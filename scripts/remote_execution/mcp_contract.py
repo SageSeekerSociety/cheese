@@ -1,56 +1,40 @@
 """What the executor needs `claude mcp serve` to keep doing.
 
-The executor runs its shell commands through the assigned machine's
-`claude mcp serve`, so that a command's working directory, its escape back to
-the workspace root, and its output all behave the way the same build's own Bash
-tool behaves. Three of those properties are not in any contract Anthropic
-publishes, and one of them — where a backgrounded command's output lands on
-disk — is a path we read directly, because the build offers no way back to a
-task its own Bash tool backgrounded: `TaskStop` answers `No task found` for
-the id, and 2.1.277 stopped serving `TaskOutput` at all.
+The executor runs the room's file operations through the assigned machine's
+`claude mcp serve`, so that Read, Edit, Write and NotebookEdit behave the way
+the same build's own tools do. Its shell commands it runs as processes of its
+own, each starting from the snapshot of the machine's shell that a native
+session there would source; the executor has the build write that snapshot by
+calling serve's Bash tool once (`runtime.Executor.shell_snapshot`). Where the
+snapshot lands and what it holds are in no contract Anthropic publishes.
 
 So this script is the contract. It runs against a given build and says which
 properties still hold. Point it at the pinned build to gate a merge, and at the
 newest published build to learn that the next upgrade will break us before the
 upgrade is what we are debugging.
 
-The last check is inverted on purpose: it asserts that the build still
-offers no way back to a backgrounded task. The day that check fails, the
-workaround in `runtime.py` has become dead weight and goes.
-
 Usage:
     python3 mcp_contract.py --claude <binary> [--output <receipts dir>]
 """
 
 import argparse
-import contextlib
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
-import time
 from pathlib import Path
-
-sys.path.insert(
-    0,
-    str(
-        Path(__file__).resolve().parents[2]
-        / "backend/app/domain/agent/harness/claude_code/remote_execution"
-    ),
-)
-from runtime import serve_task_output
 
 
 class Serve:
     """One `claude mcp serve` process, driven over stdio."""
 
-    def __init__(self, binary, workspace, temp_root):
+    def __init__(self, binary, workspace, temp_root, home):
         self.workspace = Path(workspace).resolve()
         self.temp_root = Path(temp_root).resolve()
-        config = Path(tempfile.mkdtemp(prefix="mcp-contract-config-"))
+        self.config = config = Path(tempfile.mkdtemp(prefix="mcp-contract-config-"))
         (config / ".claude.json").write_text(
             json.dumps(
                 {
@@ -71,6 +55,11 @@ class Serve:
             "CLAUDE_CODE_TMPDIR": str(self.temp_root),
             "ANTHROPIC_API_KEY": "execution-only-no-model",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            # The environment the executor gives serve: bash, and a HOME whose
+            # shell setup the snapshot has to carry.
+            "HOME": str(home),
+            "SHELL": shutil.which("bash") or "/bin/bash",
+            "PATH": "/opt/mcp-contract-only" + os.pathsep + os.environ.get("PATH", ""),
         }
         for name in (
             "CLAUDE_CODE_OAUTH_TOKEN",
@@ -156,29 +145,12 @@ class Serve:
             self.process.wait()
 
 
-def descendants(pid):
-    listing = subprocess.run(
-        ["ps", "-eo", "pid=,ppid="], capture_output=True, text=True
-    ).stdout
-    children = {}
-    for line in listing.splitlines():
-        parts = line.split()
-        if len(parts) == 2:
-            children.setdefault(int(parts[1]), []).append(int(parts[0]))
-    found, queue = [], [pid]
-    while queue:
-        for child in children.get(queue.pop(), []):
-            found.append(child)
-            queue.append(child)
-    return found
-
-
 def checks(serve):
     """Each check yields (name, holds, what was observed)."""
     tools = {tool["name"] for tool in serve.call("tools/list", {})["result"]["tools"]}
     needed = {"Bash", "Read", "Edit", "Write", "NotebookEdit"}
     yield (
-        "the tools the executor forwards are all served",
+        "the file tools the executor forwards, and the Bash it writes its snapshot with, are served",
         needed <= tools,
         f"missing {sorted(needed - tools)}"
         if needed - tools
@@ -192,104 +164,35 @@ def checks(serve):
         else "Glob/Grep unavailable; Bash is the supported remote search path",
     )
 
-    started = time.monotonic()
-    slow = serve.request(
-        "tools/call",
-        {"name": "Bash", "arguments": {"command": "sleep 3; echo slow"}},
-    )
-    fast = serve.request(
-        "tools/call", {"name": "Bash", "arguments": {"command": "echo fast"}}
-    )
-    first = serve.read()
-    elapsed = time.monotonic() - started
-    serve.read()
+    answer = serve.tool("Bash", command="true")
+    snapshots = sorted((serve.config / "shell-snapshots").glob("snapshot-bash-*.sh"))
     yield (
-        "two commands run at once rather than queueing",
-        first.get("id") == fast and elapsed < 2,
-        f"first answer was id={first.get('id')} after {elapsed:.2f}s (slow={slow})",
+        "one Bash call writes a bash snapshot into CLAUDE_CONFIG_DIR/shell-snapshots",
+        len(snapshots) == 1,
+        f"{[path.name for path in snapshots]} after {json.dumps(answer)[:80]}",
     )
-
-    (serve.workspace / "sub").mkdir(exist_ok=True)
-    serve.tool("Bash", command="cd sub")
-    where = serve.tool("Bash", command="pwd").get("stdout", "").strip()
-    yield (
-        "a command's cd is still in force for the next command",
-        where == str(serve.workspace / "sub"),
-        where,
-    )
-
-    serve.tool("Bash", command="cd /")
-    where = serve.tool("Bash", command="pwd").get("stdout", "").strip()
-    yield (
-        "a command that leaves the workspace does not take the next one with it",
-        where.startswith(str(serve.workspace)),
-        where,
-    )
-
-    background = serve.tool(
-        "Bash",
-        command="echo first-line; sleep 1; echo second-line",
-        run_in_background=True,
-    )
-    task = background.get("backgroundTaskId")
-    yield (
-        "a backgrounded command answers with an id",
-        bool(task),
-        json.dumps(background)[:120],
-    )
-    if not task:
+    if not snapshots:
         return
-
-    deadline, found = time.monotonic() + 10, None
-    while time.monotonic() < deadline:
-        found = serve_task_output(serve.temp_root, task)
-        if found and found.read_text().strip().endswith("second-line"):
-            break
-        time.sleep(0.2)
-    yield (
-        "a backgrounded command's whole output is on disk where we look for it",
-        bool(found) and found.read_text().split() == ["first-line", "second-line"],
-        f"{found}: {found.read_text()!r}" if found else "no file under our temp root",
+    probe = subprocess.run(
+        [
+            shutil.which("bash") or "/bin/bash",
+            "-c",
+            # One line each: an alias is expanded only on a line read after
+            # the one that defined it, as in a native session's next command.
+            f"source {shlex.quote(str(snapshots[0]))}\ncontract_alias\n"
+            "contract_function\nprintf '%s' \"$PATH\"",
+        ],
+        env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent"},
+        capture_output=True,
+        text=True,
     )
-
-    serve.tool("Bash", command="sleep 47", run_in_background=True)
-    time.sleep(0.5)
-    sleepers = [
-        pid
-        for pid in descendants(serve.process.pid)
-        if "sleep 47"
-        in subprocess.run(
-            ["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True
-        ).stdout
-    ]
-    for pid in sleepers:
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(pid, signal.SIGKILL)
-    time.sleep(0.5)
-    left = subprocess.run(
-        ["pgrep", "-f", "sleep 47"], capture_output=True, text=True
-    ).stdout
+    lines = probe.stdout.splitlines()
     yield (
-        "we can find and stop a running command ourselves",
-        bool(sleepers) and not left.strip(),
-        f"found {len(sleepers)} process(es), {len(left.split())} left after the kill",
-    )
-
-    # Either the tool is not served at all (2.1.277 dropped TaskOutput from
-    # serve mode) or it answers `No task found` for the id Bash just handed out
-    # (every build so far, for TaskStop). Both mean the same: no way back to
-    # the task through the build, which is why the executor keeps its own.
-    def blind(name):
-        answer = serve.tool(name, task_id=task)
-        text = answer.get("error", "") or answer.get("raw", "") or json.dumps(answer)
-        return "not found" in text.lower() or "no task found" in text.lower()
-
-    yield (
-        "the build STILL offers no way back to a backgrounded task (delete our workaround when this fails)",
-        blind("TaskOutput") and blind("TaskStop"),
-        "TaskOutput/TaskStop absent or blind"
-        if blind("TaskOutput") and blind("TaskStop")
-        else "one of them now finds the task",
+        "sourcing it reproduces the HOME's alias, function and serve's PATH",
+        lines[:2] == ["CONTRACT_ALIAS", "CONTRACT_FUNCTION"]
+        and len(lines) == 3
+        and lines[2].split(os.pathsep)[0] == "/opt/mcp-contract-only",
+        f"rc={probe.returncode} out={probe.stdout[-200:]!r} err={probe.stderr[-200:]!r}",
     )
 
 
@@ -300,13 +203,18 @@ def main():
     arguments = parser.parse_args()
 
     root = Path(tempfile.mkdtemp(prefix="mcp-contract-"))
-    workspace, temp_root = root / "workspace", root / "temp"
+    workspace, temp_root, home = root / "workspace", root / "temp", root / "home"
     workspace.mkdir()
     temp_root.mkdir()
+    home.mkdir()
+    (home / ".bashrc").write_text(
+        "alias contract_alias='echo CONTRACT_ALIAS'\n"
+        "contract_function() { echo CONTRACT_FUNCTION; }\n"
+    )
     version = subprocess.run(
         [arguments.claude, "--version"], capture_output=True, text=True
     ).stdout.strip()
-    serve = Serve(arguments.claude, workspace, temp_root)
+    serve = Serve(arguments.claude, workspace, temp_root, home)
     results = []
     try:
         for name, holds, observed in checks(serve):

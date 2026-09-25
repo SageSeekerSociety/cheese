@@ -1559,7 +1559,7 @@ def journal(binary, root):
     try:
         large = turn_bytes(session, LARGE)
         yield (
-            "the same holds for a Bash the plugin runs on the executor",
+            "the same holds for a Bash the shell prefix runs on the executor",
             bool(large) and large["turn"] < 64_000,
             json.dumps(large and summary(large)),
         )
@@ -1571,10 +1571,12 @@ def remote(binary, root, name, args, env=None, trusted_hook=None, untrusted_hook
     """A -p session launched the way a room's central session is, against a local executor.
 
     The executor is the acceptance fixture's (`acceptance.setup`): runtime.py
-    serving `claude mcp serve` of the same build over a project seeded by
-    seed.py. The central side is `client.prepare`, so the function hook
-    (proxy.js), the shell prefix and the PreToolUse guard are exactly what a
-    room launches with. Two things differ from a room, neither of which the
+    over a project seeded by seed.py, running commands as its own processes
+    and file operations through `claude mcp serve` of the same build. The
+    central side is `client.prepare`, so the function hook (proxy.js, which
+    keeps the file tools), the shell prefix (which carries the build's own
+    Bash to the executor) and the PreToolUse guard are exactly what a room
+    launches with. Two things differ from a room, neither of which the
     checks read: the forwarded project view is a FUSE mount this fixture does
     not have, so the central workspace is an empty directory, and the version
     pin is relaxed so the daily job can run the newest build.
@@ -1736,12 +1738,17 @@ def functionhooks(binary, root):
         stop_remote(session)
 
 
-def remotebackground(binary, root):
-    """Moving a Bash the plugin routed to the executor into the background.
+def alive(argv):
+    """Whether a process whose whole command line is `argv` is running."""
+    return subprocess.run(["pgrep", "-xf", argv], capture_output=True).returncode == 0
 
-    The harness never runs that Bash itself — the function hook answers the
-    call — so the harness has no task to move. The executor does: today the
-    room's button reaches it as an executor control (REMOTE_CONTROLS).
+
+def remotebackground(binary, root):
+    """A Bash the build sends through the shell prefix to the executor.
+
+    The build runs that Bash itself — the prefix only carries it to the
+    executor — so it is the build's own task: reported, moved to the
+    background by the room's button on stdin, and announced when it ends.
     """
     session = remote(binary, root, "remotebackground", DRIVER)
     try:
@@ -1753,78 +1760,63 @@ def remotebackground(binary, root):
                 timeout=120000,
             )
         )
-        _, call = session.wait(
-            lambda e: (
-                e.get("type") == "assistant"
-                and any(b.get("type") == "tool_use" for b in blocks(e))
-            ),
-            60,
-            mark,
+        _, started = session.wait(
+            is_("system", "task_started", task_type="local_bash"), 60, mark
         )
-        tool = (
-            [b["id"] for b in blocks(call) if b.get("type") == "tool_use"][0]
-            if call
-            else None
-        )
-        time.sleep(3)
-        started = [e for e in session.events[mark:] if is_("system", "task_started")(e)]
-        answer = session.control({"subtype": "background_tasks", "tool_use_id": tool})
-        ended, _ = session.wait(is_("result"), 3, mark)
         yield (
-            "a Bash the plugin routes is no harness task: no task_started, and stdin background_tasks moves nothing",
-            not started
-            and (answer.get("response") or {}).get("backgrounded") is False
-            and ended is None,
+            "a Bash the prefix sends to the executor is a harness task: task_started local_bash",
+            started is not None and started.get("is_backgrounded") is False,
+            json.dumps(started)[:200],
+        )
+        if not started:
+            return
+        time.sleep(2)
+        moved_at = len(session.events)
+        answer = session.control(
+            {"subtype": "background_tasks", "tool_use_id": started["tool_use_id"]}
+        )
+        ended, _ = session.wait(is_("result"), 10, moved_at)
+        running = alive("sleep 12")
+        out = [text_of(r) for r in results_since(session, mark)]
+        yield (
+            "stdin background_tasks moves it: backgrounded, the turn ends, the command keeps running on the executor",
+            (answer.get("response") or {}).get("backgrounded") is True
+            and ended is not None
+            and running
+            and len(out) == 1
+            and f"backgrounded by user with ID: {started['task_id']}" in out[0],
             json.dumps(
                 {
-                    "task_started": len(started),
                     "answer": answer.get("response"),
                     "result": ended,
+                    "running": running,
+                    "tool_result": out[0][:120] if out else None,
                 }
             ),
         )
-        executor = __import__("acceptance").client.RemoteClient(
-            json.loads(session.execution.read_text())
+        noted, notification = session.wait(
+            is_("system", "task_notification", task_id=started["task_id"]),
+            30,
+            moved_at,
         )
-        tasks = executor.control({"subtype": "background_tasks", "tool_use_id": tool})[
-            "tasks"
-        ]
-        ended, _ = session.wait(is_("result"), 10, mark)
-        out = [text_of(r) for r in results_since(session, mark)]
-        running = [t for t in tasks if t.get("request_id") == tool]
-        yield (
-            "background_tasks sent to the executor moves it: the turn ends while it runs, naming the executor task",
-            ended is not None
-            and len(running) == 1
-            and running[0]["status"] == "running"
-            and len(out) == 1
-            and f"Command running in background with ID: {running[0]['task_id']}"
-            in out[0],
-            json.dumps({"result": ended, "tool_result": out[0][:120] if out else None}),
-        )
-        mark = len(session.events)
-        noted, _ = session.wait(
-            lambda e: is_("system", "task_notification")(e) or is_("result")(e),
-            20,
-            mark,
-        )
-        done = (
-            executor.control(
-                {"subtype": "task_output", "task_id": running[0]["task_id"]}
-            )
-            if running
-            else {}
+        follow, _ = session.wait(is_("result"), 30, (noted or 0) + 1)
+        output = (
+            Path(notification["output_file"]).read_text()
+            if notification and notification.get("output_file")
+            else ""
         )
         yield (
-            "its completion is not announced on stdout: no task_notification and no follow-up turn "
-            "(drop this check if it starts to be)",
-            noted is None
-            and done.get("status") == "completed"
-            and "REMOTE_SLEPT" in done.get("stdout", ""),
+            "its completion is the build's own: task_notification completed and a follow-up turn",
+            notification is not None
+            and notification.get("status") == "completed"
+            and follow is not None
+            and "REMOTE_SLEPT" in output,
             json.dumps(
                 {
-                    "announced at": noted,
-                    "executor": {k: done.get(k) for k in ("status", "exit_code")},
+                    "notification": notification
+                    and {k: notification.get(k) for k in ("status", "summary")},
+                    "follow-up result at": follow,
+                    "output": output[:80],
                 }
             ),
         )

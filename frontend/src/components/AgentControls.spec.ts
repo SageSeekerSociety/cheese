@@ -52,15 +52,15 @@ it('shows native control errors', async () => {
   await view.findByText('Tool cannot be interrupted')
 })
 
-it("lists the executor's commands beside the session's own tasks and stops one", async () => {
+it("lists the session's commands beside its agents and stops one", async () => {
   vi.mocked(getAgentControl).mockResolvedValue({
     id: 's1',
     connected: true,
     tasks: {
-      'cheese-task-0123456789abcdef': {
-        task_id: 'cheese-task-0123456789abcdef',
+      b7k2m9x4q: {
+        task_id: 'b7k2m9x4q',
         status: 'running',
-        task_type: 'executor_bash',
+        task_type: 'local_bash',
       },
       a1: { task_id: 'a1', description: '派分身去查', status: 'completed', task_type: 'local_agent' },
     },
@@ -73,14 +73,14 @@ it("lists the executor's commands beside the session's own tasks and stops one",
   const view = mount()
   await view.findByText('控制已连接')
   await fireEvent.click(view.getByText('更多控制'))
-  await view.findByText('cheese-task-0123456789abcdef · 运行中')
+  await view.findByText('b7k2m9x4q · 运行中')
   expect(view.getByText('派分身去查 · 已完成')).toBeTruthy()
   const stops = view.getAllByText('停止')
   await fireEvent.click(stops[0])
   await view.findByText('指令已确认')
   expect(sendAgentControl).toHaveBeenCalledWith('topic1', 's1', {
     subtype: 'stop_task',
-    task_id: 'cheese-task-0123456789abcdef',
+    task_id: 'b7k2m9x4q',
   })
 })
 

@@ -131,7 +131,10 @@ def task_action(name, index):
             for block in tool_results(body)
             if block["tool_use_id"] == f"toolu_acceptance_{index}"
         )
-        task_id = re.search(r"cheese-task-[0-9a-f]{16}", json.dumps(content)).group()
+        # The build's own background task: it names the id it gave the command.
+        task_id = re.search(
+            r"background with ID: ([A-Za-z0-9_-]+)\.", json.dumps(content)
+        ).group(1)
         return {
             "name": name,
             "input": {"task_id": task_id},
@@ -478,6 +481,9 @@ def case(folder, options):
             diff = bound.control({"subtype": "get_workspace_diff"})
             assert "+AFTER_EDIT" in diff["diff"]
             dump(folder / "file-controls.json", {"preview": preview, "diff": diff})
+            # The stopped command would have written this after two seconds:
+            # its absence is the command gone from the executor, not only the
+            # build's task marked stopped.
             time.sleep(2.1)
             result = executor.call(
                 "invoke",

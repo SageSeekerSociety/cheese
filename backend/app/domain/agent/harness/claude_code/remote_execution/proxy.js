@@ -1,7 +1,5 @@
 const execution = __EXECUTION_CONFIG__;
-const native = new Set([
-  "Read", "Edit", "Write", "Bash", "NotebookEdit", "TaskStop",
-]);
+const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 
 function remotePath(path) {
   if (path.startsWith(execution.central_config + "/skills/")) {
@@ -27,6 +25,24 @@ function localPaths(path) {
     seen.push(root + "/" + path);
   }
   return seen;
+}
+
+// What the build writes about a command it ran through the shell prefix names
+// this host's workspace; the model was told the executor's.
+function respell(text) {
+  return typeof text === "string"
+    ? text.split(execution.central_workspace).join(execution.workspace)
+    : text;
+}
+
+// A Bash command's output is on this host, where the build wrote it: a
+// background task's output file under the session's temp directory, a large
+// result under the transcript's tool-results. Reading one is a local read, as
+// it is in a native session; the PreToolUse guard admits nothing else.
+function ownOutput(path) {
+  if (typeof path !== "string" || path.split("/").includes("..")) return false;
+  return path.startsWith(execution.central_tmp + "/")
+    || (path.startsWith(execution.central_config + "/projects/") && path.includes("/tool-results/"));
 }
 
 const SEND_USER_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -119,6 +135,27 @@ export function register(on) {
         return { deny: "Cheese tool failed: " + String(error) };
       }
     }
+    if (tool === "Bash") {
+      const outcome = await next(e);
+      // The build's own refusal to run a command comes back as a string
+      // result. 2.1.277 renders an error from `result` alone and refuses any
+      // change to it, and a `deny` would wrap it in <tool_use_error>, so a
+      // refusal keeps the build's text, this host's workspace spelling
+      // included (scripts/remote_execution/equivalence.py KNOWN_DIFFERENCES).
+      if (!outcome || typeof outcome.result !== "object" || outcome.result === null) {
+        return outcome;
+      }
+      return {
+        ...outcome,
+        result: {
+          ...outcome.result,
+          stdout: respell(outcome.result.stdout),
+          stderr: respell(outcome.result.stderr),
+        },
+        text: respell(outcome.text),
+      };
+    }
+    if (tool === "Read" && ownOutput(args.file_path)) return next(e);
     if (native.has(tool)) {
       for (const field of ["file_path", "path", "notebook_path"]) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field]);
@@ -133,11 +170,6 @@ export function register(on) {
           const receipt = await $.fs.read(outcome.receipt_path, { as: "text" });
           outcome = JSON.parse(receipt);
         }
-        // 一个 TaskStop 的 id 有两个主人：执行机上后台跑着的那条命令，和这条会话
-        // 里起着的一条子线程。执行器只认前者——它答「不认识」的那个 id 就是后者，
-        // 让回给 harness 自己停（结论 43「父线程能停掉它」）。判据是执行器认不认
-        // 得，不是 id 长什么样：两种 id 都是机器自己发的，长得一样。
-        if (tool === "TaskStop" && outcome.deny === "Unknown remote task") return next();
         if (outcome.result?.type === "image") {
           outcome.result.file.base64 = response.content.find(block => block.type === "image").source.data;
         }
@@ -176,6 +208,15 @@ export function register(on) {
   on("prompt.section", async ($, e, next) => {
     const result = await next(e);
     return { ...result, text: result.text === null ? null : result.text.split(execution.central_workspace).join(execution.workspace) };
+  });
+  // What the build attaches about the session — its working directory at
+  // start, and again each time a command changes it — names this host's
+  // workspace too.
+  on("prompt.attachment", async ($, e, next) => {
+    const result = await next(e);
+    return result && typeof result.text === "string"
+      ? { ...result, text: respell(result.text) }
+      : result;
   });
   on("skill.prompt", async ($, e, next) => {
     const result = await next(e);

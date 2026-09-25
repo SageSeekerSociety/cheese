@@ -73,12 +73,16 @@ def test_view_refuses_context_outside_project_boundary():
     with pytest.raises(RuntimeError, match="leaves the forwarded project boundary"):
         view.refresh()
     view = ForwardedProject(
-        lambda *_: {
-            "generation": "one",
-            "entries": {},
-            "unsupported_imports": [],
-            "unsupported_paths": [],
-        }
+        lambda _method, params: (
+            {
+                "generation": "one",
+                "entries": {},
+                "unsupported_imports": [],
+                "unsupported_paths": [],
+            }
+            if params["operation"] == "tree"
+            else {"missing": True}
+        )
     )
     with pytest.raises(OSError) as missing:
         view.getattr("/missing")
@@ -107,3 +111,34 @@ def test_view_maps_absolute_project_symlinks_into_mount():
     )
     view.refresh()
     assert view.readlink("/instructions") == "/center/project/docs/instructions.md"
+
+
+def test_the_view_looks_up_directories_on_the_executor():
+    asked = []
+    lookups = {"made": {"mode": 0o755, "mtime_ns": 5, "nlink": 2}}
+
+    def call(method, params):
+        if params["operation"] == "tree":
+            return {"generation": "g", "entries": {}}
+        asked.append(params)
+        if params["path"] == "broken":
+            raise RuntimeError("link down")
+        if params["operation"] == "list":
+            return {"directories": ["made"] if params["path"] == "" else []}
+        return lookups.get(params["path"], {"missing": True})
+
+    view = ForwardedProject(call)
+    attributes = view.getattr("/made")
+    assert stat.S_ISDIR(attributes["st_mode"])
+    assert not attributes["st_mode"] & 0o222
+    with pytest.raises(OSError) as missing:
+        view.getattr("/missing")
+    assert missing.value.errno == errno.ENOENT
+    with pytest.raises(OSError) as broken:
+        view.getattr("/broken")
+    assert broken.value.errno == errno.EIO
+    asked.clear()
+    with pytest.raises(OSError):
+        view.getattr("/.git/HEAD")
+    assert asked == []
+    assert set(view.readdir("/")) == {".", "..", ".git", "made"}

@@ -1,17 +1,16 @@
 name: Claude Code build contracts
 
-# The executor runs its shell commands through the assigned machine's
-# `claude mcp serve`. Three of the behaviours it relies on are not in any
-# published contract — a command's `cd` outliving the call, a command that
-# leaves the workspace not taking the next one with it, and a backgrounded
-# command's output landing at a path we read directly — so they are checked
-# here instead of being discovered during an upgrade. The headless
-# stream-json protocol the Claude Code driver speaks (#1606) is unpublished
-# too; headless_contract.py checks the parts of it the driver relies on,
-# including through the remote-execution plugin, so changes to the plugin and
-# its executor run it as well. And the metering proxy renews the platform's
-# Claude login with a copy of this build's token refresh, which
-# refresh_contract.py holds to the build's own, byte for byte.
+# The executor runs a room's file operations through the assigned machine's
+# `claude mcp serve`, and takes the shell snapshot its commands start from
+# from that build's Bash tool; mcp_contract.py checks both, since neither is
+# in a published contract. The headless stream-json protocol the Claude Code
+# driver speaks (#1606) is unpublished too; headless_contract.py checks the
+# parts of it the driver relies on, including through the remote-execution
+# plugin. equivalence.py checks that a room's Bash, run through the shell
+# prefix on the executor, is what the same build does running there itself.
+# Changes to the plugin and its executor run all three. And the metering proxy
+# renews the platform's Claude login with a copy of this build's token
+# refresh, which refresh_contract.py holds to the build's own, byte for byte.
 
 on:
   workflow_call:
@@ -76,6 +75,24 @@ jobs:
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --mitmdump "$RUNNER_TEMP/mitm/bin/mitmdump"
           --output tmp/mcp-contract/pinned/refresh
+      - name: Install FUSE for the forwarded project view
+        # The equivalence check mounts the view a room's session works in.
+        # libfuse2 (fusepy) mounts through `fusermount`; Ubuntu 24.04 ships
+        # only `fusermount3`, which takes the same arguments.
+        if: ${{ !cancelled() }}
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq fuse3 libfuse2t64
+          command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
+          python3 -m venv tmp/equivalence-venv
+          tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1
+      - name: Remote Bash is equivalent to Claude Code on the executor
+        # Runs even when an earlier check failed, so one run reports all.
+        if: ${{ !cancelled() }}
+        run: >-
+          tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --output tmp/mcp-contract/pinned/equivalence
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         # A quota-refused upload retries until the JOB timeout cancels the job
@@ -141,6 +158,24 @@ jobs:
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --mitmdump "$RUNNER_TEMP/mitm/bin/mitmdump"
           --output tmp/mcp-contract/latest/refresh
+      - name: Install FUSE for the forwarded project view
+        # The equivalence check mounts the view a room's session works in.
+        # libfuse2 (fusepy) mounts through `fusermount`; Ubuntu 24.04 ships
+        # only `fusermount3`, which takes the same arguments.
+        if: ${{ !cancelled() }}
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq fuse3 libfuse2t64
+          command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
+          python3 -m venv tmp/equivalence-venv
+          tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1
+      - name: Remote Bash is equivalent to Claude Code on the executor
+        # Runs even when an earlier check failed, so one run reports all.
+        if: ${{ !cancelled() }}
+        run: >-
+          tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --output tmp/mcp-contract/latest/equivalence
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         # A quota-refused upload retries until the JOB timeout cancels the job

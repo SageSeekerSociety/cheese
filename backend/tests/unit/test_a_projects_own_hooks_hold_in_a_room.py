@@ -3,12 +3,15 @@
 A repository that guards its tools with a hook in `.claude/settings.json`
 gets that guard in plain Claude Code, and must get it in a room without
 changing anything. In a room the model's Bash and Write never run where the
-model is: `proxy.js` hands them to the executor that holds the project, and
-the executor runs the project's hooks around each call. So these drive the
-pinned build headless, launched the way a room's session is (the runner's
-`LAUNCH_ARGS`, `client.prepare`'s plugin, shell prefix and guard), against the
-acceptance executor over a seeded project, and read what happened on the
-executor and what the model was sent back.
+model is. Bash the build runs itself through its shell prefix, which carries
+the command to the executor that holds the project; the session registers the
+project's hooks when it starts, as plain Claude Code does, so the build fires
+them with its own input and their commands run there too. Write the plugin
+hands to the executor, which runs the project's hooks around the call. So
+these drive the pinned build headless, launched the way a room's session is
+(the runner's `LAUNCH_ARGS`, `client.prepare`'s plugin, shell prefix and
+guard), against the acceptance executor over a seeded project, and read what
+happened on the executor and what the model was sent back.
 
 The hook scripts below are written the way a repository writes them for plain
 Claude Code: invoked through `$CLAUDE_PROJECT_DIR`, deciding by exit code or by
@@ -16,6 +19,7 @@ a `permissionDecision`, and each case asserts what plain Claude Code 2.1.277
 does with the same script.
 """
 
+import argparse
 import json
 import shlex
 import subprocess
@@ -56,23 +60,62 @@ def contract():
 
 
 @pytest.fixture
-def room(contract, tmp_path):
-    """A room's session over a project whose settings hold `room.hooks`."""
+def room(contract, tmp_path, monkeypatch):
+    """A room's session over a project whose settings hold `room.hooks`.
+
+    The settings are the project's before the session starts, as a
+    repository's are: the build registers hooks when it starts.
+    """
+    import acceptance
+
     binary = claude_binary()
     version = subprocess.check_output([binary, "--version"], text=True, timeout=10)
     assert version.startswith(CLAUDE_PINNED_VERSION + " "), version
+    # The central workspace is a forwarded view this fixture does not mount.
+    release = acceptance.execution_release
+    monkeypatch.setattr(release, "mount_state", lambda _path: release.MOUNT_LIVE)
     sessions = []
 
-    def start(hooks):
-        session = contract.remote(binary, tmp_path, f"room{len(sessions)}", LAUNCH_ARGS)
-        sessions.append(session)
-        project = session.remote_workspace
+    def start(hooks, *, directories=()):
+        name = f"room{len(sessions)}"
+        folder = tmp_path / name
+        home, executor_home = folder / "home", folder / "executor-home"
+        for path in (home / ".claude", executor_home / ".claude"):
+            path.mkdir(parents=True)
+        with monkeypatch.context() as scoped:
+            # The executor's `claude mcp serve` inherits this environment.
+            scoped.setenv("HOME", str(executor_home))
+            scoped.setenv("CLAUDE_CONFIG_DIR", str(executor_home / ".claude"))
+            executor, target = acceptance.setup(
+                folder,
+                argparse.Namespace(ssh=None, claude=binary),
+                "http://127.0.0.1:9",
+            )
+        project = Path(
+            json.loads((folder / "executor-input.json").read_text())["workspace"]
+        )
         (project / ".claude/hooks").mkdir(parents=True, exist_ok=True)
         (project / ".claude/hooks/guard.sh").write_text(GUARD)
         (project / ".claude/hooks/guard.sh").chmod(0o755)
         (project / ".claude/settings.json").write_text(
             json.dumps({"hooks": {"PreToolUse": hooks}})
         )
+        launch = acceptance.client.prepare(
+            home / "session",
+            target,
+            claude=binary,
+            home_override=home,
+            config_override=home / ".claude",
+        )
+        for directory in directories:
+            # On the executor, and in the view the unmounted fixture stands in
+            # for, where the build checks its shell's directory exists.
+            (project / directory).mkdir()
+            (Path(launch["cwd"]) / directory).mkdir()
+        session = contract.Session(binary, tmp_path, name, LAUNCH_ARGS, launch=launch)
+        session.executor = executor
+        session.remote_workspace = project
+        sessions.append(session)
         return session
 
     yield start
@@ -178,10 +221,10 @@ def test_a_project_hook_runs_where_the_command_runs(contract, room, tmp_path):
     session = room(
         bash_hook(
             'printf "%s|%s" "$PWD" "$CLAUDE_PROJECT_DIR" > ' + shlex.quote(str(seen))
-        )
+        ),
+        directories=["sub"],
     )
     project = session.remote_workspace
-    (project / "sub").mkdir()
     run(contract, session, "Bash", command="cd sub", description="enter sub")
     run(contract, session, "Bash", command="true", description="second call")
     cwd, root = seen.read_text().split("|")

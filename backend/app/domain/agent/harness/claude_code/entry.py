@@ -17,7 +17,7 @@ import os
 import signal
 from pathlib import Path
 
-from app.domain.agent.harness.claude_code.runner import Runner, executor_command
+from app.domain.agent.harness.claude_code.runner import Runner
 
 COMMAND = "CHEESE_CLAUDE_COMMAND"
 
@@ -25,7 +25,7 @@ COMMAND = "CHEESE_CLAUDE_COMMAND"
 async def serve(state: Path) -> None:
     env = dict(os.environ)
     command = env.pop(COMMAND)
-    runner = Runner(state, executor=executor_command(Path(env["HOME"])))
+    runner = Runner(state)
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

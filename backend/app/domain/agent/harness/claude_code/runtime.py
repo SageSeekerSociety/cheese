@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 #: The controls a room may send a session. Each is a ``control_request`` on the
 #: session's stdin (`scripts/remote_execution/headless_contract.py` checks them
-#: against the pinned build), except the file and task ones the room's executor
-#: answers (``routes/agent_control.py``).
+#: against the pinned build), except the file ones the room's executor answers
+#: (``routes/agent_control.py``).
 CONTROLS = (
     "initialize",
     "interrupt",
@@ -77,7 +77,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
     # Written is not read: the echo of the input is (`Subscription.receipt`).
     receipt_on_accept = False
     controls = CONTROLS
-    # The files and commands live on the executor, so it answers these.
+    # The files live on the executor, so it answers these.
     executor_controls = frozenset(REMOTE_CONTROLS)
 
     def conversation(self, handle: Handle) -> str:

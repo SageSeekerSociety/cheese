@@ -65,10 +65,24 @@ NATIVE_TOOLS = {
     "Write",
     "Bash",
     "NotebookEdit",
-    "TaskOutput",
     "TaskStop",
 }
-FILE_TOOLS = NATIVE_TOOLS - {"Bash", "TaskOutput", "TaskStop"}
+
+# A command the central session's shell prefix started (`shell`) is read by
+# that prefix until it ends. One nobody has read for this long lost its reader
+# for good — the session ended while the link to this machine was down — so it
+# is stopped; a finished one nobody collected is forgotten. Longer than any
+# link drop a deploy of the device connection causes, which the prefix waits
+# out and then reattaches.
+COMMAND_ABANDONED_S = 600.0
+# The longest one `shell` read waits for output before answering with none.
+COMMAND_READ_WAIT_S = 25.0
+# The most one `shell` read answers with per stream, before base64.
+COMMAND_READ_BYTES = 1024 * 1024
+# What the executor's own Bash (Codex, platform commands) hands back inline,
+# as the build's own Bash tool does; the rest stays in the task's output file.
+BASH_INLINE_CHARS = 30_000
+COMMAND_ID = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
 
 def stamp():
@@ -80,17 +94,6 @@ def write_json(path, value):
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex)
     temporary.write_text(json.dumps(value))
     temporary.replace(path)
-
-
-# How long a command the serve process backgrounded is given, after it has
-# ended, to have its output written before TaskOutput answers with what is
-# there. The serve process writes that file on its own schedule and the task is
-# already recorded completed — by its own exit file — by the time it does, so
-# this is a wait for a flush, not for the command. Two seconds was not enough
-# on a loaded CI runner and answered 「」 for a command that had printed; ten
-# sits well inside TaskOutput's own 30 s default, and only a command that never
-# prints anything waits it out.
-OUTPUT_AFTER_EXIT_S = 10.0
 
 
 @functools.cache
@@ -156,22 +159,6 @@ def request(state, method, params=None):
     if "error" in response:
         raise RuntimeError(response["error"])
     return response["result"]
-
-
-# `claude mcp serve` writes a backgrounded command's output to
-# `<CLAUDE_CODE_TMPDIR>/claude-<uid>/<workspace>/<session>/tasks/<id>.output`,
-# and reading that file is the only way to get it: from serve mode the build
-# offers no way back to the task — `TaskStop` looks it up in an app state the
-# serve entrypoint throws away and answers `No task found with ID`, and 2.1.277
-# stopped serving `TaskOutput` there at all.
-# The session component is a UUID the process picks and never tells us — it is
-# deliberately unguessable, so a shared /tmp cannot be pre-empted — hence the
-# glob rather than a built path. We point CLAUDE_CODE_TMPDIR at the room's own
-# state directory, so the glob stays inside one room.
-# `scripts/remote_execution/mcp_contract.py` is what tells us this still holds.
-def serve_task_output(temp_root, task_id):
-    matches = sorted(Path(temp_root).glob(f"*/*/*/tasks/{task_id}.output"))
-    return matches[0] if matches else None
 
 
 class MCPProcess:
@@ -292,25 +279,24 @@ class Executor:
                 self.upgrading = pending["ready"]
         self.root = Path(self.config["workspace"]).resolve(strict=True)
         self.env = dict(os.environ, **self.config.get("env", {}))
-        # Every command this executor has run through `mcp serve`, by marker:
-        # the marker is the only thing that ties a process in `ps` to a task,
-        # and the only thing that survives the serve process forgetting the
-        # task the moment it hands out its id.
-        self.tasks = {}
-        self.by_task_id = {}
-        # One event per running command: set by the room's "move to
-        # background" or a stop, and what the foreground wait watches.
-        self.released = {}
-        self.cancelled_requests = set()
-        self.task_lock = threading.RLock()
+        # Every command this executor runs is a process of its own, in its own
+        # process group, with its output in files under `commands/`: whoever
+        # asked for it — the central session's shell prefix, or a caller of
+        # this executor's own Bash — reads it from there, from any
+        # connection, for as long as the record is kept. The processes that
+        # are still ours to wait for, by command id.
+        self.commands_dir = self.state / "commands"
+        self.commands_dir.mkdir(exist_ok=True)
+        self.running = {}
+        self.command_lock = threading.RLock()
+        # The shell working directory of this executor's own Bash tool, which
+        # a `cd` changes for the next call, as the build's own Bash tool does.
+        self.bash_cwd = self.root
+        # When a watched command's record was last read, by command id.
+        self.collected = {}
+        self.snapshot = None
+        self.snapshot_lock = threading.Lock()
         self.cli_lock = threading.Lock()
-        self.serve_temp = self.state / "serve-temp"
-        self.serve_temp.mkdir(exist_ok=True)
-        for record in (self.state / "tasks").glob("cheese-task-*/task.json"):
-            task = json.loads(record.read_text())
-            self.tasks[task["marker"]] = task
-            if task.get("task_id"):
-                self.by_task_id[task["task_id"]] = task["marker"]
         self.clients = {}
         self.client_lock = threading.Lock()
         self.log_lock = threading.Lock()
@@ -346,6 +332,7 @@ class Executor:
                     text=True,
                 )
         self.log("service", "started", workspace=str(self.root), pid=os.getpid())
+        threading.Thread(target=self._reap, daemon=True).start()
 
     def log(self, item, status, **fields):
         with self.log_lock, (self.state / "events.jsonl").open("a") as output:
@@ -368,23 +355,18 @@ class Executor:
                         "mcp",
                         "serve",
                     ]
-                    if self.cli_worker is not None:
-                        # Commands run from this process, so the CLI has to be
-                        # on its PATH and reachable before it starts.
-                        self._ready_cli_worker()
-                    # This process runs the room's shell commands as well as
-                    # its file operations, so it carries the room's own
-                    # environment, credentials included: a command of the
-                    # room's reaches whatever the room reaches, and stripping
-                    # them would only break the commands.
+                    # This process runs the room's file operations, and it is
+                    # the build that writes the shell snapshot every command
+                    # here starts from (`shell_snapshot`). So it carries the
+                    # environment a command gets — the room's own, credentials
+                    # included, with the platform CLI on PATH — and bash, the
+                    # shell the central session wraps its commands for.
                     env = dict(
-                        self.env,
+                        self.command_env(),
                         CLAUDE_CONFIG_DIR=str(config_dir),
                         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
-                        CLAUDE_CODE_TMPDIR=str(self.serve_temp),
-                        PATH=str(self.programs / "remote-execution/bin")
-                        + os.pathsep
-                        + self.env.get("PATH", os.defpath),
+                        CLAUDE_CODE_TMPDIR=str(self.state / "serve-temp"),
+                        SHELL=self.bash_program(),
                     )
                     for key in (
                         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS",
@@ -461,6 +443,7 @@ class Executor:
                     params.get("args", {}),
                     key,
                     params.get("server", "native"),
+                    params.get("cwd"),
                 )
             }
         except Exception as exc:
@@ -473,16 +456,17 @@ class Executor:
         self.log(key, "failed" if "error" in result else "completed", result=result)
         return result
 
-    def execute(self, tool, args, key, server="native"):
+    def execute(self, tool, args, key, server="native", cwd=None):
         name = tool if server == "native" else f"mcp__{server}__{tool}"
-        args = self.hooks("PreToolUse", name, args, key)
+        args = self.hooks("PreToolUse", name, args, key, cwd=cwd)
         result = self.execute_core(tool, args, key, server)
-        self.hooks("PostToolUse", name, args, key, result)
+        self.hooks("PostToolUse", name, args, key, result, cwd=cwd)
         return result
 
-    def hooks(self, event, tool, args, key, result=None):
+    def hooks(self, event, tool, args, key, result=None, cwd=None):
         if self.config.get("private"):
             return args
+        cwd = Path(cwd) if cwd and Path(cwd).is_dir() else self.bash_cwd
         paths = [
             self.root / ".claude/settings.json",
             self.root / ".claude/settings.local.json",
@@ -504,7 +488,7 @@ class Executor:
                         "tool_name": tool,
                         "tool_input": args,
                         "tool_use_id": key,
-                        "cwd": str(self.current_directory()),
+                        "cwd": str(cwd),
                         "session_id": self.state.name,
                     }
                     if event == "PostToolUse":
@@ -516,7 +500,7 @@ class Executor:
                     # the call go ahead on any other failing exit.
                     response = subprocess.run(
                         resolve_program(["bash", "-c", hook["command"]]),
-                        cwd=self.current_directory(),
+                        cwd=cwd,
                         env=dict(self.env, CLAUDE_PROJECT_DIR=str(self.root)),
                         input=json.dumps(payload),
                         capture_output=True,
@@ -554,39 +538,15 @@ class Executor:
             )
         if tool not in NATIVE_TOOLS:
             raise ValueError(f"Unsupported remote tool: {tool}")
-        if tool == "Read":
-            # The central session tells the agent a background task's output
-            # is at `<its own temp dir>/tasks/<id>.output`, a path that exists
-            # on no machine; the task's output is what that read means.
-            match = re.search(
-                r"/tasks/(cheese-task-[0-9a-f]{16})\.output$", args["file_path"]
-            )
-            if match:
-                task = self.output(match.group(1))
-                lines = task["stdout"].splitlines(keepends=True)
-                start = max(args.get("offset", 1), 1)
-                selected = lines[start - 1 : start - 1 + args.get("limit", 2000)]
-                return {
-                    "type": "text",
-                    "file": {
-                        "filePath": args["file_path"],
-                        "content": "".join(selected),
-                        "numLines": len(selected),
-                        "startLine": start,
-                        "totalLines": len(lines),
-                    },
-                }
         if tool == "Bash":
-            return self.bash(args, key)
-        if tool == "TaskOutput":
-            return self.task_output(args)
+            return self.bash(args)
         if tool == "TaskStop":
-            task = self.stop_task(args["task_id"])
+            record = self.stop_command(args["task_id"])
             return {
                 "message": "Remote process group stopped",
-                "task_id": task["id"],
+                "task_id": args["task_id"],
                 "task_type": "local_bash",
-                "command": task["command"],
+                "command": record["command"],
             }
         result = self.client("native").call(
             "tools/call", {"name": tool, "arguments": args}
@@ -595,219 +555,138 @@ class Executor:
             raise RuntimeError(json.dumps(result.get("content")))
         return json.loads(result["content"][0]["text"])
 
-    def current_directory(self):
-        """The shell's working directory, which lives in the serve process."""
-        # Git Bash's own `pwd` answers /c/Users/..., a path only it can open.
-        shell = "pwd -W" if sys.platform == "win32" else "pwd"
-        answer = self.client("native").call(
-            "tools/call", {"name": "Bash", "arguments": {"command": shell}}
-        )
-        return Path(json.loads(answer["content"][0]["text"])["stdout"].strip())
+    # --- commands ------------------------------------------------------------
 
-    # `mcp serve` runs the command, so a `cd` that outlives the call, a command
-    # that leaves the workspace being put back, and the text a failure comes
-    # back as are the build's own answers rather than ours. Two things stay
-    # ours. The wait: at the build's own foreground timeout a command is either
-    # killed or turned into a background task, and which one depends on whether
-    # it printed anything right at the start — measured on 2.1.265,
-    # `printf x; sleep 8` is backgrounded and `sleep 1; echo x; sleep 8` is
-    # killed, a rule written down nowhere. So the serve call gets the largest
-    # timeout there is, and the agent's timeout, the room's "move to
-    # background" and "interrupt" are all decided here, by no longer waiting
-    # for an answer the command goes on producing. And the way back to a task:
-    # the build offers none from serve mode — `TaskStop` looks an id up in an
-    # app state the serve entrypoint discards and answers `No task found` for
-    # the id its own Bash tool just handed out, and 2.1.277 stopped serving
-    # `TaskOutput` there at all. Hence
-    # two lines around every command — a marker that puts the task in the
-    # shell's argv, which is how `ps` says which process is which task, and an
-    # EXIT trap that records the exit status, which is how a task is known to
-    # have finished and how. A trap rather than trailing lines: a command that
-    # calls `exit` itself never reaches anything appended after it, and an
-    # `exit` of our own is what stops the build recording the new directory.
-    # `scripts/remote_execution/mcp_contract.py` says whether this still holds.
-    def bash(self, args, request_id):
-        marker = "cheese-task-" + uuid.uuid4().hex[:16]
-        record = self.state / "tasks" / marker
-        record.mkdir(parents=True)
-        task = {
-            "marker": marker,
-            "task_id": None,
-            "request_id": request_id,
-            "command": args["command"],
-            "description": args.get("description", args["command"]),
-            "background": bool(args.get("run_in_background", False)),
-            "status": "running",
-            "exit_code": None,
-            "started_at": stamp(),
-            "started_ts": time.time(),
-        }
-        with self.task_lock:
-            if request_id in self.cancelled_requests:
-                raise RuntimeError("Command was cancelled before starting")
-            self.tasks[marker] = task
-            self.released[marker] = threading.Event()
-            write_json(record / "task.json", task)
-        self.log(marker, "started", command=args["command"])
-        arguments = {
-            "command": (
-                f": {marker}\n"
-                # The path goes through a variable: quoted inline it would sit
-                # inside the trap's own quotes, and a space in it broke every
-                # command.
-                f"__cheese_exit={shlex.quote(str(record / 'exit'))}\n"
-                'trap \'printf %s "$?" > "$__cheese_exit"\' EXIT\n'
-                # The serve process keeps the environment it started with, and
-                # the room's part of it changes underneath it: a refreshed
-                # token arrives through `configure`. So every command exports
-                # the room's current values itself.
-                + "".join(
-                    f"export {name}={shlex.quote(str(value))}\n"
-                    for name, value in self.config.get("env", {}).items()
-                    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
-                )
-                + args["command"]
-                + "\n"
-            ),
-            "timeout": 600000,
-            **{
-                name: args[name]
-                for name in ("run_in_background", "description")
-                if args.get(name) is not None
-            },
-        }
-        client = self.client("native")
-        if task["background"]:
-            return self._deliver(
-                marker,
-                client.call("tools/call", {"name": "Bash", "arguments": arguments}),
-            )
-        key, answers = client.begin(
-            "tools/call", {"name": "Bash", "arguments": arguments}
+    def bash_program(self):
+        """The bash every command runs in, chosen as the build chooses it: the
+        machine's own `$SHELL` when that is bash, else bash on PATH; on
+        Windows, the Git Bash the build is pointed at."""
+        if sys.platform == "win32" and self.env.get("CLAUDE_CODE_GIT_BASH_PATH"):
+            return self.env["CLAUDE_CODE_GIT_BASH_PATH"]
+        own = self.env.get("SHELL", "")
+        if Path(own).name == "bash" and os.access(own, os.X_OK):
+            return own
+        return shutil.which("bash", path=self.env.get("PATH")) or "/bin/bash"
+
+    def command_env(self):
+        """The environment every command starts from: the room's, with the
+        platform CLI first on PATH, and the build that runs here named where a
+        native session names it for its commands (the snapshot's `rg` reads it)."""
+        if self.cli_worker is not None:
+            # Commands reach the CLI through it, so it has to be up first.
+            self._ready_cli_worker()
+        env = dict(
+            self.env,
+            PATH=str(self.programs / "remote-execution/bin")
+            + os.pathsep
+            + self.env.get("PATH", os.defpath),
         )
-        deadline = (
-            time.monotonic() + min(max(args.get("timeout", 120000), 1), 600000) / 1000
-        )
-        released = self.released[marker]
-        while True:
+        if self.config.get("claude"):
+            env["CLAUDE_CODE_EXECPATH"] = str(self.config["claude"])
+        return env
+
+    def shell_snapshot(self):
+        """The snapshot of this machine's shell that the pinned build writes.
+
+        A native Claude Code session sources a snapshot of its own machine's
+        shell — functions, aliases, options, PATH — before every command. The
+        central session's snapshot is of the wrong machine, so every command
+        here sources this one instead: `claude mcp serve` writes it into its
+        config directory the first time its Bash tool runs, from the
+        environment a command here gets, so asking that tool for `true` once
+        is how this executor holds exactly the file a native session on this
+        machine would. None when the build could not write one; a command then
+        runs without, as a native one does.
+        """
+        with self.snapshot_lock:
+            if self.snapshot is not None and self.snapshot.exists():
+                return self.snapshot
             try:
-                data = answers.get(timeout=0.1)
-                break
-            except queue.Empty:
-                if released.is_set() or time.monotonic() >= deadline:
-                    data = None
-                    break
-        if data is not None:
-            client.pending.pop(key, None)
-            if "error" in data:
-                raise RuntimeError(data["error"]["message"])
-            return self._deliver(marker, data["result"])
-        # The command goes on; its answer is collected when it comes.
-        with self.task_lock:
-            task["background"] = True
-            write_json(record / "task.json", task)
-        threading.Thread(
-            target=self._collect, args=(marker, client, key, answers), daemon=True
-        ).start()
-        return {
-            "stdout": "",
-            "stderr": "",
-            "interrupted": False,
-            "noOutputExpected": False,
-            "backgroundTaskId": marker,
-        }
-
-    def _collect(self, marker, client, key, answers):
-        try:
-            self._deliver(marker, client.finish(key, answers, timeout=660))
-        except Exception as exc:  # noqa: BLE001 — the record says what happened
-            self.log(marker, "lost", error=str(exc))
-            self._settle(marker)
-
-    def _deliver(self, marker, result):
-        """Record what the serve process answered for a command, and shape it."""
-        task = self.tasks[marker]
-        record = self.state / "tasks" / marker
-        text = result["content"][0]["text"]
-        if result.get("isError"):
-            # A command that exits non-zero is not a failure of the executor.
-            # This is the text the build gives its own agent: the exit code
-            # line first, then whatever the command printed.
-            self._publish_output(record, text)
-            settled = self._settle(marker)
-            return {
-                "stdout": text,
-                "stderr": "",
-                "interrupted": settled["status"] == "stopped",
-                "noOutputExpected": False,
-            }
-        value = json.loads(text)
-        if value.get("backgroundTaskId"):
-            with self.task_lock:
-                task["task_id"] = value["backgroundTaskId"]
-                task["background"] = True
-                self.by_task_id[task["task_id"]] = marker
-                write_json(record / "task.json", task)
-            # The room sees one kind of task id, ours, whichever side started
-            # the background task.
-            return {**value, "backgroundTaskId": marker}
-        self._publish_output(record, value.get("stdout", "") + value.get("stderr", ""))
-        self._settle(marker)
-        return value
-
-    @staticmethod
-    def _publish_output(record, text):
-        # The exit trap can finish before this reply arrives. Readers must not
-        # mistake the empty file created by open() for a completed empty reply.
-        temporary = record / ("output." + uuid.uuid4().hex)
-        temporary.write_text(text)
-        temporary.replace(record / "output")
-
-    def _settle(self, marker):
-        """Record how a command ended, from the exit file its trap wrote."""
-        task = self.tasks[marker]
-        exit_file = self.state / "tasks" / marker / "exit"
-        with self.task_lock:
-            before = task["status"]
-            if before in ("running", "unknown"):
-                # The exit trap may write while the process scan is running.
-                # Check its file after that scan before declaring the task lost.
-                pids = self._pids(marker) if not exit_file.exists() else []
-                if exit_file.exists():
-                    value = exit_file.read_text()
-                    if value:
-                        code = int(value)
-                        task.update(
-                            status="completed" if code == 0 else "failed",
-                            exit_code=code,
-                            finished_at=stamp(),
-                        )
-                elif pids:
-                    task["status"] = "running"
-                elif time.time() - task["started_ts"] > 2:
-                    # Nothing wrote an exit status and nothing carries the
-                    # marker. The serve process answers with a task id before
-                    # the shell is even listed, so this only counts once the
-                    # command has had time to appear.
-                    task.update(status="unknown", finished_at=stamp())
-            if task["status"] != before:
-                write_json(self.state / "tasks" / marker / "task.json", task)
-                if task["status"] != "running":
-                    self.log(marker, task["status"], exit_code=task["exit_code"])
-        return dict(task)
-
-    def _pids(self, marker):
-        """Processes carrying the marker in their command line, parents first."""
-        if sys.platform == "win32":
-            rows = portable()["processes"]()
-            return portable()["tree"](
-                [
-                    (row["pid"], row["created"])
-                    for row in rows
-                    if marker in row["command"] and row["pid"] != os.getpid()
-                ],
-                rows,
+                self.client("native").call(
+                    "tools/call", {"name": "Bash", "arguments": {"command": "true"}}
+                )
+            except Exception as exc:  # noqa: BLE001 — a command still runs
+                self.log("shell-snapshot", "failed", error=str(exc))
+                return None
+            found = sorted(
+                (self.state / "native-config/shell-snapshots").glob(
+                    "snapshot-bash-*.sh"
+                ),
+                key=lambda path: path.stat().st_mtime,
             )
+            self.snapshot = found[-1] if found else None
+            return self.snapshot
+
+    def _record(self, command_id):
+        if not isinstance(command_id, str) or not COMMAND_ID.fullmatch(command_id):
+            raise ValueError("Invalid command id")
+        return self.commands_dir / command_id
+
+    def start_command(
+        self, command_id, argv, cwd, env, *, merge, stdin=None, watched, meta
+    ):
+        """Run one command as a process group of its own, output to its record.
+
+        Its output goes to files and not through this process, so what it
+        prints does not depend on anyone reading it at the time: a reader that
+        loses its connection picks up at the byte it had reached.
+        """
+        record = self._record(command_id)
+        record.mkdir()
+        write_json(record / "command.json", {**meta, "watched": watched})
+        out = (record / "out").open("wb")
+        err = out if merge else (record / "err").open("wb")
+        source = subprocess.DEVNULL
+        if stdin is not None:
+            (record / "in").write_bytes(stdin)
+            source = (record / "in").open("rb")
+        try:
+            options = {
+                "cwd": str(cwd),
+                "env": env,
+                "stdin": source,
+                "stdout": out,
+                "stderr": err,
+            }
+            if sys.platform == "win32":
+                process = subprocess.Popen(
+                    resolve_program(argv),
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                    **options,
+                )
+            else:
+                process = subprocess.Popen(argv, start_new_session=True, **options)
+        finally:
+            for stream in {out, err, source} - {subprocess.DEVNULL}:
+                stream.close()
+        with self.command_lock:
+            self.running[command_id] = {
+                "process": process,
+                "read_at": time.monotonic(),
+                "watched": watched,
+            }
+        self.log(command_id, "started", pid=process.pid, command=meta.get("command"))
+        threading.Thread(
+            target=self._wait_command, args=(command_id, process), daemon=True
+        ).start()
+
+    def _wait_command(self, command_id, process):
+        code = process.wait()
+        record = self._record(command_id)
+        # Negative for a POSIX child killed by signal n, kept so its reader can
+        # end the same way.
+        temporary = record / ("exit." + uuid.uuid4().hex)
+        temporary.write_text(str(code))
+        temporary.replace(record / "exit")
+        with self.command_lock:
+            self.running.pop(command_id, None)
+            self.collected[command_id] = time.time()
+        self.log(command_id, "exited", exit_code=code)
+
+    def _tree(self, pid):
+        """The process and its descendants, parents first. A descendant that
+        left the group (`setsid`) is still one: the build's own stop kills the
+        tree, not the group."""
         rows = []
         if Path("/proc").is_dir():
             # /proc rather than `ps`: the private execution image has no `ps`.
@@ -815,165 +694,340 @@ class Executor:
                 if not entry.name.isdigit():
                     continue
                 try:
-                    argv = (entry / "cmdline").read_bytes().replace(b"\0", b" ")
                     stat = (entry / "stat").read_text()
                 except OSError:
                     continue
                 # The command name sits in parentheses and may hold spaces;
                 # the parent pid is the second field after it.
-                ppid = stat[stat.rindex(")") + 2 :].split()[1]
-                rows.append((entry.name, ppid, argv.decode(errors="replace")))
+                rows.append(
+                    (int(entry.name), int(stat[stat.rindex(")") + 2 :].split()[1]))
+                )
         else:
             listing = subprocess.run(
-                ["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True
+                ["ps", "-eo", "pid=,ppid="], capture_output=True, text=True
             ).stdout
             rows = [
-                tuple(row)
-                for row in (line.split(None, 2) for line in listing.splitlines())
-                if len(row) == 3
+                (int(row[0]), int(row[1]))
+                for row in (line.split() for line in listing.splitlines())
+                if len(row) == 2
             ]
-        seeds = [
-            int(pid)
-            for pid, _, argv in rows
-            if marker in argv and str(os.getpid()) != pid
-        ]
         children = {}
-        for pid, ppid, _ in rows:
-            children.setdefault(int(ppid), []).append(int(pid))
-        found, queue_ = [], list(seeds)
-        while queue_:
-            pid = queue_.pop(0)
-            if pid not in found:
-                found.append(pid)
-                queue_.extend(children.get(pid, []))
+        for child, parent in rows:
+            children.setdefault(parent, []).append(child)
+        found, pending = [], [pid]
+        while pending:
+            current = pending.pop(0)
+            if current not in found:
+                found.append(current)
+                pending.extend(children.get(current, []))
         return found
 
-    def _marker(self, task_id):
-        if task_id in self.by_task_id:
-            return self.by_task_id[task_id]
-        if task_id in self.tasks:
-            return task_id
-        raise ValueError("Unknown remote task")
-
-    def task(self, task_id):
-        return self._settle(self._marker(task_id))
-
-    def output(self, task_id):
-        task = self.task(task_id)
-        return {
-            **task,
-            "id": task["marker"],
-            "stdout": self._written_output(task) or "",
-            "stderr": "",
-        }
-
-    def _written_output(self, task):
-        """What has actually been written for this task, or None if nothing has.
-
-        Two files can hold it. Ours is written once, whole, by `_deliver`. The
-        serve process's `<task_id>.output` it creates when the task starts and
-        fills as the command runs — and a command it backgrounded answers
-        `_deliver` with no stdout at all, so OUR copy for one of those is
-        written empty while the real output is in the serve process's file.
-        Reading ours first and stopping there is what returned 「」 for a
-        command that had just printed 「done」, with the task recorded completed
-        and exit code 0 (#1242, about one run in six).
-
-        So whichever has content answers, and an empty copy of ours only counts
-        when there is no serve-side task to have written the rest.
-        """
-        record = self.state / "tasks" / task["marker"] / "output"
-        if record.exists() and record.stat().st_size:
-            return record.read_text(errors="replace")
-        served = (
-            serve_task_output(self.serve_temp, task["task_id"])
-            if task.get("task_id")
-            else None
-        )
-        if served and served.stat().st_size:
-            return served.read_text(errors="replace")
-        if record.exists() and served is None:
-            return ""
-        return None
-
-    def task_output(self, args):
-        task_id = args["task_id"]
-        marker = self._marker(task_id)
-        deadline = (
-            time.monotonic() + min(max(args.get("timeout", 30000), 0), 600000) / 1000
-        )
-        settled_at = None
-        while args.get("block", True) and time.monotonic() < deadline:
-            task = self.task(marker)
-            if task["status"] == "running":
-                time.sleep(0.1)
-                continue
-            if self._written_output(task) is not None or task["status"] == "unknown":
-                break
-            if not task.get("task_id"):
-                # Ours to write, and `_collect` is still waiting for the serve
-                # process's answer — which arrives after the command's own exit
-                # file, and takes as long as it takes. The deadline is the only
-                # bound here.
-                time.sleep(0.1)
-                continue
-            # A task the serve process backgrounded, ended, with nothing
-            # written for it yet: its output is the serve process's to write
-            # and it is still doing it. Waiting out the whole timeout for one
-            # that will never print anything would be worse than this — a short
-            # grace, then whatever is there.
-            settled_at = settled_at or time.monotonic()
-            if time.monotonic() - settled_at >= OUTPUT_AFTER_EXIT_S:
-                break
-            time.sleep(0.1)
-        output = self.task(task_id)
-        written = self._written_output(output)
-        return {
-            "retrieval_status": "timeout"
-            if output["status"] == "running"
-            or (
-                output["status"] in ("completed", "failed")
-                and written is None
-                and not output.get("task_id")
-            )
-            else "success",
-            "task": {
-                "task_id": task_id,
-                "task_type": "local_bash",
-                "status": output["status"],
-                "description": output["description"],
-                "output": written or "",
-                "exitCode": output["exit_code"],
-            },
-        }
-
-    def stop_task(self, task_id):
-        marker = self._marker(task_id)
-        task = self.tasks[marker]
-        with self.task_lock:
-            if task["status"] != "running":
-                return {**task, "id": marker}
-            task["status"] = "stopped"
-            task["finished_at"] = stamp()
-            write_json(self.state / "tasks" / marker / "task.json", task)
-        # The processes are the serve process's children, so its process group
-        # is not ours to signal; each one is killed by pid. The tree is taken
-        # once, before TERM: a descendant that ignores TERM outlives the shell
-        # that carried the marker and is re-parented, so a second look would
-        # not find it.
-        pids = self._pids(marker)
+    def signal_command(self, command_id, number):
+        """Send a signal to a running command's group and every descendant."""
+        self._record(command_id)
+        with self.command_lock:
+            entry = self.running.get(command_id)
+        if entry is None:
+            return {"running": False}
+        pid = entry["process"].pid
         if sys.platform == "win32":
-            portable()["terminate"](pids)
-            pids = []
-        for pid in pids:
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGTERM)
-        time.sleep(0.3)
-        for pid in pids:
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGKILL)
-        self.log(marker, "stopped")
-        return {**task, "id": marker}
+            portable()["terminate_tree"](pid)
+            return {"running": True}
+        pids = self._tree(pid)
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(pid, number)
+        for member in pids:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(member, number)
+        return {"running": True}
+
+    def stop_command(self, command_id):
+        """Stop a command for good: TERM, then KILL for whatever ignored it."""
+        record = self._record(command_id)
+        if not (record / "command.json").exists():
+            raise ValueError("Unknown remote task")
+        meta = json.loads((record / "command.json").read_text())
+        with self.command_lock:
+            entry = self.running.get(command_id)
+        if entry is not None:
+            # Taken once, before TERM: a descendant that ignores TERM outlives
+            # the shell that parented it and is re-parented, so a second look
+            # would not find it.
+            pids = [] if sys.platform == "win32" else self._tree(entry["process"].pid)
+            self.signal_command(command_id, signal.SIGTERM)
+            time.sleep(0.3)
+            for pid in pids:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(pid, signal.SIGKILL)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                if sys.platform != "win32":
+                    os.killpg(entry["process"].pid, signal.SIGKILL)
+            self.log(command_id, "stopped")
+        return meta
+
+    def read_command(self, command_id, out_offset=0, err_offset=0, wait=0.0):
+        """What a command printed from the given offsets on, waiting briefly for
+        more; its exit status and final directory once everything is read.
+
+        Offsets are the reader's, so a reader that lost an answer asks again
+        from where it was and gets each byte exactly once.
+        """
+        record = self._record(command_id)
+        if not (record / "command.json").exists():
+            raise ValueError("Unknown command")
+        deadline = time.monotonic() + min(max(float(wait), 0.0), COMMAND_READ_WAIT_S)
+        out_path, err_path = record / "out", record / "err"
+        while True:
+            with self.command_lock:
+                entry = self.running.get(command_id)
+                if entry is not None:
+                    entry["read_at"] = time.monotonic()
+                self.collected[command_id] = time.time()
+            # The exit file first: once it exists, the process wrote all it
+            # will, so the sizes read after it cover everything it printed.
+            exited = (record / "exit").exists()
+            out_size = out_path.stat().st_size if out_path.exists() else 0
+            err_size = err_path.stat().st_size if err_path.exists() else 0
+            if entry is None and not exited:
+                # Not ours to wait for, and never finished: the service that
+                # started it is gone.
+                return {"out": "", "err": "", "lost": True}
+            if (
+                out_size > out_offset
+                or err_size > err_offset
+                or exited
+                or time.monotonic() >= deadline
+            ):
+                break
+            time.sleep(0.05)
+
+        def chunk(path, offset, size):
+            if size <= offset:
+                return b""
+            with path.open("rb") as stream:
+                stream.seek(offset)
+                return stream.read(min(size - offset, COMMAND_READ_BYTES))
+
+        out = chunk(out_path, out_offset, out_size)
+        err = chunk(err_path, err_offset, err_size)
+        answer: dict = {
+            "out": base64.b64encode(out).decode(),
+            "err": base64.b64encode(err).decode(),
+        }
+        if (
+            exited
+            and out_offset + len(out) >= out_size
+            and err_offset + len(err) >= err_size
+        ):
+            answer["exit"] = int((record / "exit").read_text())
+            cwd = self._final_directory(record)
+            if cwd is not None:
+                answer["cwd"] = str(cwd)
+        return answer
+
+    def _final_directory(self, record):
+        """The directory a command's shell ended in, as its `pwd -P` wrote it."""
+        path = record / "cwd"
+        if not path.exists():
+            return None
+        text = path.read_text(errors="replace")[:4096].strip()
+        if sys.platform == "win32":
+            # Git Bash spells C:\x as /c/x, a path only it can open.
+            text = re.sub(r"^/([A-Za-z])(?=/|$)", lambda m: m.group(1) + ":", text)
+        return Path(text) if text else None
+
+    def shell(self, params):
+        """The central session's shell prefix: one command, started, read and
+        signalled by the id its prefix chose. Starting it again with the same
+        input is answered as started, so a prefix whose answer was lost asks
+        again without running it twice.
+
+        A `control` rather than a method of its own: the route that carries
+        executor calls from a session is served by the device connection's
+        owner, which an app release leaves on its previous image, and that
+        route admits a fixed set of methods."""
+        operation = params.get("operation")
+        command_id = params.get("command_id")
+        record = self._record(command_id)
+        if operation == "start":
+            inputs = {
+                key: params.get(key)
+                for key in ("kind", "body", "cwd", "env", "merge", "stdin")
+            }
+            digest = hashlib.sha256(
+                json.dumps(inputs, sort_keys=True).encode()
+            ).hexdigest()
+            with self.command_lock:
+                if record.exists():
+                    meta = json.loads((record / "command.json").read_text())
+                    if meta.get("digest") != digest:
+                        raise ValueError(
+                            "Command ID already belongs to different input"
+                        )
+                    return {"started": True}
+                cwd = Path(params.get("cwd") or self.root)
+                if not cwd.is_dir():
+                    # Gone since the session last looked: its own reset.
+                    cwd = self.root
+                env = self.command_env()
+                env.update(
+                    (name, str(value))
+                    for name, value in (params.get("env") or {}).items()
+                    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+                )
+                if params.get("kind") == "bash":
+                    snapshot = self.shell_snapshot()
+                    script = (
+                        (
+                            f"source {shlex.quote(str(snapshot))} "
+                            "2>/dev/null || true && "
+                            if snapshot
+                            else ""
+                        )
+                        + params["body"]
+                        + " && pwd -P >| "
+                        + shlex.quote(str(record / "cwd"))
+                    )
+                    argv = [self.bash_program(), "-c", script]
+                elif params.get("kind") == "sh":
+                    argv = (
+                        [self.bash_program(), "-c", params["body"]]
+                        if sys.platform == "win32"
+                        else ["/bin/sh", "-c", params["body"]]
+                    )
+                else:
+                    raise ValueError("Unknown command kind")
+                stdin = params.get("stdin")
+                self.start_command(
+                    command_id,
+                    argv,
+                    cwd,
+                    env,
+                    merge=bool(params.get("merge")),
+                    stdin=None if stdin is None else base64.b64decode(stdin),
+                    watched=True,
+                    meta={"digest": digest, "command": params["body"][-2000:]},
+                )
+            return {"started": True}
+        if operation == "read":
+            return self.read_command(
+                command_id,
+                int(params.get("out", 0)),
+                int(params.get("err", 0)),
+                params.get("wait", 0),
+            )
+        if operation == "signal":
+            number = int(params["signal"])
+            if number not in (
+                signal.SIGTERM,
+                signal.SIGINT,
+                signal.SIGHUP,
+                signal.SIGKILL,
+            ):
+                raise ValueError("Unsupported signal")
+            return self.signal_command(command_id, number)
+        if operation == "forget":
+            with self.command_lock:
+                if command_id in self.running:
+                    raise ValueError("Command is still running")
+                shutil.rmtree(record, ignore_errors=True)
+                self.collected.pop(command_id, None)
+            return {}
+        raise ValueError("Unknown shell operation")
+
+    def _reap(self):
+        """Stop a watched command whose reader is gone for good, and forget a
+        finished one nobody collected (`COMMAND_ABANDONED_S`)."""
+        while True:
+            time.sleep(30)
+            now = time.monotonic()
+            with self.command_lock:
+                stale = [
+                    command_id
+                    for command_id, entry in self.running.items()
+                    if entry["watched"] and now - entry["read_at"] > COMMAND_ABANDONED_S
+                ]
+            for command_id in stale:
+                self.log(command_id, "abandoned")
+                with contextlib.suppress(Exception):
+                    self.stop_command(command_id)
+            for record in list(self.commands_dir.iterdir()):
+                try:
+                    meta = json.loads((record / "command.json").read_text())
+                    finished = (record / "exit").stat().st_mtime
+                except (OSError, ValueError):
+                    continue
+                last = max(finished, self.collected.get(record.name, 0))
+                if meta.get("watched") and time.time() - last > COMMAND_ABANDONED_S:
+                    shutil.rmtree(record, ignore_errors=True)
+
+    def bash(self, args):
+        """This executor's own Bash tool, for the callers that have no shell of
+        their own here: the Codex harness and the platform's own commands.
+
+        It keeps the build's Bash contract those callers were written against:
+        a `cd` holds for the next call and leaving the workspace returns to its
+        root, a failure comes back as `Exit code N` followed by the output, a
+        foreground command still running at its timeout goes on as a background
+        task, and `TaskStop` stops one.
+        """
+        command_id = "task-" + uuid.uuid4().hex[:16]
+        record = self._record(command_id)
+        snapshot = self.shell_snapshot()
+        script = (
+            (
+                f"source {shlex.quote(str(snapshot))} 2>/dev/null || true && "
+                if snapshot
+                else ""
+            )
+            + f"eval {shlex.quote(args['command'])} < /dev/null && pwd -P >| "
+            + shlex.quote(str(record / "cwd"))
+        )
+        cwd = self.bash_cwd if self.bash_cwd.is_dir() else self.root
+        self.start_command(
+            command_id,
+            [self.bash_program(), "-c", script],
+            cwd,
+            self.command_env(),
+            merge=True,
+            watched=False,
+            meta={"command": args["command"]},
+        )
+        running = {
+            "stdout": "",
+            "stderr": "",
+            "interrupted": False,
+            "noOutputExpected": False,
+            "backgroundTaskId": command_id,
+        }
+        if args.get("run_in_background"):
+            return running
+        deadline = (
+            time.monotonic() + min(max(args.get("timeout", 120000), 1), 600000) / 1000
+        )
+        while not (record / "exit").exists():
+            if time.monotonic() >= deadline:
+                return running
+            time.sleep(0.05)
+        code = int((record / "exit").read_text())
+        if code < 0:
+            # Killed by signal n: the number a shell reports.
+            code = 128 - code
+        final = self._final_directory(record)
+        self.bash_cwd = (
+            final
+            if final is not None and (final == self.root or self.root in final.parents)
+            else self.root
+        )
+        with (record / "out").open("rb") as stream:
+            text = stream.read(BASH_INLINE_CHARS * 4).decode("utf-8", "replace")
+        text = text[:BASH_INLINE_CHARS].rstrip("\n")
+        return {
+            "stdout": text if code == 0 else f"Exit code {code}\n{text}",
+            "stderr": "",
+            "interrupted": False,
+            "noOutputExpected": False,
+        }
 
     def control(self, params):
         kind = params["subtype"]
@@ -986,6 +1040,8 @@ class Executor:
                     "args": {"command": "cheese-sync"},
                 }
             )
+        if kind == "shell":
+            return self.shell(params)
         if kind == "read_file":
             path = Path(params["path"])
             if not path.is_absolute():
@@ -1016,42 +1072,6 @@ class Executor:
                 ["git", "diff", "HEAD", "--"], cwd=self.root, text=True
             )
             return {"diff": diff}
-        if kind == "background_tasks":
-            with self.task_lock:
-                for marker, task in self.tasks.items():
-                    if task["request_id"] == params.get("tool_use_id"):
-                        self.released[marker].set()
-            return {
-                "tasks": [
-                    {
-                        **self.task(marker),
-                        "task_id": task.get("task_id") or marker,
-                        "task_type": "local_bash",
-                    }
-                    for marker, task in list(self.tasks.items())
-                ]
-            }
-        if kind == "stop_task":
-            task = self.stop_task(params["task_id"])
-            return {"task_id": task["id"], "status": task["status"]}
-        if kind == "stop_request":
-            with self.task_lock:
-                self.cancelled_requests.add(params["request_id"])
-                selected = [
-                    marker
-                    for marker, task in self.tasks.items()
-                    if task["request_id"] == params["request_id"]
-                ]
-            for marker in selected:
-                self.stop_task(marker)
-            return {}
-        if kind == "task_output":
-            return self.output(params["task_id"])
-        if kind == "interrupt":
-            for marker, task in list(self.tasks.items()):
-                if task["status"] == "running" and not task["background"]:
-                    self.stop_task(marker)
-            return {}
         raise ValueError(f"Unsupported executor control: {kind}")
 
     def context(self, known_files=None):
@@ -1060,7 +1080,6 @@ class Executor:
             # into the central Claude Code process.
             return {
                 "workspace": str(self.root),
-                "cwd": str(self.current_directory()),
                 "files": {},
                 "instructions": "This chat has temporary scratch space at /work. "
                 "Use shell and file tools for drafts and small processing tasks. "
@@ -1113,7 +1132,6 @@ class Executor:
                     files[name] = base64.b64encode(content).decode()
         return {
             "workspace": str(self.root),
-            "cwd": str(self.current_directory()),
             "files": files,
             "file_names": file_names,
             "instructions": "\n\n".join(instructions),
@@ -1355,6 +1373,35 @@ class Executor:
                 "f_bfree": fs.f_bfree,
                 "f_bavail": fs.f_bavail,
             }
+        if operation in ("directory", "list"):
+            # The project's directories, looked up one at a time: the central
+            # session keeps its shell's directory only if it exists in the
+            # forwarded view, and a directory a command just made exists only
+            # here. Directories only — files stay with the file tools.
+            relative = Path(params.get("path", ""))
+            if relative.is_absolute() or ".." in relative.parts:
+                return {"missing": True}
+            try:
+                path = (root / relative).resolve(strict=True)
+                path.relative_to(root)
+            except (OSError, ValueError):
+                return {"missing": True}
+            if not path.is_dir():
+                return {"missing": True}
+            if operation == "list":
+                names = []
+                for child in path.iterdir():
+                    with contextlib.suppress(OSError, ValueError):
+                        child.resolve(strict=True).relative_to(root)
+                        if child.is_dir():
+                            names.append(child.name)
+                return {"directories": sorted(names)}
+            stat = path.stat()
+            return {
+                "mode": stat.st_mode & 0o777,
+                "mtime_ns": stat.st_mtime_ns,
+                "nlink": stat.st_nlink,
+            }
         if operation in {
             "mkdir",
             "create",
@@ -1576,8 +1623,53 @@ class Executor:
                 "entries": entries,
                 "unsupported_imports": sorted(unsupported_imports),
                 "unsupported_paths": sorted(unsupported_paths),
+                "hooks": self.project_tool_hooks(),
             }
         raise ValueError("Unsupported context filesystem operation")
+
+    def project_tool_hooks(self):
+        """The project's own PreToolUse and PostToolUse command hooks.
+
+        The central session registers them, so the build fires them for the
+        calls it runs itself — Bash above all — with its own input, and their
+        commands run here through its shell prefix. The file tools the plugin
+        runs here keep their hooks in `hooks`. A hook that is not a shell
+        command string is left out: nothing of the project runs on the
+        session host.
+        """
+        hooks = {}
+        for name in ("settings.json", "settings.local.json"):
+            path = self.root / ".claude" / name
+            try:
+                path.resolve(strict=True).relative_to(self.root)
+                settings = json.loads(path.read_text())
+            except (OSError, ValueError):
+                continue
+            for event in ("PreToolUse", "PostToolUse"):
+                for group in (settings.get("hooks") or {}).get(event) or []:
+                    commands = [
+                        {
+                            key: hook[key]
+                            for key in ("type", "command", "timeout")
+                            if key in hook
+                        }
+                        for hook in group.get("hooks") or []
+                        if hook.get("type") == "command"
+                        and isinstance(hook.get("command"), str)
+                        and "args" not in hook
+                    ]
+                    if commands:
+                        hooks.setdefault(event, []).append(
+                            {
+                                **(
+                                    {"matcher": group["matcher"]}
+                                    if isinstance(group.get("matcher"), str)
+                                    else {}
+                                ),
+                                "hooks": commands,
+                            }
+                        )
+        return hooks
 
     def prepare(self, payload):
         owner = self.state.parents[5]
@@ -1618,14 +1710,7 @@ class Executor:
         if method == "begin_upgrade":
             with self.admission_lock:
                 busy = not self.upgrading and (
-                    self.active_calls > 0
-                    or any(
-                        self.task(marker)["status"]
-                        # An unknown task has no exit trap and no live process;
-                        # it cannot still be holding the executor.
-                        not in {"completed", "failed", "stopped", "unknown"}
-                        for marker in list(self.tasks)
-                    )
+                    self.active_calls > 0 or bool(self.running)
                 )
                 result = {
                     "release": params["release"],
@@ -1638,11 +1723,13 @@ class Executor:
                 return result
         if method == "ping":
             return self._dispatch(method, params)
+        # Reaching a command that already exists is not new work: its reader
+        # has to be able to finish collecting it while the service drains.
         inspect_task = (
             method == "control"
-            and params.get("subtype")
-            in {"background_tasks", "task_output", "stop_task", "stop_request"}
-        ) or (method == "invoke" and params.get("tool") in {"TaskOutput", "TaskStop"})
+            and params.get("subtype") == "shell"
+            and params.get("operation") in {"read", "signal", "forget"}
+        ) or (method == "invoke" and params.get("tool") == "TaskStop")
         with self.admission_lock:
             if self.upgrading and not inspect_task:
                 raise RuntimeError("Executor is upgrading; request was not accepted")
@@ -1709,9 +1796,8 @@ class Executor:
         raise ValueError("Unknown executor method")
 
     def close(self):
-        for marker, task in list(self.tasks.items()):
-            if task["status"] == "running":
-                self.stop_task(marker)
+        for command_id in list(self.running):
+            self.stop_command(command_id)
         for client in self.clients.values():
             client.close()
         if self.cli_worker is not None:

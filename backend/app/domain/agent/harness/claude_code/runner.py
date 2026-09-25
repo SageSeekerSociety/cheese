@@ -15,11 +15,9 @@ sees the order things happened in: the echo of an input we wrote
 that opens without one (a background task finishing woke the session) is a turn
 the session started for itself, and ``result`` closes whichever is open.
 
-Two things Claude Code does not put on stdout are read from disk into the same
+One thing Claude Code does not put on stdout is read from disk into the same
 journal: the transcripts of agents a subagent or a workflow starts, which only
-their own ``subagents/**/agent-<id>.jsonl`` file holds, and the completion of a
-command the remote-execution plugin backgrounded on the executor, which the
-session is never told about — so this runner asks the executor and tells it.
+their own ``subagents/**/agent-<id>.jsonl`` file holds.
 
 Standard library only: this module travels in the runner archive.
 """
@@ -28,7 +26,6 @@ import asyncio
 import contextlib
 import json
 import os
-import re
 import signal
 import subprocess
 import time
@@ -50,7 +47,8 @@ IDLE_EXIT_S = 600.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
 TAIL_POLL_S = 0.5
-EXECUTOR_POLL_S = 5.0
+# How often the runner checks whether it has been idle long enough to let go.
+IDLE_CHECK_S = 5.0
 # How long the runner keeps what it recorded, and how often it looks.
 RETENTION_S = 7 * 24 * 3600
 RETENTION_EVERY_S = 3600
@@ -58,16 +56,7 @@ RETENTION_EVERY_S = 3600
 # The room reads the tail of a failure and a subagent's conclusion; neither is
 # worth more than stdout would have carried.
 FILE_TEXT_MAX = 30_000
-# A command the plugin backgrounded on the executor. The executor names its own
-# tasks this way (remote_execution/runtime.py `bash`), which is what tells one
-# apart from a task the harness runs itself and reports on stdout.
-EXECUTOR_TASK = re.compile(r"cheese-task-[0-9a-f]{16}")
-# How the plugin's receipt for a command it backgrounded reads to the build. Only
-# this sentence counts: an id merely printed by some command is not a task this
-# session started.
-BACKGROUNDED = re.compile(r"background with ID: (cheese-task-[0-9a-f]{16})")
 FINISHED = frozenset({"completed", "failed", "killed", "stopped"})
-NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话："
 
 
 def _is_claude(argv0: str) -> bool:
@@ -234,13 +223,9 @@ class Runner(runner.Runner[Journal]):
         state: Path,
         *,
         idle_exit_s: float = IDLE_EXIT_S,
-        executor: list[str] | None = None,
     ):
         super().__init__(state, Journal, "records.sqlite")
         self.idle_exit_s = idle_exit_s
-        # How to ask the executor about a task: the remote-execution client's
-        # `control` mode, run as a process. None where there is no executor.
-        self.executor = executor
         self.write_lock = asyncio.Lock()
         self.controls: dict[str, asyncio.Future] = {}
         self.commands: dict[str, asyncio.Future] = {}
@@ -257,8 +242,6 @@ class Runner(runner.Runner[Journal]):
         # reports on stdout, any other only in its own file.
         self.main_calls: set[str] = set()
         self.tailing: dict[str, str] = {}
-        # Executor tasks nobody has told the session about yet: id → tool call.
-        self.watched: dict[str, str] = {}
         self.read_at = time.monotonic()
         self.session_id: str | None = None
         self.config_dir: Path | None = None
@@ -428,9 +411,6 @@ class Runner(runner.Runner[Journal]):
                     self.main_calls.add(str(block.get("id")))
         if kind == "system":
             self._track(record)
-        started = (
-            self._backgrounded(record) if kind == "user" and not from_file else None
-        )
         work = self.work if self.working else self.last_work
         if kind == "result" and self.interrupting:
             stamp["interrupted"] = True
@@ -440,9 +420,6 @@ class Runner(runner.Runner[Journal]):
             if self.working and self.unsolicited:
                 owner["unsolicited"] = True
         self.journal.append({**lighter(record), "cheese": {**owner, **stamp}})
-        if started is not None:
-            self.watched[started] = str(record.get("parent_tool_use_id") or "")
-            self.observe_executor({"task_id": started, "status": "running"})
         if kind == "result":
             waiting = {str(record.get("user_message_uuid"))} | {
                 str(identifier) for identifier in record.get("user_message_uuids") or []
@@ -538,39 +515,6 @@ class Runner(runner.Runner[Journal]):
                         )
                 self.journal.remember(key, str(offset + len(complete)))
 
-    def _backgrounded(self, record: dict) -> str | None:
-        """The executor task a tool result says it left running, if any."""
-        result = record.get("tool_use_result")
-        task = result.get("backgroundTaskId") if isinstance(result, dict) else None
-        if isinstance(task, str) and EXECUTOR_TASK.fullmatch(task):
-            return task
-        for block in (record.get("message") or {}).get("content") or []:
-            if isinstance(block, dict) and block.get("type") == "tool_result":
-                content = block.get("content")
-                text = content if isinstance(content, str) else json.dumps(content)
-                if found := BACKGROUNDED.search(text):
-                    return found.group(1)
-        return None
-
-    def observe_executor(self, task: dict) -> None:
-        """An executor task, recorded where the room's controls read tasks."""
-        self.observe({"type": "system", "subtype": "executor_task", **task})
-
-    def ask_executor(self, request: dict) -> dict | None:
-        if self.executor is None:
-            return None
-        try:
-            done = subprocess.run(
-                self.executor,
-                input=json.dumps(request),
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            return json.loads(done.stdout) if done.returncode == 0 else None
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            return None
-
     async def _watch(self) -> None:
         expired_at = 0.0
         while True:
@@ -579,31 +523,7 @@ class Runner(runner.Runner[Journal]):
                 self.journal.expire(
                     (datetime.now(UTC) - timedelta(seconds=RETENTION_S)).isoformat()
                 )
-            await asyncio.sleep(EXECUTOR_POLL_S)
-            for task in list(self.watched):
-                answer = await asyncio.to_thread(
-                    self.ask_executor, {"subtype": "task_output", "task_id": task}
-                )
-                if not answer or answer.get("status") in (None, "running"):
-                    continue
-                del self.watched[task]
-                self.observe_executor(
-                    {
-                        "task_id": task,
-                        "status": answer.get("status"),
-                        "exit_code": answer.get("exit_code"),
-                    }
-                )
-                tail = (answer.get("stdout", "") + answer.get("stderr", ""))[-2000:]
-                await self._put(
-                    f"cheese-notice-{uuid.uuid4()}",
-                    None,
-                    f"{NOTICE}\n后台命令 {task} 已结束："
-                    f"{answer.get('status')}，退出码 {answer.get('exit_code')}。"
-                    f"输出末尾：\n{tail}",
-                    [],
-                    "notice",
-                )
+            await asyncio.sleep(IDLE_CHECK_S)
             if (
                 self.idle_exit_s
                 and not self.working
@@ -611,7 +531,6 @@ class Runner(runner.Runner[Journal]):
                 and not self.sent
                 and not self.controls
                 and not self.commands
-                and not self.watched
                 and not self.inputs
                 and time.monotonic() - self.read_at >= self.idle_exit_s
             ):
@@ -753,12 +672,3 @@ class Runner(runner.Runner[Journal]):
                 "alive": self.process is not None and self.process.returncode is None,
             }
         raise ValueError(f"Unknown Claude Code session operation: {method}")
-
-
-def executor_command(home: Path) -> list[str] | None:
-    """The remote-execution client's `control` mode, if this session has one."""
-    client = home / ".cheese/remote-execution/client.py"
-    target = home / ".cheese/remote-session/execution.json"
-    if not client.is_file():
-        return None
-    return ["python3", str(client), "control", str(target)]

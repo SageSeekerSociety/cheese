@@ -460,11 +460,15 @@ class RemoteClient:
 
     def call(self, method, params=None):
         operation_deadline = time.monotonic() + 660
-        if self.config.get("lease_path") and method in {
-            "invoke",
-            "mcp",
-            "project_tools",
-        }:
+        if self.config.get("lease_path") and (
+            method in {"invoke", "mcp", "project_tools"}
+            # Starting a command acquires hands; reading one that runs does not.
+            or (
+                method == "control"
+                and (params or {}).get("subtype") == "shell"
+                and (params or {}).get("operation") == "start"
+            )
+        ):
             # Only a requested execution operation acquires hands. Bootstrap,
             # context discovery and a platform-only tool never enter this path.
             response = self.platform_request(
@@ -490,6 +494,13 @@ class RemoteClient:
                     value = params["args"].get(field)
                     if isinstance(value, str):
                         params["args"][field] = value.replace(
+                            original_workspace, target["workspace"]
+                        )
+            if params and method == "control":
+                params = dict(params)
+                for field in ("body", "cwd"):
+                    if isinstance(params.get(field), str):
+                        params[field] = params[field].replace(
                             original_workspace, target["workspace"]
                         )
             changed_lease = self.config.get("generation") != target.get("generation")

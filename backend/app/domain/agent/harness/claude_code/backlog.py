@@ -27,7 +27,7 @@ TASKS_KEPT = 50
 def control_facts(record: dict, known: dict[str, str]) -> dict[str, str]:
     """What a record changes about the state the room's controls show.
 
-    Tasks by id (the build's own and the executor commands the runner watches),
+    Tasks by id (the build's own),
     and the session's latest ``init`` — its model, tools and permission mode.
     """
     if record.get("type") != "system":
@@ -44,7 +44,7 @@ def control_facts(record: dict, known: dict[str, str]) -> dict[str, str]:
             )
         }
     task = record.get("task_id")
-    if not task or not str(subtype).startswith(("task_", "executor_task")):
+    if not task or not str(subtype).startswith("task_"):
         return {}
     key = f"{CONTROL}task:{task}"
     current = json.loads(known.get(key) or "{}")
@@ -55,12 +55,10 @@ def control_facts(record: dict, known: dict[str, str]) -> dict[str, str]:
         and value is not None
     }
     update.update(record.get("patch") or {})
-    if subtype in ("task_started", "executor_task") and "status" not in update:
+    if subtype == "task_started" and "status" not in update:
         update["status"] = "running"
     if subtype == "task_notification":
         update["status"] = record.get("status") or "completed"
-    if subtype == "executor_task":
-        update["task_type"] = "executor_bash"
     return {key: json.dumps({**current, **update, "task_id": task}, ensure_ascii=False)}
 
 

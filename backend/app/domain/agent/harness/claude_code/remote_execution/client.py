@@ -14,11 +14,15 @@ if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "context":
 
 import argparse
 import base64
+import contextlib
 import json
 import os
+import re
 import shlex
 import signal
+import stat
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -47,21 +51,57 @@ else:
     )
 
 PINNED_VERSION = "2.1.277"
+# The file tools the plugin runs on the executor. Bash is not one: the build
+# runs it itself, through the shell prefix (`shell`), so its tasks, their
+# controls and their notifications are the build's own.
 NATIVE_TOOLS = (
     "Read",
     "Edit",
     "Write",
-    "Bash",
     "NotebookEdit",
-    "TaskStop",
 )
 REMOTE_CONTROLS = {
     "read_file",
     "file_suggestions",
     "get_workspace_diff",
-    "background_tasks",
-    "stop_task",
 }
+# What the build adds to its shell children's environment, forwarded to a
+# command on the executor because a native session there would set the same.
+# Nothing else of this host's environment leaves it — its credentials are in
+# there — and the build's messaging socket and its token name a process on
+# this host, so they stay too.
+FORWARDED_ENV = (
+    "AI_AGENT",
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "COREPACK_ENABLE_AUTO_PIN",
+    "GIT_EDITOR",
+    "NoDefaultCurrentDirectoryInExePath",
+)
+# The build wraps each Bash command as
+# `source <snapshot> 2>/dev/null || true && <options> && eval '<command>'
+# < /dev/null && pwd -P >| <tmp>/claude-<hex>-cwd`. The snapshot is of this
+# host's shell and the cwd file is where the build learns the new directory,
+# so the executor swaps in its own snapshot and file, and the prefix copies
+# the directory back.
+_SNAPSHOT = re.compile(r"source ('(?:[^']|'\\'')*'|\S+) 2>/dev/null \|\| true && ")
+_CWD_FILE = re.compile(r" && pwd -P >\| ('(?:[^']|'\\'')*'|\S+)\Z")
+# The stdin a hook command may carry to the executor, and the output a command
+# may write onto this host (the build persists what it is handed).
+SHELL_INPUT_BYTES = 16 * 1024 * 1024
+SHELL_OUTPUT_BYTES = 256 * 1024 * 1024
+# How long a command that never started keeps being retried across a dropped
+# link before the machine is reported out of reach.
+SHELL_START_RETRY_S = 60.0
+# How long a reader keeps retrying an executor that answers, but with an error,
+# before giving the command up.
+SHELL_ERROR_RETRY_S = 60.0
+# After a stop reaches the executor, how long the command gets to end before
+# it is killed outright.
+SHELL_STOP_GRACE_S = 5.0
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
@@ -137,6 +177,10 @@ def prepare(
     home.mkdir(exist_ok=True)
     config = Path(config_override) if config_override else directory / "config"
     config.mkdir(exist_ok=True)
+    # The build's own temporary files — a Bash command's output, the file its
+    # shell reports its directory in — kept to this session.
+    temporary = directory / "tmp"
+    temporary.mkdir(exist_ok=True, mode=0o700)
     client = RemoteClient(target)
     info = {"workspace": target["workspace"]} if unavailable else client.call("ping")
     if target.get("kind") == "private":
@@ -146,6 +190,7 @@ def prepare(
         workspace=info["workspace"],
         central_workspace=str(workspace),
         central_config=str(config),
+        central_tmp=str(temporary),
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -225,6 +270,10 @@ def prepare(
     module = module.replace("__EXECUTION_CONFIG__", json.dumps(target))
     (plugin / "hooks/proxy.js").write_text(module)
     settings = json.loads(json.dumps(base_settings or {}))
+    # The project's own tool hooks, which the build fires and the shell prefix
+    # runs on the executor (never here: they are not in `central_hooks`).
+    for event, groups in ((context_tree or {}).get("hooks") or {}).items():
+        settings.setdefault("hooks", {}).setdefault(event, []).extend(groups)
     permissions = settings.setdefault("permissions", {})
     allowed = permissions.setdefault("allow", [])
     for tool in (
@@ -239,19 +288,12 @@ def prepare(
     hooks = settings.setdefault("hooks", {})
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
-    # `TaskStop` 不在这道闸门后面。闸门拒的是「插件没接住的原生调用」，而
-    # `proxy.js` 对一个执行器不认得的 `TaskStop` id 是**故意**放手的：那条 id 属于
-    # 这条会话里的一条子线程，父线程停它靠的就是 harness 自己这一手（结论 43）。
-    # 放在名单里，那次放手会被当成「没处理」一律拒掉，这条硬性要求在房间里就不成
-    # 立。漏出去的只有一次停在中心机上的 `TaskStop`——它不动文件、不跑命令，正是这
-    # 道闸门要挡的两样都不沾。
-    # The pinned serve build has no Glob/Grep. Keep their local guard even
-    # though they are not invocable remotely: another interactive build must
-    # not search the session host when it offers them.
-    guarded = tuple(tool for tool in NATIVE_TOOLS if tool != "TaskStop") + (
-        "Glob",
-        "Grep",
-    )
+    # The file tools the plugin runs remotely. Bash is not guarded: the build
+    # runs it, and the shell prefix sends it to the executor. The pinned serve
+    # build has no Glob/Grep. Keep their local guard even though they are not
+    # invocable remotely: another interactive build must not search the
+    # session host when it offers them.
+    guarded = NATIVE_TOOLS + ("Glob", "Grep")
     hooks.setdefault("PreToolUse", []).insert(
         0,
         {
@@ -345,6 +387,7 @@ def prepare(
         # MCP definitions pass 10% of the window, and then fail there.
         "ENABLE_TOOL_SEARCH": "false",
         "CHEESE_EXECUTION_CONFIG": str(target_path),
+        "CLAUDE_CODE_TMPDIR": str(temporary),
     }
     prefix = directory / "shell-prefix"
     local_commands = {
@@ -513,7 +556,35 @@ def sync_context(target_path, supplied_tree=None):
     return snapshot
 
 
+def _same_file(first, second):
+    try:
+        a, b = os.fstat(first), os.fstat(second)
+    except OSError:
+        return False
+    return stat.S_ISREG(a.st_mode) and (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
+def _write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
+
+
+def _under(path, root):
+    return bool(root) and (path == root or path.startswith(root + "/"))
+
+
 def shell(target_path, command):
+    """One command the build hands its shell prefix: run where it belongs.
+
+    A platform command this host trusts, matched whole, runs here. Anything
+    else runs on the executor, and this process stands in for it towards the
+    build: it prints what the command prints as it prints it, ends when it
+    ends and the way it ended, passes on a signal the build sends it, and for
+    a Bash command tells the build which directory the shell ended in. The
+    command itself is the executor's, not this process's: a dropped link only
+    pauses the reading, and the reader picks up at the byte it had reached.
+    """
     target = json.loads(Path(target_path).read_text())
     words = shlex.split(command)
     helper = str(Path(__file__).resolve())
@@ -534,37 +605,218 @@ def shell(target_path, command):
     }
     if command in commands:
         os.execvp("sh", ["sh", "-c", command])
+    return run_on_the_machine(target, command)
+
+
+def run_on_the_machine(target, command):
+    central = target["central_workspace"]
+    remote = target["workspace"]
+    skills = target["central_config"] + "/skills/"
+
+    def outward(text):
+        return text.replace(skills, remote + "/.claude/skills/").replace(
+            central, remote
+        )
+
+    here = os.getcwd()
+    cwd = remote + here[len(central) :] if _under(here, central) else remote
+    head, tail = _SNAPSHOT.match(command), _CWD_FILE.search(command)
+    bash = tail is not None
+    if bash:
+        # A Bash tool command: the executor wraps its body with its own
+        # snapshot and cwd file. Its stdin is `/dev/null` by construction.
+        body = command[head.end() if head else 0 : tail.start()]
+        stdin = None
+    else:
+        # A hook: its input arrives on stdin, spelled for this host.
+        body = command
+        data = b""
+        with os.fdopen(os.dup(0), "rb") as source:
+            data = source.read(SHELL_INPUT_BYTES + 1)
+        if len(data) > SHELL_INPUT_BYTES:
+            raise SystemExit("Hook input is over the executor's limit")
+        stdin = base64.b64encode(
+            outward(data.decode("utf-8", "surrogateescape")).encode(
+                "utf-8", "surrogateescape"
+            )
+        ).decode()
+    env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
+    if "CLAUDE_PROJECT_DIR" in os.environ:
+        env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
+    merge = _same_file(1, 2)
+    command_id = "shell-" + uuid.uuid4().hex
     client = RemoteClient(target)
-    command = command.replace(
-        target["central_config"] + "/skills/", target["workspace"] + "/.claude/skills/"
-    )
-    command = command.replace(target["central_workspace"], target["workspace"])
-    request_id = "shell-" + uuid.uuid4().hex
 
-    def cancel(signum, _frame):
-        client.control({"subtype": "stop_request", "request_id": request_id})
-        raise SystemExit(128 + signum)
+    def call(operation, through=None, **params):
+        return (through or client).call(
+            "control",
+            {
+                "subtype": "shell",
+                "operation": operation,
+                "command_id": command_id,
+                **params,
+            },
+        )
 
-    signal.signal(signal.SIGTERM, cancel)
-    signal.signal(signal.SIGINT, cancel)
-    result = client.call(
-        "invoke",
-        {
-            "id": request_id,
-            "tool": "Bash",
-            "args": {"command": command, "run_in_background": True},
-        },
-    )
-    if "error" in result:
-        raise RuntimeError(result["error"])
-    task_id = result["value"]["backgroundTaskId"]
+    # A stop from the build is passed on by a thread of its own: TERM now,
+    # KILL once the grace has passed and the command still runs. The read in
+    # flight is left to finish — it answers as soon as the command has ended —
+    # so no request to the executor is ever abandoned halfway.
+    stop = {"number": None, "started": False}
+    ended = threading.Event()
+
+    def stopper(number):
+        stopping_client = RemoteClient(target)
+        for attempt in (number, signal.SIGKILL):
+            deadline = time.monotonic() + SHELL_STOP_GRACE_S
+            while not ended.is_set():
+                try:
+                    call("signal", through=stopping_client, signal=int(attempt))
+                    break
+                except Exception:  # noqa: BLE001 — the link may be down; retry
+                    if time.monotonic() > deadline:
+                        break
+                    stopping_client = RemoteClient(target)
+                    ended.wait(0.5)
+            if ended.wait(SHELL_STOP_GRACE_S):
+                return
+
+    def on_signal(number, _frame):
+        if stop["number"] is not None:
+            return
+        stop["number"] = number
+        if stop["started"]:
+            threading.Thread(target=stopper, args=(number,), daemon=True).start()
+
+    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(number, on_signal)
+
+    # Started once, whatever it takes: the id makes a retried start the same
+    # start.
+    deadline = time.monotonic() + SHELL_START_RETRY_S
     while True:
-        task = client.control({"subtype": "task_output", "task_id": task_id})
-        if task["status"] != "running":
-            sys.stdout.write(task["stdout"])
-            sys.stderr.write(task["stderr"])
-            return task["exit_code"] if task["exit_code"] is not None else 1
-        time.sleep(0.1)
+        try:
+            call(
+                "start",
+                kind="bash" if bash else "sh",
+                body=outward(body),
+                cwd=outward(cwd),
+                env=env,
+                merge=merge,
+                stdin=stdin,
+            )
+            break
+        except MachineOutOfReach:
+            if target.get("kind") == "unavailable" or time.monotonic() > deadline:
+                sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
+                return 1
+        except (OSError, TimeoutError):
+            if time.monotonic() > deadline:
+                sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
+                return 1
+        except RuntimeError as exc:
+            if "upgrading" not in str(exc) or time.monotonic() > deadline:
+                sys.stderr.write(f"{exc}\n")
+                return 1
+        if stop["number"] is not None:
+            # Stopped before it was known to run: nothing more to wait for.
+            return 128 + stop["number"]
+        time.sleep(1)
+    stop["started"] = True
+    if stop["number"] is not None:
+        threading.Thread(target=stopper, args=(stop["number"],), daemon=True).start()
+    offsets = {"out": 0, "err": 0}
+    written = 0
+    failing_since = None
+    delay = 0.5
+    answer = {}
+    while True:
+        try:
+            answer = call("read", out=offsets["out"], err=offsets["err"], wait=20)
+            failing_since, delay = None, 0.5
+        except Exception as exc:  # noqa: BLE001 — the command outlives the link
+            link = isinstance(exc, MachineOutOfReach | OSError | TimeoutError)
+            failing_since = failing_since or time.monotonic()
+            if not link and time.monotonic() - failing_since > SHELL_ERROR_RETRY_S:
+                sys.stderr.write(f"{exc}\n")
+                return 1
+            client = RemoteClient(target)
+            time.sleep(delay)
+            delay = min(delay * 2, 5.0)
+            continue
+        if answer.get("lost"):
+            sys.stderr.write(
+                "The command's executor restarted; its outcome is unknown\n"
+            )
+            return 1
+        for stream, fd in (("out", 1), ("err", 2)):
+            data = base64.b64decode(answer.get(stream) or "")
+            offsets[stream] += len(data)
+            written += len(data)
+            if written > SHELL_OUTPUT_BYTES:
+                with contextlib.suppress(Exception):
+                    call("signal", signal=int(signal.SIGKILL))
+                sys.stderr.write(
+                    f"\nOutput passed {SHELL_OUTPUT_BYTES // (1024 * 1024)} MiB; "
+                    "the command was stopped.\n"
+                )
+                return 1
+            _write_all(fd, data)
+        if "exit" in answer:
+            break
+    ended.set()
+    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(number, signal.SIG_IGN)
+    if bash and "cwd" in answer:
+        _report_directory(target, client, answer["cwd"], tail.group(1))
+    with contextlib.suppress(Exception):
+        call("forget")
+    code = answer["exit"]
+    if code < 0:
+        # Killed by a signal there: end the same way here, as the shell the
+        # build started would have.
+        # SIGKILL's disposition cannot be set, and needs no resetting.
+        with contextlib.suppress(OSError, ValueError):
+            signal.signal(-code, signal.SIG_DFL)
+        os.kill(os.getpid(), -code)
+    return code
+
+
+def _report_directory(target, client, final, spelled):
+    """Tell the build which directory the command's shell ended in.
+
+    The build reads it from the cwd file it named and keeps it only if the
+    directory exists here, so a directory on the executor is reported by its
+    place in the forwarded project view. One outside the workspace is reported
+    as `/`, which the build answers exactly as a native session does: it
+    resets to the workspace root and says so.
+    """
+    path = Path(shlex.split(spelled)[0])
+    temporary = os.environ.get("CLAUDE_CODE_TMPDIR")
+    # Only the cwd file the build itself chose: a hook shaped like a Bash
+    # command must not steer this write anywhere else on this host.
+    if (
+        not temporary
+        or path.parent != Path(temporary)
+        or not re.fullmatch(r"claude-[0-9a-f]+-cwd", path.name)
+    ):
+        return
+    remote = client.config.get("workspace", target["workspace"])
+    central = target["central_workspace"]
+    final = final[:4096]
+    if _under(final, remote):
+        relative = final[len(remote) :]
+        spelled_here = central + relative
+        if target.get("kind") == "private":
+            # The private scratch view is a plain directory here.
+            Path(spelled_here).mkdir(parents=True, exist_ok=True)
+    else:
+        spelled_here = "/"
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600
+    )
+    with os.fdopen(descriptor, "w") as output:
+        output.write(spelled_here + "\n")
 
 
 MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
@@ -795,12 +1047,8 @@ def transport(config, target_path):
 
     def cancel(request_id):
         with active_lock:
-            payload = active.get(request_id)
-            if payload is None:
-                return
-            cancelled.add(request_id)
-        if payload.get("tool") == "Bash":
-            client.control({"subtype": "stop_request", "request_id": payload["id"]})
+            if request_id in active:
+                cancelled.add(request_id)
 
     def stop(signum, _frame):
         with active_lock:
@@ -1123,6 +1371,25 @@ def transport(config, target_path):
                 workers.submit(handle, request)
 
 
+def own_output(config, call):
+    """A Read of what the build wrote about a command on this host: a
+    background task's output file, or a large result it persisted. That read
+    is local in a native session too; any other native call is refused."""
+    if call.get("tool_name") != "Read":
+        return False
+    path = os.path.realpath(str((call.get("tool_input") or {}).get("file_path", "")))
+    temporary = os.path.realpath(config.get("central_tmp", "")) + os.sep
+    projects = os.path.realpath(config["central_config"]) + os.sep + "projects" + os.sep
+    return (
+        bool(config.get("central_tmp"))
+        and path.startswith(temporary)
+        or (
+            path.startswith(projects)
+            and os.sep + "tool-results" + os.sep in path[len(projects) :]
+        )
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1184,7 +1451,9 @@ def main():
         if "error" in result:
             raise RuntimeError(result["error"])
     elif args.mode == "guard":
-        json.load(sys.stdin)
+        call = json.load(sys.stdin)
+        if own_output(config, call):
+            return
         print(
             json.dumps(
                 {
