@@ -184,6 +184,8 @@ export type PlatformNotice =
       /** >1 时显示 ×N；1 表示没有折叠。 */
       count: number
       occurrences: NoticeOccurrence[]
+      /** 后端说现在点一下重试有用（`meta.retryable`）。 */
+      retryable: boolean
     }
   | { mode: 'agent-status'; line: string; updatedAt: string; occurrences: NoticeOccurrence[] }
   /** 老样子：居中、灰、12px、一行。 */
@@ -326,6 +328,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
       whoLabel: whoLabel(block),
       count: run.length,
       occurrences: run.map(occurrenceOf).filter((o) => o.detail),
+      retryable: m?.retryable === true,
     }
   }
 

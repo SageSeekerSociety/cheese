@@ -49,7 +49,8 @@ def _failure_meta(failure: PlatformFailure, verdict, detail: str) -> dict:
             f"连续 {verdict.consecutive_failures} 轮因「{failure.title}」失败。\n"
             f"{detail}"
         ),
-        detail_label="发生了什么",
+        detail_label="原因",
+        retryable=True,
     )
 
 
@@ -101,23 +102,23 @@ async def judge_host_failure(
         return HostVerdict(
             quarantined=True,
             device_id=device_id,
-            message=f"Cloud 机器「{name}」连续失败",
+            message=f"云端机器「{name}」连续失败",
             event_meta=_failure_meta(
                 failure,
                 verdict,
-                "本话题留在这台机器上，平台不会换一台。"
-                "需要有人看这台机器上的连接器和屏幕，修好后再 @芝士。",
+                "话题会留在这台机器上，不会换到其他机器。"
+                "需要有人检查这台机器上的连接器和会话，修复后可以重试。",
             ),
         )
     return HostVerdict(
         quarantined=True,
         device_id=device_id,
-        message=f"机器「{name}」连续失败，已暂停派活",
+        message=f"机器「{name}」连续失败，已暂停使用",
         event_meta=_failure_meta(
             failure,
             verdict,
-            "本话题仍留在这台机器上，平台会等它恢复，不会迁移到别的机器。"
-            "请在机器恢复后再 @芝士。",
+            "话题仍留在这台机器上，平台会等它恢复，不会换到其他机器。"
+            "机器恢复后可以重试。",
         ),
     )
 

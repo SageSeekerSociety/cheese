@@ -446,9 +446,8 @@ describe('平台提示：事故卡的正文压成一行', () => {
     const shown = visibleText(card)
     expect(shown).toContain('这轮因运行环境存储空间不足而暂停')
     expect(shown).not.toContain('平台正在自动清理构建缓存')
-    // 卡自己的标题和状态没变。
+    // 卡自己的标题没变。
     expect(shown).toContain('运行环境存储空间不足')
-    expect(shown).toContain('自动清理中 · 稍后 @芝士重试')
   })
 
   it('剩下的那几句一句没少，点开就有', async () => {

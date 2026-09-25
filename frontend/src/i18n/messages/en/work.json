@@ -171,6 +171,11 @@
       "review": "Review",
       "expand": "Show details",
       "collapse": "Hide details"
+    },
+    "retry": {
+      "action": "Retry",
+      "nothingPending": "Nothing to retry",
+      "failed": "Retry failed"
     }
   },
   "members": {

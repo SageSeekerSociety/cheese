@@ -23,8 +23,8 @@ CREDITS_EXHAUSTED_META = notice(
     EVENT_TURN_FAILED,
     severity=SEVERITY_ERROR,
     who=WHO_HUMAN,
-    detail="请联系团队管理员或额度发放方补充额度。",
-    detail_label="怎么恢复",
+    detail="联系团队管理员或额度发放方补充额度。",
+    detail_label="下一步",
 )
 
 

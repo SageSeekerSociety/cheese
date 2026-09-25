@@ -207,16 +207,20 @@ def notice(
     who: str,
     detail: str | None = None,
     detail_label: str | None = None,
+    retryable: bool = False,
 ) -> dict:
     """一条平台提示的 `meta`。
 
-    五个键**总是**都在，哪怕值是 None —— 读它的一方（前端、测试、以后的别的
+    这五个键**总是**都在，哪怕值是 None —— 读它的一方（前端、测试、以后的别的
     消费者）可以直接取，不用先判断键存不存在。
 
     `detail` 是要折叠起来的原文，`detail_label` 是展开区的标题（"CI 日志" /
     "检查输出" / "服务原话"…）。给了 detail 却不给 label 是允许的，前端有默认
     标题；反过来给 label 不给 detail 没有意义，但也不报错 —— 这个函数不做校验，
     它只是把契约写成一处。
+
+    `retryable` 说的是「人现在点一下重试有没有用」：房间会在这条提示上给一个
+    重试按钮，而不是让人自己去 @ 队友。只在为真时才写进去。
     """
     return {
         "event_type": event_type,
@@ -224,6 +228,7 @@ def notice(
         "who": who,
         "detail": detail,
         "detail_label": detail_label,
+        **({"retryable": True} if retryable else {}),
     }
 
 

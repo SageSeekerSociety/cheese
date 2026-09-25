@@ -734,16 +734,16 @@ def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
         # A spent balance is not a wait — no amount of retrying refills it, and
         # telling someone to try again later sends them into a loop that cannot
         # succeed. Say what actually has to happen.
-        line = "芝士这轮没跑完：AI 中继余额用尽，要人充值"
-        hint = "这不是等一等就能好的，需要有人充值或把机器切到其他 AI 供给；重试无效。"
+        line = "本轮未完成：AI 中继余额已用完"
+        hint = "需要充值，或者把机器切换到其他 AI 服务。重试没有作用。"
+        retryable = False
     else:
         first = detail.splitlines()[0].strip() if detail else ""
         if len(first) > 160:
             first = first[:160] + "…"
-        line = (
-            f"芝士这轮没跑完：{first}" if first else "芝士这轮没跑完：AI 服务返回错误"
-        )
-        hint = "稍后再 @ 它重试。"
+        line = f"本轮未完成：{first}" if first else "本轮未完成：AI 服务返回错误"
+        hint = "稍后可以重试。"
+        retryable = True
     return line, notice(
         EVENT_TURN_FAILED,
         severity=SEVERITY_ERROR,
@@ -755,6 +755,7 @@ def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
         )
         or None,
         detail_label="详细说明",
+        retryable=retryable,
     )
 
 
@@ -767,38 +768,44 @@ def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
 # 英文原话一个字都不丢,收进「服务原话」的折叠区 —— 它是唯一的一份。
 _CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
     PROVIDER_UNREACHABLE_CODE: (
-        "芝士连不上 AI 服务，这一步没做成",
+        "无法连接 AI 服务，这一步未完成",
         SEVERITY_ERROR,
         WHO_PLATFORM,
-        "这个多半不会自己好:要么是这台机器上的隧道助手掉了,要么是中继在丢连接。"
-        "先重新 @ 它一次;还是连不上就该找人看机器,不要反复重试。",
+        "通常不会自行恢复：可能是这台机器上的隧道助手断开了，也可能是中继连接不稳定。"
+        "可以先重试一次；仍然连不上就需要有人检查机器，不要反复重试。",
     ),
     PROVIDER_OVERLOADED_CODE: (
-        "AI 服务暂时过载，这一步没做成",
+        "AI 服务暂时过载，这一步未完成",
         SEVERITY_WARN,
         WHO_PLATFORM,
-        "服务端的事,通常一会儿就好。稍后再 @ 它一次。",
+        "这是服务端的问题，通常很快恢复。稍后可以重试。",
     ),
     MODEL_LIMIT_REACHED_CODE: (
-        "这个模型的额度用完了",
+        "这个模型的额度已用完",
         SEVERITY_ERROR,
         WHO_HUMAN,
-        "这不是等一等就能好的:要换一个模型,或者等额度恢复。重试无效。",
+        "需要换一个模型，或者等额度恢复。重试没有作用。",
     ),
     TOOL_UNAVAILABLE_CODE: (
-        "芝士想用的一个工具没能用上",
+        "一个工具无法使用",
         SEVERITY_WARN,
         WHO_PLATFORM,
-        "它在等一个没有人能给的授权 —— 那个框画在容器的终端里，房间里够不着。"
-        "这说明这台机器上的工具配置不对，要人去看，重试不会有变化。",
+        "工具在等待授权，但授权提示出现在容器的终端里，房间里无法操作。"
+        "这说明这台机器上的工具配置有误，需要有人检查，重试不会有变化。",
     ),
     RESPONSE_TRUNCATED_CODE: (
-        "上面那条回复没说完就断了",
+        "上一条回复没有完整发出",
         SEVERITY_WARN,
         WHO_PLATFORM,
-        "上面那条可能是半截。要它接着说就再 @ 它一次。",
+        "上一条回复可能不完整，重试会让它接着说。",
     ),
 }
+
+
+#: 等一等、再来一次就可能好的那几种。额度用完、工具配置错了，重试不会有变化。
+_CLI_RETRYABLE = frozenset(
+    {PROVIDER_UNREACHABLE_CODE, PROVIDER_OVERLOADED_CODE, RESPONSE_TRUNCATED_CODE}
+)
 
 
 def _cli_notice(text: str) -> tuple[str, dict] | None:
@@ -813,6 +820,7 @@ def _cli_notice(text: str) -> tuple[str, dict] | None:
         who=who,
         detail=f"{hint}\n\n服务原话：\n{text.strip()}",
         detail_label="详细说明",
+        retryable=failure in _CLI_RETRYABLE,
     )
 
 

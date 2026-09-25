@@ -62,9 +62,9 @@ async def report_failure(
             author_type=AuthorType.platform,
             kind=BlockKind.event,
             content=(
-                "环境准备失败，已交给总览芝士检查。"
+                "环境准备失败，已交给项目总览处理。"
                 if available
-                else "环境准备失败，总览芝士暂不可用，请查看安装日志。"
+                else "环境准备失败，项目总览暂时无法处理，可以查看安装日志。"
             ),
             meta={
                 "event_type": "environment_recovery",

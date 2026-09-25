@@ -1206,22 +1206,22 @@ class AgentWorkRunner:
             if topic_id in wedged_topics:
                 continue
             wedged_topics.add(topic_id)
-            how = f"卡死了：{round(age_s / 60)} 分钟里一个字都没输出，已强制结束"
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
-                f"芝士上一轮{how}，平台不会自动重试",
+                f"上一轮 {round(age_s / 60)} 分钟没有任何输出，已强制停止",
                 notice(
                     EVENT_TURN_TIMEOUT,
                     severity=SEVERITY_WARN,
                     # 平台不再自动重试 —— 要有人看一眼、再 @ 它。
                     who=WHO_HUMAN,
                     detail=(
-                        "已完成的改动都还在工作区里。平台不会自动重跑"
-                        "（重跑只会再进一次刚死掉的机器）——需要继续的话，"
-                        "有人看一眼后 @ 芝士，它会从断点接着做。"
+                        "已完成的改动都在工作区里。平台不会自动重试，"
+                        "因为重试会回到刚刚出问题的机器。"
+                        "检查过后可以重试，会从中断处继续。"
                     ),
                     detail_label="详细说明",
+                    retryable=True,
                 ),
             )
             logger.info(
@@ -1399,18 +1399,19 @@ class AgentWorkRunner:
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
-                f"有 {len(unknown)} 次工具调用发出去了而结果没回来，平台不会替它重试",
+                f"{len(unknown)} 次工具调用没有返回结果，平台不会自动重试",
                 notice(
                     EVENT_DISPATCH_UNKNOWN,
                     severity=SEVERITY_WARN,
                     # 平台到头了：做没做过只有那台机器知道，而它已经不说话了。
                     who=WHO_HUMAN,
                     detail=(
-                        "平台记下了这些调用发出去过，机器没能把结果送回来，所以它们"
-                        f"做没做过只有那台机器知道：{waiting}。自动重发可能把一次已经"
-                        "落地的改动再做一遍——有人确认过之后 @ 芝士，它会从那里接着做。"
+                        "这些调用已经发出，但机器没有返回结果，所以只有那台机器"
+                        f"知道它们是否执行过：{waiting}。自动重发可能把已经生效的"
+                        "改动再做一遍。确认之后可以重试，会从那里继续。"
                     ),
                     detail_label="详细说明",
+                    retryable=True,
                 ),
             )
             async with chat_service.session_factory() as ledger:
@@ -1428,18 +1429,18 @@ class AgentWorkRunner:
             stale = age_s > self.ORPHAN_STALE_S
             # 平台提示统一契约: 房间里一行 `text`，展开才看的长文进 meta.detail。
             text = (
-                f"这条消息没送到芝士那边，已经搁了 {round(age_s / 60)} 分钟"
+                f"消息未送达，已等待 {round(age_s / 60)} 分钟"
                 if stale
-                else "上一次重发被平台重启打断了，没送到芝士那边"
+                else "上一次重发被平台重启打断，消息未送达"
             )
             detail = (
-                "没有迹象表明消息送到了芝士那边，而它搁置得太久，"
-                "自动重发多半已经不是你要的了。"
-                "需要继续的话 @ 芝士，之前的消息会一并带上。"
+                "没有迹象表明消息已经送达。它等待的时间太久，"
+                "自动重发可能已经不合适。"
+                "需要继续的话可以重试，之前的消息会一起带上。"
                 if stale
                 else (
-                    "重发只发一次，不连着自动重试。已完成的改动都还在工作区里"
-                    "—— 需要继续的话 @ 芝士，它会从断点接着做。"
+                    "重发只进行一次，不会连续自动重试。已完成的改动都在工作区里，"
+                    "需要继续的话可以重试，会从中断处继续。"
                 )
             )
             await self._post_orphan_event(
@@ -1453,6 +1454,7 @@ class AgentWorkRunner:
                     who=WHO_HUMAN,
                     detail=detail,
                     detail_label="详细说明",
+                    retryable=True,
                 ),
             )
         if not allow_actions:
@@ -1502,13 +1504,11 @@ class AgentWorkRunner:
 
     # The re-send opener's wording (#316): name the platform as the cause —
     # "被部署中断" — never "AI 服务返回错误" for a failure the deploy made.
-    RESEND_REASON = "上一轮被平台部署中断，消息没送到芝士那边，原样重发一次"
+    RESEND_REASON = "上一轮被平台部署中断，消息未送达，已重新发送"
 
     #: Same contract for the other platform-caused silence: the room's tools
     #: vanished mid-turn, so 芝士 answered where nobody could hear it.
-    TOOLS_REASON = (
-        "上一轮平台的工具通道断了，芝士的回复没能发进房间；已经接回来，原样重发一次"
-    )
+    TOOLS_REASON = "上一轮平台工具连接中断，回复没有发到房间，已恢复并重新发送"
 
     async def _recover_silent_turn(
         self,
@@ -1528,7 +1528,7 @@ class AgentWorkRunner:
         await self._post_orphan_event(
             chat_service,
             topic_id,
-            "平台的工具通道断了，刚才那条消息芝士没能回进房间；已经接回来，正在重发",
+            "平台工具连接中断，刚才的回复没有发到房间，已恢复并正在重新发送",
             self._TOOLS_RECOVERED_META,
         )
         # 重新投递，不是新起一轮：收件人还是上一条消息点的那个席位，平台只是把没送
@@ -1592,16 +1592,16 @@ class AgentWorkRunner:
     @staticmethod
     def _queued_text(ahead: int) -> str:
         if ahead <= 0:
-            return "项目同时进行的轮次已满，这轮先排队"
-        return f"项目同时进行的轮次已满，这轮先排队，前面还有 {ahead} 个"
+            return "项目同时运行的轮次已满，本轮正在排队"
+        return f"项目同时运行的轮次已满，本轮正在排队，前面还有 {ahead} 个"
 
     #: 工具断了是平台的事，平台自己接回来并重发；房间里的人不用动手。
     _TOOLS_RECOVERED_META = notice(
         EVENT_TOOLS_RECOVERED,
         severity=SEVERITY_WARN,
         who=WHO_PLATFORM,
-        detail="重发只发一次。芝士上一轮说的话留在执行会话里，没有发进房间。",
-        detail_label="接下来会发生什么",
+        detail="只重新发送一次。上一轮的回复留在执行会话里，没有发到房间。",
+        detail_label="说明",
     )
 
     #: 排队不是故障：平台自己会往前推，没人需要动手。
@@ -2318,7 +2318,7 @@ class AgentWorkRunner:
                 channel,
                 {
                     "type": "error",
-                    "message": "芝士这轮被强制结束了",
+                    "message": "本轮已被强制停止",
                     "persisted": False,
                 },
             )
@@ -2395,8 +2395,8 @@ class AgentWorkRunner:
                 rec["detail"] = "no first output"
                 # 平台提示统一契约: 房间里一行，「常见原因」那一串进 meta.detail。
                 text = (
-                    f"芝士这轮一个字都没输出"
-                    f"（{round(self._first_output_timeout_s)}秒），平台不会自动重试。"
+                    f"本轮 {round(self._first_output_timeout_s)} 秒内没有任何输出，"
+                    "平台不会自动重试。"
                 )
                 timeout_meta = notice(
                     EVENT_TURN_TIMEOUT,
@@ -2404,16 +2404,17 @@ class AgentWorkRunner:
                     # 运行环境没起来，平台不再自动重试 —— 要有人看一眼。
                     who=WHO_HUMAN,
                     detail=(
-                        f"{round(self._first_output_timeout_s)}秒内没有任何模型输出，"
-                        "也没有任何工具调用，按运行环境没起来处理。"
-                        "常见原因：平台的模型订阅凭据过期（需要主机侧重新认证）、"
-                        "沙箱容器建不起来、磁盘满了、或者模型侧连不上"
-                        "——不是芝士卡在某一步，所以这里没有「已完成的改动」。"
-                        "平台不会自动重试（重试只会再撞上同一个没起来的环境）；"
-                        "需要有人看一眼运行环境（容器、磁盘、模型通路），"
-                        "修好后 @ 芝士。"
+                        f"{round(self._first_output_timeout_s)} 秒内没有模型输出，"
+                        "也没有工具调用，按运行环境没有启动处理。"
+                        "常见原因：模型订阅凭据过期（需要在主机上重新认证）、"
+                        "沙箱容器无法创建、磁盘已满，或者无法连接模型。"
+                        "任务没有开始，所以没有已完成的改动。"
+                        "平台不会自动重试，因为重试会遇到同一个没有启动的环境。"
+                        "需要有人检查运行环境（容器、磁盘、模型连接），"
+                        "修复后可以重试。"
                     ),
-                    detail_label="常见原因",
+                    detail_label="原因",
+                    retryable=True,
                 )
             block = None
             try:
@@ -2477,17 +2478,18 @@ class AgentWorkRunner:
                 # 平台认不出来的失败当作缺陷信号，不当瞬时故障 —— 重试只会把同一个
                 # bug 再触发一遍（2026-09-04 一个 NotFoundError 被连着自动重跑，
                 # 把一个正在进行的 hackathon 房间刷了屏）。发一次，交给人。
-                text = "芝士这轮中断了，平台不会自动重试"
+                text = "本轮意外中断，平台不会自动重试"
                 event_meta = notice(
                     EVENT_TURN_FAILED,
                     severity=SEVERITY_ERROR,
                     who=WHO_HUMAN,
                     detail=(
-                        "已完成的改动都在；平台不会自动重试（这类失败多半是缺陷，"
-                        "重试只会再触发一遍）。需要有人看一眼日志定位问题，"
-                        "修好后重新 @ 芝士，它会从断点接着做。"
+                        "已完成的改动都在。这类失败通常是平台缺陷，重试可能再次"
+                        "触发，所以平台不会自动重试。需要有人查看日志定位问题，"
+                        "修复后可以重试，会从中断处继续。"
                     ),
                     detail_label="详细说明",
+                    retryable=True,
                 )
             block = None
             try:

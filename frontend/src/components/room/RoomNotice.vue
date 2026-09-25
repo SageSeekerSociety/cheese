@@ -9,10 +9,14 @@
 import type { Block } from '../../cx_types'
 import type { PlatformNotice } from '../../lib/platformNotice'
 
+import { computed } from 'vue'
+
 import { parseDiffLines } from '../../lib/diff'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import CloudStartupStatus from '../CloudStartupStatus.vue'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   /** 这条通知贴在哪个块上。 */
@@ -27,11 +31,24 @@ const props = defineProps<{
   agentName: string
   /** handle→昵称 / 话题 id→标题，正文里的 token 靠它渲染成可点的 chip。 */
   refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  /** 房间允许在这一条上重试：它是最新的一条、房间没在跑、也没归档。可重试与否
+   *  是提示自己说的（`retryable`），两者都成立才画按钮。 */
+  canRetry?: boolean
+  /** 重试请求已经发出、还没回来。 */
+  retrying?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string): void
+  (e: 'retry'): void
 }>()
+
+const showRetry = computed(
+  () =>
+    !!props.canRetry &&
+    ((props.notice.mode === 'incident' && props.notice.incident.retryable) ||
+      (props.notice.mode === 'fold' && props.notice.retryable))
+)
 
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
@@ -67,6 +84,9 @@ const ACTION_META: Record<string, { btn: string }> = {
         <v-icon class="sys-mark" :icon="notice.incident.icon" size="15" />
         <span class="sys-text">{{ notice.incident.title }}</span>
         <span class="sys-who">{{ notice.incident.status }}</span>
+        <button v-if="showRetry" type="button" class="sys-action" :disabled="retrying" @click="emit('retry')">
+          {{ t('work.room.retry.action') }}
+        </button>
       </div>
       <div class="sys-sub">{{ notice.lead }}</div>
       <details v-if="notice.rest" class="sys-more">
@@ -178,6 +198,16 @@ const ACTION_META: Record<string, { btn: string }> = {
         <span v-if="notice.whoLabel" class="sys-who">{{
           notice.who === 'cheese' ? `${name || agentName}正在处理` : notice.whoLabel
         }}</span>
+        <!-- 在 summary 里点它不能顺带展开这一行。 -->
+        <button
+          v-if="showRetry"
+          type="button"
+          class="sys-action"
+          :disabled="retrying"
+          @click.prevent.stop="emit('retry')"
+        >
+          {{ t('work.room.retry.action') }}
+        </button>
       </summary>
       <div class="sys-fold">
         <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">

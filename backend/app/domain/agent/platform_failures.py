@@ -42,8 +42,7 @@ TURN_TIMEOUT_CODE = "turn_timeout"
 # 「AI 服务返回错误」, blaming the model provider for a turn the provider never
 # saw — which sends whoever is debugging in exactly the wrong direction.
 PROMPT_UNDELIVERED_MESSAGE = (
-    "这条消息没能送到芝士那边，它的会话没有任何反应。改动都还在，"
-    "再 @ 它一次就会重开会话重试。"
+    "消息未能送达会话，会话没有任何响应。改动都还在，重试会重新打开会话。"
 )
 TURN_TIMEOUT_MESSAGE = "轮次超时"
 
@@ -54,8 +53,7 @@ TURN_TIMEOUT_MESSAGE = "轮次超时"
 # route to host") — that also fires on an unreachable *model gateway*, which is
 # not a property of the machine and must never quarantine it.
 DEVICE_OFFLINE_MESSAGE = (
-    "话题绑定的算力设备已离线，请重新连接该设备再继续本轮"
-    "（不会漂到别的设备，以免工作树/会话错乱）"
+    "话题绑定的设备已离线，重新连接后再继续（不会换到其他设备，以免工作目录和会话错乱）"
 )
 _STORAGE_PATTERNS = (
     re.compile(r"\bno space left on device\b", re.IGNORECASE),
@@ -109,10 +107,9 @@ class PlatformFailure:
 STORAGE_EXHAUSTED = PlatformFailure(
     code=STORAGE_EXHAUSTED_CODE,
     title="运行环境存储空间不足",
-    content="本轮因运行环境存储空间不足而暂停，平台正在清理，稍后可继续。",
+    content="运行环境存储空间不足，本轮已暂停，平台正在清理。",
     detail=(
-        "项目文件和已完成的改动都还在。平台正在清理临时空间，"
-        "请稍后再 @芝士 继续；若持续出现，请联系管理员。"
+        "项目文件和已完成的改动都还在。清理完成后可以重试；如果反复出现，联系管理员。"
     ),
     retryable=True,
     # The disk belongs to the machine. Another container on the same box hits the
@@ -123,10 +120,10 @@ STORAGE_EXHAUSTED = PlatformFailure(
 RUNTIME_IMAGE_MISSING = PlatformFailure(
     code=RUNTIME_IMAGE_MISSING_CODE,
     title="运行环境镜像暂时不可用",
-    content="本轮没能开始：平台正在重新准备运行环境镜像。",
+    content="本轮未开始，平台正在重新准备运行环境。",
     detail=(
         "本轮还没有开始执行，项目文件没有受到影响。"
-        "请稍后再 @芝士 重试；若持续出现，请联系管理员。"
+        "稍后可以重试；如果反复出现，联系管理员。"
     ),
     retryable=True,
     # A missing image is a registry/network problem that follows the topic to any
@@ -137,15 +134,14 @@ RUNTIME_IMAGE_MISSING = PlatformFailure(
 
 HOST_UNREACHABLE = PlatformFailure(
     code=HOST_UNREACHABLE_CODE,
-    title="设备连不上",
-    content="本轮没能开始：本话题绑定的设备连不上。",
+    title="无法连接设备",
+    content="本轮未开始，无法连接话题绑定的设备。",
     # 话题一旦绑定就不会再换设备——`device_provider.resolve_device` 只在第一轮
     # 挑一次，之后任何一轮都回到同一台。所以这句只说该设备重新连上，不承诺平台
     # 会替它找一台：那是没有的机制，等它等不来。
     detail=(
-        "项目文件和已提交的改动都还在。"
-        "请把该设备重新连上再 @芝士 继续本轮——话题绑定的设备不会更换，"
-        "以免工作树和会话错乱。"
+        "项目文件和已提交的改动都还在。重新连接这台设备后可以重试。"
+        "话题不会换到其他设备，以免工作目录和会话错乱。"
     ),
     retryable=True,
     host_scoped=True,
@@ -154,13 +150,12 @@ HOST_UNREACHABLE = PlatformFailure(
 
 SUBSCRIPTION_CREDENTIAL_EXPIRED = PlatformFailure(
     code=SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE,
-    title="平台的模型订阅凭据已过期",
-    content="本轮没能开始：平台的模型订阅凭据已过期，需要有权限的人在设备上重新认证。",
+    title="模型订阅凭据已过期",
+    content="本轮未开始，模型订阅凭据已过期，需要重新认证。",
     detail=(
         "需要有设备权限的人在设备上重新认证（claude setup-token，或恢复 "
-        ".credentials.json）。这不是容器、磁盘或网络的问题，也不是芝士卡在某一步"
-        "——所以这里没有「已完成的改动」。"
-        "反复 @芝士 不会有用；凭据在设备上刷新后，下一次 @ 它就会自动恢复。"
+        ".credentials.json）。这不是容器、磁盘或网络的问题，任务也没有开始，"
+        "所以没有已完成的改动。重试没有作用；凭据更新后，下一条消息会正常处理。"
     ),
     # Not retried automatically: another turn against the same dead credential just
     # burns 300s again (the platform "对自己的失败没有记忆" complaint in #388). It
@@ -176,12 +171,12 @@ SUBSCRIPTION_CREDENTIAL_EXPIRED = PlatformFailure(
 WORKSPACE_VCS_PERMS = PlatformFailure(
     code=WORKSPACE_VCS_PERMS_CODE,
     title="工作区版本库权限异常",
-    content="本轮没能开始：工作区版本库的属主不是平台进程，话题起不来。",
+    content="本轮未开始，工作区版本库的权限不正确。",
     detail=(
-        "版本库目录属于另一个系统用户，平台进不去，话题就起不来。"
-        "项目文件和已提交的改动都没有受影响，版本历史也没有动过。"
-        "这要管理员在机器上改一次属主（deploy/fix-workspace-ownership.sh），"
-        "平台自己绕不过去——请把这条提示转给管理员，修好后再 @芝士 重试。"
+        "版本库目录属于另一个系统用户，平台无法访问。"
+        "项目文件、已提交的改动和版本历史都没有受到影响。"
+        "需要管理员在机器上修改一次属主（deploy/fix-workspace-ownership.sh），"
+        "平台无法自行处理。把这条提示转给管理员，修复后可以重试。"
     ),
     retryable=True,
 )
@@ -189,14 +184,14 @@ WORKSPACE_VCS_PERMS = PlatformFailure(
 
 PROMPT_UNDELIVERED = PlatformFailure(
     code=PROMPT_UNDELIVERED_CODE,
-    title="消息没送到芝士那边",
-    content="本轮没能开始：消息没送进芝士的会话，它那边一点反应都没有。",
+    title="消息未送达",
+    content="本轮未开始，消息没有送进会话，会话也没有任何响应。",
     detail=(
-        "这不是 AI 服务的问题 —— 请求根本没走到模型那一步。"
-        "消息是打进运行环境里那个 claude 会话的，而它没有接住："
-        "常见的是会话停在某个等人回答的界面上，或者它所在的终端已经不在了。"
-        "工作区里的文件和已完成的改动都没有受影响。"
-        "再 @ 一次芝士，平台会重开会话重试；若连着几次都这样，请把这条提示转给管理员。"
+        "这不是 AI 服务的问题，请求没有到达模型。"
+        "消息发往运行环境里的 claude 会话，但会话没有接收："
+        "常见原因是会话停在一个等待回答的界面上，或者它所在的终端已经关闭。"
+        "工作区里的文件和已完成的改动都没有受到影响。"
+        "重试会重新打开会话；如果连续几次都这样，把这条提示转给管理员。"
     ),
     retryable=True,
     # NOT host-scoped: a wedged or dead claude session is a property of THIS
@@ -209,13 +204,13 @@ PROMPT_UNDELIVERED = PlatformFailure(
 
 TURN_TIMEOUT = PlatformFailure(
     code=TURN_TIMEOUT_CODE,
-    title="本轮到达时间上限，已被强制结束",
-    content="本轮到达平台的时间上限仍未结束，已被强制结束。",
+    title="本轮超过时间上限，已停止",
+    content="本轮超过时间上限，已停止。",
     detail=(
-        "这不是 AI 服务返回的错误 —— 是本轮在时限内没有收尾。"
-        "常见的是卡在某个一直不返回的命令上，或者会话停在了一个等人回答的界面上。"
-        "已完成的改动都还在工作区里。"
-        "再 @ 一次芝士，它会从断点接着做；如果同一件事反复超时，把它拆小一点再试。"
+        "这不是 AI 服务返回的错误，而是本轮没有在时限内结束。"
+        "常见原因是某个命令一直没有返回，或者会话停在一个等待回答的界面上。"
+        "已完成的改动都在工作区里。"
+        "重试会从中断处继续；如果同一件事反复超时，可以把它拆小。"
     ),
     retryable=True,
     # Same reasoning as PROMPT_UNDELIVERED, and more sharply so: a turn that ran

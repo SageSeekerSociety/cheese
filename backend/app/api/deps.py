@@ -200,10 +200,11 @@ def get_cloud_wakeup() -> CloudWakeup:
                 "severity": SEVERITY_ERROR,
                 "who": WHO_HUMAN,
                 "detail": (
-                    "这条消息还留着，但平台不会自动换一台机器。"
-                    "在项目的算力页看这台机器的状态，处理后再 @芝士。"
+                    "这条消息还在，平台不会自动换一台机器。"
+                    "可以在项目设置里查看这台设备的状态，处理后重试。"
                 ),
-                "detail_label": "接下来",
+                "detail_label": "下一步",
+                "retryable": True,
             },
         )
         if block is not None:

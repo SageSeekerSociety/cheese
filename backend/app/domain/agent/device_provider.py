@@ -93,7 +93,7 @@ class EnvironmentPreparationError(ScreenSetupError):
     def __init__(self, status: dict):
         self.environment_status = status
         super().__init__(
-            "环境准备失败，芝士还没有开始处理这条消息。",
+            "环境准备失败，这条消息还没有开始处理。",
             failure_code="environment_preparation_failed",
         )
 
@@ -520,7 +520,7 @@ class DeviceChannel(Channel):
     builds_model_env = True
     # 要手的一轮要不到手时说的那一句。供给不同，这一句不同，而「要不要手、要不到
     # 就停」那条分支三种供给是同一条——所以变的是这一句，不是那条分支。
-    no_machine_message = "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
+    no_machine_message = "绑定的设备不在线，本轮无法运行"
 
     def __init__(
         self,
@@ -1671,7 +1671,7 @@ class DeviceChannel(Channel):
                                 "attempt"
                             ) != before.get("attempt"):
                                 raise ScreenSetupError(
-                                    "环境已准备完成，但芝士启动后退出，请查看房间终端"
+                                    "环境已准备完成，但会话启动后退出，可以在房间终端查看原因"
                                 )
                             if (
                                 status["state"] == "pending"

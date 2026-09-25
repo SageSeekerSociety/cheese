@@ -53,6 +53,8 @@ import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
 
+import { t } from '@/i18n'
+
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage and happens in the row components; here we only fill the
 // handle→name and id→title maps they render with, from the roster / topics props.
@@ -1004,6 +1006,30 @@ async function summonNow() {
   }
 }
 
+// 失败提示上的「重试」。只给最新的那一条：更早的失败已经被后面发生的事盖过去了，
+// 在它上面重试说不清是在重试什么。房间在跑、归档了，重试都没有意义。
+function canRetryAt(i: number): boolean {
+  if (i !== rows.value.length - 1) return false
+  if (!props.showComposer || props.topic?.status === 'archived') return false
+  return !awaitingReply.value && !outbox.value.length
+}
+// 重试走的是「交给它」同一个入口：失败的那一轮没有把消息标成已读，所以它们还在
+// 等人处理，平台重新开一轮去接。什么都没有可接的时候要说出来，不能按了没反应。
+async function retryNow() {
+  const id = props.topic?.id
+  if (!id || summonBusy.value) return
+  summonBusy.value = true
+  try {
+    const res = await summonAgent(id)
+    if (res.started) awaitingReply.value = true
+    else if (res.reason === 'nothing_pending') errorMsg.value = t('work.room.retry.nothingPending')
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.retry.failed')
+  } finally {
+    summonBusy.value = false
+  }
+}
+
 // 输入区只知道正文和「这条叫不叫它」。待发附件在这一层，因为它要跟着话题走。
 function onComposerSend({ content, summon }: { content: string; summon: boolean }) {
   if (send(content, summon, uploaded(pendingAtts.value))) {
@@ -1262,7 +1288,10 @@ onBeforeUnmount(() => {
               :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
               :agent-name="agentName"
               :refs="refMaps"
+              :can-retry="canRetryAt(i)"
+              :retrying="summonBusy"
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
+              @retry="retryNow"
             />
             <!-- message row -->
             <RoomMessage
@@ -1354,9 +1383,9 @@ onBeforeUnmount(() => {
                  总览: parked at the end of the conversation it sat under every new
                  message, pushing the talk up. -->
               <ul v-if="liveTodo" class="todo-list">
-                <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
-                  <v-icon class="todo-mark" size="14">{{ todoIcon(t.status) }}</v-icon>
-                  <span class="todo-text">{{ t.subject }}</span>
+                <li v-for="item in todoItems" :key="item.id" class="todo-item" :class="'todo-' + item.status">
+                  <v-icon class="todo-mark" size="14">{{ todoIcon(item.status) }}</v-icon>
+                  <span class="todo-text">{{ item.subject }}</span>
                 </li>
               </ul>
 

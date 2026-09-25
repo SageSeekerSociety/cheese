@@ -95,7 +95,8 @@ def test_the_card_says_it_in_chinese_and_keeps_the_original():
     result = _cli_notice(original)
     assert result is not None
     line, meta = result
-    assert line == "芝士连不上 AI 服务，这一步没做成"
+    # 卡面那一行是平台自己的话，不是 CLI 的英文原话。
+    assert "API Error" not in line
     assert meta["severity"] == "error"
     # 原话是唯一的一份，不能丢 —— 折叠起来，不是删掉。
     assert original in meta["detail"]
@@ -106,9 +107,9 @@ def test_a_limit_says_it_needs_a_person_not_a_retry():
     result = _cli_notice("You've reached your Fable limit. /model to switch models.")
     assert result is not None
     line, meta = result
-    assert line == "这个模型的额度用完了"
     assert meta["who"] == "human"
-    assert "重试无效" in meta["detail"]
+    # 房间不会给它一个重试按钮。
+    assert not meta.get("retryable")
 
 
 def test_an_overload_says_it_is_worth_retrying():
@@ -117,3 +118,4 @@ def test_an_overload_says_it_is_worth_retrying():
     _, meta = result
     assert meta["severity"] == "warn"
     assert meta["who"] == "platform"
+    assert meta["retryable"] is True
