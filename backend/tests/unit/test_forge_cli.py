@@ -122,15 +122,16 @@ def test_gh_forwards_arguments_exit_status_and_mints_again(invocation, monkeypat
     assert os.environ["GH_TOKEN"] == "expired-shell-token"
 
 
-@pytest.mark.parametrize("system", ["linux", "darwin"])
+@pytest.mark.parametrize("system", ["linux", "darwin", "win32"])
 def test_fj_uses_private_temporary_native_config_and_removes_it(
-    invocation, monkeypatch, system
+    invocation, monkeypatch, tmp_path, system
 ):
     data, captured = invocation
     data["kind"] = "forgejo"
     data["url"] = "https://forge.invalid/subpath/team/project.git"
     data["api_url"] = "http://internal-forge:3000/api/v1"
     monkeypatch.setattr(forge_cli.sys, "platform", system)
+    appdata = tmp_path / "AppData/Roaming"
     if system == "darwin":
         monkeypatch.setenv(
             "CHEESE_TEST_NATIVE_KEYS_FILE",
@@ -139,6 +140,13 @@ def test_fj_uses_private_temporary_native_config_and_removes_it(
                 / "Library/Application Support/forgejo-cli.forgejo-cli/keys.json"
             ),
         )
+    if system == "win32":
+        monkeypatch.setattr(forge_cli, "lock", lambda _: None)
+        monkeypatch.setenv("APPDATA", str(appdata))
+        monkeypatch.setenv(
+            "CHEESE_TEST_NATIVE_KEYS_FILE",
+            str(appdata / "forgejo-cli/forgejo-cli/data/keys.json"),
+        )
     assert forge_cli.run("fj", ["pr", "list"]) == 7
     got = json.loads(captured.read_text())
     assert got["keys"] == {
@@ -146,11 +154,31 @@ def test_fj_uses_private_temporary_native_config_and_removes_it(
             "forge.invalid/subpath": {"type": "Application", "token": data["token"]}
         }
     }
-    assert got["mode"] == 0o600
+    if system != "win32":  # Windows keeps AppData private by ACL, not mode bits.
+        assert got["mode"] == 0o600
     assert not Path(got["path"]).exists()
     assert not (
         Path.home() / "Library/Application Support/forgejo-cli.forgejo-cli/keys.json"
     ).is_symlink()
+
+
+def test_fj_on_windows_never_replaces_a_users_own_native_config(
+    invocation, monkeypatch, tmp_path
+):
+    data, captured = invocation
+    data.update(kind="forgejo", url="https://forge.invalid/team/project.git")
+    monkeypatch.setattr(forge_cli.sys, "platform", "win32")
+    monkeypatch.setattr(forge_cli, "lock", lambda _: None)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData/Roaming"))
+    own = tmp_path / "AppData/Roaming/forgejo-cli/forgejo-cli/data/keys.json"
+    own.parent.mkdir(parents=True)
+    own.write_text('{"hosts": {"codeberg.org": {"type": "Application"}}}')
+    with pytest.raises(FileExistsError):
+        forge_cli.run("fj", ["pr", "list"])
+    assert json.loads(own.read_text())["hosts"] == {
+        "codeberg.org": {"type": "Application"}
+    }
+    assert not captured.exists()
 
 
 def test_wrong_provider_cannot_receive_the_other_providers_token(invocation):
@@ -218,7 +246,13 @@ def test_fj_offline_uses_relay_without_replaying_the_command(
 
 @pytest.mark.parametrize(
     "system,tool",
-    [("linux", "fj"), ("linux", "gh"), ("darwin", "gh"), ("darwin", "fj")],
+    [
+        ("linux", "fj"),
+        ("linux", "gh"),
+        ("darwin", "gh"),
+        ("darwin", "fj"),
+        ("win32", "fj"),
+    ],
 )
 def test_missing_binary_downloads_verified_archive_and_reuses_cache(
     monkeypatch, tmp_path, system, tool
@@ -228,15 +262,24 @@ def test_missing_binary_downloads_verified_archive_and_reuses_cache(
     monkeypatch.setattr(forge_cli.sys, "platform", system)
     monkeypatch.setattr(forge_cli.platform, "machine", lambda: "arm64")
     monkeypatch.setenv("CHEESE_API", "https://platform.invalid/api")
+    executable = tool
+    if system == "win32":
+        monkeypatch.setattr(forge_cli, "lock", lambda _: None)
+        monkeypatch.setattr(forge_cli.platform, "machine", lambda: "AMD64")
+        executable = tool + ".exe"
     if tool == "fj":
-        old = tmp_path / ".cheese/native/fj-0.6.0/fj"
+        old = tmp_path / f".cheese/native/fj-0.6.0/{executable}"
         old.parent.mkdir(parents=True)
         old.write_bytes(b"#!/bin/sh\nexit 101\n")
         old.chmod(0o700)
         monkeypatch.setattr(os, "get_exec_path", lambda: [str(old.parent)])
     payload = b"#!/bin/sh\nexit 0\n"
     archive = io.BytesIO()
-    if system == "darwin" and tool == "gh":
+    if system == "win32":
+        with zipfile.ZipFile(archive, "w") as package:
+            package.writestr("LICENSE-MIT", b"license")
+            package.writestr(executable, payload)
+    elif system == "darwin" and tool == "gh":
         with zipfile.ZipFile(archive, "w") as package:
             package.writestr(f"release/bin/{tool}", payload)
     else:
@@ -258,8 +301,10 @@ def test_missing_binary_downloads_verified_archive_and_reuses_cache(
     assert binary.read_bytes() == payload
     assert binary.stat().st_mode & 0o777 == 0o700
     assert forge_cli.native_binary(tool) == str(binary)
+    assert binary.name == executable
+    platform = "windows-x64" if system == "win32" else f"{system}-arm64"
     assert calls == [
-        f"https://platform.invalid/api/connector/toolchain/{tool}/{system}-arm64/artifact"
+        f"https://platform.invalid/api/connector/toolchain/{tool}/{platform}/artifact"
     ]
 
 

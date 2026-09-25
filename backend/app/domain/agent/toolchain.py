@@ -61,7 +61,7 @@ _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 #: (`<os>-<arch>`). typst and uv ship musl-static linux builds, so one artifact
 #: serves glibc and musl alike; pandoc's linux tarball wants glibc, which is why
 #: a musl machine is a documented gap rather than a silent one. Windows is x64
-#: only, and has no fj: nothing builds one yet.
+#: only.
 PLATFORM_RE = re.compile(r"^((linux|darwin)-(x64|arm64)|windows-x64)$")
 TOOL_RE = re.compile(r"^[a-z0-9-]{1,32}$")
 
@@ -133,6 +133,12 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         "f426f59e0f4136b0a97c0ae24367f4a4dcc865d4f805aa1f9ec8bde082d371f7",
         10239679,
         ".tar.gz",
+    ),
+    ("fj", "windows-x64"): Artifact(
+        f"{_FJ_BASE}/fj-{FJ_VERSION}-x86_64-pc-windows-gnu.zip",
+        "a2222c6c3fa77098aef5e8bcec0cc4276372e91d5f943c838ef4fa7cb1cddafa",
+        8343164,
+        ".zip",
     ),
     ("typst", "linux-x64"): Artifact(
         f"{_TYPST_BASE}/typst-x86_64-unknown-linux-musl.tar.xz",

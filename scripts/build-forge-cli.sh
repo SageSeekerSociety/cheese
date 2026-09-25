@@ -18,7 +18,14 @@ export CFLAGS="-ffile-prefix-map=$HOME=/build"
 export CARGO_BUILD_JOBS=4
 log "status=start version=$version rust=1.98.1 source=crates.io locked=true openssl=vendored"
 case "$(uname -s)" in
-  Darwin) targets=(aarch64-apple-darwin x86_64-apple-darwin) ;;
+  Darwin)
+    # Windows cross-builds here with Homebrew's mingw-w64; macOS can link it
+    # without a container and without the MSVC SDK.
+    targets=(aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-gnu)
+    export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+    export CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc
+    export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
+    ;;
   Linux)
     targets=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu)
     export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
@@ -42,7 +49,13 @@ if ! patch --force -R -p1 --dry-run < "$root/scripts/patches/forgejo-cli-merged-
   patch --force -p1 < "$root/scripts/patches/forgejo-cli-merged-at.patch"
 fi
 for target in "${targets[@]}"; do
-  result="$artifacts/fj-$version-$target.tar.gz"
+  executable=fj
+  suffix=tar.gz
+  if [[ "$target" == *windows* ]]; then
+    executable=fj.exe
+    suffix=zip
+  fi
+  result="$artifacts/fj-$version-$target.$suffix"
   if [[ -f "$result.sha256" ]]; then
     (cd "$artifacts" && shasum -a 256 -c "$result.sha256")
     log "item=$target status=skip reason=verified-artifact"
@@ -51,7 +64,7 @@ for target in "${targets[@]}"; do
   log "item=$target status=start"
   rustup +1.98.1 target add "$target"
   cargo +1.98.1 build --release --locked --target "$target" --features git2/vendored-openssl
-  binary="target/$target/release/fj"
+  binary="target/$target/release/$executable"
   # A distributable binary may use system libraries, never Homebrew paths.
   if [[ "$target" == *apple-darwin ]]; then
     otool -L "$binary"
@@ -60,7 +73,15 @@ for target in "${targets[@]}"; do
       exit 1
     fi
   fi
-  if [[ "$target" == aarch64-unknown-linux-gnu ]]; then
+  if [[ "$target" == *windows* ]]; then
+    x86_64-w64-mingw32-objdump -p "$binary" | grep 'DLL Name'
+    # MinGW runtime DLLs are not on a stock Windows machine; link them statically.
+    if x86_64-w64-mingw32-objdump -p "$binary" | grep -Ei 'DLL Name: (libgcc|libwinpthread|libstdc)'; then
+      log "item=$target status=fail reason=mingw-runtime-dll"
+      exit 1
+    fi
+    # This host cannot execute it; run --help and a request on Windows before publishing.
+  elif [[ "$target" == aarch64-unknown-linux-gnu ]]; then
     qemu-aarch64 -L /usr/aarch64-linux-gnu "$binary" --help
     python3 "$root/scripts/test-forge-cli-status.py" qemu-aarch64 -L /usr/aarch64-linux-gnu "$PWD/$binary"
   else
@@ -74,7 +95,11 @@ for target in "${targets[@]}"; do
     log "item=$target status=fail reason=private-build-path"
     exit 1
   fi
-  COPYFILE_DISABLE=1 tar -czf "$result.part" LICENSE-APACHE LICENSE-MIT -C "target/$target/release" fj
+  if [[ "$suffix" == zip ]]; then
+    COPYFILE_DISABLE=1 tar --format zip -cf "$result.part" LICENSE-APACHE LICENSE-MIT -C "target/$target/release" "$executable"
+  else
+    COPYFILE_DISABLE=1 tar -czf "$result.part" LICENSE-APACHE LICENSE-MIT -C "target/$target/release" "$executable"
+  fi
   mv "$result.part" "$result"
   (cd "$artifacts" && shasum -a 256 "$(basename "$result")") > "$result.sha256"
   log "item=$target status=done artifact=$result"

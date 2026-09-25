@@ -53,8 +53,6 @@ def native_binary(name):
                     return str(candidate)
     if sys.platform not in ("linux", "darwin", "win32"):
         raise RuntimeError(f"Native {name} is not installed on this machine")
-    if sys.platform == "win32" and name == "fj":
-        raise RuntimeError("fj has no Windows build yet; this machine cannot run it")
     machine = platform.machine()
     arch = {
         "aarch64": "arm64",
@@ -401,6 +399,24 @@ def run(name, arguments):
             if fixed.is_symlink() and fixed.readlink().is_relative_to(root):
                 fixed.unlink()  # An interrupted launcher left its own link.
             fixed.symlink_to(path)
+            cleanup.callback(fixed.unlink, missing_ok=True)
+        elif sys.platform == "win32":
+            # directories-rs reads the roaming AppData folder on Windows, and a
+            # symlink there needs Developer Mode, so the file is written in
+            # place. The marker is what tells a copy an interrupted launcher
+            # left from a user's own file, which is never replaced.
+            fixed = Path(
+                os.environ["APPDATA"], "forgejo-cli/forgejo-cli/data/keys.json"
+            )
+            fixed.parent.mkdir(parents=True, exist_ok=True)
+            lock(cleanup.enter_context((root / "windows.lock").open("a")))
+            marker = root / "windows-keys-written"
+            if marker.exists():
+                fixed.unlink(missing_ok=True)
+            with open(fixed, "x") as output:
+                json.dump(keys, output)
+            marker.touch()
+            cleanup.callback(marker.unlink, missing_ok=True)
             cleanup.callback(fixed.unlink, missing_ok=True)
         return subprocess.call([binary, *arguments], env=env)
 

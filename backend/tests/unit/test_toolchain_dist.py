@@ -155,10 +155,9 @@ def test_every_binary_tool_is_pinned_for_every_platform_we_serve():
 
 
 def test_windows_is_served_the_tools_it_places_and_its_own_runtime():
-    """What a Windows room places, what its gh launcher fetches, and the
-    interpreter and shell its connector provisions. (fj has no Windows build
-    yet, so its launcher refuses there instead of asking.)"""
-    for tool in {name for name, *_ in toolchain.PLACEMENTS} | {"gh"}:
+    """What a Windows room places, what its gh and fj launchers fetch, and the
+    interpreter and shell its connector provisions."""
+    for tool in {name for name, *_ in toolchain.PLACEMENTS} | {"gh", "fj"}:
         assert toolchain.resolve(tool, "windows-x64"), f"{tool} has no windows-x64"
     for tool in WINDOWS_RUNTIME:
         assert toolchain.resolve(tool, "windows-x64"), tool
