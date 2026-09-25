@@ -50,14 +50,15 @@ def load_model_fixture():
 
 
 class Executor:
-    """The machine holding the project. Only its answer to `ping` is needed."""
+    """The machine holding the project. Only its answer to `ping` is needed.
+    Its path has a space, as a path on a machine can."""
 
     def __init__(self, target):
         self.target = target
 
     def call(self, operation, args=None):
         assert operation == "ping", operation
-        return {"workspace": "/executor/project"}
+        return {"workspace": "/executor/the project"}
 
 
 # The session runs in a namespace of its own (`client.py enter`), with the
@@ -118,7 +119,7 @@ def test_host_instruction_files_stay_out_while_the_rooms_own_arrive(
             {
                 "kind": "device",
                 "device_id": "executor",
-                "workspace": "/executor/project",
+                "workspace": "/executor/the project",
                 "mcp_servers": [],
                 "context_tree": {
                     "generation": "fixture",

@@ -159,7 +159,8 @@ class Layout:
         self.shell = shell
         self.machine = root / "machine"
         self.home = self.machine / "home"
-        self.project = self.machine / "project"
+        # With a space, as a machine's path can have.
+        self.project = self.machine / "the project"
         self.programs = self.machine / "programs"
         self.hook_log = self.machine / "hook-log"
         self.session = root / "session"
