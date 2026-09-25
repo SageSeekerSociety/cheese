@@ -22,6 +22,7 @@ import shlex
 import signal
 import stat
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -555,12 +556,6 @@ def sync_context(target_path, supplied_tree=None):
     return snapshot
 
 
-class _Signalled(Exception):
-    def __init__(self, number):
-        super().__init__(number)
-        self.number = number
-
-
 def _same_file(first, second):
     try:
         a, b = os.fstat(first), os.fstat(second)
@@ -652,14 +647,8 @@ def run_on_the_machine(target, command):
     command_id = "shell-" + uuid.uuid4().hex
     client = RemoteClient(target)
 
-    def on_signal(number, _frame):
-        raise _Signalled(number)
-
-    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(number, on_signal)
-
-    def call(operation, **params):
-        return client.call(
+    def call(operation, through=None, **params):
+        return (through or client).call(
             "control",
             {
                 "subtype": "shell",
@@ -669,70 +658,82 @@ def run_on_the_machine(target, command):
             },
         )
 
-    stopping = None
-    try:
-        # Started once, whatever it takes: the id makes a retried start the
-        # same start.
-        deadline = time.monotonic() + SHELL_START_RETRY_S
-        while True:
-            try:
-                call(
-                    "start",
-                    kind="bash" if bash else "sh",
-                    body=outward(body),
-                    cwd=outward(cwd),
-                    env=env,
-                    merge=merge,
-                    stdin=stdin,
-                )
-                break
-            except MachineOutOfReach:
-                if target.get("kind") == "unavailable" or time.monotonic() > deadline:
-                    sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
-                    return 1
-            except (OSError, TimeoutError):
-                if time.monotonic() > deadline:
-                    sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
-                    return 1
-            except RuntimeError as exc:
-                if "upgrading" not in str(exc) or time.monotonic() > deadline:
-                    sys.stderr.write(f"{exc}\n")
-                    return 1
-            time.sleep(1)
-    except _Signalled as signalled:
-        # Stopped before the command was known to run: nothing to stop there
-        # but whatever the start may have begun.
-        stopping = signalled.number
+    # A stop from the build is passed on by a thread of its own: TERM now,
+    # KILL once the grace has passed and the command still runs. The read in
+    # flight is left to finish — it answers as soon as the command has ended —
+    # so no request to the executor is ever abandoned halfway.
+    stop = {"number": None, "started": False}
+    ended = threading.Event()
+
+    def stopper(number):
+        stopping_client = RemoteClient(target)
+        for attempt in (number, signal.SIGKILL):
+            deadline = time.monotonic() + SHELL_STOP_GRACE_S
+            while not ended.is_set():
+                try:
+                    call("signal", through=stopping_client, signal=int(attempt))
+                    break
+                except Exception:  # noqa: BLE001 — the link may be down; retry
+                    if time.monotonic() > deadline:
+                        break
+                    stopping_client = RemoteClient(target)
+                    ended.wait(0.5)
+            if ended.wait(SHELL_STOP_GRACE_S):
+                return
+
+    def on_signal(number, _frame):
+        if stop["number"] is not None:
+            return
+        stop["number"] = number
+        if stop["started"]:
+            threading.Thread(target=stopper, args=(number,), daemon=True).start()
+
+    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(number, on_signal)
+
+    # Started once, whatever it takes: the id makes a retried start the same
+    # start.
+    deadline = time.monotonic() + SHELL_START_RETRY_S
+    while True:
+        try:
+            call(
+                "start",
+                kind="bash" if bash else "sh",
+                body=outward(body),
+                cwd=outward(cwd),
+                env=env,
+                merge=merge,
+                stdin=stdin,
+            )
+            break
+        except MachineOutOfReach:
+            if target.get("kind") == "unavailable" or time.monotonic() > deadline:
+                sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
+                return 1
+        except (OSError, TimeoutError):
+            if time.monotonic() > deadline:
+                sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
+                return 1
+        except RuntimeError as exc:
+            if "upgrading" not in str(exc) or time.monotonic() > deadline:
+                sys.stderr.write(f"{exc}\n")
+                return 1
+        if stop["number"] is not None:
+            # Stopped before it was known to run: nothing more to wait for.
+            return 128 + stop["number"]
+        time.sleep(1)
+    stop["started"] = True
+    if stop["number"] is not None:
+        threading.Thread(target=stopper, args=(stop["number"],), daemon=True).start()
     offsets = {"out": 0, "err": 0}
     written = 0
     failing_since = None
     delay = 0.5
-    stop_sent_at = None
     answer = {}
     while True:
         try:
-            if stopping is not None and stop_sent_at is None:
-                signal.signal(stopping, signal.SIG_IGN)
-                call("signal", signal=int(stopping))
-                stop_sent_at = time.monotonic()
-            if (
-                stop_sent_at is not None
-                and time.monotonic() - stop_sent_at > SHELL_STOP_GRACE_S
-            ):
-                call("signal", signal=int(signal.SIGKILL))
-                stop_sent_at = time.monotonic()
-            # Once stopping, short reads, so the grace below is kept to.
-            answer = call(
-                "read",
-                out=offsets["out"],
-                err=offsets["err"],
-                wait=20 if stopping is None else 0.5,
-            )
+            answer = call("read", out=offsets["out"], err=offsets["err"], wait=20)
             failing_since, delay = None, 0.5
-        except _Signalled as signalled:
-            stopping = stopping or signalled.number
-            client = RemoteClient(target)
-            continue
         except Exception as exc:  # noqa: BLE001 — the command outlives the link
             link = isinstance(exc, MachineOutOfReach | OSError | TimeoutError)
             failing_since = failing_since or time.monotonic()
@@ -740,10 +741,7 @@ def run_on_the_machine(target, command):
                 sys.stderr.write(f"{exc}\n")
                 return 1
             client = RemoteClient(target)
-            try:
-                time.sleep(delay)
-            except _Signalled as signalled:
-                stopping = stopping or signalled.number
+            time.sleep(delay)
             delay = min(delay * 2, 5.0)
             continue
         if answer.get("lost"):
@@ -763,12 +761,10 @@ def run_on_the_machine(target, command):
                     "the command was stopped.\n"
                 )
                 return 1
-            try:
-                _write_all(fd, data)
-            except _Signalled as signalled:
-                stopping = stopping or signalled.number
+            _write_all(fd, data)
         if "exit" in answer:
             break
+    ended.set()
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, signal.SIG_IGN)
     if bash and "cwd" in answer:

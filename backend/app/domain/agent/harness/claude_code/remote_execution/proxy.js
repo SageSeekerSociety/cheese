@@ -137,14 +137,15 @@ export function register(on) {
     }
     if (tool === "Bash") {
       const outcome = await next(e);
-      if (outcome && outcome.result) {
-        for (const field of ["stdout", "stderr"]) {
-          outcome.result[field] = respell(outcome.result[field]);
-        }
+      if (!outcome) return outcome;
+      // A command's output, or the build's own refusal to run it (a string).
+      let result = outcome.result;
+      if (typeof result === "string") {
+        result = respell(result);
+      } else if (result && typeof result === "object") {
+        result = { ...result, stdout: respell(result.stdout), stderr: respell(result.stderr) };
       }
-      return outcome && typeof outcome.text === "string"
-        ? { ...outcome, text: respell(outcome.text) }
-        : outcome;
+      return { ...outcome, result, text: respell(outcome.text) };
     }
     if (tool === "Read" && ownOutput(args.file_path)) return next(e);
     if (native.has(tool)) {
