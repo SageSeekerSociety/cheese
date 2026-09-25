@@ -148,8 +148,25 @@ def _deck(title: str, subtitle: str, pages: list[tuple[str, list[str]]], name: s
         for paragraph in body.paragraphs:
             for run in paragraph.runs:
                 run.font.size = PPt(20)
-    for slide in prs.slides:
-        slide.shapes.title.width = Emu(prs.slide_width - Inches(1))
+    # The default layouts are drawn for a 4:3 page; on 16:9 every box is placed
+    # explicitly so nothing hangs off the page or under the bar.
+    width = Emu(prs.slide_width - Inches(1.2))
+    for i, slide in enumerate(prs.slides):
+        title = slide.shapes.title
+        body = slide.placeholders[1]
+        title.left = body.left = Inches(0.6)
+        title.width = body.width = width
+        if i == 0:
+            title.top, title.height = Inches(2.4), Inches(1.5)
+            body.top, body.height = Inches(4.1), Inches(1.0)
+        else:
+            title.top, title.height = Inches(0.45), Inches(1.0)
+            body.top, body.height = Inches(1.7), Inches(5.2)
+            for paragraph in title.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    run.font.size = PPt(32)
+                    run.font.bold = True
+                    run.font.color.rgb = PColor(0x1F, 0x4E, 0x79)
     prs.save(HERE / name)
 
 
