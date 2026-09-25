@@ -355,6 +355,10 @@ async def editor_saves_file(
         return JSONResponse({"error": 1})
     users = payload.get("users") or []
     author = str(users[0]) if users else target.handle
+    if await room_files.saved_by_session(
+        db, target.room_id, target.path, target.key, data
+    ):
+        return JSONResponse({"error": 0})
     try:
         await room_files.save_room_file(
             db,
