@@ -254,8 +254,6 @@ class KnowledgeService:
                 "nickname": nickname,
                 "avatarId": profile.avatar_id if profile else None,
                 "intro": profile.intro if profile else "",
-                "follow_count": 0,
-                "fans_count": 0,
                 "question_count": 0,
                 "answer_count": 0,
             }
@@ -309,8 +307,6 @@ def _user_stub(user_id: int | None) -> dict:
         "nickname": "",
         "avatarId": None,
         "intro": "",
-        "follow_count": 0,
-        "fans_count": 0,
         "question_count": 0,
         "answer_count": 0,
     }

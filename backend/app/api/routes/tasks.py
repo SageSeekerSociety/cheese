@@ -444,8 +444,6 @@ async def _enrich_task_models(
                 "nickname": nickname,
                 "avatarId": avatar_id,
                 "intro": intro,
-                "follow_count": 0,
-                "fans_count": 0,
                 "question_count": 0,
                 "answer_count": 0,
             }
@@ -456,8 +454,6 @@ async def _enrich_task_models(
                 "nickname": "unknown",
                 "avatarId": None,
                 "intro": "",
-                "follow_count": 0,
-                "fans_count": 0,
                 "question_count": 0,
                 "answer_count": 0,
             }

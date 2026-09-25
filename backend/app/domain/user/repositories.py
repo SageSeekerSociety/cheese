@@ -13,7 +13,6 @@ from app.domain.questions.models import Question
 from app.domain.team.models import Team
 from app.domain.user.models import (
     User,
-    UserFollowingRelationship,
     UserProfile,
     UserRealNameAccessLog,
     UserRealNameIdentity,
@@ -441,63 +440,6 @@ class UserProfileRepository:
             profile.avatar_id = avatar_id
         await self._session.flush()
         return profile
-
-
-class UserFollowingRepository:
-    """Persistence operations for user follow relationships."""
-
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def count_followers(self, user_id: int) -> int:
-        stmt = select(func.count(UserFollowingRelationship.id)).where(
-            UserFollowingRelationship.followee_id == user_id,
-            UserFollowingRelationship.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one() or 0)
-
-    async def count_following(self, user_id: int) -> int:
-        stmt = select(func.count(UserFollowingRelationship.id)).where(
-            UserFollowingRelationship.follower_id == user_id,
-            UserFollowingRelationship.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one() or 0)
-
-    async def is_following(self, follower_id: int, followee_id: int) -> bool:
-        stmt = select(UserFollowingRelationship.id).where(
-            UserFollowingRelationship.follower_id == follower_id,
-            UserFollowingRelationship.followee_id == followee_id,
-            UserFollowingRelationship.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none() is not None
-
-    async def add_follow(self, follower_id: int, followee_id: int) -> None:
-        rel = UserFollowingRelationship(
-            follower_id=follower_id,
-            followee_id=followee_id,
-            created_at=datetime.now(UTC),
-        )
-        self._session.add(rel)
-        await self._session.flush()
-
-    async def soft_delete_follow(self, follower_id: int, followee_id: int) -> bool:
-        stmt: Select[tuple[UserFollowingRelationship]] = select(
-            UserFollowingRelationship
-        ).where(
-            UserFollowingRelationship.follower_id == follower_id,
-            UserFollowingRelationship.followee_id == followee_id,
-            UserFollowingRelationship.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        rel = result.scalar_one_or_none()
-        if rel is None:
-            return False
-        rel.deleted_at = datetime.now(UTC)
-        await self._session.flush()
-        return True
 
 
 class UserRealNameRepository:

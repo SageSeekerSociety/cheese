@@ -242,7 +242,6 @@ class TestUserAuthService:
         return {
             "user_repo": AsyncMock(),
             "profile_repo": AsyncMock(),
-            "follow_repo": AsyncMock(),
             "stats_repo": AsyncMock(),
         }
 
@@ -467,71 +466,19 @@ class TestUserAuthService:
     async def test_build_user_dto_no_viewer(self, service, repos) -> None:
         user = _user(id=5, username="zara")
         profile = _profile(nickname="Zara", avatar_id=2, intro="hey")
-        repos["follow_repo"].count_followers.return_value = 10
-        repos["follow_repo"].count_following.return_value = 3
         repos["stats_repo"].aggregate.return_value = _stats_dict()
 
         dto = await service.build_user_dto(user, profile)
 
         assert dto["id"] == 5
         assert dto["nickname"] == "Zara"
-        assert dto["fans_count"] == 10
-        assert dto["follow_count"] == 3
         assert dto["question_count"] == 3
         assert dto["answer_count"] == 7
-        assert dto["is_follow"] is False
-        # is_following should NOT have been called when viewer_id is None
-        repos["follow_repo"].is_following.assert_not_awaited()
-
-    @pytest.mark.anyio
-    async def test_build_user_dto_viewer_is_self(self, service, repos) -> None:
-        user = _user(id=5)
-        profile = _profile()
-        repos["follow_repo"].count_followers.return_value = 0
-        repos["follow_repo"].count_following.return_value = 0
-        repos["stats_repo"].aggregate.return_value = _stats_dict()
-
-        dto = await service.build_user_dto(user, profile, viewer_id=5)
-
-        # Same user viewing themselves -> is_follow stays False, no repo call
-        assert dto["is_follow"] is False
-        repos["follow_repo"].is_following.assert_not_awaited()
-
-    @pytest.mark.anyio
-    async def test_build_user_dto_viewer_follows(self, service, repos) -> None:
-        user = _user(id=5)
-        profile = _profile()
-        repos["follow_repo"].count_followers.return_value = 1
-        repos["follow_repo"].count_following.return_value = 0
-        repos["follow_repo"].is_following.return_value = True
-        repos["stats_repo"].aggregate.return_value = _stats_dict()
-
-        dto = await service.build_user_dto(user, profile, viewer_id=99)
-
-        assert dto["is_follow"] is True
-        repos["follow_repo"].is_following.assert_awaited_once_with(
-            follower_id=99, followee_id=5
-        )
-
-    @pytest.mark.anyio
-    async def test_build_user_dto_viewer_does_not_follow(self, service, repos) -> None:
-        user = _user(id=5)
-        profile = _profile()
-        repos["follow_repo"].count_followers.return_value = 0
-        repos["follow_repo"].count_following.return_value = 0
-        repos["follow_repo"].is_following.return_value = False
-        repos["stats_repo"].aggregate.return_value = _stats_dict()
-
-        dto = await service.build_user_dto(user, profile, viewer_id=99)
-
-        assert dto["is_follow"] is False
 
     @pytest.mark.anyio
     async def test_build_user_dto_all_stats_fields(self, service, repos) -> None:
         user = _user(id=1)
         profile = _profile()
-        repos["follow_repo"].count_followers.return_value = 0
-        repos["follow_repo"].count_following.return_value = 0
         stats = _stats_dict(
             questionCount=10,
             answerCount=20,
