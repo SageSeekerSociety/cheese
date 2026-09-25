@@ -19,6 +19,7 @@ const listProjectInvitations = vi.fn()
 const revokeInvitation = vi.fn()
 const removeProjectMember = vi.fn()
 const listProjectAgents = vi.fn()
+const getProject = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -30,6 +31,7 @@ vi.mock('@/api', async () => {
     revokeInvitation: (...a: unknown[]) => revokeInvitation(...a),
     removeProjectMember: (...a: unknown[]) => removeProjectMember(...a),
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
+    getProject: (...a: unknown[]) => getProject(...a),
   }
 })
 
@@ -53,7 +55,7 @@ vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
     members,
     privateUnreadMap,
-    projects,
+    projects: projects.map((row) => ({ ...row, can_manage_members: undefined })),
     refreshMembers,
     refreshProjects: vi.fn(),
   }),
@@ -104,6 +106,7 @@ beforeEach(() => {
   listProjectInvitations.mockReset().mockResolvedValue({ data: [], total: 0 })
   revokeInvitation.mockReset().mockResolvedValue({})
   removeProjectMember.mockReset().mockResolvedValue({ deleted: true })
+  getProject.mockReset().mockImplementation(async (id: string) => projects.find((p) => p.id === id))
   listProjectAgents.mockReset().mockResolvedValue({
     data: [{ handle: 'cheese', display_name: '芝士', is_default: true, is_active: true }],
   })
@@ -163,23 +166,26 @@ describe('成员页：按来路分段', () => {
 })
 
 describe('成员页：谁能管外部成员', () => {
-  it('管得了的人只在外部成员那一行看到管理菜单', () => {
+  it('管得了的人只在外部成员那一行看到管理菜单', async () => {
     const { container } = mount()
-    expect(rowFor(container, 'mentor1').querySelector('[aria-label="管理成员"]')).toBeTruthy()
+    await waitFor(() => expect(rowFor(container, 'mentor1').querySelector('[aria-label="管理成员"]')).toBeTruthy())
     expect(rowFor(container, 'ligan').querySelector('[aria-label="管理成员"]')).toBeNull()
     expect(rowFor(container, 'alice').querySelector('[aria-label="管理成员"]')).toBeNull()
   })
 
-  it('管不了的人看不到邀请，也看不到任何管理菜单', () => {
+  it('管不了的人看不到邀请，也看不到任何管理菜单', async () => {
     meHandle = 'ligan'
     projects = [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', can_manage_members: false }]
     const { container, queryByText } = mount()
+    await waitFor(() => expect(getProject).toHaveBeenCalledWith('p1'))
+    await new Promise((resolve) => setTimeout(resolve))
     expect(queryByText('邀请外部成员')).toBeNull()
     expect(container.querySelectorAll('[aria-label="管理成员"]').length).toBe(0)
   })
 
   it('移出外部成员要先确认，确认后调接口并刷新名册', async () => {
     const { container } = mount()
+    await waitFor(() => expect(rowFor(container, 'mentor1').querySelector('[aria-label="管理成员"]')).toBeTruthy())
     await fireEvent.click(rowFor(container, 'mentor1').querySelector('[aria-label="管理成员"]') as Element)
     await fireEvent.click(await screen.findByText('移出项目'))
     expect(removeProjectMember).not.toHaveBeenCalled()
@@ -213,8 +219,8 @@ describe('成员页：退出与转让', () => {
 describe('成员页：邀请外部成员', () => {
   it('按用户名或邮箱查到人，摆出来确认，再把他的 handle 交给后端', async () => {
     lookupUser.mockResolvedValue({ handle: 'zhangheng', name: '张衡', avatar_id: null })
-    const { getByText } = mount()
-    await fireEvent.click(getByText('邀请外部成员'))
+    mount()
+    await fireEvent.click(await screen.findByText('邀请外部成员'))
     const dialog = await screen.findByRole('dialog')
     await fireEvent.update(within(dialog).getByLabelText('用户名或邮箱'), 'zh@example.com')
     await waitFor(() => expect(lookupUser).toHaveBeenCalledWith('zh@example.com'))
@@ -225,8 +231,8 @@ describe('成员页：邀请外部成员', () => {
 
   it('查无此人 → 说出来，并且按钮按不下去', async () => {
     lookupUser.mockRejectedValue(new ApiError(404, 'not found'))
-    const { getByText } = mount()
-    await fireEvent.click(getByText('邀请外部成员'))
+    mount()
+    await fireEvent.click(await screen.findByText('邀请外部成员'))
     const dialog = await screen.findByRole('dialog')
     await fireEvent.update(within(dialog).getByLabelText('用户名或邮箱'), 'nobody')
     expect(await within(dialog).findByText('没有找到这个用户名或邮箱')).toBeTruthy()
@@ -235,8 +241,8 @@ describe('成员页：邀请外部成员', () => {
 
   it('已经在项目里的人不让再邀一次', async () => {
     lookupUser.mockResolvedValue({ handle: 'ligan', name: '李干', avatar_id: null })
-    const { getByText } = mount()
-    await fireEvent.click(getByText('邀请外部成员'))
+    mount()
+    await fireEvent.click(await screen.findByText('邀请外部成员'))
     const dialog = await screen.findByRole('dialog')
     await fireEvent.update(within(dialog).getByLabelText('用户名或邮箱'), 'ligan')
     expect(await within(dialog).findByText('已经在项目里')).toBeTruthy()
@@ -246,8 +252,8 @@ describe('成员页：邀请外部成员', () => {
   it('后端拒绝（比如对方已在团队里）时把理由写在输入框下面', async () => {
     lookupUser.mockResolvedValue({ handle: 'zhangheng', name: '张衡', avatar_id: null })
     inviteExternalMember.mockRejectedValue(new Error('这个人已经在团队里'))
-    const { getByText } = mount()
-    await fireEvent.click(getByText('邀请外部成员'))
+    mount()
+    await fireEvent.click(await screen.findByText('邀请外部成员'))
     const dialog = await screen.findByRole('dialog')
     await fireEvent.update(within(dialog).getByLabelText('用户名或邮箱'), 'zhangheng')
     await within(dialog).findByText('张衡')
