@@ -22,6 +22,8 @@ from app.domain.agent.platform_notices import (
     EVENT_ROUTINE_PROPOSED,
     EVENT_ROUTINE_RESULT,
     EVENT_ROUTINE_RUN,
+    EVENT_TURN_FAILED,
+    EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
     SEVERITY_INFO,
     WHO_CHEESE,
@@ -607,6 +609,21 @@ async def _fire_events(session: AsyncSession) -> int:
     return fired
 
 
+async def _turn_failure(session: AsyncSession, turn_id: uuid.UUID) -> str | None:
+    """What the room was told when this turn failed or timed out, if anything."""
+    return await session.scalar(
+        select(Block.content)
+        .where(
+            Block.turn_id == turn_id,
+            Block.meta["event_type"]
+            .as_string()
+            .in_((EVENT_TURN_FAILED, EVENT_TURN_TIMEOUT)),
+        )
+        .order_by(Block.created_at.desc())
+        .limit(1)
+    )
+
+
 async def _settle_open_runs(session: AsyncSession) -> None:
     stamp = now()
     runs = list(
@@ -638,14 +655,28 @@ async def _settle_open_runs(session: AsyncSession) -> None:
         )
         if turn is not None and run.turn_id is None:
             run.turn_id = turn.id
+        if turn is not None and turn.stopped_at is not None:
+            if turn.delivered_at is None:
+                run.status = RunStatus.failed.value
+                run.error = "这一轮没能开始：" + (
+                    await _turn_failure(session, turn.id)
+                    or delivery.last_error
+                    or "执行环境没有接住这次工作"
+                )
+                run.finished_at = turn.stopped_at
+                continue
+            if run.status == RunStatus.queued.value:
+                run.status = RunStatus.running.value
+                run.started_at = turn.delivered_at
+            if stamp - turn.stopped_at > REPORT_GRACE:
+                run.status = RunStatus.failed.value
+                run.error = "AI 队友这一轮已经结束，但没有交回结果"
+                run.finished_at = turn.stopped_at
+            continue
         if turn is not None and turn.delivered_at is not None:
             if run.status == RunStatus.queued.value:
                 run.status = RunStatus.running.value
                 run.started_at = turn.delivered_at
-            if turn.stopped_at is not None and stamp - turn.stopped_at > REPORT_GRACE:
-                run.status = RunStatus.failed.value
-                run.error = "AI 队友这一轮已经结束，但没有交回结果"
-                run.finished_at = turn.stopped_at
             continue
         if stamp - run.created_at > START_TIMEOUT:
             run.status = RunStatus.failed.value

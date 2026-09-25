@@ -325,3 +325,57 @@ def test_only_the_executing_teammate_reports_and_nobody_outside_the_room_reads(c
     assert client.get(
         f"/projects/{project}/routines?topic={room}", headers=stranger
     ).status_code in (401, 403)
+
+
+def test_a_turn_that_never_started_says_why(client):
+    """The machine was not there: the run fails now, with the room's own reason."""
+    from app.domain.block.authorship import AuthorType
+    from app.domain.block.models import Block, BlockKind
+
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    _make_due(client, routine["id"])
+    _sweep(client)
+    run = _runs(client, routine["id"])[0]
+
+    async def the_machine_was_missing(session):
+        run_row = await session.get(RoutineRun, uuid.UUID(run["id"]))
+        delivery = await session.scalar(
+            select(Delivery).where(Delivery.event_id == run_row.delivery_event_id)
+        )
+        attempt = delivery.attempt_id or uuid.uuid4()
+        delivery.attempt_id = attempt
+        delivery.state = "uncertain"
+        now = datetime.now(UTC)
+        session.add(
+            AgentTurn(
+                id=attempt,
+                topic_id=uuid.UUID(room),
+                continuation_id=attempt,
+                author="system",
+                content="",
+                started_at=now,
+                stopped_at=now,
+            )
+        )
+        await session.flush()
+        session.add(
+            Block(
+                id=uuid.uuid4(),
+                project_id=uuid.UUID(routine["project_id"]),
+                topic_id=uuid.UUID(room),
+                author="system",
+                author_type=AuthorType.platform,
+                kind=BlockKind.event,
+                content="本轮未完成：这条会话的机器尚未配置或未连接",
+                meta={"event_type": "turn_failed"},
+                turn_id=attempt,
+            )
+        )
+
+    _db(client, the_machine_was_missing)
+    _sweep(client)
+
+    run = _runs(client, routine["id"])[0]
+    assert run["status"] == "failed"
+    assert "机器尚未配置或未连接" in run["error"]
