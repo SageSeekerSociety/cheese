@@ -1,7 +1,6 @@
 import type { User } from '@/types'
 import type { AcceptedDocuments, ConsentMethod } from '../legal/types'
 import type {
-  FollowUserResponse,
   GetAnswerListResponse,
   GetOAuthProvidersResponse,
   GetOAuthStateResponse,
@@ -19,7 +18,6 @@ import type {
   RealNameInfo,
   UpdateRealNameInfoResponse,
   UserIdentityAccessLog,
-  UserList,
   VerifyOAuthEmailResponse,
 } from './types'
 
@@ -142,28 +140,6 @@ export namespace UserApi {
       data,
     })
 
-  export const getUserFollower = (userid: number, data: { pageStart: number; pageSize: number }) =>
-    ApiInstance.request<UserList>({
-      // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}/followers`,
-      url: `/users/${userid}/followers`,
-      method: 'GET',
-      data: {
-        pageStart: data.pageStart,
-        pageSize: data.pageSize,
-      },
-    })
-
-  export const getUserFollowing = (userid: number, data: { pageStart: number; pageSize: number }) =>
-    ApiInstance.request<UserList>({
-      // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}/follow/users`,
-      url: `/users/${userid}/follow/users`,
-      method: 'GET',
-      data: {
-        pageStart: data.pageStart,
-        pageSize: data.pageSize,
-      },
-    })
-
   export const getQuestionList = (userId: number, pageStart?: number, pageSize: number = 20) =>
     ApiInstance.request<GetQuestionListResponse>({
       // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}/questions`,
@@ -184,18 +160,6 @@ export namespace UserApi {
         pageStart: data.pageStart,
         pageSize: data.pageSize,
       },
-    })
-
-  export const followUser = (userId: number) =>
-    ApiInstance.request<FollowUserResponse>({
-      url: `/users/${userId}/followers`,
-      method: 'POST',
-    })
-
-  export const unfollowUser = (userId: number) =>
-    ApiInstance.request<FollowUserResponse>({
-      url: `/users/${userId}/followers`,
-      method: 'DELETE',
     })
 
   // Passkey 注册相关

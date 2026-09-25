@@ -12,17 +12,8 @@ export type GetQuestionListResponse = {
   page: Page
 }
 
-export type UserList = {
-  users: User[]
-  page: Page
-}
-
 export type GetUserInfoResponse = {
   user: User
-}
-
-export type FollowUserResponse = {
-  follow_count: number
 }
 
 export type PasskeyRegistrationOptionsResponse = {
