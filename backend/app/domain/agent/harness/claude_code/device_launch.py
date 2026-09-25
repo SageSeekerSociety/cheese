@@ -130,6 +130,27 @@ echo down
 """
 
 
+def project_skill_prune(shipped: list[str]) -> str:
+    """Shell that removes the project skills a machine got last time and no
+    longer ships, then records what ships now. Nothing at all for a project
+    that never had one."""
+    listed = '"$CLAUDE_CONFIG_DIR/skills/.cheese-project-skills"'
+    return (
+        f"keep={shlex.quote(' '.join(shipped))}\n"
+        f'if [ -n "$keep" ] || [ -f {listed} ]; then\n'
+        '  mkdir -p "$CLAUDE_CONFIG_DIR/skills"\n'
+        f"  touch {listed}\n"
+        "  while IFS= read -r stale; do\n"
+        '    case "$stale" in ""|*/*|.|..|documents|cheese|cheese-docs|chat-detail)'
+        " continue ;; esac\n"
+        '    case " $keep " in *" $stale "*) ;; '
+        '*) rm -rf "$CLAUDE_CONFIG_DIR/skills/$stale" ;; esac\n'
+        f"  done < {listed}\n"
+        f"  printf '%s\\n' {shlex.join(shipped)} > {listed}\n"
+        "fi"
+    )
+
+
 def launch_holes(
     *,
     state: str,
@@ -172,22 +193,7 @@ def launch_holes(
 export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
-    shipped = project_skill_names(project_id)
-    # A project skill deleted since the last launch leaves this machine too.
-    listed = '"$CLAUDE_CONFIG_DIR/skills/.cheese-project-skills"'
-    prune = (
-        f"keep={shlex.quote(' '.join(shipped))}\n"
-        f"if [ -f {listed} ]; then\n"
-        "  while IFS= read -r stale; do\n"
-        '    case "$stale" in ""|*/*|.|..|documents|cheese|cheese-docs|chat-detail)'
-        " continue ;; esac\n"
-        '    case " $keep " in *" $stale "*) ;; '
-        '*) rm -rf "$CLAUDE_CONFIG_DIR/skills/$stale" ;; esac\n'
-        f"  done < {listed}\n"
-        "fi\n"
-        'mkdir -p "$CLAUDE_CONFIG_DIR/skills"\n'
-        f"printf '%s\\n' {shlex.join(shipped)} > {listed}"
-    )
+    prune = project_skill_prune(project_skill_names(project_id))
     skill_setup = "\n".join(
         [prune]
         + [

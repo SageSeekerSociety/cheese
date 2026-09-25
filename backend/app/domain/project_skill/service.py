@@ -38,7 +38,7 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def mirror_root(project_id: uuid.UUID) -> Path:
+def mirror_root(project_id: uuid.UUID | str) -> Path:
     return Path(settings.workspace_root) / ".project-skills" / str(project_id)
 
 
@@ -297,7 +297,7 @@ def project_skill_files(project_id: uuid.UUID | str | None) -> dict[str, str]:
     """{"skills/<name>/<path>": text} for the project's confirmed skills."""
     if not project_id:
         return {}
-    root = mirror_root(uuid.UUID(str(project_id)))
+    root = mirror_root(project_id)
     if not root.is_dir():
         return {}
     files: dict[str, str] = {}
