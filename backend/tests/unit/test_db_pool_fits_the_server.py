@@ -37,7 +37,9 @@ def _owner_pool() -> int:
 
 def test_three_pools_fit_in_one_default_postgresql():
     settings = Settings()
-    per_backend = settings.db_pool_size + settings.db_max_overflow
+    # Plus the one connection outside the pool that holds the owner lock
+    # (`app.core.ownership`), for as long as the process lives.
+    per_backend = settings.db_pool_size + settings.db_max_overflow + 1
     demanded = (
         per_backend * BACKENDS_DURING_A_ROLLOUT + _owner_pool() + RESERVED_FOR_OPS
     )

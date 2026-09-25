@@ -120,8 +120,19 @@ watch(isMember, (member) => {
   min-height: 60px;
 }
 
+/* 这一列必须自己拿满高。`v-row` 是 `display:flex; flex-wrap:wrap`，列作为 flex 项
+   默认 `min-height:auto`，会被内容撑到内容高、绕过 `fill-height` 给行的高；于是
+   里面的 `h-100` 板子也是内容高，最内层 `.content-body` 永远拿不到有界高度，
+   滚不起来 —— 而外层 `.layout-container` 是 `overflow:hidden`，多出来的部分直接
+   没了（成员一多就露馅）。`height:100%` 是确定值，压得住内容。 */
+.layout-container .v-col {
+  height: 100%;
+  min-height: 0;
+}
+
 .content-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 

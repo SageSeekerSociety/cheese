@@ -19,6 +19,7 @@ import { workspaceRoutes } from './workspaceRoutes'
 import { recordEntry } from '@/lib/projectEntry'
 import { reloadForNewBuild } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
+import { SpaceBoardRoutes } from '@/views/spaces/board/routes'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -34,6 +35,8 @@ const routes: RouteRecordRaw[] = [
   QuestionRoutes,
   CourseJoinRoutes,
   SpacesRoutes,
+  // 空间新界面（并存的一棵，挂在 /spaces/:id/board 下）。见该文件顶部说明。
+  SpaceBoardRoutes,
   TeamsRoutes,
   // --- CheeseX (agent workspace) routes ---------------------------------
   // Our grafted views navigate internally by these route names; they must be

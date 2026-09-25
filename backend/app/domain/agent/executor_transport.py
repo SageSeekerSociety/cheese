@@ -85,12 +85,6 @@ class MachineOutOfReach(RuntimeError):
         super().__init__(MACHINE_OUT_OF_REACH)
 
 
-class NoHandsYet(RuntimeError):
-    """The platform cannot hand this session its machine now: it is still being
-    prepared, or it is not to be had (`RemoteClient.acquire`). The message is
-    the platform's, for the agent to read."""
-
-
 # Where a session started before its machine was rented sees the project: the
 # machine, and so the path it holds the project at, does not exist yet.
 DEFERRED_WORKSPACE = "/unavailable-project"
@@ -493,8 +487,9 @@ class RemoteClient:
 
         The platform waits a bounded while for a machine being prepared, and
         this asks again until ``deadline``; the machine still being prepared
-        then, or not to be had at all, raises `NoHandsYet`. Returns whether
-        the hands are another lease than the ones this client held."""
+        then, or not to be had at all, raises with the platform's reason.
+        Returns whether the hands are another lease than the ones this client
+        held."""
         while True:
             response = self.platform_request(
                 {
@@ -515,9 +510,9 @@ class RemoteClient:
             if not result.get("preparing") or time.monotonic() >= deadline:
                 break
         if result.get("preparing"):
-            raise NoHandsYet(f"{result['unavailable']}（等到操作时限仍未就绪）")
+            raise RuntimeError(f"{result['unavailable']}（等到操作时限仍未就绪）")
         if result.get("unavailable"):
-            raise NoHandsYet(result["unavailable"])
+            raise RuntimeError(result["unavailable"])
         target = result["target"]
         changed_lease = self.config.get("generation") != target.get("generation")
         self.config.update(target)

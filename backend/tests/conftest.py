@@ -1060,6 +1060,11 @@ def client(
                         c.portal.call(app_engine.dispose)
     finally:
         app.dependency_overrides.clear()
+        # Leaving the app hands its work over and holds the runner's turns, which
+        # is right for a process that exits next. This one goes on to run tests
+        # that drive the same runner without an app around it.
+        get_work_runner().start_turns()
+        get_work_runner().own_sessions(True)
         asyncio.run(setup_engine.dispose())
 
 

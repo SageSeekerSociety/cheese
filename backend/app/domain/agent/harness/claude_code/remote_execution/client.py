@@ -35,7 +35,6 @@ if __package__:
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         MachineOutOfReach,
-        NoHandsYet,
         PlatformHost,
         RemoteClient,
         read_file_on_the_machine,
@@ -50,7 +49,6 @@ else:
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         MachineOutOfReach,
-        NoHandsYet,
         PlatformHost,
         RemoteClient,
         read_file_on_the_machine,
@@ -532,22 +530,18 @@ def _carry_transcripts(config, before, after):
 def _take_leased_machine(target):
     """A session whose machine was leased before it started starts on it.
 
-    The platform names where the machine holds the project (`central_provider`),
-    so the session is relaunched there once its lease is ready, and here takes
-    the machine the way a placeholder session's first command does: through the
-    lease. It then starts as one started on that machine would, with the
-    project's instructions, hooks and MCP servers, and its commands go straight
-    there. A machine the platform cannot hand out right now leaves it as it
-    was: a session the lease reaches on its first command, as before its
-    machine existed, but seeing the project at the machine's path.
+    The platform names where the machine holds the project (`central_provider`)
+    only when the machine answered this turn, so the session is relaunched onto
+    it then, and here takes the machine the way a placeholder session's first
+    command does: through the lease. It starts as one started on that machine
+    would, with the project's instructions, hooks and MCP servers. A lease the
+    platform cannot hand out now fails the start, loudly: a session at the
+    machine's path without the machine is not one that machine would run.
     """
     client = RemoteClient(dict(target))
-    try:
-        # Taken as it is, with no wait for a machine still being prepared: the
-        # room's conversation does not wait for its machine.
-        client.acquire(deadline=time.monotonic())
-    except (MachineOutOfReach, NoHandsYet):
-        return target
+    # Taken as it is, with no wait for a machine being prepared: the platform
+    # asked the machine this turn, and the turn is not held for it.
+    client.acquire(deadline=time.monotonic())
     return client.config
 
 

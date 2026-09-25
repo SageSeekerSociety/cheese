@@ -201,6 +201,12 @@
       "slowest": "最慢那条 p95",
       "routesOf": "有样本 {shown} / 共 {total}",
       "routesNote": "每一条注册过的端点都占一行，没被访问过的也在（次数画破折号）。分位数是最近 256 个样本上的精确分位。",
+      "banner": "此刻最慢",
+      "bannerMeta": "p95 · 次数 {n}",
+      "filterPlaceholder": "筛路由…",
+      "filterEmpty": "没有匹配「{q}」的路由",
+      "foldMore": "展开其余 {n} 条 · p95 最高 {p95}",
+      "foldLess": "收起",
       "network": {
         "title": "网络吞吐",
         "uplink": "机器网卡",

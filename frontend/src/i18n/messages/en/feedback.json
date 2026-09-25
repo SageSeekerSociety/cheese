@@ -201,6 +201,12 @@
       "slowest": "Slowest p95",
       "routesOf": "{shown} sampled / {total} registered",
       "routesNote": "Every registered endpoint gets a row, never-hit ones included (their call count shows an em-dash). The percentiles are exact over the last 256 samples, not lifetime.",
+      "banner": "Slowest right now",
+      "bannerMeta": "p95 · {n} calls",
+      "filterPlaceholder": "Filter routes…",
+      "filterEmpty": "No routes match \"{q}\"",
+      "foldMore": "Show {n} more · highest p95 {p95}",
+      "foldLess": "Collapse",
       "network": {
         "title": "Network throughput",
         "uplink": "Host NIC",
