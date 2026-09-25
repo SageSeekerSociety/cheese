@@ -11,6 +11,7 @@ use tauri::ipc::{CapabilityBuilder, Channel};
 use tauri::webview::NewWindowResponse;
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
 // Built against okcheese.com; CHEESE_ORIGIN at build time points a build elsewhere.
@@ -60,9 +61,26 @@ fn cancel_connect(running: State<'_, connect::Running>) {
     connect::cancel(&running);
 }
 
+// Replaces this app with the newest release (.github/workflows/desktop.yml
+// publishes it with latest.json beside it) and starts that. The page is the
+// server's own and always current; this is for the app around it. A
+// connection in progress finishes first: a restart would cut it off halfway.
+async fn update(app: tauri::AppHandle) -> tauri_plugin_updater::Result<()> {
+    let Some(update) = app.updater()?.check().await? else {
+        return Ok(());
+    };
+    let bytes = update.download(|_, _| {}, || {}).await?;
+    while app.state::<connect::Running>().0.lock().unwrap().is_some() {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    update.install(bytes)?;
+    app.restart();
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(connect::Running::default())
         .invoke_handler(tauri::generate_handler![connect_this_machine, cancel_connect, this_device])
         .setup(|app| {
@@ -77,6 +95,12 @@ fn main() {
                     .permission("allow-cancel-connect")
                     .permission("allow-this-device"),
             )?;
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = update(handle).await {
+                    eprintln!("cheese: update check failed: {e}");
+                }
+            });
             let opener = app.handle().clone();
             let opener2 = app.handle().clone();
             // Anything that is not the server — docs, GitHub, a shared link — opens

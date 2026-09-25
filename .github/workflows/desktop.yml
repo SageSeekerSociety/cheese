@@ -32,9 +32,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14, target: aarch64-apple-darwin, tmux: arm64, asset: Cheese-arm64.dmg }
-          - { os: macos-14, target: x86_64-apple-darwin, tmux: x86_64, asset: Cheese-x64.dmg }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: Cheese-Setup-x64.exe }
+          # `update` is what the app's updater downloads (Windows reruns the installer).
+          - { os: macos-14, target: aarch64-apple-darwin, tmux: arm64, asset: Cheese-arm64.dmg, update: Cheese-arm64.app.tar.gz }
+          - { os: macos-14, target: x86_64-apple-darwin, tmux: x86_64, asset: Cheese-x64.dmg, update: Cheese-x64.app.tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: Cheese-Setup-x64.exe, update: Cheese-Setup-x64.exe }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
@@ -56,20 +57,40 @@ jobs:
         working-directory: desktop/src-tauri
         run: cargo test --target ${{ matrix.target }}
 
-      - run: pnpm tauri build --target ${{ matrix.target }}
+      # Every build is a newer version than the last, which is how an installed
+      # app knows to update. The update artifacts are signed with the key the
+      # app's pubkey (tauri.conf.json) trusts; a build without the key (a fork's
+      # PR) still builds, just without them.
+      - name: Build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          signed=false; [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && signed=true
+          pnpm tauri build --target ${{ matrix.target }} \
+            --config "{\"version\":\"0.1.${{ github.run_number }}\",\"bundle\":{\"createUpdaterArtifacts\":$signed}}"
 
       - name: Name the installer
         run: |
           bundle=src-tauri/target/${{ matrix.target }}/release/bundle
           mkdir -p out
-          if [ "$RUNNER_OS" = macOS ]; then cp "$bundle"/dmg/*.dmg out/${{ matrix.asset }}
-          else cp "$bundle"/nsis/*-setup.exe out/${{ matrix.asset }}; fi
+          if [ "$RUNNER_OS" = macOS ]; then
+            cp "$bundle"/dmg/*.dmg out/${{ matrix.asset }}
+            update="$bundle"/macos/Cheese.app.tar.gz
+          else
+            cp "$bundle"/nsis/*-setup.exe out/${{ matrix.asset }}
+            update=$(ls "$bundle"/nsis/*-setup.exe)
+          fi
+          if [ -f "$update.sig" ]; then
+            [ "${{ matrix.update }}" = "${{ matrix.asset }}" ] || cp "$update" out/${{ matrix.update }}
+            cp "$update.sig" out/${{ matrix.update }}.sig
+          fi
           ls -la out
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.asset }}
-          path: desktop/out/${{ matrix.asset }}
+          path: desktop/out/
           if-no-files-found: error
 
   publish:
@@ -95,3 +116,15 @@ jobs:
             gh release create desktop-latest --prerelease --target "$GITHUB_SHA" \
               --title "Cheese desktop" --notes "Built from main by .github/workflows/desktop.yml."
           gh release upload desktop-latest out/* --clobber
+          # latest.json last: an app never sees a version whose files are not up yet.
+          base="https://github.com/$GH_REPO/releases/download/desktop-latest"
+          jq -n --arg v "0.1.${{ github.run_number }}" --arg base "$base" \
+            --rawfile win out/Cheese-Setup-x64.exe.sig \
+            --rawfile arm out/Cheese-arm64.app.tar.gz.sig \
+            --rawfile x64 out/Cheese-x64.app.tar.gz.sig \
+            '{version: $v, pub_date: (now | todate), platforms: {
+               "windows-x86_64": {signature: $win, url: "\($base)/Cheese-Setup-x64.exe"},
+               "darwin-aarch64": {signature: $arm, url: "\($base)/Cheese-arm64.app.tar.gz"},
+               "darwin-x86_64": {signature: $x64, url: "\($base)/Cheese-x64.app.tar.gz"}}}' \
+            > latest.json
+          gh release upload desktop-latest latest.json --clobber
