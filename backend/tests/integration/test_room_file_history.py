@@ -269,3 +269,23 @@ def test_a_library_original_is_copied_into_the_room_before_editing(client):
         client.get(f"/topics/{room}/files/raw", params={"path": library_path}).content
         == b"the user's template"
     )
+
+
+def test_closing_the_editor_after_saving_does_not_leave_a_duplicate(
+    client, monkeypatch
+):
+    """「保存」之后芝士又改了，人再关掉编辑器：关闭时编辑器会把同样的内容再交一次。
+    那不是一次冲突的保存，不该多出一份「某某的修改」。"""
+    project, room = _room(client)
+    _show(client, project, room, b"v1")
+    config = _open(client, room)["config"]
+    _fake_editor_result(monkeypatch, b"person's saved edit")
+    assert _callback(client, _link_of(config), SAVED).json() == {"error": 0}
+    _show(client, project, room, b"cheese changed it afterwards")
+
+    closed = {**SAVED, "status": 2}
+    assert _callback(client, _link_of(config), closed).json() == {"error": 0}
+
+    assert _current(client, room) == b"cheese changed it afterwards"
+    shown = client.get(f"/topics/{room}/shown").json()["data"]["data"]
+    assert [row["path"] for row in shown] == ["output/报告.docx"]

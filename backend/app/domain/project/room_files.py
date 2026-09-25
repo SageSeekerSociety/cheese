@@ -19,6 +19,7 @@
 """
 
 import asyncio
+import hashlib
 import uuid
 from pathlib import PurePosixPath
 
@@ -217,6 +218,34 @@ async def _record(
     session.add(row)
     await session.flush()
     return row
+
+
+async def saved_by_session(
+    session: AsyncSession,
+    room_id: uuid.UUID,
+    path: str,
+    editor_key: str,
+    data: bytes,
+) -> bool:
+    """Whether this editor session already saved exactly these bytes.
+
+    The editor posts its content again when the last person closes it, even
+    when every change was already saved with 「保存」. If the file has moved on
+    since (芝士 saved after that), that repeat looks like a conflicting save —
+    it is not; it is a copy of something already kept.
+    """
+    digest = hashlib.sha256(data).hexdigest()
+    found = await session.execute(
+        select(RoomFileRevision.id)
+        .where(
+            RoomFileRevision.room_id == room_id,
+            RoomFileRevision.path == path,
+            RoomFileRevision.editor_key == editor_key,
+            RoomFileRevision.sha256 == digest,
+        )
+        .limit(1)
+    )
+    return found.first() is not None
 
 
 async def list_revisions(
