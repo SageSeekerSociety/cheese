@@ -310,7 +310,7 @@
     <v-dialog v-model="submissionsDialog" fullscreen scrollable>
       <v-card>
         <v-toolbar color="primary" dark class="elevation-0">
-          <v-btn icon @click="submissionsDialog = false">
+          <v-btn icon variant="text" @click="submissionsDialog = false">
             <v-icon>mdi-close</v-icon>
           </v-btn>
           <v-toolbar-title

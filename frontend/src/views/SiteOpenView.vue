@@ -63,7 +63,7 @@ watch(
     </template>
     <template v-else-if="error">
       <v-alert type="error" class="mb-4">{{ error }}</v-alert>
-      <v-btn variant="tonal" :loading="loading" @click="openSite">重试</v-btn>
+      <v-btn color="primary" variant="tonal" :loading="loading" @click="openSite">重试</v-btn>
     </template>
     <v-progress-circular v-else indeterminate aria-label="正在打开网站" />
   </v-container>

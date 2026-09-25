@@ -33,10 +33,10 @@
         }}</v-btn>
       </div>
       <div v-if="applicationOffset || applications.length === 50" class="d-flex justify-end">
-        <v-btn :disabled="!applicationOffset" @click="changeApplicationsPage(-50)">{{
+        <v-btn variant="text" :disabled="!applicationOffset" @click="changeApplicationsPage(-50)">{{
           t('spaces.review.previous')
         }}</v-btn>
-        <v-btn :disabled="applications.length < 50" @click="changeApplicationsPage(50)">{{
+        <v-btn variant="text" :disabled="applications.length < 50" @click="changeApplicationsPage(50)">{{
           t('spaces.review.next')
         }}</v-btn>
       </div>
@@ -176,7 +176,9 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn :disabled="creating" @click="createDialog = false">{{ t('spaces.create.cancel') }}</v-btn>
+          <v-btn variant="text" :disabled="creating" @click="createDialog = false">{{
+            t('spaces.create.cancel')
+          }}</v-btn>
           <v-btn
             type="submit"
             color="primary"

@@ -86,12 +86,7 @@ beforeEach(() => {
 function openTheLinkFromTheCommit(url: string) {
   const parsed = new URL(url)
   query = Object.fromEntries(parsed.searchParams.entries())
-  // 这份用例不装 Vuetify：房间那一层给按钮换默认色的 provider 在这里只是个透传的
-  // 外壳。
-  return render(View, {
-    props: { projectId: 'p1', topicId: 't1' },
-    global: { stubs: { VDefaultsProvider: { template: '<div><slot /></div>' } } },
-  })
+  return render(View, { props: { projectId: 'p1', topicId: 't1' } })
 }
 
 describe('Cheese-Task 那条地址', () => {

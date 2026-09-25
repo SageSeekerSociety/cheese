@@ -75,7 +75,7 @@ async function approve() {
       <v-alert v-else-if="!loggedIn" type="info" density="comfortable" class="mb-4">
         请先登录，再批准这台设备归你所有
         <template #append>
-          <v-btn size="small" variant="tonal" :to="loginLink">去登录</v-btn>
+          <v-btn size="small" color="primary" variant="tonal" :to="loginLink">去登录</v-btn>
         </template>
       </v-alert>
 

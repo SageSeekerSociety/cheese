@@ -109,7 +109,7 @@
                   <v-card-actions>
                     <v-spacer></v-spacer>
 
-                    <v-btn text="关闭" @click="isActive.value = false"></v-btn>
+                    <v-btn text="关闭" variant="text" @click="isActive.value = false"></v-btn>
                   </v-card-actions>
                 </v-card>
               </template>
@@ -149,7 +149,7 @@
                   <v-card-actions>
                     <v-spacer></v-spacer>
 
-                    <v-btn text="取消" @click="isActive.value = false"></v-btn>
+                    <v-btn text="取消" variant="text" @click="isActive.value = false"></v-btn>
                     <v-btn variant="flat" color="primary" :loading="bountyLoading" @click="addBounty">{{
                       t('questions.detail.buttons.addBounty')
                     }}</v-btn>
