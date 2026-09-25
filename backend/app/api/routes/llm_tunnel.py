@@ -80,23 +80,25 @@ class _Activity:
 
 
 async def _pump_ws_to_tcp(
-    ws: WebSocket, writer: asyncio.StreamWriter, activity: _Activity
+    ws: WebSocket, writer: asyncio.StreamWriter, activity: _Activity | None = None
 ) -> None:
     while True:
         data = await ws.receive_bytes()
-        activity.touch()
+        if activity is not None:
+            activity.touch()
         writer.write(data)
         await writer.drain()
 
 
 async def _pump_tcp_to_ws(
-    reader: asyncio.StreamReader, ws: WebSocket, activity: _Activity
+    reader: asyncio.StreamReader, ws: WebSocket, activity: _Activity | None = None
 ) -> None:
     while True:
         data = await reader.read(_CHUNK)
         if not data:
             return  # listener closed; ending this side ends the pair
-        activity.touch()
+        if activity is not None:
+            activity.touch()
         await ws.send_bytes(data)
 
 
