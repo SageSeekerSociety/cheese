@@ -355,6 +355,7 @@ async function loadOlder() {
     messages.value = next.blocks
     hasMore.value = next.hasMore
     setCachedWindow(topic.id, next)
+    for (const b of payload.data) older.add(b.id)
     await nextTick()
     const sc = scrollRef.value
     if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
@@ -423,6 +424,10 @@ let historyGeneration = 0
 // 再淡入一次就是一闪。
 const arrived = reactive(new Set<string>())
 
+// 往上翻时拼到顶部的那一页：只淡入，不位移——这一刻滚动位置正被补偿到原处，再
+// 往上浮 4px，读的人会看见整页抖一下。
+const older = reactive(new Set<string>())
+
 function pushBlock(b: Block) {
   historyChanges?.set(b.id, b)
   if (!messages.value.some((m) => m.id === b.id)) {
@@ -454,6 +459,7 @@ function jumpToUnseen() {
 // keyframes 名字加了后缀，所以比前缀。
 function settleArrival(e: AnimationEvent, id: string) {
   if (e.animationName.startsWith('tl-arrive')) arrived.delete(id)
+  if (e.animationName.startsWith('tl-older')) older.delete(id)
 }
 
 // 一行离开时先收拢自己的高度再走，下面的东西平滑地补上来，而不是等它淡完一下子
@@ -639,6 +645,7 @@ async function loadTopic(topic: Topic, entering = false) {
   reactionPickerFor.value = null
   unreadAnchorId.value = null
   arrived.clear()
+  older.clear()
   unseen.value = []
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
@@ -1379,7 +1386,7 @@ onBeforeUnmount(() => {
             />
             <RoomNotice
               v-if="notice"
-              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :class="{ 'tl-arrive': arrived.has(m.id), 'tl-older': older.has(m.id) }"
               @animationend="settleArrival($event, m.id)"
               :block="m"
               :notice="notice"
@@ -1396,7 +1403,7 @@ onBeforeUnmount(() => {
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
-              :class="{ 'tl-arrive': arrived.has(m.id), 'tl-flash': flashId === m.id }"
+              :class="{ 'tl-arrive': arrived.has(m.id), 'tl-older': older.has(m.id), 'tl-flash': flashId === m.id }"
               @animationend="settleArrival($event, m.id)"
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
@@ -1854,6 +1861,15 @@ onBeforeUnmount(() => {
   from {
     opacity: 0;
     transform: translateY(4px);
+  }
+}
+/* 翻上去时拼进来的更早的一页：只淡入（见 `older`）。 */
+.tl-older {
+  animation: tl-older var(--dur-base) var(--ease-out);
+}
+@keyframes tl-older {
+  from {
+    opacity: 0;
   }
 }
 /* 跳到的那一条：底色从琥珀的浅底褪回去。它和新消息线、未读是同一族——「你要找的
