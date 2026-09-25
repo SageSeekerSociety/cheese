@@ -10,7 +10,8 @@
     "members": "Members",
     "docs": "Project docs",
     "settings": "Project settings",
-    "general": "General"
+    "general": "General",
+    "routines": "Routines"
   },
   "spaces": "Spaces",
   "teams": "Teams",
