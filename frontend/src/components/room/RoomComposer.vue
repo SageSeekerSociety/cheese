@@ -705,11 +705,11 @@ defineExpose({
   background: #8a94a3;
   flex: none;
 }
-/* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：--ink 的圆角方块。它原来
+/* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：反色的圆角方块。它原来
    是一颗琥珀圆——琥珀留给主操作，不给头像。 */
 .mention-avatar--agent {
-  color: var(--surface);
-  background: var(--ink);
+  color: var(--inverse-ink);
+  background: var(--inverse-surface);
   border-radius: var(--radius-sm);
 }
 .mention-avatar--broadcast {

@@ -20,6 +20,8 @@ import { ApiError, listBlocks } from '../api'
 
 import ChatPanel from './ChatPanel.vue'
 
+import { t } from '@/i18n'
+
 async function flushPromises() {
   await vi.advanceTimersByTimeAsync(0)
 }
@@ -325,12 +327,39 @@ it('a rejected message stops waiting and only resends when the user retries', as
   })
   await flushPromises()
   expect(view.container.textContent).toContain('房间已关闭')
-  expect(view.getByText('重试')).toBeTruthy()
+  expect(view.getByText(t('work.room.retry.action'))).toBeTruthy()
   sockets[0].onclose?.()
   await vi.advanceTimersByTimeAsync(1000)
   sockets[1].onopen?.()
   expect(sockets[1].send).not.toHaveBeenCalled()
-  await fireEvent.click(view.getByText('重试'))
+  await fireEvent.click(view.getByText(t('work.room.retry.action')))
   const retry = JSON.parse(String(sockets[1].send.mock.calls[0][0]))
   expect(retry.client_id).toBe(sent.client_id)
+})
+
+it('editing a message that failed to send puts its text back in the box and takes it off the timeline', async () => {
+  const view = mountPanel(true)
+  await flushPromises()
+  sockets[0].onopen?.()
+  await flushPromises()
+  const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
+  textarea.focus()
+  await fireEvent.update(textarea, 'the words I typed')
+  await fireEvent.keyDown(textarea, { key: 'Enter' })
+  const sent = JSON.parse(String(sockets[0].send.mock.calls[0][0]))
+  sockets[0].onmessage?.({
+    data: JSON.stringify({ type: 'error', code: 'ForbiddenError', client_id: sent.client_id, message: '房间已关闭' }),
+  })
+  await flushPromises()
+  expect(textarea.value).toBe('')
+
+  await fireEvent.click(view.getByText(t('work.room.outbox.edit')))
+  await flushPromises()
+  expect(textarea.value).toBe('the words I typed')
+  expect(view.container.querySelector('.im-row--pending')).toBeNull()
+  // 拿回来编辑的那条不会在重连之后自己又发出去。
+  sockets[0].onclose?.()
+  await vi.advanceTimersByTimeAsync(1000)
+  sockets[1].onopen?.()
+  expect(sockets[1].send).not.toHaveBeenCalled()
 })

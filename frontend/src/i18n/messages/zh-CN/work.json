@@ -176,7 +176,23 @@
       "action": "重试",
       "nothingPending": "没有需要重试的消息",
       "failed": "重试失败"
-    }
+    },
+    "notice": {
+      "platform": "平台",
+      "changedFiles": "改动的文件",
+      "moreFiles": "另 {n} 个文件"
+    },
+    "message": {
+      "copy": "复制",
+      "copied": "已复制"
+    },
+    "outbox": {
+      "failed": "发送失败：{reason}",
+      "undelivered": "未送达",
+      "edit": "编辑",
+      "editHint": "放回输入框"
+    },
+    "newMessages": "条新消息"
   },
   "members": {
     "leave": "退出项目",

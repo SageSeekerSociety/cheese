@@ -9,6 +9,8 @@
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block } from '../../cx_types'
 
+import { computed, ref, watch } from 'vue'
+
 import { artifactKind, artifactName, askAnswered, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
 import { renderMarkdown as renderMarkdownWith, renderPlain as renderPlainWith } from '../../lib/renderMessage'
@@ -17,8 +19,9 @@ import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 
-/** MVP 表情选择器里那八个：常用的就够了，多了是一面墙。 */
-const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
+import RollingNumber from './RollingNumber.vue'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   block: Block
@@ -27,6 +30,8 @@ const props = defineProps<{
   parentName: string | null
   /** 同一个人连着说的第一条——只有它带头像和名字。 */
   runStart: boolean
+  /** 同一个人隔了一阵又开口：重新带上名字和时间，但只空一小档。 */
+  regroup?: boolean
   /** 这条是我自己说的（名字加重）。 */
   mine: boolean
   topicId: string | null
@@ -41,7 +46,8 @@ const props = defineProps<{
   refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
   /** 自己的 handle，用来标出哪些表情是自己点的。 */
   viewer: string
-  pickerOpen: boolean
+  /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
+  active?: boolean
   askBusy: boolean
   /**
    * 这条没叫芝士、而它是最后一条——传队友的名字表示要显示那行补救提示，null 表示不用。
@@ -51,6 +57,7 @@ const props = defineProps<{
   /**
    * 这一条还没落库——已经在屏幕上，正在（或没能）送出去。淡一档，形状不变：
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
+   * 没送出去的那条带「重试」和「编辑」：编辑把原文放回输入框。
    */
   outgoing?: { error?: string; failed: boolean } | null
 }>()
@@ -58,10 +65,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open-file', path: string, taskId: string | null): void
   (e: 'open-topic', id: string): void
-  (e: 'upgrade', blockId: string): void
-  (e: 'reply', block: Block): void
   (e: 'react', block: Block, emoji: string): void
-  (e: 'toggle-picker', blockId: string): void
   (e: 'answer', block: Block, option: string): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
@@ -69,7 +73,7 @@ const emit = defineEmits<{
   (e: 'summon'): void
   (e: 'avatar-error', handle: string): void
   (e: 'retry'): void
-  (e: 'drop'): void
+  (e: 'edit'): void
 }>()
 
 function renderMarkdown(text: string): string {
@@ -79,13 +83,63 @@ function renderMarkdown(text: string): string {
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
 }
+
+// 芝士的回复里每个代码块右上角一颗「复制」。按钮是渲染之后加上去的，文字取自
+// 这一处自己的文案，不来自消息内容，所以不必再过一遍净化。
+const agentHtml = computed(() =>
+  renderMarkdown(props.block.content)
+    .replaceAll(
+      '<pre>',
+      `<div class="md-pre"><button type="button" class="md-copy">${t('work.room.message.copy')}</button><pre>`
+    )
+    .replaceAll('</pre>', '</pre></div>')
+)
+
+const COPIED_MS = 1500
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// 选项作答：点下去的那一项先变实、其余淡下去，等答案落库再换成「谁选了什么」。
+// 请求没成（askBusy 落回去了、也没有答案）就松手，几个选项回到原样。
+const picked = ref<string | null>(null)
+function pick(option: string) {
+  picked.value = option
+  emit('answer', props.block, option)
+}
+watch(
+  () => props.askBusy,
+  (busy) => {
+    if (!busy && !askAnswered(props.block)) picked.value = null
+  }
+)
+
+async function onAgentTextClick(e: MouseEvent) {
+  const btn = (e.target as HTMLElement | null)?.closest('.md-copy') as HTMLButtonElement | null
+  const code = btn?.parentElement?.querySelector('pre')
+  if (!btn || !code || !(await copyText(code.textContent ?? ''))) return
+  btn.textContent = t('work.room.message.copied')
+  setTimeout(() => (btn.textContent = t('work.room.message.copy')), COPIED_MS)
+}
 </script>
 
 <template>
   <div
     class="im-row"
-    :class="{ 'im-row--cont': !runStart, 'im-row--self': mine, 'im-row--pending': !!outgoing }"
+    :class="{
+      'im-row--cont': !runStart,
+      'im-row--regroup': runStart && regroup,
+      'im-row--self': mine,
+      'im-row--pending': !!outgoing,
+      'im-row--active': active,
+    }"
     :data-mid="block.id"
+    :data-actions="outgoing ? undefined : ''"
   >
     <!-- avatar gutter: only on the first of a run -->
     <div class="im-gutter">
@@ -105,7 +159,12 @@ function renderPlain(text: string): string {
           {{ avatarInitial(authorName) }}
         </div>
       </template>
+      <!-- 续话没有名字那一行，时间在悬停时出现在头像列里，和正文第一行对齐。 -->
+      <span v-else-if="!outgoing" class="im-gutter-time">{{ time }}</span>
     </div>
+    <!-- 还没送出去的续话同样没有名字那一行，送达状态（发送中 / 等待连接）就挂在
+       行尾，一直在，不等悬停：断网时人要知道这几句为什么是淡的。 -->
+    <span v-if="outgoing && !runStart && time" class="im-pending-state">{{ time }}</span>
 
     <div class="im-main">
       <div v-if="runStart" class="im-meta">
@@ -154,35 +213,42 @@ function renderPlain(text: string): string {
         </span>
         <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
       </button>
-      <div v-else-if="isAgent" class="im-text md-content" v-html="renderMarkdown(block.content)" />
+      <div v-else-if="isAgent" class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />
       <!-- 现场尊重原文: human text renders verbatim — newlines and
          spacing preserved (pre-wrap), no markdown reflow. -->
       <div v-else class="im-text im-text--verbatim" v-html="renderPlain(block.content)" />
-      <p v-if="outgoing?.error" class="outbox-error" role="alert">{{ outgoing.error }}</p>
-      <div v-if="outgoing?.failed" class="outbox-actions">
-        <button type="button" class="outbox-act" @click="emit('retry')">重试</button>
-        <button type="button" class="outbox-act" @click="emit('drop')">删除</button>
+      <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
+        <span class="outbox-fail__text">{{
+          outgoing.error ? t('work.room.outbox.failed', { reason: outgoing.error }) : t('work.room.outbox.undelivered')
+        }}</span>
+        <button type="button" class="outbox-btn" @click="emit('retry')">{{ t('work.room.retry.action') }}</button>
+        <button type="button" class="outbox-btn" :title="t('work.room.outbox.editHint')" @click="emit('edit')">
+          {{ t('work.room.outbox.edit') }}
+        </button>
       </div>
       <!-- 选项问题 (cheese_ask): one-click answer buttons; answered
          state shows the pick + who made it (everyone sees it). -->
-      <div v-if="askOptions(block)" class="ask-row">
-        <template v-if="!askAnswered(block)">
+      <Transition name="ask-swap" mode="out-in">
+        <div v-if="askOptions(block) && !askAnswered(block)" key="options" class="ask-row">
           <button
             v-for="opt in askOptions(block)!"
             :key="opt"
             type="button"
             class="ask-option"
-            :disabled="askBusy"
-            @click="emit('answer', block, opt)"
+            :class="{ 'ask-option--picked': picked === opt, 'ask-option--dim': picked !== null && picked !== opt }"
+            :disabled="askBusy || picked !== null"
+            @click="pick(opt)"
           >
             {{ opt }}
           </button>
-        </template>
-        <div v-else class="ask-answered">
-          <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
-          {{ askAnswered(block)!.by }} 选了「{{ askAnswered(block)!.option }}」
         </div>
-      </div>
+        <div v-else-if="askOptions(block)" key="answered" class="ask-row">
+          <div class="ask-answered">
+            <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
+            {{ askAnswered(block)!.by }} 选了「{{ askAnswered(block)!.option }}」
+          </div>
+        </div>
+      </Transition>
       <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
          升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
          一张表，同时只会有一个非空。 -->
@@ -205,7 +271,7 @@ function renderPlain(text: string): string {
       </div>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
-      <div v-if="block.reactions?.length" class="rx-row">
+      <TransitionGroup v-if="block.reactions?.length" tag="div" name="rx" class="rx-row">
         <button
           v-for="r in block.reactions"
           :key="r.emoji"
@@ -216,36 +282,9 @@ function renderPlain(text: string): string {
           @click="emit('react', block, r.emoji)"
         >
           <span class="rx-emoji">{{ r.emoji }}</span>
-          <span class="rx-count">{{ r.count }}</span>
+          <RollingNumber class="rx-count" :value="r.count" />
         </button>
-      </div>
-    </div>
-
-    <!-- hover action bar, top-right of the row (Feishu). Only actions
-       we actually implement are shown (no dead buttons). 还没落库的那条没有:
-       回复和升级都要一个库里的 id，而表情要一条别人也看得见的消息。 -->
-    <div v-if="!outgoing" class="im-actions" :class="{ 'im-actions--open': pickerOpen }">
-      <button
-        type="button"
-        class="im-act rx-toggle"
-        :class="{ 'im-act--on': pickerOpen }"
-        title="添加表情"
-        @click="emit('toggle-picker', block.id)"
-      >
-        <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
-      </button>
-      <button type="button" class="im-act" title="回复" @click="emit('reply', block)">
-        <v-icon size="15">mdi-reply-outline</v-icon>
-      </button>
-      <button type="button" class="im-act" title="转为话题" @click="emit('upgrade', block.id)">
-        <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
-      </button>
-      <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
-      <div v-if="pickerOpen" class="rx-picker">
-        <button v-for="e in QUICK_EMOJIS" :key="e" type="button" class="rx-pick" @click="emit('react', block, e)">
-          {{ e }}
-        </button>
-      </div>
+      </TransitionGroup>
     </div>
   </div>
 </template>
@@ -299,33 +338,51 @@ function renderPlain(text: string): string {
 .im-replied:hover {
   color: var(--ink);
 }
+.im-pending-state {
+  position: absolute;
+  top: 4px;
+  right: 16px;
+  font-size: 12px;
+  line-height: var(--lh-14-loose);
+  color: var(--faint);
+}
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
 .im-row--pending .im-name {
   opacity: 0.62;
 }
-.outbox-error {
-  margin: 6px 0;
+/* 没送出去：一句为什么，后面两颗和事件行同一种中性小按钮。 */
+.outbox-fail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 6px;
   font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--danger-ink);
+}
+.outbox-fail__text {
   overflow-wrap: anywhere;
 }
-.outbox-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 2px;
-}
-.outbox-act {
-  border: none;
-  background: none;
-  padding: 0;
-  font-size: 12px;
-  color: var(--accent-ink);
+.outbox-btn {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
   cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
 }
-.outbox-act:hover {
-  text-decoration: underline;
+.outbox-btn:hover {
+  background: var(--fill);
+  border-color: var(--faint);
 }
 /* 现场尊重原文: exactly what the human typed, line breaks included. */
 .im-text--verbatim {
@@ -345,8 +402,8 @@ function renderPlain(text: string): string {
   text-align: left;
   cursor: pointer;
   transition:
-    background-color 0.12s ease,
-    border-color 0.12s ease;
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
 }
 .im-artifact:hover {
   background: var(--fill);
@@ -426,84 +483,8 @@ function renderPlain(text: string): string {
   font-size: 0.92em;
 }
 
-/* per-row hover action bar (Feishu), floats at the row's top-right */
-.im-actions {
-  position: absolute;
-  top: -12px;
-  right: 12px;
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  box-shadow: var(--shadow-1);
-  opacity: 0;
-  transition: opacity var(--dur-quick) var(--ease-standard);
-  pointer-events: none;
-}
-/* One quiet square button per action: muted ink, fill on hover — the harsh
-   default round icon-buttons inside a rounded pill read as unfinished. */
-.im-act {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 0.1s ease,
-    color 0.1s ease;
-}
-.im-act:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-.im-act--on {
-  background: rgba(var(--v-theme-primary), 0.12);
-  color: rgb(var(--v-theme-primary));
-}
-.im-row:hover .im-actions,
-.im-actions--open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* ---- Emoji reactions (Slack) ---- */
-/* MVP picker: a strip of the 8 common emoji, floating under the action bar. */
-.rx-picker {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  display: flex;
-  gap: 2px;
-  padding: 4px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  box-shadow: var(--shadow-2);
-  z-index: 5;
-}
-.rx-pick {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: none;
-  border-radius: 6px;
-  /* 这个 16px 量的是一枚 emoji 字形，不是正文，所以不走字号阶梯；`line-height: 1`
-     同理——它是把字形在 28px 方格里居中的手段，不是一段话的行距。 */
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-.rx-pick:hover {
-  background: var(--fill);
-}
-/* 选项问题 buttons (cheese_ask): quiet outlined pills, amber on hover. */
+/* 选项问题 buttons (cheese_ask): quiet outlined buttons. 悬停只加深一档，不上琥珀：
+   一排选项里没有哪一个是「主操作」。 */
 .ask-row {
   display: flex;
   flex-wrap: wrap;
@@ -518,16 +499,36 @@ function renderPlain(text: string): string {
   font-size: 13px;
   cursor: pointer;
   transition:
-    border-color 0.12s,
-    background 0.12s;
+    border-color var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard),
+    opacity var(--dur-base) var(--ease-standard);
 }
-.ask-option:hover {
-  border-color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.06);
+.ask-option:hover:not(:disabled) {
+  border-color: var(--faint);
+  background: var(--fill);
 }
 .ask-option:disabled {
-  opacity: 0.5;
   cursor: default;
+}
+.ask-option--picked {
+  border-color: var(--muted);
+  background: var(--line-2);
+  color: var(--ink);
+}
+.ask-option--dim {
+  opacity: 0.45;
+}
+/* 选项换成「谁选了什么」：先淡出，再淡入。 */
+.ask-swap-enter-active {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.ask-swap-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.ask-swap-enter-from,
+.ask-swap-leave-to {
+  opacity: 0;
 }
 .ask-answered {
   display: inline-flex;
@@ -540,6 +541,7 @@ function renderPlain(text: string): string {
 /* Reaction chips under a message: emoji + count; own reactions get a darker
    outline and ground (Slack's "you reacted" affordance), not amber. */
 .rx-row {
+  position: relative; /* 缩掉的那颗在这一行里原地离开，不把别的撑开 */
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -563,6 +565,26 @@ function renderPlain(text: string): string {
 .rx-chip:hover {
   border-color: var(--faint);
 }
+/* 表情：新的一颗从小弹到位，归零的那颗缩掉，旁边的滑过来补位。 */
+.rx-enter-active {
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.rx-leave-active {
+  position: absolute;
+  transition:
+    transform var(--dur-quick) var(--ease-in),
+    opacity var(--dur-quick) var(--ease-in);
+}
+.rx-enter-from,
+.rx-leave-to {
+  opacity: 0;
+  transform: scale(0.6);
+}
+.rx-move {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
 .rx-chip--mine {
   border-color: var(--muted);
   background: var(--line-2);
@@ -578,13 +600,12 @@ function renderPlain(text: string): string {
 }
 
 /* Rendered markdown for 芝士's replies (v-html → :deep). */
-/* 渲染出来的 markdown 走 style.css 里 .md-content 那份的行距约定（全局是 1.7），
-   不走 chrome 的 --lh-* 阶梯：这里是连续正文，而阶梯的比例（1.43）是给界面文字
-   定的，用在成段的正文上偏挤。字号折到 14px 是为了让下面那几个 em 的子元素
-   （h1/h2/h3、code）有一个干净的基数。 */
+/* 行距和人说的话是同一档（room-row.css 的 .im-text）：同一列里两种行距，扫下来
+   就是一段松一段紧。字号折到 14px 是为了让下面那几个 em 的子元素（h1/h2/h3、
+   code）有一个干净的基数。 */
 .md-content {
   font-size: 14px;
-  line-height: 1.6;
+  line-height: var(--lh-14-loose);
 }
 .md-content :deep(p) {
   margin: 0 0 8px;
@@ -621,7 +642,7 @@ function renderPlain(text: string): string {
 .md-content :deep(img) {
   max-width: 100%;
   height: auto;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 .md-content :deep(table) {
   display: block;
@@ -629,25 +650,61 @@ function renderPlain(text: string): string {
   max-width: 100%;
   overflow-x: auto;
 }
-/* 气泡里那一层往回走到「面」那一级配一条更浅的线：一层比一层亮，和两侧的气泡
-   底色（--fill / --fill-2）都分得开。留在 --fill 的话它和左侧气泡同色，糊成一块。 */
+/* 行内代码压一层 --fill 再描一道浅线：行本身就是 --surface，只描线的话它在
+   悬停刷成 --fill 的那一行上会消失。 */
 .md-content :deep(code) {
   font-family: var(--font-mono);
-  background: var(--surface);
+  background: var(--fill);
   border: 1px solid var(--line);
   padding: 0.5px 5px;
   border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
+/* 代码块和它右上角的「复制」。按钮悬停时才出现；没有悬停的设备上一直在。 */
+.md-content :deep(.md-pre) {
+  position: relative;
+}
+.md-content :deep(.md-copy) {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+.md-content :deep(.md-pre:hover .md-copy),
+.md-content :deep(.md-copy:focus-visible) {
+  opacity: 1;
+}
+.md-content :deep(.md-copy:hover) {
+  color: var(--ink);
+}
+@media (hover: none) {
+  .md-content :deep(.md-copy) {
+    opacity: 1;
+  }
+}
 .md-content :deep(pre) {
   background: var(--surface);
   border: 1px solid var(--line);
-  padding: 11px 13px;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
   overflow-x: auto;
 }
-.md-content :deep(pre) code {
+/* 代码块里的 <code> 是行内元素：它身上的边框会在每一行上各画一个框。 */
+.md-content :deep(pre code) {
   background: none;
+  border: 0;
   padding: 0;
 }
 .md-content :deep(blockquote) {

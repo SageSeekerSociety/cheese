@@ -116,7 +116,9 @@ describe('输入框的内容属于它被打出来的那个话题', () => {
     })
     await settle()
 
-    const replyBtn = Array.from(container.querySelectorAll('.im-act')).find(
+    // 悬停条跟着指针走：先把指针放到那条消息上。
+    await fireEvent.mouseOver(container.querySelector('[data-mid="m1"] .im-text')!)
+    const replyBtn = Array.from(container.querySelectorAll('.hover-bar button')).find(
       (b) => b.getAttribute('title') === '回复'
     ) as HTMLButtonElement
     await fireEvent.click(replyBtn)

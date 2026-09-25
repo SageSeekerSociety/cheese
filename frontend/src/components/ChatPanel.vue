@@ -46,7 +46,9 @@ import { useChatScroll } from './room/composables/useChatScroll'
 import { useOutbox } from './room/composables/useOutbox'
 import { useRoomRoster } from './room/composables/useRoomRoster'
 import { useRoomSocket } from './room/composables/useRoomSocket'
+import RollingNumber from './room/RollingNumber.vue'
 import RoomComposer from './room/RoomComposer.vue'
+import RoomHoverBar from './room/RoomHoverBar.vue'
 import RoomMessage from './room/RoomMessage.vue'
 import RoomNotice from './room/RoomNotice.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
@@ -309,6 +311,47 @@ const {
   restoreScroll,
 } = useChatScroll()
 
+// ---- 悬停条：整列一个，跟着指针在消息之间滑（见 room/RoomHoverBar）。 ----
+// 指针落在一条消息上就移过去；落在行与行之间的空隙里就留在原地（从一行滑到下一行
+// 的路上不该让它一闪一闪）；落在别的行上（事件、标记、「正在处理」）或移出整列
+// 就收起。表情选择条开着的时候钉在那一行上，不跟指针走。
+const bar = reactive({ id: null as string | null, shown: false, top: 0, jump: false })
+const barBlock = computed(() => (bar.id ? messages.value.find((m) => m.id === bar.id) ?? null : null))
+
+function rowTop(row: HTMLElement): number | null {
+  const content = contentRef.value
+  return content ? row.getBoundingClientRect().top - content.getBoundingClientRect().top : null
+}
+
+function showBarAt(row: HTMLElement) {
+  const id = row.dataset.mid
+  const top = rowTop(row)
+  if (!id || top === null) return
+  if (reactionPickerFor.value && reactionPickerFor.value !== id) return
+  if (!bar.shown) {
+    // 从收起状态出现：直接落在这一行上，只淡入，不从上一次停的地方滑过来。
+    bar.jump = true
+    requestAnimationFrame(() => requestAnimationFrame(() => (bar.jump = false)))
+  }
+  bar.id = id
+  bar.top = top
+  bar.shown = true
+}
+
+function hideBar() {
+  if (reactionPickerFor.value) return
+  bar.shown = false
+}
+
+function onTimelinePointer(e: MouseEvent) {
+  const target = e.target as HTMLElement | null
+  if (!target || target.closest('.hover-bar')) return
+  const row = target.closest<HTMLElement>('[data-mid], .notice-row, .room-happening, .dispatched, .tl-mark, .im-row')
+  if (!row) return
+  if (row.matches('[data-actions]')) showBarAt(row)
+  else hideBar()
+}
+
 // 滚动事件：记下位置，顺带判断是不是滚到了要上一页的地方。
 function onTimelineScroll() {
   rememberScroll(props.topic?.id)
@@ -354,6 +397,7 @@ async function loadOlder() {
     messages.value = next.blocks
     hasMore.value = next.hasMore
     setCachedWindow(topic.id, next)
+    for (const b of payload.data) older.add(b.id)
     await nextTick()
     const sc = scrollRef.value
     if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
@@ -422,12 +466,77 @@ let historyGeneration = 0
 // 再淡入一次就是一闪。
 const arrived = reactive(new Set<string>())
 
+// 往上翻时拼到顶部的那一页：只淡入，不位移——这一刻滚动位置正被补偿到原处，再
+// 往上浮 4px，读的人会看见整页抖一下。
+const older = reactive(new Set<string>())
+
 function pushBlock(b: Block) {
   historyChanges?.set(b.id, b)
   if (!messages.value.some((m) => m.id === b.id)) {
-    if (historyChanges === null && b.author !== AUTHOR) arrived.add(b.id)
+    if (historyChanges === null && b.author !== AUTHOR) {
+      arrived.add(b.id)
+      if (!atBottom.value && b.kind !== 'event') unseen.value.push(b.id)
+    }
     messages.value.push(b)
   }
+}
+
+// 往上翻着的时候别人又说了话：底部浮出一颗提示，写着来了几条。点它回到最新，并让
+// 来的第一条闪一下——人要找的是「新的从哪开始」，不只是「到底了」。回到底部（不管
+// 是点它还是自己滚下去）它就收起。
+const unseen = ref<string[]>([])
+watch(atBottom, (bottom) => {
+  if (bottom) unseen.value = []
+})
+function jumpToUnseen() {
+  const first = unseen.value[0]
+  const el = scrollRef.value
+  if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  unseen.value = []
+  if (first) flash(first)
+}
+
+// 淡入演完就把这一条从 `arrived` 里拿掉：class 一直挂着的话，它的 animation 会压住
+// 之后要演的那一下（跳过来的闪一下、同类事件又来一次的亮一下）。Vue 给 scoped 的
+// keyframes 名字加了后缀，所以比前缀。
+function settleArrival(e: AnimationEvent, id: string) {
+  if (e.animationName.startsWith('tl-arrive')) arrived.delete(id)
+  if (e.animationName.startsWith('tl-older')) older.delete(id)
+}
+
+// 一行离开时先收拢自己的高度再走，下面的东西平滑地补上来，而不是等它淡完一下子
+// 跳过去（设计系统 §9.2）。
+function collapseLeave(el: Element, done: () => void) {
+  const row = el as HTMLElement
+  let finished = false
+  const finish = () => {
+    if (finished) return
+    finished = true
+    done()
+  }
+  row.style.height = `${row.offsetHeight}px`
+  row.style.overflow = 'hidden'
+  requestAnimationFrame(() => {
+    row.style.height = '0'
+    row.style.marginTop = '0'
+    row.style.paddingTop = '0'
+    row.style.paddingBottom = '0'
+    row.style.opacity = '0'
+  })
+  row.addEventListener('transitionend', (ev) => ev.target === row && finish())
+  setTimeout(finish, 400) // transitionend 不来（减弱动效、元素被提前拿走）也得收尾
+}
+
+// 跳到某一条之后，让它闪一下：滚动停下来的那一刻，眼睛要知道落在哪一行。
+const flashId = ref<string | null>(null)
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+function flash(id: string) {
+  clearTimeout(flashTimer)
+  flashId.value = null
+  void nextTick(() => {
+    flashId.value = id
+    flashTimer = setTimeout(() => (flashId.value = null), 1600)
+  })
 }
 
 function handleFrame(frame: WsServerFrame) {
@@ -578,6 +687,8 @@ async function loadTopic(topic: Topic, entering = false) {
   reactionPickerFor.value = null
   unreadAnchorId.value = null
   arrived.clear()
+  older.clear()
+  unseen.value = []
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
   loadingOlder.value = false
@@ -690,7 +801,10 @@ async function downloadAttachment(m: Block) {
   }
 }
 function scrollToMessage(id: string) {
-  document.querySelector(`[data-mid="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  const el = document.querySelector(`[data-mid="${id}"]`)
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  flash(id)
 }
 
 // 发件箱：已经打出去、库里还没有的那几条 —— 见 room/composables/useOutbox。
@@ -739,6 +853,26 @@ defineExpose({ send, connected })
 // accidental merge.
 const rows = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(messages.value)))
 const visible = computed<Block[]>(() => rows.value.map((r) => r.block))
+
+// 它停着的那一行上面的东西变了（往上翻拼进来一页、上面一条长高了），行的位置跟着
+// 变：重新量一次，直接落过去，不演滑动——这一下不是指针在动。
+watch(
+  rows,
+  () =>
+    void nextTick(() => {
+      if (!bar.shown || !bar.id) return
+      const row = scrollRef.value?.querySelector<HTMLElement>(`[data-mid="${bar.id}"]`)
+      const top = row ? rowTop(row) : null
+      if (top === null) return (bar.shown = false)
+      if (top === bar.top) return
+      bar.jump = true
+      bar.top = top
+      requestAnimationFrame(() => requestAnimationFrame(() => (bar.jump = false)))
+    })
+)
+watch(reactionPickerFor, (open) => {
+  if (!open && !scrollRef.value?.matches(':hover')) bar.shown = false
+})
 
 // ---- 时间刻度 ----
 // 「这条属于哪一天」只在跨天时说一次。用本地日期而不是 UTC：读的人在哪个时区,
@@ -851,9 +985,21 @@ function pendingBlock(item: Outgoing): Block {
   return { id: item.clientId, author: AUTHOR, content: item.content, kind: 'message' } as Block
 }
 
+// 时间那一格说的是送达状态。失败了就不说：失败那一行自己会说清楚是什么失败了。
 function outgoingState(item: Outgoing): string {
-  if (item.state === 'failed') return item.error ? '发送失败' : '未送达'
+  if (item.state === 'failed') return ''
   return connected.value ? '发送中…' : '等待连接'
+}
+
+// 发送失败之后的「编辑」：这一条从发件箱里拿掉，原文、回复对象和附件放回输入框，
+// 改完再发就是一条新的。输入框里已经有字的话，原文放在前面，一个字都不覆盖。
+function editSend(item: Outgoing) {
+  dropSend(item.clientId)
+  draft.value = draft.value.trim() ? `${item.content}\n${draft.value}` : item.content
+  const parent = item.replyTo ? messages.value.find((m) => m.id === item.replyTo) : undefined
+  if (parent) replyTarget.value = parent
+  if (item.atts?.length) pendingAtts.value = [...item.atts, ...pendingAtts.value]
+  composerRef.value?.focus()
 }
 
 function fmtTime(iso: string): string {
@@ -875,18 +1021,36 @@ function isMine(m: Block): boolean {
   return isPersonBlock(m) && m.author === AUTHOR
 }
 
-// Group consecutive messages from the same author into runs: only the first of
-// a run shows the avatar + name + time; the rest indent under the text column.
-// An event block always breaks a run so the next message keeps its header.
-function isRunStart(i: number): boolean {
-  if (i === 0) return true
+// 同一个人连着说的话合并成一段：只有第一条带头像、名字和时间，其余贴在它下面。
+// 断开只有三种情况，断开之后下一条重新带上名字和时间：
+// - 中间隔了别的行（事件、「已派出」标记、新消息线）—— 否则它看上去像挂在那一行
+//   上的续话；
+// - 换了一天 —— 日期线已经横在中间；
+// - 同一天里隔了一小时以上 —— 下午接着上午说的，不该读成一口气说完的。这一种
+//   只空一小档（`regroup`），还是同一个人。
+const REGROUP_GAP_MS = 60 * 60 * 1000
+type RunEdge = 'start' | 'regroup' | 'cont'
+function sameSpeaker(a: Block, b: Block): boolean {
+  return a.author === b.author && a.author_type === b.author_type
+}
+const runEdges = computed(() => visible.value.map((_, i) => runEdge(i)))
+function runEdge(i: number): RunEdge {
+  if (i === 0) return 'start'
   const prev = visible.value[i - 1]
   const cur = visible.value[i]
-  if (prev.kind === 'event' || cur.kind === 'event') return true
-  // 一条「已派出」标记横在中间时，下面这条必须重新带头像和名字 —— 否则它看上去
-  // 像是挂在标记上的续话。同 event 的道理：中间隔了东西，run 就断了。
-  if (splitMarkers.value.before.has(cur.id)) return true
-  return prev.author !== cur.author || prev.author_type !== cur.author_type
+  if (prev.kind === 'event' || cur.kind === 'event') return 'start'
+  if (splitMarkers.value.before.has(cur.id) || cur.id === unreadAnchorId.value) return 'start'
+  if (!sameSpeaker(prev, cur) || dayKey(prev.created_at) !== dayKey(cur.created_at)) return 'start'
+  return Date.parse(cur.created_at) - Date.parse(prev.created_at) >= REGROUP_GAP_MS ? 'regroup' : 'cont'
+}
+// 发件箱里的那几条还没有落库时间，按「现在」算：接在自己刚说的那段后面就贴上去。
+function outboxEdge(index: number): RunEdge {
+  if (index > 0) return 'cont'
+  const last = visible.value.at(-1)
+  if (!last || last.kind === 'event' || !isMine(last) || splitMarkers.value.tail.length) return 'start'
+  const now = new Date().toISOString()
+  if (dayKey(last.created_at) !== dayKey(now)) return 'start'
+  return Date.now() - Date.parse(last.created_at) >= REGROUP_GAP_MS ? 'regroup' : 'cont'
 }
 
 // ---- Topic header state. The labels live in lib/topicState.ts because the
@@ -1225,11 +1389,28 @@ onBeforeUnmount(() => {
         data-testid="chat-scroll"
         @scroll="onTimelineScroll"
         @click="onMessagesClick"
+        @mouseover="onTimelinePointer"
+        @mouseleave="hideBar"
       >
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
-        <div ref="contentRef">
-          <LoadingSkeleton v-if="loadingHistory" variant="chat" />
+        <div ref="contentRef" class="tl-content">
+          <RoomHoverBar
+            :block="barBlock"
+            :shown="bar.shown"
+            :top="bar.top"
+            :jump="bar.jump"
+            :is-agent="!!barBlock && isAgentBlock(barBlock)"
+            :picker-open="!!barBlock && reactionPickerFor === barBlock.id"
+            @react="onReact"
+            @toggle-picker="reactionPickerFor = reactionPickerFor === $event ? null : $event"
+            @reply="setReply"
+            @upgrade="emit('upgrade-message', $event)"
+          />
+          <!-- 骨架和真的那几行同形同高：到货时骨架淡出，不推动下面的东西。 -->
+          <Transition name="tl-skel">
+            <LoadingSkeleton v-if="loadingHistory" variant="chat" />
+          </Transition>
 
           <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
             <h2 class="t-title mb-2">从一件具体的事开始</h2>
@@ -1281,6 +1462,8 @@ onBeforeUnmount(() => {
             />
             <RoomNotice
               v-if="notice"
+              :class="{ 'tl-arrive': arrived.has(m.id), 'tl-older': older.has(m.id) }"
+              @animationend="settleArrival($event, m.id)"
               :block="m"
               :notice="notice"
               :run="run"
@@ -1296,11 +1479,13 @@ onBeforeUnmount(() => {
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
-              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :class="{ 'tl-arrive': arrived.has(m.id), 'tl-older': older.has(m.id), 'tl-flash': flashId === m.id }"
+              @animationend="settleArrival($event, m.id)"
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
-              :run-start="isRunStart(i)"
+              :run-start="runEdges[i] !== 'cont'"
+              :regroup="runEdges[i] === 'regroup'"
               :mine="isMine(m)"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
@@ -1310,16 +1495,13 @@ onBeforeUnmount(() => {
               :time="fmtTime(m.created_at)"
               :refs="refMaps"
               :viewer="AUTHOR"
-              :picker-open="reactionPickerFor === m.id"
+              :active="bar.shown && bar.id === m.id"
               :ask-busy="askBusy === m.id"
               :summon-hint="showSummonHint(m, i) ? agentName : null"
               :summon-busy="summonBusy"
               @open-file="(path, taskId) => emit('open-file', path, taskId)"
               @open-topic="emit('open-topic', $event)"
-              @upgrade="emit('upgrade-message', $event)"
-              @reply="setReply"
               @react="onReact"
-              @toggle-picker="reactionPickerFor = reactionPickerFor === $event ? null : $event"
               @answer="pickOption"
               @download="downloadAttachment"
               @jump="scrollToMessage"
@@ -1341,12 +1523,13 @@ onBeforeUnmount(() => {
              只是时间那一格写的是送达状态——「立即显示」是第一位的，送达状态是
              第二位的。 -->
           <RoomMessage
-            v-for="item in outbox"
+            v-for="(item, oi) in outbox"
             :key="item.clientId"
             :block="pendingBlock(item)"
             :parent="null"
             :parent-name="null"
-            :run-start="true"
+            :run-start="outboxEdge(oi) !== 'cont'"
+            :regroup="outboxEdge(oi) === 'regroup'"
             :mine="true"
             :topic-id="topic?.id ?? null"
             :author-name="myName"
@@ -1356,54 +1539,80 @@ onBeforeUnmount(() => {
             :time="outgoingState(item)"
             :refs="refMaps"
             :viewer="AUTHOR"
-            :picker-open="false"
             :ask-busy="false"
             :summon-hint="null"
             :summon-busy="false"
             :outgoing="{ error: item.error, failed: item.state === 'failed' }"
             @retry="retrySend(item.clientId)"
-            @drop="dropSend(item.clientId)"
+            @edit="editSend(item)"
             @avatar-error="onAvatarError"
           />
 
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until every explicitly active turn finishes; the live
              working-log checklist stays visible for the whole turn. -->
-          <div v-if="awaitingReply || liveTodo" class="im-row">
-            <div class="im-gutter">
-              <CheeseAvatar :size="28" :name="agentName" />
-            </div>
-            <div class="im-main">
-              <div class="im-meta">
-                <span class="im-name">{{ agentName }}</span>
+          <!-- 进场上浮淡入；芝士的回复落地、这一轮结束时，它淡出，回复就在它原来的
+             位置上接着往下读。 -->
+          <Transition name="tl-working" @leave="collapseLeave">
+            <div v-if="awaitingReply || liveTodo" class="im-row">
+              <div class="im-gutter">
+                <CheeseAvatar :size="28" :name="agentName" />
               </div>
+              <div class="im-main">
+                <div class="im-meta">
+                  <span class="im-name">{{ agentName }}</span>
+                </div>
 
-              <!-- Working-log checklist (芝士's tasks, §3.1.1), only while a turn is
-                 live. Between turns the stored 进度层 (#187) lives in the panel's
-                 总览: parked at the end of the conversation it sat under every new
-                 message, pushing the talk up. -->
-              <ul v-if="liveTodo" class="todo-list">
-                <li v-for="item in todoItems" :key="item.id" class="todo-item" :class="'todo-' + item.status">
-                  <v-icon class="todo-mark" size="14">{{ todoIcon(item.status) }}</v-icon>
-                  <span class="todo-text">{{ item.subject }}</span>
-                </li>
-              </ul>
+                <!-- Working-log checklist (芝士's tasks, §3.1.1), only while a turn is
+                   live. Between turns the stored 进度层 (#187) lives in the panel's
+                   总览: parked at the end of the conversation it sat under every new
+                   message, pushing the talk up. 新的一项依次浮上来；状态变了图标原地
+                   换、删除线淡进来。 -->
+                <TransitionGroup v-if="liveTodo" tag="ul" name="todo" class="todo-list">
+                  <li
+                    v-for="(item, ti) in todoItems"
+                    :key="item.id"
+                    class="todo-item"
+                    :class="'todo-' + item.status"
+                    :style="{ '--i': ti }"
+                  >
+                    <Transition name="todo-mark" mode="out-in">
+                      <v-icon :key="item.status" class="todo-mark" size="14">{{ todoIcon(item.status) }}</v-icon>
+                    </Transition>
+                    <span class="todo-text">{{ item.subject }}</span>
+                  </li>
+                </TransitionGroup>
 
-              <!-- Instant ack before the first message / during cold start -->
-              <div v-if="awaitingReply" class="im-text">
-                <span class="text-medium-emphasis">{{
-                  reachedAgent ? `${agentName}正在处理…` : `正在交给${agentName}…`
-                }}</span>
-                <span class="caret" />
+                <!-- Instant ack before the first message / during cold start. 「正在交给」
+                   换成「正在处理」时交叉淡变，不跳。 -->
+                <div v-if="awaitingReply" class="im-text">
+                  <Transition name="tl-swap" mode="out-in">
+                    <span :key="reachedAgent ? 'working' : 'handing'" class="text-medium-emphasis">{{
+                      reachedAgent ? `${agentName}正在处理…` : `正在交给${agentName}…`
+                    }}</span>
+                  </Transition>
+                  <span class="caret" />
+                </div>
               </div>
             </div>
-          </div>
+          </Transition>
 
           <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
           <div class="px-4">
             <slot name="timeline-end" />
           </div>
         </div>
+      </div>
+
+      <!-- 往上翻着的时候来了新消息。 -->
+      <div class="new-pill-anchor">
+        <Transition name="new-pill">
+          <button v-if="unseen.length" type="button" class="new-pill" @click="jumpToUnseen">
+            <v-icon size="14">mdi-arrow-down</v-icon>
+            <RollingNumber :value="unseen.length" />
+            <span>{{ t('work.room.newMessages') }}</span>
+          </button>
+        </Transition>
       </div>
 
       <v-alert
@@ -1479,12 +1688,13 @@ onBeforeUnmount(() => {
 }
 /* Working-log checklist (§3.1.1) — process, sits above the streaming text.
    Between turns the same list shows the stored 进度层 (#187) under a label. */
-/* 任务清单块：强调靠 wash 底色，不靠左竖条（左条纹只留给引用块和结构线）。 */
+/* 任务清单块：一块中性底色把它和正文分开，不靠左竖条（左条纹只留给引用块和结构
+   线），也不上琥珀（它是进度，不是要人去按的东西）。 */
 .todo-list {
   list-style: none;
-  margin: 2px 0 6px;
+  margin: 4px 0 6px;
   padding: 6px 10px;
-  background: rgba(var(--v-theme-primary), 0.05);
+  background: var(--fill);
   border-radius: var(--radius-sm);
 }
 .todo-item {
@@ -1510,9 +1720,47 @@ onBeforeUnmount(() => {
 .todo-completed {
   color: var(--faint);
 }
+/* 删除线一直在，只是透明的：做完的那一刻它淡进来，不是突然出现。 */
+.todo-text {
+  text-decoration-line: line-through;
+  text-decoration-color: transparent;
+  transition:
+    text-decoration-color var(--dur-base) var(--ease-standard),
+    opacity var(--dur-base) var(--ease-standard);
+}
+.todo-item {
+  transition: color var(--dur-base) var(--ease-standard);
+}
 .todo-completed .todo-text {
-  text-decoration: line-through;
+  text-decoration-color: currentcolor;
   opacity: 0.7;
+}
+/* 新的一项依次浮上来，一项晚 30ms。 */
+.todo-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+  /* 一组不超过 300ms（§9.7）：第十项之后不再往后排。 */
+  transition-delay: calc(min(var(--i, 0), 9) * 30ms);
+}
+.todo-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.todo-mark-enter-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-out),
+    transform var(--dur-quick) var(--ease-out);
+}
+.todo-mark-leave-active {
+  transition:
+    opacity var(--dur-press) var(--ease-in),
+    transform var(--dur-press) var(--ease-in);
+}
+.todo-mark-enter-from,
+.todo-mark-leave-to {
+  opacity: 0;
+  transform: scale(0.6);
 }
 .messages {
   background: var(--surface);
@@ -1537,7 +1785,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 600;
   padding: 1px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .pr-state--open {
   /* --surface, not #fff: the ground (--ok) lightens on dark (#3FBF7F), where
@@ -1595,6 +1843,87 @@ onBeforeUnmount(() => {
     opacity: 0;
   }
 }
+/* 骨架到货时淡出。离场时它脱离文档流，下面已经排好的真行不会被它推一下。 */
+.tl-content {
+  position: relative;
+}
+.tl-skel-leave-active {
+  position: absolute;
+  inset: 0 0 auto;
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.tl-skel-leave-to {
+  opacity: 0;
+}
+/* 「芝士正在处理」那一行：进来上浮淡入，这一轮结束时淡出。 */
+.tl-working-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.tl-working-leave-active {
+  transition:
+    height var(--dur-quick) var(--ease-in),
+    margin-top var(--dur-quick) var(--ease-in),
+    padding var(--dur-quick) var(--ease-in),
+    opacity var(--dur-quick) var(--ease-in);
+}
+.tl-working-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.tl-working-leave-to {
+  opacity: 0;
+}
+.tl-swap-enter-active {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.tl-swap-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.tl-swap-enter-from,
+.tl-swap-leave-to {
+  opacity: 0;
+}
+/* 新消息提示：浮在时间线底部正中，从下面升上来。 */
+.new-pill-anchor {
+  position: relative;
+  height: 0;
+}
+.new-pill {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: rgb(var(--v-theme-on-primary)); /* 和发送键同一对：琥珀底上的字 */
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-2);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+.new-pill-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.new-pill-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.new-pill-enter-from,
+.new-pill-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 8px);
+}
 /* 新来的一条：淡入并从下面 4px 升到位（见 `arrived`）。只演一次——class 留着也
    不会重播，动画只在元素挂上的那一刻跑。 */
 .tl-arrive {
@@ -1604,6 +1933,26 @@ onBeforeUnmount(() => {
   from {
     opacity: 0;
     transform: translateY(4px);
+  }
+}
+/* 翻上去时拼进来的更早的一页：只淡入（见 `older`）。 */
+.tl-older {
+  animation: tl-older var(--dur-base) var(--ease-out);
+}
+@keyframes tl-older {
+  from {
+    opacity: 0;
+  }
+}
+/* 跳到的那一条：底色从琥珀的浅底褪回去。它和新消息线、未读是同一族——「你要找的
+   在这儿」。 */
+.tl-flash {
+  animation: tl-flash 1.6s var(--ease-out);
+}
+@keyframes tl-flash {
+  from,
+  25% {
+    background-color: var(--accent-wash);
   }
 }
 /* 关掉动效时光标常亮：它说的「还在往下写」靠的是在不在，不是闪不闪。 */

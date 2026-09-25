@@ -22,10 +22,14 @@
 .im-row--cont {
   margin-top: 0;
 }
-/* 悬停只改颜色不改位置（设计系统 §9.1）。刷的是整行 —— 气泡在的时候刷不了，
-   气泡自己就是 --fill，整行一刷它就跟背景融了，只好退而求其次去刷气泡内部那
-   一档。现在这一档腾出来了。 */
-.im-row:hover {
+/* 同一个人隔了一阵又开口：名字和时间重新出现，间距只空一小档——还是同一个人。 */
+.im-row--regroup {
+  margin-top: 8px;
+}
+/* 悬停只改颜色不改位置（设计系统 §9.1），刷的是整行。悬停条停在这一行上时
+   （指针挪到了悬停条上，已经不在行上了）这一行也还是亮着的：`--active`。 */
+.im-row:hover,
+.im-row--active {
   background: var(--fill);
 }
 .im-gutter {
@@ -46,12 +50,30 @@
   color: #fff;
   font-size: 12px;
   font-weight: 600;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 /* 真头像：同一个 28px 方槽，图片裁进去，不撑变消息行。 */
 .im-avatar--photo {
   object-fit: cover;
   background: var(--fill);
+}
+/* 续话的时间：悬停才出现，放在头像列里，和正文第一行（22px 的行盒）对齐。比
+   28px 的头像列宽，往左探出去一点，右边缘仍然贴着正文。 */
+.im-gutter-time {
+  display: block;
+  width: 40px;
+  margin-left: -12px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: var(--lh-14-loose);
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-standard);
+}
+.im-row:hover .im-gutter-time,
+.im-row--active .im-gutter-time {
+  opacity: 1;
 }
 .im-main {
   min-width: 0;
@@ -93,7 +115,8 @@
 .im-text {
   max-width: 100%;
   font-size: 14px;
-  line-height: var(--lh-14);
+  /* 连着读的正文用松一档的行距（设计系统 §3.2）：人说的话和芝士的回复都是它。 */
+  line-height: var(--lh-14-loose);
   color: var(--text);
   word-break: break-word;
 }

@@ -156,3 +156,45 @@ describe('新消息分隔线', () => {
     expect(container.querySelector('.tl-mark--unread')?.nextElementSibling?.getAttribute('data-mid')).toBe('theirs')
   })
 })
+
+describe('同一个人连着说的话', () => {
+  // 名字那一行出现几次，就是这段话被分成了几段。
+  const speakerLines = (container: Element) => container.querySelectorAll('[data-mid] .im-name').length
+
+  const at = (h: number, m: number, daysBack = 0) => {
+    const d = daysAgo(daysBack, h)
+    d.setMinutes(m)
+    return d
+  }
+
+  it('一小时之内说的几句合成一段，名字只出现一次', async () => {
+    history = [msg('a', 'other', at(9, 0)), msg('b', 'other', at(9, 20)), msg('c', 'other', at(9, 55))]
+    const { container } = render(Panel, { props: { topic: topicOf('t1') }, global: { plugins: [vuetify] } })
+    await settle()
+    expect(speakerLines(container)).toBe(1)
+  })
+
+  it('同一天隔了一小时以上再开口，重新带上名字和时间', async () => {
+    history = [msg('a', 'other', at(9, 0)), msg('b', 'other', at(10, 30))]
+    const { container } = render(Panel, { props: { topic: topicOf('t1') }, global: { plugins: [vuetify] } })
+    await settle()
+    expect(speakerLines(container)).toBe(2)
+  })
+
+  it('跨了天就断开，哪怕只隔了几分钟', async () => {
+    history = [msg('a', 'other', at(23, 58, 1)), msg('b', 'other', at(0, 1))]
+    const { container } = render(Panel, { props: { topic: topicOf('t1') }, global: { plugins: [vuetify] } })
+    await settle()
+    expect(speakerLines(container)).toBe(2)
+  })
+
+  it('新消息线横在中间时断开：线下面那条要看得出是谁说的', async () => {
+    history = [msg('a', 'other', at(9, 0)), msg('b', 'other', at(9, 5))]
+    const { container } = render(Panel, {
+      props: { topic: topicOf('t1'), unreadOnOpen: 1 },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+    expect(speakerLines(container)).toBe(2)
+  })
+})

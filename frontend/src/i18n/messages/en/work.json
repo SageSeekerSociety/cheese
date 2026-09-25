@@ -176,7 +176,23 @@
       "action": "Retry",
       "nothingPending": "Nothing to retry",
       "failed": "Retry failed"
-    }
+    },
+    "notice": {
+      "platform": "Platform",
+      "changedFiles": "Changed files",
+      "moreFiles": "{n} more files"
+    },
+    "message": {
+      "copy": "Copy",
+      "copied": "Copied"
+    },
+    "outbox": {
+      "failed": "Not sent: {reason}",
+      "undelivered": "Not delivered",
+      "edit": "Edit",
+      "editHint": "Put it back in the message box"
+    },
+    "newMessages": "new"
   },
   "members": {
     "leave": "Leave project",
