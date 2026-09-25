@@ -7,8 +7,8 @@
         </div>
       </template>
       <template #actions>
-        <v-btn @click="hasSavedInfo = false">忽略</v-btn>
-        <v-btn append-icon="mdi-lightning-bolt" @click="fillSavedInfo"> 一键填入 </v-btn>
+        <v-btn variant="text" @click="hasSavedInfo = false">忽略</v-btn>
+        <v-btn color="primary" variant="flat" append-icon="mdi-lightning-bolt" @click="fillSavedInfo"> 一键填入 </v-btn>
       </template>
     </v-banner>
 

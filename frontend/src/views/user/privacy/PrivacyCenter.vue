@@ -70,7 +70,7 @@
               <div class="text-subtitle-1 font-weight-medium mb-1">需要帮助？</div>
               <p class="text-body-2 mb-0">如有隐私方面的问题或疑虑，请联系我们的隐私支持团队</p>
             </div>
-            <v-btn variant="flat" size="small" class="ml-md-auto" prepend-icon="mdi-email-outline">
+            <v-btn color="primary" variant="flat" size="small" class="ml-md-auto" prepend-icon="mdi-email-outline">
               联系支持团队
             </v-btn>
           </div>

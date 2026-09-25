@@ -157,9 +157,9 @@ watch(
         <p v-if="error" role="alert" class="sw-error">{{ error }}</p>
       </v-card-text>
       <v-card-actions>
-        <v-btn :disabled="busy" @click="open = false">{{ t('global.close') }}</v-btn>
+        <v-btn variant="text" :disabled="busy" @click="open = false">{{ t('global.close') }}</v-btn>
         <v-spacer />
-        <v-btn variant="tonal" :disabled="busy || !changed" :loading="busy" @click="confirm">{{
+        <v-btn color="primary" variant="tonal" :disabled="busy || !changed" :loading="busy" @click="confirm">{{
           t('work.sessionMachine.confirm')
         }}</v-btn>
       </v-card-actions>
