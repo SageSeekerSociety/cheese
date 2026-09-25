@@ -1,6 +1,5 @@
 {
   "models": {
-    "title": "Model settings",
     "readOnly": "Project managers can change the default models",
     "description": "AI teammates use the project main model unless you assign one to them",
     "main": "Project main model",
