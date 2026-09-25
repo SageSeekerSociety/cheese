@@ -169,7 +169,7 @@ async function onAgentTextClick(e: MouseEvent) {
       <!-- B3: a reply shows the message it threads under -->
       <button v-if="parent" type="button" class="im-replied" @click="emit('jump', parent.id)">
         <v-icon size="12">mdi-reply</v-icon>
-        回复 {{ parentName }}：{{ replySnippet(parent) }}
+        回复 {{ parentName }}：{{ replySnippet(parent, refs) }}
       </button>
       <!-- 图片输入: an attachment block renders as the image itself
          (click opens the original in a new tab). 字节在 AttachmentImage

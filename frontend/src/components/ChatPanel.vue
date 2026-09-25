@@ -1581,7 +1581,7 @@ onBeforeUnmount(() => {
       <!-- B3: replying-to indicator — the next message threads under this one. -->
       <div v-if="replyTarget" class="reply-bar">
         <v-icon size="14" class="me-1">mdi-reply</v-icon>
-        <span class="reply-bar__text"> 回复 {{ displayName(replyTarget) }}：{{ replySnippet(replyTarget) }} </span>
+        <span class="reply-bar__text"> 回复 {{ displayName(replyTarget) }}：{{ replySnippet(replyTarget, refMaps) }} </span>
         <v-btn icon="mdi-close" size="x-small" variant="text" density="comfortable" @click="clearReply" />
       </div>
 
