@@ -20,6 +20,7 @@ from app.domain.agent.runtime import (
     InProcessBroker,
     addressed_to_agent,
 )
+from tests.support.hang import HANG_S
 from tests.turn_log import a_topic, open_turn
 
 
@@ -84,7 +85,7 @@ async def test_a_fresh_turn_starts_its_own_continuation(db_factory):
             content="hi",
             addressed=addressed_to_agent("cheese-seat"),
         )
-        await asyncio.wait_for(q.get(), 2)
+        await asyncio.wait_for(q.get(), HANG_S)
     rec = runner.topic_work(topic)
     assert rec is not None
     # "第一次尝试的 continuation 就是它自己的 turn id" — the invariant the
@@ -168,7 +169,7 @@ async def _while_running(runner, broker, topic, author: str, factory):
             content="hi",
             addressed=addressed_to_agent("cheese-seat"),
         )
-        await asyncio.wait_for(turn.started.wait(), 2)
+        await asyncio.wait_for(turn.started.wait(), HANG_S)
         answer = runner.turn_author_for(topic)
         continuation = runner.continuation_for(topic)
         turn.finish.set()

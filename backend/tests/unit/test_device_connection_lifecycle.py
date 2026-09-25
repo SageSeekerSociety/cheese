@@ -15,6 +15,7 @@ from app.core.db import get_db
 from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 from tests.support import wire
+from tests.support.hang import HANG_S
 
 
 @pytest.fixture(autouse=True)
@@ -158,7 +159,7 @@ async def test_executor_call_survives_backend_client_restart(monkeypatch) -> Non
     await device_hub.on_device_message("machine", wire.execution_data(call.id, encoded))
     await device_hub.on_device_message("machine", wire.execution_result(call.id))
 
-    assert await asyncio.wait_for(recovered, 1) == {"answer": "finished"}
+    assert await asyncio.wait_for(recovered, HANG_S) == {"answer": "finished"}
     assert connector.sent.empty()  # retry reused the original device call
     assert new_backend.is_online("machine")
     await new_backend.close()
@@ -198,7 +199,7 @@ async def test_old_disconnect_cannot_take_down_the_replacement_connection(
             )
         )
         waiters.append(interrupted)
-        await asyncio.wait_for(old.next_call(), 1)
+        await asyncio.wait_for(old.next_call(), HANG_S)
 
         # The new socket arrives before the old receive loop runs its finally.
         await device_hub.attach_device("machine", replacement)
@@ -207,7 +208,7 @@ async def test_old_disconnect_cannot_take_down_the_replacement_connection(
             "machine", {"t": "hello", "v": 3, "executor": True}
         )
         with pytest.raises(DeviceOffline):
-            await asyncio.wait_for(interrupted, 1)
+            await asyncio.wait_for(interrupted, HANG_S)
 
         answered = asyncio.create_task(
             backend.call_executor(
@@ -219,7 +220,7 @@ async def test_old_disconnect_cannot_take_down_the_replacement_connection(
             )
         )
         waiters.append(answered)
-        call = await asyncio.wait_for(replacement.next_call(), 1)
+        call = await asyncio.wait_for(replacement.next_call(), HANG_S)
         await device_hub.detach_device("machine", old)
         await backend.refresh()
         assert backend.is_online("machine")
@@ -227,7 +228,7 @@ async def test_old_disconnect_cannot_take_down_the_replacement_connection(
             "machine", wire.execution_data(call.id, b'{"result":{"output":"done"}}')
         )
         await device_hub.on_device_message("machine", wire.execution_result(call.id))
-        assert await asyncio.wait_for(answered, 1) == {"output": "done"}
+        assert await asyncio.wait_for(answered, HANG_S) == {"output": "done"}
         assert old.sent.empty()
         assert replacement.sent.empty()
     finally:
@@ -446,7 +447,7 @@ async def test_release_drain_waits_for_exec_and_blocks_new_screen_call(
                 json={"device_id": "machine", "argv": ["sleep", "1"]},
             )
         )
-        outbound = await asyncio.wait_for(connector.sent.get(), 1)
+        outbound = await asyncio.wait_for(connector.sent.get(), HANG_S)
         assert outbound["t"] == "exec"
         active = await client.post("/internal/device-connection/release-drain")
         assert active.status_code == 409
@@ -509,7 +510,7 @@ async def test_public_execution_admission_blocks_drain_during_route_preparation(
                     json={"method": "ping", "params": {}},
                 )
             )
-            await asyncio.wait_for(entered.wait(), 1)
+            await asyncio.wait_for(entered.wait(), HANG_S)
             drain = await client.post(
                 "/internal/device-connection/release-drain",
                 headers={"X-Device-Connection-Secret": "test-owner-secret"},

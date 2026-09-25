@@ -19,6 +19,7 @@ from app.domain.notification.handlers import NotificationDelivery
 from app.domain.notification.models import NotificationType
 from app.domain.notification.outbox import ChannelIntentHandler, drain_channel
 from app.domain.user.repositories import UserRepository
+from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
 
@@ -186,7 +187,7 @@ async def test_an_inflight_send_releases_database_and_excludes_another_consumer(
     try:
         async with db_factory() as observer:
             row = await asyncio.wait_for(
-                observer.scalar(select(ChannelDelivery).with_for_update()), 2
+                observer.scalar(select(ChannelDelivery).with_for_update()), HANG_S
             )
             assert row.state == "sending"
             await observer.rollback()

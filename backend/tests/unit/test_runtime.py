@@ -1,6 +1,7 @@
 """AgentWorkRunner + InProcessBroker: background turns, WS-as-subscriber (design §4)."""
 
 import asyncio
+import contextlib
 import errno
 import time
 import uuid
@@ -15,6 +16,7 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
 )
 from app.domain.identity.actor import Actor
+from tests.support.hang import HANG_S
 from tests.turn_log import a_topic, open_turn, open_turn_ids, turn_row
 
 
@@ -65,7 +67,7 @@ class _FakeChat:
 
 
 async def _next_frame(
-    queue: asyncio.Queue[dict], kind: str, *, timeout: float = 1.0
+    queue: asyncio.Queue[dict], kind: str, *, timeout: float = HANG_S
 ) -> dict:
     """Read through lifecycle/control frames until the requested frame lands."""
     async with asyncio.timeout(timeout):
@@ -149,7 +151,7 @@ async def test_runner_publishes_turn_frames_to_subscribers(db_factory):
         )
         seen = []
         while True:
-            f = await asyncio.wait_for(q.get(), 1)
+            f = await asyncio.wait_for(q.get(), HANG_S)
             seen.append(f["type"])
             if f["type"] == "turn_finished":
                 break
@@ -203,10 +205,10 @@ async def test_a_turn_the_session_did_not_adopt_is_still_reported_finished(db_fa
         )
         await _next_frame(q, "done")
 
-    for _ in range(200):
-        if not broker.active_turn_ids(str(topic)):
-            break
-        await asyncio.sleep(0.01)
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(HANG_S):
+            while broker.active_turn_ids(str(topic)):
+                await asyncio.sleep(0.01)
     assert broker.active_turn_ids(str(topic)) == [], (
         "这一轮开了标记却没人关，话题会一直被报成在忙"
     )
@@ -233,7 +235,7 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory):
         addressed=addressed_to_agent("cheese-seat"),
         provision_actor=actor,
     )
-    async with asyncio.timeout(1):
+    async with asyncio.timeout(HANG_S):
         while not chat.ran or runner.active_work_count():
             await asyncio.sleep(0.01)
 
@@ -257,10 +259,9 @@ async def test_turn_runs_to_completion_without_a_subscriber(db_factory):
         content="hi",
         addressed=addressed_to_agent("cheese-seat"),
     )
-    for _ in range(200):
-        await asyncio.sleep(0.01)
-        if chat.ran:
-            break
+    async with asyncio.timeout(HANG_S):
+        while not chat.ran:
+            await asyncio.sleep(0.01)
     assert chat.ran is True
 
 
@@ -295,7 +296,7 @@ async def test_wedged_turn_times_out_and_is_cancelled(db_factory):
         )
         kinds = []
         for _ in range(4):
-            f = await asyncio.wait_for(q.get(), 1)
+            f = await asyncio.wait_for(q.get(), HANG_S)
             kinds.append(f["type"])
             if f["type"] == "error":
                 break
@@ -341,7 +342,7 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout(db_factory):
             content="hi",
             addressed=addressed_to_agent("cheese-seat"),
         )
-        f = await _next_frame(q, "done", timeout=2)
+        f = await _next_frame(q, "done")
     # Never timed out, and the internal control frame never leaked to subscribers.
     assert f["type"] == "done"
 
@@ -367,7 +368,7 @@ async def test_topic_turn_reports_the_rescheduled_ceiling(db_factory):
             content="hi",
             addressed=addressed_to_agent("cheese-seat"),
         )
-        await _next_frame(q, "done", timeout=2)
+        await _next_frame(q, "done")
     rec = runner.topic_work(topic)
     assert rec is not None
     assert rec["ceiling_s"] == 123
@@ -858,10 +859,9 @@ async def test_a_finished_turn_leaves_a_closed_interval(db_factory):
         content="hi",
         addressed=addressed_to_agent("cheese-seat"),
     )
-    for _ in range(200):
-        await asyncio.sleep(0.01)
-        if chat.ran and not await open_turn_ids(db_factory):
-            break
+    async with asyncio.timeout(HANG_S):
+        while not (chat.ran and not await open_turn_ids(db_factory)):
+            await asyncio.sleep(0.01)
     assert chat.ran
     assert await open_turn_ids(db_factory) == set()
     # Closed, not erased: this id is on every block the turn produced.
@@ -1248,7 +1248,7 @@ async def test_live_turn_for_topic_tracks_a_running_turn(db_factory):
         content="hi",
         addressed=addressed_to_agent("cheese-seat"),
     )
-    await asyncio.wait_for(streaming.wait(), 1)
+    await asyncio.wait_for(streaming.wait(), HANG_S)
     live = runner.live_work_for_topic(topic)
     assert live is not None
     assert live["turn_id"] == str(turn_id)
@@ -1256,10 +1256,9 @@ async def test_live_turn_for_topic_tracks_a_running_turn(db_factory):
     assert runner.live_work_for_topic(uuid.uuid4()) is None  # scoped to its topic
 
     finish.set()
-    for _ in range(200):
-        await asyncio.sleep(0.01)
-        if runner.live_work_for_topic(topic) is None:
-            break
+    async with asyncio.timeout(HANG_S):
+        while runner.live_work_for_topic(topic) is not None:
+            await asyncio.sleep(0.01)
     assert runner.live_work_for_topic(topic) is None
 
 
@@ -1301,7 +1300,7 @@ async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
         content="hi",
         addressed=addressed_to_agent("cheese-seat"),
     )
-    await asyncio.wait_for(streaming.wait(), 1)
+    await asyncio.wait_for(streaming.wait(), HANG_S)
     assert topic in runner.running_topic_ids()
     assert broker.in_flight(str(topic)) is True
 
@@ -1326,10 +1325,10 @@ async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
             return {"id": "b1", "content": text}
 
     await runner.sweep_orphans(_Chat(), last_activity=_last_block)
-    for _ in range(200):  # let the cancellation land at the turn's await point
-        await asyncio.sleep(0.01)
-        if topic not in runner.running_topic_ids():
-            break
+    # Let the cancellation land at the turn's await point.
+    async with asyncio.timeout(HANG_S):
+        while topic in runner.running_topic_ids():
+            await asyncio.sleep(0.01)
 
     assert topic not in runner.running_topic_ids()
     assert runner.topic_work(topic)["status"] != "running"
@@ -1418,16 +1417,16 @@ async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(db_fact
             content="hi",
             addressed=addressed_to_agent("cheese-seat"),
         )
-        await asyncio.wait_for(stamped.wait(), 1)
-        for _ in range(200):
-            row = await turn_row(db_factory, turn_id)
-            if row is not None and row.delivered_at is not None:
-                break
-            await asyncio.sleep(0.01)
+        await asyncio.wait_for(stamped.wait(), HANG_S)
+        async with asyncio.timeout(HANG_S):
+            while (row := await turn_row(db_factory, turn_id)) is None or (
+                row.delivered_at is None
+            ):
+                await asyncio.sleep(0.01)
         assert row is not None and row.delivered_at is not None
         release.set()
         while True:
-            frame = await asyncio.wait_for(q.get(), 1)
+            frame = await asyncio.wait_for(q.get(), HANG_S)
             seen.append(frame["type"])
             if frame["type"] == "turn_finished":
                 break
@@ -1561,10 +1560,9 @@ async def test_unclassified_failure_hands_to_a_human_without_retrying(db_factory
         content="hi",
         addressed=addressed_to_agent("cheese-seat"),
     )
-    for _ in range(200):
-        await asyncio.sleep(0.01)
-        if any(meta.get("who") == "human" for _, meta in svc.events):
-            break
+    async with asyncio.timeout(HANG_S):
+        while not any(meta.get("who") == "human" for _, meta in svc.events):
+            await asyncio.sleep(0.01)
     # Nothing must sneak a second turn in after the event lands.
     await asyncio.sleep(0.05)
 
