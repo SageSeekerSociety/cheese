@@ -94,8 +94,10 @@ class UserRealNameService:
         class_name: str,
     ) -> dict:
         await self._ensure_user_exists(user_id)
-        if not all([real_name, student_id, grade, major, class_name]):
-            raise BadRequestError("All real-name fields are required.")
+        real_name, student_id = real_name.strip(), student_id.strip()
+        if not real_name or not student_id:
+            raise BadRequestError("A real name and a student ID are required.")
+        grade, major, class_name = grade.strip(), major.strip(), class_name.strip()
         identity = await self._realname_repo.upsert_identity(
             user_id=user_id,
             real_name=seal_realname_field(user_id, "real_name", real_name),

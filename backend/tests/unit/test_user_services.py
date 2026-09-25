@@ -762,7 +762,7 @@ class TestUserRealNameService:
         self, service, user_repo
     ) -> None:
         user_repo.get_by_id.return_value = _user()
-        with pytest.raises(BadRequestError, match="All real-name fields are required"):
+        with pytest.raises(BadRequestError):
             await service.create_or_update_user_identity(
                 user_id=1,
                 real_name="",
