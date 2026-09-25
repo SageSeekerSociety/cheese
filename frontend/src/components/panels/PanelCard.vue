@@ -447,23 +447,35 @@ async function send() {
   max-width: 100%;
   height: auto;
 }
+/* 给这条活的分身带一句话。它不是房间的第二个输入框：没有框、没有底色，和上面的对话
+   同一层，像在这一串话下面接一行。点进去才有一块浅底，告诉人光标在哪。 */
 .panel-card__say {
   display: flex;
+  align-items: center;
   gap: 6px;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding: 2px 4px;
+  border-radius: var(--radius-md);
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.panel-card__say:focus-within {
+  background: var(--fill);
 }
 .panel-card__input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  padding: 6px 4px;
+  border: 0;
+  outline: none;
+  background: transparent;
   color: var(--ink);
+}
+.panel-card__input::placeholder {
+  color: var(--faint);
 }
 .panel-card__send {
   flex: none;
-  padding: 0 10px;
+  padding: 4px 8px;
   border-radius: var(--radius-md);
   color: var(--muted);
   cursor: pointer;
