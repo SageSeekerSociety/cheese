@@ -133,12 +133,12 @@ class MachineService:
         )
 
     async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
-        """Team membership authorizes room execution within the team's quota.
+        """Being on the project authorizes room execution within the team's quota.
 
-        Membership is the whole question. `TeamUserRelation` is (team, user) with
-        no human/agent distinction, so an agent seated on a team is as entitled
-        to the team's machines as anyone else on it. What is still required is an
-        id to check that membership against.
+        The project's roster is the whole question: its owner, its team's members
+        (agents seated on the team included) and its external members. Who spent
+        how much is not decided per person here. What is still required is a
+        signed-in identity to look up on that roster.
         """
         user_id = actor.user_id
         if actor.via == "cheese":
@@ -153,10 +153,12 @@ class MachineService:
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        if not await team_service(self._session).is_team_member(
-            project.team_id, user_id
+        from app.domain.membership.roster import roster
+
+        if not any(
+            m.handle == actor.handle for m in await roster(self._session, project_id)
         ):
-            raise ForbiddenError("只有团队成员可以使用团队云额度")
+            raise ForbiddenError("只有项目成员可以使用项目的云额度")
 
     async def _pick_offering(self) -> dict:
         offerings = await self._client.list_offerings()
