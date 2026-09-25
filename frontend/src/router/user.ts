@@ -42,40 +42,9 @@ export default {
       ],
     },
     {
-      path: 'privacy-center',
-      name: 'UserPrivacyCenter',
-      component: () => import('@/views/user/privacy/PrivacyCenter.vue'),
-      redirect: { name: 'PrivacyCenter' },
-      children: [
-        {
-          path: '',
-          name: 'PrivacyCenter',
-          component: () => import('@/views/user/privacy/Overview.vue'),
-        },
-        {
-          path: 'real-name-info',
-          name: 'PrivacyCenterRealNameInfo',
-          meta: { backTo: 'PrivacyCenter' },
-          component: () => import('@/views/user/privacy/RealNameInfo.vue'),
-        },
-        {
-          path: 'access-logs',
-          name: 'PrivacyCenterAccessLogs',
-          meta: { backTo: 'PrivacyCenter' },
-          component: () => import('@/views/user/privacy/AccessLogs.vue'),
-        },
-        {
-          path: 'data-sharing',
-          name: 'PrivacyCenterDataSharing',
-          meta: { backTo: 'PrivacyCenter' },
-          component: () => import('@/views/user/privacy/DataSharing.vue'),
-        },
-      ],
-    },
-    {
       // 一个人的主页按 handle 找：@提及、成员名册、队友都是这么认人的。旁边的
-      // settings、privacy-center 是静态段，vue-router 先认静态段；这两个词也不许
-      // 注册成用户名（app.domain.identity.handles）。
+      // settings 是静态段，vue-router 先认静态段；这个词也不许注册成用户名
+      // （app.domain.identity.handles）。
       path: ':handle',
       name: 'UserPage',
       component: () => import('@/views/ProfileView.vue'),

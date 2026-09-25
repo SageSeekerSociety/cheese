@@ -4044,13 +4044,6 @@ class ChatService:
                     sort_keys=True,
                 )
                 + ":explicit-chat-v4-native-model-choice"
-                # A room already holding a screen keeps the argv it was started
-                # with, and nothing here compares argv — so a launch flag that
-                # changes is a change no live room adopts and nothing reports.
-                # Delete this line once the launch contract carries argv: the
-                # gate will then notice on its own, and a hand-bumped string
-                # that has to be remembered is exactly what it replaces.
-                + ":pi-extension-v1"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()

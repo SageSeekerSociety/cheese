@@ -458,7 +458,10 @@ class RemoteClient:
             ]
         return command
 
-    def call(self, method, params=None):
+    def call(self, method, params=None, *, abandoned=None):
+        """``abandoned`` says the caller has given the operation up (a cancelled
+        tool call). Acquiring hands can wait for a machine being prepared; an
+        operation given up during that wait is never started."""
         operation_deadline = time.monotonic() + 660
         if self.config.get("lease_path") and (
             method in {"invoke", "mcp", "project_tools"}
@@ -471,17 +474,31 @@ class RemoteClient:
         ):
             # Only a requested execution operation acquires hands. Bootstrap,
             # context discovery and a platform-only tool never enter this path.
-            response = self.platform_request(
-                {
-                    "method": "POST",
-                    "path": self.config["lease_path"],
-                    "body": {
-                        "env": self.config.get("setup_env", {}),
-                        "timeout": max(0.001, operation_deadline - time.monotonic()),
-                    },
-                }
-            )
-            result = json.loads(response["value"]["stdout"])["data"]
+            while True:
+                response = self.platform_request(
+                    {
+                        "method": "POST",
+                        "path": self.config["lease_path"],
+                        "body": {
+                            "env": self.config.get("setup_env", {}),
+                            "timeout": max(
+                                0.001, operation_deadline - time.monotonic()
+                            ),
+                        },
+                    }
+                )
+                result = json.loads(response["value"]["stdout"])["data"]
+                if abandoned is not None and abandoned():
+                    raise RuntimeError("Tool call was cancelled")
+                # The platform waited as long as one request may while the
+                # machine is prepared. Ask again until this operation's own
+                # deadline, which is what bounds the wait.
+                if not result.get("preparing") or time.monotonic() >= (
+                    operation_deadline
+                ):
+                    break
+            if result.get("preparing"):
+                raise RuntimeError(f"{result['unavailable']}（等到操作时限仍未就绪）")
             if result.get("unavailable"):
                 raise RuntimeError(result["unavailable"])
             original_workspace = self.config.setdefault(

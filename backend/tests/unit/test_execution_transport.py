@@ -787,7 +787,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     command = "cat > 'hook receipt.txt'; printf '%s' 'quoted * ? [value]'"
     directory = tmp_path / "prepared with spaces"
     version_probe = tmp_path / "claude-version"
-    version_probe.write_text("#!/bin/sh\nprintf '2.1.277\\n'\n")
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.282\\n'\n")
     version_probe.chmod(0o700)
     launch = central.prepare(
         directory,
@@ -1123,6 +1123,85 @@ def test_deferred_tools_acquire_once_and_read_project_rules_before_writing(
         assert (local / "protected").read_text() == "session only"
         assert not (local / "output.txt").exists()
         assert seen.count("context") == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_a_tool_waits_while_its_machine_is_prepared_unless_it_is_cancelled(
+    executor, tmp_path, monkeypatch, cancelled
+):
+    """The platform answers "still preparing" after each bounded wait; the
+    tool asks again and runs once the machine is there. A tool call cancelled
+    during that wait never runs, however soon the machine comes up after."""
+    _, work, state = executor
+    seen = []
+    generation = str(uuid.uuid4())
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/lease":
+                seen.append("lease")
+                result = {
+                    "data": {
+                        "unavailable": "Cloud 机器正在准备；对话和平台工具仍可用。",
+                        "preparing": True,
+                    }
+                    if seen.count("lease") < 3
+                    else {
+                        "target": {
+                            "kind": "device",
+                            "workspace": str(work),
+                            "url": base + "/execute",
+                            "generation": generation,
+                        },
+                        "token": "execution-only",
+                    }
+                }
+            else:
+                seen.append(body["method"])
+                result = runtime.request(state, body["method"], body["params"])
+            encoded = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    base = f"http://127.0.0.1:{server.server_port}"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv("CHEESE_API", base)
+    monkeypatch.setenv("CHEESE_TOKEN", "session-token")
+    client = executor_transport.RemoteClient(
+        {
+            "kind": "deferred",
+            "workspace": "/unavailable-project",
+            "lease_path": "/lease",
+        }
+    )
+    request = {
+        "id": "write-while-preparing",
+        "tool": "Bash",
+        "args": {"command": "printf remote > /unavailable-project/output.txt"},
+    }
+    try:
+        if cancelled:
+            with pytest.raises(RuntimeError, match="cancelled"):
+                client.call("invoke", request, abandoned=lambda: True)
+            assert seen == ["lease"]
+            assert not (work / "output.txt").exists()
+        else:
+            result = client.call("invoke", request, abandoned=lambda: False)
+            assert "error" not in result, result
+            assert seen[:3] == ["lease", "lease", "lease"]
+            assert (work / "output.txt").read_text() == "remote"
     finally:
         server.shutdown()
         server.server_close()

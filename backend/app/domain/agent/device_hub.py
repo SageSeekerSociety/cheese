@@ -822,6 +822,12 @@ class DeviceHub:
         whose bytes we cannot compare is left alone — telling it to update on a
         half-answer would re-exec the machine on every reconnect and never
         converge, which is worse than the drift.
+
+        "The one we serve" is this process's copy, and the connection owner is
+        released on its own schedule: the origin the machine downloads from can
+        publish a different build. So the request means "take what the origin
+        publishes", and a connector already running those bytes stays as it is
+        (`update.ErrCurrent` in the connector).
         """
         if device.update_pushed:
             return

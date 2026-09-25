@@ -461,7 +461,8 @@ export interface TopicMemberRow {
 }
 
 // GET /api/projects/{id}/inbox?target_handle=
-// 等你决定的那几条：还没拍板的决策请求，加上点名给你的验收卡。
+// 等你处理的那几条：还没拍板的决策请求、点名给你的验收卡，以及还没读、又不是
+// silent 的变更提醒（`level=silent` 的意思是「记下来别打扰」，它本来也不点亮角标）。
 // 字段照抄后端的 NotificationOut —— 自己另起一套界面上顺口的名字，收到的就永远是
 // undefined，而界面会把它读成「一条都没读过」。
 // `id` 是数字：两张通知表并成一张之后主键跟的是收件箱那条序列，不再是 uuid。

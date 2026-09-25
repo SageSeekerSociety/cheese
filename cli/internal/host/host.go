@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -166,6 +167,9 @@ func (h *Host) performUpdate() {
 		return
 	}
 	tmp, err := update.Fetch(h.ctx, h.base)
+	if errors.Is(err, update.ErrCurrent) {
+		return
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cheese: update aborted (kept running current build): %v\n", err)
 		return

@@ -282,6 +282,14 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool, str]] = [
         TIER_PREMIUM,
     ),
     (
+        "opus-5.5",
+        "Claude Opus 5.5",
+        "Opus 的新一代：复杂任务表现更好，同样更快消耗订阅额度（Max 有上限）。",
+        "claude-opus-5-5",
+        False,
+        TIER_PREMIUM,
+    ),
+    (
         "opus-4.8",
         "Claude Opus 4.8",
         "上一代 Opus（仍在售，1M 上下文）：Fable 被降级时实际落到的模型；"

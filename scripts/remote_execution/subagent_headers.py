@@ -46,7 +46,7 @@ def main():
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         }
     )
-    binary = Path.home() / ".local/share/claude/versions/2.1.277"
+    binary = Path.home() / ".local/share/claude/versions/2.1.282"
     with (folder / "cli.log").open("w") as output:
         result = subprocess.run(
             [
