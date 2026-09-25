@@ -411,7 +411,7 @@ function onSecurity(v: unknown) {
       </div>
     </div>
 
-    <!-- 64px 操作栏（§4.4）。**这一屏唯一的琥珀**是左边那颗主按钮（§7.4）；
+    <!-- 64px 操作栏（§4.4）。这一组里的琥珀是左边那颗主按钮（设计规范 §1.6）；
          右边那颗「提交备注」是次要动作，中性描边。底部内边距吃掉
          `env(safe-area-inset-bottom)`：窄屏上操作栏会压在 iOS 那条横条下面。 -->
     <div class="qdet__bar">
@@ -826,7 +826,7 @@ function onSecurity(v: unknown) {
   border-top: 1px solid var(--line);
 }
 
-/* 主操作。全屏唯一的琥珀（§7.4）。字色走 `--v-theme-on-primary`，和全站每一颗
+/* 主操作，这一组里唯一的琥珀（设计规范 §1.6）。字色走 `--v-theme-on-primary`，和全站每一颗
    琥珀填充按钮同一处取值（见 `MyDevicesView` 那段豁免说明：浅色下它对 #F57F17
    推出来的就是白字，2.65:1，是 2026-08-16 拍板保留的已知代价，别在这里「修好」）。 */
 .qdet__primary {
