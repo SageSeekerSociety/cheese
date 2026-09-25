@@ -15,6 +15,8 @@ launch; ``machine_launcher`` owns the other half and joins the two.
 """
 
 import base64
+import dataclasses
+import hashlib
 import json
 import shlex
 from pathlib import Path
@@ -178,64 +180,37 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     claude_args = " " + shlex.join(LAUNCH_ARGS)
     pinned_version = CLAUDE_PINNED_VERSION
     helper_sources = release.sources()
-    execution_setup = 'mkdir -p "$HOME/.cheese/remote-execution"\n'
-    for name, source in helper_sources.items():
-        execution_setup += (
-            f'cat > "$HOME/.cheese/remote-execution/{name}" '
-            "<<'CHEESE_EXECUTION_SOURCE'\n"
-            + source
-            + ("" if source.endswith("\n") else "\n")
-            + "CHEESE_EXECUTION_SOURCE\n"
-        )
-    execution_setup += (
-        f"printf %s {release.digest(helper_sources)} "
-        '> "$HOME/.cheese/remote-execution/release-ready"\n'
-    )
-    execution_setup += """printf '%s' "$CHEESE_EXECUTION_TARGET" \\
-  > "$HOME/.cheese/remote-target.json"
-EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"
-EXECUTOR_TARGET="$HOME/.cheese/remote-target.json"
-CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
-"""
     # base64 through the script: the archive is bytes. Single-quoted into the
     # script: the literal `$HOME` in the state is the CONNECTOR's placeholder,
     # and a double-quoted assignment would have the session's own shell expand
     # it to the ISOLATED home instead.
     quoted_state = shlex.quote(state)
     archive = base64.b64encode(build()).decode()
-    env: dict[str, str] = {
-        # Work is a subagent of the room's session, so these two are the shape
-        # of the room itself. Depth is a harness setting and not a design
-        # constraint (结论 33): work is flat in the room, there are no child
-        # cards, and nothing on the platform branches on this number — a
-        # deployment that wants a piece of work to spawn work of its own raises
-        # it and no code here changes. Concurrency 4: how many pieces of work a
-        # room runs at once; they share one tree, so the ceiling is about how
-        # much simultaneous editing of one tree stays comprehensible, not about
-        # machine capacity.
-        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": str(
-            settings.claude_code_max_subagent_spawn_depth
-        ),
-        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
-        # 关掉 Claude Code **自带**的 `/feedback` 与 `SendFeedback` 工具。
-        #
-        # 两个意图相同的工具并排放在同一个清单里，模型会选错那一个：它撞到的毛病是
-        # **这个平台**的，而官方那个入口把草稿写进本机队列、由人自己找地方发出去，
-        # 结果就是「提了、但没到平台的反馈里」——一份谁都看不见的证据。
-        #
-        # 这一条必须是**环境变量**：那个开关按设计只在进程启动时读一次，改
-        # settings.json 不管用（官方的开关就是给部署方这么用的）。
-        # （旧名 `DISABLE_BUG_COMMAND` 官方也还认，用新名。）
-        "DISABLE_FEEDBACK_COMMAND": "1",
-    }
-    if resume_session_id:
-        # An OFFER, not an instruction: the runner takes it only if the
-        # transcript is on that machine's disk (``runner.transcript``). Carried
-        # on the env for the same reason the tunnel vars are — a remote launch
-        # is built entirely out of its environment.
-        env["CHEESE_RESUME_SESSION"] = resume_session_id
-    return MachineLaunch(
-        configure=f"""\
+
+    def holes(system_prompt: str, helper_sources: dict[str, str]) -> tuple[str, str]:
+        """The configure and prepare holes, written for this prompt and these
+        helpers: once for the launch, and once for what the launch is compared
+        by (below)."""
+        execution_setup = 'mkdir -p "$HOME/.cheese/remote-execution"\n'
+        for name, source in helper_sources.items():
+            execution_setup += (
+                f'cat > "$HOME/.cheese/remote-execution/{name}" '
+                "<<'CHEESE_EXECUTION_SOURCE'\n"
+                + source
+                + ("" if source.endswith("\n") else "\n")
+                + "CHEESE_EXECUTION_SOURCE\n"
+            )
+        execution_setup += (
+            f"printf %s {release.digest(helper_sources)} "
+            '> "$HOME/.cheese/remote-execution/release-ready"\n'
+        )
+        execution_setup += """printf '%s' "$CHEESE_EXECUTION_TARGET" \\
+  > "$HOME/.cheese/remote-target.json"
+EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"
+EXECUTOR_TARGET="$HOME/.cheese/remote-target.json"
+CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
+"""
+        configure = f"""\
 # THE isolation boundary on a machine we do not own (#5): claude reads AND
 # writes its config — settings.json, .claude.json, .credentials.json — under
 # CLAUDE_CONFIG_DIR when it is set, and never falls back to the login user's
@@ -264,20 +239,8 @@ cat > "$CLAUDE_CONFIG_DIR/settings.json" <<'JSON'
 JSON
 cat > "$CLAUDE_CONFIG_DIR/cheese-system-prompt.md" <<'SYSPROMPT'
 {system_prompt}SYSPROMPT
-""",
-        credentials=f"""\
-# A session never holds a Claude credential. It boots on a placeholder that
-# authenticates nothing, and the metering proxy puts the real credential on
-# each request on its way to Anthropic when the platform has one, so logging
-# in or out takes effect for running sessions without a restart. An env token
-# is also one Claude Code never refreshes, so no session ever rotates a pair
-# the proxy holds. An inherited token would win over this one: none is let
-# through.
-unset CLAUDE_CODE_OAUTH_TOKEN
-export CLAUDE_CODE_OAUTH_TOKEN="{NO_LOGIN_PLACEHOLDER}"
-cheese_launch_phase credentials_selected
-""",
-        prepare=f"""\
+"""
+        prepare = f"""\
 # --- the pinned build, and the floor under it ---------------------------------
 # The binary is pinned to a verified build: the runner speaks its stream-json
 # protocol, which no document pins, so "whatever `claude` resolves to today" is
@@ -373,11 +336,78 @@ export CHEESE_CLAUDE_COMMAND="$CLAUDE"
 # it, and this file is then the only record of why.
 CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" \\
   2>>\\"$CLAUDE_STATE/runner.log\\""
+"""
+        return configure, prepare
+
+    env: dict[str, str] = {
+        # Work is a subagent of the room's session, so these two are the shape
+        # of the room itself. Depth is a harness setting and not a design
+        # constraint (结论 33): work is flat in the room, there are no child
+        # cards, and nothing on the platform branches on this number — a
+        # deployment that wants a piece of work to spawn work of its own raises
+        # it and no code here changes. Concurrency 4: how many pieces of work a
+        # room runs at once; they share one tree, so the ceiling is about how
+        # much simultaneous editing of one tree stays comprehensible, not about
+        # machine capacity.
+        "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": str(
+            settings.claude_code_max_subagent_spawn_depth
+        ),
+        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
+        # 关掉 Claude Code **自带**的 `/feedback` 与 `SendFeedback` 工具。
+        #
+        # 两个意图相同的工具并排放在同一个清单里，模型会选错那一个：它撞到的毛病是
+        # **这个平台**的，而官方那个入口把草稿写进本机队列、由人自己找地方发出去，
+        # 结果就是「提了、但没到平台的反馈里」——一份谁都看不见的证据。
+        #
+        # 这一条必须是**环境变量**：那个开关按设计只在进程启动时读一次，改
+        # settings.json 不管用（官方的开关就是给部署方这么用的）。
+        # （旧名 `DISABLE_BUG_COMMAND` 官方也还认，用新名。）
+        "DISABLE_FEEDBACK_COMMAND": "1",
+    }
+    if resume_session_id:
+        # An OFFER, not an instruction: the runner takes it only if the
+        # transcript is on that machine's disk (``runner.transcript``). Carried
+        # on the env for the same reason the tunnel vars are — a remote launch
+        # is built entirely out of its environment.
+        env["CHEESE_RESUME_SESSION"] = resume_session_id
+    configure, prepare = holes(system_prompt, helper_sources)
+    launch = MachineLaunch(
+        configure=configure,
+        credentials=f"""\
+# A session never holds a Claude credential. It boots on a placeholder that
+# authenticates nothing, and the metering proxy puts the real credential on
+# each request on its way to Anthropic when the platform has one, so logging
+# in or out takes effect for running sessions without a restart. An env token
+# is also one Claude Code never refreshes, so no session ever rotates a pair
+# the proxy holds. An inherited token would win over this one: none is let
+# through.
+unset CLAUDE_CODE_OAUTH_TOKEN
+export CLAUDE_CODE_OAUTH_TOKEN="{NO_LOGIN_PLACEHOLDER}"
+cheese_launch_phase credentials_selected
 """,
-        contract=claude_args,
+        prepare=prepare,
         command='"$CLAUDE_RUNNER"',
         env=env,
     )
+    # What a running session is compared against: the whole launch, written
+    # without the two things that are not the platform's. The system prompt is
+    # the room's and is rebuilt every turn; a live session keeps the one it
+    # started with. The resume offer names the conversation, which a relaunch
+    # continues. The helpers a release puts into a running session are left
+    # out too, since changing one is a release and not a relaunch. Everything
+    # else here is read once by a process that keeps it for its life — the
+    # binary, the argv, the settings, the skills, the runner, the environment,
+    # and everything `client.prepare` writes — so any change to it has to
+    # reach a live session as a new one.
+    configured, prepared = holes("", release.launch_only(helper_sources))
+    fixed_env = {k: v for k, v in env.items() if k != "CHEESE_RESUME_SESSION"}
+    contract = hashlib.sha256(
+        json.dumps(
+            [configured, launch.credentials, prepared, launch.command, fixed_env],
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    return dataclasses.replace(launch, contract=contract)
 
 
 def on_machine(

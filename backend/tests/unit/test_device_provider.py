@@ -63,6 +63,8 @@ class FakeHub:
         self.opened: list[HubScreen] = []
         self.envs: list[dict | None] = []
         self.reasserted: list[str] = []
+        # The environment each reassertion carried, by sid.
+        self.reasserted_envs: dict[str, dict | None] = {}
         self.closed: list[str] = []
         self.execs: list[tuple[list, str | None]] = []
         self.asked: list[tuple[str, dict]] = []  # (method, params) to the runner
@@ -117,6 +119,7 @@ class FakeHub:
     async def reassert_screen(self, screen: HubScreen, *, command, env=None) -> None:
         screen.command = command
         self.reasserted.append(screen.sid)
+        self.reasserted_envs[screen.sid] = env
 
     def update_screen(self, sid: str, **values) -> HubScreen:
         screen = next(screen for screen in self.opened if screen.sid == sid)
@@ -1468,29 +1471,65 @@ async def test_agent_config_change_replaces_screen_at_next_launch(caplog):
     assert hub.envs[-1]["CHEESE_AGENT_CONFIG"] == second.agent_configuration
 
 
-async def test_config_change_preserves_a_running_background_workflow():
-    """A workflow the session runs would die with it, so a configuration change
-    waits for the workflow — whichever harness the new launch would start —
-    and replaces the session once the runner reports it finished."""
+async def test_config_change_waits_for_every_task_the_session_is_running(caplog):
+    """Closing the session ends what it is doing — a workflow, a subagent, a
+    command it put in the background — so the relaunch waits for the runner to
+    report nothing running. Meanwhile the room's turns run on the session it
+    has, whichever harness the new launch would start."""
     hub = FakeHub()
-    hub.ping = {"alive": True, "tasks": {"wf-1": "local_workflow"}}
     room = _room(hub)
-
     first = await room.ensure(env={"CHEESE_AGENT_CONFIG": "original"})
-    with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
-        await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"})
-    with pytest.raises(ScreenSetupError, match="后台工作流仍在运行"):
-        await room.ensure(
-            env={"CHEESE_AGENT_CONFIG": "edited"},
-            launch=PiLaunch(system_prompt="", model="test"),
-        )
-    assert hub.closed == []
-    assert hub.opened == [first]
 
-    hub.ping = {"alive": True, "tasks": {"agent-1": "local_agent"}}
+    with caplog.at_level("INFO"):
+        for task_type in ("local_workflow", "local_agent", "local_bash"):
+            hub.ping = {"alive": True, "working": False, "tasks": {"t": task_type}}
+            assert await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"}) is first
+        assert (
+            await room.ensure(
+                env={"CHEESE_AGENT_CONFIG": "edited"},
+                launch=PiLaunch(system_prompt="", model="test"),
+            )
+            is first
+        )
+    assert hub.closed == [] and hub.opened == [first]
+    assert _retired(caplog) == []
+
+    hub.ping = {"alive": True, "working": False, "tasks": {}}
     second = await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"})
     assert second.sid != first.sid
     assert hub.closed == [first.sid]
+
+
+async def test_config_change_does_not_cut_a_turn_short():
+    """A session can be in a turn of its own when the room's next one arrives:
+    a background task finished and woke it."""
+    hub = FakeHub()
+    room = _room(hub)
+    first = await room.ensure(env={"CHEESE_AGENT_CONFIG": "original"})
+    hub.ping = {"alive": True, "working": True, "tasks": {}}
+
+    assert await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"}) is first
+    assert hub.closed == []
+
+    hub.ping = {"alive": True, "working": False, "tasks": {}}
+    assert (await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"})).sid != first.sid
+
+
+async def test_a_session_left_running_still_says_what_it_was_started_with():
+    """A relaunch put off by a running task stays owed. The machine keeps the
+    identity a session reports, and a respawn under the same sid runs the
+    launcher already on disk, so the running session must go on reporting
+    the launch it came from — or a backend restart would read it as current
+    and never replace it."""
+    hub = FakeHub()
+    room = _room(hub)
+    first = await room.ensure(env={"CHEESE_AGENT_CONFIG": "original"})
+    hub.ping = {"alive": True, "working": False, "tasks": {"b": "local_bash"}}
+
+    await room.ensure(env={"CHEESE_AGENT_CONFIG": "edited"})
+
+    env = hub.reasserted_envs[first.sid] or {}
+    assert env["CHEESE_AGENT_CONFIG"] == first.agent_configuration
 
 
 async def test_a_config_change_on_a_session_nobody_can_ask_replaces_it():
@@ -1539,5 +1578,87 @@ async def test_a_screen_installed_under_another_root_is_not_reused(monkeypatch):
     first = await room.ensure()
     monkeypatch.setattr(device_provider, "footprint_root", lambda: ".somewhere-else")
 
+    assert (await room.ensure()).sid != first.sid
+    assert hub.closed == [first.sid]
+
+
+def _deploy_helpers(monkeypatch, **changed: str) -> None:
+    """A deploy whose remote-execution helpers differ from what is running."""
+    current = resident_release.sources()
+    monkeypatch.setattr(resident_release, "sources", lambda: {**current, **changed})
+
+
+async def test_a_session_started_with_other_launch_only_helpers_is_relaunched(
+    monkeypatch, caplog
+):
+    """`client.prepare` writes the shell prefix, the launch environment, the
+    argv and the MCP config once, when the session starts, and nothing writes
+    them again: a release that swaps `client.py` on disk leaves the session
+    running the prefix it was born with. So a new `client.py` is a new launch.
+    The replacement is offered the room's conversation, which the runner
+    resumes when the transcript is on disk (test_resume_across_screens)."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    assert await room.ensure() is first
+    _deploy_helpers(
+        monkeypatch,
+        **{"client.py": resident_release.sources()["client.py"] + "\n# next\n"},
+    )
+
+    with caplog.at_level("INFO"):
+        replacement = await room.ensure()
+        again = await room.ensure()
+
+    assert replacement.sid != first.sid and again is replacement
+    assert hub.closed == [first.sid]
+    (line,) = _retired(caplog)
+    assert "reason=agent_configuration_changed" in line
+    assert (hub.envs[-1] or {}).get("CHEESE_RESUME_SESSION") == "conversation"
+
+
+async def test_a_helper_the_release_does_not_know_is_a_new_launch(monkeypatch):
+    """A helper added later is written by the launcher, and nothing in a
+    running session reads it again until someone shows a release can."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    _deploy_helpers(monkeypatch, **{"shell_view.py": "VIEW = 1\n"})
+
+    assert (await room.ensure()).sid != first.sid
+    assert hub.closed == [first.sid]
+
+
+async def test_a_helper_the_release_reloads_is_released_in_place(monkeypatch):
+    """The plugin module is loaded again by `/reload-plugins`, so a change to
+    it reaches the running session without ending it."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    _deploy_helpers(
+        monkeypatch,
+        **{"proxy.js": resident_release.sources()["proxy.js"] + "\n// next\n"},
+    )
+
+    assert await room.ensure() is first
+    assert hub.closed == []
+    assert hub.commands() == ["/reload-plugins"]
+
+
+async def test_a_launch_only_change_waits_for_a_background_command(monkeypatch):
+    """A command the session put in the background dies with it."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    _deploy_helpers(
+        monkeypatch,
+        **{"client.py": resident_release.sources()["client.py"] + "\n# next\n"},
+    )
+    hub.ping = {"alive": True, "working": False, "tasks": {"bash-1": "local_bash"}}
+
+    assert await room.ensure() is first
+    assert hub.closed == []
+
+    hub.ping = {"alive": True, "working": False, "tasks": {}}
     assert (await room.ensure()).sid != first.sid
     assert hub.closed == [first.sid]
