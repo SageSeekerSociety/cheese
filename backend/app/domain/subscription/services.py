@@ -111,6 +111,7 @@ class SubscriptionService:
             # 与 update_upstream_model 同一条规矩：空白不是「跟随默认」（那是
             # None），是一个写错的值。
             raise BadRequestError("上游模型标识不能为空")
+        _check_upstream_provider(upstream_model)
         try:
             started = await self._oauth.start_device_flow()
         except SubscriptionOAuthError as exc:
@@ -732,6 +733,7 @@ class SubscriptionService:
             raise BadRequestError("这条订阅当前不在可改上游模型的状态")
         if upstream_model is not None and not upstream_model.strip():
             raise BadRequestError("上游模型标识不能为空")
+        _check_upstream_provider(upstream_model)
         before = _audit_snapshot(sub)
         sub.upstream_model = _normalize_upstream(upstream_model)
 
@@ -916,6 +918,21 @@ def _normalize_upstream(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _check_upstream_provider(value: str | None) -> None:
+    """上游必须走 LiteLLM 的 ``openai/`` provider。
+
+    网关模型带的是这条订阅的 access_token 和 ChatGPT codex 的 api_base，只有
+    ``openai/`` 用它们。别的 provider 不认：``chatgpt/`` 会无视这把 key，自己
+    在网关进程里起一次 ChatGPT 设备码登录并等人授权，等待期间整个网关的请求
+    都卡住，超时后下一次同步模型又起一轮。
+    """
+    if value is not None and not value.strip().startswith("openai/"):
+        raise BadRequestError(
+            f"上游模型要以 openai/ 开头（如 openai/gpt-5.6-luna），收到的是 "
+            f"{value.strip()}"
+        )
 
 
 def _effective_upstream(sub: LlmSubscription) -> str:
