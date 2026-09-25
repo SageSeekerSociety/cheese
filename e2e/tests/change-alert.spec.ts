@@ -9,7 +9,7 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { api, login, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject } from './helpers';
 
 function projectIdOf(page: Page): string {
   const id = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
@@ -27,7 +27,7 @@ test.describe('变更提醒', () => {
   let projectId = '';
 
   test.beforeEach(async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
     await openFirstProject(page);
     projectId = projectIdOf(page);
   });
@@ -91,6 +91,9 @@ test.describe('变更提醒', () => {
     await expect(asked.getByRole('button', { name: '去话题' })).toHaveCount(0);
 
     await asked.getByRole('button', { name: '知道了' }).click();
-    await expect(asked).not.toContainText(title);
+    // 断言「这个标题不在了」，而不是「这一叠不在了」：答掉的最后一条会让整叠退场，
+    // `.asked` 动画放完就从 DOM 里摘掉 —— 那时候 `not.toContainText` 两种情形都不
+    // 满足（还在读得到 / 元素已经没了），会红在一个跟被测行为无关的时机上。
+    await expect(page.getByText(title)).toHaveCount(0);
   });
 });
