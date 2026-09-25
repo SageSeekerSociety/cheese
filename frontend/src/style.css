@@ -717,6 +717,22 @@ button:not(.v-btn) {
   background-color: rgb(var(--v-theme-surface)) !important;
 }
 
+/* 由 useRevealGate 管着的页面主体：闸开之前内容照常排版但不可见，转圈浮在最上面；
+   闸一开整页一起出现，不是一块一块把下面的往下推。 */
+.reveal-gate {
+  position: relative;
+}
+.reveal-gate--waiting > :not(.reveal-gate__wait) {
+  visibility: hidden;
+}
+.reveal-gate__wait {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+}
+
 /* Indeterminate progress bars, same motion as Vuetify's, moved by transform.
    Vuetify animates the bars' `left` and `right`, so every frame is a layout
    and a layout shift for as long as a bar is on screen: a settings page that

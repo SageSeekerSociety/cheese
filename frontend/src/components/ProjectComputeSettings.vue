@@ -3,6 +3,8 @@ import type { ComputeChoice, ProjectComputeConfigs } from '../cx_types'
 
 import { onMounted, ref, watch } from 'vue'
 
+import { holdRevealGate } from '@/composables/useRevealGate'
+
 import { getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
 import { choiceDetail, choiceKey, compactChoices } from '../lib/computeConfig'
 
@@ -52,7 +54,9 @@ function makeDefault(choice: ComputeChoice) {
     compactChoices(state.value.default, state.value.favorites).filter((c) => choiceKey(c) !== choiceKey(choice))
   )
 }
-onMounted(load)
+// 首次取数期间占住设置页的显示闸，见 useRevealGate。
+const releaseGate = holdRevealGate()
+onMounted(() => load().finally(releaseGate))
 watch(() => props.projectId, load)
 </script>
 

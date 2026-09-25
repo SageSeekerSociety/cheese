@@ -11,6 +11,8 @@ import type {
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { provideRevealGate } from '@/composables/useRevealGate'
+
 import {
   connectGithubRepo as apiConnectGithubRepo,
   deleteOAuthConnection,
@@ -352,11 +354,14 @@ function consumeGithubCallbackNotice() {
   router.replace({ query: rest })
 }
 
+const gate = provideRevealGate()
+const { revealed } = gate
+
 onMounted(() => {
   consumeGithubCallbackNotice()
   load()
-  loadBranchProtection()
-  loadGithubAccountConnection()
+  void loadBranchProtection().finally(gate.hold())
+  void loadGithubAccountConnection().finally(gate.hold())
 })
 watch(
   () => props.projectId,
@@ -379,7 +384,9 @@ watch(
       {{ error }}
     </v-alert>
 
-    <template v-else>
+    <!-- 下面各块各自取数；全部首次到齐之前整页藏在一个转圈后面，到齐后一起出现，
+         不然每到一块就把下面的往下推一次。见 useRevealGate。 -->
+    <div v-else class="reveal-gate" :class="{ 'reveal-gate--waiting': !revealed }">
       <!-- 分四组，因为这一页的读者一次只为一件事来：换队友 / 调机器 / 定交付
              规则 / 接仓库。原来是六块竖着铺满一页，读的人得自己认哪块是哪块；而
              没绑仓库的项目从头到尾只看得到跟仓库有关的东西，于是整页像是坏的。 -->
@@ -851,7 +858,10 @@ watch(
           </p>
         </div>
       </section>
-    </template>
+      <div v-if="!revealed" class="reveal-gate__wait">
+        <v-progress-circular indeterminate color="primary" />
+      </div>
+    </div>
   </ProjectPage>
 </template>
 

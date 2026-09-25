@@ -3,6 +3,8 @@ import type { EnvironmentStatus, ProjectEnvironmentInfo } from '../cx_types'
 
 import { onBeforeUnmount, ref, watch } from 'vue'
 
+import { holdRevealGate } from '@/composables/useRevealGate'
+
 import { applyRoomEnvironment, getProjectEnvironment, getRoomEnvironment, saveProjectEnvironment } from '../api'
 
 const props = defineProps<{ projectId: string }>()
@@ -104,7 +106,13 @@ async function apply(latest: boolean) {
   }
 }
 
-watch(() => props.projectId, load, { immediate: true })
+// 首次取数期间占住设置页的显示闸，见 useRevealGate。
+const releaseGate = holdRevealGate()
+watch(
+  () => props.projectId,
+  () => load().finally(releaseGate),
+  { immediate: true }
+)
 watch(selectedRoom, () => {
   status.value = null
   void refreshStatus()
