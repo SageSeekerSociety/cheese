@@ -52,7 +52,12 @@ onBeforeUnmount(() => clearInterval(timer))
 
 <template>
   <details class="cloud-startup" data-testid="platform-notice">
-    <summary>{{ title }} · {{ finished ? '共用时' : '已等待' }} {{ duration(events[0].created_at) }}</summary>
+    <summary>
+      <span>{{ title }} · {{ finished ? '共用时' : '已等待' }} {{ duration(events[0].created_at) }}</span>
+      <svg class="cloud-startup-chev" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+    </summary>
     <div class="cloud-startup-body">
       <p v-if="quiet">
         已 {{ duration(latest.created_at) }} 没有新的启动进度，最近一条进度记录：{{ time(latest.created_at) }}。
@@ -80,14 +85,32 @@ onBeforeUnmount(() => clearInterval(timer))
   color: var(--muted);
 }
 
+/* 和房间里其它可展开的事件行一样：一行字后面跟一个箭头，点开转 90°。 */
 summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 20px;
   cursor: pointer;
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+.cloud-startup-chev {
+  flex: none;
+  color: var(--faint);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+
+.cloud-startup[open] .cloud-startup-chev {
+  transform: rotate(90deg);
 }
 
 .cloud-startup-body {
-  padding-top: 8px;
-  margin-top: 8px;
-  border-top: 1px solid var(--line);
+  padding-top: 4px;
 }
 
 ol {
@@ -99,16 +122,22 @@ ol {
 li {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  padding: 4px 0;
+  gap: 10px;
+  padding: 2px 0;
+  color: var(--text);
 }
 
 time,
 small,
 .cloud-startup-duration {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--faint);
+}
+
+time,
+.cloud-startup-duration {
+  font-family: var(--font-mono);
 }
 
 time,

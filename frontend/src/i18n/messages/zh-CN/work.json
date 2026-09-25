@@ -176,6 +176,11 @@
       "action": "重试",
       "nothingPending": "没有需要重试的消息",
       "failed": "重试失败"
+    },
+    "notice": {
+      "platform": "平台",
+      "changedFiles": "改动的文件",
+      "moreFiles": "另 {n} 个文件"
     }
   },
   "members": {

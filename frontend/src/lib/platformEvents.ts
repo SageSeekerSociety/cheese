@@ -5,7 +5,6 @@ export interface PlatformErrorPresentation {
   title: string
   body: string
   status: string
-  icon: string
   retryable: boolean
 }
 
@@ -29,12 +28,6 @@ export function platformErrorPresentation(block: Block): PlatformErrorPresentati
           : retryable
             ? '可以重试'
             : '需要管理员处理',
-    icon:
-      code === 'storage_exhausted'
-        ? 'mdi-harddisk-alert'
-        : code === 'runtime_image_missing'
-          ? 'mdi-package-variant-closed-remove'
-          : 'mdi-server-alert',
     retryable,
   }
 }

@@ -1479,12 +1479,13 @@ onBeforeUnmount(() => {
 }
 /* Working-log checklist (§3.1.1) — process, sits above the streaming text.
    Between turns the same list shows the stored 进度层 (#187) under a label. */
-/* 任务清单块：强调靠 wash 底色，不靠左竖条（左条纹只留给引用块和结构线）。 */
+/* 任务清单块：一块中性底色把它和正文分开，不靠左竖条（左条纹只留给引用块和结构
+   线），也不上琥珀（它是进度，不是要人去按的东西）。 */
 .todo-list {
   list-style: none;
-  margin: 2px 0 6px;
+  margin: 4px 0 6px;
   padding: 6px 10px;
-  background: rgba(var(--v-theme-primary), 0.05);
+  background: var(--fill);
   border-radius: var(--radius-sm);
 }
 .todo-item {

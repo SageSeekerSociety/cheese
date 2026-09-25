@@ -176,6 +176,11 @@
       "action": "Retry",
       "nothingPending": "Nothing to retry",
       "failed": "Retry failed"
+    },
+    "notice": {
+      "platform": "Platform",
+      "changedFiles": "Changed files",
+      "moreFiles": "{n} more files"
     }
   },
   "members": {

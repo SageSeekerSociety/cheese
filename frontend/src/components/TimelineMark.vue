@@ -1,13 +1,12 @@
 <script setup lang="ts">
-// 时间刻度: the one archetype in the conversation column that is allowed to be
-// CENTERED and to span the full width — because it is not something anyone
-// said. Dates, the unread boundary, and 「已拆出子话题」 are marks ON the
+// 时间刻度: a rule across the full width, for marks about time itself — the day
+// changed, or this is where the unread part starts. They are marks ON the
 // timeline, not entries IN it.
 //
-// Everything else (messages, platform rows) shares the 54px text axis. Keeping
-// that split explicit is the whole point of this component existing: before it,
-// centered and left-aligned rows were mixed by accident and the column had
-// three different left edges.
+// Messages and the rows for something someone did share the 54px text axis;
+// what merely happened in the room (someone joined, a task was dispatched) is a
+// centred line of faint text with no rule. Three kinds, three shapes, and no
+// row picks its shape by accident.
 defineOptions({ name: 'TimelineMark' })
 
 withDefaults(

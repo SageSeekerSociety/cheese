@@ -464,8 +464,8 @@ function renderPlain(text: string): string {
   color: var(--ink);
 }
 .im-act--on {
-  background: rgba(var(--v-theme-primary), 0.12);
-  color: rgb(var(--v-theme-primary));
+  background: var(--line-2);
+  color: var(--ink);
 }
 .im-row:hover .im-actions,
 .im-actions--open {
@@ -503,7 +503,8 @@ function renderPlain(text: string): string {
 .rx-pick:hover {
   background: var(--fill);
 }
-/* 选项问题 buttons (cheese_ask): quiet outlined pills, amber on hover. */
+/* 选项问题 buttons (cheese_ask): quiet outlined buttons. 悬停只加深一档，不上琥珀：
+   一排选项里没有哪一个是「主操作」。 */
 .ask-row {
   display: flex;
   flex-wrap: wrap;
@@ -521,9 +522,9 @@ function renderPlain(text: string): string {
     border-color var(--dur-quick) var(--ease-standard),
     background-color var(--dur-quick) var(--ease-standard);
 }
-.ask-option:hover {
-  border-color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.06);
+.ask-option:hover:not(:disabled) {
+  border-color: var(--faint);
+  background: var(--fill);
 }
 .ask-option:disabled {
   opacity: 0.5;

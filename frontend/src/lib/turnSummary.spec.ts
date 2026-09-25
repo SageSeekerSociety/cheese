@@ -74,7 +74,10 @@ describe('本轮摘要', () => {
       filesTotal: 3,
       added: 120,
       removed: 8,
-      files: ['a.ts', 'b.ts'],
+      files: [
+        { path: 'a.ts', added: 100, removed: 4 },
+        { path: 'b.ts', added: 20, removed: 4 },
+      ],
       filesOmitted: 1,
     })
     expect(notice.actions.map((a) => a.resource)).toEqual(['doc', 'decision'])
