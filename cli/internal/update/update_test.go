@@ -1,9 +1,14 @@
 package update
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -106,5 +111,46 @@ func TestSelfDigestIsTheHashOfTheRunningBinary(t *testing.T) {
 	again, err := SelfDigest()
 	if err != nil || again != got {
 		t.Errorf("SelfDigest() second call = %q (err %v), want %q", again, err, got)
+	}
+}
+
+// An update request means "take what the origin publishes". When the origin
+// publishes the bytes this process already runs there is nothing to hand off
+// to — and handing off anyway drops the machine's link on every reconnect.
+func TestFetchOfTheRunningBuildIsNotAnUpdate(t *testing.T) {
+	self, err := SelfPath()
+	if err != nil {
+		t.Fatalf("SelfPath error: %v", err)
+	}
+	running, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatalf("read %s: %v", self, err)
+	}
+	served := running
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(served)
+	}))
+	defer origin.Close()
+	leftovers := func() []string {
+		found, _ := filepath.Glob(filepath.Join(filepath.Dir(self), ".cheese-update-*"))
+		return found
+	}
+
+	tmp, err := Fetch(context.Background(), origin.URL)
+	if !errors.Is(err, ErrCurrent) {
+		t.Fatalf("Fetch of the running build = (%q, %v), want ErrCurrent", tmp, err)
+	}
+	if found := leftovers(); len(found) != 0 {
+		t.Errorf("Fetch left downloads behind: %v", found)
+	}
+
+	// Different bytes are a real update: never ErrCurrent. These fail the
+	// runnable check, which is the other half of Fetch's contract.
+	served = append([]byte("not this build"), running[:64]...)
+	if _, err := Fetch(context.Background(), origin.URL); err == nil || errors.Is(err, ErrCurrent) {
+		t.Fatalf("Fetch of different bytes = %v, want a verification failure", err)
+	}
+	if found := leftovers(); len(found) != 0 {
+		t.Errorf("Fetch left downloads behind: %v", found)
 	}
 }

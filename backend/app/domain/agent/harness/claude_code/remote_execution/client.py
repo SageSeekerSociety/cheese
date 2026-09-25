@@ -1113,7 +1113,7 @@ def transport(config, target_path):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
-    def invoke_on_the_machine(payload, args):
+    def invoke_on_the_machine(payload, args, abandoned=None):
         """项目工具的唯一出口 —— 机器够不着时它当场答，不去撞那条超时。"""
         gone_for = (
             None
@@ -1126,6 +1126,7 @@ def transport(config, target_path):
             receipt = client.call(
                 "invoke",
                 {"id": payload["id"], "tool": payload["tool"], "args": args},
+                abandoned=abandoned,
             )
         except MachineOutOfReach:
             unreachable_since[0] = time.monotonic()
@@ -1339,10 +1340,19 @@ def transport(config, target_path):
                 if tool == "invoke" and payload["tool"] not in NATIVE_TOOLS:
                     raise ValueError("Unknown native tool")
                 args = payload["args"]
+
+                def abandoned():
+                    # Checked again once the machine is ready: a call cancelled
+                    # while it was being prepared never starts.
+                    with active_lock:
+                        return request["id"] in cancelled
+
                 if tool == "project_tools":
                     receipt = {
                         "value": client.call(
-                            "project_tools", {**args, "id": payload["id"]}
+                            "project_tools",
+                            {**args, "id": payload["id"]},
+                            abandoned=abandoned,
                         )
                     }
                 elif tool == "send_user_file":
@@ -1357,7 +1367,7 @@ def transport(config, target_path):
                         if tool == "platform_request"
                         else client.publish_message(payload, args)
                         if tool == "chat_send"
-                        else invoke_on_the_machine(payload, args)
+                        else invoke_on_the_machine(payload, args, abandoned)
                     )
                 if "error" in receipt:
                     outcome = {"deny": receipt["error"]}

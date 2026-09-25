@@ -1498,6 +1498,8 @@ async def acquire_session_work_lease(
                     claims=claims,
                     token=token,
                     env=body.env,
+                    wait_s=min(work_lease.PREPARING_WAIT_S, body.timeout),
+                    gone=request.is_disconnected,
                 )
             )
     except TimeoutError as exc:
