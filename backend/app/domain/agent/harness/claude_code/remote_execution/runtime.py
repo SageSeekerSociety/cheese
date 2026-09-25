@@ -137,7 +137,7 @@ def connect(state):
 
 def claude_shell(env):
     """The shell Claude Code runs its commands in on a machine with this
-    environment, chosen as the pinned build chooses it (2.1.277; held to it by
+    environment, chosen as the pinned build chooses it (held to it by
     `scripts/remote_execution/mcp_contract.py`). On Windows, the Git Bash it is
     pointed at; elsewhere `CLAUDE_CODE_SHELL` when it names an executable bash
     or zsh, then `$SHELL` when it does, then zsh before bash (bash before zsh

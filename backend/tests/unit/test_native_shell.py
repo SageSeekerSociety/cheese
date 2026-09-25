@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -513,6 +514,73 @@ def test_a_stop_reaches_the_command_and_the_prefix_ends_by_it(session, machine):
     process.send_signal(signal.SIGTERM)
     assert process.wait(timeout=30) == -signal.SIGTERM
     _wait_for(lambda: not _alive("^sleep 61$"))
+
+
+def test_the_first_command_after_the_machine_arrives_stops_promptly(tmp_path, machine):
+    """A session started before its machine was rented holds a placeholder
+    target; its first command is what rents the machine. A stop for that
+    command reaches the machine the lease named, at once."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Platform(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/lease":
+                result = {
+                    "data": {
+                        "target": {
+                            "kind": "device",
+                            "workspace": str(machine.workspace),
+                            "url": base + "/execute",
+                            "generation": "rented",
+                        },
+                        "token": "execution-only",
+                    }
+                }
+            else:
+                result = runtime.request(machine.state, body["method"], body["params"])
+            encoded = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Platform)
+    base = f"http://127.0.0.1:{server.server_port}"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    session = Session(tmp_path / "deferred-session", machine)
+    session.target.write_text(
+        json.dumps(
+            {
+                "kind": "deferred",
+                "workspace": "/unavailable-project",
+                "session_workspace": "/unavailable-project",
+                "lease_path": "/lease",
+                "target_file": str(session.target),
+                "central_workspace": str(session.central),
+                "central_config": str(session.config),
+                "central_tmp": str(session.tmp),
+                "central_hooks": {},
+            }
+        )
+    )
+    try:
+        started = machine.workspace / "started"
+        process = session.prefix(
+            session.wrapped(f"touch {shlex.quote(str(started))}; sleep 65"),
+            cwd=session.central,
+            env=session.env(CHEESE_API=base, CHEESE_TOKEN="session-token"),
+        )
+        _wait_for(started.exists, timeout=30)
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=15) == -signal.SIGTERM
+        _wait_for(lambda: not _alive("^sleep 65$"))
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_a_command_that_ignores_the_stop_is_killed_after_the_grace(session, machine):

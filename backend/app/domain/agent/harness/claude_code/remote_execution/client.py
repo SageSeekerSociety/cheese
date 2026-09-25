@@ -740,7 +740,7 @@ def run_on_the_machine(target, command):
             if not link and time.monotonic() - failing_since > SHELL_ERROR_RETRY_S:
                 sys.stderr.write(f"{exc}\n")
                 return 1
-            client = RemoteClient(target)
+            client = RemoteClient(_current_target(target))
             time.sleep(delay)
             delay = min(delay * 2, 5.0)
             continue
@@ -781,6 +781,16 @@ def run_on_the_machine(target, command):
             signal.signal(-code, signal.SIG_DFL)
         os.kill(os.getpid(), -code)
     return code
+
+
+def _current_target(target):
+    """Where the session's commands go now. A session started before its
+    machine was rented holds a placeholder until the lease names the machine
+    (`RemoteClient.call`), which writes the target file anew; a process that
+    read the placeholder before then reads the machine from there."""
+    with contextlib.suppress(KeyError, OSError, ValueError):
+        return json.loads(Path(target["target_file"]).read_text())
+    return target
 
 
 def _start_watcher(target, command_id):
@@ -830,7 +840,7 @@ def _deliver_stop(target, command_id, pipe):
             number = int(found.group(1))
         elif not chunk:
             number = int(signal.SIGTERM)
-    client = RemoteClient(target)
+    client = RemoteClient(_current_target(target))
 
     def send(signalled):
         deadline = time.monotonic() + 600
@@ -847,7 +857,7 @@ def _deliver_stop(target, command_id, pipe):
                     },
                 )
             except Exception:  # noqa: BLE001 — the link may be down; retry
-                client = RemoteClient(target)
+                client = RemoteClient(_current_target(target))
                 time.sleep(1)
         return {}
 
