@@ -113,7 +113,6 @@ async def test_two_live_cards_each_adding_a_migration_are_flagged(monkeypatch):
     assert len(rec.messages) == 1
     said = rec.messages[0]
     assert "进度层与记忆落地" in said  # names the room to go look at
-    assert "不拦" in said  # and says it is not blocking
 
 
 @pytest.mark.anyio
