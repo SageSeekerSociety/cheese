@@ -2,7 +2,7 @@
 // this script; it adds search, 问芝士, theme, and the home page's motion.
 import { build, stageFor, BUBBLE } from 'virtual:motion'
 import { ic } from './content.js'
-import { WORK, workPanel, sayHtml } from './home.mjs'
+import { sayHtml } from './home.mjs'
 import { freshToken, signInUrl } from './session.js'
 
 const $ = (s, r = document) => r.querySelector(s)
@@ -321,19 +321,14 @@ async function homeData() {
   home ||= await fetch('/docs/home.json').then((r) => r.json())
   return home
 }
-async function renderWork(i) {
-  const { pages } = await homeData()
-  $$('#workTabs button').forEach((b) => { const on = +b.dataset.work === i; b.classList.toggle('on', on); b.setAttribute('aria-selected', on) })
-  const on = $('#workTabs button.on'), ind = $('#workInd')
-  if (on && ind) { ind.style.left = on.offsetLeft + 'px'; ind.style.width = on.offsetWidth + 'px' }
-  $('#workPanel').innerHTML = workPanel(i, pages)
-}
 const say = { who: '', what: 0, open: '' }
 async function renderSay() {
   const { pages, who } = await homeData()
   say.who ||= Object.keys(who)[0]
   const h = sayHtml(say.who, say.what, who, pages, say.open)
   $('#pickWho').innerHTML = h.who; $('#pickWhat').innerHTML = h.what; $('#sayOut').innerHTML = h.out
+  const work = $('#workPanel')
+  if (work.dataset.who !== say.who) { work.dataset.who = say.who; work.innerHTML = h.work }
 }
 
 // ---------- developer docs: the admin check ----------
@@ -353,7 +348,7 @@ async function devGate() {
 
 // ---------- events ----------
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-menu],[data-copy-page],[data-copy],[data-f],[data-sug],[data-work],[data-pick],[data-pick-opt],.code-tab,.side a[href^="#"]')
+  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-menu],[data-copy-page],[data-copy],[data-f],[data-sug],[data-pick],[data-pick-opt],.code-tab,.side a[href^="#"]')
   if (say.open && !e.target.closest('.x-menu,[data-pick]')) { say.open = ''; renderSay() }
   if (!t) { if (!e.target.closest('.menu')) $('#menu')?.classList.remove('open'); return }
   if (t.matches('[data-open-search]')) { e.preventDefault(); openSearch() }
@@ -372,8 +367,7 @@ document.addEventListener('click', (e) => {
     $$('.item').forEach((i) => i.classList.toggle('hide', f !== 'all' && i.dataset.t !== f))
     $$('.day').forEach((d) => d.classList.toggle('hide', !d.querySelector('.item:not(.hide)')))
     onScroll()
-  } else if (t.matches('[data-work]')) renderWork(+t.dataset.work)
-  else if (t.matches('[data-pick-opt]')) { if (t.dataset.pickOpt === 'who') { say.who = t.dataset.v; say.what = 0 } else say.what = +t.dataset.v; say.open = ''; renderSay() }
+  } else if (t.matches('[data-pick-opt]')) { if (t.dataset.pickOpt === 'who') { say.who = t.dataset.v; say.what = 0 } else say.what = +t.dataset.v; say.open = ''; renderSay() }
   else if (t.matches('[data-pick]')) { say.open = say.open === t.dataset.pick ? '' : t.dataset.pick; renderSay() }
   else if (t.matches('.code-tab')) t.parentElement.querySelectorAll('.code-tab').forEach((x) => x.classList.toggle('on', x === t))
   else if (t.matches('.side a[href^="#"]')) moveSidePill(t)

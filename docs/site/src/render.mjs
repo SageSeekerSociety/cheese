@@ -3,7 +3,7 @@
 import { ic, TAG, STEPS } from './content.js'
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
-const REPO = 'https://github.com/SageSeekerSociety/cheese'
+export const REPO = 'https://github.com/SageSeekerSociety/cheese'
 
 // ---------- shell ----------
 export function shell(ctx, { title, description, section, bodyClass = '', main, pageData }) {

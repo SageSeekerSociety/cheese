@@ -385,11 +385,8 @@ write('dev/index.html', redirectPage('/docs/dev/overview'))
 
 const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel }]))
 pageRefs.__logo = assets.logo
-const library = [
-  ...SECTIONS.flatMap(([key, label]) => userNav[key].map(([g, items]) => [userNav[key].length > 1 ? g : label, false, items])),
-  ...devNav.filter(([g]) => !g.includes('自动生成')).map(([g, items]) => [`开发者 · ${g}`, true, items]),
-]
-write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, library, pages: pageRefs }))
+const doors = SECTIONS.map(([key, label, icon]) => ({ key, label, icon, items: userNav[key].flatMap(([, items]) => items) }))
+write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs }))
 write('changelog.html', changelogPage(ctx, RELEASES))
 write('changelog.xml', changelogFeed(RELEASES))
 write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest' }))

@@ -803,19 +803,7 @@ html.dark .x-stage{background:linear-gradient(160deg,#5a3a1c,#7a3a1f 55%,#3a1d16
 .x-head{text-align:center;max-width:680px;margin:0 auto 40px}
 .x-head h2,.x-end h2{font-family:var(--serif);font-size:clamp(30px,3.8vw,48px);line-height:1.2;font-weight:700;color:var(--ink);margin:0}
 .x-head p{margin:14px 0 0;color:var(--muted);font-size:17px}
-.x-three{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
-.x-num{position:relative;overflow:hidden;display:flex;flex-direction:column;gap:10px;padding:30px 28px;border-radius:22px;border:1px solid var(--line);background:var(--surface);min-height:260px;transition:border-color .3s,transform .5s var(--out)}
-.x-num:hover{border-color:var(--accent);transform:translateY(-4px)}
-.x-num .n{font:600 13px var(--mono);color:var(--accent-ink)}
-.x-num b{font-family:var(--serif);font-size:24px;color:var(--ink);font-weight:700}
-.x-num p{margin:0;color:var(--muted);line-height:1.75}
-.x-num .go{margin-top:auto;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--ink)}
-.x-num .go .ico{transition:transform .4s var(--spring)}.x-num:hover .go .ico{transform:translateX(5px)}
 
-.x-tabs.x-tabs{position:relative;display:flex;gap:4px;width:max-content;max-width:100%;margin:0 auto 28px;padding:5px;border-radius:999px;background:var(--panel);overflow-x:auto}
-.x-tabs button{position:relative;z-index:1;padding:8px 18px;border-radius:999px;font-size:14.5px;color:var(--muted);white-space:nowrap;transition:color .25s}
-.x-tabs button.on{color:var(--btn-ink)}
-.x-tabs .f-ind{position:absolute;z-index:0;top:5px;bottom:5px;border-radius:999px;background:var(--btn);transition:left .5s var(--spring),width .5s var(--spring)}
 .x-work{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:1000px;margin:0 auto}
 .x-work>div{animation:rise .5s var(--out) both;border-radius:22px;padding:28px}
 .x-work>div+div{animation-delay:.12s}
@@ -831,11 +819,6 @@ html.dark .x-stage{background:linear-gradient(160deg,#5a3a1c,#7a3a1f 55%,#3a1d16
 .w-result p{margin:6px 0 14px;font-size:15.5px;line-height:1.75;color:var(--ink)}
 .w-result .w-files{margin-bottom:16px}
 
-.x-lib{display:grid;grid-template-columns:repeat(4,1fr);gap:36px 28px}
-.x-lib h3{display:flex;align-items:center;gap:6px;margin:0 0 10px;padding-bottom:10px;border-bottom:1px solid var(--line);font-size:14px;font-weight:650;color:var(--ink)}
-.x-lib a{display:flex;align-items:center;gap:8px;padding:5px 0;color:var(--muted);font-size:14.5px;transition:color .2s,transform .3s var(--out)}
-.x-lib a:hover{color:var(--accent-ink);transform:translateX(3px)}
-.x-lib small{font-size:10.5px;color:var(--faint);border:1px dashed var(--line-2);border-radius:5px;padding:0 5px}
 
 .x-say{text-align:center}
 .x-sentence{font-family:var(--serif);font-size:clamp(28px,4vw,48px);line-height:1.45;font-weight:700;color:var(--ink);margin:0}
@@ -854,7 +837,8 @@ html.dark .x-stage{background:linear-gradient(160deg,#5a3a1c,#7a3a1f 55%,#3a1d16
 .x-menu button.on .x-menu-ic{background:var(--accent);color:#fff}
 .x-menu b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
 .x-menu small{display:block;font-size:12.5px;color:var(--muted);line-height:1.5}
-.x-say-out{max-width:620px;margin:36px auto 0}
+.x-say .x-work{margin-top:40px;text-align:left}
+.x-say-out{max-width:620px;margin:22px auto 0}
 .x-say-card{animation:rise .45s var(--out) both;padding:26px 28px;border-radius:22px;border:1px solid var(--line);background:var(--surface);text-align:left;display:grid;gap:6px;justify-items:start}
 .x-say-card small{color:var(--faint);font-size:12.5px}
 .x-say-card b{font-size:20px;color:var(--ink)}
@@ -862,14 +846,48 @@ html.dark .x-stage{background:linear-gradient(160deg,#5a3a1c,#7a3a1f 55%,#3a1d16
 
 .x-end{padding:130px 0 120px;text-align:center}
 .x-end .x-cta{margin-top:30px;animation:none}
+.x-end-sub{margin:22px 0 0;color:var(--muted);font-size:14px}
+
+/* ---------- home: the four doors ---------- */
+.x-doors{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.x-door{display:flex;flex-direction:column;gap:10px;padding:22px 20px;border-radius:20px;border:1px solid var(--line);background:var(--surface);transition:border-color .3s,transform .5s var(--out),box-shadow .3s}
+.x-door:hover{border-color:var(--line-2);transform:translateY(-3px);box-shadow:var(--shadow)}
+.x-door-head{display:flex;align-items:center;gap:10px;color:var(--ink)}
+.x-door-head b{font-family:var(--serif);font-size:20px;font-weight:700}
+.x-door-head small{margin-left:auto;font:12px var(--mono);color:var(--faint)}
+.x-door-ic{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:var(--accent-wash);color:var(--accent-ink);transition:transform .5s var(--spring)}
+.x-door:hover .x-door-ic{transform:rotate(-8deg) scale(1.08)}
+.x-door p{margin:0;color:var(--muted);font-size:14px;line-height:1.7}
+.x-door-list{display:grid;margin-top:auto;padding-top:6px;border-top:1px solid var(--line)}
+.x-door-list a{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;font-size:14.5px;color:var(--text);transition:color .2s}
+.x-door-list a .ico{opacity:0;transform:translateX(-4px);transition:.3s var(--out);color:var(--accent)}
+.x-door-list a:hover{color:var(--accent-ink)}
+.x-door-list a:hover .ico{opacity:1;transform:none}
+
+/* ---------- home: latest release ---------- */
+.x-news{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:40px;align-items:start;padding:36px;border-radius:24px;background:var(--panel)}
+.x-news h2{font-family:var(--serif);font-size:34px;color:var(--ink);margin:6px 0 18px;display:flex;flex-direction:column;gap:6px}
+.x-news h2 small{font:500 13.5px var(--sans);color:var(--muted)}
+.x-news .x-cta{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.x-news-list{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.x-news-list li{display:flex;align-items:baseline;gap:10px;padding:10px 12px;border-radius:12px;background:var(--surface);color:var(--ink);font-size:14.5px}
+.x-news-list .badge{flex:none}
+
+/* ---------- home: docs for AI ---------- */
+.x-agent-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.x-agent{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:20px;border-radius:18px;border:1px solid var(--line);background:var(--surface);color:var(--ink);transition:border-color .25s,transform .4s var(--out)}
+.x-agent:hover{border-color:var(--accent);transform:translateY(-2px)}
+.x-agent code{font:600 14px var(--mono);color:var(--accent-ink);background:var(--accent-wash);padding:2px 8px;border-radius:7px}
+.x-agent b{font-size:15.5px}
+.x-agent p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.65}
 .home.x+.foot,body.page-home .foot{background:#1c1812;border-top:0}
 body.page-home .foot h6{color:#8d8577}
 body.page-home .foot a,body.page-home .foot .brand-word{color:#d9d2c4}
 body.page-home .foot a:hover{color:#fff}
 body.page-home .foot .fine{color:#8d8577}
 
-@media (max-width:980px){.x-hero{grid-template-columns:1fr;min-height:0}.x-mark{order:-1;width:min(300px,70%)}.x-three,.x-work{grid-template-columns:1fr}.x-lib{grid-template-columns:1fr 1fr}.d-body{grid-template-columns:1fr}.d-side{display:none}.x-stage{padding:32px 20px 0}}
-@media (max-width:620px){.x{padding:0 18px}.x-lib{grid-template-columns:1fr}}
+@media (max-width:980px){.x-hero{grid-template-columns:1fr;min-height:0}.x-mark{order:-1;width:min(300px,70%)}.x-work,.x-news{grid-template-columns:1fr}.x-doors,.x-agent-grid{grid-template-columns:1fr 1fr}.x-news{gap:20px;padding:26px 22px}.d-body{grid-template-columns:1fr}.d-side{display:none}.x-stage{padding:32px 20px 0}}
+@media (max-width:620px){.x{padding:0 18px}.x-doors,.x-agent-grid{grid-template-columns:1fr}}
 
 /* ---------- home: the pinned room story ---------- */
 .x-story{position:relative;height:calc(var(--n) * 85vh + 100vh);margin-top:90px}
