@@ -17,14 +17,14 @@ export interface MergeBadge {
  *  词优先按 state 分：dirty / behind / clean 这三个状态本身就说明了下一步是
  *  什么；unstable / blocked 才需要 who 来分「检查红了」和「CI 还在跑」——那个
  *  分流后端做过了（issue #718 的表格），这里照抄结论。 */
-export function mergeBadgeOf(ms: MergeStateInfo): MergeBadge {
+export function mergeBadgeOf(ms: MergeStateInfo, agentName = '芝士'): MergeBadge {
   switch (ms.state) {
     case 'clean':
       // 绿勾 + 采纳亮；圈是「等你」—— 下一步真的在人手上。平台 lane（没绑
       // GitHub）的卡恒是这一档或 dirty（#363 拍板：没有检查可读，卡直接 CLEAN）。
       return { label: '可以合并', column: 'needs_you' }
     case 'dirty':
-      return { label: '芝士处理中', column: 'building' }
+      return { label: `${agentName}正在处理`, column: 'building' }
     case 'behind':
       return { label: '平台更新分支', column: 'delivering' }
     case 'unknown':
@@ -36,12 +36,12 @@ export function mergeBadgeOf(ms: MergeStateInfo): MergeBadge {
   // unstable / blocked：按后端下发的「谁的活」分。
   switch (ms.who) {
     case 'agent':
-      return { label: '芝士处理中', column: 'building' }
+      return { label: `${agentName}正在处理`, column: 'building' }
     case 'ci':
-      return { label: '等 CI', column: 'delivering' }
+      return { label: '等待检查', column: 'delivering' }
     case 'human':
       // 采纳被新提交作废，或机器看不出细节 —— 球在人手上。
-      return { label: '等采纳', column: 'needs_you' }
+      return { label: '待审阅', column: 'needs_you' }
     default:
       return { label: '平台处理中', column: 'delivering' }
   }

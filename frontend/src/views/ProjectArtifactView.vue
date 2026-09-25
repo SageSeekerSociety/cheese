@@ -235,7 +235,7 @@ watch(
               <div class="t-body version-row__subject">{{ version.subject || '这次交付没有留下说明' }}</div>
               <div class="t-meta c-faint">
                 <template v-if="when(version)">{{ when(version) }}</template>
-                <template v-if="version.decided_by"> · {{ version.decided_by }} 验收</template>
+                <template v-if="version.decided_by"> · {{ version.decided_by }} 采纳</template>
               </div>
             </div>
             <v-btn
@@ -267,7 +267,6 @@ watch(
 
         <div v-else class="py-8 text-center">
           <p class="t-body c-muted">暂无交付</p>
-          <p class="t-meta c-faint mt-1">有一次交付被验收后，这里会出现第一版</p>
         </div>
       </template>
     </div>

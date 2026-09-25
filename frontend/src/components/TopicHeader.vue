@@ -132,7 +132,7 @@ function toggleFocus() {
           <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
           <span v-if="isWorkTopic" class="pr-state" :class="state.cls">{{ state.label }}</span>
           <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
-            <span class="status-dot status-dot--warn" />整台机器
+            <span class="status-dot status-dot--warn" />可访问整台设备
           </span>
           <span v-if="!connected" class="topic-header__disconnected" role="status">未连接</span>
         </span>

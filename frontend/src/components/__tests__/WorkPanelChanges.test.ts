@@ -274,7 +274,7 @@ describe('文件面板', () => {
     await flush()
     expect(editor(container)!.value).toBe('A 话题的内容\n')
     expect(editor(container)!.readOnly).toBe(true)
-    expect(container.textContent).not.toContain('二进制文件，不能按文本编辑')
+    expect(container.textContent).not.toContain('非文本文件，无法编辑')
     expect(writeFile).not.toHaveBeenCalled()
   })
 
@@ -372,7 +372,7 @@ describe('文件面板', () => {
     await openFilesTool(container)
 
     expect(editor(container)).toBeNull()
-    expect(container.textContent).toContain('二进制文件，不能按文本编辑')
+    expect(container.textContent).toContain('非文本文件，无法编辑')
     expect(buttonByText(container, '保存')).toBeUndefined()
   })
 
@@ -391,7 +391,7 @@ describe('文件面板', () => {
     await openFilesTool(container)
 
     expect(editor(container)).toBeNull()
-    expect(container.textContent).toContain('文件太大')
+    expect(container.textContent).toContain('文件过大')
     expect(buttonByText(container, '保存')).toBeUndefined()
   })
 
@@ -407,8 +407,8 @@ describe('文件面板', () => {
     await fireEvent.click(buttonByText(container, '保存')!)
     await flush()
 
-    expect(container.textContent).toContain('这个文件在你编辑期间被改过')
-    const overwrite = buttons(container).find((b) => b.textContent?.includes('仍然覆盖保存'))
+    expect(container.textContent).toContain('这个文件已被修改')
+    const overwrite = buttons(container).find((b) => b.textContent?.includes('仍要保存'))
     expect(overwrite).toBeTruthy()
 
     // The explicit overwrite still detects another write after the refresh.

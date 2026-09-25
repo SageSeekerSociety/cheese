@@ -30,7 +30,7 @@ vi.mock('@/services/webPush', () => ({
 
 const Prompt = PushPermissionPrompt as unknown as Component
 const ASKED_KEY = 'cheese:push-asked'
-const ASK_TEXT = '本轮运行时间可能较长'
+const ASK_TEXT = '这次运行时间可能较长'
 
 let vuetify: ReturnType<typeof createVuetify>
 

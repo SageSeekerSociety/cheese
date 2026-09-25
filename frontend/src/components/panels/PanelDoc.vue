@@ -56,8 +56,10 @@ const props = withDefaults(
     // Project topics (A2): resolve a doc node's upgraded_to_topic_id to the
     // subtopic's title + live status for the in-place live-ref badge.
     topicList?: Topic[]
+    /** 项目 AI 队友的名字：文档被它改过时，提示里说的是它，不写死「芝士」。 */
+    agentName?: string
   }>(),
-  { topicList: () => [] }
+  { topicList: () => [], agentName: '芝士' }
 )
 
 // open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
@@ -466,8 +468,8 @@ const paused = computed(() =>
 )
 const pausedHint = computed(() =>
   editable.value
-    ? '此文档含编辑器不完全支持的语法，自动保存已暂停；切到源码模式编辑即可保存'
-    : '只读模式下不会自动保存；切回编辑模式即可保存这些改动'
+    ? '这篇文档包含编辑器无法显示的格式，自动保存已暂停。在源码模式下编辑可以保存'
+    : '只读模式下不会自动保存，回到编辑后可以保存这些改动'
 )
 
 // Full markdown the file should contain if we saved right now.
@@ -1204,7 +1206,7 @@ async function showConflictWithServerDoc(topicId: string) {
     docVersion.value = block?.doc_version ?? 0
     externalDoc.value = block?.content ?? ''
   } catch {
-    errorMsg.value = '文档在别处被改过了，这次保存没写进去'
+    errorMsg.value = '文档已在别处更新，本次未保存'
   }
 }
 
@@ -1416,8 +1418,8 @@ onBeforeUnmount(() => {
       <div v-if="hasPendingEdits" class="doc-notice">
         <v-icon size="16" class="doc-notice__icon">mdi-content-save-alert-outline</v-icon>
         <div class="doc-notice__text">
-          有未保存的改动没有带入当前编辑器，编辑器显示的是磁盘上的版本。改动仍然保留，可以随时取回。
-          <template v-if="pendingEdits.length > 1">共 {{ pendingEdits.length }} 份，先取回最近一份。</template>
+          未保存的改动已保留，编辑器中是已保存的版本。
+          <template v-if="pendingEdits.length > 1">共 {{ pendingEdits.length }} 份，将先恢复最近一份。</template>
         </div>
         <button type="button" class="doc-notice__btn" @click="applyPendingEdits">恢复我的改动</button>
         <button type="button" class="doc-notice__btn doc-notice__btn--quiet" @click="discardPendingEdits">丢弃</button>
@@ -1425,9 +1427,9 @@ onBeforeUnmount(() => {
       <!-- Server and local both moved: neither side wins silently. -->
       <div v-if="externalDoc !== null" class="doc-notice doc-notice--conflict">
         <v-icon size="16" class="doc-notice__icon">mdi-source-branch</v-icon>
-        <div class="doc-notice__text">芝士更新了磁盘上的这篇文档，而你有未保存的改动。两份都还在，选一份继续。</div>
-        <button type="button" class="doc-notice__btn" @click="viewExternalDoc">查看磁盘版本</button>
-        <button type="button" class="doc-notice__btn" @click="overwriteWithMine">用我的版本覆盖</button>
+        <div class="doc-notice__text">{{ agentName }}更新了这篇文档，你也有未保存的改动。两个版本都已保留</div>
+        <button type="button" class="doc-notice__btn" @click="viewExternalDoc">查看{{ agentName }}的版本</button>
+        <button type="button" class="doc-notice__btn" @click="overwriteWithMine">保留我的版本</button>
       </div>
 
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
@@ -1533,12 +1535,12 @@ onBeforeUnmount(() => {
               <div class="doc-lossy-banner__text">
                 {{
                   editingBlocked
-                    ? '此文档包含编辑器暂不完全支持的语法，改起来需要源码模式，手机上不提供。在电脑上打开可以编辑。'
-                    : '此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。自动保存已暂停，建议用源码模式编辑。'
+                    ? '这篇文档包含编辑器无法显示的格式，需要在源码模式下编辑。手机上暂不支持，可以在电脑上打开'
+                    : '这篇文档包含编辑器无法显示的格式，保存会丢失这些格式，因此自动保存已暂停。在源码模式下编辑可以保留原文'
                 }}
               </div>
               <button v-if="!editingBlocked" type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">
-                源码模式
+                切换到源码模式
               </button>
             </div>
             <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
@@ -1665,16 +1667,15 @@ onBeforeUnmount(() => {
         <v-card rounded="lg">
           <v-card-title class="text-subtitle-1 d-flex align-center ga-2">
             <v-icon size="20" color="warning">mdi-alert-outline</v-icon>
-            确认覆盖保存？
+            仍要保存？
           </v-card-title>
           <v-card-text class="text-body-2 pt-0">
-            此文档包含可视化编辑器暂不完全支持的语法。直接保存会按编辑器的理解重写文件，不支持的格式将丢失。
-            用源码模式编辑可以完整保留原文，你刚才的改动会被暂存，切过去之后可以一键取回。
+            编辑器无法显示的格式会丢失。在源码模式下编辑可以保留原文，你的改动会暂存
           </v-card-text>
           <v-card-actions>
             <v-spacer />
             <v-btn size="small" variant="text" @click="lossyConfirmOpen = false"> 取消 </v-btn>
-            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode()"> 用源码模式 </v-btn>
+            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode()"> 用源码模式编辑 </v-btn>
             <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave"> 仍要保存 </v-btn>
           </v-card-actions>
         </v-card>

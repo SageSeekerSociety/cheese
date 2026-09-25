@@ -86,7 +86,7 @@ test.describe('房间里派出去的活', () => {
     await expect(view.locator('.board-col--made')).toContainText('做出了什么');
     // 板要答的是「该谁动」，所以它得说出各列各有几件；一件都没有的时候要明说，
     // 否则一块空板读起来就是「这个项目没活」——而项目里可能有几百条。
-    await expect(view).toContainText(/施工中|交付中|等你|暂无派出去的活/);
+    await expect(view).toContainText(/施工中|交付中|待处理|暂无任务/);
   });
 });
 

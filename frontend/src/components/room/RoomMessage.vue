@@ -193,14 +193,14 @@ function renderPlain(text: string): string {
         @click="emit('open-topic', (block.upgraded_to_task_id || block.upgraded_to_topic_id)!)"
       >
         <v-icon size="13">mdi-arrow-top-right</v-icon>
-        已升级为话题，点击查看
+        已转为话题
       </button>
       <!-- 忘了 @ 的补救：房间里最后一句是对着人说的，芝士就不会动，
          而在这一行出现之前，房间里没有任何东西说明这一点。 -->
       <div v-if="summonHint" class="summon-hint">
-        <span class="summon-hint-text">这条没叫{{ summonHint }}，它不会现在动</span>
+        <span class="summon-hint-text">未交给{{ summonHint }}</span>
         <button type="button" class="summon-hint-btn" :disabled="summonBusy" @click="emit('summon')">
-          让它现在就看
+          交给{{ summonHint }}
         </button>
       </div>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
@@ -237,7 +237,7 @@ function renderPlain(text: string): string {
       <button type="button" class="im-act" title="回复" @click="emit('reply', block)">
         <v-icon size="15">mdi-reply-outline</v-icon>
       </button>
-      <button type="button" class="im-act" title="升级为话题" @click="emit('upgrade', block.id)">
+      <button type="button" class="im-act" title="转为话题" @click="emit('upgrade', block.id)">
         <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
       </button>
       <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->

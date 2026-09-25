@@ -63,6 +63,8 @@ const props = withDefaults(
     // 房间名册 handle → 名字。现场那一格用它给每一行署名。一路透传：漏掉它不
     // 报错，只是那一格里写的是 handle。
     memberNames?: Record<string, string>
+    /** 项目 AI 队友的名字（项目可以给它改名），提示和空态里用它，不写死「芝士」。 */
+    agentName?: string
   }>(),
   {
     working: false,
@@ -73,6 +75,7 @@ const props = withDefaults(
     tab: undefined,
     phase: undefined,
     withChat: false,
+    agentName: '芝士',
   }
 )
 
@@ -380,7 +383,7 @@ const tabs = computed(() => ALL_TABS.filter((t) => t.key !== 'chat' || props.wit
 
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(t: TabDef): string {
-  if (t.key === 'site' && props.working) return `${t.label}（芝士正在工作）`
+  if (t.key === 'site' && props.working) return `${t.label}（${props.agentName}正在工作）`
   if (t.key === 'overview' && threads.value.total) {
     const { total, open } = threads.value
     return open ? `${t.label}（${total} 件任务，${open} 件进行中）` : `${t.label}（${total} 件任务）`
@@ -623,6 +626,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           <slot name="chat" />
         </div>
         <PanelOverview
+          :agent-name="agentName"
           v-show="active === 'overview'"
           ref="overviewRef"
           :topic="topic"
@@ -638,6 +642,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           @open-file="openFile"
         />
         <PanelSite
+          :agent-name="agentName"
           v-if="mounted.has('site')"
           v-show="active === 'site'"
           :topic="topic"

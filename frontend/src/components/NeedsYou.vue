@@ -123,7 +123,7 @@ watch(
     <section v-if="rows.length" class="asked">
       <div class="asked__inner">
         <header class="asked__head">
-          <h2 class="asked__title t-title">等你决定</h2>
+          <h2 class="asked__title t-title">等你回答</h2>
           <!-- 「1/3」：一叠摆出来的是一条，所以件数得连着位置一起说，光写 3 会读成
                「这张卡有三个选项」。只有一条的时候不写——那时候位置不是信息。 -->
           <span v-if="rows.length > 1" class="asked__count t-meta c-faint">{{ cursor + 1 }}/{{ rows.length }}</span>
@@ -175,7 +175,7 @@ watch(
                   :loading="busy === row.id"
                   @click="dismiss(row)"
                 >
-                  知道了
+                  收起
                 </v-btn>
                 <v-spacer />
                 <v-btn

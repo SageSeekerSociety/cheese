@@ -100,7 +100,7 @@ describe('等你决定', () => {
 
     await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
     const text = container.textContent ?? ''
-    expect(text).toContain('等你决定')
+    expect(text).toContain('等你回答')
     expect(text).toContain('两条路都通，但只够做一条')
     expect(button(container, '先做导出')).toBeTruthy()
     expect(button(container, '先做搜索')).toBeTruthy()
@@ -124,7 +124,7 @@ describe('等你决定', () => {
     const { container } = mount()
 
     await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
-    await fireEvent.click(button(container, '知道了')!)
+    await fireEvent.click(button(container, '收起')!)
 
     await waitFor(() => expect(markRead).toHaveBeenCalledWith(1))
     expect(resolveAlert).not.toHaveBeenCalled()

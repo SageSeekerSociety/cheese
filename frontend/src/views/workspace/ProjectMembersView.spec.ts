@@ -235,7 +235,7 @@ describe('成员页：邀请外部成员', () => {
     await fireEvent.click(await screen.findByText('邀请外部成员'))
     const dialog = await screen.findByRole('dialog')
     await fireEvent.update(within(dialog).getByLabelText('用户名或邮箱'), 'nobody')
-    expect(await within(dialog).findByText('没有找到这个用户名或邮箱')).toBeTruthy()
+    expect(await within(dialog).findByText('找不到这个用户名或邮箱')).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: '发送邀请' }).hasAttribute('disabled')).toBe(true)
   })
 

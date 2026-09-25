@@ -113,7 +113,7 @@ describe('活还在路上的看板', () => {
     expect(columnNames(container), '列头在两个时刻是同一串，板才不会跳').toEqual(before)
   })
 
-  it('一件活都没有的时候，说的是「暂无派出去的任务」，不是接着画骨架', async () => {
+  it('一件活都没有的时候，说的是「暂无任务」，不是接着画骨架', async () => {
     // 空板和「还没到」在屏幕上必须是两回事，所以这里等着看骨架先出现、再消失：
     // 一上来 rows 也是空的，不卡着这一步就分不清测的是哪一刻。
     const gate = pending<{ data: RoomTask[]; total: number }>()
@@ -123,6 +123,6 @@ describe('活还在路上的看板', () => {
 
     gate.resolve({ data: [], total: 0 })
     await waitFor(() => expect(container.querySelector('[role="status"][aria-busy="true"]')).toBeNull())
-    expect(container.textContent).toContain('暂无派出去的任务')
+    expect(container.textContent).toContain('暂无任务')
   })
 })

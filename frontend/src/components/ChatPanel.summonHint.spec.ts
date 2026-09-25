@@ -10,7 +10,7 @@ import type { Block, Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, within } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
@@ -129,7 +129,7 @@ describe('没叫芝士的那条消息', () => {
 
     const hint = container.querySelector('.summon-hint')
     expect(hint, '最后一句没人接，房间里却没有任何东西说明为什么').toBeTruthy()
-    expect(hint!.textContent).toContain('没叫芝士')
+    expect(hint!.textContent).toContain('未交给芝士')
   })
 
   it('@ 了它的那条消息不提示——它本来就会动', async () => {
@@ -155,10 +155,13 @@ describe('没叫芝士的那条消息', () => {
 
   it('点一下就叫它来读，且不再多发一条一模一样的消息', async () => {
     history = [humanMsg('h1', '这个分页方案你看下')]
-    const { container, getByRole } = mount('t-click')
+    const { container } = mount('t-click')
     await settle()
 
-    await fireEvent.click(getByRole('button', { name: '让它现在就看' }))
+    // 输入框旁那颗「交给芝士」是给下一条用的开关；这里点的是这条消息下面那一颗。
+    await fireEvent.click(
+      within(container.querySelector('.summon-hint') as HTMLElement).getByRole('button', { name: '交给芝士' })
+    )
     await settle()
 
     expect(posts.filter((u) => u.includes('/summon'))).toHaveLength(1)
@@ -173,10 +176,13 @@ describe('没叫芝士的那条消息', () => {
   it('后端说这一下本来就不必（已经在干活），提示照样收起来', async () => {
     started = false
     history = [humanMsg('h1', '这个分页方案你看下')]
-    const { container, getByRole } = mount('t-noop')
+    const { container } = mount('t-noop')
     await settle()
 
-    await fireEvent.click(getByRole('button', { name: '让它现在就看' }))
+    // 输入框旁那颗「交给芝士」是给下一条用的开关；这里点的是这条消息下面那一颗。
+    await fireEvent.click(
+      within(container.querySelector('.summon-hint') as HTMLElement).getByRole('button', { name: '交给芝士' })
+    )
     await settle()
 
     expect(container.querySelector('.summon-hint')).toBeNull()

@@ -362,6 +362,7 @@ watch(
         />
         <WorkPanel
           ref="panelRef"
+          :agent-name="store.agentName"
           class="col col-doc"
           :style="{ flex: '1 1 0', minWidth: 0 }"
           :topic="selectedTopic"
