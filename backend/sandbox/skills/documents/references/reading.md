@@ -1,5 +1,8 @@
 # 读用户给的材料
 
+要引用、要核对、要写结论的时候先用 `scripts/read.py`：它给每一段标上位置，并列出没读到
+的部分（见 `sources.md`）。下面几种办法是只想快速看一眼时用的。
+
 ## Word、PowerPoint、ODT、EPUB、HTML 用 pandoc
 
 ```bash
