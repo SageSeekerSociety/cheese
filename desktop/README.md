@@ -33,6 +33,14 @@ and only that origin's pages can call it.
 `.github/workflows/desktop.yml` builds the two macOS dmgs and the Windows
 installer on every change here and, on main, replaces the assets of the
 `desktop-latest` release, which is where the download links on 「我的设备」 point.
+Each build is version `0.1.<run number>`, and the publish step uploads
+`latest.json` last. An installed app checks it at every start and, when a
+newer version is out, downloads it, waits for any connection in progress to
+finish, installs it and restarts. The updates are signed with a key held in
+the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; the app trusts only its public half
+(`plugins.updater.pubkey` in `tauri.conf.json`). Losing that key means no
+installed app can be updated again, so keep a copy outside GitHub.
 Neither is signed by a developer certificate, so the first open is stopped by
 the system — on macOS until the user allows it under 系统设置 → 隐私与安全性,
 on Windows at the SmartScreen prompt (更多信息 → 仍要运行).
