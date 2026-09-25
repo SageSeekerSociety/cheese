@@ -294,6 +294,7 @@ export namespace UserApi {
     | 'oauth:unbind'
     | 'realname:view'
     | 'realname:update'
+    | 'realname:delete'
 
   /**
    * A ticket for `purpose` without proving anything again, granted only while
@@ -452,7 +453,7 @@ export namespace UserApi {
       data,
     })
 
-  // 实名信息 API。看完整信息和修改都要一张 sudo 票：看要 'realname:view'，改要 'realname:update'
+  // 实名信息 API。看完整信息、修改和删除各要一张对应用途的 sudo 票
   export const getRealNameInfo = (userId: number) =>
     NewApiInstance.request<GetRealNameInfoResponse>({
       url: `/users/${userId}/identity`,
@@ -474,14 +475,13 @@ export namespace UserApi {
       data: { ...data, sudoTicket },
     })
 
-  export const patchRealNameInfo = (userId: number, data: Partial<RealNameInfo>, sudoTicket: string) =>
-    NewApiInstance.request<UpdateRealNameInfoResponse>({
+  export const deleteRealNameInfo = (userId: number, sudoTicket: string) =>
+    NewApiInstance.request({
       url: `/users/${userId}/identity`,
-      method: 'PATCH',
-      data: { ...data, sudoTicket },
+      method: 'DELETE',
+      data: { sudoTicket },
     })
 
-  // 获取实名信息访问日志
   export const getRealNameAccessLogs = (userId: number, pageStart?: number, pageSize: number = 20) =>
     NewApiInstance.request<{
       logs: UserIdentityAccessLog[]
