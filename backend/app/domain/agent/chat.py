@@ -83,6 +83,7 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
+    AgentStepOutput,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolResult,
@@ -92,6 +93,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
+from app.domain.agent.step_output import output_tail, without_output
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent.tool_preview import (
     SHELL_TOOLS,
@@ -197,9 +199,9 @@ class _HookWorkState:
     # then left alone for the remaining two hours and fifty minutes. The room
     # showing nothing for that long is the complaint this reminder exists for.
     last_progress_reminder_at: datetime | None = None
-    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。失败的结果
-    #: 回来时要标的就是那一块。只在内存里、只活这一轮：成功的调用（绝大多数）因此
-    #: 一个字节都不必落库，而重启丢掉的只是几个红点，不是记录。
+    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。结果回来时要
+    #: 写上输出、挂了要标红的就是那一块。只在内存里、只活这一轮：重启丢掉的只是几
+    #: 截输出和几个红点，不是记录。
     steps: dict[str, uuid.UUID] = field(default_factory=dict)
 
     # The topic branch's commits as of turn start — what makes "this turn's
@@ -2629,7 +2631,15 @@ class ChatService:
             if block_id is not None:
                 payload = await self._mark_step_failed(block_id, event.text)
                 if payload is not None:
-                    frame = {"type": "block_updated", "block": payload}
+                    frame = {"type": "block_updated", "block": without_output(payload)}
+        elif isinstance(event, AgentStepOutput):
+            # Written onto the step, like a failure. The frame says only that
+            # the step now has output: the text is read when somebody opens it.
+            block_id = state.steps.get(event.call_id) if state is not None else None
+            if block_id is not None:
+                payload = await self._record_step_output(block_id, event.text)
+                if payload is not None:
+                    frame = {"type": "block_updated", "block": without_output(payload)}
         elif isinstance(event, AgentRetrying):
             await self._note_retry(
                 topic_id,
@@ -3638,6 +3648,25 @@ class ChatService:
             return payload
         except Exception:  # noqa: BLE001 — a step's verdict is not worth a turn
             logger.warning("could not mark step %s failed", block_id)
+            return None
+
+    async def _record_step_output(self, block_id: uuid.UUID, text: str) -> dict | None:
+        """Keep the tail of what a step printed. Never fails a turn over it."""
+        output, total = output_tail(text)
+        try:
+            async with self._sessions() as session:
+                block = await BlockRepository(session).record_step_output(
+                    block_id, output, total
+                )
+                payload = (
+                    _block_payload(BlockOut.model_validate(block))
+                    if block is not None
+                    else None
+                )
+                await session.commit()
+            return payload
+        except Exception:  # noqa: BLE001 — a step's output is not worth a turn
+            logger.warning("could not record the output of step %s", block_id)
             return None
 
     async def _note_retry(

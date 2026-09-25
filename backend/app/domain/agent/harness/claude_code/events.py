@@ -16,9 +16,10 @@ agent a subagent starts without a label of its own is working for the same
 card. Those bindings are ``facts``: worked out once, in journal order, when a
 page is mirrored (``bind``), and read back by every later pass.
 
-Tool returns are dropped, with two exceptions: a failed one marks the step it
-belongs to, and a subagent's is its conclusion, which otherwise reaches only the
-thread that spawned it.
+A tool's return is written onto the step it belongs to (``AgentStepOutput``),
+and a failed one also marks that step. A subagent's return is its conclusion,
+which otherwise reaches only the thread that spawned it, so it becomes an event
+of its own instead.
 """
 
 import json
@@ -34,6 +35,7 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
+    AgentStepOutput,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolResult,
@@ -263,6 +265,7 @@ class Assembler:
                 continue
             call = str(block.get("tool_use_id"))
             said = _text(block.get("content"))
+            made = self._call(call)
             if block.get("is_error"):
                 if INTERRUPTED in said:
                     continue
@@ -275,9 +278,11 @@ class Assembler:
                         thread_label=label,
                     )
                 )
-                continue
-            made = self._call(call)
-            if made.get("name") not in SUBAGENT_TOOLS:
+            if made.get("name") not in SUBAGENT_TOOLS or block.get("is_error"):
+                if said.strip():
+                    events.append(
+                        AgentStepOutput(call_id=call, text=said, thread_label=label)
+                    )
                 continue
             result = message.get("tool_use_result")
             report = (

@@ -9,6 +9,7 @@ from app.domain.agent.service import (
     AgentResult,
     AgentRetrying,
     AgentSessionInfo,
+    AgentStepOutput,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolUse,
@@ -116,9 +117,25 @@ class Assembler:
                         item["tool"],
                         item["arguments"],
                         eid=eid,
+                        # The item's own id: its completion names the same one.
+                        call_id=item["id"],
                         **self.attribution(params["threadId"]),
                     )
                 ]
+            if item["type"] == "dynamicToolCall":
+                said = "\n".join(
+                    part.get("text", "")
+                    for part in item.get("contentItems") or []
+                    if isinstance(part, dict) and part.get("type") == "inputText"
+                )
+                if said.strip():
+                    return [
+                        AgentStepOutput(
+                            call_id=item["id"],
+                            text=said,
+                            **self.attribution(params["threadId"]),
+                        )
+                    ]
             return []
         if method == "turn/completed":
             turn = params["turn"]

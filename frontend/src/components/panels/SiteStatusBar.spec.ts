@@ -56,6 +56,22 @@ describe('现场状态条', () => {
     expect(text).toContain('正在执行命令')
   })
 
+  it('那一步已经交回了输出：它做完了，回到思考中', () => {
+    const text = bar(
+      [
+        row('1', '2026-09-25T10:04:00Z', {
+          tool: 'Bash',
+          arg: 'make test',
+          output_bytes: 12,
+          at: '2026-09-25T10:04:58Z',
+        }),
+      ],
+      true,
+      RUNNING
+    )
+    expect(text).toContain('思考中')
+  })
+
   it('那一步已经挂了、之后再没动静：回到思考中，并说多久没动静了', () => {
     const text = bar(
       [row('1', '2026-09-25T10:04:00Z', { tool: 'Bash', arg: 'make test', failed: true, error: 'x' })],

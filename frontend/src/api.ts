@@ -1664,6 +1664,14 @@ export function getTranscript(
   )
 }
 
+// 现场一步打印出来的东西：后端只留末尾一截（至多 8 KiB，凭据已抹掉）。列表和
+// socket 上只带它有多长（`meta.output_bytes`），摊开那一步时才来取这一份。
+export function getStepOutput(topicId: string, blockId: string): Promise<{ output: string; bytes: number }> {
+  return request<{ output: string; bytes: number }>(
+    `/topics/${encodeURIComponent(topicId)}/transcript/${encodeURIComponent(blockId)}/output`
+  )
+}
+
 export interface PreviewSession {
   url: string
   grant: string
