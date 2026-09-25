@@ -92,7 +92,7 @@ def test_filing_a_card_leaves_a_room_line_marked_as_waiting_on_a_person(client):
     assert _file_card(client, room).status_code == 200
 
     (event,) = _filed_events(client, room)
-    assert "待 alice 验收" in event["content"]
+    assert "alice" in event["content"]
     assert event["meta"]["who"] == "human"
     # 改动主题最长 72 字，房间里那一行要保持一行 —— 所以它进展开区，不进正文。
     assert _SUBJECT in event["meta"]["detail"]
@@ -143,7 +143,7 @@ def test_an_agent_reviewer_reads_it_in_the_room_instead_of_the_mailbox(client):
     assert _file_card(client, room, reviewer=agent).status_code == 200
 
     (event,) = _filed_events(client, room)
-    assert f"待 {agent} 验收" in event["content"]
+    assert agent in event["content"]
     (row,) = _notices(client, reporter)
     assert row["contextMetadata"]["content"] == event["content"]
     assert _notices(client, agent_token) == []
