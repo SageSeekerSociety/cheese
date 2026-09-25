@@ -137,4 +137,7 @@ async def accept_documents(
         ip=ip,
         user_agent=user_agent,
     )
+    # Dependency teardown commits after the response: a failed commit there
+    # would already have told the person their acceptance was recorded.
+    await session.commit()
     return {"code": 200, "message": "OK", "data": {"pending": []}}

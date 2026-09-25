@@ -41,7 +41,7 @@ command -v typst && command -v pandoc
 | 读一份用户给的材料 | Word/PPT/ODT/HTML 用 `pandoc`，PDF 用 `pypdf` | `references/reading.md` |
 | **在一份已有的 Word 上改** | `scripts/office.py` | `references/word.md` |
 | **在一份已有的 PPT 上改** | `scripts/office.py --plain` | `references/slides.md` |
-| 读或改一份表格 | `openpyxl`，改完 `cheese recalc` | `references/sheets.md` |
+| 读或改一份表格 | `openpyxl`，改完 `cheese recalc`，再用 `scripts/sheets.py` 核对 | `references/sheets.md` |
 | 做/读 PDF | `typst` / `pypdf` | `references/pdf.md` |
 | 造一份全新的文件 | `python-docx` / `python-pptx` / `openpyxl` / `typst` | 本文件下面 |
 | `.doc` / `.ppt` / `.xls` | 先 `cheese convert` 升级格式，再改 | `references/reading.md` |
