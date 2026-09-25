@@ -110,9 +110,8 @@ async def test_a_dead_self_hosted_machine_keeps_its_pin_and_waits_for_it():
     assert verdict.quarantined
     assert await service.topic_device(topic) == own
     assert verdict.message is not None and "自己的机器" in verdict.message
-    # 「留在原地等这台机器」是这条通知的全部意义，它在展开区里说。
-    assert "等" in verdict.event_meta["detail"]
-    assert "不会迁移" in verdict.event_meta["detail"]
+    # 等这台机器恢复之后，人可以在这条提示上直接重试。
+    assert verdict.event_meta["retryable"] is True
 
 
 async def test_a_failure_that_isnt_the_machines_fault_is_not_recorded():

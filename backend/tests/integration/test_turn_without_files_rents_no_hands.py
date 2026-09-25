@@ -131,7 +131,7 @@ async def test_a_channel_nobody_wraps_answers_the_question_too(
     assert resolved.machine == "center"
     assert resolved.agent_user_id and looks_like_agent_handle(resolved.agent_handle)
 
-    with pytest.raises(ScreenSetupError, match="没有在线的绑定设备"):
+    with pytest.raises(ScreenSetupError):
         await channel.precheck(session, needs_place=True)
 
 

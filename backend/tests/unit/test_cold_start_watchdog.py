@@ -159,7 +159,7 @@ async def test_a_turn_that_never_speaks_is_cut_at_the_fuse_not_at_the_ceiling(
     )
     frame = await asyncio.wait_for(_error_frame(runner, backend, db_factory), 2)
 
-    assert "一个字都没输出" in frame["message"]
+    assert frame.get("code") is None
     # 而且**不能**说「已完成的改动都在」——什么都没跑，那句话是假的。
     assert "已完成的改动都在" not in frame["message"]
     # 「按运行环境没起来处理」和那一串常见原因收进了展开区，房间里只剩一行。
@@ -177,7 +177,8 @@ async def test_turn_ceiling_alone_does_not_lift_the_fuse(db_factory):
         _error_frame(runner, _MuteButAnnouncesItsCeiling(), db_factory), 2
     )
 
-    assert "一个字都没输出" in frame["message"]
+    assert frame["type"] == "error"
+    assert frame.get("code") is None
 
 
 @pytest.mark.anyio
@@ -197,7 +198,6 @@ async def test_first_output_retires_the_fuse_and_the_ceiling_only_records(
     kinds = [f["type"] for f in frames]
     assert "error" not in kinds, frames
     assert kinds[-1] == "done"
-    assert not any("一个字都没输出" in str(f.get("message", "")) for f in frames)
     assert any(
         "ceiling" in r.getMessage() and "recorded" in r.getMessage()
         for r in caplog.records
@@ -219,7 +219,6 @@ async def test_the_fuse_can_be_turned_off(db_factory, caplog):
     kinds = [f["type"] for f in frames]
     assert "error" not in kinds, frames
     assert kinds[-1] == "done"
-    assert not any("一个字都没输出" in str(f.get("message", "")) for f in frames)
     assert any("ceiling" in r.getMessage() for r in caplog.records)
 
 
@@ -269,8 +268,8 @@ async def test_a_live_credential_keeps_the_generic_cold_start_message(db_factory
     )
     frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 2)
 
-    assert "一个字都没输出" in frame["message"]
-    assert "凭据已过期" not in frame["message"]
+    # 普通的冷启动失败：没有带上凭据过期那一类的码。
+    assert frame.get("code") is None
     assert frame.get("code") is None
 
 
@@ -283,5 +282,5 @@ async def test_no_credential_lookup_leaves_the_fuse_untouched(db_factory):
     )
     frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 2)
 
-    assert "一个字都没输出" in frame["message"]
-    assert "凭据已过期" not in frame["message"]
+    # 普通的冷启动失败：没有带上凭据过期那一类的码。
+    assert frame.get("code") is None

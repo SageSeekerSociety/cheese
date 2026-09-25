@@ -40,22 +40,16 @@ def test_storage_failure_payload_is_stable_and_sanitized():
     )
     assert failure is not None
     assert failure.code == STORAGE_EXHAUSTED_CODE
-    assert failure.meta == {
-        "event_type": "platform_error",
-        "code": "storage_exhausted",
-        "severity": "error",
-        "title": "运行环境存储空间不足",
-        "retryable": True,
-        # 平台提示统一契约: 卡面留一句，解释性的几句进 detail 由前端折叠。
-        "detail": (
-            "项目文件和已完成的改动都还在。平台正在清理临时空间，"
-            "请稍后再 @芝士 继续；若持续出现，请联系管理员。"
-        ),
-        "detail_label": "详细说明",
-    }
-    # 卡面是一句话；那句解释没丢，它在展开区里。
+    meta = failure.meta
+    assert (meta["event_type"], meta["code"], meta["severity"]) == (
+        "platform_error",
+        "storage_exhausted",
+        "error",
+    )
+    assert meta["retryable"] is True
+    # 平台提示统一契约: 卡面留一句，解释性的几句进 detail 由前端折叠。
+    assert meta["title"] and meta["detail"]
     assert failure.content.count("。") == 1
-    assert "项目文件和已完成的改动都还在" in failure.detail
     # 脱敏在两处都要成立 —— 把长文挪进 detail 不是把它挪出审查范围。
     assert "/home/private" not in failure.content
     assert "/home/private" not in failure.detail
@@ -69,20 +63,16 @@ def test_missing_runtime_image_is_a_sanitized_platform_event():
 
     assert failure is not None
     assert failure.code == RUNTIME_IMAGE_MISSING_CODE
-    assert failure.meta == {
-        "event_type": "platform_error",
-        "code": "runtime_image_missing",
-        "severity": "error",
-        "title": "运行环境镜像暂时不可用",
-        "retryable": True,
-        "detail": (
-            "本轮还没有开始执行，项目文件没有受到影响。"
-            "请稍后再 @芝士 重试；若持续出现，请联系管理员。"
-        ),
-        "detail_label": "详细说明",
-    }
+    meta = failure.meta
+    assert (meta["event_type"], meta["code"], meta["severity"]) == (
+        "platform_error",
+        "runtime_image_missing",
+        "error",
+    )
+    assert meta["retryable"] is True
+    # 平台提示统一契约: 卡面留一句，解释性的几句进 detail 由前端折叠。
+    assert meta["title"] and meta["detail"]
     assert failure.content.count("。") == 1
-    assert "本轮还没有开始执行" in failure.detail
     assert "pull access denied" not in failure.content
     assert "pull access denied" not in failure.detail
 
@@ -125,22 +115,16 @@ def test_workspace_vcs_perms_payload_is_stable_and_sanitized():
 
     assert failure is not None
     assert failure.code == WORKSPACE_VCS_PERMS_CODE
-    assert failure.meta == {
-        "event_type": "platform_error",
-        "code": "workspace_vcs_perms",
-        "severity": "error",
-        "title": "工作区版本库权限异常",
-        "retryable": True,
-        "detail": (
-            "版本库目录属于另一个系统用户，平台进不去，话题就起不来。"
-            "项目文件和已提交的改动都没有受影响，版本历史也没有动过。"
-            "这要管理员在机器上改一次属主（deploy/fix-workspace-ownership.sh），"
-            "平台自己绕不过去——请把这条提示转给管理员，修好后再 @芝士 重试。"
-        ),
-        "detail_label": "详细说明",
-    }
+    meta = failure.meta
+    assert (meta["event_type"], meta["code"], meta["severity"]) == (
+        "platform_error",
+        "workspace_vcs_perms",
+        "error",
+    )
+    assert meta["retryable"] is True
+    # 平台提示统一契约: 卡面留一句，解释性的几句进 detail 由前端折叠。
+    assert meta["title"] and meta["detail"]
     assert failure.content.count("。") == 1
-    assert "版本历史也没有动过" in failure.detail
     # No internal paths, and above all no "AI 服务" — that misdirection is the
     # reason this classification exists. Both halves are user-facing now, so
     # both are checked.

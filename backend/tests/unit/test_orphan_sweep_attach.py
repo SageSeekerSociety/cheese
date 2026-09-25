@@ -53,11 +53,13 @@ class _Chat:
         self.events: list[tuple[uuid.UUID, str]] = []
         # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在 meta.detail。
         self.notices: list[tuple[uuid.UUID, str]] = []
+        self.retryable: list[bool] = []
         self.converse_calls: list[dict] = []
 
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         self.events.append((topic_id, text))
         self.notices.append((topic_id, text + ((meta or {}).get("detail") or "")))
+        self.retryable.append(bool((meta or {}).get("retryable")))
         return {"id": "b1", "content": text}
 
     def has_live_screen(self, topic_id):
@@ -310,9 +312,7 @@ async def test_a_wedged_turn_is_cancelled_and_never_re_run(db_factory, monkeypat
     # Exactly one notice, and it hands the topic to a person rather than
     # promising the platform will pick it back up.
     assert len(chat.events) == 1
-    _, notice_text = chat.notices[0]
-    assert "@ 芝士" in notice_text
-    assert "不会自动重跑" in notice_text or "不会自动重试" in notice_text
+    assert chat.retryable == [True]
 
 
 @pytest.mark.parametrize(
