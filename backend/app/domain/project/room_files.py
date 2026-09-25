@@ -38,7 +38,7 @@ from app.domain.project.models import RoomFileRevision
 from app.domain.textfile import content_version
 
 #: Which door a revision's bytes came in by.
-SOURCES = ("baseline", "upload", "ai", "editor", "restore", "scheduled")
+SOURCES = ("baseline", "upload", "template", "ai", "editor", "restore", "scheduled")
 
 
 async def save_to_library(
