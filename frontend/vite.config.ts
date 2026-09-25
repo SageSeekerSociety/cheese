@@ -333,13 +333,14 @@ export default defineConfig({
       // into its own pages keep the prefix.
       '/office-editor': {
         target: process.env.OFFICE_EDITOR_URL ?? 'http://127.0.0.1:18090',
-        changeOrigin: true,
+        // Host stays the page's: the editor writes its own absolute URLs from it.
         ws: true,
         rewrite: (path) => path.replace(/^\/office-editor/, ''),
         configure: (proxy) => {
-          proxy.on('proxyReq', (req, incoming) => {
-            req.setHeader('X-Forwarded-Host', `${incoming.headers.host ?? ''}/office-editor`)
-          })
+          const mount = (req: { setHeader: (k: string, v: string) => void }, host?: string) =>
+            req.setHeader('X-Forwarded-Host', `${host ?? ''}/office-editor`)
+          proxy.on('proxyReq', (req, incoming) => mount(req, incoming.headers.host))
+          proxy.on('proxyReqWs', (req, incoming) => mount(req, incoming.headers.host))
         },
       },
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).

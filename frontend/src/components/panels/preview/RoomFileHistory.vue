@@ -87,7 +87,8 @@ defineExpose({ reload: load })
           <strong>第 {{ row.seq }} 版</strong>
           <v-chip v-if="i === 0" size="x-small" color="primary" variant="tonal">当前</v-chip>
           <span class="t-meta">{{ SOURCE_LABEL[row.source] ?? row.source }}</span>
-          <span v-if="row.author" class="t-meta">· {{ row.author }}</span>
+          <span v-if="row.author_kind === 'agent'" class="t-meta">· 芝士</span>
+          <span v-else-if="row.author" class="t-meta">· {{ row.author }}</span>
         </div>
         <div class="t-meta">{{ when(row.created_at) }}</div>
         <div v-if="row.note" class="rh__note">{{ row.note }}</div>

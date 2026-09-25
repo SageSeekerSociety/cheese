@@ -212,6 +212,9 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.rfe :deep(.v-alert) {
+  flex: none;
+}
 .rfe__main {
   flex: 1;
   min-height: 0;
