@@ -58,6 +58,7 @@ from app.domain.questions.repositories import (
     QuestionRepository,
     QuestionTopicRepository,
 )
+from app.domain.space.repositories import SpaceRepository
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
@@ -816,6 +817,7 @@ async def get_user_realname_service(
         user_repo=user_repo,
         profile_repo=profile_repo,
         realname_repo=realname_repo,
+        space_repo=SpaceRepository(session=db),
     )
 
 

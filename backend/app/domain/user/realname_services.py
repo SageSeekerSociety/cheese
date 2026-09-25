@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import BadRequestError, NotFoundError
+from app.domain.shell.catalog import is_course_shell
+from app.domain.space.repositories import SpaceRepository
 from app.domain.user.models import User, UserRealNameAccessLog, UserRealNameIdentity
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -43,11 +45,13 @@ class UserRealNameService:
         user_repo: UserRepository,
         profile_repo: UserProfileRepository,
         realname_repo: UserRealNameRepository,
+        space_repo: SpaceRepository,
     ) -> None:
         self._session = session
         self._user_repo = user_repo
         self._profile_repo = profile_repo
         self._realname_repo = realname_repo
+        self._space_repo = space_repo
 
     async def _ensure_user_exists(self, user_id: int) -> User:
         user = await self._user_repo.get_by_id(user_id)
@@ -166,6 +170,17 @@ class UserRealNameService:
             if user is not None:
                 accessor_users[uid] = user
 
+        # Where each access happened: a board, named, and said to be a course
+        # or not, looked up for the whole page at once.
+        space_ids = sorted(
+            {
+                row.module_entity_id
+                for row in rows
+                if row.module_type == "SPACE" and row.module_entity_id is not None
+            }
+        )
+        spaces = await self._space_repo.names_and_shells(space_ids=space_ids)
+
         logs: list[dict] = []
         for log in rows:
             profile = profiles.get(log.accessor_id)
@@ -185,15 +200,22 @@ class UserRealNameService:
                 else log.created_at.replace(tzinfo=UTC)
             )
             access_time_ms = int(aware.timestamp() * 1000)
+            space = (
+                spaces.get(log.module_entity_id)
+                if log.module_type == "SPACE" and log.module_entity_id is not None
+                else None
+            )
             logs.append(
                 {
                     "accessor": accessor_dto,
                     "accessModuleType": log.module_type,
                     "accessEntityId": log.module_entity_id,
-                    "accessEntityName": None,
+                    "accessEntityName": space[0] if space else None,
+                    "accessEntityIsCourse": (
+                        is_course_shell(space[1]) if space else None
+                    ),
                     "accessTime": access_time_ms,
                     "accessType": log.access_type,
-                    "ipAddress": log.ip_address,
                     "accessReason": log.access_reason,
                 }
             )

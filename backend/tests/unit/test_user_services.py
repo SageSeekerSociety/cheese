@@ -578,11 +578,14 @@ class TestUserRealNameService:
     def service(self, session, user_repo, profile_repo, realname_repo):
         from app.domain.user.realname_services import UserRealNameService
 
+        space_repo = AsyncMock()
+        space_repo.names_and_shells.return_value = {}
         return UserRealNameService(
             session=session,
             user_repo=user_repo,
             profile_repo=profile_repo,
             realname_repo=realname_repo,
+            space_repo=space_repo,
         )
 
     # --- _ensure_user_exists ---
@@ -894,7 +897,6 @@ class TestUserRealNameService:
         assert logs[0]["accessEntityId"] == 50
         assert logs[0]["accessEntityName"] is None
         assert logs[0]["accessType"] == "view"
-        assert logs[0]["ipAddress"] == "1.2.3.4"
         assert logs[0]["accessReason"] == "grading"
         assert isinstance(logs[0]["accessTime"], int)
 

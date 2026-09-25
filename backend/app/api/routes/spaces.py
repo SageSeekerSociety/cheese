@@ -403,6 +403,7 @@ async def get_space_user_realname_service(
         user_repo=user_repo,
         profile_repo=profile_repo,
         realname_repo=realname_repo,
+        space_repo=SpaceRepository(session=db),
     )
 
 

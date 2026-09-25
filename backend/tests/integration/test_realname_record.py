@@ -169,3 +169,64 @@ class TestDeletingARecord:
         held = _portal.call(rows)
         assert held
         assert all(not any(fields.values()) for fields in held)
+
+
+def _logs(person: _Owner, client: TestClient) -> list[dict]:
+    resp = client.get(
+        f"/users/{person.id}/identity/access-logs",
+        params={"pageSize": 50},
+        headers=person.headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["logs"]
+
+
+class TestTheAccessLog:
+    @pytest.fixture
+    def exported(
+        self, owner: _Owner, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
+        """The person took part in a board, and its admin exported the roster."""
+        admin = _Owner(user_client)
+        space = _board(admin, api_client, name=f"Data Structures ({unique_int()})")
+        _join(admin, api_client, space, owner)
+        task_id = _task_requiring_real_name(admin, api_client, space)
+        assert _save(owner, api_client, "put", IDENTITY).status_code == 200
+        applied = api_client.post(
+            f"/tasks/{task_id}/participants", json={}, headers=owner.headers
+        )
+        assert applied.status_code == 200, applied.text
+        export = api_client.get(
+            f"/spaces/{space['id']}/analytics/participants/export",
+            headers=admin.headers,
+        )
+        assert export.status_code == 200, export.text
+        shown = api_client.get(f"/spaces/{space['id']}", headers=admin.headers)
+        assert shown.status_code == 200, shown.text
+        return {"admin": admin, "space": shown.json()["data"]["space"]}
+
+    def test_an_export_names_the_board_it_came_from(
+        self, owner: _Owner, api_client: TestClient, exported: dict
+    ):
+        (entry,) = _logs(owner, api_client)
+
+        assert entry["accessor"]["id"] == exported["admin"].id
+        assert entry["accessType"] == "EXPORT"
+        assert entry["accessEntityName"] == exported["space"]["name"]
+        assert entry["accessEntityIsCourse"] == exported["space"]["isCourse"]
+
+    def test_it_outlives_the_record(
+        self, owner: _Owner, api_client: TestClient, exported: dict
+    ):
+        ticket = owner.sudo_ticket(api_client, "realname:delete")
+        assert owner.delete(api_client, ticket).status_code == 200
+
+        (entry,) = _logs(owner, api_client)
+        assert entry["accessEntityName"] == exported["space"]["name"]
+
+    def test_it_does_not_disclose_where_the_reader_was(
+        self, owner: _Owner, api_client: TestClient, exported: dict
+    ):
+        (entry,) = _logs(owner, api_client)
+
+        assert "ipAddress" not in entry
