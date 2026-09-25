@@ -109,7 +109,7 @@ SYSTEM_HANDLE = "system"
 
 
 _TEAM_PAGES = frozenset({"explore", "mine", "pending"})
-_USER_PAGES = frozenset({"settings", "privacy-center"})
+_USER_PAGES = frozenset({"settings"})
 
 
 def is_reserved_username(username: str) -> bool:
