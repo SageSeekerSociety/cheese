@@ -578,14 +578,14 @@ class TestUserRealNameService:
     def service(self, session, user_repo, profile_repo, realname_repo):
         from app.domain.user.realname_services import UserRealNameService
 
-        space_repo = AsyncMock()
-        space_repo.names_and_shells.return_value = {}
+        space_labels = AsyncMock()
+        space_labels.describe.return_value = {}
         return UserRealNameService(
             session=session,
             user_repo=user_repo,
             profile_repo=profile_repo,
             realname_repo=realname_repo,
-            space_repo=space_repo,
+            space_labels=space_labels,
         )
 
     # --- _ensure_user_exists ---

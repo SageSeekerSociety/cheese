@@ -5,8 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import BadRequestError, NotFoundError
-from app.domain.shell.catalog import is_course_shell
-from app.domain.space.repositories import SpaceRepository
+from app.domain.space.services import SpaceLabels
 from app.domain.user.models import User, UserRealNameAccessLog, UserRealNameIdentity
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -45,13 +44,13 @@ class UserRealNameService:
         user_repo: UserRepository,
         profile_repo: UserProfileRepository,
         realname_repo: UserRealNameRepository,
-        space_repo: SpaceRepository,
+        space_labels: SpaceLabels,
     ) -> None:
         self._session = session
         self._user_repo = user_repo
         self._profile_repo = profile_repo
         self._realname_repo = realname_repo
-        self._space_repo = space_repo
+        self._space_labels = space_labels
 
     async def _ensure_user_exists(self, user_id: int) -> User:
         user = await self._user_repo.get_by_id(user_id)
@@ -179,7 +178,7 @@ class UserRealNameService:
                 if row.module_type == "SPACE" and row.module_entity_id is not None
             }
         )
-        spaces = await self._space_repo.names_and_shells(space_ids=space_ids)
+        spaces = await self._space_labels.describe(space_ids)
 
         logs: list[dict] = []
         for log in rows:
@@ -210,10 +209,8 @@ class UserRealNameService:
                     "accessor": accessor_dto,
                     "accessModuleType": log.module_type,
                     "accessEntityId": log.module_entity_id,
-                    "accessEntityName": space[0] if space else None,
-                    "accessEntityIsCourse": (
-                        is_course_shell(space[1]) if space else None
-                    ),
+                    "accessEntityName": space.name if space else None,
+                    "accessEntityIsCourse": space.is_course if space else None,
                     "accessTime": access_time_ms,
                     "accessType": log.access_type,
                     "accessReason": log.access_reason,

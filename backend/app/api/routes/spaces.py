@@ -52,7 +52,7 @@ from app.domain.space.repositories import (
     SpaceUserRankRepository,
 )
 from app.domain.space.review_service import SpaceReviewService
-from app.domain.space.services import SpaceService
+from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.space.tags_service import SpaceTagsService
 from app.domain.task.models import Task
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
@@ -403,7 +403,7 @@ async def get_space_user_realname_service(
         user_repo=user_repo,
         profile_repo=profile_repo,
         realname_repo=realname_repo,
-        space_repo=SpaceRepository(session=db),
+        space_labels=SpaceLabels(session=db),
     )
 
 
