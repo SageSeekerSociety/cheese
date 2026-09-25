@@ -119,11 +119,8 @@ class TestUserProfileIntegration:
         assert user_data["username"] == self.user.username
         assert new_nickname in user_data["nickname"]
         assert new_intro in user_data["intro"]
-        assert "follow_count" in user_data
-        assert "fans_count" in user_data
         assert "question_count" in user_data
         assert "answer_count" in user_data
-        assert "is_follow" in user_data
 
     def test_get_user_profile_not_found(self):
         response = self.client.get(

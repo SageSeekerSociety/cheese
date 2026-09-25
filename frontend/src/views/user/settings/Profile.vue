@@ -5,7 +5,7 @@
         <h1 class="t-page-title">{{ t('account.profile.title') }}</h1>
         <p class="settings-page__lede">{{ t('account.profile.lede') }}</p>
       </div>
-      <router-link v-if="user" class="profile__home" :to="{ name: 'UserDefault', params: { id: user.id } }">
+      <router-link v-if="user" class="profile__home" :to="{ name: 'UserPage', params: { handle: user.username } }">
         {{ t('account.profile.viewPage') }}
         <v-icon icon="mdi-chevron-right" size="16" />
       </router-link>

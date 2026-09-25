@@ -412,6 +412,28 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length);
     expect(tracks).toBeGreaterThanOrEqual(4);
   });
+
+  test('个人主页：全站和项目里两个入口，宽窄三档，没有两处文字画在同一个坐标上', async ({ page }) => {
+    await apiLogin(page);
+    await openFirstProject(page);
+    const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+    expect(projectPath).toBeTruthy();
+
+    // 话题那一行在桌面上横排四样东西（标题、项目、条数、时间），窄一点的桌面宽度
+    // 是它们最容易挤到一起的时候；手机上换成两行。
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 1100, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(size);
+      for (const path of ['/users/alice', `${projectPath}/members/alice`]) {
+        await page.goto(path);
+        await expect(page.locator('[data-section="activity"]')).toBeVisible();
+        expect(await textOverlaps(page.locator('.profile')), `${size.width}px · ${path}`).toEqual([]);
+      }
+    }
+  });
 });
 
 // 侧栏顶上项目名那一条，和右边内容区的页头是同一条线：一样高、顶在同一处，两条底
@@ -425,7 +447,7 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
   const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
   expect(projectPath).toBeTruthy();
 
-  for (const sub of ['running', 'members', 'docs/charter', 'library', 'settings', 'calendar']) {
+  for (const sub of ['running', 'members', 'members/alice', 'docs/charter', 'library', 'settings', 'calendar']) {
     await page.goto(`${projectPath}/${sub}`);
     const head = page.locator('.project-page__head');
     await expect(head).toBeVisible();
