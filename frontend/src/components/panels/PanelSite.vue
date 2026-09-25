@@ -5,7 +5,7 @@ import type { AgentControlState, Block, Topic } from '../../cx_types'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../../api'
-import { isAgentBlock } from '../../lib/authorship'
+import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import {
   countLines,
   eventArg,
@@ -25,6 +25,8 @@ import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 import SiteStatusBar from './SiteStatusBar.vue'
 import SiteStepOutput from './SiteStepOutput.vue'
+
+import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -219,6 +221,58 @@ watch(
   }
 )
 
+// ---- 按队友看 ----
+// 一个房间可以先后、甚至同时交给几个队友。时间线是他们交错着的，而人来看的往往
+// 是其中一个在干什么。作者就是做这一步的那个队友：做过一步、说过一句的参与者。
+// 平台自己的话（署名 system）和人的动作只在「全部」里。
+const agents = computed(() => {
+  const seen: string[] = []
+  for (const b of transcript.value) {
+    if (b.author_type !== 'participant' || seen.includes(b.author)) continue
+    if (b.meta?.tool || isNarration(b.meta)) seen.push(b.author)
+  }
+  return seen
+})
+// null = 全部。
+const selectedAgent = ref<string | null>(null)
+watch(
+  () => props.topic?.id,
+  () => (selectedAgent.value = null)
+)
+const viewing = computed(() =>
+  selectedAgent.value !== null && agents.value.includes(selectedAgent.value) ? selectedAgent.value : null
+)
+const visible = computed(() =>
+  viewing.value === null ? transcript.value : transcript.value.filter((b) => b.author === viewing.value)
+)
+
+function agentLabel(handle: string): string {
+  return props.memberNames[handle] || (isAgentHandle(handle) ? props.agentName : handle)
+}
+
+// 在跑的轮次里，最近一行是谁做的：「全部」下状态条说的是这个队友。
+const activeAgent = computed(() => {
+  const running = props.runningTurns ?? {}
+  let last: Block | undefined
+  for (const b of transcript.value) {
+    if (b.turn_id && b.turn_id in running && agents.value.includes(b.author)) last = b
+  }
+  return last?.author ?? null
+})
+// 选中的队友在不在干活：房间在干活，而且在跑的轮次里有它的行。在跑的轮次还一
+// 行都没有时说不出是谁的，就不替任何一个说「没在干」。
+const viewingWorking = computed(() => {
+  if (!props.working || viewing.value === null) return props.working
+  const running = props.runningTurns ?? {}
+  const rows = transcript.value.filter((b) => b.turn_id && b.turn_id in running)
+  return rows.length === 0 || rows.some((b) => b.author === viewing.value)
+})
+const statusAgent = computed(() => {
+  if (agents.value.length < 2) return ''
+  const who = viewing.value ?? activeAgent.value
+  return who ? agentLabel(who) : ''
+})
+
 // 一轮刚结束：开着的这一栏安静地重读一遍。
 watch(
   () => props.refreshTick,
@@ -265,7 +319,7 @@ function isSay(b: Block): boolean {
   return b.kind !== 'event' || isNarration(b.meta)
 }
 
-const turns = computed(() => groupByTurn(transcript.value))
+const turns = computed(() => groupByTurn(visible.value))
 
 // 这一组还在跑吗：它的轮次在对话栏听到的在跑的轮次里。只看「房间有没有活」的话，
 // 新一轮还没落下第一行时，上一轮的那一组会被说成进行中。
@@ -284,7 +338,31 @@ function isLive(index: number): boolean {
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
       <AgentControls v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
-      <SiteStatusBar :blocks="transcript" :working="working" :turns="runningTurns ?? {}" />
+      <div v-if="agents.length > 1" class="site-agents" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          class="site-agents__tab"
+          :class="{ 'site-agents__tab--on': viewing === null }"
+          :aria-selected="viewing === null"
+          @click="selectedAgent = null"
+        >
+          {{ t('work.room.site.agents.all') }}
+        </button>
+        <button
+          v-for="a in agents"
+          :key="a"
+          type="button"
+          role="tab"
+          class="site-agents__tab"
+          :class="{ 'site-agents__tab--on': viewing === a }"
+          :aria-selected="viewing === a"
+          @click="selectedAgent = a"
+        >
+          {{ agentLabel(a) }}
+        </button>
+      </div>
+      <SiteStatusBar :blocks="visible" :working="viewingWorking" :turns="runningTurns ?? {}" :agent="statusAgent" />
       <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">暂无现场记录</div>
       <div v-else class="site-log pa-3">
         <div v-if="hasOlder" class="site-older">
@@ -387,6 +465,31 @@ function isLive(index: number): boolean {
 </template>
 
 <style scoped>
+/* 按队友看：一排文字按钮，选中的那个换底色和墨色，不用琥珀——这里不是主操作。 */
+.site-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 12px 0;
+}
+.site-agents__tab {
+  padding: 2px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.site-agents__tab:hover {
+  background: var(--fill);
+}
+.site-agents__tab--on {
+  background: var(--fill);
+  color: var(--ink);
+  font-weight: 600;
+}
 .site-older {
   padding: 2px 0 8px;
   text-align: center;
