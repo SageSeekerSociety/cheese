@@ -218,6 +218,10 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     flow.request.host = parsed.hostname
     flow.request.port = parsed.port or (443 if flow.request.scheme == "https" else 80)
     flow.request.headers["host"] = parsed.netloc
+    # mitmproxy hands this flow the server connection the previous request on
+    # the same client connection opened, egress included when that request
+    # carried the platform credential. The gateway is local: never through it.
+    flow.server_conn.via = None
     # LiteLLM authenticates with the project's virtual key. The caller's own
     # Claude credential is in this header and must NOT ride along to the
     # gateway, where it would sit in another service's reach and logs;
