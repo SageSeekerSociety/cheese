@@ -1,0 +1,229 @@
+{
+ "schema_version": 1,
+ "diagram_type": "sequence",
+ "meta": {
+  "title": "一条消息怎么变成芝士的一轮",
+  "subtitle": "点名 AI 队友 → 找会话、选机器 → 骨架跑 → 经平台工具发言",
+  "locale": "zh-CN",
+  "viewBox": [
+   1040,
+   904
+  ],
+  "animation": "trace",
+  "visual_preset": "signal-flow",
+  "quality_profile": "showcase",
+  "column_fit": "spread",
+  "views": [
+   {
+    "id": "address",
+    "label": "寻址",
+    "focus": [
+     "room",
+     "api",
+     "db"
+    ],
+    "note": "消息先落库、广播，再决定要不要起一轮。"
+   },
+   {
+    "id": "compute",
+    "label": "选机器",
+    "focus": [
+     "api",
+     "pool",
+     "machine",
+     "session"
+    ],
+    "note": "ComputePool 决定这一轮在哪跑，会话可以重连续跑。"
+   },
+   {
+    "id": "speak",
+    "label": "发言",
+    "focus": [
+     "session",
+     "api",
+     "room"
+    ],
+    "note": "普通输出不进房间，发言必须调 chat_send。"
+   }
+  ]
+ },
+ "participants": [
+  {
+   "id": "room",
+   "type": "frontend",
+   "label": "房间",
+   "sublabel": "浏览器"
+  },
+  {
+   "id": "api",
+   "type": "backend",
+   "label": "主 API",
+   "sublabel": "ChatService"
+  },
+  {
+   "id": "db",
+   "type": "database",
+   "label": "PostgreSQL",
+   "sublabel": "消息 · 点名"
+  },
+  {
+   "id": "pool",
+   "type": "backend",
+   "label": "ComputePool",
+   "sublabel": "在哪跑"
+  },
+  {
+   "id": "machine",
+   "type": "cloud",
+   "label": "机器",
+   "sublabel": "沙盒 · 设备 · 云机"
+  },
+  {
+   "id": "session",
+   "type": "backend",
+   "label": "骨架会话",
+   "sublabel": "Claude Code · Codex · Pi"
+  }
+ ],
+ "segments": [
+  {
+   "from": 170,
+   "to": 302,
+   "label": "发消息与寻址"
+  },
+  {
+   "from": 326,
+   "to": 502,
+   "label": "找会话、选机器"
+  },
+  {
+   "from": 526,
+   "to": 658,
+   "label": "芝士干活、发言"
+  },
+  {
+   "from": 682,
+   "to": 814,
+   "label": "中途插话"
+  }
+ ],
+ "messages": [
+  {
+   "from": "room",
+   "to": "api",
+   "y": 196,
+   "label": "发消息（client_id 去重）",
+   "variant": "emphasis"
+  },
+  {
+   "from": "api",
+   "to": "db",
+   "y": 240,
+   "label": "短事务落库 + 点名通知"
+  },
+  {
+   "from": "api",
+   "to": "room",
+   "y": 284,
+   "label": "广播，发送不被正在跑的一轮挡住",
+   "variant": "return"
+  },
+  {
+   "from": "api",
+   "to": "pool",
+   "y": 352,
+   "label": "点名了 AI 队友：进话题串行锁",
+   "variant": "emphasis"
+  },
+  {
+   "from": "pool",
+   "to": "machine",
+   "y": 396,
+   "label": "远端机器探活（≤15 秒）",
+   "variant": "dashed"
+  },
+  {
+   "from": "machine",
+   "to": "pool",
+   "y": 440,
+   "label": "还在",
+   "variant": "return"
+  },
+  {
+   "from": "pool",
+   "to": "session",
+   "y": 484,
+   "label": "启动，或按话题上的会话 id 续跑",
+   "variant": "emphasis"
+  },
+  {
+   "from": "session",
+   "to": "machine",
+   "y": 552,
+   "label": "读写文件、跑命令"
+  },
+  {
+   "from": "session",
+   "to": "api",
+   "y": 596,
+   "label": "chat_send（平台工具）",
+   "variant": "security"
+  },
+  {
+   "from": "api",
+   "to": "room",
+   "y": 640,
+   "label": "消息进房间",
+   "variant": "return"
+  },
+  {
+   "from": "room",
+   "to": "api",
+   "y": 708,
+   "label": "又一条消息"
+  },
+  {
+   "from": "api",
+   "to": "session",
+   "y": 752,
+   "label": "merge_into_running_turn：送进正在跑的会话",
+   "variant": "emphasis"
+  },
+  {
+   "from": "session",
+   "to": "api",
+   "y": 796,
+   "label": "一轮结束：活动块、结果",
+   "variant": "return"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "不点名不跑",
+   "items": [
+    "只有点名 AI 队友的消息才起一轮",
+    "平台自己的投递也只能点名",
+    "人和人的对话不触发一轮"
+   ]
+  },
+  {
+   "dot": "orange",
+   "title": "一个话题一轮",
+   "items": [
+    "同一话题的轮串行",
+    "跑着的时候新消息直接送进去",
+    "发消息永远先落库再排队"
+   ]
+  },
+  {
+   "dot": "emerald",
+   "title": "失败归机器",
+   "items": [
+    "机器的错记在设备上，连续两次同类失败隔离",
+    "不悄悄换机器",
+    "发版时新进程接管在跑的轮"
+   ]
+  }
+ ]
+}

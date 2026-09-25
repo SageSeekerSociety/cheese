@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "diagrams": "sh gen/diagrams.sh",
+    "diagrams": "bash gen/diagrams.sh",
     "room": "node island/build.mjs"
   },
   "devDependencies": {

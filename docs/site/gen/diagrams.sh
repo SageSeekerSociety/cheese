@@ -12,7 +12,9 @@ for spec in diagrams/*.json; do
   base=$(basename "$spec" .json)
   type=${base##*.}
   slug=${base%.*}
-  node "$cli" deliver "$type" "$spec" "diagrams/$slug.html" --quality showcase --repo-root ../.. --json >"/tmp/archify-$slug.receipt.json" \
+  # Only architecture diagrams are checked against the repository's files.
+  root=(); [ "$type" = architecture ] && root=(--repo-root ../..)
+  node "$cli" deliver "$type" "$spec" "diagrams/$slug.html" --quality showcase "${root[@]}" --json >"/tmp/archify-$slug.receipt.json" \
     || { cat "/tmp/archify-$slug.receipt.json"; exit 1; }
   echo "diagrams/$slug.html ($type)"
 done
