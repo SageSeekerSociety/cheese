@@ -95,6 +95,7 @@ class RequiredCITest(unittest.TestCase):
             "cli/internal/client.go",
             "scripts/remote_execution/room_fixture.py",
             ".dockerignore",
+            ".github/scripts/allow-user-namespaces.sh",
             ".github/scripts/ensure-apt.sh",
             ".github/scripts/ci-test-evidence.py",
             ".github/workflows/remote-execution.yml",
