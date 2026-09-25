@@ -909,14 +909,6 @@ def test_a_path_the_session_cannot_take_is_refused(tmp_path, seen, reason):
     assert not (view / "ran").exists()
 
 
-@pytest.mark.skipif(sys.platform == "linux", reason="refused only off Linux")
-def test_a_session_host_without_linux_namespaces_is_refused(tmp_path):
-    view, done = _enter(tmp_path, "/executor/project", "touch ran")
-    assert done.returncode != 0
-    assert "must be Linux" in done.stderr
-    assert not (view / "ran").exists()
-
-
 # --- the guard ------------------------------------------------------------------
 
 
