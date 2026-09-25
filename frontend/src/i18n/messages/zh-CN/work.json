@@ -192,7 +192,12 @@
       "edit": "编辑",
       "editHint": "放回输入框"
     },
-    "newMessages": "条新消息"
+    "newMessages": "条新消息",
+    "composer": {
+      "replyTo": "回复 {name}：{text}",
+      "cancelReply": "取消回复",
+      "removeAttachment": "移除 {name}"
+    }
   },
   "members": {
     "leave": "退出项目",

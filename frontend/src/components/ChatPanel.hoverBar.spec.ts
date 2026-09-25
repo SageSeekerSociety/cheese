@@ -82,11 +82,11 @@ describe('消息的悬停条', () => {
 
     await pointAt(container, '[data-mid="m2"] .im-text')
     await fireEvent.click(replyButtons(container)[0])
-    expect(container.querySelector('.reply-bar')?.textContent).toContain('第二条')
+    expect(container.querySelector('.reply-chip')?.textContent).toContain('第二条')
 
     await pointAt(container, '[data-mid="m1"] .im-text')
     await fireEvent.click(replyButtons(container)[0])
-    expect(container.querySelector('.reply-bar')?.textContent).toContain('第一条')
+    expect(container.querySelector('.reply-chip')?.textContent).toContain('第一条')
   })
 
   it('整列只有一个，不是每条消息各带一个', async () => {

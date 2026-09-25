@@ -122,12 +122,12 @@ describe('输入框的内容属于它被打出来的那个话题', () => {
       (b) => b.getAttribute('title') === '回复'
     ) as HTMLButtonElement
     await fireEvent.click(replyBtn)
-    expect(container.querySelector('.reply-bar')).toBeTruthy()
+    expect(container.querySelector('.reply-chip')).toBeTruthy()
 
     await rerender({ topic: topicOf('t2'), showComposer: true })
     await settle()
     // 留着的话，下一条发到 t2 的消息会带上 t1 的 reply_to。
-    expect(container.querySelector('.reply-bar')).toBeNull()
+    expect(container.querySelector('.reply-chip')).toBeNull()
   })
 })
 

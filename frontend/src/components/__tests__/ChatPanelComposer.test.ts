@@ -236,10 +236,10 @@ describe('对话栏自己的输入栏', () => {
     await flush()
     // 每一格都是同一个块：左边那个方格说明它是什么，右边一直写着名字。PDF 在
     // 方格里画首页——发之前要确认的是「附的是哪一份」，光有名字答不了。
-    const card = container.querySelector('.att-strip .att-card')!
-    expect(card.querySelector('.att-card__name')?.textContent).toBe('需求 文档.pdf')
+    const card = container.querySelector('.chip-list .chip')!
+    expect(card.querySelector('.chip__label')?.textContent).toBe('需求 文档.pdf')
     expect(card.querySelector('canvas')).toBeTruthy()
-    expect(container.querySelector('.att-strip img')).toBeNull()
+    expect(container.querySelector('.chip-list img')).toBeNull()
     await fireEvent.click(container.querySelector('[title="发送"]')!)
     await flush()
     expect(JSON.parse(sent[0].payload).attachments).toEqual([
@@ -273,8 +273,8 @@ describe('对话栏自己的输入栏', () => {
     })
     await flush()
 
-    const cards = Array.from(container.querySelectorAll('.att-strip .att-card'))
-    expect(cards.map((c) => c.querySelector('.att-card__name')?.textContent)).toEqual([
+    const cards = Array.from(container.querySelectorAll('.chip-list .chip'))
+    expect(cards.map((c) => c.querySelector('.chip__label')?.textContent)).toEqual([
       '截图.png',
       'Writing替换词.docx',
     ])
@@ -311,8 +311,8 @@ describe('对话栏自己的输入栏', () => {
     })
     await flush()
 
-    const card = container.querySelector('.att-strip .att-card')!
-    expect(card.querySelector('.att-card__name')?.textContent).toBe('预算.xlsx')
+    const card = container.querySelector('.chip-list .chip')!
+    expect(card.querySelector('.chip__label')?.textContent).toBe('预算.xlsx')
     expect(card.querySelector('canvas')).toBeNull()
     expect(card.querySelector('.mdi-file-excel-outline')).toBeTruthy()
     expect(vi.mocked(api.previewDocumentPdf)).not.toHaveBeenCalled()
@@ -340,7 +340,7 @@ describe('对话栏自己的输入栏', () => {
     })
     await flush()
 
-    const card = container.querySelector('.att-strip .att-card')!
+    const card = container.querySelector('.chip-list .chip')!
     expect(card.getAttribute('title')).toBeNull()
     await fireEvent.mouseEnter(card)
     await flush()
@@ -363,7 +363,7 @@ describe('对话栏自己的输入栏', () => {
     const file = new File(['png'], '截图.png', { type: 'image/png' })
     await fireEvent.change(input, { target: { files: [file] } })
     await flush()
-    const img = container.querySelector<HTMLImageElement>('.att-strip img')!
+    const img = container.querySelector<HTMLImageElement>('.chip-list img')!
     expect(img.getAttribute('src')).toBe('blob:composer-thumb')
     expect(img.getAttribute('src')).not.toContain('/attachments/raw')
     expect(api.attachmentImageUrl).toHaveBeenCalledWith('topic-image', 'uploads/id/截图.png')

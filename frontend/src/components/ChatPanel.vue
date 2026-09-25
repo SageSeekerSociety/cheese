@@ -776,6 +776,15 @@ function setReply(m: Block) {
 function clearReply() {
   replyTarget.value = null
 }
+// 输入框里那枚回复标签上写的：回复的是谁、那条说了什么。
+const replyLabel = computed(() =>
+  replyTarget.value
+    ? t('work.room.composer.replyTo', {
+        name: displayName(replyTarget.value),
+        text: replySnippet(replyTarget.value, refMaps),
+      })
+    : null
+)
 function parentOf(m: Block): Block | undefined {
   return m.reply_to ? messages.value.find((x) => x.id === m.reply_to) : undefined
 }
@@ -1578,13 +1587,6 @@ onBeforeUnmount(() => {
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
 
-      <!-- B3: replying-to indicator — the next message threads under this one. -->
-      <div v-if="replyTarget" class="reply-bar">
-        <v-icon size="14" class="me-1">mdi-reply</v-icon>
-        <span class="reply-bar__text"> 回复 {{ displayName(replyTarget) }}：{{ replySnippet(replyTarget, refMaps) }} </span>
-        <v-btn icon="mdi-close" size="x-small" variant="text" density="comfortable" @click="clearReply" />
-      </div>
-
       <!-- Built-in composer (private chat / standalone use). -->
       <RoomComposer
         v-if="showComposer"
@@ -1599,7 +1601,9 @@ onBeforeUnmount(() => {
         :hint="composerHint"
         :atts="pendingAtts"
         :atts-uploading="attsUploading"
+        :reply-label="replyLabel"
         @send="onComposerSend"
+        @clear-reply="clearReply"
         @files="(files) => void addFiles(files)"
         @drop-files="onComposerDrop"
         @paste="onComposerPaste"
@@ -1760,22 +1764,6 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   font-weight: 500;
   color: var(--muted);
-}
-.reply-bar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px 12px;
-  font-size: 12px;
-  color: var(--muted);
-  background: var(--fill);
-  border-top: 1px solid var(--line);
-}
-.reply-bar__text {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .caret {
   display: inline-block;

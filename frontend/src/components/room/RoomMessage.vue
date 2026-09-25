@@ -278,7 +278,7 @@ async function onAgentTextClick(e: MouseEvent) {
 <style scoped src="./room-row.css"></style>
 
 <style scoped>
-/* B3: the "回复 X：…" cue above a reply, and the composer reply-to bar. */
+/* B3: the "回复 X：…" cue above a reply. */
 .im-replied {
   display: inline-flex;
   align-items: center;

@@ -6,8 +6,8 @@
 // 它」谁也答不上来，而只有开关那条是通的。三个入口（手打 @、点按钮、⌘/Ctrl+
 // Enter）写的都是同一个 @，你看得见，也能自己删。
 //
-// 草稿和待发附件**不归它管**：那两样要跟着话题走、跨刷新活下来，而话题什么时候
-// 换只有房间知道。正文是 v-model，附件由房间传进来——它只负责画和发。
+// 草稿、回复对象和待发附件**不归它管**：那几样要跟着话题走、跨刷新活下来，而话题
+// 什么时候换只有房间知道。正文是 v-model，其余由房间传进来——它只负责画和发。
 import type { LibraryFile } from '../../api'
 import type { ChatAttachment, Topic } from '../../cx_types'
 
@@ -17,8 +17,12 @@ import { useDisplay } from 'vuetify'
 import { listProjectLibrary } from '../../api'
 import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
 import { IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
-import AttachmentTile from '../AttachmentTile.vue'
 import ExternalTag from '../common/ExternalTag.vue'
+
+import AttachmentChip from './AttachmentChip.vue'
+import ComposerChip from './ComposerChip.vue'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
@@ -36,6 +40,8 @@ const props = defineProps<{
   /** 已经传上去、等着跟下一条一起发出去的附件。 */
   atts: ChatAttachment[]
   attsUploading: boolean
+  /** 这条消息回复的是哪一条，读出来的样子（「回复 谁：说了什么」）。不回复时是 null。 */
+  replyLabel?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -45,6 +51,7 @@ const emit = defineEmits<{
   (e: 'drop-files', event: DragEvent): void
   (e: 'paste', event: ClipboardEvent): void
   (e: 'remove-att', index: number): void
+  (e: 'clear-reply'): void
   (e: 'add-library-file', path: string): void
 }>()
 
@@ -433,9 +440,21 @@ defineExpose({
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
     <div class="composer-box">
-      <!-- 待发条: the attachments waiting to go with the next send. -->
-      <div v-if="atts.length" class="att-strip">
-        <AttachmentTile
+      <!-- 这条消息带着的东西：回复的那条在最前，后面是待发的附件。一行排开，
+           不换行——多了就在这一行里横着滚，每一个都还拿得掉。 -->
+      <div v-if="replyLabel || atts.length" class="chip-list">
+        <ComposerChip
+          v-if="replyLabel"
+          key="reply"
+          class="reply-chip"
+          quiet
+          :label="replyLabel"
+          :remove-label="t('work.room.composer.cancelReply')"
+          @remove="emit('clear-reply')"
+        >
+          <template #face><v-icon size="13">mdi-reply</v-icon></template>
+        </ComposerChip>
+        <AttachmentChip
           v-for="(a, i) in atts"
           :key="a.path"
           :topic-id="topic!.id"
@@ -758,13 +777,13 @@ defineExpose({
   color: var(--faint);
 }
 
-/* 待发条。一格长什么样归 AttachmentTile，这里只排它们；行距留 10px，因为每格
-   右上角那个移除按钮探出了边界 6px。 */
-.att-strip {
+/* 回复和附件那一行。不换行：换了行输入框就被一截一截往上顶。多出来的横着滚——
+   裁掉的话，第四个附件既看不见也拿不掉。 */
+.chip-list {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 10px 2px 6px;
+  gap: 6px;
+  padding: 2px 0 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 </style>

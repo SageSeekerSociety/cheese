@@ -192,7 +192,12 @@
       "edit": "Edit",
       "editHint": "Put it back in the message box"
     },
-    "newMessages": "new"
+    "newMessages": "new",
+    "composer": {
+      "replyTo": "Replying to {name}: {text}",
+      "cancelReply": "Cancel reply",
+      "removeAttachment": "Remove {name}"
+    }
   },
   "members": {
     "leave": "Leave project",
