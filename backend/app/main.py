@@ -156,11 +156,19 @@ async def lifespan(_: FastAPI):
     # released to it; a turn asked for in the meantime waits for that.
     jobs: list[background.PeriodicRunner] = []
     forge_events: list[asyncio.Task] = []
+    # Once this process has held the lock, it has sessions to hand back on the
+    # way out — even if it has since lost the lock (`keep_holding`).
+    held_the_work: list[asyncio.Task] = []
     ownership = get_ownership()
     get_work_runner().hold_turns()
+    get_work_runner().own_sessions(False)
 
     async def take_over() -> None:
         await ownership.acquire()
+        held_the_work.append(
+            asyncio.create_task(keep_holding(ownership), name="owner lock watch")
+        )
+        get_work_runner().own_sessions(True)
         try:
             await taken_over()
         finally:
@@ -168,7 +176,6 @@ async def lifespan(_: FastAPI):
             # against the sessions and turns it has just taken over — and starts
             # even if some step of the takeover failed, which it logged.
             get_work_runner().start_turns()
-        background.spawn(keep_holding(ownership), name="owner lock watch")
 
     async def taken_over() -> None:
         try:
@@ -290,9 +297,13 @@ async def lifespan(_: FastAPI):
             # the prompts on their way out arrive; the sessions stop being read
             # here before anyone else reads them; only then is the lock let go.
             get_work_runner().hold_turns()
+            get_work_runner().own_sessions(False)
             taking_over.cancel()
             await asyncio.gather(taking_over, return_exceptions=True)
-            if ownership.held:
+            for watch in held_the_work:
+                watch.cancel()
+            await asyncio.gather(*held_the_work, return_exceptions=True)
+            if held_the_work:
                 handover_started = time.monotonic()
                 undelivered = await get_work_runner().settle_deliveries(
                     settings.handover_timeout_s

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from app.api.deps import get_chat_service, get_work_runner
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
+from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
@@ -91,6 +92,33 @@ def test_a_message_waiting_for_its_turn_is_answered_by_the_next_backend(client):
     assert _handed_over(client, service) == 1
 
     _until_answered(client, service, channel, room)
+
+
+def test_a_message_the_next_backend_already_holds_starts_one_turn(client):
+    """Sent to the incoming backend before it took over: the message is already
+    waiting there for the takeover, and the takeover must not start it again."""
+    room, channel, service = _room(client)
+    runner = get_work_runner()
+    runner.hold_turns()
+    _say(client, room, "@芝士 修一下登录页")
+
+    assert client.portal.call(runner.resume_lost_messages, service) == 0
+    runner.start_turns()
+    _until_answered(client, service, channel, room)
+
+    async def turns() -> int:
+        async with client.test_factory() as session:
+            return len(
+                list(
+                    await session.scalars(
+                        select(AgentTurn.id).where(
+                            AgentTurn.topic_id == uuid.UUID(room)
+                        )
+                    )
+                )
+            )
+
+    assert asyncio.run(turns()) == 1
 
 
 def test_a_message_that_was_answered_is_not_answered_again(client):

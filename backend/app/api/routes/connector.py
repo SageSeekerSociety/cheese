@@ -102,7 +102,7 @@ async def _recover_business_state(device_id: str) -> None:
     # work listens to their sessions: two listeners land one session's output
     # twice. A backend still waiting to take over recovers every device when it
     # does; one on its way out leaves them to the next.
-    if not get_work_runner().accepting_turns:
+    if not get_work_runner().owns_sessions:
         return
     try:
         await get_chat_service().recover_sessions(device_id)

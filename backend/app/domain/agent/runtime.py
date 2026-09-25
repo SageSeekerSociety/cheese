@@ -498,12 +498,23 @@ class AgentWorkRunner:
         # not refused — it waits here until the process takes over, or is left
         # to its owner when this one is on its way out.
         self._may_start = True
+        # Whether this process is the one listening to sessions. Set from the
+        # moment it holds the owner lock, a little before turns may start (the
+        # takeover itself listens), and cleared the moment it starts to leave.
+        self._owns_sessions = True
 
     @property
     def accepting_turns(self) -> bool:
         """Is this process the one running the work right now — the owner, and
         not on its way out?"""
         return self._may_start
+
+    @property
+    def owns_sessions(self) -> bool:
+        return self._owns_sessions
+
+    def own_sessions(self, owns: bool) -> None:
+        self._owns_sessions = owns
 
     def hold_turns(self) -> None:
         """Let no turn start in this process until `start_turns`."""
@@ -841,8 +852,11 @@ class AgentWorkRunner:
         self._broker.subscribe_messages(self._receive_message)
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:
+        # Named like `submit`'s, so `turn_pending` sees a message still waiting
+        # to be admitted as the pending turn it is.
         task = asyncio.create_task(
-            self._consume_message(chat_service, topic_id, turn_id, **message)
+            self._consume_message(chat_service, topic_id, turn_id, **message),
+            name=f"turn:{turn_id}",
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -1205,6 +1219,10 @@ class AgentWorkRunner:
         rooms: dict[uuid.UUID, object] = {}
         for block in mentioned:
             if block.id in begun or block.id in answered:
+                continue
+            # Accepted by this process while it waited to take over: its turn is
+            # already on its way here, and a second one would race it.
+            if self.turn_pending(block.id):
                 continue
             if block.topic_id in busy or chat_service.has_running_turn(block.topic_id):
                 continue
