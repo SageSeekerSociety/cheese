@@ -18,9 +18,11 @@ import re
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.block.models import Block
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
@@ -227,6 +229,54 @@ async def test_the_next_prompt_still_carries_an_unsummoned_message(
     assert len(screen.prompts) == 1
     assert "先记一句" in screen.prompts[0]
     assert re.search(r"<@cheese-[0-9a-f]+>", screen.prompts[0]), screen.prompts[0]
+
+    screen.release.set()
+    await finish_turn(svc, topic_id)
+    await runner.drain()
+
+
+@pytest.mark.anyio
+async def test_a_reply_sent_mid_turn_carries_the_message_it_answers(
+    business_db_factory, tmp_path
+):
+    """干活途中回复房间里更早的一条，送进这一轮的那段话要带上被回复的原文。
+
+    被回复的那条上一轮已经读过，不会再出现在任何待读窗口里；只递回复本身，芝士
+    收到的就是一句「按这条改」，却不知道是哪条。
+    """
+    factory = business_db_factory  # type: ignore[attr-defined]
+    screen = WorkingScreen()
+    svc = _service(factory, screen, tmp_path)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    runner.subscribe_messages()
+    topic_id = await _a_topic(factory)
+
+    await broker.receive_message(
+        svc, topic_id, author="wangchangxin", content="B 组第 7 行录错了，应该是 0.42"
+    )
+    await broker.receive_message(
+        svc, topic_id, author="wangchangxin", content="@芝士 去查一下这条链路"
+    )
+    await asyncio.wait_for(screen.started.wait(), 5)
+    async with factory() as session:
+        parent_id = await session.scalar(
+            select(Block.id).where(
+                Block.topic_id == topic_id, Block.content.startswith("B 组第 7 行")
+            )
+        )
+
+    await broker.receive_message(
+        svc,
+        topic_id,
+        author="wangchangxin",
+        content="按这条改",
+        reply_to=str(parent_id),
+    )
+
+    await _until(lambda: len(screen.delivered) == 1)
+    assert "按这条改" in screen.delivered[0]
+    assert "B 组第 7 行录错了，应该是 0.42" in screen.delivered[0]
 
     screen.release.set()
     await finish_turn(svc, topic_id)

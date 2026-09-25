@@ -22,6 +22,8 @@ type PdfLib = typeof import('pdfjs-dist')
 const props = defineProps<{
   topicId: string | null
   path: string
+  /** 画页面之前那个类型图标的大小，跟着方格走。 */
+  iconSize?: number
 }>()
 
 let lib: PdfLib | null = null
@@ -110,7 +112,7 @@ onBeforeUnmount(() => {
 <template>
   <span class="att-face">
     <canvas ref="canvas" class="doc-thumb__page" :class="{ 'doc-thumb__page--ready': drawn }" />
-    <v-icon v-if="!drawn" size="22">{{ mark() }}</v-icon>
+    <v-icon v-if="!drawn" :size="iconSize ?? 22">{{ mark() }}</v-icon>
   </span>
 </template>
 

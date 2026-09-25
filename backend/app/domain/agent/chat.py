@@ -48,6 +48,7 @@ from app.domain.agent.harness.prompt import (
     platform_prompt,
     prompt_line,
     publication_prompt,
+    reply_quote,
     strip_platform_notice,
 )
 from app.domain.agent.platform_failures import (
@@ -1560,6 +1561,19 @@ class ChatService:
             ):
                 yield frame
 
+    async def _reply_parent(self, block_ids: list[uuid.UUID]) -> Block | None:
+        """The message a just-posted send answers, if it is a reply.
+
+        Read back from the stored blocks rather than from the request: the
+        write already dropped a reply target outside this room."""
+        async with self._sessions() as session:
+            blocks = BlockRepository(session)
+            for block_id in block_ids:
+                block = await blocks.get(block_id)
+                if block is not None and block.reply_to is not None:
+                    return await blocks.get(block.reply_to)
+        return None
+
     async def merge_into_running_turn(
         self,
         topic_id: uuid.UUID,
@@ -1613,6 +1627,10 @@ class ChatService:
             )
             for image in images
         )
+        if (replied := await self._reply_parent(user_block_ids)) is not None:
+            lines.append(
+                reply_quote(replied, recipient=state.acting_agent if state else None)
+            )
         state = self._hook_work.get((topic_id, consuming_turn_id))
         line = publication_prompt("\n".join(lines))
         # Register BEFORE the write so a fast receipt cannot race the entry
@@ -4842,8 +4860,25 @@ class ChatService:
             # or a returned conclusion. Say so, rather than handing
             # 芝士 bare text that looks like a person's message.
             embeds_images = getattr(provider, "embeds_images", True)
+            # A reply carries the message it answers: that message is seldom in
+            # the backlog (an earlier turn read it), and 「改一下这条」 without
+            # 「这条」 is a request 芝士 cannot act on. One already in the
+            # backlog is quoted there, so it is not quoted twice.
+            replied = {
+                b.id: parent
+                for b in pending
+                if b.reply_to is not None
+                and b.reply_to not in pending_ids
+                and (parent := await blocks.get(b.reply_to)) is not None
+            }
             backlog = "\n".join(
-                prompt_line(b, embeds_images=embeds_images) for b in pending
+                prompt_line(
+                    b,
+                    embeds_images=embeds_images,
+                    replied=replied.get(b.id),
+                    recipient=agent.handle,
+                )
+                for b in pending
             )
             prompt_text = backlog or platform_prompt(content)
             # 平台指令不会被待读消息挤掉。A platform turn EXISTS because of its

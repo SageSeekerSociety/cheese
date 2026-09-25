@@ -151,7 +151,7 @@ describe('输入栏引用资料库里的文件', () => {
 
     // 正文只剩人写的那句话，文件在待发条里。
     expect(box.value).toBe('看看 ')
-    expect(c.querySelector('.att-strip')?.textContent).toContain('预算表.xlsx')
+    expect(c.querySelector('.chip-list')?.textContent).toContain('预算表.xlsx')
   })
 
   // 打了一半的 @ 会跟着话题存下来，所以重新进这个房间时菜单从第一帧起就是开着的。

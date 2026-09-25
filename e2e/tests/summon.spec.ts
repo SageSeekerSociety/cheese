@@ -168,14 +168,14 @@ test.describe('把消息交给芝士', () => {
     await expect(sent.locator(`.mention[data-handle="${seat!.member_handle}"]`)).toBeVisible();
   });
 
-  // 手机宽度上按钮收成一个 @ 图标。这条不是审美，是排版会不会塌：那一行右边还站着
-  // 发送，按钮带着三个字的时候它们挤不下就要换行。
+  // 手机宽度上按钮收掉名字，只留「交给」。这条不是审美，是排版会不会塌：那一行右边
+  // 还站着发送，按钮带着名字的时候它们挤不下就要换行。
   //
   // 手机宽度必须是**打开就这么宽**，不能把桌面窗口拖窄了测：工作台的分栏宽度是挂载
   // 时算出来的，拖窄之后整个输入框会塌成 0 宽（和这颗按钮无关——600px 上标签还好好
   // 显示着就已经塌了）。照那条路走，测到的是另一个毛病。所以先把视口调好再进这个
   // 话题；走 URL 是因为手机上左边那条项目栏是收起来的，点不进去。
-  test('手机宽度上按钮收成一个图标，输入框那一行不换行', async ({ page }) => {
+  test('手机宽度上按钮收掉名字，输入框那一行不换行', async ({ page }) => {
     const projects = (await api(page, 'get', '/projects')).data as { id: string }[];
     const project = projects[0];
     expect(project, 'alice 名下没有项目').toBeTruthy();
@@ -189,8 +189,9 @@ test.describe('把消息交给芝士', () => {
 
     const button = page.locator('.summon-btn');
     await expect(button).toBeVisible();
-    // 三个字收掉，只剩那个 @。
+    // 名字收掉，留两个字说它是「交给」，不是「插入一个 @」。
     await expect(button.locator('.summon-btn-label')).toBeHidden();
+    await expect(button.locator('.summon-btn-short')).toBeVisible();
 
     // 同一行：按钮和发送键的垂直中心对得上，说明没有谁被挤到下一行去。
     const send = page.locator('.composer-send');
@@ -202,7 +203,7 @@ test.describe('把消息交给芝士', () => {
     // 而且按钮没被挤出屏幕。
     expect(b!.x + b!.width).toBeLessThanOrEqual(375);
 
-    // 收成图标之后照样是那颗按钮：点一下，@ 还是进正文。
+    // 收窄之后照样是那颗按钮：点一下，@ 还是进正文。
     await composer.fill('这条是说给人听的');
     await button.click();
     await expect(composer).toHaveValue(/^@.+ 这条是说给人听的$/);
