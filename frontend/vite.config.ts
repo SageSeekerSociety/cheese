@@ -175,13 +175,11 @@ export default defineConfig({
         // Keep '/' out of the precache's implicit '/index.html' alias so the
         // public navigation rule below can fetch the current HTML online.
         directoryIndex: null,
-        // Precache the app shell. maximumFileSizeToCacheInBytes is raised well
-        // above the 2 MiB default because this bundle is heavy (monaco / tiptap
-        // / prismjs-all) — the shell-critical chunks (vue, vuetify, entry) must
-        // land in precache or an offline reload white-screens. The genuinely
-        // huge, view-specific chunks that exceed even this are NOT precached;
-        // the /assets/ runtime cache below picks them up on first online visit
-        // instead, so precache stays bounded.
+        // Precache the app shell: the shell-critical chunks (vue, vuetify,
+        // entry) must land in precache or an offline reload white-screens.
+        // Chunks over workbox's 2 MiB default are NOT precached; the /assets/
+        // runtime cache below picks them up on first online visit instead, so
+        // precache stays bounded.
         //
         // `.woff` is deliberately absent while `.woff2` stays. Both formats of
         // the same faces ship (MDI 574 KB + 394 KB, plus 20 KaTeX pairs) and no
@@ -208,12 +206,6 @@ export default defineConfig({
         // 只有浏览器的安装弹窗会去取它，跟 App 能不能离线跑毫无关系，别让每次安装
         // 都白下 100 KB。
         globIgnores: ['**/*.worker-*.js', '**/monaco-*.js', 'docs/**', 'screenshots/**'],
-        // Raised from the 2 MiB default so the shell-critical `vendor` chunk
-        // (~5 MB) is precached — leaving it out is exactly the "离线白屏" the
-        // spec warns against. Do NOT tune this number to drop one specific
-        // chunk — it is a blanket rule and would take unrelated chunks with it.
-        // Anything that should not be precached goes in `globIgnores` by name.
-        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         // 这两行**故意不写**（原来写着 clientsClaim/skipWaiting，都是 true）。
         // 它们是「新 worker 立刻接管」的开关，留着就等于绕过 registerType: 'prompt'
@@ -382,10 +374,9 @@ export default defineConfig({
           // unassigned, Rollup merged it into the first manual chunk that
           // needed it, which after the split below was `monaco`, so the entry
           // and every route chunk imported `monaco` just to reach the helper
-          // and Monaco was back on the first paint. Pin it where the entry
-          // already goes.
+          // and Monaco was back on the first paint. Give it a chunk of its own.
           if (id.includes('vite/preload-helper')) {
-            return 'vendor'
+            return 'preload-helper'
           }
           if (id.includes('node_modules')) {
             // Monaco is the largest package in node_modules and only the code
@@ -432,10 +423,6 @@ export default defineConfig({
             if (id.includes('@editorjs')) {
               return 'editorjs'
             }
-            // katex 单独一个 chunk
-            if (id.includes('katex')) {
-              return 'katex'
-            }
             // dayjs 单独一个 chunk
             if (id.includes('dayjs')) {
               return 'dayjs'
@@ -448,8 +435,11 @@ export default defineConfig({
             if (id.includes('axios')) {
               return 'axios'
             }
-            // 其他 node_modules 内的包统一归到 vendor
-            return 'vendor'
+            // Everything else is left to Rollup, which places a package by who
+            // imports it. A catch-all `vendor` here once put exceljs, pdf.js,
+            // xterm, yjs and KaTeX on every first paint, although the code only
+            // reaches them through `import()`: a manual chunk ignores that and
+            // becomes a static import of the entry.
           }
         },
       },
