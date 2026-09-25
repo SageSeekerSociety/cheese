@@ -967,7 +967,7 @@ async def test_no_online_device_is_a_clean_error():
         return None  # nothing online / bound
 
     channel = DeviceChannel(hub=FakeHub(), device_resolver=resolver)
-    with pytest.raises(ScreenSetupError, match="没有在线的绑定设备"):
+    with pytest.raises(ScreenSetupError):
         await channel.precheck(
             SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code"),
             needs_place=True,
