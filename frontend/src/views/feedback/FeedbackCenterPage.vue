@@ -221,7 +221,8 @@ function clearFilters() {
       <v-tabs
         :model-value="store.tab"
         density="comfortable"
-        color="primary"
+        color="on-surface"
+        slider-color="primary"
         class="fb-tabs"
         @update:model-value="store.setTab($event as TabName)"
       >

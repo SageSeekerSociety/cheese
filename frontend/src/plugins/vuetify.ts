@@ -8,9 +8,10 @@
  * truth for the values and for which token means what.
  *
  * THE ONE PRINCIPLE: ~95% neutral. `primary` is amber (#F57F17) but is reserved
- * for the ONE primary action button, the active nav indicator, and the brand
- * mark — never avatars, status chips, icons, or selected-row fills. Component
- * defaults below stay neutral; amber is opted into explicitly where it belongs.
+ * for the main action of an area, unread markers, the active nav indicator, and
+ * the brand mark — never avatars, status chips, icons, or selected-row fills.
+ * Component defaults below stay neutral; amber is opted into explicitly where it
+ * belongs.
  *
  * Framework documentation: https://vuetifyjs.com
  */

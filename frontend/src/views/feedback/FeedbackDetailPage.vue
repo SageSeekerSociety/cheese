@@ -395,12 +395,9 @@ async function share() {
                   @blur="onComposerBlur"
                 />
                 <div class="d-flex justify-end mt-2">
-                  <!-- 这一页唯一的琥珀在底部那条操作栏里（§7.4：详情页那一颗在操作栏）。
-                       这一颗跟着降成中性 tonal —— 两颗琥珀同屏时，读的人分不出哪一颗是
-                       「这一页的主操作」，而「只有一颗」正是琥珀全部的意思。 -->
                   <v-btn
-                    color="secondary"
-                    variant="tonal"
+                    color="primary"
+                    variant="flat"
                     size="small"
                     :disabled="!commentDraft.trim()"
                     :loading="posting"
@@ -456,8 +453,8 @@ async function share() {
         {{ store.error }}
       </v-alert>
 
-      <!-- 64px 粘底操作栏（§4.4）。用户侧这一栏里的主操作是**支持** —— 这一页唯一的
-           琥珀（§7.4）。它原先是漂在正文中间的一颗按钮，滚过两屏就够不着了，而它是
+      <!-- 64px 粘底操作栏（§4.4）。用户侧这一栏里的主操作是**支持**，这一栏的
+           琥珀。它原先是漂在正文中间的一颗按钮，滚过两屏就够不着了，而它是
            这一页唯一一件「读完之后能做的事」；现在它钉在屏幕底下，读到哪里都在。
            分享是次要动作，中性描边。
            「已支持」那一态跟着退回中性 tonal：琥珀画的是「现在该做这件」，而它已经

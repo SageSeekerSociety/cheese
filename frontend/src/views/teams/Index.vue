@@ -1,7 +1,7 @@
 <template>
   <PageHeader icon="mdi-account-group" title="团队">
     <template #tabs>
-      <v-tabs slider-color="primary" bg-color="transparent">
+      <v-tabs color="on-surface" slider-color="primary" bg-color="transparent">
         <v-tab :to="{ name: 'HomeTeamsExplore' }">发现</v-tab>
         <v-tab :to="{ name: 'HomeTeamsMine' }">我的</v-tab>
         <v-tab :to="{ name: 'HomeTeamsPending' }">待定</v-tab>
@@ -27,7 +27,7 @@
       <v-toolbar color="transparent" flat>
         <v-toolbar-title class="text-h6">创建团队</v-toolbar-title>
         <v-spacer></v-spacer>
-        <v-btn icon @click="createTeamDialog = false">
+        <v-btn icon variant="text" @click="createTeamDialog = false">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </v-toolbar>

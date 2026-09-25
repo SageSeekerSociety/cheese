@@ -261,7 +261,9 @@ const authUrl = computed(() => {
         <p v-if="operation === 'set_max_thinking_tokens'" class="control-description">
           采用自适应思考的模型会自行决定预算
         </p>
-        <v-btn type="submit" size="small" variant="tonal" :disabled="busy || !state?.connected">执行</v-btn>
+        <v-btn type="submit" size="small" color="primary" variant="tonal" :disabled="busy || !state?.connected"
+          >执行</v-btn
+        >
       </form>
       <v-btn v-if="authUrl" :href="authUrl" target="_blank" rel="noopener noreferrer" variant="tonal"
         >打开授权页面</v-btn
