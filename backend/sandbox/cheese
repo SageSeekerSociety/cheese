@@ -223,7 +223,8 @@ PLATFORM_TOOLS = ToolTable(
             "把这一轮的步骤清单整份写给房间：每次传完整的清单，不是增量，"
             "上一份整份被替换。房间里正在进行的那条消息原地显示它。"
             f"最多 {TODO_MAX_ITEMS} 项，每项 ≤{TODO_MAX_CHARS} 字；"
-            "同一时刻只让一项 in_progress。",
+            "同一时刻只让一项 in_progress。你是替一条活干活的分身时带上那条活的 id，"
+            "清单记在那张卡上；不带就是房间自己的清单。",
             {
                 "todos": {
                     "type": "array",
@@ -242,6 +243,7 @@ PLATFORM_TOOLS = ToolTable(
                         "required": ["content", "status"],
                     },
                 },
+                "task": _text("你是分身时，你做的那条活的 id"),
             },
             ["todos"],
         ),
@@ -600,7 +602,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {
             "method": "PUT",
             "path": f"/topics/{topic}/progress",
-            "body": {"todos": args["todos"]},
+            "body": {"todos": args["todos"], **_given(args, "task")},
         }
     if tool == "cheese_doc_get":
         return {"method": "GET", "path": f"/topics/{topic}/doc"}
@@ -1117,7 +1119,8 @@ def _say_task(args, data, env) -> str:
         f"动手前用 Bash 跑 `cheese worktree {data.get('id')}` 准备工作目录，"
         "进入它返回的目录再改文件。交给原生分身时，把任务简报、那个目录和上面的"
         "线程标识一起放进它的 prompt：平台从 prompt 上读出标识，分身干的每件事才"
-        "落在这张卡上；不写，这条活看着就是没人做。"
+        "落在这张卡上；不写，这条活看着就是没人做。也告诉它：用 `todo_write` 写清单时"
+        f"带 task={data.get('id')}，清单才记在这张卡上，不盖掉房间的。"
     )
 
 

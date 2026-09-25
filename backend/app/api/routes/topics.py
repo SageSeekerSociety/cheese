@@ -1206,13 +1206,15 @@ async def get_topic_progress(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    task: Annotated[uuid.UUID | None, Query()] = None,
 ) -> dict:
     """进度层 (#187): 芝士's checklist for this topic, as of the last turn to
     touch it. Read on topic open — between turns there is no WS stream to carry
-    it, and "做到哪了" has to be visible without summoning anyone."""
+    it, and "做到哪了" has to be visible without summoning anyone. With ``task``,
+    that card's list — the one its 分身 wrote — instead of the room's."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    items, updated_at = await TopicService(db).get_progress(topic_id)
+    items, updated_at = await TopicService(db).get_progress(topic_id, task_id=task)
     return ok(
         {
             "items": items,
@@ -1233,6 +1235,10 @@ class TodoIn(BaseModel):
 
 class ProgressIn(BaseModel):
     todos: list[TodoIn] = Field(min_length=1, max_length=30)
+    # The card whose 分身 is writing. A 分身 runs inside the room's session, on
+    # the room's credentials, so the call cannot tell it apart from the room's
+    # own agent: it says so, the way `cheese_lock` names its task.
+    task: uuid.UUID | None = None
 
 
 @router.put("/{topic_id}/progress")
@@ -1243,6 +1249,10 @@ async def write_topic_progress(
     resolver: ActorResolverDep,
 ) -> dict:
     """`todo_write`: the agent's whole checklist for the running turn (进度层).
+
+    With ``task`` it is that card's 分身 writing, and the list is the card's:
+    stored under the card and pushed on the card's channel, the same channel its
+    attributed events go to (`chat.py`), leaving the room's own list alone.
 
     Whole-list replace, so what the room shows is exactly what the agent last
     said, never a merge of two plans. Stored first, then pushed as the `todo`
@@ -1261,6 +1271,10 @@ async def write_topic_progress(
     )
     if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         raise ForbiddenError("An authenticated agent must write this checklist")
+    if body.task is not None:
+        task = await TaskRepository(db).get(body.task)
+        if task is None or task.room_id != place.room_id:
+            raise NotFoundError("Task not found in this room")
     items = [
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)
@@ -1269,10 +1283,12 @@ async def write_topic_progress(
     await TopicProgressRepository(db).save(
         place.room_id,
         items,
+        task_id=body.task,
         turn_id=uuid.UUID(work["turn_id"]) if work is not None else None,
     )
     await db.commit()
-    await get_broker().publish(str(topic_id), {"type": "todo", "items": items})
+    channel = str(body.task) if body.task is not None else str(topic_id)
+    await get_broker().publish(channel, {"type": "todo", "items": items})
     return ok({"items": items})
 
 

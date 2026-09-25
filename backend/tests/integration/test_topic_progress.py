@@ -8,7 +8,9 @@ actually told about it.
 
 import pytest
 
+from app.api.deps import get_broker
 from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
     post_project,
@@ -35,15 +37,26 @@ def _room(client) -> tuple[str, dict]:
     return t["id"], {"X-Cheese-Token": token}
 
 
-def _write(client, topic_id: str, headers: dict, todos: list[dict]):
+def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):
     return client.put(
-        f"/topics/{topic_id}/progress", json={"todos": todos}, headers=headers
+        f"/topics/{topic_id}/progress",
+        json={"todos": todos, **extra},
+        headers=headers,
     )
 
 
-def _progress(client, topic_id: str) -> list[tuple[str, str]]:
-    data = client.get(f"/topics/{topic_id}/progress").json()["data"]
+def _progress(client, topic_id: str, **params) -> list[tuple[str, str]]:
+    data = client.get(f"/topics/{topic_id}/progress", params=params).json()["data"]
     return [(i["subject"], i["status"]) for i in data["items"]]
+
+
+def _card(client, room_id: str) -> str:
+    """One of the room's cards — a 分身 works it inside the room's session."""
+    task = client.post(
+        f"/topics/{room_id}/split", json={"title": "子活", "reviewer_handle": "alice"}
+    ).json()["data"]
+    wait_work_idle()
+    return task["id"]
 
 
 def _chat(client, topic_id: str) -> list[dict]:
@@ -113,6 +126,49 @@ def test_next_turn_is_told_where_the_work_got_to(client, stub_hooks):
         "写实现",
         "补测试",
     ]
+
+
+def test_a_workers_checklist_stays_on_its_card(client, stub_hooks, monkeypatch):
+    """A 分身 runs in the room's session, on the room's credentials. Its plan is
+    its card's: the room's stored list, and what the room's next turn is handed
+    back, stay the room's own."""
+    topic, headers = _room(client)
+    card = _card(client, topic)
+    _write(client, topic, headers, PLAN)
+    broker = get_broker()
+    published: list[tuple[str, dict]] = []
+    publish = broker.publish
+
+    async def spy(channel, frame):
+        published.append((channel, frame))
+        await publish(channel, frame)
+
+    monkeypatch.setattr(broker, "publish", spy)
+    worker = [{"content": "改卡片上的接口", "status": "in_progress"}]
+    response = _write(client, topic, headers, worker, task=card)
+    assert response.status_code == 200, response.text
+
+    assert _progress(client, topic, task=card) == [("改卡片上的接口", "in_progress")]
+    assert _progress(client, topic) == [(t["content"], t["status"]) for t in PLAN]
+    todo_frames = [(c, f) for c, f in published if f["type"] == "todo"]
+    assert [c for c, _ in todo_frames] == [card], "the card's list goes to the card"
+
+    monkeypatch.setattr(broker, "publish", publish)
+    frames = _chat(client, topic)
+    prompt = stub_hooks.last_system_prompt or ""
+    assert "- [~] 写实现" in prompt
+    assert "改卡片上的接口" not in prompt
+    restored = [f for f in frames if f["type"] == "todo" and f.get("restored")]
+    assert [i["subject"] for i in restored[0]["items"]] == [t["content"] for t in PLAN]
+
+
+def test_a_card_from_another_room_is_refused(client):
+    topic, headers = _room(client)
+    other, _ = _room(client)
+    foreign = _card(client, other)
+    assert _write(client, topic, headers, PLAN, task=foreign).status_code == 404
+    assert _progress(client, topic) == []
+    assert _progress(client, other, task=foreign) == []
 
 
 @pytest.mark.parametrize(

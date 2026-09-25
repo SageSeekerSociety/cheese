@@ -171,7 +171,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | 工具 | 作用 |
 |---|---|
 | `chat_send(content, reply_to?, request_id?)` | 主动发送聊天消息。结果不确定时带上返回的 `request_id` 原样重试 |
-| `todo_write(todos)` | 把这一轮的步骤清单整份写给房间，`todos` 每项是 `{content, status}`，status 取 pending / in_progress / completed。每次传完整的清单，上一份整份被替换；房间里正在进行的那条消息原地显示它，下一轮开场也会读到它。最多 30 项，每项 ≤200 字 |
+| `todo_write(todos, task?)` | 把这一轮的步骤清单整份写给房间，`todos` 每项是 `{content, status}`，status 取 pending / in_progress / completed。每次传完整的清单，上一份整份被替换；房间里正在进行的那条消息原地显示它，下一轮开场也会读到它。最多 30 项，每项 ≤200 字。**你是分身时带上你那条活的 id**（`task`）：清单记在那张卡上；不带，写的是房间自己的清单，会盖掉主线程的计划 |
 | `cheese_chat_list(topic?, task?, limit?, before? 或 after?, kind?, author?)` | 读最近的聊天记录（含结构化消息和表情），默认当前房间最近 50 条；带 `task` 读那条任务卡的记录。只读，不叫醒任何人、不标记消息已读。结果末尾带续读的调用，翻更早的照抄它 |
 | `cheese_chat_search(query, topic?, task?, limit?, before? 或 after?, kind?, author?)` | 按文字搜聊天记录：对正文、结构化消息信息和引用文字做不区分大小写的**字面**匹配，搜范围内全部记录。查不到就缩短关键词或换个说法，别断定没说过 |
 | `cheese_chat_get(message_id, offset?, length?)` | 读一条消息的全文（任何类型，含任务卡评论和文档节点）；超长的按 `offset` 续读 |
