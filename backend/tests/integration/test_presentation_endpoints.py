@@ -13,7 +13,7 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
-from app.domain.room_task.presentation import LOST_SIGNAL_AFTER
+from app.domain.room_task.presentation import LOST_SIGNAL_AFTER, Building, NeedsYou
 from app.domain.topic.models import Topic, TopicKind
 from tests.integration.conftest import a_team
 
@@ -113,23 +113,23 @@ def test_the_project_task_list_carries_the_board_cell(client, stub_hooks):
 
     assert by_id[ids["running"]]["presentation"] == {
         "column": "building",
-        "display_status": "运行中",
+        "display_status": Building.running,
     }
     # 安静，但等的是人 —— 光看 open/closed 和「待开工」一模一样，而这两者意味着相反的
     # 下一步（去验收 vs 去催）。
     assert by_id[ids["waiting"]]["presentation"] == {
         "column": "needs_you",
-        "display_status": "等待验收",
+        "display_status": NeedsYou.awaiting_review,
     }
     # 说有分身在做，但没有任何东西最近确认过 —— 今天前端没有这一格。
     assert by_id[ids["lost"]]["presentation"] == {
         "column": "building",
-        "display_status": "失联",
+        "display_status": Building.lost,
     }
     # 同样一个过期的 last_turn_at，但它刚落了一个 block：心跳压过认领时间。
     assert by_id[ids["talking"]]["presentation"] == {
         "column": "building",
-        "display_status": "运行中",
+        "display_status": Building.running,
     }
 
 
@@ -166,7 +166,10 @@ def test_a_room_carries_its_own_board_cell(client):
     # 房间自己没有卡（那张 pending 卡是一条活的），所以房间是空闲的 —— 一条活在等
     # 验收，不能让它上面那个房间也显示成等验收。
     header = client.get(f"/topics/{ids['room']}").json()["data"]
-    assert header["presentation"] == {"column": "building", "display_status": "空闲"}
+    assert header["presentation"] == {
+        "column": "building",
+        "display_status": Building.idle,
+    }
 
     listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
     rooms = {t["id"]: t["presentation"] for t in listed}
@@ -194,5 +197,5 @@ def test_a_rooms_own_card_reaches_the_room(client):
     header = client.get(f"/topics/{ids['room']}").json()["data"]
     assert header["presentation"] == {
         "column": "needs_you",
-        "display_status": "等待验收",
+        "display_status": NeedsYou.awaiting_review,
     }

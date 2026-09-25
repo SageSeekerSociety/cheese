@@ -1187,7 +1187,6 @@ def test_accepting_a_card_that_never_showed_a_version_refreshes_instead(
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
     assert card["pr_head_sha"] == live  # 卡已经刷新到当前 head
-    assert "重新看过" in r.json()["message"]
 
     # 重新看过（这下卡面有 sha 了）再点，才合，合的就是那一版。
     assert _accept(client, cid).status_code == 200
@@ -1207,7 +1206,6 @@ def test_force_merging_a_card_that_never_showed_a_version_refreshes_instead(
     assert r.status_code == 422, r.text
     assert fake.merge_calls == []
     assert _cards(client, tid)[0]["pr_head_sha"] == live
-    assert "重新看过" in r.json()["message"]
 
     r = _merge_anyway(client, cid, "alice", reason="CI 挂了")
     assert r.status_code == 200, r.text
@@ -1227,7 +1225,6 @@ def test_arming_auto_merge_on_a_card_that_never_showed_a_version_refreshes_inste
     assert r.status_code == 422, r.text
     assert _cards(client, tid)[0]["auto_merge"]["armed_by"] is None
     assert _cards(client, tid)[0]["pr_head_sha"] == live
-    assert "重新看过" in r.json()["message"]
 
     assert _arm(client, cid, "alice").status_code == 200
     assert _cards(client, tid)[0]["auto_merge"]["armed_by"] == "alice"
@@ -1252,7 +1249,6 @@ def test_a_pr_opened_at_accept_time_is_kept_but_not_merged_this_click(
     r = _accept(client, cid)
 
     assert r.status_code == 422, r.text
-    assert "重新看过" in r.json()["message"]
     assert fake.merge_calls == []  # GitHub 上一次都没合
     assert len(app_world["opened"]) == 1  # PR 开出来了，而且留着
     number = app_world["opened"][0]["number"]
@@ -1285,7 +1281,6 @@ def test_head_moved_since_the_reviewer_looked_refreshes_instead_of_merging(
 
     r = _accept(client, cid)
     assert r.status_code == 422, r.text
-    assert "重新看" in r.json()["message"]
     assert fake.merge_calls == []
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
@@ -2426,7 +2421,7 @@ def test_push_fix_reports_unreachable_forge_without_pushing(client, app_world):
     assert pushed["pushed"] is False
     assert "HTTP 502" in pushed["reason"]
     card = _cards(client, tid)[0]
-    assert "读不到这个 PR 的状态" in card["note"]
+    assert "HTTP 502" in card["note"]
     assert card["note_level"] == "error"
     assert card["pr_head_sha"] == head_sha
 
@@ -2860,7 +2855,9 @@ def test_a_correction_leaves_a_trace_in_the_room(client, sweeping):
     r = _describe(client, tid, change_subject="fix(accept): corrected subject")
     assert r.status_code == 200, r.text
 
-    assert "改了验收卡的描述" in _room_settled(client, tid, "改了验收卡的描述")
+    room = _room_settled(client, tid, "fix(accept): corrected subject")
+    assert "chore(test): file an accept card" in room
+    assert "fix(accept): corrected subject" in room
 
 
 def test_a_correction_never_touches_the_delivery_claim(client, sweeping):

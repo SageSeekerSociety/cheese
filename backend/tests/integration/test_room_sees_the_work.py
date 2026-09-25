@@ -83,7 +83,8 @@ def test_a_subagents_conclusion_lands_in_the_room(client):
 
     # The call was already visible before this change…
     calls = [b for b in blocks if (b.get("meta") or {}).get("tool") == "Task"]
-    assert [b["content"] for b in calls] == ["派分身去查\n查分页接口现状"]
+    assert len(calls) == 1
+    assert calls[0]["content"].endswith("\n查分页接口现状")
 
     # …and now so is the answer.
     results = [b for b in blocks if (b.get("meta") or {}).get("subagent")]

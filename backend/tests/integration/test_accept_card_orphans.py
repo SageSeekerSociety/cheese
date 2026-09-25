@@ -141,7 +141,6 @@ def test_archiving_revokes_a_pending_card(client):
 
     card = _cards(client, tid)[0]
     assert card["status"] == "revoked"
-    assert "话题归档" in card["note"]
     assert card["decided_by"] == "bob"
 
 

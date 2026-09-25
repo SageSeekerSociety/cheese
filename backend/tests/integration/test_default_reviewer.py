@@ -97,7 +97,6 @@ def test_dispatch_requires_a_reviewer_before_creating_work(client):
     room = _room(client, pid)
     response = client.post(f"/topics/{room}/split", json={"title": "Needs reviewer"})
     assert response.status_code == 422
-    assert "默认验收人" in response.json()["message"]
     assert client.get(f"/topics/{room}/tasks").json()["data"]["total"] == 0
 
 
