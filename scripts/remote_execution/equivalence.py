@@ -746,12 +746,14 @@ def step_interrupt(run):
 
 
 def step_timeout(run):
-    turn(run, bash("sleep 304", timeout=3000))
+    # Well past the point where the build reports a foreground command as a
+    # task: a timeout close to it made that report a race between the runs.
+    turn(run, bash("sleep 304", timeout=8000))
     gone = settle(lambda: not alive("sleep 304"))
-    turn(run, bash("trap '' TERM; sleep 305", timeout=3000))
+    turn(run, bash("trap '' TERM; sleep 305", timeout=8000))
     stubborn_gone = settle(lambda: not alive("sleep 305"), timeout=15)
-    turn(run, bash("(trap '' TERM; sleep 306) & sleep 307", timeout=3000))
-    time.sleep(8)
+    turn(run, bash("(trap '' TERM; sleep 306) & sleep 307", timeout=8000))
+    time.sleep(12)
     return {
         "gone after": gone,
         "TERM-ignoring command gone after": stubborn_gone,
