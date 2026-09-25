@@ -16,10 +16,12 @@ import argparse
 import base64
 import contextlib
 import json
+import logging
 import os
 import re
 import select
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -35,6 +37,7 @@ if __package__:
         PlatformHost,
         RemoteClient,
         read_file_on_the_machine,
+        session_path,
         stat_file_on_the_machine,
     )
 else:
@@ -47,6 +50,7 @@ else:
         PlatformHost,
         RemoteClient,
         read_file_on_the_machine,
+        session_path,
         stat_file_on_the_machine,
     )
 
@@ -185,9 +189,14 @@ def prepare(
     info = {"workspace": target["workspace"]} if unavailable else client.call("ping")
     if target.get("kind") == "private":
         info["workspace"] = "/work"
+    # Where the session sees the project: at the executor's own path, so that
+    # every path the build prints is the one it prints running there (`enter`).
+    # `central_workspace` is where this host holds the view of it.
+    seen = session_path(info["workspace"])
     target = dict(
         target,
         workspace=info["workspace"],
+        session_workspace=seen,
         central_workspace=str(workspace),
         central_config=str(config),
         central_tmp=str(temporary),
@@ -255,7 +264,7 @@ def prepare(
         link_forwarded_user_context(
             directory,
             config,
-            workspace,
+            Path(seen),
             {"entries": {}} if unavailable else context_tree,
             Path(__file__).parent,
         )
@@ -349,7 +358,7 @@ def prepare(
         "autoUpdates": False,
         "bypassPermissionsModeAccepted": True,
         "projects": {
-            str(workspace): {
+            seen: {
                 "hasTrustDialogAccepted": True,
                 "hasCompletedProjectOnboarding": True,
             }
@@ -425,13 +434,13 @@ def prepare(
     env["CLAUDE_CODE_SHELL_PREFIX"] = str(prefix)
     command = [
         claude,
-        # The session's working directory sits under the session host's home,
-        # and Claude Code reads CLAUDE.md, CLAUDE.local.md, .claude/CLAUDE.md
-        # and .claude/rules from every directory between it and `/`. This flag
-        # limits it to the user source, which is our config dir, so none of the
-        # host owner's files reach the room. Nothing else keeps them out:
-        # dropping it puts them back into every session's prompt without any
-        # error. The room's own instructions arrive through the config dir
+        # The directories above the session's working directory are the session
+        # host's, and Claude Code reads CLAUDE.md, CLAUDE.local.md,
+        # .claude/CLAUDE.md and .claude/rules from every one of them up to `/`.
+        # This flag limits it to the user source, which is our config dir, so
+        # none of the host owner's files reach the room. Nothing else keeps them
+        # out: dropping it puts them back into every session's prompt without
+        # any error. The room's own instructions arrive through the config dir
         # (`link_forwarded_user_context`). Guarded by
         # tests/unit/test_session_host_files_stay_out_of_the_prompt.py.
         "--setting-sources",
@@ -456,9 +465,12 @@ def prepare(
             ]
         )
     launch = {
-        "command": command,
+        # The session enters its own namespace first, where the project is at
+        # `workspace`; `cwd` is where this host holds it, for starting there.
+        "command": [*helper, "enter", str(target_path), *command],
         "env": env,
         "cwd": str(workspace),
+        "workspace": seen,
         "execution": str(target_path),
     }
     (directory / "launch.json").write_text(json.dumps(launch))
@@ -605,21 +617,32 @@ def shell(target_path, command):
     }
     if command in commands:
         os.execvp("sh", ["sh", "-c", command])
+    # The build hands this process's stdout and stderr to the command: they
+    # are the command's output, and nothing of the platform's may be in them.
+    # What the transport logs on its way through a retry (a 409 while the
+    # device reconnects, say) goes to this session's own log instead. Only a
+    # command that could not run at all says so there, in the platform's words.
+    logging.basicConfig(
+        filename=str(Path(target_path).parent / "shell-prefix.log"),
+        format="%(asctime)s %(process)d %(levelname)s %(message)s",
+        level=logging.INFO,
+    )
     return run_on_the_machine(target, command)
 
 
 def run_on_the_machine(target, command):
-    central = target["central_workspace"]
-    remote = target["workspace"]
+    # The session sees the project at the executor's own path, so a command and
+    # its directory need no respelling. Its skills are the one thing the build
+    # reads from this host's config directory (`link_forwarded_user_context`),
+    # where the executor has none: a command naming a skill's file names it in
+    # the project.
     skills = target["central_config"] + "/skills/"
+    project_skills = session_path(target["workspace"]) + "/.claude/skills/"
 
     def outward(text):
-        return text.replace(skills, remote + "/.claude/skills/").replace(
-            central, remote
-        )
+        return text.replace(skills, project_skills)
 
-    here = os.getcwd()
-    cwd = remote + here[len(central) :] if _under(here, central) else remote
+    cwd = os.getcwd()
     head, tail = _SNAPSHOT.match(command), _CWD_FILE.search(command)
     bash = tail is not None
     if bash:
@@ -642,7 +665,7 @@ def run_on_the_machine(target, command):
         ).decode()
     env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
     if "CLAUDE_PROJECT_DIR" in os.environ:
-        env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
+        env["CLAUDE_PROJECT_DIR"] = os.environ["CLAUDE_PROJECT_DIR"]
     merge = _same_file(1, 2)
     command_id = "shell-" + uuid.uuid4().hex
     client = RemoteClient(target)
@@ -683,7 +706,7 @@ def run_on_the_machine(target, command):
                 "start",
                 kind="bash" if bash else "sh",
                 body=outward(body),
-                cwd=outward(cwd),
+                cwd=cwd,
                 env=env,
                 merge=merge,
                 stdin=stdin,
@@ -717,7 +740,7 @@ def run_on_the_machine(target, command):
             if not link and time.monotonic() - failing_since > SHELL_ERROR_RETRY_S:
                 sys.stderr.write(f"{exc}\n")
                 return 1
-            client = RemoteClient(target)
+            client = RemoteClient(_current_target(target))
             time.sleep(delay)
             delay = min(delay * 2, 5.0)
             continue
@@ -758,6 +781,16 @@ def run_on_the_machine(target, command):
             signal.signal(-code, signal.SIG_DFL)
         os.kill(os.getpid(), -code)
     return code
+
+
+def _current_target(target):
+    """Where the session's commands go now. A session started before its
+    machine was rented holds a placeholder until the lease names the machine
+    (`RemoteClient.call`), which writes the target file anew; a process that
+    read the placeholder before then reads the machine from there."""
+    with contextlib.suppress(KeyError, OSError, ValueError):
+        return json.loads(Path(target["target_file"]).read_text())
+    return target
 
 
 def _start_watcher(target, command_id):
@@ -807,7 +840,7 @@ def _deliver_stop(target, command_id, pipe):
             number = int(found.group(1))
         elif not chunk:
             number = int(signal.SIGTERM)
-    client = RemoteClient(target)
+    client = RemoteClient(_current_target(target))
 
     def send(signalled):
         deadline = time.monotonic() + 600
@@ -824,7 +857,7 @@ def _deliver_stop(target, command_id, pipe):
                     },
                 )
             except Exception:  # noqa: BLE001 — the link may be down; retry
-                client = RemoteClient(target)
+                client = RemoteClient(_current_target(target))
                 time.sleep(1)
         return {}
 
@@ -839,10 +872,10 @@ def _report_directory(target, client, final, spelled):
     """Tell the build which directory the command's shell ended in.
 
     The build reads it from the cwd file it named and keeps it only if the
-    directory exists here, so a directory on the executor is reported by its
-    place in the forwarded project view. One outside the workspace is reported
-    as `/`, which the build answers exactly as a native session does: it
-    resets to the workspace root and says so.
+    directory exists here. A directory in the workspace does, at the same path,
+    in the session's view of the project. One outside the workspace is
+    reported as `/`, which the build answers exactly as a native session does:
+    it resets to the workspace root and says so.
     """
     path = Path(shlex.split(spelled)[0])
     temporary = os.environ.get("CLAUDE_CODE_TMPDIR")
@@ -854,12 +887,14 @@ def _report_directory(target, client, final, spelled):
         or not re.fullmatch(r"claude-[0-9a-f]+-cwd", path.name)
     ):
         return
-    remote = client.config.get("workspace", target["workspace"])
-    central = target["central_workspace"]
+    # A deferred session was started before its machine was rented, at a
+    # placeholder; the lease (`RemoteClient.call`) points it at the machine's
+    # workspace, which the session keeps seeing at the placeholder.
+    machine = session_path(client.config["workspace"])
+    seen = session_path(client.config.get("virtual_workspace", machine))
     final = final[:4096]
-    if _under(final, remote):
-        relative = final[len(remote) :]
-        spelled_here = central + relative
+    if _under(final, machine):
+        spelled_here = seen + final[len(machine) :]
         if target.get("kind") == "private":
             # The private scratch view is a plain directory here.
             Path(spelled_here).mkdir(parents=True, exist_ok=True)
@@ -870,6 +905,180 @@ def _report_directory(target, client, final, spelled):
     )
     with os.fdopen(descriptor, "w") as output:
         output.write(spelled_here + "\n")
+
+
+# The namespace the session runs in (`enter`): mount(2), umount2(2) and
+# pivot_root(2) flags and numbers, which the standard library does not name.
+_MS_NOSUID, _MS_NODEV = 2, 4
+_MS_BIND, _MS_REC, _MS_PRIVATE = 4096, 16384, 1 << 18
+_CLONE_NEWNS, _CLONE_NEWUSER = 0x00020000, 0x10000000
+_MNT_DETACH = 2
+_SYS_PIVOT_ROOT = {"x86_64": 155, "aarch64": 41}
+
+
+def enter(target_path, argv):
+    """Run the session with the project at the executor's own path.
+
+    Claude Code prints its working directory — in what it tells the model
+    about the session, in a refusal to run a command, when it resets the
+    shell's directory — and what it prints has to be what it prints running on
+    the executor. So the session gets a user and mount namespace of its own,
+    in which this host's view of the project is mounted at exactly the path
+    the executor holds it at, and runs there. Nothing else in it moves: every
+    other path is this host's own, bound into place. The directories made to
+    lead down to the project are the session's own: what is already in them
+    is this host's, and what the session creates directly in one (a socket in
+    `/tmp` when the project is under it) stays in the session, as in a private
+    `/tmp`.
+
+    A path that cannot be placed so is refused, loudly: one that is not an
+    absolute path, one under the kernel's own filesystems, and one that would
+    cover something the session itself needs.
+    """
+    target = json.loads(Path(target_path).read_text())
+    seen = target["session_workspace"]
+    view = target["central_workspace"]
+    program = shutil.which(argv[0])
+    if not program:
+        raise SystemExit(f"{argv[0]}: not found")
+    program = os.path.abspath(program)
+    needed = [
+        str(Path(target_path).parent),
+        target["central_config"],
+        target["central_tmp"],
+        os.environ.get("HOME", ""),
+        str(Path(__file__).resolve().parent),
+        sys.executable,
+        program,
+        view,
+    ]
+    problem = _unplaceable(seen, needed)
+    if problem:
+        raise SystemExit(
+            f"This session cannot see its project at {seen!r}, the executor's "
+            f"path: {problem}"
+        )
+    _place(seen, view, Path(target_path).parent / "namespace-root")
+    os.chdir(seen)
+    os.environ["PWD"] = seen
+    os.execv(program, argv)
+
+
+def _unplaceable(seen, needed):
+    """Why `seen` cannot hold the project in the session's namespace, or None."""
+    if sys.platform != "linux":
+        return "the session host must be Linux, for its user and mount namespaces"
+    if not seen.startswith("/") or seen.startswith("//"):
+        return "it is not an absolute path"
+    if os.path.normpath(seen) != seen or seen == "/":
+        return "it is not a normalized path below /"
+    if seen.split("/")[1] in ("proc", "sys", "dev"):
+        return "it is under a kernel filesystem"
+    for path in needed:
+        for spelled in {path, os.path.realpath(path)} if path else ():
+            if spelled == seen or spelled.startswith(seen + "/"):
+                return f"it would cover {spelled}, which the session needs"
+    return None
+
+
+def _place(seen, view, root):
+    """Enter a user and mount namespace whose root is this host's, with `view`
+    mounted at `seen`.
+
+    The new root is a tmpfs holding this host's top-level entries, each bound
+    into place. Every directory on the way down to `seen` is rebuilt the same
+    way, with its other entries bound in and the next one made anew, since an
+    unprivileged namespace can mount over a directory but not create one in a
+    directory it does not own. The user namespace maps this user to itself,
+    so files keep their owner, and the capabilities it grants end at exec.
+    """
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+
+    def check(result, what):
+        if result != 0:
+            number = ctypes.get_errno()
+            # OSError(errno, ...) is the subclass the errno names, so a source
+            # that vanished is a FileNotFoundError.
+            raise OSError(number, f"{what}: {os.strerror(number)}")
+
+    def mount(source, place, kind, flags, data=None):
+        check(
+            libc.mount(
+                source.encode() if source else None,
+                place.encode(),
+                kind.encode() if kind else None,
+                flags,
+                data.encode() if data else None,
+            ),
+            f"mount {place}",
+        )
+
+    uid, gid = os.getuid(), os.getgid()
+    root = str(root)
+    os.makedirs(root, exist_ok=True)
+    check(libc.unshare(_CLONE_NEWUSER | _CLONE_NEWNS), "unshare")
+    for name, value in (
+        ("setgroups", "deny"),
+        ("uid_map", f"{uid} {uid} 1"),
+        ("gid_map", f"{gid} {gid} 1"),
+    ):
+        with open(f"/proc/self/{name}", "w") as stream:
+            stream.write(value)
+    mount(None, "/", None, _MS_REC | _MS_PRIVATE)
+    # Bounded: it is memory, on the host every session runs on.
+    mount("tmpfs", root, "tmpfs", _MS_NOSUID | _MS_NODEV, "mode=755,size=64m")
+
+    def rebuild(real, copy, skip):
+        # A bind that is not recursive is refused in a user namespace when the
+        # directory has mounts under it, so every bind here is recursive.
+        for entry in os.scandir(real):
+            if entry.name == skip:
+                continue
+            place = os.path.join(copy, entry.name)
+            try:
+                if entry.is_symlink():
+                    os.symlink(os.readlink(entry.path), place)
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    os.mkdir(place)
+                else:
+                    open(place, "w").close()
+                mount(entry.path, place, None, _MS_BIND | _MS_REC)
+            except FileNotFoundError:
+                # Gone since it was listed (a busy /tmp): not there to show.
+                if os.path.isdir(place) and not os.path.islink(place):
+                    os.rmdir(place)
+                elif os.path.lexists(place):
+                    os.unlink(place)
+
+    names = seen.strip("/").split("/")
+    real, copy = "/", root
+    for name in names:
+        if real is not None:
+            rebuild(real, copy, name)
+        copy = os.path.join(copy, name)
+        os.mkdir(copy)
+        below = os.path.join(real, name) if real is not None else None
+        # A directory reached through a symlink (`/lib` on a merged-/usr
+        # system) is rebuilt from where it leads, so nothing in it goes missing.
+        real = (
+            os.path.realpath(below)
+            if below is not None and os.path.isdir(below)
+            else None
+        )
+    mount(view, copy, None, _MS_BIND | _MS_REC)
+    old = os.path.join(root, ".host-root")
+    os.mkdir(old)
+    os.chdir(root)
+    number = _SYS_PIVOT_ROOT.get(os.uname().machine)
+    if number is None:
+        raise OSError(f"pivot_root: no syscall number for {os.uname().machine}")
+    check(libc.syscall(number, b".", b".host-root"), "pivot_root")
+    os.chdir("/")
+    check(libc.umount2(b"/.host-root", _MNT_DETACH), "umount /.host-root")
+    os.rmdir("/.host-root")
 
 
 MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
@@ -911,12 +1120,9 @@ def send_user_file_paths(path, config):
     gives a paste with no name of its own.
     """
     path = (path or "").replace("\\", "/")
-    center = (config.get("central_workspace") or "").rstrip("/")
-    work = (config.get("workspace") or "").rstrip("/")
+    work = session_path(config.get("workspace") or "").rstrip("/")
     machine = path
-    if center and work and (path == center or path.startswith(center + "/")):
-        machine = work + path[len(center) :]
-    elif work and not machine.startswith("/"):
+    if work and not machine.startswith("/"):
         # The executor's shell keeps its own cwd across commands; a relative
         # path is only unambiguous once it is anchored at the workspace.
         machine = work + "/" + machine
@@ -1466,6 +1672,7 @@ def main():
             "control",
             "shell",
             "bootstrap",
+            "enter",
             "checkpoint",
             "release",
             "transport",
@@ -1531,6 +1738,8 @@ def main():
         )
     elif args.mode == "shell":
         raise SystemExit(shell(args.config, args.args[0]))
+    elif args.mode == "enter":
+        enter(args.config, args.args)
     elif args.mode == "bootstrap":
         # The platform's own directory holds the target file and this client;
         # the harness's config dir is the harness's, and is where `claude` reads

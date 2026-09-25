@@ -275,7 +275,10 @@ def link_forwarded_user_context(directory, config, forwarded, tree, helpers):
     imports = [
         forwarded / name for name in ("CLAUDE.md", "CLAUDE.local.md") if name in entries
     ]
-    wrapper = "".join(f"@{path}\n" for path in imports)
+    # The project is at the executor's own path, which can hold a space; an
+    # import ends at the first unescaped one, and Claude Code reads `\ ` as a
+    # space inside it.
+    wrapper = "".join("@" + str(path).replace(" ", "\\ ") + "\n" for path in imports)
     if instructions.is_symlink():
         instructions.unlink()
     elif instructions.exists() and instructions.read_text() != wrapper:
