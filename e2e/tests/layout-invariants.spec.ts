@@ -458,3 +458,102 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
     expect(main!.height, `${sub} · height`).toBeCloseTo(side!.height, 0);
   }
 });
+
+/** 首屏以下的内容里，有没有**够不着**的 —— 它在视野外，而页面上没有任何祖先能滚。
+ *
+ *  平台的外壳把整页钉死在窗口高度（`styles/common.scss` 把 html/body/#app 定成
+ *  `height:100%; overflow:hidden`），文档层永不滚动，所以滚动得由每一页自己领。
+ *  领漏了不会报错、不会让任何单测变红，typecheck / eslint / stylelint 也都看不见
+ *  —— 只有量屏幕看得见。2026-09 的小队详情就栽在这里：容器 630px、内容 1576px，
+ *  **946px 永远够不着**（成员一多才露馅，短内容看不出）。
+ *
+ *  判据刻意只有两条，宁可漏报也不误报：
+ *    1. 元素整体落在首屏以下（`rect.top >= innerHeight`）；
+ *    2. 从它往上**没有任何祖先真的能滚**（`overflow-y: auto|scroll` 且
+ *       `scrollHeight > clientHeight`）。
+ *  只判第 1 条会把所有正常滚动都报成缺陷；只看「最近的那个裁剪祖先」又会漏 ——
+ *  小队详情里最近的一层（`.content-body`）当时是被内容撑高的，并没有裁到谁，
+ *  真正裁人的是更外面的 `.layout-container`。
+ */
+async function unreachableBelowFold(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const vh = window.innerHeight;
+    const scroller = (el: Element): boolean => {
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const s = getComputedStyle(p);
+        if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && p.scrollHeight > p.clientHeight + 1) {
+          return true;
+        }
+      }
+      return false;
+    };
+    const out: string[] = [];
+    const reported: Element[] = [];
+    for (const el of document.body.querySelectorAll('*')) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      if (!(el.checkVisibility?.({ checkVisibilityCSS: true }) ?? true)) continue;
+      const text = (el.textContent || '').trim();
+      if (!text) continue;
+      if (r.top < vh - 2) continue;
+      if (scroller(el)) continue;
+      if (reported.some((r0) => r0.contains(el))) continue;
+      reported.push(el);
+      const cls = typeof el.className === 'string' ? (el.className.split(/\s+/)[0] ?? '') : '';
+      out.push(`${el.tagName.toLowerCase()}${cls ? '.' + cls : ''}「${text.slice(0, 24)}」`);
+      if (out.length > 8) break;
+    }
+    return out;
+  });
+}
+
+// vite dev 按需编译：某个路由第一次被访问时才现编译它的模块图，冷启动能到 30s 以上
+// （`playwright.config.ts` 就是为这件事把整条用例的超时提到 60s 的）。小队详情不是别的
+// 用例会先踩到的路由，默认 5s 的前置等待会在冷编译上误报成「元素不存在」——2026-09-25
+// 实测连 signin 页都能 60s 出不来。所以前置等待放到 30s：**仍然要求元素真的出现**，
+// 只是给冷编译留出时间，不是把断言放水。
+const ROUTE_READY_MS = 30_000;
+
+test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
+  test('小队详情：四个 tab 在窄窗口下都够得着底部', async ({ page }) => {
+    await apiLogin(page);
+
+    // 视图高度压到 360 是故意的：这一套种子数据只有 5 个小队成员，靠内容自然长到
+    // 溢出不可靠；把窗口压矮能让「内容比窗口高」这件事在任何数据下都成立，而宽度
+    // 保持在 960 以上 —— 小队详情在 ≤960px 会切成自适应高度、滚动交还外壳，那是
+    // 另一条分支，这里要量的是桌面那条。
+    for (const size of [
+      { width: 1280, height: 663 },
+      { width: 1100, height: 360 },
+    ]) {
+      await page.setViewportSize(size);
+      for (const path of ['', 'members', 'knowledge', 'compute']) {
+        await page.goto(`/teams/team-1${path ? '/' + path : ''}`);
+
+        // 量不到这一层就是范围选错了（比如 alice 不是成员，看到的是对外主页），
+        // 空范围永远返回「没有缺陷」，是一条只会绿的断言，所以这里炸掉而不是放过。
+        await expect(
+          page.locator('.content-body'),
+          `${size.width}×${size.height} · /teams/team-1/${path}：没落在小队工作区里，这条断言等于没做`,
+        ).toBeVisible({ timeout: ROUTE_READY_MS });
+
+        // `.content-body` 一出现就量还不够 —— 它的内容（成员/资料/算力）是另一次请求
+        // 填进去的，量早了会量到一个半空的工作区，而**空范围永远返回「没有缺陷」**。
+        // 等这一层里真的画出了字（页头在它外面，所以量到的就是当前 tab 自己的内容），
+        // 四个 tab 在种子数据下都有内容，等不到就是页面根本没起来，该炸。
+        await expect
+          .poll(async () => page.locator('.content-body').evaluate((el) => (el.textContent || '').trim().length), {
+            message: `${size.width}×${size.height} · /teams/team-1/${path}：工作区一直是空的，这一条等于没做`,
+            timeout: ROUTE_READY_MS,
+          })
+          .toBeGreaterThan(0);
+
+        expect(await unreachableBelowFold(page), `${size.width}×${size.height} · /teams/team-1/${path}`).toEqual([]);
+      }
+    }
+  });
+
+  // 法务页（`/legal/terms`、`/legal/privacy`）其实是同一类，但它已经有人守住，
+  // 就不在这里再摆一份：`e2e/tests/legal-pages.spec.ts`（随修复 #1722 一起进来）
+  // 直接驱动滚轮和 Home/End，量的是「读到读不到最后一节」，比这套几何判据更贴读者。
+});
