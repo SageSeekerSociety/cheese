@@ -59,7 +59,7 @@ async def control_state(
     runtime = chat.session_controls(topic_id)
     if runtime is None:
         return ok({"id": None, "connected": False, "controls": [], "tasks": {}})
-    return ok(runtime.control_state(topic_id))
+    return ok(await runtime.control_state(topic_id))
 
 
 class ControlIn(BaseModel):
@@ -108,7 +108,7 @@ async def control(
     runtime = chat.session_controls(topic_id)
     if runtime is None:
         raise ConflictError("No session is running in this room")
-    state = runtime.control_state(topic_id)
+    state = await runtime.control_state(topic_id)
     if state.get("id") != data.session_id:
         raise ConflictError("The active session changed; refresh before controlling it")
     not_its_own(state, actor)

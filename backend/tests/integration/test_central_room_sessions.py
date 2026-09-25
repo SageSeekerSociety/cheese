@@ -727,12 +727,16 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
         ).status_code
         == 401
     )
+
     # A room's live session, as the controls see it: reading a file is the
     # executor's to answer, so it goes to the lease the platform recorded.
+    async def control_state(_topic):
+        return {"id": "session-1", "tasks": {}}
+
     session = SimpleNamespace(
         controls=("read_file",),
         executor_controls=frozenset({"read_file"}),
-        control_state=lambda _topic: {"id": "session-1", "tasks": {}},
+        control_state=control_state,
     )
     fastapi_app.dependency_overrides[get_chat_service] = lambda: SimpleNamespace(
         session_controls=lambda _topic: session

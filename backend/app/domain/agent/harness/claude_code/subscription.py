@@ -55,7 +55,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         self.announce = announce
 
     async def receive(self) -> None:
-        if await receive(self.path, self.call):
+        if await receive(self.path, self.call, self.on_disk):
             await self.announce()
 
     def reader(self) -> ClaudeCodeBacklog:

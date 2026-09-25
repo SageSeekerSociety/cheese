@@ -483,7 +483,7 @@ class SessionControls(Protocol):
     #: files and commands live on the executor.
     executor_controls: frozenset[str]
 
-    def control_state(self, topic_id: uuid.UUID) -> dict:
+    async def control_state(self, topic_id: uuid.UUID) -> dict:
         """What the room's controls show: the session, its tasks, its state."""
         ...
 

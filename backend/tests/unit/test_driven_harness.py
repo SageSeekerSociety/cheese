@@ -8,7 +8,10 @@ reaches it, over the runner's Unix socket.
 """
 
 import asyncio
+import functools
 import json
+import sqlite3
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -151,16 +154,16 @@ class Backlog:
 
 class Subscription(subscription.Subscription[Backlog]):
     async def receive(self) -> None:
-        mirror = Journal(self.path)
+        mirror = await self.on_disk(Journal, self.path)
         try:
             while True:
-                after = int(mirror.recall("received") or 0)
+                after = int(await self.on_disk(mirror.recall, "received") or 0)
                 page = (await self.call("records", {"after": after}))["records"]
-                mirror.import_page(page)
+                await self.on_disk(mirror.import_page, page)
                 if len(page) < journal.PAGE:
                     return
         finally:
-            mirror.close()
+            await self.on_disk(mirror.close)
 
     def reader(self) -> Backlog:
         return Backlog(self.path)
@@ -281,3 +284,138 @@ async def test_an_input_id_reused_for_different_text_is_refused(tmp_path):
         assert [row["record"].get("said") for row in rows.read()] == ["first", None]
     finally:
         rows.close()
+
+
+#: Only guards a hang: the tests below wait on events, never on how long
+#: something takes.
+HANG_S = 30
+
+
+class Disk:
+    """The mirror's disk, where one sync can be held until the test lets it go.
+
+    Holds the ``hold``-th commit to ``path`` and no other: enough to see what
+    else runs while a mirror waits on its disk.
+    """
+
+    def __init__(self, path: Path, hold: int = 1):
+        self.syncing = asyncio.Event()
+        self.let_go = threading.Event()
+        self.synced = threading.Event()
+        self.held: list[bool] = []
+        loop = asyncio.get_running_loop()
+        commits = 0
+        disk = self
+
+        class Connection(sqlite3.Connection):
+            def __init__(self, database, *args, **kwargs):
+                super().__init__(database, *args, **kwargs)
+                self.mirror = Path(database) == path
+
+            def __exit__(self, *exc):
+                nonlocal commits
+                commits += self.mirror
+                if not (self.mirror and commits == hold):
+                    return super().__exit__(*exc)
+                loop.call_soon_threadsafe(disk.syncing.set)
+                disk.held.append(disk.let_go.wait(HANG_S))
+                try:
+                    return super().__exit__(*exc)
+                finally:
+                    disk.synced.set()
+
+        self.connect = functools.partial(sqlite3.connect, factory=Connection)
+
+
+async def start(state: Path, *texts: str) -> Runner:
+    running = Runner(state)
+    await running.start()
+    for text in texts:
+        await call(state, "send", send(text, text, str(uuid.uuid4())))
+    return running
+
+
+@pytest.mark.anyio
+async def test_a_room_waiting_on_its_disk_does_not_hold_up_another_room(
+    tmp_path, monkeypatch
+):
+    """Every room on a backend is drained on one event loop. While one room's
+    mirror waits for a sync, another room's drain runs from start to finish."""
+    slow, other = Room(), Room()
+    runners = [
+        await start(tmp_path / "slow", "a", "b", "c"),
+        await start(tmp_path / "other", "x", "y"),
+    ]
+    try:
+        disk = Disk(tmp_path / "slow.sqlite")
+        # After the runners opened their own journals: only mirrors get it.
+        monkeypatch.setattr(journal.sqlite3, "connect", disk.connect)
+
+        async def other_room() -> int:
+            await disk.syncing.wait()
+            delivered = await subscribe(
+                tmp_path / "other", tmp_path / "other.sqlite", other
+            ).drain()
+            disk.let_go.set()
+            return delivered
+
+        delivered = await asyncio.gather(
+            subscribe(tmp_path / "slow", tmp_path / "slow.sqlite", slow).drain(),
+            other_room(),
+        )
+        # The held sync was let go by the other room, not by the hang guard.
+        assert disk.held == [True]
+        assert delivered == [6, 4]
+        assert (
+            await subscribe(tmp_path / "slow", tmp_path / "slow.sqlite", slow).drain()
+            == 0
+        )
+    finally:
+        for running in runners:
+            await running.close()
+
+    assert [eid for eid, _ in slow.landed] == [
+        f"stand-in:{sequence}" for sequence in (2, 2, 4, 4, 6, 6)
+    ]
+    assert [eid for eid, _ in other.landed] == [
+        f"stand-in:{sequence}" for sequence in (2, 2, 4, 4)
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_reader_let_go_mid_write_is_released_after_the_write(
+    tmp_path, monkeypatch
+):
+    """A drain cancelled while its mirror syncs leaves the write running. The
+    next reader of that mirror starts after it, and lands each record once."""
+    state, mirror, room = tmp_path / "state", tmp_path / "mirror.sqlite", Room()
+    running = await start(state, "a", "b")
+    try:
+        # The first commit imports the page; the second lands the first record,
+        # the write a cancelled drain leaves running with nobody waiting on it.
+        disk = Disk(mirror, hold=2)
+        monkeypatch.setattr(journal.sqlite3, "connect", disk.connect)
+        first = subscribe(state, mirror, room)
+        drain = asyncio.create_task(first.drain())
+        await disk.syncing.wait()
+        drain.cancel()
+        await asyncio.gather(drain, return_exceptions=True)
+
+        release = asyncio.create_task(first.release())
+        # Released while the write is still syncing would be too early. A
+        # release that does not wait finishes well inside this; one that does
+        # cannot finish at all until the write is let go.
+        await asyncio.wait({release}, timeout=0.2)
+        assert not release.done()
+        disk.let_go.set()
+        await asyncio.wait_for(release, HANG_S)
+        assert disk.synced.is_set()
+
+        assert await subscribe(state, mirror, room).drain() == 4
+        assert await subscribe(state, mirror, room).drain() == 0
+    finally:
+        await running.close()
+
+    assert [eid for eid, _ in room.landed] == [
+        f"stand-in:{sequence}" for sequence in (2, 2, 4, 4)
+    ]
