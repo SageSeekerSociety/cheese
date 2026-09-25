@@ -9,7 +9,7 @@ const CONTENT = path.resolve(__dirname, '..')
 
 // 侧边栏按功能分组。组的顺序写死在这里(它是产品的叙事顺序,不该由文件名决定);
 // 组内顺序看 order。加一页 = 新建一个 .md 并写好 frontmatter,配置不用动。
-const GROUPS = ['开始', '基础', '干活', '产出', '资源']
+const GROUPS = ['开始使用', '教程', '使用 Cheese', '常见问题']
 
 type Page = { text: string; link: string; order: number; group: string; file: string }
 
@@ -17,7 +17,7 @@ function pages(): Page[] {
   return fs
     .readdirSync(CONTENT)
     // index.md 是首页,README.md 是写给维护者的规矩 —— 都不是说明书的一页。
-    .filter((f) => f.endsWith('.md') && !['README.md', 'index.md'].includes(f))
+    .filter((f) => f.endsWith('.md') && !['README.md', 'index.md', 'members.md', 'compute.md'].includes(f))
     .map((f) => {
       const raw = fs.readFileSync(path.join(CONTENT, f), 'utf8')
       const front = /^---\n([\s\S]*?)\n---/.exec(raw)?.[1] ?? ''
