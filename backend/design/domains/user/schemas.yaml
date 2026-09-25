@@ -23,16 +23,6 @@ User:
       type: string
       description: User bio
       default: "This user has not set an introduction yet."
-    follow_count:
-      type: integer
-      format: int64
-      description: Number of users following
-      minimum: 0
-    fans_count:
-      type: integer
-      format: int64
-      description: Number of followers
-      minimum: 0
     question_count:
       type: integer
       format: int64
@@ -43,17 +33,12 @@ User:
       format: int64
       description: Number of answers given
       minimum: 0
-    is_follow:
-      type: boolean
-      description: Whether current user follows this user
   required:
     - id
     - username
     - nickname
     - avatarId
     - intro
-    - follow_count
-    - fans_count
     - question_count
     - answer_count
 

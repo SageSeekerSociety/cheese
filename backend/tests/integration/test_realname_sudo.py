@@ -1,5 +1,5 @@
 """A real name and student ID are read only by their owner. They are shown
-unmasked, and changed, only after the owner re-authenticates for that
+unmasked, changed, and deleted only after the owner re-authenticates for that
 operation; the masked form needs the owner's session alone."""
 
 import pytest
@@ -59,6 +59,15 @@ class _Owner:
         payload = body if ticket is None else {**body, "sudoTicket": ticket}
         return client.put(
             f"/users/{self.id}/identity", headers=self.headers, json=payload
+        )
+
+    def delete(self, client: TestClient, ticket: str | None, *, of: int | None = None):
+        payload = {} if ticket is None else {"sudoTicket": ticket}
+        return client.request(
+            "DELETE",
+            f"/users/{self.id if of is None else of}/identity",
+            headers=self.headers,
+            json=payload,
         )
 
 
@@ -182,3 +191,39 @@ def _assert_major(owner: _Owner, client: TestClient, major: str) -> None:
     resp = owner.read(client, precise=False)
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["identity"]["major"] == major
+
+
+class TestDeleting:
+    def test_the_owner_deletes_with_a_delete_ticket(
+        self, registered: _Owner, api_client: TestClient
+    ):
+        ticket = registered.sudo_ticket(api_client, "realname:delete")
+
+        resp = registered.delete(api_client, ticket)
+
+        assert resp.status_code == 200, resp.text
+        assert registered.read(api_client, precise=False).json()["data"] == {
+            "hasIdentity": False,
+            "identity": None,
+        }
+
+    @pytest.mark.parametrize("purpose", [None, "realname:update", "realname:view"])
+    def test_a_delete_is_refused_without_a_delete_ticket(
+        self, registered: _Owner, api_client: TestClient, purpose: str | None
+    ):
+        ticket = registered.sudo_ticket(api_client, purpose) if purpose else None
+
+        _refused(registered.delete(api_client, ticket))
+        _assert_major(registered, api_client, IDENTITY["major"])
+
+    def test_another_user_cannot_delete_it(
+        self, registered: _Owner, user_client: UserCreator, api_client: TestClient
+    ):
+        stranger = _Owner(user_client)
+        ticket = stranger.sudo_ticket(api_client, "realname:delete")
+
+        resp = stranger.delete(api_client, ticket, of=registered.id)
+
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["error"]["name"] == "ForbiddenError"
+        _assert_major(registered, api_client, IDENTITY["major"])

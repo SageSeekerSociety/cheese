@@ -116,7 +116,7 @@ jobs:
         working-directory: .
         run: |
           export NPM_CONFIG_PREFIX="$GITHUB_WORKSPACE/.npm-e2e"
-          npm install -g --silent @anthropic-ai/claude-code@2.1.277
+          npm install -g --silent @anthropic-ai/claude-code@2.1.282
           "$NPM_CONFIG_PREFIX/bin/claude" --version
 
       # The mock API's image, fetched before the suite so a registry hiccup is

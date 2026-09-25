@@ -99,12 +99,8 @@ paths:
     $ref: './domains/user/paths.yaml#/~1users~1{userId}~1questions'
   /users/{userId}/answers:
     $ref: './domains/user/paths.yaml#/~1users~1{userId}~1answers'
-  /users/{userId}/followers:
-    $ref: './domains/user/paths.yaml#/~1users~1{userId}~1followers'
   /users/{userId}/follow/questions:
     $ref: './domains/user/paths.yaml#/~1users~1{userId}~1follow~1questions'
-  /users/{userId}/follow/users:
-    $ref: './domains/user/paths.yaml#/~1users~1{userId}~1follow~1users'
   /users/auth/passkey/challenge:
     $ref: './domains/user/paths.yaml#/~1users~1auth~1passkey~1challenge'
   /users/auth/passkey/verify:

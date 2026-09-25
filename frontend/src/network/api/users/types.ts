@@ -12,17 +12,8 @@ export type GetQuestionListResponse = {
   page: Page
 }
 
-export type UserList = {
-  users: User[]
-  page: Page
-}
-
 export type GetUserInfoResponse = {
   user: User
-}
-
-export type FollowUserResponse = {
-  follow_count: number
 }
 
 export type PasskeyRegistrationOptionsResponse = {
@@ -84,48 +75,41 @@ export interface TokenPayload {
   }
 }
 
-// 实名信息类型
+/** A real-name record. Grade, major and class may be empty. */
 export interface RealNameInfo {
   realName: string
   studentId: string
   grade: string
   major: string
   className: string
-  phone?: string
-  email?: string
-  isEncrypted?: boolean
 }
 
-// 实名信息访问模块类型
-export enum UserIdentityAccessModuleType {
-  TASK = 'TASK',
-}
-
-// 实名信息访问类型
 export enum UserIdentityAccessType {
   VIEW = 'VIEW',
   EXPORT = 'EXPORT',
 }
 
-// 实名信息访问日志
+/** One read of a person's real-name record: who, how, where and when. */
 export interface UserIdentityAccessLog {
   accessor: User
-  accessModuleType?: UserIdentityAccessModuleType
-  accessEntityId?: number
-  accessEntityName?: string
+  /** `SPACE` for a read on a board; older entries may carry something else, or nothing. */
+  accessModuleType?: string | null
+  accessEntityId?: number | null
+  /** The board's name, for a read on a board. */
+  accessEntityName?: string | null
+  /** Whether that board is a course. */
+  accessEntityIsCourse?: boolean | null
   accessTime: number
   accessType: UserIdentityAccessType
-  ipAddress: string
 }
 
 export type GetRealNameInfoResponse = {
   hasIdentity: boolean
-  identity?: RealNameInfo
+  identity?: RealNameInfo | null
 }
 
 export type UpdateRealNameInfoResponse = {
-  success: boolean
-  realNameInfo: RealNameInfo
+  identity: RealNameInfo
 }
 
 // OAuth 相关类型定义

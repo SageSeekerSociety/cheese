@@ -1,5 +1,6 @@
 import secrets
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,8 @@ from app.domain.space.repositories import (
 from app.domain.tag.models import Tag
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from app.domain.task.repositories import TaskRepository
 
 
@@ -39,6 +42,33 @@ DEFAULT_SPACE_INVITE_CODE_MAX_USES = 50
 #: No 0/O/1/I/L — these codes get read aloud and typed in by hand.
 _INVITE_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _INVITE_CODE_LENGTH = 10
+
+
+@dataclass(frozen=True)
+class SpaceLabel:
+    """How a board is named where something happened on it."""
+
+    name: str
+    is_course: bool
+
+
+class SpaceLabels:
+    """Names boards for records of what happened on them.
+
+    Deleted boards are named too: a board removed since is still where the
+    thing happened.
+    """
+
+    def __init__(self, session: "AsyncSession") -> None:
+        self._repo = SpaceRepository(session=session)
+
+    async def describe(self, space_ids: Sequence[int]) -> dict[int, SpaceLabel]:
+        """Each of these boards' labels, in one query; unknown ids are left out."""
+        rows = await self._repo.names_and_shells(space_ids=space_ids)
+        return {
+            space_id: SpaceLabel(name=name, is_course=is_course_shell(shell))
+            for space_id, (name, shell) in rows.items()
+        }
 
 
 class SpaceService:

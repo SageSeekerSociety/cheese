@@ -210,12 +210,15 @@ def case(folder, options):
         # checked for writes that went there instead of to the executor.
         center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
         execution_file = home / ".cheese/remote-session/execution.json"
+        # Where the session sees the project: at the executor's own path
+        # (`client.py enter`); `center` is this host's view of it.
+        seen = Path(executor.call("ping")["workspace"])
         actions = [
-            {"name": "Read", "input": {"file_path": str(center / "target.txt")}},
+            {"name": "Read", "input": {"file_path": str(seen / "target.txt")}},
             {
                 "name": "Edit",
                 "input": {
-                    "file_path": str(center / "target.txt"),
+                    "file_path": str(seen / "target.txt"),
                     "old_string": "BEFORE_EDIT",
                     "new_string": "AFTER_EDIT",
                 },
@@ -223,7 +226,7 @@ def case(folder, options):
             {
                 "name": "Write",
                 "input": {
-                    "file_path": str(center / "new.txt"),
+                    "file_path": str(seen / "new.txt"),
                     "content": "REMOTE_WRITE",
                 },
             },
@@ -276,7 +279,7 @@ def case(folder, options):
                     "isolation": "worktree",
                 },
             },
-            {"name": "Read", "input": {"file_path": str(center / "image.png")}},
+            {"name": "Read", "input": {"file_path": str(seen / "image.png")}},
         ]
         if options.mode != "normal":
             actions = [actions[2]]
@@ -475,7 +478,7 @@ def case(folder, options):
             assert "ACCEPTANCE_DONE" in (ended.get("result") or ""), ended
             bound = client.RemoteClient(json.loads(execution_file.read_text()))
             preview = bound.control(
-                {"subtype": "read_file", "path": str(center / "target.txt")}
+                {"subtype": "read_file", "path": str(seen / "target.txt")}
             )
             assert preview["contents"] == "AFTER_EDIT\n", preview
             diff = bound.control({"subtype": "get_workspace_diff"})

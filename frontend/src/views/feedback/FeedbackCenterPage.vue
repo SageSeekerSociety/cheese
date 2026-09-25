@@ -175,7 +175,7 @@ function clearFilters() {
 <template>
   <!-- `fill-height overflow-y-auto` 不是装饰，是这一页能不能滚的全部。common.scss
        把 html/body/#app 定成固定高度 + `overflow: hidden`，滚动由每一页自己领
-       （CalendarView / MemberView / MarketView 都是这么写的）。少了这两个类，内容
+       （CalendarView / ProfileView / MarketView 都是这么写的）。少了这两个类，内容
        一旦比窗口高，下半截就被外面那层 `overflow-hidden` 裁掉，而且**没有任何元素
        可滚** —— 1280×600 的窗口里反馈中心少 117px，列表最后几条再也够不着。 -->
   <div class="fb-page fill-height overflow-y-auto">

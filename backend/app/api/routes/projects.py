@@ -839,15 +839,24 @@ async def delete_library_file(
 
 @router.get("/{project_id}/decisions")
 async def list_decisions(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
 ) -> dict:
     """决策记录 (spec §7.1): project-wide decision blocks, each traceable to its
     source topic via topic_id.
 
     These are the project's own words, not metadata about it — the same content
-    ``/topics`` has always guarded."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    ``/topics`` has always guarded.
+
+    ``topic`` is the caller naming its place, and it is how 芝士 reads this at
+    all (``_project_reader``): a per-turn credential is minted for one turn in
+    one room, so a bare ``authorize_project`` refuses it — which left the one
+    caller that WRITES decisions (``POST /topics/{id}/decision``, the
+    ``cheese decision`` CLI) unable to read a single one back. Its own room's
+    blocks were reachable; the project's record was not."""
+    await _project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     blocks = await BlockRepository(db).list_by_kind_for_project(
         project_id, BlockKind.decision
@@ -858,7 +867,10 @@ async def list_decisions(
 
 @router.get("/{project_id}/weeklies")
 async def list_weeklies(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
 ) -> dict:
     """周报集 (spec §7.1): project-wide weekly blocks, newest first.
 
@@ -868,9 +880,9 @@ async def list_weeklies(
 
     Same shape as /decisions and for the same reason: these are the project's
     own words, and each is traceable to the room it was written in via
-    `topic_id`."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    `topic_id` — including the same ``topic`` place, so the caller that writes
+    a weekly (``POST /topics/{id}/weekly``) can read the set back."""
+    await _project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     blocks = await BlockRepository(db).list_by_kind_for_project(
         project_id, BlockKind.weekly

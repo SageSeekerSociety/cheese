@@ -287,19 +287,25 @@ def _launch_identity(
     the backend would start today.
 
     Everything a running process cannot adopt without being restarted, in one
-    value: the model and role it was born with, the harness build and the argv
-    it was started with, the executor it was handed, and the directory the
-    platform installed itself into. Anything left out is a change that lands in
-    the code and never reaches the rooms already running — the shape this
-    replaced compared only the first of the four, so a pinned harness version
-    could move while every reused screen kept the one it started with, and
-    nothing said so.
+    value: the model and role it was born with, the harness's whole launch
+    (``MachineLaunch.contract``), the platform's half of the launcher, the
+    executor it was handed, and the directory the platform installed itself
+    into. Anything left out is a change that lands in the code and never
+    reaches the rooms already running — a pinned harness version once moved
+    while every reused screen kept the one it started with, and later a new
+    shell prefix reached no room that was already open.
     """
     return hashlib.sha256(
         json.dumps(
             {
                 "agent": agent_configuration,
                 "harness": harness_contract,
+                # The platform half has no per-room content of its own: that
+                # arrives as environment, so with empty holes it is the same
+                # script for every room.
+                "launcher": hashlib.sha256(
+                    machine_launcher.launch_script(command="").encode()
+                ).hexdigest(),
                 "target": execution_target,
                 "root": footprint_root(),
             },
@@ -1289,23 +1295,31 @@ class DeviceChannel(Channel):
         # as a configuration change on its next turn, every turn.
         screen_env["CHEESE_AGENT_CONFIG"] = configuration
         if existing is not None and existing.agent_configuration != configuration:
-            # Called between turns, and only now: what a session was started
-            # with is not fully known until the harness has been asked. A
-            # workflow the session still runs would die with it, so the room is
-            # told to wait instead; a runner that cannot be asked has nothing
-            # left running to lose.
+            # Asked only now: what a session was started with is not fully
+            # known until the harness has been asked. Closing the session ends
+            # whatever it is still doing — a turn, a background command, a
+            # subagent, a workflow — so while it is doing any of those, this
+            # turn runs on it as it is and the relaunch waits for the first
+            # turn that finds it idle. A background command may run for days,
+            # so refusing turns until it ends is not waiting. A runner that
+            # cannot be asked has nothing left running to lose.
             status = await self._runner(device_id, place.state, "ping")
-            if (
-                status is not None
-                and "local_workflow" in (status.get("tasks") or {}).values()
-            ):
-                raise ScreenSetupError(
-                    "后台工作流仍在运行；当前会话已保留，工作流结束后请重试。"
+            if status is not None and (status.get("working") or status.get("tasks")):
+                logger.info(
+                    "device_screen_relaunch_deferred topic=%s sid=%s working=%s "
+                    "tasks=%s",
+                    topic_id,
+                    existing.sid,
+                    bool(status.get("working")),
+                    sorted((status.get("tasks") or {}).values()),
                 )
-            await self._retire_screen(
-                existing, topic_id=topic_id, reason="agent_configuration_changed"
-            )
-            existing = None
+                # Still what the running process was started with.
+                screen_env["CHEESE_AGENT_CONFIG"] = existing.agent_configuration
+            else:
+                await self._retire_screen(
+                    existing, topic_id=topic_id, reason="agent_configuration_changed"
+                )
+                existing = None
         mark("launcher_built")
         # The remote-execution helpers are the executor harness's; a session
         # whose plan has no executor has none of them to release.

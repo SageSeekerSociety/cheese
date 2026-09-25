@@ -1,5 +1,5 @@
 /**
- * 项目首页那一块「等你决定」。
+ * 项目首页项目收件箱那一块（「等你决定」/「变更提醒」）。
  *
  * 它从退役的「总览」搬过来，而那一页上它只能摆着看：选项存在 payload 里从来没
  * 画出来过，答复它的接口一个调用方都没有。所以这一组钉的不是「搬过来了」，是
@@ -8,7 +8,12 @@
  * 另一半钉的是它摆成一叠之后的行为：屏幕上同时只有一个问题、一次只答得了那一
  * 个，而「一共几条、这是第几条」写在标题那一行。这一页钉在视口上，板按剩下的高
  * 度分列，所以「几条问题占多高」这件事必须和条数无关。
+ *
+ * 最后一块钉「变更提醒」：它是平台报告自己的那几种里唯一会落到这一块上的（spec
+ * §8.5 的第一种典型通知）。以前它写进库没有任何界面读得到，所以这里钉两件事
+ * ——它摆得出来，以及它点得到它说的那个话题（通知只是提醒，东西在话题里）。
  */
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -82,8 +87,30 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+/** 一台只认本次要用的那两条路由的 router。
+ *
+ *  `workspace-topic` 是「去话题」要落的那一页 —— 这一组钉的是「落到了哪个话题」，
+ *  所以路径随便写一个能认出参数来的就够，不需要真的把话题页挂起来。 */
+function makeRouter() {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', name: 'home', component: { template: '<div />' } },
+      {
+        path: '/p/:projectId/t/:topicId',
+        name: 'workspace-topic',
+        component: { template: '<div />' },
+      },
+    ],
+  })
+}
+
 function mount() {
-  return render(NeedsYou, { props: { projectId: 'p1' }, global: { plugins: [vuetify] } })
+  const router = makeRouter()
+  return {
+    ...render(NeedsYou, { props: { projectId: 'p1' }, global: { plugins: [vuetify, router] } }),
+    router,
+  }
 }
 
 function buttons(container: Element, label: string): HTMLElement[] {
@@ -251,5 +278,82 @@ describe('等你决定：一叠而不是一列', () => {
     // 原来停在第 3 条，现在只剩 2 条：回到第一条，而不是指着一个不存在的下标。
     await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
     expect(container.textContent?.replace(/\s+/g, '')).toContain('1/2')
+  })
+})
+
+describe('变更提醒', () => {
+  /** 芝士 干完活说的那一句：没有选项，只有一个去处。 */
+  function notice(overrides: Record<string, unknown> = {}) {
+    return item({
+      kind: 'change_alert',
+      title: '文档预览的转圈修好了',
+      body: '改了一个竞态，顺手补了回归测试',
+      payload: {},
+      topic_id: 't1',
+      ...overrides,
+    })
+  }
+
+  it('摆的是「变更提醒」，不是「等你决定」', async () => {
+    vi.mocked(getInbox).mockResolvedValue({ data: [notice()], total: 1 })
+    const { container } = mount()
+
+    await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
+    const text = container.textContent ?? ''
+    expect(text).toContain('变更提醒')
+    // 它没有要人答的东西，标题写「等你决定」就是假话。
+    expect(text).not.toContain('等你决定')
+    expect(text).toContain('改了一个竞态，顺手补了回归测试')
+  })
+
+  it('点「去话题」落在它说的那个话题上', async () => {
+    vi.mocked(getInbox).mockResolvedValue({ data: [notice()], total: 1 })
+    const { container, router } = mount()
+    await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
+
+    await fireEvent.click(button(container, '去话题')!)
+
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-topic'))
+    expect(router.currentRoute.value.params).toMatchObject({
+      projectId: 'p1',
+      topicId: 't1',
+    })
+  })
+
+  it('没有话题可去的那一条不给这个入口，但照样收得起来', async () => {
+    vi.mocked(getInbox).mockResolvedValue({ data: [notice({ topic_id: null })], total: 1 })
+    const { container } = mount()
+
+    await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
+    expect(button(container, '去话题')).toBeUndefined()
+
+    await fireEvent.click(button(container, '知道了')!)
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith(1))
+    expect(resolveAlert).not.toHaveBeenCalled()
+  })
+
+  it('决策请求那颗卡上不摆「去话题」——要动手的是选项', async () => {
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
+
+    expect(button(container, '去话题')).toBeUndefined()
+    expect(button(container, '先做导出')).toBeTruthy()
+  })
+
+  it('和决策请求摆在同一叠里时，标题跟着最上面那条走', async () => {
+    // 新的在前：一条变更提醒压着一条决策请求。
+    vi.mocked(getInbox).mockResolvedValue({
+      data: [notice({ id: 9 }), item({ id: 1 })],
+      total: 2,
+    })
+    const { container } = mount()
+
+    await waitFor(() => expect(container.textContent).toContain('文档预览的转圈修好了'))
+    expect(container.textContent).toContain('变更提醒')
+
+    await fireEvent.click(button(container, '下一条')!)
+
+    await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
+    expect(container.textContent).toContain('等你决定')
   })
 })

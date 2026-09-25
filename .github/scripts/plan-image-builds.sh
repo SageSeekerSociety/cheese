@@ -59,6 +59,7 @@ office_render=false
 browser_render=false
 gateway=false
 metering_proxy=false
+private_executor=false
 
 # Tags and manual runs are explicit release/rebuild requests. A repository with
 # no earlier successful build also needs a complete bootstrap.
@@ -85,6 +86,7 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   office_render=true
   gateway=true
   metering_proxy=true
+  private_executor=true
 else
   while IFS= read -r -d '' changed_path; do
     case "$changed_path" in
@@ -122,10 +124,29 @@ else
         sandbox=true
         ;;
     esac
+
+    # The private-chat executor is built from the repository root and copies
+    # these files in, so any of them changing is a change to that image.
+    case "$changed_path" in
+      backend/sandbox/Dockerfile.private \
+        | backend/sandbox/cheese \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/private.py)
+        private_executor=true
+        ;;
+    esac
   done < <(git diff --name-only -z "$base_sha" "$current_sha" --)
   # A baseline predating this image cannot provide a manifest to promote.
   if ! git cat-file -e "$base_sha:deploy/metering-proxy/Dockerfile" 2>/dev/null; then
     metering_proxy=true
+  fi
+  # The executor's recipe is older than its build job, so a baseline whose
+  # workflow never built it has no manifest to promote either. No `grep -q`:
+  # it exits at the first match, and under pipefail the SIGPIPE that gives
+  # `git show` would read as "not built" and force this image every time.
+  if ! git show "$base_sha:.github/workflows/build.yml" 2>/dev/null \
+      | grep '^  build-private-executor:' >/dev/null; then
+    private_executor=true
   fi
 fi
 
@@ -136,6 +157,7 @@ fi
 echo "planned: backend=$backend sandbox=$sandbox frontend=$frontend" \
   "office_render=$office_render browser_render=$browser_render" \
   "gateway=$gateway metering_proxy=$metering_proxy" \
+  "private_executor=$private_executor" \
   "base=${base_sha:-none}" >&2
 
 {
@@ -146,6 +168,7 @@ echo "planned: backend=$backend sandbox=$sandbox frontend=$frontend" \
   echo "browser_render=$browser_render"
   echo "gateway=$gateway"
   echo "metering_proxy=$metering_proxy"
+  echo "private_executor=$private_executor"
   echo "base_sha=$base_sha"
   echo "base_tag=${base_sha:0:7}"
   echo "current_tag=$("$(dirname "$0")/../../deploy/image-tag.sh" "$current_sha")"

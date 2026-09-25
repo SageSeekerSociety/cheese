@@ -15,7 +15,6 @@ from app.domain.user.passwords import (
     password_too_long,
 )
 from app.domain.user.repositories import (
-    UserFollowingRepository,
     UserProfileRepository,
     UserRepository,
     UserStatisticsRepository,
@@ -287,12 +286,10 @@ class UserAuthService:
         self,
         user_repo: UserRepository,
         profile_repo: UserProfileRepository,
-        follow_repo: UserFollowingRepository,
         stats_repo: UserStatisticsRepository,
     ) -> None:
         self._user_repo = user_repo
         self._profile_repo = profile_repo
-        self._follow_repo = follow_repo
         self._stats_repo = stats_repo
 
     async def authenticate(
@@ -472,16 +469,8 @@ class UserAuthService:
         profile: UserProfile,
         viewer_id: int | None = None,
     ) -> dict:
-        """Map User + UserProfile into a UserDto-compatible dict with counts & follow flag."""  # noqa: E501
+        """Map User + UserProfile into a UserDto-compatible dict with counts."""
         base = self._base_user_dto(user, profile)
-        followers = await self._follow_repo.count_followers(user.id)
-        following = await self._follow_repo.count_following(user.id)
-        is_follow = False
-        if viewer_id is not None and viewer_id != user.id:
-            is_follow = await self._follow_repo.is_following(
-                follower_id=viewer_id,
-                followee_id=user.id,
-            )
         stats = await self._stats_repo.aggregate(user.id)
         if viewer_id == user.id:
             # Only the owner is told: an account without an address of its own
@@ -490,15 +479,12 @@ class UserAuthService:
 
         base.update(
             {
-                "follow_count": following,
-                "fans_count": followers,
                 "question_count": stats["questionCount"],
                 "answer_count": stats["answerCount"],
                 "team_count": stats["teamCount"],
                 "task_participation_count": stats["taskParticipationCount"],
                 "knowledge_count": stats["knowledgeCount"],
                 "submission_count": stats["submissionCount"],
-                "is_follow": is_follow,
             }
         )
         return base

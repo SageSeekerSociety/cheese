@@ -653,16 +653,35 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             "claim_until": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
         }
         await db.commit()
-    reserved = client.post(path, headers={"X-Cheese-Token": token}, json=body)
+    # Another request of this session holds the installation: this one waits
+    # for it and takes what it installed.
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=1) as requests:
+        pending_tool = requests.submit(
+            client.post, path, headers={"X-Cheese-Token": token}, json=body
+        )
+        await asyncio.sleep(1.5)
+        assert not pending_tool.done(), "The other installer is still preparing"
+        async with client.test_factory() as db:
+            current = await AgentSessionService(db).by_id(session_id)
+            current.work_lease = before
+            await db.commit()
+        reserved = pending_tool.result(timeout=20)
     assert reserved.status_code == 200, reserved.text
-    assert "unavailable" in reserved.json()["data"]
+    assert reserved.json()["data"]["target"]["resource_id"] == before["resource_id"]
     assert hub.exec.await_count == 1, "Another installer owns this reservation"
-    async with client.test_factory() as db:
-        current = await AgentSessionService(db).by_id(session_id)
-        current.work_lease = before
-        await db.commit()
     state["phase"] = scenario
-    if scenario in {"pending", "failed"}:
+    monkeypatch.setattr(work_lease, "ENVIRONMENT_POLL_S", 0.2)
+    if scenario == "pending":
+        # Still being prepared: the tool waits until it is ready.
+        status.side_effect = [
+            {"state": "preparing"},
+            {"state": "preparing"},
+            {"state": "ready"},
+        ]
+    if scenario == "failed":
         status.return_value = {"state": scenario, "error": "environment not ready"}
     if scenario == "prepare-failure":
         with pytest.raises(RuntimeError, match="prepare rejected"):
@@ -673,9 +692,15 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     else:
         next_tool = client.post(path, headers={"X-Cheese-Token": token}, json=body)
         assert next_tool.status_code == 200, next_tool.text
-        if scenario in {"pending", "failed"}:
+        if scenario == "pending":
+            assert next_tool.json()["data"]["target"]["resource_id"] == resource_id
+            assert status.await_count >= 3
+            assert hub.exec.await_count == 1
+        elif scenario == "failed":
+            # A failed environment will not become ready by waiting.
             assert next_tool.json()["data"]["environment_status"]["state"] == scenario
             assert "target" not in next_tool.json()["data"]
+            assert "preparing" not in next_tool.json()["data"]
             assert hub.exec.await_count == 1
             status.return_value = {"state": "ready"}
             retry = client.post(path, headers={"X-Cheese-Token": token}, json=body)
