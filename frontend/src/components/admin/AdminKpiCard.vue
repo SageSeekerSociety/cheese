@@ -234,5 +234,45 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
 
 .akpi__skel--value :deep(.v-skeleton-loader__text) {
   height: 23px;
+  margin: 0;
+  background: var(--fill-2);
 }
+
+/* —— 看板整面板模式（§4.2 重排）：挂在看板的 `.ad__inner` 下时，N 张卡合成一条
+   整面板 —— 外框与分隔线由 `.ad__kpis` 给，卡自己的边框、圆角与写死高度全部关掉
+   （高度回到内容自适应；分隔线天生对齐，不再需要 92/108px 那档妥协）。数字升到
+   30px：分隔线给了安静的行，大数字接得住。模型页（`.amd__kpis`）保持独立卡片不变。 */
+:where(.ad__inner) .akpi {
+  justify-content: flex-start;
+  height: auto;
+  min-height: 0;
+  padding: 14px 18px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+:where(.ad__inner) .akpi--rich {
+  height: auto;
+}
+
+:where(.ad__inner) .akpi__num {
+  font-size: 30px;
+}
+
+/* 窄屏降档跟着整面板的列数走：4 列 ≥560、2 列以下。30px 在 ~130px 的格里装不下
+   六位数字，降回 23px（`.t-console-title` 的原档）。 */
+@container (max-width: 1320px) {
+  :where(.ad__inner) .akpi__num {
+    font-size: 23px;
+  }
+}
+
+@container (max-width: 760px) {
+  :where(.ad__inner) .akpi__num {
+    font-size: 20px;
+  }
+}
+
+/* 整面板里链接卡的 hover 仍然成立（分隔线是边框，底色照常盖）。 */
 </style>

@@ -27,6 +27,7 @@
 import type { Component } from 'vue'
 import type { StatsKind } from '@/api'
 
+import { nextTick } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -199,6 +200,75 @@ describe('看板页', () => {
     // 「有历史的、整个平台的」。钉的是路由表底下那句的原话，不是 `/进程内存/`：
     // 网速面板和机器台账也有这四个字，宽匹配会命中多条、findByText 直接抛。
     expect(await findByText(/数在进程内存里/)).toBeTruthy()
+  })
+
+  it('性能屏：表按 p95 降序、「此刻最慢」横幅与最慢那行一致、量级条按全表归一', async () => {
+    const { findByText, getAllByRole, container } = await mountDashboard()
+    await loaded('pipeline')
+
+    await fireEvent.click(tab('性能', getAllByRole))
+    await loaded('performance')
+
+    // fixture 是未排序的（/feedback 在前，/topics/{topic_id}/messages 的 p95 更高）——
+    // 「哪条慢」的读法从上往下，排序是页面的责任，不重信后端排好的序。
+    expect(await findByText('此刻最慢')).toBeTruthy()
+    const banner = container.querySelector('.ad__slowest')!
+    expect(banner.textContent).toContain('/topics/{topic_id}/messages')
+    expect(banner.textContent).toContain('123')
+
+    // 表里第一行就是横幅里那条。
+    const rows = Array.from(container.querySelectorAll('.ad__perf-table tbody tr'))
+    const first = rows[0]!
+    expect(first.textContent).toContain('/topics/{topic_id}/messages')
+    // 最慢那行的量级条满宽；p95 更高（122.6）的那条排在 p95 61.2 之前。
+    const fill = first.querySelector('.ad__perf-p95fill')! as HTMLElement
+    expect(fill.style.width).toBe('100%')
+  })
+
+  it('性能屏：路由多于 Top N 时折叠并给出被折部分的 p95 上限，筛选不受折叠限制', async () => {
+    const { getAllByRole, getByPlaceholderText, getByRole, container } = await mountDashboard()
+    await loaded('pipeline')
+    const store = useFeedbackStore()
+
+    await fireEvent.click(tab('性能', getAllByRole))
+    await loaded('performance')
+
+    // 在 fixture 的 7 条上追加 6 条快路由（总数 13 > Top 8）。排序降序，所以折掉的
+    // 是尾部那些「真的很快」的 —— 折叠行要说出它们的 p95 上限。
+    const perfStats = store.stats.performance as { routes: Record<string, unknown>[] }
+    for (let i = 0; i < 6; i++) {
+      perfStats.routes.push({
+        method: 'GET',
+        route: `/extra/route-${i}`,
+        count: 10 + i,
+        error_count: 0,
+        status: { '2xx': 10 + i, '3xx': 0, '4xx': 0, '5xx': 0 },
+        p50: 1,
+        p95: 10 + i,
+        p99: 20 + i,
+        spark: [],
+      })
+    }
+    await nextTick()
+
+    // 默认只画 8 行；折叠行写着「其余 5 条 · p95 最高 12 ms」—— 被折部分里 p95
+    // 最高的是 route-2（12）；route-3..5（13–15）排在有样本的几条 fixture 之前、
+    // 不在折叠区里。这句话本身就是结论：被折掉的最快也就这么多，不看也罢。
+    expect(container.querySelectorAll('.ad__perf-table tbody tr')).toHaveLength(8)
+    const foldBtn = getByRole('button', { name: /展开其余 5 条/ })
+    expect(foldBtn.textContent).toContain('12')
+
+    // 展开后 13 行全在；再点收起。
+    await fireEvent.click(foldBtn)
+    expect(container.querySelectorAll('.ad__perf-table tbody tr')).toHaveLength(13)
+    await fireEvent.click(getByRole('button', { name: '收起' }))
+    expect(container.querySelectorAll('.ad__perf-table tbody tr')).toHaveLength(8)
+
+    // 被折着的那条也能被筛出来：筛选作用于全部路由，不受 Top N 限制。
+    await fireEvent.update(getByPlaceholderText('筛路由…'), 'route-5')
+    const filtered = Array.from(container.querySelectorAll('.ad__perf-table tbody tr'))
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0]!.textContent).toContain('/extra/route-5')
   })
 
   it('平台那一类把机器报成存量，并写明它不是在线数', async () => {
