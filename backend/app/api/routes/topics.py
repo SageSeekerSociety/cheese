@@ -24,6 +24,7 @@ from app.api.deps import (
     get_work_runner,
     project_device_online,
 )
+from app.api.place import project_reader
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -282,6 +283,7 @@ async def list_topics(
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
     active_since: datetime | None = None,
+    topic: str = "",
 ) -> dict:
     """The project's topics.
 
@@ -293,8 +295,7 @@ async def list_topics(
     Every row also carries 与我的相关性 (`i_participate`/`awaits_me`) for the
     caller — this is the endpoint the sidebar groups from.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    actor = await project_reader(db, resolver, project_id, topic)
     service = TopicService(db)
     topics, last_activity, total = await service.list_for_project(
         project_id, sort=sort, order=order, active_since=active_since

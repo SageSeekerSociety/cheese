@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_work_runner
+from app.api.place import project_reader
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import NotFoundError
@@ -94,10 +95,9 @@ async def create_milestone(
 
 @router.get("/projects/{project_id}/milestones")
 async def list_milestones(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
 ) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await project_reader(db, resolver, project_id, topic)
     milestones, total = await MilestoneService(db).list_for_project(project_id)
     items = [MilestoneOut.model_validate(m).model_dump(mode="json") for m in milestones]
     return ok(page(items, total))
