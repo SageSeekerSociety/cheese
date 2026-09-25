@@ -80,6 +80,8 @@ class MeteringReleaseTest(unittest.TestCase):
                 if (home / "calls").exists()
                 else []
             )
+            login = home / "claude-login.sh"
+            self.installed_login = login.is_file() and os.access(login, os.X_OK)
             self.assertNotIn("private-test-value", result.stdout + result.stderr)
             self.assertEqual(
                 (home / ".env").read_text(),
@@ -168,6 +170,13 @@ class MeteringReleaseTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("no restart needed", result.stdout)
         self.assertFalse(any(c["args"][0] == "compose" for c in calls))
+        # The login tool still arrives when the image does not change.
+        self.assertTrue(self.installed_login)
+
+    def test_a_release_installs_the_login_tool_beside_the_credential(self):
+        result, _calls = self.run_release()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.installed_login)
 
     def test_unhealthy_same_digest_is_recreated(self):
         result, calls = self.run_release(
