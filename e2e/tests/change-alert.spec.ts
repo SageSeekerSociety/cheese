@@ -4,8 +4,12 @@
  * 项目角标、列表里却一条也没有。这一条从写入那一步开始走完整条路：走 `cheese
  * notify` 用的那个接口写一条，在项目首页看到它，点「去话题」落到那个话题上。
  *
- * 2026-09-24 在本机这套栈上跑过：自己的后端 + 自己的前端（Playwright 的
- * webServer 从本工作树起）+ 一份迁移+种子好的库，真浏览器，2 passed。
+ * 2026-09-25 在本机这套栈上跑过（Playwright 的 webServer 从本工作树起自己的后端和
+ * 前端 + 一份迁移+种子好的库 + 独立的 forge，真 chromium）：这两条加上
+ * `room-work.spec.ts` 里那条「板里不另起标题」共 3 passed。把下面每条用例后的清理
+ * 临时去掉再跑，`room-work` 那条立刻红 —— 报的是 `.board h1, h2` 计数为 1，和 CI
+ * 上那条一字不差。它数的是整个板容器里的标题，而这一叠正嵌在板容器里，所以那页上
+ * 有任何一条未读提醒都会让它红：这是下面那个清理必须有的理由。
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
