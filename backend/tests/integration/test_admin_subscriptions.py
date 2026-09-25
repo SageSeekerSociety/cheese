@@ -776,6 +776,31 @@ def test_update_upstream_model_rejected_shapes(client, as_admin, rig):
     assert r.status_code == 400, r.text
 
 
+def test_an_upstream_outside_the_openai_provider_is_a_400(client, as_admin, rig):
+    """chatgpt/ 会让网关自己起设备码登录、卡住所有请求；这把订阅的 key 只有
+    openai/ 用得上。两个入口都拒，行上的选择不动。"""
+    sub_id = _seed_active(client)
+    _linked_model_fixture(rig)
+
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": "chatgpt/gpt-5.6-luna"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+    assert "openai/" in r.text
+    (row,) = _subs_rows(client)
+    assert row.upstream_model is None
+
+    r = client.post(
+        "/admin/subscriptions/device-flows",
+        json={"provider": "openai_codex", "upstream_model": "chatgpt/gpt-5.6-luna"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+    assert "openai/" in r.text
+
+
 def test_update_upstream_model_gateway_failure_is_a_502(client, as_admin, rig):
     """选择已落库（下一次刷新会补推）、审计落 failed，网关的原话翻成 502。"""
     sub_id = _seed_active(client)
