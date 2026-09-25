@@ -28,25 +28,30 @@ DECLARATION = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
 MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 DOC_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+# 这几种 MIME 串本身就比一行长，拼 XML 时只能从中间断开——断点是拼接用的，
+# 拼出来的字节和一行写完一模一样。
+OFFICE_MIME = "application/vnd.openxmlformats-officedocument"
 
 CONTENT_TYPES = (
     DECLARATION
     + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    '<Default Extension="rels" '
+    'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
     '<Default Extension="xml" ContentType="application/xml"/>'
-    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+    '<Override PartName="/xl/workbook.xml" '
+    f'ContentType="{OFFICE_MIME}.spreadsheetml.sheet.main+xml"/>'
     + "".join(
         f'<Override PartName="/xl/worksheets/sheet{i}.xml" '
-        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        f'ContentType="{OFFICE_MIME}.spreadsheetml.worksheet+xml"/>'
         for i in (1, 2)
     )
     + "</Types>"
 )
 
 ROOT_RELS = (
-    DECLARATION
-    + f'<Relationships xmlns="{REL}">'
-    f'<Relationship Id="rId1" Type="{DOC_REL}/officeDocument" Target="xl/workbook.xml"/>'
+    DECLARATION + f'<Relationships xmlns="{REL}">'
+    f'<Relationship Id="rId1" Type="{DOC_REL}/officeDocument" '
+    'Target="xl/workbook.xml"/>'
     "</Relationships>"
 )
 
@@ -100,11 +105,17 @@ def workbook(names: list[str]) -> str:
         f'<sheet name="{name}" sheetId="{i}" r:id="rId{i}"/>'
         for i, name in enumerate(names, start=1)
     )
-    return f"{DECLARATION}<workbook xmlns=\"{MAIN}\" xmlns:r=\"{DOC_REL}\"><sheets>{entries}</sheets></workbook>"
+    return (
+        f'{DECLARATION}<workbook xmlns="{MAIN}" xmlns:r="{DOC_REL}">'
+        f"<sheets>{entries}</sheets></workbook>"
+    )
 
 
 def worksheet(body: str) -> str:
-    return f'{DECLARATION}<worksheet xmlns="{MAIN}"><sheetData>{body}</sheetData></worksheet>'
+    return (
+        f'{DECLARATION}<worksheet xmlns="{MAIN}">'
+        f"<sheetData>{body}</sheetData></worksheet>"
+    )
 
 
 @pytest.fixture
@@ -128,10 +139,11 @@ def book(tmp_path: Path):
     return build
 
 
-DETAIL = row(1, text("A1", "单号"), text("B1", "类别"), text("C1", "金额")) + row(
-    2, text("A2", "SO-1001"), text("B2", "消息流"), number("C2", "57400")
-) + row(3, text("A3", "SO-1002"), text("B3", "预览"), number("C3", "30800")) + row(
-    4, text("A4", "SO-1003"), text("B4", "办公文件"), number("C4", "12600")
+DETAIL = (
+    row(1, text("A1", "单号"), text("B1", "类别"), text("C1", "金额"))
+    + row(2, text("A2", "SO-1001"), text("B2", "消息流"), number("C2", "57400"))
+    + row(3, text("A3", "SO-1002"), text("B3", "预览"), number("C3", "30800"))
+    + row(4, text("A4", "SO-1003"), text("B4", "办公文件"), number("C4", "12600"))
 )
 
 #: 统计表按「预览、办公文件、消息流」排，公式却按位置抄了明细表的第 2、3、4 行。
