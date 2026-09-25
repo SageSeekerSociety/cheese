@@ -215,3 +215,28 @@ it('still renders a web page as a page', async () => {
   await waitFor(() => expect(requestPreviewSession).toHaveBeenCalled())
   expect(screen.queryByTestId('pages')).toBeNull()
 })
+
+it('sends a .pdf whose bytes read as text to the document viewer, not a blank frame', async () => {
+  getPreview.mockResolvedValue({
+    kind: 'file',
+    path: 'output/报告.pdf',
+    mime: 'application/pdf',
+    url: 'https://preview.example/',
+    artifact_id: 'artifact-pdf',
+    tunnel_up: true,
+  })
+  readPreviewFile.mockResolvedValue({
+    path: 'output/报告.pdf',
+    content: 'this is not a pdf',
+    version: 'v1',
+    bytes: 17,
+    binary: false,
+    too_large: false,
+  })
+
+  mount()
+
+  // The viewer is what can say the file is broken; a frame just stays empty.
+  expect(await screen.findByTestId('pages')).toBeTruthy()
+  expect(requestPreviewSession).not.toHaveBeenCalled()
+})
