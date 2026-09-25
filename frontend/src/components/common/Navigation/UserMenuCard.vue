@@ -31,7 +31,7 @@
     <v-divider />
 
     <v-list class="menu-list" nav density="compact" bg-color="transparent">
-      <v-list-item :to="{ name: 'UserDefault', params: { id: menu.currentUser.value?.id } }">
+      <v-list-item :to="{ name: 'UserPage', params: { handle: menu.currentUser.value?.username } }">
         <v-list-item-title>{{ t('navigation.userMenu.profile') }}</v-list-item-title>
       </v-list-item>
       <v-list-item :to="{ name: 'UserSettingsProfile' }">

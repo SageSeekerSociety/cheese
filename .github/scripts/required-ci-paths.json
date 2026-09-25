@@ -4,6 +4,7 @@
     "deploy/metering-proxy/**",
     ".pre-commit-config.yaml",
     ".github/scripts/ensure-apt.sh",
+    ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/test.yml"
   ],
   "frontend": [
@@ -69,6 +70,7 @@
     "backend/app/domain/agent/executor_transport.py",
     "backend/app/domain/agent/cli_worker.py",
     "backend/sandbox/cheese",
+    ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/mcp-contract.yml"
   ]
 }

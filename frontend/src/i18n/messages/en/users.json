@@ -1,3 +1,59 @@
 {
-  "showUsers": "Showing no users | Showing 1 user | Showing {count} users"
+  "profile": {
+    "joined": "Joined {date}",
+    "edit": "Edit profile",
+    "notFound": "This user does not exist",
+    "loadFailed": "Could not load this page",
+    "retry": "Retry",
+    "activity": {
+      "title": "Activity",
+      "yearTotal": "{count} contributions in the last year",
+      "halfYearTotal": "{count} contributions in the last six months",
+      "less": "Less",
+      "more": "More",
+      "grid": "Contributions per day",
+      "cell": "{date}: {count} contributions",
+      "table": "View data table",
+      "colWeek": "Week",
+      "colCount": "Contributions"
+    },
+    "projects": {
+      "shared": "Projects in common",
+      "mine": "My projects",
+      "stats": "{topics} topics started · {count} contributions",
+      "contributions": "{count} contributions",
+      "active": "active {when}",
+      "trend": "Contributions per week, last 12 weeks: {counts}",
+      "emptyShared": "No projects in common",
+      "emptyMine": "No projects"
+    },
+    "role": {
+      "owner": "Owner",
+      "team": "Team member"
+    },
+    "topics": {
+      "recent": "Recent topics",
+      "range": "{from} – {to}",
+      "backToRecent": "Back to recent",
+      "count": "{count}",
+      "empty": "No topics yet",
+      "emptyWeek": "No topics that week",
+      "loadFailed": "Could not load topics"
+    },
+    "notes": {
+      "title": "What your AI teammates noted about you",
+      "private": "Only you can see this",
+      "delete": "Delete this note",
+      "deleteFailed": "Could not delete",
+      "empty": "Nothing yet"
+    },
+    "inProject": {
+      "title": "In this project",
+      "weekly": "{count} contributions this week",
+      "waiting": "Waiting on you",
+      "waitingEmpty": "Nothing waiting",
+      "active": "Active topics",
+      "activeEmpty": "No active topics"
+    }
+  }
 }

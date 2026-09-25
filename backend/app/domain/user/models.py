@@ -8,7 +8,6 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
-    Sequence,
     String,
     Text,
     UniqueConstraint,
@@ -89,27 +88,6 @@ class UserProfile(Base):
         DateTime(timezone=True), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-
-class UserFollowingRelationship(Base):
-    """Mapping for user_following_relationship table."""
-
-    __tablename__ = "user_following_relationship"
-
-    id: Mapped[int] = mapped_column(
-        Integer,
-        Sequence("user_following_relationship_id_seq"),
-        primary_key=True,
-    )
-    followee_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    follower_id: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
     deleted_at: Mapped[datetime | None] = mapped_column(

@@ -8,9 +8,20 @@
 //
 // 宽度也归这里：`read` 是读和填表的那一栏（--page-w），`full` 给多列的工作面（看
 // 板）。页面不再各自写一个数字。
+import type { RouteLocationRaw } from 'vue-router'
+
 import { useDisplay } from 'vuetify'
 
-withDefaults(defineProps<{ title: string; width?: 'read' | 'full' }>(), { width: 'read' })
+withDefaults(
+  defineProps<{
+    title: string
+    width?: 'read' | 'full'
+    // 这一页是另一页里的一项（成员名册里的一个人）：页头写成「成员 / 名字」，前
+    // 一段点回去。
+    parent?: { label: string; to: RouteLocationRaw }
+  }>(),
+  { width: 'read', parent: undefined }
+)
 
 defineSlots<{
   default?: () => unknown
@@ -30,7 +41,13 @@ const ACTION_DEFAULTS = { VBtn: { variant: 'text', size: 'small' } } as const
     <!-- 手机上页名写在顶栏里（路由的 title），这一条只剩状态和操作；两样都没有就
          整条不画。 -->
     <header v-if="mdAndUp || $slots.meta || $slots.actions" class="project-page__head">
-      <h1 v-if="mdAndUp" class="project-page__title t-title">{{ title }}</h1>
+      <h1 v-if="mdAndUp" class="project-page__title t-title">
+        <template v-if="parent">
+          <router-link :to="parent.to" class="project-page__parent">{{ parent.label }}</router-link>
+          <span class="project-page__sep" aria-hidden="true">/</span>
+        </template>
+        {{ title }}
+      </h1>
       <div v-if="$slots.meta" class="project-page__meta"><slot name="meta" /></div>
       <!-- 页头上的按钮默认是小号的文字按钮；页头的主操作自己写
            color="primary" variant="flat"。 -->
@@ -68,6 +85,20 @@ const ACTION_DEFAULTS = { VBtn: { variant: 'text', size: 'small' } } as const
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.project-page__parent {
+  color: var(--muted);
+  font-weight: 400;
+  text-decoration: none;
+  transition: color var(--dur-quick) var(--ease-standard);
+}
+.project-page__parent:hover {
+  color: var(--ink);
+}
+.project-page__sep {
+  margin-inline: 8px;
+  color: var(--faint);
+  font-weight: 400;
 }
 .project-page__meta {
   display: flex;

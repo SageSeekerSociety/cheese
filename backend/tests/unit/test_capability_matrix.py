@@ -84,7 +84,7 @@ def test_every_copy_of_a_pin_is_held_to_the_one_the_adapter_declares() -> None:
     # 私聊执行器那一串：镜像里装的 claude 要过上面那道版本闸门，镜像的 tag 就是
     # 那个版本，而打 tag 的 CI、选镜像的配置默认值各写了一遍那个 tag。
     dockerfile = (BACKEND / "sandbox/Dockerfile.private").read_text()
-    assert f"@anthropic-ai/claude-code@{claude}" in dockerfile
+    assert f"ARG CLAUDE_CODE_VERSION={claude}\n" in dockerfile
     assert private.IMAGE == f"cheese-private-executor:{claude}"
     assert Settings.model_fields["private_chat_executor_image"].default == private.IMAGE
     workflow = (REPO / ".github/workflows/remote-execution.yml").read_text()

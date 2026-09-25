@@ -92,6 +92,25 @@ def sources():
     return result
 
 
+# The helpers a release really does bring up to date in a running session. The
+# plugin module is loaded again by `/reload-plugins`; the other two are read
+# only by processes that start after the release — a prompt hook, and the native
+# MCP transport the release reconnects.
+#
+# Every other helper stays as the launch left it, so a change to one is a
+# change to the launch (`launch_only`). `client.py` is replaced on disk here,
+# but `prepare` wrote the shell prefix, the launch environment, the argv and
+# the MCP config out of it once, the forwarded view's server and the other MCP
+# bridges keep the modules they started with, and nothing writes those again.
+# A helper added later is launch-only until it is shown to be one of these.
+RESIDENT = frozenset({"proxy.js", "context_service.py", "cheese.py"})
+
+
+def launch_only(sources):
+    """The helper sources a running session keeps as they were at launch."""
+    return {name: text for name, text in sources.items() if name not in RESIDENT}
+
+
 def script(function, *args):
     return (
         Path(__file__).read_text()
@@ -256,7 +275,10 @@ def link_forwarded_user_context(directory, config, forwarded, tree, helpers):
     imports = [
         forwarded / name for name in ("CLAUDE.md", "CLAUDE.local.md") if name in entries
     ]
-    wrapper = "".join(f"@{path}\n" for path in imports)
+    # The project is at the executor's own path, which can hold a space; an
+    # import ends at the first unescaped one, and Claude Code reads `\ ` as a
+    # space inside it.
+    wrapper = "".join("@" + str(path).replace(" ", "\\ ") + "\n" for path in imports)
     if instructions.is_symlink():
         instructions.unlink()
     elif instructions.exists() and instructions.read_text() != wrapper:

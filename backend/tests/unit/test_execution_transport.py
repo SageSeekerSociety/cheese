@@ -545,12 +545,23 @@ def test_send_user_file_reports_what_it_could_not_deliver_without_lying(
     assert process.publications == []
 
 
+def test_a_windows_workspace_is_seen_the_way_git_bash_spells_it():
+    """A Linux session host cannot have `C:\\...` as a path, so the session sees
+    a Windows executor's project where Git Bash, the shell Claude Code runs
+    commands in there, puts it."""
+    assert executor_transport.session_path("C:\\Users\\owner\\proj") == (
+        "/c/Users/owner/proj"
+    )
+    assert executor_transport.session_path("D:\\") == "/d"
+    assert executor_transport.session_path("/home/owner/proj") == "/home/owner/proj"
+
+
 def test_send_user_file_paths_keep_the_workspaces_address_and_invent_one_outside_it():
     """`POST /topics/{id}/shown` takes a workspace-relative pointer and refuses
     an absolute one; a file the agent left in `/tmp` still has to arrive, under
     the name this room already gives a paste with no name of its own.
     """
-    config = {"workspace": "/work", "central_workspace": "/center"}
+    config = {"workspace": "/work"}
     assert central.send_user_file_paths("docs/report.pdf", config) == (
         "/work/docs/report.pdf",
         "docs/report.pdf",
@@ -559,11 +570,10 @@ def test_send_user_file_paths_keep_the_workspaces_address_and_invent_one_outside
         "/work/shot.png",
         "shot.png",
     )
-    # The model is told the executor's paths; the plugin host sees the mount.
-    assert central.send_user_file_paths("/center/shot.png", config) == (
-        "/work/shot.png",
-        "shot.png",
-    )
+    # A Windows executor's workspace, as the session sees it (Git Bash's).
+    assert central.send_user_file_paths(
+        "/c/Users/owner/work/shot.png", {"workspace": "C:\\Users\\owner\\work"}
+    ) == ("/c/Users/owner/work/shot.png", "shot.png")
     machine, rel = central.send_user_file_paths("/tmp/scratch.bin", config)
     assert machine == "/tmp/scratch.bin"
     assert rel.startswith("uploads/") and rel.endswith("/scratch.bin")
@@ -662,7 +672,7 @@ def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(
 
     result = central.deliver_send_user_file(
         Client(),
-        {"workspace": "/work", "central_workspace": "/center"},
+        {"workspace": "/work"},
         {"id": "over"},
         {"files": [{"path": "/work/huge.bin", "name": "huge.bin"}]},
         invoke,
@@ -787,7 +797,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     command = "cat > 'hook receipt.txt'; printf '%s' 'quoted * ? [value]'"
     directory = tmp_path / "prepared with spaces"
     version_probe = tmp_path / "claude-version"
-    version_probe.write_text("#!/bin/sh\nprintf '2.1.277\\n'\n")
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.282\\n'\n")
     version_probe.chmod(0o700)
     launch = central.prepare(
         directory,
@@ -823,11 +833,14 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     assert (workspace / "hook receipt.txt").read_text() == '{"receipt":true}'
     assert not (remote_work / "hook receipt.txt").exists()
     # Sharing a prefix with an allowed hook cannot make arbitrary commands local.
-    changed = command + "; printf remote > appended.txt"
+    # The session's directory is the executor's path, which on this one host
+    # is the executor's own directory too; what ran where shows in the
+    # session's own variable, which never leaves this host.
+    changed = command + '; printf "${CHEESE_EXECUTION_CONFIG:-remote}" > appended.txt'
     subprocess.run(
         [prefix, changed],
         input="remote input",
-        cwd=workspace,
+        cwd=remote_work,
         env={**os.environ, **env},
         text=True,
         capture_output=True,
@@ -1123,6 +1136,85 @@ def test_deferred_tools_acquire_once_and_read_project_rules_before_writing(
         assert (local / "protected").read_text() == "session only"
         assert not (local / "output.txt").exists()
         assert seen.count("context") == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_a_tool_waits_while_its_machine_is_prepared_unless_it_is_cancelled(
+    executor, tmp_path, monkeypatch, cancelled
+):
+    """The platform answers "still preparing" after each bounded wait; the
+    tool asks again and runs once the machine is there. A tool call cancelled
+    during that wait never runs, however soon the machine comes up after."""
+    _, work, state = executor
+    seen = []
+    generation = str(uuid.uuid4())
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/lease":
+                seen.append("lease")
+                result = {
+                    "data": {
+                        "unavailable": "Cloud 机器正在准备；对话和平台工具仍可用。",
+                        "preparing": True,
+                    }
+                    if seen.count("lease") < 3
+                    else {
+                        "target": {
+                            "kind": "device",
+                            "workspace": str(work),
+                            "url": base + "/execute",
+                            "generation": generation,
+                        },
+                        "token": "execution-only",
+                    }
+                }
+            else:
+                seen.append(body["method"])
+                result = runtime.request(state, body["method"], body["params"])
+            encoded = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    base = f"http://127.0.0.1:{server.server_port}"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv("CHEESE_API", base)
+    monkeypatch.setenv("CHEESE_TOKEN", "session-token")
+    client = executor_transport.RemoteClient(
+        {
+            "kind": "deferred",
+            "workspace": "/unavailable-project",
+            "lease_path": "/lease",
+        }
+    )
+    request = {
+        "id": "write-while-preparing",
+        "tool": "Bash",
+        "args": {"command": "printf remote > /unavailable-project/output.txt"},
+    }
+    try:
+        if cancelled:
+            with pytest.raises(RuntimeError, match="cancelled"):
+                client.call("invoke", request, abandoned=lambda: True)
+            assert seen == ["lease"]
+            assert not (work / "output.txt").exists()
+        else:
+            result = client.call("invoke", request, abandoned=lambda: False)
+            assert "error" not in result, result
+            assert seen[:3] == ["lease", "lease", "lease"]
+            assert (work / "output.txt").read_text() == "remote"
     finally:
         server.shutdown()
         server.server_close()

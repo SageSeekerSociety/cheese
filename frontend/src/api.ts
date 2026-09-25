@@ -44,6 +44,7 @@ import type {
   OAuthConnectionInfo,
   PrChecks,
   PreviewInfo,
+  ProfileTopic,
   Project,
   ProjectAgent,
   ProjectCredits,
@@ -639,9 +640,29 @@ export function getMemberSummary(projectId: string, handle: string): Promise<Mem
 }
 
 // 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2). Cross-project résumé:
-// header + 芝士 understanding + per-project contributions.
+// who they are, a year of activity, their projects, and — on your own page —
+// what 芝士 has noted about you.
 export function getUserProfile(handle: string): Promise<UserProfile> {
   return request<UserProfile>(`/users/${encodeURIComponent(handle)}/profile`)
+}
+
+// The topics a person wrote in, latest participation first. `from`/`to` are
+// UTC dates (`YYYY-MM-DD`), both included.
+export function getUserTopics(
+  handle: string,
+  range: { from?: string; to?: string; limit?: number } = {}
+): Promise<{ topics: ProfileTopic[] }> {
+  const query = new URLSearchParams()
+  if (range.from) query.set('from', range.from)
+  if (range.to) query.set('to', range.to)
+  if (range.limit) query.set('limit', String(range.limit))
+  const qs = query.toString()
+  return request<{ topics: ProfileTopic[] }>(`/users/${encodeURIComponent(handle)}/topics${qs ? `?${qs}` : ''}`)
+}
+
+// Delete one thing an agent noted about the signed-in person.
+export function deleteUnderstanding(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/users/me/understanding/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 // `last_activity_at` = 最后活动时间 (the topic's newest block). `updated_at` is

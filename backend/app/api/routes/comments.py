@@ -10,7 +10,6 @@ from app.domain.comments.repositories import CommentRepository
 from app.domain.comments.services import CommentService
 from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.repositories import (
-    UserFollowingRepository,
     UserProfileRepository,
     UserRepository,
     UserStatisticsRepository,
@@ -30,12 +29,10 @@ async def get_comment_service(db=Depends(get_db)) -> CommentService:
 async def get_user_auth_service(db=Depends(get_db)) -> UserAuthService:
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
-    follow_repo = UserFollowingRepository(session=db)
     stats_repo = UserStatisticsRepository(session=db)
     return UserAuthService(
         user_repo=user_repo,
         profile_repo=profile_repo,
-        follow_repo=follow_repo,
         stats_repo=stats_repo,
     )
 

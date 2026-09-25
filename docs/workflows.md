@@ -111,7 +111,7 @@ uv run --with playwright python scripts/shots.py
 | 文档 | **飞书文档** | 居中文档页、大标题、块悬停手柄 |
 | 工作台 | **Cursor/Replit** | 话题树｜对话｜文档 + 右侧工具抽屉 |
 | 总览/看板 | **Linear** | 冷静中性、状态用圆点、等宽数字 |
-| 个人主页 | **LinkedIn/GitHub profile** | 封面+头像+技能+参与项目=简历 |
+| 个人主页 | **LinkedIn/GitHub profile** | 头像+活动图+参与项目+参与的话题=简历 |
 | 私聊 | **飞书私聊** | 左栏会话入口 → 主区域普通 1:1 聊天 |
 
 ### Token（`frontend/src/style.css :root` + `plugins/vuetify.ts` 镜像）

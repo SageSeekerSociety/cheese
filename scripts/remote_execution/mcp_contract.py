@@ -5,8 +5,10 @@ The executor runs the room's file operations through the assigned machine's
 the same build's own tools do. Its shell commands it runs as processes of its
 own, each starting from the snapshot of the machine's shell that a native
 session there would source; the executor has the build write that snapshot by
-calling serve's Bash tool once (`runtime.Executor.shell_snapshot`). Where the
-snapshot lands and what it holds are in no contract Anthropic publishes.
+calling serve's Bash tool once (`runtime.Executor.shell_snapshot`), holding it
+to the shell the build would choose on that machine by itself
+(`runtime.claude_shell`). Where the snapshot lands, what it holds and how the
+build chooses its shell are in no contract Anthropic publishes.
 
 So this script is the contract. It runs against a given build and says which
 properties still hold. Point it at the pinned build to gate a merge, and at the
@@ -24,14 +26,24 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(
+    0,
+    str(
+        Path(__file__).resolve().parents[2]
+        / "backend/app/domain/agent/harness/claude_code/remote_execution"
+    ),
+)
+import runtime  # noqa: E402
 
 
 class Serve:
     """One `claude mcp serve` process, driven over stdio."""
 
-    def __init__(self, binary, workspace, temp_root, home):
+    def __init__(self, binary, workspace, temp_root, home, shell_env):
         self.workspace = Path(workspace).resolve()
         self.temp_root = Path(temp_root).resolve()
         self.config = config = Path(tempfile.mkdtemp(prefix="mcp-contract-config-"))
@@ -55,10 +67,8 @@ class Serve:
             "CLAUDE_CODE_TMPDIR": str(self.temp_root),
             "ANTHROPIC_API_KEY": "execution-only-no-model",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-            # The environment the executor gives serve: bash, and a HOME whose
-            # shell setup the snapshot has to carry.
+            # A HOME whose shell setup the snapshot has to carry.
             "HOME": str(home),
-            "SHELL": shutil.which("bash") or "/bin/bash",
             "PATH": "/opt/mcp-contract-only" + os.pathsep + os.environ.get("PATH", ""),
         }
         for name in (
@@ -66,8 +76,14 @@ class Serve:
             "ANTHROPIC_AUTH_TOKEN",
             "CLAUDE_CODE_SHELL_PREFIX",
             "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS",
+            "CLAUDE_CODE_SHELL",
+            "SHELL",
         ):
             environment.pop(name, None)
+        # The shell settings under test: `SHELL`, and `CLAUDE_CODE_SHELL`,
+        # which the executor sets to its own choice.
+        environment.update(shell_env)
+        self.environment = environment
         self.process = subprocess.Popen(
             [binary, "--setting-sources", "", "mcp", "serve"],
             cwd=self.workspace,
@@ -145,7 +161,16 @@ class Serve:
             self.process.wait()
 
 
-def checks(serve):
+def snapshots(serve):
+    return sorted((serve.config / "shell-snapshots").glob("snapshot-*.sh"))
+
+
+def kind(shell):
+    """The name the build gives a shell in its snapshot's file name."""
+    return "zsh" if "zsh" in shell else "bash" if "bash" in shell else "sh"
+
+
+def checks(serve, shell):
     """Each check yields (name, holds, what was observed)."""
     tools = {tool["name"] for tool in serve.call("tools/list", {})["result"]["tools"]}
     needed = {"Bash", "Read", "Edit", "Write", "NotebookEdit"}
@@ -165,22 +190,29 @@ def checks(serve):
     )
 
     answer = serve.tool("Bash", command="true")
-    snapshots = sorted((serve.config / "shell-snapshots").glob("snapshot-bash-*.sh"))
+    written = [
+        path
+        for path in snapshots(serve)
+        if path.name.startswith(f"snapshot-{kind(shell)}-")
+    ]
     yield (
-        "one Bash call writes a bash snapshot into CLAUDE_CONFIG_DIR/shell-snapshots",
-        len(snapshots) == 1,
-        f"{[path.name for path in snapshots]} after {json.dumps(answer)[:80]}",
+        f"with CLAUDE_CODE_SHELL naming {kind(shell)}, one Bash call writes a "
+        f"snapshot-{kind(shell)}-* into CLAUDE_CONFIG_DIR/shell-snapshots",
+        len(written) == 1 and len(snapshots(serve)) == 1,
+        f"{[path.name for path in snapshots(serve)]} after {json.dumps(answer)[:80]}",
     )
-    if not snapshots:
+    if not written:
         return
     probe = subprocess.run(
         [
-            shutil.which("bash") or "/bin/bash",
+            shell,
             "-c",
-            # One line each: an alias is expanded only on a line read after
-            # the one that defined it, as in a native session's next command.
-            f"source {shlex.quote(str(snapshots[0]))}\ncontract_alias\n"
-            "contract_function\nprintf '%s' \"$PATH\"",
+            # As the build runs a command: the snapshot, then the command
+            # through `eval`, which parses it only once the snapshot's
+            # aliases exist (zsh parses a whole `-c` string before running
+            # any of it).
+            f"source {shlex.quote(str(written[0]))} && eval "
+            + shlex.quote("contract_alias\ncontract_function\nprintf '%s' \"$PATH\""),
         ],
         env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent"},
         capture_output=True,
@@ -188,7 +220,8 @@ def checks(serve):
     )
     lines = probe.stdout.splitlines()
     yield (
-        "sourcing it reproduces the HOME's alias, function and serve's PATH",
+        f"sourcing it in {kind(shell)} reproduces the HOME's alias, function "
+        "and serve's PATH",
         lines[:2] == ["CONTRACT_ALIAS", "CONTRACT_FUNCTION"]
         and len(lines) == 3
         and lines[2].split(os.pathsep)[0] == "/opt/mcp-contract-only",
@@ -207,21 +240,62 @@ def main():
     workspace.mkdir()
     temp_root.mkdir()
     home.mkdir()
-    (home / ".bashrc").write_text(
-        "alias contract_alias='echo CONTRACT_ALIAS'\n"
-        "contract_function() { echo CONTRACT_FUNCTION; }\n"
-    )
+    for startup in (".bashrc", ".zshrc"):
+        (home / startup).write_text(
+            "alias contract_alias='echo CONTRACT_ALIAS'\n"
+            "contract_function() { echo CONTRACT_FUNCTION; }\n"
+        )
     version = subprocess.run(
         [arguments.claude, "--version"], capture_output=True, text=True
     ).stdout.strip()
-    serve = Serve(arguments.claude, workspace, temp_root, home)
     results = []
-    try:
-        for name, holds, observed in checks(serve):
-            results.append({"check": name, "holds": holds, "observed": observed})
-            print(f"{'PASS' if holds else 'FAIL'}  {name}\n      {observed}")
-    finally:
-        serve.close()
+
+    def report(name, holds, observed):
+        results.append({"check": name, "holds": holds, "observed": observed})
+        print(f"{'PASS' if holds else 'FAIL'}  {name}\n      {observed}")
+
+    shells = [path for path in map(shutil.which, ("bash", "zsh")) if path]
+    for shell in shells:
+        serve = Serve(
+            arguments.claude,
+            workspace,
+            temp_root,
+            home,
+            {"SHELL": shell, "CLAUDE_CODE_SHELL": shell},
+        )
+        try:
+            for check in checks(serve, shell):
+                report(*check)
+        finally:
+            serve.close()
+    # The shell the build picks by itself, from the machine's `SHELL` alone,
+    # is the one the executor picks for it.
+    for label, value in (
+        ("names bash", shutil.which("bash")),
+        ("names zsh", shutil.which("zsh")),
+        ("names another shell", "/usr/bin/fish"),
+        ("is unset", None),
+    ):
+        if label == "names zsh" and not value:
+            continue
+        serve = Serve(
+            arguments.claude,
+            workspace,
+            temp_root,
+            home,
+            {"SHELL": value} if value else {},
+        )
+        try:
+            serve.tool("Bash", command="true")
+            chosen = [path.name.split("-")[1] for path in snapshots(serve)]
+            expected = kind(runtime.claude_shell(serve.environment))
+            report(
+                f"when SHELL {label}, the build's shell is the executor's choice",
+                chosen == [expected],
+                f"build wrote {chosen}, executor picks {expected}",
+            )
+        finally:
+            serve.close()
     receipt = {
         "claude": str(arguments.claude),
         "version": version,

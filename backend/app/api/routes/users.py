@@ -58,6 +58,7 @@ from app.domain.questions.repositories import (
     QuestionRepository,
     QuestionTopicRepository,
 )
+from app.domain.space.services import SpaceLabels
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
@@ -65,13 +66,11 @@ from app.domain.team.repositories import (
 )
 from app.domain.team.services import TeamService
 from app.domain.user.models import (
-    UserFollowingRelationship,
     UserSession,
     UserTrustedDevice,
 )
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
-    UserFollowingRepository,
     UserProfileRepository,
     UserRealNameRepository,
     UserRepository,
@@ -778,12 +777,10 @@ async def get_user_auth_service(
 ) -> UserAuthService:
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
-    follow_repo = UserFollowingRepository(session=db)
     stats_repo = UserStatisticsRepository(session=db)
     return UserAuthService(
         user_repo=user_repo,
         profile_repo=profile_repo,
-        follow_repo=follow_repo,
         stats_repo=stats_repo,
     )
 
@@ -816,6 +813,7 @@ async def get_user_realname_service(
         user_repo=user_repo,
         profile_repo=profile_repo,
         realname_repo=realname_repo,
+        space_labels=SpaceLabels(session=db),
     )
 
 
@@ -830,48 +828,6 @@ async def get_oauth_service(
     db=Depends(get_db),
 ) -> OAuthService:
     return OAuthService(repo=OAuthConnectionRepository(session=db))
-
-
-@router.post(
-    "/{userId}/followers",
-    summary="Follow user",
-    status_code=201,
-)
-async def follow_user(
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
-) -> dict:
-    """Follow another user.
-
-    NOTE: 当前实现不引入完整的权限模型，只做基础合法性检查：
-    - 不能关注自己；
-    - 要求被关注用户存在；
-    - 重复关注直接视为错误返回 400。
-    """
-    if auth_user.user_id == user_id:
-        raise UnprocessableEntityError("Cannot follow yourself")
-
-    user_repo = UserRepository(session=db)
-    follow_repo = UserFollowingRepository(session=db)
-
-    target = await user_repo.get_by_id(user_id)
-    if target is None:
-        raise NotFoundError("User not found")
-
-    if await follow_repo.is_following(auth_user.user_id, user_id):
-        raise UnprocessableEntityError("User already followed")
-
-    await follow_repo.add_follow(auth_user.user_id, user_id)
-    follow_count = await follow_repo.count_following(auth_user.user_id)
-
-    return {
-        "code": 201,
-        "message": "Follow user successfully.",
-        "data": {
-            "follow_count": follow_count,
-        },
-    }
 
 
 @router.delete(
@@ -1039,224 +995,6 @@ async def list_my_team_invitations(
         "message": "OK",
         "data": {
             "invitations": items,
-            "page": page,
-        },
-    }
-
-
-@router.delete(
-    "/{userId}/followers",
-    summary="Unfollow user",
-)
-async def unfollow_user(
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
-) -> dict:
-    """Unfollow a previously followed user."""
-    if auth_user.user_id == user_id:
-        raise UnprocessableEntityError("Cannot unfollow yourself")
-
-    user_repo = UserRepository(session=db)
-    follow_repo = UserFollowingRepository(session=db)
-
-    target = await user_repo.get_by_id(user_id)
-    if target is None:
-        raise NotFoundError("User not found")
-
-    removed = await follow_repo.soft_delete_follow(auth_user.user_id, user_id)
-    if not removed:
-        raise UnprocessableEntityError("User not followed yet")
-
-    follow_count = await follow_repo.count_following(auth_user.user_id)
-    return {
-        "code": 200,
-        "message": "Unfollow user successfully.",
-        "data": {
-            "follow_count": follow_count,
-        },
-    }
-
-
-@router.get(
-    "/{userId}/followers",
-    summary="List followers of a user",
-)
-async def get_followers(
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
-    page_start: int | None = Query(default=None, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
-) -> dict:
-    """Return followers of the given user (cursor-based pagination)."""
-    if page_size <= 0:
-        page_size = 20
-
-    user_repo = UserRepository(session=db)
-    profile_repo = UserProfileRepository(session=db)
-    follow_repo = UserFollowingRepository(session=db)
-    stats_repo = UserStatisticsRepository(session=db)
-    auth_service = UserAuthService(
-        user_repo=user_repo,
-        profile_repo=profile_repo,
-        follow_repo=follow_repo,
-        stats_repo=stats_repo,
-    )
-
-    target = await user_repo.get_by_id(user_id)
-    if target is None:
-        raise NotFoundError("User not found")
-
-    all_follower_ids_stmt = (
-        select(UserFollowingRelationship.follower_id)
-        .where(
-            UserFollowingRelationship.followee_id == user_id,
-            UserFollowingRelationship.deleted_at.is_(None),
-        )
-        .order_by(UserFollowingRelationship.follower_id.asc())
-    )
-    all_result = await db.execute(all_follower_ids_stmt)
-    all_follower_ids = [r[0] for r in all_result.all()]
-
-    if page_start is not None:
-        try:
-            start_idx = all_follower_ids.index(page_start)
-        except ValueError:
-            start_idx = 0
-    else:
-        start_idx = 0
-
-    end_idx = start_idx + page_size
-    page_follower_ids = all_follower_ids[start_idx:end_idx]
-
-    followers: list[dict] = []
-    for fid in page_follower_ids:
-        user = await user_repo.get_by_id(fid)
-        profile = await profile_repo.get_profile_by_user_id(fid)
-        if user is None or profile is None:
-            continue
-        followers.append(
-            await auth_service.build_user_dto(
-                user=user,
-                profile=profile,
-                viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
-            )
-        )
-
-    returned = len(followers)
-    has_prev = start_idx > 0
-    prev_start = all_follower_ids[0] if has_prev and len(all_follower_ids) > 0 else 0
-    has_more = end_idx < len(all_follower_ids)
-    next_start = all_follower_ids[end_idx] if has_more else 0
-
-    first_id = page_follower_ids[0] if page_follower_ids else 0
-    page = {
-        "pageStart": first_id,
-        "pageSize": returned,
-        "hasPrev": has_prev,
-        "prevStart": prev_start,
-        "hasMore": has_more,
-        "nextStart": next_start,
-    }
-
-    return {
-        "code": 200,
-        "message": "Query followers successfully.",
-        "data": {
-            "users": followers,
-            "page": page,
-        },
-    }
-
-
-@router.get(
-    "/{userId}/follow/users",
-    summary="List followees of a user",
-)
-async def get_followees(
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
-    page_start: int | None = Query(default=None, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
-) -> dict:
-    """Return users that the given user is following (cursor-based pagination)."""
-    if page_size <= 0:
-        page_size = 20
-
-    user_repo = UserRepository(session=db)
-    profile_repo = UserProfileRepository(session=db)
-    follow_repo = UserFollowingRepository(session=db)
-    stats_repo = UserStatisticsRepository(session=db)
-    auth_service = UserAuthService(
-        user_repo=user_repo,
-        profile_repo=profile_repo,
-        follow_repo=follow_repo,
-        stats_repo=stats_repo,
-    )
-
-    target = await user_repo.get_by_id(user_id)
-    if target is None:
-        raise NotFoundError("User not found")
-
-    all_followee_ids_stmt = (
-        select(UserFollowingRelationship.followee_id)
-        .where(
-            UserFollowingRelationship.follower_id == user_id,
-            UserFollowingRelationship.deleted_at.is_(None),
-        )
-        .order_by(UserFollowingRelationship.followee_id.asc())
-    )
-    all_result = await db.execute(all_followee_ids_stmt)
-    all_followee_ids = [r[0] for r in all_result.all()]
-
-    if page_start is not None:
-        try:
-            start_idx = all_followee_ids.index(page_start)
-        except ValueError:
-            start_idx = 0
-    else:
-        start_idx = 0
-
-    end_idx = start_idx + page_size
-    page_followee_ids = all_followee_ids[start_idx:end_idx]
-
-    followees: list[dict] = []
-    for fid in page_followee_ids:
-        user = await user_repo.get_by_id(fid)
-        profile = await profile_repo.get_profile_by_user_id(fid)
-        if user is None or profile is None:
-            continue
-        followees.append(
-            await auth_service.build_user_dto(
-                user=user,
-                profile=profile,
-                viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
-            )
-        )
-
-    returned = len(followees)
-    has_prev = start_idx > 0
-    prev_start = all_followee_ids[0] if has_prev and len(all_followee_ids) > 0 else 0
-    has_more = end_idx < len(all_followee_ids)
-    next_start = all_followee_ids[end_idx] if has_more else 0
-
-    first_id = page_followee_ids[0] if page_followee_ids else 0
-    page = {
-        "pageStart": first_id,
-        "pageSize": returned,
-        "hasPrev": has_prev,
-        "prevStart": prev_start,
-        "hasMore": has_more,
-        "nextStart": next_start,
-    }
-
-    return {
-        "code": 200,
-        "message": "Query followees successfully.",
-        "data": {
-            "users": followees,
             "page": page,
         },
     }
@@ -2884,6 +2622,28 @@ async def patch_user_identity(
     return {"code": 200, "message": "Success", "data": {"identity": stored}}
 
 
+@router.delete(
+    "/{userId}/identity",
+    summary="Delete User Real Name Identity Info",
+)
+async def delete_user_identity(
+    user_id: Annotated[int, Path(ge=1, alias="userId")],
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    realname_service: UserRealNameService = Depends(get_user_realname_service),
+) -> dict:
+    """The owner removes their record. Who read it before stays on record."""
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can delete identity.")
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.REALNAME_DELETE,
+    )
+    await realname_service.delete_user_identity(user_id)
+    return {"code": 200, "message": "Success"}
+
+
 @router.get(
     "/{userId}/identity/access-logs",
     summary="Get User Real Name Identity Access Logs",
@@ -3351,12 +3111,10 @@ async def list_users(
     """List users with optional search query."""
     profile_repo = UserProfileRepository(session=db)
     user_repo = UserRepository(session=db)
-    follow_repo = UserFollowingRepository(session=db)
     stats_repo = UserStatisticsRepository(session=db)
     auth_service = UserAuthService(
         user_repo=user_repo,
         profile_repo=profile_repo,
-        follow_repo=follow_repo,
         stats_repo=stats_repo,
     )
 

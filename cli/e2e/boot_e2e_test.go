@@ -55,7 +55,7 @@ func claudeBinary(t *testing.T) string {
 }
 
 // Must track device_launch.CLAUDE_PINNED_VERSION.
-const pinnedVersion = "2.1.277"
+const pinnedVersion = "2.1.282"
 
 type bootFixture struct {
 	markFile string

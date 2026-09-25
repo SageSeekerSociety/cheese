@@ -73,7 +73,6 @@ class TestUserAuthService:
     @pytest.fixture
     def mock_repos(self):
         from app.domain.user.repositories import (
-            UserFollowingRepository,
             UserProfileRepository,
             UserRepository,
             UserStatisticsRepository,
@@ -82,7 +81,6 @@ class TestUserAuthService:
         return {
             "user_repo": AsyncMock(spec=UserRepository),
             "profile_repo": AsyncMock(spec=UserProfileRepository),
-            "follow_repo": AsyncMock(spec=UserFollowingRepository),
             "stats_repo": AsyncMock(spec=UserStatisticsRepository),
         }
 
