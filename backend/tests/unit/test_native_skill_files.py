@@ -14,7 +14,7 @@ import pytest
 from app.domain.agent.skills import (
     _NATIVE_SKILL_SRC,
     _SHIPPED_NATIVE_SKILLS,
-    _SKILL_FILE_SUFFIXES,
+    SKILL_FILE_SUFFIXES,
     SKILL_HEREDOC_MARKER,
     native_skill_files,
 )
@@ -58,11 +58,11 @@ def test_nothing_in_the_directory_is_left_behind_without_saying_so():
     shipped = _shipped()
     for path in _files_in_tree():
         relative = path.relative_to(_NATIVE_SKILL_SRC).as_posix()
-        if path.suffix in _SKILL_FILE_SUFFIXES:
+        if path.suffix in SKILL_FILE_SUFFIXES:
             assert f"skills/{relative}" in shipped, f"{relative} 没有装船"
         else:
             pytest.fail(
-                f"{relative} 的后缀 {path.suffix!r} 不在 _SKILL_FILE_SUFFIXES 里，"
+                f"{relative} 的后缀 {path.suffix!r} 不在 SKILL_FILE_SUFFIXES 里，"
                 "它现在到不了用户的机器上"
             )
 

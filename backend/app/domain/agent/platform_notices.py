@@ -144,6 +144,8 @@ EVENT_DEPENDENCY_REJECTED: Final = "dependency_rejected"
 EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 #: 到点了 —— 这一轮是这条线程自己当初请平台在这个时刻递给它的（结论 17）。
 EVENT_TIMED_DELIVERY: Final = "timed_delivery"
+#: 芝士把一次做法整理成了项目工作方法（skill），等人确认后才保存、才下发。
+EVENT_SKILL_PROPOSED: Final = "skill_proposed"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -196,6 +198,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_DEPENDENCY_REJECTED,
         EVENT_POLICY_PROPOSAL,
         EVENT_TIMED_DELIVERY,
+        EVENT_SKILL_PROPOSED,
     }
 )
 

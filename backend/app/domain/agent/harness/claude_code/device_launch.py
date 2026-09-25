@@ -28,7 +28,8 @@ from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
-from app.domain.agent.skills import SKILL_HEREDOC_MARKER, native_skill_files
+from app.domain.agent.skills import SKILL_HEREDOC_MARKER
+from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # --- the version this session is pinned to ----------------------------------
 # The runner drives Claude Code over its stream-json pipes, a protocol no
@@ -135,6 +136,7 @@ def launch_holes(
     system_prompt: str = "",
     ca_pem: str = "",
     resume_session_id: str | None = None,
+    project_id: str | None = None,
 ) -> MachineLaunch:
     """Claude Code's half of a device launch: the four holes, and its own env.
 
@@ -170,11 +172,30 @@ def launch_holes(
 export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
+    shipped = project_skill_names(project_id)
+    # A project skill deleted since the last launch leaves this machine too.
+    listed = '"$CLAUDE_CONFIG_DIR/skills/.cheese-project-skills"'
+    prune = (
+        f"keep={shlex.quote(' '.join(shipped))}\n"
+        f"if [ -f {listed} ]; then\n"
+        "  while IFS= read -r stale; do\n"
+        '    case "$stale" in ""|*/*|.|..|documents|cheese|cheese-docs|chat-detail)'
+        " continue ;; esac\n"
+        '    case " $keep " in *" $stale "*) ;; '
+        '*) rm -rf "$CLAUDE_CONFIG_DIR/skills/$stale" ;; esac\n'
+        f"  done < {listed}\n"
+        "fi\n"
+        'mkdir -p "$CLAUDE_CONFIG_DIR/skills"\n'
+        f"printf '%s\\n' {shlex.join(shipped)} > {listed}"
+    )
     skill_setup = "\n".join(
-        f'mkdir -p "$CLAUDE_CONFIG_DIR/{Path(name).parent}"\n'
-        f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'{SKILL_HEREDOC_MARKER}'\n"
-        f"{content}\n{SKILL_HEREDOC_MARKER}"
-        for name, content in native_skill_files().items()
+        [prune]
+        + [
+            f'mkdir -p "$CLAUDE_CONFIG_DIR/{Path(name).parent}"\n'
+            f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'{SKILL_HEREDOC_MARKER}'\n"
+            f"{content}\n{SKILL_HEREDOC_MARKER}"
+            for name, content in session_skill_files(project_id).items()
+        ]
     )
     settings_json = json.dumps(session_settings(), ensure_ascii=False)
     claude_args = " " + shlex.join(LAUNCH_ARGS)
@@ -427,6 +448,7 @@ def on_machine(
         system_prompt=system_prompt,
         ca_pem=place.ca_pem,
         resume_session_id=resume_session_id,
+        project_id=place.project_id,
     )
 
 
