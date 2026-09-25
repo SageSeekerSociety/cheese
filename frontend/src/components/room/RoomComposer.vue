@@ -17,6 +17,7 @@ import { useDisplay } from 'vuetify'
 import { listProjectLibrary } from '../../api'
 import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
 import { IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
+import { avatarColor, avatarInitial } from '../../utils/avatar'
 import ExternalTag from '../common/ExternalTag.vue'
 
 import AttachmentChip from './AttachmentChip.vue'
@@ -114,6 +115,8 @@ interface MentionItem {
   external?: boolean
   // 二级菜单里这一项属于哪一组（同一组的标题只画一次）。
   group?: string
+  // 人的 handle：头像的底色按它算，和时间线上这个人的头像同一个颜色。
+  handle?: string
 }
 // 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
 // at the top. expandMentions turns them into <@all>/<@here>.
@@ -192,6 +195,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
       sub: `@${m.handle}`,
       agent: m.agent,
       external: !!m.external,
+      handle: m.handle,
     })),
     ...props.topicList
       .filter((t) => t.kind !== 'root')
@@ -282,6 +286,13 @@ function mentionsAgent(expanded: string): boolean {
 const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
 // 这个房间的芝士是谁，现在知道了吗。
 const summonReady = computed(() => props.agentSeat !== null)
+// 那颗按钮上的字。窄屏收掉名字，只留「交给」；读屏读的一直是全名。
+const summonText = computed(() => ({
+  label: t('work.room.composer.summon', { name: props.agentName }),
+  short: t('work.room.composer.summonShort'),
+  on: t('work.room.composer.summonOn', { name: props.agentName }),
+  off: t('work.room.composer.summonOff', { name: props.agentName }),
+}))
 
 // 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
 // handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
@@ -411,11 +422,14 @@ defineExpose({
           <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
             <v-icon size="13">mdi-bullhorn-outline</v-icon>
           </span>
+          <span v-else-if="mm.kind === 'member' && mm.agent" class="mention-avatar mention-avatar--agent">{{
+            avatarInitial(mm.label)
+          }}</span>
           <span
             v-else-if="mm.kind === 'member'"
             class="mention-avatar"
-            :class="{ 'mention-avatar--agent': mm.agent }"
-            >{{ mm.label.slice(0, 1).toUpperCase() }}</span
+            :style="{ backgroundColor: avatarColor(mm.handle) }"
+            >{{ avatarInitial(mm.label) }}</span
           >
           <span v-else-if="mm.kind === 'category'" class="mention-avatar mention-avatar--file">
             <v-icon size="13">mdi-folder-outline</v-icon>
@@ -533,11 +547,13 @@ defineExpose({
           :class="{ 'summon-btn--on': summonOn }"
           :disabled="!summonReady"
           :aria-pressed="summonOn"
-          :title="summonOn ? `已 @${agentName}，点击取消` : `发送并交给${agentName}（⌘/Ctrl+Enter）`"
+          :aria-label="summonText.label"
+          :title="summonOn ? summonText.on : summonText.off"
           @click="toggleSummon"
         >
           <v-icon size="14">mdi-at</v-icon>
-          <span class="summon-btn-label">交给{{ agentName }}</span>
+          <span class="summon-btn-label" aria-hidden="true">{{ summonText.label }}</span>
+          <span class="summon-btn-short" aria-hidden="true">{{ summonText.short }}</span>
         </button>
         <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
                按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
@@ -635,9 +651,8 @@ defineExpose({
   color: var(--muted);
   cursor: pointer;
   transition:
-    color 0.12s ease,
-    border-color 0.12s ease,
-    background-color 0.12s ease;
+    color var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
 }
 .summon-btn:hover:not(:disabled) {
   background: var(--fill);
@@ -648,24 +663,28 @@ defineExpose({
   opacity: 0.5;
 }
 /* 开着的时候要一眼认得出：这条消息会真的开出一轮，和「只是说了句话」是两回事。
-   描边那一档太轻了——它和没开的状态只差一条 1px 的线，而这一行右边还站着一颗实心
-   的发送按钮，线根本抢不到注意力。所以开态是填充的：比 hover 深一档的底、墨色
-   加粗的字。不用琥珀——琥珀是旁边那颗发送按钮的，两个琥珀的东西并排，人就分不
-   出该点哪个。 */
+   一条 1px 的描边抢不过旁边那颗实心的发送按钮，所以开态是填充的：比 hover 深一档
+   的底、墨色的字。只变底色，不加粗——字一加粗按钮就变宽，开关一下整行跟着挪。
+   不用琥珀：琥珀是旁边那颗发送按钮的，两个琥珀的东西并排，人就分不出该点哪个。 */
 .summon-btn--on {
-  border-color: transparent;
   background: var(--line-2);
   color: var(--ink);
-  font-weight: 600;
 }
 .summon-btn--on:hover:not(:disabled) {
   background: var(--line-2);
   color: var(--ink);
 }
-/* 窄屏上只留那个 @ 图标：这一行右边还站着算力和发送，三个都带字就换行了。 */
+/* 窄屏上名字收掉，留「交给」两个字：只剩一个 @ 图标的话，它读起来是「插入一个
+   @」，不是「这条交给它处理」。两个字加图标放得进这一行，不会换行。 */
+.summon-btn-short {
+  display: none;
+}
 @media (max-width: 480px) {
   .summon-btn-label {
     display: none;
+  }
+  .summon-btn-short {
+    display: inline;
   }
 }
 
@@ -715,13 +734,12 @@ defineExpose({
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  font-weight: 700;
-  /* Theme-invariant pair (same call as the default avatar in LeftAppRail): the
-     slate disc is one value in both themes, so its ink must be too. */
+  font-weight: 600;
+  /* 底色是 avatarColor() 按 handle 算出来的定值，和时间线上这个人的头像一个颜色，
+     两套主题下都不变，所以上面的字也得是定值。 */
   color: #fff;
-  background: #8a94a3;
   flex: none;
 }
 /* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：反色的圆角方块。它原来

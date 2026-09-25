@@ -16,6 +16,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { t } from '@/i18n'
+
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -274,10 +276,7 @@ describe('对话栏自己的输入栏', () => {
     await flush()
 
     const cards = Array.from(container.querySelectorAll('.chip-list .chip'))
-    expect(cards.map((c) => c.querySelector('.chip__label')?.textContent)).toEqual([
-      '截图.png',
-      'Writing替换词.docx',
-    ])
+    expect(cards.map((c) => c.querySelector('.chip__label')?.textContent)).toEqual(['截图.png', 'Writing替换词.docx'])
     // 同一个块、同一个方格。
     expect(cards.every((c) => c.querySelector('.att-face'))).toBe(true)
     // 图片是 <img>；.docx 走的是画布，因为它也有第一页可画——平台先把它转成 PDF。
@@ -519,7 +518,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     await fireEvent.update(box, '看看这个')
-    const btn = getByRole('button', { name: /交给芝士/ })
+    const btn = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) })
     expect(btn.getAttribute('aria-pressed')).toBe('false')
 
     await fireEvent.click(btn)
@@ -536,7 +535,7 @@ describe('对话栏自己的输入栏', () => {
     await flush()
 
     const box = composerBox(container)!
-    const btn = getByRole('button', { name: /交给芝士/ })
+    const btn = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) })
     expect(btn.getAttribute('aria-pressed')).toBe('false')
     await fireEvent.update(box, '@芝士 看看这个')
     expect(btn.getAttribute('aria-pressed'), '正文里 @ 了它，按钮却没亮——两边说的不是同一件事').toBe('true')
@@ -564,7 +563,7 @@ describe('对话栏自己的输入栏', () => {
     const { container, getByRole } = mountPanel({}, 'topic-late-roster')
     await flush()
 
-    const before = getByRole('button', { name: /交给/ }) as HTMLButtonElement
+    const before = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) }) as HTMLButtonElement
     expect(before.disabled, '房间名册还没到，按钮却已经能点了——这时候它认的是项目名册上那行共用的芝士').toBe(true)
 
     release()
@@ -572,7 +571,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     await fireEvent.update(box, '看看这个')
-    await fireEvent.click(getByRole('button', { name: /交给芝士/ }))
+    await fireEvent.click(getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) }))
     expect(box.value).toBe('@芝士 看看这个')
 
     box.focus()

@@ -196,7 +196,11 @@
     "composer": {
       "replyTo": "回复 {name}：{text}",
       "cancelReply": "取消回复",
-      "removeAttachment": "移除 {name}"
+      "removeAttachment": "移除 {name}",
+      "summon": "交给{name}",
+      "summonShort": "交给",
+      "summonOn": "已 {'@'}{name}，点击取消",
+      "summonOff": "发送并交给{name}（⌘/Ctrl+Enter）"
     }
   },
   "members": {

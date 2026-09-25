@@ -196,7 +196,11 @@
     "composer": {
       "replyTo": "Replying to {name}: {text}",
       "cancelReply": "Cancel reply",
-      "removeAttachment": "Remove {name}"
+      "removeAttachment": "Remove {name}",
+      "summon": "Hand to {name}",
+      "summonShort": "Hand off",
+      "summonOn": "{'@'}{name} is mentioned. Click to remove",
+      "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)"
     }
   },
   "members": {

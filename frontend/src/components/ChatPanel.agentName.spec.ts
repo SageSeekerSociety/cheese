@@ -14,6 +14,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import { t } from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 
 const SEAT = 'cheese-t1'
@@ -200,7 +202,7 @@ describe('AI 说的话署谁的名', () => {
     await settle()
 
     const shown = container.textContent ?? ''
-    expect(shown).toContain('交给接班')
+    expect(shown).toContain(t('work.room.composer.summon', { name: '接班' }))
     expect(shown).not.toContain('退休')
   })
 
