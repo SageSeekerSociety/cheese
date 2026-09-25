@@ -23,11 +23,11 @@ export function platformErrorPresentation(block: Block): PlatformErrorPresentati
     body: block.content,
     status:
       code === 'storage_exhausted'
-        ? '自动清理中 · 稍后 @芝士重试'
+        ? '正在自动清理'
         : code === 'runtime_image_missing'
-          ? '平台组件恢复中 · 稍后 @芝士重试'
+          ? '正在恢复'
           : retryable
-            ? '平台正在恢复 · 稍后可重试'
+            ? '可以重试'
             : '需要管理员处理',
     icon:
       code === 'storage_exhausted'

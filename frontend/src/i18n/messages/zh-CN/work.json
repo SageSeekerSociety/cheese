@@ -171,6 +171,11 @@
       "review": "审阅",
       "expand": "展开详情",
       "collapse": "收起详情"
+    },
+    "retry": {
+      "action": "重试",
+      "nothingPending": "没有需要重试的消息",
+      "failed": "重试失败"
     }
   },
   "members": {
