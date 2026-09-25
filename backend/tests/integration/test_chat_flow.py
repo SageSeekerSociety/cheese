@@ -264,6 +264,25 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
     assert f"[alice]: <@{room_agent_seat(client, topic_id)}> 芝士看看" in prompt
 
 
+def test_a_reply_brings_the_message_it_answers(stub_hooks, client):
+    # 回复一条前一轮已经读过的消息并 @ 芝士：那条不在待读里了，原文得跟着这次回复
+    # 进 prompt，否则「按这条改」到了芝士那里没有「这条」。
+    _, topic_id = _create_project_and_topic(client, owner="alice")
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "B 组第 7 行录错了，应该是 0.42"})
+        parent = _drain_until_done(ws)[0]["block"]
+        ws.send_json({"type": "message", "content": "@芝士 先看看"})
+        _drain_until_done(ws)
+        ws.send_json(
+            {"type": "message", "content": "@芝士 按这条改", "reply_to": parent["id"]}
+        )
+        _drain_until_done(ws)
+
+    prompt = stub_hooks.last_prompt or ""
+    assert "按这条改" in prompt
+    assert "B 组第 7 行录错了，应该是 0.42" in prompt
+
+
 def _drain_until_done(ws) -> list[dict]:
     frames: list[dict] = []
     while True:
