@@ -836,7 +836,9 @@ class TopicService:
                 branch_protection_of(project).default_reviewer or None
             )
             if reviewer_handle is None:
-                raise ValidationError("请指定任务验收人，或先设置项目默认验收人")
+                raise ValidationError(
+                    "需要指定由谁审阅，或在项目设置中设置默认审阅的人"
+                )
             task = await tasks.open_thread(
                 project_id=block.project_id,
                 room_id=parent.id,
@@ -1036,7 +1038,7 @@ class TopicService:
             branch_protection_of(project).default_reviewer or None
         )
         if reviewer_handle is None:
-            raise ValidationError("请指定任务验收人，或先设置项目默认验收人")
+            raise ValidationError("需要指定由谁审阅，或在项目设置中设置默认审阅的人")
         task = await TaskService(self._session).open_thread(
             project_id=room.project_id,
             room_id=room.id,

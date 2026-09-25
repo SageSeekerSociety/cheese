@@ -14,7 +14,7 @@
 - `building` 施工中 —— 还没递出交付。
 - `delivering` 交付中 —— 下一步在**平台/芝士**手上。
 - `needs_you` 待处理 —— 下一步在**人**手上。
-- `done` 已完成 —— 已采纳，或已收工且没交付。
+- `done` 已完成 —— 已采纳，或已关闭且没交付。
 - `archived` 已归档 —— 房间才有；活不归档。
 
 同一个客观事实会因为「谁负责下一步」落在不同列。CI 红了，平台已经派芝士去修就是
@@ -113,16 +113,16 @@ class NeedsYou(enum.StrEnum):
     """下一步在人手上。"""
 
     checks_failed = "检查未通过"
-    awaiting_review = "等待验收"
-    bounced = "交付被退回"
+    awaiting_review = "待审阅"
+    bounced = "已退回"
     #: 芝士提出了待确认问题，本轮停止等待回答。这是唯一一种**会中断运行**的：
     #: 其余几格都是一轮结束之后的状态。
-    awaiting_answer = "待确认"
+    awaiting_answer = "待回答"
 
 
 class Done(enum.StrEnum):
     accepted = "已采纳"
-    closed = "已收工"
+    closed = "已关闭"
 
 
 class Archived(enum.StrEnum):

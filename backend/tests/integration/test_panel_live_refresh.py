@@ -216,6 +216,7 @@ def test_the_turn_still_files_its_action_card(client, tmp_path):
 
     seen = _turn_frames(client, tmp_path, _Decides())
     assert any(
-        f["type"] == "event_block" and f["block"].get("content") == "芝士 记录了决策"
+        f["type"] == "event_block"
+        and (f["block"].get("meta") or {}).get("action") == "decision"
         for f in seen
     )

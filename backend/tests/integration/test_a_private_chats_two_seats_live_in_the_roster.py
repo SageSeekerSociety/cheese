@@ -252,7 +252,7 @@ def test_a_dm_has_no_member_list_even_when_its_roster_is_not_two_seats(client):
     _send(client, dm, "@mentor-1 这段先别说出去", author="user-1")
 
     assert _alerts(client, project_id, "mentor-1") == []
-    # 名册解析不到，@ 原样留在正文里（渲染成「项目成员里没有这个 handle」的 ⚠️）。
+    # 名册解析不到，@ 原样留在正文里（渲染成「未能通知 …：项目中没有这个成员」）。
     assert "@mentor-1 这段先别说出去" in _texts(client, dm, "user-1")
 
 

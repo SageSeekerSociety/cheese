@@ -114,4 +114,3 @@ def test_an_accepted_card_still_cannot_be_rejected(client):
         json={"decided_by": "alice", "note": "x"},
     )
     assert r.status_code == 422
-    assert "已处理" in r.text

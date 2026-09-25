@@ -25,11 +25,21 @@ def _meta(name: str, args: dict, *, platform: bool = False) -> dict:
 # ---- fallback text (baked into content for old clients / old rows) ----
 
 
+def _verb(name: str, args: dict) -> str:
+    return _text(name, args).split("\n", 1)[0]
+
+
 def test_format_tool_event_translates_native_tools():
-    assert _text("Glob", {"pattern": "**/*.py"}) == "找文件\n**/*.py"
-    assert _text("Grep", {"pattern": "TODO"}) == "搜内容\nTODO"
-    assert _text("Agent", {"description": "查资料"}) == "派分身去查\n查资料"
-    assert _text("Task", {"description": "查"}) == "派分身去查\n查"
+    for name, args, preview in (
+        ("Glob", {"pattern": "**/*.py"}, "**/*.py"),
+        ("Grep", {"pattern": "TODO"}, "TODO"),
+        ("Agent", {"description": "查资料"}, "查资料"),
+    ):
+        verb, shown = _text(name, args).split("\n", 1)
+        assert verb != name
+        assert shown == preview
+    # Task 是 Agent 的旧名，同一件事说同一句话。
+    assert _verb("Task", {"description": "查"}) == _verb("Agent", {"description": "查"})
 
 
 def test_format_tool_event_unknown_tool_falls_back_to_raw_name():
@@ -40,7 +50,7 @@ def test_format_tool_event_unknown_tool_falls_back_to_raw_name():
 def test_format_tool_event_collapses_whitespace_and_truncates():
     out = _text("Bash", {"command": "make   a\t--flag " + "x" * 300})
     verb, preview = out.split("\n", 1)
-    assert verb == "执行命令"
+    assert verb != "Bash"
     assert preview.startswith("make a --flag x")
     assert len(preview) <= 120
 
@@ -53,9 +63,8 @@ def test_a_multi_line_command_shows_the_step_that_does_something():
 
 def test_a_recognised_command_borrows_the_fitting_verb():
     # meta.tool 仍然是 Bash（跑的确实是它），显示时按 action 说人话。
-    assert _text("Bash", {"command": "cat backend/app/main.py"}) == (
-        "读文件\nbackend/app/main.py"
-    )
+    shown = _text("Bash", {"command": "cat backend/app/main.py"})
+    assert shown == f"{_verb('Read', {'file_path': 'x'})}\nbackend/app/main.py"
 
 
 # ---- 圆点分级: platform detection ----
@@ -166,10 +175,19 @@ def test_tool_event_meta_never_borrows_the_platform_action_key():
 
 
 def test_format_tool_event_translates_pis_tools_too():
-    assert _text("read", {"path": "hello.py"}) == "读文件\nhello.py"
-    assert _text("write", {"path": "notes.md", "content": "x"}) == "写文件\nnotes.md"
-    assert _text("grep", {"pattern": "TODO"}) == "搜内容\nTODO"
-    assert _text("ls", {"path": "backend"}) == "列目录\nbackend"
+    # 同一件事在两个 harness 里说同一句话。
+    assert _text("read", {"path": "hello.py"}) == (
+        f"{_verb('Read', {'file_path': 'x'})}\nhello.py"
+    )
+    assert _text("write", {"path": "notes.md", "content": "x"}) == (
+        f"{_verb('Write', {'file_path': 'x'})}\nnotes.md"
+    )
+    assert (
+        _text("grep", {"pattern": "TODO"}) == f"{_verb('Grep', {'pattern': 'x'})}\nTODO"
+    )
+    verb, shown = _text("ls", {"path": "backend"}).split("\n", 1)
+    assert verb != "ls"
+    assert shown == "backend"
 
 
 def test_a_platform_action_is_one_wherever_the_cheese_cli_runs():

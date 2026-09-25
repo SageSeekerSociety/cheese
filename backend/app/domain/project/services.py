@@ -30,7 +30,7 @@ def _intent_brief(intent: str) -> str:
     text = intent.strip()
     if not text:
         return ""
-    return f"## 这个项目要做什么\n\n{text}\n\n下一步：在下面告诉芝士你要做什么。"
+    return f"## 这个项目要做什么\n\n{text}\n\n下一步：在下方对话中说明你要做什么。"
 
 
 class ProjectService:

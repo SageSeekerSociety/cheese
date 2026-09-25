@@ -90,9 +90,8 @@ def test_accept_short_of_votes_structured_error(client):
         json={"decided_by": "alice", "head_sha": _rendered_head(client, card["id"])},
     )
     assert r.status_code == 422
-    # Structured shortfall the frontend can display: 还差 N 票 (alice's own
-    # accept would count as 1 of 3).
-    assert "还差 2 票" in r.json()["message"]
+    # The refusal carries the tally: alice's own accept counts as 1 of 3.
+    assert "1/3" in r.json()["message"]
 
     # Card untouched, topic still active.
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]

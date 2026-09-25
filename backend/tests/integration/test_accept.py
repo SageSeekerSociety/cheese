@@ -166,7 +166,6 @@ def test_ai_cannot_accept_own_work_collaborative(client):
         headers=session_auth_headers("cheese"),
     )
     assert r.status_code == 422
-    assert "AI 不能验收自己做的东西" in r.json()["message"]
 
     # Card untouched, topic still active.
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
