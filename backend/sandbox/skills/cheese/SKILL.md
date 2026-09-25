@@ -171,10 +171,10 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | 工具 | 作用 |
 |---|---|
 | `chat_send(content, reply_to?, request_id?)` | 主动发送聊天消息。结果不确定时带上返回的 `request_id` 原样重试 |
-| `cheese_chat_list(topic?, task?, limit?, before? 或 after?, kind?, author?, json?)` | 读最近的聊天记录（含结构化消息和表情），默认当前房间最近 50 条；带 `task` 读那条任务卡的记录。只读，不叫醒任何人、不标记消息已读。结果末尾带续读的调用，翻更早的照抄它 |
-| `cheese_chat_search(query, topic?, task?, limit?, before? 或 after?, kind?, author?, json?)` | 按文字搜聊天记录：对正文、结构化消息信息和引用文字做不区分大小写的**字面**匹配，搜范围内全部记录。查不到就缩短关键词或换个说法，别断定没说过 |
-| `cheese_chat_get(message_id, offset?, length?, json?)` | 读一条消息的全文（任何类型，含任务卡评论和文档节点）；超长的按 `offset` 续读 |
-| `cheese_chat_replies(message_id, limit?, before? 或 after?, json?)` | 列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 ID 再读 |
+| `cheese_chat_list(topic?, task?, limit?, before? 或 after?, kind?, author?)` | 读最近的聊天记录（含结构化消息和表情），默认当前房间最近 50 条；带 `task` 读那条任务卡的记录。只读，不叫醒任何人、不标记消息已读。结果末尾带续读的调用，翻更早的照抄它 |
+| `cheese_chat_search(query, topic?, task?, limit?, before? 或 after?, kind?, author?)` | 按文字搜聊天记录：对正文、结构化消息信息和引用文字做不区分大小写的**字面**匹配，搜范围内全部记录。查不到就缩短关键词或换个说法，别断定没说过 |
+| `cheese_chat_get(message_id, offset?, length?)` | 读一条消息的全文（任何类型，含任务卡评论和文档节点）；超长的按 `offset` 续读 |
+| `cheese_chat_replies(message_id, limit?, before? 或 after?)` | 列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 ID 再读 |
 | `cheese_doc_get()` | 返回当前实况文档。也是拿到写入权的那一步——没读过就写,只有本话题还没文档时才让你建 |
 | `cheese_doc_set(path)` | 把机器上一个 markdown 文件（给绝对路径）的内容设为本话题实况文档（整块覆盖）。调用前先 `cheese_doc_get`；写入冲突时重新读、合并再写 |
 | `cheese_title(text, task?)` | 修改房间标题；带 `task` 时修改该任务标题 |

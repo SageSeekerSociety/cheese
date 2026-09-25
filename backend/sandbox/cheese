@@ -182,7 +182,6 @@ _CONTRIBUTOR = {
 _CHAT_SCOPE = {
     "topic": _text("房间 id，默认当前房间"),
     "task": _text("任务 id：读或校验这条任务卡的记录"),
-    "json": {"type": "boolean", "description": "返回完整 JSON，不受文本长度限制"},
 }
 _CHAT_PAGE = {
     "limit": {"type": "integer", "description": "每页条数 1..500，默认 50"},
@@ -862,8 +861,6 @@ def _chat_get(args: dict, host) -> str:
     length = _CHAT_TEXT_BUDGET if args.get("length") is None else args["length"]
     if not 1 <= length <= _CHAT_TEXT_BUDGET or offset < 0:
         raise PlatformToolError(f"length 取 1..{_CHAT_TEXT_BUDGET}，offset 不小于 0")
-    if args.get("json") and (offset or length != _CHAT_TEXT_BUDGET):
-        raise PlatformToolError("json 返回完整数据，不要同时给 offset 或 length")
     topic = args.get("topic") or host.environ.get("CHEESE_TOPIC", "")
     path = (
         f"/topics/{urllib.parse.quote(topic, safe='')}/history/"
@@ -872,8 +869,6 @@ def _chat_get(args: dict, host) -> str:
     block = host.request({"method": "GET", "path": path})["data"]
     if args.get("task") and block.get("task_id") != args["task"]:
         raise PlatformToolError("这条消息不属于那条任务卡")
-    if args.get("json"):
-        return json.dumps(block, ensure_ascii=False)
     text = _chat_message_text(block)
     end = offset + length
     shown = text[offset:end]
@@ -916,8 +911,6 @@ def _chat_page(tool: str):
             + urllib.parse.urlencode(params)
         )
         data = host.request({"method": "GET", "path": path})["data"]
-        if args.get("json"):
-            return json.dumps(data, ensure_ascii=False)
 
         def preview(block):
             text = _chat_message_text(block)
