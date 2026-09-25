@@ -22,6 +22,7 @@ from app.domain.agent.runtime import (
     InProcessBroker,
     addressed_to_agent,
 )
+from tests.support.hang import HANG_S
 from tests.turn_log import a_topic
 
 
@@ -152,12 +153,12 @@ async def test_a_turn_that_never_speaks_is_cut_at_the_fuse_not_at_the_ceiling(
     db_factory,
 ):
     backend = _Mute()
-    # 上限 10 秒，保险丝 0.05 秒。保险丝没生效的话这一轮要跑满 10 秒，
-    # 下面 2 秒的等待会先超时——「被上限砍」和「被保险丝砍」就是这么分开的。
+    # 上限 600 秒，保险丝 0.05 秒。保险丝没生效的话这一轮要跑满上限，
+    # 下面那个等待（HANG_S）会先超时——「被上限砍」和「被保险丝砍」就是这么分开的。
     runner = AgentWorkRunner(
-        InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
+        InProcessBroker(), turn_timeout_s=600.0, first_output_timeout_s=0.05
     )
-    frame = await asyncio.wait_for(_error_frame(runner, backend, db_factory), 2)
+    frame = await asyncio.wait_for(_error_frame(runner, backend, db_factory), HANG_S)
 
     assert frame.get("code") is None
     # 而且**不能**说「已完成的改动都在」——什么都没跑，那句话是假的。
@@ -171,10 +172,10 @@ async def test_turn_ceiling_alone_does_not_lift_the_fuse(db_factory):
     # 这条是整个改动里最容易写错的一处。`turn_ceiling` 是碰容器之前发的，
     # 让它把 deadline 推到 900 秒，等于把看门狗对真实故障关掉。
     runner = AgentWorkRunner(
-        InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
+        InProcessBroker(), turn_timeout_s=600.0, first_output_timeout_s=0.05
     )
     frame = await asyncio.wait_for(
-        _error_frame(runner, _MuteButAnnouncesItsCeiling(), db_factory), 2
+        _error_frame(runner, _MuteButAnnouncesItsCeiling(), db_factory), HANG_S
     )
 
     assert frame["type"] == "error"
@@ -231,18 +232,18 @@ async def test_the_fuse_can_be_turned_off(db_factory, caplog):
 
 @pytest.mark.anyio
 async def test_known_expired_credential_fast_fails_with_the_true_reason(db_factory):
-    # first_output_timeout_s is LARGE (30s) but the credential is known-expired, so
+    # first_output_timeout_s is LARGE (600s) but the credential is known-expired, so
     # the credential fuse (0.05s) is what fires — proving the short-circuit is the
-    # credential signal, not a small generic fuse. If it did NOT fire, the 30s wall
-    # would blow past the 2s wait below.
+    # credential signal, not a small generic fuse. If it did NOT fire, the 600s wall
+    # would blow past the HANG_S wait below.
     runner = AgentWorkRunner(
         InProcessBroker(),
-        turn_timeout_s=60.0,
-        first_output_timeout_s=30.0,
+        turn_timeout_s=900.0,
+        first_output_timeout_s=600.0,
         credential_expiry_of=lambda _topic: 0,  # epoch → long expired
         credential_expired_fuse_s=0.05,
     )
-    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 2)
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), HANG_S)
 
     # The event tells the truth: an expired subscription credential needing host
     # re-auth — NOT the misleading container/disk/network guesses.
@@ -261,12 +262,12 @@ async def test_a_live_credential_keeps_the_generic_cold_start_message(db_factory
     # never engages, and a mute turn falls to the ordinary cold-start message.
     runner = AgentWorkRunner(
         InProcessBroker(),
-        turn_timeout_s=10.0,
+        turn_timeout_s=600.0,
         first_output_timeout_s=0.05,
         credential_expiry_of=lambda _topic: 10**12,  # year 33658 — very much alive
         credential_expired_fuse_s=0.05,
     )
-    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 2)
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), HANG_S)
 
     # 普通的冷启动失败：没有带上凭据过期那一类的码。
     assert frame.get("code") is None
@@ -278,9 +279,9 @@ async def test_no_credential_lookup_leaves_the_fuse_untouched(db_factory):
     # The default (no lookup wired) must behave exactly as before: a mute turn is
     # the generic cold-start failure, no credential branch anywhere.
     runner = AgentWorkRunner(
-        InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
+        InProcessBroker(), turn_timeout_s=600.0, first_output_timeout_s=0.05
     )
-    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 2)
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), HANG_S)
 
     # 普通的冷启动失败：没有带上凭据过期那一类的码。
     assert frame.get("code") is None
