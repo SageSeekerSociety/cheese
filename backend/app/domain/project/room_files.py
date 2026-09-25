@@ -22,9 +22,10 @@ import asyncio
 import uuid
 from pathlib import PurePosixPath
 
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_LIBRARY_SAVED,
@@ -33,6 +34,11 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.library import service as library
+from app.domain.project.models import RoomFileRevision
+from app.domain.textfile import content_version
+
+#: Which door a revision's bytes came in by.
+SOURCES = ("baseline", "upload", "ai", "editor", "restore", "scheduled")
 
 
 async def save_to_library(
@@ -66,3 +72,219 @@ async def save_to_library(
         ),
     )
     return name
+
+
+def current_version(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> str | None:
+    """The version a reader holds: the content hash, or None when there is no file."""
+    if not library.room_file_exists(project_id, room_id, path):
+        return None
+    return content_version(library.read_room_file(project_id, room_id, path))
+
+
+async def save_room_file(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    path: str,
+    data: bytes,
+    author: str,
+    author_kind: str,
+    source: str,
+    note: str | None = None,
+    base_version: str | None = None,
+    editor_key: str | None = None,
+) -> RoomFileRevision:
+    """Write a room file and keep the state it replaces restorable.
+
+    `base_version` is the version the writer read before editing. When the file
+    has moved since, somebody else saved in between, and writing would drop
+    their work without anyone seeing it — so it is a conflict, never an
+    overwrite. A writer that is creating the file, or that knowingly replaces
+    it (a restore), passes None.
+
+    The first save of a file that existed before history did records that
+    earlier state first, so the very first edit is already undoable.
+    """
+    if source not in SOURCES:
+        raise ValidationError(f"unknown revision source {source!r}")
+    # One writer per (room, path) at a time: the version check and the seq
+    # below are only true while nobody else is between them.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"room-file:{room_id}:{path}"},
+    )
+    existing = await asyncio.to_thread(
+        library.room_file_exists, project_id, room_id, path
+    )
+    before = (
+        await asyncio.to_thread(library.read_room_file, project_id, room_id, path)
+        if existing
+        else None
+    )
+    now_version = content_version(before) if before is not None else None
+    latest = await _latest(session, room_id, path)
+    own_earlier_save = (
+        editor_key is not None
+        and latest is not None
+        and latest.editor_key == editor_key
+    )
+    if (
+        base_version
+        and now_version
+        and base_version != now_version
+        and not own_earlier_save
+    ):
+        raise ConflictError(
+            "这份文件在你读取之后被人改过，先取最新的一版再改",
+            data={"path": path, "version": now_version, "base_version": base_version},
+        )
+    if latest is None and before is not None:
+        latest = await _record(
+            session,
+            project_id=project_id,
+            room_id=room_id,
+            path=path,
+            data=before,
+            seq=1,
+            author="",
+            author_kind="unknown",
+            source="baseline",
+            note=None,
+            editor_key=None,
+        )
+    if before is not None and before == data and latest is not None:
+        return latest
+    await asyncio.to_thread(library.write_room_file, project_id, room_id, path, data)
+    return await _record(
+        session,
+        project_id=project_id,
+        room_id=room_id,
+        path=path,
+        data=data,
+        seq=(latest.seq if latest else 0) + 1,
+        author=author,
+        author_kind=author_kind,
+        source=source,
+        note=(note or "").strip() or None,
+        editor_key=editor_key,
+    )
+
+
+async def _latest(
+    session: AsyncSession, room_id: uuid.UUID, path: str
+) -> RoomFileRevision | None:
+    return (
+        await session.execute(
+            select(RoomFileRevision)
+            .where(RoomFileRevision.room_id == room_id, RoomFileRevision.path == path)
+            .order_by(RoomFileRevision.seq.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _record(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    path: str,
+    data: bytes,
+    seq: int,
+    author: str,
+    author_kind: str,
+    source: str,
+    note: str | None,
+    editor_key: str | None,
+) -> RoomFileRevision:
+    digest = await asyncio.to_thread(
+        library.write_revision_blob, project_id, room_id, data
+    )
+    row = RoomFileRevision(
+        project_id=project_id,
+        room_id=room_id,
+        path=path,
+        seq=seq,
+        sha256=digest,
+        size=len(data),
+        author_handle=author,
+        author_kind=author_kind,
+        source=source,
+        note=note,
+        editor_key=editor_key,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def list_revisions(
+    session: AsyncSession, room_id: uuid.UUID, path: str
+) -> list[RoomFileRevision]:
+    return list(
+        (
+            await session.execute(
+                select(RoomFileRevision)
+                .where(
+                    RoomFileRevision.room_id == room_id, RoomFileRevision.path == path
+                )
+                .order_by(RoomFileRevision.seq.desc())
+            )
+        ).scalars()
+    )
+
+
+async def revision_or_404(
+    session: AsyncSession, room_id: uuid.UUID, revision_id: uuid.UUID
+) -> RoomFileRevision:
+    row = await session.get(RoomFileRevision, revision_id)
+    if row is None or row.room_id != room_id:
+        raise NotFoundError("没有这一版")
+    return row
+
+
+def revision_bytes(row: RoomFileRevision) -> bytes:
+    return library.read_revision_blob(row.project_id, row.room_id, row.sha256)
+
+
+async def restore_revision(
+    session: AsyncSession,
+    *,
+    row: RoomFileRevision,
+    by: str,
+    author_kind: str,
+) -> RoomFileRevision:
+    """Put an earlier state back as the file's newest one.
+
+    History is not rewound: the restore is a new revision, so the state it
+    replaced stays one click away too. A delivered version lives in the accept
+    card's own snapshot and is not reachable from here at all.
+    """
+    data = await asyncio.to_thread(revision_bytes, row)
+    return await save_room_file(
+        session,
+        project_id=row.project_id,
+        room_id=row.room_id,
+        path=row.path,
+        data=data,
+        author=by,
+        author_kind=author_kind,
+        source="restore",
+        note=f"恢复到第 {row.seq} 版",
+    )
+
+
+def revision_out(row: RoomFileRevision) -> dict:
+    return {
+        "id": str(row.id),
+        "path": row.path,
+        "seq": row.seq,
+        "version": row.sha256[:16],
+        "size": row.size,
+        "author": row.author_handle,
+        "author_kind": row.author_kind,
+        "source": row.source,
+        "note": row.note,
+        "created_at": row.created_at.isoformat(),
+    }
