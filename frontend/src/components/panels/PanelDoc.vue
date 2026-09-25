@@ -1975,14 +1975,14 @@ onBeforeUnmount(() => {
   opacity: 0.4;
   cursor: default;
 }
-/* Feishu-style comment anchor: quiet dashed amber underline; hover lifts. */
+/* Feishu-style comment anchor: a quiet dashed underline; hover fills. */
 .doc-editor :deep(.comment-anchor) {
-  border-bottom: 1.5px dashed rgba(var(--v-theme-primary), 0.55);
+  border-bottom: 1.5px dashed var(--faint);
   padding-bottom: 1px;
   cursor: pointer;
 }
 .doc-editor :deep(.comment-anchor:hover) {
-  background: rgba(var(--v-theme-primary), 0.08);
+  background: var(--fill);
 }
 .doc-handle__grip {
   cursor: grab;
@@ -2070,7 +2070,7 @@ onBeforeUnmount(() => {
 .doc-editor :deep(ul[data-type='taskList'] input[type='checkbox']) {
   width: 15px;
   height: 15px;
-  accent-color: rgb(var(--v-theme-primary));
+  accent-color: var(--ink);
   cursor: pointer;
   vertical-align: middle;
   margin: 0;
@@ -2089,11 +2089,11 @@ onBeforeUnmount(() => {
 .doc-editor :deep(blockquote) {
   margin: 0.7em 0;
   padding: 6px 14px;
-  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-left: 3px solid var(--line-2);
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--accent) 4%, transparent);
-  color: rgba(var(--v-theme-on-surface), 0.72);
+  background: var(--fill);
+  color: var(--muted);
 }
 .doc-editor :deep(blockquote blockquote) {
   margin: 0.4em 0;
@@ -2136,7 +2136,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   /* 装饰性角标，不按可读下限走：它蹲在第一行代码的右上角，放大到 12px 就压住
      长行的字（量过：标签到 19px，第一行从 16px 起）。 */
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.04em;
   color: var(--faint);
   text-transform: lowercase;
@@ -2229,11 +2229,11 @@ onBeforeUnmount(() => {
 }
 /* Table rows breathe on hover (body only, not the header). */
 .doc-editor :deep(.doc-prose tbody tr:hover td) {
-  background: color-mix(in srgb, var(--accent) 3%, transparent);
+  background: var(--fill);
 }
 
 /* ---- 军规 1 UI ---- */
-/* Lossy-load banner: amber, quiet, right above the doc. */
+/* Lossy-load banner: a warning, so the warn triple — mark, wash, ink. */
 .doc-lossy-banner {
   display: flex;
   align-items: flex-start;
@@ -2242,14 +2242,14 @@ onBeforeUnmount(() => {
   margin: 0 auto 16px;
   padding: 9px 12px;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  border: 1px solid var(--warn);
+  background: var(--warn-wash);
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--text);
 }
 .doc-lossy-banner__icon {
-  color: var(--accent);
+  color: var(--warn);
   margin-top: 2px;
 }
 .doc-lossy-banner__text {
@@ -2258,17 +2258,17 @@ onBeforeUnmount(() => {
 }
 .doc-lossy-banner__btn {
   flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border: 1px solid var(--warn);
   background: var(--surface);
-  color: var(--accent-ink);
-  border-radius: 6px;
+  color: var(--warn-ink);
+  border-radius: var(--radius-sm);
   padding: 2px 10px;
   font-size: 13px;
   cursor: pointer;
   transition: background 0.12s ease;
 }
 .doc-lossy-banner__btn:hover {
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background: var(--warn-wash);
 }
 /* Header status for the paused state — an honest, quiet warning, not the
    「编辑中…」 that used to impersonate a save in progress. */

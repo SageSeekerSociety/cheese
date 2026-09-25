@@ -455,8 +455,8 @@ function openTask(task: RoomTask) {
   color: var(--faint);
   margin: 0 4px;
 }
-/* 「只看我的」。开着的时候整个开关变琥珀色——板上的每个计数都因此换了含义，这个
-   状态不能是要找才看得见的。过渡只写具体属性，不写 all。 */
+/* 「只看我的」。开着的时候整个开关加深、拨柄变实——板上的每个计数都因此换了含义，
+   这个状态不能是要找才看得见的。过渡只写具体属性，不写 all。 */
 .board__mine {
   flex: none;
   margin-left: auto;
@@ -477,9 +477,9 @@ function openTask(task: RoomTask) {
   background: var(--fill);
 }
 .board__mine[aria-pressed='true'] {
-  border-color: var(--accent);
-  color: var(--accent-ink);
-  background: var(--accent-wash);
+  border-color: var(--faint);
+  color: var(--ink);
+  background: var(--fill);
 }
 /* 拨柄。位置变化留给真的发生了变化的时刻——按下开关就是那种时刻。 */
 .board__sw {
@@ -502,7 +502,7 @@ function openTask(task: RoomTask) {
   transition: transform 0.15s ease;
 }
 .board__mine[aria-pressed='true'] .board__sw {
-  background: var(--accent);
+  background: var(--ink);
 }
 .board__mine[aria-pressed='true'] .board__sw::after {
   transform: translateX(11px);

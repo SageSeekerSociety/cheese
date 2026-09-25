@@ -566,7 +566,7 @@ defineExpose({ reload: loadAcceptCard })
                       <template #activator="{ props: menuProps }">
                         <v-btn
                           v-bind="menuProps"
-                          size="x-small"
+                          size="small"
                           variant="text"
                           density="comfortable"
                           class="text-medium-emphasis"
@@ -620,7 +620,7 @@ defineExpose({ reload: loadAcceptCard })
                         <span class="text-medium-emphasis">·</span>
                         <code class="text-caption">{{ pendingCard.deliverable.filename }}</code>
                         <v-btn
-                          size="x-small"
+                          size="small"
                           variant="text"
                           density="comfortable"
                           class="text-medium-emphasis"

@@ -149,7 +149,7 @@ function toggleFocus() {
         icon="mdi-arrow-collapse"
         size="small"
         variant="text"
-        class="topic-header__on"
+        color="on-surface"
         :title="t('work.room.menu.exitFocus')"
         :aria-label="t('work.room.menu.exitFocus')"
         @click="emit('toggle-focus')"
@@ -281,9 +281,6 @@ function toggleFocus() {
   flex: 0 0 auto;
   color: var(--warn-ink);
   font-size: 12px;
-}
-.topic-header__on {
-  color: var(--ink);
 }
 /* 状态标 — semantic for 进行中, muted otherwise. Same three faces as the chat
    header still shows for 私聊 / 本体; the labels come from lib/topicState.ts. */

@@ -547,7 +547,7 @@ async function submitInvite() {
   top: -2px;
   inset-inline-end: -2px;
   color: var(--accent);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;

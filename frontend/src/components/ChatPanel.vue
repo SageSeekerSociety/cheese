@@ -1466,7 +1466,7 @@ onBeforeUnmount(() => {
   color: var(--faint);
 }
 .todo-in_progress {
-  color: var(--accent-ink);
+  color: var(--ink);
   font-weight: 600;
 }
 .todo-completed {

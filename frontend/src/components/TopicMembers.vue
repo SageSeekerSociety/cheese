@@ -357,23 +357,23 @@ async function onSetRole(handle: string, role: string) {
 }
 .roster__title {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 14px;
   color: var(--ink);
 }
 .roster__count {
-  font-size: 0.75rem;
+  font-size: 12px;
   color: var(--muted);
 }
 .roster__error {
   padding: 8px 14px;
-  font-size: 0.78rem;
+  font-size: 13px;
   color: rgb(var(--v-theme-error, 211, 47, 47));
   background: rgba(var(--v-theme-error, 211, 47, 47), 0.08);
 }
 .roster__empty,
 .roster__hint {
   padding: 12px 14px;
-  font-size: 0.78rem;
+  font-size: 13px;
   color: var(--muted);
 }
 .roster__list {
@@ -423,7 +423,7 @@ async function onSetRole(handle: string, role: string) {
   flex: 1 1 auto;
 }
 .roster__name {
-  font-size: 0.84rem;
+  font-size: 13px;
   font-weight: 500;
   color: var(--ink);
   overflow: hidden;
@@ -431,11 +431,11 @@ async function onSetRole(handle: string, role: string) {
   white-space: nowrap;
 }
 .roster__handle {
-  font-size: 0.72rem;
+  font-size: 12px;
   color: var(--muted);
 }
 .roster__badge {
-  font-size: 0.62rem;
+  font-size: 12px;
   font-weight: 600;
   padding: 1px 5px;
   border-radius: var(--radius-sm);
@@ -443,7 +443,7 @@ async function onSetRole(handle: string, role: string) {
   background: rgba(var(--v-theme-primary), 0.12);
 }
 .roster__role {
-  font-size: 0.72rem;
+  font-size: 12px;
   color: var(--muted);
   flex: none;
 }
