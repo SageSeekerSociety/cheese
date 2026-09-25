@@ -123,7 +123,7 @@ html, body { margin: 0; height: 100%; background: transparent; }
 .room-bar-project { font-weight: 600; color: var(--ink); }
 .room-bar-topic { color: var(--muted); }
 .room-bar-sample { margin-left: auto; font-size: 12px; color: var(--faint); }
-.room-body { display: flex; flex: 1; min-height: 0; }
+.room-body { position: relative; display: flex; flex: 1; min-height: 0; }
 .room-chat { display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 16px 0; }
 .room-lines { display: flex; flex: 1; flex-direction: column; justify-content: flex-end; overflow: hidden; }
 .room-composer { display: flex; align-items: center; height: 44px; padding: 0 12px; margin: 12px 16px 0; font-size: 14px; color: var(--faint); border: 1px solid var(--line-2); border-radius: var(--radius-md); }
@@ -144,4 +144,12 @@ html, body { margin: 0; height: 100%; background: transparent; }
 .room-pane-enter-from { opacity: 0; transform: translateX(24px); }
 .room-pane-leave-active { transition: opacity .2s ease; }
 .room-pane-leave-to { opacity: 0; }
+/* Phone: the preview can't share the row, so it rises from the bottom as a sheet. */
+@media (max-width: 700px) {
+  .room-bar-project { display: none; }
+  .room-chat { padding: 12px 0; }
+  .room-preview { position: absolute; left: 10px; right: 10px; bottom: 10px; width: auto; height: 52%; border: 1px solid var(--line-2); border-radius: var(--radius-lg); box-shadow: 0 -12px 40px -12px rgba(0,0,0,.28); overflow: hidden; }
+  .room-preview-page { margin: 10px; padding: 14px; gap: 10px; }
+  .room-pane-enter-from { opacity: 0; transform: translateY(40px); }
+}
 </style>

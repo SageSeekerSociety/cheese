@@ -126,18 +126,25 @@ function syncRoom() {
   const f = roomFrame(); if (!f?.contentWindow?.setStep) return
   f.contentWindow.setTheme(isDark() ? 'dark' : 'light'); f.contentWindow.setStep(Math.max(storyStep, 0))
 }
-// The room always renders at a desktop size and is scaled down to fit, so a
-// narrow window shows a small desktop, never the workbench's phone layout.
-const ROOM_W = 1200, ROOM_H = 740
+// The room renders at a real device size and is scaled to fit, never reflowed:
+// a desktop visitor sees the desktop workbench, a phone visitor the phone one.
+// The scale takes the smaller of width and height, so nothing overflows.
+const ROOM_SIZE = { desktop: [1200, 740], phone: [390, 760] }
 let roomRO
 function fitRoom() {
   const box = $('#roomFit'), f = roomFrame(); if (!box || !f) return
-  const k = box.clientWidth / ROOM_W
-  f.style.transform = `scale(${k})`; box.style.height = ROOM_H * k + 'px'
+  const phone = matchMedia('(max-width: 820px), (pointer: coarse) and (max-width: 1024px)').matches
+  const [w, h] = ROOM_SIZE[phone ? 'phone' : 'desktop']
+  box.classList.toggle('phone', phone)
+  const maxH = phone ? Math.min(innerHeight * 0.72, 640) : Infinity
+  const k = Math.min(box.clientWidth / w, maxH / h, 1)
+  f.style.width = w + 'px'; f.style.height = h + 'px'; f.style.transform = `scale(${k})`
+  f.style.marginLeft = Math.max(0, (box.clientWidth - w * k) / 2) + 'px'
+  box.style.height = h * k + 'px'
 }
 function mountStory() {
   const f = roomFrame(); if (!f) return
-  roomRO?.disconnect(); roomRO = new ResizeObserver(fitRoom); roomRO.observe($('#roomFit')); fitRoom()
+  roomRO?.disconnect(); roomRO = new ResizeObserver(fitRoom); roomRO.observe($('#roomFit')); addEventListener('resize', fitRoom); fitRoom()
   storyStep = -1
   f.onload = () => { syncRoom(); onStoryScroll() }
   f.srcdoc = ROOM
