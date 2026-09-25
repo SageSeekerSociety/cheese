@@ -97,7 +97,7 @@ logger = logging.getLogger("cheesex.review")
 #: 采纳现场补开 App PR 失败（存量无 PR 卡，#296 stage 1 的回归修复）。开不出 PR
 #: 时采纳停下、原因亮在卡上——绑定 GitHub 的项目绝不静默本地合并直推 main
 #: （all commits go through PR）。卡保持 pending，人处理后可直接重试采纳。
-_ACCEPT_PR_OPEN_FAILED_PREFIX = "采纳未完成：开不出 PR"
+_ACCEPT_PR_OPEN_FAILED_PREFIX = "采纳未完成：无法开 PR"
 #: 卡上有 PR 但此刻推进不了（GitHub 不可达 / PR 被关闭未合并 / …）。绑定 GitHub
 #: 的项目采纳只通过合并 PR 完成 (#363)——这类失败停下亮出来，永不落 local merge。
 _ACCEPT_PR_STALLED_PREFIX = "采纳未完成：PR 未能合并"
@@ -106,15 +106,15 @@ _ACCEPT_PR_STALLED_PREFIX = "采纳未完成：PR 未能合并"
 #: 当成讨论话题返回 None，采纳落进本地合并 no-op——卡标成 accepted，人以为交付
 #: 完成，而改动没有合进任何地方。主张交付却无从交付的采纳必须停下；只有真正的
 #: 存量讨论卡（change_subject 为 NULL，递于 subject 必填之前）才允许 no-op 采纳。
-_ACCEPT_NO_BRANCH_PREFIX = "采纳未完成：这棵树的分支上没有任何提交"
+_ACCEPT_NO_BRANCH_PREFIX = "采纳未完成：分支上没有任何提交"
 
 #: pending_gate 孤儿卡 (2026-08-11). 判死的卡和检查真红了的卡都落在 `gate_failed`
 #: 上，但对芝士意味着完全相反的下一步——「没跑完」= 原样重递，「没通过」= 去修
 #: 代码。gate_sweep.py 把这句话同时写进 note 和 gate_output，也发给芝士。
-GATE_ABANDONED_PREFIX = "检查没跑完"
+GATE_ABANDONED_PREFIX = "检查未完成"
 #: 人工作废 (2026-08-11)。作废复用 `revoked` 终态（archive.py 收敛非终态卡时也
 #: 用它），所以「谁作废的、为什么」只能写在 note 里。
-VOIDED_PREFIX = "卡片已作废"
+VOIDED_PREFIX = "已作废"
 #: 人工放行。红着合有时是对的（CI 基础设施抽风、与本次改动无关的既有失败），
 #: 不能接受的是**没有人做过这个决定**。这条 note 就是那个署名：谁、什么时候、
 #: 当时检查是什么状态、理由。默认拒绝、显式放行。
@@ -159,7 +159,7 @@ def _stale_view_message(pr_number: int | None, action: str) -> str:
     head、只有浏览器里那份还停在旧版本。卡不用刷新（它已经是新的），要刷新的
     是人的眼睛。"""
     where = f"PR #{pr_number} " if pr_number is not None else ""
-    return f"{where}有新提交，你看到的版本已过时 —— 请重新看过再{action}"
+    return f"{where}有新提交，你看到的版本已过时，重新查看后再{action}"
 
 
 def _never_shown_message(pr_number: int | None, action: str) -> str:
@@ -170,10 +170,7 @@ def _never_shown_message(pr_number: int | None, action: str) -> str:
     GitHub 的 head 去合 —— 一个从未在任何界面上出现过的 commit。卡先刷新到当前
     head（`_refresh_stale_card`），人重新看一眼，那一版才算被看过。"""
     where = f"PR #{pr_number} " if pr_number is not None else ""
-    return (
-        f"{where}的卡还没显示过任何版本（刚递上来，还没读到 PR 的 head），"
-        f"卡已刷新 —— 请重新看过再{action}"
-    )
+    return f"{where}还没有显示过任何版本，已刷新，重新查看后再{action}"
 
 
 #: How much of the failure detail rides in the nudge message. The detail is
@@ -696,13 +693,13 @@ class AcceptService:
             self._session,
             place_id=topic.id,
             task_id=task.id,
-            content=(f"《{artifact}》的这次更新已提交，待 {card.reviewer_handle} 验收"),
+            content=(f"《{artifact}》已提交，待 {card.reviewer_handle} 审阅"),
             meta=notice(
                 EVENT_CARD_FILED,
                 severity=SEVERITY_INFO,
                 who=WHO_HUMAN,
                 detail=detail or None,
-                detail_label="这次改动",
+                detail_label="改动",
             ),
             points_at=Event(
                 reviewers=(card.reviewer_handle,),
@@ -798,19 +795,19 @@ class AcceptService:
             rooms.append(f"「{sibling.title}」" if sibling else str(other.topic_id))
         self._notify_merge_result(
             topic,
-            "另一张未决的验收卡也新建了迁移",
+            "另一项待审阅的改动也新建了数据库迁移",
             meta=notice(
                 EVENT_MIGRATION_COLLISION,
                 severity=SEVERITY_WARN,
                 who=WHO_HUMAN,
                 detail=(
-                    "另一张卡在：" + "、".join(rooms) + "。\n"
-                    "两张卡各带一个 alembic revision，合到一起会让迁移链分叉，"
-                    "而且往往说明同一件事被做了两遍。\n"
-                    "平台不拦这次采纳。请先比对两张卡的改动：如果确实是两件事，"
-                    "照常采纳，先合的那张合完后另一张需要 rebase。"
+                    "另一项改动在：" + "、".join(rooms) + "。\n"
+                    "两项改动各带一个 alembic revision，都合并后迁移链会分叉，"
+                    "这通常也说明同一件事做了两遍。\n"
+                    "平台不会阻止这次采纳。先比对两项改动：如果确实是两件事，"
+                    "照常采纳，先合并的那项合并后，另一项需要 rebase。"
                 ),
-                detail_label="为什么提醒",
+                detail_label="原因",
             ),
         )
 
@@ -1125,7 +1122,7 @@ class AcceptService:
             if m.source == "external"
         }
         if decided_by not in outside:
-            raise ValidationError("按机构协议，这个话题须由外部成员验收")
+            raise ValidationError("按机构协议，这个话题须由外部成员采纳")
 
     async def reassign(
         self,
@@ -1139,7 +1136,7 @@ class AcceptService:
         one, which is the same ladder 递卡 climbs."""
         card = await self._card_or_404(card_id)
         if card.status != AcceptStatus.pending:
-            raise ValidationError("只有待处理的验收卡能改验收人")
+            raise ValidationError("审阅已结束，无法改由他人审阅")
         topic = await self._topic_or_404(card.topic_id)
         card.reviewer_handle = await self._reviewer_or_project_default(
             await self._projects.get(topic.project_id), reviewer_handle
@@ -1162,7 +1159,7 @@ class AcceptService:
             and project.ai_mode == AiMode.collaborative
             and looks_like_agent_handle(handle)
         ):
-            raise ValidationError(f"AI 不能{action}自己做的东西，必须有人来")
+            raise ValidationError(f"AI 不能{action}自己的改动，需要由人操作")
 
     async def approve(self, *, card_id: uuid.UUID, approver_handle: str) -> AcceptCard:
         """主分支保护 (spec §4.4): record one vote toward this card's accept.
@@ -1175,7 +1172,7 @@ class AcceptService:
             AcceptStatus.pending_gate,
             AcceptStatus.conflict,
         ):
-            raise ValidationError("验收卡已关闭，不能再批准")
+            raise ValidationError("审阅已结束，无法批准")
         topic = await self._topic_or_404(card.topic_id)
         project = await self._projects.get(topic.project_id)
         self._forbid_ai(project, approver_handle, "批准")
@@ -1210,17 +1207,17 @@ class AcceptService:
 
         card = await self._card_or_404(card_id)
         if card.status != AcceptStatus.pending or card.pr_number is None:
-            raise ValidationError("只有骑着 PR、还在等采纳的验收卡能设置自动合并")
+            raise ValidationError("只有待审阅且已开 PR 的改动能设置自动合并")
         topic = await self._topic_or_404(card.topic_id)
         project = await self._projects.get(topic.project_id)
-        self._forbid_ai(project, decided_by, "布防自动合并")
+        self._forbid_ai(project, decided_by, "设置自动合并")
         if enabled and not branch_protection_of(project).auto_merge_allowed:
-            raise ValidationError("这个项目没有开启「绿了自动合」（项目设置）")
+            raise ValidationError("项目未开启自动合并，可在项目设置中开启")
         allowed = {card.reviewer_handle}
         if card.auto_merge_armed_by:
             allowed.add(card.auto_merge_armed_by)
         if decided_by not in allowed:
-            raise ForbiddenError("只有这张卡的验收人能设置自动合并")
+            raise ForbiddenError("只有被指定审阅的人能设置自动合并")
         if enabled:
             await self._seen_head_or_refresh(card, topic, head_sha, "布防")
             card.auto_merge_armed_by = decided_by
@@ -1351,10 +1348,7 @@ class AcceptService:
             topic,
             live_head=live,
             action=action,
-            headline=(
-                f"PR #{number} 的 head 还没镜像到卡上，卡面没显示过任何版本；"
-                "已刷新到当前 head"
-            ),
+            headline=(f"PR #{number} 还没有显示过任何版本，已刷新到最新版本"),
         )
         raise ValidationError(_never_shown_message(number, action))
 
@@ -1364,18 +1358,18 @@ class AcceptService:
         card = await self._card_or_404(card_id)
         # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
         if card.status == AcceptStatus.pending_gate:
-            raise ValidationError("平台检查还在进行中，检查通过后才能采纳")
+            raise ValidationError("检查仍在进行，通过后才能采纳")
         if card.status == AcceptStatus.gate_failed:
-            raise ValidationError("平台检查未通过，等芝士修复后重新递卡")
+            raise ValidationError("检查未通过，修复后会重新提交审阅")
         if card.status == AcceptStatus.gate_blocked:
-            raise ValidationError("平台检查没能跑起来（对代码没有结论），等重新递卡")
+            raise ValidationError("检查未能运行，重新提交审阅后才能采纳")
         # pending → first attempt; conflict → retry after 芝士 resolved.
         if card.status not in (AcceptStatus.pending, AcceptStatus.conflict):
-            raise ValidationError("验收卡已处理，不能重复验收")
+            raise ValidationError("审阅已结束，无法再次采纳")
         # 递给某个具体的人 (spec §4.4): only the routed reviewer may accept —
         # decided_by is the caller's verified actor handle, never body-trusted.
         if decided_by != card.reviewer_handle:
-            raise ForbiddenError("你不是这张验收卡指定的验收人，无权采纳")
+            raise ForbiddenError("只有被指定审阅的人能采纳")
         topic = await self._topic_or_404(card.topic_id)
         # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。
         seen_head = await self._seen_head_or_refresh(card, topic, head_sha, "采纳")
@@ -1384,9 +1378,9 @@ class AcceptService:
         # 走不到；留着是为了兜住"归档与采纳同时发生"的竞态。重复采纳本身由上面的
         # 卡状态闸门挡（一张卡只能 accepted 一次），不再依赖话题被归档。
         if topic.status == TopicStatus.archived:
-            raise ValidationError("话题已归档，不能重复采纳")
+            raise ValidationError("话题已归档，无法采纳")
         project = await self._projects.get(topic.project_id)
-        self._forbid_ai(project, decided_by, "验收")
+        self._forbid_ai(project, decided_by, "采纳")
 
         # Institution protocol from linked Task Templates (spec §4.2).
         await self._enforce_protocol(topic, decided_by)
@@ -1402,7 +1396,7 @@ class AcceptService:
         required = approvals_required_of(project)
         if votes < required:
             raise ValidationError(
-                f"批准人数不足，还差 {required - votes} 票（{votes}/{required}）"
+                f"还需 {required - votes} 人批准（{votes}/{required}）"
             )
 
         forge = await self._resolve_forge(topic.project_id, card=card)
@@ -1492,11 +1486,11 @@ class AcceptService:
             return None
         parent = await TaskService(self._session).get(task.base_task_id)
         if parent is None or not status.base_ref:
-            return "暂时无法确认这条活需要等待的任务，请稍后刷新"
+            return "暂时无法确认这个任务依赖的任务，稍后刷新重试"
         if status.base_ref == parent.branch_name:
-            return f"等「{parent.title}」先被采纳，或由芝士调整这条活后重新递交"
+            return f"需等「{parent.title}」先被采纳，或调整这个任务后重新提交审阅"
         if status.base_ref != task.base_branch:
-            return "这条活的对照已改变，请刷新后重新查看"
+            return "这个任务的比较基准已改变，刷新后重新查看"
         return None
 
     async def _sync_dependency_target(
@@ -1747,7 +1741,7 @@ class AcceptService:
         if status.head_sha != seen:
             await self._refresh_stale_card(card, topic, live_head=status.head_sha)
             raise ValidationError(
-                f"PR #{number} 的 head 在你查看后变了，卡已刷新 —— 请重新看过再采纳"
+                f"PR #{number} 在你查看后有新提交，已刷新，重新查看后再采纳"
             )
 
         try:
@@ -1821,8 +1815,7 @@ class AcceptService:
                 logger.warning("card %s: post-409 head read failed", card.id)
             await self._refresh_stale_card(card, topic, live_head=live)
             raise ValidationError(
-                f"PR #{number} 的 head 在采纳瞬间变了（GitHub 409），卡已刷新 —— "
-                "请重新看过再采纳"
+                f"PR #{number} 在采纳时有新提交，已刷新，重新查看后再采纳"
             )
         if result.queued:
             await self._record_queue_entry(card, decided_by)
@@ -2231,7 +2224,7 @@ class AcceptService:
         # 否则它就是一条能悄悄改「这次改动会在历史里说什么」的路。
         self._notify_merge_result(
             topic,
-            f"{actor} 改了验收卡的描述（PR 正文已同步）",
+            f"{actor} 修改了审阅说明（已同步到 PR）",
             meta=notice(
                 EVENT_CARD_REDESCRIBED,
                 severity=SEVERITY_INFO,
@@ -2372,7 +2365,7 @@ class AcceptService:
         notes.record(
             card,
             notes.NoteCode.poll_failed,
-            f"读不到这个 PR 的状态，卡暂时推不动（下一轮还会重试）：{detail}",
+            f"无法读取 PR 状态，稍后自动重试：{detail}",
         )
 
     async def _poll_pr_card(
@@ -2555,10 +2548,10 @@ class AcceptService:
                     card=card,
                     topic=topic,
                     reason=(
-                        f"必跑检查 {missing} 迟迟没有报到"
-                        f"（已等超过 {_REQUIRED_CHECK_GRACE_MINUTES} 分钟）——"
-                        "多半是 workflow 没被触发、被改名或被禁用，"
-                        "平台不会替人判定它可以不跑"
+                        f"必须通过的检查 {missing} 一直没有运行"
+                        f"（已等待超过 {_REQUIRED_CHECK_GRACE_MINUTES} 分钟），"
+                        "可能是 workflow 没有触发、被改名或被停用，"
+                        "平台不会替人判定它可以跳过"
                     ),
                     explain=(
                         "这不是检查红了，是它根本没报到：平台只能确认"
@@ -2613,10 +2606,10 @@ class AcceptService:
                 card=card,
                 topic=topic,
                 reason=(
-                    "分支反复落后于 main（已自动换基 3 次仍未赶上）——"
-                    "main 移动太快或换基没生效，请人工处理"
+                    "分支反复落后于 main（已自动变基 3 次仍未跟上），"
+                    "可能是 main 更新太快或变基没有生效，需要人工处理"
                 ),
-                explain="平台的自动更新分支追不上 main 的移动速度。",
+                explain="平台自动更新分支的速度跟不上 main 的更新。",
             )
             await self._session.flush()
             return
@@ -2853,9 +2846,8 @@ class AcceptService:
         the reason can legitimately change while the card itself hasn't
         moved."""
         note = (
-            f"PR #{card.pr_number} 平台不会自动推进：{reason}。"
-            "需要人来定：人工放行（override 名单里的人）、自己在 GitHub 上处理，"
-            "或者作废这张卡。"
+            f"PR #{card.pr_number} 不会自动合并：{reason}。"
+            "可以由有权限的人人工放行，在 GitHub 上处理，或者作废这次审阅。"
         )
         if card.note == note:
             return  # already said once — the 60s poll must not repeat it
@@ -2872,11 +2864,11 @@ class AcceptService:
                 who=WHO_HUMAN,
                 detail=(
                     f"{reason}。\n{why}\n"
-                    "需要人来定：在卡片上人工放行（平台会记下是谁、什么时候、"
-                    "当时检查是什么状态），自己在 GitHub 上合并，或者作废这张卡。"
+                    "可以人工放行（平台会记下是谁、在什么时候、当时的检查状态），"
+                    "在 GitHub 上合并，或者作废这次审阅。"
                     f"\n{card.pr_url}"
                 ),
-                detail_label="为什么扣住",
+                detail_label="原因",
             ),
         )
 
@@ -2909,7 +2901,7 @@ class AcceptService:
         """
         note = (
             f"PR #{card.pr_number} 已关闭且没有合并，平台不会自动合并。"
-            "需要人决定：重开 PR，或作废这张卡。"
+            "可以重新打开 PR，或者作废这次审阅。"
         )
         if card.note == note:
             return  # already said once — the 60s poll must not repeat it
@@ -2928,10 +2920,10 @@ class AcceptService:
                 severity=SEVERITY_WARN,
                 who=WHO_HUMAN,
                 detail=(
-                    "平台不会自动合并一个被人关掉的 PR。话题保持活跃，"
-                    "需要人决定：重开 PR，或作废这张卡。"
+                    "已关闭的 PR 不会自动合并。话题保持进行中，"
+                    "可以重新打开 PR，或者作废这次审阅。"
                 ),
-                detail_label="怎么办",
+                detail_label="下一步",
             ),
         )
 
@@ -3203,7 +3195,7 @@ class AcceptService:
                 "提交后用 cheese push-fix 更新原 PR，说明处理结果。\n"
                 "如果冲突解不动、或者不该由你来解，在话题里说清楚卡在哪。"
             ),
-            note=f"PR #{card.pr_number} 和目标分支冲突，已叫芝士来解",
+            note=f"PR #{card.pr_number} 与目标分支冲突，正在解决",
             note_code=notes.NoteCode.merge_conflict,
             event_type=EVENT_PR_CONFLICT,
         )
@@ -3380,7 +3372,7 @@ class AcceptService:
                     "绑定 GitHub 的项目只通过合并 PR 完成采纳，平台不会绕过 PR "
                     "直推上游。处理后可重试采纳。"
                 ),
-                detail_label="为什么停下",
+                detail_label="原因",
             ),
         )
         await self._session.rollback()
@@ -3409,23 +3401,22 @@ class AcceptService:
         work = await TaskService(self._session).require_in_room(topic.id, task_id)
         branch = work.branch_name
         note = (
-            f"{_ACCEPT_NO_BRANCH_PREFIX}（{branch}），开不出能承载"
-            f"「{subject}」的 PR。改动可能被提交到了别的分支——"
-            f"把提交推上 {branch} 后重试采纳。"
+            f"{_ACCEPT_NO_BRANCH_PREFIX}（{branch}），无法为「{subject}」开 PR。"
+            f"改动可能提交到了其他分支，推送到 {branch} 后重新采纳。"
         )
         self._notify_merge_result(
             topic,
-            "采纳未完成：树上没有可交付的提交",
+            "采纳未完成：分支上没有提交",
             meta=notice(
                 EVENT_ACCEPT_STOPPED,
                 severity=SEVERITY_ERROR,
                 who=WHO_HUMAN,
                 detail=(
-                    f"这张卡主张交付「{subject}」，但这棵树的分支（{branch}）上"
-                    "没有任何提交：开不出 PR，也没有东西可以合并。改动可能在"
-                    f"别的分支上；把提交推上 {branch} 后重试采纳。"
+                    f"这次审阅的改动是「{subject}」，但分支 {branch} 上"
+                    "没有任何提交，无法开 PR，也没有可合并的内容。改动可能在"
+                    f"其他分支上，推送到 {branch} 后重新采纳。"
                 ),
-                detail_label="为什么停下",
+                detail_label="原因",
             ),
         )
         await self._session.rollback()
@@ -3502,7 +3493,7 @@ class AcceptService:
                         "平台不会在没有 PR 的情况下把改动直推上游。"
                         "处理后可重试采纳。"
                     ),
-                    detail_label="为什么停下",
+                    detail_label="原因",
                 ),
             )
             # Roll back first, for the same reason as `_stop_accept_pr_
@@ -3514,8 +3505,8 @@ class AcceptService:
                 card_id, notes.NoteCode.accept_pr_open_failed, note
             )
             raise ValidationError(
-                "采纳未完成：无法为这张卡开 PR（原因已写在卡片上）。"
-                "平台不会在没有 PR 的情况下把改动直推上游；修复后重试采纳"
+                "采纳未完成：无法开 PR，原因见审阅详情。"
+                "没有 PR 时平台不会直接推送改动，修复后重新采纳"
             ) from exc
         if pr is None:
             return  # PR 路对这个项目/话题不适用 — 本地合并就是它唯一的采纳方式
@@ -3568,16 +3559,16 @@ class AcceptService:
             owner=owner, repo=repo, number=card.pr_number, token=creds.read
         )
         if status.merged:
-            raise ValidationError("PR 已经合并，不能撤销队列中的合并请求，请刷新卡片。")
+            raise ValidationError("PR 已合并，无法撤回合并请求，刷新后查看")
 
     async def reject(
         self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
     ) -> AcceptCard:
         card = await self._card_or_404(card_id)
         if card.status != AcceptStatus.pending:
-            raise ValidationError("验收卡已处理，不能重复决议")
+            raise ValidationError("审阅已结束，无法退回")
         if decided_by != card.reviewer_handle:
-            raise ForbiddenError("你不是这张验收卡指定的验收人，无权驳回")
+            raise ForbiddenError("只有被指定审阅的人能退回")
 
         await self._cancel_queued_accept(card)
         card.status = AcceptStatus.rejected
@@ -3594,7 +3585,7 @@ class AcceptService:
         card = await self._card_or_404(card_id)
         # Accept is revocable (spec §6.3): only an accepted card can be revoked.
         if card.status != AcceptStatus.accepted:
-            raise ValidationError("只有已验收的卡才能撤销")
+            raise ValidationError("只有已采纳的改动能撤销")
 
         # Only the person who accepted it, or someone who manages the project,
         # may revoke — not any arbitrary handle.
@@ -3659,13 +3650,13 @@ class AcceptService:
 
         card = await self._card_or_404(card_id)
         if card.status != AcceptStatus.pending or card.pr_merged_at is not None:
-            raise ValidationError("只有还在等采纳的验收卡能人工放行合并")
+            raise ValidationError("只有待审阅的改动能人工放行")
         if card.pr_number is None:
-            raise ValidationError("这张卡没有可合并的 PR")
+            raise ValidationError("没有可合并的 PR")
 
         topic = await self._topic_or_404(card.topic_id)
         project = await self._projects.get(topic.project_id)
-        self._forbid_ai(project, decided_by, "人工放行合并")
+        self._forbid_ai(project, decided_by, "人工放行")
 
         protection = branch_protection_of(project)
         if protection.override_handles is not None:
@@ -3754,8 +3745,7 @@ class AcceptService:
         if result.stale_head:
             await self._refresh_stale_card(card, topic, live_head="", action="放行")
             raise ValidationError(
-                f"PR #{number} 的 head 在放行瞬间变了（GitHub 409），卡已刷新 —— "
-                "请重新看过再放行"
+                f"PR #{number} 在放行时有新提交，已刷新，重新查看后再放行"
             )
         if result.queued:
             await self._record_queue_entry(card, decided_by)
@@ -3822,7 +3812,7 @@ class AcceptService:
         """
         card = await self._card_or_404(card_id)
         if card.status not in archive.OPEN_CARD_STATUSES:
-            raise ValidationError(f"这张验收卡已经是终态（{card.status}），不用作废")
+            raise ValidationError("审阅已结束，无需作废")
 
         topic = await self._topic_or_404(card.topic_id)
         project = await self._projects.get(topic.project_id)
@@ -3831,22 +3821,22 @@ class AcceptService:
         if decided_by != card.reviewer_handle and not await MemberService(
             self._session
         ).manages(topic.project_id, decided_by):
-            raise ForbiddenError("只有这张卡的验收人、项目所有者或团队管理员能作废它")
+            raise ForbiddenError("只有被指定审阅的人、项目所有者或团队管理员能作废")
 
         await self._cancel_queued_accept(card)
         was = card.status
         reason = f" 理由：{note.strip()}" if note.strip() else ""
         headline = (
             f"{VOIDED_PREFIX}：<@{decided_by}> 作废于状态「{was}」。"
-            f"话题可以重新递卡。{reason}"
+            f"话题可以重新提交审阅。{reason}"
         )
         if card.pr_number is not None and card.pr_merged_at is None:
             # 跟归档收敛同一条产品判断 (review/archive.py 的模块 docstring)：平台
             # 不拿别人的 token 去关别人名下的 PR。停止跟进 + 留痕。
             headline = (
-                f"{VOIDED_PREFIX}：<@{decided_by}> 作废了这张卡，平台已停止跟进 "
-                f"PR #{card.pr_number}。PR 未合并、仍开在 GitHub 上，合还是关由人"
-                f"决定：{card.pr_url or '(无链接)'}{reason}"
+                f"{VOIDED_PREFIX}：<@{decided_by}> 作废了这次审阅，平台已停止跟进 "
+                f"PR #{card.pr_number}。PR 未合并，仍在 GitHub 上打开，需要人决定"
+                f"合并还是关闭：{card.pr_url or '（无链接）'}{reason}"
             )
         card.status = AcceptStatus.revoked
         notes.record(
@@ -3875,7 +3865,7 @@ class AcceptService:
             task_id=landed.task_id,
             author="cheese",
             author_type=AuthorType.platform,
-            content=f"<@{decided_by}> 作废了这张验收卡",
+            content=f"<@{decided_by}> 作废了审阅",
             kind=BlockKind.event,
             meta={
                 "platform": True,
@@ -3884,8 +3874,8 @@ class AcceptService:
                     severity=SEVERITY_INFO,
                     who=WHO_CHEESE,
                     detail=(
-                        f"作废于状态「{was}」。这不是驳回，也不代表检查不通过——"
-                        f"它只是把卡收尾，好让这个话题能重新递卡。{reason}"
+                        f"作废于状态「{was}」。这不是退回，也不代表检查未通过，"
+                        f"只是结束这次审阅，让话题可以重新提交。{reason}"
                     ),
                     detail_label="作废说明",
                 ),

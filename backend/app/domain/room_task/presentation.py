@@ -113,16 +113,16 @@ class NeedsYou(enum.StrEnum):
     """下一步在人手上。"""
 
     checks_failed = "检查未通过"
-    awaiting_review = "等待验收"
-    bounced = "交付被退回"
+    awaiting_review = "待审阅"
+    bounced = "已退回"
     #: 芝士提出了待确认问题，本轮停止等待回答。这是唯一一种**会中断运行**的：
     #: 其余几格都是一轮结束之后的状态。
-    awaiting_answer = "待确认"
+    awaiting_answer = "待回答"
 
 
 class Done(enum.StrEnum):
     accepted = "已采纳"
-    closed = "已收工"
+    closed = "已关闭"
 
 
 class Archived(enum.StrEnum):

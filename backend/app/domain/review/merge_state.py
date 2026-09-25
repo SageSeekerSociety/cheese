@@ -203,7 +203,7 @@ def _check_annotations(check_runs: Sequence[CheckRun]) -> tuple[MergeReason, ...
             MergeReason(
                 kind="check_failed",
                 checks=red,
-                detail="检查红了：" + ", ".join(red),
+                detail="检查未通过：" + ", ".join(red),
             )
         )
     if running:
@@ -211,7 +211,7 @@ def _check_annotations(check_runs: Sequence[CheckRun]) -> tuple[MergeReason, ...
             MergeReason(
                 kind="ci_running",
                 checks=running,
-                detail="CI 还在跑：" + ", ".join(running),
+                detail="CI 正在运行：" + ", ".join(running),
             )
         )
     return tuple(out)
@@ -230,7 +230,7 @@ def _passthrough(
     ``draft`` 归入 blocked（reason 说明），``has_hooks``（带 pre-receive hook
     的 clean）归入 clean，认不出的词和 ``unknown`` 都归 unknown。"""
     verdict = MergeReason(
-        kind="github_verdict", detail=f"GitHub 的裁决：{state_word or 'unknown'}"
+        kind="github_verdict", detail=f"GitHub 合并状态：{state_word or 'unknown'}"
     )
     annotations = _check_annotations(check_runs)
     match state_word:
@@ -242,19 +242,25 @@ def _passthrough(
         case "behind":
             return MergeVerdict(
                 state="behind",
-                reasons=(verdict, MergeReason(kind="behind_base", detail="落后基线")),
+                reasons=(
+                    verdict,
+                    MergeReason(kind="behind_base", detail="落后于目标分支"),
+                ),
             )
         case "dirty":
             return MergeVerdict(
                 state="dirty",
-                reasons=(verdict, MergeReason(kind="conflict", detail="与基线冲突")),
+                reasons=(
+                    verdict,
+                    MergeReason(kind="conflict", detail="与目标分支冲突"),
+                ),
             )
         case "draft":
             return MergeVerdict(
                 state="blocked",
                 reasons=(
                     verdict,
-                    MergeReason(kind="draft", detail="还是 draft，没递交评审"),
+                    MergeReason(kind="draft", detail="PR 仍是草稿，尚未提交审阅"),
                 ),
             )
         case _:
@@ -303,7 +309,7 @@ def compute_merge_state(
     if draft or state_word == "draft":
         return MergeVerdict(
             state="blocked",
-            reasons=(MergeReason(kind="draft", detail="还是 draft，没递交评审"),),
+            reasons=(MergeReason(kind="draft", detail="PR 仍是草稿，尚未提交审阅"),),
         )
 
     # 冲突最优先：冲突的 PR 上 CI 说什么都不重要，先解掉。只有 mergeable 是
@@ -311,7 +317,7 @@ def compute_merge_state(
     if state_word == "dirty" or github_mergeable is False:
         return MergeVerdict(
             state="dirty",
-            reasons=(MergeReason(kind="conflict", detail="与基线冲突"),),
+            reasons=(MergeReason(kind="conflict", detail="与目标分支冲突"),),
         )
 
     # 必跑名单（#468/#470 语义）：红 → blocked；缺席/skipped → blocked（等
@@ -336,7 +342,7 @@ def compute_merge_state(
             case "pass":
                 pass
     fallback_note = (
-        "（拿不到这次改动的文件清单，带路径条件的必跑检查按必需处理）"
+        "（无法获取改动的文件清单，带路径条件的检查一律按必须通过处理）"
         if fallback
         else ""
     )
@@ -347,7 +353,7 @@ def compute_merge_state(
                 MergeReason(
                     kind="required_check_failed",
                     checks=tuple(sorted(red)),
-                    detail="必跑检查红了：" + ", ".join(sorted(red)),
+                    detail="必须通过的检查未通过：" + ", ".join(sorted(red)),
                 )
             )
         if missing:
@@ -355,7 +361,7 @@ def compute_merge_state(
                 MergeReason(
                     kind="required_check_missing",
                     checks=tuple(sorted(missing)),
-                    detail="必跑检查还没报到："
+                    detail="必须通过的检查尚未运行："
                     + ", ".join(sorted(missing))
                     + fallback_note,
                 )
@@ -368,7 +374,9 @@ def compute_merge_state(
         return MergeVerdict(
             state="behind",
             reasons=(
-                MergeReason(kind="behind_base", detail=f"落后基线（{base_ancestry}）"),
+                MergeReason(
+                    kind="behind_base", detail=f"落后于目标分支（{base_ancestry}）"
+                ),
             ),
         )
 
@@ -386,7 +394,7 @@ def compute_merge_state(
                 MergeReason(
                     kind="ci_running",
                     checks=tuple(sorted(running)),
-                    detail="CI 还在跑：" + ", ".join(sorted(running)),
+                    detail="CI 正在运行：" + ", ".join(sorted(running)),
                 ),
             ),
         )
@@ -409,7 +417,7 @@ def compute_merge_state(
                 reasons=(
                     MergeReason(
                         kind="github_verdict",
-                        detail="有检查没过，但都不在必跑名单，可以采纳",
+                        detail="有检查未通过，但都不是必须通过的检查，可以采纳",
                     ),
                     *_check_annotations(check_runs),
                 ),
@@ -421,7 +429,9 @@ def compute_merge_state(
             return MergeVerdict(
                 state=state,
                 reasons=(
-                    MergeReason(kind="github_verdict", detail=f"GitHub 的裁决：{word}"),
+                    MergeReason(
+                        kind="github_verdict", detail=f"GitHub 合并状态：{word}"
+                    ),
                 ),
             )
         case _:
@@ -432,7 +442,7 @@ def compute_merge_state(
                 reasons=(
                     MergeReason(
                         kind="no_signal",
-                        detail="GitHub 还没算出这个 PR 的合并态",
+                        detail="GitHub 尚未计算出 PR 的合并状态",
                     ),
                 ),
             )
@@ -489,7 +499,7 @@ def local_merge_state(*, conflicts_with_trunk: bool | None) -> MergeVerdict:
         case True:
             return MergeVerdict(
                 state="dirty",
-                reasons=(MergeReason(kind="conflict", detail="与基线冲突"),),
+                reasons=(MergeReason(kind="conflict", detail="与目标分支冲突"),),
             )
         case False:
             return MergeVerdict(
@@ -500,6 +510,6 @@ def local_merge_state(*, conflicts_with_trunk: bool | None) -> MergeVerdict:
             return MergeVerdict(
                 state="unknown",
                 reasons=(
-                    MergeReason(kind="no_signal", detail="还没算过与基线是否冲突"),
+                    MergeReason(kind="no_signal", detail="尚未检查是否与目标分支冲突"),
                 ),
             )

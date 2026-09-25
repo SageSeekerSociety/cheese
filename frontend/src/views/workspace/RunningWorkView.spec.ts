@@ -97,7 +97,7 @@ describe('列按「该谁动」分', () => {
       data: [
         task({ id: 'a', title: '甲', presentation: { column: 'building', display_status: '运行中' } }),
         task({ id: 'b', title: '乙', presentation: { column: 'delivering', display_status: '等待检查' } }),
-        task({ id: 'c', title: '丙', presentation: { column: 'needs_you', display_status: '等待验收' } }),
+        task({ id: 'c', title: '丙', presentation: { column: 'needs_you', display_status: '待审阅' } }),
       ],
       total: 3,
     })
@@ -136,7 +136,7 @@ describe('列按「该谁动」分', () => {
 describe('空列不消失', () => {
   it('一件活都没有的列仍然留着列头和 0', async () => {
     listProjectTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'needs_you', display_status: '等待验收' } })],
+      data: [task({ presentation: { column: 'needs_you', display_status: '待审阅' } })],
       total: 1,
     })
     const { container } = mount()
@@ -152,7 +152,7 @@ describe('已完成不占板面', () => {
     listProjectTasks.mockResolvedValue({
       data: [
         task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已采纳' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已收工' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已关闭' } }),
       ],
       total: 2,
     })
@@ -164,9 +164,9 @@ describe('已完成不占板面', () => {
 
     await fireEvent.click(container.querySelector('.board__done-head') as HTMLElement)
     await findByText('甲')
-    // 「已采纳」和「已收工」的区别没有丢：同一列里是两个不同的短语。
+    // 「已采纳」和「已关闭」的区别没有丢：同一列里是两个不同的短语。
     await findByText('已采纳')
-    await findByText('已收工')
+    await findByText('已关闭')
   })
 })
 
@@ -202,7 +202,7 @@ describe('这一页原来的两个用处都还在', () => {
     listProjectTasks.mockResolvedValue({
       data: [
         task({ id: 'a', presentation: { column: 'building', display_status: '运行中' } }),
-        task({ id: 'b', presentation: { column: 'needs_you', display_status: '等待验收' } }),
+        task({ id: 'b', presentation: { column: 'needs_you', display_status: '待审阅' } }),
         task({ id: 'c', presentation: { column: 'done', display_status: '已采纳' } }),
       ],
       total: 3,
@@ -304,8 +304,8 @@ describe('一件活都没有', () => {
   it('活全在「已完成」里的时候，板面照样说得出下一步', async () => {
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已收工' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已收工' } }),
+        task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已关闭' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已关闭' } }),
       ],
       total: 2,
     })

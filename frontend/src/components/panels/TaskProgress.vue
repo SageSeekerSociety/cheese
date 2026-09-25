@@ -126,7 +126,7 @@ function inColumn(column: BoardColumn): ThreadRow[] {
 /** 有东西的那几列。「已完成」不在 BOARD_COLUMNS 里，它在最底下另有一行。 */
 const shownColumns = computed(() => BOARD_COLUMNS.filter((col) => inColumn(col.key).length > 0))
 
-/** 已完成收在最底下、折起来 —— 和项目那块板同一个处理。「已采纳」和「已收工」的
+/** 已完成收在最底下、折起来 —— 和项目那块板同一个处理。「已采纳」和「已关闭」的
  *  区别没有丢：它们在同一列里是两个不同的短语，展开就看得见。 */
 const doneRows = computed(() => inColumn('done'))
 /** 这个房间此刻有几件在等人。它排在标题旁边，因为这是打开一个房间最该先看到的数。 */
@@ -188,7 +188,7 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
               </ul>
             </template>
 
-            <!-- 已完成收在最底下、折起来。「已采纳」和「已收工」的区别没有丢：它们在
+            <!-- 已完成收在最底下、折起来。「已采纳」和「已关闭」的区别没有丢：它们在
                这一列里是两个不同的短语，展开就看得见。 -->
             <template v-if="doneRows.length">
               <button

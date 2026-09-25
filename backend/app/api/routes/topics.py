@@ -678,7 +678,7 @@ async def get_room_task(
     tasks = TaskService(db)
     task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这条活")
+        raise NotFoundError("这个房间里没有这个任务")
     blocks = await tasks.blocks_for_thread(task_id, limit=limit)
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
     beats = await TaskRepository(db).last_block_at_for_tasks([task.id])
@@ -747,7 +747,7 @@ async def say_on_task(
     place = await TopicService(db).place_or_404(topic_id)
     task = await TaskService(db).get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这条活")
+        raise NotFoundError("这个房间里没有这个任务")
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError("消息内容不能为空")
@@ -831,7 +831,7 @@ async def set_task_title(
     await _actor_in_place(resolver, place)
     task = await TaskService(db).get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这条活")
+        raise NotFoundError("这个房间里没有这个任务")
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError("title 不能为空")
@@ -873,7 +873,7 @@ async def conclude_task(
     tasks = TaskService(db)
     task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这条活")
+        raise NotFoundError("这个房间里没有这个任务")
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()
@@ -1177,6 +1177,7 @@ async def add_comment(
     if not await members.holds_an_agent_seat(place.room, actor.handle):
         where = f"「{quote[:80]}」" if quote else "整篇"
         said = f"在实况文档 {where} 处评论：{content}"
+        seat = await members.addressable_agent_handle(place.room_id)
         runner.submit(
             chat,
             place.room_id,
@@ -1185,10 +1186,12 @@ async def add_comment(
                 f"{author} {said}\n"
                 "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
             ),
-            addressed=addressed_to_agent(
-                await members.addressable_agent_handle(place.room_id)
+            addressed=addressed_to_agent(seat),
+            nudge_event=(
+                f"{author} 评论了文档，已交给 <@{seat}>"
+                if seat
+                else f"{author} 评论了文档"
             ),
-            nudge_event=f"{author} 在文档上留了评论，芝士来处理",
             provision_actor=actor,
         )
     return ok(payload)
@@ -1967,7 +1970,11 @@ async def summon_agent(
         # 点名的是按下这个按钮的人，不是平台：他指名这个房间的芝士，寻址结果里
         # 因此恰好有它一个，这一轮才跑得起来。
         addressed=addressed_to_agent(seat),
-        nudge_event=f"<@{actor.handle}> 叫芝士来看前面的消息",
+        nudge_event=(
+            f"<@{actor.handle}> 把之前的消息交给了 <@{seat}>"
+            if seat
+            else f"<@{actor.handle}> 交出了之前的消息"
+        ),
         provision_actor=actor,
     )
     return ok({"started": True})
@@ -2972,7 +2979,7 @@ async def decide_document_revisions(
         # 资料库那一份是用户给进来的原件，只读：这里写回去就是在他没要求的时候改了
         # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
         # 栏照常列），能做的只是不动它。
-        raise ValidationError("资料库里的原件不改——让芝士基于它做一份新的")
+        raise ValidationError("项目资料里的原件不能修改，可以基于它新建一份")
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")
@@ -2986,7 +2993,7 @@ async def decide_document_revisions(
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(
-            "文件已被改动（芝士或其他人写过），这份清单是基于旧内容的",
+            "文件已被修改，这份清单基于旧内容，刷新后重试",
             data={"path": clean, "version": actual},
         )
     try:
@@ -3428,9 +3435,7 @@ async def upgrade_block(
             db,
             place_id=room.id,
             content=(
-                "一条消息升级成了这个房间里的一条活"
-                if thread is not None
-                else "一条消息升级成了一个房间"
+                "一条消息已转为任务" if thread is not None else "一条消息已转为话题"
             ),
             meta=notice(
                 EVENT_BLOCK_UPGRADED,

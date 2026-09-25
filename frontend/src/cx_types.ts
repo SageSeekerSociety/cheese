@@ -183,7 +183,7 @@ export interface ListPayload<T> {
  *  `displayStatus` 就是看板卡面上那一句，后端算好的 —— 前端不做第二张映射表，理由
  *  和 `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
  *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的
- *  待确认问题上 (`asked`)。 */
+ *  待回答的问题上 (`asked`)。 */
 export interface WaitingItem {
   projectId: string
   projectName: string
@@ -273,7 +273,7 @@ export interface RoomTask {
  *    building   施工中 —— 还没递出交付
  *    delivering 交付中 —— 下一步在平台/芝士手上
  *    needs_you  待处理 —— 下一步在人手上
- *    done       已完成 —— 已采纳，或已收工且没交付
+ *    done       已完成 —— 已采纳，或已关闭且没交付
  *    archived   已归档 —— 房间才有；活不归档
  */
 export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'

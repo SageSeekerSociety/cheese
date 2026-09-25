@@ -69,7 +69,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'needs_you', display_status: '等待验收' },
+    presentation: { column: 'needs_you', display_status: '待审阅' },
     ...over,
   }
 }
@@ -220,8 +220,8 @@ describe('已完成那条折叠行', () => {
     query = { mine: '1' }
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已收工' } }),
-        task({ id: 'b', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已收工' } }),
+        task({ id: 'a', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已关闭' } }),
+        task({ id: 'b', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已关闭' } }),
       ],
       total: 2,
     })

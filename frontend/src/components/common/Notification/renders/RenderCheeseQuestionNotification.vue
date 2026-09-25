@@ -14,7 +14,7 @@ import { useI18n } from 'vue-i18n'
 import { getStringMetadata } from './NotificationRenderUtils'
 
 /**
- * 芝士提出的待确认问题：本轮停在这里等回答。
+ * 芝士提出的待回答问题：本轮停在这里等回答。
  *
  * 标题就是问题原文，这里不改写、不套模板 —— 通知里读到的和回房间看到的是同一句。
  * 与 `ROOM_NOTICE` 分成两个组件，是因为那一条是平台的一行提示（定长、措辞由平台

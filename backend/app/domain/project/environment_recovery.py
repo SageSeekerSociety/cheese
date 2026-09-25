@@ -94,7 +94,7 @@ async def report_failure(
             root,
             author="system",
             addressed=addressed_to_agent(seat),
-            nudge_event="房间环境准备失败，已交给总览芝士检查",
+            nudge_event="房间环境准备失败，已交给项目总览检查",
             nudge_meta={
                 **notice(
                     EVENT_ENVIRONMENT_RECOVERY_REQUEST,

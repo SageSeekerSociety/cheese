@@ -313,11 +313,11 @@ class _Proposed:
 # "verb\npreview" (preview omitted when empty).
 _TOOL_VERB = {
     "update_doc": "更新文档",
-    "remember": "记入记忆",
+    "remember": "记入项目记忆",
     "notify": "发送通知",
-    "request_accept": "递出验收卡",
-    "pin_milestone": "钉里程碑",
-    "write_file": "写文件",
+    "request_accept": "提交审阅",
+    "pin_milestone": "添加里程碑",
+    "write_file": "写入文件",
     "record_decision": "记录决策",
 }
 
@@ -329,20 +329,20 @@ _TOOL_VERB = {
 _TOOL_VERB.update(
     {
         "Bash": "执行命令",
-        "Write": "写文件",
-        "Edit": "改文件",
-        "Read": "读文件",
-        "Glob": "找文件",
-        "Grep": "搜内容",
-        "WebSearch": "搜网页",
-        "WebFetch": "看网页",
-        "Agent": "派分身去查",
-        "Task": "派分身去查",  # older CLI name for Agent
-        "NotebookEdit": "改笔记本",
+        "Write": "写入文件",
+        "Edit": "修改文件",
+        "Read": "读取文件",
+        "Glob": "查找文件",
+        "Grep": "搜索内容",
+        "WebSearch": "搜索网页",
+        "WebFetch": "读取网页",
+        "Agent": "派出分身",
+        "Task": "派出分身",  # older CLI name for Agent
+        "NotebookEdit": "修改笔记本",
         "TodoWrite": "更新任务清单",
-        "BashOutput": "看命令输出",
-        "KillShell": "停掉命令",
-        "KillBash": "停掉命令",
+        "BashOutput": "查看命令输出",
+        "KillShell": "终止命令",
+        "KillBash": "终止命令",
         "ExitPlanMode": "提交方案待确认",
         "AskUserQuestion": "向用户提问",
         "Skill": "调用技能",
@@ -355,12 +355,12 @@ _TOOL_VERB.update(
 _TOOL_VERB.update(
     {
         "bash": "执行命令",
-        "read": "读文件",
-        "write": "写文件",
-        "edit": "改文件",
-        "ls": "列目录",
-        "find": "找文件",
-        "grep": "搜内容",
+        "read": "读取文件",
+        "write": "写入文件",
+        "edit": "修改文件",
+        "ls": "列出目录",
+        "find": "查找文件",
+        "grep": "搜索内容",
     }
 )
 
@@ -456,7 +456,7 @@ def _tool_event_meta(
 
 
 # 分身回吐 (§9 可见性): a subagent reports to whoever spawned it and nothing else,
-# so the room used to see 「派分身去查 X」 and never the answer. Its conclusion
+# so the room used to see 「派出分身 X」 and never the answer. Its conclusion
 # lands as its own 现场 event — CAPPED, because the room is a place people read:
 # a subagent can return thousands of words and pasting them here would bury the
 # conversation instead of informing it. The full text is in the transcript; what
@@ -652,7 +652,7 @@ _TOOL_ACTION = {
 # to them is the same fact told twice, worse.
 _ACTION_LABEL = {
     "decision": "记录了决策",
-    "topics": "更新了这个房间的活",
+    "topics": "更新了这个房间的任务",
     "milestone": "添加了里程碑",
     "notify": "发送了通知",
 }
@@ -1201,8 +1201,8 @@ def _is_dm(topic: Topic) -> bool:
     自漂移，这次退役的正是漂开了的三十处。推出来的是两件事：
 
     - **这间房没有名册。**私聊不暴露成员列表，`@` 解析不到项目里的第三个人：解
-      析表给 `[]`，`@某某` 原样留在正文里，显示成一条「项目成员里没有这个 handle」
-      的 ⚠️。这一条管的是正文去了哪里，不只是渲染：名册还要往下走进
+      析表给 `[]`，`@某某` 原样留在正文里，显示成一条「项目中没有这个成员」
+      。这一条管的是正文去了哪里，不只是渲染：名册还要往下走进
       `_notify_mentions`，解析到的每个 handle 都会收到一条带正文前 200 字的强提醒。
     - **这一轮不租地点**（`needs_place`，结论 19、不变量 I2）：不碰仓库文件、不
       跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出来。它桌上只有
@@ -2798,7 +2798,7 @@ class ChatService:
                     task_id=landed.task_id,
                     author=state.acting_agent,
                     author_type=AuthorType.platform,
-                    content=f"芝士 {_ACTION_LABEL[resource]}",
+                    content=f"<@{state.acting_agent}> {_ACTION_LABEL[resource]}",
                     kind=BlockKind.event,
                     turn_id=state.work_id,
                     meta={"platform": True, "action": resource},
@@ -3469,7 +3469,7 @@ class ChatService:
                 if refs:
                     block.refs = refs
                 for bad in unresolved:
-                    warn = f"⚠️ @了 <@{bad}>，项目成员里没有这个 handle，没能通知到"
+                    warn = f"未能通知 <@{bad}>：项目中没有这个成员"
                     # Beside the message it is about, not in the room the
                     # message did not go to — same landing as the message.
                     await blocks.add(

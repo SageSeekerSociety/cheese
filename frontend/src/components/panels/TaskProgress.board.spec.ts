@@ -99,18 +99,18 @@ describe('列和短语跟项目那块板是同一套', () => {
 
   it('行上写的是后端那句话，不是这一段自己想的词', async () => {
     listRoomTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'needs_you', display_status: '交付被退回' } })],
+      data: [task({ presentation: { column: 'needs_you', display_status: '已退回' } })],
       total: 1,
     })
     const { findByText } = mount()
-    await findByText('交付被退回')
+    await findByText('已退回')
   })
 
   it('活按后端给的列分开', async () => {
     listRoomTasks.mockResolvedValue({
       data: [
         task({ id: 'a', title: '甲', presentation: { column: 'building', display_status: '空闲' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'needs_you', display_status: '等待验收' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'needs_you', display_status: '待审阅' } }),
       ],
       total: 2,
     })
@@ -127,11 +127,11 @@ describe('列和短语跟项目那块板是同一套', () => {
 })
 
 describe('已完成收在最底下', () => {
-  it('折起来时件数说得出来，展开后「已采纳」和「已收工」分得清', async () => {
+  it('折起来时件数说得出来，展开后「已采纳」和「已关闭」分得清', async () => {
     listRoomTasks.mockResolvedValue({
       data: [
         task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已采纳' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已收工' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已关闭' } }),
       ],
       total: 2,
     })
@@ -146,7 +146,7 @@ describe('已完成收在最底下', () => {
 
     await fireEvent.click(fold)
     await findByText('已采纳')
-    await findByText('已收工')
+    await findByText('已关闭')
   })
 })
 
@@ -154,7 +154,7 @@ describe('标题旁边那个数', () => {
   it('说的是有几件在等人 —— 打开一个房间最该先看到的数', async () => {
     listRoomTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', presentation: { column: 'needs_you', display_status: '等待验收' } }),
+        task({ id: 'a', presentation: { column: 'needs_you', display_status: '待审阅' } }),
         task({ id: 'b', presentation: { column: 'needs_you', display_status: '检查未通过' } }),
         task({ id: 'c', presentation: { column: 'building', display_status: '运行中' } }),
       ],
@@ -178,7 +178,7 @@ describe('第 N 件的编号不跟着列走', () => {
           id: 'b',
           title: '新的',
           created_at: '2026-08-09T00:00:00Z',
-          presentation: { column: 'needs_you', display_status: '等待验收' },
+          presentation: { column: 'needs_you', display_status: '待审阅' },
         }),
       ],
       total: 2,
