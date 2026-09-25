@@ -1216,7 +1216,7 @@ class AgentWorkRunner:
                 )
                 if (block.meta or {}).get("event_type") not in _WAITING
             }
-        rooms: dict[uuid.UUID, object] = {}
+        rooms: dict[uuid.UUID, Block] = {}
         for block in mentioned:
             if block.id in begun or block.id in answered:
                 continue
