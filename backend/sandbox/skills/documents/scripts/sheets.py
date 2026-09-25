@@ -248,6 +248,51 @@ class Book:
         value = self.cells.get(ref.sheet, {}).get(ref.cell)
         return value is None or (isinstance(value, str) and not value.strip())
 
+    def row_texts(self, sheet: str, row: int, before_col: int) -> list[str]:
+        """The text cells left of `before_col` in one row: what labels it."""
+        cells = self.cells.get(sheet, {})
+        texts = []
+        for index in range(1, before_col):
+            value = cells.get(f"{_column_letter(index)}{row}")
+            if isinstance(value, str) and value.strip():
+                texts.append(value.strip())
+        return texts
+
+    def label_mismatches(self, sheet: str, address: str, refs: list[Reference]):
+        """Cross-sheet cells read from a row other than the one carrying this
+        row's label.
+
+        This is the shape the moved-block bug leaves behind: 统计 row 「预览」
+        reads 明细 row 2, while 「预览」 sits in 明细 row 3. It is only reported
+        when the label is found on the other sheet in a different row — two
+        sheets that label rows differently say nothing either way, and guessing
+        there would bury the real finding under false ones. Ranges and same-sheet
+        references have no single row to agree with.
+        """
+        col = _col_of(address)
+        mine = self.row_texts(sheet, _row_of(address), col)
+        if not mine:
+            return []
+        found = []
+        for ref in refs:
+            if not ref.external or ":" in ref.cell or ref.sheet not in self.cells:
+                continue
+            ref_col, ref_row = _col_of(ref.cell), _row_of(ref.cell)
+            if set(mine) & set(self.row_texts(ref.sheet, ref_row, ref_col)):
+                continue
+            rows = sorted(
+                {
+                    _row_of(other)
+                    for other, value in self.cells[ref.sheet].items()
+                    if isinstance(value, str)
+                    and value.strip() in mine
+                    and _col_of(other) < ref_col
+                }
+            )
+            if rows:
+                found.append((ref.address, mine[-1], rows))
+        return found
+
 
 def _is_function(formula: str, end: int) -> bool:
     """`LOG10` is letters and digits, and reads exactly like a cell."""
@@ -358,12 +403,23 @@ def cmd_refs(args) -> int:
                     "formula": formula,
                     "reads": [r.address for r in refs],
                     "reads_blank": [r.address for r in refs if book.is_blank(r)],
+                    "label_mismatch": [
+                        {"reads": cell, "label": label, "label_rows": rows}
+                        for cell, label, rows in book.label_mismatches(
+                            name, address, refs
+                        )
+                    ],
                 }
             )
 
+    # A label found in a different row of the sheet being read is the one
+    # misalignment this can prove from the file alone, so it fails the command:
+    # a delivery flow that runs `refs` stops there instead of relying on
+    # somebody reading the table.
+    misaligned = sum(1 for entry in rows if entry["label_mismatch"])
     if args.json:
         print(json.dumps({"formulas": rows}, ensure_ascii=False, indent=2))
-        return 0
+        return 1 if misaligned else 0
 
     if not rows:
         print("没有找到公式格。")
@@ -374,12 +430,24 @@ def cmd_refs(args) -> int:
         print(f"    读到：{'、'.join(entry['reads']) or '（没有引用任何格）'}")
         if entry["reads_blank"]:
             print(f"    其中是空格：{'、'.join(entry['reads_blank'])}")
+        for miss in entry["label_mismatch"]:
+            where = "、".join(f"第 {r} 行" for r in miss["label_rows"])
+            print(
+                f"    标签对不上：这一行是「{miss['label']}」，读的 {miss['reads']} "
+                f"不在那一行；「{miss['label']}」在那张表的{where}"
+            )
     blanks = sum(1 for entry in rows if entry["reads_blank"])
-    print(f"\n共 {len(rows)} 个公式格；{blanks} 个读到了空格。")
+    print(
+        f"\n共 {len(rows)} 个公式格；{blanks} 个读到了空格；{misaligned} 个标签对不上。"
+    )
     if blanks:
         print("读到空格常常是行号错位的形状：公式指到了没数据的那一行。")
+    if misaligned:
+        print(
+            "标签对不上就是错位：公式读的不是它旁边标签所说的那一行。修好之前不要交付。"
+        )
     print("读到哪些格不等于读对——把这张引用表对着旁边的标签看一遍。")
-    return 0
+    return 1 if misaligned else 0
 
 
 def cmd_check(args) -> int:
