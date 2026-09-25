@@ -2383,12 +2383,15 @@ class ChatService:
 
         ``opened`` is a turn whose interval already exists: one a previous
         process of ours fed and delivered, which outlived it and is found again
-        by recovery. It gets the same context, and no second row.
+        by recovery. It gets the same context and no second row, and what the
+        process that assembled it wrote on that row: where its model traffic
+        went, the message it answers, and when it really started.
 
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
         from app.api.deps import get_work_runner
+        from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
@@ -2403,6 +2406,9 @@ class ChatService:
                 agent = await agents.for_topic(topic, project)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
+                row = (
+                    await AgentTurnRepository(session).get(turn_id) if opened else None
+                )
             if not opened:
                 await get_work_runner().open_turn_the_session_started(
                     self, topic_id, turn_id, author=acting_agent
@@ -2420,7 +2426,7 @@ class ChatService:
             topic_id=topic_id,
             work_id=turn_id,
             pending_ids=set(),
-            reply_to=None,
+            reply_to=row.reply_to if row is not None else None,
             roster=None,
             topic_refs=[],
             continuation_id=turn_id,
@@ -2429,11 +2435,12 @@ class ChatService:
             # that cannot invent spend: the gateway's log is drained by whatever
             # turn closes next, which is exactly what happened before any of
             # this existed.
-            route=self._session_route.get(topic_id, "native"),
+            route=(row.route if row is not None else None)
+            or self._session_route.get(topic_id, "native"),
             acting_agent=acting_agent,
             agent_pool=agent_pool,
             user_text="",
-            started_at=datetime.now(UTC),
+            started_at=row.started_at if row is not None else datetime.now(UTC),
             agent_instance_handle=agent.handle,
             known_commits=asyncio.ensure_future(
                 self._known_commits(project_id, topic_id)
@@ -2441,7 +2448,29 @@ class ChatService:
             self_started=not opened,
         )
         self._hook_work[(topic_id, turn_id)] = state
+        if opened:
+            # The session announced this turn's start to the process that fed
+            # it, so this one never heard it: without this a message sent now
+            # would start a turn beside it instead of joining it.
+            self._active_turn_ids[topic_id] = turn_id
         return state
+
+    async def _note_turn_context(
+        self, turn_id: uuid.UUID, *, route: str, reply_to: uuid.UUID | None
+    ) -> None:
+        """Best-effort, like the delivery stamp: losing it costs a turn picked
+        up by another backend its reply link and the accuracy of one route
+        label, never the turn."""
+        from app.domain.agent.repositories import AgentTurnRepository
+
+        try:
+            async with self._sessions() as session:
+                await AgentTurnRepository(session).note_context(
+                    turn_id, route=route, reply_to=reply_to
+                )
+                await session.commit()
+        except Exception:  # noqa: BLE001 — bookkeeping must not stop a turn
+            logger.exception("could not record the context of turn %s", turn_id)
 
     async def _consume_hook_event(
         self,
@@ -5048,6 +5077,9 @@ class ChatService:
         self._session_route[topic_id] = route
         while len(self._session_route) > _SESSION_ROUTES_KEPT:
             del self._session_route[next(iter(self._session_route))]
+        # And on the turn itself: the backend that ends this turn may not be
+        # this one (`_begin_self_started_turn`), and it remembers neither.
+        await self._note_turn_context(turn_id, route=route, reply_to=user_block_id)
         # Internal: the screen subscription, not this request, owns timeout and
         # thinking lifecycle. Runtime consumes this frame and disables its
         # request-scoped lifecycle before provider setup begins.
