@@ -516,7 +516,7 @@ const ROUTE_READY_MS = 30_000;
 
 test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
   test('小队详情：四个 tab 在窄窗口下都够得着底部', async ({ page }) => {
-    await login(page);
+    await apiLogin(page);
 
     // 视图高度压到 360 是故意的：这一套种子数据只有 5 个小队成员，靠内容自然长到
     // 溢出不可靠；把窗口压矮能让「内容比窗口高」这件事在任何数据下都成立，而宽度
