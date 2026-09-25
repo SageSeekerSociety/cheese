@@ -107,7 +107,7 @@ function homePage() {
    </div>
    <div class="moon-stage" id="moonStage">
     ${chartSvg()}
-    <div class="moon"><img src="${LOGO}" alt="知是的标志：一只老鼠仰望奶酪做的月亮"></div>
+    <div class="moon" id="moon" role="img" aria-label="知是的标志：一只老鼠仰望奶酪做的月亮" title="点一下，再看一次月升"></div>
     <div class="horizon"></div>
     <div class="sea" aria-hidden="true"><i class="reflect"></i></div>
    </div>
@@ -166,7 +166,60 @@ function chartSvg() {
    ${mark(-45, '使用文档', `${counts.guide} 页`, '#/guide/quickstart')}${mark(45, '开发文档', `${counts.dev} 篇`, '#/dev/overview')}${mark(225, '更新日志', `本周 ${counts.week} 项`, '#/changelog')}
   </svg>`
 }
+let moonIO
+function watchMoon() {
+  moonIO?.disconnect()
+  const stage = $('#moonStage'); if (!stage) return
+  moonIO = new IntersectionObserver((es) => stage.classList.toggle('paused', !es[0].isIntersecting))
+  moonIO.observe(stage)
+}
 function drawChart() { requestAnimationFrame(() => $('#moonStage')?.classList.add('drawn')) }
+
+/* 望月: the moon waxes from a thin crescent to full. The mouse is cut out of
+   the moon, so it only exists once the light reaches it — it appears last.
+   Then its ear and eye catch the light and the tail is drawn in. */
+const NS = 'http://www.w3.org/2000/svg'
+const MOON = { cx: 613, cy: 572, r: 540, tilt: -38 }
+const el = (tag, attrs) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n }
+let moonRun = 0
+function moonrise() {
+  const host = $('#moon'); if (!host) return
+  const run = ++moonRun
+  host.replaceChildren($('#logoTpl').content.cloneNode(true))
+  const svg = $('svg', host), layer = $('#Layer_4', svg), lit = $('g[mask]', layer), tail = $('.wy-st6', svg)
+  const reflect = $('.sea .reflect'), stage = $('#moonStage')
+  stage.classList.remove('alive')
+  const { cx, cy, r, tilt } = MOON
+  const half = el('path', { d: `M${cx},${cy - r} A${r},${r} 0 0 1 ${cx},${cy + r} Z`, fill: '#fff' })
+  const term = el('ellipse', { cx, cy, rx: r, ry: r, fill: '#000' })
+  const soft = el('filter', { id: 'wySoft', x: '-20%', y: '-20%', width: '140%', height: '140%' }); soft.appendChild(el('feGaussianBlur', { stdDeviation: 9 }))
+  const phaseG = el('g', { transform: `rotate(${tilt} ${cx} ${cy})`, filter: 'url(#wySoft)' }); phaseG.append(half, term)
+  const mask = el('mask', { id: 'wyPhase', maskUnits: 'userSpaceOnUse', x: 0, y: 0, width: 1200, height: 1200 }); mask.appendChild(phaseG)
+  const defs = el('defs', {}); defs.append(soft, mask); svg.prepend(defs)
+  const ghost = el('g', { mask: 'url(#wyHole)', class: 'wy-ghost' }); ghost.appendChild($('.wy-st7', svg).cloneNode())
+  layer.insertBefore(ghost, lit)
+  const wrap = el('g', { mask: 'url(#wyPhase)' }); layer.insertBefore(wrap, lit); wrap.appendChild(lit)
+  const tailG = el('g', { class: 'wy-tail' }); tailG.appendChild(tail); layer.appendChild(tailG)
+
+  const setPhase = (p) => {
+    term.setAttribute('rx', (r * Math.abs(1 - 2 * p)).toFixed(1))
+    term.setAttribute('fill', p < 0.5 ? '#000' : '#fff')
+    if (reflect) { reflect.style.transform = `translateX(-50%) scaleY(${p.toFixed(3)})`; reflect.style.opacity = p.toFixed(3) }
+  }
+  const finish = () => { wrap.removeAttribute('mask'); svg.classList.add('lit', 'glint', 'tail-in'); if (!reduced) { svg.classList.add('alive'); stage.classList.add('alive') } if (reflect) { reflect.style.transform = 'translateX(-50%)'; reflect.style.opacity = 1 } }
+  if (reduced) { finish(); svg.classList.remove('glint'); return }
+  setPhase(0.02)
+  const t0 = performance.now() + 300, dur = 2400
+  const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
+  const step = (t) => {
+    if (run !== moonRun || !svg.isConnected) return
+    const k = Math.max(0, Math.min(1, (t - t0) / dur))
+    setPhase(0.02 + 0.98 * ease(k))
+    if (k > 0.82) svg.classList.add('tail-in')
+    if (k < 1) requestAnimationFrame(step); else finish()
+  }
+  requestAnimationFrame(step)
+}
 
 function footer() {
   return `<footer class="foot"><div class="foot-row">
@@ -227,7 +280,7 @@ function navigate() {
 addEventListener('hashchange', navigate)
 
 function afterMount(sec) {
-  if (sec === '') { demoChat(); typeLlms(); drawChart() }
+  if (sec === '') { demoChat(); typeLlms(); drawChart(); moonrise(); watchMoon() }
   if (sec === 'changelog') { moveSidePill('all'); moveFilter() }
 }
 
@@ -457,7 +510,7 @@ document.addEventListener('click', (e) => {
       return
     } else if (a.closest('.cite') && innerWidth <= 820) closeDock()
   }
-  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-toast],[data-menu],[data-copy-page],[data-copy],[data-vote],[data-f],[data-soon],[data-sug],[data-theme-demo],.code-tab')
+  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-toast],[data-menu],[data-copy-page],[data-copy],[data-vote],[data-f],[data-soon],[data-sug],[data-theme-demo],#moon,.code-tab')
   if (!t) { if (!e.target.closest('.menu')) $('#menu')?.classList.remove('open'); return }
   if (t.matches('[data-open-search]')) { e.preventDefault(); openSearch() }
   else if (t.matches('[data-open-ask]')) { e.preventDefault(); $('#menu')?.classList.remove('open'); if (t.closest('.hdr')) toggleDock(); else openAsk() }
@@ -477,6 +530,7 @@ document.addEventListener('click', (e) => {
   }
   else if (t.matches('[data-soon]')) { e.preventDefault(); toast('这一页还没写：上线时会先隐藏') }
   else if (t.matches('[data-theme-demo]')) { const r = t.getBoundingClientRect(); toggleTheme(e.clientX || r.left + r.width / 2, e.clientY || r.top + r.height / 2) }
+  else if (t.matches('#moon')) moonrise()
   else if (t.matches('.code-tab')) t.parentElement.querySelectorAll('.code-tab').forEach((x) => x.classList.toggle('on', x === t))
   else if (t.matches('[data-toast]')) { e.preventDefault(); toast(t.dataset.toast + '（预览里不跳转）') }
 })

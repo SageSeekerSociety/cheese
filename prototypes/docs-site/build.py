@@ -7,6 +7,7 @@ esbuild bundles src/main.js; the CSS, the script and every image are inlined so
 the preview channel only ever fetches a single file.
 """
 import base64
+import re
 import subprocess
 from pathlib import Path
 
@@ -27,7 +28,15 @@ images = {
     "__IMG_LOGO_SVG__": data_uri(ASSETS / "logo.svg", "image/svg+xml"),
     "__IMG_INVITE__": data_uri(REPO / "docs/manual/public/images/teams-invite.png", "image/png"),
 }
+logo = (ASSETS / "logo.svg").read_text()
+logo = logo[logo.index("<svg"):]
+head, rest = logo.split(">", 1)
+logo = re.sub(r'\s(width|height|x|y|style)="[^"]*"', "", head) + ">" + rest
+logo = logo.replace("<svg", '<svg class="wy-logo" aria-hidden="true"', 1)
+logo = logo.replace("SVGID_", "wySVGID_").replace("holeMask", "wyHole").replace('class="st', 'class="wy-st').replace("\t.st", "\t.wy-st")
+
 html = (HERE / "src/index.html").read_text()
+html = html.replace("<!--__LOGO_INLINE__-->", logo)
 html = html.replace("/*__CSS__*/", (HERE / "src/style.css").read_text())
 html = html.replace("/*__JS__*/", js.replace("</script", "<\\/script"))
 for key, uri in images.items():
