@@ -72,6 +72,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '打开网站', isFullPage: true },
   },
   {
+    name: 'my-connections',
+    path: '/my/connections',
+    component: () => import('@/views/MyConnectionsView.vue'),
+    meta: { title: '我的连接', isFullPage: true },
+  },
+  {
     name: 'my-devices',
     path: '/my/devices',
     component: () => import('@/views/MyDevicesView.vue'),

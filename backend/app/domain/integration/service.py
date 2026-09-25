@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
+import socket
 import uuid
 from datetime import UTC, date, datetime
 from email.message import EmailMessage
@@ -18,6 +20,7 @@ from email.message import EmailMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.integration import mail
@@ -126,6 +129,31 @@ def draft_view(row: MailDraft) -> dict:
     }
 
 
+def guard_mail_hosts(config: dict) -> None:
+    """Refuse a mail server that is this platform's own network, or plaintext."""
+    if settings.integration_allow_private_hosts:
+        return
+    if config.get("security") == "plain":
+        raise ValidationError("邮件服务器必须用 SSL 或 STARTTLS 加密连接")
+    for key in ("imap_host", "smtp_host"):
+        host = str(config.get(key) or "")
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except OSError as exc:
+            raise ValidationError(f"找不到邮件服务器 {host}") from exc
+        for info in infos:
+            address = ipaddress.ip_address(info[4][0])
+            if (
+                address.is_private
+                or address.is_loopback
+                or address.is_link_local
+                or address.is_reserved
+                or address.is_multicast
+                or address.is_unspecified
+            ):
+                raise ValidationError(f"邮件服务器 {host} 指向内网地址，不能使用")
+
+
 class IntegrationService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -166,6 +194,8 @@ class IntegrationService:
 
     async def _check(self, row: Integration) -> None:
         row.last_checked_at = _now()
+        if row.provider == "mail":
+            await asyncio.to_thread(guard_mail_hosts, row.config)
         try:
             if row.provider == "mail":
                 await asyncio.to_thread(mail.check, mail_settings(row))
@@ -240,6 +270,7 @@ class IntegrationService:
     async def _mail(self, row: Integration, fn, *args, **kwargs):
         if row.provider != "mail":
             raise ValidationError("这个连接不是邮箱")
+        await asyncio.to_thread(guard_mail_hosts, row.config)
         try:
             return await asyncio.to_thread(fn, mail_settings(row), *args, **kwargs)
         except IntegrationError as exc:

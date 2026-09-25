@@ -24,6 +24,8 @@ OWNER = "user-1"
 @pytest.fixture(autouse=True)
 def _store(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    # The stand-in mailbox has made-up host names; the guard has its own test.
+    monkeypatch.setattr(settings, "integration_allow_private_hosts", True)
 
 
 class Mailbox:
@@ -321,3 +323,39 @@ def test_feishu_read_create_edit_and_refusals(client, feishu_stub):
         f"/integrations/{fid}/feishu/search?topic={room}", json={"query": "周报"}
     )
     assert no_search.status_code == 403, "app-only credentials pretended to search"
+
+
+def test_a_mail_server_on_the_platforms_own_network_is_refused(
+    client, mailbox, monkeypatch
+):
+    monkeypatch.setattr(settings, "integration_allow_private_hosts", False)
+    person, project, _room = _setup(client)
+    for host, security in (
+        ("127.0.0.1", "ssl"),
+        ("localhost", "ssl"),
+        ("10.0.0.5", "ssl"),
+    ):
+        r = client.post(
+            "/me/integrations/mail",
+            json={
+                "imap_host": host,
+                "smtp_host": host,
+                "username": "a@x.test",
+                "password": "p",
+                "security": security,
+            },
+            headers=person,
+        )
+        assert r.status_code == 422 and "内网" in r.text, (host, r.text)
+    plain = client.post(
+        "/me/integrations/mail",
+        json={
+            "imap_host": "imap.qq.com",
+            "smtp_host": "smtp.qq.com",
+            "username": "a@x.test",
+            "password": "p",
+            "security": "plain",
+        },
+        headers=person,
+    )
+    assert plain.status_code == 422 and "加密" in plain.text

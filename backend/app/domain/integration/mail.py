@@ -80,6 +80,14 @@ def _imap(settings: MailSettings) -> imaplib.IMAP4:
         box.login(settings.username, settings.password)
     except imaplib.IMAP4.error as exc:
         raise _auth_error(exc) from exc
+    if "ID" in box.capabilities:
+        # 163/126 refuse SELECT as an "Unsafe Login" from a client that has not
+        # said who it is (RFC 2971).
+        imaplib.Commands.setdefault("ID", ("AUTH", "SELECTED"))
+        try:
+            box._simple_command("ID", '("name" "cheese" "version" "1")')  # type: ignore[attr-defined]
+        except imaplib.IMAP4.error:
+            pass
     return box
 
 
