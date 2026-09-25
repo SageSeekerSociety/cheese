@@ -694,6 +694,8 @@ if [ "$DRAIN_SECONDS" -lt 31 ]; then
   DRAIN_SECONDS=31
 fi
 NEXT_BACKEND="${PROJECT}-backend-next"
+# Matches the backend's stop_grace_period in the compose files.
+BACKEND_STOP_GRACE_SECONDS="${DEPLOY_BACKEND_STOP_GRACE_SECONDS:-60}"
 # Opt in only after the public ingress uses the standing frontend proxy.
 ACTIVE_FRONTEND_DIR="${ACTIVE_FRONTEND_DIR:-}"
 FRONTEND_PROXY_PORT="${FRONTEND_PROXY_PORT:-18080}"
@@ -788,6 +790,11 @@ rollout_backend() {
   # Requests the old nginx workers were still answering go to the container
   # that is about to disappear; give them a moment to finish.
   sleep "$DRAIN_SECONDS"
+  # Stopped before it is removed: on SIGTERM it hands its running turns to the
+  # backend just switched to (backend/app/core/ownership.py), and `rm -f` alone
+  # is a SIGKILL that cuts that handover off. The compose backend gets the same
+  # grace from its stop_grace_period when `up` recreates it above.
+  docker stop --time "$BACKEND_STOP_GRACE_SECONDS" "$NEXT_BACKEND" >/dev/null 2>&1 || true
   docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
   log "$NEXT_BACKEND removed; backend rollout complete"
 }

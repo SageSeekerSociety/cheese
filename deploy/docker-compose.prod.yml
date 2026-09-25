@@ -47,6 +47,9 @@ services:
         tag: "{{.Name}}"
 
   backend:
+    # Time to hand its running turns to the next backend; see
+    # compose/docker-compose.base.yml.
+    stop_grace_period: 60s
     image: ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}
     container_name: cheese_prod_backend
     ports:

@@ -792,7 +792,7 @@ test_rollout_recovers_after_forge_stops_backend() {
 }
 
 test_rollout_keeps_a_backend_serving() {
-  local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone frontend_up first_drain second_drain
+  local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone next_stopped frontend_up first_drain second_drain
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env >/dev/null 2>&1 || fail "rollout deploy did not succeed"
@@ -801,6 +801,7 @@ test_rollout_keeps_a_backend_serving() {
   blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
   flip_back="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 2)"
   next_gone="$(last_log_line "$docker_log" 'rm -f cheese-backend-next')"
+  next_stopped="$(last_log_line "$docker_log" 'stop --time 60 cheese-backend-next')"
   frontend_up="$(log_line "$docker_log" 'up -d --no-deps frontend')"
   first_drain="$(nth_log_line "$docker_log" 'sleep 31' 1)"
   second_drain="$(nth_log_line "$docker_log" 'sleep 31' 2)"
@@ -814,6 +815,8 @@ test_rollout_keeps_a_backend_serving() {
   [ "$blue_up" -lt "$flip_back" ] || fail "api-front was pointed back before the compose backend was recreated"
   [ "$flip_back" -lt "$next_gone" ] || fail "cheese-backend-next was removed while api-front still pointed at it"
   [ "$flip_back" -lt "$second_drain" ] && [ "$second_drain" -lt "$next_gone" ] || fail "successor removed before worker drain"
+  [ -n "$next_stopped" ] && [ "$second_drain" -lt "$next_stopped" ] && [ "$next_stopped" -lt "$next_gone" ] \
+    || fail "cheese-backend-next was removed without being stopped first, which cuts its handover off"
   [ "$next_gone" -lt "$frontend_up" ] || fail "the frontend came up before the backend rollout finished"
   grep -Fqx 'upstream backend_active { server 127.0.0.1:18081; }' "$run_dir/active/backend.conf" \
     || fail "api-front was left pointing away from the compose backend: $(cat "$run_dir/active/backend.conf")"

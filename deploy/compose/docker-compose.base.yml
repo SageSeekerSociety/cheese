@@ -50,6 +50,13 @@ services:
         tag: "{{.Name}}"
 
   backend:
+    # A backend on its way out hands its running turns to the next one
+    # (backend/app/core/ownership.py): uvicorn's own shutdown (at most 10s,
+    # --timeout-graceful-shutdown in backend/Dockerfile), then up to
+    # HANDOVER_TIMEOUT_S (20s) for the prompts and receipts still on their way,
+    # then a few seconds to stop reading its sessions. Docker's default 10s
+    # SIGKILLs it halfway through that.
+    stop_grace_period: 60s
     labels:
       li.zhifei.cheese.room-cleanup: "true"
     # Default is the current-path image by sha. Override BACKEND_IMAGE for an env
