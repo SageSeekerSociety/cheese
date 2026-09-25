@@ -96,6 +96,7 @@ function homePage() {
   const all = CL.flatMap(([date, , it]) => it.map((x) => [date, ...x]))
   return `<div class="home">
   <section class="stage">
+   <div class="scene" aria-hidden="true"></div>
    <div class="hero-copy">
     <a class="badge-row" href="#/changelog"><b>本周</b>${counts.week} 项更新，最新：桌面端会自己更新 ${ic('arrow')}</a>
     <h1 class="hero-h1"><span class="line"><span>和 <em>AI 队友</em></span></span><span class="line"><span>一起做项目</span></span></h1>
@@ -108,6 +109,7 @@ function homePage() {
     ${chartSvg()}
     <div class="moon"><img src="${LOGO}" alt="知是的标志：一只老鼠仰望奶酪做的月亮"></div>
     <div class="horizon"></div>
+    <div class="sea" aria-hidden="true"><i class="reflect"></i></div>
    </div>
   </section>
 
@@ -207,18 +209,20 @@ function render() {
   }
   cur = { sec, page }
   $('#hdr').classList.toggle('solid', sec !== '' || scrollY > 20)
-  $('#side')?.classList.remove('open'); $('#scrim').classList.remove('open')
+  document.body.classList.toggle('page-home', sec === '')
+  const d = P[sec + '/' + page]; $('#ctxPage').textContent = sec === '' ? '首页' : sec === 'changelog' ? '更新日志' : d ? d.title : ''
+  $('#side')?.classList.remove('open'); if (!(innerWidth <= 820 && $('#drawer').classList.contains('open'))) $('#scrim').classList.remove('open')
   if (anchor) {
     const el = document.getElementById(anchor)
     if (el) setTimeout(() => { el.scrollIntoView({ behavior: same ? 'smooth' : 'instant' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash') }, same ? 0 : 60)
   }
 }
 function navigate() {
-  const next = parse()
-  const withinDoc = cur && cur.sec === next.sec && next.sec && next.sec !== 'changelog' && cur.page !== next.page
-  if (!document.startViewTransition || reduced || (cur && cur.sec === next.sec && cur.page === next.page)) return render()
-  app.style.viewTransitionName = withinDoc ? 'none' : 'page'
-  document.startViewTransition(render).finished.finally(() => { app.style.viewTransitionName = '' })
+  const prev = cur
+  render()
+  if (reduced || !prev || (prev.sec === cur.sec && prev.page === cur.page)) return
+  const el = prev.sec === cur.sec && cur.sec && cur.sec !== 'changelog' ? $('#article') : app
+  el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter')
 }
 addEventListener('hashchange', navigate)
 
@@ -318,6 +322,8 @@ function answerFor(q) {
   for (const [w, pages] of Object.entries(WORDS)) if (lq.includes(w)) pages.forEach((p) => hits.add(p))
   let docs = INDEX.filter((x) => x.sec !== 'changelog' && hits.has(x.href.split('/').pop()))
   if (!docs.length) docs = INDEX.filter((x) => x.sec !== 'changelog' && [...lq].some((c) => c.trim() && (x.title + x.body).includes(c))).slice(0, 2)
+  const here = cur && P[cur.sec + '/' + cur.page]
+  if (!docs.length && here && $('#ctxUse')?.checked) { const x = INDEX.find((i) => i.href === `#/${cur.sec}/${cur.page}`); if (x) docs = [x] }
   if (!docs.length) return { text: '文档里暂时没有讲到这一点。你可以在知是的房间里直接 @芝士 问，它能看到你的项目本身。', cites: [] }
   const main = docs[0]
   return { text: `这在「${main.title}」里讲得最清楚：${main.text}`, cites: docs.slice(0, 2) }
@@ -390,7 +396,9 @@ function doSearch() {
   $('#askTxt').textContent = q ? `问芝士：「${q}」` : '没找到？直接问芝士'
 }
 function openSearch() { $('#scrim').classList.add('open'); $('#palette').classList.add('open'); $('#q').value = ''; doSearch(); setTimeout(() => $('#q').focus(), 30) }
-function closeAll() { ['#scrim', '#palette', '#drawer'].forEach((s) => $(s).classList.remove('open')); $('#menu')?.classList.remove('open'); $('#side')?.classList.remove('open') }
+function closeAll() { ['#scrim', '#palette'].forEach((s) => $(s).classList.remove('open')); $('#menu')?.classList.remove('open'); $('#side')?.classList.remove('open'); if (innerWidth <= 820) closeDock() }
+function closeDock() { $('#drawer').classList.remove('open'); document.body.classList.remove('docked'); $('#scrim').classList.remove('open') }
+function toggleDock() { $('#drawer').classList.contains('open') ? closeDock() : openAsk() }
 function go(i) { const h = hits[i]; if (!h) return; closeAll(); location.hash = h.href.slice(1) }
 $('#q').addEventListener('input', doSearch)
 $('#q').addEventListener('keydown', (e) => {
@@ -405,7 +413,8 @@ $('#askRow').onclick = () => openAsk($('#q').value)
 let greeted = false
 const SUGGEST = ['怎么把我已有的 GitHub 仓库接进来？', '采纳和合并是一回事吗？', '能用我自己的电脑跑芝士吗？']
 function openAsk(q) {
-  $('#palette').classList.remove('open'); $('#scrim').classList.add('open'); $('#drawer').classList.add('open')
+  $('#palette').classList.remove('open'); $('#drawer').classList.add('open')
+  if (innerWidth <= 820) $('#scrim').classList.add('open'); else { $('#scrim').classList.remove('open'); document.body.classList.add('docked') }
   if (!greeted) {
     greeted = true
     $('#chat').innerHTML = `<div class="a"><span class="brand-mark sm"><img src="${LOGO}" alt=""></span><div class="body"><p>你好，我是芝士。关于知是怎么用、怎么改，问我就行——我只根据这份文档回答，并告诉你出自哪一节。</p></div></div>`
@@ -446,13 +455,14 @@ document.addEventListener('click', (e) => {
       const el = document.getElementById(h.slice(1))
       if (el) { history.replaceState(null, '', location.hash.split('#').slice(0, 2).join('#') + h); el.scrollIntoView({ behavior: 'smooth' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash') }
       return
-    } else if (a.closest('.cite')) closeAll()
+    } else if (a.closest('.cite') && innerWidth <= 820) closeDock()
   }
-  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-toast],[data-menu],[data-copy-page],[data-copy],[data-vote],[data-f],[data-soon],[data-sug],[data-theme-demo],.code-tab')
+  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-toast],[data-menu],[data-copy-page],[data-copy],[data-vote],[data-f],[data-soon],[data-sug],[data-theme-demo],.code-tab')
   if (!t) { if (!e.target.closest('.menu')) $('#menu')?.classList.remove('open'); return }
   if (t.matches('[data-open-search]')) { e.preventDefault(); openSearch() }
-  else if (t.matches('[data-open-ask]')) { e.preventDefault(); $('#menu')?.classList.remove('open'); openAsk() }
-  else if (t.matches('[data-close-ask]')) closeAll()
+  else if (t.matches('[data-open-ask]')) { e.preventDefault(); $('#menu')?.classList.remove('open'); if (t.closest('.hdr')) toggleDock(); else openAsk() }
+  else if (t.matches('[data-close-ask]')) closeDock()
+  else if (t.matches('[data-new-chat]')) { greeted = false; openAsk() }
   else if (t.matches('[data-sug]')) ask(t.textContent)
   else if (t.matches('[data-menu]')) $('#menu').classList.toggle('open')
   else if (t.matches('[data-copy-page]')) { e.preventDefault(); $('#menu')?.classList.remove('open'); const d = P[cur.sec + '/' + cur.page]; if (d) navigator.clipboard?.writeText(`# ${d.title}\n\n${d.lede}\n`).catch(() => {}); toast('已复制本页 Markdown') }
@@ -470,14 +480,22 @@ document.addEventListener('click', (e) => {
   else if (t.matches('.code-tab')) t.parentElement.querySelectorAll('.code-tab').forEach((x) => x.classList.toggle('on', x === t))
   else if (t.matches('[data-toast]')) { e.preventDefault(); toast(t.dataset.toast + '（预览里不跳转）') }
 })
-$('#scrim').onclick = closeAll
+$('#scrim').onclick = () => { closeAll(); closeDock() }
 $('#menuBtn').onclick = () => { $('#side')?.classList.add('open'); $('#scrim').classList.add('open') }
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openSearch() }
   else if (e.key === '/' && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); openSearch() }
+  else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') { e.preventDefault(); toggleDock() }
   else if (e.key === 'Escape') closeAll()
 })
 addEventListener('resize', () => { moveTabs(cur?.sec ?? ''); moveFilter(); if (cur?.page) moveSidePill(cur.page) })
+
+$('#dockResize').addEventListener('pointerdown', (e) => {
+  e.preventDefault(); document.body.classList.add('dragging')
+  const move = (ev) => document.documentElement.style.setProperty('--dock-w', Math.max(320, Math.min(720, innerWidth - ev.clientX)) + 'px')
+  const up = () => { document.body.classList.remove('dragging'); removeEventListener('pointermove', move); removeEventListener('pointerup', up) }
+  addEventListener('pointermove', move); addEventListener('pointerup', up)
+})
 
 buildTabs()
 render()
