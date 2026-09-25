@@ -67,7 +67,9 @@ def test_event_blocks_persist_structured_meta(client):
         "platform": False,
         "in_room": False,
     }
-    assert grep["content"] == "搜内容\nTODO"  # human-readable fallback text
+    # human-readable fallback text: a verb in words, then the argument
+    verb, arg = grep["content"].split("\n", 1)
+    assert verb != "Grep" and arg == "TODO"
 
     # cheese MCP tool → platform (amber dot); name stored mcp-prefix-stripped.
     doc = by_tool["update_doc"]

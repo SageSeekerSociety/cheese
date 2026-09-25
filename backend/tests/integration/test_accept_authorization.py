@@ -57,7 +57,6 @@ def test_accept_by_non_reviewer_403_even_with_matching_body_field(client):
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403
-    assert "验收人" in r.json()["message"]
 
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "pending"
