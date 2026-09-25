@@ -4096,18 +4096,17 @@ class ChatService:
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
             #
-            # 模型和它的池也在里面，而这里的 model 只为容器那条路存在：
-            # `session_launch.py` 仍然把它拼进 `claude --model` 的 argv，那是启动
-            # 那一刻钉进进程、此后没有任何代码再比对的东西，而这个哈希是唯一比较
-            # 「屏幕是不是还配得上现在的选择」的地方。device 启动环境里已经没有模型
-            # 了（结论 46）：`device_provider.py` 既不传 `--model`，也不留那三个
-            # family 别名，每个请求的模型在计量代理问准入时解析、由代理写进请求体。
-            #
-            # 代价说清楚：model 留在哈希里，意味着改项目默认模型在两条路上都要到
-            # 下一个 task boundary 收屏重开一次，哪怕 device 上的下一个请求本来就
-            # 会拿到新绑定。容器那条路必须这样 —— 不放进来就是屏幕带着
-            # `--model glm-5.2` 继续跑而准入已经解析成订阅池，此后每一轮都死在
-            # 「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
+            # 模型和它的池也在里面：两条路都在启动那一刻把 model 钉进进程 ——
+            # 容器那条路是 `session_launch.py` 拼进 argv 的 `claude --model`，
+            # device 那条路是下面的 `ANTHROPIC_MODEL`。Claude Code 按它组装整套
+            # 系统提示词和自我介绍（Opus 与 Sonnet 用的是两份不同的提示词），
+            # 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，所以改
+            # 项目模型在两条路上都会到下一个 task boundary 收屏重开一次，提示词
+            # 随之换成新模型的。device 上每个请求实际跑哪个模型仍然只由准入决定
+            # （结论 46），计量代理把答案写进请求体；启动时的这个名字只决定提示
+            # 词，在重开之前的那几轮里它可能落后于绑定。容器那条路没有代理改写，
+            # 不放进哈希就是屏幕带着 `--model glm-5.2` 继续跑而准入已经解析成订阅
+            # 池，此后每一轮都死在「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
             (
                 json.dumps(
                     {
@@ -4121,7 +4120,7 @@ class ChatService:
                     },
                     sort_keys=True,
                 )
-                + ":explicit-chat-v4-native-model-choice"
+                + ":explicit-chat-v5-launch-model"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
@@ -4130,6 +4129,9 @@ class ChatService:
             "env": {
                 "CHEESE_AGENT_CONFIG": config_hash,
                 "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+                # The bound model, so Claude Code builds the system prompt and
+                # self-description for the model the turn actually runs on.
+                "ANTHROPIC_MODEL": model,
                 "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
             },
             # Which conversation the turn belongs to, and so which session's
