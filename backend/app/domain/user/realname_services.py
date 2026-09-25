@@ -109,6 +109,14 @@ class UserRealNameService:
         )
         return realname_dict(identity)
 
+    async def delete_user_identity(self, user_id: int) -> None:
+        await self._ensure_user_exists(user_id)
+        if not await self._realname_repo.delete_identity(user_id):
+            raise NotFoundError(
+                "user real name identity not found",
+                data={"type": "user_real_name_identity", "id": user_id},
+            )
+
     async def log_access(
         self,
         *,

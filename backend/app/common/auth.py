@@ -155,6 +155,7 @@ class SudoPurpose(StrEnum):
     OAUTH_UNBIND = "oauth:unbind"
     REALNAME_VIEW = "realname:view"
     REALNAME_UPDATE = "realname:update"
+    REALNAME_DELETE = "realname:delete"
 
 
 class MintedSudoTicket(NamedTuple):

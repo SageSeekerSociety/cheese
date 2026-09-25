@@ -562,6 +562,27 @@ class UserRealNameRepository:
         await self._session.flush()
         return existing
 
+    async def delete_identity(self, user_id: int) -> bool:
+        """Remove the user's record; False when there was none.
+
+        The row stays to say when the record went away, but what it held is
+        erased with it: deleted personal data must not be recoverable, not even
+        by whoever holds the encryption key.
+        """
+        existing = await self.get_identity(user_id)
+        if existing is None:
+            return False
+        now = datetime.now(UTC)
+        existing.real_name = ""
+        existing.student_id = ""
+        existing.grade = ""
+        existing.major = ""
+        existing.class_name = ""
+        existing.updated_at = now
+        existing.deleted_at = now
+        await self._session.flush()
+        return True
+
     async def create_access_log(
         self,
         *,

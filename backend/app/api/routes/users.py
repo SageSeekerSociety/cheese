@@ -2880,6 +2880,28 @@ async def patch_user_identity(
     return {"code": 200, "message": "Success", "data": {"identity": stored}}
 
 
+@router.delete(
+    "/{userId}/identity",
+    summary="Delete User Real Name Identity Info",
+)
+async def delete_user_identity(
+    user_id: Annotated[int, Path(ge=1, alias="userId")],
+    payload: SudoTicketRequest = Body(default_factory=SudoTicketRequest),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    realname_service: UserRealNameService = Depends(get_user_realname_service),
+) -> dict:
+    """The owner removes their record. Who read it before stays on record."""
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can delete identity.")
+    await _spend_sudo_ticket(
+        payload.sudo_ticket,
+        user_id=auth_user.user_id,
+        purpose=SudoPurpose.REALNAME_DELETE,
+    )
+    await realname_service.delete_user_identity(user_id)
+    return {"code": 200, "message": "Success"}
+
+
 @router.get(
     "/{userId}/identity/access-logs",
     summary="Get User Real Name Identity Access Logs",
