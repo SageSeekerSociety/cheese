@@ -61,14 +61,18 @@ const draftName = ref('')
 // dev proxies /connector → :8799, prod serves it same-origin, so this is always
 // the reachable backend from the user's browser — never hardcoded to a dead port.
 const addDeviceOpen = ref(false)
-const copied = ref(false)
-const installCommand = computed(() => `curl -fsSL ${window.location.origin}/connector/install.sh | sh`)
+// One per shell: install.sh for Mac and Linux, install.ps1 for Windows.
+const installCommands = computed(() => [
+  { os: 'Mac / Linux', command: `curl -fsSL ${window.location.origin}/connector/install.sh | sh` },
+  { os: 'Windows（PowerShell）', command: `irm ${window.location.origin}/connector/install.ps1 | iex` },
+])
+const copied = ref<string | null>(null)
 
-async function copyInstall() {
+async function copyInstall(command: string) {
   try {
-    await navigator.clipboard.writeText(installCommand.value)
-    copied.value = true
-    setTimeout(() => (copied.value = false), 1600)
+    await navigator.clipboard.writeText(command)
+    copied.value = command
+    setTimeout(() => (copied.value = null), 1600)
   } catch {
     // Clipboard blocked (insecure context / permissions) — leave the command
     // visible so the user can still select and copy it by hand.
@@ -223,22 +227,26 @@ onMounted(load)
           <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
           <div class="t-body c-muted mb-1">暂无已连接的设备</div>
           <div class="t-caption c-muted mb-5">
-            Mac 和 Windows 电脑可以在「添加设备」里下载桌面端一键接入；其他机器运行下面这条命令，按提示批准
+            Mac 和 Windows 电脑可以在「添加设备」里下载桌面端一键接入；其他机器运行下面对应系统的命令，再运行
+            <code>cheesehost link connect</code> 按提示批准
           </div>
 
           <!-- Copyable install one-liner, right in the empty-state so the user can
              act without hunting for a dialog. -->
-          <div class="install-cmd mx-auto mb-4">
-            <code class="install-cmd__code">{{ installCommand }}</code>
-            <v-btn
-              :color="copied ? 'success' : 'primary'"
-              variant="text"
-              size="small"
-              :prepend-icon="copied ? 'mdi-check' : 'mdi-content-copy'"
-              @click="copyInstall"
-            >
-              {{ copied ? '已复制' : '复制' }}
-            </v-btn>
+          <div v-for="c in installCommands" :key="c.command" class="mx-auto mb-3" style="max-width: 480px">
+            <div class="t-caption c-muted text-left mb-1">{{ c.os }}</div>
+            <div class="install-cmd">
+              <code class="install-cmd__code">{{ c.command }}</code>
+              <v-btn
+                :color="copied === c.command ? 'success' : 'primary'"
+                variant="text"
+                size="small"
+                :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
+                @click="copyInstall(c.command)"
+              >
+                {{ copied === c.command ? '已复制' : '复制' }}
+              </v-btn>
+            </div>
           </div>
 
           <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true"> 添加设备 </v-btn>
@@ -363,24 +371,27 @@ onMounted(load)
           </div>
         </template>
 
-        <div class="t-title mt-6 mb-1">{{ desktop ? '其他机器' : '服务器或 Linux' }}</div>
-        <div class="install-cmd mb-5">
-          <code class="install-cmd__code">{{ installCommand }}</code>
-          <v-btn
-            :color="copied ? 'success' : 'primary'"
-            variant="text"
-            size="small"
-            :prepend-icon="copied ? 'mdi-check' : 'mdi-content-copy'"
-            @click="copyInstall"
-          >
-            {{ copied ? '已复制' : '复制' }}
-          </v-btn>
+        <div class="t-title mt-6 mb-1">{{ desktop ? '其他机器' : '服务器，或不装桌面端的电脑' }}</div>
+        <div v-for="c in installCommands" :key="c.command" class="mb-3">
+          <div class="t-caption c-muted mb-1">{{ c.os }}</div>
+          <div class="install-cmd">
+            <code class="install-cmd__code">{{ c.command }}</code>
+            <v-btn
+              :color="copied === c.command ? 'success' : 'primary'"
+              variant="text"
+              size="small"
+              :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
+              @click="copyInstall(c.command)"
+            >
+              {{ copied === c.command ? '已复制' : '复制' }}
+            </v-btn>
+          </div>
         </div>
 
         <ol class="steps">
           <li>
             <span class="steps__n">1</span>
-            <span>在你想接入的机器上运行这条命令</span>
+            <span>在你想接入的机器上运行对应系统的那条命令</span>
           </li>
           <li>
             <span class="steps__n">2</span>

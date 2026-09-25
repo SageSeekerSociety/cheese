@@ -87,3 +87,24 @@ def test_install_script_writes_ws_url_where_cheesehost_reads_its_config(
 
     config = home / config_dir / "config.json"
     assert "wss://ws-capable.example/connector/agent" in config.read_text()
+
+
+def test_windows_installer_names_this_server_and_the_one_command(client):
+    body = client.get("/connector/install.ps1").text
+    origin = client.get("/connector/install.sh").text.split('ORIGIN="')[1].split('"')[0]
+    assert f"$origin = '{origin}'" in body
+    assert "/connector/latest/windows-$arch/cheesehost.exe" in body
+    assert "cheesehost link connect $origin/connector" in body
+    # Inert without configuration, like install.sh.
+    assert "else { '' }" in body
+
+
+def test_windows_installer_bakes_ws_url_for_matching_origin(
+    client, monkeypatch: pytest.MonkeyPatch
+):
+    origin = client.get("/connector/install.sh").text.split('ORIGIN="')[1].split('"')[0]
+    monkeypatch.setattr(
+        settings, "connector_ws_overrides", {origin: "https://ws-capable.example"}
+    )
+    body = client.get("/connector/install.ps1").text
+    assert "else { 'wss://ws-capable.example/connector/agent' }" in body

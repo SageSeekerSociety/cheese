@@ -137,6 +137,63 @@ echo "next: cheesehost link connect $ORIGIN/connector   (logs in, then stays con
     return PlainTextResponse(script, media_type="text/x-shellscript")
 
 
+_INSTALL_PS1 = r"""# cheesehost installer for Windows, the counterpart of install.sh.
+# Run it in PowerShell as the user whose machine this is:
+#   irm <origin>/connector/install.ps1 | iex
+# No administrator rights and no secrets; enrollment is `cheesehost link connect`.
+$ErrorActionPreference = 'Stop'
+$origin = '__ORIGIN__'
+$wsUrl = if ($env:CHEESE_WS_URL) { $env:CHEESE_WS_URL } else { '__WS_URL__' }
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+# A directory this user can write, so the connector can replace itself there.
+$dir = Join-Path $env:LOCALAPPDATA 'cheese\bin'
+$exe = Join-Path $dir 'cheesehost.exe'
+New-Item -ItemType Directory -Force $dir | Out-Null
+Write-Host "downloading cheesehost (windows-$arch)..."
+$partial = "$exe.part"
+& curl.exe -fsSL -o $partial "$origin/connector/latest/windows-$arch/cheesehost.exe"
+if ($LASTEXITCODE -ne 0) { throw "download failed ($LASTEXITCODE)" }
+try {
+  Move-Item -Force $partial $exe
+} catch {
+  # Windows will not replace a running exe; a connector already running keeps
+  # itself current, so there is nothing to do.
+  Remove-Item -Force $partial
+  Write-Host "cheesehost is already installed and running; it updates itself."
+}
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if (-not (($userPath -split ';') -contains $dir)) {
+  $newPath = if ($userPath) { "$userPath;$dir" } else { $dir }
+  [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+  $env:Path += ";$dir"
+}
+Write-Host "installed to $exe"
+# WS-stripping edge: the same pinned control-channel URL install.sh writes,
+# into the file cheesehost reads (os.UserConfigDir is %APPDATA%).
+if ($wsUrl) {
+  $cfgDir = Join-Path $env:APPDATA 'cheese'
+  $cfg = Join-Path $cfgDir 'config.json'
+  New-Item -ItemType Directory -Force $cfgDir | Out-Null
+  $config = [pscustomobject]@{}
+  if (Test-Path $cfg) { $config = Get-Content -Raw $cfg | ConvertFrom-Json }
+  $config | Add-Member -Force -NotePropertyName ws -NotePropertyValue $wsUrl
+  [IO.File]::WriteAllText($cfg, ($config | ConvertTo-Json))
+  Write-Host "control channel pinned to $wsUrl (WS-stripping edge)"
+}
+Write-Host "next: cheesehost link connect $origin/connector"
+Write-Host "      (logs in, then stays connected)"
+"""
+
+
+@router.get("/install.ps1")
+async def install_powershell(request: Request) -> PlainTextResponse:
+    origin = _origin(request)
+    script = _INSTALL_PS1.replace("__ORIGIN__", origin).replace(
+        "__WS_URL__", _ws_control_url(origin)
+    )
+    return PlainTextResponse(script, media_type="text/plain")
+
+
 # Claude Code itself, served from here for the same reason the connector is: a
 # machine may have no route to the vendor (private cloud subnets, a user's
 # network we do not control, or the vendor's own regional availability, which

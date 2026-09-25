@@ -72,6 +72,7 @@ describe('adding a device', () => {
     )
     expect(screen.getByText('Windows').closest('a')?.getAttribute('href')).toMatch(/Cheese-Setup-x64\.exe$/)
     expect(screen.getAllByText(/connector\/install\.sh/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/irm .*\/connector\/install\.ps1 \| iex/).length).toBeGreaterThan(0)
     expect(screen.queryByText('接入这台电脑')).toBeNull()
   })
 

@@ -45,6 +45,7 @@ func stopProcess(pid int) error {
 // (allowed while running) and leaves a hidden cmd to delete the file once this
 // process has exited.
 func removeSelf(exe string) error {
+	dropFromUserPath(filepath.Dir(exe))
 	doomed := exe + ".uninstalled"
 	if err := os.Rename(exe, doomed); err != nil {
 		return err
@@ -86,4 +87,14 @@ func removeTree(dir string) error {
 		err = os.RemoveAll(dir)
 	}
 	return err
+}
+
+// dropFromUserPath takes dir out of the user's PATH, where install.ps1 put it.
+// The directory travels in the environment, as in stopFootprintProcesses.
+func dropFromUserPath(dir string) {
+	script := `$p = [Environment]::GetEnvironmentVariable('Path', 'User'); if ($p) { $kept = ($p -split ';' | Where-Object { $_ -and $_ -ne $env:CHEESE_BIN }) -join ';'; if ($kept -ne $p) { [Environment]::SetEnvironmentVariable('Path', $kept, 'User') } }`
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = append(os.Environ(), "CHEESE_BIN="+dir)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	_ = cmd.Run()
 }
