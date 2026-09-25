@@ -220,7 +220,15 @@ def analysis_book() -> None:
     summary.column_dimensions["A"].width = 18
     chart = BarChart()
     chart.type = "col"
+    chart.grouping = "clustered"
     chart.title = "各类别指标"
+    # openpyxl writes both axes as deleted unless told otherwise; Excel then
+    # draws no axis and the editor draws the labels on top of each other.
+    chart.x_axis.delete = False
+    chart.y_axis.delete = False
+    chart.x_axis.axPos = "b"
+    chart.y_axis.majorGridlines = None
+    chart.width, chart.height = 16, 8
     values = Reference(data, min_col=2, max_col=3, min_row=1, max_row=6)
     chart.add_data(values, titles_from_data=True)
     chart.set_categories(Reference(data, min_col=1, min_row=2, max_row=6))
