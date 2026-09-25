@@ -1,12 +1,14 @@
 """Accounts are created only with a recorded consent, and material changes to
 the rules are put to everyone again (#1486)."""
 
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.users import _issue_oauth_state_token
 from app.domain.legal.documents import DOCUMENTS, LegalVersion
@@ -37,6 +39,22 @@ def _pending(api_client: TestClient, token: str) -> list[str]:
     )
     assert r.status_code == 200, r.text
     return [d["document"] for d in r.json()["data"]["pending"]]
+
+
+@contextmanager
+def _commit_fails(api_client: TestClient):
+    """The database refuses this request's commit. The client asks for its
+    pending consents as soon as it holds an answer, so a consent the answer
+    reports must already be committed; one that cannot be never gets reported."""
+
+    async def refuse(session):
+        raise OSError("database commit failed")
+
+    with pytest.MonkeyPatch.context() as failing:
+        failing.setattr(AsyncSession, "commit", refuse)
+        # See the answer a browser gets rather than the server's exception.
+        failing.setattr(api_client._transport, "raise_server_exceptions", False)
+        yield
 
 
 def _account_exists(db_session, portal, username: str) -> bool:
@@ -98,6 +116,14 @@ class TestSignup:
         assert r.status_code == 200, r.text
         assert _pending(api_client, r.json()["data"]["accessToken"]) == []
 
+    def test_a_signup_whose_consent_was_not_saved_is_not_reported_done(
+        self, api_client: TestClient, _portal
+    ):
+        with _commit_fails(api_client):
+            r = _signup(api_client, _portal, "uncommitted1", consent=SIGNUP_CONSENT)
+
+        assert r.status_code == 500, r.text
+
 
 class TestOAuthSignup:
     def _create(self, api_client: TestClient, portal, uid: str, **consent):
@@ -147,6 +173,18 @@ class TestOAuthSignup:
         assert refreshed.status_code == 200, refreshed.text
         assert _pending(api_client, refreshed.json()["data"]["accessToken"]) == []
 
+    def test_an_oauth_signup_whose_consent_was_not_saved_is_not_reported_done(
+        self, api_client: TestClient, db_session, _portal
+    ):
+        with _commit_fails(api_client):
+            resp = self._create(
+                api_client, _portal, "uncommitted", **OAUTH_CONSENT_FORM
+            )
+
+        params = parse_qs(urlparse(resp.headers["location"]).query)
+        assert params.get("error_code") == ["CREATION_FAILED"], params
+        assert not _account_exists(db_session, _portal, "oauth_uncommitted")
+
 
 class TestReacceptance:
     def test_an_account_that_never_consented_is_asked_for_both(
@@ -168,6 +206,20 @@ class TestReacceptance:
 
         assert r.status_code == 200, r.text
         assert _pending(api_client, token_of(authenticated_user)) == []
+
+    def test_an_acceptance_that_was_not_saved_is_not_reported_done(
+        self, api_client: TestClient, authenticated_user: CreatedUser
+    ):
+        headers = {"Authorization": f"Bearer {token_of(authenticated_user)}"}
+
+        with _commit_fails(api_client):
+            r = api_client.post(
+                "/users/me/consents",
+                json={"documents": CURRENT_VERSIONS},
+                headers=headers,
+            )
+
+        assert r.status_code == 500, r.text
 
     def test_the_recorded_address_is_not_one_the_client_wrote(
         self,
