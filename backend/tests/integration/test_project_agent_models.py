@@ -211,6 +211,9 @@ async def test_removed_main_is_refused_but_unused_defaults_do_not_block_override
         uuid.UUID(project["root_topic_id"]),
     )
     assert "sonnet" in kwargs["model"]
+    # Claude Code is launched on the model admission puts each request on, so
+    # its system prompt and self-description are for that model.
+    assert kwargs["env"]["ANTHROPIC_MODEL"] == main["supply"]["model"]
     assert kwargs["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "opus"
     assert (
         client.put(
