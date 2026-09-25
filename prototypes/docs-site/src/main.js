@@ -1,5 +1,5 @@
 import { ic, TAG, STEPS } from './content.js'
-import { NAV, P, WHERE, FAQ, RELEASES, WHO, DIAGRAMS, LOGO } from 'virtual:data'
+import { NAV, P, WHERE, FAQ, RELEASES, WHO, DIAGRAMS, ROOM, LOGO } from 'virtual:data'
 const hrefOf = (slug) => `#/${WHERE[slug]}/${slug}`
 const page = (slug) => P[WHERE[slug] + '/' + slug]
 const USER_SECS = Object.keys(NAV).filter((k) => k !== 'dev' && k !== 'changelog')
@@ -112,37 +112,36 @@ const WORK = [
 ]
 const TOOLI = { 题目: 'doc', 话题文件: 'folder', 云机器: 'cpu', 课程: 'book', 提交记录: 'list', 评分标准: 'check', 文件: 'folder', 实况文档: 'doc', 仓库: 'git', 预览: 'layers', 设备: 'cpu' }
 
-function heroDemo() {
-  const m = (at, cls, html) => `<div class="d-row ${cls}" data-at="${at}">${html}</div>`
-  return `<div class="demo" id="demo" data-step="0">
-   <div class="d-bar"><span class="lights"><i></i><i></i><i></i></span><b># 整理本周周报</b><span class="d-who"><img src="${LOGO}" alt=""><i>你</i><i>小王</i></span></div>
-   <div class="d-body">
-    <div class="d-chat">
-     ${m(1, 'me', `<span class="av">你</span><div><p><span class="mention">@芝士</span> 把这三份会议纪要整理成一页周报，按项目分节，结尾列待办。</p><div class="files"><span>${ic('doc')}周一例会.docx</span><span>${ic('doc')}周三评审.docx</span><span>${ic('doc')}周四复盘.docx</span></div></div>`)}
-     ${m(2, 'bot', `<span class="av"><img src="${LOGO}" alt=""></span><div><p>明白：一页、按项目分节、结尾是待办。我先读三份材料，十分钟后给你初稿。</p></div>`)}
-     ${m(3, 'tool', `${ic('check')}读取 周一例会.docx`)}
-     ${m(4, 'tool', `${ic('check')}读取 周三评审.docx、周四复盘.docx`)}
-     ${m(5, 'tool', `<span class="d-spin"></span>生成 周报.docx`)}
-     ${m(6, 'me', `<span class="av">你</span><div><p>标题用本周日期。</p></div>`)}
-     ${m(7, 'bot', `<span class="av"><img src="${LOGO}" alt=""></span><div><p>好，标题改成「9 月 22 日–26 日周报」。初稿好了，请验收。</p></div>`)}
-    </div>
-    <aside class="d-side">
-     <div class="d-card" data-at="3"><small>任务</small><b>整理本周周报</b><div class="d-prog"><i></i></div><span class="d-state"><em class="s1">施工中</em><em class="s2">等你验收</em></span></div>
-     <div class="d-card accept" data-at="7"><small>验收卡</small><b>${ic('doc')}周报.docx · 1 页</b><p>4 个项目 · 9 条待办 · 每条标了出处</p><div class="d-btns"><span>查看</span><span class="ok">采纳</span></div></div>
-    </aside>
-   </div>
-  </div>`
+// The room is the workbench's own components (island/), pinned while the page
+// scrolls; each quarter of the section's scroll adds the next thing that happens.
+const STORY = [
+  ['交代一件事', '在话题里说清要什么、给谁、什么时候要。@ 芝士，它就接手。'],
+  ['拆成几件事同时做', '芝士复述它的理解，把活拆成几条任务并行推进，每条都有进度。'],
+  ['交付，当场预览', '做出来的文件直接出现在话题里，右侧就能打开看；你可以随时补一句要求。'],
+  ['改好，等你验收', '它按你的补充改完，递上验收：采纳就合进项目，不满意就退回。'],
+]
+let storyStep = -1
+function roomFrame() { return $('#roomFrame') }
+function syncRoom() {
+  const f = roomFrame(); if (!f?.contentWindow?.setStep) return
+  f.contentWindow.setTheme(isDark() ? 'dark' : 'light'); f.contentWindow.setStep(Math.max(storyStep, 0))
 }
-let demoTimer = 0, demoIO
-function runDemo() {
-  const el = $('#demo'); if (!el) return
-  clearInterval(demoTimer)
-  let step = 0, seen = true
-  demoIO?.disconnect()
-  demoIO = new IntersectionObserver((es) => { seen = es[0].isIntersecting }); demoIO.observe(el)
-  const tick = () => { if (!el.isConnected) { clearInterval(demoTimer); return } if (!seen) return; step = step >= 10 ? 0 : step + 1; el.dataset.step = Math.min(step, 8) }
-  if (reduced) { el.dataset.step = 8; return }
-  demoTimer = setInterval(tick, 1100); tick()
+function mountStory() {
+  const f = roomFrame(); if (!f) return
+  storyStep = -1
+  f.onload = () => { syncRoom(); onStoryScroll() }
+  f.srcdoc = ROOM
+}
+function onStoryScroll() {
+  const sec = $('#story'); if (!sec) return
+  const r = sec.getBoundingClientRect(), run = sec.offsetHeight - innerHeight
+  const p = Math.max(0, Math.min(1, -r.top / Math.max(run, 1)))
+  const n = Math.min(STORY.length - 1, Math.floor(p * STORY.length))
+  $('#storyBar')?.style.setProperty('--p', p)
+  if (n === storyStep) return
+  storyStep = n
+  $$('#storySteps li').forEach((li, i) => { li.classList.toggle('on', i === n); li.classList.toggle('done', i < n) })
+  syncRoom()
 }
 
 function homePage() {
@@ -162,8 +161,16 @@ function homePage() {
    <div class="x-mark" id="heroLogo" role="img" aria-label="知是的标志：一轮带孔的芝士，前面站着一只小老鼠" title="点一下重播"></div>
   </section>
 
-  <section class="x-sec x-demo">
-   <div class="x-stage" data-reveal><div class="x-blob b1"></div><div class="x-blob b2"></div>${heroDemo()}</div>
+  <section class="x-story" id="story" style="--n:${STORY.length}">
+   <div class="x-story-pin">
+    <div class="x-story-copy">
+     <span class="x-kick">一件事怎么走完</span>
+     <h2>往下滚，看芝士把一件事做完</h2>
+     <ol class="x-steps" id="storySteps">${STORY.map(([t, d], i) => `<li><span class="n">0${i + 1}</span><div><b>${t}</b><p>${d}</p></div></li>`).join('')}</ol>
+     <div class="x-story-bar" id="storyBar"><i></i></div>
+    </div>
+    <div class="x-stage"><div class="x-blob b1"></div><div class="x-blob b2"></div><iframe id="roomFrame" title="话题演示：用工作台自己的组件拼成" loading="eager"></iframe></div>
+   </div>
   </section>
 
   <section class="x-sec x-three">
@@ -300,7 +307,7 @@ function navigate() {
 addEventListener('hashchange', navigate)
 
 function afterMount(sec) {
-  if (sec === '') { mountHero(); renderWork(0); renderSay(); runDemo() }
+  if (sec === '') { mountHero(); renderWork(0); renderSay(); mountStory() }
   if (sec === 'changelog') { moveSidePill(RELEASES[0].id); moveFilter() }
 }
 
@@ -372,6 +379,7 @@ function onScroll() {
   }
 }
 addEventListener('scroll', onScroll, { passive: true })
+addEventListener('scroll', onStoryScroll, { passive: true })
 
 function moveFilter() {
   const on = $('#filters button.on'), ind = $('#fInd')
@@ -409,7 +417,7 @@ const citeHtml = (c) => `<a class="cite" href="${c.href}">${ic('doc')}<span>${c.
 /* ============================================================
    Theme: a circle of night spreading from where you clicked
    ============================================================ */
-function applyTheme(d) { document.documentElement.classList.toggle('dark', d); loadDiagrams(); try { localStorage.setItem('docs-dark', d ? '1' : '0') } catch {} }
+function applyTheme(d) { document.documentElement.classList.toggle('dark', d); loadDiagrams(); syncRoom(); try { localStorage.setItem('docs-dark', d ? '1' : '0') } catch {} }
 applyTheme((() => { try { return localStorage.getItem('docs-dark') === '1' } catch { return false } })())
 function toggleTheme(x, y) {
   const to = !isDark()

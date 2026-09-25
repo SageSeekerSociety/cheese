@@ -859,6 +859,25 @@ body.page-home .foot .fine{color:#8d8577}
 @media (max-width:980px){.x-hero{grid-template-columns:1fr;min-height:0}.x-mark{order:-1;width:min(300px,70%)}.x-three,.x-work{grid-template-columns:1fr}.x-lib{grid-template-columns:1fr 1fr}.d-body{grid-template-columns:1fr}.d-side{display:none}.x-stage{padding:32px 20px 0}}
 @media (max-width:620px){.x{padding:0 18px}.x-lib{grid-template-columns:1fr}}
 
+/* ---------- home: the pinned room story ---------- */
+.x-story{position:relative;height:calc(var(--n) * 85vh + 100vh);margin-top:90px}
+.x-story-pin{position:sticky;top:var(--header);height:calc(100vh - var(--header));display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.5fr);gap:40px;align-items:center}
+.x-kick{font-size:13px;font-weight:600;letter-spacing:.06em;color:var(--accent-ink)}
+.x-story-copy h2{font-family:var(--serif);font-size:clamp(28px,3vw,40px);line-height:1.25;color:var(--ink);margin:10px 0 28px}
+.x-steps{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.x-steps li{display:flex;gap:14px;padding:14px 16px;border-radius:16px;opacity:.42;transition:opacity .5s var(--out),background .5s var(--out),transform .6s var(--out)}
+.x-steps li.done{opacity:.62}
+.x-steps li.on{opacity:1;background:var(--surface);box-shadow:var(--shadow);transform:translateX(6px)}
+.x-steps .n{font:600 13px var(--mono);color:var(--accent-ink);padding-top:2px}
+.x-steps b{display:block;font-size:17px;color:var(--ink)}
+.x-steps p{margin:4px 0 0;font-size:14px;line-height:1.7;color:var(--muted);max-height:0;overflow:hidden;transition:max-height .6s var(--out)}
+.x-steps li.on p{max-height:90px}
+.x-story-bar{height:3px;margin:22px 16px 0;border-radius:3px;background:var(--line)}
+.x-story-bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent-2),var(--accent));transform-origin:left;transform:scaleX(var(--p,0))}
+.x-story .x-stage{height:min(78vh,680px);padding:40px 40px 0;display:flex}
+.x-story iframe{position:relative;z-index:1;flex:1;width:100%;border:0;border-radius:18px 18px 0 0;background:transparent;box-shadow:0 30px 80px -20px rgba(70,25,5,.45)}
+@media (max-width:980px){.x-story{height:auto}.x-story-pin{position:static;height:auto;grid-template-columns:1fr}.x-steps li{opacity:1}.x-steps p{max-height:none}.x-story .x-stage{height:520px;padding:20px 12px 0}}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
   [data-reveal]{opacity:1;transform:none;filter:none}

@@ -131,7 +131,10 @@ const RELEASES = [
 ]
 
 // ---------- bundle ----------
-const DATA = { NAV, P, WHERE, FAQ, RELEASES, WHO, DIAGRAMS, LOGO: LOGO_URI }
+// island/room.html is built from frontend/ by island/build.mjs and committed, so
+// this build does not need the frontend's dependencies.
+const ROOM = fs.readFileSync(path.join(HERE, 'island/room.html'), 'utf8')
+const DATA = { NAV, P, WHERE, FAQ, RELEASES, WHO, DIAGRAMS, ROOM, LOGO: LOGO_URI }
 const virtual = {
   name: 'virtual',
   setup(b) {
