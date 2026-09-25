@@ -111,6 +111,9 @@ class _FakeBackend:
     async def recover(self, device_id=None):
         return []
 
+    async def stop_listening(self) -> None:
+        return None
+
     async def replay(self, session, *, known_texts):
         return None
 

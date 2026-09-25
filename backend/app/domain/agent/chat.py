@@ -2140,6 +2140,21 @@ class ChatService:
         async with self._sessions() as session:
             return await BlockRepository(session).ai_turn_ids(turn_ids)
 
+    async def stop_listening(self, timeout_s: float) -> None:
+        """Hand every session this process listens to over to the next one.
+
+        A message written into a running session is stamped consumed only when
+        the session's receipt for it is read back; stop reading before that and
+        the next turn sends it again. So the receipts already on their way are
+        read first, for up to ``timeout_s``, and only then does this process
+        stop reading. A receipt still missing by then is the ordinary case of a
+        session that stopped reading, and replays like one.
+        """
+        deadline = time.monotonic() + timeout_s
+        while any(self._pending_receipts.values()) and time.monotonic() < deadline:
+            await asyncio.sleep(0.2)
+        await self._compute.stop_listening()
+
     async def recover_sessions(self, device_id: str | None = None) -> int:
         """Listen again to sessions that outlived this process, and land what
         they said while nobody was.

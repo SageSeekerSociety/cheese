@@ -6,7 +6,8 @@ from functools import lru_cache
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.db import async_session_factory, get_db
+from app.core.db import async_session_factory, engine, get_db
+from app.core.ownership import Ownership
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel, CloudLease
 from app.domain.agent.compute import build_compute_pool
@@ -219,6 +220,12 @@ def get_cloud_wakeup() -> CloudWakeup:
         is_online=device_hub.is_online,
         announce_failure=announce_failure,
     )
+
+
+@lru_cache
+def get_ownership() -> Ownership:
+    """This process's claim on the running work (`app.core.ownership`)."""
+    return Ownership(engine.url.render_as_string(hide_password=False))
 
 
 @lru_cache

@@ -476,6 +476,63 @@ class AgentWorkRunner:
         # what this set cannot see (a failure recorded before a restart) is covered
         # by the staleness rule in `device.health` instead.
         self._host_failed_topics: set[str] = set()
+        # Live turns whose prompt the session has accepted. The rest are still
+        # being prepared or sent, and a process handing its work over waits for
+        # them: a turn that got through is one the next process can pick up where
+        # it stands, a turn cut off mid-send is one it can only send again.
+        self._delivered: set[str] = set()
+        # Whether this process may start turns right now. Only the owner of the
+        # running work may (`app.core.ownership`): a turn is started against what
+        # this process knows is already running in the room, and a process that
+        # does not own that work does not know it. A turn asked for meanwhile is
+        # not refused — it waits here until the process takes over, or is left
+        # to its owner when this one is on its way out.
+        self._may_start = True
+
+    @property
+    def accepting_turns(self) -> bool:
+        """Is this process the one running the work right now — the owner, and
+        not on its way out?"""
+        return self._may_start
+
+    def hold_turns(self) -> None:
+        """Let no turn start in this process until `start_turns`."""
+        self._may_start = False
+
+    def start_turns(self) -> None:
+        self._may_start = True
+
+    async def _wait_to_start(self) -> None:
+        while not self._may_start:
+            await asyncio.sleep(0.2)
+
+    async def settle_deliveries(self, timeout_s: float) -> set[str]:
+        """Wait for every live turn's prompt to reach its session, up to
+        `timeout_s`. Returns the turns still not delivered when it gave up."""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            waiting = set(self._live) - self._delivered
+            if not waiting or time.monotonic() >= deadline:
+                return waiting
+            await asyncio.sleep(0.2)
+
+    async def let_go(self, timeout_s: float = 5.0) -> None:
+        """Stop every piece of work this process still has in hand, for a
+        process on its way out.
+
+        Stopping a turn here stops only this process waiting on it: the agent in
+        the execution environment keeps going, and the turn's interval stays
+        open for the next process to pick up. What must not happen is this
+        process finishing a send after the lock is gone, when the next one may
+        already have judged that turn undelivered and sent it again. A message
+        still waiting to be admitted is left unanswered in its room, where the
+        next process finds it.
+        """
+        pending = [task for task in self._tasks if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.wait(pending, timeout=timeout_s)
 
     def recent_work(self) -> list[dict]:
         """Newest-first lifecycle summaries for /debug/turns."""
@@ -785,6 +842,9 @@ class AgentWorkRunner:
     ) -> None:
         # Order each recipient's messages. Waiting for another agent's turn must
         # not block a follow-up addressed to the agent that is still running.
+        # Before anything else: whether this joins a running turn or starts one
+        # depends on knowing what is running, which only the owner does.
+        await self._wait_to_start()
         key = (topic_id, message["recipient_handle"])
         lock = self._message_locks.setdefault(key, asyncio.Lock())
         # The window this and the two lines below measure runs from a message
@@ -1065,10 +1125,11 @@ class AgentWorkRunner:
         logger.warning("cancelled wedged turn %s on topic %s", turn_id, topic_id)
 
     async def resume_orphans(self, chat_service) -> int:
-        """Startup sweep. `_live` is empty at boot, so every open interval is by
-        definition an orphan of the previous process generation — which makes
-        this exactly `sweep_orphans` with the young-entry guard switched off
-        (nothing can be racing us: lifespan runs before the app serves)."""
+        """The sweep a process runs as it takes the work over. Every open
+        interval then belongs to a previous owner, which has stopped listening
+        and let go of its turns, and this process has started none yet — which
+        makes this exactly `sweep_orphans` with the young-entry guard switched
+        off: nothing can be racing it."""
         return await self.sweep_orphans(chat_service, min_age_s=0.0)
 
     async def sweep_orphans(
@@ -1838,6 +1899,7 @@ class AgentWorkRunner:
         # project's concurrent-turn ceiling is reached. Both states are posted
         # into the topic as platform system events, so people SEE why nothing
         # is streaming yet.
+        await self._wait_to_start()
         admit_started = time.monotonic()
         verdict, gate = await self._admit(chat_service, topic_id, turn_id)
         logger.info(
@@ -1942,6 +2004,7 @@ class AgentWorkRunner:
             # must stop counting as live, so the next sweep can claim it. The
             # open interval deliberately survives — that is what gets it resumed.
             self._live.pop(str(turn_id), None)
+            self._delivered.discard(str(turn_id))
             self._last_frame_at.pop(str(turn_id), None)
             self._live_topics.pop(str(turn_id), None)
             if gate is not None:
@@ -2205,6 +2268,7 @@ class AgentWorkRunner:
                         # sweep reads a fact instead of guessing from side
                         # effects that may not exist yet.
                         await _stamp_delivery(chat_service.session_factory, turn_id)
+                        self._delivered.add(str(turn_id))
                         # The turn starts HERE, so the ceiling does too. Both
                         # clocks finally have a real base, and whichever comes
                         # first wins: the fuse still asks "did anything ever

@@ -14,9 +14,7 @@ Endpoints the frozen cli expects (it dials ``base = …/connector``):
   the shared ``DeviceHub``.
 
 The DB-backed device flow uses a per-request ``SqlDeviceRepository``; the WS + hub are
-process-global (``device_hub``). Device-hosted ``claude`` posts its Claude Code hooks to
-the existing ``/sandbox/hooks/{topic_id}`` endpoint (scoped-token auth + shared
-``hook_router``) — the connector adds no second hook path.
+process-global (``device_hub``).
 """
 
 import asyncio
@@ -98,9 +96,15 @@ async def recover_business_state(device_id: str) -> None:
 
 
 async def _recover_business_state(device_id: str) -> None:
-    try:
-        from app.api.deps import get_chat_service
+    from app.api.deps import get_chat_service, get_work_runner
 
+    # Every backend watches devices come and go, but only the one running the
+    # work listens to their sessions: two listeners land one session's output
+    # twice. A backend still waiting to take over recovers every device when it
+    # does; one on its way out leaves them to the next.
+    if not get_work_runner().accepting_turns:
+        return
+    try:
         await get_chat_service().recover_sessions(device_id)
     except DeviceOffline:
         # It connected and went again before recovery could talk to it. The next
