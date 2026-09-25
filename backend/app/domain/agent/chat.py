@@ -137,6 +137,7 @@ from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.environment import EnvironmentConfig, pin_environment
+from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
@@ -2192,7 +2193,11 @@ class ChatService:
                 work = self._compute.work_in_flight(session.topic_id)
                 if work is not None and (session.topic_id, work) not in self._hook_work:
                     await self._begin_self_started_turn(
-                        session.project_id, session.topic_id, work, opened=True
+                        session.project_id,
+                        session.topic_id,
+                        work,
+                        opened=True,
+                        agent_handle=session.agent_handle or None,
                     )
                 # What the room already shows, so a message the live path DID
                 # persist before this process died is not landed twice. The room
@@ -2377,6 +2382,7 @@ class ChatService:
         turn_id: uuid.UUID,
         *,
         opened: bool = False,
+        agent_handle: str | None = None,
     ) -> "_HookWorkState | None":
         """Give a turn the session started for itself the context to end like
         any other: an interval a sweep can find, and everything its Stop needs.
@@ -2404,6 +2410,12 @@ class ChatService:
         process that assembled it wrote on that row: where its model traffic
         went, the message it answers, and when it really started.
 
+        ``agent_handle`` is the agent whose session this is, when the caller
+        knows it. Recovery does — it is on the session's own key — and must pass
+        it: the room's fallback is the project default, and a teammate's turn
+        recorded under the default holds every message addressed to that
+        teammate in ``wait_for_recipient`` until the turn ends by itself.
+
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
@@ -2420,7 +2432,7 @@ class ChatService:
                 if project is None:
                     return None
                 agents = AgentInstanceService(session)
-                agent = await agents.for_topic(topic, project)
+                agent = await self._session_agent(agents, topic, project, agent_handle)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
                 row = (
@@ -3274,6 +3286,25 @@ class ChatService:
             logger.exception("failed to 👀-ack block %s", user_block_id)
             return None
 
+    @staticmethod
+    async def _session_agent(
+        agents: AgentInstanceService,
+        topic: Topic,
+        project: Project,
+        agent_handle: str | None,
+    ) -> ResolvedAgent:
+        """The agent a known session belongs to, else the room's answer."""
+        if agent_handle:
+            try:
+                return agents.resolved(await agents.for_handle(project, agent_handle))
+            except NotFoundError:
+                logger.warning(
+                    "session agent %r is not in project %s; using the room's",
+                    agent_handle,
+                    project.id,
+                )
+        return await agents.for_topic(topic, project)
+
     async def _resolved_agent(
         self, session: AsyncSession, topic: Topic
     ) -> ResolvedAgent:
@@ -4096,18 +4127,17 @@ class ChatService:
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
             #
-            # 模型和它的池也在里面，而这里的 model 只为容器那条路存在：
-            # `session_launch.py` 仍然把它拼进 `claude --model` 的 argv，那是启动
-            # 那一刻钉进进程、此后没有任何代码再比对的东西，而这个哈希是唯一比较
-            # 「屏幕是不是还配得上现在的选择」的地方。device 启动环境里已经没有模型
-            # 了（结论 46）：`device_provider.py` 既不传 `--model`，也不留那三个
-            # family 别名，每个请求的模型在计量代理问准入时解析、由代理写进请求体。
-            #
-            # 代价说清楚：model 留在哈希里，意味着改项目默认模型在两条路上都要到
-            # 下一个 task boundary 收屏重开一次，哪怕 device 上的下一个请求本来就
-            # 会拿到新绑定。容器那条路必须这样 —— 不放进来就是屏幕带着
-            # `--model glm-5.2` 继续跑而准入已经解析成订阅池，此后每一轮都死在
-            # 「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
+            # 模型和它的池也在里面：两条路都在启动那一刻把 model 钉进进程 ——
+            # 容器那条路是 `session_launch.py` 拼进 argv 的 `claude --model`，
+            # device 那条路是下面的 `ANTHROPIC_MODEL`。Claude Code 按它组装整套
+            # 系统提示词和自我介绍（Opus 与 Sonnet 用的是两份不同的提示词），
+            # 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，所以改
+            # 项目模型在两条路上都会到下一个 task boundary 收屏重开一次，提示词
+            # 随之换成新模型的。device 上每个请求实际跑哪个模型仍然只由准入决定
+            # （结论 46），计量代理把答案写进请求体；启动时的这个名字只决定提示
+            # 词，在重开之前的那几轮里它可能落后于绑定。容器那条路没有代理改写，
+            # 不放进哈希就是屏幕带着 `--model glm-5.2` 继续跑而准入已经解析成订阅
+            # 池，此后每一轮都死在「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
             (
                 json.dumps(
                     {
@@ -4121,7 +4151,7 @@ class ChatService:
                     },
                     sort_keys=True,
                 )
-                + ":explicit-chat-v4-native-model-choice"
+                + ":explicit-chat-v5-launch-model"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
@@ -4130,6 +4160,9 @@ class ChatService:
             "env": {
                 "CHEESE_AGENT_CONFIG": config_hash,
                 "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+                # The bound model, so Claude Code builds the system prompt and
+                # self-description for the model the turn actually runs on.
+                "ANTHROPIC_MODEL": model,
                 "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
             },
             # Which conversation the turn belongs to, and so which session's
