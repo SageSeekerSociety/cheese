@@ -152,7 +152,7 @@ describe('合的是人看到的那个 commit', () => {
     ])
     expect(container.textContent).toContain(detail)
     expect(acceptButton(container).disabled).toBe(true)
-    expect(container.textContent).not.toContain('人工放行并合并')
+    expect(container.textContent).not.toContain('仍要采纳')
   })
 
   it('a linked project without a PR offers creation instead of a clean acceptance', async () => {
@@ -213,7 +213,7 @@ describe('卡上的状态直接用合并态', () => {
     expect(acceptButton(container).disabled).toBe(false)
   })
 
-  it('blocked 检查红了：芝士处理中，采纳灰，红了哪个检查看得见', async () => {
+  it('blocked 检查红了：芝士正在处理，采纳灰，红了哪个检查看得见', async () => {
     const { container } = await mountWith([
       githubCard({
         merge_state: mergeState({
@@ -224,7 +224,7 @@ describe('卡上的状态直接用合并态', () => {
       }),
     ])
 
-    expect(container.textContent).toContain('芝士处理中')
+    expect(container.textContent).toContain('芝士正在处理')
     expect(container.textContent).toContain('必跑检查未通过')
     expect(container.textContent).toContain('test')
     expect(acceptButton(container).disabled).toBe(true)
@@ -243,7 +243,7 @@ describe('卡上的状态直接用合并态', () => {
       }),
     ])
 
-    expect(container.textContent).toContain('等 CI')
+    expect(container.textContent).toContain('等待检查')
     expect(acceptButton(container).disabled).toBe(true)
   })
 
@@ -262,7 +262,7 @@ describe('卡上的状态直接用合并态', () => {
     expect(acceptButton(container).disabled).toBe(true)
   })
 
-  it('dirty：芝士处理中', async () => {
+  it('dirty：芝士正在处理', async () => {
     const { container } = await mountWith([
       githubCard({
         merge_state: mergeState({
@@ -273,7 +273,7 @@ describe('卡上的状态直接用合并态', () => {
       }),
     ])
 
-    expect(container.textContent).toContain('芝士处理中')
+    expect(container.textContent).toContain('芝士正在处理')
     expect(container.textContent).toContain('与基线冲突')
     expect(acceptButton(container).disabled).toBe(true)
   })
@@ -295,7 +295,7 @@ describe('卡上的状态直接用合并态', () => {
       }),
     ])
 
-    expect(container.textContent).toContain('芝士处理中')
+    expect(container.textContent).toContain('芝士正在处理')
     expect(container.textContent).toContain('不在必跑名单')
     expect(container.textContent).toContain('lint')
     expect(acceptButton(container).disabled).toBe(false)
@@ -312,7 +312,7 @@ describe('卡上的状态直接用合并态', () => {
       }),
     ])
 
-    expect(container.textContent).toContain('等 CI')
+    expect(container.textContent).toContain('等待检查')
     expect(acceptButton(container).disabled).toBe(true)
   })
 })
@@ -366,7 +366,7 @@ describe('平台 lane：采纳纯粹是人的判断', () => {
       }),
     ])
 
-    expect(container.textContent).toContain('重试采纳')
+    expect(container.textContent).toContain('重新采纳')
     expect(acceptButton(container).disabled).toBe(false)
   })
 })
@@ -455,7 +455,7 @@ describe('人工放行的入口', () => {
       }),
     ])
 
-    expect(container.textContent).toContain('人工放行并合并')
+    expect(container.textContent).toContain('仍要采纳')
   })
 
   it('clean 的卡没有它——正门就是开的', async () => {
@@ -469,12 +469,12 @@ describe('人工放行的入口', () => {
       }),
     ])
 
-    expect(container.textContent).not.toContain('人工放行并合并')
+    expect(container.textContent).not.toContain('仍要采纳')
   })
 
   it('平台 lane 没有它——那里没有 PR 可放行', async () => {
     const { container } = await mountWith([card({})])
 
-    expect(container.textContent).not.toContain('人工放行并合并')
+    expect(container.textContent).not.toContain('仍要采纳')
   })
 })

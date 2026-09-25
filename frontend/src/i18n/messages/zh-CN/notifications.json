@@ -103,7 +103,7 @@
     "untitled": "平台有一条提示"
   },
   "CHEESE_QUESTION": {
-    "body": "在「{topicTitle}」，本轮已暂停等待回答",
-    "untitled": "芝士有一个待确认问题"
+    "body": "在「{topicTitle}」，已暂停，待你回答",
+    "untitled": "有一个问题待你回答"
   }
 }

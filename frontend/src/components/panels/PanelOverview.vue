@@ -26,8 +26,10 @@ const props = withDefaults(
     refreshTick?: number
     /** 地址里的 `?card=` —— 非空就是在看这一张卡，而不是看板加文档。 */
     openCardId?: string | null
+    /** 项目 AI 队友的名字，传给文档那一格。 */
+    agentName?: string
   }>(),
-  { topicList: () => [], active: false, refreshTick: 0, openCardId: null }
+  { topicList: () => [], active: false, refreshTick: 0, openCardId: null, agentName: '芝士' }
 )
 
 const emit = defineEmits<{
@@ -73,6 +75,7 @@ defineExpose({
         />
         <PanelProgress :topic="props.topic" :refresh-tick="props.refreshTick" />
         <PanelDoc
+          :agent-name="props.agentName"
           ref="docRef"
           class="panel-overview__doc"
           :topic="props.topic"

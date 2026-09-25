@@ -32,7 +32,7 @@ describe('话题所处阶段', () => {
     expect(topicPhase({ status: 'archived', working: true, card: 'pending' })).toBe('archived')
   })
 
-  // 卡说「等你验收」，而芝士这会儿正在改——正在发生的事才是此刻为真的那件。
+  // 卡说「待你审阅」，而芝士这会儿正在改——正在发生的事才是此刻为真的那件。
   it('正在跑的时候是「施工中」，压过手上那张卡', () => {
     expect(topicPhase({ status: 'active', working: true, card: 'pending' })).toBe('working')
   })
@@ -52,7 +52,7 @@ describe('话题所处阶段', () => {
 
   // 待验收 = 有人在等你，用 --warn 的三件套；机器在忙的两段是中性陈述。
   it('只有「待验收」这一档带颜色，因为只有它在等人', () => {
-    expect(topicPhaseBadge('reviewing')).toEqual({ label: '待验收', cls: 'pr-state--reviewing' })
+    expect(topicPhaseBadge('reviewing')).toEqual({ label: '待审阅', cls: 'pr-state--reviewing' })
     expect(topicPhaseBadge('working').label).toBe('施工中')
     expect(topicPhaseBadge('delivering').label).toBe('交付中')
     expect(topicPhaseBadge('archived').label).toBe('已采纳')

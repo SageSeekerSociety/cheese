@@ -1,7 +1,7 @@
 /** 贴在输入框上方的验收横条。
  *
  * 它原来是对话末尾一张 280px 高的卡，一递上来对话就只剩几行。现在平时只有一行：
- * 这是什么、等谁、「去验收」；整张卡点开才有。这一份钉的就是这三件事，以及任务卡
+ * 这是什么、等谁、「审阅」；整张卡点开才有。这一份钉的就是这三件事，以及任务卡
  * 详情里（不贴底）整张卡照旧摊开。
  */
 import type { AcceptCard } from '../../cx_types'
@@ -99,14 +99,14 @@ describe('贴底的时候', () => {
   it('平时只有一行：是什么、等谁，卡里的细节不在屏幕上', async () => {
     const { container } = await mountWith([card({ reviewer_handle: 'bob' })], true)
     const bar = container.querySelector('.accept-bar')!
-    expect(bar.textContent).toContain('成果待采纳')
-    expect(bar.textContent).toContain('等 @bob 验收')
+    expect(bar.textContent).toContain('改动')
+    expect(bar.textContent).toContain('待 @bob 审阅')
     expect(container.textContent).not.toContain('chore: do a thing')
   })
 
-  it('等的是自己的时候说「等你验收」', async () => {
+  it('等的是自己的时候说「待你审阅」', async () => {
     const { container } = await mountWith([card({ reviewer_handle: 'alice' })], true)
-    expect(container.querySelector('.accept-bar')!.textContent).toContain('等你验收')
+    expect(container.querySelector('.accept-bar')!.textContent).toContain('待你审阅')
   })
 
   it('点开横条才是整张卡，再点收回去', async () => {
@@ -122,11 +122,11 @@ describe('贴底的时候', () => {
     expect(container.textContent).not.toContain('chore: do a thing')
   })
 
-  it('「去验收」在横条上，点下去把 review 交出去；展开的卡里不再放第二颗', async () => {
-    const { container, emitted, getAllByText } = await mountWith([card({})], true)
+  it('「审阅」在横条上，点下去把 review 交出去；展开的卡里不再放第二颗', async () => {
+    const { container, emitted, getAllByRole } = await mountWith([card({})], true)
     await fireEvent.click(container.querySelector('.accept-bar__toggle') as HTMLElement)
-    expect(getAllByText('去验收')).toHaveLength(1)
-    await fireEvent.click(getAllByText('去验收')[0])
+    expect(getAllByRole('button', { name: '审阅' })).toHaveLength(1)
+    await fireEvent.click(getAllByRole('button', { name: '审阅' })[0])
     expect(emitted().review).toHaveLength(1)
   })
 })
@@ -135,7 +135,7 @@ describe('不贴底的时候（任务卡详情里）', () => {
   it('没有横条，整张卡直接摊开，标题在卡自己身上', async () => {
     const { container } = await mountWith([card({})], false)
     expect(container.querySelector('.accept-bar')).toBeNull()
-    expect(container.textContent).toContain('成果待采纳')
+    expect(container.textContent).toContain('改动')
     expect(container.textContent).toContain('chore: do a thing')
   })
 })

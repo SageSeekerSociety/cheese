@@ -142,16 +142,26 @@ and radii have stylelint; copy has nothing — a badly worded string ships silen
 next section. The words themselves are not.) So the one thing to internalise
 before you type user-facing Chinese:
 
-- **正式、清晰、自然、简明.** Both failure directions are wrong: `平台检查没跑成`
-  (too colloquial) and `平台检查未能顺利完成执行` (公文腔) — write
-  `平台检查未能执行`. Second person is always 「你」, never 「您」.
+- **As short as it can be while the meaning stays whole; formal, neutral, plain.**
+  Both failure directions are wrong: `平台检查没跑成` (too colloquial) and
+  `平台检查未能顺利完成执行` (公文腔) — write `平台检查未能执行`. Second person is
+  always 「你」, never 「您」, and no 「请」: a status says the status (`待你审阅`),
+  an error says what to do (`稍后重试`). Shorter never means dropping what the
+  reader needs: why, what they can do next, whether their input is still there.
+- **One word per concept, fixed in §8.10.** 任务 (never 活), 分身 (never 子 Agent),
+  the project's own name for its AI teammate (never a hard-coded 芝士), and the
+  review flow `待审阅 → 采纳 / 退回` (never 验收 or 卡 on screen).
+- **Errors take two shapes:** `保存失败` (tried, didn't work) or `无法读取这个文件`
+  (can't). Buttons are verbs that say what happens; a confirm dialog's button
+  repeats the action (`移出`), not `确定`. No dashes, no exclamation marks.
 - **No implementation words on screen.** 跑沙箱 / 干活 → 运行任务; system prompt /
   注入 → 角色设定; 算力节点 / 连接器 → 设备; 小队 → 团队; 一页纸总结 → 概要;
   知是基座 → 默认镜像. Test: *would someone opening this product for the first
   time understand the word?* If not, it is jargon. §8.2 carries the running list
   — add to it when you find a new one.
-- **Empty states are always 「暂无 X」**, no trailing period. Short strings
-  (labels, buttons, empty states, single-sentence hints) take no 句号 at all.
+- **Empty states are always 「暂无 X」**, no trailing period, and nothing after
+  it explaining how to make something appear there. Short strings (labels,
+  buttons, empty states, single-sentence hints) take no 句号 at all.
 - **Parentheses never explain internal mechanics.** `理由（会留在卡上）` → `理由`.
   A parenthesis may hold a short qualifier (`名称（英文）`), not a sentence.
 - **Keyboard/drag hints do not live on screen** — move them into `title`, or

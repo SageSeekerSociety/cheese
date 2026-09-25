@@ -171,7 +171,7 @@ async function save() {
           autocomplete="off"
         />
         <p v-else class="t-meta c-muted mb-4">{{ t('work.models.inheritHint') }}</p>
-        <p v-if="!isNew" class="t-meta c-muted">修改只影响这个队友，从下一轮开始生效，已有记忆保留</p>
+        <p v-if="!isNew" class="t-meta c-muted">修改只影响这个队友，下次运行时生效，已有记忆保留</p>
       </v-card-text>
       <v-card-actions class="pa-5 pt-0">
         <v-spacer />

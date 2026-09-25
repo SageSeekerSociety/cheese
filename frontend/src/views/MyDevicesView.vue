@@ -215,7 +215,7 @@ onMounted(load)
         <div v-else-if="devices.length === 0 && desktop" class="empty-state text-center py-10">
           <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
           <div class="t-body c-muted mb-1">暂无已连接的设备</div>
-          <div class="t-caption c-muted mb-5">把这台电脑接入后，智能体就能在这里干活</div>
+          <div class="t-caption c-muted mb-5">接入后，AI 队友可以在这台电脑上运行任务</div>
           <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine"
             >接入这台电脑</v-btn
           >

@@ -981,8 +981,8 @@ defineExpose({ openFile })
     </div>
     <v-alert v-if="taskLoadError" type="error" density="compact" class="ma-4">{{ taskLoadError }}</v-alert>
     <div v-if="overview" class="room-changes">
-      <p v-if="requestedPath" class="source-note">选择任务以查看 {{ requestedPath }}</p>
-      <p v-if="!tasksLoaded && !taskLoadError" class="source-note">正在加载任务</p>
+      <p v-if="requestedPath" class="source-note">选择一个任务，查看 {{ requestedPath }}</p>
+      <p v-if="!tasksLoaded && !taskLoadError" class="source-note">加载中…</p>
       <p v-else-if="tasksLoaded && !taskOptions.length" class="source-note">暂无任务改动</p>
       <article v-for="task in taskOptions" :key="task.id" class="task-change-group" :aria-label="task.title">
         <!-- 进任务和铺开文件是两件事，所以是两个按钮：点整行进这条任务，点最右边
@@ -1015,7 +1015,7 @@ defineExpose({ openFile })
              一句话，读者只会以为它没有改动。 -->
         <p v-if="overviewErrors[task.id]" class="source-note" role="alert">{{ overviewErrors[task.id] }}</p>
         <div v-if="expandedTasks.has(task.id)" :id="`task-files-${task.id}`">
-          <p v-if="!overviewDiffs[task.id] && !overviewErrors[task.id]" class="source-note">正在加载改动</p>
+          <p v-if="!overviewDiffs[task.id] && !overviewErrors[task.id]" class="source-note">加载中…</p>
           <p v-else-if="overviewDiffs[task.id]?.length === 0" class="source-note">暂无改动</p>
           <button
             v-for="file in overviewDiffs[task.id] ?? []"
@@ -1039,7 +1039,7 @@ defineExpose({ openFile })
       </button>
     </div>
     <v-alert v-else-if="sourceUnavailable" type="warning" density="compact" class="ma-4"
-      >任务不可用，请选择其他来源</v-alert
+      >无法打开这个任务，换一个来源查看</v-alert
     >
     <template v-else>
       <!-- 转圈，不是骨架：这块地方长出来的是一套工具（150px 文件树 + 右边一格），
@@ -1066,12 +1066,10 @@ defineExpose({ openFile })
            human choose — a silent winner is how edits vanished. -->
         <div v-if="fileConflict" class="file-conflict">
           <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
-          <span class="file-conflict__text">
-            这个文件在你编辑期间被改过，多半是芝士写的。直接保存会覆盖那些改动。
-          </span>
-          <v-btn size="x-small" variant="text" @click="reloadOpenFile">放弃我的改动，载入最新版本</v-btn>
+          <span class="file-conflict__text"> 你编辑期间，这个文件已被修改，直接保存会覆盖这些修改 </span>
+          <v-btn size="x-small" variant="text" @click="reloadOpenFile">载入最新版本</v-btn>
           <v-btn size="x-small" variant="text" color="error" :loading="fileSaving" @click="overwriteFile">
-            仍然覆盖保存
+            仍要保存
           </v-btn>
         </div>
         <div class="file-body">
@@ -1175,12 +1173,9 @@ defineExpose({ openFile })
                 {{ fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
               </v-icon>
               <div class="file-blob__title">
-                {{ fileTooLarge ? '文件太大，不在浏览器里打开' : '二进制文件，不能按文本编辑' }}
+                {{ fileTooLarge ? '文件过大，无法在浏览器中打开' : '非文本文件，无法编辑' }}
               </div>
-              <div class="file-blob__note">
-                {{ openPath }} · {{ fmtBytes(fileBytes) }}
-                <template v-if="!fileTooLarge"> —— 按文本打开会损坏它，因此这里只读 </template>
-              </div>
+              <div class="file-blob__note">{{ openPath }} · {{ fmtBytes(fileBytes) }}</div>
               <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
                 <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
                 下载原文件
@@ -1220,7 +1215,7 @@ defineExpose({ openFile })
         </div>
       </div>
     </template>
-    <p v-if="drafts.size" class="source-note source-drafts">未保存的修改已保留在当前页面，切回对应文件可继续编辑</p>
+    <p v-if="drafts.size" class="source-note source-drafts">未保存的修改已暂存，回到对应文件可以继续编辑</p>
   </div>
 </template>
 

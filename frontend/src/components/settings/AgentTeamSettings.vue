@@ -210,8 +210,7 @@ async function confirmDeactivate() {
         <v-icon size="34" class="mb-3 c-muted">mdi-robot-outline</v-icon>
         <div class="t-body c-muted mb-1">暂无 AI 队友</div>
         <div class="t-caption c-muted mb-5" style="max-width: 460px; margin: 0 auto">
-          队友就是在话题里和你一起干活的那个
-          AI，给它一套角色设定，它在这个项目里学到的东西会一直跟着它，换个话题也还记得
+          AI 队友在话题里和你一起工作。给它一套角色设定，它在这个项目里学到的内容会一直保留，换个话题也记得
         </div>
         <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreate">新建队友</v-btn>
       </div>

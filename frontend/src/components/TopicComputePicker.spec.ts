@@ -67,7 +67,7 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
       options: [],
       effective: null,
       machine_access: false,
-      notice: '让它看到整台机器',
+      notice: '让它看到可访问整台设备',
     },
     ...overrides,
   }
@@ -160,12 +160,12 @@ describe('room compute choices', () => {
       profile({
         choice: lab,
         locked: true,
-        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到整台机器' },
+        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到可访问整台设备' },
       })
     )
     mountPicker()
     expect(await screen.findByText('实验室工作站')).toBeTruthy()
-    expect(screen.getByText('整台机器')).toBeTruthy()
+    expect(screen.getByText('可访问整台设备')).toBeTruthy()
     expect(screen.getByRole('button', { name: '更换工作电脑' })).toBeTruthy()
   })
 })

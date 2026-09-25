@@ -49,7 +49,7 @@ const ACTION_META: Record<string, { btn: string }> = {
   decision: { btn: '查看决策记录' },
   topics: { btn: '' },
   milestone: { btn: '查看日历' },
-  accept: { btn: '前往验收' },
+  accept: { btn: '审阅' },
   notify: { btn: '' },
 }
 </script>
@@ -82,7 +82,7 @@ const ACTION_META: Record<string, { btn: string }> = {
         <span class="sys-mark sys-mark--dot" aria-hidden="true" />
         <span class="sys-text">
           <template v-if="notice.changes">
-            本轮改了 {{ notice.changes.filesTotal }} 个文件 (+{{ notice.changes.added }} −{{ notice.changes.removed }})
+            改动了 {{ notice.changes.filesTotal }} 个文件（+{{ notice.changes.added }} −{{ notice.changes.removed }}）
           </template>
           <template v-for="(act, ai) in notice.actions" :key="ai">
             <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
@@ -176,7 +176,7 @@ const ACTION_META: Record<string, { btn: string }> = {
         <span class="sys-text">{{ notice.line }}</span>
         <span v-if="notice.count > 1" class="sys-count">×{{ notice.count }}</span>
         <span v-if="notice.whoLabel" class="sys-who">{{
-          notice.who === 'cheese' ? `${name || agentName}处理中` : notice.whoLabel
+          notice.who === 'cheese' ? `${name || agentName}正在处理` : notice.whoLabel
         }}</span>
       </summary>
       <div class="sys-fold">

@@ -20,7 +20,7 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
 
 // closed = 那件事做完了。同一行改口而不是换一种标记：读的人关心的是「这段归谁」，
 // 而不是这条支线的生命周期。
-const note = computed(() => (props.marker.status === 'closed' ? '这部分已完成' : '这部分正在进行'))
+const note = computed(() => (props.marker.status === 'closed' ? '已完成' : '进行中'))
 
 function open() {
   emit('open', props.marker.taskId)
@@ -31,7 +31,7 @@ function open() {
   <TimelineMark>
     <span class="dispatched" data-testid="dispatched-marker" :data-task-id="marker.taskId">
       <v-icon size="13" class="dispatched__icon">mdi-call-split</v-icon>
-      已派出<button type="button" class="dispatched__link" @click="open">《{{ marker.title }}》</button> ·
+      新建任务<button type="button" class="dispatched__link" @click="open">《{{ marker.title }}》</button> ·
       {{ note }}
     </span>
   </TimelineMark>

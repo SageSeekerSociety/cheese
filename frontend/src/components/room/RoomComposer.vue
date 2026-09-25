@@ -392,10 +392,9 @@ defineExpose({
   >
     <!-- @-autocomplete: 没打字是「人 / 群播 / 资料库」这一级，打了字就是搜索。 -->
     <div v-if="mentionMatches.length || mentionLevel === 'library'" class="mention-menu">
-      <div v-if="mentionLevel === 'library'" class="mention-menu-head">
+      <div v-if="mentionLevel === 'library'" class="mention-menu-head" title="按 Esc 返回">
         <v-icon size="13">mdi-folder-outline</v-icon>
         <span class="mention-menu-name">资料库</span>
-        <span class="mention-menu-hint">Esc 返回</span>
       </div>
       <template v-for="(mm, i) in mentionMatches" :key="mm.kind + mm.insert">
         <div v-if="mm.group && mm.group !== mentionMatches[i - 1]?.group" class="mention-menu-group">
@@ -515,11 +514,7 @@ defineExpose({
           :class="{ 'summon-btn--on': summonOn }"
           :disabled="!summonReady"
           :aria-pressed="summonOn"
-          :title="
-            summonOn
-              ? `正文里已经 @ 了${agentName}，点这里取消`
-              : `交给${agentName}（也可以直接按 ⌘/Ctrl+Enter 发送并交给它）`
-          "
+          :title="summonOn ? `已 @${agentName}，点击取消` : `发送并交给${agentName}（⌘/Ctrl+Enter）`"
           @click="toggleSummon"
         >
           <v-icon size="14">mdi-at</v-icon>

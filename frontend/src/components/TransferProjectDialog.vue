@@ -45,7 +45,7 @@ async function load() {
     const payload = await listProjectMembers(pid)
     if (props.projectId === pid && open.value) rows.value = payload.data
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '拿不到成员名单'
+    error.value = e instanceof Error ? e.message : '加载成员失败'
   }
 }
 
@@ -79,10 +79,8 @@ function faceUrl(m: ProjectMemberRow): string {
     <v-card>
       <v-card-title class="t-dialog-title pt-4">转让项目</v-card-title>
       <v-card-text class="t-body c-muted">
-        项目所有者不能直接退出——一走这个项目就没人管得了。先把它交给名册上的另一个人，你变成普通成员之后就可以退出了
-        <div v-if="candidates.length === 0" class="t-meta mt-3">
-          名册上还没有可以接手的人——先把另一个人加进项目成员，再来转让
-        </div>
+        项目所有者不能直接退出。把项目转让给另一位成员后，你就可以退出
+        <div v-if="candidates.length === 0" class="t-meta mt-3">暂无可以接手的成员</div>
         <v-list v-else density="compact" nav class="mt-2 transfer-list">
           <v-list-item
             v-for="m in candidates"
