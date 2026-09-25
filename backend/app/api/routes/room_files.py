@@ -18,19 +18,16 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.deps import get_broker
 from app.api.response import ok, page
 from app.api.routes.topics import (
     _ARTIFACT_MIME,
     _clean_artifact_path,
     artifact_kind_for,
+    record_shown,
 )
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ConflictError, NotFoundError, ValidationError
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
 from app.domain.documents import editor
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
@@ -190,27 +187,9 @@ async def copy_into_room(
         source="upload",
         note=f"从 {source} 复制",
     )
-    await show_file(db, place, target, author=actor.handle)
+    await record_shown(db, place, target, author=actor.handle)
     await db.commit()
     return ok({"path": target, "version": made.sha256[:16]})
-
-
-async def show_file(db: AsyncSession, place: Place, path: str, *, author: str) -> None:
-    """List the file among what this room has on show, as `cheese show` does."""
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=place.room_id,
-        author=author,
-        author_type=AuthorType.participant,
-        content=path,
-        kind=BlockKind.artifact,
-        mime_type=_ARTIFACT_MIME[artifact_kind_for(path)],
-        refs=[path],
-    )
-    payload = BlockOut.model_validate(block).model_dump(mode="json")
-    await get_broker().publish(
-        str(place.room_id), {"type": "assistant_block", "block": payload}
-    )
 
 
 @router.get("/topics/{topic_id}/files/editor")
@@ -349,6 +328,6 @@ async def editor_saves_file(
             editor_key=target.key,
         )
         place = await TopicService(db).place_or_404(target.room_id)
-        await show_file(db, place, aside, author=author)
+        await record_shown(db, place, aside, author=author)
     await db.commit()
     return JSONResponse({"error": 0})
