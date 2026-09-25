@@ -53,6 +53,7 @@ vi.mock('../../api', async () => {
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    getForgeConnection: vi.fn().mockResolvedValue({ kind: 'forgejo', connected: true, repo: 'o/r', url: null }),
     getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),

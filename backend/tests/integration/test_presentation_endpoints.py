@@ -115,7 +115,7 @@ def test_the_project_task_list_carries_the_board_cell(client, stub_hooks):
         "column": "building",
         "display_status": "运行中",
     }
-    # 安静，但等的是人 —— 光看 open/closed 和「空闲」一模一样，而这两者意味着相反的
+    # 安静，但等的是人 —— 光看 open/closed 和「待开工」一模一样，而这两者意味着相反的
     # 下一步（去验收 vs 去催）。
     assert by_id[ids["waiting"]]["presentation"] == {
         "column": "needs_you",

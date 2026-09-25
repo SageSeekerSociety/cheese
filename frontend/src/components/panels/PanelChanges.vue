@@ -17,6 +17,7 @@ import { useDisplay } from 'vuetify'
 import {
   ApiError,
   downloadFile,
+  getForgeConnection,
   getGitDiff,
   getGitLog,
   listFiles,
@@ -146,6 +147,8 @@ const loading = ref(false)
 // A background re-fetch: spins only the 刷新 button, never replaces the panel.
 const refreshing = ref(false)
 const errorMsg = ref<string | null>(null)
+// 见 checkRepo。
+const noRepo = ref(false)
 // 一枚 chip 指来的文件，在当前这个来源里找不到。不是这块面板出了错，所以它不走
 // `errorMsg`——那一句的样子是「这一格加载失败」。
 const missing = ref<string | null>(null)
@@ -167,7 +170,7 @@ async function loadGit(opts: { silent?: boolean } = {}) {
   const task = selectedTask.value
   const pid = props.projectId
   const epoch = sourceEpoch
-  if (!tid || !pid || overview.value || sourceUnavailable.value) return
+  if (!tid || !pid || overview.value || sourceUnavailable.value || noRepo.value) return
   if (opts.silent) refreshing.value = true
   else loading.value = true
   errorMsg.value = null
@@ -210,7 +213,7 @@ const fileSaved = ref<string>('') // last loaded/saved content, for the dirty fl
 const fileSaving = ref(false)
 const fileListOpen = ref(true) // the ☰ toggle hides the list for a wider editor
 // 横条上关于「这一份文件」的那半（路径、差异/编辑、保存）只在文件区真的摆出来时才有。
-const fileToolReady = computed(() => !sourceUnavailable.value && !loading.value && !errorMsg.value)
+const fileToolReady = computed(() => !sourceUnavailable.value && !noRepo.value && !loading.value && !errorMsg.value)
 const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
 // Version of the open file as it was read; echoed back on save so a write that
 // lost a race to 芝士 is rejected instead of silently erasing their edits.
@@ -473,7 +476,7 @@ async function doLoadFiles() {
   const task = selectedTask.value
   const pid = props.projectId
   const epoch = sourceEpoch
-  if (!tid || !pid || overview.value || sourceUnavailable.value) return
+  if (!tid || !pid || overview.value || sourceUnavailable.value || noRepo.value) return
   loading.value = true
   errorMsg.value = null
   try {
@@ -642,8 +645,27 @@ function reloadOpenFile() {
 async function loadAll(opts: { silent?: boolean } = {}) {
   await loadTasks()
   if (overview.value || taskLoadError.value) return
+  void checkRepo()
+  if (noRepo.value) return
   void loadGit(opts)
   void loadFiles()
+}
+
+// 项目没接代码仓库时，文件和提交记录都拿不到，后端答的是一句「项目没有代码仓库」。
+// 那不是这一格出了错，是这一格本来就没有东西，所以问一声，照空状态说，不把它当报错
+// 挂出来。和取文件同时问，不排在它前面：有仓库的项目（绝大多数）不该为这一问多等
+// 一个来回。问不到就当有仓库：真出了错，那句错还得让人看见。每个项目只问一次。
+let repoCheckedFor: string | null = null
+async function checkRepo() {
+  const pid = props.projectId
+  if (!pid || repoCheckedFor === pid) return
+  repoCheckedFor = pid
+  try {
+    const forge = await getForgeConnection(pid)
+    if (props.projectId === pid) noRepo.value = !forge.connected
+  } catch {
+    if (props.projectId === pid) noRepo.value = false
+  }
 }
 
 watch(
@@ -1023,7 +1045,8 @@ defineExpose({ openFile })
       <!-- 转圈，不是骨架：这块地方长出来的是一套工具（150px 文件树 + 右边一格），
          而右边那一格可能是差异、编辑器、一张图，也可能是「只读 / 二进制」提示——
          等的是什么形状，这里并不知道。判据同 PanelPreview。 -->
-      <div v-if="loading" class="d-flex justify-center py-8">
+      <p v-if="noRepo" class="source-note">暂无代码仓库</p>
+      <div v-else-if="loading" class="d-flex justify-center py-8">
         <v-progress-circular indeterminate color="primary" size="28" />
       </div>
       <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4 file-load-error">

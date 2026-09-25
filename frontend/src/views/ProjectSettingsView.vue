@@ -398,7 +398,13 @@ watch(
 
       <h2 class="t-title settings-group">运行环境</h2>
       <section class="page-section">
-        <ProjectComputeSettings :project-id="projectId" />
+        <div class="page-section-head">
+          <v-icon size="14" class="c-faint">mdi-server-outline</v-icon>
+          <span class="page-section-title">默认与常用算力</span>
+        </div>
+        <div class="page-section-body">
+          <ProjectComputeSettings :project-id="projectId" />
+        </div>
       </section>
       <ProjectEnvironmentSettings :project-id="projectId" />
       <CreditsPanel :project-id="projectId" />
@@ -433,7 +439,7 @@ watch(
               <v-icon size="16" class="c-muted">mdi-github</v-icon>
               <span>GitHub 已在执行以下规则</span>
             </div>
-            <p v-else-if="bp.github_protection.status === 'unknown'" class="t-body c-faint" style="font-size: 0.8rem">
+            <p v-else-if="bp.github_protection.status === 'unknown'" class="t-body c-faint settings-hint">
               暂时查不到 GitHub 侧的保护状态，以下规则按平台配置执行
             </p>
 
@@ -649,7 +655,7 @@ watch(
             />
             <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
           </div>
-          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+          <p class="t-body c-faint mt-2 settings-hint">
             填写要连接的 GitHub 仓库地址并保存，再点击下方“连接 GitHub 仓库”。连接后，代码与 PR 都保留在该仓库。
           </p>
         </div>
@@ -676,7 +682,7 @@ watch(
               打开仓库
             </v-btn>
           </div>
-          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">项目创建后，暂不支持切换托管服务。</p>
+          <p class="t-body c-faint mt-2 settings-hint">项目创建后，暂不支持切换托管服务。</p>
         </div>
       </section>
 
@@ -721,7 +727,7 @@ watch(
               连接 GitHub 仓库
             </v-btn>
           </div>
-          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+          <p class="t-body c-faint mt-2 settings-hint">
             通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后芝士查看 CI/CD 所需的临时凭据
             会按这个连接自动签发，不用再手工配置。
           </p>
@@ -746,7 +752,7 @@ watch(
             @update:model-value="saveAttribution"
           />
           <p class="t-body c-muted mt-2">{{ attribution?.effective ? '当前已开启' : '当前已关闭' }}</p>
-          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+          <p class="t-body c-faint mt-2 settings-hint">
             开启后，新提交会附上任务请求者的共同作者署名，提交作者仍为 AI 队友。这项设置不会修改已有提交。
           </p>
         </div>
@@ -793,7 +799,7 @@ watch(
               <v-icon size="18" color="success">mdi-check-circle</v-icon>
               <span class="t-body">
                 已连接 <strong>{{ githubAccountConn.login ?? githubAccountConn.providerUserId }}</strong>
-                <span v-if="githubAccountConn.connectedAt" class="c-faint" style="font-size: 0.8rem">
+                <span v-if="githubAccountConn.connectedAt" class="c-faint settings-hint">
                   （{{ relTime(githubAccountConn.connectedAt) }}连接）
                 </span>
               </span>
@@ -831,7 +837,7 @@ watch(
             </v-btn>
           </div>
 
-          <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+          <p class="t-body c-faint mt-2 settings-hint">
             用于识别你的提交署名，并以你的身份创建 GitHub PR。这与登录用的 GitHub 授权相互独立，可以连接不同的账号。
           </p>
         </div>
@@ -845,16 +851,16 @@ watch(
 .settings-page {
   background: var(--surface);
 }
-/* 区块节奏。这里的区块本来就不是卡片（卡片是下面那些 .pool-row —— 一个池子、
-   一个镜像是真正可拿起的对象）；区块标题跟着总览一起降成 eyebrow，划分靠留白
-   加一条顶部发丝线。类名同步改掉：`ln-section` 是这个仓库对「白卡片区块」的叫
-   法，留着它会让下一个人以为这里还有卡片可以照抄。 */
+/* 区块节奏。区块不是卡片：区块标题是 eyebrow，划分靠留白加一条顶部发丝线。
+   标题行、标题、正文三条用 :deep()，因为队友、运行环境、额度那几块是子组件自己画
+   的区块头，只写 scoped 的话样式到不了它们里面，标题就按浏览器默认的 16px 画，
+   比上面那一级组标题还大。 */
 .page-section {
   padding-top: 18px;
   margin-bottom: 22px;
   border-top: 1px solid var(--line);
 }
-.page-section-head {
+:deep(.page-section-head) {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -866,94 +872,26 @@ watch(
   margin: 32px 0 12px;
   color: var(--ink);
 }
+/* 一行规则下面那句小字说明。比正文小一档，在字号阶梯上（13）。 */
+.settings-hint {
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
 .settings-group:first-of-type {
   margin-top: 0;
 }
-.page-section-title {
+:deep(.page-section-title) {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--faint);
 }
-.page-section-body {
+:deep(.page-section-body) {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.pool-row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  text-align: left;
-  padding: 12px 14px;
-  border: 1px solid rgba(var(--v-border-color), 0.55);
-  border-radius: var(--radius-md);
-  /* 根面已经是 surface，再刷一层 surface 就是白底压白底 —— 这一行的边界由描边
-     给，底色留给 hover。 */
-  background: transparent;
-  cursor: pointer;
-  transition:
-    border-color 0.15s,
-    background 0.15s,
-    box-shadow 0.15s;
-}
-.pool-row:hover:not(:disabled) {
-  border-color: rgba(var(--v-theme-primary), 0.5);
-  background: var(--fill);
-}
 /* 选中态自己有底色，hover 不该把它冲淡。 */
-.pool-row--active:hover:not(:disabled) {
-  background: rgba(var(--v-theme-primary), 0.05);
-}
-.pool-row--active {
-  border-color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.05);
-  box-shadow: 0 0 0 1px rgb(var(--v-theme-primary));
-}
-.pool-row:disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-.pool-radio {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 2px solid rgba(var(--v-border-color), 0.9);
-}
-.pool-radio--on {
-  border-color: rgb(var(--v-theme-primary));
-  background: radial-gradient(circle, rgb(var(--v-theme-primary)) 0 4px, transparent 5px);
-}
-.pool-main {
-  flex: 1;
-  min-width: 0;
-}
-.pool-title {
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.pool-tier {
-  font-size: 0.68rem;
-  font-weight: 500;
-  padding: 1px 7px;
-  /* 小标签 → --radius-sm，和 .chip-neutral / .ln-tag 同档（原来是 10px，不在阶梯上）。 */
-  border-radius: var(--radius-sm);
-  color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.1);
-}
-.pool-sub {
-  font-size: 0.8rem;
-  margin-top: 2px;
-}
-.pool-current {
-  font-size: 0.74rem;
-  color: rgb(var(--v-theme-primary));
-  font-weight: 600;
-}
 .link {
   color: rgb(var(--v-theme-primary));
   cursor: pointer;

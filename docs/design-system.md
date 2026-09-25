@@ -222,7 +222,15 @@ stylelint 会拦下新增的写死颜色（§7）。
 
 `--logo-primary`（`#F9B233`）与 `--logo-secondary`（`#E85D2C`）两套主题下相同，只以 4–8% 的透明度叠加使用，所以允许比任何实心填充都鲜艳。它们同时定义在 Vuetify 主题里（`logo-primary` / `logo-secondary`）。
 
-### 2.5 界面杂项
+### 2.5 反色
+
+浮在页面上、和页面反着色调的小块（目前只有项目栏的悬停提示）用 `--inverse-surface` / `--inverse-ink` / `--inverse-fill`。深色下它不翻回浅色，而是一块比页面亮的灰：浮着的东西要比它下面的底更亮，才看得出是浮着的。
+
+| 变量 | 浅色 | 深色 |
+|---|---|---|
+| `--inverse-surface` / `--inverse-ink` / `--inverse-fill` | `#23242A` / `#FFFFFF` / 白 14% | `#3A3D44` / `#F3F4F6` / 白 10% |
+
+### 2.6 界面杂项
 
 `--scrollbar-*`、`--focus-ring`、`--selection-bg`、`--overlay`、`--shadow-1` / `--shadow-2`、`--code-*` 是管道，不是设计语言的一部分。`--focus-ring` 是无障碍底线，不要移除。
 

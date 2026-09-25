@@ -77,7 +77,7 @@ function faceUrl(m: ProjectMemberRow): string {
 <template>
   <v-dialog v-model="open" max-width="440">
     <v-card>
-      <v-card-title class="t-title pt-4">转让项目</v-card-title>
+      <v-card-title class="t-dialog-title pt-4">转让项目</v-card-title>
       <v-card-text class="t-body c-muted">
         项目所有者不能直接退出——一走这个项目就没人管得了。先把它交给名册上的另一个人，你变成普通成员之后就可以退出了
         <div v-if="candidates.length === 0" class="t-meta mt-3">

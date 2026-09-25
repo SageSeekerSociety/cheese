@@ -368,6 +368,13 @@ onMounted(async () => {
 .pulse-animation-warning {
   animation: pulse-warning 2s infinite;
 }
+/* 全局的减弱动效兜底只把时长压短，对无限循环等于频闪；这里直接停下。待审核
+   那枚标签本身还在，信息不靠动。 */
+@media (prefers-reduced-motion: reduce) {
+  .pulse-animation-warning {
+    animation: none;
+  }
+}
 
 @keyframes pulse-warning {
   0% {

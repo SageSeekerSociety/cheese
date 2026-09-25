@@ -57,7 +57,7 @@ def card(status: AcceptStatus, **kw) -> CardFacts:
 
 TASK_CASES = [
     # (名字, 事实, 列, 短语)
-    ("闲着", task(), Column.building, "空闲"),
+    ("还没人做", task(), Column.building, "待开工"),
     # 一条活由房间会话里的一个分身做，所以「它还在不在」有两个答案，先问屏幕。
     (
         "分身在做，刚说过话",
@@ -118,7 +118,19 @@ TASK_CASES = [
         "分身交了结论，等房间收卡",
         task(has_worker=True, last_signal_at=LONG_AGO, has_conclusion=True),
         Column.building,
-        "空闲",
+        "已交回",
+    ),
+    # 交回来的那一版被驳回了：东西不算数，下一步是再动手。
+    (
+        "交了结论，卡被驳回",
+        task(
+            has_worker=True,
+            last_signal_at=LONG_AGO,
+            has_conclusion=True,
+            card=card(AcceptStatus.rejected),
+        ),
+        Column.building,
+        "待开工",
     ),
     # 同样安静得理直气壮的另一种：卡已经递出去了，在等人。分身干完活不会把
     # `subagent_id` 抹掉，所以「失联」要是抢在卡前面说，每一条等验收的活都会
@@ -389,7 +401,7 @@ SETTLED = [
 def test_a_settled_card_stops_answering(status):
     """一张已经结算的卡不是这条活此刻的状态 —— 它被驳回之后，活回到施工中。"""
     shown = task_presentation(task(card=card(status)), now=NOW)
-    assert (shown.column, shown.display_status) == (Column.building, "空闲")
+    assert (shown.column, shown.display_status) == (Column.building, "待开工")
 
 
 # —— 列 × 短语 的约束 ————————————————————————————————————————————

@@ -520,6 +520,9 @@ function openTask(task: RoomTask) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   grid-template-rows: auto minmax(0, 1fr);
+  /* 一列多高由它有几张卡决定，满了才封顶在这一格的高度里自己滚：空列拉满整屏的
+     话，一块空框比旁边真有东西的那列还显眼。 */
+  align-items: start;
   gap: 10px;
 }
 .board__cols > .board-col--made {
@@ -544,6 +547,7 @@ function openTask(task: RoomTask) {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  max-height: 100%;
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);

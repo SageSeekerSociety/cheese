@@ -200,6 +200,16 @@ const formatDeadline = (deadline: number | null) => {
 .pulse-animation-info {
   animation: pulse-info 2s infinite;
 }
+/* 减弱动效：停下呼吸。卡上的状态标签本身还在，信息不靠动。 */
+@media (prefers-reduced-motion: reduce) {
+  .pulse-animation-primary,
+  .pulse-animation-warning,
+  .pulse-animation-error,
+  .pulse-animation-success,
+  .pulse-animation-info {
+    animation: none;
+  }
+}
 
 @keyframes pulse-primary {
   0% {

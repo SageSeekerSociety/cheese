@@ -675,6 +675,12 @@ onBeforeUnmount(() => {
   animation: pulse 1s infinite;
   vertical-align: middle;
 }
+/* 减弱动效：点停在原地常亮，「还在输出」照样看得出来。 */
+@media (prefers-reduced-motion: reduce) {
+  :deep(.input-cursor) {
+    animation: none;
+  }
+}
 
 @keyframes pulse {
   0%,

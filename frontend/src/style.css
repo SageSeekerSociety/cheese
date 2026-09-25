@@ -121,6 +121,15 @@
   --shadow-1: 0 1px 2px rgba(25, 26, 28, 0.06), 0 2px 8px rgba(25, 26, 28, 0.06);
   --shadow-2: 0 4px 12px rgba(25, 26, 28, 0.1), 0 12px 32px rgba(25, 26, 28, 0.1);
 
+  /* ---- Inverse ----
+     A chip that floats over the page in the opposite tone: dark on light. On
+     dark it is not simply flipped back to pale; it is a grey lighter than the
+     page (1.68:1 vs --canvas), because a floating chip has to sit above what
+     it floats over. Used by the project rail's hover flyout. */
+  --inverse-surface: #23242a;
+  --inverse-ink: #fff;
+  --inverse-fill: rgba(255, 255, 255, 0.14);
+
   /* ---- Radius ladder ----
      Theme-independent (a corner does not change shape in the dark), so these
      live only here and are NOT repeated in the dark block below.
@@ -292,6 +301,10 @@
      still detach from what is behind them. */
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+
+  --inverse-surface: #3a3d44;
+  --inverse-ink: #f3f4f6; /* 9.9:1 on --inverse-surface */
+  --inverse-fill: rgba(255, 255, 255, 0.1);
 }
 
 /* Paint the root element itself, so the gap between "HTML parsed" and "Vue has
@@ -359,6 +372,14 @@
   font-weight: 600;
   line-height: var(--lh-15);
   color: var(--ink);
+}
+/* 写在 .v-card-title 上时要压过它：两者特异度相同，而 VCard 的样式表在这份文件
+   之后注入，单写 .t-title 会被它的 20px / 500 / 字距盖掉。 */
+.v-card-title.t-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  letter-spacing: 0;
 }
 
 /* Dialog title: 18 / 26 / 600 / --ink. 弹窗标题那一档（§3.2 的 18px），此前没有

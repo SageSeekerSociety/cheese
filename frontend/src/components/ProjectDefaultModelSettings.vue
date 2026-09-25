@@ -75,8 +75,7 @@ watch(() => props.projectId, load)
 
 <template>
   <div>
-    <h3 class="text-subtitle-1 mb-2">{{ t('work.models.title') }}</h3>
-    <p class="text-body-2 text-medium-emphasis mb-4">{{ t('work.models.description') }}</p>
+    <p class="t-body c-muted mb-4">{{ t('work.models.description') }}</p>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <template v-if="state">
       <div class="d-flex flex-column" style="gap: 24px; max-width: 480px">

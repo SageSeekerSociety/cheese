@@ -58,10 +58,7 @@ watch(() => props.projectId, load)
 
 <template>
   <div>
-    <h3 class="text-subtitle-1 mb-2">默认与常用算力</h3>
-    <p class="text-body-2 text-medium-emphasis mb-4">
-      房间直接使用项目默认；临时选择只影响当前房间。已运行的房间保留原环境
-    </p>
+    <p class="t-body c-muted mb-4">房间直接使用项目默认；临时选择只影响当前房间。已运行的房间保留原环境</p>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <template v-if="state">
       <div v-for="choice in compactChoices(state.default, state.favorites)" :key="choiceKey(choice)" class="config-row">

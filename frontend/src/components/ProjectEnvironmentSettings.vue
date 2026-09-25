@@ -119,7 +119,7 @@ onBeforeUnmount(() => {
   <section class="page-section">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-console</v-icon>
-      <span class="page-section-title">运行环境</span>
+      <span class="page-section-title">脚本与环境变量</span>
     </div>
     <div class="page-section-body">
       <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>

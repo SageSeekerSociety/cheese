@@ -189,7 +189,7 @@ def _pump(client, room_id: str, rounds: int = 20) -> None:
 
 
 def test_a_card_nobody_has_started_on_is_idle_not_out_of_contact(client):
-    """还没分身开工的活是「空闲」，不是「失联」。
+    """还没分身开工的活是「待开工」，不是「失联」。
 
     开卡只留下分支、卡和负责人；谁在做要等平台看见一条带着这张卡线程标识的开工
     事件才知道（下一条）。屏幕没了、分身跟着没了那一格在
@@ -198,7 +198,7 @@ def test_a_card_nobody_has_started_on_is_idle_not_out_of_contact(client):
     _, room_id = _room(client)
     task = _split(client, room_id)
 
-    assert _shown(client, room_id, task["id"])["display_status"] == "空闲", (
+    assert _shown(client, room_id, task["id"])["display_status"] == "待开工", (
         "还没人做的活不是失联,是没人做"
     )
 
