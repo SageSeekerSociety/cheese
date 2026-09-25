@@ -747,8 +747,11 @@ class Executor:
         # end the same way.
         temporary = record / ("exit." + uuid.uuid4().hex)
         temporary.write_text(str(code))
-        temporary.replace(record / "exit")
+        # Renamed in and taken off `running` as one step: a reader answers
+        # `exit` once the file is there, and `forget` refuses a command still
+        # in `running`, so apart they would call one command both.
         with self.command_lock:
+            temporary.replace(record / "exit")
             self.running.pop(command_id, None)
             self.collected[command_id] = time.time()
         self.log(command_id, "exited", exit_code=code)
