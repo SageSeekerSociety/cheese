@@ -50,11 +50,6 @@ const props = defineProps<{
   active?: boolean
   askBusy: boolean
   /**
-   * 这条没叫芝士、而它是最后一条——传队友的名字表示要显示那行补救提示，null 表示不用。
-   */
-  summonHint: string | null
-  summonBusy: boolean
-  /**
    * 这一条还没落库——已经在屏幕上，正在（或没能）送出去。淡一档，形状不变：
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
    * 没送出去的那条带「重试」和「编辑」：编辑把原文放回输入框。
@@ -70,7 +65,6 @@ const emit = defineEmits<{
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
-  (e: 'summon'): void
   (e: 'avatar-error', handle: string): void
   (e: 'retry'): void
   (e: 'edit'): void
@@ -261,14 +255,6 @@ async function onAgentTextClick(e: MouseEvent) {
         <v-icon size="13">mdi-arrow-top-right</v-icon>
         已转为话题
       </button>
-      <!-- 忘了 @ 的补救：房间里最后一句是对着人说的，芝士就不会动，
-         而在这一行出现之前，房间里没有任何东西说明这一点。 -->
-      <div v-if="summonHint" class="summon-hint">
-        <span class="summon-hint-text">未交给{{ summonHint }}</span>
-        <button type="button" class="summon-hint-btn" :disabled="summonBusy" @click="emit('summon')">
-          交给{{ summonHint }}
-        </button>
-      </div>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
       <TransitionGroup v-if="block.reactions?.length" tag="div" name="rx" class="rx-row">
@@ -292,32 +278,6 @@ async function onAgentTextClick(e: MouseEvent) {
 <style scoped src="./room-row.css"></style>
 
 <style scoped>
-/* 忘了 @ 的补救行。它属于那条消息（和正文左对齐），不是一条平台行——平台行说的
-   是平台做了什么，这一行说的是**你**还差一步。 */
-.summon-hint {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--faint);
-}
-.summon-hint-btn {
-  padding: 2px 8px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  cursor: pointer;
-}
-.summon-hint-btn:hover:not(:disabled) {
-  border-color: var(--faint);
-  color: var(--ink);
-}
-.summon-hint-btn:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
 /* B3: the "回复 X：…" cue above a reply, and the composer reply-to bar. */
 .im-replied {
   display: inline-flex;

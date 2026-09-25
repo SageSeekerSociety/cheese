@@ -34,7 +34,6 @@ import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { replySnippet } from '../lib/blockDisplay'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
-import { mentionsHandle } from '../lib/expandMentions'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
@@ -1122,54 +1121,6 @@ const {
   }
 )
 
-// ---- 忘了 @ 的补救 ----
-// 房间里最后一句话是对着人说的，芝士就不会动 —— 这是它该有的样子（没 @ 不等于
-// 没说，那条消息在待读窗口里等着下一轮捎上）。真正伤人的是**房间里没有任何东西
-// 说明这一点**：一个人贴完需求等了八分钟，追问「你有看到我的问题嘛」，全程没人
-// 接、也没有一行字告诉他为什么。这一行就是那行字，外加一次点击。
-//
-// 所以文案不能写「它还没看到」：那条消息不会丢，只是不会**现在**动。
-const summonBusy = ref(false)
-// 已经为哪条消息按过这一下。按完就把提示收起来，包括后端回「本来就不必」的那两
-// 种情况 —— 点了一下什么都没变，看起来和坏掉一模一样。
-const summonedFor = ref<string | null>(null)
-function showSummonHint(m: Block, i: number): boolean {
-  if (summonedFor.value === m.id) return false
-  if (props.alwaysSummon || !props.showComposer) return false
-  if (props.topic?.status === 'archived') return false
-  // 已经在跑的那一轮会自己把没 @ 的消息接过去（后端 submit_message 的 merge
-  // 分支），这时候提示「没人接」是假的。
-  if (awaitingReply.value || outbox.value.length) return false
-  if (i !== rows.value.length - 1) return false
-  if (!isPersonBlock(m)) return false
-  if (m.kind !== 'message' && m.kind !== 'attachment') return false
-  // 一次发送可能落成好几块（一句话 + 几张图），而叫没叫它写在那句话里。只看最后
-  // 一块的话，配了图的那次发送永远会被判成「没叫」——图片块的正文是一个文件路径，
-  // 它 @ 不到任何人。所以看的是同一个人连在一起的这一串。
-  for (let k = rows.value.length - 1; k >= 0; k -= 1) {
-    const b = rows.value[k].block
-    if (!isPersonBlock(b) || b.author !== m.author) break
-    if (mentionsHandle(b.content, agentSeat.value?.handle)) return false
-  }
-  return true
-}
-async function summonNow() {
-  const id = props.topic?.id
-  if (!id || summonBusy.value) return
-  summonBusy.value = true
-  try {
-    const res = await summonAgent(id)
-    // started=false 说明这一下本来就不必花钱（房间已经在干活，或者别人先 @ 过
-    // 了）。两种都不是错，但两种都得让界面动一下。
-    summonedFor.value = rows.value.at(-1)?.block.id ?? null
-    if (res.started) awaitingReply.value = true
-  } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : `未能交给${agentName.value}，稍后重试`
-  } finally {
-    summonBusy.value = false
-  }
-}
-
 // 失败提示上的「重试」。只给最新的那一条：更早的失败已经被后面发生的事盖过去了，
 // 在它上面重试说不清是在重试什么。房间在跑、归档了，重试都没有意义。
 function canRetryAt(i: number): boolean {
@@ -1179,10 +1130,12 @@ function canRetryAt(i: number): boolean {
 }
 // 重试走的是「交给它」同一个入口：失败的那一轮没有把消息标成已读，所以它们还在
 // 等人处理，平台重新开一轮去接。什么都没有可接的时候要说出来，不能按了没反应。
+// 请求还没回来时再按一次就是再开一轮，所以按着的时候按钮是忙的。
+const retryBusy = ref(false)
 async function retryNow() {
   const id = props.topic?.id
-  if (!id || summonBusy.value) return
-  summonBusy.value = true
+  if (!id || retryBusy.value) return
+  retryBusy.value = true
   try {
     const res = await summonAgent(id)
     if (res.started) awaitingReply.value = true
@@ -1190,7 +1143,7 @@ async function retryNow() {
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : t('work.room.retry.failed')
   } finally {
-    summonBusy.value = false
+    retryBusy.value = false
   }
 }
 
@@ -1472,7 +1425,7 @@ onBeforeUnmount(() => {
               :agent-name="agentName"
               :refs="refMaps"
               :can-retry="canRetryAt(i)"
-              :retrying="summonBusy"
+              :retrying="retryBusy"
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
               @retry="retryNow"
             />
@@ -1497,15 +1450,12 @@ onBeforeUnmount(() => {
               :viewer="AUTHOR"
               :active="bar.shown && bar.id === m.id"
               :ask-busy="askBusy === m.id"
-              :summon-hint="showSummonHint(m, i) ? agentName : null"
-              :summon-busy="summonBusy"
               @open-file="(path, taskId) => emit('open-file', path, taskId)"
               @open-topic="emit('open-topic', $event)"
               @react="onReact"
               @answer="pickOption"
               @download="downloadAttachment"
               @jump="scrollToMessage"
-              @summon="summonNow"
               @avatar-error="onAvatarError"
             />
           </template>
@@ -1540,8 +1490,6 @@ onBeforeUnmount(() => {
             :refs="refMaps"
             :viewer="AUTHOR"
             :ask-busy="false"
-            :summon-hint="null"
-            :summon-busy="false"
             :outgoing="{ error: item.error, failed: item.state === 'failed' }"
             @retry="retrySend(item.clientId)"
             @edit="editSend(item)"
