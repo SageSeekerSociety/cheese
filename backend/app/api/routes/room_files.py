@@ -92,9 +92,10 @@ async def room_file_raw(
     """The file as it is now, with its version — what `cheese pull` reads."""
     place, _ = await _in_room(db, resolver, topic_id)
     clean = _clean_artifact_path(path)
-    if library.library_name(clean) is not None:
+    name = library.library_name(clean)
+    if name is not None:
         data = await asyncio.to_thread(
-            library.read_library_file, place.project_id, library.library_name(clean)
+            library.read_library_file, place.project_id, name
         )
     else:
         data = await asyncio.to_thread(
