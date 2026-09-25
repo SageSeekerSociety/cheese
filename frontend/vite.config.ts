@@ -3,7 +3,6 @@ import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
-import ViteFonts from 'unplugin-fonts/vite'
 // Utilities
 import { defineConfig } from 'vite'
 import { prismjsPlugin } from 'vite-plugin-prismjs'
@@ -23,24 +22,9 @@ export default defineConfig({
     // https://github.com/vuetifyjs/vuetify-loader/tree/next/packages/vite-plugin
     vuetify({
       autoImport: true,
-    }),
-    ViteFonts({
-      google: {
-        families: [
-          {
-            name: 'Roboto',
-            styles: 'wght@100;300;400;500;700;900',
-          },
-        ],
-      },
-      // unplugin-fonts preloads EVERY font file in the bundle unless told not
-      // to: `custom.preload` is on by default even when no custom fonts are
-      // declared. That put 64 `<link rel="preload" as="font">` on every page,
-      // 40 of them KaTeX faces the login page never renders, each a request
-      // that competes with the app's own chunks. `families: []` is there only
-      // because the type demands it; the line that matters is `preload: false`.
-      // The @font-face rules still fetch a face the moment something uses it.
-      custom: { families: [], preload: false },
+      // Vuetify writes `Roboto` into `html` and every `.text-*` typography
+      // class. This file points both at the app's own font stack.
+      styles: { configFile: 'src/styles/vuetify-settings.scss' },
     }),
     prismjsPlugin({
       // The list is what this product's code blocks actually contain — agent

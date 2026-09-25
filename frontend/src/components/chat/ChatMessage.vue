@@ -549,7 +549,7 @@ onBeforeUnmount(() => {
 }
 
 .ai-message :deep(code) {
-  font-family: 'Roboto Mono', monospace;
+  font-family: var(--font-mono);
   background-color: var(--fill);
   padding: 2px 4px;
   border-radius: 4px;
