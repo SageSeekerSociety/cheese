@@ -2719,6 +2719,32 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         )
 
 
+async def record_shown(
+    db: AsyncSession, place: Place, path: str, *, author: str, mime: str | None = None
+) -> dict:
+    """List a room file among what the room has on show, and tell open clients.
+
+    What `cheese show` does after writing the file; a file a person creates in
+    the room (a copy, a new one from a template) is on show the same way."""
+    block = await BlockRepository(db).add(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        author=author,
+        author_type=AuthorType.participant,
+        content=path,
+        kind=BlockKind.artifact,
+        mime_type=mime or _ARTIFACT_MIME[artifact_kind_for(path)],
+        refs=[path],
+    )
+    payload = BlockOut.model_validate(block).model_dump(mode="json")
+    # Live, like a published message: the reader is usually in the room while
+    # 芝士 works, and the card has to appear then, not on the next reload.
+    await get_broker().publish(
+        str(place.room_id), {"type": "assistant_block", "block": payload}
+    )
+    return payload
+
+
 @router.post("/{topic_id}/shown")
 async def show_in_room(
     topic_id: uuid.UUID,
@@ -2789,23 +2815,7 @@ async def show_in_room(
             note=note if isinstance(note, str) else None,
             base_version=base if isinstance(base, str) and base else None,
         )
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=topic_id,  # the place; `add` splits it
-        author=author,
-        author_type=AuthorType.participant,
-        content=path,
-        kind=BlockKind.artifact,
-        mime_type=mime,
-        refs=[path],
-    )
-    payload = BlockOut.model_validate(block).model_dump(mode="json")
-    # Live, like a published message: the reader is usually in the room while
-    # 芝士 works, and the card has to appear then, not on the next reload.
-    await get_broker().publish(
-        str(topic_id), {"type": "assistant_block", "block": payload}
-    )
-    return ok(payload)
+    return ok(await record_shown(db, place, path, author=author, mime=mime))
 
 
 @router.get("/{topic_id}/shown")
