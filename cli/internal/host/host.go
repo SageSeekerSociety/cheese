@@ -188,7 +188,13 @@ func (h *Host) performUpdate() {
 	// every hosted task survive as they do across an ordinary stop, and the new
 	// image reconnects and re-adopts them. If exec fails we deliberately do NOT exit —
 	// the tasks must live on; the already-replaced binary applies on next restart.
+	//
+	// The recorded pid is cleared first. Where the hand-off is a new process
+	// (Windows), that process refuses to start beside a live connector, and
+	// this one may not have exited by the time it looks.
+	h.clearState()
 	if err := handOff(self); err != nil {
+		h.publishState()
 		fmt.Fprintf(os.Stderr, "cheese: exec into new binary failed (applies on next restart): %v\n", err)
 	}
 }
