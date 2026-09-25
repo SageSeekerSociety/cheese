@@ -1876,26 +1876,35 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertFalse((self.workspace / "forbidden.txt").exists())
 
     def test_rc_can_background_a_running_foreground_command(self):
+        # The command cannot finish until the test lets it, so an answer that
+        # arrives at all arrived while the command was still running. A wall
+        # clock stood in for that before, and a stalled CI runner outlasted it.
         with ThreadPoolExecutor() as pool:
             pending = pool.submit(
                 self.invoke,
                 "Bash",
-                {"command": "touch started; sleep 3; printf done"},
+                {
+                    "command": "touch started; "
+                    "while [ ! -e finish ]; do sleep 0.05; done; printf done"
+                },
                 "foreground",
             )
-            deadline = time.monotonic() + 3
-            while (
-                not (self.workspace / "started").exists()
-                and time.monotonic() < deadline
-            ):
-                time.sleep(0.02)
-            self.assertTrue((self.workspace / "started").exists())
-            runtime.request(
-                self.state,
-                "control",
-                {"subtype": "background_tasks", "tool_use_id": "foreground"},
-            )
-            result = pending.result(timeout=1)
+            try:
+                deadline = time.monotonic() + 30
+                while (
+                    not (self.workspace / "started").exists()
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.02)
+                self.assertTrue((self.workspace / "started").exists())
+                runtime.request(
+                    self.state,
+                    "control",
+                    {"subtype": "background_tasks", "tool_use_id": "foreground"},
+                )
+                result = pending.result(timeout=30)
+            finally:
+                (self.workspace / "finish").touch()
             task = self.finished_task(result["backgroundTaskId"])
             self.assertEqual(
                 task["task"]["output"],
