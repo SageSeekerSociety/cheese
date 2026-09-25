@@ -43,8 +43,11 @@ class EvalApi:
             raise ApiError(f"API error: {body.get('code')} {body.get('message')}")
         return body.get("data")
 
-    async def get(self, path: str, **params: Any) -> Any:
-        return self._unwrap(await self._http.get(path, params=params or None))
+    async def get(self, path: str, *, cheese: bool = False, **params: Any) -> Any:
+        headers = {"X-Cheese-Token": self._sandbox_token} if cheese else None
+        return self._unwrap(
+            await self._http.get(path, params=params or None, headers=headers)
+        )
 
     async def post(
         self, path: str, body: dict | None = None, *, cheese: bool = False
@@ -91,7 +94,9 @@ class EvalApi:
         )
 
     async def list_memory(self, project_id: str) -> list[dict]:
-        return (await self.get("/api/memory", project_id=project_id))["data"]
+        return (await self.get("/api/memory", cheese=True, project_id=project_id))[
+            "data"
+        ]
 
     # ---- turns / debug ------------------------------------------------------
 

@@ -300,10 +300,12 @@ def _remember_about(client, project_id: str, person: str, fact: str) -> None:
     asyncio.run(_seed())
 
 
-def _list_memory(client, project_id: str, **params) -> list[dict]:
+def _list_memory(
+    client, project_id: str, *, headers: dict | None = None, **params
+) -> list[dict]:
     query = "&".join(f"{k}={v}" for k, v in params.items())
     url = f"/memory?project_id={project_id}" + (f"&{query}" if query else "")
-    return client.get(url).json()["data"]["data"]
+    return client.get(url, headers=headers).json()["data"]["data"]
 
 
 def test_listing_a_project_shows_what_its_agents_remembered(client):
@@ -380,7 +382,9 @@ def test_listing_answers_what_was_remembered_about_me(client):
     """问「关于我记了什么」的人在请求里写了 `user_handle`，那是另一个问题。
 
     它和「这个项目的芝士都记了什么」一起答：两条各自成立，谁也不挡谁。"""
-    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    project_id = post_project(
+        client, json={"name": "P", "owner_handle": "alice"}
+    ).json()["data"]["id"]
     topic_id = client.post(
         "/topics",
         json={"project_id": project_id, "title": "T", "created_by": "alice"},
@@ -388,5 +392,7 @@ def test_listing_answers_what_was_remembered_about_me(client):
     _remember(client, project_id, topic_id, "芝士自己记的")
     _remember_about(client, project_id, "alice", "他要结论在最前面")
 
-    about = _list_memory(client, project_id, user_handle="alice")
-    assert "他要结论在最前面" in [e["content"] for e in about]
+    about = _list_memory(
+        client, project_id, headers=session_auth_headers("alice"), user_handle="alice"
+    )
+    assert {"芝士自己记的", "他要结论在最前面"} <= {e["content"] for e in about}
