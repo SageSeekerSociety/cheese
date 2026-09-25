@@ -538,12 +538,36 @@ export interface MemberSummary {
 
 // ---- 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2, §8.4) ----
 
-// One project the user participates in, with their cross-project contribution.
+/** How the person is in a project: its owner, through its team, or invited alone. */
+export type ProfileProjectRole = 'owner' | 'team' | 'external'
+
+// One project the person is in, as the viewer may see it.
 export interface ProfileProject {
   project_id: string
   name: string
+  source: ProfileProjectRole
   topics_started: number
   contributions: number
+  /** Their newest contribution there; null when they have none. */
+  last_active_at: string | null
+  /** Contributions in the last 12 trailing 7-day spans, oldest first. */
+  weekly: number[]
+}
+
+// A team the person is in that the viewer may see (the TeamSummary payload).
+export interface ProfileTeam {
+  id: number
+  /** Null only for a team that no longer exists. */
+  handle: string | null
+  name: string
+  intro: string
+  avatarId: number | null
+}
+
+/** One UTC day of the activity year. `date` is `YYYY-MM-DD`. */
+export interface ProfileActivityDay {
+  date: string
+  count: number
 }
 
 // One thing an agent noted about this person, and where it was noted. The
@@ -558,16 +582,34 @@ export interface ProfileUnderstanding {
   agent_name: string | null
 }
 
-// GET /api/users/{handle}/profile — the cross-project résumé view.
+// GET /api/users/{handle}/profile — cut to what the viewer may see.
 // `understanding` = what 芝士 has learned about this person (个人记忆, §8.4);
-// only the person themselves receives it.
+// only the person themselves receives it, everyone else gets [].
 export interface UserProfile {
   handle: string
   name: string
   bio: string
+  /** The raw profile avatar, which may be the platform default (see useChosenAvatar). */
+  avatar_id: number | null
+  /** Null when no account holds this handle. */
+  joined_at: string | null
+  teams: ProfileTeam[]
+  /** The last 365 UTC days, oldest first, today last. */
+  activity: { days: ProfileActivityDay[]; total: number }
   projects: ProfileProject[]
   understanding: ProfileUnderstanding[]
-  [key: string]: unknown
+}
+
+// GET /api/users/{handle}/topics — a topic the person wrote in.
+export interface ProfileTopic {
+  id: string
+  title: string
+  status: string
+  project_id: string
+  project_name: string
+  /** Their contributions in it, inside the requested dates when given. */
+  contributions: number
+  last_participated_at: string
 }
 
 // ---- 执行面板 (Phase 4 tool drawers) ----

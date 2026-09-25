@@ -357,8 +357,14 @@ export default defineConfig({
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
       // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer:
-      // reach the backend directly.
-      '/users': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
+      // reach the backend directly. A page load under /users (a person's page,
+      // settings) is the app's own route, as it is behind nginx, so it gets the SPA.
+      '/users': {
+        target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081',
+        changeOrigin: true,
+        ws: true,
+        bypass: (req) => (req.headers.accept?.includes('text/html') ? '/index.html' : undefined),
+      },
     },
   },
   build: {

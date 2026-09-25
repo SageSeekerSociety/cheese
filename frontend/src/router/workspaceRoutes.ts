@@ -150,11 +150,12 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '成员', hideTabs: true, backTo: 'workspace-project' },
     },
     {
+      // 同一个个人主页，从名册打开就留在项目这个框里，← 回名册。
       name: 'member',
       path: 'members/:handle',
-      component: () => import('@/views/MemberView.vue'),
+      component: () => import('@/views/ProfileView.vue'),
       props: true,
-      meta: { title: '成员', hideTabs: true, backTo: 'workspace-project' },
+      meta: { title: '成员', hideTabs: true, backTo: 'project-members' },
     },
     ...DOC_KINDS.map(
       (kind): RouteRecordRaw => ({

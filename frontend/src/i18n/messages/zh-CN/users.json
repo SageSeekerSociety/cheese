@@ -1,3 +1,59 @@
 {
-  "showUsers": "展示了 {count} 个用户"
+  "profile": {
+    "joined": "{date}加入",
+    "edit": "编辑资料",
+    "notFound": "该用户不存在",
+    "loadFailed": "个人主页加载失败",
+    "retry": "重试",
+    "activity": {
+      "title": "活动",
+      "yearTotal": "过去一年 {count} 条贡献",
+      "halfYearTotal": "近半年 {count} 条贡献",
+      "less": "少",
+      "more": "多",
+      "grid": "每天的贡献",
+      "cell": "{date}，{count} 条贡献",
+      "table": "查看数据表",
+      "colWeek": "周",
+      "colCount": "贡献"
+    },
+    "projects": {
+      "shared": "共同的项目",
+      "mine": "我的项目",
+      "stats": "发起 {topics} 个话题 · {count} 条贡献",
+      "contributions": "{count} 条贡献",
+      "active": "{when}活动",
+      "trend": "近 12 周每周贡献：{counts}",
+      "emptyShared": "暂无共同的项目",
+      "emptyMine": "暂无项目"
+    },
+    "role": {
+      "owner": "所有者",
+      "team": "团队成员"
+    },
+    "topics": {
+      "recent": "最近参与的话题",
+      "range": "{from} – {to}",
+      "backToRecent": "回到最近",
+      "count": "{count} 条",
+      "empty": "暂无参与的话题",
+      "emptyWeek": "这一周没有参与话题",
+      "loadFailed": "话题加载失败"
+    },
+    "notes": {
+      "title": "芝士眼中的你",
+      "private": "仅自己可见",
+      "delete": "删除这条",
+      "deleteFailed": "删除失败",
+      "empty": "暂无记录"
+    },
+    "inProject": {
+      "title": "在这个项目里",
+      "weekly": "本周 {count} 条贡献",
+      "waiting": "等你处理",
+      "waitingEmpty": "暂无待处理的事",
+      "active": "在忙的话题",
+      "activeEmpty": "暂无进行中的话题"
+    }
+  }
 }
