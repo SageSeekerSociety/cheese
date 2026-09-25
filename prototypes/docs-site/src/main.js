@@ -99,80 +99,82 @@ function changelogPage() {
   </article></main></div>`
 }
 
-const guideCount = USER_SECS.reduce((n, k) => n + flat(k).length, 0), devCount = flat('dev').length
-const written = Object.entries(P).filter(([k, d]) => !k.startsWith('dev/') && !d.draft).length
-const unreleased = RELEASES[0]
+const TUTOR = { 学生: 'tut-student', '老师 / 助教': 'tut-teacher', 办公: 'tut-office' }
 function homePage() {
-  const feats = NAV.features.groups.flatMap(([, items]) => items)
-  const who = Object.keys(WHO)
-  return `<div class="home">
-  <section class="stage">
-   <div class="scene" aria-hidden="true"></div>
-   <div class="hero-copy">
-    <a class="badge-row" href="#/changelog"><b>最新</b>${unreleased.list.length} 项改动已在测试环境，等下一版正式发布 ${ic('arrow')}</a>
-    <h1 class="hero-h1"><span class="line"><span>把一件事</span></span><span class="line"><span>交给<em>芝士</em></span></span></h1>
-    <p class="hero-sub">知是 · Cheese 是你和 AI 队友一起做项目的地方。这里写着怎么开始、每个功能怎么用，以及遇到问题怎么办。</p>
-    <div class="hero-in" style="--d:1"><button class="hero-search" data-open-search>${ic('search', 'width:18px;height:18px')}<span class="tw">搜索文档，或者直接问：怎么邀请同学进项目？</span><kbd>⌘K</kbd></button></div>
-    <div class="hero-cta hero-in" style="--d:2"><a class="pill lg magnetic" href="#/start/quickstart">快速开始 ${ic('arrow')}</a><a class="pill lg alt magnetic" href="#" data-open-ask>${ic('chat')} 问芝士</a></div>
-    <div class="coords hero-in" style="--d:3"><span>知是 · CHEESE</span><span>文档 v2 · 2026.09</span><span>${guideCount + devCount} 篇 · 已写 ${written}</span></div>
+  const latest = RELEASES[0]
+  const start = [
+    ['rocket', '快速开始', '建项目、开话题、让芝士完成第一件事，十分钟走完一趟。', 'quickstart'],
+    ['spark', '与芝士协作', '怎么把一件事交给 AI 队友：说目标、给上下文、中途补要求。', 'working-with-cheese'],
+    ['info', '常见问题', '芝士没反应、额度用完、设备离线……先看这里。', 'troubleshooting'],
+  ]
+  return `<div class="home h">
+  <section class="h-hero">
+   <div class="h-copy">
+    <div class="h-eyebrow">知是 · Cheese 文档</div>
+    <h1 class="h-title">把一件事，<br>交给芝士。</h1>
+    <p class="h-sub">知是是你和 AI 队友一起做项目的地方。这里写着怎么开始、每个功能怎么用，以及遇到问题怎么办。</p>
+    <button class="h-search" data-open-search>${ic('search', 'width:18px;height:18px')}<span>搜索文档，或者直接问一句</span><kbd>⌘K</kbd></button>
+    <div class="h-links"><a class="h-btn" href="#/start/quickstart">快速开始</a><a class="h-link" href="#" data-open-ask>问芝士 ${ic('arrow', 'width:14px;height:14px')}</a></div>
    </div>
-   <div class="moon-stage" id="moonStage">
-    ${chartSvg()}
-    <div class="cheese-art" id="heroLogo" role="img" aria-label="知是的标志：一轮带孔的芝士，前面站着一只小老鼠" title="点一下重播"></div>
+   <div class="h-art"><div class="h-art-in" id="heroLogo" role="img" aria-label="知是的标志：一轮带孔的芝士，前面站着一只小老鼠" title="点一下重播"></div></div>
+  </section>
+
+  <section class="h-sec">
+   <h2 class="h-h2">从这里开始</h2>
+   <div class="h-start">${start.map(([icon, t, d, s]) => `<a class="h-card" href="${hrefOf(s)}"><span class="h-ic">${ic(icon)}</span><b>${t}</b><p>${d}</p></a>`).join('')}</div>
+  </section>
+
+  <section class="h-sec">
+   <div class="h-head"><h2 class="h-h2">按身份的教程</h2><a class="h-link" href="#/tutorials/${NAV.tutorials.first}">全部教程 ${ic('arrow', 'width:14px;height:14px')}</a></div>
+   <div class="h-roles">
+    <div class="h-role-tabs" id="roleTabs">${Object.keys(TUTOR).map((k, i) => `<button data-role="${k}"${i ? '' : ' class="on"'}><b>${k}</b><small>${esc(page(TUTOR[k]).title.split('：')[1] || '')}</small></button>`).join('')}</div>
+    <div class="h-role-panel" id="rolePanel"></div>
    </div>
   </section>
 
-  <div class="wrap">
-   <div class="sec-head" data-reveal><span class="kick">按 身 份 开 始</span><h2>挑一件你现在就想做的事</h2><p>直接跳到对应的教程或说明，不用从头读。</p></div>
-   <div class="who-tabs filters" id="whoTabs"><span class="f-ind" id="whoInd"></span>${who.map((k, i) => `<button data-who="${k}"${i ? '' : ' class="on"'}>${k}</button>`).join('')}</div>
-   <section class="entry four" id="whoCards"></section>
+  <section class="h-sec">
+   <h2 class="h-h2">一件事怎么走完</h2>
+   <p class="h-lede">不管做什么，都是这四步。</p>
+   <ol class="h-flow">${STEPS.map(([t, d, mock], k) => `<li><span class="h-n">${k + 1}</span><b>${t}</b><p>${d}</p><div class="mock">${mock}</div></li>`).join('')}</ol>
+  </section>
 
-   <div class="sec-head" data-reveal><span class="kick">一 件 事 怎 么 走 完</span><h2>不管做什么，都是这四步</h2><p>说清目标，它去做；你随时插话，最后验收。</p></div>
-   <section class="flow">${STEPS.map(([t, d, mock], k) => `<div class="bx spot" data-reveal style="--d:${k}"><span class="flow-n">0${k + 1}</span><h3>${t}</h3><p>${d}</p><div class="mock">${mock}</div></div>`).join('')}</section>
+  <section class="h-sec">
+   <div class="h-head"><h2 class="h-h2">功能说明</h2><a class="h-link" href="#/features/${NAV.features.first}">全部功能 ${ic('arrow', 'width:14px;height:14px')}</a></div>
+   <div class="h-index">${NAV.features.groups.map(([g, items]) => `<div><h3>${g}</h3>${items.map(([s, t, draft]) => `<a href="${hrefOf(s)}">${t}${draft ? '<small>待写</small>' : ''}</a>`).join('')}</div>`).join('')}</div>
+  </section>
 
-   <div class="sec-head" data-reveal><span class="kick">按 功 能 查 找</span><h2>已经会用了，只想查一个功能</h2></div>
-   <section class="feat-grid" data-reveal>${feats.map(([s, t, draft]) => `<a href="${hrefOf(s)}"><span>${t}</span>${draft ? '<small>待写</small>' : ic('arrow')}</a>`).join('')}</section>
+  <section class="h-sec h-pair">
+   <a class="h-card h-wide" href="#/changelog">
+    <span class="h-kick">更新日志 · ${latest.ver}</span><b>最近多了什么</b>
+    <ul>${latest.hl.feat.slice(0, 3).map(([t]) => `<li>${esc(t)}</li>`).join('')}</ul>
+    <span class="h-link">看全部 ${latest.list.length} 项改动 ${ic('arrow', 'width:14px;height:14px')}</span>
+   </a>
+   <a class="h-card h-wide" href="#/dev/overview">
+    <span class="h-kick">${ic('lock', 'width:12px;height:12px')} 开发文档 · 仅管理员</span><b>知是是怎么搭起来的</b>
+    <ul>${NAV.dev.groups.map(([g, items]) => `<li>${g}：${items.slice(0, 3).map((i) => i[1]).join('、')}${items.length > 3 ? '…' : ''}</li>`).join('')}</ul>
+    <span class="h-link">进入开发文档 ${ic('arrow', 'width:14px;height:14px')}</span>
+   </a>
+  </section>
 
-   <div class="sec-head" data-reveal><span class="kick">常 见 问 题</span><h2>先看看是不是这几个</h2><p>来自<a class="link" href="#/faq/troubleshooting">常见问题与排障</a>。</p></div>
-   <section class="faq" data-reveal>${FAQ.map((f) => `<details class="qa"><summary>${esc(f.q)}${ic('down')}</summary><div>${f.a} <a class="link" href="#/faq/troubleshooting#${f.id}">详细说明</a></div></details>`).join('')}</section>
-  </div>
+  <section class="h-sec">
+   <h2 class="h-h2">常见问题</h2>
+   <div class="h-faq">${FAQ.map((f) => `<details><summary>${esc(f.q)}<span class="h-plus"></span></summary><div>${f.a} <a class="link" href="#/faq/troubleshooting#${f.id}">详细说明</a></div></details>`).join('')}</div>
+  </section>
 
-  <section class="cta-band">
-   <h2 data-reveal>不知道从哪开始？<br>问芝士。</h2>
-   <p data-reveal style="--d:1">用你自己的话描述想做的事，芝士会告诉你从哪一页、哪一步开始。</p>
-   <div class="row" data-reveal style="--d:2"><a class="pill lg magnetic" href="#" data-open-ask>${ic('chat')} 问芝士</a><a class="pill lg alt magnetic" href="#/start/quickstart">快速开始 ${ic('arrow')}</a></div>
-   <div class="giant-wrap"><span class="giant">知是</span><img src="${LOGO}" alt=""></div>
+  <section class="h-end">
+   <h2 class="h-h2">不知道从哪开始？</h2>
+   <p class="h-lede">用你自己的话描述想做的事，芝士会告诉你从哪一页、哪一步开始。</p>
+   <div class="h-links" style="justify-content:center"><a class="h-btn" href="#" data-open-ask>问芝士</a><a class="h-link" href="#/start/quickstart">快速开始 ${ic('arrow', 'width:14px;height:14px')}</a></div>
   </section>
   </div>`
 }
-function renderWho(k) {
-  $('#whoCards').innerHTML = WHO[k].map(([t, d, s], i) => `<a class="tilt spot" href="${hrefOf(s)}"><span class="num">0${i + 1}</span><div class="who">${NAV[WHERE[s]].label} · ${esc(page(s).title)}</div><b>${t}</b><p>${d}</p><span class="go">去看看 ${ic('arrow')}</span></a>`).join('')
-  $$('#whoTabs button').forEach((b) => b.classList.toggle('on', b.dataset.who === k))
-  const on = $('#whoTabs button.on'), ind = $('#whoInd')
-  if (on && ind) { ind.style.left = on.offsetLeft + 'px'; ind.style.width = on.offsetWidth + 'px' }
-  setupSpot()
+function renderRole(k) {
+  const s = TUTOR[k], d = page(s)
+  $$('#roleTabs button').forEach((b) => b.classList.toggle('on', b.dataset.role === k))
+  $('#rolePanel').innerHTML = `<div class="h-role-top"><span class="h-kick">教程 · ${esc(k)}</span><b>${esc(d.title)}</b><p>${d.lede}</p></div>
+   <ol class="h-steps">${(d.points || []).map((p) => `<li>${esc(p)}</li>`).join('')}</ol>
+   <div class="h-role-foot"><a class="h-btn sm" href="${hrefOf(s)}">阅读教程</a><span>常做的事：${WHO[k].map(([t, , to]) => `<a class="link" href="${hrefOf(to)}">${t}</a>`).join('、')}</span></div>`
 }
-
-function chartSvg() {
-  const R = 290, ticks = []
-  for (let a = 0; a < 360; a += 3) {
-    const long = a % 30 === 0, r1 = R - (long ? 14 : 6), t = (a - 90) * Math.PI / 180
-    ticks.push(`<line x1="${(Math.cos(t) * r1).toFixed(1)}" y1="${(Math.sin(t) * r1).toFixed(1)}" x2="${(Math.cos(t) * R).toFixed(1)}" y2="${(Math.sin(t) * R).toFixed(1)}"${long ? ' class="lg"' : ''}/>`)
-    if (long) ticks.push(`<text x="${(Math.cos(t) * (R + 16)).toFixed(1)}" y="${(Math.sin(t) * (R + 16) + 3).toFixed(1)}">${String(a).padStart(3, '0')}</text>`)
-  }
-  const mark = (deg, label, sub, href) => {
-    const t = (deg - 90) * Math.PI / 180, p = (r) => [(Math.cos(t) * r).toFixed(1), (Math.sin(t) * r).toFixed(1)]
-    const [x, y] = p(R), [lx, ly] = p(R + 44), right = Math.cos(t) > 0, tx = (+lx + (right ? 8 : -8)).toFixed(1), anchor = right ? 'start' : 'end'
-    return `<a href="${href}" class="mark"><circle cx="${x}" cy="${y}" r="4.5"/><circle class="ring-o" cx="${x}" cy="${y}" r="10"/><line class="lead" x1="${x}" y1="${y}" x2="${lx}" y2="${ly}"/><text class="lbl" x="${tx}" y="${(+ly - 2).toFixed(1)}" text-anchor="${anchor}">${label}</text><text class="sub" x="${tx}" y="${(+ly + 14).toFixed(1)}" text-anchor="${anchor}">${sub}</text></a>`
-  }
-  return `<svg class="chart" viewBox="-400 -400 800 800" aria-hidden="true">
-   <circle class="draw" r="${R}" style="--len:${(2 * Math.PI * R).toFixed(0)}"/><circle class="draw dash" r="232" style="--len:1458"/><circle class="draw" r="172" style="--len:1081"/>
-   <line class="axis" x1="-330" y1="0" x2="330" y2="0"/><line class="axis" x1="0" y1="-330" x2="0" y2="330"/>
-   <g class="ticks">${ticks.join('')}</g>
-   ${mark(-62, '开始使用', `${flat('start').length} 篇`, '#/start/quickstart')}${mark(-22, '教程', `${flat('tutorials').length} 条`, '#/tutorials/' + NAV.tutorials.first)}${mark(18, '功能说明', `${flat('features').length} 篇`, '#/features/' + NAV.features.first)}${mark(58, '常见问题', '排障', '#/faq/troubleshooting')}${mark(140, '开发文档', `${devCount} 篇 · 仅管理员`, '#/dev/overview')}${mark(225, '更新日志', `${RELEASES.length} 个版本`, '#/changelog')}
-  </svg>`
-}
-function drawChart() { requestAnimationFrame(() => $('#moonStage')?.classList.add('drawn')) }
 
 /* The cheese logo, direction A「冒孔」: holes bubble up one by one, the mouse
    peeks out, then a quiet loop keeps it alive. It rests on the original logo. */
@@ -257,7 +259,7 @@ function navigate() {
 addEventListener('hashchange', navigate)
 
 function afterMount(sec) {
-  if (sec === '') { drawChart(); mountHero(); renderWho(Object.keys(WHO)[0]) }
+  if (sec === '') { mountHero(); renderRole(Object.keys(TUTOR)[0]) }
   if (sec === 'changelog') { moveSidePill(RELEASES[0].id); moveFilter() }
 }
 
@@ -458,7 +460,7 @@ document.addEventListener('click', (e) => {
       return
     } else if (a.closest('.cite') && innerWidth <= 820) closeDock()
   }
-  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-toast],[data-menu],[data-copy-page],[data-copy],[data-vote],[data-f],[data-sug],[data-who],#heroLogo,.code-tab')
+  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-toast],[data-menu],[data-copy-page],[data-copy],[data-vote],[data-f],[data-sug],[data-role],#heroLogo,.code-tab')
   if (!t) { if (!e.target.closest('.menu')) $('#menu')?.classList.remove('open'); return }
   if (t.matches('[data-open-search]')) { e.preventDefault(); openSearch() }
   else if (t.matches('[data-open-ask]')) { e.preventDefault(); $('#menu')?.classList.remove('open'); if (t.closest('.hdr')) toggleDock(); else openAsk() }
@@ -476,7 +478,7 @@ document.addEventListener('click', (e) => {
     $$('.day').forEach((d) => d.classList.toggle('hide', !d.querySelector('.item:not(.hide)')))
     onScroll()
   }
-  else if (t.matches('[data-who]')) renderWho(t.dataset.who)
+  else if (t.matches('[data-role]')) renderRole(t.dataset.role)
   else if (t.matches('#heroLogo')) mountHero()
   else if (t.matches('.code-tab')) t.parentElement.querySelectorAll('.code-tab').forEach((x) => x.classList.toggle('on', x === t))
   else if (t.matches('[data-toast]')) { e.preventDefault(); toast(t.dataset.toast + '（预览里不跳转）') }
@@ -489,7 +491,7 @@ document.addEventListener('keydown', (e) => {
   else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') { e.preventDefault(); toggleDock() }
   else if (e.key === 'Escape') closeAll()
 })
-addEventListener('resize', () => { moveTabs(cur?.sec ?? ''); moveFilter(); if (cur?.page) moveSidePill(cur.page); const w = $('#whoTabs button.on'); if (w) renderWho(w.dataset.who) })
+addEventListener('resize', () => { moveTabs(cur?.sec ?? ''); moveFilter(); if (cur?.page) moveSidePill(cur.page) })
 
 $('#dockResize').addEventListener('pointerdown', (e) => {
   e.preventDefault(); document.body.classList.add('dragging')

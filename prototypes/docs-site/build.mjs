@@ -83,7 +83,7 @@ function addPages(sec, groups) {
   return groups.map(([group, items]) => [group, items.map(([slug, title, src]) => {
     const draft = typeof src !== 'string'
     P[sec + '/' + slug] = draft
-      ? { title, lede: esc(src.lede), body: outlineBody(src.points, sec === 'dev'), src: sec === 'dev' ? '按当前代码撰写' : 'docs/manual', updated: '待写', draft }
+      ? { title, lede: esc(src.lede), points: src.points, body: outlineBody(src.points, sec === 'dev'), src: sec === 'dev' ? '按当前代码撰写' : 'docs/manual', updated: '待写', draft }
       : { title, ...mdPage(src) }
     return draft ? [slug, title, 1] : [slug, title]
   })])

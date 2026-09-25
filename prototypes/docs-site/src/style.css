@@ -618,6 +618,99 @@ html.dark .cheese-art svg{filter:drop-shadow(0 0 60px rgba(255,190,80,.35)) drop
 
 /* six sibling tabs: drop their icons before the header gets tight */
 @media (max-width:1520px){.tab>.ico{display:none}.tab{padding:0 11px}}
+
+/* ---------- home: editorial, in the manner of official product/docs home pages ---------- */
+.h{max-width:1120px;margin:0 auto;padding:0 32px}
+.h-hero{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:64px;align-items:center;padding:88px 0 96px}
+.h-eyebrow{font-size:13px;font-weight:600;letter-spacing:.04em;color:var(--accent-ink);margin-bottom:18px}
+.h-title{font-family:var(--serif);font-weight:600;font-size:clamp(40px,5vw,64px);line-height:1.12;letter-spacing:-.01em;color:var(--ink);margin:0}
+.h-sub{font-size:18px;line-height:1.75;color:var(--muted);margin:22px 0 32px;max-width:30em}
+.h-search{display:flex;align-items:center;gap:12px;width:100%;max-width:480px;height:52px;padding:0 12px 0 16px;border:1px solid var(--line-2);border-radius:12px;background:var(--surface);color:var(--faint);font-size:15px;text-align:left;transition:border-color .2s,box-shadow .2s}
+.h-search span{flex:1}
+.h-search:hover{border-color:var(--faint);box-shadow:0 0 0 4px color-mix(in srgb,var(--ink) 5%,transparent)}
+.h-links{display:flex;align-items:center;gap:22px;margin-top:22px;flex-wrap:wrap}
+.h-btn{display:inline-flex;align-items:center;height:44px;padding:0 20px;border-radius:10px;background:var(--btn);color:var(--btn-ink);font-weight:600;font-size:15px;transition:opacity .2s}
+.h-btn:hover{opacity:.86}
+.h-btn.sm{height:36px;padding:0 14px;font-size:14px}
+.h-link{display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:500;color:var(--ink)}
+.h-link .ico{transition:transform .3s var(--out)}
+.h-link:hover .ico,.h-card:hover .h-link .ico{transform:translateX(3px)}
+.h-art{position:relative;aspect-ratio:1;border-radius:28px;background:radial-gradient(70% 70% at 50% 55%,color-mix(in srgb,var(--accent-2) 26%,var(--surface)),var(--panel));overflow:hidden}
+html.dark .h-art{background:radial-gradient(70% 70% at 50% 55%,rgba(255,170,60,.16),var(--surface))}
+.h-art-in{position:absolute;inset:13%;cursor:pointer}
+.h-art-in svg{width:100%;height:100%;display:block;overflow:visible;filter:drop-shadow(0 16px 30px rgba(160,90,10,.18))}
+
+.h-sec{padding:72px 0;border-top:1px solid var(--line)}
+.h-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px}
+.h-h2{font-family:var(--serif);font-weight:600;font-size:clamp(26px,3vw,34px);line-height:1.25;color:var(--ink);margin:0 0 28px}
+.h-head .h-h2{margin-bottom:28px}
+.h-lede{color:var(--muted);font-size:16.5px;margin:-16px 0 32px}
+.h-kick{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--accent-ink);letter-spacing:.03em}
+
+.h-card{display:flex;flex-direction:column;gap:8px;padding:24px;border:1px solid var(--line);border-radius:16px;background:var(--surface);transition:border-color .2s,box-shadow .25s}
+.h-card:hover{border-color:var(--line-2);box-shadow:var(--shadow)}
+.h-card b{font-size:17px;font-weight:600;color:var(--ink)}
+.h-card p{margin:0;font-size:14.5px;line-height:1.7;color:var(--muted)}
+.h-ic{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:var(--accent-wash);color:var(--accent-ink);margin-bottom:8px}
+.h-start{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+
+.h-roles{display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px}
+.h-role-tabs{display:flex;flex-direction:column;gap:4px}
+.h-role-tabs button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:14px 16px;border-radius:12px;text-align:left;border:1px solid transparent;transition:background .2s,border-color .2s}
+.h-role-tabs button b{font-size:16px;font-weight:600;color:var(--muted)}
+.h-role-tabs button small{font-size:13px;color:var(--faint);line-height:1.5}
+.h-role-tabs button:hover{background:var(--panel)}
+.h-role-tabs button.on{background:var(--surface);border-color:var(--line)}
+.h-role-tabs button.on b{color:var(--ink)}
+.h-role-panel{padding:28px 32px;border:1px solid var(--line);border-radius:16px;background:var(--surface);animation:rise .4s var(--out)}
+.h-role-top b{display:block;font-family:var(--serif);font-size:22px;font-weight:600;color:var(--ink);margin:6px 0 6px}
+.h-role-top p{margin:0 0 20px;color:var(--muted)}
+.h-steps{list-style:none;counter-reset:st;margin:0 0 24px;padding:0;display:grid;gap:0}
+.h-steps li{counter-increment:st;position:relative;padding:12px 0 12px 44px;border-top:1px solid var(--line);color:var(--text)}
+.h-steps li::before{content:counter(st);position:absolute;left:0;top:11px;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font:600 13px var(--mono);background:var(--panel);color:var(--ink)}
+.h-role-foot{display:flex;align-items:center;gap:18px;flex-wrap:wrap;font-size:14px;color:var(--muted)}
+
+.h-flow{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.h-flow li{display:flex;flex-direction:column;padding:22px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.h-n{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--btn);color:var(--btn-ink);font:600 13px var(--mono);margin-bottom:14px}
+.h-flow b{font-size:16px;color:var(--ink);font-weight:600}
+.h-flow p{margin:6px 0 16px;font-size:14px;line-height:1.7;color:var(--muted)}
+.h-flow .mock{margin-top:auto;display:flex;flex-direction:column;gap:6px;font-size:12.5px;padding:12px;border-radius:12px;background:var(--bg);border:1px solid var(--line)}
+.h-flow .bub{align-self:flex-end;max-width:92%;background:var(--btn);color:var(--btn-ink);border-radius:12px 12px 4px 12px;padding:6px 10px}
+.h-flow .bot{max-width:92%;background:var(--panel);border-radius:12px 12px 12px 4px;padding:6px 10px}
+.h-flow .bar{height:6px;border-radius:6px;background:var(--panel);overflow:hidden}
+.h-flow .bar i{display:block;height:100%;width:62%;background:var(--accent)}
+.h-flow .chip{display:inline-block;padding:3px 10px;border:1px solid var(--line-2);border-radius:999px;background:var(--surface)}
+.h-flow .chip.ok{background:var(--btn);color:var(--btn-ink);border-color:var(--btn)}
+
+.h-index{display:grid;grid-template-columns:repeat(4,1fr);gap:32px}
+.h-index h3{margin:0 0 10px;font-size:13px;font-weight:600;color:var(--faint);letter-spacing:.06em}
+.h-index a{display:flex;align-items:center;gap:8px;padding:6px 0;color:var(--ink);font-size:15px;border-bottom:1px solid transparent;transition:color .2s}
+.h-index a:hover{color:var(--accent-ink)}
+.h-index small{font-size:11px;color:var(--faint);border:1px dashed var(--line-2);border-radius:5px;padding:0 5px}
+
+.h-pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.h-wide{padding:28px}
+.h-wide b{font-family:var(--serif);font-size:22px}
+.h-wide ul{margin:4px 0 12px;padding-left:18px;color:var(--muted);font-size:14.5px;line-height:1.9}
+.h-wide .h-link{margin-top:auto}
+
+.h-faq{border-top:1px solid var(--line)}
+.h-faq details{border-bottom:1px solid var(--line)}
+.h-faq summary{list-style:none;display:flex;align-items:center;gap:16px;padding:20px 0;cursor:pointer;font-size:16.5px;font-weight:500;color:var(--ink)}
+.h-faq summary::-webkit-details-marker{display:none}
+.h-plus{position:relative;margin-left:auto;width:14px;height:14px;flex:none}
+.h-plus::before,.h-plus::after{content:"";position:absolute;left:0;top:6px;width:14px;height:2px;border-radius:2px;background:var(--faint);transition:transform .3s var(--out)}
+.h-plus::after{transform:rotate(90deg)}
+.h-faq details[open] .h-plus::after{transform:none}
+.h-faq details>div{padding:0 32px 22px 0;color:var(--muted);font-size:15px;line-height:1.8}
+
+.h-end{padding:96px 0 110px;border-top:1px solid var(--line);text-align:center}
+.h-end .h-lede{margin:-12px 0 8px}
+
+@media (max-width:980px){.h-hero{grid-template-columns:1fr;gap:36px;padding:48px 0 64px}.h-art{max-width:380px}.h-start,.h-flow{grid-template-columns:1fr 1fr}.h-index{grid-template-columns:1fr 1fr}.h-roles{grid-template-columns:1fr}.h-role-tabs{flex-direction:row;overflow-x:auto}.h-role-tabs button small{display:none}}
+@media (max-width:620px){.h{padding:0 20px}.h-start,.h-flow,.h-pair{grid-template-columns:1fr}.h-role-panel{padding:22px}}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
   [data-reveal]{opacity:1;transform:none;filter:none}
