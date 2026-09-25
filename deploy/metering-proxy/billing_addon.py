@@ -942,7 +942,8 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     is_message_200 = "/v1/messages" in flow.request.path and resp.status_code == 200
     if is_message_200 and "event-stream" in resp.headers.get("content-type", ""):
         project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
-        extractor = StreamingUsageExtractor()
+        encoding = resp.headers.get("content-encoding", "")
+        extractor = StreamingUsageExtractor(encoding)
 
         def tee(chunk: bytes) -> bytes:
             if chunk:
@@ -951,6 +952,14 @@ def responseheaders(flow: http.HTTPFlow) -> None:
                 extractor.close()
                 if extractor.usage:
                     METER.record(project_id, topic_id, extractor.usage, extractor.model)
+                else:
+                    # A turn that ran and cost nothing on the meter is the cap
+                    # silently switched off; say so rather than skip it.
+                    logger.warning(
+                        "no usage found in a subscription message response "
+                        "(content-encoding %r); the turn is not metered",
+                        encoding,
+                    )
             return chunk
 
         resp.stream = tee
