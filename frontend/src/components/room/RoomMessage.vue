@@ -9,7 +9,7 @@
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block } from '../../cx_types'
 
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { artifactKind, artifactName, askAnswered, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
@@ -18,6 +18,8 @@ import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
+
+import RollingNumber from './RollingNumber.vue'
 
 import { t } from '@/i18n'
 
@@ -123,6 +125,20 @@ async function copyMessage() {
   clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => (copied.value = false), COPIED_MS)
 }
+
+// 选项作答：点下去的那一项先变实、其余淡下去，等答案落库再换成「谁选了什么」。
+// 请求没成（askBusy 落回去了、也没有答案）就松手，几个选项回到原样。
+const picked = ref<string | null>(null)
+function pick(option: string) {
+  picked.value = option
+  emit('answer', props.block, option)
+}
+watch(
+  () => props.askBusy,
+  (busy) => {
+    if (!busy && !askAnswered(props.block)) picked.value = null
+  }
+)
 
 async function onAgentTextClick(e: MouseEvent) {
   const btn = (e.target as HTMLElement | null)?.closest('.md-copy') as HTMLButtonElement | null
@@ -231,24 +247,27 @@ async function onAgentTextClick(e: MouseEvent) {
       </div>
       <!-- 选项问题 (cheese_ask): one-click answer buttons; answered
          state shows the pick + who made it (everyone sees it). -->
-      <div v-if="askOptions(block)" class="ask-row">
-        <template v-if="!askAnswered(block)">
+      <Transition name="ask-swap" mode="out-in">
+        <div v-if="askOptions(block) && !askAnswered(block)" key="options" class="ask-row">
           <button
             v-for="opt in askOptions(block)!"
             :key="opt"
             type="button"
             class="ask-option"
-            :disabled="askBusy"
-            @click="emit('answer', block, opt)"
+            :class="{ 'ask-option--picked': picked === opt, 'ask-option--dim': picked !== null && picked !== opt }"
+            :disabled="askBusy || picked !== null"
+            @click="pick(opt)"
           >
             {{ opt }}
           </button>
-        </template>
-        <div v-else class="ask-answered">
-          <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
-          {{ askAnswered(block)!.by }} 选了「{{ askAnswered(block)!.option }}」
         </div>
-      </div>
+        <div v-else-if="askOptions(block)" key="answered" class="ask-row">
+          <div class="ask-answered">
+            <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
+            {{ askAnswered(block)!.by }} 选了「{{ askAnswered(block)!.option }}」
+          </div>
+        </div>
+      </Transition>
       <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
          升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
          一张表，同时只会有一个非空。 -->
@@ -271,7 +290,7 @@ async function onAgentTextClick(e: MouseEvent) {
       </div>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
-      <div v-if="block.reactions?.length" class="rx-row">
+      <TransitionGroup v-if="block.reactions?.length" tag="div" name="rx" class="rx-row">
         <button
           v-for="r in block.reactions"
           :key="r.emoji"
@@ -282,9 +301,9 @@ async function onAgentTextClick(e: MouseEvent) {
           @click="emit('react', block, r.emoji)"
         >
           <span class="rx-emoji">{{ r.emoji }}</span>
-          <span class="rx-count">{{ r.count }}</span>
+          <RollingNumber class="rx-count" :value="r.count" />
         </button>
-      </div>
+      </TransitionGroup>
     </div>
 
     <!-- hover action bar, top-right of the row (Feishu). Only actions
@@ -315,11 +334,13 @@ async function onAgentTextClick(e: MouseEvent) {
         <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
       </button>
       <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
-      <div v-if="pickerOpen" class="rx-picker">
-        <button v-for="e in QUICK_EMOJIS" :key="e" type="button" class="rx-pick" @click="emit('react', block, e)">
-          {{ e }}
-        </button>
-      </div>
+      <Transition name="rx-picker">
+        <div v-if="pickerOpen" class="rx-picker">
+          <button v-for="e in QUICK_EMOJIS" :key="e" type="button" class="rx-pick" @click="emit('react', block, e)">
+            {{ e }}
+          </button>
+        </div>
+      </Transition>
     </div>
   </div>
 </template>
@@ -566,8 +587,25 @@ async function onAgentTextClick(e: MouseEvent) {
 }
 
 /* ---- Emoji reactions (Slack) ---- */
-/* MVP picker: a strip of the 8 common emoji, floating under the action bar. */
+/* MVP picker: a strip of the 8 common emoji, floating under the action bar.
+   从右上角那颗按钮下面长出来，收回也回到那里。 */
+.rx-picker-enter-active {
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.rx-picker-leave-active {
+  transition:
+    transform var(--dur-quick) var(--ease-in),
+    opacity var(--dur-quick) var(--ease-in);
+}
+.rx-picker-enter-from,
+.rx-picker-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+}
 .rx-picker {
+  transform-origin: top right;
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
@@ -612,15 +650,35 @@ async function onAgentTextClick(e: MouseEvent) {
   cursor: pointer;
   transition:
     border-color var(--dur-quick) var(--ease-standard),
-    background-color var(--dur-quick) var(--ease-standard);
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard),
+    opacity var(--dur-base) var(--ease-standard);
 }
 .ask-option:hover:not(:disabled) {
   border-color: var(--faint);
   background: var(--fill);
 }
 .ask-option:disabled {
-  opacity: 0.5;
   cursor: default;
+}
+.ask-option--picked {
+  border-color: var(--muted);
+  background: var(--line-2);
+  color: var(--ink);
+}
+.ask-option--dim {
+  opacity: 0.45;
+}
+/* 选项换成「谁选了什么」：先淡出，再淡入。 */
+.ask-swap-enter-active {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.ask-swap-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.ask-swap-enter-from,
+.ask-swap-leave-to {
+  opacity: 0;
 }
 .ask-answered {
   display: inline-flex;
@@ -633,6 +691,7 @@ async function onAgentTextClick(e: MouseEvent) {
 /* Reaction chips under a message: emoji + count; own reactions get a darker
    outline and ground (Slack's "you reacted" affordance), not amber. */
 .rx-row {
+  position: relative; /* 缩掉的那颗在这一行里原地离开，不把别的撑开 */
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -655,6 +714,26 @@ async function onAgentTextClick(e: MouseEvent) {
 }
 .rx-chip:hover {
   border-color: var(--faint);
+}
+/* 表情：新的一颗从小弹到位，归零的那颗缩掉，旁边的滑过来补位。 */
+.rx-enter-active {
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.rx-leave-active {
+  position: absolute;
+  transition:
+    transform var(--dur-quick) var(--ease-in),
+    opacity var(--dur-quick) var(--ease-in);
+}
+.rx-enter-from,
+.rx-leave-to {
+  opacity: 0;
+  transform: scale(0.6);
+}
+.rx-move {
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 .rx-chip--mine {
   border-color: var(--muted);

@@ -191,7 +191,8 @@
       "undelivered": "未送达",
       "edit": "编辑",
       "editHint": "放回输入框"
-    }
+    },
+    "newMessages": "条新消息"
   },
   "members": {
     "leave": "退出项目",

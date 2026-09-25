@@ -191,7 +191,8 @@
       "undelivered": "Not delivered",
       "edit": "Edit",
       "editHint": "Put it back in the message box"
-    }
+    },
+    "newMessages": "new"
   },
   "members": {
     "leave": "Leave project",

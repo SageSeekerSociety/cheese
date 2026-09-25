@@ -12,12 +12,14 @@
 import type { Block } from '../../cx_types'
 import type { PlatformNotice } from '../../lib/platformNotice'
 
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { parseDiffLines } from '../../lib/diff'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import CloudStartupStatus from '../CloudStartupStatus.vue'
+
+import RollingNumber from './RollingNumber.vue'
 
 import { t } from '@/i18n'
 
@@ -59,6 +61,22 @@ const shownFiles = computed(
 /** 「另 N 个文件」里的 N：没列出来的，包括后端就没有发过来的那几个。 */
 const hiddenFiles = computed(() => (changes.value ? changes.value.filesTotal - shownFiles.value.length : 0))
 
+// 同类事件又来了一次：不加新行，这一行的计数滚一格、整行亮一下，说「又一次」。
+const repeats = computed(() =>
+  props.notice.mode === 'fold'
+    ? props.notice.count
+    : props.notice.mode === 'backend-error'
+      ? props.notice.error.count ?? 0
+      : 0
+)
+const bumped = ref(false)
+watch(repeats, async (next, prev) => {
+  if (next <= prev) return
+  bumped.value = false
+  await nextTick()
+  requestAnimationFrame(() => (bumped.value = true))
+})
+
 const showRetry = computed(
   () =>
     !!props.canRetry &&
@@ -93,7 +111,7 @@ const ACTION_META: Record<string, { btn: string }> = {
   <div v-if="happening" class="room-happening im-event">
     <span v-html="renderPlain(block.content)" /><span class="room-happening__time"> · {{ time }}</span>
   </div>
-  <AgentNoticeFrame v-else :name="name" :time="time">
+  <AgentNoticeFrame v-else :name="name" :time="time" :class="{ 'notice-bump': bumped }" @animationend="bumped = false">
     <div
       v-if="notice.mode === 'incident'"
       class="sys-row sys-row--danger platform-incident"
@@ -213,7 +231,7 @@ const ACTION_META: Record<string, { btn: string }> = {
       <summary class="sys-line">
         <span class="sys-text sys-lead">{{ notice.error.line }}</span>
         <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
-        <span v-if="notice.error.count" class="sys-num">×{{ notice.error.count }}</span>
+        <span v-if="notice.error.count" class="sys-num">×<RollingNumber :value="notice.error.count" /></span>
       </summary>
       <div class="sys-fold">
         <div v-if="notice.error.where || notice.error.requestId" class="sys-meta">
@@ -236,7 +254,7 @@ const ACTION_META: Record<string, { btn: string }> = {
       <summary class="sys-line">
         <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }">{{ notice.line }}</span>
         <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
-        <span v-if="notice.count > 1" class="sys-num">×{{ notice.count }}</span>
+        <span v-if="notice.count > 1" class="sys-num">×<RollingNumber :value="notice.count" /></span>
         <span v-if="notice.whoLabel" class="sys-who">{{
           notice.who === 'cheese' ? `${name || agentName}正在处理` : notice.whoLabel
         }}</span>
@@ -322,6 +340,34 @@ details.sys-row > summary::-webkit-details-marker,
 }
 details[open] > summary > .sys-chev {
   transform: rotate(90deg);
+}
+/* 展开收起过渡高度，不跳（设计系统 §9.2）。不认 ::details-content 的浏览器照旧
+   直接展开，什么都不缺。 */
+.sys-row,
+.sys-more {
+  interpolate-size: allow-keywords;
+}
+details::details-content {
+  height: 0;
+  overflow: clip;
+  transition:
+    height var(--dur-quick) var(--ease-in),
+    content-visibility var(--dur-quick) allow-discrete;
+}
+details[open]::details-content {
+  height: auto;
+  transition:
+    height var(--dur-base) var(--ease-out),
+    content-visibility var(--dur-base) allow-discrete;
+}
+/* 又来了一次：整行从 --fill 褪回去。 */
+.notice-bump {
+  animation: notice-bump var(--dur-slow) var(--ease-out);
+}
+@keyframes notice-bump {
+  from {
+    background-color: var(--fill-2);
+  }
 }
 /* 这一列里要人动手的那一步，全是这一种中性小按钮。琥珀只留给发送和审阅。 */
 .sys-btn {

@@ -113,6 +113,26 @@ summary::-webkit-details-marker {
   padding-top: 4px;
 }
 
+/* 展开收起过渡高度，和房间里别的可展开行一样。 */
+.cloud-startup {
+  interpolate-size: allow-keywords;
+}
+
+.cloud-startup::details-content {
+  height: 0;
+  overflow: clip;
+  transition:
+    height var(--dur-quick) var(--ease-in),
+    content-visibility var(--dur-quick) allow-discrete;
+}
+
+.cloud-startup[open]::details-content {
+  height: auto;
+  transition:
+    height var(--dur-base) var(--ease-out),
+    content-visibility var(--dur-base) allow-discrete;
+}
+
 ol {
   padding: 0;
   margin: 0;

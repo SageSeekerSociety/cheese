@@ -46,6 +46,7 @@ import { useChatScroll } from './room/composables/useChatScroll'
 import { useOutbox } from './room/composables/useOutbox'
 import { useRoomRoster } from './room/composables/useRoomRoster'
 import { useRoomSocket } from './room/composables/useRoomSocket'
+import RollingNumber from './room/RollingNumber.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessage from './room/RoomMessage.vue'
 import RoomNotice from './room/RoomNotice.vue'
@@ -425,9 +426,69 @@ const arrived = reactive(new Set<string>())
 function pushBlock(b: Block) {
   historyChanges?.set(b.id, b)
   if (!messages.value.some((m) => m.id === b.id)) {
-    if (historyChanges === null && b.author !== AUTHOR) arrived.add(b.id)
+    if (historyChanges === null && b.author !== AUTHOR) {
+      arrived.add(b.id)
+      if (!atBottom.value && b.kind !== 'event') unseen.value.push(b.id)
+    }
     messages.value.push(b)
   }
+}
+
+// 往上翻着的时候别人又说了话：底部浮出一颗提示，写着来了几条。点它回到最新，并让
+// 来的第一条闪一下——人要找的是「新的从哪开始」，不只是「到底了」。回到底部（不管
+// 是点它还是自己滚下去）它就收起。
+const unseen = ref<string[]>([])
+watch(atBottom, (bottom) => {
+  if (bottom) unseen.value = []
+})
+function jumpToUnseen() {
+  const first = unseen.value[0]
+  const el = scrollRef.value
+  if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  unseen.value = []
+  if (first) flash(first)
+}
+
+// 淡入演完就把这一条从 `arrived` 里拿掉：class 一直挂着的话，它的 animation 会压住
+// 之后要演的那一下（跳过来的闪一下、同类事件又来一次的亮一下）。Vue 给 scoped 的
+// keyframes 名字加了后缀，所以比前缀。
+function settleArrival(e: AnimationEvent, id: string) {
+  if (e.animationName.startsWith('tl-arrive')) arrived.delete(id)
+}
+
+// 一行离开时先收拢自己的高度再走，下面的东西平滑地补上来，而不是等它淡完一下子
+// 跳过去（设计系统 §9.2）。
+function collapseLeave(el: Element, done: () => void) {
+  const row = el as HTMLElement
+  let finished = false
+  const finish = () => {
+    if (finished) return
+    finished = true
+    done()
+  }
+  row.style.height = `${row.offsetHeight}px`
+  row.style.overflow = 'hidden'
+  requestAnimationFrame(() => {
+    row.style.height = '0'
+    row.style.marginTop = '0'
+    row.style.paddingTop = '0'
+    row.style.paddingBottom = '0'
+    row.style.opacity = '0'
+  })
+  row.addEventListener('transitionend', (ev) => ev.target === row && finish())
+  setTimeout(finish, 400) // transitionend 不来（减弱动效、元素被提前拿走）也得收尾
+}
+
+// 跳到某一条之后，让它闪一下：滚动停下来的那一刻，眼睛要知道落在哪一行。
+const flashId = ref<string | null>(null)
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+function flash(id: string) {
+  clearTimeout(flashTimer)
+  flashId.value = null
+  void nextTick(() => {
+    flashId.value = id
+    flashTimer = setTimeout(() => (flashId.value = null), 1600)
+  })
 }
 
 function handleFrame(frame: WsServerFrame) {
@@ -578,6 +639,7 @@ async function loadTopic(topic: Topic, entering = false) {
   reactionPickerFor.value = null
   unreadAnchorId.value = null
   arrived.clear()
+  unseen.value = []
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
   loadingOlder.value = false
@@ -690,7 +752,10 @@ async function downloadAttachment(m: Block) {
   }
 }
 function scrollToMessage(id: string) {
-  document.querySelector(`[data-mid="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  const el = document.querySelector(`[data-mid="${id}"]`)
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  flash(id)
 }
 
 // 发件箱：已经打出去、库里还没有的那几条 —— 见 room/composables/useOutbox。
@@ -899,6 +964,7 @@ type RunEdge = 'start' | 'regroup' | 'cont'
 function sameSpeaker(a: Block, b: Block): boolean {
   return a.author === b.author && a.author_type === b.author_type
 }
+const runEdges = computed(() => visible.value.map((_, i) => runEdge(i)))
 function runEdge(i: number): RunEdge {
   if (i === 0) return 'start'
   const prev = visible.value[i - 1]
@@ -1257,8 +1323,11 @@ onBeforeUnmount(() => {
       >
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
-        <div ref="contentRef">
-          <LoadingSkeleton v-if="loadingHistory" variant="chat" />
+        <div ref="contentRef" class="tl-content">
+          <!-- 骨架和真的那几行同形同高：到货时骨架淡出，不推动下面的东西。 -->
+          <Transition name="tl-skel">
+            <LoadingSkeleton v-if="loadingHistory" variant="chat" />
+          </Transition>
 
           <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
             <h2 class="t-title mb-2">从一件具体的事开始</h2>
@@ -1310,6 +1379,8 @@ onBeforeUnmount(() => {
             />
             <RoomNotice
               v-if="notice"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              @animationend="settleArrival($event, m.id)"
               :block="m"
               :notice="notice"
               :run="run"
@@ -1325,12 +1396,13 @@ onBeforeUnmount(() => {
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
-              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :class="{ 'tl-arrive': arrived.has(m.id), 'tl-flash': flashId === m.id }"
+              @animationend="settleArrival($event, m.id)"
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
-              :run-start="runEdge(i) !== 'cont'"
-              :regroup="runEdge(i) === 'regroup'"
+              :run-start="runEdges[i] !== 'cont'"
+              :regroup="runEdges[i] === 'regroup'"
               :mine="isMine(m)"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
@@ -1400,41 +1472,68 @@ onBeforeUnmount(() => {
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until every explicitly active turn finishes; the live
              working-log checklist stays visible for the whole turn. -->
-          <div v-if="awaitingReply || liveTodo" class="im-row">
-            <div class="im-gutter">
-              <CheeseAvatar :size="28" :name="agentName" />
-            </div>
-            <div class="im-main">
-              <div class="im-meta">
-                <span class="im-name">{{ agentName }}</span>
+          <!-- 进场上浮淡入；芝士的回复落地、这一轮结束时，它淡出，回复就在它原来的
+             位置上接着往下读。 -->
+          <Transition name="tl-working" @leave="collapseLeave">
+            <div v-if="awaitingReply || liveTodo" class="im-row">
+              <div class="im-gutter">
+                <CheeseAvatar :size="28" :name="agentName" />
               </div>
+              <div class="im-main">
+                <div class="im-meta">
+                  <span class="im-name">{{ agentName }}</span>
+                </div>
 
-              <!-- Working-log checklist (芝士's tasks, §3.1.1), only while a turn is
-                 live. Between turns the stored 进度层 (#187) lives in the panel's
-                 总览: parked at the end of the conversation it sat under every new
-                 message, pushing the talk up. -->
-              <ul v-if="liveTodo" class="todo-list">
-                <li v-for="item in todoItems" :key="item.id" class="todo-item" :class="'todo-' + item.status">
-                  <v-icon class="todo-mark" size="14">{{ todoIcon(item.status) }}</v-icon>
-                  <span class="todo-text">{{ item.subject }}</span>
-                </li>
-              </ul>
+                <!-- Working-log checklist (芝士's tasks, §3.1.1), only while a turn is
+                   live. Between turns the stored 进度层 (#187) lives in the panel's
+                   总览: parked at the end of the conversation it sat under every new
+                   message, pushing the talk up. 新的一项依次浮上来；状态变了图标原地
+                   换、删除线淡进来。 -->
+                <TransitionGroup v-if="liveTodo" tag="ul" name="todo" class="todo-list">
+                  <li
+                    v-for="(item, ti) in todoItems"
+                    :key="item.id"
+                    class="todo-item"
+                    :class="'todo-' + item.status"
+                    :style="{ '--i': ti }"
+                  >
+                    <Transition name="todo-mark" mode="out-in">
+                      <v-icon :key="item.status" class="todo-mark" size="14">{{ todoIcon(item.status) }}</v-icon>
+                    </Transition>
+                    <span class="todo-text">{{ item.subject }}</span>
+                  </li>
+                </TransitionGroup>
 
-              <!-- Instant ack before the first message / during cold start -->
-              <div v-if="awaitingReply" class="im-text">
-                <span class="text-medium-emphasis">{{
-                  reachedAgent ? `${agentName}正在处理…` : `正在交给${agentName}…`
-                }}</span>
-                <span class="caret" />
+                <!-- Instant ack before the first message / during cold start. 「正在交给」
+                   换成「正在处理」时交叉淡变，不跳。 -->
+                <div v-if="awaitingReply" class="im-text">
+                  <Transition name="tl-swap" mode="out-in">
+                    <span :key="reachedAgent ? 'working' : 'handing'" class="text-medium-emphasis">{{
+                      reachedAgent ? `${agentName}正在处理…` : `正在交给${agentName}…`
+                    }}</span>
+                  </Transition>
+                  <span class="caret" />
+                </div>
               </div>
             </div>
-          </div>
+          </Transition>
 
           <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
           <div class="px-4">
             <slot name="timeline-end" />
           </div>
         </div>
+      </div>
+
+      <!-- 往上翻着的时候来了新消息。 -->
+      <div class="new-pill-anchor">
+        <Transition name="new-pill">
+          <button v-if="unseen.length" type="button" class="new-pill" @click="jumpToUnseen">
+            <v-icon size="14">mdi-arrow-down</v-icon>
+            <RollingNumber :value="unseen.length" />
+            <span>{{ t('work.room.newMessages') }}</span>
+          </button>
+        </Transition>
       </div>
 
       <v-alert
@@ -1542,9 +1641,47 @@ onBeforeUnmount(() => {
 .todo-completed {
   color: var(--faint);
 }
+/* 删除线一直在，只是透明的：做完的那一刻它淡进来，不是突然出现。 */
+.todo-text {
+  text-decoration-line: line-through;
+  text-decoration-color: transparent;
+  transition:
+    text-decoration-color var(--dur-base) var(--ease-standard),
+    opacity var(--dur-base) var(--ease-standard);
+}
+.todo-item {
+  transition: color var(--dur-base) var(--ease-standard);
+}
 .todo-completed .todo-text {
-  text-decoration: line-through;
+  text-decoration-color: currentcolor;
   opacity: 0.7;
+}
+/* 新的一项依次浮上来，一项晚 30ms。 */
+.todo-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+  /* 一组不超过 300ms（§9.7）：第十项之后不再往后排。 */
+  transition-delay: calc(min(var(--i, 0), 9) * 30ms);
+}
+.todo-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.todo-mark-enter-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-out),
+    transform var(--dur-quick) var(--ease-out);
+}
+.todo-mark-leave-active {
+  transition:
+    opacity var(--dur-press) var(--ease-in),
+    transform var(--dur-press) var(--ease-in);
+}
+.todo-mark-enter-from,
+.todo-mark-leave-to {
+  opacity: 0;
+  transform: scale(0.6);
 }
 .messages {
   background: var(--surface);
@@ -1627,6 +1764,87 @@ onBeforeUnmount(() => {
     opacity: 0;
   }
 }
+/* 骨架到货时淡出。离场时它脱离文档流，下面已经排好的真行不会被它推一下。 */
+.tl-content {
+  position: relative;
+}
+.tl-skel-leave-active {
+  position: absolute;
+  inset: 0 0 auto;
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.tl-skel-leave-to {
+  opacity: 0;
+}
+/* 「芝士正在处理」那一行：进来上浮淡入，这一轮结束时淡出。 */
+.tl-working-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.tl-working-leave-active {
+  transition:
+    height var(--dur-quick) var(--ease-in),
+    margin-top var(--dur-quick) var(--ease-in),
+    padding var(--dur-quick) var(--ease-in),
+    opacity var(--dur-quick) var(--ease-in);
+}
+.tl-working-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.tl-working-leave-to {
+  opacity: 0;
+}
+.tl-swap-enter-active {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.tl-swap-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.tl-swap-enter-from,
+.tl-swap-leave-to {
+  opacity: 0;
+}
+/* 新消息提示：浮在时间线底部正中，从下面升上来。 */
+.new-pill-anchor {
+  position: relative;
+  height: 0;
+}
+.new-pill {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: rgb(var(--v-theme-on-primary)); /* 和发送键同一对：琥珀底上的字 */
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-2);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+.new-pill-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.new-pill-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.new-pill-enter-from,
+.new-pill-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 8px);
+}
 /* 新来的一条：淡入并从下面 4px 升到位（见 `arrived`）。只演一次——class 留着也
    不会重播，动画只在元素挂上的那一刻跑。 */
 .tl-arrive {
@@ -1636,6 +1854,17 @@ onBeforeUnmount(() => {
   from {
     opacity: 0;
     transform: translateY(4px);
+  }
+}
+/* 跳到的那一条：底色从琥珀的浅底褪回去。它和新消息线、未读是同一族——「你要找的
+   在这儿」。 */
+.tl-flash {
+  animation: tl-flash 1.6s var(--ease-out);
+}
+@keyframes tl-flash {
+  from,
+  25% {
+    background-color: var(--accent-wash);
   }
 }
 /* 关掉动效时光标常亮：它说的「还在往下写」靠的是在不在，不是闪不闪。 */
