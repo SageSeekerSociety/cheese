@@ -16,7 +16,7 @@ import type { ActivityWeek } from '@/lib/activityYear'
 import { computed, nextTick, ref } from 'vue'
 
 import i18n, { t } from '@/i18n'
-import { activityWeeks, formatUtcDay, monthStarts } from '@/lib/activityYear'
+import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS, monthStarts } from '@/lib/activityYear'
 
 const props = defineProps<{
   days: ProfileActivityDay[]
@@ -26,8 +26,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ select: [week: ActivityWeek] }>()
-
-const HALF_YEAR_WEEKS = 26
 
 const weeks = computed(() => activityWeeks(props.days, props.compact ? HALF_YEAR_WEEKS : undefined))
 const locale = computed(() => i18n.global.locale.value)

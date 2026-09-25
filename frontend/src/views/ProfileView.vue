@@ -38,7 +38,7 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import ActivityHeatmap from '@/components/profile/ActivityHeatmap.vue'
 import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
-import { formatUtcDay } from '@/lib/activityYear'
+import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
@@ -109,10 +109,9 @@ watch(
 
 // ---- 活动 ----
 const activityTotal = computed(() => {
-  const days = profile.value?.activity.days ?? []
   if (!compact.value) return profile.value?.activity.total ?? 0
-  // 手机上那张图只有半年，数字跟着图走。
-  return days.slice(-26 * 7).reduce((sum, d) => sum + d.count, 0)
+  // 手机上那张图只有半年，数字按图上那几列加：周从星期一起，按天数截会差出几天。
+  return activityWeeks(profile.value?.activity.days ?? [], HALF_YEAR_WEEKS).reduce((sum, w) => sum + w.total, 0)
 })
 
 // ---- 项目 ----

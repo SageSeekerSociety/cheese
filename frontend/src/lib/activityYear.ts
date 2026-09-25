@@ -25,6 +25,9 @@ export interface ActivityWeek {
   total: number
 }
 
+/** 手机上那张图只画最近这么多周。 */
+export const HALF_YEAR_WEEKS = 26
+
 const DAY_MS = 86_400_000
 
 function parseDay(day: string): number {
