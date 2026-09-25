@@ -1492,7 +1492,11 @@ async def acquire_session_work_lease(
     from app.core.errors import GatewayTimeoutError
 
     try:
-        async with asyncio.timeout(body.timeout):
+        # body.timeout caps how long the caller waits for a machine being
+        # prepared (wait_s). It is not the time to answer: a session that will
+        # not wait asks with ~0, and bounding the whole call by that answered
+        # 504 even when its machine was ready.
+        async with asyncio.timeout(max(body.timeout, work_lease.PREPARING_WAIT_S)):
             return ok(
                 await work_lease.ensure(
                     db,

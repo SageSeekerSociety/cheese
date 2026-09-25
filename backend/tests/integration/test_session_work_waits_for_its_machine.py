@@ -211,6 +211,21 @@ def test_a_new_rooms_first_command_waits_for_its_own_machine(cloud_rooms, monkey
     assert installed_on == ["older-rooms-machine", "new-rooms-machine"]
 
 
+def test_a_session_that_will_not_wait_is_still_answered(cloud_rooms):
+    """A session relaunched onto its machine takes it without waiting: it asks
+    with the smallest timeout the route accepts. That caps the wait, not the
+    answer: it is told where its machine is, or that it is still preparing."""
+    case = cloud_rooms
+    preparing = _lease(case, case.new, timeout=0.001)
+    assert preparing.status_code == 200, preparing.text
+    assert preparing.json()["data"]["preparing"] is True
+
+    _machine_is_up(case, case.new[1], "new-rooms-machine")
+    ready = _lease(case, case.new, timeout=0.001)
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["data"]["target"]["device_id"] == "new-rooms-machine"
+
+
 @pytest.mark.parametrize("failure", ["provider-error", "enrolment-exhausted"])
 def test_a_machine_that_cannot_be_prepared_is_reported_at_once(
     cloud_rooms, monkeypatch, failure
