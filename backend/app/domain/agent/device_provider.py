@@ -514,8 +514,8 @@ class DeviceChannel(Channel):
     supply = Supply.self_hosted
     # ``_ensure_screen`` below builds the whole model environment on the machine
     # — one shape, the metering-proxy env, and no other. The machine holds no
-    # provider credential and no model name; both are settled per request at
-    # admission. Every transport that reaches a machine over a link inherits
+    # provider credential, and which model a request runs on is settled per
+    # request at admission. Every transport that reaches a machine over a link inherits
     # this build, and inherits the declaration with it.
     builds_model_env = True
     # 要手的一轮要不到手时说的那一句。供给不同，这一句不同，而「要不要手、要不到
@@ -1198,14 +1198,14 @@ class DeviceChannel(Channel):
             connect_proxy_url=connect_proxy_url,
             no_proxy=self._no_proxy_hosts(),
         )
-        # 启动环境里没有模型这件事。Which model a request runs on is decided at
-        # one control point — admission, when the request reaches the metering
-        # proxy (结论 46) — and the proxy writes the answer into the REQUEST
-        # BODY on its way out. So nothing here names a model: not
-        # `claude --model`, not the three family aliases the CLI addresses
-        # subagents by. A key here would be a second declaration of what the
-        # binding on the card already says, and nobody could write down which
-        # of the two wins (I4a).
+        # Which model a request runs on is decided at one control point —
+        # admission, when the request reaches the metering proxy (结论 46) — and
+        # the proxy writes the answer into the REQUEST BODY on its way out; that
+        # always wins. The caller's ``ANTHROPIC_MODEL`` (chat `_model_kwargs`)
+        # names the same binding at launch only so Claude Code builds the system
+        # prompt for that model, and a change of binding reopens the screen at
+        # the next task boundary. The three family aliases the CLI addresses
+        # subagents by stay out: the subagent default is its own binding.
         model_env = {**(env or {})}
         # Dropped, not overridden: `subscription_provider` only ADDS keys, and
         # any of these surviving from a caller's env flips the CLI out of
