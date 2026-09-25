@@ -12,8 +12,13 @@ from app.api.response import ok
 from app.api.routes.machines import _require_project_access
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, ValidationError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    NotFoundError,
+    ValidationError,
+)
 from app.domain.dashboard.services import DashboardService
+from app.domain.memory.store import forget_fact_about
 from app.domain.project.repositories import ProjectRepository
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
@@ -172,3 +177,17 @@ async def user_topics(
 
 def _utc_midnight(day: date) -> datetime:
     return datetime.combine(day, time.min, tzinfo=UTC)
+
+
+@router.delete("/users/me/understanding/{entry_id}")
+async def forget_understanding(
+    entry_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Delete one thing an agent noted about the caller.
+
+    Only a note about the caller is theirs to delete. Any other id — someone
+    else's, an agent's own, one that does not exist — is the same 404."""
+    viewer = await _signed_in(resolver, "删除记忆")
+    if not await forget_fact_about(db, entry_id=entry_id, person_handle=viewer):
+        raise NotFoundError("记忆条目不存在")
+    return ok({"deleted": str(entry_id)})

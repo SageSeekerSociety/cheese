@@ -228,7 +228,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 机构   POST/GET /api/spaces · GET /spaces/{id}/dashboard · POST/GET /api/spaces/{id}/templates
 任务   POST/GET /api/templates/{id}/tasks · POST/GET/DELETE /api/projects/{id}/tasks[/{task_id}]
 工作区 GET /api/projects/{id}/{files,file,git/log,git/diff} · POST /{id}/{activities,heartbeat,summary}
-个人   GET /api/users/{handle}/{profile,topics} · GET/PUT /api/users/{handle}
+个人   GET /api/users/{handle}/{profile,topics} · DELETE /api/users/me/understanding/{id} · GET/PUT /api/users/{handle}
 反馈   GET/POST /api/feedback · GET /api/feedback/{meta,counts,mine,{id},{id}/comments} · POST /api/feedback/{read,{id}/comments,{id}/supports}
        管理端 GET/PATCH /api/admin/feedback[/{id}] · POST /api/admin/feedback/{id}/{status,notes}
        提案 GET/POST /api/topics/{id}/feedback-proposals · POST .../{block_id}/{accept,dismiss}

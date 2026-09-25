@@ -312,6 +312,36 @@ def test_topics_in_a_date_range_count_only_that_range(client, bearer):
     assert backwards.status_code == 422
 
 
+def test_a_person_deletes_only_what_was_noted_about_them(client, bearer):
+    p1, _ = _seed_u1_with_two_projects(client)
+    _remember(client, p1, "u2", "u2 爱写文档")
+
+    def notes(handle: str) -> dict[str, str]:
+        understanding = _profile(client, bearer, handle, viewer=handle)["understanding"]
+        return {u["content"]: u["id"] for u in understanding}
+
+    about_u1 = notes("u1")["擅长后端架构"]
+    about_u2 = notes("u2")["u2 爱写文档"]
+    missing = client.delete(
+        f"/users/me/understanding/{uuid.uuid4()}", headers=bearer("u1")
+    )
+    assert missing.status_code == 404
+
+    # A note about someone else answers exactly as one that does not exist.
+    for viewer, entry in (("u1", about_u2), ("u2", about_u1)):
+        resp = client.delete(f"/users/me/understanding/{entry}", headers=bearer(viewer))
+        assert (resp.status_code, resp.json()["message"]) == (
+            404,
+            missing.json()["message"],
+        )
+    assert "u2 爱写文档" in notes("u2")
+    assert client.delete(f"/users/me/understanding/{about_u1}").status_code == 401
+
+    resp = client.delete(f"/users/me/understanding/{about_u1}", headers=bearer("u1"))
+    assert resp.status_code == 200, resp.text
+    assert set(notes("u1")) == {"喜欢先写测试"}
+
+
 def test_a_stealth_team_is_named_only_to_its_members(client, bearer):
     _seed_u1_with_two_projects(client)
 
