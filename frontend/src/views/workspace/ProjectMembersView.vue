@@ -314,7 +314,7 @@ async function submitInvite() {
 
     <div v-for="s in sections" :key="s.key" class="mb-6" :data-section="s.key">
       <div class="t-eyebrow mb-2">{{ s.title }} · {{ s.rows.length }}</div>
-      <p v-if="s.key === 'team'" class="t-meta c-muted mb-2">{{ t('work.members.teamHint') }}</p>
+      <p v-if="s.key === 'team'" class="t-meta-read mb-2">{{ t('work.members.teamHint') }}</p>
       <v-card v-for="m in s.rows" :key="m.user_handle" class="mb-2 member-row" variant="outlined">
         <div class="d-flex align-center pa-3" @click="openProfile(m)">
           <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="36" class="mr-3" />
@@ -328,7 +328,7 @@ async function submitInvite() {
             <router-link
               v-if="s.key === 'team' && m.team_handle"
               :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
-              class="t-meta"
+              class="t-meta-read"
               @click.stop
               >{{ t('work.members.fromTeam', { handle: m.team_handle }) }}</router-link
             >
@@ -535,8 +535,8 @@ async function submitInvite() {
   font-weight: 500;
   color: var(--ink);
 }
-/* 私聊按钮 + 它右上角那颗未读。按钮本身是 icon 按钮，徽标压在它的右上角，所以
-   这个槽是定位参照系。 */
+/* 私聊按钮 + 它右上角那颗未读。按钮本身是 icon 按钮，徽标压在图标的右上角——
+   不是按钮框的：small 按钮比图标大一圈，贴框角会浮在图标上方。这个槽是定位参照系。 */
 .dm-slot {
   position: relative;
   display: inline-flex;
@@ -544,8 +544,8 @@ async function submitInvite() {
 /* 未读 = 裸的琥珀数字，没有底色：侧栏那颗徽标同款，同一个产品里未读只能有一种读法。 */
 .dm-unread {
   position: absolute;
-  top: -2px;
-  inset-inline-end: -2px;
+  top: 4px;
+  inset-inline-end: 4px;
   color: var(--accent);
   font-size: 12px;
   font-weight: 700;
