@@ -51,7 +51,10 @@ SECTIONS.forEach(([sec, , , groups]) => groups.forEach(([, items]) => items.forE
   WHERE[slug] = sec
   if (typeof src === 'string') slugOf[src.replace(/^local:/, '').replace(/\.md$/, '')] = slug
 })))
-DEV.forEach(([, items]) => items.forEach(([slug]) => { WHERE[slug] = 'dev' }))
+DEV.forEach(([, items]) => items.forEach(([slug, , src]) => {
+  WHERE[slug] = 'dev'
+  if (typeof src === 'string') slugOf[src.replace(/^local:/, '').replace(/\.md$/, '')] = slug
+}))
 
 function mdPage(file) {
   const raw = fix(readManual(file)).replace(/^---\n[\s\S]*?\n---\n/, '')
@@ -66,8 +69,8 @@ function mdPage(file) {
   }
   renderer.link = function ({ href, tokens }) {
     const t = this.parser.parseInline(tokens)
-    const m = /^\/([\w-]+)(?:\.md)?(?:#([\w-]+))?$/.exec(href)
-    if (m) { const slug = slugOf[m[1]] || m[1]; return `<a class="link" href="#/${WHERE[slug] || 'start'}/${slug}${m[2] ? '#' + m[2] : ''}">${t}</a>` }
+    const m = /^\/((?:dev\/)?[\w-]+)(?:\.md)?(?:#([\w-]+))?$/.exec(href)
+    if (m) { const slug = slugOf[m[1]] || m[1].replace(/^dev\//, ''); return `<a class="link" href="#/${WHERE[slug] || 'start'}/${slug}${m[2] ? '#' + m[2] : ''}">${t}</a>` }
     return `<a class="link" href="${href}" target="_blank" rel="noopener">${t}</a>`
   }
   renderer.image = ({ text }) => `<figure class="shot-todo"><span>截图待补：${esc(text || '界面截图')}</span></figure>`
@@ -103,7 +106,7 @@ function addPages(sec, groups) {
     const draft = typeof src !== 'string'
     P[sec + '/' + slug] = draft
       ? { title, lede: esc(src.lede), points: src.points, body: diagramFor(slug) + outlineBody(src.points, sec === 'dev'), src: sec === 'dev' ? '按当前代码撰写' : 'docs/manual', updated: '待写', draft }
-      : { title, ...mdPage(src) }
+      : (({ body, ...rest }) => ({ title, ...rest, body: diagramFor(slug) + body }))(mdPage(src))
     return draft ? [slug, title, 1] : [slug, title]
   })])
 }

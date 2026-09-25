@@ -139,7 +139,7 @@ function fitRoom() {
   const maxH = phone ? Math.min(innerHeight * 0.72, 640) : Infinity
   const k = Math.min(box.clientWidth / w, maxH / h, 1)
   f.style.width = w + 'px'; f.style.height = h + 'px'; f.style.transform = `scale(${k})`
-  f.style.marginLeft = Math.max(0, (box.clientWidth - w * k) / 2) + 'px'
+  f.style.left = Math.max(0, (box.clientWidth - w * k) / 2) + 'px'
   box.style.height = h * k + 'px'
 }
 function mountStory() {
