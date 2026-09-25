@@ -545,12 +545,23 @@ def test_send_user_file_reports_what_it_could_not_deliver_without_lying(
     assert process.publications == []
 
 
+def test_a_windows_workspace_is_seen_the_way_git_bash_spells_it():
+    """A Linux session host cannot have `C:\\...` as a path, so the session sees
+    a Windows executor's project where Git Bash, the shell Claude Code runs
+    commands in there, puts it."""
+    assert executor_transport.session_path("C:\\Users\\owner\\proj") == (
+        "/c/Users/owner/proj"
+    )
+    assert executor_transport.session_path("D:\\") == "/d"
+    assert executor_transport.session_path("/home/owner/proj") == "/home/owner/proj"
+
+
 def test_send_user_file_paths_keep_the_workspaces_address_and_invent_one_outside_it():
     """`POST /topics/{id}/shown` takes a workspace-relative pointer and refuses
     an absolute one; a file the agent left in `/tmp` still has to arrive, under
     the name this room already gives a paste with no name of its own.
     """
-    config = {"workspace": "/work", "central_workspace": "/center"}
+    config = {"workspace": "/work"}
     assert central.send_user_file_paths("docs/report.pdf", config) == (
         "/work/docs/report.pdf",
         "docs/report.pdf",
@@ -559,11 +570,10 @@ def test_send_user_file_paths_keep_the_workspaces_address_and_invent_one_outside
         "/work/shot.png",
         "shot.png",
     )
-    # The model is told the executor's paths; the plugin host sees the mount.
-    assert central.send_user_file_paths("/center/shot.png", config) == (
-        "/work/shot.png",
-        "shot.png",
-    )
+    # A Windows executor's workspace, as the session sees it (Git Bash's).
+    assert central.send_user_file_paths(
+        "/c/Users/owner/work/shot.png", {"workspace": "C:\\Users\\owner\\work"}
+    ) == ("/c/Users/owner/work/shot.png", "shot.png")
     machine, rel = central.send_user_file_paths("/tmp/scratch.bin", config)
     assert machine == "/tmp/scratch.bin"
     assert rel.startswith("uploads/") and rel.endswith("/scratch.bin")
@@ -662,7 +672,7 @@ def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(
 
     result = central.deliver_send_user_file(
         Client(),
-        {"workspace": "/work", "central_workspace": "/center"},
+        {"workspace": "/work"},
         {"id": "over"},
         {"files": [{"path": "/work/huge.bin", "name": "huge.bin"}]},
         invoke,
@@ -823,11 +833,14 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     assert (workspace / "hook receipt.txt").read_text() == '{"receipt":true}'
     assert not (remote_work / "hook receipt.txt").exists()
     # Sharing a prefix with an allowed hook cannot make arbitrary commands local.
-    changed = command + "; printf remote > appended.txt"
+    # The session's directory is the executor's path, which on this one host
+    # is the executor's own directory too; what ran where shows in the
+    # session's own variable, which never leaves this host.
+    changed = command + '; printf "${CHEESE_EXECUTION_CONFIG:-remote}" > appended.txt'
     subprocess.run(
         [prefix, changed],
         input="remote input",
-        cwd=workspace,
+        cwd=remote_work,
         env={**os.environ, **env},
         text=True,
         capture_output=True,

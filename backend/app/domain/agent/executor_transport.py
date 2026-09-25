@@ -148,6 +148,23 @@ def stat_file_on_the_machine(invoke, path, request_id):
 MACHINE_READ_CHUNK_BYTES = 21000
 
 
+def session_path(path):
+    """Where a room's session sees a path of its executor: at that path.
+
+    The session runs in a mount namespace of its own on the session host, with
+    the project view at the executor's own path (`client.py` `enter`), so the
+    paths it prints are the ones Claude Code on the executor would print. A
+    Windows path cannot be a path on the Linux session host; the session sees
+    it the way Git Bash, the shell Claude Code runs there, spells it
+    (`C:\\Users\\x` is `/c/Users/x`), and the executor turns that spelling
+    back into its own (`runtime.native_path`).
+    """
+    if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
+        rest = path[2:].replace("\\", "/").rstrip("/")
+        return "/" + path[0].lower() + ("/" + rest.lstrip("/") if rest else "")
+    return path
+
+
 def read_file_on_the_machine(invoke, path, request_id):
     """One file's bytes, from the machine that holds them, in pieces small
     enough that the build hands each one back whole."""
@@ -190,12 +207,12 @@ class PlatformHost:
         return json.loads(stdout) if stdout else {}
 
     def read_file(self, path):
-        # The agent spells paths as it was shown them: the session's view of the
-        # workspace, or relative to it.
-        machine = self.client.remote_path(path)
-        workspace = (self.client.config.get("workspace") or "").rstrip("/")
+        # The agent spells paths as it was shown them: the workspace's own path,
+        # or relative to it.
+        workspace = session_path(self.client.config.get("workspace") or "")
+        machine = path
         if workspace and not machine.startswith("/"):
-            machine = f"{workspace}/{machine}"
+            machine = f"{workspace.rstrip('/')}/{machine}"
         return read_file_on_the_machine(self.invoke, machine, f"{self.call_id}-read")
 
     def sync_task(self, task_id):
@@ -677,13 +694,4 @@ class RemoteClient:
         return json.loads(result.stdout)
 
     def control(self, request):
-        request = dict(request)
-        if "path" in request:
-            request["path"] = self.remote_path(request["path"])
-        return self.call("control", request)
-
-    def remote_path(self, path):
-        center = self.config.get("central_workspace", "")
-        if center and (path == center or path.startswith(center + "/")):
-            return self.config["workspace"] + path[len(center) :]
-        return path
+        return self.call("control", dict(request))

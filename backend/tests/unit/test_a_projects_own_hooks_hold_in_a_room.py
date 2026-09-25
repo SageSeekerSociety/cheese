@@ -34,6 +34,12 @@ from tests.pinned_claude import claude_binary
 
 SCRIPTS = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
 
+# The room's session runs in a namespace of its own (`client.py enter`), with
+# the project at the executor's path, which is Linux's to give.
+pytestmark = pytest.mark.skipif(
+    sys.platform != "linux", reason="the session's namespace is Linux's"
+)
+
 GUARD = """#!/bin/sh
 input=$(cat)
 case "$input" in

@@ -62,8 +62,9 @@ def _proxy_source() -> str:
             json.dumps(
                 {
                     "central_config": "/config",
-                    "central_workspace": "/center",
+                    "central_workspace": "/view",
                     "workspace": "/work",
+                    "session_workspace": "/work",
                 }
             ),
         )
@@ -94,7 +95,7 @@ def test_unavailable_search_tools_do_not_search_the_session_host():
         register((event, handler) => {handlers[event] = handler});
         for (const tool of ['Glob', 'Grep']) {
           const result = await handlers['tool.call']({}, {
-            tool, tool_use_id: 'search', path: '/center', pattern: 'private',
+            tool, tool_use_id: 'search', path: '/work', pattern: 'private',
           }, () => {throw new Error('searched session host')});
           assert.match(result.deny, /use Bash/);
         }
@@ -164,12 +165,20 @@ def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
         };
         await handlers['tool.call'](api, {
           tool: 'Read', tool_use_id: 'read', agentId: 'child',
-          file_path: '/center/image.png',
+          file_path: '/work/image.png',
         });
         assert.deepEqual(called, {server: 'native', tool: 'invoke', args: {
           id: 'read', tool: 'Read', args: {file_path: '/work/image.png'},
           session_id: 'session',
         }});
+        // A skill's file, which the build found in this host's config
+        // directory, is the project's on the executor.
+        await handlers['tool.call'](api, {
+          tool: 'Read', tool_use_id: 'skill',
+          file_path: '/config/skills/check/SKILL.md',
+        });
+        assert.deepEqual(called.args.args,
+          {file_path: '/work/.claude/skills/check/SKILL.md'});
     """)
 
 
@@ -268,11 +277,12 @@ def test_large_edit_receipt_reaches_the_caller_without_replaying_the_edit():
     """)
 
 
-def test_the_build_runs_bash_and_its_own_tasks_and_hears_the_executors_paths():
+def test_the_build_runs_bash_and_its_own_tasks_and_its_words_reach_the_model():
     """Bash, TaskStop and a read of the build's own output files are the
     build's to run (the shell prefix carries Bash to the executor); only the
-    file tools go to the executor. What the build writes about the central
-    workspace reaches the model spelled the way it was told the workspace."""
+    file tools go to the executor. What the build writes about a command
+    reaches the model as the build wrote it: the session sees the project at
+    the executor's path, so there is nothing to respell."""
     source = _proxy_source().replace(
         '"workspace": "/work"', '"workspace": "/work", "central_tmp": "/session-tmp"'
     )
@@ -296,14 +306,14 @@ def test_the_build_runs_bash_and_its_own_tasks_and_hears_the_executors_paths():
             return {content: [{type: 'text', text}]};
           }},
         };
-        const reset = 'Shell cwd was reset to /center';
+        const reset = 'Shell cwd was reset to /work';
+        const outcome = {
+          ref: 1, result: {stdout: 'x', stderr: reset}, text: 'x\\n' + reset,
+        };
         const bash = await handlers['tool.call'](api, {
           tool: 'Bash', tool_use_id: 'b', command: 'cd /tmp',
-        }, async () => ({
-          ref: 1, result: {stdout: 'x', stderr: reset}, text: 'x\\n' + reset,
-        }));
-        assert.equal(bash.result.stderr, 'Shell cwd was reset to /work');
-        assert.equal(bash.text, 'x\\nShell cwd was reset to /work');
+        }, async () => outcome);
+        assert.equal(bash, outcome);
         const stop = await handlers['tool.call'](api, {
           tool: 'TaskStop', tool_use_id: 's', task_id: 'b123',
         }, async () => 'harness');
@@ -315,7 +325,7 @@ def test_the_build_runs_bash_and_its_own_tasks_and_hears_the_executors_paths():
           }, async () => 'local');
           assert.equal(own, 'local');
         }
-        for (const path of ['/session-tmp/../etc/passwd', '/center/a.txt',
+        for (const path of ['/session-tmp/../etc/passwd', '/work/a.txt',
                             '/config/projects/-w/s.jsonl']) {
           await handlers['tool.call'](api, {
             tool: 'Read', tool_use_id: 'r', file_path: path,
@@ -398,11 +408,11 @@ def test_send_user_file_is_delivered_to_the_room_never_to_the_anthropic_upload()
     """)
 
 
-def test_send_user_file_reaches_a_file_the_model_spelled_on_the_executor():
-    """The session tells the model the executor's paths (prompt.section rewrites
-    them), so a file it just wrote is named `/work/…` while `$.fs` on this host
-    sees the forwarded workspace under `central_workspace`. Either spelling has
-    to find the same bytes.
+def test_send_user_file_reads_the_path_the_model_named():
+    """The session sees the project at the executor's own path, so the path the
+    model names is the one `$.fs` opens on this host, as it would open it
+    there; a relative one is the build's own working directory's, the
+    workspace, whatever directory the shell is in.
     """
     _run_proxy("""
         import assert from 'node:assert/strict';
@@ -412,21 +422,18 @@ def test_send_user_file_reaches_a_file_the_model_spelled_on_the_executor():
         register((event, handler) => {handlers[event] = handler});
         const bytes = Buffer.from('png');
         const asked = [];
+        let sent;
         const api = {
           session: {id: async () => 'session'},
           fs: {
             stat: async (path) => {
               asked.push(path);
-              if (path.startsWith('/work/')) throw new Error('ENOENT');
               return {kind: 'file', size: bytes.length, mtimeMs: 0, isLink: false};
             },
-            read: async (path) => {
-              if (path.startsWith('/work/')) throw new Error('ENOENT');
-              assert.equal(path, '/center/shot.png');
-              return {base64: bytes.toString('base64')};
-            },
+            read: async (path) => ({base64: bytes.toString('base64')}),
           },
           mcp: {call: async (server, tool, args) => {
+            sent = args.files;
             const text = JSON.stringify({result: {attachments: []}});
             return {content: [{type: 'text', text}]};
           }},
@@ -434,10 +441,12 @@ def test_send_user_file_reaches_a_file_the_model_spelled_on_the_executor():
 
         await handlers['tool.call'](api, {
           tool: 'SendUserFile', tool_use_id: 'send',
-          files: ['/work/shot.png'], status: 'proactive',
+          files: ['/work/shot.png', 'docs/plan.md'], status: 'proactive',
         }, async () => 'next');
 
-        assert.deepEqual(asked, ['/work/shot.png', '/center/shot.png']);
+        assert.deepEqual(asked, ['/work/shot.png', 'docs/plan.md']);
+        assert.deepEqual(sent.map((file) => file.data_b64),
+          [bytes.toString('base64'), bytes.toString('base64')]);
     """)
 
 

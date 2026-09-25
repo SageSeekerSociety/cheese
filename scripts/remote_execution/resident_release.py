@@ -42,12 +42,18 @@ def main():
         '"name": "cheese-native-execution"',
         '"name": "cheese-native-execution-before-release"',
     )
+    # The previous plugin marks every prompt section it sees, so a request that
+    # still went through it after the release would carry the mark.
     previous["proxy.js"] = current["proxy.js"].replace(
-        "result.text.split(execution.central_workspace).join(execution.workspace)",
-        "result.text.split(execution.central_workspace).join(execution.workspace)"
-        ' + " BEFORE_RELEASE"',
+        "export function register(on) {",
+        "export function register(on) {\n"
+        '  on("prompt.section", async ($, e, next) => {\n'
+        "    const result = await next(e);\n"
+        '    return { ...result, text: result.text === null ? null : result.text + " BEFORE_RELEASE" };\n'
+        "  });",
     )
     assert previous["client.py"] != current["client.py"]
+    assert previous["proxy.js"] != current["proxy.js"]
     # The session starts on the previous release, laid down as the launcher
     # lays one down, and the release below replaces it before the first turn.
     release.sources = lambda: previous

@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -55,14 +56,18 @@ EXECUTOR_ENV = {
 class Machine:
     """A workspace on the "executor" and the runtime serving it."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, shell="bash", startup=None):
         self.root = root
         self.workspace = root / "executor project"
         self.workspace.mkdir(parents=True)
+        # The executor reports its workspace as its real path.
+        self.workspace = self.workspace.resolve()
         self.state = root / "state"
         home = root / "executor-home"
         home.mkdir()
-        self.env = {**EXECUTOR_ENV, "HOME": str(home)}
+        for name, text in (startup or {}).items():
+            (home / name).write_text(text)
+        self.env = {**EXECUTOR_ENV, "HOME": str(home), "SHELL": shutil.which(shell)}
         process = subprocess.run(
             [sys.executable, str(RUNTIME), "start", "--state", str(self.state)],
             input=json.dumps(
@@ -298,7 +303,9 @@ def test_an_abandoned_watched_command_is_stopped_and_an_own_task_is_not(
 
 class Session:
     """What the build gives its shell prefix: the target, a cwd file, its
-    temp directory and a merged output file."""
+    temp directory and a merged output file. Its working directory is the
+    executor's own path, where the session sees the project (`client.py`
+    `enter`); on this one host that is the executor's directory itself."""
 
     def __init__(self, root: Path, machine: Machine, kind=None):
         self.root = root
@@ -315,6 +322,7 @@ class Session:
                     "command": [sys.executable, str(RUNTIME)],
                     "state": str(machine.state),
                     "workspace": str(machine.workspace),
+                    "session_workspace": str(machine.workspace),
                     "central_workspace": str(self.central),
                     "central_config": str(self.config),
                     "central_tmp": str(self.tmp),
@@ -325,6 +333,7 @@ class Session:
         )
         self.output = root / "output"
         self.cwd_file = self.tmp / "claude-ab12-cwd"
+        self.workspace = machine.workspace
 
     def wrapped(self, command):
         """A Bash command the way the build hands it to the prefix."""
@@ -347,7 +356,7 @@ class Session:
         try:
             return subprocess.Popen(
                 argv,
-                cwd=cwd or self.central,
+                cwd=cwd or self.workspace,
                 env=env or self.env(),
                 stdin=stdin,
                 stdout=output,
@@ -387,16 +396,15 @@ def test_a_bash_command_runs_there_and_the_build_learns_its_directory(session, m
     assert not session.cwd_file.exists()
     code, _ = session.run(session.wrapped("cd 'only there'"))
     assert code == 0
-    assert session.cwd_file.read_text() == f"{session.central}/only there\n"
+    assert session.cwd_file.read_text() == f"{machine.workspace}/only there\n"
     code, _ = session.run(session.wrapped("cd /"))
     assert session.cwd_file.read_text() == "/\n"
 
 
-def test_the_prefix_starts_in_the_executors_spelling_of_its_directory(session, machine):
+def test_a_command_starts_in_the_sessions_directory(session, machine):
     (machine.workspace / "sub").mkdir()
-    (session.central / "sub").mkdir()
-    code, output = session.run(session.wrapped("pwd"), cwd=session.central / "sub")
-    assert (code, output) == (0, f"{(machine.workspace / 'sub').resolve()}\n".encode())
+    code, output = session.run(session.wrapped("pwd"), cwd=machine.workspace / "sub")
+    assert (code, output) == (0, f"{machine.workspace / 'sub'}\n".encode())
 
 
 DRIVER = textwrap.dedent(
@@ -594,22 +602,57 @@ def test_hook_input_over_the_limit_is_refused_before_it_travels(session, machine
     assert not (machine.workspace / "got-input.txt").exists()
 
 
-def test_a_hook_gets_its_input_spelled_for_the_executor(session, machine):
-    process = session.prefix(
-        'cat > hook-input.json; printf "%s" "$CLAUDE_PROJECT_DIR" > project-dir.txt',
-        stdin=subprocess.PIPE,
-        env=session.env(CLAUDE_PROJECT_DIR=str(session.central)),
-    )
-    process.communicate(
-        json.dumps({"cwd": str(session.central), "tool_name": "Bash"}).encode(),
-        timeout=60,
-    )
-    assert process.returncode == 0
-    assert json.loads((machine.workspace / "hook-input.json").read_text()) == {
+def test_a_hook_gets_the_builds_input_and_a_skill_file_is_the_projects(
+    session, machine
+):
+    # The build reads a skill from this host's config directory; on the
+    # executor, the skill is the project's.
+    skill = machine.workspace / ".claude/skills/check"
+    skill.mkdir(parents=True)
+    (skill / "run.sh").write_text("echo PROJECT_SKILL\n")
+    hook_input = {
         "cwd": str(machine.workspace),
         "tool_name": "Bash",
+        "tool_input": {"command": f"sh '{session.config}/skills/check/run.sh'"},
+    }
+    process = session.prefix(
+        'cat > hook-input.json; printf "%s" "$CLAUDE_PROJECT_DIR" > project-dir.txt; '
+        f"sh '{session.config}/skills/check/run.sh'",
+        stdin=subprocess.PIPE,
+        env=session.env(CLAUDE_PROJECT_DIR=str(machine.workspace)),
+    )
+    process.communicate(json.dumps(hook_input).encode(), timeout=60)
+    assert (process.returncode, session.output.read_bytes()) == (0, b"PROJECT_SKILL\n")
+    received = json.loads((machine.workspace / "hook-input.json").read_text())
+    assert received == {
+        **hook_input,
+        "tool_input": {"command": f"sh '{skill}/run.sh'"},
     }
     assert (machine.workspace / "project-dir.txt").read_text() == str(machine.workspace)
+
+
+def test_a_machine_whose_shell_is_zsh_runs_commands_in_zsh(tmp_path):
+    """Claude Code on the executor runs its commands in the shell it picks
+    there, zsh for a zsh user, from that shell's own snapshot."""
+    machine = Machine(
+        tmp_path / "zsh-machine",
+        shell="zsh",
+        startup={
+            ".zshrc": "alias zsh_alias='echo ZSH_ALIAS'\n"
+            "zsh_fn() { echo ZSH_FN; }\nsetopt SH_WORD_SPLIT\n"
+        },
+    )
+    try:
+        session = Session(tmp_path / "zsh-session", machine)
+        code, output = session.run(
+            session.wrapped(
+                'echo "${ZSH_VERSION:+zsh}${BASH_VERSION:+bash}"; zsh_alias; zsh_fn; '
+                'words="one two"; for word in $words; do echo "[$word]"; done'
+            )
+        )
+        assert (code, output) == (0, b"zsh\nZSH_ALIAS\nZSH_FN\n[one]\n[two]\n")
+    finally:
+        machine.stop()
 
 
 def test_this_hosts_environment_stays_here(session, machine):
@@ -681,7 +724,7 @@ def test_a_machine_out_of_reach_is_said_at_once(tmp_path, machine):
 # --- the launch -----------------------------------------------------------------
 
 
-def _prepared(tmp_path, machine, monkeypatch):
+def _prepared(tmp_path, machine, monkeypatch, platform_hook="touch platform-hook"):
     from app.domain.agent.harness.claude_code.remote_execution import client, release
 
     monkeypatch.setattr(release, "mount_state", lambda _path: release.MOUNT_LIVE)
@@ -713,9 +756,7 @@ def _prepared(tmp_path, machine, monkeypatch):
         claude=claude_binary(),
         base_settings={
             "hooks": {
-                "Stop": [
-                    {"hooks": [{"type": "command", "command": "touch platform-hook"}]}
-                ]
+                "Stop": [{"hooks": [{"type": "command", "command": platform_hook}]}]
             }
         },
         home_override=home,
@@ -725,44 +766,56 @@ def _prepared(tmp_path, machine, monkeypatch):
 
 
 def test_only_whole_trusted_commands_run_on_this_host(tmp_path, machine, monkeypatch):
-    launch, home = _prepared(tmp_path, machine, monkeypatch)
+    # Where each command ran, told apart by the variable only the executor
+    # has. The session's directory is the executor's path, which on this one
+    # host is also where the executor keeps the project.
+    marks = tmp_path / "marks"
+    marks.mkdir()
+
+    def marking(name):
+        return f'printf %s "${{EXECUTOR_MARKER:-central}}" > {marks}/{name}'
+
+    launch, home = _prepared(
+        tmp_path, machine, monkeypatch, platform_hook=marking("platform-hook")
+    )
     prefix = launch["env"]["CLAUDE_CODE_SHELL_PREFIX"]
-    central = Path(launch["cwd"])
+    assert launch["workspace"] == str(machine.workspace)
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(home),
         "CLAUDE_CODE_TMPDIR": launch["env"]["CLAUDE_CODE_TMPDIR"],
     }
-
-    def run(command):
-        return subprocess.run(
+    for command, name, where in (
+        (marking("platform-hook"), "platform-hook", "central"),
+        (marking("arbitrary"), "arbitrary", "on-the-executor"),
+        (
+            marking("platform-hook") + "; " + marking("appended"),
+            "appended",
+            "on-the-executor",
+        ),
+    ):
+        done = subprocess.run(
             [prefix, command],
-            cwd=central,
+            cwd=machine.workspace,
             env=env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=60,
         )
-
-    for command, made, where in (
-        ("touch platform-hook", "platform-hook", central),
-        ("touch arbitrary", "arbitrary", machine.workspace),
-        ("touch platform-hook; touch appended", "appended", machine.workspace),
-        ("touch project-hook", "project-hook", machine.workspace),
-        (
-            f"touch '{central}/absolute-central-path'",
-            "absolute-central-path",
-            machine.workspace,
-        ),
-    ):
-        assert run(command).returncode == 0, command
-        assert (where / made).exists(), command
-    assert (central / "platform-hook").exists()
-    for name in ("arbitrary", "appended", "project-hook"):
-        assert (machine.workspace / name).exists(), name
-        assert not (central / name).exists(), name
-    assert not (central / "absolute-central-path").exists()
-    assert (machine.workspace / "absolute-central-path").exists()
+        assert done.returncode == 0, (command, done.stderr)
+        assert (marks / name).read_text() == where, command
+    assert (
+        subprocess.run(
+            [prefix, "touch project-hook"],
+            cwd=machine.workspace,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=60,
+        ).returncode
+        == 0
+    )
+    assert (machine.workspace / "project-hook").exists()
 
 
 def test_the_projects_hooks_are_registered_centrally_and_run_there(
@@ -780,6 +833,88 @@ def test_the_projects_hooks_are_registered_centrally_and_run_there(
     guard = written["hooks"]["PreToolUse"][0]["matcher"].split("|")
     assert "Bash" not in guard and "Read" in guard
     assert launch["env"]["CLAUDE_CODE_TMPDIR"]
+
+
+# --- the session's namespace ------------------------------------------------------
+
+LINUX_NAMESPACES = pytest.mark.skipif(
+    sys.platform != "linux", reason="the session's namespace is Linux's"
+)
+
+
+def _enter(tmp_path, seen, command):
+    """`client.py enter` for a session whose executor holds the project at
+    `seen`, running `command` where the session would run."""
+    directory = tmp_path / "session"
+    view = directory / "view"
+    view.mkdir(parents=True)
+    (view / "marker").write_text("VIEW\n")
+    for name in ("config", "tmp"):
+        (directory / name).mkdir()
+    target = directory / "execution.json"
+    target.write_text(
+        json.dumps(
+            {
+                "session_workspace": seen,
+                "central_workspace": str(view),
+                "central_config": str(directory / "config"),
+                "central_tmp": str(directory / "tmp"),
+            }
+        )
+    )
+    done = subprocess.run(
+        [sys.executable, str(CLIENT), "enter", str(target), "/bin/sh", "-c", command],
+        cwd=view,
+        env={"PATH": os.environ["PATH"], "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return view, done
+
+
+@LINUX_NAMESPACES
+def test_the_session_sees_its_project_at_the_executors_path(tmp_path):
+    assert not Path("/executor").exists()
+    view, done = _enter(
+        tmp_path,
+        "/executor/owner/project",
+        'pwd; pwd -P; echo "$PWD"; cat marker; echo made > made-here; '
+        f"ls /executor/owner; cat {tmp_path}/session/view/marker; "
+        "touch /executor/owner/beside && ls /executor/owner",
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == (
+        "/executor/owner/project\n" * 3 + "VIEW\nproject\nVIEW\nbeside\nproject\n"
+    )
+    assert (view / "made-here").read_text() == "made\n"
+    # What the session made beside the project stayed in the session.
+    assert not Path("/executor").exists()
+
+
+@LINUX_NAMESPACES
+@pytest.mark.parametrize(
+    ("seen", "reason"),
+    [
+        ("relative/project", "not an absolute path"),
+        ("/srv/../project", "not a normalized path"),
+        ("/proc/project", "kernel filesystem"),
+        ("{home}", "which the session needs"),
+    ],
+)
+def test_a_path_the_session_cannot_take_is_refused(tmp_path, seen, reason):
+    view, done = _enter(tmp_path, seen.format(home=tmp_path), "touch ran")
+    assert done.returncode != 0
+    assert reason in done.stderr
+    assert not (view / "ran").exists()
+
+
+@pytest.mark.skipif(sys.platform == "linux", reason="refused only off Linux")
+def test_a_session_host_without_linux_namespaces_is_refused(tmp_path):
+    view, done = _enter(tmp_path, "/executor/project", "touch ran")
+    assert done.returncode != 0
+    assert "must be Linux" in done.stderr
+    assert not (view / "ran").exists()
 
 
 # --- the guard ------------------------------------------------------------------

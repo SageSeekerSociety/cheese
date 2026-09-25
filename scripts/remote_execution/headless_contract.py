@@ -223,6 +223,7 @@ class Session:
         env=None,
         home=None,
         launch=None,
+        port=0,
     ):
         self.name = name
         self.root = root / name
@@ -240,7 +241,9 @@ class Session:
             workspace(self.workspace)
         if settings is not None:
             (self.config / "settings.json").write_text(json.dumps(settings, indent=2))
-        self.server = Server(("127.0.0.1", 0), Refusing if refuse else Handler)
+        # A given port lets two sessions run one after the other against the
+        # same model address.
+        self.server = Server(("127.0.0.1", port), Refusing if refuse else Handler)
         self.server.state = {
             "dir": self.fixture,
             "actions": Directives(),
@@ -1645,7 +1648,10 @@ def stop_remote(session):
 
 def functionhooks(binary, root):
     """The remote-execution plugin under -p: tools, the shell prefix and the guard."""
-    trusted = root / "functionhooks" / "trusted-hook.txt"
+    # In the session's own home: what the session creates directly in a
+    # directory leading down to the executor's path stays in its namespace
+    # (`client.py enter`).
+    trusted = root / "functionhooks" / "home" / "trusted-hook.txt"
     session = remote(
         binary,
         root,
@@ -1671,10 +1677,12 @@ def functionhooks(binary, root):
             and str(session.remote_workspace) in out[0],
             json.dumps(out)[:200],
         )
+        # The session sees the project at the executor's path; this host's
+        # view of it is elsewhere.
         target = session.workspace / "new.txt"
-        mark = session.user(do("Write", file_path=str(target), content="REMOTE_WRITE"))
-        session.wait(is_("result"), 60, mark)
         written = session.remote_workspace / "new.txt"
+        mark = session.user(do("Write", file_path=str(written), content="REMOTE_WRITE"))
+        session.wait(is_("result"), 60, mark)
         yield (
             "function hooks: Write lands in the executor workspace, not the central one",
             written.exists()

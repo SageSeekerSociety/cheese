@@ -17,9 +17,12 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import threading
 import uuid
 from pathlib import Path
+
+import pytest
 
 from app.domain.agent.harness.claude_code.remote_execution import client, release
 from app.domain.agent.skills import native_skill_files
@@ -57,6 +60,11 @@ class Executor:
         return {"workspace": "/executor/project"}
 
 
+# The session runs in a namespace of its own (`client.py enter`), with the
+# project at the executor's path, which is Linux's to give.
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="the session's namespace is Linux's"
+)
 def test_host_instruction_files_stay_out_while_the_rooms_own_arrive(
     tmp_path, monkeypatch
 ):

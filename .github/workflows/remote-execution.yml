@@ -55,6 +55,9 @@ jobs:
           - 6379/tcp
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Let a session have its own namespace
+        # These jobs launch sessions the way a room does (`client.py enter`).
+        run: .github/scripts/allow-user-namespaces.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
@@ -210,6 +213,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Let a session have its own namespace
+        # These jobs launch sessions the way a room does (`client.py enter`).
+        run: .github/scripts/allow-user-namespaces.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'

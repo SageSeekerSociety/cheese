@@ -135,6 +135,59 @@ def connect(state):
     return connection
 
 
+def claude_shell(env):
+    """The shell Claude Code runs its commands in on a machine with this
+    environment, chosen as the pinned build chooses it (2.1.277; held to it by
+    `scripts/remote_execution/mcp_contract.py`). On Windows, the Git Bash it is
+    pointed at; elsewhere `CLAUDE_CODE_SHELL` when it names an executable bash
+    or zsh, then `$SHELL` when it does, then zsh before bash (bash before zsh
+    when `$SHELL` names bash), each found on PATH first and then in the usual
+    directories."""
+    if sys.platform == "win32" and env.get("CLAUDE_CODE_GIT_BASH_PATH"):
+        return env["CLAUDE_CODE_GIT_BASH_PATH"]
+
+    def usable(path):
+        return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+
+    def posix(path):
+        return "bash" in path or "zsh" in path
+
+    override = env.get("CLAUDE_CODE_SHELL", "")
+    if posix(override) and usable(override):
+        return override
+    own = env.get("SHELL", "")
+    order = ("bash", "zsh") if "bash" in own else ("zsh", "bash")
+    found = [shutil.which(name, path=env.get("PATH")) for name in order]
+    candidates = [
+        found[0],
+        *(
+            f"{directory}/{name}"
+            for name in order
+            for directory in ("/bin", "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin")
+        ),
+        found[1],
+    ]
+    if posix(own):
+        candidates.insert(0, own)
+    for candidate in candidates:
+        if usable(candidate):
+            return candidate
+    raise RuntimeError("No bash or zsh on this machine for Claude Code to run")
+
+
+def native_path(path):
+    """This machine's own spelling of a path the session names.
+
+    The session sees a Windows executor's paths the way Git Bash spells them
+    (`/c/Users/x` for `C:\\Users\\x`, `executor_transport.session_path`),
+    which Git Bash opens and nothing else here does. Elsewhere the spellings
+    are the same.
+    """
+    if sys.platform != "win32":
+        return path
+    return re.sub(r"^/([A-Za-z])(?:/|$)", lambda m: m.group(1).upper() + ":/", path)
+
+
 def request(state, method, params=None):
     with connect(state) as connection:
         with connection.makefile("rwb") as stream:
@@ -359,14 +412,15 @@ class Executor:
                     # the build that writes the shell snapshot every command
                     # here starts from (`shell_snapshot`). So it carries the
                     # environment a command gets — the room's own, credentials
-                    # included, with the platform CLI on PATH — and bash, the
-                    # shell the central session wraps its commands for.
+                    # included, with the platform CLI on PATH — and is held to
+                    # the shell commands here run in, which is the one it would
+                    # choose itself.
                     env = dict(
                         self.command_env(),
                         CLAUDE_CONFIG_DIR=str(config_dir),
                         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
                         CLAUDE_CODE_TMPDIR=str(self.state / "serve-temp"),
-                        SHELL=self.bash_program(),
+                        CLAUDE_CODE_SHELL=claude_shell(self.env),
                     )
                     for key in (
                         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS",
@@ -444,6 +498,7 @@ class Executor:
                     key,
                     params.get("server", "native"),
                     params.get("cwd"),
+                    tool_hooks=not params.get("platform"),
                 )
             }
         except Exception as exc:
@@ -456,11 +511,13 @@ class Executor:
         self.log(key, "failed" if "error" in result else "completed", result=result)
         return result
 
-    def execute(self, tool, args, key, server="native", cwd=None):
+    def execute(self, tool, args, key, server="native", cwd=None, tool_hooks=True):
         name = tool if server == "native" else f"mcp__{server}__{tool}"
-        args = self.hooks("PreToolUse", name, args, key, cwd=cwd)
+        if tool_hooks:
+            args = self.hooks("PreToolUse", name, args, key, cwd=cwd)
         result = self.execute_core(tool, args, key, server)
-        self.hooks("PostToolUse", name, args, key, result, cwd=cwd)
+        if tool_hooks:
+            self.hooks("PostToolUse", name, args, key, result, cwd=cwd)
         return result
 
     def hooks(self, event, tool, args, key, result=None, cwd=None):
@@ -548,6 +605,12 @@ class Executor:
                 "task_type": "local_bash",
                 "command": record["command"],
             }
+        args = {
+            key: native_path(value)
+            if key in ("file_path", "notebook_path", "path") and isinstance(value, str)
+            else value
+            for key, value in args.items()
+        }
         result = self.client("native").call(
             "tools/call", {"name": tool, "arguments": args}
         )
@@ -557,16 +620,21 @@ class Executor:
 
     # --- commands ------------------------------------------------------------
 
-    def bash_program(self):
-        """The bash every command runs in, chosen as the build chooses it: the
-        machine's own `$SHELL` when that is bash, else bash on PATH; on
-        Windows, the Git Bash the build is pointed at."""
-        if sys.platform == "win32" and self.env.get("CLAUDE_CODE_GIT_BASH_PATH"):
-            return self.env["CLAUDE_CODE_GIT_BASH_PATH"]
-        own = self.env.get("SHELL", "")
-        if Path(own).name == "bash" and os.access(own, os.X_OK):
-            return own
-        return shutil.which("bash", path=self.env.get("PATH")) or "/bin/bash"
+    def shell_argv(self, script):
+        """How the build starts its shell for one command: after its snapshot
+        when it has one, and as a login shell when it does not."""
+        snapshot = self.shell_snapshot()
+        return [
+            claude_shell(self.env),
+            "-c",
+            *([] if snapshot else ["-l"]),
+            (
+                f"source {shlex.quote(str(snapshot))} 2>/dev/null || true && "
+                if snapshot
+                else ""
+            )
+            + script,
+        ]
 
     def command_env(self):
         """The environment every command starts from: the room's, with the
@@ -608,9 +676,11 @@ class Executor:
             except Exception as exc:  # noqa: BLE001 — a command still runs
                 self.log("shell-snapshot", "failed", error=str(exc))
                 return None
+            shell = claude_shell(self.env)
+            kind = "zsh" if "zsh" in shell else "bash" if "bash" in shell else "sh"
             found = sorted(
                 (self.state / "native-config/shell-snapshots").glob(
-                    "snapshot-bash-*.sh"
+                    f"snapshot-{kind}-*.sh"
                 ),
                 key=lambda path: path.stat().st_mtime,
             )
@@ -833,9 +903,13 @@ class Executor:
             and err_offset + len(err) >= err_size
         ):
             answer["exit"] = int((record / "exit").read_text())
-            cwd = self._final_directory(record)
-            if cwd is not None:
-                answer["cwd"] = str(cwd)
+            # As the shell spelled it, which is the session's spelling too
+            # (`native_path`).
+            path = record / "cwd"
+            if path.exists():
+                text = path.read_text(errors="replace")[:4096].strip()
+                if text:
+                    answer["cwd"] = text
         return answer
 
     def _final_directory(self, record):
@@ -844,10 +918,7 @@ class Executor:
         if not path.exists():
             return None
         text = path.read_text(errors="replace")[:4096].strip()
-        if sys.platform == "win32":
-            # Git Bash spells C:\x as /c/x, a path only it can open.
-            text = re.sub(r"^/([A-Za-z])(?=/|$)", lambda m: m.group(1) + ":", text)
-        return Path(text) if text else None
+        return Path(native_path(text)) if text else None
 
     def shell(self, params):
         """The central session's shell prefix: one command, started, read and
@@ -882,7 +953,7 @@ class Executor:
                             "Command ID already belongs to different input"
                         )
                     return {"started": True}
-                cwd = Path(params.get("cwd") or self.root)
+                cwd = Path(native_path(params.get("cwd") or str(self.root)))
                 if not cwd.is_dir():
                     # Gone since the session last looked: its own reset.
                     cwd = self.root
@@ -893,22 +964,14 @@ class Executor:
                     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
                 )
                 if params.get("kind") == "bash":
-                    snapshot = self.shell_snapshot()
-                    script = (
-                        (
-                            f"source {shlex.quote(str(snapshot))} "
-                            "2>/dev/null || true && "
-                            if snapshot
-                            else ""
-                        )
-                        + params["body"]
+                    argv = self.shell_argv(
+                        params["body"]
                         + " && pwd -P >| "
                         + shlex.quote(str(record / "cwd"))
                     )
-                    argv = [self.bash_program(), "-c", script]
                 elif params.get("kind") == "sh":
                     argv = (
-                        [self.bash_program(), "-c", params["body"]]
+                        [claude_shell(self.env), "-c", params["body"]]
                         if sys.platform == "win32"
                         else ["/bin/sh", "-c", params["body"]]
                     )
@@ -990,20 +1053,13 @@ class Executor:
         """
         command_id = "task-" + uuid.uuid4().hex[:16]
         record = self._record(command_id)
-        snapshot = self.shell_snapshot()
-        script = (
-            (
-                f"source {shlex.quote(str(snapshot))} 2>/dev/null || true && "
-                if snapshot
-                else ""
-            )
-            + f"eval {shlex.quote(args['command'])} < /dev/null && pwd -P >| "
-            + shlex.quote(str(record / "cwd"))
-        )
         cwd = self.bash_cwd if self.bash_cwd.is_dir() else self.root
         self.start_command(
             command_id,
-            [self.bash_program(), "-c", script],
+            self.shell_argv(
+                f"eval {shlex.quote(args['command'])} < /dev/null && pwd -P >| "
+                + shlex.quote(str(record / "cwd"))
+            ),
             cwd,
             self.command_env(),
             merge=True,
@@ -1050,17 +1106,20 @@ class Executor:
         kind = params["subtype"]
         if kind == "checkpoint":
             self.hooks("Stop", "", {}, params["request_id"])
+            # The platform's own command, not a call of the agent's: the
+            # project's tool hooks never see it, as they never would natively.
             return self.invoke(
                 {
                     "id": params["request_id"],
                     "tool": "Bash",
                     "args": {"command": "cheese-sync"},
+                    "platform": True,
                 }
             )
         if kind == "shell":
             return self.shell(params)
         if kind == "read_file":
-            path = Path(params["path"])
+            path = Path(native_path(params["path"]))
             if not path.is_absolute():
                 path = self.root / path
             return {"contents": path.read_text(), "absPath": str(path)}
