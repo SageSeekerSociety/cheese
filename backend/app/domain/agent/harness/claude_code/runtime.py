@@ -123,15 +123,21 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
 
     # --- the room's controls -------------------------------------------------
 
-    def control_state(self, topic: uuid.UUID) -> dict:
+    async def control_state(self, topic: uuid.UUID) -> dict:
         """What the room's controls show, from the mirror alone."""
         handle = self.live.get(topic)
+        subscription = self.subscriptions.get(topic)
+        mirrored = (
+            await subscription.on_disk(control_state, subscription.path)
+            if subscription is not None
+            else control_state(None)
+        )
         return {
             "id": handle.session_id if handle else None,
             "agent_handle": handle.agent_handle if handle else None,
             "connected": handle is not None,
             "controls": list(CONTROLS),
-            **control_state(handle.mirror if handle else None),
+            **mirrored,
         }
 
     async def control(self, topic: uuid.UUID, request: dict) -> dict:
@@ -146,5 +152,6 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
         from app.domain.agent.runtime import get_broker
 
         await get_broker().publish(
-            str(topic), {"type": "agent_control", "state": self.control_state(topic)}
+            str(topic),
+            {"type": "agent_control", "state": await self.control_state(topic)},
         )

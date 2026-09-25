@@ -9,6 +9,7 @@ log already survives.
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from app.domain.agent.harness import (
     ActivityConsumer,
@@ -23,19 +24,23 @@ from app.domain.agent.harness.pi.events import CONTINUES
 from app.domain.agent.harness.pi.journal import Journal
 
 
-async def receive(path: Path, call: Callable[[str, dict], Awaitable[dict]]) -> None:
+async def receive(
+    path: Path,
+    call: Callable[[str, dict], Awaitable[dict]],
+    on_disk: Callable[..., Awaitable[Any]],
+) -> None:
     """Pull whatever the runner has that we do not, a page at a time."""
-    journal = Journal(path)
+    journal = await on_disk(Journal, path)
     try:
-        since = journal.recall("received")
+        since = await on_disk(journal.recall, "received")
         while True:
             page = (await call("entries", {"since": since}))["entries"]
-            journal.import_entries(page)
+            await on_disk(journal.import_entries, page)
             if len(page) < PAGE:
                 return
             since = page[-1]["id"]
     finally:
-        journal.close()
+        await on_disk(journal.close)
 
 
 class Subscription(subscription.Subscription[PiBacklog]):
@@ -54,7 +59,7 @@ class Subscription(subscription.Subscription[PiBacklog]):
         self.session_id = session_id
 
     async def receive(self) -> None:
-        await receive(self.path, self.call)
+        await receive(self.path, self.call, self.on_disk)
 
     def reader(self) -> PiBacklog:
         return PiBacklog(self.path, self.session_id)
