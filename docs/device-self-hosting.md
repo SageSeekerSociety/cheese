@@ -82,6 +82,12 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
    ```
    脚本探测平台、下对应二进制到 `~/.local/bin/cheesehost`，不带任何 secret、不含业务逻辑，最后提示 `next: cheesehost link connect <origin>/connector`。
 
+   Windows 上（没装桌面端的机器，比如服务器）在 PowerShell 里运行，作用相同：
+   ```powershell
+   irm <origin>/connector/install.ps1 | iex
+   ```
+   它把 `cheesehost.exe` 放到 `%LOCALAPPDATA%\cheese\bin` 并加进用户 PATH，不需要管理员；`cheesehost uninstall` 会把这条 PATH 一并去掉。
+
 2. **`cheesehost link connect <origin>/connector`**。这台机器还没登录，它先走登录：CLI 打 `POST /connector/auth/device/start`，拿回 `device_code`，打印一个 `approve_url`（指向前端 `/connect?code=<code>`），然后**阻塞轮询** `POST /connector/auth/device/poll`，等人批准。
 
 3. **人在网页批准**。打开 `approve_url`，登录后落到前端 `/connect` 审批页（批准**在登录态后面**，没有裸批准按钮）：可给节点改名、可选绑定一个项目，提交即 `POST /connector/connect`——把设备绑到当前用户为 owner，签发**不过期的 durable token**（只能服务端撤销）。
