@@ -78,12 +78,28 @@ function mdPage(file) {
 const outlineBody = (points, dev) => `<div class="callout ${dev ? 'note' : 'warn'}">${INFO}<p>${dev ? '<strong>这篇还没写正文。</strong>下面是按当前代码核实过的要点，正文照着它展开。' : '<strong>这一页还没写。</strong>下面是它要讲的内容，上线前会补齐。'}</p></div>
 <h2 id="outline">要讲的内容<a class="anchor" href="#outline">#</a></h2><ol class="outline">${points.map((p) => `<li>${esc(p)}</li>`).join('')}</ol>`
 
+// diagrams/<slug>.<type>.json is the source; src/diagrams.sh renders it to diagrams/<slug>.html with archify.
+// The rendered viewer is inlined (iframe srcdoc) so the preview stays one file; its query reads are
+// redirected so the page can pass embed mode and the current theme.
+const DIAGRAMS = {}
+function diagramFor(slug) {
+  const dir = path.join(HERE, 'diagrams')
+  const spec = fs.existsSync(dir) && fs.readdirSync(dir).find((f) => f.startsWith(slug + '.') && f.endsWith('.json'))
+  if (!spec) return ''
+  const file = path.join(dir, slug + '.html')
+  if (!fs.existsSync(file)) throw new Error(`diagrams/${slug}.html missing; run src/diagrams.sh`)
+  const { meta } = JSON.parse(fs.readFileSync(path.join(dir, spec), 'utf8'))
+  DIAGRAMS[slug] = fs.readFileSync(file, 'utf8').replace(/URLSearchParams\((?:window\.)?location\.search\)/g, 'URLSearchParams(window.__archifyQuery || location.search)')
+  const [w, h] = meta.viewBox || [1200, 760]
+  return `<figure class="archify"><iframe data-diagram="${slug}" title="${esc(meta.title)}" loading="lazy" style="aspect-ratio:${w}/${h}"></iframe><figcaption><span>${esc(meta.title)}</span><button data-diagram-open="${slug}">全屏查看：可缩放、搜索、导出 ↗</button></figcaption></figure>`
+}
+
 const P = {}
 function addPages(sec, groups) {
   return groups.map(([group, items]) => [group, items.map(([slug, title, src]) => {
     const draft = typeof src !== 'string'
     P[sec + '/' + slug] = draft
-      ? { title, lede: esc(src.lede), points: src.points, body: outlineBody(src.points, sec === 'dev'), src: sec === 'dev' ? '按当前代码撰写' : 'docs/manual', updated: '待写', draft }
+      ? { title, lede: esc(src.lede), points: src.points, body: diagramFor(slug) + outlineBody(src.points, sec === 'dev'), src: sec === 'dev' ? '按当前代码撰写' : 'docs/manual', updated: '待写', draft }
       : { title, ...mdPage(src) }
     return draft ? [slug, title, 1] : [slug, title]
   })])
@@ -115,7 +131,7 @@ const RELEASES = [
 ]
 
 // ---------- bundle ----------
-const DATA = { NAV, P, WHERE, FAQ, RELEASES, WHO, LOGO: LOGO_URI }
+const DATA = { NAV, P, WHERE, FAQ, RELEASES, WHO, DIAGRAMS, LOGO: LOGO_URI }
 const virtual = {
   name: 'virtual',
   setup(b) {
