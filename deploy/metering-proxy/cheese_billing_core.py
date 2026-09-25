@@ -21,8 +21,10 @@ with the backend via env; rotate them together.
 """
 
 import base64
+import gzip
 import hashlib
 import hmac
+import http.client
 import json
 import logging
 import os
@@ -30,7 +32,9 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -781,9 +785,12 @@ def is_haiku_name(value: str) -> bool:
 # once. Only one holder may ever refresh a pair, because a refresh rotates it:
 # the login script moves the pair here and deletes the copy it was made in.
 #
-# The refresh request is Claude Code 2.1.281's own (`mie` in the shipped binary):
-# same URL, client id, JSON body in the same key order, scope list, and the
-# headers its axios instance sends.
+# The refresh request is byte for byte the one the pinned Claude Code sends
+# (`refresh_request`): URL, client id, JSON body in the same key order, scope
+# list, and its headers with their names, values and order.
+# scripts/remote_execution/refresh_contract.py captures the pinned build's own
+# refresh and fails when the two differ, so an upgrade that changes it is caught
+# before it ships.
 OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 _REFRESH_SCOPES = (
@@ -794,11 +801,6 @@ _REFRESH_SCOPES = (
     "user:file_upload",
     "user:plugins",
 )
-_REFRESH_HEADERS = {
-    "Accept": "application/json, text/plain, */*",
-    "Content-Type": "application/json",
-    "User-Agent": "axios/1.15.2",
-}
 # Claude Code refreshes when the access token is within five minutes of expiry.
 REFRESH_MARGIN_S = 300
 # After a failed refresh that was not a refusal, wait before asking again: the
@@ -815,21 +817,61 @@ LOGIN_REQUIRED = "login_required"
 _credential_log = logging.getLogger("cheese.metering")
 
 
-def _post_refresh(url: str, body: dict, timeout_s: float) -> tuple[int, dict]:
-    """POST the refresh grant. Returns (status, parsed body); raises on transport."""
-    req = urllib.request.Request(
-        url,
-        method="POST",
-        headers=_REFRESH_HEADERS,
-        data=json.dumps(body, separators=(",", ":")).encode(),
-    )
+def refresh_request(body: dict) -> tuple[list[tuple[str, str]], bytes]:
+    """The refresh POST's headers, in the order they are sent, and its body."""
+    raw = json.dumps(body, separators=(",", ":")).encode()
+    headers = [
+        ("Accept", "application/json, text/plain, */*"),
+        ("Content-Type", "application/json"),
+        ("User-Agent", "axios/1.15.2"),
+        ("Content-Length", str(len(raw))),
+        ("Accept-Encoding", "gzip, compress, deflate, br"),
+        ("Host", urllib.parse.urlsplit(OAUTH_TOKEN_URL).hostname or ""),
+        ("Connection", "close"),
+    ]
+    return headers, raw
+
+
+def _decoded(raw: bytes, encoding: str) -> bytes:
+    if encoding == "gzip":
+        return gzip.decompress(raw)
+    if encoding == "deflate":
+        return zlib.decompress(raw)
+    if encoding == "br":
+        try:
+            import brotli  # mitmproxy's own dependency, present in the image
+        except ImportError as err:
+            raise OSError("a brotli response and no brotli module") from err
+        return brotli.decompress(raw)
+    return raw
+
+
+def _post_refresh(
+    url: str, body: dict, timeout_s: float, *, connect=http.client.HTTPSConnection
+) -> tuple[int, dict]:
+    """POST the refresh grant exactly as `refresh_request` lays it out.
+
+    http.client rather than urllib: urllib re-cases header names and adds its
+    own, so the request would stop matching Claude Code's. Returns (status,
+    parsed body); raises OSError on transport problems.
+    """
+    parts = urllib.parse.urlsplit(url)
+    headers, raw = refresh_request(body)
+    conn = connect(parts.hostname, parts.port, timeout=timeout_s)
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 — fixed URL
-            status, raw = resp.status, resp.read()
-    except urllib.error.HTTPError as err:
-        status, raw = err.code, err.read()
+        conn.putrequest("POST", parts.path, skip_host=True, skip_accept_encoding=True)
+        for name, value in headers:
+            conn.putheader(name, value)
+        conn.endheaders(raw)
+        resp = conn.getresponse()
+        data = _decoded(resp.read(), resp.getheader("Content-Encoding", ""))
+        status = resp.status
+    except http.client.HTTPException as err:
+        raise OSError(str(err)) from err
+    finally:
+        conn.close()
     try:
-        parsed = json.loads(raw or b"{}")
+        parsed = json.loads(data or b"{}")
     except ValueError:
         parsed = {}
     return status, parsed if isinstance(parsed, dict) else {}

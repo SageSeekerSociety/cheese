@@ -621,3 +621,64 @@ def test_no_file_or_an_unreadable_one_is_being_logged_out(tmp_path):
     broken = tmp_path / "broken"
     broken.write_text("{not json")
     assert core.PlatformCredential(broken).token() == ("", "none")
+
+
+def test_the_refresh_goes_on_the_wire_exactly_as_laid_out():
+    """The transport must not add, re-case or reorder anything: what reaches
+    the socket is the request `refresh_request` describes, byte for byte, and
+    that is what the contract compares with the pinned Claude Code's own."""
+    import http.client
+    import socket
+
+    received = bytearray()
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve():
+        conn, _ = listener.accept()
+        with conn:
+            while b"\r\n\r\n" not in received or not received.endswith(b"}"):
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                received.extend(chunk)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                b"Content-Length: 22\r\nConnection: close\r\n\r\n"
+                b'{"access_token":"new"}'
+            )
+
+    server = _threading.Thread(target=serve)
+    server.start()
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": "sk-ant-ort01-X",
+        "client_id": core.OAUTH_CLIENT_ID,
+        "scope": "user:profile user:inference",
+    }
+
+    status, answer = core._post_refresh(
+        f"http://127.0.0.1:{port}/v1/oauth/token",
+        body,
+        5,
+        connect=http.client.HTTPConnection,
+    )
+    server.join(5)
+    listener.close()
+
+    headers, raw = core.refresh_request(body)
+    expected = (
+        b"POST /v1/oauth/token HTTP/1.1\r\n"
+        + b"".join(f"{n}: {v}\r\n".encode() for n, v in headers)
+        + b"\r\n"
+        + raw
+    )
+    assert bytes(received) == expected
+    assert (status, answer) == (200, {"access_token": "new"})
+    assert raw == (
+        b'{"grant_type":"refresh_token","refresh_token":"sk-ant-ort01-X",'
+        b'"client_id":"9d1c250a-e61b-44d9-88ed-5944d1962f5e",'
+        b'"scope":"user:profile user:inference"}'
+    )
