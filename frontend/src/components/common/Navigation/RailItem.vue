@@ -189,7 +189,7 @@ function warmDestination() {
     // change is the ink on top — it used to be `on-primary`, a value Vuetify
     // derives from `primary`, which differs between the themes (#F57F17 vs the
     // lightened #FFA733) and could flip the glyph to white on this bright
-    // yellow. Pinning it to the same dark ink the flyout uses keeps the logo at
+    // yellow. Pinning it to one dark ink keeps the logo at
     // 7.0:1 against the #ff9500 stop and 12.2:1 against #ffe600, in BOTH themes.
     &:hover,
     &[aria-current] {
@@ -292,33 +292,14 @@ function warmDestination() {
   padding: 0;
   box-shadow: none;
   opacity: 1;
-
-  /* This flyout is an INVERTED element: on light it is deliberately a dark chip
-     floating over a pale page. There is no `inverse-surface` token to express
-     that (surface/surface-bright are pale on light, which is the opposite), and
-     inventing one would ripple into wave 2's mapping — so the two values live
-     here as component-local custom properties instead.
-     This is the rare, legitimate `[data-theme='dark']` branch: the element is
-     not picking the wrong token, it is the one thing that must invert TWICE.
-     On dark, #23242a would sink into the #141517 canvas (1.13:1) — a floating
-     chip has to be LIGHTER than the page it floats over, hence #3a3d44 (1.68:1
-     vs canvas, 1.55:1 vs surface, plus the drop shadow below). */
-  --rail-flyout-bg: #23242a;
-  --rail-flyout-ink: #fff;
-  --rail-flyout-kbd-bg: rgba(255, 255, 255, 0.14);
-}
-:root[data-theme='dark'] .rail-flyout.rail-flyout {
-  --rail-flyout-bg: #3a3d44;
-  --rail-flyout-ink: #f3f4f6; /* 9.9:1 on #3a3d44 */
-  --rail-flyout-kbd-bg: rgba(255, 255, 255, 0.1);
 }
 .rail-flyout .rail-flyout__inner {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--rail-flyout-bg);
-  color: var(--rail-flyout-ink);
+  background: var(--inverse-surface);
+  color: var(--inverse-ink);
   border-radius: var(--radius-md);
   font-size: 14px;
   font-weight: 600;
@@ -332,8 +313,8 @@ function warmDestination() {
   height: 20px;
   padding: 0 4px;
   border-radius: var(--radius-sm);
-  background: var(--rail-flyout-kbd-bg);
-  color: var(--rail-flyout-ink);
+  background: var(--inverse-fill);
+  color: var(--inverse-ink);
   font-size: 12px;
   font-weight: 600;
   font-family: inherit;
