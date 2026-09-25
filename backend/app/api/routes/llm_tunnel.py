@@ -34,6 +34,7 @@ listener.
 
 import asyncio
 import logging
+import time
 
 from fastapi import APIRouter, Header, Query, WebSocket, WebSocketDisconnect
 
@@ -57,23 +58,54 @@ _CHUNK = 65536
 _CONNECT_TIMEOUT_S = 5.0
 
 
+# How long a pipe may carry nothing, in either direction, before it is cut. A
+# live model stream is never this quiet — it sends deltas and periodic pings —
+# so silence this long means a hop underneath died without saying so: the meter
+# recreated by a deploy left an in-flight turn hanging for minutes with every
+# hop still ESTABLISHED (2026-09-25). Closing is what lets the caller retry.
+IDLE_TIMEOUT_S = 180.0
+_IDLE_CHECK_S = 5.0
+
+
 def _listener() -> tuple[str, int]:
     return settings.subscription_proxy_host, settings.subscription_proxy_connect_port
 
 
-async def _pump_ws_to_tcp(ws: WebSocket, writer: asyncio.StreamWriter) -> None:
+class _Activity:
+    def __init__(self) -> None:
+        self.last = time.monotonic()
+
+    def touch(self) -> None:
+        self.last = time.monotonic()
+
+
+async def _pump_ws_to_tcp(
+    ws: WebSocket, writer: asyncio.StreamWriter, activity: _Activity
+) -> None:
     while True:
         data = await ws.receive_bytes()
+        activity.touch()
         writer.write(data)
         await writer.drain()
 
 
-async def _pump_tcp_to_ws(reader: asyncio.StreamReader, ws: WebSocket) -> None:
+async def _pump_tcp_to_ws(
+    reader: asyncio.StreamReader, ws: WebSocket, activity: _Activity
+) -> None:
     while True:
         data = await reader.read(_CHUNK)
         if not data:
             return  # listener closed; ending this side ends the pair
+        activity.touch()
         await ws.send_bytes(data)
+
+
+async def _until_idle(activity: _Activity, idle_s: float, check_s: float) -> None:
+    while True:
+        remaining = idle_s - (time.monotonic() - activity.last)
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(check_s, remaining))
 
 
 @router.websocket("/tunnel")
@@ -115,17 +147,29 @@ async def tunnel(
         return
 
     await websocket.accept()
-    to_tcp = asyncio.create_task(_pump_ws_to_tcp(websocket, writer))
-    to_ws = asyncio.create_task(_pump_tcp_to_ws(reader, websocket))
+    activity = _Activity()
+    to_tcp = asyncio.create_task(_pump_ws_to_tcp(websocket, writer, activity))
+    to_ws = asyncio.create_task(_pump_tcp_to_ws(reader, websocket, activity))
+    idle = asyncio.create_task(_until_idle(activity, IDLE_TIMEOUT_S, _IDLE_CHECK_S))
     try:
         # Either direction ending ends the connection: a half-open pipe would
         # leave the caller waiting on a response that can no longer arrive.
-        await asyncio.wait({to_tcp, to_ws}, return_when=asyncio.FIRST_COMPLETED)
+        await asyncio.wait({to_tcp, to_ws, idle}, return_when=asyncio.FIRST_COMPLETED)
     except WebSocketDisconnect:
         pass
     finally:
-        for task in (to_tcp, to_ws):
+        for task in (to_tcp, to_ws, idle):
             task.cancel()
+        if idle.done() and not idle.cancelled():
+            logger.warning(
+                "llm tunnel carried nothing for %.0fs; closing it so the caller "
+                "retries",
+                IDLE_TIMEOUT_S,
+            )
+            try:
+                await websocket.close(code=1011, reason="the tunnel went silent")
+            except RuntimeError:
+                pass
         writer.close()
         try:
             await writer.wait_closed()
