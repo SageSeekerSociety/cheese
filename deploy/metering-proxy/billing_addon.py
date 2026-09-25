@@ -60,6 +60,7 @@ from cheese_billing_core import (  # noqa: E402
     NO_CREDENTIAL,
     NO_LOGIN_PLACEHOLDER,
     AdmissionGate,
+    Egress,
     Meter,
     ModelRewrite,
     PlatformCredential,
@@ -391,12 +392,58 @@ def http_connect(flow: http.HTTPFlow) -> None:
     )
 
 
+def _leave_through_egress(flow: http.HTTPFlow) -> bool:
+    """Send a request carrying the platform's credential out through the
+    credential's egress, when it has one. Only these requests: the gateway,
+    the answers given here and everything tunnelled raw keep their own route.
+    No egress reachable means no request: the upstream connection fails and
+    the client is told so, never quietly sent direct instead. False when the
+    request has been refused here instead."""
+    egress = CREDENTIAL.egress()
+    if egress is None:
+        return True
+    if egress == _REFUSED_EGRESS.get("egress"):
+        # Refused the proxy's credentials once, it will again until someone
+        # changes them; a 502 would be retried silently for minutes.
+        _refuse(
+            flow,
+            400,
+            "invalid_request_error",
+            f"cheese: the Claude credential's egress {egress.host}:"
+            f"{egress.port} refused the proxy's credentials; fix them with "
+            "`claude-login.sh egress set`",
+        )
+        return False
+    flow.server_conn.via = ("http", (egress.host, egress.port))
+    flow.metadata["cheese_egress"] = egress
+    # The upstream CONNECT is a flow of its own, raised when the lazy server
+    # connection opens; the client connection is what the two share.
+    _EGRESS_AUTH_BY_CLIENT[getattr(flow.client_conn, "id", "")] = egress.authorization
+    return True
+
+
+# The egress that last answered a CONNECT with 407, until its line changes.
+_REFUSED_EGRESS: dict[str, Egress] = {}
+
+# The Proxy-Authorization each client connection's egress wants, set when a
+# request is sent through it and read when the connection to it is opened.
+_EGRESS_AUTH_BY_CLIENT: dict[str, str] = {}
+
+
+def http_connect_upstream(flow: http.HTTPFlow) -> None:
+    """Authenticate the CONNECT to a credential's egress."""
+    authorization = _EGRESS_AUTH_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
+    if authorization:
+        flow.request.headers["Proxy-Authorization"] = authorization
+
+
 def client_disconnected(client) -> None:
     """A long-lived proxy must not accumulate one entry per connection ever
     made; the proven project does not outlive the connection that established
     it — and a recycled connection id must not inherit the previous caller's
     project."""
     _SCOPED_BY_CLIENT.pop(getattr(client, "id", ""), None)
+    _EGRESS_AUTH_BY_CLIENT.pop(getattr(client, "id", ""), None)
 
 
 def tls_clienthello(data: tls.ClientHelloData) -> None:
@@ -800,6 +847,8 @@ def _route(
         token, missing = CREDENTIAL.token()
         if token:
             flow.request.headers["authorization"] = f"Bearer {token}"
+            if not _leave_through_egress(flow):
+                return
         else:
             _refuse_without_credential(flow, verdict, missing)
             return
@@ -1073,6 +1122,16 @@ def _answer_a_missed_binding(flow: http.HTTPFlow) -> bool:
 def error(flow: http.HTTPFlow) -> None:
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
+    egress = flow.metadata.get("cheese_egress")
+    if egress is not None:
+        if "407" in str(flow.error):
+            _REFUSED_EGRESS["egress"] = egress
+        logger.warning(
+            "request through the Claude credential's egress %s:%s failed: %s",
+            egress.host,
+            egress.port,
+            flow.error,
+        )
 
 
 def response(flow: http.HTTPFlow) -> None:

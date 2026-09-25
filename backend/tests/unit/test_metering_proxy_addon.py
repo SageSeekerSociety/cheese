@@ -962,6 +962,83 @@ def test_a_refused_login_is_reported_as_one_to_renew_and_not_retried(
     assert b"has to be renewed" in flow.response.content
 
 
+def test_the_credentials_requests_leave_through_its_egress(monkeypatch, tmp_path):
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    mod.CREDENTIAL.egress_path.write_text("http://me:pw@egress.example:3128\n")
+
+    asyncio.run(mod.requestheaders(flow))
+    connect = SimpleNamespace(
+        request=SimpleNamespace(headers={}), client_conn=flow.client_conn
+    )
+    mod.http_connect_upstream(connect)
+
+    assert flow.response is None
+    assert flow.server_conn.via == ("http", ("egress.example", 3128))
+    assert connect.request.headers["Proxy-Authorization"] == (
+        "Basic " + base64.b64encode(b"me:pw").decode()
+    )
+
+
+def test_an_egress_that_refused_the_proxy_is_reported_until_it_changes(
+    monkeypatch, tmp_path
+):
+    """A 502 would be retried silently for minutes; a wrong proxy password
+    does not heal by waiting."""
+    mod, first = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    mod.CREDENTIAL.egress_path.write_text("http://me:wrong@egress.example:3128\n")
+    asyncio.run(mod.requestheaders(first))
+    first.error = (
+        "Upstream proxy egress.example:3128 refused HTTP CONNECT request: "
+        "407 Proxy Authentication Required"
+    )
+    mod.error(first)
+
+    second = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    asyncio.run(mod.requestheaders(second))
+    assert second.response is not None and second.response.status_code == 400
+    assert b"egress.example:3128 refused" in second.response.content
+    # A refusal that still streams the body is never delivered: mitmproxy
+    # drops the connection and the client waits out its timeout.
+    assert second.request.stream is False
+
+    mod.CREDENTIAL.egress_path.write_text("http://me:right@egress.example:3128\n")
+    third = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    asyncio.run(mod.requestheaders(third))
+    assert third.response is None
+    assert third.server_conn.via == ("http", ("egress.example", 3128))
+
+
+def test_only_the_credentials_requests_take_the_egress(monkeypatch, tmp_path):
+    """A turn admission sends to the gateway carries no platform credential,
+    and keeps its own route."""
+    mod, flow = _platform_turn(
+        monkeypatch,
+        tmp_path,
+        credential="sk-ant-oat01-PLATFORM-SETUP",
+        pool="gateway",
+    )
+    mod.CREDENTIAL.egress_path.write_text("http://egress.example:3128\n")
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.request.host == "litellm.invalid"
+    assert flow.server_conn.via is None
+
+
+def test_without_an_egress_the_credentials_requests_go_direct(monkeypatch, tmp_path):
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.server_conn.via is None
+
+
 def test_the_platforms_credential_never_reaches_the_gateway(monkeypatch, tmp_path):
     mod, flow = _platform_turn(
         monkeypatch,

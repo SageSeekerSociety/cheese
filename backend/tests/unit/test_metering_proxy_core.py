@@ -682,3 +682,82 @@ def test_the_refresh_goes_on_the_wire_exactly_as_laid_out():
         b'"client_id":"9d1c250a-e61b-44d9-88ed-5944d1962f5e",'
         b'"scope":"user:profile user:inference"}'
     )
+
+
+def test_an_egress_is_an_http_proxy_with_optional_credentials():
+    plain = core.Egress.parse("http://10.0.0.5:3128\n")
+    assert (plain.host, plain.port, plain.authorization) == ("10.0.0.5", 3128, "")
+    authed = core.Egress.parse("http://me:p%40ss@proxy.example:8080")
+    assert authed.authorization == "Basic " + base64.b64encode(b"me:p@ss").decode()
+    for invalid in ("", "https://proxy:1", "http://proxy", "socks5://proxy:1"):
+        assert core.Egress.parse(invalid) is None
+
+
+def test_a_credential_reads_its_egress_from_beside_it(tmp_path):
+    cred = core.PlatformCredential(tmp_path / "credential")
+    assert cred.egress() is None
+    (tmp_path / "egress").write_text("http://proxy.example:3128\n")
+    assert cred.egress() == core.Egress("proxy.example", 3128, "")
+
+
+def test_the_refresh_goes_through_the_egress_unchanged_inside_the_tunnel():
+    """Through an egress, the proxy is asked for a tunnel to the token endpoint
+    with its credentials, and what goes through the tunnel is the same request
+    byte for byte."""
+    import http.client
+    import socket
+
+    received = bytearray()
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve():
+        conn, _ = listener.accept()
+        with conn:
+            while b"\r\n\r\n" not in received:
+                received.extend(conn.recv(65536))
+            conn.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            while not received.endswith(b"}"):
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                received.extend(chunk)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                b"Content-Length: 22\r\nConnection: close\r\n\r\n"
+                b'{"access_token":"new"}'
+            )
+
+    server = _threading.Thread(target=serve)
+    server.start()
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": "sk-ant-ort01-X",
+        "client_id": core.OAUTH_CLIENT_ID,
+        "scope": "user:inference",
+    }
+    egress = core.Egress.parse(f"http://me:pw@127.0.0.1:{port}")
+
+    status, answer = core._post_refresh(
+        core.OAUTH_TOKEN_URL,
+        body,
+        5,
+        egress=egress,
+        connect=http.client.HTTPConnection,
+    )
+    server.join(5)
+    listener.close()
+
+    tunnel, _, inside = bytes(received).partition(b"\r\n\r\n")
+    assert tunnel.startswith(b"CONNECT platform.claude.com:443 HTTP/")
+    assert b"Proxy-Authorization: Basic " + base64.b64encode(b"me:pw") in tunnel
+    headers, raw = core.refresh_request(body)
+    assert inside == (
+        b"POST /v1/oauth/token HTTP/1.1\r\n"
+        + b"".join(f"{n}: {v}\r\n".encode() for n, v in headers)
+        + b"\r\n"
+        + raw
+    )
+    assert (status, answer) == (200, {"access_token": "new"})
