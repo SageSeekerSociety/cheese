@@ -141,6 +141,19 @@
   },
   "room": {
     "noTasks": "No tasks",
+    "site": {
+      "status": {
+        "thinking": "Thinking",
+        "acting": "{verb}",
+        "retrying": "Retrying",
+        "retryingCount": "Retrying (attempt {attempt})",
+        "waiting": "Waiting for the machine",
+        "stopped": "Stopped",
+        "idle": "Idle",
+        "elapsed": "{span} so far",
+        "quiet": "last activity {span} ago"
+      }
+    },
     "menu": {
       "more": "More",
       "focus": "Focus mode",

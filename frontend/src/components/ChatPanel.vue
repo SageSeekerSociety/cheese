@@ -126,6 +126,11 @@ const emit = defineEmits<{
   (e: 'working', working: boolean): void
   // 会话控制状态（任务、模型）动了：socket 上的这一帧转给现场那格的控制条。
   (e: 'agent-control', state: AgentControlState): void
+  // 现场那格的时间线上多了一行，或者已有的一行变了（挂了、重试次数涨了）。socket
+  // 在这一栏，现场自己听不到。
+  (e: 'site-block', block: Block): void
+  // 正在跑的轮次，各自从什么时候开始（毫秒）。现场的状态条靠它说「已用多久」。
+  (e: 'site-turns', turns: Record<string, number>): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
@@ -210,6 +215,23 @@ const awaitingReply = ref(false)
 const reachedAgent = ref(false)
 const activeTurnIds = ref<Set<string>>(new Set())
 watch(awaitingReply, (v) => emit('working', v))
+// 每个在跑的轮次从什么时候开始。中途连进来的，后端在 turn_active 上带着开始时间；
+// 没带的（老后端）只能从连上的这一刻算。
+const turnStarts = ref<Record<string, number>>({})
+watch(turnStarts, (v) => emit('site-turns', v))
+function turnBegan(id: string, at = Date.now()) {
+  if (!(id in turnStarts.value)) turnStarts.value = { ...turnStarts.value, [id]: at }
+}
+function turnEnded(id: string) {
+  if (!(id in turnStarts.value)) return
+  const next = { ...turnStarts.value }
+  delete next[id]
+  turnStarts.value = next
+}
+// 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
+function toSite(b: Block) {
+  if (b.kind === 'event' && !b.task_id) emit('site-block', b)
+}
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
 // Working-log todo (the agent's `todo_write`). Live during a turn (§3.1.1); between
@@ -602,8 +624,17 @@ function handleFrame(frame: WsServerFrame) {
     case 'event_block':
       // A persisted, clickable action card (decision/doc/...) for this turn.
       pushBlock(frame.block)
+      toSite(frame.block)
       autoScroll()
       break
+    case 'block_updated': {
+      // 已经在时间线上的一行变了：原地换掉，不追加第二行。
+      const at = messages.value.findIndex((m) => m.id === frame.block.id)
+      if (at >= 0) messages.value.splice(at, 1, frame.block)
+      historyChanges?.set(frame.block.id, frame.block)
+      toSite(frame.block)
+      break
+    }
     case 'assistant_block':
       // One complete 芝士 message (Slack-style) — a turn may land several.
       pushBlock(frame.block)
@@ -655,6 +686,10 @@ function handleFrame(frame: WsServerFrame) {
       break
     case 'turn_active':
       if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
+      for (const id of frame.turn_ids ?? []) {
+        const since = frame.since?.[id]
+        turnBegan(id, typeof since === 'number' ? since * 1000 : Date.now())
+      }
       awaitingReply.value = true
       // 这个话题上有活在跑，就说明消息早到它手上了。回执是精确的那一路，这是
       // 兜底的一路：重连进来、或者会话自己开的一轮，本来就不该说「正在送给」。
@@ -664,6 +699,7 @@ function handleFrame(frame: WsServerFrame) {
       const next = new Set(activeTurnIds.value)
       next.add(frame.turn_id)
       activeTurnIds.value = next
+      turnBegan(frame.turn_id)
       awaitingReply.value = true
       reachedAgent.value = true
       break
@@ -672,6 +708,7 @@ function handleFrame(frame: WsServerFrame) {
       const next = new Set(activeTurnIds.value)
       next.delete(frame.turn_id)
       activeTurnIds.value = next
+      turnEnded(frame.turn_id)
       awaitingReply.value = next.size > 0
       todoRestored.value = true
       emit('turn-done')
@@ -695,6 +732,7 @@ async function loadTopic(topic: Topic, entering = false) {
   connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
   activeTurnIds.value = new Set()
+  turnStarts.value = {}
   todoItems.value = []
   todoRestored.value = false
   // 进度层 (#187): the checklist the last turn left behind. Fire-and-forget and
@@ -1509,13 +1547,13 @@ onBeforeUnmount(() => {
               :author-name="displayName(m)"
               :external="isExternal(m.author)"
               :avatar="avatarSrc(m.author)"
-              @animationend="settleArrival($event, m.id)"
               :is-agent="isAgentBlock(m)"
               :time="fmtTime(m.created_at)"
               :refs="refMaps"
               :viewer="AUTHOR"
               :active="bar.shown && bar.id === m.id"
               :ask-busy="askBusy === m.id"
+              @animationend="settleArrival($event, m.id)"
               @open-file="(path, taskId) => emit('open-file', path, taskId)"
               @open-topic="emit('open-topic', $event)"
               @react="onReact"
@@ -1553,7 +1591,6 @@ onBeforeUnmount(() => {
               :topic-id="topic?.id ?? null"
               :author-name="myName"
               :external="isExternal(AUTHOR)"
-              @animationend="settleSent($event, item.clientId)"
               :avatar="avatarSrc(AUTHOR)"
               :is-agent="false"
               :time="outgoingState(item)"
@@ -1561,6 +1598,7 @@ onBeforeUnmount(() => {
               :viewer="AUTHOR"
               :ask-busy="false"
               :outgoing="{ error: item.error, failed: item.state === 'failed' }"
+              @animationend="settleSent($event, item.clientId)"
               @retry="retrySend(item.clientId)"
               @edit="editSend(item)"
               @avatar-error="onAvatarError"

@@ -88,6 +88,21 @@ describe('现场按轮组织', () => {
     expect(head).toContain('1 分 04 秒')
   })
 
+  it('平台在这一轮里说的话（在重试、在等机器）不算一步', async () => {
+    const container = await openSite([
+      event('1', 'turn-a', '2026-09-15T20:28:00Z', { tool: 'bash', arg: 'ls' }),
+      event(
+        '2',
+        'turn-a',
+        '2026-09-15T20:28:30Z',
+        { event_type: 'api_retry', severity: 'warn', who: 'platform', attempt: 2 },
+        'AI 服务请求失败，正在重试（第 2/10 次）'
+      ),
+    ])
+
+    expect(container.querySelector('.turn__head')?.textContent).toContain('1 步')
+  })
+
   it('换了一轮就换一组', async () => {
     const container = await openSite([
       event('1', 'turn-a', '2026-09-15T20:28:00Z', { tool: 'bash', arg: 'ls' }),
@@ -108,18 +123,27 @@ describe('现场按轮组织', () => {
     expect(container.querySelector('.turn__head')?.textContent).toContain('1 步')
   })
 
-  it('房间里有活在跑时，最后一组说进行中', async () => {
+  it('正在跑的那一轮说进行中', async () => {
     const container = await openSite(
       [
         event('1', 'turn-a', '2026-09-15T20:28:00Z', { tool: 'bash', arg: 'ls' }),
         event('2', 'turn-b', '2026-09-15T20:31:00Z', { tool: 'bash', arg: 'ls' }),
       ],
-      { working: true }
+      { working: true, runningTurns: { 'turn-b': Date.parse('2026-09-15T20:30:50Z') } }
     )
 
     const heads = Array.from(container.querySelectorAll('.turn__head')).map((h) => h.textContent ?? '')
     expect(heads[0]).not.toContain('进行中')
     expect(heads[1]).toContain('进行中')
+  })
+
+  it('新一轮还没落下第一行时，上一轮不说进行中', async () => {
+    const container = await openSite([event('1', 'turn-a', '2026-09-15T20:28:00Z', { tool: 'bash', arg: 'ls' })], {
+      working: true,
+      runningTurns: { 'turn-b': Date.parse('2026-09-15T20:31:00Z') },
+    })
+
+    expect(container.querySelector('.turn__head')?.textContent).not.toContain('进行中')
   })
 
   it('没有活在跑时谁都不说进行中', async () => {

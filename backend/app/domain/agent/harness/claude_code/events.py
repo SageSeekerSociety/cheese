@@ -31,6 +31,7 @@ from app.domain.agent.service import (
     AgentEvent,
     AgentMessage,
     AgentResult,
+    AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
     AgentSubagentStart,
@@ -74,6 +75,24 @@ def _at(record: dict) -> datetime | None:
         return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _count(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _retrying(record: dict, label: str | None) -> AgentRetrying:
+    """``system/api_retry``, as the pinned build writes it: ``attempt``,
+    ``max_retries``, ``retry_delay_ms``, ``error_status`` (null for a
+    connection error) and ``error``, the kind of failure."""
+    return AgentRetrying(
+        error=str(record.get("error") or ""),
+        attempt=_count(record.get("attempt")),
+        max_attempts=_count(record.get("max_retries")),
+        delay_ms=_count(record.get("retry_delay_ms")),
+        status=_count(record.get("error_status")),
+        thread_label=label,
+    )
 
 
 def _message(record: dict) -> tuple[dict, str | None]:
@@ -278,6 +297,8 @@ class Assembler:
 
     def _system(self, record: dict) -> list[AgentEvent]:
         subtype = record.get("subtype")
+        if subtype == "api_retry":
+            return [_retrying(record, self._label(_message(record)[1]))]
         task = str(record.get("task_id") or "")
         # Only an agent is a worker the room tracks: a background command or a
         # workflow reports its tasks here too.

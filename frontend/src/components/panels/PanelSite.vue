@@ -23,6 +23,8 @@ import AgentControls from '../AgentControls.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
+import SiteStatusBar from './SiteStatusBar.vue'
+
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
@@ -37,6 +39,11 @@ const props = withDefaults(
     working?: boolean
     // 房间 socket 上最近一帧会话控制状态（对话栏收到，经 TopicView 转过来）。
     agentControl?: AgentControlState | null
+    // 在跑的轮次 id → 开始时间（毫秒），对话栏从 socket 上算的。哪一组「进行中」、
+    // 状态条上「已用多久」都读它。
+    runningTurns?: Record<string, number>
+    // 一轮结束时加一：趁这时把这一段安静地重读一遍，补上 socket 断开时漏掉的行。
+    refreshTick?: number
     /** 名册里查不到名字的 AI 发言按这个名字称呼（项目 AI 队友的名字）。 */
     agentName?: string
   }>(),
@@ -120,25 +127,75 @@ function scrollSiteToTail(): void {
   nextTick(() => requestAnimationFrame(pin))
 }
 
+// 读的人是不是正看着最底下。新的一行来了，只有这时才跟着往下走；往上翻着看旧记录
+// 的人，不能被一行新的拽回底部。
+function atTail(): boolean {
+  const el = scrollRef.value
+  return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 48
+}
+
+// 这一栏已经有东西时，再读一遍是安静的：不换骨架屏、不跳回底部——换成骨架屏再
+// 换回来，就是整栏闪一下。
 async function load() {
   const tid = props.topic?.id
   if (!tid) return
-  loading.value = true
+  const quiet = transcript.value.length > 0
+  const follow = !quiet || atTail()
+  if (!quiet) loading.value = true
   errorMsg.value = null
   try {
     const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE })
     if (props.topic?.id !== tid) return
-    transcript.value = tx.data
-    hasOlder.value = tx.has_more === true
+    transcript.value = mergeSite(tx.data, transcript.value)
+    if (!quiet) hasOlder.value = tx.has_more === true
     // Follow the tail on every open of a topic's 现场 — that is what "open on
     // the newest" means.
-    scrollSiteToTail()
+    if (follow) scrollSiteToTail()
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
     if (props.topic?.id === tid) loading.value = false
   }
 }
+
+// 一页读回来的，和这一栏手上已有的，按 id 合成一份。读的请求在路上的时候 socket
+// 又送来了几行，它们比这一页新：留着，接在后面。手上那份里比这一页最老的一行还
+// 老的（往上翻出来的更早的记录），也留着。
+function mergeSite(page: Block[], held: Block[]): Block[] {
+  if (!page.length) return held.length ? held : page
+  const ids = new Set(page.map((b) => b.id))
+  const first = Date.parse(page[0].created_at)
+  const last = Date.parse(page[page.length - 1].created_at)
+  const older = held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) < first)
+  const newer = held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) >= last)
+  return [...older, ...page, ...newer]
+}
+
+/**
+ * socket 上来的一行（对话栏收到，一路转过来）：新的接在末尾，已有的原地换掉。
+ * 别的话题的、分身卡上的、不是事件的，都不归这一栏。
+ */
+function receive(block: Block): void {
+  if (block.topic_id !== props.topic?.id || block.kind !== 'event' || block.task_id) return
+  const at = transcript.value.findIndex((b) => b.id === block.id)
+  if (at >= 0) {
+    const next = transcript.value.slice()
+    next[at] = block
+    transcript.value = next
+    return
+  }
+  const follow = atTail()
+  const time = Date.parse(block.created_at)
+  const next = transcript.value.slice()
+  // 几乎总是接在末尾；偶尔晚到的一行按时间插回它的位置（一轮以它记下的时间排）。
+  let i = next.length
+  while (i > 0 && Date.parse(next[i - 1].created_at) > time) i -= 1
+  next.splice(i, 0, block)
+  transcript.value = next
+  if (follow) scrollSiteToTail()
+}
+
+defineExpose({ receive })
 
 // Opening the tab loads it, exactly like opening the drawer used to.
 watch(
@@ -157,6 +214,14 @@ watch(
     transcript.value = []
     expandedSite.value = new Set()
     errorMsg.value = null
+    if (props.active) void load()
+  }
+)
+
+// 一轮刚结束：开着的这一栏安静地重读一遍。
+watch(
+  () => props.refreshTick,
+  () => {
     if (props.active) void load()
   }
 )
@@ -201,10 +266,10 @@ function isSay(b: Block): boolean {
 
 const turns = computed(() => groupByTurn(transcript.value))
 
-// 最后一组还在跑吗。现场没有逐轮的生命周期，只有「这个房间有没有活」，所以只
-// 给最后一组打这个标 —— 再往前的组都已经结束了。
+// 这一组还在跑吗：它的轮次在对话栏听到的在跑的轮次里。只看「房间有没有活」的话，
+// 新一轮还没落下第一行时，上一轮的那一组会被说成进行中。
 function isLive(index: number): boolean {
-  return props.working && index === turns.value.length - 1
+  return props.working && turns.value[index].key in (props.runningTurns ?? {})
 }
 </script>
 
@@ -218,6 +283,7 @@ function isLive(index: number): boolean {
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
       <AgentControls v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
+      <SiteStatusBar :blocks="transcript" :working="working" :turns="runningTurns ?? {}" />
       <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">暂无现场记录</div>
       <div v-else class="site-log pa-3">
         <div v-if="hasOlder" class="site-older">
