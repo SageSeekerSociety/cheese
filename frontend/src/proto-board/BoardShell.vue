@@ -25,6 +25,8 @@ const NAV = computed(() =>
   [
     { to: '/', label: '题目板', icon: 'mdi-view-grid-outline', show: true },
     { to: '/mine', label: '我的', icon: 'mdi-account-outline', show: true },
+    // 公告不给身份设门槛：普通成员也要看得见板上发过什么，只是发不了。
+    { to: '/announcements', label: '公告', icon: 'mdi-bullhorn-outline', show: true },
     { to: '/review', label: '审核', icon: 'mdi-clipboard-check-outline', show: isManager.value, badge: true },
     { to: '/members', label: '成员', icon: 'mdi-account-group-outline', show: isManager.value },
     { to: '/analytics', label: '数据看板', icon: 'mdi-chart-box-outline', show: isManager.value },

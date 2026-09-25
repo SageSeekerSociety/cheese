@@ -973,3 +973,101 @@ export function deadlineText(task: BoardTask): string {
   if (days === 0) return '今天截止'
   return `${days} 天后截止`
 }
+
+// --- 公告 --------------------------------------------------------------------
+
+/** 一条空间公告。字段照着真平台取：真库里公告不是一个模型，而是 `space.announcements`
+ *  这个 jsonb 数组里的一个元素，形状是 {title, content, createdAt, updatedAt,
+ *  publisher}；`content` 是 tiptap 出来的 **HTML**，`publisher` 存的是发布时的昵称
+ *  字符串，不是外键。这里把 publisher 写成 Person，是为了和原型别处一样显示假名。 */
+export interface Announcement {
+  id: string
+  title: string
+  /** 正文。真平台存的是富文本 HTML；原型里存纯文本，渲染时按空行分段、「- 」开头的
+   *  一段当列表。落真代码时这一格换成真编辑器，渲染交给现成的 Viewer。 */
+  content: string
+  createdAt: string
+  updatedAt: string
+  publisher: Person
+  /** 置顶。**真平台现在没有这一项** —— 公告只是一段数组，没有排序字段，谁也没法把一条
+   *  一直摆在最前面。这一条是这次重设计**新增**的，落真代码要给元素加一个布尔字段。 */
+  pinned: boolean
+}
+
+export const ANNOUNCEMENTS: Announcement[] = [
+  {
+    id: 'an-1',
+    title: '从今天起，这块板上任何人都可以出题',
+    content: `这块板不再只是几个人发题的地方。
+
+- 任何成员都能出题，发出来进「待审核」，由所有者或管理员审过之后上板；
+- 管理员自己出的题，自己就能审，不必等别人；
+- 驳回会写明原因，作者改完可以重新提交。
+
+出题不再是权限，是一件事 —— 谁有想让人做的东西，谁就可以发。`,
+    createdAt: daysBefore(2, 9),
+    updatedAt: daysBefore(2, 9),
+    publisher: PEOPLE.caisongyang,
+    pinned: true,
+  },
+  {
+    id: 'an-2',
+    title: '邀请码改成随时可调了',
+    content: `邀请码挪到了板上方那块下拉里（所有者与管理员可见）。
+
+- 可用人数和有效期就地可改，改完立刻生效，不用重建一个码；
+- 也能随时撤销。
+
+之前要改一个数就得建新码、作废旧码，成员手里的链接跟着失效一次。现在不用了。`,
+    createdAt: daysBefore(5, 15),
+    updatedAt: daysBefore(4, 11),
+    publisher: PEOPLE.maxiaoyu,
+    pinned: false,
+  },
+  {
+    id: 'an-3',
+    title: '本周五 18:00 之前，请把这三道题的末尾确认一下',
+    content: `有三道题的截止时间落在本周五，出题的人请确认一下材料齐了没有：
+
+- 给题目板写一个「领取人数」的并发安全实现
+- 找出邀请码可以被重复兑换的路径
+- 写一个能复现「领取超发」的最小用例
+
+到点还没交材料，就按题面上写的默认期限处理。`,
+    createdAt: daysBefore(1, 17),
+    updatedAt: daysBefore(1, 17),
+    publisher: PEOPLE.maxiaoyu,
+    pinned: false,
+  },
+  {
+    id: 'an-4',
+    title: '数据看板对管理员开放了',
+    content: `所有者与管理员现在能看到整块板的一屏数据：题目总数、领取与提交走势、题目构成、分类分布、最热的题、出题人排行。
+
+普通成员看不到这一屏 —— 在自己的「我的」里能看到自己出的题和领的题，那就够了。`,
+    createdAt: daysBefore(9, 10),
+    updatedAt: daysBefore(9, 10),
+    publisher: PEOPLE.caisongyang,
+    pinned: false,
+  },
+]
+
+/** 公告正文的分段：空行分段，「- 」开头的一段当列表。真平台这段由富文本编辑器直接
+ *  产出 HTML，原型没有编辑器，所以在这里把纯文本折成块。 */
+export function announcementBlocks(content: string): { type: 'p' | 'ul'; items: string[] }[] {
+  const blocks: { type: 'p' | 'ul'; items: string[] }[] = []
+  for (const chunk of content.split(/\n\s*\n/)) {
+    const lines = chunk
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+    if (!lines.length) continue
+    const bullets = lines.filter((l) => l.startsWith('- '))
+    if (bullets.length === lines.length) {
+      blocks.push({ type: 'ul', items: bullets.map((l) => l.slice(2)) })
+    } else {
+      blocks.push({ type: 'p', items: [lines.join(' ')] })
+    }
+  }
+  return blocks
+}

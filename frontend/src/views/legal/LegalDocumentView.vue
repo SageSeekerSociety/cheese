@@ -126,3 +126,16 @@ watch(
   background: var(--fill);
 }
 </style>
+<style>
+/* The workspace locks document scrolling (styles/common.scss); a legal
+   document is read as a page, so it scrolls as one, like the landing page. */
+html:has(.legal) {
+  overflow-y: auto !important;
+}
+
+body:has(.legal),
+#app:has(.legal) {
+  height: auto;
+  overflow: visible;
+}
+</style>

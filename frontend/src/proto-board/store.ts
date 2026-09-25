@@ -11,6 +11,8 @@
 import { computed, ref } from 'vue'
 
 import {
+  type Announcement,
+  ANNOUNCEMENTS,
   type BoardTask,
   type Claimant,
   IDENTITIES,
@@ -212,6 +214,60 @@ export function updateCode(code: string, spec: { maxUses: number | null; expires
 export function revokeCode(code: string) {
   const row = codes.value.find((c) => c.code === code)
   if (row) row.revoked = true
+}
+
+// --- 公告 --------------------------------------------------------------------
+
+/** 公告是**板级**的东西，不看身份：谁都能读。能发的只有所有者与管理员 ——
+ *  真平台的判据是 `SpaceService.update_space` 里的 `_ensure_admin`，因为公告是随
+ *  空间一起 PATCH 下去的（`space.announcements` 那一格），没有自己的接口。
+ *  这里把同一条判据写成 `Announcements.vue` 里那几个按钮的显示条件。 */
+export const announcements = ref<Announcement[]>(ANNOUNCEMENTS.map((a) => ({ ...a })))
+
+/** 置顶的排最前，其余按发布时间倒序。列表和首页那条横幅共用这一个口径 ——
+ *  两处各排一次，迟早会出现「横幅上是这条、列表第一条是另一条」。 */
+export const announcementList = computed(() =>
+  [...announcements.value].sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  })
+)
+
+/** 首页横幅上挂的那一条。 */
+export const topAnnouncement = computed(() => announcementList.value[0])
+
+export function publishAnnouncement(draft: { title: string; content: string; pinned?: boolean }): Announcement {
+  const now = new Date().toISOString()
+  const row: Announcement = {
+    id: `an-${Date.now()}`,
+    title: draft.title.trim(),
+    content: draft.content.trim(),
+    createdAt: now,
+    updatedAt: now,
+    publisher: me.value,
+    pinned: draft.pinned ?? false,
+  }
+  announcements.value = [row, ...announcements.value]
+  return row
+}
+
+/** 改动只改标题与正文，**发布人不动** —— 真平台上 publisher 是发布那一刻写进数组的
+ *  昵称，后面谁来改都不会把它改掉。 */
+export function updateAnnouncement(id: string, draft: { title: string; content: string }) {
+  const row = announcements.value.find((a) => a.id === id)
+  if (!row) return
+  row.title = draft.title.trim()
+  row.content = draft.content.trim()
+  row.updatedAt = new Date().toISOString()
+}
+
+export function removeAnnouncement(id: string) {
+  announcements.value = announcements.value.filter((a) => a.id !== id)
+}
+
+export function toggleAnnouncementPin(id: string) {
+  const row = announcements.value.find((a) => a.id === id)
+  if (row) row.pinned = !row.pinned
 }
 
 // --- 派生视图（各页面共用的那几个口径）----------------------------------------
