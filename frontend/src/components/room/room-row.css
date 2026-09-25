@@ -46,7 +46,7 @@
   color: #fff;
   font-size: 12px;
   font-weight: 600;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 /* 真头像：同一个 28px 方槽，图片裁进去，不撑变消息行。 */
 .im-avatar--photo {
@@ -93,7 +93,8 @@
 .im-text {
   max-width: 100%;
   font-size: 14px;
-  line-height: var(--lh-14);
+  /* 连着读的正文用松一档的行距（设计系统 §3.2）：人说的话和芝士的回复都是它。 */
+  line-height: var(--lh-14-loose);
   color: var(--text);
   word-break: break-word;
 }

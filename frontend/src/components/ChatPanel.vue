@@ -1537,7 +1537,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 600;
   padding: 1px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .pr-state--open {
   /* --surface, not #fff: the ground (--ok) lightens on dark (#3FBF7F), where

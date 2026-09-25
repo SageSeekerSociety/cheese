@@ -63,18 +63,17 @@ describe('画几行', () => {
 })
 
 describe('每一行长得像它替代的那一行', () => {
-  it('聊天行：一个头像位 + 名字 + 一个气泡', () => {
-    // 消息现在是气泡（分栏，2026-09-09 定），骨架画一条灰线的话，等来的是一个
-    // 带框的块，到货那一刻整列会重排一次。
-    const row = rows(draw({ variant: 'chat', rows: 1 }), 'chat')[0]
-    expect(row.querySelector('.skel__bone--avatar'), '没有头像位的话，消息到达那一刻整行会往右挪').not.toBeNull()
-    expect(row.querySelector('.skel__bone--name')).not.toBeNull()
-    expect(row.querySelector('.skel__bubble'), '画的必须是气泡，不是一条线').not.toBeNull()
-  })
-
-  it('聊天骨架里两侧都有 —— 真的那一列自己发的靠右', () => {
+  it('聊天行：一个头像位 + 名字 + 正文，靠左', () => {
+    // 消息是平铺的（人和芝士都靠左，没有气泡）。骨架画成气泡或者靠右，到货那一刻
+    // 整列会重排一次。
     const container = draw({ variant: 'chat', rows: 4 })
-    expect(container.querySelector('.skel__chat--self')).not.toBeNull()
+    for (const row of rows(container, 'chat')) {
+      expect(row.querySelector('.skel__bone--avatar'), '没有头像位的话，消息到达那一刻整行会往右挪').not.toBeNull()
+      expect(row.querySelector('.skel__bone--name')).not.toBeNull()
+      expect(row.querySelector('.skel__chat-line')).not.toBeNull()
+      expect(row.firstElementChild?.classList.contains('skel__bone--avatar'), '头像在最左边').toBe(true)
+    }
+    expect(container.querySelector('.skel__bubble'), '没有气泡').toBeNull()
   })
 
   it('名册行：一个头像位 + 两行字 + 右边一个小标', () => {

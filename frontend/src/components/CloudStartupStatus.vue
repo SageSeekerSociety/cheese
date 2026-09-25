@@ -73,10 +73,11 @@ onBeforeUnmount(() => clearInterval(timer))
 </template>
 
 <style scoped>
+/* 和它身边的事件行同一档：13px、--muted。它说的是运行环境在做什么，不是谁的话。 */
 .cloud-startup {
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
 }
 
 summary {

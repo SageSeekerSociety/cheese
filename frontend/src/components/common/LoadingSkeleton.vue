@@ -24,7 +24,7 @@ withDefaults(
     /**
      * 画哪一种行。每一种都指名道姓地对应界面里的一样东西：
      * - `list`   侧栏导航行（`TopicSidebar` 的 `.topic-row`，36px 一行）
-     * - `chat`   聊天消息行（`ChatPanel` 的 `.im-row`，28px 头像 + 名字 + 一个气泡）
+     * - `chat`   聊天消息行（`RoomMessage` 的 `.im-row`，28px 头像 + 名字 + 一两行正文，全部靠左）
      * - `roster` 名册行（`TopicMembers` 的 `.roster__item`，26px 头像 + 两行字 + 小标）
      * - `entry`  支线进度（`TaskProgress`：一条分组小标 + 若干 55px 的 `.task-row`）
      * - `card`   看板的卡（`RunningWorkView` 的 `.board-card`，101px 的带框块）
@@ -71,20 +71,15 @@ function width(i: number): string {
   <div class="skel" :class="`skel--${variant}`" role="status" aria-busy="true" aria-live="polite">
     <span class="skel__sr">加载中</span>
 
-    <!-- 聊天：消息现在是气泡，骨架也得是气泡形 —— 画一条灰线，等来的是一个带框的
-         块，到货那一刻整列会重排一次。自己发的那一侧靠右（隔一条画一条）。 -->
+    <!-- 聊天：消息是平铺的，人和芝士都靠左，所以骨架也是头像 + 名字 + 一两行字。
+         行高逐条抄自真的那一行，到货那一刻整列不跳。 -->
     <template v-if="variant === 'chat'">
-      <div
-        v-for="i in rows || DEFAULT_ROWS.chat"
-        :key="i"
-        class="skel__chat"
-        :class="{ 'skel__chat--self': i % 3 === 0 }"
-        :style="{ '--skel-i': i }"
-      >
+      <div v-for="i in rows || DEFAULT_ROWS.chat" :key="i" class="skel__chat" :style="{ '--skel-i': i }">
         <div class="skel__bone skel__bone--avatar" />
         <div class="skel__chat-main">
           <div class="skel__bone skel__bone--name" />
-          <div class="skel__bubble" :style="{ width: width(i) }" />
+          <div class="skel__bone skel__chat-line" :style="{ width: width(i) }" />
+          <div v-if="i % 2 === 1" class="skel__bone skel__chat-line" :style="{ width: width(i + 3) }" />
         </div>
       </div>
     </template>
@@ -343,7 +338,7 @@ function width(i: number): string {
   width: 28px;
   height: 28px;
   flex: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 .skel__bone--face {
   width: 26px;
@@ -365,36 +360,18 @@ function width(i: number): string {
 }
 
 /* 行的间距同样照抄真东西。 */
-/* ChatPanel 的 .im-row：padding 4px 16px、margin-top 8px、gap 10px，对侧留白 8%。 */
+/* room-row.css 的 .im-row：padding 4px 16px、换人时 margin-top 16px、gap 10px。 */
 .skel__chat {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 4px 16px;
-  padding-right: calc(16px + 8%);
-  margin-top: 8px;
+  margin-top: 16px;
 }
-.skel__chat--self {
-  flex-direction: row-reverse;
-  padding-right: 16px;
-  padding-left: calc(16px + 8%);
-}
-/* 气泡：几何逐条抄自 .im-text —— padding 7/12、--radius-lg、1px --line-2 的描边，
-   里面一行 .t-body 的行盒 23px。合计 7+23+7+2 = 39px，同一条单行消息。 */
-.skel__bubble {
-  height: 39px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  border-top-left-radius: var(--radius-sm);
-  background: var(--skel-bone, var(--fill-2));
-}
-.skel__chat--self .skel__bubble {
-  margin-left: auto;
-  border-top-left-radius: var(--radius-lg);
-  border-top-right-radius: var(--radius-sm);
-}
-.skel__chat--self .skel__bone--name {
-  margin-left: auto;
+/* 正文的一行：.im-text 的行盒是 22px（--lh-14-loose），灰条 12px 居中。 */
+.skel__chat-line {
+  height: 12px;
+  margin: 5px 0;
 }
 .skel__chat-main {
   display: flex;

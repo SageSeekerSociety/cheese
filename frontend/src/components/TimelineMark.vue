@@ -51,7 +51,7 @@ withDefaults(
   flex: 0 1 auto;
   min-width: 0;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: var(--lh-12);
   color: var(--faint);
 }
 /* 新消息线是这一列里唯一一条要被找到的线，所以它是这里唯一带色的一档。 */

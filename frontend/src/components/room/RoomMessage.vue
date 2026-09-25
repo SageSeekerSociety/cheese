@@ -345,8 +345,8 @@ function renderPlain(text: string): string {
   text-align: left;
   cursor: pointer;
   transition:
-    background-color 0.12s ease,
-    border-color 0.12s ease;
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
 }
 .im-artifact:hover {
   background: var(--fill);
@@ -436,7 +436,7 @@ function renderPlain(text: string): string {
   padding: 3px;
   background: var(--surface);
   border: 1px solid var(--line-2);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
   opacity: 0;
   transition: opacity var(--dur-quick) var(--ease-standard);
@@ -451,13 +451,13 @@ function renderPlain(text: string): string {
   width: 26px;
   height: 26px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--muted);
   cursor: pointer;
   transition:
-    background 0.1s ease,
-    color 0.1s ease;
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
 }
 .im-act:hover {
   background: var(--fill);
@@ -484,7 +484,7 @@ function renderPlain(text: string): string {
   padding: 4px;
   background: var(--surface);
   border: 1px solid var(--line-2);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-2);
   z-index: 5;
 }
@@ -493,7 +493,7 @@ function renderPlain(text: string): string {
   height: 28px;
   border: none;
   background: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   /* 这个 16px 量的是一枚 emoji 字形，不是正文，所以不走字号阶梯；`line-height: 1`
      同理——它是把字形在 28px 方格里居中的手段，不是一段话的行距。 */
   font-size: 16px;
@@ -518,8 +518,8 @@ function renderPlain(text: string): string {
   font-size: 13px;
   cursor: pointer;
   transition:
-    border-color 0.12s,
-    background 0.12s;
+    border-color var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
 }
 .ask-option:hover {
   border-color: rgb(var(--v-theme-primary));
@@ -578,13 +578,12 @@ function renderPlain(text: string): string {
 }
 
 /* Rendered markdown for 芝士's replies (v-html → :deep). */
-/* 渲染出来的 markdown 走 style.css 里 .md-content 那份的行距约定（全局是 1.7），
-   不走 chrome 的 --lh-* 阶梯：这里是连续正文，而阶梯的比例（1.43）是给界面文字
-   定的，用在成段的正文上偏挤。字号折到 14px 是为了让下面那几个 em 的子元素
-   （h1/h2/h3、code）有一个干净的基数。 */
+/* 行距和人说的话是同一档（room-row.css 的 .im-text）：同一列里两种行距，扫下来
+   就是一段松一段紧。字号折到 14px 是为了让下面那几个 em 的子元素（h1/h2/h3、
+   code）有一个干净的基数。 */
 .md-content {
   font-size: 14px;
-  line-height: 1.6;
+  line-height: var(--lh-14-loose);
 }
 .md-content :deep(p) {
   margin: 0 0 8px;
@@ -621,7 +620,7 @@ function renderPlain(text: string): string {
 .md-content :deep(img) {
   max-width: 100%;
   height: auto;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 .md-content :deep(table) {
   display: block;
@@ -629,11 +628,11 @@ function renderPlain(text: string): string {
   max-width: 100%;
   overflow-x: auto;
 }
-/* 气泡里那一层往回走到「面」那一级配一条更浅的线：一层比一层亮，和两侧的气泡
-   底色（--fill / --fill-2）都分得开。留在 --fill 的话它和左侧气泡同色，糊成一块。 */
+/* 行内代码压一层 --fill 再描一道浅线：行本身就是 --surface，只描线的话它在
+   悬停刷成 --fill 的那一行上会消失。 */
 .md-content :deep(code) {
   font-family: var(--font-mono);
-  background: var(--surface);
+  background: var(--fill);
   border: 1px solid var(--line);
   padding: 0.5px 5px;
   border-radius: var(--radius-sm);
@@ -642,12 +641,14 @@ function renderPlain(text: string): string {
 .md-content :deep(pre) {
   background: var(--surface);
   border: 1px solid var(--line);
-  padding: 11px 13px;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
   overflow-x: auto;
 }
-.md-content :deep(pre) code {
+/* 代码块里的 <code> 是行内元素：它身上的边框会在每一行上各画一个框。 */
+.md-content :deep(pre code) {
   background: none;
+  border: 0;
   padding: 0;
 }
 .md-content :deep(blockquote) {

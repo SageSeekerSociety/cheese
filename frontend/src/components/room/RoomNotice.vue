@@ -97,7 +97,11 @@ const ACTION_META: Record<string, { btn: string }> = {
     <!-- 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么 + 顺带更新了什么。
      「查看改动」是这一行唯一的动作 —— 采纳是话题级的一次性动作，不是
      每轮都问一遍的东西（§14.6）。 -->
-    <div v-else-if="notice.mode === 'turn-summary'" class="sys-row turn-summary">
+    <div
+      v-else-if="notice.mode === 'turn-summary'"
+      class="sys-row turn-summary"
+      :class="{ 'sys-row--centered': !name }"
+    >
       <div class="sys-line">
         <span class="sys-mark sys-mark--dot" aria-hidden="true" />
         <span class="sys-text">
@@ -221,7 +225,7 @@ const ACTION_META: Record<string, { btn: string }> = {
     <!-- system / event blocks. Content may carry a <@handle> actor token
      (归档/编辑…): render it through the SAME token→chip path as
      messages so the actor is a clickable mention, not raw text. -->
-    <div v-else-if="notice.mode === 'plain'" class="sys-row im-event">
+    <div v-else-if="notice.mode === 'plain'" class="sys-row im-event" :class="{ 'sys-row--centered': !name }">
       <div class="sys-line">
         <span class="sys-mark sys-mark--dot" aria-hidden="true" />
         <span class="sys-text" v-html="renderPlain(block.content)" />
@@ -245,19 +249,17 @@ const ACTION_META: Record<string, { btn: string }> = {
   line-height: var(--lh-13);
   color: var(--muted);
 }
-/* 分栏之下，「谁都没说这句话」需要自己的位置：一行字的平台行居中（飞书/微信
-   的通行做法）。**只有单行的那两种**——带右侧归属/状态列的动作卡、可折叠的
-   报错卡、事故卡仍然留在左轴上：把一张右侧有状态列的卡居中，那一列就没了落点。 */
-.sys-row.turn-summary,
-.sys-row.im-event {
+/* 「谁都没说这句话」的一行字居中（飞书/微信的通行做法）。只在它没有署名的时候：
+   有署名的那一行由外框放进头像列和正文轴上，再居中就是半截在轴上、半截在中间。
+   带右侧归属/状态列的动作卡、可折叠的报错卡、事故卡也不居中：把一张右侧有状态
+   列的卡居中，那一列就没了落点。 */
+.sys-row--centered {
   padding-left: 16px;
 }
-.sys-row.turn-summary .sys-line,
-.sys-row.im-event .sys-line {
+.sys-row--centered .sys-line {
   justify-content: center;
 }
-.sys-row.turn-summary .sys-text,
-.sys-row.im-event .sys-text {
+.sys-row--centered .sys-text {
   flex: 0 1 auto;
 }
 details.sys-row > summary {
