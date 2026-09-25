@@ -321,6 +321,15 @@ class TestPublicDocuments:
             == (api_client.get("/legal/documents/privacy").json()["data"]["content"])
         )
 
+    def test_every_version_someone_may_have_accepted_stays_readable(
+        self, api_client: TestClient
+    ):
+        for key, doc in DOCUMENTS.items():
+            for v in doc.versions:
+                r = api_client.get(f"/legal/documents/{key}/versions/{v.version}")
+                assert r.status_code == 200, (key, v.version, r.text)
+                assert r.json()["data"]["content"].strip()
+
     def test_unknown_documents_and_versions_are_not_found(self, api_client: TestClient):
         assert api_client.get("/legal/documents/cookies").status_code == 404
         assert api_client.get("/legal/documents/terms/versions/0.1").status_code == 404
