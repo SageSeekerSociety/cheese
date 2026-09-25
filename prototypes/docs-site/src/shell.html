@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cheese 文档</title>
+<title>知是 · Cheese 文档</title>
 <style>
 *,*::before,*::after{box-sizing:border-box}
 :root{--amber:#f59e0b;--amber-d:#b45309;--r:12px}
@@ -17,6 +17,7 @@ button{font:inherit;color:inherit}
 .brand{display:flex;align-items:center;gap:9px;text-decoration:none;font-weight:700;font-size:17px;letter-spacing:.01em}
 .brand svg{width:28px;height:28px}
 .brand small{font-weight:500;color:var(--dim);font-size:13px}
+.brand .dot{color:var(--dim);font-weight:500;margin:0 -3px}
 .tabs{display:flex;gap:4px;height:100%}
 .tab{display:flex;align-items:center;gap:6px;padding:0 12px;text-decoration:none;color:var(--fg2);font-size:14px;border-bottom:2px solid transparent;height:100%}
 .tab:hover{color:var(--fg)}
@@ -168,7 +169,7 @@ body[data-shot] .view{animation:none}
 <body data-theme="light">
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>/*__GRADS__*/</defs></svg>
 <header class="hdr">
-  <a class="brand" href="#/"><svg viewBox="0 0 1200 1200" id="mini"></svg>Cheese<small>文档</small></a>
+  <a class="brand" href="#/"><svg viewBox="0 0 1200 1200" id="mini"></svg>知是<span class="dot">·</span>Cheese<small>文档</small></a>
   <nav class="tabs" id="tabs">
     <a class="tab" data-sec="docs" href="#/docs/quickstart">使用文档</a>
     <a class="tab" data-sec="dev" href="#/dev/overview">开发文档<span class="lock">仅管理员</span></a>
@@ -177,7 +178,7 @@ body[data-shot] .view{animation:none}
   <span class="sp"></span>
   <div class="search" id="openSearch">搜索文档<kbd>⌘K</kbd></div>
   <button class="icon-btn" id="theme" title="切换深浅色" aria-label="切换深浅色">◐</button>
-  <a class="go" href="#" data-toast="会打开 Cheese 平台">进入 Cheese</a>
+  <a class="go" href="#" data-toast="会打开知是平台">进入知是</a>
 </header>
 <div id="app"></div>
 <div class="modal" id="modal"><div class="box"><input id="q" placeholder="搜索文档，或直接问芝士…" autocomplete="off"><div class="res" id="res"></div></div></div>
@@ -214,14 +215,14 @@ const WHO={
   办公:[['让芝士整理一份周报','把材料丢进话题，说清要什么格式','working-with-cheese'],['把一件事交给芝士','描述目标，中途补要求，最后验收','tut-office'],['和同事一起推进项目','团队、项目、话题，谁在做什么一目了然','projects'],['把做好的网页发布出去','项目里的网页一键发布成网站','sites']],
 };
 function home(){
-  const feats=DATA.nav.docs.find(g=>g.group==='使用 Cheese').slugs.map(s=>bySlug['docs/'+s]);
+  const feats=DATA.nav.docs.find(g=>g.group==='使用知是').slugs.map(s=>bySlug['docs/'+s]);
   return `<div class="home view">
   <section class="hero">
     <div>
       <h1>把一件事<br>交给<em>芝士</em></h1>
-      <p class="sub">Cheese 是你和 AI 队友一起做项目的地方。这里写着怎么开始、每个功能怎么用，以及遇到问题怎么办。</p>
+      <p class="sub">知是 · Cheese 是你和 AI 队友一起做项目的地方。这里写着怎么开始、每个功能怎么用，以及遇到问题怎么办。</p>
       <form class="ask" id="heroAsk"><input placeholder="搜索文档，或问芝士：怎么邀请同学进项目？"><button type="button" class="b1" id="heroSearch">搜索</button><button class="b2">问芝士</button></form>
-      <div class="ctas"><a class="btn pri" href="#/docs/quickstart">快速开始</a><a class="btn" href="#" data-toast="会打开 Cheese 平台">进入 Cheese</a></div>
+      <div class="ctas"><a class="btn pri" href="#/docs/quickstart">快速开始</a><a class="btn" href="#" data-toast="会打开知是平台">进入知是</a></div>
     </div>
     <div class="art" title="点一下重播"><svg id="heroLogo"></svg></div>
   </section>
@@ -268,7 +269,7 @@ function docPage(sec,slug,anchor){
 }
 
 function changelog(){
-  return `<div class="cl view"><h1>更新日志</h1><p class="intro">按版本记录 Cheese 的变化。每个版本先列要点，完整的改动清单可以展开。</p>
+  return `<div class="cl view"><h1>更新日志</h1><p class="intro">按版本记录知是的变化。每个版本先列要点，完整的改动清单可以展开。</p>
   <div class="note">说明：平台最近一个正式 release 是 0.17.0。之后的「0.18.0」是按 9 月 23 日那次正式环境上线划出的<b>建议版本号</b>，以后每次上线正式环境都打一个 release，这里就按 release 自动生成。</div>
   ${DATA.releases.map(r=>`<section class="rel ${r.tag}"><div class="meta"><div class="ver">${r.ver}</div><div class="date">${r.date}</div><span class="env">${r.env}</span>
     <div class="nums">${r.stats.all} 项改动<br>新功能 ${r.stats.feat} · 修复 ${r.stats.fix}</div></div>

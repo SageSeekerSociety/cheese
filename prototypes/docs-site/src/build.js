@@ -1,14 +1,29 @@
-// Builds the docs-site preview: one self-contained HTML.
+// Builds the docs-site preview: one HTML page plus the diagrams/ it embeds.
+// Usage (from prototypes/docs-site): npm install && npm run build
+//   MANUAL_REF=<git ref>  read docs/manual from that ref instead of the working tree
+//   OUT=<file>            write somewhere other than ../index.html
 const fs = require('fs');
 const path = require('path');
-const { marked } = require('/tmp/node_modules/marked');
+const { execFileSync } = require('child_process');
+const { marked } = require('marked');
 
-const MANUAL = '/home/nictheboy/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/1584a145-a30b-403a-a8f3-cf8d5086af5a/.cheese/tasks/126fa903-1742-48b2-86de-cef592c5da50/docs/manual';
-const OUT = process.env.OUT || '/tmp/ds/index.html';
+const SITE = path.resolve(__dirname, '..');
+const REPO = path.resolve(SITE, '../..');
+const MOTION = path.join(REPO, 'prototypes/cheese-motion/src');
+const MANUAL_REF = process.env.MANUAL_REF || '';
+const OUT = process.env.OUT || path.join(SITE, 'index.html');
+
+const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: 'Asia/Shanghai' } });
+function readManual(file) {
+  if (MANUAL_REF) return git('show', `${MANUAL_REF}:docs/manual/${file}`);
+  const f = path.join(REPO, 'docs/manual', file);
+  if (!fs.existsSync(f)) throw new Error(`docs/manual/${file} not in this checkout; until PR #1737 lands, run with MANUAL_REF=origin/task/126fa903`);
+  return fs.readFileSync(f, 'utf8');
+}
 
 // ---------- logo motion (direction A) lifted from the motion prototype ----------
-const tpl = fs.readFileSync('/tmp/cm/template.html', 'utf8');
-const parts = JSON.parse(fs.readFileSync('/tmp/cm/parts.json', 'utf8'));
+const tpl = fs.readFileSync(path.join(MOTION, 'template.html'), 'utf8');
+const parts = JSON.parse(fs.readFileSync(path.join(MOTION, 'parts.json'), 'utf8'));
 const grads = parts.grads; delete parts.grads;
 const cut = (a, b) => { const i = tpl.indexOf(a), j = tpl.indexOf(b, i); if (i < 0 || j < 0) throw new Error('marker ' + a); return tpl.slice(i, j); };
 const motionCore = cut('const P = __PARTS__;', '// ---------- 四个方向').replace('__PARTS__', JSON.stringify(parts));
@@ -17,9 +32,10 @@ const stage = cut('function stageFor(svg){', '// 调试用');
 
 // ---------- user manual ----------
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const fix = s => s.replace(/小队/g, '团队').replace(/知是/g, 'Cheese');
+// The product's name in prose is 知是 (as in the app UI); the lockup 知是 · Cheese is for the site brand only.
+const fix = s => s.replace(/小队/g, '团队').replace(/(?<![\w-])Cheese(?![\w-])/g, '知是');
 function mdPage(file) {
-  const raw = fix(fs.readFileSync(path.join(MANUAL, file), 'utf8'));
+  const raw = fix(readManual(file));
   const body = raw.replace(/^---\n[\s\S]*?\n---\n/, '');
   const toc = [];
   const renderer = new marked.Renderer();
@@ -53,9 +69,9 @@ const USER = [
   { group: '教程', pages: [
     ['tut-student', '学生：在空间里完成第一道题目', outline('从加入空间开始，走完一道题目：看题、参与、让芝士协助、提交。', ['找到老师给的空间和题目', '参与题目，从题目创建自己的项目', '在话题里和芝士一起完成', '按题目要求提交，查看提交记录'])],
     ['tut-teacher', '老师 / 助教：开一门课，收作业、打分', outline('从零开一门课：建课程、排单元、布置作业和测验、看提交并打分。', ['创建课程和课程团队', '按周排单元，挂作业和测验', '邀请学生加入', '查看提交记录、打分，看学生卡在哪里'])],
-    ['tut-office', '办公：完成第一个协作项目', outline('一个小团队用 Cheese 完成一件真实的事：从建团队到验收交付。', ['建团队、邀请同事', '建项目、开话题、把任务交给芝士', '中途补充要求、回答芝士的问题', '验收采纳，把成果发布或下载'])],
+    ['tut-office', '办公：完成第一个协作项目', outline('一个小团队用知是完成一件真实的事：从建团队到验收交付。', ['建团队、邀请同事', '建项目、开话题、把任务交给芝士', '中途补充要求、回答芝士的问题', '验收采纳，把成果发布或下载'])],
   ]},
-  { group: '使用 Cheese', pages: [
+  { group: '使用知是', pages: [
     ['spaces', '空间与题目', outline('空间是老师和组织发布题目的地方。', ['找到空间和题目', '题目详情与参与', '从题目创建项目', '我参与的、我发布的', '发布和编辑题目，参与者管理与数据分析'])],
     ['courses', '课程与作业', outline('课程把教学按单元组织起来。', ['加入课程', '课程首页与单元', '作业与测验', '课程成员与课程团队', '课程设置'])],
     ['teams', '团队', 'teams.md'],
@@ -139,16 +155,19 @@ const pages = [...buildPages(USER, 'docs'), ...buildPages(DEV, 'dev')];
 const nav = { docs: USER.map(g => ({ group: g.group, slugs: g.pages.map(p => p[0]) })), dev: DEV.map(g => ({ group: g.group, slugs: g.pages.map(p => p[0]) })) };
 
 // FAQ from the troubleshooting page
-const trouble = fix(fs.readFileSync(path.join(MANUAL, 'troubleshooting.md'), 'utf8'));
+const trouble = fix(readManual('troubleshooting.md'));
 const faq = [...trouble.matchAll(/^## (.+?)\s*\{#([\w-]+)\}\n+([\s\S]*?)(?=\n## |$)/gm)].map(m => ({ q: m[1], id: m[2], a: marked.parseInline(m[3].trim().split(/\n\n/)[0]) }));
 
 // ---------- changelog ----------
-const tsv = f => fs.readFileSync(f, 'utf8').trim().split('\n').map(l => l.split('\t')).map(([h, d, s]) => {
+// 455c4530 is what the 2026-09-23 "Deploy (prod RUC box)" run shipped; 0.17.0 is the last GitHub release.
+const PROD_0180 = '455c453012d316506f15da35298d46a1c1d55417';
+const HEAD_REF = process.env.CHANGELOG_HEAD || 'origin/main';
+const prLog = range => git('log', '--first-parent', '--date=format-local:%Y-%m-%d', '--format=%h%x09%ad%x09%s', range).trim().split('\n').map(l => l.split('\t')).map(([h, d, s]) => {
   const pr = (/\(#(\d+)\)\s*$/.exec(s) || [])[1];
   const kind = (/^(\w+)/.exec(s) || [])[1];
   return { d, s: s.replace(/\s*\(#\d+\)\s*$/, ''), pr, kind };
 }).filter(x => x.pr);
-const unrel = tsv('/tmp/ds/unrel.tsv'), r018 = tsv('/tmp/ds/r018.tsv');
+const unrel = prLog(`${PROD_0180}..${HEAD_REF}`), r018 = prLog(`0.17.0..${PROD_0180}`);
 const count = list => ({ feat: list.filter(x => x.kind === 'feat').length, fix: list.filter(x => x.kind === 'fix').length, all: list.length });
 const RELEASES = [
   { ver: '未发布', tag: 'unreleased', date: '9 月 23 日之后', env: '已在测试环境，下次正式发布时带上', stats: count(unrel), list: unrel,
@@ -168,7 +187,7 @@ const RELEASES = [
 ];
 
 const DATA = { pages, nav, faq, releases: RELEASES };
-let html = fs.readFileSync('/tmp/ds/shell.html', 'utf8');
+let html = fs.readFileSync(path.join(__dirname, 'shell.html'), 'utf8');
 html = html.replace('/*__GRADS__*/', grads)
   .replace('/*__DATA__*/', 'const DATA = ' + JSON.stringify(DATA).replace(/<\/script/g, '<\\/script') + ';')
   .replace('/*__MOTION__*/', motionCore + '\nconst BUBBLE = ' + bubble + ';\n' + stage);

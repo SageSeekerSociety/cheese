@@ -1,0 +1,10 @@
+{
+  "name": "cheese-docs-site-prototype",
+  "private": true,
+  "scripts": {
+    "build": "node src/build.js"
+  },
+  "devDependencies": {
+    "marked": "18.0.14"
+  }
+}
