@@ -24,7 +24,7 @@
 import type { AgentControlState, PreviewInfo, Topic } from '../cx_types'
 import type { TopicPhase } from '../lib/topicState'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
 import { fileIcon, previewCanShowInRoom } from '../lib/fileKind'
@@ -153,6 +153,44 @@ watch(active, () => {
     on?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   })
 })
+
+// 选中那一格下面的线是一条，换页签时从旧的那一格滑到新的那一格（§9.2：位置变了，
+// 就让人看见它是从哪儿挪过来的）。每一格各画一条的话，换页签是一条消失、另一条
+// 凭空出现，读不出「从这儿到那儿」。
+//
+// 量的是选中那一格自己的盒子，所以一格的宽度变了（计数出现、字体加载完）也得重量
+// 一次——盯着的就是那一格。第一次落位不演：打开房间时线本来就在那儿。
+const ink = ref<{ left: number; width: number } | null>(null)
+const inkMoves = ref(false)
+let inkWatch: ResizeObserver | null = null
+let inkTarget: Element | null = null
+function placeInk() {
+  const on = tabbarRef.value?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+  if (!on) {
+    ink.value = null
+    return
+  }
+  // 页签在 `.tabbar__file` 里的时候 offsetLeft 量的也是到 `.tabbar` 的距离：那层
+  // 包装没有定位，偏移的基准一路落到定了位的 `.tabbar` 上。
+  ink.value = { left: on.offsetLeft, width: on.offsetWidth }
+  // 只在选中的换了一格时改盯的对象：`observe` 一挂上就先回调一次，回调里再
+  // `disconnect` + `observe` 同一格，就是每一帧都在重挂、每一帧都在报 ResizeObserver
+  // 循环。
+  if (on !== inkTarget && typeof ResizeObserver !== 'undefined') {
+    inkWatch?.disconnect()
+    inkWatch ??= new ResizeObserver(() => placeInk())
+    inkWatch.observe(on)
+    inkTarget = on
+  }
+  if (!inkMoves.value) requestAnimationFrame(() => (inkMoves.value = true))
+}
+watch([active, () => openFiles.value.length, tabbarRef], () => void nextTick(placeInk), { immediate: true })
+onBeforeUnmount(() => inkWatch?.disconnect())
+const inkStyle = computed(() =>
+  ink.value
+    ? { transform: `translateX(${ink.value.left + 8}px)`, width: `${Math.max(0, ink.value.width - 16)}px` }
+    : { display: 'none' }
+)
 
 // Every move the panel makes goes through here, so the address always says what
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
@@ -575,6 +613,7 @@ defineExpose({ pulse, highlightTurn, openFile })
             <v-icon size="14">mdi-close</v-icon>
           </button>
         </div>
+        <span class="tabbar__ink" :class="{ 'tabbar__ink--moves': inkMoves }" :style="inkStyle" aria-hidden="true" />
       </div>
 
       <div class="tabbody">
@@ -665,6 +704,7 @@ defineExpose({ pulse, highlightTurn, openFile })
   height: 100%;
 }
 .tabbar {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: stretch;
@@ -755,12 +795,18 @@ defineExpose({ pulse, highlightTurn, openFile })
   color: var(--ink);
   font-weight: 600;
 }
-.tabbar__tab--on::after {
-  content: '';
+.tabbar__ink {
   position: absolute;
-  inset: auto 8px -1px 8px;
+  bottom: -1px;
+  left: 0;
   height: 2px;
   background: var(--ink);
+  pointer-events: none;
+}
+.tabbar__ink--moves {
+  transition:
+    transform var(--dur-base) var(--ease-standard),
+    width var(--dur-base) var(--ease-standard);
 }
 /* 有新内容 —— 琥珀在这条 tab 栏里只给「有东西等你看」，不给选中态。 */
 .tabbar__dot {

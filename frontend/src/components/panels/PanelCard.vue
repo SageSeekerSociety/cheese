@@ -373,7 +373,7 @@ async function send() {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: background-color 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .card-steps__head:hover {
   background: var(--fill);

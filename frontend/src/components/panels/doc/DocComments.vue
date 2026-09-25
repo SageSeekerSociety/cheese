@@ -406,7 +406,7 @@ defineExpose({ open, locate })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background 0.15s;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .doc-comments__chip:hover {
   background: rgba(var(--v-theme-primary), 0.13);

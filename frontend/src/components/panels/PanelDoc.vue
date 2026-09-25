@@ -2141,7 +2141,7 @@ onBeforeUnmount(() => {
   color: var(--faint);
   text-transform: lowercase;
   pointer-events: none;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--dur-quick) var(--ease-standard);
 }
 .doc-editor :deep(pre:hover)::before {
   opacity: 0;
@@ -2265,7 +2265,7 @@ onBeforeUnmount(() => {
   padding: 2px 10px;
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .doc-lossy-banner__btn:hover {
   background: var(--warn-wash);
@@ -2317,7 +2317,7 @@ onBeforeUnmount(() => {
   padding: 2px 10px;
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .doc-notice__btn:hover {
   background: color-mix(in srgb, var(--text) 6%, var(--surface));

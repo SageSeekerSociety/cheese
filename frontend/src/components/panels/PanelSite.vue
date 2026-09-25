@@ -424,7 +424,7 @@ function isLive(index: number): boolean {
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.55;
-  transition: background-color 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .site-act:hover {
   background: var(--fill);
@@ -527,7 +527,7 @@ function isLive(index: number): boolean {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--dur-quick) var(--ease-standard);
 }
 /* 现场 is a transcript, not a doc — 芝士's messages are shown RAW (markdown
    source, <@handle> tokens intact), Claude Code style: mono + pre-wrap. */

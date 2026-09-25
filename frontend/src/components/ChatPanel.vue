@@ -413,9 +413,17 @@ let historyChanges: Map<string, Block | null> | null = null
 let historyReactions: Map<string, ReactionAgg[]> | null = null
 let historyGeneration = 0
 
+// 此刻才进来的那几条消息（不是打开房间时读出来的历史）。它们进来时淡入一下：新
+// 消息落在底部，这一下说的是「刚来的是这条」；读历史时演，一屏同时浮上来几十条，
+// 什么也说明不了。历史快照合并完之前（`historyChanges` 还在）进来的也不算——那是
+// 打开房间时的补齐。自己发的不算：发件箱那一行早已在屏幕上，换成落库的那一条时
+// 再淡入一次就是一闪。
+const arrived = reactive(new Set<string>())
+
 function pushBlock(b: Block) {
   historyChanges?.set(b.id, b)
   if (!messages.value.some((m) => m.id === b.id)) {
+    if (historyChanges === null && b.author !== AUTHOR) arrived.add(b.id)
     messages.value.push(b)
   }
 }
@@ -567,6 +575,7 @@ async function loadTopic(topic: Topic, entering = false) {
     .catch(() => {})
   reactionPickerFor.value = null
   unreadAnchorId.value = null
+  arrived.clear()
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
   loadingOlder.value = false
@@ -1259,6 +1268,7 @@ onBeforeUnmount(() => {
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
@@ -1555,6 +1565,23 @@ onBeforeUnmount(() => {
 @keyframes blink {
   50% {
     opacity: 0;
+  }
+}
+/* 新来的一条：淡入并从下面 4px 升到位（见 `arrived`）。只演一次——class 留着也
+   不会重播，动画只在元素挂上的那一刻跑。 */
+.tl-arrive {
+  animation: tl-arrive var(--dur-base) var(--ease-out);
+}
+@keyframes tl-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+/* 关掉动效时光标常亮：它说的「还在往下写」靠的是在不在，不是闪不闪。 */
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
   }
 }
 </style>
