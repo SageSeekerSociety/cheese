@@ -1,9 +1,14 @@
 package update
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -15,6 +20,8 @@ func TestPlatformDir(t *testing.T) {
 		{"linux", "arm64", "linux-arm64"},
 		{"darwin", "amd64", "darwin-amd64"},
 		{"darwin", "arm64", "darwin-arm64"},
+		{"windows", "amd64", "windows-amd64"},
+		{"windows", "arm64", "windows-arm64"},
 	}
 	for _, c := range cases {
 		got, err := platformDir(c.goos, c.goarch)
@@ -28,8 +35,8 @@ func TestPlatformDir(t *testing.T) {
 }
 
 func TestPlatformDirUnsupported(t *testing.T) {
-	if _, err := platformDir("windows", "amd64"); err == nil {
-		t.Error("expected error for windows")
+	if _, err := platformDir("freebsd", "amd64"); err == nil {
+		t.Error("expected error for freebsd")
 	}
 	if _, err := platformDir("linux", "riscv64"); err == nil {
 		t.Error("expected error for riscv64")
@@ -55,6 +62,10 @@ func TestBinaryURL(t *testing.T) {
 		{
 			"https://example.com/", "linux-arm64",
 			"https://example.com/connector/latest/linux-arm64/cheesehost",
+		},
+		{
+			"https://example.com/connector", "windows-amd64",
+			"https://example.com/connector/latest/windows-amd64/cheesehost.exe",
 		},
 	}
 	for _, c := range cases {
@@ -100,5 +111,46 @@ func TestSelfDigestIsTheHashOfTheRunningBinary(t *testing.T) {
 	again, err := SelfDigest()
 	if err != nil || again != got {
 		t.Errorf("SelfDigest() second call = %q (err %v), want %q", again, err, got)
+	}
+}
+
+// An update request means "take what the origin publishes". When the origin
+// publishes the bytes this process already runs there is nothing to hand off
+// to — and handing off anyway drops the machine's link on every reconnect.
+func TestFetchOfTheRunningBuildIsNotAnUpdate(t *testing.T) {
+	self, err := SelfPath()
+	if err != nil {
+		t.Fatalf("SelfPath error: %v", err)
+	}
+	running, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatalf("read %s: %v", self, err)
+	}
+	served := running
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(served)
+	}))
+	defer origin.Close()
+	leftovers := func() []string {
+		found, _ := filepath.Glob(filepath.Join(filepath.Dir(self), ".cheese-update-*"))
+		return found
+	}
+
+	tmp, err := Fetch(context.Background(), origin.URL)
+	if !errors.Is(err, ErrCurrent) {
+		t.Fatalf("Fetch of the running build = (%q, %v), want ErrCurrent", tmp, err)
+	}
+	if found := leftovers(); len(found) != 0 {
+		t.Errorf("Fetch left downloads behind: %v", found)
+	}
+
+	// Different bytes are a real update: never ErrCurrent. These fail the
+	// runnable check, which is the other half of Fetch's contract.
+	served = append([]byte("not this build"), running[:64]...)
+	if _, err := Fetch(context.Background(), origin.URL); err == nil || errors.Is(err, ErrCurrent) {
+		t.Fatalf("Fetch of different bytes = %v, want a verification failure", err)
+	}
+	if found := leftovers(); len(found) != 0 {
+		t.Errorf("Fetch left downloads behind: %v", found)
 	}
 }

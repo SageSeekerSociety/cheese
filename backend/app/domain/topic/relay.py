@@ -1,4 +1,4 @@
-"""房间给它的一条活留话 (`cheese tell`).
+"""房间给它的一条活留话 (`cheese_tell`).
 
 One direction, and it is the only one there can be: 房间 → 它派出的活.
 
@@ -18,7 +18,7 @@ there, and so does whoever opens the card next week.
 The reverse leg (活 → 它所在的房间) is gone with the sessions: it existed because
 a piece of work held a per-turn token of its own and had no other way home. A
 card has no turn and no token. A sub-thread's result is recorded on the card its
-label names; acceptance closes delivered work, while `cheese close-task` abandons
+label names; acceptance closes delivered work, while `cheese_close_task` abandons
 a task.
 
 Why this is not `POST /topics/{id}/comments`: that route summons only when the

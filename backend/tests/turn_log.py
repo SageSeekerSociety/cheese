@@ -13,12 +13,14 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from tests.integration.conftest import registered
 
 
 async def a_topic(factory, *, title: str = "T") -> uuid.UUID:
     """A real project + topic to hang turns off."""
     async with factory() as session:
         # Turn lifecycle tests need a room, not a provisioned code repository.
+        await registered(session, "u")
         project = await ProjectService(session).create(
             name="P", owner_handle="u", forge_kind="github_app"
         )
@@ -65,6 +67,13 @@ async def open_turn(
             await AgentTurnRepository(session).mark_delivered(turn_id, started_at)
         await session.commit()
     return turn_id
+
+
+async def close_turn(factory, turn_id: uuid.UUID) -> None:
+    """End one interval the way the harness's Stop does."""
+    async with factory() as session:
+        await AgentTurnRepository(session).close([turn_id], datetime.now(UTC))
+        await session.commit()
 
 
 async def open_turn_ids(factory) -> set[uuid.UUID]:

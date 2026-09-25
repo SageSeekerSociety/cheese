@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Topic } from '@/cx_types'
+import type { AgentControlState, Topic } from '@/cx_types'
 import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
@@ -12,7 +12,7 @@ import { listTopicMembers } from '@/api'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
-import { topicPhase } from '@/lib/topicState'
+import { topicPhase, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
@@ -77,7 +77,7 @@ const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
 watch(
   selectedTopic,
   (topic) => {
-    if (topic) setDynamicTitle(topic.title, 'workspace-topic')
+    if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
     else clearDynamicTitle('workspace-topic')
   },
   { immediate: true }
@@ -101,6 +101,13 @@ function openTopic(topicId: string) {
 // one of its own (`cheesex.toolWidth`), plus a 钉住 toggle that decided whether
 // the doc made room for it at all.
 const focusMode = ref(false) // 专注模式 (spec §7.1): session-only, a transient mode
+// 收起 / 拉开的那一下里，栏在变窄变宽，里面的东西不跟着变：几百条消息每一帧按新
+// 宽度重新折行，既费又难看。把里面钉在这一栏落定时的宽度上，栏只是把它裁开、露出。
+function freezeChatWidth(el: Element) {
+  const panes = (el as HTMLElement).parentElement
+  if (!panes) return
+  ;(el as HTMLElement).style.setProperty('--chat-frozen-w', `${(panes.clientWidth * store.chatPct) / 100}px`)
+}
 const panelRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
@@ -150,6 +157,7 @@ function onLocate(message: string) {
 const chatEvents = {
   'turn-done': handleTurnDone,
   working: handleWorking,
+  'agent-control': (state: AgentControlState) => (agentControl.value = state),
   'state-changed': handleStateChanged,
   'mention-click': handleMentionClick,
   'open-file': (path: string, taskId?: string | null) => panelRef.value?.openFile?.(path, taskId),
@@ -162,6 +170,8 @@ const chatEvents = {
 
 // 芝士 是不是正在这个话题里干活 —— 话题头上的状态词和工作面板的 tab 都读它。
 const working = ref(false)
+// 会话控制状态的最近一帧，对话栏从 socket 上收到，现场那格的控制条读它。
+const agentControl = ref<AgentControlState | null>(null)
 
 // ---- 话题此刻处在哪一段 (规则 3/4) ----
 // The accept card owns its own data, but not the one word that summarises it:
@@ -284,6 +294,7 @@ watch(
   () => props.topicId,
   async (id) => {
     working.value = false
+    agentControl.value = null
     if (!id) return
     unreadOnOpen.value = store.unreadMap[id] ?? 0
     // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
@@ -320,24 +331,28 @@ watch(
       />
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
-           什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
-           画。放在这里而不是首屏：见组件自己的说明。 -->
+         什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
+         画。放在这里而不是首屏：见组件自己的说明。 -->
       <PushPermissionPrompt :working="working" />
 
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
-        <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
-        <TopicChatColumn
-          v-if="mdAndUp"
-          v-show="!focusMode"
-          ref="chatColumn"
-          class="col col-chat"
-          :style="{ flex: `0 0 ${store.chatPct}%` }"
-          :topic="selectedTopic"
-          :members="store.members"
-          :topic-list="store.topics"
-          :unread-on-open="unreadOnOpen"
-          v-on="chatEvents"
-        />
+        <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。
+           专注模式开关时这一栏像抽屉一样收起 / 拉开，而不是一下消失、面板一下跳宽：
+           人要看得出面板是从哪儿长过来的。 -->
+        <Transition name="focus-chat" @before-enter="freezeChatWidth" @before-leave="freezeChatWidth">
+          <TopicChatColumn
+            v-if="mdAndUp"
+            v-show="!focusMode"
+            ref="chatColumn"
+            class="col col-chat"
+            :style="{ flex: `0 0 ${store.chatPct}%` }"
+            :topic="selectedTopic"
+            :members="store.members"
+            :topic-list="store.topics"
+            :unread-on-open="unreadOnOpen"
+            v-on="chatEvents"
+          />
+        </Transition>
         <div
           v-if="mdAndUp && !focusMode"
           class="pane-resizer"
@@ -347,11 +362,13 @@ watch(
         />
         <WorkPanel
           ref="panelRef"
+          :agent-name="store.agentName"
           class="col col-doc"
           :style="{ flex: '1 1 0', minWidth: 0 }"
           :topic="selectedTopic"
           :activity-tick="activityTick"
           :working="working"
+          :agent-control="agentControl"
           :topic-list="store.topics"
           :tab="panelTab"
           :phase="phase"
@@ -397,14 +414,49 @@ watch(
 .col {
   min-width: 0;
 }
-/* Draggable splitter between chat and panel (replaces the static divider). */
+/* 专注模式：对话栏是一只侧抽屉（§9：整块进出 --dur-slow，走掉快一档）。动的是
+   flex-basis；`!important` 是为了压过模板上那条内联的 `flex: 0 0 N%`。 */
+.focus-chat-enter-active,
+.focus-chat-leave-active {
+  overflow: hidden;
+}
+.focus-chat-enter-active {
+  transition:
+    flex-basis var(--dur-slow) var(--ease-out),
+    opacity var(--dur-slow) var(--ease-out);
+}
+.focus-chat-leave-active {
+  transition:
+    flex-basis var(--dur-base) var(--ease-in),
+    opacity var(--dur-base) var(--ease-in);
+}
+.focus-chat-enter-from,
+.focus-chat-leave-to {
+  flex-basis: 0% !important;
+  opacity: 0;
+}
+.focus-chat-enter-active > :deep(*),
+.focus-chat-leave-active > :deep(*) {
+  width: var(--chat-frozen-w);
+  min-width: var(--chat-frozen-w);
+}
+/* 对话和面板之间那条可拖的线。看得见的只有 1px，和页面上别的分隔线一样重；能抓
+   的范围左右各多 4px（::before），不然一条细线很难按准。它原来是一条 5px 的灰带，
+   比屏幕上任何一条线都粗，悬停还变琥珀——琥珀留给主操作。 */
 .pane-resizer {
-  flex: 0 0 5px;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 1px;
   cursor: col-resize;
   background: var(--line);
-  transition: background 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.pane-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
 }
 .pane-resizer:hover {
-  background: var(--accent);
+  background: var(--faint);
 }
 </style>

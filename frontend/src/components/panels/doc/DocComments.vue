@@ -37,7 +37,7 @@ const folded = ref(false)
 // text; we only ever truncate it for display (never to derive semantics).
 function nodeLabel(content: string): string {
   const t = content.replace(/^#+\s*/, '').trim()
-  return t.length > 22 ? t.slice(0, 22) + '…' : t || '(空段落)'
+  return t.length > 22 ? t.slice(0, 22) + '…' : t || '（空段落）'
 }
 /** The paragraph a comment points at (or null for a whole-doc comment). */
 function commentAnchor(c: Block): Block | null {
@@ -133,8 +133,8 @@ defineExpose({ open, locate })
       <v-btn
         icon="mdi-plus"
         size="x-small"
-        variant="tonal"
-        color="primary"
+        variant="text"
+        color="on-surface-variant"
         title="写评论"
         @click="open({ anchorId: null, quote: '' })"
       />
@@ -245,7 +245,7 @@ defineExpose({ open, locate })
   max-width: 240px;
   padding: 1px 9px;
   border-radius: var(--radius-lg);
-  font-size: 0.72rem;
+  font-size: 12px;
   line-height: 1.6;
   white-space: nowrap;
   color: rgb(var(--v-theme-primary));
@@ -284,7 +284,7 @@ defineExpose({ open, locate })
 }
 .doc-editor :deep(.doc-liveref__status) {
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 12px;
 }
 
 /* 飞书 docs 风常驻评论区 at the bottom of the document column. */
@@ -328,7 +328,7 @@ defineExpose({ open, locate })
   margin-bottom: 12px;
 }
 .doc-comments__count {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   padding: 0 6px;
   border-radius: 8px;
@@ -375,7 +375,7 @@ defineExpose({ open, locate })
   margin-bottom: 1px;
 }
 .doc-comments__author {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ink);
 }
@@ -386,15 +386,15 @@ defineExpose({ open, locate })
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* Anchored comment's quote chip: the message-quote visual language (amber left
-   bar over a faint amber ground). Click → scroll + flash the paragraph. */
+/* Anchored comment's quote chip: the message-quote visual language (a neutral
+   left bar over the fill ground). Click → scroll + flash the paragraph. */
 .doc-comments__chip {
   display: block;
   max-width: 100%;
   text-align: left;
   border: none;
-  border-left: 2px solid var(--accent);
-  background: rgba(var(--v-theme-primary), 0.06);
+  border-left: 2px solid var(--line-2);
+  background: var(--fill);
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
   padding: 3px 8px;
@@ -406,7 +406,7 @@ defineExpose({ open, locate })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background 0.15s;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .doc-comments__chip:hover {
   background: rgba(var(--v-theme-primary), 0.13);
@@ -431,7 +431,7 @@ defineExpose({ open, locate })
   border: 1px solid var(--line-2);
   border-radius: 8px;
   background: var(--fill);
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--text);
   outline: none;
   transition:

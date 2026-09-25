@@ -100,7 +100,7 @@ func Setup(version string) *cobra.Command {
 	cli.Root.Long = "cheese connects this machine to your cheese workspace so your " +
 		"sessions can run here and you can use them from the web. Log in once and it " +
 		"stays connected in the background. Run `cheese <command> -h` for any command; " +
-		"`cheese api` calls your workspace's API."
+		"`cheesehost api` calls your workspace's API."
 	cli.Root.Example = ""
 	cli.Root.SilenceErrors = true
 	cli.Root.CompletionOptions.DisableDefaultCmd = true
@@ -114,9 +114,9 @@ func Setup(version string) *cobra.Command {
 		Use:   "api",
 		Short: "The server's full request/response API (generated live from OpenAPI)",
 		Long: "Every operation the server publishes, built fresh from its live OpenAPI\n" +
-			"each run. Base URL and credential come from `cheese auth login` (or the\n" +
-			"CHEESE_API / CHEESE_TOKEN env). `cheese api` lists the operations;\n" +
-			"`cheese api <operation> -h` shows one operation's generated help.",
+			"each run. Base URL and credential come from `cheesehost auth login` (or the\n" +
+			"CHEESE_API / CHEESE_TOKEN env). `cheesehost api` lists the operations;\n" +
+			"`cheesehost api <operation> -h` shows one operation's generated help.",
 	}
 	cli.Root.AddCommand(apiCmd)
 	return apiCmd

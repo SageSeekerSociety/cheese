@@ -1,13 +1,14 @@
 // Package host is the composition root of `cheese run`: it dials the server and
 // lets the server open any number of screens on this machine. Each screen is a
-// program in a terminal, and the server reaches it three ways:
+// program in a terminal, and the server reaches it two ways:
 //
 //   - as a raw byte stream to and from the terminal (what a browser viewer
 //     rides),
-//   - through the screen's own rendezvous socket, where a prompt is enqueued as
-//     human-origin input without passing through the terminal at all,
 //   - and by staging files under the platform's own footprint on this machine,
 //     which is where a server-sent file goes and the only place it may go.
+//
+// A session's own program (a harness runner) is reached separately, on the
+// socket its state directory names (executor.go).
 //
 // The host wires those together and ascribes no meaning to any of it; all
 // behavior lives in the server.
@@ -23,19 +24,15 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
 	"github.com/SageSeekerSociety/cheese/cli/internal/localfs"
-	"github.com/SageSeekerSociety/cheese/cli/internal/place"
-	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
 	"github.com/SageSeekerSociety/cheese/cli/internal/update"
@@ -73,19 +70,6 @@ type sess struct {
 	client   *terminal.Client // a real tmux client (pty) while a viewer is attached
 	lastCols int
 	lastRows int
-
-	// Prompt delivery goes through the session's own rendezvous socket when the
-	// launcher armed one (CLAUDE_BG_RENDEZVOUS_SOCK / CLAUDE_BG_RV_AUTH in the
-	// screen env). That path replaces typing into the terminal entirely: the
-	// text is enqueued by Claude Code as human-origin input, so nothing about
-	// delivery depends on pane width, TUI state, or a screen scrape.
-	// rvTokenFile is read lazily, not at create time: the launcher writes it
-	// while claude boots, which is strictly after the screen is spawned.
-	rvPath      string
-	rvTokenFile string
-	workDir     string
-	rvMu        sync.Mutex
-	rv          *rendezvous.Client
 }
 
 // New builds a Host from cfg. cfgPath locates the shared state file that lets
@@ -95,7 +79,7 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	tm, err := terminal.NewManager()
+	tm, err := newTerminalManager()
 	if err != nil {
 		return nil, err
 	}
@@ -116,15 +100,15 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 }
 
 // Run connects and serves screens until ctx is cancelled, then LETS GO of them:
-// it releases what this process owns (viewer ptys, rendezvous clients) and
-// leaves every tmux session running.
+// it releases what this process owns (viewer ptys) and leaves every tmux
+// session running.
 //
 // Stopping the connector is not a decision to end anybody's work. The service
 // manager stops this process to restart it, to apply an update, on a reboot —
 // and a turn mid-flight on this machine has nothing to do with any of that. So
 // the exit path releases and the sessions live on; the next run re-adopts them
-// (createSession's HasSession branch), the drainer keeps retrying the hooks it
-// spooled, and the viewer reattaches to the pane it left. Ending a session is a
+// (createSession's HasSession branch), a runner keeps its journal for whoever
+// reads it next, and the viewer reattaches to the pane it left. Ending a session is a
 // separate, explicit act: the server closing a screen, or the operator running
 // `cheese link disconnect` / `cheese uninstall`, which tear the server down.
 func (h *Host) Run(ctx context.Context) error {
@@ -143,8 +127,10 @@ func (h *Host) Run(ctx context.Context) error {
 	// the run. Note: a successful update never returns from performUpdate — it
 	// replaces the process image — so none of the deferred teardown above runs.
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGUSR2)
-	defer signal.Stop(sig)
+	if signals := updateSignals(); len(signals) > 0 {
+		signal.Notify(sig, signals...)
+		defer signal.Stop(sig)
+	}
 	go func() {
 		for {
 			select {
@@ -181,6 +167,9 @@ func (h *Host) performUpdate() {
 		return
 	}
 	tmp, err := update.Fetch(h.ctx, h.base)
+	if errors.Is(err, update.ErrCurrent) {
+		return
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cheese: update aborted (kept running current build): %v\n", err)
 		return
@@ -203,7 +192,13 @@ func (h *Host) performUpdate() {
 	// every hosted task survive as they do across an ordinary stop, and the new
 	// image reconnects and re-adopts them. If exec fails we deliberately do NOT exit —
 	// the tasks must live on; the already-replaced binary applies on next restart.
-	if err := syscall.Exec(self, os.Args, os.Environ()); err != nil {
+	//
+	// The recorded pid is cleared first. Where the hand-off is a new process
+	// (Windows), that process refuses to start beside a live connector, and
+	// this one may not have exited by the time it looks.
+	h.clearState()
+	if err := handOff(self); err != nil {
+		h.publishState()
 		fmt.Fprintf(os.Stderr, "cheese: exec into new binary failed (applies on next restart): %v\n", err)
 	}
 }
@@ -246,18 +241,6 @@ func (h *Host) onMsg(m link.Msg) {
 			reply.Error = err.Error()
 		}
 		_ = h.conn.Send(reply)
-	case "rpc.call": // the server asks this screen to do something
-		if s := h.session(m.Sid); s != nil {
-			go h.serveCall(m, s)
-		}
-	case "file.put":
-		// The screen still has to exist: the ack is what keeps the prompt from
-		// racing the bytes, and there is nothing to keep it behind otherwise.
-		if s := h.session(m.Sid); s != nil {
-			go h.putFile(m)
-		} else {
-			_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Error: "unknown screen"})
-		}
 	case "screen.subscribe": // attach a real tmux client sized to the viewer
 		h.subscribeScreen(m.Sid, m.Cols, m.Rows)
 	case "screen.unsubscribe":
@@ -307,6 +290,10 @@ func (h *Host) session(sid string) *sess {
 }
 
 func (h *Host) createSession(m link.Msg) {
+	if h.tm == nil {
+		_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: errNoScreens.Error()})
+		return
+	}
 	if h.session(m.Sid) != nil {
 		// Same-process reconnect: the screen is already live locally, and every
 		// way of reaching it is per-message, so there is nothing to re-establish.
@@ -341,8 +328,9 @@ func (h *Host) createSession(m link.Msg) {
 			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: "Cannot adopt session without its saved launch identity"})
 			return
 		}
-		// The running model still listens at its original socket. A reassertion
-		// can carry a fresh launch environment, which no process has consumed.
+		// The running session keeps the environment it was born with. A
+		// reassertion can carry a fresh launch environment, which no process
+		// has consumed.
 		m = birth
 		term = h.tm.Adopt(m.Sid)
 	} else {
@@ -363,12 +351,7 @@ func (h *Host) createSession(m link.Msg) {
 		}
 	}
 	h.mu.Lock()
-	h.sessions[m.Sid] = &sess{
-		term:        term,
-		rvPath:      m.Env[envRvSock],
-		rvTokenFile: m.Env[envRvTokenFile],
-		workDir:     m.Env["CHEESE_WORK"],
-	}
+	h.sessions[m.Sid] = &sess{term: term}
 	h.mu.Unlock()
 
 	_ = h.conn.Send(link.Msg{T: "session.ready", Sid: m.Sid})
@@ -409,6 +392,9 @@ func (h *Host) unsubscribeScreen(sid string) {
 }
 
 func (h *Host) closeSession(sid string) error {
+	if h.tm == nil {
+		return nil
+	}
 	h.mu.Lock()
 	s := h.sessions[sid]
 	h.mu.Unlock()
@@ -436,6 +422,9 @@ func (h *Host) closeSession(sid string) error {
 }
 
 func (h *Host) restoreSessions() ([]link.Msg, error) {
+	if h.tm == nil {
+		return nil, nil
+	}
 	identities, err := h.tm.Identities(h.base)
 	if err != nil {
 		return nil, err
@@ -483,9 +472,8 @@ func (h *Host) releaseAll() {
 	}
 }
 
-// release drops what this PROCESS owns for a screen — the viewer's pty client
-// and the rendezvous connection. Nothing here outlives the process anyway, and
-// none of it is the screen's work.
+// release drops what this PROCESS owns for a screen — the viewer's pty client.
+// Nothing here outlives the process anyway, and none of it is the screen's work.
 func (h *Host) release(s *sess) {
 	if s == nil {
 		return
@@ -493,56 +481,6 @@ func (h *Host) release(s *sess) {
 	if s.client != nil {
 		s.client.Close()
 	}
-	s.rvMu.Lock()
-	if s.rv != nil {
-		s.rv.Close()
-		s.rv = nil
-	}
-	s.rvMu.Unlock()
-}
-
-// The screen-env keys the launcher and this host agree on. The launcher derives
-// Claude Code's own three variables from them and writes the token file; the
-// host reads the same two to find the socket and its token. Keeping the token
-// in a FILE rather than the env is what makes an adopted screen work: a reused
-// `claude` keeps the token it booted with, so a fresh env value would not match
-// — the file is the single copy both sides read.
-const (
-	envRvSock      = "CHEESE_RV_SOCK"
-	envRvTokenFile = "CHEESE_RV_TOKEN_FILE"
-	promptCall     = "prompt"
-)
-
-// rvDialWindow bounds how long we wait for a booting claude to bind its socket.
-// A cold screen (image pull, node start, TUI mount) has been measured well over
-// a minute; giving up early is what made the old driver abandon a prompt while
-// the session was merely still starting.
-var rvDialWindow = 120 * time.Second
-
-const maxScreenFileBytes = 10 << 20
-
-// putFile stages an uploaded image before its @path is submitted over rendezvous.
-// The acknowledgement is the ordering boundary: the prompt cannot race ahead of
-// the bytes on a remote device.
-//
-// It lands under the platform's footprint on this machine and nowhere else. The
-// server sends an absolute, $HOME-anchored destination rather than a path
-// relative to the screen's work directory, because that work directory is the
-// user's own checkout and the platform does not put files in it: one staged
-// there is an untracked file in a repository whose owner never added it, and
-// which `cheese uninstall` would walk past. The reply carries the resolved
-// absolute path, which is what the prompt @-mentions — this machine's $HOME is
-// the server's to ask for, never to guess.
-func (h *Host) putFile(m link.Msg) {
-	reply := func(value any, errStr string) {
-		_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Value: value, Error: errStr})
-	}
-	landed, err := writeFootprintFile(m.Path, m.Data)
-	if err != nil {
-		reply(nil, fmt.Sprintf("file.put: %v", err))
-		return
-	}
-	reply(map[string]any{"ok": true, "path": landed}, "")
 }
 
 func resolveScreenWorkDir(workDir string) (string, error) {
@@ -562,221 +500,6 @@ func resolveScreenWorkDir(workDir string) (string, error) {
 		return "", fmt.Errorf("work directory is not absolute")
 	}
 	return filepath.Clean(workDir), nil
-}
-
-// writeFootprintFile writes one server-sent file under this machine's footprint
-// root and answers with where it landed.
-//
-// The wire path is $HOME-anchored and must name something inside
-// $HOME/<place.Root>/ — the one directory the platform owns here, and the
-// one `cheese uninstall` removes. Anything else is refused rather than written:
-// the destination the server builds is checked on its side too, and a writer
-// that trusts the sender is a writer that will one day put a file in a user's
-// repository because some caller built the path wrong.
-func writeFootprintFile(wirePath, encoded string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	clean := path.Clean(wirePath)
-	prefix := "$HOME/" + place.Root + "/"
-	if !strings.HasPrefix(clean, prefix) || strings.Contains(clean, "/../") {
-		return "", fmt.Errorf("path must be under $HOME/%s/", place.Root)
-	}
-	if len(encoded) > base64.StdEncoding.EncodedLen(maxScreenFileBytes) {
-		return "", fmt.Errorf("file exceeds %d bytes", maxScreenFileBytes)
-	}
-	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", fmt.Errorf("invalid base64: %w", err)
-	}
-	if len(raw) == 0 || len(raw) > maxScreenFileBytes {
-		return "", fmt.Errorf("invalid file size %d", len(raw))
-	}
-	root := filepath.Join(home, place.Root)
-	target := filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(clean, "$HOME/")))
-	parent := filepath.Dir(target)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return "", err
-	}
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve footprint root: %w", err)
-	}
-	realParent, err := filepath.EvalSymlinks(parent)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(realRoot, realParent)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("upload path escapes the platform footprint")
-	}
-	tmp, err := os.CreateTemp(realParent, ".cheese-upload-*")
-	if err != nil {
-		return "", err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	err = tmp.Chmod(0o644)
-	if err == nil {
-		_, err = tmp.Write(raw)
-	}
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return "", err
-	}
-	landed := filepath.Join(realParent, filepath.Base(target))
-	return landed, os.Rename(tmpPath, landed)
-}
-
-// deliverPrompt hands one turn's prompt to the session over its rendezvous
-// socket and answers the server's rpc.call with the outcome. Failure here is
-// REPORTED, never retried into the void: the whole point of leaving send-keys
-// behind is that a prompt either lands or says why not.
-func (h *Host) deliverPrompt(m link.Msg, s *sess) {
-	text := ""
-	if len(m.Args) > 0 {
-		if str, ok := m.Args[0].(string); ok {
-			text = str
-		}
-	}
-	reply := func(value any, errStr string) {
-		_ = h.conn.Send(link.Msg{T: "rpc.result", Sid: m.Sid, ID: m.ID, Value: value, Error: errStr})
-	}
-	if text == "" {
-		reply(nil, "rendezvous: empty prompt")
-		return
-	}
-
-	c, delivered, err := h.rendezvousClient(s, text)
-	if err != nil {
-		var value any
-		if errors.Is(err, rendezvous.ErrUnavailable) {
-			value = map[string]any{"failure_code": "prompt_socket_unavailable"}
-		}
-		reply(value, err.Error())
-		return
-	}
-	if !delivered {
-		err = c.Reply(text)
-	}
-	if err == nil {
-		reply(map[string]any{"ok": true, "ready": true, "transport": "rendezvous"}, "")
-		return
-	}
-	// One reconnect-and-retry. A session that has been idle can have dropped
-	// our connection (or been re-attached by another client), and that failure
-	// mode is indistinguishable from a dead session until we try again. A
-	// rejected or unwritable frame never reached the queue, so a retry cannot
-	// duplicate a delivered prompt.
-	h.dropRendezvous(s)
-	if c2, delivered2, err2 := h.rendezvousClient(s, text); err2 == nil {
-		if !delivered2 {
-			err2 = c2.Reply(text)
-		}
-		if err2 == nil {
-			reply(map[string]any{"ok": true, "ready": true, "transport": "rendezvous", "retried": true}, "")
-			return
-		} else {
-			err = err2
-		}
-	}
-	reply(nil, fmt.Sprintf("rendezvous delivery failed: %v", err))
-}
-
-// rendezvousClient sends the first prompt while connecting; a cached client
-// leaves delivery to the caller. The boolean prevents sending that prompt twice.
-func (h *Host) rendezvousClient(s *sess, prompt string) (*rendezvous.Client, bool, error) {
-	s.rvMu.Lock()
-	defer s.rvMu.Unlock()
-	if s.rv != nil && s.rv.Alive() {
-		return s.rv, false, nil
-	}
-	if s.rv != nil {
-		s.rv.Close()
-		s.rv = nil
-	}
-	token, err := readRvToken(s.rvTokenFile)
-	if err != nil {
-		return nil, false, err
-	}
-	ctx, cancel := context.WithTimeout(h.ctx, rvDialWindow+15*time.Second)
-	defer cancel()
-	c, err := rendezvous.Dial(ctx, s.rvPath, token, rendezvous.Options{
-		InitialPrompt: prompt,
-		WaitForSocket: rvDialWindow,
-		Logf: func(format string, args ...any) {
-			fmt.Fprintf(os.Stderr, "cheese: rendezvous: "+format+"\n", args...)
-		},
-	})
-	if err != nil {
-		return nil, false, err
-	}
-	s.rv = c
-	return c, true, nil
-}
-
-func (h *Host) dropRendezvous(s *sess) {
-	s.rvMu.Lock()
-	defer s.rvMu.Unlock()
-	if s.rv != nil {
-		s.rv.Close()
-		s.rv = nil
-	}
-}
-
-// rvTokenWait bounds the wait below. The token file is written on the launcher's
-// way to exec'ing claude — necessarily BEFORE the socket claude then binds — so
-// this window must be at least rvDialWindow, never a fraction of it. It was 20s
-// against a 120s socket window: a first prompt for a cold screen gave up on the
-// token six times sooner than it would have waited for the socket, and a new
-// topic whose workspace was still coming up died at ~20s every time. The wait
-// now covers a full cold start (workspace bring-up + node + TUI mount) with
-// margin. A var, not a const, so a test does not have to spend it.
-var rvTokenWait = 180 * time.Second
-
-// serveCall answers one server->screen call. `prompt` is the only thing a screen
-// can be asked to do, and it goes over the rendezvous socket the launcher armed.
-// Anything else — a call this build does not know, or a prompt for a screen with
-// no socket — is answered with an error rather than dropped: a call the server
-// believes it made and this side silently ignored is the exact failure shape
-// this delivery path exists to end.
-func (h *Host) serveCall(m link.Msg, s *sess) {
-	if m.Name != promptCall {
-		_ = h.conn.Send(link.Msg{T: "rpc.result", Sid: m.Sid, ID: m.ID,
-			Error: fmt.Sprintf("unknown call %q", m.Name)})
-		return
-	}
-	if s.rvPath == "" {
-		_ = h.conn.Send(link.Msg{T: "rpc.result", Sid: m.Sid, ID: m.ID,
-			Error: "rendezvous: this screen has no socket (" + envRvSock + " was not in its env)"})
-		return
-	}
-	h.deliverPrompt(m, s)
-}
-
-// readRvToken reads the launcher-written token. It waits briefly: the file is
-// written on the launcher's way to exec'ing claude, so a prompt that races a
-// cold screen can arrive a moment before it exists.
-func readRvToken(path string) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("rendezvous: no token file configured (%s)", envRvTokenFile)
-	}
-	deadline := time.Now().Add(rvTokenWait)
-	for {
-		b, err := os.ReadFile(path)
-		if err == nil {
-			if tok := strings.TrimSpace(string(b)); tok != "" {
-				return tok, nil
-			}
-		}
-		if time.Now().After(deadline) {
-			return "", fmt.Errorf("rendezvous: token file %s never appeared", path)
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
 }
 
 // execMaxOut caps each of stdout/stderr so a runaway command can't exhaust memory.

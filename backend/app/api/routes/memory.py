@@ -4,6 +4,10 @@
 prune) what it remembers, or the memory is a black box. Entries live in
 ``memory_entries``; ids are row UUIDs.
 
+What an agent remembered in a project is that project's content, and what it
+noted about a person is that person's business: the people who may read the
+project read the one, the person reads the other, and nobody else reads either.
+
 Deleting is safe curation, not data loss (memory is a projection).
 """
 
@@ -14,13 +18,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.memory.models import (
     MemoryEntry,
     MemoryScope,
     agent_project_scope_id,
+    project_of_scope,
     project_scope_prefix,
     user_scope_about,
     user_scope_id,
@@ -51,13 +57,14 @@ def _entry_out(e: MemoryEntry) -> dict:
 @router.get("")
 async def list_memory(
     db: DbSession,
-    project_id: uuid.UUID | None = None,
+    resolver: ActorResolverDep,
+    project_id: uuid.UUID,
     user_handle: str | None = None,
     agent_handle: str | None = None,
 ) -> dict:
     """Memory entries for a project and/or a person, newest first.
 
-    Every memory here belongs to one agent instance (结论 8): `cheese remember`
+    Every memory here belongs to one agent instance (结论 8): `cheese_remember`
     lands in an ``agent_project`` pool keyed ``{project_id}:{handle}``, and
     ``project_id`` lists every such pool in the project; ``scope``/``scope_id``
     on each entry say which one it came from, and ``agent_handle`` narrows to
@@ -68,51 +75,42 @@ async def list_memory(
     has been remembered *about me* — and it is answered INSIDE this project:
     a pool about a person belongs to one agent instance in one project (结论
     8), so listing it without a project would hand the reader another project's
-    notes about the same person. That is why it no longer stands alone as a
-    condition of its own.
+    notes about the same person. It is asked by that person and nobody else:
+    the agent itself reads its notes on someone only in that person's private
+    chat with it, and a teammate has no better claim than the agent does.
     """
-    conds = []
-    if project_id is not None:
-        agent_cond = MemoryEntry.scope == MemoryScope.agent_project
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    if user_handle and user_handle != actor.handle:
+        raise ForbiddenError("只能查看关于你自己的记忆")
+    agent_cond = MemoryEntry.scope == MemoryScope.agent_project
+    if agent_handle:
+        cond = agent_cond & (
+            MemoryEntry.scope_id == agent_project_scope_id(project_id, agent_handle)
+        )
+    else:
+        # Every agent that ever wrote here, including ones no longer on a
+        # roster — a prefix scan is the only listing that can't go silently
+        # blind. `project_id` is a parsed UUID, so it carries no LIKE
+        # wildcards; autoescape guards the general case anyway.
+        cond = agent_cond & MemoryEntry.scope_id.startswith(
+            project_scope_prefix(project_id), autoescape=True
+        )
+    if user_handle:
         if agent_handle:
-            conds.append(
-                agent_cond
-                & (
-                    MemoryEntry.scope_id
-                    == agent_project_scope_id(project_id, agent_handle)
-                )
+            about = MemoryEntry.scope_id == user_scope_id(
+                project_id, agent_handle, user_handle
             )
         else:
-            # Every agent that ever wrote here, including ones no longer on
-            # a roster — a prefix scan is the only listing that can't go
-            # silently blind. `project_id` is a parsed UUID, so it carries
-            # no LIKE wildcards; autoescape guards the general case anyway.
-            conds.append(
-                agent_cond
-                & MemoryEntry.scope_id.startswith(
-                    project_scope_prefix(project_id), autoescape=True
-                )
+            # 这个项目里每一位 agent 对他的记录。前缀锁住项目，后缀锁住
+            # 人，中间那一段是谁记的——两头夹住才既不漏掉一位队友，也不
+            # 把别的项目对同一个人的记录带进来。
+            about = MemoryEntry.scope_id.startswith(
+                project_scope_prefix(project_id), autoescape=True
+            ) & MemoryEntry.scope_id.endswith(
+                user_scope_about(user_handle), autoescape=True
             )
-        if user_handle:
-            if agent_handle:
-                about = MemoryEntry.scope_id == user_scope_id(
-                    project_id, agent_handle, user_handle
-                )
-            else:
-                # 这个项目里每一位 agent 对他的记录。前缀锁住项目，后缀锁住
-                # 人，中间那一段是谁记的——两头夹住才既不漏掉一位队友，也不
-                # 把别的项目对同一个人的记录带进来。
-                about = MemoryEntry.scope_id.startswith(
-                    project_scope_prefix(project_id), autoescape=True
-                ) & MemoryEntry.scope_id.endswith(
-                    user_scope_about(user_handle), autoescape=True
-                )
-            conds.append((MemoryEntry.scope == MemoryScope.user) & about)
-    if not conds:
-        return ok(page([], 0))
-    cond = conds[0]
-    for c in conds[1:]:
-        cond = cond | c
+        cond = cond | ((MemoryEntry.scope == MemoryScope.user) & about)
     # Same filter the recall path uses: a fact 记忆整理 retired is no longer part
     # of the memory, and showing it here would tell a human the opposite of what
     # 芝士 will actually read next turn.
@@ -127,15 +125,37 @@ async def list_memory(
 
 
 @router.delete("/{entry_id}")
-async def delete_memory(entry_id: str, db: DbSession) -> dict:
-    """人工修剪一条记忆 (curation, not data loss — memory is a projection)."""
+async def delete_memory(
+    entry_id: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """人工修剪一条记忆 (curation, not data loss — memory is a projection).
+
+    An entry is pruned by someone the listing above would show it to: a pool
+    of the project's agents by whoever may read the project, a note about a
+    person by that person. Anyone else is told the entry does not exist,
+    exactly as for an id that never did — a refusal that answered differently
+    would confirm the id to someone with no business knowing it.
+    """
+    actor = await resolver.require_verified_caller()
     try:
         row_id = uuid.UUID(entry_id)
     except ValueError as exc:
         raise ValidationError("无效的记忆条目 id") from exc
+    missing = NotFoundError("记忆条目不存在")
     entry = await db.get(MemoryEntry, row_id)
     if entry is None:
-        raise NotFoundError("记忆条目不存在")
+        raise missing
+    project_id = project_of_scope(entry.scope, entry.scope_id)
+    if project_id is None:
+        raise missing
+    try:
+        await resolver.authorize_project(actor, project_id=project_id)
+    except (ForbiddenError, NotFoundError) as exc:
+        raise missing from exc
+    if entry.scope is MemoryScope.user and not entry.scope_id.endswith(
+        user_scope_about(actor.handle)
+    ):
+        raise missing
     await db.delete(entry)
     await db.flush()
     return ok({"deleted": entry_id})

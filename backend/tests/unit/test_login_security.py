@@ -3,16 +3,16 @@ from unittest.mock import AsyncMock
 import pytest
 
 
-class TestLoginRateLimiter:
+class TestAttemptLimiter:
     @pytest.fixture
     def mock_redis(self):
         return AsyncMock()
 
     @pytest.fixture
     def rate_limiter(self, mock_redis):
-        from app.domain.user.login_security import LoginRateLimiter
+        from app.domain.user.login_security import TwoFactorRateLimiter
 
-        return LoginRateLimiter(mock_redis)
+        return TwoFactorRateLimiter(mock_redis)
 
     @pytest.mark.anyio
     async def test_not_locked_initially(self, rate_limiter, mock_redis) -> None:
@@ -54,7 +54,7 @@ class TestTwoFactorBudgets:
         """Not the username keys: a successful password step clears those, so
         sharing them would reset the 2FA budget on every login attempt."""
         from app.domain.user.login_security import (
-            LOGIN_ATTEMPTS_PREFIX,
+            LOGIN_FAILURES_PREFIX,
             TWO_FACTOR_ATTEMPTS_PREFIX,
             TwoFactorRateLimiter,
         )
@@ -64,7 +64,7 @@ class TestTwoFactorBudgets:
 
         key = mock_redis.incr.call_args.args[0]
         assert key == f"{TWO_FACTOR_ATTEMPTS_PREFIX}42"
-        assert not key.startswith(LOGIN_ATTEMPTS_PREFIX)
+        assert not key.startswith(LOGIN_FAILURES_PREFIX)
 
     @pytest.mark.anyio
     async def test_backup_codes_count_under_keys_of_their_own(self, mock_redis) -> None:
@@ -376,24 +376,13 @@ class TestTOTPServiceStorage:
         user_id = await _user(session)
         await self._enable(totp, user_id)
         codes = await totp.generate_backup_codes(user_id)
-        await totp.set_always_required(user_id, True)
         assert await totp.disable_2fa(user_id) is True
         assert await totp.is_2fa_enabled(user_id) is False
-        assert await totp.is_always_required(user_id) is False
         assert await totp.verify_backup_code(user_id, codes[0]) is False
         assert await totp.disable_2fa(user_id) is False
 
-    @pytest.mark.anyio
-    async def test_always_required_flag(self, totp, session) -> None:
-        user_id = await _user(session)
-        assert await totp.is_always_required(user_id) is False
-        await totp.set_always_required(user_id, True)
-        assert await totp.is_always_required(user_id) is True
-        await totp.set_always_required(user_id, False)
-        assert await totp.is_always_required(user_id) is False
 
-
-class TestLoginRateLimiterExtended:
+class TestAttemptLimiterExtended:
     """Additional rate limiter tests for uncovered methods."""
 
     @pytest.fixture
@@ -402,9 +391,9 @@ class TestLoginRateLimiterExtended:
 
     @pytest.fixture
     def rate_limiter(self, mock_redis):
-        from app.domain.user.login_security import LoginRateLimiter
+        from app.domain.user.login_security import TwoFactorRateLimiter
 
-        return LoginRateLimiter(mock_redis)
+        return TwoFactorRateLimiter(mock_redis)
 
     @pytest.mark.anyio
     async def test_get_remaining_lockout_seconds_locked(self, rate_limiter, mock_redis):
@@ -419,119 +408,6 @@ class TestLoginRateLimiterExtended:
         mock_redis.ttl.return_value = -1
         result = await rate_limiter.get_remaining_lockout_seconds("testuser")
         assert result == 0
-
-
-class TestSessionManager:
-    @pytest.fixture
-    def mock_redis(self):
-        return AsyncMock()
-
-    @pytest.fixture
-    def session_manager(self, mock_redis):
-        from app.domain.user.login_security import SessionManager
-
-        return SessionManager(mock_redis)
-
-    @pytest.mark.anyio
-    async def test_create_session(self, session_manager, mock_redis) -> None:
-        session_id = await session_manager.create_session(
-            user_id=123,
-            device_info="Chrome",
-            ip_address="127.0.0.1",
-            user_agent="Mozilla/5.0",
-        )
-        assert session_id is not None
-        assert len(session_id) == 36
-        mock_redis.hset.assert_called()
-        mock_redis.sadd.assert_called()
-
-    @pytest.mark.anyio
-    async def test_get_session(self, session_manager, mock_redis) -> None:
-        mock_redis.hgetall.return_value = {
-            b"session_id": b"test-id",
-            b"user_id": b"123",
-        }
-        session = await session_manager.get_session("test-id")
-        assert session is not None
-        assert session["session_id"] == "test-id"
-
-    @pytest.mark.anyio
-    async def test_get_session_not_found(self, session_manager, mock_redis) -> None:
-        mock_redis.hgetall.return_value = {}
-        session = await session_manager.get_session("nonexistent")
-        assert session is None
-
-    @pytest.mark.anyio
-    async def test_list_user_sessions(self, session_manager, mock_redis) -> None:
-        mock_redis.smembers.return_value = {b"session-1", b"session-2"}
-        mock_redis.hgetall.side_effect = [
-            {b"session_id": b"session-1", b"last_active_at": b"2024-01-01T00:00:00"},
-            {b"session_id": b"session-2", b"last_active_at": b"2024-01-02T00:00:00"},
-        ]
-        sessions = await session_manager.list_user_sessions(123)
-        assert len(sessions) == 2
-
-    @pytest.mark.anyio
-    async def test_revoke_session_success(self, session_manager, mock_redis) -> None:
-        mock_redis.hgetall.return_value = {
-            b"session_id": b"test-id",
-            b"user_id": b"123",
-        }
-        result = await session_manager.revoke_session("test-id", 123)
-        assert result is True
-        mock_redis.delete.assert_called()
-
-    @pytest.mark.anyio
-    async def test_revoke_session_not_found(self, session_manager, mock_redis) -> None:
-        mock_redis.hgetall.return_value = {}
-        result = await session_manager.revoke_session("nonexistent", 123)
-        assert result is False
-
-    @pytest.mark.anyio
-    async def test_revoke_session_wrong_user(self, session_manager, mock_redis) -> None:
-        from app.core.errors import ForbiddenError
-
-        mock_redis.hgetall.return_value = {
-            b"session_id": b"test-id",
-            b"user_id": b"456",
-        }
-        with pytest.raises(ForbiddenError):
-            await session_manager.revoke_session("test-id", 123)
-
-    @pytest.mark.anyio
-    async def test_update_last_active(self, session_manager, mock_redis) -> None:
-        await session_manager.update_last_active("test-id")
-        mock_redis.hset.assert_called_once()
-        mock_redis.expire.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_list_user_sessions_with_stale(
-        self, session_manager, mock_redis
-    ) -> None:
-        """Sessions that no longer exist in Redis get cleaned from the set."""
-        mock_redis.smembers.return_value = {b"alive", b"stale"}
-        mock_redis.hgetall.side_effect = [
-            {b"session_id": b"alive", b"last_active_at": b"2024-01-01"},
-            {},  # stale session returns empty
-        ]
-        sessions = await session_manager.list_user_sessions(123)
-        assert len(sessions) == 1
-        mock_redis.srem.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_revoke_all_sessions(self, session_manager, mock_redis) -> None:
-        mock_redis.smembers.return_value = {b"s1", b"s2", b"s3"}
-        count = await session_manager.revoke_all_sessions(123)
-        assert count == 3
-        assert mock_redis.delete.call_count == 3
-
-    @pytest.mark.anyio
-    async def test_revoke_all_sessions_except_current(
-        self, session_manager, mock_redis
-    ) -> None:
-        mock_redis.smembers.return_value = {b"s1", b"s2", b"s3"}
-        count = await session_manager.revoke_all_sessions(123, except_session_id="s2")
-        assert count == 2  # s2 is excluded
 
 
 class TestPasswordResetService:

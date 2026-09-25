@@ -32,30 +32,22 @@ class AgentMessage:
     (Slack-style discrete messages instead of one growing streamed bubble)."""
 
     text: str
-    # Stable per-event id on the hooks path (see AgentToolUse.eid) so the spool
-    # reconcile can dedup a backfilled message against its live delivery.
+    # Stable per-event id (see AgentToolUse.eid), so a record read twice lands
+    # once.
     eid: str | None = None
-    # On the hooks path a message arrives as several MessageDisplay flushes,
-    # each with its own event id; the assembled message carries every one so
-    # dedup (live and reconcile) recognizes any constituent flush. Holds eid
-    # too when set. Empty off the hooks path (sdk backend).
+    # Every id this message was delivered under. Holds eid too when set.
     eids: tuple[str, ...] = ()
-    # When 芝士 STARTED saying this — the arrival of its first flush, not the
-    # moment assembly finished. The two differ by however long the message took
-    # to stream, and the timeline is sorted on this: a message is only complete
-    # once the event AFTER it arrives, so stamping completion time files every
-    # message that precedes a tool call *behind* that tool call. Measured: the
-    # room showed 「先看代码链路。」 between the two greps it introduced.
-    # None off the hooks path, where the persist time is already the right one.
+    # When 芝士 said this, as the harness recorded it. The timeline is sorted on
+    # this, and a record read long after the fact — a reader catching up after
+    # a restart — would otherwise file the message at the bottom of a
+    # conversation it belongs in the middle of. None where the persist time is
+    # already the right one.
     at: datetime | None = None
     # WHICH sub-thread said this, when it was not the session itself. See the
     # module note: the label the agent gave the subagent it spawned, None for
     # the main thread.
     thread_label: str | None = None
     agent_handle: str | None = None
-    # Every representation of this message shares its ID. Legacy hooks can
-    # echo a Stop under another ID and still need text-based recovery dedup.
-    complete_identity: bool = False
 
 
 @dataclass
@@ -64,9 +56,8 @@ class AgentToolUse:
 
     name: str
     input: dict[str, Any]
-    # Stable per-event id (the hook forwarder's X-Cheese-Event-Id / spool filename).
-    # Lets the durable-spool reconcile dedup a backfilled 现场 event against the one
-    # the live hook path already persisted. None off the hooks path (sdk backend).
+    # Stable per-event id: the harness's own id for the record it came from,
+    # so a 现场 event read twice lands once. None where the harness has none.
     eid: str | None = None
     # The HARNESS's own id for this call (Claude Code `tool_use_id`, pi's
     # `toolCall.id`), which is what its later result names. Not the same key as

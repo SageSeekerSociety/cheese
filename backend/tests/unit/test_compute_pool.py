@@ -263,7 +263,7 @@ def test_build_pool_registers_the_concrete_cloud_channel():
 
     backend = pool.select(provider_id="cloud")
     assert pool.has("cloud")
-    assert backend.channel.executor is cloud
+    assert backend.channel.channel.executor is cloud
     # Registration is independent of readiness. Chat needs its session host;
     # Cloud hands are acquired by a tool, never by turn admission.
     assert backend.available() is False
@@ -287,7 +287,6 @@ def _register_pi(monkeypatch):
             PI,
             "pi",
             subagents=dict.fromkeys(SubagentRequirement, "本条测试里假定它答得出"),
-            draws_on_its_screen=False,
         ),
     )
 
@@ -342,7 +341,7 @@ def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine(monkeyp
     for provider in ("device", "cloud"):
         wrapped = pool.select(provider_id=provider, harness=CLAUDE_CODE)
         assert wrapped is not None
-        assert wrapped.channel.capabilities() == frozenset()
+        assert wrapped.channel.channel.capabilities() == frozenset()
 
 
 def test_a_place_whose_hands_are_elsewhere_gets_no_pi(monkeypatch):

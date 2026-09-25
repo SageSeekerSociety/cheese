@@ -25,7 +25,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import text
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 _MIGRATION = (
     Path(__file__).resolve().parents[2]
@@ -69,8 +69,8 @@ def _join(client, pid: str | None, tid: str | None, *handles: str) -> None:
         rosters.append(
             (
                 "INSERT INTO project_members"
-                " (id, project_id, user_handle, role, created_at, updated_at)"
-                " VALUES (:id, :where, :handle, 'member', :now, :now)"
+                " (id, project_id, user_handle, created_at, updated_at)"
+                " VALUES (:id, :where, :handle, :now, :now)"
                 " ON CONFLICT DO NOTHING",
                 uuid.UUID(pid),
             )
@@ -150,7 +150,7 @@ def create_alerts_table(client) -> None:
 def _room(client) -> tuple[str, str]:
     """一个项目 + 一个房间，名册上是 alice、bob 和一个 agent。"""
     create_alerts_table(client)
-    pid = client.post("/projects", json={"name": "并表"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "并表"}).json()["data"]["id"]
     tid = client.post(
         "/topics", json={"project_id": pid, "title": "房间", "created_by": "alice"}
     ).json()["data"]["id"]

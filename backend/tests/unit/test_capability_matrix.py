@@ -84,11 +84,18 @@ def test_every_copy_of_a_pin_is_held_to_the_one_the_adapter_declares() -> None:
     # 私聊执行器那一串：镜像里装的 claude 要过上面那道版本闸门，镜像的 tag 就是
     # 那个版本，而打 tag 的 CI、选镜像的配置默认值各写了一遍那个 tag。
     dockerfile = (BACKEND / "sandbox/Dockerfile.private").read_text()
-    assert f"@anthropic-ai/claude-code@{claude}" in dockerfile
+    assert f"ARG CLAUDE_CODE_VERSION={claude}\n" in dockerfile
     assert private.IMAGE == f"cheese-private-executor:{claude}"
     assert Settings.model_fields["private_chat_executor_image"].default == private.IMAGE
     workflow = (REPO / ".github/workflows/remote-execution.yml").read_text()
     assert f"-t {private.IMAGE} " in workflow
+    # The agent image bakes the same build a device launches, so "the same turn"
+    # means the same runtime on either side; and the connector's delivery e2e in
+    # CI boots the build production launches.
+    sandbox = (BACKEND / "sandbox/Dockerfile").read_text()
+    assert f"ARG CLAUDE_CODE_VERSION={claude}" in sandbox
+    connector = (REPO / ".github/workflows/cli.yml").read_text()
+    assert f"@anthropic-ai/claude-code@{claude}" in connector
     # 装机脚本：引用适配层的常量会把整个 codex 包连着 ORM 一起拖进来。
     installer = ast.parse(
         (BACKEND / "scripts/install_codex_session_host.py").read_text()

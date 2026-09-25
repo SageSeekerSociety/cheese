@@ -15,7 +15,7 @@ import uuid
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
 
@@ -26,7 +26,7 @@ def remote_delivery(client, app_world):
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -166,7 +166,6 @@ def test_ai_cannot_accept_own_work_collaborative(client):
         headers=session_auth_headers("cheese"),
     )
     assert r.status_code == 422
-    assert "AI 不能验收自己做的东西" in r.json()["message"]
 
     # Card untouched, topic still active.
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]

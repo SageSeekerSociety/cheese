@@ -23,27 +23,27 @@ describe('mergeBadgeOf', () => {
     expect(mergeBadgeOf(ms('clean', 'human'))).toEqual({ label: '可以合并', column: 'needs_you' })
   })
 
-  it('dirty → 芝士处理中，无论 who 说什么（平台 lane 的冲突卡 who 恒 human）', () => {
-    expect(mergeBadgeOf(ms('dirty', 'agent'))).toEqual({ label: '芝士处理中', column: 'building' })
-    expect(mergeBadgeOf(ms('dirty', 'human'))).toEqual({ label: '芝士处理中', column: 'building' })
+  it('dirty → 芝士正在处理，无论 who 说什么（平台 lane 的冲突卡 who 恒 human）', () => {
+    expect(mergeBadgeOf(ms('dirty', 'agent'))).toEqual({ label: '芝士正在处理', column: 'building' })
+    expect(mergeBadgeOf(ms('dirty', 'human'))).toEqual({ label: '芝士正在处理', column: 'building' })
   })
 
   it('behind → 平台更新分支', () => {
     expect(mergeBadgeOf(ms('behind', 'platform'))).toEqual({ label: '平台更新分支', column: 'delivering' })
   })
 
-  it('unstable / blocked 检查红了 → 芝士处理中', () => {
-    expect(mergeBadgeOf(ms('unstable', 'agent'))?.label).toBe('芝士处理中')
-    expect(mergeBadgeOf(ms('blocked', 'agent'))?.label).toBe('芝士处理中')
+  it('unstable / blocked 检查红了 → 芝士正在处理', () => {
+    expect(mergeBadgeOf(ms('unstable', 'agent'))?.label).toBe('芝士正在处理')
+    expect(mergeBadgeOf(ms('blocked', 'agent'))?.label).toBe('芝士正在处理')
   })
 
   it('blocked 必跑检查没报到 / CI 在跑 → 等 CI', () => {
-    expect(mergeBadgeOf(ms('blocked', 'ci'))).toEqual({ label: '等 CI', column: 'delivering' })
-    expect(mergeBadgeOf(ms('unstable', 'ci'))?.label).toBe('等 CI')
+    expect(mergeBadgeOf(ms('blocked', 'ci'))).toEqual({ label: '等待检查', column: 'delivering' })
+    expect(mergeBadgeOf(ms('unstable', 'ci'))?.label).toBe('等待检查')
   })
 
   it('blocked 采纳被新提交作废 → 等采纳，圈是「等你」', () => {
-    expect(mergeBadgeOf(ms('blocked', 'human'))).toEqual({ label: '等采纳', column: 'needs_you' })
+    expect(mergeBadgeOf(ms('blocked', 'human'))).toEqual({ label: '待审阅', column: 'needs_you' })
   })
 
   it('unknown 是「还没看过」，中性展示（平台 lane 恒是 clean/dirty，#363 拍板，走不到这档）', () => {

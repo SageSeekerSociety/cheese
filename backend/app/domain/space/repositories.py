@@ -99,6 +99,25 @@ class SpaceRepository:
         result = await self._session.execute(stmt)
         return {int(row[0]): row[1] for row in result.all()}
 
+    async def names_and_shells(
+        self, *, space_ids: Sequence[int]
+    ) -> dict[int, tuple[str, str | None]]:
+        """Each board's name and default 分组 壳, deleted boards included.
+
+        For records of what happened on a board: a board removed since then is
+        still where it happened.
+        """
+        if not space_ids:
+            return {}
+        stmt = (
+            select(Space.id, Space.name, SpaceCategory.shell)
+            .select_from(Space)
+            .outerjoin(SpaceCategory, SpaceCategory.id == Space.default_category_id)
+            .where(Space.id.in_(space_ids))
+        )
+        result = await self._session.execute(stmt)
+        return {int(row[0]): (row[1], row[2]) for row in result.all()}
+
     @staticmethod
     def build_membership_predicate(*, user_id: int) -> ColumnElement[bool]:
         """「这个题目版是不是他的」, as a SQL predicate over Space.

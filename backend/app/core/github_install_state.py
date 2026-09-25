@@ -3,8 +3,8 @@
 ``github.com/apps/<slug>/installations/new`` round-trips a ``state`` query
 param through the user's browser and GitHub's redirect, unmodified. The
 callback must know which project asked without trusting the value as given —
-same shape as ``app.core.tokens`` session tokens (HS256, ``settings.jwt_secret``,
-a ``type`` claim), so this can never be confused with a session token or a
+same shape as access tokens (HS256, ``settings.jwt_secret``,
+a ``type`` claim), so this can never be confused with an access token or a
 sandbox scoped token even though all three ultimately share the one platform
 secret (project convention: no per-module signing secret).
 """
@@ -78,8 +78,8 @@ def verify_install_state(state: str) -> InstallClaims | None:
 # Same shape, distinct `type`, for the OTHER GitHub App flow: a logged-in
 # human linking their own GitHub identity (#192 "连接 GitHub 账号",
 # user-to-server auth) rather than a project connecting a repo. The distinct
-# `type` claim keeps the two — and the unrelated session token in
-# app.core.tokens — from ever validating as each other despite sharing
+# `type` claim keeps the two — and the unrelated access token in
+# app.common.auth — from ever validating as each other despite sharing
 # `jwt_secret`.
 _ACCOUNT_LINK_TYPE = "github_account_link"
 # Exported so the reservation that makes a state single-use expires with the

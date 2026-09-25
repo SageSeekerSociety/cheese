@@ -264,8 +264,7 @@ onBeforeUnmount(() => {
              还有一处更硬的：那一截挤在 `t-meta`（12.5px 等宽）那一档上，而它是一句
              正常的句子 —— 一句话不该坐在元信息的刻度上。现在整句是 `t-body`。 -->
         <div class="t-body mb-3">你的账号不在平台管理员名单里，无法访问管理后台。</div>
-        <!-- 这一屏只有这一个动作，所以它是 `primary`。琥珀的规矩是「一屏只有一个主
-             操作」，不是「管理员页面不许用琥珀」；这里没有第二个候选来稀释它。 -->
+        <!-- 这一屏只有这一个动作，所以它是 `primary`。 -->
         <v-btn variant="text" color="primary" size="small" to="/feedback">回到反馈中心</v-btn>
       </div>
     </div>

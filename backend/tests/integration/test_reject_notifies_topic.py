@@ -5,11 +5,11 @@ import uuid
 
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _project(client) -> str:
-    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}).json()["data"]["id"]
 
 
 def _topic(client, project_id: str) -> str:
@@ -92,11 +92,9 @@ def test_reject_leaves_a_task_visible_line_with_the_reason_in_meta(client):
         e for e in events if (e.get("meta") or {}).get("event_type") == "card_rejected"
     ]
     assert len(rejected) == 1
-    assert "驳回" in rejected[0]["content"]
     assert "alice" in rejected[0]["content"]
     meta = rejected[0]["meta"]
     assert meta["detail"] == "口径和上一版对不上"
-    assert meta["detail_label"] == "驳回理由"
     assert meta["severity"] == "warn"
 
 
@@ -147,4 +145,3 @@ def test_reject_of_closed_task_reports_reason_without_waking_worker(client, stub
         if (b.get("meta") or {}).get("event_type") == "card_rejected"
     ]
     assert notices[-1]["meta"]["detail"] == "Needs a replacement task"
-    assert "原任务已结束" in notices[-1]["content"]

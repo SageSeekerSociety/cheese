@@ -24,6 +24,16 @@ class AgentConfiguration(BaseModel):
     model: str | None = None
 
 
+def project_pool(project_settings: dict | None) -> str:
+    """这个项目跑哪个池。
+
+    ``resolve_pool`` 对目录消费者的唯一出口：「这轮走哪条供给」只能有一个
+    答案来源（P34 的守卫按模块数引用），要池的调用方拿这里，不许自己再
+    import supply。
+    """
+    return resolve_pool(project_settings)
+
+
 def model_choices(project_settings: dict | None) -> list[dict]:
     """Every model this project can be pointed at.
 

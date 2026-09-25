@@ -13,28 +13,22 @@
       {{ errorDescription }}
     </v-alert>
 
-    <v-btn
-      block
-      color="primary"
-      size="large"
-      to="/account/signin"
-      style="text-transform: none; font-weight: 500; height: 48px"
-      class="mb-4"
-    >
-      {{ t('account.backToSignIn') }}
-    </v-btn>
-
-    <v-btn
-      v-if="providerId"
-      block
-      variant="outlined"
-      color="on-surface"
-      size="large"
-      style="text-transform: none; font-weight: 500; height: 48px; border-color: var(--line-2)"
-      @click="retryOAuth"
-    >
-      {{ t('account.oauth.error.retry', { provider: providerName }) }}
-    </v-btn>
+    <div class="account-actions">
+      <v-btn block color="primary" size="large" to="/account/signin" class="account-submit">
+        {{ t('account.backToSignIn') }}
+      </v-btn>
+      <v-btn
+        v-if="providerId"
+        block
+        variant="outlined"
+        color="on-surface"
+        size="large"
+        class="account-secondary"
+        @click="retryOAuth"
+      >
+        {{ t('account.oauth.error.retry', { provider: providerName }) }}
+      </v-btn>
+    </div>
   </div>
 </template>
 
@@ -69,6 +63,8 @@ const errorDescription = computed(() => {
       return t('account.oauth.error.creationFailed')
     case 'EMAIL_TAKEN':
       return t('account.oauth.error.emailTaken')
+    case 'EMAIL_UNVERIFIED':
+      return t('account.oauth.error.emailUnverified')
     case 'INVALID_CREDENTIALS':
       return t('account.oauth.error.invalidCredentials')
     case 'INVALID_INVITE_CODE':

@@ -230,6 +230,8 @@ jobs:
       - name: Ensure required test tools
         run: |
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof tmux zsh
+          # Tests that launch a room's session need its namespace.
+          "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
 
       - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"

@@ -1,12 +1,14 @@
 """Accounts are created only with a recorded consent, and material changes to
 the rules are put to everyone again (#1486)."""
 
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.users import _issue_oauth_state_token
 from app.domain.legal.documents import DOCUMENTS, LegalVersion
@@ -37,6 +39,22 @@ def _pending(api_client: TestClient, token: str) -> list[str]:
     )
     assert r.status_code == 200, r.text
     return [d["document"] for d in r.json()["data"]["pending"]]
+
+
+@contextmanager
+def _commit_fails(api_client: TestClient):
+    """The database refuses this request's commit. The client asks for its
+    pending consents as soon as it holds an answer, so a consent the answer
+    reports must already be committed; one that cannot be never gets reported."""
+
+    async def refuse(session):
+        raise OSError("database commit failed")
+
+    with pytest.MonkeyPatch.context() as failing:
+        failing.setattr(AsyncSession, "commit", refuse)
+        # See the answer a browser gets rather than the server's exception.
+        failing.setattr(api_client._transport, "raise_server_exceptions", False)
+        yield
 
 
 def _account_exists(db_session, portal, username: str) -> bool:
@@ -98,13 +116,26 @@ class TestSignup:
         assert r.status_code == 200, r.text
         assert _pending(api_client, r.json()["data"]["accessToken"]) == []
 
+    def test_a_signup_whose_consent_was_not_saved_is_not_reported_done(
+        self, api_client: TestClient, _portal
+    ):
+        with _commit_fails(api_client):
+            r = _signup(api_client, _portal, "uncommitted1", consent=SIGNUP_CONSENT)
+
+        assert r.status_code == 500, r.text
+
 
 class TestOAuthSignup:
     def _create(self, api_client: TestClient, portal, uid: str, **consent):
         token = portal.call(
             _issue_oauth_state_token,
             "ruc",
-            {"id": uid, "name": "Prov", "preferredUsername": uid},
+            {
+                "id": uid,
+                "name": "Prov",
+                "preferredUsername": uid,
+                "verifiedEmail": f"{uid}@example.com",
+            },
         )
         return api_client.post(
             "/users/oauth/create",
@@ -134,7 +165,25 @@ class TestOAuthSignup:
 
         params = parse_qs(urlparse(resp.headers["location"]).query)
         assert params["created"] == ["true"]
-        assert _pending(api_client, params["token"][0]) == []
+        # The landing page signs in with the cookie the redirect set.
+        refreshed = api_client.post(
+            "/users/auth/refresh-token",
+            headers={"Cookie": f"cheese_refresh={resp.cookies['cheese_refresh']}"},
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        assert _pending(api_client, refreshed.json()["data"]["accessToken"]) == []
+
+    def test_an_oauth_signup_whose_consent_was_not_saved_is_not_reported_done(
+        self, api_client: TestClient, db_session, _portal
+    ):
+        with _commit_fails(api_client):
+            resp = self._create(
+                api_client, _portal, "uncommitted", **OAUTH_CONSENT_FORM
+            )
+
+        params = parse_qs(urlparse(resp.headers["location"]).query)
+        assert params.get("error_code") == ["CREATION_FAILED"], params
+        assert not _account_exists(db_session, _portal, "oauth_uncommitted")
 
 
 class TestReacceptance:
@@ -157,6 +206,53 @@ class TestReacceptance:
 
         assert r.status_code == 200, r.text
         assert _pending(api_client, token_of(authenticated_user)) == []
+
+    def test_an_acceptance_that_was_not_saved_is_not_reported_done(
+        self, api_client: TestClient, authenticated_user: CreatedUser
+    ):
+        headers = {"Authorization": f"Bearer {token_of(authenticated_user)}"}
+
+        with _commit_fails(api_client):
+            r = api_client.post(
+                "/users/me/consents",
+                json={"documents": CURRENT_VERSIONS},
+                headers=headers,
+            )
+
+        assert r.status_code == 500, r.text
+
+    def test_the_recorded_address_is_not_one_the_client_wrote(
+        self,
+        api_client: TestClient,
+        authenticated_user: CreatedUser,
+        db_session,
+        _portal,
+    ):
+        """A consent row is evidence of who agreed from where; a forwarded
+        address from a peer that is not one of our proxies proves nothing."""
+        from sqlalchemy import select
+
+        from app.domain.legal.models import UserConsent
+
+        headers = {
+            "Authorization": f"Bearer {token_of(authenticated_user)}",
+            "X-Forwarded-For": "6.6.6.6",
+        }
+        r = api_client.post(
+            "/users/me/consents", json={"documents": CURRENT_VERSIONS}, headers=headers
+        )
+        assert r.status_code == 200, r.text
+
+        async def recorded() -> set[str]:
+            rows = await db_session.execute(
+                select(UserConsent.ip).where(
+                    UserConsent.user_id == authenticated_user.user_id
+                )
+            )
+            return set(rows.scalars())
+
+        # TestClient's peer, which is not a trusted proxy.
+        assert _portal.call(recorded) == {"testclient"}
 
     def test_accepting_only_part_of_what_is_pending_is_refused(
         self, api_client: TestClient, authenticated_user: CreatedUser
@@ -276,6 +372,15 @@ class TestPublicDocuments:
             r.json()["data"]["content"]
             == (api_client.get("/legal/documents/privacy").json()["data"]["content"])
         )
+
+    def test_every_version_someone_may_have_accepted_stays_readable(
+        self, api_client: TestClient
+    ):
+        for key, doc in DOCUMENTS.items():
+            for v in doc.versions:
+                r = api_client.get(f"/legal/documents/{key}/versions/{v.version}")
+                assert r.status_code == 200, (key, v.version, r.text)
+                assert r.json()["data"]["content"].strip()
 
     def test_unknown_documents_and_versions_are_not_found(self, api_client: TestClient):
         assert api_client.get("/legal/documents/cookies").status_code == 404

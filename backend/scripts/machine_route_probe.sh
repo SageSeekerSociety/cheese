@@ -4,13 +4,13 @@
 #
 #   when the platform launches Claude Code here, whose endpoint does it call?
 #
-# It is not obvious, because two things compete. MicroCloud writes
-# ~/.claude/settings.json with an `env` block (its newapi base URL, plus the
-# ccproxy proxy and CA). Our launcher exports its own HOME and writes its own
+# It is not obvious, because two things compete. A machine given a MicroCloud AI
+# channel has ~/.claude/settings.json with an `env` block pointing Claude Code
+# at that channel. Our launcher exports its own HOME and writes its own
 # settings.json there. Claude Code applies settings `env` over the inherited
 # environment — so if it resolves its config dir from the passwd entry rather
 # than $HOME, our launcher's settings (and hooks) never load, and every turn
-# silently bills MicroCloud's newapi account instead of our gateway.
+# silently goes to MicroCloud's channel instead of our gateway.
 #
 # Three cases, each with a loopback sink standing in for our gateway:
 #   A  our HOME, our settings.json carries the sink in its `env`

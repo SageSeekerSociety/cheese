@@ -30,8 +30,8 @@ class TestChangePassword:
 
         from app.core.config import settings
         from app.domain.user.login_security import (
-            LOGIN_ATTEMPTS_PREFIX,
-            LOGIN_LOCKOUT_PREFIX,
+            LOGIN_FAILURES_PREFIX,
+            LOGIN_WAIT_PREFIX,
             STEP_UP_PASSWORD_ATTEMPTS_PREFIX,
             STEP_UP_PASSWORD_LOCKOUT_PREFIX,
         )
@@ -40,8 +40,8 @@ class TestChangePassword:
         r.delete(
             f"{STEP_UP_PASSWORD_ATTEMPTS_PREFIX}{self.user.user_id}",
             f"{STEP_UP_PASSWORD_LOCKOUT_PREFIX}{self.user.user_id}",
-            f"{LOGIN_ATTEMPTS_PREFIX}{self.user.username}",
-            f"{LOGIN_LOCKOUT_PREFIX}{self.user.username}",
+            f"{LOGIN_FAILURES_PREFIX}{self.user.username}",
+            f"{LOGIN_WAIT_PREFIX}{self.user.username}",
         )
         r.close()
 
@@ -101,7 +101,7 @@ class TestChangePassword:
         assert self._password_login(self.user.password).status_code == 200
 
     def test_a_ticket_for_something_else_does_not_change_it(self):
-        refused = self._change("a-brand-new-password-1", self._ticket("2fa:settings"))
+        refused = self._change("a-brand-new-password-1", self._ticket("2fa:disable"))
         assert refused.status_code == 403, refused.text
 
         assert self._password_login(self.user.password).status_code == 200

@@ -147,12 +147,6 @@ class MicroCloudClient:
     async def create_machine(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self._call("POST", "/machine", body)
 
-    async def switch_ai(self, machine_id: int, mode: str) -> dict[str, Any]:
-        """Point the machine's built-in AI channel at ``ccproxy``/``newapi``
-        (the tenant console's →ccproxy button). Asynchronous on MicroCloud's
-        side: aiStatus drops back to provisioning and settles on its own."""
-        return await self._call("POST", f"/machine/{machine_id}/ai/{mode}")
-
     async def find_machine(
         self, customer_id: int, hostname: str
     ) -> dict[str, Any] | None:

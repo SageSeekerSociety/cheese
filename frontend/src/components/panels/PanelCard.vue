@@ -49,6 +49,9 @@ const loading = ref(false)
 const errorMsg = ref<string | null>(null)
 const draft = ref('')
 const sending = ref(false)
+// 留言没发出去。它和上面那个加载错误分开：能留言时任务已经加载好了，那个错误
+// 只在任务没加载出来时才画，写进它的话永远不会出现在屏幕上。
+const sendError = ref<string | null>(null)
 const timelineRef = ref<HTMLElement | null>(null)
 
 async function load(silent = false) {
@@ -69,7 +72,7 @@ async function load(silent = false) {
     void nextTick(scrollToBottom)
   } catch {
     if (props.roomId !== room || props.cardId !== id) return
-    errorMsg.value = '这张卡打不开了'
+    errorMsg.value = '无法加载这个任务'
     card.value = null
   } finally {
     if (props.roomId === room && props.cardId === id) loading.value = false
@@ -142,12 +145,13 @@ async function send() {
   const text = draft.value.trim()
   if (!room || !id || !text || sending.value) return
   sending.value = true
+  sendError.value = null
   try {
     await sayOnRoomTask(room, id, text, myHandle())
     draft.value = ''
     await load(true)
   } catch {
-    errorMsg.value = '没发出去，再试一次'
+    sendError.value = '留言未发送，稍后重试'
   } finally {
     sending.value = false
   }
@@ -166,7 +170,8 @@ async function send() {
     <LoadingSkeleton v-if="loading && !card" variant="brief" />
 
     <div v-else-if="!card" class="px-3 py-4 t-body c-muted">
-      {{ errorMsg ?? '这个房间里没有这条活' }}
+      {{ errorMsg ?? '这个房间里没有这个任务' }}
+      <v-btn v-if="errorMsg" size="small" variant="text" class="ms-1" @click="load()">重试</v-btn>
     </div>
 
     <template v-else>
@@ -205,7 +210,7 @@ async function send() {
       </div>
 
       <div ref="timelineRef" class="panel-card__timeline">
-        <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">这条活还没有人说过话。</div>
+        <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">暂无消息</div>
         <template v-for="e in entries" :key="e.kind === 'steps' ? e.key : e.block.id">
           <div v-if="e.kind === 'say'" class="card-msg">
             <span class="card-msg__who t-meta">{{ e.block.author }}</span>
@@ -223,7 +228,7 @@ async function send() {
             :run="[e.block]"
             :name="null"
             :time="relTime(e.block.created_at)"
-            agent-name="队友"
+            agent-name="分身"
             :refs="{ mentionNames: {}, topicTitles: {} }"
           />
           <div v-else class="card-steps">
@@ -235,7 +240,7 @@ async function send() {
             >
               <v-icon size="14">{{ openSteps.has(e.key) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
               <span>{{ e.blocks.length }} 步操作</span>
-              <span v-if="e.blocks.some(eventFailed)" class="card-steps__failed">有失败</span>
+              <span v-if="e.blocks.some(eventFailed)" class="card-steps__failed">有步骤失败</span>
             </button>
             <ol v-if="openSteps.has(e.key)" class="card-steps__list">
               <li v-for="b in e.blocks" :key="b.id" class="card-step" :class="{ 'card-step--failed': eventFailed(b) }">
@@ -255,11 +260,12 @@ async function send() {
           autocomplete="off"
           class="panel-card__input t-body"
           type="text"
-          placeholder="在这条活下面说点什么（房间会转达给它）"
+          placeholder="给分身留言"
           :disabled="sending"
         />
         <button type="submit" class="panel-card__send t-meta" :disabled="sending || !draft.trim()">发送</button>
       </form>
+      <p v-if="sendError" class="panel-card__say-error t-meta" role="alert">{{ sendError }}</p>
     </template>
   </section>
 </template>
@@ -373,7 +379,7 @@ async function send() {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: background-color 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .card-steps__head:hover {
   background: var(--fill);
@@ -447,23 +453,35 @@ async function send() {
   max-width: 100%;
   height: auto;
 }
+/* 给这条活的分身带一句话。它不是房间的第二个输入框：没有框、没有底色，和上面的对话
+   同一层，像在这一串话下面接一行。点进去才有一块浅底，告诉人光标在哪。 */
 .panel-card__say {
   display: flex;
+  align-items: center;
   gap: 6px;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding: 2px 4px;
+  border-radius: var(--radius-md);
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.panel-card__say:focus-within {
+  background: var(--fill);
 }
 .panel-card__input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  padding: 6px 4px;
+  border: 0;
+  outline: none;
+  background: transparent;
   color: var(--ink);
+}
+.panel-card__input::placeholder {
+  color: var(--faint);
 }
 .panel-card__send {
   flex: none;
-  padding: 0 10px;
+  padding: 4px 8px;
   border-radius: var(--radius-md);
   color: var(--muted);
   cursor: pointer;
@@ -474,6 +492,10 @@ async function send() {
 }
 .panel-card__send:not(:disabled):hover {
   color: var(--ink);
+}
+.panel-card__say-error {
+  margin: 2px 4px 0;
+  color: var(--danger-ink);
 }
 .board-dot {
   flex: 0 0 auto;

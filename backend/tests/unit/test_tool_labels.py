@@ -10,8 +10,9 @@ a verb should be.
 So the two ends are pinned here, from their real sources rather than from a
 second list written down next to the answer:
 
-- every command of the CLI **this repository ships**, read out of its argparse
-  tree the same way the pi catalog is built (`cli_worker._tools`);
+- every tool on the platform's session-side table (`PLATFORM_TOOLS`), and every
+  command of the CLI **this repository ships**, read out of its argparse tree
+  the same way the pi catalog is built (`cli_worker._tools`);
 - every tool the pi extension registers on its own, read out of the extension.
 
 A command added without a verb fails here, at the commit that adds it.
@@ -49,7 +50,10 @@ def cli_tools() -> list[str]:
     assert spec
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
-    return [tool["name"] for tool in cli_worker._tools(module.build_parser())]
+    return [
+        *module.PLATFORM_TOOLS.names(),
+        *(tool["name"] for tool in cli_worker._tools(module.build_parser())),
+    ]
 
 
 def test_every_platform_command_has_a_verb():
@@ -61,8 +65,8 @@ def test_every_platform_command_has_a_verb():
 
 
 def test_every_tool_the_extension_adds_has_a_verb():
-    """The background tools and the publish alias are the extension's own — they
-    are in no catalog, so nothing else would notice them going untranslated."""
+    """The background tools are the extension's own — they are in no catalog, so
+    nothing else would notice them going untranslated."""
     source = EXTENSION.read_text(encoding="utf-8")
     registered = set(re.findall(r'name:\s*"([a-z_]+)"', source))
     alias = re.findall(r'^const PUBLISH = "([a-z_]+)";', source, re.MULTILINE)

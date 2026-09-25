@@ -430,7 +430,7 @@ describe('对话栏自己的输入栏', () => {
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
 
-    expect(view.getByText('正在送给芝士…')).toBeTruthy()
+    expect(view.getByText('正在交给芝士…')).toBeTruthy()
     expect(view.queryByText('芝士正在处理…')).toBeNull()
   })
 

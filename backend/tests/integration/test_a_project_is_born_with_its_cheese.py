@@ -15,12 +15,13 @@ from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic_membership.services import TopicMemberService
+from tests.integration.conftest import post_project
 
 OWNER = "owner-born"
 
 
 def _create_project(client, name: str = "P") -> uuid.UUID:
-    body = client.post("/projects", json={"name": name, "owner_handle": OWNER}).json()
+    body = post_project(client, json={"name": name, "owner_handle": OWNER}).json()
     return uuid.UUID(body["data"]["id"])
 
 

@@ -8,17 +8,21 @@ export interface Project {
   created_at: string
   // 一页纸总结 (may be empty until 芝士 generates it).
   summary?: string
+  // 建项目的人自己写的「打算做什么」（#946 片 C）。空串 = 建的时候没答，或跳过了。
+  intent?: string
   // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
   root_topic_id?: string
   /** 建这个项目的人。名册上他那一行不带任何管理动作——没人能把他降职或移出。 */
   owner_handle?: string | null
-  /**
-   * 这个项目归哪个小队（项目归团队 v4）。历史遗留的行是 null——新建项目一律会落到
-   * 创建者的个人小队。顶栏那颗 ← 在没记到来路时拿它当兜底。
-   */
+  /** 这个项目归哪个团队。顶栏那颗 ← 在没记到来路时拿它当兜底。 */
   team_id?: number | null
   /** 所属团队的 handle，团队页的地址（`/teams/<handle>`）。 */
   team_handle?: string | null
+  /**
+   * 当前这个人能不能管理这个项目的外部成员（邀请、撤回、移出）：项目所有者，或者
+   * 所属团队的所有者、管理员。后端按同一条规则再判一次，这里只决定给不给按钮。
+   */
+  can_manage_members?: boolean
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
@@ -179,7 +183,7 @@ export interface ListPayload<T> {
  *  `displayStatus` 就是看板卡面上那一句，后端算好的 —— 前端不做第二张映射表，理由
  *  和 `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
  *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的
- *  待确认问题上 (`asked`)。 */
+ *  待回答的问题上 (`asked`)。 */
 export interface WaitingItem {
   projectId: string
   projectName: string
@@ -269,7 +273,7 @@ export interface RoomTask {
  *    building   施工中 —— 还没递出交付
  *    delivering 交付中 —— 下一步在平台/芝士手上
  *    needs_you  待处理 —— 下一步在人手上
- *    done       已完成 —— 已采纳，或已收工且没交付
+ *    done       已完成 —— 已采纳，或已关闭且没交付
  *    archived   已归档 —— 房间才有；活不归档
  */
 export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
@@ -326,31 +330,26 @@ export type WsServerFrame =
   | { type: 'block_updated'; block: Block }
   // Answer to the client's liveness ping; carries nothing.
   | { type: 'pong' }
-  // The room's session state moved: the agent asked something, a session
-  // appeared, went quiet or came back. Carries what the platform's own store
-  // knows. The machine's background-task list is NOT in here — nothing tells
-  // the platform when that changes — so the panel that shows it still reads it
-  // over HTTP.
+  // The room's session state moved: a task started or finished (the harness's
+  // own, or a command the executor runs), or the session reported its model.
+  // The same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
-
-export interface AgentControlRequest {
-  request_id: string
-  request: {
-    subtype: string
-    tool_name?: string
-    input?: Record<string, unknown>
-  }
-}
 
 export interface AgentControlState {
   id: string | null
+  agent_handle?: string | null
   connected: boolean
-  title?: string
   controls?: string[]
-  pending?: Record<string, AgentControlRequest>
   tasks?: Record<
     string,
-    { task_id: string; description?: string; status?: string; subtype?: string; tool_use_id?: string }
+    {
+      task_id: string
+      description?: string
+      status?: string
+      subtype?: string
+      tool_use_id?: string
+      task_type?: string
+    }
   >
   state?: Record<string, Record<string, unknown>>
 }
@@ -404,11 +403,10 @@ export interface ProjectMember {
 // 再自己把「人」和「队友」两份拼起来——拼出来的那份就是第二份声明。
 export interface ProjectMemberRow {
   user_handle: string
-  role: string
-  // 这一行背后**没有**成员表记录时说明它是怎么进名册的：小队带进来的人、项目的
-  // 所有者（所有者记在 Project.owner_handle 上，从来不是一行成员数据），或者它是
-  // 这个项目的 AI 队友。没有这个字段 = 名册上有他自己的一行，角色和移出才动得了。
-  source?: 'team' | 'owner' | 'agent'
+  // 这个人是怎么在项目里的：项目的所有者、所属团队的成员，或者被邀请进来的外部成员
+  // （团队以外、只参与这一个项目的人）。只有外部成员能从项目里移出——团队成员的去
+  // 留在团队里定。AI 队友那几行是 `agent`。
+  source?: 'owner' | 'team' | 'external' | 'agent'
   team_id?: number
   // source 为 team 时，带他进来的那个团队的 handle（团队页 `/teams/<handle>`）。
   team_handle?: string
@@ -437,7 +435,6 @@ export interface ProjectInvitation {
   project_id: string
   invitee_handle: string
   inviter_handle: string
-  role: string
   status: 'pending' | 'accepted' | 'declined' | 'revoked'
   created_at: string
   responded_at?: string | null
@@ -464,7 +461,8 @@ export interface TopicMemberRow {
 }
 
 // GET /api/projects/{id}/inbox?target_handle=
-// 等你决定的那几条：还没拍板的决策请求，加上点名给你的验收卡。
+// 等你处理的那几条：还没拍板的决策请求、点名给你的验收卡，以及还没读、又不是
+// silent 的变更提醒（`level=silent` 的意思是「记下来别打扰」，它本来也不点亮角标）。
 // 字段照抄后端的 NotificationOut —— 自己另起一套界面上顺口的名字，收到的就永远是
 // undefined，而界面会把它读成「一条都没读过」。
 // `id` 是数字：两张通知表并成一张之后主键跟的是收件箱那条序列，不再是 uuid。
@@ -530,7 +528,8 @@ export interface MemberTopic {
 // GET /api/projects/{id}/members/{handle}/summary
 export interface MemberSummary {
   handle: string
-  role: string
+  /** 他在这个项目里的来路：所有者、团队成员、外部成员；查不到是 null。 */
+  source?: 'owner' | 'team' | 'external' | null
   topics_started: MemberTopic[]
   topics_active?: MemberTopic[]
   weekly_contributions?: number
@@ -540,26 +539,78 @@ export interface MemberSummary {
 
 // ---- 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2, §8.4) ----
 
-// One project the user participates in, with their cross-project contribution.
+/** How the person is in a project: its owner, through its team, or invited alone. */
+export type ProfileProjectRole = 'owner' | 'team' | 'external'
+
+// One project the person is in, as the viewer may see it.
 export interface ProfileProject {
   project_id: string
   name: string
-  role: string
+  source: ProfileProjectRole
   topics_started: number
   contributions: number
+  /** Their newest contribution there; null when they have none. */
+  last_active_at: string | null
+  /** Contributions in the last 12 trailing 7-day spans, oldest first. */
+  weekly: number[]
 }
 
-// GET /api/users/{handle}/profile — the cross-project résumé view.
-// `understanding` = what 芝士 has learned about this person (个人记忆, §8.4).
+// A team the person is in that the viewer may see (the TeamSummary payload).
+export interface ProfileTeam {
+  id: number
+  /** Null only for a team that no longer exists. */
+  handle: string | null
+  name: string
+  intro: string
+  avatarId: number | null
+}
+
+/** One UTC day of the activity year. `date` is `YYYY-MM-DD`. */
+export interface ProfileActivityDay {
+  date: string
+  count: number
+}
+
+// One thing an agent noted about this person, and where it was noted. The
+// project is null once the person can no longer read it.
+export interface ProfileUnderstanding {
+  id: string
+  content: string
+  created_at: string
+  project_id: string | null
+  project_name: string | null
+  agent_handle: string | null
+  agent_name: string | null
+}
+
+// GET /api/users/{handle}/profile — cut to what the viewer may see.
+// `understanding` = what 芝士 has learned about this person (个人记忆, §8.4);
+// only the person themselves receives it, everyone else gets [].
 export interface UserProfile {
   handle: string
   name: string
   bio: string
-  interests: string[]
-  skills: string[]
+  /** The raw profile avatar, which may be the platform default (see useChosenAvatar). */
+  avatar_id: number | null
+  /** Null when no account holds this handle. */
+  joined_at: string | null
+  teams: ProfileTeam[]
+  /** The last 365 UTC days, oldest first, today last. */
+  activity: { days: ProfileActivityDay[]; total: number }
   projects: ProfileProject[]
-  understanding: string[]
-  [key: string]: unknown
+  understanding: ProfileUnderstanding[]
+}
+
+// GET /api/users/{handle}/topics — a topic the person wrote in.
+export interface ProfileTopic {
+  id: string
+  title: string
+  status: string
+  project_id: string
+  project_name: string
+  /** Their contributions in it, inside the requested dates when given. */
+  contributions: number
+  last_participated_at: string
 }
 
 // ---- 执行面板 (Phase 4 tool drawers) ----

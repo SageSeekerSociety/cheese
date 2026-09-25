@@ -23,7 +23,7 @@ const route = useRoute()
   <router-view v-if="route.meta.publicLanding" />
   <template v-else>
     <Teleport v-if="!mdAndUp" to="#app-bar-slot">
-      <v-tabs class="home-sections" grow slider-color="primary" bg-color="transparent" height="56">
+      <v-tabs class="home-sections" grow color="on-surface" slider-color="primary" bg-color="transparent" height="56">
         <!-- 我的工作排在最前：它是这一层的落地页，手机上「换个项目」也走这一格
              —— 底栏「工作区」那一格只落到上次打开的那个项目（那一格的落点由壳和
              验收用例钉着），所以在手机上翻自己的项目要有这一条路。 -->

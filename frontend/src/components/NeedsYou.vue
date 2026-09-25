@@ -1,12 +1,18 @@
 <script setup lang="ts">
-// 等你决定 —— 芝士 问了你一句话，在等你回答。
+// 等你回答 —— 项目收件箱里那几条摆成的一叠。
+//
+// 以前这里只有**问题**：芝士 问了你一句话，在等你回答。现在多一种 —— 变更提醒
+// （spec §8.5 的第一种典型通知）：芝士 干完活说了一句「这一轮改了什么」，没有要
+// 你答的，读过就收起来。两种都从项目收件箱来（`/projects/{id}/inbox`），因为
+// 它们本来就是一列：等你的东西。摆卡的那三层形状两种共用，标题按摆着的那条说
+// 实话——一条变更提醒不是「等你回答」的事。
 //
 // 这一块从「总览」搬到项目首页：它是那一页上唯一一处别处没有的东西，而那一页答
 // 的其他问题（现在轮到谁、交出去了什么、成员是谁）首页和成员页各自答得更准。
 //
-// 和下面那块板不是一回事：板上的「待处理」是派出去的活轮到你，这里是一条**问题**
-// ——选项摆在那儿，你点一个它才算完。所以它按项目的收件箱读（决策请求在被答复之前
-// 不会消失），而不是按任务读。
+// 和下面那块板不是一回事：板上的「待处理」是派出去的活轮到你，这里是一条**消息**
+// ——决策请求选项摆在那儿，你点一个它才算完；变更提醒点一下「去话题」去看它说的
+// 是什么。所以它按项目的收件箱读（决策请求在被答复之前不会消失），而不是按任务读。
 //
 // 摆成一叠而不是一列：这一页钉在视口上、板在它下面按剩下的高度分列，所以这一块有
 // 几条就占多高的话，板会被问题的条数挤扁——三条问题等于板少一行卡。一叠的高度和条
@@ -17,12 +23,15 @@
 import type { InboxItem } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { getInbox, markRead, resolveAlert, sendFeedback } from '@/api'
 import { label, NOTIF_KIND } from '@/labels'
 import { myHandle } from '@/me'
 
 const props = defineProps<{ projectId: string }>()
+
+const router = useRouter()
 
 const rows = ref<InboxItem[]>([])
 const actionError = ref('')
@@ -46,6 +55,35 @@ const deck = computed(() => {
   const n = Math.min(DEPTH, list.length)
   return Array.from({ length: n }, (_, i) => list[(cursor.value + i) % list.length])
 })
+
+/** 这一叠的标题说的是**摆在最上面那条**是什么。
+ *
+ *  变更提醒没有要你答的东西，摆它的时候写「等你回答」是假话：人读到的是「有个
+ *  决定在等我」，翻开来却只是一句「这轮改了什么」。 */
+const heading = computed(() => (deck.value[0]?.kind === 'change_alert' ? '变更提醒' : '等你回答'))
+
+/** 这一条要「点进去看」的地方 —— 它的房间。
+ *
+ *  通知只是实时提醒，ground truth 在文档和对话框里（spec §8.5），所以一条通知
+ *  得有个去处。后端把 `topic_id` 收窄到房间这一层再落库（`routes/alerts.py`），
+ *  所以这里拿到的一定是话题页认的那个 id；没有话题的通知（入队结果这类）给不出
+ *  目标，就不给这个入口。 */
+function topicTarget(row: InboxItem) {
+  return row.topic_id
+    ? { name: 'workspace-topic', params: { projectId: props.projectId, topicId: row.topic_id } }
+    : null
+}
+
+/** 变更提醒才有这个入口：决策请求那张卡上要动手的是选项按钮，再摆一个「去话题」
+ *  会跟它们抢同一行的注意力。 */
+function canOpen(row: InboxItem): boolean {
+  return row.kind === 'change_alert' && topicTarget(row) !== null
+}
+
+function open(row: InboxItem) {
+  const target = topicTarget(row)
+  if (target) void router.push(target)
+}
 
 /** 这一条给的选项。带选项的才答得了，其余只能读完收起来。 */
 function optionsOf(row: InboxItem): string[] {
@@ -123,7 +161,7 @@ watch(
     <section v-if="rows.length" class="asked">
       <div class="asked__inner">
         <header class="asked__head">
-          <h2 class="asked__title t-title">等你决定</h2>
+          <h2 class="asked__title t-title">{{ heading }}</h2>
           <!-- 「1/3」：一叠摆出来的是一条，所以件数得连着位置一起说，光写 3 会读成
                「这张卡有三个选项」。只有一条的时候不写——那时候位置不是信息。 -->
           <span v-if="rows.length > 1" class="asked__count t-meta c-faint">{{ cursor + 1 }}/{{ rows.length }}</span>
@@ -167,6 +205,9 @@ watch(
                 >
                   {{ option }}
                 </v-btn>
+                <v-btn v-if="canOpen(row)" size="small" variant="outlined" color="primary" @click="open(row)">
+                  去话题
+                </v-btn>
                 <v-btn
                   v-if="!optionsOf(row).length"
                   size="small"
@@ -175,7 +216,7 @@ watch(
                   :loading="busy === row.id"
                   @click="dismiss(row)"
                 >
-                  知道了
+                  收起
                 </v-btn>
                 <v-spacer />
                 <v-btn

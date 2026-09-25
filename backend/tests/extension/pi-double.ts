@@ -76,7 +76,7 @@ export function cleanup() {
 
 export const CATALOG = [
   {
-    name: "cheese_chat_send",
+    name: "chat_send",
     description: "发布消息",
     inputSchema: {
       type: "object",

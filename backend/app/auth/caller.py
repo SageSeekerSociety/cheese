@@ -1,17 +1,8 @@
 """Who is calling, expressed as a handle.
 
-Two token families reach these routes and only one of them survives the numeric
-identity layer:
-
-  * main-minted tokens carry an int user id in ``sub`` — ``get_auth_user`` turns
-    those into an ``AuthUserInfo`` and they work;
-  * cheesex session tokens are HANDLE-ONLY (``user_id=None``), so the same layer
-    sees no id and reports a guest.
-
-2.0 membership is keyed by handle, so a check written against ``AuthUserInfo``
-silently rejects every caller in the second family — which is why guarding these
-routes by user id refused real callers. Resolving the handle from the claims,
-with the numeric id as a fallback, is the only form that covers both.
+2.0 membership is keyed by handle, so these routes ask for the handle an access
+token names rather than its user id. A token that names no handle is resolved
+through its user id.
 """
 
 import uuid
@@ -20,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app.auth.project_access import may_read_project
-from app.core.tokens import verify_session_token
+from app.common.auth import verify_access_token
 from app.domain.user.repositories import UserRepository
 
 
@@ -36,17 +27,14 @@ def _bearer(request: Request) -> str | None:
 async def caller_handle(request: Request, session: AsyncSession) -> str | None:
     """The calling user's handle, or None when nobody is authenticated."""
     token = _bearer(request)
-    if token:
-        claims = verify_session_token(token)
-        if claims is not None:
-            handle = claims.get("handle") or claims.get("sub")
-            # A numeric ``sub`` is a user id, not a handle — resolve it.
-            if handle and not str(handle).isdigit():
-                return str(handle)
-            if handle:
-                user = await UserRepository(session).get_by_id(int(handle))
-                return getattr(user, "handle", None)
-    return None
+    claims = verify_access_token(token) if token else None
+    if claims is None:
+        return None
+    # A handle that is all digits is a user id standing in for a missing one.
+    if not claims.handle.isdigit():
+        return claims.handle
+    user = await UserRepository(session).get_by_id(int(claims.handle))
+    return getattr(user, "handle", None)
 
 
 async def may_access_project(

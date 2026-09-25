@@ -37,6 +37,8 @@ vi.mock('@/api', async () => {
 
 import PanelCard from './PanelCard.vue'
 
+import { setLocale } from '@/i18n'
+
 const Panel = PanelCard as unknown as Component
 
 function block(over: Partial<Block> = {}): Block {
@@ -93,6 +95,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 卡上的标题走文案目录，而 happy-dom 起步是英文。
+  setLocale('zh-CN')
   getRoomTask.mockReset()
   sayOnRoomTask.mockReset()
   getAcceptCards.mockReset()
@@ -250,7 +254,7 @@ describe('卡下的过程', () => {
     )
     const { getByText } = mount()
     await waitFor(() => getByText('1 步操作'))
-    expect(getByText('有失败')).toBeTruthy()
+    expect(getByText('有步骤失败')).toBeTruthy()
   })
 
   it('芝士没显式发布的输出是话，不算一步操作', async () => {
@@ -354,16 +358,16 @@ function acceptCard(over: Partial<AcceptCard> = {}): AcceptCard {
   } as AcceptCard
 }
 
-// 「去验收」是这张卡上唯一一个自己不干活的按钮（批准 / 采纳 / 退回 / 撤回都自己打
+// 「审阅」是这张卡上唯一一个自己不干活的按钮（批准 / 采纳 / 退回 / 撤回都自己打
 // API）：它要去的那个地方是右栏的「改动」那一格，而开在哪一格是 `TopicView` 的事。
 // PanelCard 以前没接这个事件，于是点下去什么都不发生。这一条钉的是「点了要 emit 出
 // 去」；透到哪一格由 PanelOverview.spec.ts 和 TopicView 那边管。
-describe('卡上的「去验收」', () => {
+describe('卡上的「审阅」', () => {
   it('点下去把 review emit 出去，而不是自己找个地方去', async () => {
     getAcceptCards.mockResolvedValue({ data: [acceptCard()], total: 1 })
-    const { emitted, getByText } = mount()
-    await waitFor(() => getByText('去验收'))
-    await fireEvent.click(getByText('去验收'))
+    const { emitted, getByRole } = mount()
+    await waitFor(() => getByRole('button', { name: '审阅' }))
+    await fireEvent.click(getByRole('button', { name: '审阅' }))
     expect(emitted().review).toBeTruthy()
   })
 })

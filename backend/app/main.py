@@ -68,11 +68,7 @@ async def lifespan(_: FastAPI):
     # from jwt_secret), and there is nothing left to warn about here.
 
     from app.api.deps import get_chat_service, get_work_runner
-    from app.domain.agent.device_hub import (
-        DeviceOffline,
-        configure_subscription_cleanup,
-        device_hub,
-    )
+    from app.domain.agent.device_hub import DeviceOffline, device_hub
 
     hub_runtime: Any = device_hub
     if hasattr(hub_runtime, "start"):
@@ -80,7 +76,6 @@ async def lifespan(_: FastAPI):
 
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)
-        configure_subscription_cleanup(hub_runtime)
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
     # its platform agent-binding. Idempotent — the migration seeds it too; this is
     # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
@@ -529,16 +524,23 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     if request.url.path != "/health":
         # Who and from where, when known. `auth_user_id` is set by
         # get_auth_user (request.state rides scope, so it survives the
-        # middleware task boundary). XFF/UA are recorded verbatim, no trust
-        # decisions — behind the edge proxy the peer address is useless for
-        # telling two clients apart (all traffic arrives from the proxy).
+        # middleware task boundary). `client` is the address uvicorn resolved
+        # through the proxies FORWARDED_ALLOW_IPS trusts — the one sessions and
+        # audits record. The raw X-Forwarded-For rides along as `xff`: its
+        # left part is whatever the client wrote, kept for forensics only.
+        # `host` tells apart the domains that share this backend.
         who: dict[str, object] = {}
         user_id = request.scope.get("state", {}).get("auth_user_id")
         if user_id is not None:
             who["user"] = user_id
+        if request.client:
+            who["client"] = request.client.host
         xff = request.headers.get("x-forwarded-for")
         if xff:
-            who["client"] = xff
+            who["xff"] = xff
+        host = request.headers.get("host")
+        if host:
+            who["host"] = host
         ua = request.headers.get("user-agent")
         if ua:
             who["ua"] = ua

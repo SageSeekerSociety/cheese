@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /** 总览里点开一张卡，就在这一格往下钻一层（`?card=` 记着这一层）。卡上的按钮里
- * 「去验收」是唯一一个自己干不了活的：切到「改动」那一格是 `TopicView` 的事（它
+ * 「审阅」是唯一一个自己干不了活的：切到「改动」那一格是 `TopicView` 的事（它
  * 拿着地址），所以它必须原样透出去——以前这一层没接，那颗按钮点下去什么都不发生。
  *
  * PanelCard 在这里换成只会 emit 的桩：要钉的是**这一层有没有把事件转出去**，不是
@@ -13,7 +13,7 @@ vi.mock('./PanelCard.vue', () => ({
   default: {
     name: 'PanelCardStub',
     emits: ['back', 'review'],
-    template: '<button type="button" class="card-stub" @click="$emit(\'review\')">去验收</button>',
+    template: '<button type="button" class="card-stub" @click="$emit(\'review\')">审阅</button>',
   },
 }))
 
@@ -25,7 +25,7 @@ vi.mock('./TaskProgress.vue', () => ({ default: { name: 'TaskProgressStub', temp
 import PanelOverview from './PanelOverview.vue'
 
 describe('总览里的卡透出来的事件', () => {
-  it('「去验收」原样透出去', async () => {
+  it('「审阅」原样透出去', async () => {
     const { container, emitted } = render(PanelOverview, {
       props: { topic: null, activityTick: 0, openCardId: 'task-1' },
     })

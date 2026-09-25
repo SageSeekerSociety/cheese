@@ -104,10 +104,14 @@ echo "installed to $dest/cheesehost"
 case ":$PATH:" in *":$dest:"*) : ;; *) echo "add $dest to your PATH" ;; esac
 # WS-stripping edge (e.g. a campus front proxy that only forwards HTTP): the
 # server baked a WS-capable control-channel URL above. Pre-write it into the
-# cli config's "ws" key — `cheesehost auth login` loads-then-saves, so it
+# cli config's "ws" key — the login loads-then-saves, so it
 # survives login. Login/approve/API/downloads all stay on ORIGIN.
 if [ -n "$WS_URL" ]; then
-  CFG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/cheese"
+  # Where cheesehost reads it: Go's os.UserConfigDir, which on macOS ignores XDG.
+  case "$os" in
+    darwin) CFG_DIR="$HOME/Library/Application Support/cheese" ;;
+    *) CFG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/cheese" ;;
+  esac
   CFG="$CFG_DIR/config.json"
   mkdir -p "$CFG_DIR"
   if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
@@ -128,9 +132,66 @@ PY
   fi
   echo "control channel pinned to $WS_URL (WS-stripping edge)"
 fi
-echo "next: cheesehost auth login $ORIGIN/connector"
+echo "next: cheesehost link connect $ORIGIN/connector   (logs in, then stays connected)"
 """
     return PlainTextResponse(script, media_type="text/x-shellscript")
+
+
+_INSTALL_PS1 = r"""# cheesehost installer for Windows, the counterpart of install.sh.
+# Run it in PowerShell as the user whose machine this is:
+#   irm <origin>/connector/install.ps1 | iex
+# No administrator rights and no secrets; enrollment is `cheesehost link connect`.
+$ErrorActionPreference = 'Stop'
+$origin = '__ORIGIN__'
+$wsUrl = if ($env:CHEESE_WS_URL) { $env:CHEESE_WS_URL } else { '__WS_URL__' }
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+# A directory this user can write, so the connector can replace itself there.
+$dir = Join-Path $env:LOCALAPPDATA 'cheese\bin'
+$exe = Join-Path $dir 'cheesehost.exe'
+New-Item -ItemType Directory -Force $dir | Out-Null
+Write-Host "downloading cheesehost (windows-$arch)..."
+$partial = "$exe.part"
+& curl.exe -fsSL -o $partial "$origin/connector/latest/windows-$arch/cheesehost.exe"
+if ($LASTEXITCODE -ne 0) { throw "download failed ($LASTEXITCODE)" }
+try {
+  Move-Item -Force $partial $exe
+} catch {
+  # Windows will not replace a running exe; a connector already running keeps
+  # itself current, so there is nothing to do.
+  Remove-Item -Force $partial
+  Write-Host "cheesehost is already installed and running; it updates itself."
+}
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if (-not (($userPath -split ';') -contains $dir)) {
+  $newPath = if ($userPath) { "$userPath;$dir" } else { $dir }
+  [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+  $env:Path += ";$dir"
+}
+Write-Host "installed to $exe"
+# WS-stripping edge: the same pinned control-channel URL install.sh writes,
+# into the file cheesehost reads (os.UserConfigDir is %APPDATA%).
+if ($wsUrl) {
+  $cfgDir = Join-Path $env:APPDATA 'cheese'
+  $cfg = Join-Path $cfgDir 'config.json'
+  New-Item -ItemType Directory -Force $cfgDir | Out-Null
+  $config = [pscustomobject]@{}
+  if (Test-Path $cfg) { $config = Get-Content -Raw $cfg | ConvertFrom-Json }
+  $config | Add-Member -Force -NotePropertyName ws -NotePropertyValue $wsUrl
+  [IO.File]::WriteAllText($cfg, ($config | ConvertTo-Json))
+  Write-Host "control channel pinned to $wsUrl (WS-stripping edge)"
+}
+Write-Host "next: cheesehost link connect $origin/connector"
+Write-Host "      (logs in, then stays connected)"
+"""
+
+
+@router.get("/install.ps1")
+async def install_powershell(request: Request) -> PlainTextResponse:
+    origin = _origin(request)
+    script = _INSTALL_PS1.replace("__ORIGIN__", origin).replace(
+        "__WS_URL__", _ws_control_url(origin)
+    )
+    return PlainTextResponse(script, media_type="text/plain")
 
 
 # Claude Code itself, served from here for the same reason the connector is: a
@@ -144,12 +205,14 @@ echo "next: cheesehost auth login $ORIGIN/connector"
 # The platform string is the vendor's (`linux-x64`, `linux-arm64-musl`, …), not
 # our `<os>-<arch>` connector target: only the machine knows whether its libc is
 # musl, and our target names cannot express that distinction.
-@router.get("/claude/{version}/{platform}/claude")
-async def download_claude(version: str, platform: str) -> Response:
+@router.get("/claude/{version}/{platform}/{name}")
+async def download_claude(version: str, platform: str, name: str) -> Response:
     if not claude_dist.VERSION_RE.match(version):
         return PlainTextResponse("bad version", status_code=400)
     if not claude_dist.PLATFORM_RE.match(platform):
         return PlainTextResponse("unknown platform", status_code=400)
+    if name != claude_dist.binary_name(platform):
+        return PlainTextResponse("unknown file", status_code=404)
     try:
         binary = await claude_dist.ensure_cached(_dist_dir(), version, platform)
     except claude_dist.ClaudeDistError as exc:
@@ -158,9 +221,7 @@ async def download_claude(version: str, platform: str) -> Response:
         return PlainTextResponse(
             f"claude {version} unavailable: {exc}", status_code=503
         )
-    return FileResponse(
-        binary, media_type="application/octet-stream", filename="claude"
-    )
+    return FileResponse(binary, media_type="application/octet-stream", filename=name)
 
 
 # pi, served for the same reason and in the same shape. The artifact is a
@@ -216,10 +277,12 @@ async def download_toolchain(tool: str, platform: str) -> Response:
     )
 
 
-@router.get("/latest/{target}/cheesehost")
-async def download_binary(target: str) -> Response:
+@router.get("/latest/{target}/{name}")
+async def download_binary(target: str, name: str) -> Response:
     if not _TARGET_RE.match(target) or target not in _TARGETS:
         return PlainTextResponse("unknown target", status_code=404)
+    if name != connector_build.binary_name(target):
+        return PlainTextResponse("unknown file", status_code=404)
     binary = connector_build.binary_path(target)
     if binary is None:
         return PlainTextResponse(

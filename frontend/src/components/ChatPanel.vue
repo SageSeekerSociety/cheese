@@ -49,14 +49,9 @@ import { useRoomSocket } from './room/composables/useRoomSocket'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessage from './room/RoomMessage.vue'
 import RoomNotice from './room/RoomNotice.vue'
-import AgentControls from './AgentControls.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
-
-// The room's session state as the socket last reported it. Null until the first
-// frame lands, and passing it at all is what puts AgentControls on the frames.
-const agentControl = ref<AgentControlState | null>(null)
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage and happens in the row components; here we only fill the
@@ -126,6 +121,8 @@ const emit = defineEmits<{
   // 走：干出来的东西是干活的**证据**，不是干活的**开始**，而右边那格「现场」得
   // 在开工那一刻就在那儿——它就是用来看它在干什么的。
   (e: 'working', working: boolean): void
+  // 会话控制状态（任务、模型）动了：socket 上的这一帧转给现场那格的控制条。
+  (e: 'agent-control', state: AgentControlState): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
@@ -154,6 +151,7 @@ const {
   seatByHandle,
   agentDisplayName,
   displayName,
+  isExternal,
   avatarSrc,
   onAvatarError,
   myName,
@@ -170,7 +168,7 @@ const {
 // 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
 // 是一次「我试了但做不了」，而人只会记得是它没做成。
 const composerHint = computed(() =>
-  props.alwaysSummon ? `和${agentName.value}聊聊，或交给它一件事…` : `输入消息，@${agentName.value} 交给它做`
+  props.alwaysSummon ? `给${agentName.value}发消息` : `输入消息，@${agentName.value} 交给它处理`
 )
 
 // Keep the module-level handle→name map in sync with the roster, so
@@ -219,6 +217,8 @@ const todoItems = ref<TodoItem[]>([])
 // progress — labelled differently so nobody reads a stale half-circle as
 // "running now".
 const todoRestored = ref(false)
+// 对话里只画正在跑的这一轮的清单；上一轮留下的在总览里（PanelProgress）。
+const liveTodo = computed(() => todoItems.value.length > 0 && !todoRestored.value)
 // 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
 // 在 13px 上 ◐ 和 ○ 几乎分不开。三个 mdi 图标按「填充程度」递进，一眼可分——
 // 空心圈 = 还没做，半填充 = 正在做，实心圈里带勾 = 做完了。
@@ -228,7 +228,7 @@ function todoIcon(status: string): string {
   return 'mdi-circle-outline'
 }
 
-// ---- 选项问题 (cheese ask): buttons under the message; one click answers
+// ---- 选项问题 (cheese_ask): buttons under the message; one click answers
 // and summons 芝士 to continue. Answered state renders for everyone. ----
 const askBusy = ref<string | null>(null)
 async function pickOption(m: Block, option: string) {
@@ -267,7 +267,7 @@ async function onReact(m: Block, emoji: string) {
     const out = await apiToggleReaction(m.id, emoji, AUTHOR)
     applyReactions(m.id, out.reactions)
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '表情未能更新'
+    errorMsg.value = e instanceof Error ? e.message : '表情更新失败'
   }
 }
 
@@ -357,7 +357,7 @@ async function loadOlder() {
     if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
   } catch (e) {
     failed = true
-    errorMsg.value = e instanceof Error ? e.message : '加载更早的消息失败'
+    errorMsg.value = e instanceof Error ? e.message : '加载消息失败'
   } finally {
     // Unconditional: a topic switch mid-flight must not leave the flag stuck,
     // or the new topic could never page back.
@@ -413,9 +413,17 @@ let historyChanges: Map<string, Block | null> | null = null
 let historyReactions: Map<string, ReactionAgg[]> | null = null
 let historyGeneration = 0
 
+// 此刻才进来的那几条消息（不是打开房间时读出来的历史）。它们进来时淡入一下：新
+// 消息落在底部，这一下说的是「刚来的是这条」；读历史时演，一屏同时浮上来几十条，
+// 什么也说明不了。历史快照合并完之前（`historyChanges` 还在）进来的也不算——那是
+// 打开房间时的补齐。自己发的不算：发件箱那一行早已在屏幕上，换成落库的那一条时
+// 再淡入一次就是一闪。
+const arrived = reactive(new Set<string>())
+
 function pushBlock(b: Block) {
   historyChanges?.set(b.id, b)
   if (!messages.value.some((m) => m.id === b.id)) {
+    if (historyChanges === null && b.author !== AUTHOR) arrived.add(b.id)
     messages.value.push(b)
   }
 }
@@ -503,7 +511,7 @@ function handleFrame(frame: WsServerFrame) {
       messages.value = messages.value.filter((m) => m.id !== frame.block_id)
       break
     case 'agent_control':
-      agentControl.value = frame.state
+      emit('agent-control', frame.state)
       break
     case 'turn_active':
       if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
@@ -567,6 +575,7 @@ async function loadTopic(topic: Topic, entering = false) {
     .catch(() => {})
   reactionPickerFor.value = null
   unreadAnchorId.value = null
+  arrived.clear()
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
   loadingOlder.value = false
@@ -630,7 +639,7 @@ async function loadTopic(topic: Topic, entering = false) {
   } catch (e) {
     if (!stillHere()) return
     if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
-    errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
+    errorMsg.value = e instanceof Error ? e.message : '加载消息失败'
     // A failed history fetch must not terminate socket recovery during an outage.
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
       retryLater(topic.id)
@@ -841,7 +850,7 @@ function pendingBlock(item: Outgoing): Block {
 }
 
 function outgoingState(item: Outgoing): string {
-  if (item.state === 'failed') return item.error ? '待处理' : '未送达'
+  if (item.state === 'failed') return item.error ? '发送失败' : '未送达'
   return connected.value ? '发送中…' : '等待连接'
 }
 
@@ -989,7 +998,7 @@ async function summonNow() {
     summonedFor.value = rows.value.at(-1)?.block.id ?? null
     if (res.started) awaitingReply.value = true
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '没能叫醒它，请重试'
+    errorMsg.value = e instanceof Error ? e.message : `未能交给${agentName.value}，稍后重试`
   } finally {
     summonBusy.value = false
   }
@@ -1198,7 +1207,7 @@ onBeforeUnmount(() => {
 
           <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
             <h2 class="t-title mb-2">从一件具体的事开始</h2>
-            <p class="t-body c-muted mb-4">说说你想解决什么问题，@芝士 可以查资料、写文档，也能和你一起拆任务</p>
+            <p class="t-body c-muted mb-4">{{ agentName }}可以查找资料、起草文档，或和你一起拆分任务</p>
             <div class="d-flex flex-wrap ga-2">
               <v-btn
                 v-for="prompt in starterPrompts"
@@ -1210,7 +1219,6 @@ onBeforeUnmount(() => {
                 >{{ prompt.label }}</v-btn
               >
             </div>
-            <p class="t-meta mt-3">点选后补充你的需求，再发送</p>
           </section>
 
           <!-- Paging back through history. The row is always rendered while
@@ -1259,6 +1267,7 @@ onBeforeUnmount(() => {
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
@@ -1266,6 +1275,7 @@ onBeforeUnmount(() => {
               :mine="isMine(m)"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
+              :external="isExternal(m.author)"
               :avatar="avatarSrc(m.author)"
               :is-agent="isAgentBlock(m)"
               :time="fmtTime(m.created_at)"
@@ -1311,6 +1321,7 @@ onBeforeUnmount(() => {
             :mine="true"
             :topic-id="topic?.id ?? null"
             :author-name="myName"
+            :external="isExternal(AUTHOR)"
             :avatar="avatarSrc(AUTHOR)"
             :is-agent="false"
             :time="outgoingState(item)"
@@ -1329,7 +1340,7 @@ onBeforeUnmount(() => {
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until every explicitly active turn finishes; the live
              working-log checklist stays visible for the whole turn. -->
-          <div v-if="awaitingReply || todoItems.length" class="im-row">
+          <div v-if="awaitingReply || liveTodo" class="im-row">
             <div class="im-gutter">
               <CheeseAvatar :size="28" :name="agentName" />
             </div>
@@ -1338,12 +1349,11 @@ onBeforeUnmount(() => {
                 <span class="im-name">{{ agentName }}</span>
               </div>
 
-              <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
-                 turn; between turns this is the topic's stored 进度层 (#187),
-                 labelled so a leftover 进行中 row is not read as "running right
-                 now". -->
-              <div v-if="todoItems.length && todoRestored" class="todo-label">上次的进度</div>
-              <ul v-if="todoItems.length" class="todo-list">
+              <!-- Working-log checklist (芝士's tasks, §3.1.1), only while a turn is
+                 live. Between turns the stored 进度层 (#187) lives in the panel's
+                 总览: parked at the end of the conversation it sat under every new
+                 message, pushing the talk up. -->
+              <ul v-if="liveTodo" class="todo-list">
                 <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
                   <v-icon class="todo-mark" size="14">{{ todoIcon(t.status) }}</v-icon>
                   <span class="todo-text">{{ t.subject }}</span>
@@ -1353,7 +1363,7 @@ onBeforeUnmount(() => {
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
                 <span class="text-medium-emphasis">{{
-                  reachedAgent ? `${agentName}正在处理…` : `正在送给${agentName}…`
+                  reachedAgent ? `${agentName}正在处理…` : `正在交给${agentName}…`
                 }}</span>
                 <span class="caret" />
               </div>
@@ -1378,6 +1388,10 @@ onBeforeUnmount(() => {
         {{ errorMsg }}
       </v-alert>
 
+      <!-- 贴在输入框上方的那一条（验收卡）。它不随对话滚：等人做的决定要一直看得见，
+           又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
+      <slot name="above-composer" />
+
       <!-- B3: replying-to indicator — the next message threads under this one. -->
       <div v-if="replyTarget" class="reply-bar">
         <v-icon size="14" class="me-1">mdi-reply</v-icon>
@@ -1386,7 +1400,6 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="true" :pushed="agentControl" questions-only />
       <RoomComposer
         v-if="showComposer"
         ref="composerRef"
@@ -1437,11 +1450,6 @@ onBeforeUnmount(() => {
 }
 /* Working-log checklist (§3.1.1) — process, sits above the streaming text.
    Between turns the same list shows the stored 进度层 (#187) under a label. */
-.todo-label {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 2px 0 0;
-}
 /* 任务清单块：强调靠 wash 底色，不靠左竖条（左条纹只留给引用块和结构线）。 */
 .todo-list {
   list-style: none;
@@ -1467,7 +1475,7 @@ onBeforeUnmount(() => {
   color: var(--faint);
 }
 .todo-in_progress {
-  color: var(--accent-ink);
+  color: var(--ink);
   font-weight: 600;
 }
 .todo-completed {
@@ -1556,6 +1564,23 @@ onBeforeUnmount(() => {
 @keyframes blink {
   50% {
     opacity: 0;
+  }
+}
+/* 新来的一条：淡入并从下面 4px 升到位（见 `arrived`）。只演一次——class 留着也
+   不会重播，动画只在元素挂上的那一刻跑。 */
+.tl-arrive {
+  animation: tl-arrive var(--dur-base) var(--ease-out);
+}
+@keyframes tl-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+/* 关掉动效时光标常亮：它说的「还在往下写」靠的是在不在，不是闪不闪。 */
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
   }
 }
 </style>

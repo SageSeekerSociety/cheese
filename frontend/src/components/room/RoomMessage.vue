@@ -15,6 +15,7 @@ import { renderMarkdown as renderMarkdownWith, renderPlain as renderPlainWith } 
 import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
+import ExternalTag from '../common/ExternalTag.vue'
 
 /** MVP 表情选择器里那八个：常用的就够了，多了是一面墙。 */
 const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
@@ -33,6 +34,8 @@ const props = defineProps<{
   /** 真头像的地址；取不到就画按 handle 哈希的色块。 */
   avatar: string | null
   isAgent: boolean
+  /** 说话的人是这个项目的外部成员（团队以外、被邀请进来的）——名字旁挂「外部」。 */
+  external?: boolean
   time: string
   /** handle→昵称 / 话题 id→标题，正文里的 token 靠它渲染成可点的 chip。 */
   refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
@@ -107,6 +110,7 @@ function renderPlain(text: string): string {
     <div class="im-main">
       <div v-if="runStart" class="im-meta">
         <span class="im-name">{{ authorName }}</span>
+        <ExternalTag v-if="external && !isAgent" />
         <span class="im-time">{{ time }}</span>
       </div>
       <!-- B3: a reply shows the message it threads under -->
@@ -159,7 +163,7 @@ function renderPlain(text: string): string {
         <button type="button" class="outbox-act" @click="emit('retry')">重试</button>
         <button type="button" class="outbox-act" @click="emit('drop')">删除</button>
       </div>
-      <!-- 选项问题 (cheese ask): one-click answer buttons; answered
+      <!-- 选项问题 (cheese_ask): one-click answer buttons; answered
          state shows the pick + who made it (everyone sees it). -->
       <div v-if="askOptions(block)" class="ask-row">
         <template v-if="!askAnswered(block)">
@@ -175,7 +179,7 @@ function renderPlain(text: string): string {
           </button>
         </template>
         <div v-else class="ask-answered">
-          <v-icon size="13" color="primary">mdi-check-circle</v-icon>
+          <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
           {{ askAnswered(block)!.by }} 选了「{{ askAnswered(block)!.option }}」
         </div>
       </div>
@@ -189,14 +193,14 @@ function renderPlain(text: string): string {
         @click="emit('open-topic', (block.upgraded_to_task_id || block.upgraded_to_topic_id)!)"
       >
         <v-icon size="13">mdi-arrow-top-right</v-icon>
-        已升级为话题，点击查看
+        已转为话题
       </button>
       <!-- 忘了 @ 的补救：房间里最后一句是对着人说的，芝士就不会动，
          而在这一行出现之前，房间里没有任何东西说明这一点。 -->
       <div v-if="summonHint" class="summon-hint">
-        <span class="summon-hint-text">这条没叫{{ summonHint }}，它不会现在动</span>
+        <span class="summon-hint-text">未交给{{ summonHint }}</span>
         <button type="button" class="summon-hint-btn" :disabled="summonBusy" @click="emit('summon')">
-          让它现在就看
+          交给{{ summonHint }}
         </button>
       </div>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
@@ -233,7 +237,7 @@ function renderPlain(text: string): string {
       <button type="button" class="im-act" title="回复" @click="emit('reply', block)">
         <v-icon size="15">mdi-reply-outline</v-icon>
       </button>
-      <button type="button" class="im-act" title="升级为话题" @click="emit('upgrade', block.id)">
+      <button type="button" class="im-act" title="转为话题" @click="emit('upgrade', block.id)">
         <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
       </button>
       <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
@@ -267,8 +271,8 @@ function renderPlain(text: string): string {
   cursor: pointer;
 }
 .summon-hint-btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--faint);
+  color: var(--ink);
 }
 .summon-hint-btn:disabled {
   cursor: default;
@@ -293,7 +297,7 @@ function renderPlain(text: string): string {
   white-space: nowrap;
 }
 .im-replied:hover {
-  color: var(--accent-ink);
+  color: var(--ink);
 }
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
@@ -387,7 +391,7 @@ function renderPlain(text: string): string {
   margin-top: 4px;
   padding: 2px 8px;
   font-size: 12px;
-  color: var(--accent-ink);
+  color: var(--text);
   background: var(--fill);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-sm);
@@ -395,7 +399,7 @@ function renderPlain(text: string): string {
 }
 .im-upgraded:hover {
   background: var(--surface);
-  border-color: var(--accent);
+  border-color: var(--faint);
 }
 /* @mention: neutral inset, ink text — not amber. */
 .im-text :deep(.mention) {
@@ -435,7 +439,7 @@ function renderPlain(text: string): string {
   border-radius: 8px;
   box-shadow: var(--shadow-1);
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--dur-quick) var(--ease-standard);
   pointer-events: none;
 }
 /* One quiet square button per action: muted ink, fill on hover — the harsh
@@ -499,7 +503,7 @@ function renderPlain(text: string): string {
 .rx-pick:hover {
   background: var(--fill);
 }
-/* 选项问题 buttons (cheese ask): quiet outlined pills, amber on hover. */
+/* 选项问题 buttons (cheese_ask): quiet outlined pills, amber on hover. */
 .ask-row {
   display: flex;
   flex-wrap: wrap;
@@ -533,8 +537,8 @@ function renderPlain(text: string): string {
   color: var(--muted);
 }
 
-/* Reaction chips under a message: emoji + count; own reactions get the amber
-   outline (Slack's "you reacted" affordance). */
+/* Reaction chips under a message: emoji + count; own reactions get a darker
+   outline and ground (Slack's "you reacted" affordance), not amber. */
 .rx-row {
   display: flex;
   flex-wrap: wrap;
@@ -554,14 +558,14 @@ function renderPlain(text: string): string {
   line-height: 1;
   color: var(--muted);
   cursor: pointer;
-  transition: border-color 0.12s ease;
+  transition: border-color var(--dur-quick) var(--ease-standard);
 }
 .rx-chip:hover {
-  border-color: var(--accent);
+  border-color: var(--faint);
 }
 .rx-chip--mine {
-  border-color: var(--accent);
-  background: var(--surface);
+  border-color: var(--muted);
+  background: var(--line-2);
   color: var(--ink);
 }
 .rx-emoji {

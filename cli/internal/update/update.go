@@ -1,6 +1,6 @@
 // Package update fetches a fresh connector binary (the server's `cheesehost`
 // artifact) and swaps it in place of the running executable. It carries the platform→artifact mapping the installer uses
-// (frontend/scripts/build-connector.mjs + install.sh), downloads the matching
+// (backend/scripts/build-connector.sh + install.sh), downloads the matching
 // binary next to the running executable, verifies it is a real, runnable binary,
 // and atomically replaces the current one. Handing the process off to the new
 // binary (so a running service keeps its tmux) is the caller's job; this package
@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -29,9 +31,9 @@ import (
 // (amd64/arm64), NOT uname-style (x86_64/aarch64). Kept pure so it is unit-testable.
 func platformDir(goos, goarch string) (string, error) {
 	switch goos {
-	case "linux", "darwin":
+	case "linux", "darwin", "windows":
 	default:
-		return "", fmt.Errorf("update: unsupported OS %q (cheese runs on Linux and macOS)", goos)
+		return "", fmt.Errorf("update: unsupported OS %q (cheese runs on Linux, macOS and Windows)", goos)
 	}
 	switch goarch {
 	case "amd64", "arm64":
@@ -39,6 +41,15 @@ func platformDir(goos, goarch string) (string, error) {
 		return "", fmt.Errorf("update: unsupported arch %q (cheese ships amd64 and arm64)", goarch)
 	}
 	return goos + "-" + goarch, nil
+}
+
+// BinaryName is the file the server publishes for dir: `cheesehost`, with
+// Windows' `.exe`.
+func BinaryName(dir string) string {
+	if strings.HasPrefix(dir, "windows-") {
+		return "cheesehost.exe"
+	}
+	return "cheesehost"
 }
 
 // PlatformDir returns the artifact directory for the running platform.
@@ -57,16 +68,28 @@ func binaryURL(base, dir string) (string, error) {
 		return "", fmt.Errorf("update: bad base %q: %v", base, err)
 	}
 	origin := u.Scheme + "://" + u.Host
-	return origin + "/connector/latest/" + dir + "/cheesehost", nil
+	return origin + "/connector/latest/" + dir + "/" + BinaryName(dir), nil
 }
+
+// ErrCurrent is Fetch's answer when the origin publishes exactly the bytes this
+// executable already holds: there is nothing to swap in and no reason to hand
+// off. An update request says "take what the origin publishes", not "you are
+// stale" — the process that asks compares against its own copy, which a
+// separately released connection owner can hold at a different build than the
+// origin does. Handing off to identical bytes dropped the link on every
+// reconnect: a new cloud machine was offline for minutes, re-downloading the
+// build it already ran.
+var ErrCurrent = errors.New("update: already running the build the server publishes")
 
 // Fetch downloads the current platform's `cheese` binary from base's origin into a
 // temp file in the SAME directory as the running executable (so a later os.Rename
 // onto the executable is atomic), makes it executable, and verifies it is a real,
 // runnable binary by executing `<temp> --version` under a timeout. On any failure
 // the temp file is removed and an error is returned — the caller must keep running
-// the current binary unchanged. On success it returns the temp file path; the
-// caller replaces the executable with Replace and hands off.
+// the current binary unchanged. When the download is byte-identical to the
+// executable it returns ErrCurrent, having removed the temp file. Otherwise it
+// returns the temp file path; the caller replaces the executable with Replace and
+// hands off.
 func Fetch(ctx context.Context, base string) (string, error) {
 	dir, err := PlatformDir()
 	if err != nil {
@@ -83,7 +106,9 @@ func Fetch(ctx context.Context, base string) (string, error) {
 	self, _ = filepath.EvalSymlinks(self)
 	destDir := filepath.Dir(self)
 
-	tmp, err := os.CreateTemp(destDir, ".cheese-update-*")
+	// Same extension as the running binary: Windows only runs a file by its
+	// .exe, which verify needs before anything is swapped.
+	tmp, err := os.CreateTemp(destDir, ".cheese-update-*"+filepath.Ext(self))
 	if err != nil {
 		// This is where a connector installed into a directory it cannot write
 		// dies — every time, forever, and until now with an error that named
@@ -125,13 +150,18 @@ func Fetch(ctx context.Context, base string) (string, error) {
 		cleanup()
 		return "", fmt.Errorf("update: download %s: HTTP %d", rawURL, resp.StatusCode)
 	}
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	digest := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmp, digest), resp.Body); err != nil {
 		cleanup()
 		return "", fmt.Errorf("update: write: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
 		return "", fmt.Errorf("update: close: %w", err)
+	}
+	if running, err := SelfDigest(); err == nil && running == hex.EncodeToString(digest.Sum(nil)) {
+		os.Remove(tmpPath)
+		return "", ErrCurrent
 	}
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
 		os.Remove(tmpPath)
@@ -163,7 +193,7 @@ func verify(ctx context.Context, path string) error {
 // executable's path is fine on Linux/macOS (the old inode stays mapped until the
 // process exits).
 func Replace(tmpPath, selfPath string) error {
-	if err := os.Rename(tmpPath, selfPath); err != nil {
+	if err := replace(tmpPath, selfPath); err != nil {
 		return fmt.Errorf("update: replace %s: %w", selfPath, err)
 	}
 	return nil

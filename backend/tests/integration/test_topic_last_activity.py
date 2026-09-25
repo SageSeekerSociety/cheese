@@ -7,9 +7,11 @@ changed, and "最近活跃的话题" came out empty or in the wrong order.
 
 from datetime import UTC, datetime, timedelta
 
+from tests.integration.conftest import post_project
+
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

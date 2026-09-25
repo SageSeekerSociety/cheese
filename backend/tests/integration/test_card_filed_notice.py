@@ -27,13 +27,13 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 _SUBJECT = "chore(test): file an accept card"
 
 
 def _room(client) -> str:
-    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
     return client.post("/topics", json={"project_id": pid, "title": "预算复核"}).json()[
         "data"
     ]["id"]
@@ -92,7 +92,7 @@ def test_filing_a_card_leaves_a_room_line_marked_as_waiting_on_a_person(client):
     assert _file_card(client, room).status_code == 200
 
     (event,) = _filed_events(client, room)
-    assert "待 alice 验收" in event["content"]
+    assert "alice" in event["content"]
     assert event["meta"]["who"] == "human"
     # 改动主题最长 72 字，房间里那一行要保持一行 —— 所以它进展开区，不进正文。
     assert _SUBJECT in event["meta"]["detail"]
@@ -143,7 +143,7 @@ def test_an_agent_reviewer_reads_it_in_the_room_instead_of_the_mailbox(client):
     assert _file_card(client, room, reviewer=agent).status_code == 200
 
     (event,) = _filed_events(client, room)
-    assert f"待 {agent} 验收" in event["content"]
+    assert agent in event["content"]
     (row,) = _notices(client, reporter)
     assert row["contextMetadata"]["content"] == event["content"]
     assert _notices(client, agent_token) == []

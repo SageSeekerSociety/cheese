@@ -12,14 +12,15 @@
 import uuid
 
 from app.domain.room_task.models import Task
+from app.domain.room_task.presentation import NeedsYou
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
-from tests.integration.conftest import session_auth_headers
-from tests.turn_log import open_turn
+from tests.integration.conftest import post_project, session_auth_headers
+from tests.turn_log import close_turn, open_turn
 
 
 def _project(client, handle: str) -> str:
-    return client.post(
-        "/projects", json={"name": "P"}, headers=session_auth_headers(handle)
+    return post_project(
+        client, json={"name": "P"}, headers=session_auth_headers(handle)
     ).json()["data"]["id"]
 
 
@@ -80,7 +81,7 @@ def test_a_card_routed_to_me_is_on_my_list_and_not_on_anyone_elses(client):
     (item,) = _mine(client, "alice")
     assert item["topicId"] == room
     assert item["topicTitle"] == "预算复核"
-    assert item["displayStatus"] == "等待验收"
+    assert item["displayStatus"] == NeedsYou.awaiting_review
     assert item["reason"] == "reviewer"
     assert _mine(client, "bob") == []
 
@@ -98,7 +99,7 @@ def test_the_person_who_asked_for_the_work_is_on_it_too(client):
 
 
 def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(client):
-    """一个待确认问题只有发起那一轮的人能回答。
+    """一个待回答的问题只有发起那一轮的人能回答。
 
     凭房间名册推收件人，等于把一条只有一个人该处理的事项摆进一屋子人的待办里。
     """
@@ -111,9 +112,26 @@ def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(client):
     _ask(client, room, "alice")
 
     (item,) = _mine(client, "alice")
-    assert item["displayStatus"] == "待确认"
+    assert item["displayStatus"] == NeedsYou.awaiting_answer
     assert item["reason"] == "asked"
     assert item["taskId"] is None  # 房间自己那条线上的提问
+
+
+def test_a_question_still_waits_on_its_person_after_the_turn_ends(client):
+    """`cheese_ask` 不等回答：芝士问完就收尾，这一轮随即关闭。
+
+    题还摆在那儿，等的还是那个人——「在等谁」不能在轮次关掉的那一刻跟着消失。
+    """
+    project = _project(client, "alice")
+    room = _room(client, project, "alice")
+    turn = client.portal.call(
+        lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="alice")
+    )
+    _ask(client, room, "alice")
+    client.portal.call(lambda: close_turn(client.test_request_factory, turn))
+
+    (item,) = _mine(client, "alice")
+    assert item["reason"] == "asked"
 
 
 def test_the_newest_open_turn_decides_who_the_question_is_waiting_on(client):

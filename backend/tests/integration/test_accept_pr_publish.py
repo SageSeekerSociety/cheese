@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def test_unreadable_binding_keeps_cards_visible_and_refuses_accept(client, monkeypatch):
@@ -38,7 +38,7 @@ def test_unreadable_binding_keeps_cards_visible_and_refuses_accept(client, monke
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

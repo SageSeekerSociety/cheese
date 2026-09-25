@@ -41,7 +41,7 @@
     <v-spacer></v-spacer>
 
     <div v-if="hasActions && ($vuetify.display.mdAndUp || showOnMobile)" class="header-actions">
-      <v-defaults-provider :defaults="{ VBtn: { color: 'on-surface', size: 'small', variant: 'text' } }">
+      <v-defaults-provider :defaults="{ VBtn: { size: 'small', variant: 'text' } }">
         <component :is="actionsComponent" v-if="actionsComponent" />
         <slot name="actions"></slot>
       </v-defaults-provider>

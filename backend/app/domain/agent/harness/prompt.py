@@ -11,8 +11,7 @@
 3. **运行中的会话**：**保持它启动时的那一份，直到下一次冷启动。** 这不是本模块
    的选择，是 Claude Code 的事实：harness 用 `--append-system-prompt-file` 把
    prompt 交给它，而它**在启动时读一次**那个文件
-   （`claude_code/session_launch.py` 的模块注释，`hooks_substrate` 里
-   「reads a system prompt exactly once — at launch」）。文件每轮都重写，重写是
+   （`claude_code/session_launch.py` 的模块注释）。文件每轮都重写，重写是
    给**下一次**冷启动看的。
 
    所以「第 3 周改成了第 4 周」这件事，一个正在跑的会话当天听不到。这是有意接受
@@ -32,6 +31,17 @@ from app.domain.task.teaching import TeachingContext
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
 )
+
+
+# How a roster row is in the project, in the words the agent reads. An external
+# member is someone from outside the team taking part in this one project.
+_STANDING = {"owner": "项目所有者", "team": "团队成员", "external": "外部成员"}
+
+
+def _standing(member: dict) -> str:
+    if member.get("agent"):
+        return "AI 队友"
+    return _STANDING.get(member.get("source") or "", "成员")
 
 
 def chipify_paths(fact: str) -> str:
@@ -205,7 +215,7 @@ def build_system_prompt(
             "## 本轮第一件事：先给本话题起名（先于一切）\n"
             "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
             "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
-            "`cheese title <标题>` 起个 ≤12 字简短标题，"
+            "`cheese_title` 起个 ≤12 字简短标题，"
             "然后再照常回应、干活。"
             "这条优先于「先回应，再干活」：起标题只是一次工具调用，几乎不花时间。"
             "（只起一次，定了别反复改。）"
@@ -250,7 +260,7 @@ def build_system_prompt(
         #
         # **清单空着的时候这一段以短指针出现。** 那是必须说话的那一次：一个交文件
         # 的项目，第一次交付只能新建，而它起的那个名字会留在清单上。指针只留三件
-        # 不能少的——怎么新建、合并不用声明、细则去 accept-request 的 help 看；
+        # 不能少的——怎么新建、合并不用声明、细则去 cheese_accept_request 的说明看；
         # 整套说明跟着清单走，不跟着每一轮走（#1535：空清单也全量注入是指令:信息
         # 约 8:1 的那一处）。
         head = "## 这个项目的产物清单（交出去的东西，一项一行）\n"
@@ -295,18 +305,18 @@ def build_system_prompt(
             )
         else:
             # 短指针的三个不能丢：新建要带 about、合并不用声明、细则的权威文本
-            # 在 accept-request --help（CLAUDE.md：help 与代码同源，不会过期）。
+            # 是 cheese_accept_request 的工具说明（与代码同源，不会过期）。
             parts.append(
                 head
                 + "清单还空着，这个项目一样东西都还没交出去过。第一次交出文件或地址，"
                 "用 `new_artifact=<真名>` 加 `about=<一句话>`（说的是这东西本身，"
                 "不是这一版做了什么）声明它；交出这次合并的**不用声明产物**——交的"
                 "是项目那个仓库，平台自己认得出。写法细则看 "
-                "`cheese accept-request --help`。"
+                "`cheese_accept_request` 工具的说明。"
             )
     if roster:
         lines = "\n".join(
-            f"- {m['name']}（{m['role']}，handle: {m['handle']}）" for m in roster
+            f"- {m['name']}（{_standing(m)}，handle: {m['handle']}）" for m in roster
         )
         parts.append(
             "## 项目成员 & 怎么点名\n"
@@ -322,22 +332,22 @@ def build_system_prompt(
             "## 项目总览的实况文档（全项目共看的那一份，不是本话题的）\n"
             "这是这个项目所有人和所有芝士共同看的那一份状态：项目在做什么、"
             "定了什么、谁在负责。**你观察到「所有人都该知道」的事实，写进它**"
-            "（`cheese remember --everyone <事实>`），不要记进只有你自己读得到的"
+            "（`cheese_remember` 带 `everyone`），不要记进只有你自己读得到的"
             "记忆池。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,
-                full_read_hint="在项目根话题里运行 `cheese doc get` 读全文",
+                full_read_hint="在项目根话题里调 `cheese_doc_get` 读全文",
             )
         )
     if doc:
         parts.append(
             "## 当前话题的实况文档（这是最新状态；用户可能编辑了它，"
-            "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n"
+            "请按它继续工作，并在状态变化时用 `cheese_doc_set` 更新它）\n"
             + fit_doc_to_budget(
                 doc,
                 TOPIC_DOC_CHAR_BUDGET,
-                full_read_hint="用 `cheese doc get` 读全文",
+                full_read_hint="用 `cheese_doc_get` 读全文",
             )
         )
     if memories or memories_omitted:
@@ -356,7 +366,7 @@ def build_system_prompt(
                 f"\n\n> 📚 记忆池里另有 **{memories_omitted} 条**，"
                 "**不会自动出现在这里**——核心记忆之外的都要自己查。"
                 "开工前、话题拐弯时、要用到某条旧约定或踩过的坑时，"
-                "用 `cheese recall --query <关键词>` 查一次。"
+                "用 `cheese_recall` 查一次。"
                 "**一次没查到不等于没有**：换个说法、或只用其中一两个关键词再试一次。"
             )
         if memories_core_omitted:
@@ -365,7 +375,7 @@ def build_system_prompt(
             block += (
                 f"\n\n> ⚠️ **核心记忆超预算了**：有 {memories_core_omitted} 条核心记忆"
                 "没放下。核心记忆本该每轮全在场，出现这种情况说明它被当成普通记忆写"
-                "了——挑几条降级成普通记忆（`cheese remember` 不带 `--core`）。"
+                "了——挑几条降级成普通记忆（`cheese_remember` 不带 `core`）。"
             )
         parts.append(block)
     if session_opening:
@@ -396,7 +406,7 @@ def thread_relay_prompt(
         "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
         "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身，新分身的"
         "prompt 里照旧写这条活的线程标识。"
-        "回话说在这条活上（`cheese tell <这条活> <说明>`），别只在房间里说，"
+        "回话说在这条活上（`cheese_tell`），别只在房间里说，"
         "问话的人看的是那边。"
     )
 

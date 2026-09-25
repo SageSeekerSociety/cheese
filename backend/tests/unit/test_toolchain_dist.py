@@ -122,10 +122,20 @@ def test_a_font_is_the_same_file_on_every_platform():
     place for the two to drift — a PDF that renders differently on a Mac."""
     resolved = {
         toolchain.resolve("font-sans", platform)
-        for platform in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64")
+        for platform in (
+            "linux-x64",
+            "linux-arm64",
+            "darwin-x64",
+            "darwin-arm64",
+            "windows-x64",
+        )
     }
     assert len(resolved) == 1
     assert resolved.pop() is not None
+
+
+# The connector's own runtime on Windows, which no other machine is sent.
+WINDOWS_RUNTIME = {"python", "git"}
 
 
 def test_every_binary_tool_is_pinned_for_every_platform_we_serve():
@@ -136,12 +146,30 @@ def test_every_binary_tool_is_pinned_for_every_platform_we_serve():
     tools = {
         tool
         for tool, _ in toolchain.ARTIFACTS
-        if tool not in ("font-sans", "font-serif")
+        if tool not in ("font-sans", "font-serif") and tool not in WINDOWS_RUNTIME
     }
     assert tools, "the table must actually carry the binaries"
     for tool in tools:
         for platform in platforms:
             assert toolchain.resolve(tool, platform), f"{tool} has no {platform}"
+
+
+def test_windows_is_served_the_tools_it_places_and_its_own_runtime():
+    """What a Windows room places, what its gh and fj launchers fetch, and the
+    interpreter and shell its connector provisions."""
+    for tool in {name for name, *_ in toolchain.PLACEMENTS} | {"gh", "fj"}:
+        assert toolchain.resolve(tool, "windows-x64"), f"{tool} has no windows-x64"
+    for tool in WINDOWS_RUNTIME:
+        assert toolchain.resolve(tool, "windows-x64"), tool
+        for platform in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"):
+            assert toolchain.resolve(tool, platform) is None, (tool, platform)
+
+
+def test_the_windows_runtime_is_never_placed_as_a_document_tool():
+    """The launcher places whatever PLACEMENTS names on every machine it runs
+    on; the connector's interpreter and shell are the connector's business."""
+    placed = {name for name, *_ in toolchain.PLACEMENTS}
+    assert not placed & WINDOWS_RUNTIME
 
 
 def test_every_pin_is_a_real_digest_over_https():
@@ -157,5 +185,5 @@ def test_every_pin_is_a_real_digest_over_https():
 def test_unknown_names_and_traversal_never_reach_upstream():
     assert toolchain.resolve("typst", "../../etc") is None
     assert toolchain.resolve("../claude", "linux-x64") is None
-    assert toolchain.resolve("typst", "windows-x64") is None
+    assert toolchain.resolve("typst", "windows-arm64") is None
     assert toolchain.resolve("no-such-tool", "linux-x64") is None

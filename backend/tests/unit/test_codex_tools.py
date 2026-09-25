@@ -72,8 +72,9 @@ async def test_schema_pages_and_multimodal_results_keep_their_content(monkeypatc
     tools = RemoteTools({})
     monkeypatch.setattr(tools.client, "call", call)
     schemas = await tools.discover(["docs"])
-    assert [tool["name"] for tool in schemas] == ["Bash", "mcp__docs__view"]
-    assert all(tool["inputSchema"] == schema for tool in schemas)
+    names = [tool["name"] for tool in schemas]
+    assert names[:2] == ["Bash", "mcp__docs__view"]
+    assert all(tool["inputSchema"] == schema for tool in schemas[:2])
     result = await tools(
         "item/tool/call",
         {
@@ -101,6 +102,41 @@ async def test_schema_pages_and_multimodal_results_keep_their_content(monkeypatc
     }
 
 
+@pytest.mark.anyio
+async def test_platform_tools_are_listed_and_answered_by_the_backend(monkeypatch):
+    """The platform's table arrives with the executor's tools, and a call to one
+    goes to the backend: the executor is never asked for it or about it."""
+    executor_calls = []
+
+    def call(method, params):
+        executor_calls.append(method)
+        return {"tools": []}
+
+    requests = []
+
+    def platform_request(plan):
+        requests.append(plan)
+        return {"value": {"stdout": json.dumps({"data": {"hits": []}})}}
+
+    monkeypatch.setenv("CHEESE_TOPIC", "room")
+    monkeypatch.setenv("CHEESE_PROJECT", "project")
+    tools = RemoteTools({})
+    monkeypatch.setattr(tools.client, "call", call)
+    monkeypatch.setattr(tools.client, "platform_request", platform_request)
+    names = {tool["name"] for tool in await tools.discover([])}
+    assert {"chat_send", "cheese_recall", "cheese_task"} <= names
+
+    executor_calls.clear()
+    result = await tools(
+        "item/tool/call",
+        {"tool": "cheese_recall", "callId": "c-1", "arguments": {"query": "技术栈"}},
+    )
+    assert result["success"] is True
+    assert "没有找到相关记忆" in result["contentItems"][0]["text"]
+    assert requests[0]["path"] == "/projects/project/memory/search"
+    assert executor_calls == []
+
+
 def test_runner_archive_launches_without_the_backend_environment(tmp_path):
     archive = tmp_path / "runner.pyz"
     archive.write_bytes(build())
@@ -114,3 +150,24 @@ def test_runner_archive_launches_without_the_backend_environment(tmp_path):
     )
     assert process.returncode == 0, process.stderr
     assert "--state" in process.stdout
+
+
+def test_the_runner_archive_carries_the_platform_tool_table(tmp_path):
+    """The session host has no source tree: the table has to arrive inside the
+    archive, and load from there."""
+    archive = tmp_path / "runner.pyz"
+    archive.write_bytes(build())
+    probe = (
+        "import sys; sys.path.insert(0, sys.argv[1]);"
+        "from app.domain.agent.harness.codex.tools import platform_tools;"
+        "print(sorted(platform_tools().PLATFORM_TOOLS.names())[:3])"
+    )
+    process = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", probe, str(archive)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert process.returncode == 0, process.stderr
+    assert "chat_send" in process.stdout

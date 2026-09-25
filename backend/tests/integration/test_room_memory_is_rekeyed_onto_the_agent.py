@@ -22,6 +22,7 @@ from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from tests.integration.conftest import registered
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -61,8 +62,9 @@ def test_the_same_cheese_recalls_the_same_facts_after_the_rekey(
     """
 
     async def run() -> None:
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Rekey", forge_kind="github_app"
+            owner_handle="owner", name="Rekey", forge_kind="github_app"
         )
         room = await TopicService(db_session).create(
             project_id=project.id, title="学到东西的那间房", created_by="alice"
@@ -77,8 +79,9 @@ def test_the_same_cheese_recalls_the_same_facts_after_the_rekey(
             "这条是按房间分池时代记下的",
         )
         # 另一个项目的同名形状不许被顺手带走。
+        await registered(db_session, "owner")
         other = await ProjectService(db_session).create(
-            name="Bystander", forge_kind="github_app"
+            owner_handle="owner", name="Bystander", forge_kind="github_app"
         )
         await store.remember(
             MemoryScope.agent_project,

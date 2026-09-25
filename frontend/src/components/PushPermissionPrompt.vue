@@ -96,7 +96,7 @@ function decline() {
     <div v-if="shown" class="push-fold">
       <div class="push-fold__inner">
         <div class="push-ask">
-          <span class="push-ask__text">本轮运行时间可能较长，完成后通知你</span>
+          <span class="push-ask__text">这次运行时间可能较长，完成后通知你</span>
           <div class="push-ask__actions">
             <v-btn variant="text" size="small" color="primary" :loading="busy" @click="accept"> 开启通知 </v-btn>
             <v-btn variant="text" size="small" color="medium-emphasis" :disabled="busy" @click="decline"

@@ -268,8 +268,6 @@ def _build_user_dto(user_obj, profile, *, fallback_id: int) -> dict:
             "nickname": nickname,
             "avatarId": avatar_id,
             "intro": intro,
-            "follow_count": 0,
-            "fans_count": 0,
             "question_count": 0,
             "answer_count": 0,
         }
@@ -282,8 +280,6 @@ def _build_user_dto(user_obj, profile, *, fallback_id: int) -> dict:
         "nickname": "",
         "avatarId": None,
         "intro": "",
-        "follow_count": 0,
-        "fans_count": 0,
         "question_count": 0,
         "answer_count": 0,
     }

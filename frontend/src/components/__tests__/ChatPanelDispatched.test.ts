@@ -1,6 +1,6 @@
 /** 时间线上的「已派出」标记 (issue #314)。
  *
- * 2026-08-11 09:04 一件活被拆到子话题，父话题这边**什么都没变**：`cheese split`
+ * 2026-08-11 09:04 一件活被拆到子话题，父话题这边**什么都没变**：`cheese_task`
  * 不往父话题写任何 block。于是房间照着自己那份清单又做了一遍同一件事，两套不兼容
  * 的迁移各自跑绿，全靠人工比对文件列表才发现。
  *
@@ -143,7 +143,7 @@ describe('房间时间线上的「已派出」标记', () => {
     expect(timelineOrder(container)).toEqual(['b1', 't:sub-1', 'b2'])
     const marker = container.querySelector('[data-testid="dispatched-marker"]')!
     expect(marker.textContent).toContain('进度层与记忆落地')
-    expect(marker.textContent).toContain('这部分正在进行')
+    expect(marker.textContent).toContain('进行中')
   })
 
   it('点标记上的标题 = 打开那个子话题', async () => {
@@ -186,7 +186,7 @@ describe('房间时间线上的「已派出」标记', () => {
     const { container } = mountPanel(room(id), [done])
     await flush()
 
-    expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain('这部分已完成')
+    expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain('已完成')
   })
 
   it('房间里没派出去任何活时，时间线一如既往', async () => {
@@ -203,7 +203,7 @@ describe('房间时间线上的「已派出」标记', () => {
     expect(timelineOrder(container)).toEqual(['b1'])
   })
 
-  // 「讨论升级」那条路径本来就在源消息上渲染了「已升级为话题，点击查看」。再标一行
+  // 「讨论升级」那条路径本来就在源消息上渲染了「已转为话题，点击查看」。再标一行
   // 派出，就是同一件事在同一屏说两遍。
   it('从某条消息升级出去的话题不重复标', async () => {
     const id = freshRoom()
@@ -223,7 +223,7 @@ describe('房间时间线上的「已派出」标记', () => {
     await flush()
 
     expect(container.querySelectorAll('[data-testid="dispatched-marker"]')).toHaveLength(0)
-    expect(container.textContent).toContain('已升级为话题')
+    expect(container.textContent).toContain('已转为话题')
   })
 
   // 「窗口上面还有没加载的历史时，落在窗口之前的标记先不显示」这条只在

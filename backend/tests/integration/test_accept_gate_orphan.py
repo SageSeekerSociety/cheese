@@ -23,9 +23,15 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import gate_sweep
+from app.domain.review.services import GATE_ABANDONED_PREFIX
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import room_text, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_text,
+    session_auth_headers,
+)
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _give_card_a_pr
 from tests.integration.test_accept_pr import app_world as app_world
@@ -39,7 +45,7 @@ def _authenticated_project_owner(client):
 
 
 def _make_project(client) -> str:
-    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return post_project(client, json={"name": "P"}).json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
@@ -133,9 +139,9 @@ def _deadline_passed(monkeypatch) -> None:
     monkeypatch.setattr(gate_sweep, "GATE_STALE_GRACE_S", 0)
 
 
-#: 判死那条事件在卡上的那一行。房间里另有一行「检查结果丢了……」——那是叫醒芝士
+#: 判死那条事件在卡上的那一行。房间里另有一行召唤——那是叫醒芝士
 #: 去重递的召唤，不是这条事件，所以断言落点必须认准这一句。
-_CONDEMNED = "检查没跑完，这张验收卡已判死"
+_CONDEMNED = gate_sweep._CONDEMNED_LINE
 
 
 def _card_line_text(client, topic_id: str) -> str:
@@ -199,9 +205,8 @@ def test_condemned_card_says_the_gate_never_finished_not_that_it_failed(
     _sweep(client)
 
     card = _latest_card(client, tid)
-    assert "检查没跑完" in card["note"]
-    assert "检查没跑完" in card["gate_output"]
-    assert "检查未通过" not in card["note"] + card["gate_output"]
+    assert GATE_ABANDONED_PREFIX in card["note"]
+    assert GATE_ABANDONED_PREFIX in card["gate_output"]
 
     # 芝士被叫醒去**重递**，而且被明说不是它的代码有问题。
     text = ""
@@ -213,7 +218,6 @@ def test_condemned_card_says_the_gate_never_finished_not_that_it_failed(
             break
         time.sleep(0.05)
     assert _CONDEMNED in text
-    assert "重新递" in text
     # 判死是这张卡的事，落的就是这张卡（结论 14）——房间主线上没有它。房间里那一
     # 行是另一回事：叫醒芝士去重递的召唤，收件人是房间里的芝士。
     assert _CONDEMNED not in _room_line_text(client, tid)
@@ -295,14 +299,11 @@ def test_void_puts_the_card_in_a_terminal_state_never_back_to_pending(client):
     )
 
 
-def test_project_lead_can_void_but_an_ordinary_member_cannot(client):
+def test_a_team_admin_can_void_but_an_ordinary_member_cannot(client):
     tid, card_id = _orphan_card(client)
     pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
-    for handle, role in (("lead-user", "lead"), ("member-user", "member")):
-        r = client.post(
-            f"/projects/{pid}/members", json={"user_handle": handle, "role": role}
-        )
-        assert r.status_code == 200
+    join_project_team(client, pid, "lead-user", admin=True)
+    join_project_team(client, pid, "member-user")
 
     assert _void(client, card_id, "member-user").status_code == 403
     assert _void(client, card_id, "mallory").status_code == 403

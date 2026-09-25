@@ -11,7 +11,7 @@
     />
     <div :class="contentClass" @click="onButtonClick">
       <slot>
-        <v-btn :disabled="disabled">
+        <v-btn variant="outlined" :disabled="disabled">
           <v-icon>mdi-upload</v-icon>
           上传文件
         </v-btn>

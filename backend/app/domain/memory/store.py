@@ -3,14 +3,20 @@
 The block tree remains the source of truth; memory is a fast-recall projection.
 """
 
+import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.memory.keywords import is_relevant, match_content, query_terms
-from app.domain.memory.models import MemoryEntry, MemoryLayer, MemoryScope
+from app.domain.memory.models import (
+    MemoryEntry,
+    MemoryLayer,
+    MemoryScope,
+    user_scope_about,
+)
 
 # Only `core` is injected. It is what the agent must know to be itself, it is
 # in every turn by definition, and it is small enough that being in every turn
@@ -36,6 +42,37 @@ def live_entries() -> ColumnElement[bool]:
     芝士 ever decided was wrong, which is worse than never having organized.
     """
     return MemoryEntry.retired_at.is_(None)
+
+
+def about_person(person_handle: str) -> ColumnElement[bool]:
+    """Every live fact any agent, in any project, holds about this person.
+
+    The question a person's own page asks, and the only one that is not about a
+    single pool; see :func:`user_scope_about`.
+    """
+    return and_(
+        MemoryEntry.scope == MemoryScope.user,
+        MemoryEntry.scope_id.endswith(user_scope_about(person_handle), autoescape=True),
+        live_entries(),
+    )
+
+
+async def forget_fact_about(
+    session: AsyncSession, *, entry_id: uuid.UUID, person_handle: str
+) -> bool:
+    """Delete one fact about ``person_handle``; False when there is no such fact.
+
+    A person prunes what was learned about them the way the memory panel
+    prunes a pool: the row goes (memory is a projection of the conversation,
+    so this is curation, not data loss). Anything that is not a live fact about
+    them answers False, exactly like an id that does not exist.
+    """
+    deleted = await session.execute(
+        delete(MemoryEntry)
+        .where(MemoryEntry.id == entry_id, about_person(person_handle))
+        .returning(MemoryEntry.id)
+    )
+    return deleted.first() is not None
 
 
 class MemoryStore(Protocol):

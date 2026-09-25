@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_chat_service, get_db
 from app.api.response import ok
 from app.core.config import settings
+from app.core.db import release_read_session
 from app.core.errors import (
     AuthenticationRequiredError,
     GatewayUnavailableError,
@@ -43,7 +44,7 @@ from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
 from app.domain.agent.supply import GATEWAY
-from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.agent_instance import configuration
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -97,29 +98,20 @@ def _upstream_url(path: str) -> str:
     return f"{base}/{path.lstrip('/')}"
 
 
-def _teammate_model_ids(instances: list, choices: dict[str, dict]) -> set[str]:
-    """一个项目的分身可指定的模型集合：每个活跃 AI 队友绑的模型（展开继承）。
-
-    队友没绑模型（``configuration.model`` 为 None）语义是跟着项目主模型走，
-    所以集合里放目录默认那个 id —— 分身请求体里的全名经 ``catalog_id`` 翻译
-    回来，对上的正是它。
-    """
-    default = _default_catalog_id(choices)
-    allowed: set[str] = set()
-    for row in instances:
-        if not row.is_active:
-            continue
-        model = (row.configuration or {}).get("model")
-        if isinstance(model, str) and model:
-            allowed.add(model)
-        elif default is not None:
-            allowed.add(default)
-    return allowed
-
-
 def _default_catalog_id(choices: dict[str, dict]) -> str | None:
     default = next((c for c in choices.values() if c.get("default")), None)
     return default["id"] if default else None
+
+
+def _offerable_model_ids(project, choices: dict[str, dict]) -> set[str]:
+    """这个项目能指定的模型集合：目录里属于本项目池的那些 id。
+
+    池外的目录项（gateway 项目里的订阅短名、订阅项目里的网关模型）对主
+    agent 不可指定：绑上它们请求就得走另一条供给路，而那条路这个项目没有
+    凭据 —— 列进可选等于教人吃拒绝。
+    """
+    pool = configuration.project_pool(project.settings if project else None)
+    return {cid for cid, c in choices.items() if c.get("supply") == pool}
 
 
 async def _bind_requested_subagent_model(
@@ -131,15 +123,19 @@ async def _bind_requested_subagent_model(
     *,
     explicit: bool = False,
 ):
-    """分身指定了模型时的绑定：翻译成目录 id，校验它在项目 AI 队友范围内。
+    """分身指定了模型时的绑定：翻译成目录 id，校验它在项目模型目录内。
 
-    指定了就要么绑它、要么明说为什么不行 —— 静默改写回默认模型正是
+    指定模型是 subagent 机制自己的能力，与平台 AI 队友（有身份的参与者）
+    无关 —— 可指定的集合是项目的模型目录，不是任何参与者的配置（2026-09-23
+    拍板）。指定了就要么绑它、要么明说为什么不行 —— 静默改写回默认模型正是
     「指定了却不生效」那个旧行为（I27 的另一种长相）。
 
     继承不算指定：CC 对每个分身请求都在体里写一个顶层 model 成员，fork 和
     定义里不带 model 的分身写的是**父会话的模型** —— 那才是「未指定」在请
     求体里真正的长相。体里的名字翻译回来等于父会话绑定的，退回分身默认，
-    与今天逐字节一致。
+    与今天逐字节一致。（容器路径上父会话钉的就是席位模型，这里比得上；
+    device 路径上不钉模型、CC 回显它自己的内建默认，那一路由计量代理在
+    送这个头之前就认掉，到不了这里。）
     """
     requested_id = binding.catalog_id(requested, choices)
     parent = await agents.for_seat_handle(project, parent_handle)
@@ -158,19 +154,25 @@ async def _bind_requested_subagent_model(
             choices,
             default_model=(project.settings or {}).get("default_subagent_model"),
         )
-    allowed = _teammate_model_ids(await agents.list_for_project(project.id), choices)
-    # 项目自己的分身默认也合法：主 agent 复述默认值不该吃到一个拒绝。
-    default_sub = (project.settings or {}).get("default_subagent_model")
-    if isinstance(default_sub, str) and default_sub:
-        allowed.add(default_sub)
-    offer = "、".join(sorted(allowed)) or "（这个项目还没有可指定的队友模型）"
+    allowed = _offerable_model_ids(project, choices)
+    # 项目显式配的两个默认（主模型、分身默认）也合法：它们跨池也真跑得起来
+    # （供给跟着绑定走），主 agent 复述默认值不该吃到一个拒绝。但只列目录
+    # 里还在的 —— 列一个 resolve 绑不上的,是把人从一个拒绝指到另一个拒绝。
+    for configured in (
+        (project.settings or {}).get("default_model"),
+        (project.settings or {}).get("default_subagent_model"),
+    ):
+        if isinstance(configured, str) and configured and configured in choices:
+            allowed.add(configured)
+    offer = "、".join(sorted(allowed)) or "（这个项目当前没有可指定的模型）"
     if requested_id is None:
         raise ValidationError(
             f"分身指定的模型 {requested!r} 当前项目的模型目录里没有；可指定：{offer}"
         )
     if requested_id not in allowed:
         raise ValidationError(
-            f"分身指定的模型 {requested!r} 不在项目 AI 队友的范围内；可指定：{offer}"
+            f"分身指定的模型 {requested!r} 不在当前项目可用的模型范围内；"
+            f"可指定：{offer}"
         )
     return binding.resolve(None, choices, agent_model=requested_id)
 
@@ -207,22 +209,6 @@ async def admission(
         limit=None if summary["unlimited"] else summary["credits_total"],
     )
     decision = decide(state)
-    if not decision.allow:
-        # Tell the room NOW, from the place that actually knows why (#715) —
-        # rather than let Claude Code retry ten times into a `StopFailure` it
-        # reads as a bad API key. `t` is the PLACE claim (room or thread); a
-        # token minted without one (project-wide capabilities) has nothing to
-        # tell, and a place with no turn running is the turn-start refusal
-        # path's job, not this one's.
-        place = claims.get("t")
-        if isinstance(place, str) and place:
-            try:
-                place_uuid = uuid.UUID(place)
-            except ValueError:
-                place_uuid = None
-            if place_uuid is not None:
-                await chat.note_credits_refusal(place_uuid)
-
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
     # it run" and "where does it go" keeps the data plane from needing a second
@@ -332,24 +318,14 @@ async def admission(
     # the catalogue is the only thing that knows, so the translation lives on
     # the binding (`WorkBinding.wire_model`) rather than here.
     supply: dict = {"pool": pool, "model": bound.wire_model}
-    if pool == GATEWAY and decision.allow:
-        # Minted lazily and cached on the project; the proxy never holds a
-        # provider key of its own, so a project whose key cannot be provisioned
-        # gets no key here and the proxy refuses rather than falling back to a
-        # shared credential (which would bill every project to one bucket).
-        supply["key"] = await chat.project_gateway_key(project_uuid)
-    if decision.allow:
-        # Which identity the proxy should authenticate as on its ccproxy hop.
-        # ccproxy scopes its ticket swap to the authenticated connection, so
-        # relaying a machine's OWN ticket only works from that machine's
-        # identity — carrying it here is what lets the proxy forward the ticket
-        # untouched instead of holding a credential to swap in. Absent (an
-        # unpinned room, a machine enrolled before this was recorded) means
-        # "use the deployment-wide identity", i.e. exactly today's behaviour.
-        #
-        # The claim is a PLACE id, not necessarily a room's: a thread's per-turn
-        # token carries the thread's own id, and the repository is what turns
-        # that back into the room whose machine the thread runs on.
+
+    # The calls below may wait on the gateway lock and open another database
+    # session. Returning this read connection first prevents concurrent
+    # admissions from exhausting the pool while they wait.
+    await release_read_session(db)
+    if not decision.allow:
+        # Tell the running room when credits run out (#715); the room write
+        # uses its own database session.
         place = claims.get("t")
         if isinstance(place, str) and place:
             try:
@@ -357,11 +333,11 @@ async def admission(
             except ValueError:
                 place_uuid = None
             if place_uuid is not None:
-                upstream = await ProjectMachineRepository(
-                    db
-                ).ccproxy_upstream_for_place(place_uuid)
-                if upstream:
-                    supply["upstream"] = upstream
+                await chat.note_credits_refusal(place_uuid)
+    if pool == GATEWAY and decision.allow:
+        # Minted lazily and cached on the project; never keep the admission
+        # read connection checked out while waiting for the gateway.
+        supply["key"] = await chat.project_gateway_key(project_uuid)
 
     return ok(
         {

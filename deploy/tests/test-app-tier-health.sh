@@ -460,6 +460,60 @@ test_deploy_retains_ci_service_images() {
   echo "PASS: deploy retains CI service-container images before pruning"
 }
 
+test_deploy_delivers_private_executor() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/private-executor.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+
+  grep -Fqx 'pull ghcr.io/sageseekersociety/cheese/private-executor:testsha' \
+    "$docker_log" || fail "deploy did not pull this commit's private executor"
+  grep -Fqx \
+    'tag ghcr.io/sageseekersociety/cheese/private-executor:testsha cheese-private-executor:9.9.9' \
+    "$docker_log" || fail "deploy did not give the executor the name its label declares"
+  promote_line="$(grep -nF \
+    'rename cheese-private-executor-image-retainer-next cheese-private-executor-image-retainer' \
+    "$docker_log" | cut -d: -f1)"
+  prune_line="$(grep -nF 'image prune -af' "$docker_log" | tail -n 1 | cut -d: -f1)"
+  [ -n "$promote_line" ] && [ -n "$prune_line" ] && \
+    [ "$promote_line" -lt "$prune_line" ] || \
+    fail "private executor was not retained before image pruning"
+
+  rm -rf "$run_dir"
+  echo "PASS: deploy delivers the private executor under its local name"
+}
+
+test_private_executor_failure_does_not_fail_deploy() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/private-executor-missing.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if ! PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_DOCKER_FAIL_MATCH='pull ghcr.io/sageseekersociety/cheese/private-executor' \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
+    rm -rf "$run_dir"
+    fail "an unavailable private executor failed the deploy"
+  fi
+  grep -F 'WARNING: private-executor image unavailable' "$run_dir/out" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an unavailable private executor left no warning"; }
+  rm -rf "$run_dir"
+  echo "PASS: an unavailable private executor only warns"
+}
+
 test_app_only_deploy_does_not_require_agent_images() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/app-only-images.XXXXXX")"
@@ -742,7 +796,7 @@ test_rollout_keeps_a_backend_serving() {
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env >/dev/null 2>&1 || fail "rollout deploy did not succeed"
-  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 0.0.0.0:18082:8081 backend')"
+  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 127.0.0.1:18082:8081 backend')"
   flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 1)"
   blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
   flip_back="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 2)"
@@ -971,7 +1025,7 @@ test_operator_uses_registry_sha_width() {
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=abc1234 \
-    APP_TIER_REQUIRE_SHORT7=true \
+    APP_TIER_GIT_SHA=abc1234def5678901234567890123456789abcde \
     CHEESE_DEV_HOST=fake-host \
     "$ROOT/scripts/whats-live.sh" >/dev/null
   echo "PASS: operator drift check uses the registry's 7-character SHA tag"
@@ -1152,6 +1206,8 @@ case "$CASE" in
   cloud-control-release) test_cloud_control_has_an_independent_drained_release ;;
   runtime-images) test_deploy_keeps_agent_runtime_images ;;
   ci-service-images) test_deploy_retains_ci_service_images ;;
+  private-executor) test_deploy_delivers_private_executor ;;
+  private-executor-missing) test_private_executor_failure_does_not_fail_deploy ;;
   app-only) test_app_only_deploy_does_not_require_agent_images ;;
   local-images) test_local_app_images_skip_registry_pull ;;
   local-images-missing) test_local_app_images_must_exist ;;
@@ -1187,6 +1243,8 @@ case "$CASE" in
     test_deploy_warns_when_the_session_base_will_not_survive
     test_deploy_keeps_agent_runtime_images
     test_deploy_retains_ci_service_images
+    test_deploy_delivers_private_executor
+    test_private_executor_failure_does_not_fail_deploy
     test_app_only_deploy_does_not_require_agent_images
     test_local_app_images_skip_registry_pull
     test_local_app_images_must_exist

@@ -8,11 +8,11 @@
 
 ## Central sessions and private chat execution
 
-All Claude Code and RC sessions run on the central device configured by `AGENT_SESSION_DEVICE_ID`. Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Private chats use a temporary container on the central host. A missing or offline session host produces an explicit setup failure.
+All Claude Code sessions run, each under its runner, on the central device configured by `AGENT_SESSION_DEVICE_ID`. Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Platform tools (chat, living document, task cards, acceptance, memory) run on the session host against the backend and do not depend on that machine. Private chats use a temporary container on the central host. A missing or offline session host produces an explicit setup failure.
 
 Each chat gets a separate execution container with a read-only image and 64 MiB of writable temporary storage. Shell commands, file operations and Cheese CLI run there. The container has no host directory mounts or model credentials. It retains drafts across turns while it lives; releasing the chat removes its scratch files. Published documents remain in platform storage.
 
-Build the executor on the central device with `docker build -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .` from the repository root. `PRIVATE_CHAT_EXECUTOR_IMAGE` selects the installed image. General network access remains available; backend authorization governs platform operations. The configured session host must have this image available before accepting private chats.
+The build workflow publishes the executor from `backend/sandbox/Dockerfile.private` as the `private-executor` image, and each deploy pulls the deployed commit's copy and tags it with the local name in its `com.cheese.local-image` label, which is the name `PRIVATE_CHAT_EXECUTOR_IMAGE` selects by default. A deploy that cannot fetch it logs a warning and continues; private chats then fail with a setup error until a later deploy delivers it. General network access remains available; backend authorization governs platform operations.
 
 The remaining sections describe ordinary work topics and their selected compute providers.
 
@@ -29,7 +29,7 @@ The remaining sections describe ordinary work topics and their selected compute 
 
 设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装。
 
-These choices select the ordinary room's execution machine. Claude Code and RC run on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
+These choices select the ordinary room's execution machine. Claude Code runs on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
 
 ## 这些机器上有什么工具
 
@@ -52,7 +52,7 @@ session home 里：**这些属于机器，那台机器上每个房间共用一�
 第二层分两半，因为它们的寿命不同。
 
 **工具:每台机器每个项目装一次。** 初始化脚本唯一能写的地方是 `$HOME`，而房间的
-HOME 必须各自独立（hook 事件要按房间分开落盘）—— 这两件事凑一起，就是每个房间都
+HOME 必须各自独立（会话的配置、记录和凭证都在它下面）—— 这两件事凑一起，就是每个房间都
 把同一套工具重下一遍的原因。2026-09-17 实测：每房间一份 Node 22 约 254MB、228 个
 房间，三小时里看到 5 个房间各下一遍同一个 54MB 的 tarball。
 
@@ -171,8 +171,6 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 **给人看结果：`cheese show <文件>` 点名一个网页或 SVG。** 平台读那个文件、渲染进预览面板。这条路跟机器无关——文件在工作树里，工作树在哪台机器上都一样。
 
-**看现场：**设备上的那个屏通过连接器拨出来的链路回传，房间里能实时看，也能直接输入——它是什么、给谁的，见下一节。
-
 **看跑起来的应用：`cheese serve <端口>`。** 芝士把 dev server 起在那台机器的 `127.0.0.1` 上，报一个端口，房间的预览面板里就能直接用它——HTTP 和 WebSocket（dev server 的热更新）都走。
 
 这条路和上面两条一样，**没有一条网络路径是通往机器的**。平台仍然打不进去，是那台机器多拨出来一条 WebSocket，浏览器的请求在这条连接上分流回去（`agent/preview_tunnel.py` 是机器那一半，`agent/preview_hub.py` 是平台这一半）。
@@ -180,26 +178,16 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 三件事把它的边界钉死：
 
 - **地址永远不在线上。** 机器那半只拨一个地方：`cheese serve` 在**那台机器的磁盘上**写下的那个端口。平台发下去的帧里根本没有主机字段，所以平台就算被攻陷也没法让一台笔记本去扫别的端口。
-- **不是连接器那条链路。** 连接器那条是一轮活的命脉（prompt、hooks、现场中继），两端都用一把锁串行发帧；dev server 的静态资源和热更新排在 prompt 前面就是活活拖死一轮。同一条网络路径、同一个网关、同样是拨出——但另一条连接，另一个失效域。
-- **能看的人，本来就能在那台机器上敲命令。** 预览的门槛跟现场同一道（话题所在项目的成员/所有者）。现场是可写的（见下一节），所以「读一个 loopback 端口」不是一道新增的权限，是已有边界里面的一件小事。反过来，页面本身是芝士写的，所以 iframe 拿不到任何凭证：不带 `?token=`（那是页面自己的 JS 读得到的），只有一个按路径限定的 HttpOnly cookie，且 sandbox 不给 `allow-same-origin`。
+- **不是连接器那条链路。** 连接器那条是一轮活的命脉（提示词、控制、会话记录），两端都用一把锁串行发帧；dev server 的静态资源和热更新排在 prompt 前面就是活活拖死一轮。同一条网络路径、同一个网关、同样是拨出——但另一条连接，另一个失效域。
+- **能看的人，本来就能让芝士在那台机器上跑命令。** 预览的门槛是话题所在项目的成员/所有者，这些人在房间里说一句话，芝士就在那台机器上执行，所以「读一个 loopback 端口」不是一道新增的权限，是已有边界里面的一件小事。反过来，页面本身是芝士写的，所以 iframe 拿不到任何凭证：不带 `?token=`（那是页面自己的 JS 读得到的），只有一个按路径限定的 HttpOnly cookie，且 sandbox 不给 `allow-same-origin`。
 
 要给人看一个**静止**的结果，仍然是 `cheese show` 更省事——它连机器在不在线都不关心。
 
-## 六、现场：给开发者 debug 用的，长期保留
-
-**现场是一个真终端**，接在芝士干活的那块屏幕上，浏览器里看到的是逐字节的真实画面。
-
-**它是给开发者的**，不是给普通用户的产品功能。存在的理由很实际：**agent 会以事件流看不出来的方式出问题。** 房间里那套结构化事件（消息、工具调用、结果）只覆盖 harness 愿意上报的东西；当 harness 本身卡住、报错只印在屏幕上而没有变成事件、或者根本没起来，**唯一还能看见真相的地方就是那块屏幕**。这不是假设——平台有过一次十小时零输出，四个人猜了一整天，而正确答案（一行 401）一直印在屏幕上，只是没人去看。
-
-**今天它是可写的**：连接器的 viewer socket 把按键转发进窗格。**「能直接上手操作」是权宜之计，不是设计**——它在那儿是因为 harness 不稳到需要人接管；长期形态是**能看、不能碰**。
-
-**这一条刻意不进 harness 契约。** 现场要求那个 harness 是交互式终端程序、跑在 pty 里，而契约里其他所有东西（事件词汇表、游标、resume token）都是抽象的。**一个没有 TUI 的 harness 就是没有这个 debug 面，不该因此被拒之门外**——它可以有别的形态的 debug 面，或者干脆没有。别让一个调试工具变成接入门槛。
-
-## 七、已定但还没做完的
+## 六、已定但还没做完的
 
 **芝士自己提交、推送、开 PR。** 平台不再替它写工作树。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
 
-## 八、归档退掉什么
+## 七、归档退掉什么
 
 Open rooms retain their agent sessions and environments, including while idle or
 after accepting a delivery. Archival is an authenticated owner/admin action.
@@ -214,8 +202,8 @@ absence from the database never grants deletion permission.
 
 Cleanup first requests a graceful agent exit and verifies that no process holds the
 resource open. Stop commands share a device lock and durable completion receipt,
-including subprocesses that could outlive a timed-out caller. Unpublished source or
-undelivered hook events keep cleanup pending. The platform does not create a
+including subprocesses that could outlive a timed-out caller. Unpublished source keeps
+cleanup pending. The platform does not create a
 separate backup of dirty working trees or unpushed commits.
 
 Transcripts are not uploaded; the platform keeps no copy of them. Claude Code runs

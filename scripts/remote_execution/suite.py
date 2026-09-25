@@ -1,4 +1,4 @@
-"""Run the pinned terminal acceptance and backend regression suite with receipts."""
+"""Run the pinned session acceptance and backend regression suite with receipts."""
 
 import argparse
 import hashlib
@@ -44,7 +44,6 @@ def main():
         *ROOT.glob("backend/alembic/**/*.py"),
         *ROOT.glob("scripts/remote_execution/*.py"),
         *ROOT.glob("backend/tests/unit/test_remote*.py"),
-        ROOT / "backend/app/api/routes/remote_control.py",
         ROOT / "backend/scripts/device_connection_lifecycle_acceptance.py",
         ROOT / "backend/app/core/config.py",
         ROOT / "backend/app/core/sandbox_auth.py",
@@ -110,13 +109,11 @@ def main():
         env=env,
     )
     for name, args in (
-        ("native-terminal-rc", ["--launcher", "device", "--rc"]),
-        # RC acknowledges connection readiness; typing into a terminal after a
-        # fixed sleep can leave Enter unprocessed while the native UI mounts.
-        ("plugin-disabled", ["--mode", "disabled", "--rc"]),
-        ("plugin-throws", ["--mode", "throw", "--rc"]),
-        ("plugin-timeout", ["--mode", "timeout", "--rc"]),
-        ("executor-disconnected", ["--mode", "disconnect", "--rc"]),
+        ("device-launcher", ["--launcher", "device"]),
+        ("plugin-disabled", ["--mode", "disabled"]),
+        ("plugin-throws", ["--mode", "throw"]),
+        ("plugin-timeout", ["--mode", "timeout"]),
+        ("executor-disconnected", ["--mode", "disconnect"]),
     ):
         attempt = len(list(folder.glob(name + ".attempt-*.log"))) + 1
         case(
@@ -177,9 +174,7 @@ def main():
                     sys.executable,
                     "-m",
                     "pytest",
-                    "tests/unit/test_remote_control.py",
                     "tests/unit/test_device_launch.py",
-                    "tests/unit/test_device_launch_route.py",
                     "-q",
                     "--junitxml",
                     str(folder / "backend-regressions.xml"),

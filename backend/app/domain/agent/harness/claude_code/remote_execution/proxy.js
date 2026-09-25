@@ -1,32 +1,25 @@
 const execution = __EXECUTION_CONFIG__;
-const native = new Set([
-  "Read", "Edit", "Write", "Bash", "NotebookEdit", "TaskStop",
-]);
+const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
+
+// The session sees the project at the executor's own path (`client.py`
+// `enter`), so paths need no respelling. Its skills are the exception: the
+// build reads them from this host's config directory, and they are the
+// project's, on the executor.
+const skills = execution.central_config + "/skills/";
+const projectSkills = execution.session_workspace + "/.claude/skills/";
 
 function remotePath(path) {
-  if (path.startsWith(execution.central_config + "/skills/")) {
-    return execution.workspace + "/.claude/skills/" + path.slice((execution.central_config + "/skills/").length);
-  }
-  const root = execution.central_workspace;
-  return path === root || path.startsWith(root + "/")
-    ? execution.workspace + path.slice(root.length)
-    : path;
+  return path.startsWith(skills) ? projectSkills + path.slice(skills.length) : path;
 }
 
-// The model is told the executor's spelling of every path (prompt.section
-// rewrites them), while $.fs sees this host — where a forwarded workspace sits
-// at central_workspace. Try both so a SendUserFile path works whichever
-// spelling the model used, and whichever side of the mount the name resolves on.
-function localPaths(path) {
-  const seen = [path];
-  const root = execution.central_workspace;
-  const remote = execution.workspace;
-  if (path === remote || path.startsWith(remote + "/")) {
-    seen.push(root + path.slice(remote.length));
-  } else if (!path.startsWith("/") && root) {
-    seen.push(root + "/" + path);
-  }
-  return seen;
+// A Bash command's output is on this host, where the build wrote it: a
+// background task's output file under the session's temp directory, a large
+// result under the transcript's tool-results. Reading one is a local read, as
+// it is in a native session; the PreToolUse guard admits nothing else.
+function ownOutput(path) {
+  if (typeof path !== "string" || path.split("/").includes("..")) return false;
+  return path.startsWith(execution.central_tmp + "/")
+    || (path.startsWith(execution.central_config + "/projects/") && path.includes("/tool-results/"));
 }
 
 const SEND_USER_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -43,21 +36,16 @@ async function sendUserFile($, tool_use_id, args) {
     const name = path.replace(/\\/g, "/").split("/").pop() || "file";
     let data_b64;
     let upload_error;
-    for (const candidate of localPaths(path)) {
-      try {
-        const stat = await $.fs.stat(candidate, { resolve: false });
-        if (stat.kind !== "file") continue;
-        if (stat.size > SEND_USER_FILE_MAX_BYTES) {
-          upload_error = `file is over the ${SEND_USER_FILE_MAX_BYTES / (1024 * 1024)}MB limit`;
-          break;
-        }
-        data_b64 = (await $.fs.read(candidate, { as: "bytes" })).base64;
-        break;
-      } catch (error) {
-        // $.fs.read refuses anything over its own transfer cap; the transport
-        // still reads that file from the executor and applies the real limit.
-        if (String(error).includes("byte limit")) break;
+    try {
+      const stat = await $.fs.stat(path, { resolve: false });
+      if (stat.kind === "file" && stat.size > SEND_USER_FILE_MAX_BYTES) {
+        upload_error = `file is over the ${SEND_USER_FILE_MAX_BYTES / (1024 * 1024)}MB limit`;
+      } else if (stat.kind === "file") {
+        data_b64 = (await $.fs.read(path, { as: "bytes" })).base64;
       }
+    } catch {
+      // Not readable here (or over $.fs.read's own transfer cap): the
+      // transport reads it from the executor and applies the real limit.
     }
     files.push({
       path,
@@ -91,7 +79,7 @@ export function register(on) {
     // back to "worktree". Either way the spawn dies on EROFS, and the subagent
     // never exists. A subagent without it already runs its tools remotely.
     if (tool === "Agent" && args.isolation) {
-      return { deny: `Agent isolation "${args.isolation}" is unavailable: the project lives on the work machine, not here. Omit isolation (the subagent's file and shell tools already run on the work machine); for a separate checkout, run \`cheese split\` and give the subagent the directory it returns.` };
+      return { deny: `Agent isolation "${args.isolation}" is unavailable here because the project lives on the work machine; omit isolation, since the subagent's file and shell tools already run there. Only when the work is itself a deliverable to track and review, create it with \`cheese_task\`, prepare its directory with \`cheese worktree <id>\`, and give the subagent that directory.` };
     }
     if (tool === "mcp__native__chat_send" || tool === "mcp__native__platform_request" || tool.startsWith("mcp__native__cheese_")) {
       try {
@@ -99,7 +87,10 @@ export function register(on) {
           ...args, id: tool_use_id, session_id: await $.session.id(),
         });
         if (response.isError) return { deny: JSON.stringify(response.content) };
-        const outcome = JSON.parse(response.content[0].text);
+        let outcome = JSON.parse(response.content[0].text);
+        if (outcome.receipt_path) {
+          outcome = JSON.parse(await $.fs.read(outcome.receipt_path, { as: "text" }));
+        }
         if (outcome.deny) return outcome;
         // Only a non-empty half becomes a block. A `text` block holding the
         // empty string is not harmless padding: a provider that validates text
@@ -116,6 +107,7 @@ export function register(on) {
         return { deny: "Cheese tool failed: " + String(error) };
       }
     }
+    if (tool === "Read" && ownOutput(args.file_path)) return next(e);
     if (native.has(tool)) {
       for (const field of ["file_path", "path", "notebook_path"]) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field]);
@@ -130,11 +122,6 @@ export function register(on) {
           const receipt = await $.fs.read(outcome.receipt_path, { as: "text" });
           outcome = JSON.parse(receipt);
         }
-        // 一个 TaskStop 的 id 有两个主人：执行机上后台跑着的那条命令，和这条会话
-        // 里起着的一条子线程。执行器只认前者——它答「不认识」的那个 id 就是后者，
-        // 让回给 harness 自己停（结论 43「父线程能停掉它」）。判据是执行器认不认
-        // 得，不是 id 长什么样：两种 id 都是机器自己发的，长得一样。
-        if (tool === "TaskStop" && outcome.deny === "Unknown remote task") return next();
         if (outcome.result?.type === "image") {
           outcome.result.file.base64 = response.content.find(block => block.type === "image").source.data;
         }
@@ -170,13 +157,8 @@ export function register(on) {
     return next(e);
   });
 
-  on("prompt.section", async ($, e, next) => {
-    const result = await next(e);
-    return { ...result, text: result.text === null ? null : result.text.split(execution.central_workspace).join(execution.workspace) };
-  });
   on("skill.prompt", async ($, e, next) => {
     const result = await next(e);
-    return { text: result.text.split(execution.central_config + "/skills/").join(execution.workspace + "/.claude/skills/")
-      .split(execution.central_workspace).join(execution.workspace) };
+    return { text: result.text.split(skills).join(projectSkills) };
   });
 }

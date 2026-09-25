@@ -9,7 +9,7 @@ AI cannot vote (collaborative mode, same rule as "AI 不能验收自己").
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept import _make_card as _remote_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
@@ -24,7 +24,7 @@ def _authenticated_project_owner(client):
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -90,9 +90,8 @@ def test_accept_short_of_votes_structured_error(client):
         json={"decided_by": "alice", "head_sha": _rendered_head(client, card["id"])},
     )
     assert r.status_code == 422
-    # Structured shortfall the frontend can display: 还差 N 票 (alice's own
-    # accept would count as 1 of 3).
-    assert "还差 2 票" in r.json()["message"]
+    # The refusal carries the tally: alice's own accept counts as 1 of 3.
+    assert "1/3" in r.json()["message"]
 
     # Card untouched, topic still active.
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]

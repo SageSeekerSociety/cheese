@@ -60,19 +60,24 @@
     <!-- 协议实质变更后的重新同意（#1486）；只在应用外壳里，协议页不在外壳里 -->
     <ConsentGate />
 
+    <!-- 敏感操作前确认身份；withSudo 打开它 -->
+    <SudoDialog v-if="sudoWanted" />
+
     <!-- 新建项目 dialog (opened by the rail's "+" affordance) -->
     <v-dialog v-model="newProjectDialog" max-width="420" persistent>
       <v-card rounded="lg" class="pa-2">
-        <v-card-title class="text-h6 font-weight-bold pb-1">{{
-          newProjectStep === 1 ? '新建项目' : t('work.teammate.title')
+        <v-card-title class="t-dialog-title pb-1">{{
+          newProjectStep === 1 ? t('work.newProject.title') : t('work.teammate.title')
         }}</v-card-title>
         <v-card-text v-show="newProjectStep === 1" class="pb-2">
-          <p v-if="sourceTask" class="t-body c-muted mb-3">来自题目：{{ sourceTask.name }}</p>
+          <p v-if="sourceTask" class="t-body c-muted mb-3">
+            {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
+          </p>
           <ResourceLimitsNotice v-if="newProjectDialog" />
           <v-text-field
             v-model="newProjectName"
             autocomplete="off"
-            label="项目名称"
+            :label="t('work.newProject.name')"
             variant="outlined"
             color="primary"
             autofocus
@@ -80,13 +85,28 @@
             :disabled="creatingProject"
             @keyup.enter="advanceNewProject"
           />
+          <!-- 可选：答案会跟着项目进房间（见 ProjectService.create）。不填也能建，
+               所以这不是必填项，标签里就写着「可选」。 -->
+          <v-textarea
+            v-model="newProjectIntent"
+            autocomplete="off"
+            :label="t('work.newProject.intent')"
+            :placeholder="t('work.newProject.intentExample')"
+            variant="outlined"
+            color="primary"
+            rows="2"
+            auto-grow
+            hide-details
+            class="mt-3"
+            :disabled="creatingProject"
+          />
           <v-select
             v-model="newProjectTeamId"
             autocomplete="off"
             :items="newProjectTeams"
             :item-title="teamLabel"
             item-value="id"
-            label="所属团队"
+            :label="t('work.newProject.team')"
             variant="outlined"
             color="primary"
             class="mt-3"
@@ -94,32 +114,30 @@
             :loading="loadingTeams"
             :disabled="creatingProject || loadingTeams"
           />
-          <div class="t-meta mt-2">项目归所选团队，成员可以一起协作</div>
           <v-select
             v-model="newProjectForgeKind"
             autocomplete="off"
             :items="[
-              { title: '由芝士托管（默认）', value: 'forgejo' },
-              { title: '连接 GitHub', value: 'github_app' },
+              { title: t('work.newProject.forgeHosted'), value: 'forgejo' },
+              { title: t('work.newProject.forgeGithub'), value: 'github_app' },
             ]"
-            label="代码仓库"
+            :label="t('work.newProject.forge')"
             variant="outlined"
             color="primary"
             class="mt-3"
             hide-details
             :disabled="creatingProject"
           />
-          <div class="t-meta mt-2">
+          <div class="t-meta-read mt-2">
             {{
-              newProjectForgeKind === 'forgejo'
-                ? '创建项目时自动准备代码仓库。'
-                : '创建后前往项目设置连接 GitHub，连接完成后即可开始代码任务。'
+              newProjectForgeKind === 'forgejo' ? t('work.newProject.forgeHint') : t('work.newProject.forgeGithubHint')
             }}
-            项目创建后，暂不支持切换托管服务。
           </div>
           <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ teamLoadError }}
-            <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">重试</v-btn>
+            <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">{{
+              t('work.newProject.retry')
+            }}</v-btn>
           </v-alert>
         </v-card-text>
         <v-card-text v-if="newProjectStep === 2" class="pt-3 pb-2">
@@ -145,14 +163,16 @@
               />
             </template>
           </v-text-field>
-          <p class="t-meta c-muted">{{ t('work.teammate.more') }}</p>
+          <p class="t-meta-read">{{ t('work.teammate.more') }}</p>
         </v-card-text>
         <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mx-4 my-3">
           {{ newProjectError }}
         </v-alert>
         <v-card-actions class="px-4 pb-3">
           <v-spacer />
-          <v-btn variant="text" :disabled="creatingProject" @click="newProjectDialog = false">取消</v-btn>
+          <v-btn variant="text" :disabled="creatingProject" @click="newProjectDialog = false">{{
+            t('work.newProject.cancel')
+          }}</v-btn>
           <v-btn v-if="newProjectStep === 2" variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
             t('work.teammate.back')
           }}</v-btn>
@@ -178,7 +198,7 @@
     <v-snackbar v-model="showProjectListWarning" color="warning" :timeout="8000">
       {{ projectListWarning }}
       <template #actions>
-        <v-btn variant="text" @click="loadCxProjects">重试</v-btn>
+        <v-btn variant="text" @click="loadCxProjects">{{ t('work.newProject.retry') }}</v-btn>
       </template>
     </v-snackbar>
 
@@ -198,10 +218,13 @@ import type { Project } from '@/cx_types'
 import type { Team } from '@/types/teams'
 import type { NavSources } from './components/common/Navigation/destinations'
 
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
+
+import { avatarColor } from '@/utils/avatar'
+import { pendingSudo } from '@/utils/sudo'
 
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
@@ -222,6 +245,7 @@ import UpdateBanner from '@/components/common/UpdateBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
+import { autoConnectThisComputer } from '@/lib/desktop'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { randomTeammateName } from '@/lib/projectAgents'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
@@ -272,7 +296,14 @@ router.isReady().then(async () => {
 // 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
 // useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
 // 面看到的是一屏永远不再刷新的旧数据。
-const keptAlivePages = ['ProjectDocsView', 'MemberView', 'CalendarView']
+const keptAlivePages = ['ProjectDocsView', 'ProfileView', 'CalendarView']
+
+// 确认身份的弹窗第一次被要用时才加载：大多数会话从不需要它
+const SudoDialog = defineAsyncComponent(() => import('./components/account/SudoDialog.vue'))
+const sudoWanted = ref(false)
+watch(pendingSudo, (request) => {
+  if (request) sudoWanted.value = true
+})
 
 const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar
@@ -312,9 +343,7 @@ async function loadCxProjects() {
     saveCachedProjects(myHandle(), cxProjects.value)
     showProjectListWarning.value = false
   } catch {
-    projectListWarning.value = cxProjects.value.length
-      ? '项目列表刷新失败，正在显示上次成功加载的内容'
-      : '项目列表暂时无法加载，请稍后重试'
+    projectListWarning.value = cxProjects.value.length ? t('work.projectList.stale') : t('work.projectList.unavailable')
     showProjectListWarning.value = true
   }
 }
@@ -353,6 +382,16 @@ watch(
     projectOrder.value = loadProjectOrder(myHandle())
     void loadCxProjects()
   }
+)
+
+// In the desktop app, being signed in is what makes this computer one of your
+// devices: at launch with a session, and at every sign-in (lib/desktop.ts).
+watch(
+  () => AccountService.loggedIn && AccountService.user?.id,
+  (userId) => {
+    if (typeof userId === 'number') void autoConnectThisComputer(userId)
+  },
+  { immediate: true }
 )
 
 // 上次开过的那个项目存在 workspace store 的布局里，所以冷启动也落得回去。
@@ -405,6 +444,9 @@ const newProjectName = ref('')
 const newProjectStep = ref(1)
 const newProjectAgentName = ref('')
 const newProjectForgeKind = ref<'forgejo' | 'github_app'>('forgejo')
+// 这个项目打算做什么——建项目时问的那一句（#946 片 C）。问题只在人愿意答的时候
+// 才有价值，所以它是可选的：空着就和从前一样，只建一个空房间。
+const newProjectIntent = ref('')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
 // 所属小队: which team the project belongs to decides who can see it. Without
@@ -414,7 +456,7 @@ const newProjectTeams = ref<Team[]>([])
 const newProjectTeamId = ref<number | null>(null)
 const loadingTeams = ref(false)
 const teamLoadError = ref<string | null>(null)
-const teamLabel = (t: Team) => (t.personal ? '个人' : t.name)
+const teamLabel = (team: Team) => (team.personal ? t('work.newProject.personalTeam') : team.name)
 
 function createNewProject() {
   // From a team page, that team; elsewhere the dialog falls back to 个人.
@@ -430,10 +472,10 @@ async function loadProjectTeams() {
       data: { teams },
     } = await TeamsApi.getMyTeams()
     newProjectTeams.value = teams
-    if (!teams.length) teamLoadError.value = '暂无可用团队，请先创建或加入团队'
+    if (!teams.length) teamLoadError.value = t('work.newProject.teamsEmpty')
   } catch {
     newProjectTeams.value = []
-    teamLoadError.value = '团队列表加载失败，请重试后选择项目归属'
+    teamLoadError.value = t('work.newProject.teamsFailed')
   } finally {
     loadingTeams.value = false
   }
@@ -446,6 +488,9 @@ watch(newProjectDialog, (opened) => {
   newProjectStep.value = 1
   newProjectAgentName.value = randomTeammateName()
   newProjectForgeKind.value = 'forgejo'
+  // 上一次开的对话框留下的答案不该跟到这一次——那会让第二个项目凭空继承第一个
+  // 项目的说明，而人根本没说过。
+  newProjectIntent.value = ''
   newProjectError.value = null
   void loadProjectTeams()
 })
@@ -469,6 +514,7 @@ async function confirmNewProject() {
       newProjectTeamId.value,
       sourceTask.value?.id,
       newProjectForgeKind.value,
+      newProjectIntent.value.trim(),
       newProjectAgentName.value.trim()
     )
     await loadCxProjects()
@@ -486,7 +532,7 @@ async function confirmNewProject() {
     )
   } catch (e) {
     // Inline error inside the dialog — not a native alert() chrome.
-    newProjectError.value = e instanceof Error ? e.message : '创建项目失败'
+    newProjectError.value = e instanceof Error ? e.message : t('work.newProject.createFailed')
   } finally {
     creatingProject.value = false
   }
@@ -505,15 +551,16 @@ function onRailShortcut(e: KeyboardEvent) {
 }
 onMounted(() => window.addEventListener('keydown', onRailShortcut))
 
+// 项目格子：首字压在 avatarColor() 的底色上，和人的默认头像同一套取色——
+// 色相由名字散列而来，明度固定，所以每一种色相上的白字都过 4.5:1。白字写死是
+// 对的：底色本身不随主题变，字也不能变。
 function projectAvatar(name: string): string {
   const trimmed = (name || '').trim()
   const ch = trimmed ? [...trimmed][0] : '·'
-  const colors = ['#F57F17', '#1f9d55', '#2563eb', '#7c3aed', '#dc2626', '#0891b2']
-  const c = colors[trimmed.length % colors.length]
   const esc = ch.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">` +
-    `<rect width="48" height="48" rx="11" fill="${c}"/>` +
+    `<rect width="48" height="48" fill="${avatarColor(trimmed)}"/>` +
     `<text x="24" y="24" font-size="24" fill="#ffffff" text-anchor="middle" ` +
     `dominant-baseline="central" font-family="sans-serif" font-weight="700">${esc}</text></svg>`
   // Unicode-safe base64 (the initial may be CJK) — more robust in v-img than a

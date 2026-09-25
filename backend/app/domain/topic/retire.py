@@ -9,18 +9,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import or_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import event_drain, resource_cleanup
+from app.domain.agent import resource_cleanup
 from app.domain.agent.device_hub import device_hub
-from app.domain.agent.device_provider import device_home_dir, list_device_storage
+from app.domain.agent.device_provider import list_device_storage
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.models import DeviceRow
-from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
 from app.domain.repository import service as ws
@@ -77,51 +73,6 @@ async def _device_action(
         raise RuntimeError(
             str(result.get("stderr") or "device cleanup check failed")[-1500:]
         )
-
-
-async def _deliver_events(
-    project: uuid.UUID,
-    topic: uuid.UUID,
-    entry: dict,
-    session: AsyncSession,
-) -> None:
-    """Deliver the home's last spooled hook events before it is removed.
-
-    The room's own sender stops with its agent, so what it had not sent yet is
-    sent from here, with the sender the backend ships today."""
-    home = device_home_dir(project, uuid.UUID(entry["resource_id"]))
-    token = mint_scoped_token(project_id=str(project), topic_id=str(topic), ttl_s=3600)
-    base = settings.connector_public_base.rstrip("/")
-    device = await session.get(DeviceRow, entry["device_id"])
-    if device and device.supply == Supply.cloud and device.cloud_control_private:
-        base = "http://127.0.0.1:18080"
-    # Delivery can take a while; nothing here is pending, so end the
-    # transaction rather than hold a pool connection across it.
-    await session.commit()
-    setup = (
-        f'if [ ! -d "{home}/.cheese/cheese-spool" ]; then exit 0; fi; '
-        f'export CHEESE_COLLECT_HOME="{home}"; exec python3 -'
-    )
-    source = Path(event_drain.__file__).read_text()
-    source = source[: source.index('if __name__ == "__main__":')]
-    source += """\nhome = Path(os.environ["CHEESE_COLLECT_HOME"])
-values = {"CHEESE_HOOK_URL": os.environ["CHEESE_CLEANUP_HOOK_URL"],
-          "CHEESE_TOKEN": os.environ["CHEESE_CLEANUP_TOKEN"]}
-if deliver_events(home / ".cheese/cheese-spool", values).rejected:
-    sys.exit("hook events still await acknowledgement")
-"""
-    result = await device_hub.exec(
-        entry["device_id"],
-        ["sh", "-c", setup],
-        stdin=source,
-        env={
-            "CHEESE_CLEANUP_TOKEN": token,
-            "CHEESE_CLEANUP_HOOK_URL": f"{base}/sandbox/hooks/{topic}",
-        },
-        timeout=900,
-    )
-    if result.get("exit") != 0 or result.get("truncated"):
-        raise RuntimeError("final hook event delivery failed")
 
 
 async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[dict]:
@@ -506,9 +457,6 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                         "publication",
                         operation.id,
                     )
-                    await _deliver_events(
-                        operation.project_id, operation.topic_id, entry, session
-                    )
             active = await session.scalar(
                 select(AgentTurn.id)
                 .where(
@@ -587,9 +535,6 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                     entry["resource_id"],
                     "prepare",
                     operation.id,
-                )
-                await _deliver_events(
-                    operation.project_id, operation.topic_id, entry, session
                 )
             await _device_action(
                 entry["device_id"],

@@ -36,7 +36,7 @@ import httpx
 # The vendor's release layout, as read from their install.sh:
 #   <base>/latest                      → a bare version string
 #   <base>/<version>/manifest.json     → platforms.<p>.checksum (sha256)
-#   <base>/<version>/<platform>/claude → the binary
+#   <base>/<version>/<platform>/claude → the binary (claude.exe on win32)
 UPSTREAM_BASE = "https://downloads.claude.ai/claude-code-releases"
 
 # Platform strings are the vendor's, NOT our `<os>-<arch>` connector targets.
@@ -44,7 +44,9 @@ UPSTREAM_BASE = "https://downloads.claude.ai/claude-code-releases"
 # need a different build), which our own target names cannot express — and the
 # machine, which knows whether its libc is musl, is the only place that can
 # decide. So this is a proxy, not a translator.
-PLATFORM_RE = re.compile(r"^(darwin-(x64|arm64)|linux-(x64|arm64)(-musl)?)$")
+PLATFORM_RE = re.compile(
+    r"^(darwin-(x64|arm64)|linux-(x64|arm64)(-musl)?|win32-(x64|arm64))$"
+)
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$")
 
 _FETCH_TIMEOUT_S = 180.0
@@ -66,8 +68,13 @@ def cache_dir(root: Path) -> Path:
     return root / "claude-cache"
 
 
+def binary_name(platform: str) -> str:
+    """The file the vendor publishes for ``platform``: Windows builds are .exe."""
+    return "claude.exe" if platform.startswith("win32-") else "claude"
+
+
 def cached_path(root: Path, version: str, platform: str) -> Path:
-    return cache_dir(root) / version / platform / "claude"
+    return cache_dir(root) / version / platform / binary_name(platform)
 
 
 async def _lock_for(version: str, platform: str) -> asyncio.Lock:
@@ -117,7 +124,7 @@ async def ensure_cached(root: Path, version: str, platform: str) -> Path:
         try:
             async with httpx.AsyncClient(follow_redirects=True) as client:
                 want = await _checksum(client, version, platform)
-                url = f"{UPSTREAM_BASE}/{version}/{platform}/claude"
+                url = f"{UPSTREAM_BASE}/{version}/{platform}/{binary_name(platform)}"
                 async with client.stream("GET", url, timeout=_FETCH_TIMEOUT_S) as resp:
                     if resp.status_code != 200:
                         raise ClaudeDistError(

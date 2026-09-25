@@ -7,13 +7,11 @@
 
 import time
 
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 def _project_and_topic(client, owner: str = "user-1") -> str:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     t = client.post(
         "/topics", json={"project_id": p["id"], "title": "T", "created_by": owner}
     ).json()["data"]

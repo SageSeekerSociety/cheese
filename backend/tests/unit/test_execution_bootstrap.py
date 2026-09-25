@@ -36,7 +36,7 @@ def test_prepared_executor_can_start_offline_forge_transport(tmp_path, monkeypat
 
 
 def test_executor_prepares_room_without_model_credentials(tmp_path):
-    pin = Path.home() / ".local/share/claude/versions/2.1.277"
+    pin = Path.home() / ".local/share/claude/versions/2.1.282"
     binary = os.environ.get("CHEESE_TEST_CLAUDE") or (
         str(pin) if pin.exists() else None
     )
@@ -46,7 +46,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
             "running the pure layer"
         )
     owner = tmp_path / "owner"
-    destination = owner / ".cheese/claude/versions/2.1.277"
+    destination = owner / ".cheese/claude/versions/2.1.282"
     destination.parent.mkdir(parents=True)
     destination.symlink_to(binary)
     project, resource = uuid.uuid4(), uuid.uuid4()
@@ -206,3 +206,63 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
             capture_output=True,
             timeout=15,
         )
+
+
+def _executor_payload():
+    from app.domain.agent.harness.claude_code.remote_execution.launch import (
+        payload_for,
+    )
+
+    return payload_for(
+        uuid.uuid4(),
+        uuid.uuid4(),
+        {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
+    )
+
+
+def test_a_new_executor_machine_is_given_the_platform_skills(tmp_path, monkeypatch):
+    """This machine is where the skill's own command runs.
+
+    The agent is handed skill text that names
+    `$CLAUDE_CONFIG_DIR/skills/documents/scripts/office.py`, and the shell it
+    runs that in is on the executor. Nothing on that side installed the file —
+    the container and device-hosted launches each do it beside the claude they
+    start, and this path starts no claude. A room that answers this by finding a
+    copy in another room's cache is not a mechanism: the other room has to still
+    be there.
+    """
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.skills import native_skill_files
+
+    payload = _executor_payload()
+    assert payload["skills"], "the payload carries no skills at all"
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    with bootstrap.prepared(payload, tmp_path) as (home, _config, _state, _env):
+        for name, content in native_skill_files().items():
+            assert (home / ".claude" / name).read_text(encoding="utf-8") == content
+        # The script the skill tells the agent to run, and one reference it is
+        # told to read before running it.
+        assert (home / ".claude/skills/documents/scripts/office.py").is_file()
+        assert (home / ".claude/skills/documents/references/word.md").is_file()
+
+
+def test_preparing_again_restores_them_and_an_older_payload_still_prepares(
+    tmp_path, monkeypatch
+):
+    """This runs on every prepare, including the ones that change nothing."""
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+
+    payload = _executor_payload()
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    with bootstrap.prepared(payload, tmp_path) as (home, _config, _state, _env):
+        script = home / ".claude/skills/documents/scripts/office.py"
+    script.write_text("# trampled\n", encoding="utf-8")
+    with bootstrap.prepared(payload, tmp_path) as (home, _config, _state, _env):
+        restored = home / ".claude/skills/documents/scripts/office.py"
+        assert restored.resolve() == script.resolve()
+        assert restored.read_text(encoding="utf-8") != "# trampled\n"
+    # A payload from a backend that predates this key prepares as it always did.
+    with bootstrap.prepared(
+        {name: value for name, value in payload.items() if name != "skills"}, tmp_path
+    ):
+        pass

@@ -9,23 +9,41 @@ truth.
 """
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotificationType
 from app.domain.notification.repositories import NotificationRepository
+from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_window
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
-from app.domain.topic.models import TopicStatus
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
+
+if TYPE_CHECKING:
+    from app.domain.project.models import Project
+    from app.domain.user.models import User
+
+# A personal page's heatmap covers the last year, by UTC day (the day the
+# platform's other per-day charts use, ``app.domain.platform_stats.windows``);
+# each project's sparkline covers the last twelve weeks of it.
+_ACTIVITY_DAYS = 365
+_SPARKLINE_WEEKS = 12
+
+
+def _listed_topic() -> ColumnElement[bool]:
+    """A topic a personal page may name: not a private 1:1 chat, which is not
+    part of any topic listing — on the person's own page either."""
+    return Topic.is_private.is_(False)
 
 
 class DashboardService:
@@ -35,7 +53,6 @@ class DashboardService:
         self._topics = TopicRepository(session)
         self._milestones = MilestoneRepository(session)
         self._notifs = NotificationRepository(session)
-        self._members = MemberRepository(session)
         self._spaces = SpaceRepository(session)
 
     async def _project_card(self, project_id: uuid.UUID) -> dict | None:
@@ -100,15 +117,20 @@ class DashboardService:
         self, project_id: uuid.UUID, user_handle: str, *, viewer: str
     ) -> dict:
         """成员页 (spec §7.2): one member's slice — topics they started, what's
-        waiting on them, their role. Doubles as the portfolio source.
+        waiting on them, how they are in the project (``source``: owner, team or
+        external). Doubles as the portfolio source.
 
-        The public half (topics, contributions, role) is the same for everyone;
+        The public half (topics, contributions, source) is the same for everyone;
         ``waiting_on_you`` is one person's mailbox, so only that person gets it
         — on anybody else's page it is empty."""
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
-        members = await self._members.list_for_project(project_id)
-        member = next((m for m in members if m.user_handle == user_handle), None)
+        from app.domain.membership.roster import roster
+
+        member = next(
+            (m for m in await roster(self._s, project_id) if m.handle == user_handle),
+            None,
+        )
         topics = await self._topics.list_for_project(project_id)
         started = [
             {"id": str(t.id), "title": t.title, "status": t.status.value}
@@ -160,7 +182,7 @@ class DashboardService:
         )
         return {
             "handle": user_handle,
-            "role": member.role.value if member else None,
+            "source": member.source if member else None,
             "topics_started": started,
             "topics_active": topics_active,
             "weekly_contributions": int(weekly),
@@ -174,104 +196,283 @@ class DashboardService:
             ],
         }
 
-    async def user_profile(self, handle: str) -> dict:
-        """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
-        they are, what they're on across projects, and 芝士's understanding of
-        them (个人记忆, §8.4). This is the "项目过程即简历" view."""
-        from app.domain.memory.models import (
-            MemoryEntry,
-            MemoryScope,
-            user_scope_about,
-        )
-        from app.domain.memory.store import live_entries
-        from app.domain.project.models import Project, ProjectMember
-        from app.domain.topic.models import Topic
-        from app.domain.user.repositories import UserProfileRepository, UserRepository
+    async def _projects_shown(
+        self, handle: str, *, viewer: str
+    ) -> "tuple[User | None, list[Project]]":
+        """The person, and their projects as ``viewer`` may see them.
+
+        Every project they are in — owned, through a team, or as an external
+        member. Their own page lists them all; anyone else's lists a project
+        only when the viewer may read it too. Everything a personal page counts
+        (projects, activity, topics) is counted inside this one set, so no
+        number on it reaches into a project the viewer cannot open."""
+        from app.domain.user.repositories import UserRepository
 
         user = await UserRepository(self._s).get_by_handle(handle)
+        theirs = await self._projects.list_visible_to(
+            handle=handle, user_id=user.id if user else None
+        )
+        if viewer == handle:
+            return user, theirs
+        return user, [
+            project
+            for project in theirs
+            if await may_read_project(self._s, project_id=project.id, handle=viewer)
+        ]
+
+    async def user_profile(self, handle: str, *, viewer: str) -> dict:
+        """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
+        they are, what they're on across projects, and 芝士's understanding of
+        them (个人记忆, §8.4). This is the "项目过程即简历" view.
+
+        Cut to what ``viewer`` may see (see ``_projects_shown``). The teams are
+        the ones the viewer may see, and the understanding is empty on anyone
+        else's page — what the agents remember about a person is not for other
+        people to read."""
+        from app.domain.team.services import team_service
+        from app.domain.team.summary import team_summary
+        from app.domain.user.repositories import UserProfileRepository, UserRepository
+
+        user, visible = await self._projects_shown(handle, viewer=viewer)
         profile = (
             await UserProfileRepository(self._s).get_profile_by_user_id(user.id)
             if user
             else None
         )
+        is_self = viewer == handle
+        ids = [project.id for project in visible]
 
-        # Cross-project memberships + role + how much they started/contributed.
-        rows = (
-            await self._s.execute(
-                select(ProjectMember, Project)
-                .join(Project, Project.id == ProjectMember.project_id)
-                .where(ProjectMember.user_handle == handle)
+        teams = []
+        if user is not None:
+            viewer_user = (
+                user if is_self else await UserRepository(self._s).get_by_handle(viewer)
             )
-        ).all()
-        projects = []
-        for member, project in rows:
-            started = (
-                await self._s.scalar(
-                    select(func.count())
-                    .select_from(Topic)
+            # Their personal team is the account itself, not a team they are in.
+            teams = [
+                team
+                for team in await team_service(self._s).teams_of_seen_by(
+                    user.id, viewer_user.id if viewer_user else None
+                )
+                if team.personal_owner_user_id is None
+            ]
+        team_ids = {team.id for team in teams}
+
+        started = dict(
+            (
+                await self._s.execute(
+                    select(Topic.project_id, func.count())
                     .where(
-                        Topic.project_id == project.id,
+                        Topic.project_id.in_(ids),
                         Topic.created_by == handle,
-                        # Don't count the private 1:1 chat as a started topic.
-                        Topic.is_private.is_(False),
+                        _listed_topic(),
                     )
+                    .group_by(Topic.project_id)
                 )
-            ) or 0
-            # Contributions = the member's own blocks — not the platform's
-            # lifecycle/event blocks that happen to carry their handle.
-            blocks = (
-                await self._s.scalar(
-                    select(func.count())
-                    .select_from(Block)
-                    .where(
-                        Block.project_id == project.id,
-                        Block.author == handle,
-                        participant_blocks(),
-                    )
+            )
+            .tuples()
+            .all()
+        )
+        # Contributions = the member's own blocks — not the platform's
+        # lifecycle/event blocks that happen to carry their handle.
+        mine = (Block.author == handle, participant_blocks(), Block.project_id.in_(ids))
+        totals = {
+            project_id: (int(count), last)
+            for project_id, count, last in (
+                await self._s.execute(
+                    select(Block.project_id, func.count(), func.max(Block.created_at))
+                    .where(*mine)
+                    .group_by(Block.project_id)
                 )
-            ) or 0
+            ).tuples()
+        }
+        # The last year, by UTC day and project, in one query: the heatmap sums
+        # the projects, each project's sparkline sums its own days by week.
+        since, until, days = utc_day_window(_ACTIVITY_DAYS)
+        day = utc_day(Block.created_at)
+        per_day: dict[date, int] = {}
+        per_project_day: dict[tuple[uuid.UUID, date], int] = {}
+        for project_id, bucket, count in (
+            await self._s.execute(
+                select(Block.project_id, day, func.count())
+                .where(*mine, Block.created_at >= since, Block.created_at < until)
+                .group_by(Block.project_id, day)
+            )
+        ).tuples():
+            per_day[bucket.date()] = per_day.get(bucket.date(), 0) + int(count)
+            per_project_day[(project_id, bucket.date())] = int(count)
+        weeks = [
+            days[len(days) - 7 * (_SPARKLINE_WEEKS - i) :][:7]
+            for i in range(_SPARKLINE_WEEKS)
+        ]
+
+        projects = []
+        for project in visible:
+            contributions, last_active = totals.get(project.id, (0, None))
             projects.append(
                 {
                     "project_id": str(project.id),
                     "name": project.name,
-                    "role": member.role.value,
-                    "topics_started": int(started),
-                    "contributions": int(blocks),
+                    # Same precedence as the roster: owner, then team, then
+                    # external.
+                    "source": (
+                        "owner"
+                        if project.owner_handle == handle
+                        else "team"
+                        if project.team_id in team_ids
+                        else "external"
+                    ),
+                    "topics_started": int(started.get(project.id, 0)),
+                    "contributions": contributions,
+                    "last_active_at": last_active.isoformat() if last_active else None,
+                    "weekly": [
+                        sum(per_project_day.get((project.id, d), 0) for d in week)
+                        for week in weeks
+                    ],
                 }
             )
 
-        # 关于他的记忆已经不是一个跨项目的池了：每个项目里的每位芝士各有一份自己
-        # 的看法（结论 8），键是 `<项目>:<agent>:<他>`。这一页问的却正好是那个没有
-        # 项目的问题——「大家对我的认识」——所以按后缀把每一份都收进来，而不是拼
-        # 一个不存在的全局键。收进来的是哪一位芝士记的，`scope_id` 自己说得出。
-        understanding = [
-            row.content
-            for row in (
-                await self._s.scalars(
-                    select(MemoryEntry)
-                    .where(
-                        MemoryEntry.scope == MemoryScope.user,
-                        MemoryEntry.scope_id.endswith(
-                            user_scope_about(handle), autoescape=True
-                        ),
-                        live_entries(),
-                    )
-                    .order_by(MemoryEntry.created_at.desc())
-                    .limit(50)
-                )
-            ).all()
-        ][::-1]
         return {
             "handle": handle,
             # Merged schema: display name is UserProfile.nickname, bio is
-            # UserProfile.intro. There are no interests/skills columns.
+            # UserProfile.intro.
             "name": profile.nickname if profile else handle,
             "bio": profile.intro if profile else "",
-            "interests": [],
-            "skills": [],
+            "avatar_id": profile.avatar_id if profile else None,
+            "joined_at": user.created_at.isoformat() if user else None,
+            "teams": [team_summary(team, fallback_id=team.id) for team in teams],
+            "activity": {
+                "days": dense_series(days, {"count": per_day}),
+                "total": sum(per_day.values()),
+            },
             "projects": projects,
-            "understanding": understanding,  # 芝士 对 TA 的理解 (§8.4)
+            # 芝士 对 TA 的理解 (§8.4)
+            "understanding": await self._understanding(handle) if is_self else [],
         }
+
+    async def _understanding(self, handle: str) -> list[dict]:
+        """What every agent, in every project, has noted about this person.
+
+        关于他的记忆已经不是一个跨项目的池了：每个项目里的每位芝士各有一份自己的
+        看法（结论 8），键是 `<项目>:<agent>:<他>`。这一页问的却正好是那个没有项目的
+        问题——「大家对我的认识」——所以按后缀把每一份都收进来，而不是拼一个不存在
+        的全局键。收进来的是哪一位芝士记的，`scope_id` 自己说得出。
+
+        A project is named only while the person may still read it; one they
+        have left keeps its notes here (they are about them) but not its name.
+        """
+        from app.domain.agent_instance.models import AgentInstance
+        from app.domain.memory.models import MemoryEntry, parse_user_scope_id
+        from app.domain.memory.store import about_person
+        from app.domain.project.models import Project
+
+        rows = (
+            await self._s.scalars(
+                select(MemoryEntry)
+                .where(about_person(handle))
+                .order_by(MemoryEntry.created_at.desc())
+                .limit(50)
+            )
+        ).all()[::-1]
+        keys = {row.id: parse_user_scope_id(row.scope_id) for row in rows}
+        project_ids = {key[0] for key in keys.values() if key is not None}
+        readable = {
+            project_id
+            for project_id in project_ids
+            if await may_read_project(self._s, project_id=project_id, handle=handle)
+        }
+        names = dict(
+            (
+                await self._s.execute(
+                    select(Project.id, Project.name).where(Project.id.in_(readable))
+                )
+            )
+            .tuples()
+            .all()
+        )
+        agents = {
+            (project_id, agent_handle): display_name
+            for project_id, agent_handle, display_name in (
+                await self._s.execute(
+                    select(
+                        AgentInstance.project_id,
+                        AgentInstance.handle,
+                        AgentInstance.display_name,
+                    ).where(AgentInstance.project_id.in_(readable))
+                )
+            ).tuples()
+        }
+        out = []
+        for row in rows:
+            key = keys[row.id]
+            agent_name = agents.get((key[0], key[1])) if key else None
+            out.append(
+                {
+                    "id": str(row.id),
+                    "content": row.content,
+                    "created_at": row.created_at.isoformat(),
+                    "project_id": str(key[0]) if key else None,
+                    "project_name": names.get(key[0]) if key else None,
+                    "agent_handle": key[1] if key else None,
+                    "agent_name": agent_name or None,
+                }
+            )
+        return out
+
+    async def participated_topics(
+        self,
+        handle: str,
+        *,
+        viewer: str,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """The topics this person wrote in, the latest participation first.
+
+        ``contributions`` and ``last_participated_at`` are counted inside
+        ``[since, until)`` when given. Only topics the viewer may open are
+        listed: in a project they may read (``_projects_shown``), and never a
+        private 1:1 chat — a private chat is not part of any topic listing,
+        this person's own page included."""
+        _, visible = await self._projects_shown(handle, viewer=viewer)
+        names = {project.id: project.name for project in visible}
+        last = func.max(Block.created_at)
+        stmt = (
+            select(Block.topic_id, func.count(), last)
+            .join(Topic, Topic.id == Block.topic_id)
+            .where(
+                Block.author == handle,
+                participant_blocks(),
+                Topic.project_id.in_(list(names)),
+                _listed_topic(),
+            )
+            .group_by(Block.topic_id)
+            .order_by(last.desc(), Block.topic_id)
+            .limit(limit)
+        )
+        if since is not None:
+            stmt = stmt.where(Block.created_at >= since)
+        if until is not None:
+            stmt = stmt.where(Block.created_at < until)
+        rows = (await self._s.execute(stmt)).tuples().all()
+        topics = {
+            topic.id: topic
+            for topic in await self._s.scalars(
+                select(Topic).where(Topic.id.in_([row[0] for row in rows]))
+            )
+        }
+        return [
+            {
+                "id": str(topic_id),
+                "title": topics[topic_id].title,
+                "status": topics[topic_id].status.value,
+                "project_id": str(topics[topic_id].project_id),
+                "project_name": names[topics[topic_id].project_id],
+                "contributions": int(count),
+                "last_participated_at": last_at.isoformat(),
+            }
+            for topic_id, count, last_at in rows
+        ]
 
     async def contributions(self, project_id: uuid.UUID) -> dict:
         """贡献统计 (spec §10.1): human vs AI, and per author. Source for the

@@ -93,7 +93,7 @@ watch(
     <template v-if="state">
       <SessionWorkPicker :topic-id="topicId" :profile="state" />
       <span v-if="state.visibility?.machine_access" class="cp-machine" :title="state.visibility.notice">
-        <span class="status-dot status-dot--warn" /> 整台机器
+        <span class="status-dot status-dot--warn" /> 可访问整台设备
       </span>
       <span v-if="state.locked" class="cp-chip" :title="t('work.sessionMachine.initial')">
         <v-icon size="13">mdi-lock-outline</v-icon> {{ state.choice.name }}

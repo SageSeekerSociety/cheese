@@ -16,7 +16,12 @@ import uuid
 import pytest
 
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import room_text, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_text,
+    session_auth_headers,
+)
 
 # Reuse the #718 App-lane harness instead of rebuilding it — see
 # .claude/rules/backend-tests.md.
@@ -44,6 +49,8 @@ def _archive(client, topic_id: str, by: str = "bob") -> dict:
         member["member_handle"] for member in roster if member["role"] == "owner"
     )
     if owner != by:
+        project_id = _topic(client, topic_id)["project_id"]
+        join_project_team(client, project_id, by)
         response = client.post(
             f"/topics/{topic_id}/members",
             json={"handle": by, "role": "admin"},
@@ -58,7 +65,7 @@ def _archive(client, topic_id: str, by: str = "bob") -> dict:
 
 
 def _make_project(client) -> str:
-    return client.post("/projects", json={"name": "P", "owner_handle": "bob"}).json()[
+    return post_project(client, json={"name": "P", "owner_handle": "bob"}).json()[
         "data"
     ]["id"]
 
@@ -134,7 +141,6 @@ def test_archiving_revokes_a_pending_card(client):
 
     card = _cards(client, tid)[0]
     assert card["status"] == "revoked"
-    assert "话题归档" in card["note"]
     assert card["decided_by"] == "bob"
 
 

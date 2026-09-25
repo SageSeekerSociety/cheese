@@ -1,7 +1,7 @@
 <template>
-  <PageHeader icon="mdi-account-group" title="小队">
+  <PageHeader icon="mdi-account-group" title="团队">
     <template #tabs>
-      <v-tabs slider-color="primary" bg-color="transparent">
+      <v-tabs color="on-surface" slider-color="primary" bg-color="transparent">
         <v-tab :to="{ name: 'HomeTeamsExplore' }">发现</v-tab>
         <v-tab :to="{ name: 'HomeTeamsMine' }">我的</v-tab>
         <v-tab :to="{ name: 'HomeTeamsPending' }">待定</v-tab>
@@ -14,7 +14,7 @@
         prepend-icon="mdi-plus"
         @click="openCreateTeamDialog"
       >
-        创建小队
+        创建团队
       </v-btn>
     </template>
   </PageHeader>
@@ -25,9 +25,9 @@
   <v-dialog v-model="createTeamDialog" width="600">
     <v-card rounded="lg" class="create-team-dialog elevation-0 border">
       <v-toolbar color="transparent" flat>
-        <v-toolbar-title class="text-h6">创建小队</v-toolbar-title>
+        <v-toolbar-title class="text-h6">创建团队</v-toolbar-title>
         <v-spacer></v-spacer>
-        <v-btn icon @click="createTeamDialog = false">
+        <v-btn icon variant="text" @click="createTeamDialog = false">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </v-toolbar>
@@ -40,17 +40,17 @@
             <v-row>
               <v-col cols="12" md="4" class="text-center">
                 <avatar-uploader v-model="teamAvatar" />
-                <p class="text-body-2 text-medium-emphasis mb-2">小队头像</p>
+                <p class="text-body-2 text-medium-emphasis mb-2">团队头像</p>
               </v-col>
               <v-col cols="12" md="8">
                 <v-text-field
                   v-model="teamName"
                   autocomplete="off"
-                  label="小队名称"
+                  label="团队名称"
                   variant="outlined"
                   color="primary"
-                  placeholder="输入小队名称..."
-                  :rules="[(v) => !!v || '请输入小队名称']"
+                  placeholder="输入团队名称..."
+                  :rules="[(v) => !!v || '请输入团队名称']"
                   class="mb-4"
                   rounded="md"
                 ></v-text-field>
@@ -69,12 +69,12 @@
                   rounded="md"
                 ></v-text-field>
 
-                <p class="text-body-2 text-medium-emphasis mb-2">小队描述</p>
+                <p class="text-body-2 text-medium-emphasis mb-2">团队描述</p>
                 <tip-tap-editor
                   ref="teamDescriptionEditor"
                   v-model="teamDescription"
                   output="html"
-                  placeholder="描述你的小队定位、目标和文化..."
+                  placeholder="描述你的团队定位、目标和文化..."
                   class="team-description-editor rounded-md"
                 />
               </v-col>
@@ -89,7 +89,7 @@
         <v-spacer></v-spacer>
         <v-btn variant="text" class="mr-2" @click="createTeamDialog = false">取消</v-btn>
         <v-btn color="primary" variant="elevated" rounded="md" :loading="creatingTeam" @click="createTeam">
-          创建小队
+          创建团队
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -130,7 +130,7 @@ const openCreateTeamDialog = () => {
 
 const createTeam = async () => {
   if (!teamName.value) {
-    toast.error('请输入小队名称')
+    toast.error('请输入团队名称')
     return
   }
 
@@ -156,14 +156,14 @@ const createTeam = async () => {
       handle: teamHandle.value.trim() || undefined,
     })
 
-    toast.success('创建小队成功')
+    toast.success('创建团队成功')
     router.push({ name: 'TeamsDetailDefault', params: { handle: team.handle } })
   } catch (error) {
     if (error instanceof BusinessError && error.error?.data?.field === 'handle') {
       teamHandleError.value = error.code === 409 ? t('work.teamLink.handleTaken') : t('work.teamLink.handleInvalid')
       return
     }
-    toast.error('创建小队失败，请稍后重试')
+    toast.error('创建团队失败，请稍后重试')
     console.error(error)
   } finally {
     creatingTeam.value = false

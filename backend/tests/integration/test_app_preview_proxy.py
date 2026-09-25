@@ -9,7 +9,11 @@ from app.api.preview_host import cookie_name, preview_origin
 from app.core.config import settings
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import preview_hub
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    add_external_member,
+    post_project,
+    session_auth_headers,
+)
 
 
 class FakeMachine:
@@ -108,8 +112,8 @@ def preview_config(monkeypatch, tmp_path):
 
 def _project_topic(client, handle: str = "alice"):
     auth = session_auth_headers(handle)
-    response = client.post(
-        "/projects", json={"name": "Preview", "owner_handle": handle}, headers=auth
+    response = post_project(
+        client, json={"name": "Preview", "owner_handle": handle}, headers=auth
     )
     assert response.status_code == 200, response.text
     project = response.json()["data"]
@@ -379,12 +383,7 @@ def test_hmr_refuses_missing_cookie_or_cross_origin(
 def test_membership_revocation_blocks_http_and_new_hmr_connection(client, app_preview):
     project, topic_id, machine = app_preview
     owner = session_auth_headers("alice")
-    added = client.post(
-        f"/projects/{project['id']}/members",
-        json={"user_handle": "bob", "role": "member"},
-        headers=owner,
-    )
-    assert added.status_code == 200, added.text
+    add_external_member(client, project["id"], "bob", by="alice")
     _open_preview(client, topic_id, "bob")
     origin = preview_origin(topic_id)
     assert client.get(origin + "/").status_code == 200

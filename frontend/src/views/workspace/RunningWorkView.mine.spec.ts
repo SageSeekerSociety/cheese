@@ -69,7 +69,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'needs_you', display_status: '等待验收' },
+    presentation: { column: 'needs_you', display_status: '待审阅' },
     ...over,
   }
 }
@@ -179,39 +179,36 @@ describe('筛完之后板还是一块板', () => {
     await waitFor(() => expect(countOf(container, 'needs_you')).toBe('1 / 3'))
   })
 
-  it('筛到一件不剩的时候，每一列自己说「暂无归你的任务」', async () => {
+  it('筛到一件不剩的时候，每一列自己说「暂无分配给你的任务」', async () => {
     // 「暂无施工中的任务」在这一刻是句错话：那一列有活，只是不归你。
     query = { mine: '1' }
     listProjectTasks.mockResolvedValue({ data: [task({ owner_handle: 'ligan' })], total: 1 })
     const { container, getAllByText, queryByText } = mount()
     await waitFor(() => expect(countOf(container, 'needs_you')).toBe('0 / 1'))
-    expect(getAllByText('暂无归你的任务').length).toBe(3)
+    expect(getAllByText('暂无分配给你的任务').length).toBe(3)
     expect(queryByText('暂无施工中的任务')).toBeNull()
     // 顶上那行数的仍然是整块板：它说的是这个项目有多少活，和取景无关。
     expect(container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')).toBe('待处理1')
   })
 
-  it('筛掉之后那一列的下一步提示也收起来 —— 「在房间里说明要做什么」在这一刻是句错话', async () => {
-    query = { mine: '1' }
-    listProjectTasks.mockResolvedValue({ data: [task({ owner_handle: 'ligan' })], total: 1 })
-    const { container, queryByText } = mount()
-    await waitFor(() => expect(countOf(container, 'needs_you')).toBe('0 / 1'))
-    expect(queryByText('在房间里说明要做什么，芝士会把它拆成任务')).toBeNull()
-  })
-
-  it('「房间满员」数的是整块板，不是筛过的那一份', async () => {
+  it('「排队中」数的是整块板，不是筛过的那一份', async () => {
     // 房间满没满和「这是谁的活」无关。按筛过的结果数，开关一开这个提示就凭空没了。
     const running = { column: 'building', display_status: '运行中' } as const
     query = { mine: '1' }
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'mine', title: '我的', owner_handle: 'n1ctheboy', presentation: { ...running } }),
-        ...['x', 'y', 'z'].map((id) => task({ id, owner_handle: 'ligan', presentation: { ...running } })),
+        task({
+          id: 'mine',
+          title: '我的',
+          owner_handle: 'n1ctheboy',
+          presentation: { column: 'building', display_status: '待开工' },
+        }),
+        ...['w', 'x', 'y', 'z'].map((id) => task({ id, owner_handle: 'ligan', presentation: { ...running } })),
       ],
-      total: 4,
+      total: 5,
     })
     const { findByText } = mount()
-    await findByText('房间满员')
+    await findByText('排队中')
   })
 })
 
@@ -220,8 +217,8 @@ describe('已完成那条折叠行', () => {
     query = { mine: '1' }
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已收工' } }),
-        task({ id: 'b', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已收工' } }),
+        task({ id: 'a', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已关闭' } }),
+        task({ id: 'b', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已关闭' } }),
       ],
       total: 2,
     })

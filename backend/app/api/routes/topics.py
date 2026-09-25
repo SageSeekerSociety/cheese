@@ -6,6 +6,7 @@ import binascii
 import re
 import shutil
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
@@ -189,6 +190,19 @@ def _viewer(actor: Actor) -> str | None:
     return actor.handle if actor.handle != "anonymous" else None
 
 
+def _asks_me(
+    asked: Mapping[uuid.UUID, str | None], viewer: str | None
+) -> set[uuid.UUID]:
+    """这些停在提问上的房间里，哪几个在等 `viewer` 回答。
+
+    一道待确认问题只有**发起那一轮的人**能回答，提问那一刻就记在题上
+    （`meta.asked`）：旁观的人不该被一道不归他答的题点亮。
+    """
+    if viewer is None:
+        return set()
+    return {tid for tid, who in asked.items() if who == viewer}
+
+
 async def _live_room_cards(
     db: AsyncSession, room_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, AcceptCard]:
@@ -218,7 +232,8 @@ def _topic_out(
     cards: dict[uuid.UUID, AcceptCard] | None = None,
     now: datetime | None = None,
     managed_ids: set[uuid.UUID] | None = None,
-    asked: set[uuid.UUID] | None = None,
+    asked: Mapping[uuid.UUID, str | None] | None = None,
+    asks_me: set[uuid.UUID] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: the in-memory
     turn-running flag (separate from `status`/归档 — see TopicOut.running: a
@@ -239,15 +254,18 @@ def _topic_out(
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
     mine = (relevance or {}).get(topic.id, TopicRelevance())
-    out.i_participate = mine.i_participate
-    out.awaits_me = mine.awaits_me
+    # 芝士停在一道只有我能回答的问题上，同样是「在等我」——而且比一张卡更急：卡是
+    # 一轮结束后的状态，提问是一轮**停在半路**。它也蕴含参与，理由同上。
+    asking_me = topic.id in (asks_me or set())
+    out.i_participate = mine.i_participate or asking_me
+    out.awaits_me = mine.awaits_me or asking_me
     data = out.model_dump(mode="json")
     data["running"] = topic.id in running_ids
     facts = presentation.facts_for_room(
         topic,
         running_ids,
         (cards or {}).get(topic.id),
-        awaiting_answer=topic.id in (asked or set()),
+        awaiting_answer=topic.id in (asked or {}),
     )
     data["presentation"] = presentation.room_presentation(
         facts, now=now or datetime.now(UTC)
@@ -293,10 +311,21 @@ async def list_topics(
     )
     # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
     asked = await BlockRepository(db).rooms_awaiting_an_answer([t.id for t in topics])
+    asks_me = _asks_me(asked, _viewer(actor))
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
     now = datetime.now(UTC)
     items = [
-        _topic_out(t, running_ids, last_activity, relevance, cards, now, managed, asked)
+        _topic_out(
+            t,
+            running_ids,
+            last_activity,
+            relevance,
+            cards,
+            now,
+            managed,
+            asked,
+            asks_me,
+        )
         for t in topics
     ]
     return ok(page(items, total))
@@ -339,6 +368,7 @@ async def get_topic(
         if actor.authenticated
         else set()
     )
+    asked = await BlockRepository(db).rooms_awaiting_an_answer([topic.id])
     return ok(
         _topic_out(
             topic,
@@ -347,7 +377,8 @@ async def get_topic(
             relevance,
             cards,
             managed_ids=managed,
-            asked=await BlockRepository(db).rooms_awaiting_an_answer([topic.id]),
+            asked=asked,
+            asks_me=_asks_me(asked, _viewer(actor)),
         )
     )
 
@@ -369,7 +400,7 @@ async def list_topic_blocks(
 
     Paging is OPT-IN: with no `limit` this returns the whole timeline, exactly
     as it always has. That default is deliberate — agents read this endpoint to
-    review history (`cheese api GET /topics/{id}/blocks`), and a default window
+    review history (`platform_request GET /topics/{id}/blocks`), and a default window
     would silently truncate them with no way to notice. Callers that DO page get
     `has_more` + `oldest_id` and can walk backwards.
 
@@ -647,7 +678,7 @@ async def get_room_task(
     tasks = TaskService(db)
     task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这条活")
+        raise NotFoundError("这个房间里没有这个任务")
     blocks = await tasks.blocks_for_thread(task_id, limit=limit)
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
     beats = await TaskRepository(db).last_block_at_for_tasks([task.id])
@@ -716,7 +747,7 @@ async def say_on_task(
     place = await TopicService(db).place_or_404(topic_id)
     task = await TaskService(db).get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这条活")
+        raise NotFoundError("这个房间里没有这个任务")
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError("消息内容不能为空")
@@ -800,7 +831,7 @@ async def set_task_title(
     await _actor_in_place(resolver, place)
     task = await TaskService(db).get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这条活")
+        raise NotFoundError("这个房间里没有这个任务")
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError("title 不能为空")
@@ -842,7 +873,7 @@ async def conclude_task(
     tasks = TaskService(db)
     task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这条活")
+        raise NotFoundError("这个房间里没有这个任务")
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()
@@ -1146,6 +1177,7 @@ async def add_comment(
     if not await members.holds_an_agent_seat(place.room, actor.handle):
         where = f"「{quote[:80]}」" if quote else "整篇"
         said = f"在实况文档 {where} 处评论：{content}"
+        seat = await members.addressable_agent_handle(place.room_id)
         runner.submit(
             chat,
             place.room_id,
@@ -1154,10 +1186,12 @@ async def add_comment(
                 f"{author} {said}\n"
                 "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
             ),
-            addressed=addressed_to_agent(
-                await members.addressable_agent_handle(place.room_id)
+            addressed=addressed_to_agent(seat),
+            nudge_event=(
+                f"{author} 评论了文档，已交给 <@{seat}>"
+                if seat
+                else f"{author} 评论了文档"
             ),
-            nudge_event=f"{author} 在文档上留了评论，芝士来处理",
             provision_actor=actor,
         )
     return ok(payload)
@@ -1222,12 +1256,12 @@ async def edit_topic_doc(
     top of one — and false of the turn already in progress, which went on
     working from the version it started with and would then set that version
     back. What gets pushed is the version number and a line about what moved,
-    never the text: the doc is one `cheese doc get` away, and a document
+    never the text: the doc is one `cheese_doc_get` away, and a document
     injected mid-turn displaces the work instead of informing it."""
     # A thread has a doc of its own — its brief, and then how the work is
     # going — and `edit_doc` has always written by place. Only this handler
-    # still refused to name one, so `cheese doc set` 404ed for every 分身 doing
-    # the work while `cheese doc get` right above answered fine.
+    # still refused to name one, so `cheese_doc_set` 404ed for every 分身 doing
+    # the work while `cheese_doc_get` right above answered fine.
     place = await TopicService(db).place_or_404(topic_id)
     # actor 在信任边界注入: prefer the verified token, fall back to body.author.
     # The token is scoped to the place; the roster is the room's.
@@ -1467,6 +1501,8 @@ async def acquire_session_work_lease(
                     claims=claims,
                     token=token,
                     env=body.env,
+                    wait_s=min(work_lease.PREPARING_WAIT_S, body.timeout),
+                    gone=request.is_disconnected,
                 )
             )
     except TimeoutError as exc:
@@ -1742,7 +1778,7 @@ async def publish_chat_message(
 async def ask_options(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """芝士 asks an option question IN the chat (cheese ask): a message block
+    """芝士 asks an option question IN the chat (cheese_ask): a message block
     whose meta.options renders as one-click buttons. Structured interaction —
     the answer comes back as data, never parsed from prose (spec §14.5).
 
@@ -1759,7 +1795,7 @@ async def ask_options(
     if not 2 <= len(options) <= 4:
         raise ValidationError("需要 2-4 个选项")
     # 署名是 agent 的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
-    # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese ask` 只在 CHEESE_TURN
+    # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese_ask` 只在 CHEESE_TURN
     # 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量，于是 `add` 的兜底
     # 拿到的永远是 None，「署名是 agent 且落在某一轮里」在这里答不出来。所以由写入端
     # 直接说明（`own_output`）：不说明的话这道题会盖上待读标记，「忘了 @」的补救按钮
@@ -1775,6 +1811,16 @@ async def ask_options(
             topic_id, room_id=place.room_id
         )
         asked_by_agent = True
+    # 发起这一轮的人 —— 芝士是代他执行这件事的，这个问题也只有他能回答。平台发起
+    # 的轮次（resume、各类提醒）作者是 system，那种提问指不到具体的人。
+    #
+    # 记在这道题自己身上（`meta.asked`），不留到以后再去问轮次：`cheese_ask` 不等
+    # 回答，芝士问完就收尾，这一轮随即关闭——过一会儿再问「开着的那一轮是谁的」，
+    # 答案已经是「没有」，而题还摆在那儿等人。
+    waiting_for = await AgentTurnRepository(db).open_turn_author_for_topic(
+        place.room_id
+    )
+    asked = None if waiting_for == "system" else waiting_for
     blk = await BlockRepository(db).add(
         project_id=place.project_id,
         # The place id: `add` splits it, so a thread's question is asked in the
@@ -1784,13 +1830,8 @@ async def ask_options(
         author_type=AuthorType.participant,
         content=question,
         kind=BlockKind.message,
-        meta={"options": options},
+        meta={"options": options, "asked": asked},
         own_output=asked_by_agent,
-    )
-    # 发起这一轮的人 —— 芝士是代他执行这件事的，这个问题也只有他能回答。平台发起
-    # 的轮次（resume、各类提醒）作者是 system，那种提问指不到具体的人。
-    waiting_for = await AgentTurnRepository(db).open_turn_author_for_topic(
-        place.room_id
     )
     await notify_question(
         db,
@@ -1798,7 +1839,7 @@ async def ask_options(
         block=blk,
         question=question,
         asker=blk.author,
-        asked=None if waiting_for == "system" else waiting_for,
+        asked=asked,
     )
     await db.commit()
     payload = BlockOut.model_validate(blk).model_dump(mode="json")
@@ -1929,7 +1970,11 @@ async def summon_agent(
         # 点名的是按下这个按钮的人，不是平台：他指名这个房间的芝士，寻址结果里
         # 因此恰好有它一个，这一轮才跑得起来。
         addressed=addressed_to_agent(seat),
-        nudge_event=f"<@{actor.handle}> 叫芝士来看前面的消息",
+        nudge_event=(
+            f"<@{actor.handle}> 把之前的消息交给了 <@{seat}>"
+            if seat
+            else f"<@{actor.handle}> 交出了之前的消息"
+        ),
         provision_actor=actor,
     )
     return ok({"started": True})
@@ -2035,7 +2080,7 @@ async def record_decision(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """记录关键决策到决策记录 (spec §7.1) — used by the `cheese decision` CLI."""
+    """记录关键决策到决策记录 (spec §7.1) — used by the `cheese_decision` tool."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     decision = (body.get("decision") or "").strip()
@@ -2160,7 +2205,7 @@ async def record_weekly(
 async def set_title(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """给这个地方起/改标题 — used by both `cheese title` (AI-generated, naming an
+    """给这个地方起/改标题 — used by both `cheese_title` (AI-generated, naming an
     untitled place) and the frontend sidebar rename UI (dual-use, like doc/split).
 
     Names the THREAD when the id is a thread's. Resolving only rooms did not
@@ -2492,7 +2537,7 @@ async def tell_topic(
     resolver: ActorResolverDep,
 ) -> dict:
     """留话给一条活: write one message onto a thread this room dispatched
-    (`cheese tell`). See `app.domain.topic.relay` for why the comments endpoint
+    (`cheese_tell`). See `app.domain.topic.relay` for why the comments endpoint
     could not be this channel, and why nothing is woken.
 
     `topic_id` is the SENDER — the place whose turn is speaking, which is what
@@ -2934,7 +2979,7 @@ async def decide_document_revisions(
         # 资料库那一份是用户给进来的原件，只读：这里写回去就是在他没要求的时候改了
         # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
         # 栏照常列），能做的只是不动它。
-        raise ValidationError("资料库里的原件不改——让芝士基于它做一份新的")
+        raise ValidationError("项目资料里的原件不能修改，可以基于它新建一份")
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")
@@ -2948,7 +2993,7 @@ async def decide_document_revisions(
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(
-            "文件已被改动（芝士或其他人写过），这份清单是基于旧内容的",
+            "文件已被修改，这份清单基于旧内容，刷新后重试",
             data={"path": clean, "version": actual},
         )
     try:
@@ -3390,9 +3435,7 @@ async def upgrade_block(
             db,
             place_id=room.id,
             content=(
-                "一条消息升级成了这个房间里的一条活"
-                if thread is not None
-                else "一条消息升级成了一个房间"
+                "一条消息已转为任务" if thread is not None else "一条消息已转为话题"
             ),
             meta=notice(
                 EVENT_BLOCK_UPGRADED,

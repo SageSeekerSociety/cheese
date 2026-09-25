@@ -7,7 +7,7 @@ export const TOOL_LABELS: Record<string, string> = {
   update_doc: '更新文档',
   remember: '记入项目记忆',
   notify: '发送通知',
-  request_accept: '提交验收卡',
+  request_accept: '提交审阅',
   pin_milestone: '添加里程碑',
   write_file: '写入文件',
   record_decision: '记录决策',
@@ -39,53 +39,52 @@ export const TOOL_LABELS: Record<string, string> = {
   ls: '列出目录',
   find: '查找文件',
   grep: '搜索内容',
-  // 平台 CLI 的每条命令，在 pi 房间里各是一个工具（`cheese_<命令>`）。
-  // 一条都不能少：少一条，现场那一行显示的就是 `cheese_accept_request`，
-  // 而这是房间里最该看懂的那一类动作。少了哪条由
-  // backend/tests/unit/test_tool_labels.py 直接对着 CLI 的命令树说出来。
-  cheese_chat_send: '发布消息',
-  chat_send: '发布消息', // 系统提示里用的名字，两个都注册了
+  // 平台工具表（backend/sandbox/cheese 的 PLATFORM_TOOLS）里的每一样，以及
+  // pi 房间里由机器上的 CLI 命令变成的工具（`cheese_<命令>`）。一条都不能少：
+  // 少一条，现场那一行显示的就是 `cheese_accept_request`，而这是房间里最该看懂
+  // 的那一类动作。少了哪条由 backend/tests/unit/test_tool_labels.py 对着工具表
+  // 和 CLI 的命令树说出来。
+  chat_send: '发布消息',
   cheese_chat_list: '读取聊天记录',
   cheese_chat_search: '搜索聊天记录',
   cheese_chat_get: '读取一条消息',
   cheese_chat_replies: '读取消息回复',
-  cheese_doc_set: '更新实况文档',
-  cheese_doc_get: '读取实况文档',
-  cheese_split: '创建任务',
+  cheese_doc_set: '更新文档',
+  cheese_doc_get: '读取文档',
+  cheese_task: '创建任务',
   cheese_worktree: '准备工作目录',
   cheese_sync: '同步任务代码',
   cheese_recover: '恢复任务备份',
   cheese_close_task: '关闭任务',
   cheese_push_fix: '更新任务 PR',
   cheese_fetch: '读取网页',
-  cheese_lock: '占用重资源',
-  cheese_unlock: '释放重资源',
+  cheese_lock: '锁定资源',
+  cheese_unlock: '释放资源',
   cheese_decision: '记录决策',
   cheese_title: '设置标题',
   cheese_remember: '记入项目记忆',
   cheese_recall: '检索项目记忆',
   cheese_notify: '发送通知',
   cheese_ask: '向用户提问',
-  cheese_accept_request: '提交验收卡',
-  cheese_describe: '修改验收说明',
-  cheese_ready: '标记可评审',
+  cheese_accept_request: '提交审阅',
+  cheese_describe: '修改审阅说明',
+  cheese_ready: '标记可审阅',
   cheese_tell: '给分身留言',
   cheese_milestone: '添加里程碑',
   cheese_members: '列出话题成员',
   cheese_gh_token: '获取 GitHub 令牌',
   cheese_status: '查看平台状态',
-  cheese_sync_agents: '刷新队友分身定义',
+  cheese_sync_agents: '刷新分身配置',
   cheese_serve: '设置预览',
   cheese_library_ls: '查看项目资料',
   cheese_library_get: '取用项目资料',
-  cheese_show: '摆出一份东西',
+  cheese_show: '展示文件',
   cheese_convert: '转换文档格式',
   cheese_recalc: '重算表格公式',
   cheese_feedback_propose: '提交反馈提案',
-  cheese_machine: '要一台机器',
-  cheese_note: '留一张便条',
-  cheese_deliver_at: '设定时投递',
-  cheese_api: '调用平台接口',
+  cheese_machine: '申请设备',
+  cheese_note: '留下便条',
+  cheese_deliver_at: '定时发送',
   // 后台任务 — pi 自己没有后台 shell，这五个是平台加的。
   bash_start: '启动后台任务',
   bash_read: '读取任务输出',
@@ -106,7 +105,7 @@ export function toolLabel(name: string): string {
   return TOOL_LABELS[short] ?? short
 }
 
-// ---- 现场圆点分级: platform action (amber) vs plain work (neutral) ----
+// ---- 现场圆点分级: platform action (solid) vs plain work (faint) ----
 // Deterministic by construction — never inferred from natural language.
 
 // Structured event payload persisted on kind=event blocks (backend meta).

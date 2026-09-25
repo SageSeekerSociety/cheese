@@ -300,7 +300,7 @@ async def approve_card(
     """主分支保护 (spec §4.4): record one human approval toward the accept."""
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能批准验收卡")
+        raise AuthenticationRequiredError("需要登录才能批准")
     svc = AcceptService(db)
     card = await svc.approve(card_id=card_id, approver_handle=actor.handle)
     return ok(await svc.describe(card))
@@ -315,7 +315,7 @@ async def accept_card(
 ) -> dict:
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能采纳验收卡")
+        raise AuthenticationRequiredError("需要登录才能采纳")
     svc = AcceptService(db)
     card = await svc.accept(
         card_id=card_id, decided_by=actor.handle, head_sha=body.head_sha
@@ -333,7 +333,7 @@ async def reassign_card(
     """改验收人 (spec §4.4)."""
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能改验收人")
+        raise AuthenticationRequiredError("需要登录才能改由他人审阅")
     svc = AcceptService(db)
     card = await svc.reassign(
         card_id=card_id,
@@ -355,7 +355,7 @@ async def reject_card(
     """Record the rejection and its task-parent instruction in one transaction."""
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能驳回验收卡")
+        raise AuthenticationRequiredError("需要登录才能退回")
     svc = AcceptService(db)
     card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
     described = await svc.describe(card)
@@ -382,14 +382,14 @@ async def reject_card(
         content=(
             f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
-        headline=f"{decided_by} 驳回了验收卡"
-        + ("，芝士去改" if actionable else "，原任务已结束"),
+        headline=f"{decided_by} 退回了改动"
+        + ("，正在修改" if actionable else "，原任务已关闭"),
         meta=notice(
             EVENT_CARD_REJECTED,
             severity=SEVERITY_WARN,
             who=WHO_CHEESE,
             detail=reason or None,
-            detail_label="驳回理由",
+            detail_label="退回理由",
         ),
     )
     await db.commit()
@@ -418,7 +418,7 @@ async def void_card(
     """
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能作废验收卡")
+        raise AuthenticationRequiredError("需要登录才能作废")
     svc = AcceptService(db)
     card = await svc.void(card_id=card_id, decided_by=actor.handle, note=body.note)
     return ok(await svc.describe(card))
@@ -446,7 +446,7 @@ async def merge_card_anyway(
     """
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能人工放行合并")
+        raise AuthenticationRequiredError("需要登录才能人工放行")
     svc = AcceptService(db)
     card = await svc.merge_despite_checks(
         card_id=card_id,

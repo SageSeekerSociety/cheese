@@ -441,9 +441,8 @@
       }
     },
     "reliability": {
-      "title": "Delivery and events",
-      "oldest": "Oldest unread {age}",
-      "note": "Delivery backlog is stock, not a failure rate. Spool unread is an UPPER bound (reading is not consuming) and only sees this host's spool."
+      "title": "Delivery",
+      "note": "Delivery backlog is stock, not a failure rate."
     }
   },
   "chart": {

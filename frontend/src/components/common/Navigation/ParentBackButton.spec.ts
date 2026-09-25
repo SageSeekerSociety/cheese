@@ -103,7 +103,6 @@ describe('返回上一级', () => {
     ['/spaces/42/templates/2/edit', '/spaces/42/templates'],
     ['/spaces/42/tasks', '/spaces'],
     ['/teams/12/members', '/teams/mine'],
-    ['/users/privacy-center/access-logs', '/users/privacy-center'],
   ])('direct entry to %s returns to %s without browser history', async (path, parent) => {
     const { router, getByRole } = await open(path)
     const link = getByRole('link', { name: '返回上一级' })
@@ -114,7 +113,7 @@ describe('返回上一级', () => {
     await waitFor(() => expect(router.currentRoute.value.path).toBe(parent))
   })
 
-  it.each(['/spaces', '/teams/mine', '/projects/project-a', '/users/privacy-center'])(
+  it.each(['/spaces', '/teams/mine', '/projects/project-a'])(
     'does not offer a return to nowhere on %s',
     async (path) => {
       const { queryByRole } = await open(path)
@@ -182,7 +181,7 @@ describe('走进一个项目之后，← 回得去', () => {
   // 的时候再去取，那一页早就卸载了。
   it('说得出自己去哪儿', async () => {
     const view = await walk(TEAM, PROJECT + '/running')
-    expect(back(view)?.getAttribute('title')).toBe('返回小队')
+    expect(back(view)?.getAttribute('title')).toBe('返回团队')
   })
 
   // 左栏切项目是同一层上的平移。少了这一条，B 项目的 ← 会指向 A 项目。

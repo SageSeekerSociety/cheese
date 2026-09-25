@@ -48,16 +48,17 @@ the parts no gate can see.
   the BACKGROUND. Using the mark colour for text is the single most common
   defect — in light theme `--warn` measures 2.34:1 on white, well under the
   4.5:1 needed to read. Same shape for `--ok` and `--accent`.
-- Amber (`--accent`) is reserved for the ONE primary action, the active nav
-  indicator, and the brand mark. Not avatars, not status chips, not ordinary
-  icons. ~95% of any screen is neutral.
+- Amber (`--accent`) is reserved for the main action of an area, unread
+  markers, the current nav position, and the brand mark. A page may have
+  several areas, but a group of sibling buttons has only one amber button. Not
+  avatars, not status chips, not ordinary icons. ~95% of any screen is neutral.
 - Cards get a `--line` border and **no shadow**. `--shadow-1`/`--shadow-2` are
   for menus, dialogs and drawers only — things floating above the page.
 
 If you find yourself writing `:root[data-theme='dark'] .thing { ... }`, stop:
 nine times out of ten the real fix is that `.thing` picked the wrong token.
 
-## Motion: still is the default
+## Motion: it moves only to explain a change
 
 Full rules: [`docs/design-system.md` §9](../../docs/design-system.md#9-动效). The three
 that get written wrong on turn one:
@@ -66,8 +67,8 @@ that get written wrong on turn one:
   lists — a sidebar of dozens of topics, a chat of dozens of messages, a board
   column of a dozen cards. Lift each row 2px under the pointer and what a person
   sees is the column jumping, not which row they are on; the background change
-  already said that. (The community half does lift, in ~33 files. It is the side
-  that has to come off it, not this one.)
+  already said that. The community half still lifts; it is the side that has to
+  change, not this one.
 - **Never `transition: all`** — it drags `width`/`height`/`padding` along, so the
   browser relayouts every frame inside a list, and nobody can tell what the line
   was meant to animate. Name the properties.
@@ -77,9 +78,11 @@ that get written wrong on turn one:
   `@media (prefers-reduced-motion: reduce) { animation: none }` next to it, and
   make sure the thing still says what it meant with the animation off.
 
-Durations are 0.12s (answering the pointer) / 0.2s (appearing, disappearing) /
-0.3s (a whole panel moving in or out). Easing is `ease`; `ease-in-out` for loops;
-`linear` only for genuinely constant motion.
+Durations and easing are tokens in `style.css`: `--dur-press` / `--dur-quick` /
+`--dur-base` / `--dur-slow`, and `--ease-out` for arriving, `--ease-in` for
+leaving, `--ease-standard` for changing in place. Leaving is one step faster
+than arriving. `linear` only for genuinely constant motion. Old literal
+durations and plain `ease` fold to the tokens as you touch them (§9.3).
 
 ## Colours live in two files and must be changed in both
 
@@ -96,16 +99,16 @@ avoid a white flash before first paint. Change the storage key
 ## Scales
 
 - Radius: `--radius-sm` 6 / `--radius-md` 8 / `--radius-lg` 12 / `--radius-pill`
-  999. Nothing else. (The tree currently holds 15 distinct values.)
+  999. Nothing else.
 - Font size: prefer the `.t-page-title` / `.t-title` / `.t-body` / `.t-eyebrow` /
   `.t-meta` utility classes. Hand-written sizes are limited to 12/13/14/15/18/23
-  px, and **13px is the floor for anything readable** — there are 29 sites at
-  10–11px and they are not a precedent to follow.
+  px, and **13px is the floor for anything readable** — the 10–11px sizes
+  already in the tree are not a precedent.
 - Line height: `--lh-12` 18 / `--lh-13` 19 / `--lh-14` 20 / `--lh-15` 21 /
   `--lh-18` 26 / `--lh-23` 33 — one per font size, and the size picks it. The
   utility classes already carry it, so a bare `line-height` in new CSS is almost
-  always the mistake: the tree holds 21 hand-picked values (1.2 → 1.9) and none
-  of them is a ladder. Token, never a ratio.
+  always the mistake: the hand-picked values already in the tree are not a
+  ladder to copy. Token, never a ratio.
 - Spacing: 8px grid (4/8/12/16/24/32). Prefer Vuetify's `pa-*`/`ma-*` utilities.
 
 ## A field's label sits OUTSIDE its box, and that is what collides
@@ -139,16 +142,26 @@ and radii have stylelint; copy has nothing — a badly worded string ships silen
 next section. The words themselves are not.) So the one thing to internalise
 before you type user-facing Chinese:
 
-- **正式、清晰、自然、简明.** Both failure directions are wrong: `平台检查没跑成`
-  (too colloquial) and `平台检查未能顺利完成执行` (公文腔) — write
-  `平台检查未能执行`. Second person is always 「你」, never 「您」.
+- **As short as it can be while the meaning stays whole; formal, neutral, plain.**
+  Both failure directions are wrong: `平台检查没跑成` (too colloquial) and
+  `平台检查未能顺利完成执行` (公文腔) — write `平台检查未能执行`. Second person is
+  always 「你」, never 「您」, and no 「请」: a status says the status (`待你审阅`),
+  an error says what to do (`稍后重试`). Shorter never means dropping what the
+  reader needs: why, what they can do next, whether their input is still there.
+- **One word per concept, fixed in §8.10.** 任务 (never 活), 分身 (never 子 Agent),
+  the project's own name for its AI teammate (never a hard-coded 芝士), and the
+  review flow `待审阅 → 采纳 / 退回` (never 验收 or 卡 on screen).
+- **Errors take two shapes:** `保存失败` (tried, didn't work) or `无法读取这个文件`
+  (can't). Buttons are verbs that say what happens; a confirm dialog's button
+  repeats the action (`移出`), not `确定`. No dashes, no exclamation marks.
 - **No implementation words on screen.** 跑沙箱 / 干活 → 运行任务; system prompt /
   注入 → 角色设定; 算力节点 / 连接器 → 设备; 小队 → 团队; 一页纸总结 → 概要;
   知是基座 → 默认镜像. Test: *would someone opening this product for the first
   time understand the word?* If not, it is jargon. §8.2 carries the running list
   — add to it when you find a new one.
-- **Empty states are always 「暂无 X」**, no trailing period. Short strings
-  (labels, buttons, empty states, single-sentence hints) take no 句号 at all.
+- **Empty states are always 「暂无 X」**, no trailing period, and nothing after
+  it explaining how to make something appear there. Short strings (labels,
+  buttons, empty states, single-sentence hints) take no 句号 at all.
 - **Parentheses never explain internal mechanics.** `理由（会留在卡上）` → `理由`.
   A parenthesis may hold a short qualifier (`名称（英文）`), not a sentence.
 - **Keyboard/drag hints do not live on screen** — move them into `title`, or
@@ -184,7 +197,7 @@ wrong on turn one:
 
 `frontend/stylelint-baseline.json` freezes the pre-existing violations and the
 gate blocks only NEW ones — same mechanism as `tsc-baseline.json`, and for the
-same reason: a rule that goes red on 251 existing sites gets switched off.
+same reason: a rule that goes red on hundreds of existing sites gets switched off.
 
 ```bash
 cd frontend

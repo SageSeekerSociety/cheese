@@ -1,98 +1,87 @@
 <template>
   <div>
-    <AccountHeading :title="t('account.signUp.title')" />
+    <AccountHeading :title="t('account.signUp.title')">
+      {{ t('account.signUp.haveAccount') }}
+      <router-link to="/account/signin" class="account-link">{{ t('account.signUp.signIn') }}</router-link>
+    </AccountHeading>
 
     <v-alert v-if="error" closable type="error" variant="tonal" density="comfortable" class="mb-6">
       {{ error }}
     </v-alert>
 
     <v-form ref="signupForm" @submit.prevent="submit">
-      <v-text-field
-        id="signup-username"
-        v-model="username"
-        name="username"
-        autocomplete="username"
-        :label="t('account.field.username')"
-        v-bind="usernameProps"
-      />
+      <AccountField :label="t('account.field.username')" input-id="signup-username">
+        <v-text-field
+          id="signup-username"
+          v-model="username"
+          name="username"
+          autocomplete="username"
+          v-bind="usernameProps"
+        />
+      </AccountField>
 
-      <v-text-field
-        id="signup-nickname"
-        v-model="nickname"
-        name="nickname"
-        autocomplete="nickname"
-        :label="t('account.field.displayName')"
-        v-bind="nicknameProps"
-      />
+      <AccountField :label="t('account.field.displayName')" input-id="signup-nickname">
+        <v-text-field
+          id="signup-nickname"
+          v-model="nickname"
+          name="nickname"
+          autocomplete="nickname"
+          v-bind="nicknameProps"
+        />
+      </AccountField>
 
-      <v-text-field
-        id="signup-email"
-        v-model="email"
-        name="email"
-        autocomplete="email"
-        :label="t('account.field.email')"
-        type="email"
-        :hint="t('account.rule.emailHint')"
-        persistent-hint
-        v-bind="emailProps"
-        class="mb-2"
-      />
+      <AccountField :label="t('account.field.email')" input-id="signup-email">
+        <v-text-field
+          id="signup-email"
+          v-model="email"
+          name="email"
+          autocomplete="email"
+          type="email"
+          :hint="t('account.rule.emailHint')"
+          persistent-hint
+          v-bind="emailProps"
+        />
+      </AccountField>
 
-      <PasswordField
-        id="signup-password"
-        v-model="password"
-        name="password"
-        autocomplete="new-password"
-        :label="t('account.field.password')"
-        :hint="t('account.rule.passwordHint')"
-        persistent-hint
-        v-bind="passwordProps"
-        class="mb-2"
-      />
+      <AccountField :label="t('account.field.password')" input-id="signup-password">
+        <PasswordField
+          id="signup-password"
+          v-model="password"
+          name="password"
+          autocomplete="new-password"
+          :hint="t('account.rule.passwordHint')"
+          persistent-hint
+          v-bind="passwordProps"
+        />
+      </AccountField>
 
-      <PasswordField
-        id="signup-confirm-password"
-        v-model="confirmPassword"
-        name="confirmPassword"
-        autocomplete="new-password"
-        :label="t('account.field.confirmPassword')"
-        v-bind="confirmPasswordProps"
-      />
+      <AccountField :label="t('account.field.confirmPassword')" input-id="signup-confirm-password">
+        <PasswordField
+          id="signup-confirm-password"
+          v-model="confirmPassword"
+          name="confirmPassword"
+          autocomplete="new-password"
+          v-bind="confirmPasswordProps"
+        />
+      </AccountField>
 
-      <v-text-field
-        v-if="requireInviteCode"
-        v-model="inviteCode"
-        autocomplete="off"
-        :label="t('account.invitationCode')"
-        v-bind="inviteCodeProps"
-      />
+      <AccountField v-if="requireInviteCode" :label="t('account.invitationCode')" input-id="signup-invite-code">
+        <v-text-field id="signup-invite-code" v-model="inviteCode" autocomplete="off" v-bind="inviteCodeProps" />
+      </AccountField>
 
-      <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-6" />
+      <LegalConsent ref="consentRef" :action-label="t('account.agreeAndSignUp')" class="mb-4" />
 
       <v-btn
         block
         color="primary"
         size="large"
         type="submit"
+        class="account-submit"
         :loading="submitting"
         :disabled="!registrationConfigReady"
-        style="text-transform: none; font-weight: 500; height: 48px"
-        class="mb-4"
       >
         {{ t('account.signUp.submit') }}
       </v-btn>
-
-      <p class="text-body-2" style="color: var(--muted)">
-        {{ t('account.signUp.haveAccount') }}
-        <v-btn
-          variant="text"
-          color="primary"
-          to="/account/signin"
-          style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
-          class="text-decoration-none"
-          >{{ t('account.signUp.signIn') }}</v-btn
-        >
-      </p>
     </v-form>
   </div>
 </template>
@@ -106,6 +95,9 @@ import { z } from 'zod'
 
 import { REGEX_PASSWORD, REGEX_USERNAME, vuetifyConfig } from '@/utils/form'
 
+import { attemptMessage } from '../attemptWait'
+
+import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
@@ -200,7 +192,7 @@ const submit = async () => {
 
     router.push('/account/signup/verify-email')
   } catch (e) {
-    error.value = requestErrorMessage(e, t('account.signUp.failed'))
+    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.signUp.failed'))
   } finally {
     submitting.value = false
   }

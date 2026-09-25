@@ -112,6 +112,7 @@ from app.domain.block.models import (
     BlockKind,
     agent_notice,
     consumed_turn,
+    prompted_turn,
 )
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -307,46 +308,16 @@ class _Proposed:
     landed: dict | None
 
 
-# How long a message's spooled flushes may sit incomplete (no final flush, no
-# Stop) before the reconcile stops waiting for the missing one and lands what
-# arrived. Long enough for the device drainer's retry loop to fill a gap;
-# short enough that a mid-message death still surfaces its words.
-_SPOOL_PARTIAL_GRACE_S = 120
-# How long a read event stays on disk before retention drops it. A spool is not
-# only the backfill queue — it is the raw record of what a session emitted, and
-# the first thing anyone reaches for when a block looks wrong. A day is long
-# enough to answer that and short enough that a busy topic's directory stays
-# something a person can list.
-_SPOOL_RETENTION_S = 24 * 3600
-
-
-def _persisted_eids(blocks: list[Block]) -> set[str]:
-    """Event ids already materialized in the topic timeline. A coalesced
-    message block carries every constituent flush id in ``meta.eids``; each
-    one counts, or the flushes after the first would backfill as fragments."""
-    out: set[str] = set()
-    for block in blocks:
-        meta = block.meta if isinstance(block.meta, dict) else None
-        if not meta:
-            continue
-        if isinstance(meta.get("eid"), str):
-            out.add(meta["eid"])
-        eids = meta.get("eids")
-        if isinstance(eids, list):
-            out.update(e for e in eids if isinstance(e, str))
-    return out
-
-
 # 施工现场: render each tool call like a Claude Code action line — a Chinese verb
 # plus a short preview of its most telling argument. Stored in the event block as
 # "verb\npreview" (preview omitted when empty).
 _TOOL_VERB = {
     "update_doc": "更新文档",
-    "remember": "记入记忆",
+    "remember": "记入项目记忆",
     "notify": "发送通知",
-    "request_accept": "递出验收卡",
-    "pin_milestone": "钉里程碑",
-    "write_file": "写文件",
+    "request_accept": "提交审阅",
+    "pin_milestone": "添加里程碑",
+    "write_file": "写入文件",
     "record_decision": "记录决策",
 }
 
@@ -358,20 +329,20 @@ _TOOL_VERB = {
 _TOOL_VERB.update(
     {
         "Bash": "执行命令",
-        "Write": "写文件",
-        "Edit": "改文件",
-        "Read": "读文件",
-        "Glob": "找文件",
-        "Grep": "搜内容",
-        "WebSearch": "搜网页",
-        "WebFetch": "看网页",
-        "Agent": "派分身去查",
-        "Task": "派分身去查",  # older CLI name for Agent
-        "NotebookEdit": "改笔记本",
+        "Write": "写入文件",
+        "Edit": "修改文件",
+        "Read": "读取文件",
+        "Glob": "查找文件",
+        "Grep": "搜索内容",
+        "WebSearch": "搜索网页",
+        "WebFetch": "读取网页",
+        "Agent": "派出分身",
+        "Task": "派出分身",  # older CLI name for Agent
+        "NotebookEdit": "修改笔记本",
         "TodoWrite": "更新任务清单",
-        "BashOutput": "看命令输出",
-        "KillShell": "停掉命令",
-        "KillBash": "停掉命令",
+        "BashOutput": "查看命令输出",
+        "KillShell": "终止命令",
+        "KillBash": "终止命令",
         "ExitPlanMode": "提交方案待确认",
         "AskUserQuestion": "向用户提问",
         "Skill": "调用技能",
@@ -384,12 +355,12 @@ _TOOL_VERB.update(
 _TOOL_VERB.update(
     {
         "bash": "执行命令",
-        "read": "读文件",
-        "write": "写文件",
-        "edit": "改文件",
-        "ls": "列目录",
-        "find": "找文件",
-        "grep": "搜内容",
+        "read": "读取文件",
+        "write": "写入文件",
+        "edit": "修改文件",
+        "ls": "列出目录",
+        "find": "查找文件",
+        "grep": "搜索内容",
     }
 )
 
@@ -485,7 +456,7 @@ def _tool_event_meta(
 
 
 # 分身回吐 (§9 可见性): a subagent reports to whoever spawned it and nothing else,
-# so the room used to see 「派分身去查 X」 and never the answer. Its conclusion
+# so the room used to see 「派出分身 X」 and never the answer. Its conclusion
 # lands as its own 现场 event — CAPPED, because the room is a place people read:
 # a subagent can return thousands of words and pasting them here would bury the
 # conversation instead of informing it. The full text is in the transcript; what
@@ -655,15 +626,16 @@ def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
     return False
 
 
-# A `cheese <sub>` command → the action card 芝士 files for it at the end of the
-# turn (`_ACTION_LABEL`). Only the card: telling the room a panel went stale is
-# the job of the API handler that changed it (`announce_stale`), which knows the
-# change happened whoever called it.
-_CHEESE_RESOURCE = {
-    "decision": "decision",
-    "split": "topics",
-    "milestone": "milestone",
-    "notify": "notify",
+# A platform tool → the action card 芝士 files for it at the end of the turn
+# (`_ACTION_LABEL`). Only the card: telling the room a panel went stale is the
+# job of the API handler that changed it (`announce_stale`), which knows the
+# change happened whoever called it. Keyed by the tool's short name
+# (`mcp__native__cheese_decision` → `cheese_decision`).
+_TOOL_ACTION = {
+    "cheese_decision": "decision",
+    "cheese_task": "topics",
+    "cheese_milestone": "milestone",
+    "cheese_notify": "notify",
 }
 
 
@@ -680,7 +652,7 @@ _CHEESE_RESOURCE = {
 # to them is the same fact told twice, worse.
 _ACTION_LABEL = {
     "decision": "记录了决策",
-    "topics": "更新了这个房间的活",
+    "topics": "更新了这个房间的任务",
     "milestone": "添加了里程碑",
     "notify": "发送了通知",
 }
@@ -853,11 +825,6 @@ def _parse_uuid(raw: str | None) -> uuid.UUID | None:
         return None
 
 
-def _cheese_resource(command: str) -> str | None:
-    """Which action card a Bash `cheese <sub>` command files, else None."""
-    return _CHEESE_RESOURCE.get(cheese_subcommand(command))
-
-
 # Open (non-final) accept-card statuses, worth telling the agent about at turn
 # start — a card in one of these states usually implies "there is follow-up
 # work or a wait the agent should know it's in".
@@ -1011,7 +978,7 @@ _SPECIAL_MENTIONS = frozenset({MENTION_ALL, MENTION_HERE})
 _TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
 
 # A topic created from the rail's + has no human-typed title ("新话题"); 芝士 names
-# it via `cheese title` (titles are AI-generated, never deterministically derived
+# it via `cheese_title` (titles are AI-generated, never deterministically derived
 # from human input or the agent's output — see CLAUDE.md).
 PLACEHOLDER_TITLE = "新话题"
 
@@ -1107,7 +1074,7 @@ def _pending_input_blocks(history: list[Block]) -> list[Block]:
     轮次边界按**归属**划，不按位置划：一条在轮次运行中到达的人类消息，created_at
     排在那轮 AI 回复之前，所以"最后一条 AI 消息之后"这个窗口会把它切掉 —— 而且
     切掉就再也捡不回来了（那个下标只会往前走）。这里改成挑「没被任何一轮盖过
-    consumed 戳」的块，戳由跑完的轮次自己盖上（BlockRepository.mark_consumed）。
+    consumed 戳」的块，戳由干净收尾的轮次盖上（BlockRepository.mark_consumed）。
 
     New inputs carry an explicit ``consumed_turn: null`` marker while pending.
     That presence matters: a newer mid-turn input can be receipted before an
@@ -1128,6 +1095,12 @@ def _pending_input_blocks(history: list[Block]) -> list[Block]:
         and consumed_turn(b) is None
         and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
     ]
+
+
+def _addressed_to(block: Block, handle: str) -> bool:
+    """Is this input for the agent `handle`? One without a recipient is for
+    whichever agent the room resolves to, which the caller passes in."""
+    return (block.meta or {}).get("agent_recipient", {}).get("handle", handle) == handle
 
 
 def _pending_platform_notices(history: list[Block]) -> list[Block]:
@@ -1228,8 +1201,8 @@ def _is_dm(topic: Topic) -> bool:
     自漂移，这次退役的正是漂开了的三十处。推出来的是两件事：
 
     - **这间房没有名册。**私聊不暴露成员列表，`@` 解析不到项目里的第三个人：解
-      析表给 `[]`，`@某某` 原样留在正文里，显示成一条「项目成员里没有这个 handle」
-      的 ⚠️。这一条管的是正文去了哪里，不只是渲染：名册还要往下走进
+      析表给 `[]`，`@某某` 原样留在正文里，显示成一条「项目中没有这个成员」
+      。这一条管的是正文去了哪里，不只是渲染：名册还要往下走进
       `_notify_mentions`，解析到的每个 handle 都会收到一条带正文前 200 字的强提醒。
     - **这一轮不租地点**（`needs_place`，结论 19、不变量 I2）：不碰仓库文件、不
       跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出来。它桌上只有
@@ -1335,11 +1308,6 @@ class ChatService:
         # Strong refs to in-flight background tasks (asyncio only keeps weak
         # refs; without this a pending commit could be GC'd).
         self._background_tasks: set[asyncio.Task] = set()
-        # Debounce + strong refs for background spool settles (attach 收账,
-        # #316): topics with a settle already scheduled, and the tasks running
-        # them so they can't be GC'd mid-drain.
-        self._settle_pending: set[uuid.UUID] = set()
-        self._settle_tasks: set[asyncio.Task] = set()
 
     @property
     def session_factory(self) -> async_sessionmaker:
@@ -1908,6 +1876,10 @@ class ChatService:
                     )
                 return
 
+    def session_controls(self, topic_id: uuid.UUID):
+        """The runtime whose live session in this room takes controls, if any."""
+        return self._compute.session_controls(topic_id)
+
     async def recover_native_tools(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> bool:
@@ -2160,38 +2132,6 @@ class ChatService:
         async with self._sessions() as session:
             return await BlockRepository(session).ai_turn_ids(turn_ids)
 
-    async def settle_spool(self, topic_id: uuid.UUID) -> int:
-        """Drain the topic's hook spool NOW, with no turn required. Returns how
-        many blocks were landed (each is also broadcast on the topic channel).
-
-        The reconcile normally runs at the next turn's start — which is exactly
-        never for an orphan the sweep attaches to instead of re-prompting
-        (#316): the events the surviving claude keeps sending (its Stop
-        included) would sit parked until a human happened to speak. This is
-        that missing drain: the same `_reconcile_spool`, under the same topic
-        lock so it can never race a turn's own reconcile, frames published to
-        the broker so open clients see the backfill live."""
-        async with self._sessions() as session:
-            topic = await TopicRepository(session).get(topic_id)
-            if topic is None:
-                return 0
-            # 这间房的轮次跑在哪个骨架上（结论 28）——读 spool 的那个 ref 得和轮次
-            # 用的是同一个答案，不然读的是另一个骨架的日志。
-            project = await ProjectRepository(session).get(topic.project_id)
-        harness = harness_for(project.settings if project else None)
-        from app.domain.agent.runtime import get_broker
-
-        broker = get_broker()
-        channel = str(topic_id)
-        landed = 0
-        async with self._lock_for(topic_id):
-            async for frame in self._reconcile_spool(
-                topic.project_id, topic_id, None, harness=harness
-            ):
-                await broker.publish(channel, frame)
-                landed += 1
-        return landed
-
     async def recover_sessions(self, device_id: str | None = None) -> int:
         """Listen again to sessions that outlived this process, and land what
         they said while nobody was.
@@ -2205,6 +2145,15 @@ class ChatService:
         unique = {session.topic_id: session for session in sessions}
         for session in unique.values():
             try:
+                # A turn still running there was fed by a process that is gone,
+                # and its result lands here. Without its bookkeeping that result
+                # closes nothing: the batch it answered is never stamped
+                # consumed, and the next turn sends it again.
+                work = self._compute.work_in_flight(session.topic_id)
+                if work is not None and (session.topic_id, work) not in self._hook_work:
+                    await self._begin_self_started_turn(
+                        session.project_id, session.topic_id, work, opened=True
+                    )
                 # What the room already shows, so a message the live path DID
                 # persist before this process died is not landed twice. The room
                 # is ours; which of the harness's own records are still unlanded
@@ -2245,39 +2194,6 @@ class ChatService:
             and (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
         }
 
-    def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
-        """Debounced background ``settle_spool``. Called after a live turn ends,
-        so idle time can advance its replay cursor; by the hooks
-        endpoint when an event arrives with no turn listening — nothing will
-        read what it just wrote until something goes looking, so a working
-        claude's progress (and its Stop) lands within seconds instead of waiting
-        for the next summon — and the orphan sweep when it attaches to an
-        interrupted turn, so anything already waiting lands now."""
-        if topic_id in self._settle_pending:
-            return
-        self._settle_pending.add(topic_id)
-
-        async def _later() -> None:
-            try:
-                await asyncio.sleep(delay_s)
-                # Cleared BEFORE the drain: a hook parked mid-settle must be
-                # able to schedule the next round rather than being missed.
-                self._settle_pending.discard(topic_id)
-                landed = await self.settle_spool(topic_id)
-                if landed:
-                    logger.info(
-                        "spool settle landed %d block(s) for topic %s",
-                        landed,
-                        topic_id,
-                    )
-            except Exception:  # noqa: BLE001 — a settle must never crash the loop
-                self._settle_pending.discard(topic_id)
-                logger.exception("spool settle failed for topic %s", topic_id)
-
-        task = asyncio.create_task(_later())
-        self._settle_tasks.add(task)
-        task.add_done_callback(self._settle_tasks.discard)
-
     async def _save_session_pointer(
         self,
         topic_id: uuid.UUID,
@@ -2300,20 +2216,27 @@ class ChatService:
             async with self._sessions() as session:
                 place = await PlaceResolver(session).resolve(topic_id)
                 if place is not None:
-                    # New event streams carry their original owner. Legacy
-                    # hooks still require resolving the room's current agent.
-                    if agent_handle is None or harness is None:
-                        agent = await self._agent_at(session, place)
-                        agent_handle = agent_handle or agent.handle
-                        # 事件没说骨架（老的 hook 流），就问这个项目跑的是哪
-                        # 个——同一个答法，和开这一轮用的那一个（结论 28）。
-                        owner = await ProjectRepository(session).get(place.project_id)
-                        harness = harness or harness_for(
-                            owner.settings if owner else None
+                    # An event names who ACTED: the seat its session authors
+                    # under. The pointer is keyed by the agent that seat
+                    # belongs to, the key the next turn reads it back under
+                    # (the resume lookup in `_assemble_turn`); written under
+                    # the seat, it is never found and every cold start opens
+                    # a new conversation. A room-derived seat, the shared one
+                    # and an event that names nobody are the room's agent.
+                    owner = await ProjectRepository(session).get(place.project_id)
+                    agent = (
+                        await AgentInstanceService(session).for_seat_handle(
+                            owner, agent_handle
                         )
+                        if owner is not None
+                        else None
+                    ) or await self._agent_at(session, place)
+                    # 事件没说骨架，就问这个项目跑的是哪个——同一个答法，和开
+                    # 这一轮用的那一个（结论 28）。
+                    harness = harness or harness_for(owner.settings if owner else None)
                     await AgentSessionService(session).remember(
                         topic_id=place.room_id,
-                        agent_handle=agent_handle,
+                        agent_handle=agent.handle,
                         resume_token=session_id,
                         harness=harness,
                     )
@@ -2408,7 +2331,12 @@ class ChatService:
         return task.id if task is not None else None
 
     async def _begin_self_started_turn(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        *,
+        opened: bool = False,
     ) -> "_HookWorkState | None":
         """Give a turn the session started for itself the context to end like
         any other: an interval a sweep can find, and everything its Stop needs.
@@ -2430,6 +2358,10 @@ class ChatService:
         this turn. A message that merges into it mid-flight is stamped consumed
         by its own receipt (`confirm_prompt_receipt`), not from here.
 
+        ``opened`` is a turn whose interval already exists: one a previous
+        process of ours fed and delivered, which outlived it and is found again
+        by recovery. It gets the same context, and no second row.
+
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
@@ -2448,9 +2380,10 @@ class ChatService:
                 agent = await agents.for_topic(topic, project)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
-            await get_work_runner().open_turn_the_session_started(
-                self, topic_id, turn_id, author=acting_agent
-            )
+            if not opened:
+                await get_work_runner().open_turn_the_session_started(
+                    self, topic_id, turn_id, author=acting_agent
+                )
         except Exception:  # noqa: BLE001 — the event matters more than the row
             logger.exception(
                 "could not open the turn a session started for itself "
@@ -2482,7 +2415,7 @@ class ChatService:
             known_commits=asyncio.ensure_future(
                 self._known_commits(project_id, topic_id)
             ),
-            self_started=True,
+            self_started=not opened,
         )
         self._hook_work[(topic_id, turn_id)] = state
         return state
@@ -2603,8 +2536,8 @@ class ChatService:
                     frame = {"type": "event_block", "block": payload}
                     if state is not None and event.call_id:
                         state.steps[event.call_id] = uuid.UUID(payload["id"])
-                if name in SHELL_TOOLS and state is not None:
-                    resource = _cheese_resource(str(args.get("command", "")))
+                if state is not None:
+                    resource = _TOOL_ACTION.get(name)
                     if resource is not None and resource not in state.actions:
                         state.actions.append(resource)
         elif isinstance(event, AgentStepFailed):
@@ -2729,6 +2662,8 @@ class ChatService:
                         # No coroutine owns this one, so there is no `finally`
                         # anywhere else to drop the marks it left in the runner.
                         get_work_runner().close_turn_the_session_started(turn_id)
+            elif event.is_error:
+                await self._forget_room_claims(topic_id)
             if event.is_error:
                 frame_out = {
                     "type": "error",
@@ -2739,7 +2674,54 @@ class ChatService:
                     frame_out["code"] = error_code
                 await broker.publish(str(topic_id), frame_out)
             await broker.publish(str(topic_id), {"type": "done"})
-            self.schedule_spool_settle(topic_id)
+
+    async def _delivered_unread(
+        self, session: AsyncSession, state: _HookWorkState
+    ) -> list[uuid.UUID]:
+        """This agent's inputs that a delivered prompt carried and no Stop has
+        stamped yet.
+
+        A clean Stop means the session got through every prompt written into it,
+        so these are read — whichever turn fed them. `state.pending_ids` cannot
+        answer that alone: it lives in this process, and a backend replaced
+        mid-turn hands the session's Stop to a process that never saw the
+        prompt, so the batch went unstamped and every later turn re-sent it.
+        Undelivered prompts stay out: the session never heard them.
+        """
+        from app.domain.agent.repositories import AgentTurnRepository
+
+        handle = state.agent_instance_handle
+        if handle is None:
+            return []
+        history = await BlockRepository(session).turn_history(state.topic_id)
+        fed = {
+            block.id: turn
+            for block in _pending_input_blocks(history)
+            if (turn := prompted_turn(block)) is not None
+            and _addressed_to(block, handle)
+        }
+        delivered = await AgentTurnRepository(session).delivered(set(fed.values()))
+        return [block_id for block_id, turn in fed.items() if turn in delivered]
+
+    async def _forget_room_claims(self, topic_id: uuid.UUID) -> None:
+        """A session failed and this process holds no turn for it — the
+        backend was replaced before the session produced anything here. Which
+        agent's batch it was is unknown, so every delivered claim in the room
+        is withdrawn: the cost is a replay, never a lost message."""
+        try:
+            async with self._sessions() as session:
+                blocks = BlockRepository(session)
+                history = await blocks.turn_history(topic_id)
+                await blocks.forget_prompted_turn(
+                    [
+                        block.id
+                        for block in _pending_input_blocks(history)
+                        if prompted_turn(block) is not None
+                    ]
+                )
+                await session.commit()
+        except Exception:  # noqa: BLE001 — the failure notice matters more
+            logger.exception("could not withdraw delivered claims (topic=%s)", topic_id)
 
     async def _close_hook_work(
         self, state: _HookWorkState, result: AgentResult
@@ -2816,7 +2798,7 @@ class ChatService:
                     task_id=landed.task_id,
                     author=state.acting_agent,
                     author_type=AuthorType.platform,
-                    content=f"芝士 {_ACTION_LABEL[resource]}",
+                    content=f"<@{state.acting_agent}> {_ACTION_LABEL[resource]}",
                     kind=BlockKind.event,
                     turn_id=state.work_id,
                     meta={"platform": True, "action": resource},
@@ -2827,8 +2809,17 @@ class ChatService:
                         "block": _block_payload(BlockOut.model_validate(block)),
                     }
                 )
+            # What this session was fed, including by a process that is gone.
+            # Settled either way: a failed session must also drop the batches
+            # an earlier process fed it, or a later clean Stop would read them
+            # as heard — and a self-started turn's own set is always empty.
+            fed = list(
+                state.pending_ids | set(await self._delivered_unread(session, state))
+            )
             if not result.is_error:
-                await blocks.mark_consumed(list(state.pending_ids), state.work_id)
+                await blocks.mark_consumed(fed, state.work_id)
+            else:
+                await blocks.forget_prompted_turn(fed)
             await session.commit()
 
         changeset = await self._turn_changeset(
@@ -3323,7 +3314,6 @@ class ChatService:
         topic_refs: list[dict],
         eid: str | None = None,
         eids: tuple[str, ...] = (),
-        backfilled: bool = False,
         platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
         at: datetime | None = None,
@@ -3336,10 +3326,10 @@ class ChatService:
         """Persist output immediately; only explicit publications enter chat.
 
         Terminal output remains in activity without notifying mentioned members.
-        ``eid`` (hooks path) is stamped into meta so the spool reconcile can
-        dedup a backfilled copy against this live one; ``eids`` carries every
-        constituent flush id of a coalesced message, and any one of them
-        matching an existing block means this message already landed.
+        ``eid`` (the harness's own id for the event) is stamped into meta so a
+        record read twice lands once; ``eids`` carries every id a message was
+        delivered under, and any one of them matching an existing block means
+        this message already landed.
 
         Returns None when ``continuation_id`` says this exact message already
         landed in an earlier attempt at the same work (④ 重发): the re-sent
@@ -3351,8 +3341,8 @@ class ChatService:
         答得出这件事。填它的是那种平台填不出轮次号的写入端（远程控制里芝士问出
         口的那句话）。"""
         # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
-        # 当成助手输出印了出来。拦在这里而不是调用方:活路径、补投、spool 回填
-        # 三条路都经过这个方法,拦在门口才不会有一条漏网。
+        # 当成助手输出印了出来。拦在这里而不是调用方:每一条写入路都经过这个方法,
+        # 拦在门口才不会有一条漏网。
         as_progress = not publish
         as_notice = None if publish else _cli_notice(text)
         if as_notice is not None:
@@ -3364,7 +3354,6 @@ class ChatService:
                 meta=notice_meta,
                 turn_id=turn_id,
                 eid=eid,
-                backfilled=backfilled,
                 platform_unsolicited=platform_unsolicited,
                 in_room=True,
                 author_type=AuthorType.platform,
@@ -3377,8 +3366,6 @@ class ChatService:
             meta = {**(meta or {}), "eid": eid}
         if len(eids) > 1:
             meta = {**(meta or {}), "eids": list(eids)}
-        if backfilled:
-            meta = {**(meta or {}), "backfilled": True}
         if platform_unsolicited:
             meta = {**(meta or {}), "platform_unsolicited": True}
         known_ids = [e for e in dict.fromkeys((eid, *eids)) if e]
@@ -3482,7 +3469,7 @@ class ChatService:
                 if refs:
                     block.refs = refs
                 for bad in unresolved:
-                    warn = f"⚠️ @了 <@{bad}>，项目成员里没有这个 handle，没能通知到"
+                    warn = f"未能通知 <@{bad}>：项目中没有这个成员"
                     # Beside the message it is about, not in the room the
                     # message did not go to — same landing as the message.
                     await blocks.add(
@@ -3548,17 +3535,15 @@ class ChatService:
         platform: bool,
         turn_id: uuid.UUID | None,
         eid: str | None = None,
-        backfilled: bool = False,
         platform_unsolicited: bool = False,
         task_id: uuid.UUID | None = None,
     ) -> dict | None:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
         a mid-turn restart/crash never loses the 现场 timeline already produced.
-        ``eid`` (the hook forwarder's event id) is stamped into meta so the durable
-        spool reconcile can dedup a backfilled copy against this live one. Returns
-        the persisted block payload so a caller (live path or spool reconcile) can
-        broadcast it as a WS frame."""
+        ``eid`` (the harness's own id for the event) is stamped into meta so a
+        record read twice lands once. Returns the persisted block payload so the
+        caller can broadcast it as a WS frame."""
         preview = tool_preview(
             name, tool_input, work_dir=work_subpath(project_id, topic_id)
         )
@@ -3574,7 +3559,6 @@ class ChatService:
             ),
             turn_id=turn_id,
             eid=eid,
-            backfilled=backfilled,
             platform_unsolicited=platform_unsolicited,
             task_id=task_id,
         )
@@ -3597,7 +3581,6 @@ class ChatService:
         meta: dict,
         turn_id: uuid.UUID | None,
         eid: str | None = None,
-        backfilled: bool = False,
         platform_unsolicited: bool = False,
         in_room: bool = False,
         author_type: AuthorType = AuthorType.participant,
@@ -3624,8 +3607,6 @@ class ChatService:
         meta = {**meta, "in_room": in_room}
         if eid:
             meta = {**meta, "eid": eid}
-        if backfilled:
-            meta = {**meta, "backfilled": True}
         if platform_unsolicited:
             meta = {**meta, "platform_unsolicited": True}
         async with self._sessions() as session:
@@ -3664,7 +3645,6 @@ class ChatService:
         event: AgentToolResult,
         turn_id: uuid.UUID | None,
         eid: str | None = None,
-        backfilled: bool = False,
         platform_unsolicited: bool = False,
         task_id: uuid.UUID | None = None,
     ) -> dict | None:
@@ -3676,7 +3656,6 @@ class ChatService:
             meta=_subagent_result_meta(event.name, event.description, event.text),
             turn_id=turn_id,
             eid=eid or event.eid,
-            backfilled=backfilled,
             platform_unsolicited=platform_unsolicited,
             task_id=task_id,
         )
@@ -3912,327 +3891,6 @@ class ChatService:
             author_type=AuthorType.platform,  # 平台自己数出来的，不是芝士说的
         )
 
-    async def _reconcile_spool(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID | None,
-        *,
-        harness: str,
-    ) -> AsyncIterator[dict]:
-        """Land what a session said while nobody was listening (backend down, or
-        no listener during a prior turn) — idempotent by event id, best-effort,
-        and never blocking the turn.
-
-        ``harness`` is the one this room's turns run on, resolved by the caller
-        — the ref that reads the spool carries the same answer the turn used,
-        rather than asking again and possibly getting a different one. Nothing
-        downstream reads it today: the spool is addressed by (project, topic)
-        in ``hooks_substrate.read_log``/``acknowledge_log``, and no ``backlog``
-        implementation looks at it — so a spool is NOT partitioned by harness.
-        It is required because ``SessionRef`` has no default harness (不变量
-        I5) and every construction point must be able to state its answer.
-
-        The harness's ``backlog`` says WHAT was said; this decides what to do
-        about it. Scope: 现场 tool events, 芝士 chat messages, and the turn-ending
-        result — a copy the live path already persisted is skipped by id.
-        Backfilled messages skip mention-notify (the moment passed) but DO yield
-        a WS frame like the live path: something that missed its turn's listening
-        window must still reach the frontend, just without threading or an
-        @-notify (bug: it was landing as a silent DB row nobody saw).
-
-        The result is what lets an ORPHANED turn finish (#316): a backend restart
-        kills the waiter, not the working agent, and the sweep no longer
-        re-prompts one that heard the task — so its ending arrives with no turn
-        listening, gets parked, and has to close the books from here: save the
-        finished session's pointer, and land its final message unless a message
-        (live or in this same pass) already carries that text — the ending
-        normally echoes the last one.
-
-        Whether a message is whole is the harness's call, not ours: ``assemble``
-        answers with nothing until it is, ``unfinished`` names what is still
-        missing a piece — and the cursor must stop before those, so the pass that
-        completes them still sees what they are made of. ``give_up`` is for the
-        session that died mid-sentence: what arrived lands joined rather than
-        being lost."""
-        started = time.monotonic()
-        phases_ms: dict[str, float] = {}
-        event_count = 0
-        try:
-            session_ref = SessionRef(project_id, topic_id, harness=harness)
-            backlog = await asyncio.to_thread(self._compute.backlog, session_ref)
-            spooled = backlog.unread()
-            event_count = len(spooled)
-            phases_ms["read"] = (time.monotonic() - started) * 1000
-            if not spooled:
-                return
-            # Dedup against everything the live path already persisted (this +
-            # prior turns): event-ids stamped on this topic's blocks (any kind).
-            async with self._sessions() as session:
-                blocks = await BlockRepository(session).list_for_topic(topic_id)
-                topic = await TopicRepository(session).get(topic_id)
-                # The roster/topic table that STORED content was canonicalized
-                # with. Loaded here because the text dedup below has to compare
-                # like for like — see `_canon`.
-                roster = (
-                    []
-                    if topic is None or _is_dm(topic)
-                    else await roster_rows(session, project_id)
-                )
-                topic_refs, _ = _topic_ref_lists(
-                    await TopicRepository(session).list_for_project(project_id),
-                    exclude_id=topic_id,
-                )
-            phases_ms["history"] = (time.monotonic() - started) * 1000
-            seen = _persisted_eids(blocks)
-
-            def _canon(text: str) -> str:
-                """Stored form of a raw hook text.
-
-                Every persist path runs `_expand_mention_names` on the way in, so
-                a stored block holds `<@handle>` where the hook payload still
-                holds `@名字`. Comparing the two forms directly is why a message
-                that mentions ANYONE defeated the dedup below and landed twice.
-                """
-                return _expand_mention_names(text, roster, topic_refs).strip()
-
-            # Text-level dedup for the Stop's final message (it has its OWN eid,
-            # so eid dedup can never match it against the MessageDisplay twin).
-            known_texts = {
-                (b.content or "").strip()
-                for b in blocks
-                if looks_like_agent_handle(b.author)
-                and (b.kind == BlockKind.message or (b.meta or {}).get("progress"))
-            }
-            recovered = 0
-
-            async def _land_message(
-                message: AgentMessage, fallback_eid: str
-            ) -> dict | None:
-                # A chat message whose live delivery was lost — land it as
-                # history (no reply threading, no notify: the moment passed)
-                # but still broadcast it, exactly like the live path does.
-                #
-                # Unless the room already has it. A turn whose own
-                # MessageDisplay went to the spool instead of arriving live
-                # ends with a Stop that echoes the same words, and that echo is
-                # posted as an eid-less fallback — so the spooled copy would
-                # land beside it as a twin nobody can tell apart. eid dedup
-                # cannot see it (the fallback carries the Stop's id, or none at
-                # all), which is why this compares the words. Traced from
-                # production: 46 messages, exactly one with empty meta, sitting
-                # next to a backfilled duplicate of itself.
-                if (
-                    not message.complete_identity
-                    and _canon(message.text) in known_texts
-                ):
-                    seen.add(fallback_eid)
-                    seen.update(message.eids)
-                    return None
-                block_payload = await self._persist_assistant_message(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    text=message.text,
-                    turn_id=turn_id,
-                    reply_to=None,
-                    roster=roster,
-                    topic_refs=topic_refs,
-                    eid=message.eid or fallback_eid,
-                    eids=message.eids,
-                    backfilled=True,
-                    at=message.at,
-                    author=message.agent_handle,
-                    task_id=await self._work_of_worker(topic_id, message.thread_label),
-                )
-                seen.add(fallback_eid)
-                seen.update(message.eids)
-                known_texts.add(_canon(message.text))
-                return block_payload
-
-            for spooled_event in spooled:
-                eid = spooled_event.eid
-                if eid in seen:
-                    continue
-                events = backlog.assemble(spooled_event)
-                if events and isinstance(events[-1], AgentResult):
-                    # A Stop first drains still-buffered flushes. A drained
-                    # partial that is a PREFIX of the Stop's text is the same
-                    # message minus its lost tail — skip the fragment and let
-                    # the Stop's whole copy land, carrying the fragment's
-                    # flush ids so a redelivered flush still matches.
-                    result = events[-1]
-                    stop_text = (result.text or "").strip()
-                    carried: list[str] = []
-                    for partial in events[:-1]:
-                        if not isinstance(partial, AgentMessage):
-                            continue
-                        if stop_text.startswith(partial.text.strip()):
-                            carried.extend(partial.eids)
-                            continue
-                        block_payload = await _land_message(partial, eid)
-                        if block_payload is not None:
-                            recovered += 1
-                            yield {"type": "event_block", "block": block_payload}
-                    if result.session_id:
-                        # The finished session is what the next summon must
-                        # resume — without this the topic keeps pointing at
-                        # whatever SessionStart last managed to save live.
-                        await self._save_session_pointer(
-                            topic_id,
-                            result.session_id,
-                            agent_handle=result.agent_handle,
-                            harness=result.harness,
-                        )
-                    # `stop_text` stays RAW above (the prefix test matches it
-                    # against raw flush text); the dedup compares stored forms.
-                    if not stop_text or _canon(result.text or "") in known_texts:
-                        seen.add(eid)
-                        seen.update(carried)
-                        continue
-                    block_payload = await self._persist_assistant_message(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        text=result.text,
-                        turn_id=turn_id,
-                        reply_to=None,
-                        roster=roster,
-                        topic_refs=topic_refs,
-                        eid=eid,
-                        eids=tuple(dict.fromkeys((*carried, eid))),
-                        backfilled=True,
-                    )
-                    seen.add(eid)
-                    seen.update(carried)
-                    known_texts.add(_canon(stop_text))
-                    if block_payload is None:
-                        continue
-                    recovered += 1
-                    yield {"type": "event_block", "block": block_payload}
-                    continue
-                for event in events:
-                    if isinstance(event, AgentMessage):
-                        block_payload = await _land_message(event, eid)
-                        if block_payload is None:
-                            continue
-                        recovered += 1
-                        yield {"type": "event_block", "block": block_payload}
-                        continue
-                    if isinstance(event, AgentSubagentStart | AgentSubagentStop):
-                        # A worker's closing message reaches the platform exactly
-                        # once, in the Stop that carries it — its own transcript
-                        # dies with the container. So a lost delivery here is the
-                        # answer itself going missing, not a redraw.
-                        block_payload = await self._persist_worker_event(
-                            project_id=project_id,
-                            topic_id=topic_id,
-                            event=event,
-                            task_id=await self._work_of_worker(
-                                topic_id, event.thread_label
-                            ),
-                            turn_id=turn_id,
-                            eid=eid,
-                        )
-                        seen.add(eid)
-                        if block_payload is None:
-                            continue
-                        recovered += 1
-                        yield {"type": "event_block", "block": block_payload}
-                        continue
-                    if isinstance(event, AgentToolResult):
-                        # A subagent's conclusion whose live delivery was lost. Worth
-                        # backfilling for the same reason it is worth showing at all:
-                        # without it the timeline keeps the question and loses the
-                        # answer, and 现场 history is what a late reader reads.
-                        block_payload = await self._persist_subagent_result(
-                            project_id=project_id,
-                            topic_id=topic_id,
-                            event=event,
-                            turn_id=turn_id,
-                            eid=eid,
-                            backfilled=True,
-                            task_id=await self._work_of_worker(
-                                topic_id, event.thread_label
-                            ),
-                        )
-                        seen.add(eid)
-                        if block_payload is None:
-                            continue
-                        recovered += 1
-                        yield {"type": "event_block", "block": block_payload}
-                        continue
-                    if not isinstance(event, AgentToolUse):
-                        continue  # SessionStart has no historical counterpart
-                    name = _short_tool_name(event.name)
-                    if name in _TASK_TOOLS:
-                        continue  # task todos are process state, not persisted 现场
-                    args = event.input or {}
-                    block_payload = await self._persist_tool_event(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        name=name,
-                        tool_input=args,
-                        platform=_is_platform_tool(event.name, args),
-                        turn_id=turn_id,
-                        eid=eid,
-                        backfilled=True,
-                        task_id=await self._work_of_worker(
-                            topic_id, event.thread_label
-                        ),
-                    )
-                    seen.add(eid)
-                    if block_payload is None:
-                        continue
-                    recovered += 1
-                    yield {"type": "event_block", "block": block_payload}
-            pending = backlog.unfinished()
-            if pending:
-                newest = min(
-                    (event.age_s for event in spooled if event.eid in pending),
-                    default=0.0,
-                )
-                if newest > _SPOOL_PARTIAL_GRACE_S:
-                    # No Stop and nothing new for a while: the message will
-                    # never complete (the screen died mid-message). Land what
-                    # arrived, joined, rather than lose it.
-                    for partial in backlog.give_up():
-                        block_payload = await _land_message(partial, partial.eid or "")
-                        if block_payload is not None:
-                            recovered += 1
-                            yield {"type": "event_block", "block": block_payload}
-                    pending = set()
-            phases_ms["replay"] = (time.monotonic() - started) * 1000
-            # Reading is not consuming: the cursor moves over the events that
-            # reached the timeline, and retention — not this pass — is what
-            # eventually deletes them. It stops at the first still-buffered
-            # flush rather than stepping over it, so the pass that completes
-            # that message still sees the flushes it is made of.
-            for event in spooled:
-                if event.eid in pending:
-                    break
-                backlog.landed(through=event.key)
-            phases_ms["cursor"] = (time.monotonic() - started) * 1000
-            # Retention scans the whole on-disk log, even for one new event.
-            await asyncio.to_thread(backlog.forget, older_than_s=_SPOOL_RETENTION_S)
-            phases_ms["retention"] = (time.monotonic() - started) * 1000
-            if recovered:
-                logger.info(
-                    "reconciled %d spooled 现场 event(s) for topic %s",
-                    recovered,
-                    topic_id,
-                )
-        except Exception:  # noqa: BLE001 — reconcile is best-effort, never fail a turn
-            logger.exception("spool reconcile failed for topic %s", topic_id)
-        finally:
-            logger.info(
-                "spool_reconcile_timing topic=%s turn=%s events=%d "
-                "elapsed_ms=%.3f phases_ms=%s",
-                topic_id,
-                turn_id,
-                event_count,
-                (time.monotonic() - started) * 1000,
-                phases_ms,
-            )
-
     async def _pass_policy_gate(
         self,
         session: AsyncSession,
@@ -4386,13 +4044,6 @@ class ChatService:
                     sort_keys=True,
                 )
                 + ":explicit-chat-v4-native-model-choice"
-                # A room already holding a screen keeps the argv it was started
-                # with, and nothing here compares argv — so a launch flag that
-                # changes is a change no live room adopts and nothing reports.
-                # Delete this line once the launch contract carries argv: the
-                # gate will then notice on its own, and a hand-bumped string
-                # that has to be remembered is exactly what it replaces.
-                + ":pi-extension-v1"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
@@ -4804,14 +4455,7 @@ class ChatService:
                         instance_id=uuid.UUID(recipient["instance_id"]),
                     )
                 )
-            pending = [
-                block
-                for block in pending
-                if (block.meta or {})
-                .get("agent_recipient", {})
-                .get("handle", agent.handle)
-                == agent.handle
-            ]
+            pending = [block for block in pending if _addressed_to(block, agent.handle)]
             pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
                 # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
@@ -5166,7 +4810,7 @@ class ChatService:
             # "this one batch keeps failing" look identical, and the second one
             # is the diagnosis. Counting at prompt-build time is the only place
             # that sees a failed attempt at all.
-            replay_n = await blocks.bump_prompt_attempts(pending_ids)
+            replay_n = await blocks.bump_prompt_attempts(pending_ids, turn_id)
             # Committed HERE and not left to ride the conditional commit further
             # down: that one only fires on a topic's FIRST turn (compute_profile
             # still None), so on every later turn this session closes without a
@@ -5174,8 +4818,8 @@ class ChatService:
             # failure mode this counter exists to expose.
             await session.commit()
             replay_notice = _replay_notice(replay_n, pending)
-            # turn 活跃度检测: the device channel runs hooks_substrate's two-layer
-            # idle-suspect + hard-ceiling loop and manages its own inner ceiling
+            # turn 活跃度检测: a driven runtime judges liveness itself
+            # (docs/agent-liveness.md) and holds its own inner ceiling
             # (which can be hours), so the outer wall-clock wrap (runtime.py) must
             # be told the REAL ceiling via a `turn_ceiling` frame instead of
             # killing the turn at the generic `agent_turn_timeout_s`. Without this
@@ -5356,7 +5000,7 @@ class ChatService:
         )
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
-        # In a private chat, `cheese remember` targets the owner's personal memory
+        # In a private chat, `cheese_remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(
             project_id,
@@ -5406,22 +5050,6 @@ class ChatService:
             )
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
-
-        # Backfill any 现场 events the live hook path missed (backend down / no
-        # listener during a prior turn) from the durable spool WAL — idempotent by
-        # event-id. No-op for an empty spool.
-        async for frame in self._reconcile_spool(
-            project_id, topic_id, turn_id, harness=prepared.harness
-        ):
-            yield frame
-        logger.info(
-            "chat_preparation_timing topic=%s turn=%s phase=spool_reconciled "
-            "elapsed_ms=%.3f unix_ms=%.3f",
-            topic_id,
-            turn_id,
-            (time.monotonic() - preparation_started) * 1000,
-            time.time() * 1000,
-        )
 
         # The turn's own checklist starts EMPTY even when prior_progress is not
         # (see `_HookWorkState.todo`): _apply_task_event numbers items by
@@ -5653,9 +5281,9 @@ class ChatService:
         )
         prompt = (
             "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
-            "用 cheese 把 做了什么/定了什么/谁负责/下一步 设为本话题实况文档；"
-            "如果这是个关键节点就用 cheese 钉成里程碑；"
-            "需要分派的待办用 cheese 通知到人。\n\n---\n" + text
+            "用 cheese_doc_set 把 做了什么/定了什么/谁负责/下一步 设为本话题实况文档；"
+            "如果这是个关键节点就用 cheese_milestone 钉成里程碑；"
+            "需要分派的待办用 cheese_notify 通知到人。\n\n---\n" + text
         )
         provider = self._compute.platform_work(compute_id)
         runtime = runtime_for(provider)
@@ -5766,7 +5394,7 @@ class ChatService:
         prompt = (
             "现在做一次定期巡检。下面是项目当前状态。请：先在回复里写下你的巡检"
             "判断和理由（决策日志：看了什么、该催谁/该拆什么/有什么风险），"
-            "然后只对真正需要的事用 cheese 发分级通知（level=silent/light/"
+            "然后只对真正需要的事用 cheese_notify 发分级通知（level=silent/light/"
             "strong，kind=heartbeat），别骚扰。\n\n" + context
         )
         provider = self._compute.platform_work(compute_id)
@@ -5854,7 +5482,7 @@ class ChatService:
                 fit_doc_to_budget(
                     overview_doc.strip(),
                     OVERVIEW_DOC_CHAR_BUDGET,
-                    full_read_hint="在项目根话题里运行 `cheese doc get` 读全文",
+                    full_read_hint="在项目根话题里调 `cheese_doc_get` 读全文",
                 )
                 if overview_doc.strip()
                 else "（暂无）"

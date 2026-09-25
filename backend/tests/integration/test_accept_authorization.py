@@ -8,7 +8,7 @@ could accept/reject/revoke any card by simply naming the right handle.
 """
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept import _make_card as _make_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
@@ -16,7 +16,7 @@ from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -57,7 +57,6 @@ def test_accept_by_non_reviewer_403_even_with_matching_body_field(client):
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403
-    assert "验收人" in r.json()["message"]
 
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "pending"

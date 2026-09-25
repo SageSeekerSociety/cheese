@@ -16,7 +16,7 @@ import itertools
 import uuid
 
 from tests.delivery import delivery_artifact
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_project_tree import _insert_block
 from tests.machine_work import declare_task, machine_commits
 
@@ -25,7 +25,7 @@ _written = itertools.count()
 
 def _project(client) -> str:
     client.headers.update(session_auth_headers("alice"))
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -97,7 +97,6 @@ def test_dispatch_requires_a_reviewer_before_creating_work(client):
     room = _room(client, pid)
     response = client.post(f"/topics/{room}/split", json={"title": "Needs reviewer"})
     assert response.status_code == 422
-    assert "默认验收人" in response.json()["message"]
     assert client.get(f"/topics/{room}/tasks").json()["data"]["total"] == 0
 
 

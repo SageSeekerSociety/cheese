@@ -3,7 +3,7 @@
 export const NOTIF_KIND: Record<string, string> = {
   decision_request: '决策请求',
   change_alert: '变更提醒',
-  accept_request: '验收卡',
+  accept_request: '审阅',
   heartbeat: '巡检',
 }
 
@@ -25,12 +25,6 @@ export const TOPIC_KIND: Record<string, string> = {
 export const AI_MODE: Record<string, string> = {
   collaborative: '协作',
   autonomous: '自主',
-}
-
-export const PROJECT_ROLE: Record<string, string> = {
-  lead: '组长',
-  member: '成员',
-  mentor: '导师',
 }
 
 export function label(map: Record<string, string>, key: string | null | undefined): string {

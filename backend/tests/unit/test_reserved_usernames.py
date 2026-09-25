@@ -39,6 +39,13 @@ def test_reserving_is_case_folded(name: str):
     assert is_reserved_username(name) is True
 
 
+@pytest.mark.parametrize("name", ["settings", "Settings"])
+def test_a_page_beside_a_persons_own_page_is_not_a_username(name: str):
+    """个人主页是 `/users/<handle>`，旁边的设置页占着同一层地址。叫这个名字的人，
+    主页永远打不开。"""
+    assert is_reserved_username(name) is True
+
+
 @pytest.mark.parametrize(
     "name",
     [

@@ -80,7 +80,7 @@ function changeSummary(block: Block): ChangeSummary | null {
 const WHO_LABEL: Record<WhoTag, string> = {
   platform: '平台已处理',
   cheese: '芝士处理中',
-  human: '待人工处理',
+  human: '需要手动处理',
 }
 
 // These events describe the room agent's work or execution environment. `who`

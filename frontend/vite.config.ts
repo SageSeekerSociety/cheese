@@ -84,7 +84,7 @@ export default defineConfig({
     }),
     viteCompression(),
     // PWA / offline support. Goal (owner spec): the app shell + already-seen
-    // content load offline; live features (WS chat, 现场 terminal, notifications)
+    // content load offline; live features (WS chat, notifications)
     // degrade gracefully and auto-recover when the network returns. NO offline
     // writes / message queue — reads only.
     VitePWA({
@@ -276,8 +276,6 @@ export default defineConfig({
               // caching them would persist a bearer token on disk and serve
               // another user stale bytes.
               if (url.searchParams.has('token')) return false
-              // Terminal availability changes with the live connection.
-              if (/^\/api\/topics\/[^/]+\/terminal(\/|$)/.test(url.pathname)) return false
               // SSE streams (agent advice): a NetworkFirst would hang forever
               // waiting to cache a response that never ends.
               if ((request.headers.get('accept') || '').includes('text/event-stream')) return false
@@ -358,9 +356,15 @@ export default defineConfig({
       },
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
-      // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer
-      // (e.g. GET /users/auth/methods/:username): reach the backend directly.
-      '/users': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
+      // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer:
+      // reach the backend directly. A page load under /users (a person's page,
+      // settings) is the app's own route, as it is behind nginx, so it gets the SPA.
+      '/users': {
+        target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081',
+        changeOrigin: true,
+        ws: true,
+        bypass: (req) => (req.headers.accept?.includes('text/html') ? '/index.html' : undefined),
+      },
     },
   },
   build: {

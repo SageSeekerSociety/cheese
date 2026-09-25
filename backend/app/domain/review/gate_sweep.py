@@ -66,8 +66,8 @@ from app.domain.topic.repositories import TopicRepository
 GATE_STALE_GRACE_S = 600
 
 _ABANDONED_OUTPUT = (
-    f"{GATE_ABANDONED_PREFIX}：平台没能拿到这次检查的结果（后端重启或闸门任务丢失），"
-    "卡片被判死。这**不是**检查失败——检查根本没跑完，代码本身没有被判定有问题。"
+    f"{GATE_ABANDONED_PREFIX}：平台未能取得这次检查的结果（后端重启或检查任务丢失），"
+    "审阅已终止。这不是检查未通过：检查没有运行完，代码没有被判定有问题。"
 )
 
 _ABANDONED_NUDGE = (
@@ -81,8 +81,10 @@ _ABANDONED_NUDGE = (
 #: 平台提示统一契约：房间里只留这一行，上面那段给芝士的说明收进 `meta.detail`。
 #: 「判死」和「没通过」在这里也必须分得开 —— 这正是本模块 docstring 里那一节讲的
 #: 事，只不过现在多了一个前端读得懂的码，不用再从正文里猜。
-_ABANDONED_EVENT = "检查结果丢了，这张验收卡已判死"
-_ABANDONED_DETAIL_LABEL = "怎么回事"
+_ABANDONED_EVENT = "检查结果丢失，审阅已终止"
+_ABANDONED_DETAIL_LABEL = "原因"
+#: 卡自己那条线上的一行。和上面那句召唤分开写：房间里那句叫醒芝士，这句落在卡上。
+_CONDEMNED_LINE = "检查未完成，审阅已终止"
 
 
 def stale_before(now: datetime | None = None) -> datetime:
@@ -118,7 +120,7 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
         notes.NoteCode.gate_abandoned,
         archive.prefix_note(
             card.note,
-            f"{GATE_ABANDONED_PREFIX}：检查没跑完就失去结果，卡片判死，话题可以重新递卡。",
+            f"{GATE_ABANDONED_PREFIX}：检查结果丢失，审阅已终止，可以重新提交审阅。",
         ),
     )
     # decided_by/decided_at 留空是刻意的：没有人做过这个决定，写上谁都是假的。
@@ -141,7 +143,7 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
         task_id=landed.task_id,
         author="cheese",
         author_type=AuthorType.platform,
-        content="检查没跑完，这张验收卡已判死",
+        content=_CONDEMNED_LINE,
         kind=BlockKind.event,
         meta={
             "platform": True,
@@ -150,12 +152,12 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
                 severity=SEVERITY_WARN,
                 who=WHO_CHEESE,
                 detail=(
-                    "平台没能拿到这次检查的结果，多半是后端重启时闸门任务"
-                    "随进程丢了。\n"
-                    "这不是检查没通过——检查根本没跑完，没有任何证据说明代码"
-                    "有问题。重新递一次卡即可。"
+                    "平台未能取得这次检查的结果，通常是后端重启时检查任务"
+                    "随进程丢失。\n"
+                    "这不是检查未通过：检查没有运行完，没有证据表明代码"
+                    "有问题。重新提交审阅即可。"
                 ),
-                detail_label="为什么判死",
+                detail_label=_ABANDONED_DETAIL_LABEL,
             ),
         },
     )

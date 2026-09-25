@@ -47,10 +47,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from app.domain.agent.service import (
-    AgentEvent,
-    AgentMessage,
-)
+from app.domain.agent.service import AgentEvent
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputeProvider
@@ -177,8 +174,8 @@ class SessionRef:
     one while writing under the other hands back None rather than failing.
 
     It is left unset by the calls that address a PLACE rather than a
-    conversation: a room's event spool and the screen it is watched in are one
-    per room, so reading them names no agent. Anything that resolves where a
+    conversation: a room's machine and the screens on it are one per room, so
+    reading them names no agent. Anything that resolves where a
     session runs must fill it in — that resolution is per session and there is
     nothing on the room left to fall back to.
 
@@ -465,10 +462,34 @@ class AgentRuntime(Protocol):
 
 
 @runtime_checkable
+class SessionControls(Protocol):
+    """A runtime whose live session takes the room's controls.
+
+    Not one of the verbs: a harness with no control channel is still a
+    harness, and the room then simply shows no controls for it. Asked of the
+    runtime that holds a room (``ComputePool.session_controls``).
+    """
+
+    #: What the room may send a session, by subtype.
+    controls: tuple[str, ...]
+    #: Which of those the room's executor answers rather than the session: the
+    #: files and commands live on the executor.
+    executor_controls: frozenset[str]
+
+    def control_state(self, topic_id: uuid.UUID) -> dict:
+        """What the room's controls show: the session, its tasks, its state."""
+        ...
+
+    async def control(self, topic_id: uuid.UUID, request: dict) -> dict:
+        """One control request to the live session, to its response."""
+        ...
+
+
+@runtime_checkable
 class Backlog(Protocol):
     """The unread tail of one session, as the platform needs to consume it.
 
-    Six calls, and the split between them is the point. ``unread`` and
+    Five calls, and the split between them is the point. ``unread`` and
     ``assemble`` are the harness's — what did this agent say, and what does one
     log entry mean. Deciding what to DO about it (persist a block, broadcast a
     frame, skip a duplicate) is the platform's, and happens between the two.
@@ -493,15 +514,6 @@ class Backlog(Protocol):
 
     def unfinished(self) -> set[str]:
         """Ids of entries assembled so far whose thing is still incomplete."""
-        ...
-
-    def give_up(self) -> Sequence[AgentMessage]:
-        """Hand over the incomplete pieces anyway — the session died
-        mid-sentence and what arrived is better landed than lost.
-
-        Messages, not events: a tool call is whole the moment it is reported,
-        so the only thing that can be caught half-arrived is something the
-        agent was still saying."""
         ...
 
     def landed(self, *, through: str) -> None:
@@ -584,18 +596,6 @@ class Harness:
     # minted for ONE harness; no other can carry it, whatever it can otherwise
     # drive.
     carries_subscription: bool = False
-    # Does the agent DRAW on the screen it was started in? Claude Code is a TUI,
-    # so its pane is the 现场 — a person watching it sees the work happen. A
-    # harness whose screen runs a runner and talks to the agent over RPC has a
-    # pane with nothing in it, for ever.
-    #
-    # Read by the terminal endpoint, which must answer "will the drawer
-    # actually show a pane?" and until now answered "is a screen open" — the
-    # same thing for a TUI, and not the same thing at all for a runner. The
-    # drawer replaces the 施工记录 timeline with the embed on a true, so
-    # answering it wrongly is what leaves someone in front of a black frame
-    # with no way back to the timeline.
-    draws_on_its_screen: bool = True
 
     def __post_init__(self) -> None:
         """答不全四条的，根本造不出来——这就是「摘掉」的可判形式。
@@ -621,21 +621,22 @@ HARNESSES: dict[str, Harness] = {
             SubagentRequirement.SPAWNS_WITH_A_MODEL: (
                 "Agent(model=...) selects a native child model. The pinned-binary "
                 "test_claude_child_models verifies general-purpose children: explicit "
-                "selection overrides CLAUDE_CODE_SUBAGENT_MODEL, supplied from the "
-                "project child default or project main default. "
-                "`agent/harness/claude_code/session_launch.py` installs the preload "
-                "that carries the chosen model to backend admission. "
-                "Admission validates "
+                "selection overrides CLAUDE_CODE_SUBAGENT_MODEL, which "
+                "`agent/chat.py` supplies from the project child default or project "
+                "main default. Admission validates "
                 "the catalog and tier policy before either supply pool forwards it. "
                 "The pinned tool schema says forks inherit the parent model; the "
                 "tested startup rejects the fork agent type with a visible tool "
                 "error. Fork model selection is not claimed as supported."
             ),
             SubagentRequirement.LABELS_ITS_THREAD: (
-                "`agent/harness/claude_code/hook_events.py` 的 `SubThreads`：标识由"
+                "`agent/harness/claude_code/events.py` 的 `bind`：标识由"
                 "`room_task/thread_label.py` 的 `thread_label` 算出来、写在起它的那"
-                "段 prompt 里，PostToolUse 的 tool_response.agentId 把它钉在这个 "
-                "worker 上，此后这条子线程的每条记录都带着它出来。"
+                "段 prompt 里；`bind` 在派发它的那次调用上读到它，钉在这次调用的 id "
+                "和 task_started 给这个 worker 的 agent id 上，此后这条子线程的每条"
+                "记录——stdout 上带 parent_tool_use_id 的，和 "
+                "`agent/harness/claude_code/runner.py` 的 `file_entry` 从它自己的 "
+                "transcript 文件读进来的——都带着它出来。"
             ),
             SubagentRequirement.PARENT_RETASKS_IT: (
                 "改指令的是起它的父线程，做法写在 "

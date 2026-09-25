@@ -67,7 +67,6 @@ from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
 from app.domain.library import service as library
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
-from app.domain.membership.repositories import MemberRepository
 from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
@@ -78,7 +77,7 @@ from app.domain.preview.office import (
     render_to_pdf,
 )
 from app.domain.project import artifacts
-from app.domain.project.models import Project, ProjectRole
+from app.domain.project.models import Project
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
     GITHUB_UNBOUND,
@@ -111,6 +110,7 @@ from app.domain.team.services import team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheesex.projects")
 
@@ -183,18 +183,18 @@ async def create_project(
     if not owner_handle or owner_handle == ANONYMOUS_HANDLE:
         # Silence is how this got expensive (#315). A project whose owner is not
         # a real person can be repaired — PUT /{id}/owner exists now — but
-        # nothing else in the system will ever mention it: all seven readers of
-        # the field fall back to `lead` without erroring, so the gap surfaces
-        # only as "why can only one person do anything here", six days later.
+        # nothing else in the system will ever mention it: every reader of the
+        # field falls back to the team's admins without erroring, so the gap
+        # surfaces only as "why can only they do anything here", days later.
         #
         # The check covers `anonymous` as well as empty, because the empty case
         # is no longer the one that happens. `resolve()` hands back the literal
         # handle `anonymous` rather than nothing, so an unidentified creator now
         # produces a *populated* owner column that still matches no user — the
-        # same collapse onto `lead`, wearing a value.
+        # same collapse onto the team's admins, wearing a value.
         #
         # It does NOT ask whether the owner is a person. An agent instance is a
-        # participant and holds a project role like anybody else, so a handle
+        # participant like anybody else, so a handle
         # that names one is an owner this log has nothing to warn about; reading
         # the handle's SHAPE to decide otherwise was the platform guessing at a
         # participant's kind from its name.
@@ -212,6 +212,7 @@ async def create_project(
         team_id=body.team_id,
         external_task_id=body.external_task_id,
         forge_kind=body.forge_kind,
+        intent=body.intent,
     )
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
@@ -330,7 +331,13 @@ async def get_project(
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
-    return ok(await _project_payload(db, project))
+    payload = await _project_payload(db, project)
+    # Whether this caller runs the project's membership: its owner, or an
+    # owner/admin of its team. The members page shows invite/remove by it.
+    payload["can_manage_members"] = actor.authenticated and await MemberService(
+        db
+    ).manages(project_id, actor.handle)
+    return ok(payload)
 
 
 def _holds_the_default(project: Project, row: AgentInstance) -> bool:
@@ -832,15 +839,24 @@ async def delete_library_file(
 
 @router.get("/{project_id}/decisions")
 async def list_decisions(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
 ) -> dict:
     """决策记录 (spec §7.1): project-wide decision blocks, each traceable to its
     source topic via topic_id.
 
     These are the project's own words, not metadata about it — the same content
-    ``/topics`` has always guarded."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    ``/topics`` has always guarded.
+
+    ``topic`` is the caller naming its place, and it is how 芝士 reads this at
+    all (``_project_reader``): a per-turn credential is minted for one turn in
+    one room, so a bare ``authorize_project`` refuses it — which left the one
+    caller that WRITES decisions (``POST /topics/{id}/decision``, the
+    ``cheese decision`` CLI) unable to read a single one back. Its own room's
+    blocks were reachable; the project's record was not."""
+    await _project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     blocks = await BlockRepository(db).list_by_kind_for_project(
         project_id, BlockKind.decision
@@ -851,7 +867,10 @@ async def list_decisions(
 
 @router.get("/{project_id}/weeklies")
 async def list_weeklies(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
 ) -> dict:
     """周报集 (spec §7.1): project-wide weekly blocks, newest first.
 
@@ -861,9 +880,9 @@ async def list_weeklies(
 
     Same shape as /decisions and for the same reason: these are the project's
     own words, and each is traceable to the room it was written in via
-    `topic_id`."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    `topic_id` — including the same ``topic`` place, so the caller that writes
+    a weekly (``POST /topics/{id}/weekly``) can read the set back."""
+    await _project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     blocks = await BlockRepository(db).list_by_kind_for_project(
         project_id, BlockKind.weekly
@@ -954,7 +973,7 @@ async def _authorized_place(
     """Resolve and authorize the caller-named place, when present, and say
     who is calling — the pool a memory goes to is that caller's.
 
-    A place, not a room: `cheese remember` is run by whoever is doing the work,
+    A place, not a room: `cheese_remember` is run by whoever is doing the work,
     and that is usually a thread. Resolving only rooms answered 404 for the one
     caller this endpoint exists for.
 
@@ -984,7 +1003,7 @@ async def _calling_agent(
     """Whose memory this call writes to and reads from.
 
     The AGENT, not the room: a room seats any number of teammates, and the one
-    running `cheese remember` is the one on the token, so its notes go to its
+    running `cheese_remember` is the one on the token, so its notes go to its
     own pool wherever it is working — the same 芝士 moving between rooms keeps
     one pool. A token that names no saved teammate (an older one, a DM's)
     writes as the place's default: the DM's own teammate, else the project's.
@@ -1095,7 +1114,7 @@ async def add_memory(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """记入记忆 — used by the `cheese remember` CLI. With a ``topic`` it writes
+    """记入记忆 — used by the `cheese_remember` tool. With a ``topic`` it writes
     the acting 芝士's own memory for this project; with scope="user"+owner it
     writes that agent's view of that person, inside this project (结论 8).
     Called without a place, it is the project's own 芝士 writing.
@@ -1217,7 +1236,7 @@ async def search_memory(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """记忆检索 — used by the `cheese recall` CLI. Defaults to the pools this
+    """记忆检索 — used by the `cheese_recall` tool. Defaults to the pools this
     turn already reads; with scope="user"+owner it searches this agent's view
     of that one person. This is keyword matching ranked by query coverage, not
     semantic search — related, but not the same thing, which is why the CLI
@@ -1246,7 +1265,7 @@ async def search_memory(
             MemoryScope.user, user_scope_id(project_id, viewer.handle, owner), query
         )
         return ok({"hits": [h.as_dict() for h in hits]})
-    # `cheese recall` 查的就是这一轮注入时读的那几个池（`pools_for_turn`），一条
+    # `cheese_recall` 查的就是这一轮注入时读的那几个池（`pools_for_turn`），一条
     # 不多一条不少。两边同一份清单，否则会出现「注入里提过池子还有 N 条，recall
     # 却查不到」——而注入那句话的全部作用就是让人来 recall。项目共看的那份状态
     # 不在这里：它是总览的实况文档（结论 7），每一轮本来就整份进提示词。
@@ -1366,7 +1385,7 @@ async def save_forge_attribution(
 
 
 def _default_model_state(project_settings: dict | None) -> dict:
-    from app.domain.agent_instance.configuration import model_choices
+    from app.domain.agent_instance.configuration import model_choices, project_pool
 
     choices = model_choices(project_settings)
     chosen = (project_settings or {}).get("default_model")
@@ -1384,6 +1403,9 @@ def _default_model_state(project_settings: dict | None) -> dict:
             (c["id"] for c in deployment_choices if c["default"]), None
         ),
         "choices": choices,
+        # 发现层（sync-agents）按池过滤目录：与准入同源的 project_pool,别让
+        # 每个读目录的人自己从默认项反推（零默认的目录推不出来）。
+        "pool": project_pool(project_settings),
         "can_manage": False,  # 由路由层按权限填
     }
 
@@ -1612,9 +1634,10 @@ async def set_compute_profile(
 async def require_project_steward(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> str:
-    """The verified owner/lead of a project, or a 404 that hides it.
+    """A verified manager of the project — its owner, or an owner/admin of its
+    team — or a 404 that hides it.
 
-    People and agents need the same management role. A credential alone does
+    People and agents need the same standing. A credential alone does
     not grant authority to change ownership or the project's checks.
 
     Returns the caller's handle so a route can record who acted.
@@ -1626,10 +1649,7 @@ async def require_project_steward(
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    if project.owner_handle == handle:
-        return handle
-    member = await MemberRepository(db).get(project_id=project_id, user_handle=handle)
-    if member is not None and member.role == ProjectRole.lead:
+    if await MemberService(db).manages(project_id, handle):
         return handle
     # Conceal project existence from anonymous callers and outsiders.
     raise NotFoundError("Project not found")
@@ -1647,13 +1667,12 @@ async def set_project_owner(
     ``owner_handle`` had seven readers and exactly one writer: ``POST /projects``.
     A project created without one could therefore never acquire one, and on the
     dogfood project it never did (#315): the field sat NULL for six days while
-    every one of those seven readers quietly fell back to ``lead``, collapsing
-    every owner-level decision onto one person and reporting no error anywhere.
+    every one of those readers quietly fell back to someone else, collapsing
+    every owner-level decision onto them and reporting no error anywhere.
 
-    The new owner must already be on the project roster. Not ceremony — the
-    roster is what ``authorize_topic_access`` reads, so handing the project to
-    someone outside it produces an owner who cannot open the project's topics,
-    which is a worse state than the NULL this route exists to escape.
+    The new owner must be on the project's team. Not ceremony — someone outside
+    it would own a project they cannot open, which is a worse state than the
+    NULL this route exists to escape.
     """
     handle = str(body.get("owner_handle") or "").strip()
     if not handle:
@@ -1662,12 +1681,14 @@ async def set_project_owner(
     if project is None:
         raise NotFoundError("Project not found")
     if handle != project.owner_handle:
-        member = await MemberRepository(db).get(
-            project_id=project_id, user_handle=handle
-        )
-        if member is None:
+        # The project is its team's; its owner is someone from that team, not an
+        # external member who sees this one project and nothing else of it.
+        user = await user_by_handle(db, handle)
+        if user is None or not await team_service(db).is_team_member(
+            project.team_id, user.id
+        ):
             raise ValidationError(
-                f"{handle} 不是这个项目的成员——请先把 TA 加进项目成员，再转交"
+                f"{handle} 不是这个项目所属团队的成员——请先把 TA 加进团队，再转交"
             )
     previous = project.owner_handle
     project.owner_handle = handle
@@ -1770,8 +1791,7 @@ async def set_branch_protection(
     ``approvals_required`` predates this block and stays at
     ``settings["approvals_required"]`` — read and written here, never moved,
     never dual-written. Who may change review policy is the steward dependency's
-    question, and it is a question about role: an owner or a lead, whoever they
-    are.
+    question: the project's owner, or an owner/admin of its team.
     """
     project = await ProjectRepository(db).get(project_id)
     if project is None:

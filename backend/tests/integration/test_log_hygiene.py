@@ -8,8 +8,11 @@ refusal was an INFO line with no path — so the report that came back was 网�
 
 import logging
 import sys
+from typing import Any, cast
 
 import pytest
+import uvicorn
+from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.obs import RedactSecrets, configure_logging, scrub_secrets
@@ -202,27 +205,41 @@ def test_the_filter_covers_records_from_other_libraries():
     assert "SECRETVALUE" not in record.getMessage()
 
 
-def test_the_request_line_names_the_user_and_forwarded_client(client, caplog):
-    """The "req" line must say WHO, not just what.
+def test_the_request_line_names_the_user_client_and_site(client, caplog, monkeypatch):
+    """The "req" line must say WHO, from where, and to which site.
 
     From the 2026-08-10 account-link incident (#222): every request logged the
     edge proxy's address as its peer, and the request line carried no user id —
     so telling two people's browsers apart took correlating adjacent requests
-    by hand. The line must carry the authenticated user id and the verbatim
-    X-Forwarded-For / User-Agent whenever they are present.
+    by hand. The line carries the authenticated user, the client address the
+    server resolved through its trusted proxies (not whatever the client wrote
+    into X-Forwarded-For), the raw header for forensics, and the Host the
+    request was sent to.
     """
-    from app.common.auth import decode_token
+    from app.common.auth import verify_access_token
+    from app.main import app
     from tests.conftest import seed_user
 
     token = seed_user(client, "log_attrib_user")
-    user_id = int(decode_token(token)["sub"])
+    user_id = verify_access_token(token).user_id
+
+    # Served as the image serves it: uvicorn's defaults plus the proxy list
+    # from the environment, reached through docker's bridge gateway.
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "127.0.0.1,172.18.0.0/16")
+    config = uvicorn.Config(app, log_config=None)
+    config.load()
+    behind_proxy = TestClient(
+        cast(Any, config.loaded_app), client=("172.18.0.1", 40000)
+    )
+    behind_proxy.headers.update(client.headers)
+    forwarded = "6.6.6.6, 203.0.113.9"
 
     with caplog.at_level(logging.INFO, logger="http"):
-        r = client.get(
-            "/notifications/unread-count",
+        r = behind_proxy.get(
+            "http://www.cheese.example/notifications/unread-count",
             headers={
                 "Authorization": f"Bearer {token}",
-                "X-Forwarded-For": "10.9.8.7",
+                "X-Forwarded-For": forwarded,
                 "User-Agent": "test-agent/1.0",
             },
         )
@@ -237,7 +254,9 @@ def test_the_request_line_names_the_user_and_forwarded_client(client, caplog):
         ln for ln in req_lines if ln.get("path") == "/notifications/unread-count"
     )
     assert line.get("user") == user_id
-    assert line.get("client") == "10.9.8.7"
+    assert line.get("client") == "203.0.113.9"
+    assert line.get("xff") == forwarded
+    assert line.get("host") == "www.cheese.example"
     assert line.get("ua") == "test-agent/1.0"
 
 

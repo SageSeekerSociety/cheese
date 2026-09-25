@@ -124,6 +124,6 @@ def push_text(type_: NotificationType, payload: dict[str, Any]) -> tuple[str, st
     where = f"在「{room}」" if room else ""
     if type_ is NotificationType.CHEESE_QUESTION:
         question = str(payload.get("question") or "").strip()
-        return (question or "芝士有一个待确认问题", where or "待你回答")
+        return (question or "有一个新问题", where or "等你回答")
     content = str(payload.get("content") or "").strip()
     return (content or "平台有一条提示", where)

@@ -11,13 +11,39 @@ import httpx
 import pytest
 
 from app.api.routes import llm_proxy
+from app.core.db import pool_status
 from app.core.sandbox_auth import mint_scoped_token
+from tests.integration.conftest import post_project
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
+
+
+def test_admission_releases_its_database_connection_before_gateway_key(
+    client, monkeypatch
+):
+    from app.domain.agent.chat import ChatService
+
+    project_id = _make_project(client)
+    checked_out = []
+
+    async def gateway_key(self, project_id):
+        status = pool_status(client.test_app_engine)
+        assert status is not None
+        checked_out.append(status["checked_out"])
+        return "project-key"
+
+    monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
+    token = mint_scoped_token(project_id=project_id)
+    response = client.post(
+        "/llm/admission", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["supply"]["key"] == "project-key"
+    assert checked_out == [0]
 
 
 class _FakeResponse:
@@ -346,346 +372,3 @@ async def test_admission_refuses_by_name_when_it_cannot_resolve_a_model(
     # the user of a project whose catalogue serves nothing is told their quota
     # ran out — and sent to top up an account that is fine.
     assert body["reason_kind"] == "binding"
-
-
-# --- which ccproxy identity a turn goes out as ------------------------------
-# ccproxy only honours a machine's ticket over that machine's OWN identity
-# (measured 2026-08-14: m516's ticket over an m161 connection is a 401 with no
-# request_id). So the proxy must learn WHICH identity before it forwards, and
-# admission is the hop it already waits on.
-
-
-async def _pin_topic_to_machine(
-    client, *, project_id: str, topic_id, machine_id: int, upstream: str | None
-):
-    """A topic pinned to an enrolled machine — the real chain admission walks:
-    topic → pinned device → machine row."""
-    from datetime import UTC, datetime
-
-    from sqlalchemy import select
-
-    from app.domain.device.models import DeviceRow, DeviceTopicRow
-    from app.domain.machine.models import ProjectMachine
-    from app.domain.user.models import User
-
-    device_id = f"dev-{machine_id}"
-    async with client.test_factory() as session:
-        owner = (await session.execute(select(User).limit(1))).scalar_one()
-        session.add(
-            DeviceRow(
-                device_id=device_id,
-                name=f"machine-{machine_id}",
-                token=f"tok-{device_id}",
-                owner_user_id=owner.id,
-                created_at=datetime.now(UTC),
-            )
-        )
-        await session.flush()
-        session.add(
-            ProjectMachine(
-                project_id=uuid.UUID(project_id),
-                machine_id=machine_id,
-                customer_id=1,
-                account_id=1,
-                offering_id=1,
-                hostname=f"host-{machine_id}",
-                login_user="cheese",
-                cores=2,
-                memory_mb=4096,
-                disk_gb=20,
-                device_id=device_id,
-                enrolled_at=datetime.now(UTC),
-                ccproxy_upstream=upstream,
-            )
-        )
-        session.add(DeviceTopicRow(topic_id=topic_id, device_id=device_id))
-        await session.commit()
-
-
-async def test_admission_names_the_machine_identity_a_topics_turns_go_out_as(
-    client, monkeypatch
-):
-    pid = _make_project(client)
-    topic_id = uuid.uuid4()
-    headers = {
-        "Authorization": "Bearer "
-        + mint_scoped_token(project_id=pid, topic_id=str(topic_id))
-    }
-
-    # Nothing pinned yet: there is no machine, so there is no identity to name.
-    body = client.post("/llm/admission", headers=headers).json()["data"]
-    assert "upstream" not in body["supply"]
-
-    await _pin_topic_to_machine(
-        client, project_id=pid, topic_id=topic_id, machine_id=516, upstream="m516:pw516"
-    )
-
-    body = client.post("/llm/admission", headers=headers).json()["data"]
-    assert body["supply"]["upstream"] == "m516:pw516"
-
-
-async def test_admission_names_a_placed_project_machines_identity(client):
-    """A placed session must read the enrolled machine's identity, not only
-    the device row (which does not store that identity)."""
-    from app.domain.agent.harness import deployment_harness
-    from app.domain.agent_session.services import AgentSessionService
-
-    pid = _make_project(client)
-    room_id = client.post(
-        "/topics",
-        json={"project_id": pid, "title": "Machine room", "created_by": "alice"},
-    ).json()["data"]["id"]
-    await _pin_topic_to_machine(
-        client,
-        project_id=pid,
-        topic_id=uuid.UUID(room_id),
-        machine_id=517,
-        upstream="m517:pw517",
-    )
-    async with client.test_factory() as session:
-        await AgentSessionService(session).remember_place(
-            topic_id=uuid.UUID(room_id),
-            agent_handle="agent",
-            work_lease={"kind": "device", "device_id": "dev-517"},
-            runtime_location={
-                "device_id": "dev-517",
-                "resource_id": room_id,
-                "channel": "device",
-            },
-            harness=deployment_harness(),
-        )
-        await session.commit()
-
-    response = client.post(
-        "/llm/admission",
-        headers={
-            "Authorization": "Bearer "
-            + mint_scoped_token(project_id=pid, topic_id=room_id)
-        },
-    )
-    assert response.status_code == 200
-    assert response.json()["data"]["supply"]["upstream"] == "m517:pw517"
-
-
-async def test_a_machine_without_a_recorded_identity_names_none(client, monkeypatch):
-    """Enrollment is the only moment the platform is on the machine over ssh
-    (the bootstrap key is erased the instant it succeeds), so machines enrolled
-    before this existed keep NULL forever. NULL must read as "use the
-    deployment-wide identity" — never as an empty string the proxy would then
-    try to authenticate with."""
-    pid = _make_project(client)
-    topic_id = uuid.uuid4()
-    await _pin_topic_to_machine(
-        client, project_id=pid, topic_id=topic_id, machine_id=161, upstream=None
-    )
-
-    body = client.post(
-        "/llm/admission",
-        headers={
-            "Authorization": "Bearer "
-            + mint_scoped_token(project_id=pid, topic_id=str(topic_id))
-        },
-    ).json()["data"]
-    assert "upstream" not in body["supply"]
-
-
-async def _pin_topic_to_self_hosted_device(
-    client, *, topic_id, device_id: str, upstream: str | None
-):
-    """A topic pinned to a SELF-HOSTED device — no machine row at all. This is
-    the dev box's shape: it was never enrolled from MicroCloud, so its ccproxy
-    identity lives on the device row itself."""
-    from datetime import UTC, datetime
-
-    from sqlalchemy import select
-
-    from app.domain.device.models import DeviceRow, DeviceTopicRow
-    from app.domain.user.models import User
-
-    async with client.test_factory() as session:
-        owner = (await session.execute(select(User).limit(1))).scalar_one()
-        session.add(
-            DeviceRow(
-                device_id=device_id,
-                name=device_id,
-                token=f"tok-{device_id}",
-                owner_user_id=owner.id,
-                created_at=datetime.now(UTC),
-                ccproxy_upstream=upstream,
-            )
-        )
-        session.add(DeviceTopicRow(topic_id=topic_id, device_id=device_id))
-        await session.commit()
-
-
-async def test_admission_names_a_self_hosted_devices_own_identity(client, monkeypatch):
-    """The self-hosted twin of the machine case: the dev box brings its own
-    ccproxy identity on the DEVICE row (it has no enrollment and no machine
-    row), and admission must surface it the same way — one credential model for
-    every compute form, or the box stays chained to the platform-credential
-    swap path that #393 is about."""
-    pid = _make_project(client)
-    topic_id = uuid.uuid4()
-    await _pin_topic_to_self_hosted_device(
-        client, topic_id=topic_id, device_id="the-box", upstream="m161:pw161"
-    )
-
-    headers = {
-        "Authorization": "Bearer "
-        + mint_scoped_token(project_id=pid, topic_id=str(topic_id))
-    }
-    body = client.post("/llm/admission", headers=headers).json()["data"]
-
-    assert body["supply"]["upstream"] == "m161:pw161"
-
-
-async def test_a_device_with_no_identity_still_names_none(client, monkeypatch):
-    """Every laptop-class self-hosted device: NULL means "platform pool", never
-    an empty identity the proxy would try to authenticate with."""
-    pid = _make_project(client)
-    topic_id = uuid.uuid4()
-    await _pin_topic_to_self_hosted_device(
-        client, topic_id=topic_id, device_id="a-laptop", upstream=None
-    )
-
-    headers = {
-        "Authorization": "Bearer "
-        + mint_scoped_token(project_id=pid, topic_id=str(topic_id))
-    }
-    body = client.post("/llm/admission", headers=headers).json()["data"]
-
-    assert "upstream" not in body["supply"]
-
-
-@pytest.mark.parametrize("central_upstream", ["central:ticket", None])
-@pytest.mark.parametrize("supply", ["subscription", "gateway"])
-async def test_placed_room_uses_session_identity_not_executor(
-    client, monkeypatch, central_upstream, supply, _project_key
-):
-    from datetime import UTC, datetime
-
-    from app.domain.agent.harness import deployment_harness
-    from app.domain.agent_session.services import AgentSessionService
-    from app.domain.device.models import DeviceRow
-    from app.domain.project.repositories import ProjectRepository
-
-    pid = _make_project(client)
-    room_id = client.post(
-        "/topics",
-        json={"project_id": pid, "title": "Central room", "created_by": "alice"},
-    ).json()["data"]["id"]
-    await _pin_topic_to_self_hosted_device(
-        client,
-        topic_id=uuid.UUID(room_id),
-        device_id="executor",
-        upstream="executor:ticket",
-    )
-    async with client.test_factory() as session:
-        project = await ProjectRepository(session).get(uuid.UUID(pid))
-        project.settings = {**(project.settings or {}), "supply": supply}
-        executor = await session.get(DeviceRow, "executor")
-        session.add(
-            DeviceRow(
-                device_id="central",
-                name="central",
-                token="tok-central",
-                owner_user_id=executor.owner_user_id,
-                created_at=datetime.now(UTC),
-                ccproxy_upstream=central_upstream,
-            )
-        )
-        await AgentSessionService(session).remember_place(
-            topic_id=uuid.UUID(room_id),
-            agent_handle="agent",
-            work_lease={"kind": "device", "device_id": "executor"},
-            runtime_location={
-                "device_id": "central",
-                "resource_id": room_id,
-                "channel": "device",
-            },
-            harness=deployment_harness(),
-        )
-        await session.commit()
-
-    response = client.post(
-        "/llm/admission",
-        headers={
-            "Authorization": "Bearer "
-            + mint_scoped_token(project_id=pid, topic_id=room_id)
-        },
-    )
-    assert response.status_code == 200
-    answer = response.json()["data"]["supply"]
-    # 送哪个池，是这一刻从项目的模型绑定解析出来的 —— 不是启动时签进凭据里的。
-    assert answer["pool"] == supply
-    if supply == "gateway":
-        assert answer["key"].startswith("sk-virtual-for-")
-    if central_upstream is None:
-        assert "upstream" not in answer
-    else:
-        assert answer["upstream"] == central_upstream
-
-
-async def _room_with_a_thread(client, project_id: str) -> tuple[str, str]:
-    """A real room and one thread of work in it — (room_id, thread_id).
-
-    Both halves have to be real rows, not two uuids: the whole failure is that
-    a thread's id is not a `topics` id, so a test that invents one would place
-    the pin and the token on the same key and pass either way.
-    """
-    from app.domain.room_task.services import TaskService
-
-    room_id = client.post(
-        "/topics",
-        json={"project_id": project_id, "title": "房间", "created_by": "alice"},
-    ).json()["data"]["id"]
-    async with client.test_factory() as session:
-        task = await TaskService(session).open_thread(
-            project_id=uuid.UUID(project_id),
-            room_id=uuid.UUID(room_id),
-            title="一件活",
-            owner_handle="alice",
-            created_by="alice",
-        )
-        thread_id = str(task.id)
-        await session.commit()
-    return room_id, thread_id
-
-
-async def test_admission_names_the_machine_the_room_is_pinned_to(client, monkeypatch):
-    """一轮跑在哪台机器上，是**房间**的 pin 说了算 —— 一个房间一块屏幕，它派出去
-    的每一个分身都跑在那一台上，所以没有第二个 pin 可查。
-
-    查不到不是「无所谓」：带着自己 ccproxy 票的调用方在解析不出身份时会被**拒绝**，
-    而不是记到平台账上。所以这个查询答错一次，那台机器上的每一轮都被拒。
-    """
-    pid = _make_project(client)
-    room_id, _card_id = await _room_with_a_thread(client, pid)
-    await _pin_topic_to_machine(
-        client,
-        project_id=pid,
-        topic_id=uuid.UUID(room_id),
-        machine_id=784,
-        upstream="m784:pw784",
-    )
-
-    headers = {
-        "Authorization": "Bearer " + mint_scoped_token(project_id=pid, topic_id=room_id)
-    }
-    body = client.post("/llm/admission", headers=headers).json()["data"]
-
-    assert body["supply"]["upstream"] == "m784:pw784"
-
-
-async def test_admission_still_names_nothing_for_a_room_that_owns_no_machine(
-    client, monkeypatch
-):
-    """没 pin 过的房间还是「用部署级那一个」—— 今天每一轮没落位的都是这样。"""
-    pid = _make_project(client)
-    room_id, _card_id = await _room_with_a_thread(client, pid)
-
-    headers = {
-        "Authorization": "Bearer " + mint_scoped_token(project_id=pid, topic_id=room_id)
-    }
-    body = client.post("/llm/admission", headers=headers).json()["data"]
-    assert "upstream" not in body["supply"]

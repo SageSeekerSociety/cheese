@@ -1,186 +1,424 @@
-<!--
-  头像上传区里的三处固定调色板名（占位底的固定深灰 + 两处白字工具类）和下面 .uploader 的
-  两处黑色蒙版值，都是**有意保留**的，见 docs/design-system.md §1.2 例外：
-  底色本身不随主题变的地方，压在上面的前景色也不该变。
-  它是「一张照片 + 一层暗色蒙版 + 白色提示文字」的取景框，两套主题下长得一样。
-  和 components/common/AvatarUploader.vue 是同一套写法，要改一起改。
--->
 <template>
-  <v-card title="个人资料" rounded="lg">
-    <template #text>
-      <form class="pt-2 pl-5 pr-5" @submit.prevent="submit">
-        <v-row>
-          <v-col cols="4">
-            <v-list-subheader inset>头像</v-list-subheader>
-            <div class="avatar-upload">
-              <v-img
-                :src="previewUrl || getAvatarUrl(profile.avatarId)"
-                aspect-ratio="1"
-                class="rounded-lg avatar"
-                rounded="0"
-                size="180"
-                color="grey-darken-1"
-                cover
-              />
+  <div class="settings-page profile">
+    <header class="profile__head">
+      <div>
+        <h1 class="t-page-title">{{ t('account.profile.title') }}</h1>
+        <p class="settings-page__lede">{{ t('account.profile.lede') }}</p>
+      </div>
+      <router-link v-if="user" class="profile__home" :to="{ name: 'UserPage', params: { handle: user.username } }">
+        {{ t('account.profile.viewPage') }}
+        <v-icon icon="mdi-chevron-right" size="16" />
+      </router-link>
+    </header>
 
-              <file-select
-                v-model="selectedAvatar"
-                accept="image/*"
-                :max="1"
-                class="uploader"
-                content-class="uploader-inner"
-                @change="handleFileChange"
+    <!-- Save is the page's one main action, so it is the only amber on it
+         (design-system §1.6); it exists only while there is something to save. -->
+    <form v-if="user" class="settings-card" novalidate @submit.prevent="save">
+      <div class="srow srow--field">
+        <span class="srow__k">{{ t('account.profile.avatar') }}</span>
+        <div class="avatar-field">
+          <UserAvatar class="avatar-field__img" :avatar="shownAvatar" :name="avatarSeed" size="64" />
+          <div class="avatar-field__side">
+            <div class="avatar-field__actions">
+              <v-btn
+                variant="outlined"
+                color="on-surface"
+                :loading="changingAvatar"
+                :disabled="removingAvatar"
+                @click="avatarInput?.click()"
               >
-                <div
-                  class="rounded-lg d-flex flex-column align-center justify-center gap-4 pa-4 text-white uploader-inner"
-                >
-                  <v-icon size="32">mdi-camera</v-icon>
-                  <div class="text-body-1 text-white">上传头像</div>
-                </div>
-              </file-select>
+                {{ t('account.profile.changeAvatar') }}
+              </v-btn>
+              <v-btn
+                v-if="canRemoveAvatar"
+                variant="text"
+                color="on-surface"
+                :loading="removingAvatar"
+                :disabled="changingAvatar"
+                @click="removeAvatar"
+              >
+                {{ t('account.profile.removeAvatar') }}
+              </v-btn>
             </div>
-          </v-col>
-          <v-col cols="8">
-            <v-list-subheader inset>昵称</v-list-subheader>
-            <v-text-field
-              id="field-selectedNickname"
-              v-model="selectedNickname"
-              autocomplete="nickname"
-              name="selectedNickname"
-              v-bind="nicknameProps"
-            ></v-text-field>
-            <v-list-subheader inset>个人简介</v-list-subheader>
-            <v-text-field v-model="selectedIntro" autocomplete="off" :counter="60" v-bind="introProps"></v-text-field>
-          </v-col>
-        </v-row>
-        <v-row>
-          <v-col class="d-flex justify-end gap-4">
-            <v-btn @click="handleReset">重置</v-btn>
-            <v-btn color="primary" type="submit">保存</v-btn>
-          </v-col>
-        </v-row>
-      </form>
-    </template>
-  </v-card>
+            <span class="field-note">{{ t('account.profile.avatarHint') }}</span>
+          </div>
+          <input
+            ref="avatarInput"
+            class="avatar-field__input"
+            type="file"
+            :accept="AVATAR_TYPES.join(',')"
+            @change="onAvatarPicked"
+          />
+        </div>
+      </div>
+
+      <div class="srow srow--field">
+        <label class="srow__k" for="profile-nickname">{{ t('account.profile.nickname') }}</label>
+        <v-text-field
+          id="profile-nickname"
+          v-model="nickname"
+          autocomplete="nickname"
+          variant="outlined"
+          density="compact"
+          :error-messages="nicknameError"
+          hide-details="auto"
+        />
+      </div>
+
+      <div class="srow srow--field">
+        <span class="srow__k">{{ t('account.profile.username') }}</span>
+        <div class="srow__stack">
+          <span class="handle">@{{ user.username }}</span>
+          <span class="field-note">{{ t('account.profile.usernameNote') }}</span>
+        </div>
+      </div>
+
+      <div class="srow srow--field">
+        <label class="srow__k" for="profile-intro">{{ t('account.profile.intro') }}</label>
+        <v-textarea
+          id="profile-intro"
+          v-model="intro"
+          autocomplete="off"
+          variant="outlined"
+          density="compact"
+          rows="2"
+          auto-grow
+          no-resize
+          :counter="INTRO_MAX"
+          :counter-value="length"
+          persistent-counter
+          :error-messages="introError"
+        />
+      </div>
+
+      <Transition name="foot">
+        <div v-if="dirty" class="foot-reveal">
+          <div class="foot-reveal__clip">
+            <div class="profile__foot">
+              <span class="profile__foot-note">{{ t('account.profile.unsaved') }}</span>
+              <v-btn variant="text" color="on-surface" :disabled="saving" @click="revert">
+                {{ t('account.profile.revert') }}
+              </v-btn>
+              <v-btn type="submit" color="primary" variant="flat" :disabled="!valid" :loading="saving">
+                {{ t('account.profile.save') }}
+              </v-btn>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </form>
+  </div>
 </template>
 
-<script lang="ts" setup>
-import { computed, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
-import { toTypedSchema } from '@vee-validate/zod'
-import { useForm } from 'vee-validate'
-import { z } from 'zod'
+<script setup lang="ts">
+import type { User } from '@/types/users'
 
-import { vuetifyConfig } from '@/utils/form'
+import { computed, onMounted, ref, watch } from 'vue'
+import { toast } from 'vuetify-sonner'
+
 import { getAvatarUrl } from '@/utils/materials'
 
-import FileSelect from '@/components/common/FileSelect.vue'
+import { ensureDefaultAvatarId, globalDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
+
+import UserAvatar from '@/components/common/UserAvatar.vue'
+import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
 import { UserApi } from '@/network/api/users'
+import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'
 
-const profile = computed(() => AccountService._user.value!)
+// The server serves these four as images and anything else as an opaque file,
+// which would show as a broken avatar. It sets no size limit of its own.
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+const NICKNAME_MAX = 50
+const INTRO_MAX = 60
+// A nickname needs at least one CJK character, letter or digit, so it cannot be
+// only symbols or spaces.
+const READABLE = /[0-9A-Za-z㐀-䶿一-鿿]/
 
-const { handleSubmit, defineField, handleReset, resetForm } = useForm({
-  validationSchema: toTypedSchema(
-    z.object({
-      nickname: z
-        .string()
-        .trim()
-        .min(1, '昵称不能为空')
-        .max(50, '昵称最多 50 个字符')
-        // 至少有一个汉字、字母或数字，挡住纯符号/纯空白的昵称
-        .regex(/[0-9A-Za-z㐀-䶿一-鿿]/, '昵称至少包含一个汉字、字母或数字'),
-      intro: z.string().max(60),
-      avatar: z
-        .array(z.instanceof(File).refine((v) => v.size < 2 * 1024 * 1024, { message: '文件大小不能超过 2MB' }))
-        .optional(),
-    })
-  ),
+const fail = (error: unknown, fallback: string) => toast.error(requestErrorMessage(error, fallback))
+
+const user = computed(() => AccountService.user)
+
+/**
+ * Takes a change the server accepted into the signed-in person's own record at
+ * once, then refetches it so the copy kept for the next visit has it too.
+ */
+function remember(change: Partial<User>) {
+  if (AccountService.user) AccountService.user = { ...AccountService.user, ...change }
+  void AccountService.updateUserInfo()
+}
+
+// ---- Nickname and intro: edited here, saved together ----
+
+const savedNickname = computed(() => user.value?.nickname ?? '')
+const savedIntro = computed(() => user.value?.intro ?? '')
+const nickname = ref(savedNickname.value)
+const intro = ref(savedIntro.value)
+const saving = ref(false)
+
+// The record can arrive or change after the page opens. A field follows it
+// only while nobody has edited that field.
+watch(savedNickname, (next, prev) => {
+  if (nickname.value === prev) nickname.value = next
+})
+watch(savedIntro, (next, prev) => {
+  if (intro.value === prev) intro.value = next
 })
 
-watch(
-  profile,
-  (newVal) => {
-    if (!newVal) return
-    resetForm({
-      values: {
-        nickname: newVal.nickname,
-        intro: newVal.intro,
-      },
-    })
-  },
-  { immediate: true }
+// Counted in characters, as the server counts them.
+const length = (value: string) => [...value].length
+
+const nicknameError = computed(() => {
+  const value = nickname.value.trim()
+  if (!value) return t('account.profile.nicknameRequired')
+  if (length(value) > NICKNAME_MAX) return t('account.profile.nicknameTooLong', { max: NICKNAME_MAX })
+  if (!READABLE.test(value)) return t('account.profile.nicknameUnreadable')
+  return ''
+})
+const introError = computed(() =>
+  length(intro.value) > INTRO_MAX ? t('account.profile.introTooLong', { max: INTRO_MAX }) : ''
 )
 
-const [selectedNickname, nicknameProps] = defineField('nickname', vuetifyConfig)
-const [selectedIntro, introProps] = defineField('intro', vuetifyConfig)
-const [selectedAvatar, avatarProps] = defineField('avatar', vuetifyConfig)
-const previewUrl = ref('')
+const dirty = computed(() => nickname.value !== savedNickname.value || intro.value !== savedIntro.value)
+const valid = computed(() => !nicknameError.value && !introError.value)
 
-const handleFileChange = () => {
-  previewUrl.value = ''
-  const length = selectedAvatar.value?.length ?? 0
-  if (length > 0) {
-    readAvatar()
-  }
+function revert() {
+  nickname.value = savedNickname.value
+  intro.value = savedIntro.value
 }
 
-const readAvatar = () => {
-  if (!selectedAvatar.value) return
-  if (selectedAvatar.value.length === 0) return
-  const file = selectedAvatar.value[0]
-  const reader = new FileReader()
-  reader.readAsDataURL(file)
-  reader.onload = (event) => {
-    previewUrl.value = event.target?.result as string
-  }
-}
-
-const submit = handleSubmit(async (values) => {
-  let avatarId = profile.value.avatarId
-  if (selectedAvatar.value) {
-    try {
-      const { data } = await AvatarsApi.createAvatar(selectedAvatar.value[0])
-      avatarId = data.avatarId
-    } catch (error) {
-      toast.error('上传头像失败')
-      return
-    }
-  }
-  const submitData = {
-    nickname: values.nickname,
-    intro: values.intro,
-    avatarId: avatarId,
-  }
+async function save() {
+  if (!user.value || !dirty.value || !valid.value || saving.value) return
+  saving.value = true
+  const change = { nickname: nickname.value.trim(), intro: intro.value }
   try {
-    await UserApi.updateUserInfo(profile.value.id, submitData)
-    toast.success('更新成功')
-    resetForm()
+    await UserApi.updateUserInfo(user.value.id, change)
+    remember(change)
+    nickname.value = change.nickname
+    toast.success(t('account.profile.saved'))
   } catch (error) {
-    toast.error('更新失败')
+    fail(error, t('account.profile.saveFailed'))
+  } finally {
+    saving.value = false
   }
-})
+}
+
+// ---- Avatar: takes effect as soon as it is chosen ----
+
+const avatarInput = ref<HTMLInputElement | null>(null)
+const changingAvatar = ref(false)
+const removingAvatar = ref(false)
+
+// Same seed as the avatar in the navigation, so both show the same initial.
+const avatarSeed = computed(() => user.value?.nickname || String(user.value?.id ?? ''))
+const shownAvatar = computed(() => (isChosenAvatar(user.value?.avatarId) ? getAvatarUrl(user.value?.avatarId) : ''))
+// Removing an avatar puts the platform default back, which shows as the
+// initial; until that default is known there is nothing to put back.
+const canRemoveAvatar = computed(() => globalDefaultAvatarId.value !== null && isChosenAvatar(user.value?.avatarId))
+
+async function onAvatarPicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !user.value) return
+  if (!AVATAR_TYPES.includes(file.type)) {
+    toast.error(t('account.profile.avatarWrongType'))
+    return
+  }
+  if (file.size > AVATAR_MAX_BYTES) {
+    toast.error(t('account.profile.avatarTooLarge'))
+    return
+  }
+  changingAvatar.value = true
+  try {
+    const { data } = await AvatarsApi.createAvatar(file)
+    await UserApi.updateUserInfo(user.value.id, { avatarId: data.avatarId })
+    remember({ avatarId: data.avatarId })
+  } catch (error) {
+    fail(error, t('account.profile.avatarFailed'))
+  } finally {
+    changingAvatar.value = false
+  }
+}
+
+async function removeAvatar() {
+  const defaultId = globalDefaultAvatarId.value
+  if (!user.value || defaultId === null) return
+  removingAvatar.value = true
+  try {
+    await UserApi.updateUserInfo(user.value.id, { avatarId: defaultId })
+    remember({ avatarId: defaultId })
+  } catch (error) {
+    fail(error, t('account.profile.removeAvatarFailed'))
+  } finally {
+    removingAvatar.value = false
+  }
+}
+
+onMounted(ensureDefaultAvatarId)
 </script>
 
-<style scoped lang="scss">
-.avatar-upload {
-  position: relative;
+<style scoped src="./settings-card.css"></style>
 
-  .uploader {
-    position: absolute;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    right: 0;
-    /* 蒙版本身：主题无关的取景框，不 token 化（理由见文件顶部注释） */
-    border: 2px dashed rgba(0, 0, 0, 0.2);
-    border-radius: 8px;
-    background-color: rgba(0, 0, 0, 0.5);
-  }
+<style scoped>
+.profile {
+  max-width: var(--page-w-read);
 }
 
-.uploader-inner {
-  height: 100%;
+.profile__head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.profile__home {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: center;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
+  text-decoration: none;
+  transition: color var(--dur-quick) var(--ease-standard);
+}
+
+.profile__home:hover {
+  color: var(--ink);
+}
+
+/* A row that holds a field: the label sits on the field's first line. */
+.srow--field {
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  padding: 20px 24px;
+}
+
+.srow--field > .srow__k {
+  padding-top: 10px;
+}
+
+.srow__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 10px;
+}
+
+.handle {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.field-note {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.avatar-field {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.avatar-field__img {
+  flex-shrink: 0;
+  font-size: 23px;
+  font-weight: 600;
+}
+
+.avatar-field__side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.avatar-field__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.avatar-field__input {
+  display: none;
+}
+
+/* The footer opens out of the card's bottom edge when there is something to
+   save, and folds back into it when there is not. */
+.foot-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.foot-reveal__clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.foot-enter-active {
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+
+.foot-leave-active {
+  transition:
+    grid-template-rows var(--dur-quick) var(--ease-in),
+    opacity var(--dur-quick) var(--ease-in);
+}
+
+.foot-enter-from,
+.foot-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.profile__foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 16px 24px;
+  background: var(--canvas);
+  border-top: 1px solid var(--line);
+}
+
+.profile__foot-note {
+  flex-grow: 1;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+@media (max-width: 599.98px) {
+  .profile__head {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .srow--field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 16px;
+  }
+
+  .srow--field > .srow__k,
+  .srow__stack {
+    padding-top: 0;
+  }
+
+  .profile__foot {
+    padding: 12px 16px;
+  }
 }
 </style>

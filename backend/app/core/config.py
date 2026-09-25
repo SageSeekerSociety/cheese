@@ -175,7 +175,16 @@ class Settings(BaseSettings):
     require_invite_code: bool = False
     jwt_secret: str = "dev-secret"
     access_token_expires_seconds: int = 15 * 60
+    # A sign-in lasts this long from the moment it happened; refreshing does
+    # not extend it.
     refresh_token_expires_seconds: int = 60 * 60 * 24 * 30
+    # A sign-in nobody has refreshed for this long is over, however much of
+    # its lifetime remains.
+    refresh_idle_timeout_seconds: int = 60 * 60 * 24 * 14
+    # How long a refresh token that was just rotated away still answers.
+    # Two tabs refreshing at the same moment both present the old token; the
+    # slower one must not read as a stolen copy and sign the user out.
+    refresh_reuse_grace_seconds: int = 30
 
     # --- Agent (Claude Agent SDK) ---
     # The SDK talks to the model via the `claude` CLI. We route to a provider
@@ -197,7 +206,7 @@ class Settings(BaseSettings):
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
-    private_chat_executor_image: str = "cheese-private-executor:2.1.277"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.282"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也
@@ -273,7 +282,9 @@ class Settings(BaseSettings):
     # The runtime model on the gateway this subscription feeds.
     subscription_linked_model_name: str = "gpt-codex-subscription"
     # The upstream identifier the linked model calls. May need a Responses-API
-    # form (e.g. openai/responses/…) pending the protocol spike.
+    # form (e.g. openai/responses/…) pending the protocol spike. This is the
+    # DEFAULT: a subscription row may carry its own explicit upstream_model
+    # (llm_subscriptions.upstream_model), which wins over this value.
     subscription_upstream_model: str = "openai/gpt-5.2-codex"
     # Estimated prices: they exist ONLY so max_budget braking and the spend
     # readout keep working for a flat-rate subscription (the mimo precedent) —
@@ -332,7 +343,7 @@ class Settings(BaseSettings):
         ),
     )
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
-    # for the agent path (`cheese feedback propose`): a misfiring loop proposes
+    # for the agent path (`cheese_feedback_propose`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
     # afternoon and a topic nobody can read. Proposal cards are the one kind of
     # "the next step is on a person" that nobody is waiting on, so unlike a
@@ -370,12 +381,11 @@ class Settings(BaseSettings):
     #
     # Still governs: AgentWorkRunner's outer transport-independent wrap for the SDK
     # backend (no activity signal exists there), plus the generic outer default
-    # any backend keeps until it signals its own ceiling. The hooks-driven
-    # backends no longer use this for their
-    # effective timeout: they run the liveness loop the settings below describe
-    # (idle-suspect then a process probe, no-progress, unread grace; the ceiling
-    # only records) and hand the outer wrap their own ceiling through the
-    # `turn_ceiling` frame.
+    # any backend keeps until it signals its own ceiling. The session runtimes
+    # do not use this for their effective timeout: they apply the liveness
+    # rules the settings below describe (process gone, no-progress, unread
+    # grace; the ceiling only records) and hand the outer wrap their own
+    # ceiling through the `turn_ceiling` frame.
     agent_turn_timeout_s: float = 900.0
     # 冷启动看门狗: a turn that has emitted no assistant text and made no tool
     # call within this many seconds is declared dead, whatever its ceiling says.
@@ -386,40 +396,31 @@ class Settings(BaseSettings):
     # Generous on purpose: this must never cut a slow-but-live turn, only one
     # that never started. 0 disables it.
     agent_first_output_timeout_s: float = 300.0
-    # Two-layer safety net for the hooks-driven backends (they share one
-    # policy). Below this much idle time (no hook, and no
-    # backend-specific activity signal) a turn is normal; past it the turn is only
-    # SUSPECTED wedged and gets one lightweight liveness probe (a process-tree
-    # probe over the link) rather than being killed outright
-    # — a long foreground command with no interim hook must not look identical to a
-    # dead screen.
-    agent_idle_suspect_s: float = 300.0
     # The wall-clock mark past which a turn is recorded as long. A metric, not
-    # a gate: crossing it is logged once by the harness monitor and written to
-    # the turn record (`ceiling_crossed_s`), and nothing ends. With the three
-    # gates in place (the process probe past idle-suspect, output with no
-    # progress, an unread injection), what a wall clock alone could still end
-    # is a turn that is working and has not finished, which is not a fault. One
-    # number for both layers: the monitor reads it directly and the outer wrap
-    # in runtime.py receives it via the `turn_ceiling` frame.
+    # a gate: crossing it is written to the turn record (`ceiling_crossed_s`),
+    # and nothing ends. With the three gates in place (the session's process or
+    # runner gone, output with no progress, an input unread), what a wall clock
+    # alone could still end is a turn that is working and has not finished,
+    # which is not a fault. The outer wrap in runtime.py receives it via the
+    # `turn_ceiling` frame.
     agent_turn_hard_ceiling_s: float = 10800.0
     # How long a message we injected may sit unconsumed before the session is
-    # called unable to read. On a different axis from the two above: those watch
+    # called unable to read. On a different axis from the others: they watch
     # what a session PRODUCES, and a session that has stopped reading goes on
-    # producing, so neither of them ever fires for it. This one only exists
+    # producing, so none of them ever fires for it. This one only exists
     # while something is actually waiting, which makes it the narrower check and
     # the one with a person behind it.
     #
-    # Sized against the longest legitimate reason a message goes unread, which
-    # is a single long tool call: input is taken at tool boundaries, so a
-    # 20-minute command legitimately holds a message that long. This is not a
-    # responsiveness target. Ending the turn on this verdict replays the pending
-    # message into the next one, so the cost of firing is a restart, not a loss.
+    # Input is taken at tool boundaries, so the clock stands still while a tool
+    # runs and starts from its return: a 20-minute command holds a message that
+    # long without eating into this. This is not a responsiveness target. Ending
+    # the turn on this verdict replays the pending message into the next one,
+    # so the cost of firing is a restart, not a loss.
     agent_unread_grace_s: float = 1800.0
     # How long a session may keep producing output with no tool call and no
     # ending before it is called stuck. This is the gate for a loop: a session
-    # that talks and never acts keeps every other signal healthy, because the
-    # idle check sees hooks arriving and the process probe sees a live process.
+    # that talks and never acts keeps every other signal healthy: its records
+    # keep arriving and its process stays alive.
     # A long foreground command does not trip it, since it emits no output
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
@@ -469,7 +470,7 @@ class Settings(BaseSettings):
     # `subscription_device_proxy_host` directly (right for a flat network, and the
     # behaviour every deployment has today).
     subscription_tunnel_url: str = ""
-    # Where the proxy's own CA and the ccproxy CA are mounted from. The sandbox
+    # Where the proxy's own CA is mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
     # an opaque TLS error far from its cause.
     subscription_ca_host_path: str = ""
@@ -497,14 +498,13 @@ class Settings(BaseSettings):
 
     # --- Self-hosted / BYO device compute (P3, fusion-design §5) ---
     # Public base URL a device reaches the backend at: the enrolled machine's
-    # `cheese-hook` POSTs Claude Code hooks to
-    # `{connector_public_base}/connector/hooks/{key}`, and the device-flow approval
-    # link is built from it. For a NAT'd device this must be publicly reachable
-    # (outbound-only for the link WS; the hook POST is a normal outbound request).
-    # Every machine-facing URL is `{base}/<backend path>`, so the base must map
-    # 1:1 onto the backend's ROOT. Behind a reverse proxy that strips an `/api`
-    # prefix, that means the base ends in `/api` — otherwise `/sandbox/hooks/...`
-    # lands on the SPA, which answers 200/405 and drops every agent event
+    # CLI, git and model traffic go to it, and the device-flow approval link is
+    # built from it. For a NAT'd device this must be publicly reachable
+    # (outbound-only for the link WS; the CLI's calls are normal outbound
+    # requests). Every machine-facing URL is `{base}/<backend path>`, so the
+    # base must map 1:1 onto the backend's ROOT. Behind a reverse proxy that
+    # strips an `/api` prefix, that means the base ends in `/api` — otherwise
+    # `/topics/...` lands on the SPA, which answers 200/405 and drops the call
     # silently (dev, 2026-08-08: the machine worked, the platform saw nothing).
     connector_public_base: str = "http://localhost:8099"
     # Optional per-install-origin override for the device's persistent control
@@ -527,20 +527,6 @@ class Settings(BaseSettings):
     microcloud_base_url: str = ""
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
-    # The machine's built-in AI channel (the tenant console's →ccproxy button).
-    # Sent in the create call (micro-cloud#78), so the machine is born on it;
-    # the enrollment sweep still switches any machine that came up on another
-    # channel — MicroCloud's default without the field is newapi, whose default
-    # routes to a cheap non-Claude model. "" = leave whatever MicroCloud does.
-    microcloud_ai_mode: str = "ccproxy"
-
-    @property
-    def cloud_executor_ai_mode(self) -> str:
-        """Central sessions supply models; their Cloud guests only execute tools."""
-        if self.agent_session_device_id:
-            return "none"
-        return self.microcloud_ai_mode.strip().lower()
-
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
     microcloud_offering_id: int = 0
@@ -572,23 +558,11 @@ class Settings(BaseSettings):
     # (which happened, and also consumed the per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
-    # devices (and switching to the AI channel above). Ten seconds, not sixty: a Cloud
-    # topic's first turn crosses this clock twice (running → switch the AI
-    # channel, ready → enroll), and at 60s a person waited up to two minutes on
-    # a timer for a machine that was already there. A tick with nothing
-    # unsettled is three cheap queries.
+    # devices. Ten seconds, not sixty: a Cloud topic's first turn waits on this
+    # clock, and at 60s a person waited up to a minute on a timer for a machine
+    # that was already there. A tick with nothing unsettled is three cheap
+    # queries.
     machine_enroll_interval_seconds: int = 10
-
-    # --- ccproxy tenant realm: one revocable ticket per device (#420) ---
-    # Cheese is one ccproxy tenant (micro-teams/ccproxy). Registering a device
-    # there mints it a machine identity whose fake ticket ccproxy alone can
-    # swap for real credentials — so removing the device revokes exactly that
-    # device, instead of rotating a credential every box shares. Empty secret =
-    # the feature reports itself unavailable; devices keep whatever
-    # `ccproxy_upstream` an admin set by hand.
-    ccproxy_tenant_base_url: str = ""
-    ccproxy_tenant_secret: str = ""
-    ccproxy_tenant_timeout_s: float = 30.0
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
@@ -613,14 +587,14 @@ class Settings(BaseSettings):
 
         `sandbox_token` when pinned; otherwise DERIVED from `jwt_secret` rather
         than randomised per process. That fallback used to be
-        `secrets.token_hex(24)`, and the cost was not theoretical: a box's hook
-        token is baked into the environment of the long-running `claude` at
-        launch and never refreshed, so a fresh per-process secret invalidated
+        `secrets.token_hex(24)`, and the cost was not theoretical: a box's
+        session token is baked into the environment of the long-running session
+        at launch and never refreshed, so a fresh per-process secret invalidated
         every existing box's token the instant the backend restarted. The whole
-        deployment went deaf at once — hooks 401ing into nothing, turns running
-        to their ceiling reporting `tools: 0` while the agent inside worked
-        perfectly — recovering only by destroying each box (and with it the
-        session that IS that topic's conversational continuity).
+        deployment went deaf at once — every call from a session 401ing into
+        nothing while the agent inside worked perfectly — recovering only by
+        destroying each box (and with it the session that IS that topic's
+        conversational continuity).
 
         Deriving instead of randomising makes the secret stable across restarts
         with no deploy change, and `jwt_secret` is the right root because a
@@ -817,12 +791,6 @@ class Settings(BaseSettings):
     s3_public_url: str | None = None
 
     # --- Human auth (P1 agent-as-user / 真鉴权) ---
-    # Session tokens (JWT HS256) are signed AND verified with the one
-    # ``jwt_secret`` (same secret as main's access/refresh tokens) — no
-    # per-module signing secret.
-    # Session token lifetime. Login is passwordless (handle IS the identity), so
-    # this only bounds how long a minted token stays valid before re-login.
-    auth_token_ttl_s: int = 7 * 24 * 3600
     # Enforce topic access for TOKEN-authenticated actors (成员/角色/项目 checks).
     # The Phase-0 handle fallback stays permissive regardless, so existing
     # (no-token) callers are unaffected. Ops kill-switch: set false to disable the

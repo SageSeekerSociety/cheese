@@ -17,6 +17,7 @@ import { useDisplay } from 'vuetify'
 import {
   ApiError,
   downloadFile,
+  getForgeConnection,
   getGitDiff,
   getGitLog,
   listFiles,
@@ -146,6 +147,8 @@ const loading = ref(false)
 // A background re-fetch: spins only the 刷新 button, never replaces the panel.
 const refreshing = ref(false)
 const errorMsg = ref<string | null>(null)
+// 见 checkRepo。
+const noRepo = ref(false)
 // 一枚 chip 指来的文件，在当前这个来源里找不到。不是这块面板出了错，所以它不走
 // `errorMsg`——那一句的样子是「这一格加载失败」。
 const missing = ref<string | null>(null)
@@ -167,7 +170,7 @@ async function loadGit(opts: { silent?: boolean } = {}) {
   const task = selectedTask.value
   const pid = props.projectId
   const epoch = sourceEpoch
-  if (!tid || !pid || overview.value || sourceUnavailable.value) return
+  if (!tid || !pid || overview.value || sourceUnavailable.value || noRepo.value) return
   if (opts.silent) refreshing.value = true
   else loading.value = true
   errorMsg.value = null
@@ -210,7 +213,7 @@ const fileSaved = ref<string>('') // last loaded/saved content, for the dirty fl
 const fileSaving = ref(false)
 const fileListOpen = ref(true) // the ☰ toggle hides the list for a wider editor
 // 横条上关于「这一份文件」的那半（路径、差异/编辑、保存）只在文件区真的摆出来时才有。
-const fileToolReady = computed(() => !sourceUnavailable.value && !loading.value && !errorMsg.value)
+const fileToolReady = computed(() => !sourceUnavailable.value && !noRepo.value && !loading.value && !errorMsg.value)
 const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
 // Version of the open file as it was read; echoed back on save so a write that
 // lost a race to 芝士 is rejected instead of silently erasing their edits.
@@ -473,7 +476,7 @@ async function doLoadFiles() {
   const task = selectedTask.value
   const pid = props.projectId
   const epoch = sourceEpoch
-  if (!tid || !pid || overview.value || sourceUnavailable.value) return
+  if (!tid || !pid || overview.value || sourceUnavailable.value || noRepo.value) return
   loading.value = true
   errorMsg.value = null
   try {
@@ -642,8 +645,27 @@ function reloadOpenFile() {
 async function loadAll(opts: { silent?: boolean } = {}) {
   await loadTasks()
   if (overview.value || taskLoadError.value) return
+  void checkRepo()
+  if (noRepo.value) return
   void loadGit(opts)
   void loadFiles()
+}
+
+// 项目没接代码仓库时，文件和提交记录都拿不到，后端答的是一句「项目没有代码仓库」。
+// 那不是这一格出了错，是这一格本来就没有东西，所以问一声，照空状态说，不把它当报错
+// 挂出来。和取文件同时问，不排在它前面：有仓库的项目（绝大多数）不该为这一问多等
+// 一个来回。问不到就当有仓库：真出了错，那句错还得让人看见。每个项目只问一次。
+let repoCheckedFor: string | null = null
+async function checkRepo() {
+  const pid = props.projectId
+  if (!pid || repoCheckedFor === pid) return
+  repoCheckedFor = pid
+  try {
+    const forge = await getForgeConnection(pid)
+    if (props.projectId === pid) noRepo.value = !forge.connected
+  } catch {
+    if (props.projectId === pid) noRepo.value = false
+  }
 }
 
 watch(
@@ -959,8 +981,8 @@ defineExpose({ openFile })
     </div>
     <v-alert v-if="taskLoadError" type="error" density="compact" class="ma-4">{{ taskLoadError }}</v-alert>
     <div v-if="overview" class="room-changes">
-      <p v-if="requestedPath" class="source-note">选择任务以查看 {{ requestedPath }}</p>
-      <p v-if="!tasksLoaded && !taskLoadError" class="source-note">正在加载任务</p>
+      <p v-if="requestedPath" class="source-note">选择一个任务，查看 {{ requestedPath }}</p>
+      <p v-if="!tasksLoaded && !taskLoadError" class="source-note">加载中…</p>
       <p v-else-if="tasksLoaded && !taskOptions.length" class="source-note">暂无任务改动</p>
       <article v-for="task in taskOptions" :key="task.id" class="task-change-group" :aria-label="task.title">
         <!-- 进任务和铺开文件是两件事，所以是两个按钮：点整行进这条任务，点最右边
@@ -993,7 +1015,7 @@ defineExpose({ openFile })
              一句话，读者只会以为它没有改动。 -->
         <p v-if="overviewErrors[task.id]" class="source-note" role="alert">{{ overviewErrors[task.id] }}</p>
         <div v-if="expandedTasks.has(task.id)" :id="`task-files-${task.id}`">
-          <p v-if="!overviewDiffs[task.id] && !overviewErrors[task.id]" class="source-note">正在加载改动</p>
+          <p v-if="!overviewDiffs[task.id] && !overviewErrors[task.id]" class="source-note">加载中…</p>
           <p v-else-if="overviewDiffs[task.id]?.length === 0" class="source-note">暂无改动</p>
           <button
             v-for="file in overviewDiffs[task.id] ?? []"
@@ -1017,13 +1039,14 @@ defineExpose({ openFile })
       </button>
     </div>
     <v-alert v-else-if="sourceUnavailable" type="warning" density="compact" class="ma-4"
-      >任务不可用，请选择其他来源</v-alert
+      >无法打开这个任务，换一个来源查看</v-alert
     >
     <template v-else>
       <!-- 转圈，不是骨架：这块地方长出来的是一套工具（150px 文件树 + 右边一格），
          而右边那一格可能是差异、编辑器、一张图，也可能是「只读 / 二进制」提示——
          等的是什么形状，这里并不知道。判据同 PanelPreview。 -->
-      <div v-if="loading" class="d-flex justify-center py-8">
+      <p v-if="noRepo" class="source-note">暂无代码仓库</p>
+      <div v-else-if="loading" class="d-flex justify-center py-8">
         <v-progress-circular indeterminate color="primary" size="28" />
       </div>
       <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4 file-load-error">
@@ -1043,17 +1066,15 @@ defineExpose({ openFile })
            human choose — a silent winner is how edits vanished. -->
         <div v-if="fileConflict" class="file-conflict">
           <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
-          <span class="file-conflict__text">
-            这个文件在你编辑期间被改过，多半是芝士写的。直接保存会覆盖那些改动。
-          </span>
-          <v-btn size="x-small" variant="text" @click="reloadOpenFile">放弃我的改动，载入最新版本</v-btn>
+          <span class="file-conflict__text"> 你编辑期间，这个文件已被修改，直接保存会覆盖这些修改 </span>
+          <v-btn size="x-small" variant="text" @click="reloadOpenFile">载入最新版本</v-btn>
           <v-btn size="x-small" variant="text" color="error" :loading="fileSaving" @click="overwriteFile">
-            仍然覆盖保存
+            仍要保存
           </v-btn>
         </div>
         <div class="file-body">
           <div v-if="fileListOpen" ref="fileListEl" class="file-list">
-            <div v-if="fileRows.length === 0" class="text-center c-faint py-6" style="font-size: 0.8rem">
+            <div v-if="fileRows.length === 0" class="text-center c-faint py-6 t-body">
               {{ showAll ? '暂无文件' : '暂无改动' }}
             </div>
             <template v-for="row in fileRows" :key="`${row.type}:${row.path}`">
@@ -1152,12 +1173,9 @@ defineExpose({ openFile })
                 {{ fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
               </v-icon>
               <div class="file-blob__title">
-                {{ fileTooLarge ? '文件太大，不在浏览器里打开' : '二进制文件，不能按文本编辑' }}
+                {{ fileTooLarge ? '文件过大，无法在浏览器中打开' : '非文本文件，无法编辑' }}
               </div>
-              <div class="file-blob__note">
-                {{ openPath }} · {{ fmtBytes(fileBytes) }}
-                <template v-if="!fileTooLarge"> —— 按文本打开会损坏它，因此这里只读 </template>
-              </div>
+              <div class="file-blob__note">{{ openPath }} · {{ fmtBytes(fileBytes) }}</div>
               <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
                 <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
                 下载原文件
@@ -1197,7 +1215,7 @@ defineExpose({ openFile })
         </div>
       </div>
     </template>
-    <p v-if="drafts.size" class="source-note source-drafts">未保存的修改已保留在当前页面，切回对应文件可继续编辑</p>
+    <p v-if="drafts.size" class="source-note source-drafts">未保存的修改已暂存，回到对应文件可以继续编辑</p>
   </div>
 </template>
 
@@ -1229,7 +1247,7 @@ defineExpose({ openFile })
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .source-pick:hover {
   background: var(--fill);
@@ -1365,7 +1383,7 @@ defineExpose({ openFile })
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--muted);
   flex: 0 0 auto;
 }
 .changes-bar__ro {
@@ -1425,7 +1443,7 @@ defineExpose({ openFile })
   margin-left: 4px;
   padding: 0 4px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -1448,7 +1466,7 @@ defineExpose({ openFile })
   padding: 6px 0;
   background: var(--surface);
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 12px;
   line-height: 1.55;
 }
 .diff-line {
@@ -1487,7 +1505,7 @@ defineExpose({ openFile })
   gap: 4px;
   flex-wrap: wrap;
   padding: 6px 8px;
-  font-size: 0.76rem;
+  font-size: 13px;
   color: rgb(var(--v-theme-error));
   background: rgba(var(--v-theme-error), 0.07);
   border-bottom: 1px solid rgba(var(--v-theme-error), 0.25);
@@ -1507,11 +1525,11 @@ defineExpose({ openFile })
   text-align: center;
 }
 .file-blob__title {
-  font-size: 0.85rem;
+  font-size: 13px;
   color: var(--text);
 }
 .file-blob__note {
-  font-size: 0.75rem;
+  font-size: 13px;
   color: var(--muted);
   margin-top: 4px;
   word-break: break-all;
@@ -1551,7 +1569,7 @@ defineExpose({ openFile })
 }
 .file-item__name {
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

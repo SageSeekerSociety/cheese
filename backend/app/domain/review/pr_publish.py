@@ -380,7 +380,7 @@ async def retarget_completed_dependencies(
                     if delivered
                     else "已关闭，未交付"
                     if ancestor.status == TaskStatus.closed
-                    else "验收卡被驳回，任务仍在进行"
+                    else "已被退回，任务仍在进行"
                 )
                 headline = f"父任务{outcome}，子任务需要重新检查依赖"
                 rejection = (
@@ -628,7 +628,7 @@ async def _pr_text(
     topic_id: uuid.UUID,
     branch: str,
 ) -> tuple[str, str]:
-    """PR title/body from the card's change summary (`cheese accept-request
+    """PR title/body from the card's change summary (`cheese_accept_request
     --subject/--body`), falling back to the topic title when the card was filed
     without one.
 
@@ -711,8 +711,8 @@ async def _record_failure(
     from app.domain.review.repositories import AcceptCardRepository
 
     note = (
-        f"{PR_OPEN_FAILED_PREFIX}（{str(exc)[:300]}）。这张卡目前没有 PR；"
-        "点采纳会现场重开 PR，开不出来采纳会停下，不会静默直推上游。"
+        f"{PR_OPEN_FAILED_PREFIX}（{str(exc)[:300]}）。目前没有 PR，"
+        "采纳时会重新开 PR；如果仍然开不了，采纳会停止，不会直接推送改动。"
     )[:2000]
     try:
         async with session_factory() as session:

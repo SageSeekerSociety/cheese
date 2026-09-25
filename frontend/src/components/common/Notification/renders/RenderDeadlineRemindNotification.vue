@@ -85,17 +85,8 @@ const body = computed(() => {
   })
 })
 
-// 构建路由链接
-const routerLink = computed(() => {
-  if (project.value) {
-    return {
-      name: 'ProjectDetail',
-      params: { id: project.value.id },
-      query: { tab: 'schedule' },
-    }
-  }
-  return undefined
-})
+// 截止提醒原本指向 1.0 的团队项目页，那一套已经删掉，没有落点可链。
+const routerLink = computed(() => undefined)
 
 // 导出渲染结果，供父组件使用
 const content = computed<RenderedNotificationContent>(() => ({

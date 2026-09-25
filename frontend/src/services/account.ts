@@ -5,8 +5,8 @@ import { computed, ref } from 'vue'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { clearPageCache } from '@/lib/pageCache'
+import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from '@/lib/session'
 import { UserApi } from '@/network/api/users'
-import { BusinessError } from '@/network/types/error'
 import { disablePush } from '@/services/webPush'
 import { resetFeedbackCaches } from '@/stores/feedback'
 
@@ -64,8 +64,8 @@ function storedUserId(): number | undefined {
  * 它们本来都只在退出登录时清（`logout`），而危险的那一下不是退出，是**换人登录**：
  * 上一个人关掉标签页就走了、没点退出，下一个人登进来时全都还在。
  *
- * 同一个人不清：续签令牌走的也是 `login`（`refreshToken` 拦截器），每小时清一次
- * 等于这些缓存从来不存在。所以判据是**身份变了**，不是「又登了一次」。
+ * 同一个人不清：续签令牌也会走到这里（`adopt`），每小时清一次等于这些缓存从来
+ * 不存在。所以判据是**身份变了**，不是「又登了一次」。
  *
  * 认不出新身份时（OAuth 回调只给令牌，用户信息随后才拉）当作换了人：那条路径只在
  * 一次全新的登录里走到，宁可多清一次。
@@ -95,6 +95,15 @@ export class AccountService {
   // 是 false 而不是「还不知道」——根路径的守卫要是当场读，就会把回访用户当成
   // 生人送进推广页。要靠登录态做路由决定的地方先 await 这一个。
   sessionRestored: Promise<void> = Promise.resolve()
+
+  constructor() {
+    // 续签、登录、退出都可能发生在别的标签页，也可能是这个标签页里别的代码发起
+    // 的续签（lib/session.ts）。都从这里接住，内存里这份才不会和存储里的对不上。
+    onSessionEvent((event) => {
+      if (event.type === 'token') this.adopt(event.token, event.user)
+      else void this.forget()
+    })
+  }
 
   public get loggedIn() {
     return this._loggedIn.value
@@ -160,15 +169,14 @@ export class AccountService {
     // 令牌已过期就先续签再宣布登录：等 loggedIn 翻成 true 时手里一定是新令牌，
     // 消费方（AppBar / useNotifications 都 watch 了 loggedIn）自然会重新取一次数。
     if (isTokenExpired(accessToken)) {
-      // 无论如何都不宣布登录——手里没有活令牌，宣布了也只是继续撒 401。
-      // 区别只在要不要连本地那份会话一起清掉：
-      const outcome = await this.refreshExpiredSession()
+      // 续签成功才宣布登录——手里没有活令牌，宣布了也只是继续撒 401。
+      const outcome = await this.resumeFromCookie()
       if (outcome === 'rejected') {
-        // 服务端明确拒了（刷新令牌过期/被撤销）= 真的登出了。
-        await this.logout()
+        // 服务端明确拒了（登录已过期或被撤销）= 真的登出了。
+        await this.forget()
       }
       // outcome === 'unreachable' 时故意留着 localStorage：这多半是网络抖动，
-      // 刷新令牌还有 30 天，下次进页面再续一次就好，没必要逼用户重新登录。
+      // 下次进页面再续一次就好，没必要逼用户重新登录。
       return
     }
 
@@ -180,29 +188,35 @@ export class AccountService {
   }
 
   /**
-   * 用 httpOnly 的 REFRESH_TOKEN cookie 换一个新的访问令牌。成功才登录。
+   * 只凭刷新 cookie 登录：OAuth 回跳落地时，和回访时访问令牌已经过期时。
    *
-   * 失败分两种，处理方式不同：服务端答复了但拒绝（`rejected`）= 会话真的没了；
-   * 压根没拿到答复（`unreachable`，网络错误）= 别把用户的会话当垫背清掉。
+   * 服务端答复了但拒绝（`rejected`）= 会话真的没了；没拿到答复（`unreachable`）
+   * = 别把用户的会话当垫背清掉。
    */
-  private async refreshExpiredSession(): Promise<'ok' | 'rejected' | 'unreachable'> {
-    try {
-      const { data } = await UserApi.refreshAccessToken()
-      if (!data?.accessToken || !data?.user) return 'rejected'
-      await this.login(data.accessToken, data.user)
-      return 'ok'
-    } catch (error) {
-      // 拦截器给「有响应」的错误统一包成 BusinessError（ServerError 是它的子类）
-      // 并带上 code；网络错误则是一个裸 Error。
-      return error instanceof BusinessError ? 'rejected' : 'unreachable'
+  public async resumeFromCookie(): Promise<'ok' | 'rejected' | 'unreachable'> {
+    const outcome = await refreshSession()
+    if (outcome.kind !== 'ok') return outcome.kind
+    this.adopt(outcome.token, outcome.user)
+    if (!this.user) await this.updateUserInfo()
+    return 'ok'
+  }
+
+  /** 接过一个新令牌：这个标签页续签的，或者别的标签页续签、登录的。 */
+  private adopt(accessToken: string, user?: User) {
+    if (user) dropCachesIfSomeoneElseLogsIn(this.user?.id ?? storedUserId(), user.id)
+    this.accessToken = accessToken
+    if (user) {
+      this.user = user
+      localStorage.setItem('user', JSON.stringify(user))
     }
+    this.loggedIn = true
   }
 
   public async login(accessToken: string, user?: User) {
     dropCachesIfSomeoneElseLogsIn(this.user?.id ?? storedUserId(), user?.id)
     this.loggedIn = true
     this.accessToken = accessToken
-    localStorage.setItem('accessToken', accessToken)
+    announceSignIn(accessToken, user)
 
     if (user) {
       // 如果提供了用户信息，直接使用
@@ -215,6 +229,12 @@ export class AccountService {
   }
 
   public async logout() {
+    announceSignOut()
+    await this.forget()
+  }
+
+  /** 放下这个标签页里的登录态，不通知别人：别的标签页已经退出，或者会话已经失效。 */
+  private async forget() {
     // 先退订推送，趁令牌还在：那一行订阅是按 user_id 存的，留着就等于这台浏览器继
     // 续替上一个人收他的推送 —— 和下面两份缓存同一类问题，只是这一个会主动响。
     // 它自己吞掉所有错误，最坏的后果是后端往一个死地址发几次，投递侧按 404/410

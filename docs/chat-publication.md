@@ -13,24 +13,24 @@ independent of this publication path.
 
 ## Sending a message
 
-```bash
-cheese chat send 'I will check the current message flow, then connect explicit publication.'
-cheese chat send --file ./update.txt
-cheese chat send 'The retry check passed.' --reply-to <message-id>
+```
+chat_send(content="I will check the current message flow, then connect explicit publication.")
+chat_send(content="The retry check passed.", reply_to="<message-id>")
 ```
 
-The command uses the current room and agent credentials. It calls
+`chat_send` is a platform tool on the session host and uses the current room and
+agent credentials. It calls
 `POST /topics/{topic_id}/messages` with `content`, a UUID `request_id`, and an
 optional `reply_to`. The backend verifies the agent and room access, stores the
 message and mention notifications, then broadcasts an `assistant_block`. It does
 not enqueue user input or start another model turn. The response contains the
 stored message and its ID.
 
-If delivery is uncertain, repeat the unchanged request with the printed
-`--request-id`, preserving `--reply-to`. A retry returns the same stored message;
+If delivery is uncertain, repeat the unchanged request with the returned
+`request_id`, preserving `reply_to`. A retry returns the same stored message;
 changing its content or reply target returns a conflict. Parameter and permission
-errors need correction before retrying. Multiline content can come from a UTF-8
-file or stdin with `--file -`.
+errors need correction before retrying. Quotes and line breaks travel in
+`content` as written.
 
 ## Communication instructions
 

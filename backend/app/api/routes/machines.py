@@ -20,7 +20,6 @@ from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.schemas import MachineCreate, MachineOut
 from app.domain.machine.services import MachineService
-from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
 
@@ -51,9 +50,8 @@ async def _require_project_access(
 
     Machine reads contain the private address of provisioned infrastructure, and
     creates/deletes mutate a prepaid MicroCloud account. Team members may inspect
-    their shared pool; only team owners/admins may spend or destroy it. Legacy
-    team-less projects retain their owner/lead rules. Agent identities need
-    those same explicitly assigned roles.
+    their shared pool; only team owners/admins may spend or destroy it. Agent
+    identities need the same team standing.
     """
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     if not actor.authenticated:
@@ -67,28 +65,14 @@ async def _require_project_access(
     if project is None:
         raise NotFoundError("Project not found")
 
-    team_id = await ProjectRepository(db).team_for_project(project_id)
-    if team_id is not None:
-        if actor.user_id is None:
-            raise AuthenticationRequiredError(
-                "A current user credential is required to manage team compute"
-            )
-        teams = TeamRepository(db)
-        if not await teams.is_team_member(team_id, actor.user_id):
-            raise NotFoundError("Project not found")
-        return actor
-
-    # Compatibility for projects created before every project gained a team.
-    if project.owner_handle == actor.handle:
-        return actor
-    member = await MemberRepository(db).get(
-        project_id=project_id, user_handle=actor.handle
-    )
-    if member is not None:
-        return actor
-
-    # Conceal the project and its machine inventory from authenticated outsiders.
-    raise NotFoundError("Project not found")
+    if actor.user_id is None:
+        raise AuthenticationRequiredError(
+            "A current user credential is required to manage team compute"
+        )
+    if not await TeamRepository(db).is_team_member(project.team_id, actor.user_id):
+        # Conceal the project and its machine inventory from outsiders.
+        raise NotFoundError("Project not found")
+    return actor
 
 
 @router.get("/{project_id}/machines")

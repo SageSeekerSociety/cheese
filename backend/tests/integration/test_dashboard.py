@@ -5,7 +5,7 @@ import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import seed_space, seed_task_with_protocol
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _seed_block(client, project_id, topic_id, author, author_type, kind):
@@ -29,7 +29,7 @@ def _seed_block(client, project_id, topic_id, author, author_type, kind):
 
 def test_contributions_exclude_platform_blocks(client):
     # spec §10.1: by_author counts real contributors, not platform lifecycle blocks.
-    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
+    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
         "data"
     ]
     pid, root = p["id"], p["root_topic_id"]
@@ -46,15 +46,10 @@ def test_contributions_exclude_platform_blocks(client):
 
 
 def test_member_summary_has_active_and_weekly(client, bearer):
-    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
+    p = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
         "data"
     ]
     pid, root = p["id"], p["root_topic_id"]
-    client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": "user-1"},
-        headers=bearer("user-1"),  # the project owner
-    )
     _seed_block(client, pid, root, "user-1", AuthorType.participant, BlockKind.message)
 
     # The member page resolves the viewer from the credential — read as user-1.
@@ -72,9 +67,9 @@ def test_space_board_lists_linked_teams(client):
     # Space → its 赛题 → a project created from it (#370).
     space_id = seed_space(client, "明理书院")
     task_id = seed_task_with_protocol(client, space_id=space_id)
-    client.post(
-        "/projects", json={"name": "队伍A", "external_task_id": task_id}
-    ).json()["data"]
+    post_project(client, json={"name": "队伍A", "external_task_id": task_id}).json()[
+        "data"
+    ]
 
     board = client.get(f"/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 1

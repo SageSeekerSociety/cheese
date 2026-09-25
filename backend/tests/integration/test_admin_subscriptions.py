@@ -282,6 +282,7 @@ def _seed_active(
     subject: str = "sub-test-1",
     account: str = "acct-test-1",
     snapshot: dict | None = None,
+    upstream: str | None = None,
 ) -> uuid.UUID:
     """直接落一条 `active` 订阅（刷新/额度/撤销这些用例的起点不是导入本身）。"""
 
@@ -305,6 +306,7 @@ def _seed_active(
                 id_token_enc=seal_subscription_token(row_id, "id_token_enc", ID_TOKEN),
                 token_expires_at=datetime.now(UTC) + timedelta(hours=1),
                 linked_model_name=linked,
+                upstream_model=upstream,
                 quota_snapshot=snapshot,
                 quota_fetched_at=(
                     datetime.now(UTC) - timedelta(minutes=5) if snapshot else None
@@ -346,6 +348,7 @@ def test_a_stranger_gets_403_everywhere(client, as_admin, rig):
         ("POST", f"/admin/subscriptions/device-flows/{some_id}/cancel"),
         ("POST", f"/admin/subscriptions/{some_id}/refresh"),
         ("GET", f"/admin/subscriptions/{some_id}/quota"),
+        ("PATCH", f"/admin/subscriptions/{some_id}/upstream-model"),
         ("DELETE", f"/admin/subscriptions/{some_id}"),
     ]:
         r = client.request(
@@ -417,6 +420,7 @@ def test_import_full_chain(client, as_admin, rig):
     sub_dto = data["subscription"]
     assert sub_dto["status"] == "active"
     assert sub_dto["account_email"] == "admin@example.com"
+    assert sub_dto["upstream_model"] is None  # 没显式选 = 跟随部署默认
     # DTO 脱敏：token / 密文字段一个字母都不出现。
     dto_blob = json.dumps(sub_dto)
     for leaked in (ACCESS, REFRESH, ID_TOKEN, "token_enc"):
@@ -437,6 +441,8 @@ def test_import_full_chain(client, as_admin, rig):
     assert len(news) == 1
     sent = json.loads(news[0].content)
     params = sent["litellm_params"]
+    # 没显式选：上游是部署默认（settings.subscription_upstream_model）。
+    assert params["model"] == "openai/gpt-5.2-codex"
     assert params["api_key"] == ACCESS
     assert params["api_base"] == "https://chatgpt.com/backend-api/codex"
     headers = params["extra_headers"]
@@ -610,6 +616,380 @@ def test_refresh_unreachable_gateway_is_a_503(client, as_admin, rig):
     # token 已换新且可还原 —— 丢了这个等于把这条订阅弄丢。
     assert rows[0].status == "active"
     assert open_subscription_token(rows[0], "access_token_enc") == ACCESS
+
+
+# --- 上游模型：导入时指定 + 授权后修改 --------------------------------------------
+
+
+def test_import_with_explicit_upstream_model(client, as_admin, rig):
+    """导入时指定上游模型：行上存显式选择，新建网关模型的 model 就是选的那个。"""
+    started = client.post(
+        "/admin/subscriptions/device-flows",
+        json={"provider": "openai_codex", "upstream_model": "openai/gpt-5.6-luna"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert started.status_code == 200, started.text
+    flow_id = started.json()["data"]["flow_id"]
+
+    rig.openai_state["poll"] = "complete"
+    done = client.post(
+        f"/admin/subscriptions/device-flows/{flow_id}/poll",
+        headers=session_auth_headers(as_admin),
+    )
+    assert done.status_code == 200, done.text
+    sub_dto = done.json()["data"]["subscription"]
+    assert sub_dto["upstream_model"] == "openai/gpt-5.6-luna"
+
+    news = [c for c in rig.gateway_calls if c.url.path == "/model/new"]
+    assert len(news) == 1
+    sent = json.loads(news[0].content)
+    assert sent["litellm_params"]["model"] == "openai/gpt-5.6-luna"
+
+    (row,) = _subs_rows(client)
+    assert row.upstream_model == "openai/gpt-5.6-luna"
+
+
+def _linked_model_fixture(rig, upstream: str = "openai/gpt-5.2-codex") -> None:
+    """让假网关的 /model/info 报出那条已挂载的链接模型（编辑分支会被走到）。"""
+    rig.gateway_state["models"] = [
+        {
+            "model_name": "gpt-codex-subscription",
+            "litellm_params": {"model": upstream},
+            "model_info": {"id": "mid-sub-1", "cheese_selectable": True},
+        }
+    ]
+
+
+def _update_patches(rig) -> list[httpx.Request]:
+    return [
+        c
+        for c in rig.gateway_calls
+        if c.method == "PATCH" and c.url.path.endswith("/update")
+    ]
+
+
+def test_update_upstream_model_pushes_to_gateway(client, as_admin, rig):
+    """授权后改上游：行上的选择落库，PATCH 把新上游连同现有凭据推进网关。"""
+    sub_id = _seed_active(client, upstream="openai/gpt-5.2-codex")
+    _linked_model_fixture(rig)
+
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": "openai/gpt-5.6-sol"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["upstream_model"] == "openai/gpt-5.6-sol"
+
+    (row,) = _subs_rows(client)
+    assert row.upstream_model == "openai/gpt-5.6-sol"
+
+    patches = _update_patches(rig)
+    assert len(patches) == 1
+    sent = json.loads(patches[0].content)
+    assert sent["litellm_params"]["model"] == "openai/gpt-5.6-sol"
+    # 凭据随刷新同一管道重推；合并语义下 api_base / prices 不动。
+    assert sent["litellm_params"]["api_key"] == ACCESS
+    assert rig.refreshed, "写完应让选择器目录重读"
+
+    audit = [
+        r for r in _audit_rows(client) if r.action == "subscription.update_upstream"
+    ]
+    assert [(r.action, r.result) for r in audit] == [
+        ("subscription.update_upstream", "ok")
+    ]
+    assert audit[0].before["upstream_model"] == "openai/gpt-5.2-codex"
+    assert audit[0].after["upstream_model"] == "openai/gpt-5.6-sol"
+    assert ACCESS not in _audit_blob(audit)
+
+
+def test_update_upstream_model_to_null_falls_back_to_default(client, as_admin, rig):
+    """清除显式选择（null）：行上回落 NULL，推进网关的是部署默认值。"""
+    sub_id = _seed_active(client, upstream="openai/gpt-5.6-luna")
+    _linked_model_fixture(rig, upstream="openai/gpt-5.6-luna")
+
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": None},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["upstream_model"] is None
+
+    (row,) = _subs_rows(client)
+    assert row.upstream_model is None
+
+    patches = _update_patches(rig)
+    assert len(patches) == 1
+    sent = json.loads(patches[0].content)
+    assert sent["litellm_params"]["model"] == "openai/gpt-5.2-codex"
+
+
+def test_update_upstream_model_rejected_shapes(client, as_admin, rig):
+    """空串 400（形状层，仓库把 pydantic 错误翻成 BadRequestError）、不存在
+    404、终态 400 —— 每一码是不同的一句话。"""
+    sub_id = _seed_active(client)
+
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": ""},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+
+    # 字段整个缺省：必填（「忘了传」绝不能被读成「清除选择」）。
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+
+    # 全是空白：形状层过了 min_length，业务层拒（与网关模型新增同规）。
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": "   "},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+
+    # 行上的选择一路都没被动过。
+    (row,) = _subs_rows(client)
+    assert row.upstream_model is None
+
+    r = client.patch(
+        f"/admin/subscriptions/{uuid.uuid4()}/upstream-model",
+        json={"upstream_model": "openai/gpt-5.6-sol"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 404, r.text
+
+    gone = client.delete(
+        f"/admin/subscriptions/{sub_id}", headers=session_auth_headers(as_admin)
+    )
+    assert gone.status_code == 200, gone.text
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": "openai/gpt-5.6-sol"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+
+
+def test_an_upstream_outside_the_openai_provider_is_a_400(client, as_admin, rig):
+    """chatgpt/ 会让网关自己起设备码登录、卡住所有请求；这把订阅的 key 只有
+    openai/ 用得上。两个入口都拒，行上的选择不动。"""
+    sub_id = _seed_active(client)
+    _linked_model_fixture(rig)
+
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": "chatgpt/gpt-5.6-luna"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+    assert "openai/" in r.text
+    (row,) = _subs_rows(client)
+    assert row.upstream_model is None
+
+    r = client.post(
+        "/admin/subscriptions/device-flows",
+        json={"provider": "openai_codex", "upstream_model": "chatgpt/gpt-5.6-luna"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+    assert "openai/" in r.text
+
+
+def test_update_upstream_model_gateway_failure_is_a_502(client, as_admin, rig):
+    """选择已落库（下一次刷新会补推）、审计落 failed，网关的原话翻成 502。"""
+    sub_id = _seed_active(client)
+
+    def refused(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/model/info":
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(400, json={"error": "bad upstream"})
+
+    client.app.dependency_overrides[get_gateway_admin] = lambda: GatewayAdmin(
+        "http://gw", "mk", transport=httpx.MockTransport(refused)
+    )
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": "openai/gpt-5.6-sol"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 502, r.text
+
+    (row,) = _subs_rows(client)
+    assert row.upstream_model == "openai/gpt-5.6-sol"
+    assert "推进网关失败" in (row.last_refresh_error or "")
+    audit = [
+        r for r in _audit_rows(client) if r.action == "subscription.update_upstream"
+    ]
+    assert audit and audit[-1].result == "failed"
+    assert ACCESS not in _audit_blob(audit)
+
+
+def test_refresh_reasserts_the_rows_upstream(client, as_admin, rig):
+    """网关上的上游被改走（比如通用编辑页）后，下一次刷新拿行上的值盖回去
+    —— 订阅行是这条链接模型上游的唯一权威。"""
+    sub_id = _seed_active(client, upstream="openai/gpt-5.6-luna")
+    _linked_model_fixture(rig, upstream="openai/gpt-5.9-tampered")
+
+    r = client.post(
+        f"/admin/subscriptions/{sub_id}/refresh",
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+
+    patches = _update_patches(rig)
+    assert len(patches) == 1
+    sent = json.loads(patches[0].content)
+    assert sent["litellm_params"]["model"] == "openai/gpt-5.6-luna"
+
+
+def test_targeted_reauth_inherits_the_old_rows_upstream(client, as_admin, rig):
+    """重授权换凭据不换配置：请求没带上游时，新行继承被顶掉那行的显式选择，
+    完成时推进网关的也是它 —— 换号不会把模型静默打回部署默认。"""
+    old_id = _seed_active(client, upstream="openai/gpt-5.6-luna")
+    _linked_model_fixture(rig, upstream="openai/gpt-5.6-luna")
+
+    started = client.post(
+        "/admin/subscriptions/device-flows",
+        json={
+            "provider": "openai_codex",
+            "target_subscription_id": str(old_id),
+        },
+        headers=session_auth_headers(as_admin),
+    )
+    assert started.status_code == 200, started.text
+    flow_id = started.json()["data"]["flow_id"]
+
+    rig.openai_state["poll"] = "complete"
+    done = client.post(
+        f"/admin/subscriptions/device-flows/{flow_id}/poll",
+        headers=session_auth_headers(as_admin),
+    )
+    assert done.status_code == 200, done.text
+    assert done.json()["data"]["subscription"]["upstream_model"] == (
+        "openai/gpt-5.6-luna"
+    )
+
+    rows = _subs_rows(client)
+    active = [r for r in rows if r.status == "active"]
+    assert len(active) == 1
+    assert active[0].upstream_model == "openai/gpt-5.6-luna"
+
+    patches = _update_patches(rig)
+    assert len(patches) == 1
+    sent = json.loads(patches[0].content)
+    assert sent["litellm_params"]["model"] == "openai/gpt-5.6-luna"
+
+
+def test_targeted_reauth_with_explicit_null_clears_the_upstream(client, as_admin, rig):
+    """定向重授权显式传 null = 清除选择（与「字段缺省 = 继承」是两句不同的话）：
+    新行回落 NULL，推进网关的是部署默认。"""
+    old_id = _seed_active(client, upstream="openai/gpt-5.6-luna")
+    _linked_model_fixture(rig, upstream="openai/gpt-5.6-luna")
+
+    started = client.post(
+        "/admin/subscriptions/device-flows",
+        json={
+            "provider": "openai_codex",
+            "target_subscription_id": str(old_id),
+            "upstream_model": None,
+        },
+        headers=session_auth_headers(as_admin),
+    )
+    assert started.status_code == 200, started.text
+    flow_id = started.json()["data"]["flow_id"]
+
+    rig.openai_state["poll"] = "complete"
+    done = client.post(
+        f"/admin/subscriptions/device-flows/{flow_id}/poll",
+        headers=session_auth_headers(as_admin),
+    )
+    assert done.status_code == 200, done.text
+    assert done.json()["data"]["subscription"]["upstream_model"] is None
+
+    active = [r for r in _subs_rows(client) if r.status == "active"]
+    assert len(active) == 1
+    assert active[0].upstream_model is None
+    patches = _update_patches(rig)
+    assert len(patches) == 1
+    sent = json.loads(patches[0].content)
+    assert sent["litellm_params"]["model"] == "openai/gpt-5.2-codex"
+
+
+def test_start_flow_with_a_whitespace_upstream_is_a_400(client, as_admin, rig):
+    """空白上游在开启流程这一侧同样拒掉（与 PATCH 同一条规矩）。"""
+    r = client.post(
+        "/admin/subscriptions/device-flows",
+        json={"provider": "openai_codex", "upstream_model": "   "},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+    assert _subs_rows(client) == []
+
+
+def test_update_upstream_model_success_clears_the_stale_error(client, as_admin, rig):
+    """改完推成：上一次网关失败的原话不再是现状（刷新成功路径同规）。"""
+    sub_id = _seed_active(client)
+    _linked_model_fixture(rig)
+
+    async def _stale():
+        async with client.test_factory() as session:
+            row = await session.get(LlmSubscription, sub_id)
+            row.last_refresh_error = "凭据已刷新，但推进网关失败：gateway 503"
+            await session.commit()
+
+    asyncio.run(_stale())
+
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": "openai/gpt-5.6-sol"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["last_refresh_error"] is None
+    (row,) = _subs_rows(client)
+    assert row.last_refresh_error is None
+
+
+def test_update_upstream_model_with_an_undecryptable_credential_marks_reauth(
+    client, as_admin, rig
+):
+    """凭据解不开（密钥已轮换）：选择落库、行置 reauth_required（凭据不可用的
+    既有路径）、网关一个包都不收；重授权继承这个选择。"""
+    sub_id = _seed_active(client)
+
+    async def _corrupt():
+        async with client.test_factory() as session:
+            row = await session.get(LlmSubscription, sub_id)
+            row.access_token_enc = "not-a-valid-ciphertext"
+            await session.commit()
+
+    asyncio.run(_corrupt())
+
+    r = client.patch(
+        f"/admin/subscriptions/{sub_id}/upstream-model",
+        json={"upstream_model": "openai/gpt-5.6-sol"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["status"] == "reauth_required"
+    assert data["upstream_model"] == "openai/gpt-5.6-sol"
+
+    (row,) = _subs_rows(client)
+    assert row.status == "reauth_required"
+    assert row.upstream_model == "openai/gpt-5.6-sol"
+    # 网关一个包都不该收到（连 /model/info 都不读 —— 没有凭据可推）。
+    assert rig.gateway_calls == []
+    audit = [
+        r for r in _audit_rows(client) if r.action == "subscription.update_upstream"
+    ]
+    assert audit and audit[-1].result == "failed"
 
 
 # --- 额度读数 -----------------------------------------------------------------

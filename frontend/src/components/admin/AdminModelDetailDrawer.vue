@@ -5,7 +5,13 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
-import { getGatewayModel, getSubscriptionQuota, revokeSubscription, type SubscriptionQuotaTier } from '@/api'
+import {
+  getGatewayModel,
+  getSubscriptionQuota,
+  revokeSubscription,
+  type SubscriptionQuotaTier,
+  updateSubscriptionUpstreamModel,
+} from '@/api'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import AdminSubscriptionImportDialog from '@/components/admin/AdminSubscriptionImportDialog.vue'
@@ -46,6 +52,8 @@ interface SubscriptionOverlay {
   id: string
   status: string
   account_email: string | null
+  /** 订阅行上显式选的上游模型；null/缺 = 跟随部署默认（网关现值即解析值）。 */
+  upstream_model?: string | null
   token_expires_at?: string | null
   last_refresh_error?: string | null
   quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
@@ -114,6 +122,12 @@ const revokeOpen = ref(false)
 const revoking = ref(false)
 const revokeError = ref<string | null>(null)
 
+/* 上游模型的就地编辑：行上的显式选择是唯一权威，改完服务端即推网关。 */
+const upstreamEditing = ref(false)
+const upstreamDraft = ref('')
+const upstreamSaving = ref(false)
+const upstreamError = ref<string | null>(null)
+
 /** 定向重新授权的导入对话框（订阅块自己的实例，带着这条订阅的 id）。 */
 const reauthOpen = ref(false)
 
@@ -144,6 +158,8 @@ watch(
     quotaError.value = null
     revokeOpen.value = false
     revokeError.value = null
+    upstreamEditing.value = false
+    upstreamError.value = null
     void load()
   },
   { immediate: true }
@@ -172,6 +188,12 @@ const subDotClass = computed(() => {
   if (status === 'refresh_failed') return 'amdd__dot--warn'
   return 'amdd__dot--danger'
 })
+
+/** 上游模型编辑入口给哪些状态：与后端 `_REAUTHABLE` 同一个集合 —— 其余状态
+ *  （pending 等）点了也是 400，不该给人一个必败的按钮。 */
+const upstreamEditable = computed(() =>
+  ['active', 'refresh_failed', 'reauth_required'].includes(sub.value?.status ?? '')
+)
 
 /** 额度读数：活读数（刚刷的）优先，否则详情自带的快照；都没有 = 「暂无额度读数」。 */
 const quota = computed<{ tiers: SubscriptionQuotaTier[]; fetched_at: string | null; stale: boolean } | null>(() => {
@@ -245,6 +267,45 @@ async function confirmRevoke() {
 function onReauthImported() {
   emit('changed')
   void load()
+}
+
+function startUpstreamEdit() {
+  upstreamDraft.value = sub.value?.upstream_model ?? ''
+  upstreamError.value = null
+  upstreamEditing.value = true
+}
+
+function cancelUpstreamEdit() {
+  upstreamEditing.value = false
+  upstreamError.value = null
+}
+
+async function saveUpstream() {
+  const current = sub.value
+  if (!current || upstreamSaving.value) return
+  upstreamSaving.value = true
+  upstreamError.value = null
+  try {
+    await updateSubscriptionUpstreamModel(current.id, upstreamDraft.value.trim() || null)
+    if (sub.value?.id !== current.id) return
+    upstreamEditing.value = false
+    emit('changed')
+    await load()
+  } catch (e) {
+    // 失败照原话就地显示（那句话里带着网关的原话）；编辑框不关。
+    upstreamError.value = e instanceof Error && e.message ? e.message : t('models.page.loadFailed')
+    // 「行已落库、网关那一下失败」时服务端也是这个回答 —— 选择其实生效了，
+    // 后台静默重读（不动 loading，不把编辑框换成骨架），显示与库里一致。
+    if (props.name) {
+      getGatewayModel(props.name, props.days)
+        .then((fresh) => {
+          if (sub.value?.id === current.id) detail.value = fresh as unknown as DetailPayload
+        })
+        .catch(() => {})
+    }
+  } finally {
+    upstreamSaving.value = false
+  }
 }
 
 const caps = computed(() => {
@@ -363,6 +424,54 @@ function close() {
                 </span>
               </dd>
             </dl>
+            <!-- 上游模型：订阅行上的显式选择是唯一权威（没有显式选择 = 跟随部署
+                 默认；默认值是多少前端不知道，不猜）。就地改，保存即推网关。
+                 编辑入口只给后端接得住的状态（与 _REAUTHABLE 同一个集合）。 -->
+            <div class="amdd__upstream">
+              <p class="amdd__note t-meta-read t-num">
+                {{
+                  sub.upstream_model
+                    ? t('models.subscription.upstreamModelCurrent', { model: sub.upstream_model })
+                    : t('models.subscription.upstreamModelDefault')
+                }}
+                <v-btn
+                  v-if="!upstreamEditing && upstreamEditable"
+                  variant="text"
+                  size="x-small"
+                  @click="startUpstreamEdit"
+                >
+                  {{ t('models.subscription.upstreamModelEdit') }}
+                </v-btn>
+              </p>
+              <div v-if="upstreamEditing" class="amdd__upstreamedit">
+                <v-text-field
+                  v-model="upstreamDraft"
+                  :label="t('models.subscription.upstreamModel')"
+                  :hint="t('models.subscription.upstreamModelHint')"
+                  density="compact"
+                  variant="outlined"
+                  maxlength="200"
+                  autocomplete="off"
+                  hide-details="auto"
+                  data-testid="upstream-edit-input"
+                />
+                <div class="amdd__upstreamactions">
+                  <v-btn size="small" variant="text" :disabled="upstreamSaving" @click="cancelUpstreamEdit">
+                    {{ t('models.subscription.upstreamModelCancel') }}
+                  </v-btn>
+                  <v-btn
+                    size="small"
+                    color="primary"
+                    :loading="upstreamSaving"
+                    :disabled="upstreamDraft !== '' && !upstreamDraft.trim()"
+                    @click="saveUpstream"
+                  >
+                    {{ t('models.subscription.upstreamModelSave') }}
+                  </v-btn>
+                </div>
+                <p v-if="upstreamError" class="amdd__suberror t-meta-read" role="alert">{{ upstreamError }}</p>
+              </div>
+            </div>
             <p v-if="sub.token_expires_at" class="amdd__note t-meta-read t-num">
               {{ t('models.detail.subscription.tokenExpires', { time: ahead(sub.token_expires_at) }) }}
             </p>
@@ -408,7 +517,13 @@ function close() {
             </div>
 
             <div class="amdd__subactions">
-              <v-btn v-if="sub.status === 'reauth_required'" variant="outlined" size="small" @click="reauthOpen = true">
+              <v-btn
+                v-if="sub.status === 'reauth_required'"
+                color="primary"
+                variant="outlined"
+                size="small"
+                @click="reauthOpen = true"
+              >
                 {{ t('models.detail.subscription.reauth') }}
               </v-btn>
               <!-- 移除是危险动作：先确认，确认框说清连带后果（停用网关模型）。 -->
@@ -507,11 +622,13 @@ function close() {
       </v-card>
     </v-dialog>
 
-    <!-- 定向重新授权：带着这条订阅的 id 开导入对话框（服务端校验同一身份）。 -->
+    <!-- 定向重新授权：带着这条订阅的 id 与上游模型的现值开导入对话框（服务端
+         校验同一身份；上游现值起填进输入框 —— 重授权换凭据不换配置）。 -->
     <AdminSubscriptionImportDialog
       v-if="sub"
       v-model="reauthOpen"
       :target-subscription-id="sub.id"
+      :initial-upstream-model="sub.upstream_model ?? null"
       @imported="onReauthImported"
     />
   </v-navigation-drawer>
@@ -747,6 +864,20 @@ function close() {
 .amdd__subactions {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.amdd__upstreamedit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.amdd__upstreamactions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 

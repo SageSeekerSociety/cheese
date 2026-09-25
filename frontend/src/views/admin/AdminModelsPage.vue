@@ -305,6 +305,7 @@ const AUDIT_ACTION_KEY: Record<string, string> = {
   'subscription.cancel': 'models.audit.action.subscriptionCancel',
   'subscription.refresh': 'models.audit.action.subscriptionRefresh',
   'subscription.revoke': 'models.audit.action.subscriptionRevoke',
+  'subscription.update_upstream': 'models.audit.action.subscriptionUpdateUpstream',
 }
 
 function auditActionLabel(action: string): string {
@@ -581,7 +582,7 @@ onMounted(load)
         <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.models') }}</h2>
         <span class="amd__count t-meta-read">{{ num(models?.models.length) }}</span>
         <div class="amd__spacer" />
-        <!-- 导入订阅是次操作（outlined）：页面上唯一的琥珀仍是「新增模型」。 -->
+        <!-- 导入订阅是次操作（outlined）：这一组的琥珀是「新增模型」。 -->
         <v-btn
           variant="outlined"
           size="small"

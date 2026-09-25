@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from tests.conftest import StubChannel
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 class ToolScreen(StubChannel):
@@ -20,7 +20,7 @@ class ToolScreen(StubChannel):
         self.acknowledges(topic_id, prompt)
         self.uses(topic_id, "Grep", pattern="TODO", path="src")
         self.uses(topic_id, "mcp__cheese__update_doc", content="# 文档")
-        self.uses(topic_id, "Bash", command='cheese title "新标题"')
+        self.uses(topic_id, "Bash", command="cheese sync --all")
         self.uses(topic_id, "Bash", command="ls -la")
         self.uses(topic_id, "FutureTool", x=1)
         self.stops(topic_id, "done")
@@ -32,6 +32,10 @@ def stub_hooks() -> ToolScreen:
     return ToolScreen()
 
 
+def _display(meta: dict) -> dict:
+    return {key: value for key, value in meta.items() if key != "eid"}
+
+
 def _chat(client, topic_id: str) -> None:
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         ws.send_json({"type": "message", "content": "@芝士 hi"})
@@ -40,7 +44,7 @@ def _chat(client, topic_id: str) -> None:
 
 
 def test_event_blocks_persist_structured_meta(client):
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
@@ -49,17 +53,23 @@ def test_event_blocks_persist_structured_meta(client):
 
     tr = client.get(f"/topics/{t['id']}/transcript").json()["data"]["data"]
     by_tool = {b["meta"]["tool"]: b for b in tr if (b.get("meta") or {}).get("tool")}
+    # Each event also carries the harness's own id for it (its dedup key); the
+    # display fields are what this test is about.
+    assert all(b["meta"].get("eid") for b in by_tool.values())
+    shown = {name: _display(b["meta"]) for name, b in by_tool.items()}
 
     # Plain work → neutral dot; verb/arg live in meta for display-time labels.
     # in_room=False keeps 芝士's working detail out of the conversation (§14.1).
     grep = by_tool["Grep"]
-    assert grep["meta"] == {
+    assert shown["Grep"] == {
         "tool": "Grep",
         "arg": "TODO",
         "platform": False,
         "in_room": False,
     }
-    assert grep["content"] == "搜内容\nTODO"  # human-readable fallback text
+    # human-readable fallback text: a verb in words, then the argument
+    verb, arg = grep["content"].split("\n", 1)
+    assert verb != "Grep" and arg == "TODO"
 
     # cheese MCP tool → platform (amber dot); name stored mcp-prefix-stripped.
     doc = by_tool["update_doc"]
@@ -69,14 +79,14 @@ def test_event_blocks_persist_structured_meta(client):
     # Bash running the cheese CLI → platform; plain Bash → not.
     bash_events = [b for b in tr if (b.get("meta") or {}).get("tool") == "Bash"]
     platforms = {b["meta"]["arg"]: b["meta"]["platform"] for b in bash_events}
-    assert platforms['cheese title "新标题"'] is True
+    assert platforms["cheese sync --all"] is True
     assert platforms["ls -la"] is False
 
     # A tool missing from the verb table: content bakes the raw name (legacy
     # fallback), but meta still lets a NEWER frontend table translate it.
     fut = by_tool["FutureTool"]
     assert fut["content"] == "FutureTool"
-    assert fut["meta"] == {
+    assert shown["FutureTool"] == {
         "tool": "FutureTool",
         "platform": False,
         "in_room": False,
@@ -86,7 +96,7 @@ def test_event_blocks_persist_structured_meta(client):
 def test_transcript_pages_back_instead_of_serving_everything(client):
     """现场 is the biggest thing a topic can hand back — one event per tool call,
     forever. So it comes in windows, newest first, and the caller walks back."""
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
@@ -116,7 +126,7 @@ def test_transcript_pages_back_instead_of_serving_everything(client):
 
 def test_transcript_rejects_a_cursor_from_another_topic(client):
     """未知游标不能悄悄退化成「最新 N 条」—— 调用方分不出那和真的一页有什么区别。"""
-    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}).json()["data"]
     a = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "A", "created_by": "user-1"},

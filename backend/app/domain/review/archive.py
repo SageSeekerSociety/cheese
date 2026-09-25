@@ -96,14 +96,14 @@ async def close_cards_for_archived_topic(
                 notes.NoteCode.archived,
                 prefix_note(
                     card.note,
-                    f"话题归档，平台已停止跟进 PR #{card.pr_number}。PR 未合并、"
-                    f"仍开在 GitHub 上，合并还是关闭由人决定："
-                    f"{card.pr_url or '(无链接)'}",
+                    f"话题已归档，平台已停止跟进 PR #{card.pr_number}。PR 未合并，"
+                    f"仍在 GitHub 上打开，需要人决定合并还是关闭："
+                    f"{card.pr_url or '（无链接）'}",
                 ),
             )
             stranded.append(card)
         else:
-            closed = f"话题归档，验收卡随之关闭于状态「{was}」。"
+            closed = f"话题已归档，审阅随之关闭，关闭时状态为「{was}」。"
             notes.record(card, notes.NoteCode.archived, prefix_note(card.note, closed))
         # 只在空的时候补：已有的决议痕迹不覆盖。
         if card.decided_by is None:
@@ -150,9 +150,9 @@ async def close_cards_for_archived_topic(
                     who=WHO_HUMAN,
                     detail=(
                         f"{card.pr_url or '无链接'}\n"
-                        "这个 PR 还没合并，平台也不会自动关掉它——关不关由人决定。"
+                        "这个 PR 未合并，平台不会自动关闭它，需要人决定是否关闭。"
                     ),
-                    detail_label="这个 PR 怎么办",
+                    detail_label="下一步",
                 ),
             },
         )

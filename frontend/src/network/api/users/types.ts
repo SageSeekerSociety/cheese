@@ -12,17 +12,8 @@ export type GetQuestionListResponse = {
   page: Page
 }
 
-export type UserList = {
-  users: User[]
-  page: Page
-}
-
 export type GetUserInfoResponse = {
   user: User
-}
-
-export type FollowUserResponse = {
-  follow_count: number
 }
 
 export type PasskeyRegistrationOptionsResponse = {
@@ -44,10 +35,31 @@ export type GetPasskeysResponse = {
   passkeys: PasskeyInfo[]
 }
 
-export type AuthMethodsResponse = {
-  supports_passkey: boolean
-  supports_2fa: boolean
-  requires_2fa: boolean
+/** One sign-in: a device that holds a refresh token for the account. */
+export type SessionInfo = {
+  id: string
+  loginMethod: string
+  ipAddress: string
+  userAgent: string
+  createdAt: string
+  lastActiveAt: string
+  /** The sign-in this request was made from. */
+  current: boolean
+  /** Its browser is trusted to skip two-step verification. */
+  trusted: boolean
+}
+
+export type GetSessionsResponse = {
+  sessions: SessionInfo[]
+}
+
+/** The ways the signed-in account can confirm its identity. */
+export type MyAuthMethods = {
+  password: boolean
+  passkey: boolean
+  twoFactor: boolean
+  /** A code mailed to the account; never alongside two-step verification. */
+  emailCode: boolean
 }
 
 export interface TokenPayload {
@@ -63,48 +75,41 @@ export interface TokenPayload {
   }
 }
 
-// 实名信息类型
+/** A real-name record. Grade, major and class may be empty. */
 export interface RealNameInfo {
   realName: string
   studentId: string
   grade: string
   major: string
   className: string
-  phone?: string
-  email?: string
-  isEncrypted?: boolean
 }
 
-// 实名信息访问模块类型
-export enum UserIdentityAccessModuleType {
-  TASK = 'TASK',
-}
-
-// 实名信息访问类型
 export enum UserIdentityAccessType {
   VIEW = 'VIEW',
   EXPORT = 'EXPORT',
 }
 
-// 实名信息访问日志
+/** One read of a person's real-name record: who, how, where and when. */
 export interface UserIdentityAccessLog {
   accessor: User
-  accessModuleType?: UserIdentityAccessModuleType
-  accessEntityId?: number
-  accessEntityName?: string
+  /** `SPACE` for a read on a board; older entries may carry something else, or nothing. */
+  accessModuleType?: string | null
+  accessEntityId?: number | null
+  /** The board's name, for a read on a board. */
+  accessEntityName?: string | null
+  /** Whether that board is a course. */
+  accessEntityIsCourse?: boolean | null
   accessTime: number
   accessType: UserIdentityAccessType
-  ipAddress: string
 }
 
 export type GetRealNameInfoResponse = {
   hasIdentity: boolean
-  identity?: RealNameInfo
+  identity?: RealNameInfo | null
 }
 
 export type UpdateRealNameInfoResponse = {
-  success: boolean
-  realNameInfo: RealNameInfo
+  identity: RealNameInfo
 }
 
 // OAuth 相关类型定义
@@ -132,24 +137,24 @@ export interface OAuthState {
     email: string | null
     name: string
     preferredUsername: string
+    // Set once the person has proven an address with a code; the account is
+    // created with it.
+    verifiedEmail?: string
   }
   suggestedUsername: string
   suggestedNickname: string
-  emailConflict: boolean
 }
 
-export type GetOAuthStateResponse = {
-  providerId: string
-  userInfo: {
-    id: string
-    email: string | null
-    name: string
-    preferredUsername: string
-  }
-  suggestedUsername: string
-  suggestedNickname: string
-  emailConflict: boolean
+export type GetOAuthStateResponse = OAuthState
+
+// The verify page's query, when the address belongs to an existing account.
+export interface OAuthOwnership {
+  type: string
+  email: string
+  sessionId: string
 }
+
+export type VerifyOAuthEmailResponse = { stateToken: string; ownership?: undefined } | { ownership: OAuthOwnership }
 
 // OAuth 创建用户请求类型
 export interface OAuthCreateUserRequest {
@@ -192,14 +197,3 @@ export type OAuthBindUserResponse = {
 }
 
 // OAuth 绑定连接响应类型
-export interface OAuthConnection {
-  id: number
-  providerId: string
-  providerName: string
-  providerUserId: string
-  connectedAt: string
-}
-
-export type GetOAuthConnectionsResponse = {
-  connections: OAuthConnection[]
-}

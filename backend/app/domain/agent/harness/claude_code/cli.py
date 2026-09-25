@@ -1,17 +1,15 @@
-"""哪个二进制、带哪几条硬拒绝——两条传输启动的是同一个 claude。
+"""哪几条硬拒绝、以哪种模式起——每个房间启动的是同一个 claude。
 
-Kept apart from everything else so both launchers can reach it without either
-reaching the other: a leaf with no imports is the only shape that lets the
-sensing side (settings.json's deny list) and the starting side (the argv's
-``--disallowedTools``) state the SAME refusal without one importing the other.
+Kept apart from everything else so the launcher, the settings file and the
+runner test can all reach it: a leaf with no imports is the only shape that lets
+the settings file's deny list and the argv's ``--disallowedTools`` state the SAME
+refusal without one importing the other.
 """
 
-# AskUserQuestion ("向用户提问") is the one that bites: the interactive `claude`
-# draws its option picker INSIDE the screen, where no user can ever reach it —
-# the model then waits for a keypress that will never come and the turn hangs
-# until the wedged-turn safety net kills it. `cheese ask` is the platform's
-# equivalent (real buttons in the conversation, the answer arrives on the next
-# turn), so the native tool is denied outright rather than left as a trap.
+# AskUserQuestion is not offered at all. A question the agent asks reaches a
+# person through `cheese_ask` (real buttons in the room, the answer arrives on
+# the next turn); the build's own question would arrive on the driver's stdin as
+# a request nothing in the room can answer, and the turn would wait on it.
 PLATFORM_MANAGED_TOOLS = [
     "TodoWrite",
     "TaskCreate",
@@ -25,16 +23,20 @@ PLATFORM_MANAGED_TOOLS = [
 ]
 DISALLOWED_TOOLS = ["AskUserQuestion", *PLATFORM_MANAGED_TOOLS]
 
-
-def disallowed_tools(*, remote_control: bool = False) -> list[str]:
-    """RC owns its question UI; tasks and timers always belong to Cheese."""
-    return list(PLATFORM_MANAGED_TOOLS if remote_control else DISALLOWED_TOOLS)
-
-
-# The interactive `claude` every screen launches. The deny travels WITH the
-# command, not only in settings.json: --dangerously-skip-permissions waves
-# through permission prompts, and an explicit --disallowedTools is what keeps
-# this tool out regardless.
-CLAUDE_BASE_CMD = "claude --dangerously-skip-permissions --disallowedTools " + " ".join(
-    DISALLOWED_TOOLS
-)
+# How the runner drives Claude Code: headless, stream-json on both pipes, every
+# input echoed back once it is read (the echo is the delivery receipt), and no
+# permission request ever reaching the driver. Pinned by
+# `scripts/remote_execution/headless_contract.py` against the pinned build.
+LAUNCH_ARGS = [
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--replay-user-messages",
+    "--permission-mode",
+    "bypassPermissions",
+    "--disallowedTools",
+    *DISALLOWED_TOOLS,
+]

@@ -288,7 +288,7 @@ async def create_feedback(
     把它改公开的入口 —— 那是唯一一个本人无法撤销的改动，所以不给。
 
     agent **不能**走这条路：`services.create` 会拒（§5.2）。agent 的入口是
-    `cheese feedback propose`，它落的是一张提案卡，由人在卡上按发送 ——
+    `cheese_feedback_propose`，它落的是一张提案卡，由人在卡上按发送 ——
     没有这道门，一个跑歪的循环可以直接往公开列表里灌东西。人在卡上按发送时走的是
     `POST /topics/{topic_id}/feedback-proposals/{block_id}/accept`，那条路会把作者
     记成提案的 agent、把提交者记成按按钮的人。

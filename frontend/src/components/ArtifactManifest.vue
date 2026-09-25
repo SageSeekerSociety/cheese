@@ -170,7 +170,7 @@ watch(
     <!-- 改名。卡指着的是这一项，不是这个名字，所以已经交付过的那几版照样算它的。 -->
     <v-dialog :model-value="!!renaming" max-width="420" @update:model-value="renaming = null">
       <v-card v-if="renaming">
-        <v-card-title class="t-title">重命名</v-card-title>
+        <v-card-title class="t-dialog-title">重命名</v-card-title>
         <v-card-text>
           <v-text-field
             v-model="newName"
@@ -194,7 +194,7 @@ watch(
     <!-- 合并：同一样东西被声明成了两项，这是把它们收回一项。 -->
     <v-dialog :model-value="!!merging" max-width="420" @update:model-value="merging = null">
       <v-card v-if="merging">
-        <v-card-title class="t-title">合并《{{ merging.name }}》</v-card-title>
+        <v-card-title class="t-dialog-title">合并《{{ merging.name }}》</v-card-title>
         <v-card-text>
           <v-select
             v-model="mergeInto"
@@ -217,7 +217,7 @@ watch(
 
     <v-dialog :model-value="!!removing" max-width="420" @update:model-value="removing = null">
       <v-card v-if="removing">
-        <v-card-title class="t-title">删除《{{ removing.name }}》</v-card-title>
+        <v-card-title class="t-dialog-title">删除《{{ removing.name }}》</v-card-title>
         <v-card-text class="t-body">删除后它不再列在这里，已完成的交付记录保留</v-card-text>
         <v-card-actions>
           <v-spacer />

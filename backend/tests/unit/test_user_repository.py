@@ -1,7 +1,7 @@
 """Unit tests for app.domain.user.repositories.
 
-Covers UserRepository, UserProfileRepository, UserFollowingRepository,
-UserRealNameRepository, UserStatisticsRepository.
+Covers UserRepository, UserProfileRepository, UserRealNameRepository,
+UserStatisticsRepository.
 """
 
 from datetime import datetime
@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.domain.user.repositories import (
-    UserFollowingRepository,
     UserProfileRepository,
     UserRealNameRepository,
     UserRepository,
@@ -324,74 +323,6 @@ class TestUserProfileRepository:
         assert result.nickname == "NewName"
         assert result.intro == "Hello"
         assert result.avatar_id == 5
-
-
-# ---------------------------------------------------------------------------
-# UserFollowingRepository
-# ---------------------------------------------------------------------------
-
-
-class TestUserFollowingRepository:
-    @pytest.mark.anyio
-    async def test_count_followers(self):
-        session = _mock_session()
-        session.execute.return_value = _mock_scalar_one(5)
-        repo = UserFollowingRepository(session)
-
-        assert await repo.count_followers(1) == 5
-
-    @pytest.mark.anyio
-    async def test_count_following(self):
-        session = _mock_session()
-        session.execute.return_value = _mock_scalar_one(3)
-        repo = UserFollowingRepository(session)
-
-        assert await repo.count_following(1) == 3
-
-    @pytest.mark.anyio
-    async def test_is_following_true(self):
-        session = _mock_session()
-        session.execute.return_value = _mock_scalar(1)
-        repo = UserFollowingRepository(session)
-
-        assert await repo.is_following(1, 2) is True
-
-    @pytest.mark.anyio
-    async def test_is_following_false(self):
-        session = _mock_session()
-        session.execute.return_value = _mock_scalar(None)
-        repo = UserFollowingRepository(session)
-
-        assert await repo.is_following(1, 2) is False
-
-    @pytest.mark.anyio
-    async def test_add_follow(self):
-        session = _mock_session()
-        repo = UserFollowingRepository(session)
-
-        await repo.add_follow(1, 2)
-        session.add.assert_called_once()
-        session.flush.assert_awaited_once()
-
-    @pytest.mark.anyio
-    async def test_soft_delete_follow_success(self):
-        session = _mock_session()
-        rel = SimpleNamespace(follower_id=1, followee_id=2, deleted_at=None)
-        session.execute.return_value = _mock_scalar(rel)
-        repo = UserFollowingRepository(session)
-
-        result = await repo.soft_delete_follow(1, 2)
-        assert result is True
-        assert rel.deleted_at is not None
-
-    @pytest.mark.anyio
-    async def test_soft_delete_follow_not_found(self):
-        session = _mock_session()
-        session.execute.return_value = _mock_scalar(None)
-        repo = UserFollowingRepository(session)
-
-        result = await repo.soft_delete_follow(1, 2)
-        assert result is False
 
 
 # ---------------------------------------------------------------------------

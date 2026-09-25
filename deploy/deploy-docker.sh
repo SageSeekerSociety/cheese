@@ -561,6 +561,28 @@ case "$APP_IMAGE_SOURCE" in
     # screen. Nothing else in the platform is affected.
     dc pull office-render >/dev/null 2>&1 \
       || log "WARNING: office-render image unavailable; documents will offer download only"
+    # Same shape again: without the executor a private chat fails with an
+    # explicit setup error, and nothing else is affected. The backend starts it
+    # with `docker run` under a local name, which the image carries as a label;
+    # a stopped container keeps it through the image prune, handed over at the
+    # end like the sandbox retainer so a rollback still finds the old one.
+    private_executor="ghcr.io/sageseekersociety/cheese/private-executor:$IMAGE_TAG"
+    private_executor_retainer="${PROJECT}-private-executor-image-retainer-next"
+    # A retainer a failed deploy left behind must not be promoted for this one.
+    docker rm -f "$private_executor_retainer" >/dev/null 2>&1 || true
+    if docker pull "$private_executor" >/dev/null 2>&1 \
+      && private_executor_name="$(docker image inspect \
+        --format '{{ index .Config.Labels "com.cheese.local-image" }}' \
+        "$private_executor" 2>/dev/null)" \
+      && [ -n "$private_executor_name" ] \
+      && docker tag "$private_executor" "$private_executor_name" \
+      && docker create --name "$private_executor_retainer" \
+        --label "com.cheese.image-retainer=private-executor" \
+        --entrypoint /bin/true "$private_executor" >/dev/null 2>&1; then
+      log "private-chat executor available as $private_executor_name"
+    else
+      log "WARNING: private-executor image unavailable; private chats cannot start"
+    fi
     ;;
   local)
     [ -n "${BACKEND_IMAGE:-}" ] || \
@@ -699,9 +721,9 @@ check_session_base_survives_release() {
   case "$port" in
     "$BACKEND_PORT"|"$BACKEND_PORT_NEXT")
       log "WARNING: AGENT_SESSION_API_BASE=$base names :$port, which this deploy"
-      log "         replaces — every live room will see its tools, its chat and"
-      log "         its hooks refused until the new container answers. Point it"
-      log "         at the standing api-front instead (:8081 by default), which"
+      log "         replaces and which listens on loopback only — every live"
+      log "         room will see its tools, its chat and its hooks refused. Point"
+      log "         it at the standing api-front instead (:8081 by default), which"
       log "         routes execution to the owner and swaps backends underneath."
       ;;
   esac
@@ -747,7 +769,7 @@ rollout_backend() {
   # network as the compose backend, but no published port of its own except
   # the one given here, so it cannot collide with the running one.
   dc run -d --no-deps --name "$NEXT_BACKEND" \
-    -p "0.0.0.0:${BACKEND_PORT_NEXT}:8081" backend >/dev/null \
+    -p "127.0.0.1:${BACKEND_PORT_NEXT}:8081" backend >/dev/null \
     || fail "could not start $NEXT_BACKEND; the running backend was not touched"
   if ! wait_for_healthz "$BACKEND_PORT_NEXT" "$NEXT_BACKEND"; then
     docker logs --tail 40 "$NEXT_BACKEND" 2>&1 | sed 's/^/  next| /' || true
@@ -974,6 +996,13 @@ promote_image_retainer() {
 }
 if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   promote_image_retainer sandbox
+fi
+# Best-effort like its pull: only a retainer that pull prepared is handed over.
+if docker container inspect "${PROJECT}-private-executor-image-retainer-next" >/dev/null 2>&1; then
+  docker rm -f "${PROJECT}-private-executor-image-retainer" >/dev/null 2>&1 || true
+  docker rename "${PROJECT}-private-executor-image-retainer-next" \
+    "${PROJECT}-private-executor-image-retainer" \
+    || log "WARNING: could not retain the private-executor image; the prune below may remove it"
 fi
 
 # Reclaim disk from superseded per-commit images: every deploy pulls a fresh

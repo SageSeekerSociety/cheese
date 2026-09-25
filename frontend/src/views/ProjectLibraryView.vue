@@ -12,6 +12,9 @@ import { ref, watch } from 'vue'
 
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
 
+import { t } from '@/i18n'
+import ProjectPage from '@/views/workspace/ProjectPage.vue'
+
 const props = defineProps<{ projectId: string }>()
 
 const files = ref<LibraryFile[]>([])
@@ -83,13 +86,12 @@ watch(
 </script>
 
 <template>
-  <div class="library-page pa-4 pa-md-6">
-    <div class="library-content">
-      <header class="d-flex align-center justify-space-between ga-4 mb-2">
-        <h1 class="t-page-title">资料库</h1>
-        <v-btn variant="text" color="on-surface-variant" :loading="loading" @click="load">刷新</v-btn>
-      </header>
-      <p class="t-body c-muted mb-6">你给这个项目的文件。每个对话都引用得到，芝士 只读不改</p>
+  <ProjectPage :title="t('navigation.project.library')">
+    <template #actions>
+      <v-btn :loading="loading" @click="load">刷新</v-btn>
+    </template>
+    <div>
+      <p class="t-body c-muted mb-6">你给这个项目的文件。每个对话都引用得到，芝士只读不改</p>
 
       <p v-if="loadError" role="alert" class="t-body c-danger mb-4">{{ loadError }}</p>
       <p v-if="actionError" role="alert" class="t-body c-danger mb-4">{{ actionError }}</p>
@@ -128,7 +130,7 @@ watch(
          打不开，所以这一下要问一句。 -->
     <v-dialog :model-value="!!confirming" max-width="420" @update:model-value="confirming = null">
       <v-card v-if="confirming">
-        <v-card-title class="t-title">删除《{{ confirming.path }}》</v-card-title>
+        <v-card-title class="t-dialog-title">删除《{{ confirming.path }}》</v-card-title>
         <v-card-text class="t-body"> 删除后无法恢复，已经引用过它的消息也将打不开这份文件 </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -137,14 +139,10 @@ watch(
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </div>
+  </ProjectPage>
 </template>
 
 <style scoped>
-.library-content {
-  max-width: 720px;
-  margin: 0 auto;
-}
 .library-list {
   list-style: none;
   padding: 0;

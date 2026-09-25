@@ -28,6 +28,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from tests.integration.conftest import registered
 
 
 def _migration():
@@ -90,8 +91,9 @@ def test_the_overview_ends_up_with_one_cheese_and_its_lines(db_session, _portal)
     migration = _migration()
 
     async def run():
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Legacy", forge_kind="github_app"
+            owner_handle="owner", name="Legacy", forge_kind="github_app"
         )
         root = project.root_topic_id
         seeded_seat = agent_instance_handle(project.default_agent_instance_id)
@@ -147,8 +149,9 @@ def test_a_room_seating_another_agent_keeps_its_stand_in(db_session, _portal):
 
     async def run():
         agents = AgentInstanceService(db_session)
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Crowded", forge_kind="github_app"
+            owner_handle="owner", name="Crowded", forge_kind="github_app"
         )
         root = project.root_topic_id
         seeded_seat = agent_instance_handle(project.default_agent_instance_id)
@@ -216,8 +219,11 @@ def test_migrating_a_shared_seat_does_not_re_seat_the_stand_in(db_session, _port
 
     async def run():
         members = TopicMemberService(db_session)
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Shared seat on the overview", forge_kind="github_app"
+            owner_handle="owner",
+            name="Shared seat on the overview",
+            forge_kind="github_app",
         )
         root = project.root_topic_id
         own = agent_instance_handle(project.default_agent_instance_id)
@@ -245,8 +251,9 @@ def test_a_room_whose_last_agent_was_the_shared_seat_gets_the_projects_cheese(
 
     async def run():
         members = TopicMemberService(db_session)
+        await registered(db_session, "owner")
         project = await ProjectService(db_session).create(
-            name="Legacy room", forge_kind="github_app"
+            owner_handle="owner", name="Legacy room", forge_kind="github_app"
         )
         room = await TopicService(db_session).create(
             project_id=project.id, title="旧房间", created_by="alice"

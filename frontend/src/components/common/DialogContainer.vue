@@ -15,8 +15,8 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn v-if="dialog.showCancel" @click="onCancel(dialog)">取消</v-btn>
-          <v-btn @click="onConfirm(dialog)">确定</v-btn>
+          <v-btn v-if="dialog.showCancel" variant="text" @click="onCancel(dialog)">取消</v-btn>
+          <v-btn color="primary" variant="flat" @click="onConfirm(dialog)">确定</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

@@ -21,14 +21,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/auth"
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
+	"github.com/SageSeekerSociety/cheese/cli/internal/devenv"
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/service"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
@@ -77,7 +76,7 @@ func authCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				return err
 			}
 			ui.OK("Logged in.")
-			ui.Hint("`cheese link connect` to connect · `cheese link auto-connect` to also reconnect on boot")
+			ui.Hint("`cheesehost link connect` to connect · `cheesehost link auto-connect` to also reconnect on boot")
 			return nil
 		},
 	})
@@ -99,7 +98,7 @@ func authCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if err := config.Save(*cfgPath, cfg); err != nil {
 				return err
 			}
-			fmt.Println("Logged out and disconnected. `cheese auth login` to log in again.")
+			fmt.Println("Logged out and disconnected. `cheesehost auth login` to log in again.")
 			return nil
 		},
 	})
@@ -120,7 +119,7 @@ func doLogin(cfgPath, serverArg string) (*config.Config, error) {
 		cfg.Base = serverArg
 	}
 	if cfg.Base == "" {
-		return nil, fmt.Errorf("no server known yet — run `cheese auth login <server-url>` once (installers can pre-set it)")
+		return nil, fmt.Errorf("no server known yet — run `cheesehost auth login <server-url>` once (installers can pre-set it)")
 	}
 	res, err := auth.Login(context.Background(), cfg.Base, func(approveURL string) {
 		fmt.Println("Open this link and approve this machine:")
@@ -167,7 +166,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 		Use:   "connect [server-url]",
 		Short: "Connect this machine to the server",
 		Long: "Connects now (and, as a side effect of installing the background service,\n" +
-			"also reconnects after a reboot — `cheese link no-auto-connect` turns that off).\n" +
+			"also reconnects after a reboot — `cheesehost link no-auto-connect` turns that off).\n" +
 			"If this machine is not logged in yet, the login flow runs first.\n\n" +
 			"Never asks for root. The service is installed for your account only — a\n" +
 			"systemd --user unit or a launchd LaunchAgent. On Linux it is then set to\n" +
@@ -188,6 +187,12 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				}
 				ui.OK("Logged in.")
 			}
+			// What the server's commands need and this system lacks (on Windows:
+			// python3 and a POSIX shell) is placed now, so the first command sent
+			// to a machine announced as ready finds it.
+			if err := devenv.Ensure(context.Background(), cfg.Base, os.Stdout); err != nil {
+				return fmt.Errorf("prepare this machine: %w", err)
+			}
 			// The install's own refusals (a binary it could never self-update,
 			// #501; a machine-wide connector already installed) are the whole
 			// point of running it, so they reach the user instead of turning
@@ -198,14 +203,14 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if err := service.Control(*cfgPath, "start"); err != nil {
 				return err
 			}
-			ui.OK("Connected. The server can now open screens on this machine.")
+			ui.OK("Connected. The server can now run work on this machine.")
 			// Say what is true. Without linger this machine hosts until the
 			// session that started it ends, and a success line promising boot
 			// survival would be a lie the owner only catches after a reboot.
 			if err := service.KeepRunningAfterLogout(); err != nil {
 				ui.Warn("%v", err)
 			}
-			ui.Hint("`cheese status` to check · `cheese link disconnect` to disconnect")
+			ui.Hint("`cheesehost status` to check · `cheesehost link disconnect` to disconnect")
 			return nil
 		},
 	})
@@ -225,8 +230,8 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				return err
 			}
 			endHostedSessions()
-			fmt.Println("Disconnected. `cheese link connect` to reconnect.")
-			fmt.Println("(Note: it will still reconnect after a reboot; `cheese link no-auto-connect` prevents that.)")
+			fmt.Println("Disconnected. `cheesehost link connect` to reconnect.")
+			fmt.Println("(Note: it will still reconnect after a reboot; `cheesehost link no-auto-connect` prevents that.)")
 			return nil
 		},
 	})
@@ -257,7 +262,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if err := service.Control(*cfgPath, "uninstall"); err != nil {
 				return err
 			}
-			fmt.Println("Disconnected and removed from boot. `cheese link connect` to connect again.")
+			fmt.Println("Disconnected and removed from boot. `cheesehost link connect` to connect again.")
 			return nil
 		},
 	})
@@ -279,7 +284,7 @@ func statusCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			cfg, err := config.Load(*cfgPath)
 			if err != nil || cfg.Token == "" {
 				ui.Field("login", ui.Red("not logged in"))
-				ui.Hint("run `cheese auth login <server-url>` to get started")
+				ui.Hint("run `cheesehost auth login <server-url>` to get started")
 				return nil
 			}
 			ui.Field("login", ui.Green("logged in"))
@@ -304,7 +309,7 @@ func statusCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			ui.Field("screens", screens)
 
 			if serr != nil {
-				ui.Hint("run `cheese link connect` to connect")
+				ui.Hint("run `cheesehost link connect` to connect")
 			}
 			return nil
 		},
@@ -336,23 +341,40 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 		Use:   "update",
 		Short: "Update the cheese binary to the latest published build",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			restart := false
 			if pid := state.PID(*cfgPath); pid > 0 {
 				// A live service owns the tmux + tasks: let it update itself in-process
 				// and hand off, so nothing running is killed.
-				if err := syscall.Kill(pid, syscall.SIGUSR2); err != nil {
+				err := signalUpdate(pid)
+				if err == nil {
+					ui.OK("Update signalled to the running service (pid %d).", pid)
+					ui.Hint("it downloads, verifies and hands off in place — running screens are preserved")
+					return nil
+				}
+				if !errors.Is(err, errNoInProcessUpdate) {
 					return fmt.Errorf("signal running service (pid %d): %w", pid, err)
 				}
-				ui.OK("Update signalled to the running service (pid %d).", pid)
-				ui.Hint("it downloads, verifies and hands off in place — running screens are preserved")
-				return nil
+				// Where a running service cannot be asked to update itself, it hosts
+				// no screens either (Windows), so stopping it loses nothing.
+				if err := stopProcess(pid); err != nil {
+					return err
+				}
+				restart = true
 			}
 			// No running service: nothing to preserve — download + replace directly.
 			cfg, err := config.Load(*cfgPath)
 			if err != nil || cfg.Base == "" {
-				return fmt.Errorf("no server configured — run `cheese auth login` first")
+				return fmt.Errorf("no server configured — run `cheesehost auth login` first")
 			}
 			fmt.Println("Downloading the latest cheese…")
 			tmp, err := update.Fetch(context.Background(), cfg.Base)
+			if errors.Is(err, update.ErrCurrent) {
+				ui.OK("cheesehost is already the published build.")
+				if restart {
+					return service.Control(*cfgPath, "start")
+				}
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -363,7 +385,14 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			if err := update.Replace(tmp, self); err != nil {
 				return err
 			}
-			ui.OK("cheese updated.")
+			if restart {
+				if err := service.Control(*cfgPath, "start"); err != nil {
+					return err
+				}
+				ui.OK("cheesehost updated and restarted.")
+				return nil
+			}
+			ui.OK("cheesehost updated.")
 			ui.Hint("no service was running; the new binary is in place and used from now on")
 			return nil
 		},
@@ -432,6 +461,7 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 					"the cheese connector is still running (pid %d) and could not be stopped; "+
 						"nothing was removed — stop it and run this again", pid)
 			}
+			stopFootprintProcesses(footprint)
 			if err := removeFootprint(config.Dir(), home); err != nil {
 				return err
 			}
@@ -439,10 +469,10 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			if err := os.Remove(exe); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := removeSelf(exe); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove binary %s: %w (delete it manually)", exe, err)
 			}
-			fmt.Println("cheese uninstalled — service, config, footprint, and binary removed.")
+			fmt.Println("cheesehost uninstalled — service, config, footprint, and binary removed.")
 			return nil
 		},
 	})
@@ -460,7 +490,7 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 // installed that knew how to find them.
 func removeFootprint(configDir, home string) error {
 	for _, directory := range []string{configDir, filepath.Join(home, place.Root)} {
-		if err := os.RemoveAll(directory); err != nil {
+		if err := removeTree(directory); err != nil {
 			return fmt.Errorf("remove %s: %w", directory, err)
 		}
 	}
@@ -475,41 +505,6 @@ func warnScreens(cfgPath string) {
 	if n := state.Screens(cfgPath); n > 0 {
 		fmt.Printf("Note: %d running session(s) will be stopped.\n", n)
 	}
-}
-
-// procAlive reports whether pid names a live process. EPERM means it exists but we may
-// not signal it (a differently-owned process) — still alive; ESRCH means it is gone.
-func procAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
-// stopProcess ensures pid is no longer running: SIGTERM (so the host tears its tmux
-// down cleanly), then SIGKILL as a backstop, polling briefly between. Returns nil once
-// the process is gone (or was never there), or an error if it is still alive after both
-// — e.g. we lack the privilege to signal a differently-owned process.
-func stopProcess(pid int) error {
-	if !procAlive(pid) {
-		return nil
-	}
-	_ = syscall.Kill(pid, syscall.SIGTERM)
-	for range 30 {
-		if !procAlive(pid) {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	_ = syscall.Kill(pid, syscall.SIGKILL)
-	for range 20 {
-		if !procAlive(pid) {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("process %d still alive", pid)
 }
 
 func confirm(q string) bool {

@@ -1,11 +1,15 @@
 """Acquire one session's execution capability when a tool actually needs it."""
 
+import asyncio
 import json
 import uuid
-from dataclasses import asdict
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import httpx
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
@@ -26,10 +30,17 @@ from app.domain.agent.device_provider import (
 )
 from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.market import COMPUTE_TIERS
+from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, has_runnable_transport
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
+from app.domain.machine.models import (
+    GONE,
+    MAX_ENROLL_ATTEMPTS,
+    MachineStatus,
+    ProjectMachine,
+)
 from app.domain.machine.services import MachineService
 from app.domain.policy import gate
 from app.domain.project.services import ProjectService
@@ -101,9 +112,91 @@ async def request_choice(db, *, topic_id, session_id, actor, choice):
     return presentation(row)
 
 
-async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
-    """The row reservation survives worker death; remote work holds no DB lock."""
+# A tool that arrives while its session's machine is still being prepared
+# waits for it, as a native session on that machine would simply run the
+# command once it is up. One request waits at most this long and then answers
+# that the machine is still preparing; the executor asks again until its own
+# operation deadline. It is kept well inside the 300s the HTTP front gives any
+# response.
+PREPARING_WAIT_S = 50.0
+# How often a waiting request looks at the signal it waits on. Each look is
+# one row read and the hub's in-memory online set.
+PREPARING_POLL_S = 1.0
+# A project environment is looked at through the machine itself, which is a
+# whole preparation attempt: that one is re-tried less often.
+ENVIRONMENT_POLL_S = 5.0
+# An environment in one of these states will not become ready by waiting.
+ENVIRONMENT_SETTLED = {"failed", "stopped"}
+
+
+@dataclass(frozen=True, slots=True)
+class _Preparing:
+    """Why this attempt could not hand out hands yet, and what to watch.
+
+    ``progress`` answers, without side effects: a message when preparation
+    has failed for good, True when another attempt may now succeed, and
+    False while there is nothing new.
+    """
+
+    message: str
+    progress: Callable[[], Awaitable[str | bool]]
+    interval: float = PREPARING_POLL_S
+    detail: dict = field(default_factory=dict)
+
+
+async def ensure(
+    db,
+    *,
+    topic_id,
+    session_id,
+    claims,
+    token,
+    env,
+    wait_s,
+    gone,
+    hub=None,
+):
+    """Hands for this session, waiting up to ``wait_s`` while they are prepared.
+
+    ``gone`` reports that the caller has left (its command was stopped or
+    timed out), which ends the wait without taking anything further.
+    """
     hub = hub or device_hub
+    clock = asyncio.get_running_loop().time
+    deadline = clock() + wait_s
+    while True:
+        outcome = await _attempt(
+            db,
+            topic_id=topic_id,
+            session_id=session_id,
+            claims=claims,
+            token=token,
+            env=env,
+            hub=hub,
+        )
+        if not isinstance(outcome, _Preparing):
+            return outcome
+        waited = False
+        while True:
+            verdict = await outcome.progress()
+            # Nothing is held while waiting: each look ends its transaction.
+            await db.commit()
+            if isinstance(verdict, str):
+                return {"unavailable": verdict, **outcome.detail}
+            if verdict and waited:
+                break
+            if clock() >= deadline or await gone():
+                return {
+                    "unavailable": outcome.message,
+                    "preparing": True,
+                    **outcome.detail,
+                }
+            await asyncio.sleep(max(0.0, min(outcome.interval, deadline - clock())))
+            waited = True
+
+
+async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
+    """The row reservation survives worker death; remote work holds no DB lock."""
     topic = await TopicService(db).lock_for_execution(topic_id)
     sessions = AgentSessionService(db)
     row = await sessions.by_id(session_id, lock=True)
@@ -143,7 +236,10 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
     if lease and lease.get("claim_until"):
         if datetime.fromisoformat(lease["claim_until"]) > now:
             await db.commit()
-            return {"unavailable": "工作机器正在准备；对话和平台工具仍可用。"}
+            return _Preparing(
+                "工作机器正在准备；对话和平台工具仍可用。",
+                partial(_claim_moved, db, session_id, lease.get("claim")),
+            )
     choice = ComputeChoice.model_validate(request["choice"])
     devices = sql_device_service(db)
     selected = None
@@ -200,7 +296,10 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
         )
         if not machine.device_id or not hub.is_online(machine.device_id):
             await db.commit()
-            return {"unavailable": "Cloud 机器正在准备；对话和平台工具仍可用。"}
+            return _Preparing(
+                "Cloud 机器正在准备；对话和平台工具仍可用。",
+                partial(_cloud_progress, db, hub, machine.id),
+            )
         device_id = machine.device_id
         # Provisioning releases its transaction around external calls.
         topic = await TopicService(db).lock_for_execution(topic_id)
@@ -218,6 +317,13 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)
     api = await device_api_base(db, device_id, settings.connector_public_base)
+    # Existing leases can outlive a deploy that changes the host's API address.
+    # Ping/prepare must dial the current configured base, just like a new lease.
+    if lease:
+        lease = {
+            **lease,
+            "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
+        }
     work_resource = (lease or {}).get("resource_id") or generation
     claim = str(uuid.uuid4())
     reservation = {
@@ -254,7 +360,6 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
         "CHEESE_AUTHOR": actor_handle,
         "CHEESE_PREVIEW_URL": _preview_ws_url(api),
         "CHEESE_RESOURCE_ID": work_resource,
-        "CHEESE_HOOK_URL": f"{api}/sandbox/hooks/{topic_id}",
         "GIT_AUTHOR_NAME": actor_handle,
         "GIT_AUTHOR_EMAIL": f"{actor_handle}@agent.cheese.local",
     }
@@ -334,8 +439,58 @@ async def ensure(db, *, topic_id, session_id, claims, token, env, hub=None):
     row.work_lease = target
     await db.commit()
     if target["status"] != "ready":
-        return {
-            "unavailable": "项目环境尚未就绪；对话和平台工具仍可用。",
-            "environment_status": target.get("environment_status"),
-        }
+        message = "项目环境尚未就绪；对话和平台工具仍可用。"
+        detail = {"environment_status": target.get("environment_status")}
+        if (detail["environment_status"] or {}).get("state") in ENVIRONMENT_SETTLED:
+            return {"unavailable": message, **detail}
+        return _Preparing(
+            message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
+        )
     return {"target": target, "token": execution_token}
+
+
+async def _another_attempt() -> bool:
+    return True
+
+
+async def _claim_moved(db, session_id, claim) -> bool:
+    """Another request of this session holds the installation; it has moved
+    on once its claim is gone or has lapsed."""
+    lease = await db.scalar(
+        select(AgentSession.work_lease).where(AgentSession.id == session_id)
+    )
+    if (lease or {}).get("claim") != claim:
+        return True
+    until = lease.get("claim_until")
+    return not until or datetime.fromisoformat(until) <= datetime.now(UTC)
+
+
+async def _cloud_progress(db, hub, machine_id) -> str | bool:
+    """Where the session's Cloud machine is on its way to being usable."""
+    machine = (
+        await db.execute(
+            select(
+                ProjectMachine.status,
+                ProjectMachine.device_id,
+                ProjectMachine.enroll_attempts,
+                ProjectMachine.released_at,
+                ProjectMachine.superseded_at,
+            ).where(ProjectMachine.id == machine_id)
+        )
+    ).one_or_none()
+    if machine is None or machine.released_at or machine.superseded_at:
+        # The allocation changed under us; the next attempt says how.
+        return True
+    if machine.status == MachineStatus.error:
+        return "Cloud 机器创建失败：供应方报告错误。对话和平台工具仍可用。"
+    if machine.status in GONE:
+        # Gone upstream: the next attempt forgets it and asks for another.
+        return True
+    if machine.device_id is None:
+        if (machine.enroll_attempts or 0) >= MAX_ENROLL_ATTEMPTS:
+            return (
+                f"Cloud 机器接入失败：已尝试 {MAX_ENROLL_ATTEMPTS} 次。"
+                "对话和平台工具仍可用。"
+            )
+        return False
+    return hub.is_online(machine.device_id)

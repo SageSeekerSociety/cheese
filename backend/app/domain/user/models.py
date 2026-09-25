@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
@@ -7,10 +8,10 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
-    Sequence,
     String,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
     text,
 )
@@ -94,27 +95,6 @@ class UserProfile(Base):
     )
 
 
-class UserFollowingRelationship(Base):
-    """Mapping for user_following_relationship table."""
-
-    __tablename__ = "user_following_relationship"
-
-    id: Mapped[int] = mapped_column(
-        Integer,
-        Sequence("user_following_relationship_id_seq"),
-        primary_key=True,
-    )
-    followee_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    follower_id: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-
 class UserRealNameIdentity(Base):
     """Minimal mapping for user_real_name_identities to support Task.requireRealName checks."""  # noqa: E501
 
@@ -177,9 +157,6 @@ class UserTwoFactor(Base):
         Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
     )
     secret: Mapped[str | None] = mapped_column(Text, nullable=True)
-    always_required: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("false")
-    )
     pending_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     pending_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -211,4 +188,98 @@ class UserBackupCode(Base):
     digest: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UserSession(Base):
+    """One sign-in: a refresh-token family, and one entry in the account's
+    list of signed-in devices.
+
+    Only a digest of the refresh token is stored. Each refresh replaces
+    ``current_hash`` and keeps the digest it replaced in ``previous_hash``, so
+    a token presented again after it was rotated away is recognised: within
+    the grace window as a concurrent refresh, after it as a copy in someone
+    else's hands.
+    """
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    current_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    previous_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    # The credential that completed the sign-in: ``password``, ``passkey``,
+    # ``totp``, ``backup_code``, ``email_code``, ``signup`` or
+    # ``oauth:<provider>``.
+    login_method: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Two-step verification was due and a trusted device stood in for it, so
+    # ``login_method`` is the first step alone.
+    two_factor_skipped: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    user_agent: Mapped[str] = mapped_column(String(1024), nullable=False)
+    ip: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    rotated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Until when this sign-in may get a sudo ticket without proving a
+    # credential again: set by a sudo verification, and by a sign-in whose
+    # credential sudo itself would have accepted.
+    sudo_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class UserTrustedDevice(Base):
+    """A browser the account owner chose not to be asked 2FA on again.
+
+    The browser holds a random token in a cookie; only its SHA-256 digest is
+    stored, as for refresh tokens. A trust lasts a fixed 30 days from when it
+    was granted, however often it is used.
+    """
+
+    __tablename__ = "user_trusted_devices"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    # The sign-in this browser made most recently with the trust: what the
+    # device list marks as trusted, and what signing that device out ends.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("user_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    user_agent: Mapped[str] = mapped_column(String(1024), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )

@@ -97,7 +97,7 @@ describe('列按「该谁动」分', () => {
       data: [
         task({ id: 'a', title: '甲', presentation: { column: 'building', display_status: '运行中' } }),
         task({ id: 'b', title: '乙', presentation: { column: 'delivering', display_status: '等待检查' } }),
-        task({ id: 'c', title: '丙', presentation: { column: 'needs_you', display_status: '等待验收' } }),
+        task({ id: 'c', title: '丙', presentation: { column: 'needs_you', display_status: '待审阅' } }),
       ],
       total: 3,
     })
@@ -136,7 +136,7 @@ describe('列按「该谁动」分', () => {
 describe('空列不消失', () => {
   it('一件活都没有的列仍然留着列头和 0', async () => {
     listProjectTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'needs_you', display_status: '等待验收' } })],
+      data: [task({ presentation: { column: 'needs_you', display_status: '待审阅' } })],
       total: 1,
     })
     const { container } = mount()
@@ -152,7 +152,7 @@ describe('已完成不占板面', () => {
     listProjectTasks.mockResolvedValue({
       data: [
         task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已采纳' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已收工' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已关闭' } }),
       ],
       total: 2,
     })
@@ -164,24 +164,26 @@ describe('已完成不占板面', () => {
 
     await fireEvent.click(container.querySelector('.board__done-head') as HTMLElement)
     await findByText('甲')
-    // 「已采纳」和「已收工」的区别没有丢：同一列里是两个不同的短语。
+    // 「已采纳」和「已关闭」的区别没有丢：同一列里是两个不同的短语。
     await findByText('已采纳')
-    await findByText('已收工')
+    await findByText('已关闭')
   })
 })
 
 describe('这一页原来的两个用处都还在', () => {
-  it('房间满员标出来 —— 后面那些是真的在等，不是没人理', async () => {
+  it('房间四个位置占满时，还没开始的任务标「排队中」，在跑的不标', async () => {
     const running = { column: 'building', display_status: '运行中' } as const
     listProjectTasks.mockResolvedValue({
       data: [
         ...['a', 'b', 'c', 'd'].map((id) => task({ id, title: `跑-${id}`, presentation: { ...running } })),
-        task({ id: 'e', title: '排队的', presentation: { column: 'building', display_status: '排队中' } }),
+        task({ id: 'e', title: '排队的', presentation: { column: 'building', display_status: '待开工' } }),
       ],
       total: 5,
     })
     const { findAllByText } = mount()
-    expect((await findAllByText('房间满员')).length).toBe(5)
+    const marks = await findAllByText('排队中')
+    expect(marks).toHaveLength(1)
+    expect(marks[0].closest('.board-card')?.textContent).toContain('排队的')
   })
 
   it('四条在跑分在两个房间，就没有一个房间是满的', async () => {
@@ -195,14 +197,14 @@ describe('这一页原来的两个用处都还在', () => {
     })
     const { container, queryByText } = mount()
     await waitFor(() => expect(container.querySelectorAll('.board-card').length).toBe(4))
-    expect(queryByText('房间满员')).toBeNull()
+    expect(queryByText('排队中')).toBeNull()
   })
 
   it('顶上那行统计仍然在，用的是板自己的词', async () => {
     listProjectTasks.mockResolvedValue({
       data: [
         task({ id: 'a', presentation: { column: 'building', display_status: '运行中' } }),
-        task({ id: 'b', presentation: { column: 'needs_you', display_status: '等待验收' } }),
+        task({ id: 'b', presentation: { column: 'needs_you', display_status: '待审阅' } }),
         task({ id: 'c', presentation: { column: 'done', display_status: '已采纳' } }),
       ],
       total: 3,
@@ -284,37 +286,36 @@ describe('卡片上的其余几行', () => {
 })
 
 describe('一件活都没有', () => {
-  it('说「暂无派出去的任务」，而不是画三个空列了事', async () => {
+  it('说「暂无任务」，而不是画三个空列了事', async () => {
     listProjectTasks.mockResolvedValue({ data: [], total: 0 })
     const { findByText } = mount()
-    await findByText('暂无派出去的任务')
+    await findByText('暂无任务')
   })
 
-  it('每一列自己说它空，「施工中」那一列还说得出下一步', async () => {
-    // 这不是收尾的一句话：一个项目几百条活里同时活着的常常只有几条，三列全空是
-    // 第一屏的常态，所以那几行字就是这一屏的主要内容。
-    listProjectTasks.mockResolvedValue({ data: [], total: 0 })
+  it('活全在「已完成」里的时候，每一列自己说它空', async () => {
+    listProjectTasks.mockResolvedValue({
+      data: [task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已收工' } })],
+      total: 1,
+    })
     const { findByText } = mount()
     await findByText('暂无施工中的任务')
     await findByText('暂无交付中的任务')
     await findByText('暂无待处理的任务')
-    await findByText('在房间里说明要做什么，芝士会把它拆成任务')
   })
 
-  it('活全在「已完成」里的时候，板面照样说得出下一步', async () => {
+  it('活全在「已完成」里的时候，顶上照样数得出交付过多少', async () => {
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已收工' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已收工' } }),
+        task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已关闭' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已关闭' } }),
       ],
       total: 2,
     })
-    const { container, getByText } = mount()
+    const { container } = mount()
     // 顶上那行仍然说得出这个项目交付过多少：板面空不等于什么都没发生过。
     await waitFor(() =>
       expect(container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')).toBe('已完成2')
     )
-    getByText('在房间里说明要做什么，芝士会把它拆成任务')
   })
 })
 

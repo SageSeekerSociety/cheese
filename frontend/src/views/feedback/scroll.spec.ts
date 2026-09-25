@@ -3,7 +3,7 @@
  * 全站约定：`styles/common.scss` 把 `html / body / #app` 定成固定高度加
  * `overflow: hidden`，**滚动由每一页自己领** —— 别的页面都写着
  * `<div class="overview-page fill-height overflow-y-auto">` 这一组（OverviewView、
- * MemberView、MarketView、ProjectDocsView…十来个）。
+ * ProfileView、MarketView、ProjectDocsView…十来个）。
  *
  * 反馈这几页当初只写了页面自己的类。于是内容比窗口高的时候，下半截被外壳那层
  * `overflow-hidden` 裁掉，而页面上**没有任何元素能滚**：1280×600 的窗口里反馈中心

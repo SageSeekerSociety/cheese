@@ -5,7 +5,6 @@ Shipped as both gh and fj; standard library only, like the executor bootstrap.
 """
 
 import contextlib
-import fcntl
 import hashlib
 import http.client
 import json
@@ -26,35 +25,55 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+if sys.platform != "win32":
+    import fcntl
+
+
+def lock(file):
+    if sys.platform == "win32":
+        # Shipped as remote-execution/bin/gh; the Windows primitives are one up.
+        portable = Path(__file__).resolve().parents[1] / "portable.py"
+        runpy.run_path(str(portable))["lock"](file)
+    else:
+        fcntl.flock(file, fcntl.LOCK_EX)
+
 
 def native_binary(name):
     wrapper = Path(__file__).resolve()
     with wrapper.open("rb") as stream:
         signature = stream.read(128)
+    # The file the distribution unpacks to, and the name a PATH search finds.
+    executable = name + (".exe" if sys.platform == "win32" else "")
     # fj must use the patched distribution, including when an old fj is on PATH.
     for directory in os.get_exec_path() if name == "gh" else ():
-        candidate = Path(directory) / name
+        candidate = Path(directory) / executable
         if candidate.is_file() and os.access(candidate, os.X_OK):
             with candidate.open("rb") as stream:
                 if stream.read(128) != signature:
                     return str(candidate)
-    if sys.platform not in ("linux", "darwin"):
+    if sys.platform not in ("linux", "darwin", "win32"):
         raise RuntimeError(f"Native {name} is not installed on this machine")
     machine = platform.machine()
-    arch = {"aarch64": "arm64", "arm64": "arm64", "x86_64": "x64"}.get(machine)
+    arch = {
+        "aarch64": "arm64",
+        "arm64": "arm64",
+        "x86_64": "x64",
+        "AMD64": "x64",
+    }.get(machine)
     if arch is None:
         raise RuntimeError(f"No {name} distribution for {machine}")
     version = {"fj": "0.6.0-cheese.2", "gh": "2.62.0"}[name]
     directory = Path.home() / f".cheese/native/{name}-{version}"
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / name
-    with (directory / "install.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    target = directory / executable
+    with (directory / "install.lock").open("a") as install_lock:
+        lock(install_lock)
         if target.is_file():
             return str(target)
+        system = "windows" if sys.platform == "win32" else sys.platform
         url = (
             os.environ["CHEESE_API"].rstrip("/")
-            + f"/connector/toolchain/{name}/{sys.platform}-{arch}/artifact"
+            + f"/connector/toolchain/{name}/{system}-{arch}/artifact"
         )
         with tempfile.TemporaryFile() as archive:
             with urllib.request.urlopen(url, timeout=120) as response:
@@ -72,7 +91,7 @@ def native_binary(name):
                     members = [
                         item
                         for item in package.infolist()
-                        if not item.is_dir() and Path(item.filename).name == name
+                        if not item.is_dir() and Path(item.filename).name == executable
                     ]
                     if len(members) != 1:
                         raise RuntimeError(f"{name} archive must contain one binary")
@@ -83,7 +102,7 @@ def native_binary(name):
                     members = [
                         item
                         for item in package.getmembers()
-                        if item.isfile() and Path(item.name).name == name
+                        if item.isfile() and Path(item.name).name == executable
                     ]
                     if len(members) != 1:
                         raise RuntimeError(f"{name} archive must contain one binary")
@@ -376,11 +395,28 @@ def run(name, arguments):
                 / "Library/Application Support/forgejo-cli.forgejo-cli/keys.json"
             )
             fixed.parent.mkdir(parents=True, exist_ok=True)
-            lock = cleanup.enter_context((root / "macos.lock").open("a"))
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            lock(cleanup.enter_context((root / "macos.lock").open("a")))
             if fixed.is_symlink() and fixed.readlink().is_relative_to(root):
                 fixed.unlink()  # An interrupted launcher left its own link.
             fixed.symlink_to(path)
+            cleanup.callback(fixed.unlink, missing_ok=True)
+        elif sys.platform == "win32":
+            # directories-rs reads the roaming AppData folder on Windows, and a
+            # symlink there needs Developer Mode, so the file is written in
+            # place. The marker is what tells a copy an interrupted launcher
+            # left from a user's own file, which is never replaced.
+            fixed = Path(
+                os.environ["APPDATA"], "forgejo-cli/forgejo-cli/data/keys.json"
+            )
+            fixed.parent.mkdir(parents=True, exist_ok=True)
+            lock(cleanup.enter_context((root / "windows.lock").open("a")))
+            marker = root / "windows-keys-written"
+            if marker.exists():
+                fixed.unlink(missing_ok=True)
+            with open(fixed, "x") as output:
+                json.dump(keys, output)
+            marker.touch()
+            cleanup.callback(marker.unlink, missing_ok=True)
             cleanup.callback(fixed.unlink, missing_ok=True)
         return subprocess.call([binary, *arguments], env=env)
 

@@ -7,6 +7,7 @@
     v-if="item.type === 'item'"
     :to="item.to"
     rounded="lg"
+    :border="false"
     class="app-rail-item"
     :aria-label="item.title"
     :class="{
@@ -40,7 +41,7 @@
 
     <template v-if="item.img">
       <!-- project tile: just the colored rounded-square app icon (Discord-style) -->
-      <v-img :src="item.img" width="40" height="40" class="rounded-lg" cover />
+      <v-img :src="item.img" width="48" height="48" class="rounded-lg" cover />
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="26" height="26" class="cheese-icon" />
@@ -49,10 +50,6 @@
       <!-- subtle "add" affordance: a plus glyph, no label/color, so it reads as
            a button rather than a project tile -->
       <v-icon size="22" class="app-rail-add-icon">{{ item.icon }}</v-icon>
-    </template>
-    <template v-else>
-      <v-icon size="small">{{ item.icon }}</v-icon>
-      <div class="text-caption app-rail-item-text">{{ item.title }}</div>
     </template>
   </v-card>
   <template v-else>
@@ -135,11 +132,6 @@ function warmDestination() {
 </script>
 
 <style lang="scss">
-.no-style-link {
-  text-decoration: none;
-  color: inherit;
-}
-
 .app-rail-item {
   position: relative;
   width: 48px;
@@ -151,7 +143,10 @@ function warmDestination() {
   --app-rail-item-background: 0.67;
   background-color: rgba(var(--v-theme-surface-light), var(--app-rail-item-background));
   color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  transition: all 0.2s ease;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
   gap: 2px;
 
   &:hover {
@@ -159,12 +154,6 @@ function warmDestination() {
     background-color: rgba(var(--v-theme-surface-light), var(--app-rail-item-background));
     color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity));
     cursor: pointer;
-  }
-
-  &[aria-current] {
-    --app-rail-item-background: 0.1;
-    background-color: rgba(var(--v-theme-primary), var(--app-rail-item-background));
-    color: rgba(var(--v-theme-primary), var(--v-high-emphasis-opacity));
   }
 
   &.app-rail-item-cheese {
@@ -189,7 +178,9 @@ function warmDestination() {
       height: 32px !important;
       fill: rgb(var(--v-theme-on-surface));
       opacity: var(--v-medium-high-opacity);
-      transition: all 0.2s ease;
+      transition:
+        fill var(--dur-quick) var(--ease-standard),
+        opacity var(--dur-quick) var(--ease-standard);
     }
 
     // Brand paint. These two literals are deliberate and identical in both
@@ -198,7 +189,7 @@ function warmDestination() {
     // change is the ink on top — it used to be `on-primary`, a value Vuetify
     // derives from `primary`, which differs between the themes (#F57F17 vs the
     // lightened #FFA733) and could flip the glyph to white on this bright
-    // yellow. Pinning it to the same dark ink the flyout uses keeps the logo at
+    // yellow. Pinning it to one dark ink keeps the logo at
     // 7.0:1 against the #ff9500 stop and 12.2:1 against #ffe600, in BOTH themes.
     &:hover,
     &[aria-current] {
@@ -209,20 +200,6 @@ function warmDestination() {
         opacity: var(--v-high-emphasis-opacity);
       }
     }
-  }
-
-  .app-rail-item-text {
-    line-height: 1;
-  }
-
-  // project tiles: keep the name to a single, truncated line so a long title
-  // ("知是 2.0 融合演示") never breaks the tile grid
-  .app-rail-item-label {
-    max-width: 44px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 10px;
   }
 }
 
@@ -253,61 +230,49 @@ function warmDestination() {
 }
 
 // project tiles: the colored rounded-square IS the visual (like the 元思 app
-// icon), floating on the rail with its name below — no grey box around it.
+// icon) and it fills the whole 48px slot — no card box and no gap around it,
+// or the tile reads as a small square framed inside a bigger one.
 .app-rail-item.app-rail-item--tile {
-  height: auto;
-  min-height: 48px;
-  padding: 3px 0 4px;
-  gap: 3px;
   background-color: transparent;
-  // the amber ring is a box-shadow on the inner 40px avatar; a v-card clips its
-  // content (overflow:hidden) so the ring only showed at the corners. Let it
-  // render fully so the frame is a clean, symmetric square on all 4 sides.
+  // the amber ring is a box-shadow on the avatar; a v-card clips its content
+  // (overflow:hidden) so the ring only showed at the corners. Let it render
+  // fully so the frame is a clean, symmetric square on all 4 sides.
   overflow: visible;
 
-  // the colored avatar IS the tile — never draw a card box behind it (that made
-  // a messy second square around the icon). Active state = the label turns the
-  // brand colour instead.
   &:hover,
   &[aria-current] {
     background-color: transparent;
   }
-  &[aria-current] .app-rail-item-label {
-    color: rgb(var(--v-theme-primary));
-    font-weight: 600;
-  }
 
-  // Selected project reads as selected via an amber ring FRAMING the square —
-  // the 40px avatar keeps a small gap to the ring (box-shadow: 0 spread = the
-  // avatar edge, then a transparent gap, then the 2px amber ring).
+  // Selected project reads as selected via an amber ring FRAMING the square:
+  // a 3px gap in the rail's own colour, then the 2px ring. The gap is --canvas
+  // (the rail sits on `background`), not --surface — on dark those differ and
+  // a surface-coloured gap would draw a second, lighter ring.
   .v-img {
-    transition: box-shadow 0.2s ease;
+    transition: box-shadow var(--dur-quick) var(--ease-standard);
   }
   &[aria-current] .v-img {
     // `primary`, not the #f57f17 literal: identical in light (primary IS
     // #F57F17) and correctly lightened to #FFA733 on dark, where the original
     // amber only reaches 3.1:1.
     box-shadow:
-      0 0 0 3px rgb(var(--v-theme-surface)),
+      0 0 0 3px var(--canvas),
       0 0 0 5px rgb(var(--v-theme-primary));
   }
 }
 
 // "add project" affordance: a dashed rounded square with a muted plus, distinct
-// from a project tile (no colored avatar). Greens up on hover to invite the click.
+// from a project tile (no colored avatar). Hover stays neutral: it is not the
+// page's primary action, so it gets no amber.
 .app-rail-item.app-rail-item--add {
   background-color: transparent;
   border: 1.5px dashed rgba(var(--v-theme-on-surface), 0.28);
   color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
-  .app-rail-add-icon {
-    transition: all 0.2s ease;
-  }
-
   &:hover {
-    background-color: rgba(var(--v-theme-primary), 0.08);
-    border-color: rgba(var(--v-theme-primary), 0.6);
-    color: rgba(var(--v-theme-primary), var(--v-high-emphasis-opacity));
+    background-color: var(--fill-2);
+    border-color: var(--line-2);
+    color: var(--text);
   }
 }
 
@@ -317,28 +282,7 @@ function warmDestination() {
   width: 24px;
   margin: 6px auto;
   opacity: 0.6;
-  border-radius: 2px;
-}
-
-/* active indicator — a soft amber pill on the left edge, in our brand accent
-   (not Discord's white), so the selected rail tile reads at a glance.
-   `primary` rather than the #f57f17 literal — same reason as the ring above. */
-.app-rail-item[aria-current]::before {
-  content: '';
-  position: absolute;
-  left: -10px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 22px;
-  border-radius: 0 3px 3px 0;
-  background: rgb(var(--v-theme-primary));
-}
-
-/* project tiles use the amber RING (above) as their active indicator, so drop
-   the left edge pill for them — the frame around the square carries selection */
-.app-rail-item.app-rail-item--tile[aria-current]::before {
-  content: none;
+  border-radius: var(--radius-pill);
 }
 
 /* Discord-style hover flyout, tuned to our light/amber aesthetic. Rendered at the
@@ -348,37 +292,18 @@ function warmDestination() {
   padding: 0;
   box-shadow: none;
   opacity: 1;
-
-  /* This flyout is an INVERTED element: on light it is deliberately a dark chip
-     floating over a pale page. There is no `inverse-surface` token to express
-     that (surface/surface-bright are pale on light, which is the opposite), and
-     inventing one would ripple into wave 2's mapping — so the two values live
-     here as component-local custom properties instead.
-     This is the rare, legitimate `[data-theme='dark']` branch: the element is
-     not picking the wrong token, it is the one thing that must invert TWICE.
-     On dark, #23242a would sink into the #141517 canvas (1.13:1) — a floating
-     chip has to be LIGHTER than the page it floats over, hence #3a3d44 (1.68:1
-     vs canvas, 1.55:1 vs surface, plus the drop shadow below). */
-  --rail-flyout-bg: #23242a;
-  --rail-flyout-ink: #fff;
-  --rail-flyout-kbd-bg: rgba(255, 255, 255, 0.14);
-}
-:root[data-theme='dark'] .rail-flyout.rail-flyout {
-  --rail-flyout-bg: #3a3d44;
-  --rail-flyout-ink: #f3f4f6; /* 9.9:1 on #3a3d44 */
-  --rail-flyout-kbd-bg: rgba(255, 255, 255, 0.1);
 }
 .rail-flyout .rail-flyout__inner {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--rail-flyout-bg);
-  color: var(--rail-flyout-ink);
-  border-radius: 10px;
+  background: var(--inverse-surface);
+  color: var(--inverse-ink);
+  border-radius: var(--radius-md);
   font-size: 14px;
   font-weight: 600;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--shadow-2);
 }
 .rail-flyout .rail-flyout__kbd {
   display: inline-flex;
@@ -386,10 +311,10 @@ function warmDestination() {
   justify-content: center;
   min-width: 20px;
   height: 20px;
-  padding: 0 5px;
-  border-radius: 5px;
-  background: var(--rail-flyout-kbd-bg);
-  color: var(--rail-flyout-ink);
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--inverse-fill);
+  color: var(--inverse-ink);
   font-size: 12px;
   font-weight: 600;
   font-family: inherit;

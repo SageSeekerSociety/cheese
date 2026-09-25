@@ -1,16 +1,16 @@
 """Behavioural tests for the metering proxy addon (deploy/metering-proxy/
-billing_addon.py) and the credential-hardening it enforces.
+billing_addon.py).
 
 The addon imports mitmproxy, which the backend venv does not carry, so these
-load it by path behind a minimal mitmproxy stub and drive its `request` hook
-directly — testing the actual fail-closed / inject behaviour, not the source.
+load it by path behind a minimal mitmproxy stub and drive its hooks directly —
+testing what leaves the proxy, not the source.
 
-Covers the metering-proxy hardening (CODEX findings / #388):
-  - an absent/empty injector fails closed with a local 503 and forwards nothing;
-  - a present injector is swapped in as the upstream Bearer;
-  - the injector path is read from the (now directory-based) mount;
-  - the compose mounts the secrets DIRECTORY, not a single file;
-  - the CI guard's self-test passes and the tree is clean.
+The proxy holds no model credential. A session's Authorization is its host's
+own Claude login: a subscription turn carries it to Anthropic untouched, and a
+turn admission places on the API-key pool leaves with the project's virtual key
+instead — the session's credential must never reach the gateway. Attribution
+comes from the scoped token the connection proved at CONNECT (or a scoped
+Bearer), never from that credential.
 """
 
 import asyncio
@@ -82,31 +82,32 @@ def _load_addon(
     monkeypatch,
     tmp_path,
     *,
-    inject: str | None,
     scoped_secret: str = "",
     allow_header_attr: str = "",
+    credential: str | None = None,
 ):
     """Load a FRESH billing_addon module with env captured for this test.
 
-    inject=None leaves the injector file absent (empty credential); a string
-    writes it. The addon reads all of these at import time, so env must be set
-    before the module is loaded — hence a fresh module per call.
+    ``credential`` is the platform's Claude credential file's content; None
+    leaves the platform logged out.
+
+    The addon reads all of these at import time, so env must be set before the
+    module is loaded — hence a fresh module per call.
     """
     global _ADDON_LOADS
     _install_mitmproxy_stub(monkeypatch)
 
-    token_file = tmp_path / "secrets" / "inject.token"
-    if inject is not None:
-        token_file.parent.mkdir(parents=True, exist_ok=True)
-        token_file.write_text(inject)
-
     monkeypatch.setenv("CHEESE_USAGE_LOG", str(tmp_path / "usage.jsonl"))
-    monkeypatch.setenv("CHEESE_INJECT_TOKEN", str(token_file))
     monkeypatch.setenv("CHEESE_SCOPED_SECRET", scoped_secret)
     monkeypatch.setenv("CHEESE_ALLOW_HEADER_ATTR", allow_header_attr)
     monkeypatch.setenv("CHEESE_ADMISSION_URL", "")
-    monkeypatch.setenv("CHEESE_UPSTREAM_VIA", "")
+    monkeypatch.setenv("CHEESE_GATEWAY_BASE", "")
     monkeypatch.setenv("CHEESE_TOKEN_CAP", "0")
+    credential_file = tmp_path / "claude-credential" / "credential"
+    credential_file.parent.mkdir(parents=True, exist_ok=True)
+    if credential is not None:
+        credential_file.write_text(credential)
+    monkeypatch.setenv("CHEESE_CLAUDE_CREDENTIAL", str(credential_file))
 
     _ADDON_LOADS += 1
     name = f"billing_addon_{_ADDON_LOADS}"
@@ -117,9 +118,15 @@ def _load_addon(
     return mod
 
 
-def _make_flow(*, path="/v1/messages", caller_bearer="scoped.caller.token"):
+# What a session's Authorization carries: its host's own Claude login. Distinct
+# enough that a test can look for it in every header of an outgoing request.
+SESSION_CREDENTIAL = "sk-ant-oat01-REAL-SESSION-CREDENTIAL"
+
+
+def _make_flow(*, path="/v1/messages", caller_bearer=SESSION_CREDENTIAL):
     """A flow that clears the addon's host/TLS allowlist (Anthropic name over
-    proxy-terminated TLS), carrying the caller's own scoped Bearer."""
+    proxy-terminated TLS), carrying the caller's Bearer — by default the
+    session's own Claude credential."""
     request = SimpleNamespace(
         path=path,
         host="api.anthropic.com",
@@ -137,7 +144,7 @@ def _make_flow(*, path="/v1/messages", caller_bearer="scoped.caller.token"):
 
 
 def test_native_child_selection_is_admitted_and_rewritten(monkeypatch, tmp_path):
-    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
     mod.ADMISSION_URL = "http://fixture/admission"
     calls = []
 
@@ -166,7 +173,7 @@ def test_native_child_header_selects_its_model_even_for_haiku(monkeypatch, tmp_p
     """分身的 /v1/messages 推迟到 `request` 钩子才准入：主 agent 指定的模型
     在请求体里，头部时刻体还没到。准入拿到的指定随调用带上去，绑定用缓冲
     改写写回。指定的名字本身是 haiku 时的「不算指定」另有一条用例。"""
-    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
     mod.ADMISSION_URL = "http://fixture/admission"
     calls = []
 
@@ -198,7 +205,7 @@ def test_native_child_header_selects_its_model_even_for_haiku(monkeypatch, tmp_p
 def test_the_main_conversation_keeps_streaming_its_body(monkeypatch, tmp_path):
     """缓冲只落在分身头上：主对话的 turn 是长会话反复重 POST 的大体（#654
     OOM 的教训），它必须还在头部时刻准入、流式改写。"""
-    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
     mod.ADMISSION_URL = "http://fixture/admission"
     calls = []
 
@@ -251,7 +258,7 @@ def test_recorded_native_child_choices_replay_through_proxy_admission(
     records = fixture["requests"]
     canonical = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(canonical).hexdigest() == fixture["sha256"]
-    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
     mod.ADMISSION_URL = "http://fixture/admission"
     admitted = []
 
@@ -272,177 +279,14 @@ def test_recorded_native_child_choices_replay_through_proxy_admission(
     assert set(admitted) == {"claude-sonnet-5", "claude-opus-5"}
 
 
-def test_missing_injector_fails_closed_with_503(monkeypatch, tmp_path):
-    """No credential on the host → a local 503 BEFORE forwarding. The caller's
-    scoped bearer must NOT be rewritten (nothing is sent upstream)."""
-    mod = _load_addon(monkeypatch, tmp_path, inject=None)
-    flow = _make_flow(caller_bearer="scoped.caller.token")
-
-    asyncio.run(mod.requestheaders(flow))
-
-    assert flow.response is not None, "must short-circuit, not forward"
-    assert flow.response.status_code == 503
-    # The scoped bearer was left untouched — it was never swapped for a real one.
-    assert flow.request.headers["authorization"] == "Bearer scoped.caller.token"
-
-
-def test_empty_injector_also_fails_closed(monkeypatch, tmp_path):
-    """A present-but-empty token file is the same failure as an absent one."""
-    mod = _load_addon(monkeypatch, tmp_path, inject="   \n")
-    flow = _make_flow()
-
-    asyncio.run(mod.requestheaders(flow))
-
-    assert flow.response is not None and flow.response.status_code == 503
-
-
-def test_present_injector_is_swapped_in(monkeypatch, tmp_path):
-    """With a real credential the caller's bearer is replaced by it and no error
-    response is set (the request is allowed to forward)."""
-    mod = _load_addon(monkeypatch, tmp_path, inject="sk-ant-oat01-REALTOKEN\n")
-    flow = _make_flow(caller_bearer="scoped.caller.token")
-    flow.request.headers["x-api-key"] = "stale-key"
-
-    asyncio.run(mod.requestheaders(flow))
-
-    assert flow.response is None, "a served request must not be refused"
-    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-REALTOKEN"
-    # A stale x-api-key would override the injected bearer upstream — dropped.
-    assert "x-api-key" not in flow.request.headers
-
-
-def test_injector_read_from_configured_directory_path(monkeypatch, tmp_path):
-    """The token is read from CHEESE_INJECT_TOKEN, i.e. the file inside the
-    mounted secrets DIRECTORY — proving the directory-based path resolves."""
-    mod = _load_addon(monkeypatch, tmp_path, inject="sk-ant-oat01-FROMDIR\n")
-
-    assert str(mod.INJECT_TOKEN_FILE) == str(tmp_path / "secrets" / "inject.token")
-    assert mod._real_token() == "sk-ant-oat01-FROMDIR"
-
-
-def test_compose_mounts_secrets_directory_not_single_file():
-    """The compose must inject via a read-only DIRECTORY mount, so an atomic
-    rename-in-place rotation is seen without a restart (no inode trap)."""
-    text = COMPOSE.read_text()
-    assert "CHEESE_INJECT_TOKEN: /etc/cheese/secrets/inject.token" in text
-    assert ":/etc/cheese/secrets:ro" in text
-    # The old single-file bind mount (the inode trap) must be gone.
-    assert "/etc/cheese/inject.token:ro" not in text
-
-
-# --- carrying a machine's own ticket ----------------------------------------
-# ccproxy scopes its fake→real ticket swap to the identity the upstream
-# connection authenticated as: measured 2026-08-14, a ticket issued to m516 over
-# an m161 connection returns 401 with no request_id, while the same ticket over
-# m516's own connection reaches Anthropic. So "forward the caller's ticket" and
-# "authenticate as that caller's machine" are one decision, and these tests pin
-# that the two halves cannot drift apart.
-
-
-def _with_admission(mod, monkeypatch, upstream: str | None, **named):
-    """Point the addon at a control plane that returns `upstream` for everyone."""
-    verdict = _verdict(**{"pool": "subscription", "upstream": upstream, **named})
+def _with_admission(mod, monkeypatch, **named):
+    """Point the addon at a control plane that returns one verdict for everyone."""
+    verdict = _verdict(**{"pool": "subscription", **named})
     monkeypatch.setattr(mod, "ADMISSION_URL", "http://control-plane.invalid/admission")
     monkeypatch.setattr(
         mod, "ADMISSION", SimpleNamespace(check=lambda project, topic, bearer: verdict)
     )
     return verdict
-
-
-def test_a_machine_with_its_own_identity_keeps_its_own_ticket(monkeypatch, tmp_path):
-    """The whole point of the pass-through path: the platform must not swap in a
-    credential it holds, because it is not the one ccproxy will accept."""
-    secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    _with_admission(mod, monkeypatch, "m516:pw516")
-    flow = _make_flow(caller_bearer=_scoped_token(secret))
-    ticket = flow.request.headers["authorization"]
-
-    asyncio.run(mod.requestheaders(flow))
-
-    assert flow.response is None
-    assert flow.request.headers["authorization"] == ticket, "ticket was rewritten"
-    assert "PLATFORM" not in flow.request.headers["authorization"]
-
-
-def test_the_upstream_hop_authenticates_as_that_same_machine(monkeypatch, tmp_path):
-    """A forwarded ticket over the wrong identity is a 401 several hops away, so
-    the identity the request hook chose must be the one the CONNECT presents."""
-    secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    _with_admission(mod, monkeypatch, "m516:pw516")
-    monkeypatch.setattr(mod, "UPSTREAM_AUTH", "m161:pw161")
-    asyncio.run(mod.requestheaders(_make_flow(caller_bearer=_scoped_token(secret))))
-
-    connect = SimpleNamespace(
-        request=SimpleNamespace(headers={}),
-        client_conn=SimpleNamespace(id="client-1"),
-    )
-    mod.http_connect_upstream(connect)
-
-    expected = base64.b64encode(b"m516:pw516").decode()
-    assert connect.request.headers["Proxy-Authorization"] == f"Basic {expected}"
-
-
-def test_traffic_the_control_plane_cannot_place_keeps_todays_behaviour(
-    monkeypatch, tmp_path
-):
-    """A machine enrolled before identities were recorded, and the local
-    container path: the platform's own credential goes out over the
-    deployment-wide identity — the two halves still agree."""
-    secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    _with_admission(mod, monkeypatch, None)
-    monkeypatch.setattr(mod, "UPSTREAM_AUTH", "m161:pw161")
-    flow = _make_flow(caller_bearer=_scoped_token(secret))
-
-    asyncio.run(mod.requestheaders(flow))
-
-    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
-
-    connect = SimpleNamespace(
-        request=SimpleNamespace(headers={}),
-        client_conn=SimpleNamespace(id="client-1"),
-    )
-    mod.http_connect_upstream(connect)
-    expected = base64.b64encode(b"m161:pw161").decode()
-    assert connect.request.headers["Proxy-Authorization"] == f"Basic {expected}"
-
-
-def test_a_closed_connection_stops_pinning_an_identity(monkeypatch, tmp_path):
-    """The proxy is long-lived; one entry per connection ever made is a leak, and
-    a reused connection id must not inherit a previous caller's identity."""
-    secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    _with_admission(mod, monkeypatch, "m516:pw516")
-    asyncio.run(mod.requestheaders(_make_flow(caller_bearer=_scoped_token(secret))))
-    assert mod._UPSTREAM_BY_CLIENT
-
-    mod.client_disconnected(SimpleNamespace(id="client-1"))
-
-    assert not mod._UPSTREAM_BY_CLIENT
-
-
-def test_the_compose_no_longer_stamps_one_identity_on_every_connection():
-    """mitmdump's --upstream-auth applies a single value to every upstream
-    connection, which is precisely what cannot be true any more; the addon must
-    be the only writer of that header."""
-    text = COMPOSE.read_text()
-    # Comments are excluded deliberately: the header explains at length why the
-    # flag is gone, and a test that reads prose would fail on the explanation.
-    directives = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith("#")
-    )
-    assert "--upstream-auth" not in directives
-    assert "CHEESE_UPSTREAM_AUTH: ${CCPROXY_UPSTREAM_AUTH:-}" in directives
 
 
 # --- the CONNECT listener's gate -------------------------------------------
@@ -457,14 +301,11 @@ def _scoped_token(
     *,
     project: str = "p1",
     ttl_s: float = 3600.0,
-    rc: bool = False,
 ) -> str:
     """A token shaped exactly like the backend's mint_scoped_token. Signed for
     real: the addon verifies the HMAC, so a hand-written string would only ever
     exercise the reject path."""
-    raw = json.dumps(
-        {"p": project, "t": "t1", "exp": time.time() + ttl_s, "rc": int(rc)}
-    )
+    raw = json.dumps({"p": project, "t": "t1", "exp": time.time() + ttl_s})
     body = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
     digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
     return f"{body}.{base64.urlsafe_b64encode(digest).decode().rstrip('=')}"
@@ -472,29 +313,6 @@ def _scoped_token(
 
 def _basic(password: str) -> str:
     return "Basic " + base64.b64encode(f"cheese:{password}".encode()).decode()
-
-
-def test_rc_bootstrap_routes_to_cheese_before_credential_injection(
-    monkeypatch, tmp_path
-):
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
-    )
-    mod.RC_BASE = "https://backend.example/api"
-    token = _scoped_token("test-secret", rc=True)
-    mod.http_connect(_make_connect_flow(_basic(token)))
-    flow = _make_flow(path="/v1/code/sessions", caller_bearer="machine-ticket")
-    flow.request.headers["x-cheese-attr"] = "p1/some-other-topic"
-    flow.request.headers["x-api-key"] = "stale-provider-key"
-    asyncio.run(mod.requestheaders(flow))
-    assert flow.request.host == "backend.example"
-    assert flow.request.path == "/api/v1/code/sessions"
-    assert flow.request.headers["x-cheese-token"] == token
-    assert "authorization" not in flow.request.headers
-    assert "x-api-key" not in flow.request.headers
-    assert "x-cheese-attr" not in flow.request.headers
-    assert flow.server_conn.via is None
-    assert mod.verify_scoped_token(token, "test-secret")["t"] == "t1"
 
 
 def test_the_control_endpoints_are_answered_by_cheese_whatever_the_pool_is(
@@ -509,26 +327,23 @@ def test_the_control_endpoints_are_answered_by_cheese_whatever_the_pool_is(
     这里没有配任何准入：判据从前是「准入答出来的池」，而那是把开机放在一个
     fail-open 的调用后面 —— 答错一次就泄露一次，而泄露出去的身份收不回来。
     """
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
-    )
-    token = _scoped_token("test-secret", rc=True)
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    token = _scoped_token("test-secret")
     mod.http_connect(_make_connect_flow(_basic(token)))
     for path in (
         "/api/oauth/profile",
         "/api/claude_code/settings",
         "/api/claude_code/policy_limits",
     ):
-        flow = _make_flow(path=path, caller_bearer="machine-ticket")
+        flow = _make_flow(path=path)
         # 归账那一侧允许 header 在已证明的项目内部挑房间；身份这一侧不允许 ——
-        # 答出去的是这条 RC 会话被签在哪儿。
+        # 答出去的是这条会话被签在哪儿。
         flow.request.headers["x-cheese-attr"] = "p1/some-other-topic"
         asyncio.run(mod.requestheaders(flow))
         assert flow.response.status_code == (204 if path.endswith("settings") else 200)
         assert flow.request.stream is False
+        # 请求没有出过这一跳。
         assert flow.server_conn.via is None
-        # 平台的订阅凭据没有被挂上去，请求也没有出过这一跳。
-        assert flow.request.headers.get("authorization") != "Bearer provider-secret"
         if path.endswith("profile"):
             data = json.loads(flow.response.content)
             assert data["organization"]["uuid"] == "p1"
@@ -536,20 +351,15 @@ def test_the_control_endpoints_are_answered_by_cheese_whatever_the_pool_is(
         elif path.endswith("settings"):
             assert flow.response.content == b""
         else:
-            assert (
-                json.loads(flow.response.content)["restrictions"][
-                    "allow_remote_control"
-                ]["allowed"]
-                is True
-            )
+            assert json.loads(flow.response.content) == {"restrictions": {}}
 
 
 def _assert_answered_by_cheese(mod, flow) -> None:
-    """这一跳没出去，回的是这条活自己的地点，平台的订阅凭据没挂上去。"""
+    """这一跳没出去，回的是这条活自己的地点。"""
     asyncio.run(mod.requestheaders(flow))
     assert flow.response is not None
     assert flow.response.status_code == 200
-    assert flow.request.headers.get("authorization") != "Bearer provider-secret"
+    assert flow.request.stream is False
     data = json.loads(flow.response.content)
     assert data["organization"]["uuid"] == "p1"
     assert data["account"]["uuid"] == "t1"
@@ -566,16 +376,11 @@ def test_an_unconfigured_admission_does_not_echo_the_platform_account(
     的沙箱。现在它不问了，所以这条测试盯的是那个状态下开机仍然成立。
 
     没设过这个变量不是假设 —— 它是 `billing_addon` 里那段注释记着的、烧掉一天的
-    那次。这条会话还带着自己的 ccproxy 票：那一支从前会撞上「说不出用谁的身份发」
-    的 503，RC 会话根本起不来。
+    那次。
     """
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
-    )
-    mod.http_connect(_make_connect_flow(_basic(_scoped_token("test-secret", rc=True))))
-    _assert_answered_by_cheese(
-        mod, _make_flow(path="/api/oauth/profile", caller_bearer="machine-ticket")
-    )
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    mod.http_connect(_make_connect_flow(_basic(_scoped_token("test-secret"))))
+    _assert_answered_by_cheese(mod, _make_flow(path="/api/oauth/profile"))
 
 
 def test_an_unreachable_admission_does_not_echo_the_platform_account(
@@ -590,44 +395,26 @@ def test_an_unreachable_admission_does_not_echo_the_platform_account(
     def unreachable(url, bearer, timeout_s):
         raise OSError("control plane is down")
 
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
-    )
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
     url = "http://control-plane.invalid/admission"
     monkeypatch.setattr(mod, "ADMISSION_URL", url)
     monkeypatch.setattr(mod, "ADMISSION", mod.AdmissionGate(url, post=unreachable))
-    token = _scoped_token("test-secret", rc=True)
+    token = _scoped_token("test-secret")
     _assert_answered_by_cheese(
         mod, _make_flow(path="/api/oauth/profile", caller_bearer=token)
     )
 
 
-def test_rc_without_backend_never_falls_through_to_official_service(
+def test_telemetry_is_consumed_without_attaching_provider_credential(
     monkeypatch, tmp_path
 ):
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
-    )
-    token = _scoped_token("test-secret", rc=True)
-    flow = _make_flow(path="/v1/code/sessions", caller_bearer=token)
-    asyncio.run(mod.requestheaders(flow))
-    assert flow.response.status_code == 503
-    assert flow.request.headers["authorization"] != "Bearer provider-secret"
-
-
-def test_rc_telemetry_is_consumed_without_attaching_provider_credential(
-    monkeypatch, tmp_path
-):
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
-    )
-    token = _scoped_token("test-secret", rc=True)
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    token = _scoped_token("test-secret")
     mod.http_connect(_make_connect_flow(_basic(token)))
     flow = _make_flow(path="/api/event_logging/v2/batch", caller_bearer="")
     asyncio.run(mod.requestheaders(flow))
     assert flow.response.status_code == 200
     assert flow.request.stream is False
-    assert flow.request.headers["authorization"] != "Bearer provider-secret"
 
 
 def _make_connect_flow(proxy_auth: str | None = None, *, conn: str = "client-1"):
@@ -654,7 +441,7 @@ def test_connect_without_a_configured_secret_refuses_rather_than_relaying(
     """The failure this guards is silent: a box that widens CONNECT_BIND_HOST but
     forgets CHEESE_SCOPED_SECRET has no error to notice, so an unset secret must
     refuse every tunnel instead of falling back to trusting the network."""
-    mod = _load_addon(monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret="")
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="")
     flow = _make_connect_flow(_basic("anything"))
 
     mod.http_connect(flow)
@@ -664,9 +451,7 @@ def test_connect_without_a_configured_secret_refuses_rather_than_relaying(
 
 def test_connect_with_a_valid_scoped_token_is_relayed(monkeypatch, tmp_path):
     secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
-    )
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
     flow = _make_connect_flow(_basic(_scoped_token(secret)))
 
     mod.http_connect(flow)
@@ -677,9 +462,7 @@ def test_connect_with_a_valid_scoped_token_is_relayed(monkeypatch, tmp_path):
 def test_connect_with_a_foreign_or_missing_token_is_refused(monkeypatch, tmp_path):
     """Signed by someone else, expired, or absent entirely — all the same 407."""
     secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
-    )
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
     for auth in (
         None,
         _basic("not-a-token"),
@@ -694,9 +477,7 @@ def test_connect_with_a_foreign_or_missing_token_is_refused(monkeypatch, tmp_pat
 def test_connect_legacy_bridge_only_posture_stays_explicit(monkeypatch, tmp_path):
     """The one way to run an ungated listener is the documented opt-in, whose
     name already says the box trusts whoever can reach it."""
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-X", allow_header_attr="1"
-    )
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
     flow = _make_connect_flow(None)
 
     mod.http_connect(flow)
@@ -713,92 +494,114 @@ def test_compose_lets_a_box_publish_connect_where_machines_can_reach_it():
     assert '"172.17.0.1:443:8443"' in text
 
 
-# --- attribution on the pass-through path ----------------------------------
-# The two halves of the machine design contradicted each other in production:
-# pass-through requires the caller's Bearer to be the MACHINE's ccproxy ticket,
-# while attribution read the project out of that same Bearer expecting a scoped
-# cheese token. So an enrolled machine could never be attributed, never got an
-# admission verdict, never got its identity — and its turns were refused by the
-# meter itself ("a valid scoped token is required", measured on machine 474,
-# 2026-08-15). The token was never missing: it rode on the CONNECT, one layer
-# down, where nothing looked for it.
+# --- attribution: what the connection proved at CONNECT ---------------------
+# A session's Bearer is its host's own Claude credential, not a scoped cheese
+# token, so the project cannot be read from it. The scoped token rides on the
+# CONNECT instead, as the proxy password, and that is where attribution — and
+# the token that authenticates the admission call — come from.
 
 
-def _machine_flow(*, ticket="sk-ant-oat01-machine-ticket", attr=None, conn="client-1"):
-    """A request as an ENROLLED MACHINE makes it: the Bearer is its own ccproxy
-    ticket (77 chars, no dot — not a scoped token and not verifiable here), on a
-    connection that proved its project at CONNECT time."""
-    headers = {"authorization": f"Bearer {ticket}"}
+def _session_flow(*, bearer=SESSION_CREDENTIAL, attr=None, conn="client-1"):
+    """A turn as a session on the central host makes it: the Bearer is its own
+    Claude credential (not a scoped token, not verifiable here), on a connection
+    that proved its project at CONNECT time."""
+    flow = _make_flow(caller_bearer=bearer)
+    flow.client_conn.id = conn
     if attr is not None:
-        headers["x-cheese-attr"] = attr
-    request = SimpleNamespace(
-        path="/v1/messages", host="api.anthropic.com", headers=headers
-    )
-    return SimpleNamespace(
-        request=request,
-        client_conn=SimpleNamespace(
-            sni="api.anthropic.com", tls_established=True, id=conn
-        ),
-        server_conn=SimpleNamespace(via=None),
-        metadata={},
-        response=None,
-    )
+        flow.request.headers["x-cheese-attr"] = attr
+    return flow
 
 
 def _connect_flow_on(conn: str, proxy_auth: str | None):
     return _make_connect_flow(proxy_auth, conn=conn)
 
 
-def test_a_machines_ticket_is_attributed_from_what_it_proved_at_connect(
-    monkeypatch, tmp_path
-):
-    """The whole point of pass-through: the Bearer is NOT a scoped token, so the
-    project has to come from the CONNECT that opened this connection."""
+def _recording_admission(mod, monkeypatch, verdict=None):
+    """A control plane that answers `verdict` and records who asked it:
+    (project, topic, the bearer the admission call authenticates with)."""
+    asked: list[tuple[str, str, str]] = []
+
+    def check(project, topic, bearer, **_):
+        asked.append((project, topic, bearer))
+        return verdict or _verdict(pool="subscription")
+
+    monkeypatch.setattr(mod, "ADMISSION_URL", "http://control-plane.invalid/admission")
+    monkeypatch.setattr(mod, "ADMISSION", SimpleNamespace(check=check))
+    return asked
+
+
+def _turn_on_proven_connection(monkeypatch, tmp_path, *, attr=None):
+    """A session whose connection proved project p9 / topic t1 at CONNECT."""
     secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
-    )
-    mod.http_connect(
-        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
-    )
-
-    project, topic, bearer, _ = mod._attribution(_machine_flow(conn="c1"))
-
-    assert project == "p9", "an enrolled machine must still be attributable"
-    assert topic == "t1"
-
-
-def test_the_admission_call_uses_the_token_the_caller_actually_proved(
-    monkeypatch, tmp_path
-):
-    """Admission authenticates with a scoped cheese token. Handing it the
-    machine's ccproxy ticket instead would 401 — and the proxy fails OPEN on
-    admission errors, so the budget brake would quietly stop braking."""
-    secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
-    )
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
     token = _scoped_token(secret, project="p9")
     mod.http_connect(_connect_flow_on("c1", _basic(token)))
+    asked = _recording_admission(mod, monkeypatch)
+    flow = _session_flow(conn="c1", attr=attr)
+    asyncio.run(mod.requestheaders(flow))
+    return mod, flow, asked, token
 
-    _, _, bearer, _ = mod._attribution(_machine_flow(conn="c1"))
 
-    assert bearer == token
+def test_a_sessions_turn_is_attributed_from_what_it_proved_at_connect(
+    monkeypatch, tmp_path
+):
+    """The Bearer is NOT a scoped token, so the project has to come from the
+    CONNECT that opened this connection."""
+    _, flow, asked, _ = _turn_on_proven_connection(monkeypatch, tmp_path)
+
+    assert flow.response is None
+    assert [(project, topic) for project, topic, _ in asked] == [("p9", "t1")]
+
+
+def test_the_admission_call_uses_the_token_proven_at_connect(monkeypatch, tmp_path):
+    """Admission authenticates with a scoped cheese token. Handing it the
+    session's Claude credential instead would 401 — and the proxy fails OPEN on
+    admission errors, so the budget brake would quietly stop braking. It would
+    also put the session's credential in the control plane's reach."""
+    _, _, asked, token = _turn_on_proven_connection(monkeypatch, tmp_path)
+
+    assert [bearer for _, _, bearer in asked] == [token]
+    assert SESSION_CREDENTIAL not in json.dumps(asked)
+
+
+def test_a_deferred_subagent_admission_uses_the_token_proven_at_connect(
+    monkeypatch, tmp_path
+):
+    """The subagent path asks admission later, from the `request` hook, once the
+    body is whole. It must carry the same proven token, not the Bearer."""
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    token = _scoped_token(secret, project="p9")
+    mod.http_connect(_connect_flow_on("c1", _basic(token)))
+    asked = _recording_admission(mod, monkeypatch)
+    flow = _session_flow(conn="c1")
+    flow.request.headers.update(
+        {"x-claude-code-request-class": "subagent", "content-length": "34"}
+    )
+
+    asyncio.run(mod.requestheaders(flow))
+    assert asked == [], "the subagent's admission waits for its body"
+    flow.request.content = b'{"model":"glm-4.6","messages":[]}'
+    asyncio.run(mod.request(flow))
+
+    assert asked == [("p9", "t1", token)]
 
 
 def test_a_connection_that_proved_nothing_is_still_unattributable(
     monkeypatch, tmp_path
 ):
     """The security property must not regress: reading the CONNECT is a new
-    SOURCE of verified claims, not a new way to skip proving one."""
+    SOURCE of verified claims, not a new way to skip proving one. A turn on a
+    connection that proved nothing is refused and never reaches admission."""
     secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
-    )
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    asked = _recording_admission(mod, monkeypatch)
+    flow = _session_flow(conn="never-connected")
 
-    project, _, _, _ = mod._attribution(_machine_flow(conn="never-connected"))
+    asyncio.run(mod.requestheaders(flow))
 
-    assert project == ""
+    assert flow.response is not None and flow.response.status_code == 401
+    assert asked == []
 
 
 def test_the_session_header_refines_the_topic_inside_the_proven_project(
@@ -808,153 +611,455 @@ def test_the_session_header_refines_the_topic_inside_the_proven_project(
     helper, so the CONNECT token names whichever session launched last. The
     per-request header is the only per-topic signal, and it is safe to honour
     for the topic alone: the project it is checked against was proven."""
-    secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
-    )
-    mod.http_connect(
-        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    _, _, asked, _ = _turn_on_proven_connection(
+        monkeypatch, tmp_path, attr="p9/other-topic"
     )
 
-    project, topic, _, _ = mod._attribution(
-        _machine_flow(conn="c1", attr="p9/other-topic")
-    )
-
-    assert (project, topic) == ("p9", "other-topic")
+    assert [(project, topic) for project, topic, _ in asked] == [("p9", "other-topic")]
 
 
 def test_the_session_header_cannot_move_billing_to_another_project(
     monkeypatch, tmp_path
 ):
     """The header is unverified. It may pick a topic, never a payer."""
-    secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
-    )
-    mod.http_connect(
-        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    _, _, asked, _ = _turn_on_proven_connection(
+        monkeypatch, tmp_path, attr="someone-elses-project/their-topic"
     )
 
-    project, topic, _, _ = mod._attribution(
-        _machine_flow(conn="c1", attr="someone-elses-project/their-topic")
+    assert [(project, topic) for project, topic, _ in asked] == [("p9", "t1")], (
+        "a foreign project is ignored entirely"
     )
-
-    assert (project, topic) == ("p9", "t1"), "a foreign project is ignored entirely"
 
 
 def test_a_closed_connection_stops_pinning_a_proven_project(monkeypatch, tmp_path):
-    """Same lifetime rule as the identity map: a long-lived proxy must not
-    accumulate one entry per connection ever made, and a recycled connection id
-    must not inherit the previous caller's project."""
+    """A long-lived proxy must not accumulate one entry per connection ever
+    made, and a recycled connection id must not inherit the previous caller's
+    project."""
     secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
-    )
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
     mod.http_connect(
         _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
     )
+    asked = _recording_admission(mod, monkeypatch)
 
     mod.client_disconnected(SimpleNamespace(id="c1"))
-
-    assert mod._attribution(_machine_flow(conn="c1"))[0] == ""
-
-
-def test_an_unplaceable_machine_is_refused_rather_than_billed_to_the_platform(
-    monkeypatch, tmp_path
-):
-    """The day-costing failure, pinned. A box with no CHEESE_ADMISSION_URL gives
-    no verdict, so no machine is ever placed on its own identity — and the swap
-    below would put the PLATFORM's credential on a caller that brought its own.
-    Upstream then answers about a token the machine never held, which is how
-    this read as "the platform's subscription is revoked" for a day.
-
-    Refusing keeps two properties the swap would break: the wrong account is not
-    spent, and the error names the missing piece instead of impersonating an
-    auth failure."""
-    secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    mod.http_connect(
-        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
-    )
-    flow = _machine_flow(conn="c1")
-
+    flow = _session_flow(conn="c1")
     asyncio.run(mod.requestheaders(flow))
 
-    assert flow.response is not None and flow.response.status_code == 503
-    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-machine-ticket"
+    assert flow.response is not None and flow.response.status_code == 401
+    assert asked == []
 
 
-def test_a_scoped_caller_with_no_admission_still_gets_the_platform_credential(
-    monkeypatch, tmp_path
-):
-    """The refusal above must be narrow. A caller whose Bearer IS a scoped token
-    holds nothing spendable of its own, so swapping in the platform credential
-    is the whole point of its path — unchanged by any of this."""
+def test_an_exhausted_budget_says_budget(monkeypatch, tmp_path):
+    """A refused project must be told which balance ran out, not something that
+    sends whoever reads it to the wrong file. Nothing is forwarded, and the
+    session's credential is left where it was."""
     secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    flow = _make_flow(caller_bearer=_scoped_token(secret))
-
-    asyncio.run(mod.requestheaders(flow))
-
-    assert flow.response is None
-    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
-
-
-def test_an_exhausted_budget_says_budget_not_misconfiguration(monkeypatch, tmp_path):
-    """Admission resolves an identity only for a turn it is ALLOWING, so a
-    refused project also arrives here with no identity — and would be reported
-    as the box being misconfigured, sending whoever reads it to the wrong file.
-    The refusal has to name the balance."""
-    secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
     _with_admission(
-        mod, monkeypatch, None, allow=False, reason="budget spent: 10.0000 of 10.0000"
+        mod, monkeypatch, allow=False, reason="budget spent: 10.0000 of 10.0000"
     )
     mod.http_connect(
         _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
     )
-    flow = _machine_flow(conn="c1")
+    flow = _session_flow(conn="c1")
 
     asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None and flow.response.status_code == 429
     assert b"budget" in flow.response.content
-    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-machine-ticket"
+    assert flow.request.headers["authorization"] == f"Bearer {SESSION_CREDENTIAL}"
 
 
-def test_a_request_with_no_bearer_is_not_treated_as_carrying_its_own(
-    monkeypatch, tmp_path
+# --- where the session's credential goes -------------------------------------
+# The proxy holds no model credential. A subscription turn carries the session's
+# own Claude login to Anthropic as it came; a turn admission places on the
+# API-key pool goes to LiteLLM on the project's virtual key, and the session's
+# credential must not ride along — it would sit in another service's reach and
+# logs.
+
+
+def _admitted_as(mod, monkeypatch, admission: str) -> None:
+    """Three ways a box ends up serving a turn from the subscription."""
+    if admission == "no admission configured":
+        return
+    if admission == "admission says subscription":
+        _with_admission(mod, monkeypatch, pool="subscription")
+        return
+
+    def unreachable(url, bearer, timeout_s, **_):
+        raise OSError("control plane is down")
+
+    url = "http://control-plane.invalid/admission"
+    monkeypatch.setattr(mod, "ADMISSION_URL", url)
+    monkeypatch.setattr(mod, "ADMISSION", mod.AdmissionGate(url, post=unreachable))
+
+
+@pytest.mark.parametrize(
+    "admission",
+    [
+        "admission says subscription",
+        "no admission configured",
+        "admission unreachable (fail-open)",
+    ],
+)
+def test_a_subscription_turn_forwards_the_sessions_own_credential_untouched(
+    monkeypatch, tmp_path, admission
 ):
-    """Claude Code calls some endpoints with no Authorization at all. "No
-    credential" is not "someone else's credential": reading an absent bearer as
-    a foreign one refused every CONNECT caller whose project owns no machine —
-    seen on dev as a burst of 503s from a project that has none. Such a request
-    takes the ordinary swap path.
-
-    Shown on a turn rather than on the telemetry call that produced the
-    incident: telemetry is answered from the table now, before `_attribution`
-    is consulted at all, so that path can no longer demonstrate the rule it
-    taught us."""
     secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _admitted_as(mod, monkeypatch, admission)
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _session_flow(conn="c1")
+    # A stale x-api-key would override the session's bearer at Anthropic.
+    flow.request.headers["x-api-key"] = "stale-key"
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is None, "a served turn must not be refused"
+    assert flow.request.headers["authorization"] == f"Bearer {SESSION_CREDENTIAL}"
+    assert "x-api-key" not in flow.request.headers
+    assert flow.request.host == "api.anthropic.com"
+    # Straight to Anthropic: no upstream proxy hop on the server connection.
+    assert flow.server_conn.via is None
+
+
+def _gateway_turn(monkeypatch, tmp_path, *, deferred: bool):
+    """A turn admission places on the API-key pool, carrying the session's real
+    credential in both headers a client can put one in."""
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    asked = _recording_admission(
+        mod,
+        monkeypatch,
+        _verdict(pool="gateway", key="sk-virtual-project-key", model="glm-4.6"),
     )
     mod.http_connect(
         _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
     )
-    flow = _machine_flow(conn="c1")
-    del flow.request.headers["authorization"]
+    flow = _session_flow(conn="c1")
+    flow.request.headers["x-api-key"] = SESSION_CREDENTIAL
+    if deferred:
+        flow.request.headers.update(
+            {"x-claude-code-request-class": "subagent", "content-length": "34"}
+        )
+    asyncio.run(mod.requestheaders(flow))
+    if deferred:
+        flow.request.content = b'{"model":"glm-4.6","messages":[]}'
+        asyncio.run(mod.request(flow))
+    return flow, asked
+
+
+@pytest.mark.parametrize(
+    "deferred", [False, True], ids=["header-time turn", "deferred subagent turn"]
+)
+def test_a_gateway_turn_never_carries_the_sessions_credential(
+    monkeypatch, tmp_path, deferred
+):
+    """THE property of routing a turn to LiteLLM: the session's own Claude
+    credential appears in no header of what leaves for the gateway — not in
+    `authorization`, not in `x-api-key`, not anywhere — and the gateway is
+    authenticated with the project's virtual key instead."""
+    flow, asked = _gateway_turn(monkeypatch, tmp_path, deferred=deferred)
+
+    assert asked, "admission was never asked, so nothing was routed"
+    assert flow.response is None, "a routed turn must not be refused"
+    assert flow.request.host == "litellm.invalid"
+    assert flow.request.port == 4000
+    assert flow.request.headers["authorization"] == "Bearer sk-virtual-project-key"
+    leaked = {
+        name: value
+        for name, value in flow.request.headers.items()
+        if "REAL-SESSION-CREDENTIAL" in value
+    }
+    assert leaked == {}, f"the session's credential reached the gateway: {leaked}"
+
+
+def _no_login_turn(
+    monkeypatch, tmp_path, pool: str, *, answered=True, path="/v1/messages"
+):
+    """A placeholder session's request; `answered` says whether admission
+    actually answered (False = the gate failed open)."""
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    _with_admission(
+        mod,
+        monkeypatch,
+        pool=pool,
+        key="sk-virtual-project-key",
+        fail_open=not answered,
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    flow.request.path = path
+    asyncio.run(mod.requestheaders(flow))
+    return flow
+
+
+def test_a_host_without_a_claude_login_cannot_send_a_subscription_turn(
+    monkeypatch, tmp_path
+):
+    """The placeholder a login-less host boots on authenticates nothing; sending
+    it to Anthropic would come back as an opaque 401 that reads like a broken
+    account. The caller is told the host has no login instead — as a refusal
+    the client does not retry: a 5xx here had Claude Code retry silently for
+    about three minutes before the turn said anything."""
+    flow = _no_login_turn(monkeypatch, tmp_path, "subscription")
+
+    assert flow.response is not None and flow.response.status_code == 400
+    assert b"no Claude login" in flow.response.content
+
+
+def test_a_login_less_turn_the_control_plane_could_not_place_waits_for_it(
+    monkeypatch, tmp_path
+):
+    """Admission unreachable: only the gateway could serve a login-less turn,
+    and its key comes from admission, so the turn is told to retry."""
+    flow = _no_login_turn(monkeypatch, tmp_path, "subscription", answered=False)
+
+    assert flow.response is not None and flow.response.status_code == 503
+    assert b"retry" in flow.response.content
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/claude_cli/bootstrap?entrypoint=sdk-cli&model=claude-sonnet-5",
+        "/api/claude_code_penguin_mode",
+        "/api/oauth/validate",
+    ],
+)
+def test_a_login_less_session_boots_without_refusals(monkeypatch, tmp_path, path):
+    """The boot calls only a real account can answer are answered here for a
+    placeholder session, never sent to Anthropic on a credential that
+    authenticates nothing."""
+    flow = _no_login_turn(monkeypatch, tmp_path, "gateway", path=path)
+
+    assert flow.response is not None and flow.response.status_code == 200
+    assert json.loads(flow.response.content) in ({}, {"enabled": False})
+    assert flow.request.host == "api.anthropic.com"
+
+
+def _platform_turn(
+    monkeypatch,
+    tmp_path,
+    *,
+    credential,
+    pool="subscription",
+    path="/v1/messages",
+):
+    """A placeholder session's request while the platform holds `credential`."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, scoped_secret=secret, credential=credential
+    )
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    _with_admission(
+        mod, monkeypatch, pool=pool, key="sk-virtual-project-key", fail_open=False
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    flow.request.path = path
+    return mod, flow
+
+
+def _pair(expires_in_s: float, refresh="sk-ant-ort01-PLATFORM") -> str:
+    return json.dumps(
+        {
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-oat01-PLATFORM-OLD",
+                "refreshToken": refresh,
+                "expiresAt": int((time.time() + expires_in_s) * 1000),
+            }
+        }
+    )
+
+
+def test_a_subscription_turn_goes_out_on_the_platforms_credential(
+    monkeypatch, tmp_path
+):
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP\n"
+    )
 
     asyncio.run(mod.requestheaders(flow))
 
-    assert flow.response is None, "a bearer-less caller must not be refused"
-    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
+    assert flow.response is None
+    assert flow.request.host == "api.anthropic.com"
+    assert flow.request.headers["authorization"] == (
+        "Bearer sk-ant-oat01-PLATFORM-SETUP"
+    )
+
+
+def test_a_logged_in_platform_asks_anthropic_for_the_sessions_boot_data(
+    monkeypatch, tmp_path
+):
+    mod, flow = _platform_turn(
+        monkeypatch,
+        tmp_path,
+        credential="sk-ant-oat01-PLATFORM-SETUP",
+        path="/api/claude_cli/bootstrap",
+    )
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is None, "a real login's boot data comes from Anthropic"
+    assert flow.request.headers["authorization"] == (
+        "Bearer sk-ant-oat01-PLATFORM-SETUP"
+    )
+
+
+def test_a_login_about_to_expire_is_renewed_before_it_goes_out(monkeypatch, tmp_path):
+    mod, flow = _platform_turn(monkeypatch, tmp_path, credential=_pair(60))
+    refreshed = []
+
+    def grant(url, body, timeout):
+        refreshed.append(body["refresh_token"])
+        return 200, {"access_token": "sk-ant-oat01-PLATFORM-NEW", "expires_in": 28800}
+
+    mod.CREDENTIAL._post = grant
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert refreshed == ["sk-ant-ort01-PLATFORM"]
+    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM-NEW"
+
+
+def test_logging_out_takes_effect_at_the_next_request(monkeypatch, tmp_path):
+    """No session holds the credential, so removing the file is logging every
+    running session out at once."""
+    mod, first = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    asyncio.run(mod.requestheaders(first))
+    assert first.response is None
+
+    mod.CREDENTIAL.path.unlink()
+    second = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    asyncio.run(mod.requestheaders(second))
+
+    assert second.response is not None and second.response.status_code == 400
+    assert b"no Claude login" in second.response.content
+
+
+def test_a_refused_login_is_reported_as_one_to_renew_and_not_retried(
+    monkeypatch, tmp_path
+):
+    mod, flow = _platform_turn(monkeypatch, tmp_path, credential=_pair(60))
+    mod.CREDENTIAL._post = lambda url, body, timeout: (400, {"error": "invalid_grant"})
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is not None and flow.response.status_code == 400
+    assert b"has to be renewed" in flow.response.content
+
+
+def test_the_credentials_requests_leave_through_its_egress(monkeypatch, tmp_path):
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    mod.CREDENTIAL.egress_path.write_text("http://me:pw@egress.example:3128\n")
+
+    asyncio.run(mod.requestheaders(flow))
+    connect = SimpleNamespace(
+        request=SimpleNamespace(headers={}), client_conn=flow.client_conn
+    )
+    mod.http_connect_upstream(connect)
+
+    assert flow.response is None
+    assert flow.server_conn.via == ("http", ("egress.example", 3128))
+    assert connect.request.headers["Proxy-Authorization"] == (
+        "Basic " + base64.b64encode(b"me:pw").decode()
+    )
+
+
+def test_an_egress_that_refused_the_proxy_is_reported_until_it_changes(
+    monkeypatch, tmp_path
+):
+    """A 502 would be retried silently for minutes; a wrong proxy password
+    does not heal by waiting."""
+    mod, first = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    mod.CREDENTIAL.egress_path.write_text("http://me:wrong@egress.example:3128\n")
+    asyncio.run(mod.requestheaders(first))
+    first.error = (
+        "Upstream proxy egress.example:3128 refused HTTP CONNECT request: "
+        "407 Proxy Authentication Required"
+    )
+    mod.error(first)
+
+    second = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    asyncio.run(mod.requestheaders(second))
+    assert second.response is not None and second.response.status_code == 400
+    assert b"egress.example:3128 refused" in second.response.content
+    # A refusal that still streams the body is never delivered: mitmproxy
+    # drops the connection and the client waits out its timeout.
+    assert second.request.stream is False
+
+    mod.CREDENTIAL.egress_path.write_text("http://me:right@egress.example:3128\n")
+    third = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    asyncio.run(mod.requestheaders(third))
+    assert third.response is None
+    assert third.server_conn.via == ("http", ("egress.example", 3128))
+
+
+def test_only_the_credentials_requests_take_the_egress(monkeypatch, tmp_path):
+    """A turn admission sends to the gateway carries no platform credential,
+    and keeps its own route."""
+    mod, flow = _platform_turn(
+        monkeypatch,
+        tmp_path,
+        credential="sk-ant-oat01-PLATFORM-SETUP",
+        pool="gateway",
+    )
+    mod.CREDENTIAL.egress_path.write_text("http://egress.example:3128\n")
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.request.host == "litellm.invalid"
+    assert flow.server_conn.via is None
+
+
+def test_without_an_egress_the_credentials_requests_go_direct(monkeypatch, tmp_path):
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.server_conn.via is None
+
+
+def test_the_platforms_credential_never_reaches_the_gateway(monkeypatch, tmp_path):
+    mod, flow = _platform_turn(
+        monkeypatch,
+        tmp_path,
+        credential="sk-ant-oat01-PLATFORM-SETUP",
+        pool="gateway",
+    )
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.request.host == "litellm.invalid"
+    assert flow.request.headers["authorization"] == "Bearer sk-virtual-project-key"
+    assert not [v for v in flow.request.headers.values() if "PLATFORM" in v]
+
+
+def test_a_host_without_a_claude_login_still_serves_the_gateway(monkeypatch, tmp_path):
+    flow = _no_login_turn(monkeypatch, tmp_path, "gateway")
+
+    assert flow.response is None
+    assert flow.request.host == "litellm.invalid"
+    assert flow.request.headers["authorization"] == "Bearer sk-virtual-project-key"
 
 
 def _make_response(status_code=200, content_type="text/event-stream"):
@@ -969,7 +1074,7 @@ def test_a_streamed_message_is_metered_through_the_response_tee(monkeypatch, tmp
     """The response body is no longer buffered whole (that is what OOM-kills the
     proxy on long turns); it streams through a tee that scrapes usage from the
     SSE incrementally. Driving that tee must still land the turn on the meter."""
-    mod = _load_addon(monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM")
+    mod = _load_addon(monkeypatch, tmp_path)
 
     flow = _make_flow()
     flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
@@ -999,7 +1104,7 @@ def test_a_streamed_message_is_metered_through_the_response_tee(monkeypatch, tmp
 def test_a_non_message_response_streams_without_metering(monkeypatch, tmp_path):
     """Everything that is not a metered message turn still streams (so nothing
     is buffered) but must not touch the meter."""
-    mod = _load_addon(monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM")
+    mod = _load_addon(monkeypatch, tmp_path)
 
     flow = _make_flow(path="/api/oauth/profile")
     flow.response = _make_response(content_type="application/json")
@@ -1011,7 +1116,7 @@ def test_a_non_message_response_streams_without_metering(monkeypatch, tmp_path):
 
 
 def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path):
-    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod = _load_addon(monkeypatch, tmp_path)
     mod.GATEWAY_BASE = "http://gateway:4000"
     mod.ADMISSION_URL = "http://backend/llm/admission"
     mod.ALLOW_HEADER_ATTR = True
@@ -1042,7 +1147,7 @@ def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path)
 def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
     monkeypatch, tmp_path, caplog
 ):
-    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod = _load_addon(monkeypatch, tmp_path)
     mod.GATEWAY_BASE = "http://gateway:4000"
     mod.ADMISSION_URL = "http://backend/llm/admission"
     mod.ALLOW_HEADER_ATTR = True
@@ -1124,7 +1229,7 @@ def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
 async def test_gateway_stream_failure_is_reported_without_waiting_for_client_retries(
     monkeypatch, tmp_path, ending, expected
 ):
-    mod = _load_addon(monkeypatch, tmp_path, inject=None, scoped_secret="test-secret")
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
     mod.ADMISSION_URL = "http://backend/llm/admission"
     flow = _make_flow()
     flow.metadata.update(cheese_pool="gateway", cheese_attr=("project", "topic"))
@@ -1167,7 +1272,7 @@ async def test_gateway_stream_failure_is_reported_without_waiting_for_client_ret
 
 
 async def test_client_disconnect_does_not_raise_a_model_failure(monkeypatch, tmp_path):
-    mod = _load_addon(monkeypatch, tmp_path, inject=None, scoped_secret="test-secret")
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
     flow = _make_flow()
     flow.metadata.update(cheese_pool="gateway", cheese_attr=("project", "topic"))
     flow.response = _make_response()
@@ -1180,7 +1285,7 @@ async def test_client_disconnect_does_not_raise_a_model_failure(monkeypatch, tmp
 def test_admission_timing_separates_executor_queue_from_check(
     monkeypatch, tmp_path, caplog
 ):
-    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod = _load_addon(monkeypatch, tmp_path)
     mod.GATEWAY_BASE = "http://gateway:4000"
     mod.ADMISSION_URL = "http://backend/llm/admission"
     mod.ALLOW_HEADER_ATTR = True
@@ -1220,7 +1325,7 @@ def test_admission_timing_separates_executor_queue_from_check(
 def test_failed_gateway_request_keeps_timing_without_error_details(
     monkeypatch, tmp_path, caplog
 ):
-    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod = _load_addon(monkeypatch, tmp_path)
     flow = _make_flow()
     flow.metadata["cheese_pool"] = "gateway"
     flow.request.timestamp_start = 100.0
@@ -1243,60 +1348,35 @@ _BOOT_PATHS = (
 )
 
 
-def test_the_boot_endpoints_are_answered_here_without_an_rc_claim(
+def test_the_boot_endpoints_are_answered_here_for_a_caller_that_proves_nothing(
     monkeypatch, tmp_path
 ):
-    """一台机器只有一种启动环境（结论 46），所以开机不能取决于这个会话有没有 RC。
+    """一台机器只有一种启动环境（结论 46），所以开机不能取决于这个会话证明了什么。
 
-    The caller below proves no place at all — no scoped secret, no rc claim, the
+    The caller below proves no place at all — no scoped secret, the
     weakest caller the proxy ever serves. Every startup path still has to be
     answered from the table: the alternative is Anthropic answering "who am I"
     for a sandbox running someone else's code, with the platform subscription's
     own uuid and email in the reply.
     """
-    mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
-    mod.UPSTREAM_VIA = "subscription-proxy:3128"
+    mod = _load_addon(monkeypatch, tmp_path)
 
     for path in _BOOT_PATHS:
         flow = _make_flow(path=path)
         asyncio.run(mod.requestheaders(flow))
         assert flow.response is not None, path
         assert flow.response.status_code in (200, 204), path
-        # Nothing went out: no upstream hop, and no credential attached to one.
+        # Nothing went out: answered here, with no upstream hop.
         assert flow.server_conn.via is None, path
-        assert flow.request.headers["authorization"] != "Bearer subscription-secret"
         assert flow.request.stream is False, path
 
 
 def test_the_identity_answered_here_is_cheeses_own(monkeypatch, tmp_path):
-    mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
+    mod = _load_addon(monkeypatch, tmp_path)
     flow = _make_flow(path="/api/oauth/profile")
     asyncio.run(mod.requestheaders(flow))
     body = json.loads(flow.response.content)
     assert "anthropic.com" not in body["account"]["email"]
-
-
-def test_the_rc_bridge_is_announced_only_to_a_session_that_has_rc(
-    monkeypatch, tmp_path
-):
-    """The flags are what make Claude Code open `/v1/code/…`. A session whose
-    token carries no rc claim has no route for those, so announcing the bridge
-    to it would send control traffic upstream on the platform's credential."""
-    secret = "scoped-secret"
-    mod = _load_addon(monkeypatch, tmp_path, inject="x", scoped_secret=secret)
-
-    plain = _make_flow(path="/api/eval/sdk-client")
-    asyncio.run(mod.requestheaders(plain))
-    assert json.loads(plain.response.content)["features"] == {}
-
-    rc_flow = _make_flow(
-        path="/api/eval/sdk-client",
-        caller_bearer=_scoped_token(secret, rc=True),
-    )
-    asyncio.run(mod.requestheaders(rc_flow))
-    features = json.loads(rc_flow.response.content)["features"]
-    assert features["tengu_ccr_bridge"] == {"defaultValue": True}
-    assert rc_flow.server_conn.via is None
 
 
 # --- a refusal has to REACH the caller --------------------------------------
@@ -1333,51 +1413,37 @@ def _refusals_of_a_message_turn(monkeypatch, tmp_path):
     a box actually produces it. Yields (what it is, addon module, flow)."""
     secret = "s3cr3t"
 
-    # The one seen in production: a machine carrying its own ccproxy ticket that
-    # the control plane could not place on an identity.
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    # A session on a proven connection, refused by its project's balance.
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _with_admission(
+        mod, monkeypatch, allow=False, reason="budget spent: 10.0000 of 10.0000"
     )
     mod.http_connect(
         _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
     )
-    yield "a machine with no identity to send it as", mod, _machine_flow(conn="c1")
+    yield "an exhausted project budget", mod, _session_flow(conn="c1")
 
-    # The same caller, refused by its project's balance instead.
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
+    # The same session, whose card is bound to a model the project cannot serve.
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
     _with_admission(
-        mod, monkeypatch, None, allow=False, reason="budget spent: 10.0000 of 10.0000"
+        mod,
+        monkeypatch,
+        allow=False,
+        reason="model not in this project's catalogue",
+        reason_kind=core.BINDING,
     )
     mod.http_connect(
         _connect_flow_on("c2", _basic(_scoped_token(secret, project="p9")))
     )
-    yield "an exhausted project budget", mod, _machine_flow(conn="c2")
+    yield "a binding the project cannot serve", mod, _session_flow(conn="c2")
 
     # A caller that cannot prove which project to bill.
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
     yield "an unattributable caller", mod, _make_flow(caller_bearer="not-a-token")
 
-    # A box whose own subscription credential is missing. Its own directory:
-    # `inject=None` means "write nothing", so sharing one with the cases above
-    # would leave THEIR token file sitting there and this box would be fine.
-    mod = _load_addon(
-        monkeypatch, tmp_path / "bare-box", inject=None, scoped_secret=secret
-    )
-    yield (
-        "no platform credential on the box",
-        mod,
-        _make_flow(caller_bearer=_scoped_token(secret)),
-    )
-
     # A gateway project on a deployment with no pool to send it to.
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    _with_admission(mod, monkeypatch, None, pool="gateway", key=None)
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _with_admission(mod, monkeypatch, pool="gateway", key=None)
     yield (
         "a gateway project with no route",
         mod,
@@ -1387,8 +1453,8 @@ def _refusals_of_a_message_turn(monkeypatch, tmp_path):
 
 def test_every_refusal_of_a_message_turn_reaches_the_caller(monkeypatch, tmp_path):
     """The refusal is the product here: each of these exists to tell somebody
-    exactly what went wrong (which budget, which missing credential, which piece
-    of the box is unconfigured). A refusal that kills the connection instead
+    exactly what went wrong (which budget, which binding, which piece of the box
+    is unconfigured). A refusal that kills the connection instead
     reports none of it — the caller sees a hung platform, and the operator sees
     a crash log naming mitmproxy rather than the cause."""
     for what, mod, flow in _refusals_of_a_message_turn(monkeypatch, tmp_path):
@@ -1409,27 +1475,17 @@ def _forwards_of_a_message_turn(monkeypatch, tmp_path):
     Yields (what it is, addon module, flow)."""
     secret = "s3cr3t"
 
-    # SWAP: a scoped caller gets the platform's credential.
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    yield "the swap path", mod, _make_flow(caller_bearer=_scoped_token(secret))
-
-    # PASS THROUGH: an enrolled machine keeps its own ticket.
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    _with_admission(mod, monkeypatch, "m516:pw516")
+    # SUBSCRIPTION: the session's own credential goes to Anthropic as it came.
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _with_admission(mod, monkeypatch, pool="subscription")
     mod.http_connect(
         _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
     )
-    yield "the pass-through path", mod, _machine_flow(conn="c1")
+    yield "the subscription path", mod, _session_flow(conn="c1")
 
     # GATEWAY: the request is re-aimed at the API-key pool and forwarded there.
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    _with_admission(mod, monkeypatch, None, pool="gateway", key="sk-virtual-key")
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _with_admission(mod, monkeypatch, pool="gateway", key="sk-virtual-key")
     monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
     yield "the gateway path", mod, _make_flow(caller_bearer=_scoped_token(secret))
 
@@ -1464,10 +1520,8 @@ def test_a_turn_whose_body_never_names_a_model_is_refused_not_run_as_it_came(
     empty request.
     """
     secret = "s3cr3t"
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
-    )
-    _with_admission(mod, monkeypatch, None, model="claude-opus-5")
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _with_admission(mod, monkeypatch, model="claude-opus-5")
     flow = _make_flow(caller_bearer=_scoped_token(secret))
 
     asyncio.run(mod.requestheaders(flow))
@@ -1491,7 +1545,7 @@ def test_a_turn_whose_body_never_names_a_model_is_refused_not_run_as_it_came(
 def test_a_subagents_own_haiku_request_is_not_a_specification(monkeypatch, tmp_path):
     """分身发出的 haiku 类请求（CLI 自己的后台类）照旧：准入按未指定问，
     绑定改写盖成分身默认 —— 与改动前逐字节一致,不吃队友白名单。"""
-    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
     mod.ADMISSION_URL = "http://fixture/admission"
     calls = []
 
@@ -1516,10 +1570,164 @@ def test_a_subagents_own_haiku_request_is_not_a_specification(monkeypatch, tmp_p
     assert json.loads(flow.request.content)["model"] == "claude-sonnet-5"
 
 
+def test_a_subagent_echoing_the_parents_model_reads_as_inherit(monkeypatch, tmp_path):
+    """体里的模型 == 主对话被改写前的那个值 = CC 的「继承」长相,不是指定。
+
+    device 启动环境不钉模型,CC 回显的是它自己的内建默认 —— 这个名字在准入
+    的席位配置里不存在,送上去普通分身全被当成范围外指定(2026-09-23 事故)。
+    代理自己观察主对话的改写,认出回显,按未指定走。"""
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
+        return _verdict(model="kimi-k3")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+
+    # 主对话:体里写着 CC 的内建默认,被改写成绑定模型 —— 改写前的值被记住。
+    main = _make_flow()
+    main.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(main))
+    assert callable(main.request.stream)
+    out = main.request.stream(b'{"model":"claude-sonnet-5","messages":[]}')
+    assert json.loads(out)["model"] == "kimi-k3", "main flow still gets bound"
+    assert mod.PARENT_MODEL.get(("p", "t")) == "claude-sonnet-5"
+
+    # 分身:体里回显同一个名字 —— 准入按「未指定」问,绑定照分身默认写回。
+    fork = _make_flow()
+    fork.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "content-length": "42",
+        }
+    )
+    asyncio.run(mod.requestheaders(fork))
+    fork.request.content = b'{"model":"claude-sonnet-5","messages":[]}'
+    asyncio.run(mod.request(fork))
+    assert calls[-1] == (True, "")
+    assert json.loads(fork.request.content)["model"] == "kimi-k3"
+
+
+def test_a_subagent_hint_header_echoing_the_parent_also_reads_as_inherit(
+    monkeypatch, tmp_path
+):
+    """hint 头（x-cheese-child-model）回显父模型 = 继承，不是显式指定。
+
+    CC 2.1.277 的 GATEWAY_HINT_HEADERS 对每个分身都打上它解析出的分身模
+    型：没指定时就是父会话（被改写前的）模型。快路若把它当显式送准入，
+    gateway 项目的普通分身全灭 —— 2026-09-23 事故换了个头卷土重来（当日
+    实测：review 分身被线上闸门 400 打死）。判据与推迟路的体回显一致：
+    == 主对话改写前的原模型即未指定。"""
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(
+        project, topic, bearer, *, subagent=False, requested_model="", child_model=""
+    ):
+        calls.append((subagent, requested_model, child_model))
+        return _verdict(model="kimi-k3")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+
+    # 主对话：体里写着 CC 的内建默认，被改写成绑定模型 —— 改写前的值被记住。
+    main = _make_flow()
+    main.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(main))
+    out = main.request.stream(b'{"model":"claude-sonnet-5","messages":[]}')
+    assert json.loads(out)["model"] == "kimi-k3"
+    assert mod.PARENT_MODEL.get(("p", "t")) == "claude-sonnet-5"
+
+    # 分身：hint 头回显同一个名字 —— 不当显式送准入；照未指定的老路推迟，
+    # 体回显在 request 钩子里同样被认掉，准入按「未指定」问。
+    fork = _make_flow()
+    fork.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "x-cheese-child-model": "claude-sonnet-5",
+            "content-length": "42",
+        }
+    )
+    calls.clear()
+    asyncio.run(mod.requestheaders(fork))
+    assert calls == [], "回显不该在头部时刻就触发准入"
+    assert "x-cheese-child-model" not in fork.request.headers
+    fork.request.content = b'{"model":"claude-sonnet-5","messages":[]}'
+    asyncio.run(mod.request(fork))
+    assert calls[-1] == (True, "", "")
+    assert json.loads(fork.request.content)["model"] == "kimi-k3"
+
+
+def test_the_parents_haiku_background_requests_do_not_overwrite_the_record(
+    monkeypatch, tmp_path
+):
+    """CLI 自己的 haiku 后台请求（会话标题、路径建议）也走主对话路径；在
+    gateway 池上它们照样被改写（不留 haiku），replaced=True —— 但它们不是
+    父会话的工作模型。记进 PARENT_MODEL 就会把真回显盖掉,普通分身再次全灭。"""
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    mod.GATEWAY_BASE = "http://gateway:4000"
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        return _verdict(pool="gateway", key="k", model="kimi-k3")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+
+    main = _make_flow()
+    main.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(main))
+    main.request.stream(b'{"model":"claude-sonnet-5","messages":[]}')
+    assert mod.PARENT_MODEL.get(("p", "t")) == "claude-sonnet-5"
+
+    title = _make_flow()
+    title.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(title))
+    out = title.request.stream(b'{"model":"claude-haiku-4-5","messages":[]}')
+    assert json.loads(out)["model"] == "kimi-k3", "haiku 请求照样被绑定改写"
+    assert mod.PARENT_MODEL.get(("p", "t")) == "claude-sonnet-5", "但不污染记录"
+
+
+def test_a_subagent_naming_a_different_model_is_still_a_specification(
+    monkeypatch, tmp_path
+):
+    """体里的模型 ≠ 主对话回显值:这才是主 agent 的指定,原样送上准入。"""
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    calls = []
+
+    def admit(project, topic, bearer, *, subagent=False, requested_model=""):
+        calls.append((subagent, requested_model))
+        return _verdict(model=requested_model or "kimi-k3")
+
+    mod.ADMISSION = SimpleNamespace(check=admit)
+
+    main = _make_flow()
+    main.request.headers["x-cheese-attr"] = "p/t"
+    asyncio.run(mod.requestheaders(main))
+    main.request.stream(b'{"model":"claude-sonnet-5","messages":[]}')
+
+    named = _make_flow()
+    named.request.headers.update(
+        {
+            "x-cheese-attr": "p/t",
+            "x-claude-code-request-class": "subagent",
+            "content-length": "40",
+        }
+    )
+    asyncio.run(mod.requestheaders(named))
+    named.request.content = b'{"model":"mimo-v2.6-pro","messages":[]}'
+    asyncio.run(mod.request(named))
+    assert calls[-1] == (True, "mimo-v2.6-pro")
+
+
 def test_an_oversize_subagent_body_keeps_the_old_streamed_road(monkeypatch, tmp_path):
     """缓冲有上限：超过上限(或没说多大)的分身请求退回旧路 —— 头部时刻准入、
     流式放行、绑分身默认。上限是发现层的成本,不是资格,更不是拒绝的理由。"""
-    mod = _load_addon(monkeypatch, tmp_path, inject="fixture", allow_header_attr="1")
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
     mod.ADMISSION_URL = "http://fixture/admission"
     calls = []
 

@@ -4,6 +4,7 @@
     "deploy/metering-proxy/**",
     ".pre-commit-config.yaml",
     ".github/scripts/ensure-apt.sh",
+    ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/test.yml"
   ],
   "frontend": [
@@ -65,10 +66,20 @@
     "scripts/remote_execution/package-lock.json",
     "scripts/remote_execution/mcp_contract.py",
     "scripts/remote_execution/headless_contract.py",
+    "scripts/remote_execution/refresh_contract.py",
+    "deploy/metering-proxy/cheese_billing_core.py",
+    "scripts/remote_execution/equivalence.py",
     "scripts/remote_execution/model_fixture.py",
     "scripts/remote_execution/custom_mcp.py",
+    "scripts/remote_execution/acceptance.py",
+    "scripts/remote_execution/seed.py",
     "scripts/remote_execution/package.json",
-    "backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py",
+    "backend/app/domain/agent/harness/claude_code/remote_execution/*",
+    "backend/app/domain/agent/harness/claude_code/cli.py",
+    "backend/app/domain/agent/executor_transport.py",
+    "backend/app/domain/agent/cli_worker.py",
+    "backend/sandbox/cheese",
+    ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/mcp-contract.yml"
   ]
 }

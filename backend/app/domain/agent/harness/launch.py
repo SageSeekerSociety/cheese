@@ -7,9 +7,9 @@ was written against. A harness knows the command, the environment and the files
 that must be on disk before the process starts; it does not know where any
 machine put them.
 
-So neither side answers alone. The channel hands over a ``ScreenPlace``, the
-harness hands back a ``LaunchSpec``, and ``LaunchPlan`` is the sentence between
-them: *tell me what to run, now that I have said where*.
+So neither side answers alone. The channel hands over a ``MachinePlace``, the
+harness hands back a ``MachineLaunch``, and ``MachinePlan.on`` is the sentence
+between them: *tell me what to run, now that I have said where*.
 
 Nothing below mentions Claude Code, which is why it lives here and not inside
 the adapter that happens to be the first thing to satisfy it. The whole point of
@@ -17,7 +17,6 @@ the seam is that a transport can hold a launch without being able to read it.
 """
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
@@ -40,45 +39,12 @@ class ExecutorLaunch(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class SessionFile:
-    """One file the harness reads at launch, named relative to its state dir.
-
-    ``mode`` is carried because the two sides of the mount are different users:
-    the backend plants these and the sandbox's process rewrites some of them, so
-    a file it must be able to replace has to be writable by both.
-    """
-
-    name: str
-    content: str
-    mode: int
-
-
-@dataclass(frozen=True, slots=True)
-class LaunchSpec:
-    """Everything a channel needs to start a harness, and nothing else.
-
-    A channel that can honour these three has that harness on it; what it does
-    with them — a tmux session in a container, a launcher shipped to someone's
-    machine — is its own business, and this type is where that stops being the
-    harness's problem.
-
-    ``env`` is only the part the harness itself reads. A channel adds its own
-    wiring to it before starting the session, because the session takes ONE
-    environment and both halves have to be in it.
-    """
-
-    command: str
-    env: dict[str, str]
-    files: tuple[SessionFile, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class MachinePlace:
     """机器说「在哪」—— 一台设备这一侧的那一半。
 
     Everything here is a fact about the room and the machine, never an
     instruction about what to do with it: this room belongs to a project, has an
-    execution target, a CA to trust, an operator who may drive it directly. One
+    execution target, a CA to trust. One
     harness turns those into a settings file and a version floor; the next one
     ignores most of them. A channel that decided which is which could only ever
     host the harness it was written against.
@@ -102,7 +68,6 @@ class MachinePlace:
     topic_id: str
     agent_handle: str
     execution_target: dict | None = None
-    remote_control: bool = False
     ca_pem: str = ""
 
 
@@ -116,10 +81,12 @@ class MachineLaunch:
     the session is started with, without having to read a line of it.
 
     ``contract`` is not shell: it is everything about this launch that a process
-    already running could not be made to adopt — the build, the argv, the flags
-    the room's shape decided. The channel folds it into what a live session is
-    compared against, so changing any of it closes the sessions holding the old
-    one instead of leaving them running something the code no longer describes.
+    already running could not be made to adopt — the build, the argv, the
+    environment, and every file the launch writes or process it starts that is
+    read once and kept. The room's own system prompt is not in it. The channel
+    folds it into what a live session is compared against, so changing any of
+    it closes the sessions holding the old one instead of leaving them running
+    something the code no longer describes.
     """
 
     command: str
@@ -128,27 +95,6 @@ class MachineLaunch:
     credentials: str = ""
     prepare: str = ""
     env: dict[str, str] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class ScreenPlace:
-    """Where a screen keeps a harness's state, as both sides of a mount see it.
-
-    The machine's half of a launch, and the only thing a harness gets told about
-    the machine. ``state_dir`` and ``workdir`` are paths AS THE SCREEN SEES
-    THEM: they go into the command and the environment, so the session's own
-    view is the only one that resolves.
-
-    ``state_at`` is that same state directory as the BACKEND can read it, when
-    it can at all. A harness that decides anything by looking at what a previous
-    session left behind needs the path on this side of the mount — and a
-    transport where the backend simply cannot reach it answers None, rather than
-    a path that exists only somewhere else.
-    """
-
-    state_dir: str
-    workdir: str
-    state_at: Path | None = None
 
 
 @runtime_checkable
@@ -220,13 +166,4 @@ class ExecutorPlan(Protocol):
 
 @runtime_checkable
 class LaunchPlan(MachinePlan, ExecutorPlan, Protocol):
-    """两边都答得上来的计划：一台机器要的，加上一台执行机要的。
-
-    ``at`` belongs to the transport that hands a container files and a command
-    rather than a script — the shape a harness answers when the backend shares
-    a filesystem with the screen.
-    """
-
-    def at(self, place: ScreenPlace) -> LaunchSpec:
-        """The launch, now that the machine has said where."""
-        ...
+    """两边都答得上来的计划：一台机器要的，加上一台执行机要的。"""

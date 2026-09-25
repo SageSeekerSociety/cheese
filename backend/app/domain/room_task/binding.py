@@ -69,7 +69,9 @@ def resolve(
         return WorkBinding(model=default["id"], supply=default["supply"], effort=effort)
     chosen = choices.get(bound)
     if chosen is None:
-        raise ValidationError(f"这条活绑的模型 {bound!r} 在当前项目里用不了，请改绑")
+        raise ValidationError(
+            f"这个任务绑定的模型 {bound!r} 在当前项目中不可用，需要重新选择"
+        )
     return WorkBinding(model=chosen["id"], supply=chosen["supply"], effort=effort)
 
 

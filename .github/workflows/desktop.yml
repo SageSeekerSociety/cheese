@@ -1,0 +1,130 @@
+name: Desktop app
+
+# Builds desktop/ — the web app in a native window, plus connecting the computer
+# it runs on as a device — for macOS (both chips) and Windows. On main the build
+# replaces the assets of the `desktop-latest` release, which is where the
+# download links on 「我的设备」 point (frontend/src/lib/desktop.ts). It is a
+# pre-release on purpose: the repository's "latest" release is the unrelated
+# 0.x line, and a normal release here would take that name from it.
+on:
+  pull_request:
+    paths: [desktop/**, .github/workflows/desktop.yml]
+  push:
+    branches: [main]
+    paths: [desktop/**, .github/workflows/desktop.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: desktop
+    shell: bash
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `update` is what the app's updater downloads (Windows reruns the installer).
+          - { os: macos-14, target: aarch64-apple-darwin, tmux: arm64, asset: Cheese-arm64.dmg, update: Cheese-arm64.app.tar.gz }
+          - { os: macos-14, target: x86_64-apple-darwin, tmux: x86_64, asset: Cheese-x64.dmg, update: Cheese-x64.app.tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: Cheese-Setup-x64.exe, update: Cheese-Setup-x64.exe }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      # pnpm comes from desktop/package.json's `packageManager` field.
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: rustup target add ${{ matrix.target }}
+
+      # Before anything compiles: tauri-build checks the bundled resources exist.
+      - name: Build tmux for the bundle
+        if: runner.os == 'macOS'
+        run: sh scripts/build-tmux.sh ${{ matrix.tmux }} resources/tmux
+
+      - name: Test
+        if: matrix.target != 'x86_64-apple-darwin'
+        working-directory: desktop/src-tauri
+        run: cargo test --target ${{ matrix.target }}
+
+      # Every build is a newer version than the last, which is how an installed
+      # app knows to update. The update artifacts are signed with the key the
+      # app's pubkey (tauri.conf.json) trusts; a build without the key (a fork's
+      # PR) still builds, just without them.
+      - name: Build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          signed=false; [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && signed=true
+          pnpm tauri build --target ${{ matrix.target }} \
+            --config "{\"version\":\"0.1.${{ github.run_number }}\",\"bundle\":{\"createUpdaterArtifacts\":$signed}}"
+
+      - name: Name the installer
+        run: |
+          bundle=src-tauri/target/${{ matrix.target }}/release/bundle
+          mkdir -p out
+          if [ "$RUNNER_OS" = macOS ]; then
+            cp "$bundle"/dmg/*.dmg out/${{ matrix.asset }}
+            update="$bundle"/macos/Cheese.app.tar.gz
+          else
+            cp "$bundle"/nsis/*-setup.exe out/${{ matrix.asset }}
+            update=$(ls "$bundle"/nsis/*-setup.exe)
+          fi
+          if [ -f "$update.sig" ]; then
+            [ "${{ matrix.update }}" = "${{ matrix.asset }}" ] || cp "$update" out/${{ matrix.update }}
+            cp "$update.sig" out/${{ matrix.update }}.sig
+          fi
+          ls -la out
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.asset }}
+          path: desktop/out/
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: out
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view desktop-latest >/dev/null 2>&1 ||
+            gh release create desktop-latest --prerelease --target "$GITHUB_SHA" \
+              --title "Cheese desktop" --notes "Built from main by .github/workflows/desktop.yml."
+          gh release upload desktop-latest out/* --clobber
+          # latest.json last: an app never sees a version whose files are not up yet.
+          base="https://github.com/$GH_REPO/releases/download/desktop-latest"
+          jq -n --arg v "0.1.${{ github.run_number }}" --arg base "$base" \
+            --rawfile win out/Cheese-Setup-x64.exe.sig \
+            --rawfile arm out/Cheese-arm64.app.tar.gz.sig \
+            --rawfile x64 out/Cheese-x64.app.tar.gz.sig \
+            '{version: $v, pub_date: (now | todate), platforms: {
+               "windows-x86_64": {signature: $win, url: "\($base)/Cheese-Setup-x64.exe"},
+               "darwin-aarch64": {signature: $arm, url: "\($base)/Cheese-arm64.app.tar.gz"},
+               "darwin-x86_64": {signature: $x64, url: "\($base)/Cheese-x64.app.tar.gz"}}}' \
+            > latest.json
+          gh release upload desktop-latest latest.json --clobber

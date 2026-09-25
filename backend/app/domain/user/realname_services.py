@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import BadRequestError, NotFoundError
+from app.domain.space.services import SpaceLabels
 from app.domain.user.models import User, UserRealNameAccessLog, UserRealNameIdentity
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -43,11 +44,13 @@ class UserRealNameService:
         user_repo: UserRepository,
         profile_repo: UserProfileRepository,
         realname_repo: UserRealNameRepository,
+        space_labels: SpaceLabels,
     ) -> None:
         self._session = session
         self._user_repo = user_repo
         self._profile_repo = profile_repo
         self._realname_repo = realname_repo
+        self._space_labels = space_labels
 
     async def _ensure_user_exists(self, user_id: int) -> User:
         user = await self._user_repo.get_by_id(user_id)
@@ -94,8 +97,10 @@ class UserRealNameService:
         class_name: str,
     ) -> dict:
         await self._ensure_user_exists(user_id)
-        if not all([real_name, student_id, grade, major, class_name]):
-            raise BadRequestError("All real-name fields are required.")
+        real_name, student_id = real_name.strip(), student_id.strip()
+        if not real_name or not student_id:
+            raise BadRequestError("A real name and a student ID are required.")
+        grade, major, class_name = grade.strip(), major.strip(), class_name.strip()
         identity = await self._realname_repo.upsert_identity(
             user_id=user_id,
             real_name=seal_realname_field(user_id, "real_name", real_name),
@@ -106,6 +111,14 @@ class UserRealNameService:
             encrypted=True,
         )
         return realname_dict(identity)
+
+    async def delete_user_identity(self, user_id: int) -> None:
+        await self._ensure_user_exists(user_id)
+        if not await self._realname_repo.delete_identity(user_id):
+            raise NotFoundError(
+                "user real name identity not found",
+                data={"type": "user_real_name_identity", "id": user_id},
+            )
 
     async def log_access(
         self,
@@ -156,6 +169,17 @@ class UserRealNameService:
             if user is not None:
                 accessor_users[uid] = user
 
+        # Where each access happened: a board, named, and said to be a course
+        # or not, looked up for the whole page at once.
+        space_ids = sorted(
+            {
+                row.module_entity_id
+                for row in rows
+                if row.module_type == "SPACE" and row.module_entity_id is not None
+            }
+        )
+        spaces = await self._space_labels.describe(space_ids)
+
         logs: list[dict] = []
         for log in rows:
             profile = profiles.get(log.accessor_id)
@@ -175,15 +199,20 @@ class UserRealNameService:
                 else log.created_at.replace(tzinfo=UTC)
             )
             access_time_ms = int(aware.timestamp() * 1000)
+            space = (
+                spaces.get(log.module_entity_id)
+                if log.module_type == "SPACE" and log.module_entity_id is not None
+                else None
+            )
             logs.append(
                 {
                     "accessor": accessor_dto,
                     "accessModuleType": log.module_type,
                     "accessEntityId": log.module_entity_id,
-                    "accessEntityName": None,
+                    "accessEntityName": space.name if space else None,
+                    "accessEntityIsCourse": space.is_course if space else None,
                     "accessTime": access_time_ms,
                     "accessType": log.access_type,
-                    "ipAddress": log.ip_address,
                     "accessReason": log.access_reason,
                 }
             )

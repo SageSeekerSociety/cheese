@@ -1,10 +1,9 @@
 """架构守卫：Claude Code 适配器的内部，外面只能从包门口拿。
 
 包里的东西没有一样是「跑一个 agent」的事实——它们全是 Claude Code 这一个 harness
-碰巧长成的样子：一地 hook 文件当事件日志（因为它没有事件 API）、一个消息拼装器
-（因为 MessageDisplay 是按 flush 发的不是按消息发的）、一个钉死在某个没有文档的
-内部版本上的 rendezvous socket、一段替人先点掉三个首启弹窗的启动脚本。第二个
-harness 一样都不用付。
+碰巧长成的样子：一个用 stream-json 管道握住 headless ``claude -p`` 的 runner、把它
+的记录翻成房间事件的那一层、钉死版本并隔离配置的启动器、把它的工具转去房间执行机
+的 remote-execution 插件。第二个 harness 一样都不用付。
 
 所以边界就是全部的意义。**外面 import 包本身，不 import 它的子模块**，而
 ``claude_code/__init__.py`` 的导出表就是「还有什么在跨界」的账本。
@@ -18,29 +17,18 @@ harness 一样都不用付。
 写模块粒度而不是名字粒度是故意的：同一个文件从适配器里多拿一个名字，架构上还是同
 一处跨界，不值得再走一次 review；而某个文件**整个**不再需要适配器，才是真的还了债。
 
-## 今天这张表在说什么
+## 这张表在说什么
 
-三类，性质完全不同：
-
-- **channels**（device / cloud）：它们实现 ``Channel``，拿走这一个接缝和它抛
-  的错——这些都是 transport 拿来照做的，不是它自己定的。**「跑什么」不在这张表
-  里**：那是 ``harness.launch`` 的 ``LaunchPlan``，通道说自己的坐标、拿回一份它读
-  不懂的 ``LaunchSpec``。device 那段 shell 也还清了：平台那一半是
-  ``machine_launcher``，harness 那一半是 ``LaunchPlan.on`` 答的，channel 只说
-  「在哪」。剩下 ``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE`` 还没还：Claude Code
-  的知识，今天还长在传输层里。「起来了」的判据今天是 rendezvous socket 开始接受
-  连接，那是连接器在
-  ``dialWhenReady`` 里等的；等第二个 harness 的 spike 说清它那儿长什么样，再考虑
-  把这个判据搬进 ``LaunchPlan``。
-- **平台侧（chat.py）：一行也没有了。** 曾经它拿走 ``MessageAssembler`` 和 spool 的
-  四个读写函数——「把 hook 翻译成房间里的东西」有一半住在平台侧，认得的是 Claude Code
-  的事件形状。现在它只通过 ``AgentRuntime`` 的 ``backlog`` 拿到已经拼好的
-  ``AgentEvent``，落库发帧还是它的活，翻译不是。**这一行别再长回来。**
+- **channels**（device）：拿走的是还没搬过缝的 Claude Code 知识——隧道探针
+  ``DEVICE_TUNNEL_PROBE``，和常驻执行机换版时要做的 ``resident_release``。「跑什么」
+  不在这张表里：那是 ``harness.launch`` 的 ``LaunchPlan``，通道只说「在哪」。
+- **平台侧（chat.py）：一行也没有。** 它只通过 ``AgentRuntime`` 的 ``backlog`` 拿到
+  已经拼好的 ``AgentEvent``，落库发帧是它的活，翻译不是。**这一行别再长回来。**
 - **装配**（``compute``）：``build_compute_pool`` 在这里把 runtime 和 channel 拼起来，
-  所以它认得两个类名。装配处见得到零件是应该的——但也只有这里见得到。
-- **边缘**（``routes/sandbox`` 收 hook、``workspace`` 回收工作区时通知、
-  ``machine/enrollment`` 检查版本）：这几条大概率会一直在。适配器有一条对外的边，
-  边总得有人站着；第二个 harness 自己带一条，而不是从这条挤进去。
+  所以它认得这几个名字。装配处见得到零件是应该的——但也只有这里见得到。
+- **边缘**（``session_work`` 装执行机、``private_chat`` 找私聊的执行目标、功能矩阵
+  取 ``declaration``、``machine/enrollment`` 检查版本）：适配器有对外的边，边总得有
+  人站着；第二个 harness 自己带一条，而不是从这条挤进去。
 """
 
 import ast
@@ -54,12 +42,10 @@ PKG = "app.domain.agent.harness.claude_code"
 
 # 模块 → 它从适配器拿走的名字（排序后的元组）。见上面「账本是棘轮」。
 _LEDGER: dict[str, tuple[str, ...]] = {
+    # --- 边缘：适配器对外的那条边 ---
     # Lazy acquisition installs the shared work executor, through its public door.
     "app.domain.machine.session_work": ("executor_launch",),
     "app.domain.agent.private_chat": ("private_execution_target",),
-    "app.api.routes.remote_control": ("REMOTE_CONTROLS",),
-    # --- 边缘：适配器对外的那条边 ---
-    "app.api.routes.sandbox": ("hook_router",),
     # 行为声明的汇总侧：三个骨架的门口各取一份 declaration()，拼成功能矩阵。
     # 它只拿这一个名字，而且拿的是「这个 harness 自己说自己是什么」——不是
     # 适配器的内部零件。
@@ -67,18 +53,13 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     # Enrollment places the pinned build and checks it against the floor.
     "app.domain.machine.enrollment": ("CLAUDE_MIN_VERSION", "CLAUDE_PINNED_VERSION"),
     # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
-    "app.domain.agent.compute": ("ClaudeCodeRuntime", "executor_launch"),
-    "app.domain.agent.device_hub": (
-        "drop_device_subscriptions",
-        "drop_screen_subscriptions",
+    "app.domain.agent.compute": (
+        "ClaudeCodeChannel",
+        "ClaudeCodeRuntime",
+        "executor_launch",
     ),
-    # --- channels：接缝本身，加上还没搬过缝的 Claude Code 知识 ---
-    "app.domain.agent.device_provider": (
-        "DEVICE_ALIVE_PROBE",
-        "DEVICE_TUNNEL_PROBE",
-        "SESSION_TOKEN_TTL_S",
-        "resident_release",
-    ),
+    # --- channels：还没搬过缝的 Claude Code 知识 ---
+    "app.domain.agent.device_provider": ("DEVICE_TUNNEL_PROBE", "resident_release"),
 }
 
 
@@ -145,13 +126,13 @@ def test_the_ledger_says_exactly_who_still_depends_on_this_harness():
 #
 # 为什么按字面量：一处字面量就是「跑的是哪个骨架」的第二个答法，而它永远不会跟着
 # 设置改。原样长在这儿的三处——``central_provider`` 的分岔、``agent_session`` 那
-# 一列的两个默认值、``hook_events`` 给事件盖的戳——每一处都让一套配成别的骨架的
+# 一列的两个默认值、事件翻译给事件盖的戳——每一处都让一套配成别的骨架的
 # 部署当场答错，而没有一条功能测试会因此变红。
 #
 # 名字只许出现在一个文件里：``harness/__init__.py``。那里是注册表，也是
 # ``deployment_harness()`` 在部署没配的时候取值的地方。适配器自己那个目录也不
-# 例外——``hooks_substrate`` 早就是 ``harness = CLAUDE_CODE``，import 得到的东西
-# 就不该再拼一遍。
+# 例外——``claude_code/runtime.py`` 是 ``harness = CLAUDE_CODE``，import 得到的
+# 东西就不该再拼一遍。
 #
 # 三个名字一起守。只守 claude-code 的那一版，是拿一条守着三分之一的守卫当验收：
 # 下一个人往领域层写 ``harness != "codex"``——和这次从 ``central_provider`` 删掉的

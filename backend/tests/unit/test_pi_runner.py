@@ -169,9 +169,10 @@ async def test_steering_is_not_a_second_turn_and_abort_stops_the_work(tmp_path):
 # --- the platform's tools, over the same socket ------------------------------
 #
 # pi has no MCP, so a room's platform tools reach it as extension tools whose
-# calls come back here. Both the catalog and the argv come from the CLI's own
-# argparse tree, which is the point: a tool exists exactly when the command
-# does, and takes exactly what the command takes.
+# calls come back here. The catalog is read off the platform file installed on
+# the machine: its tool table, which runs here against the backend, and its
+# argparse tree, whose commands run as the CLI — a command exists exactly when
+# the CLI has it, and takes exactly what the command takes.
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox/cheese"
 
@@ -187,16 +188,25 @@ ECHOING_CLI = '''#!/usr/bin/env python3
 import argparse, json, os, sys
 
 
+class _NoTools:
+    def schemas(self):
+        return []
+
+    def __contains__(self, name):
+        return False
+
+
+PLATFORM_TOOLS = _NoTools()
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="cheese")
     sub = p.add_subparsers(dest="cmd", required=True)
-    chat = sub.add_parser("chat").add_subparsers(dest="chatcmd", required=True)
-    send = chat.add_parser("send", description="发布消息")
-    send.add_argument("content", nargs="?")
-    send.add_argument("--reply-to")
-    doc = sub.add_parser("doc").add_subparsers(dest="doccmd", required=True)
-    read = doc.add_parser("get", description="读实况文档")
-    read.add_argument("section")
+    sync = sub.add_parser("sync", description="同步任务")
+    sync.add_argument("--task")
+    sync.add_argument("note", nargs="?")
+    work = sub.add_parser("worktree", description="准备目录")
+    work.add_argument("task_id")
     return p
 
 
@@ -249,11 +259,14 @@ async def test_the_room_is_given_the_tools_the_installed_cli_actually_has(
         assert not spec["unavailable"]
         assert spec["socket"] == socket_path(runner.state)
         published = {tool["name"] for tool in spec["tools"]}
-        assert {"cheese_chat_send", "cheese_doc_get", "cheese_recall"} <= published
-        send = next(t for t in spec["tools"] if t["name"] == "cheese_chat_send")
-        properties = send["inputSchema"]["properties"]
+        # The platform's table, under the names every harness uses, and the
+        # commands that have to run here as a process.
+        assert {"chat_send", "cheese_doc_get", "cheese_recall"} <= published
+        assert {"cheese_worktree", "cheese_sync"} <= published
+        assert "cheese_chat_send" not in published
+        worktree = next(t for t in spec["tools"] if t["name"] == "cheese_worktree")
         # The CLI's own help, so the description cannot drift from the command.
-        assert properties["reply_to"]["description"]
+        assert worktree["inputSchema"]["properties"]["task_id"]["description"]
     finally:
         await runner.close()
 
@@ -297,14 +310,14 @@ async def test_a_tool_call_runs_the_command_that_tool_names(tmp_path, monkeypatc
             runner.state,
             "cli",
             {
-                "tool": "cheese_chat_send",
-                "arguments": {"content": "第一版好了", "reply_to": "m-1"},
+                "tool": "cheese_sync",
+                "arguments": {"note": "第一版好了", "task": "t-1"},
                 "cwd": str(work),
             },
         )
         assert result["status"] == 0
         ran = json.loads(result["stdout"])
-        assert ran["argv"] == ["chat", "send", "--reply-to=m-1", "--", "第一版好了"]
+        assert ran["argv"] == ["sync", "--task=t-1", "--", "第一版好了"]
         # Where the agent is working, not where the runner happens to be: half
         # of what the CLI does is about this checkout.
         assert ran["cwd"] == str(work)
@@ -329,7 +342,62 @@ async def test_a_call_the_cli_would_refuse_is_refused_without_ending_the_session
         with pytest.raises(RuntimeError, match="Unknown Cheese tool"):
             await call(runner.state, "cli", {"tool": "cheese_nope", "arguments": {}})
         with pytest.raises(RuntimeError, match="required"):
-            await call(runner.state, "cli", {"tool": "cheese_doc_get", "arguments": {}})
+            await call(
+                runner.state, "cli", {"tool": "cheese_worktree", "arguments": {}}
+            )
         assert (await call(runner.state, "ping"))["alive"] is True
     finally:
         await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_platform_tool_runs_against_the_backend_not_the_cli(
+    tmp_path, monkeypatch
+):
+    """A tool from the table is not a command line: it goes to the backend with
+    the room's credentials, and its answer comes back as text."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    received = []
+
+    class API(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            received.append((self.path, self.headers["X-Cheese-Token"], body))
+            answer = json.dumps({"data": {"id": "m-9", "content": body["content"]}})
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(answer.encode())))
+            self.end_headers()
+            self.wfile.write(answer.encode())
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), API)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    monkeypatch.setenv("CHEESE_API", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setenv("CHEESE_TOKEN", "room-token")
+    monkeypatch.setenv("CHEESE_TOPIC", "room")
+    monkeypatch.setenv("NO_PROXY", "*")
+    runner = await with_tools(tmp_path, monkeypatch)
+    try:
+        result = await call(
+            runner.state,
+            "cli",
+            {"tool": "chat_send", "arguments": {"content": "第一版好了"}},
+        )
+        assert result["status"] == 0, result
+        assert json.loads(result["stdout"])["id"] == "m-9"
+        [(path, token, body)] = received
+        assert (path, token, body["content"]) == (
+            "/topics/room/messages",
+            "room-token",
+            "第一版好了",
+        )
+    finally:
+        await runner.close()
+        server.shutdown()
+        server.server_close()
+        thread.join()

@@ -50,7 +50,9 @@
       </v-col>
 
       <v-col cols="12" md="4" lg="3">
-        <v-btn block flat rounded="lg" :loading="isSubmitting" class="mb-4" @click="submit"> 发布问题 </v-btn>
+        <v-btn block flat rounded="lg" color="primary" :loading="isSubmitting" class="mb-4" @click="submit">
+          发布问题
+        </v-btn>
         <v-sheet rounded="lg" class="pa-4 mb-4">
           <div class="text-h5">提问的艺术</div>
           <p>

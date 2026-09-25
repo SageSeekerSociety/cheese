@@ -1,79 +1,57 @@
 import asyncio
 import uuid
+import weakref
 from types import SimpleNamespace
 
+from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
 from tests import conftest
 
 
-def test_wait_work_idle_waits_for_hook_writes_but_not_an_idle_lifecycle(monkeypatch):
-    """An active marker alone does not make teardown wait for the full timeout."""
+async def _session_that_said_something(channel: conftest.StubChannel):
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese", harness=CLAUDE_CODE)
+    handle = await channel.ensure(session, Opening(system_prompt=""))
+    await channel.runtime._attach(handle)
+    channel.starts(session.topic_id)
+    return session.topic_id
+
+
+async def test_pending_records_are_the_ones_the_room_has_not_landed(monkeypatch):
+    monkeypatch.setattr(conftest, "_CHANNELS", weakref.WeakSet())
+    channel = conftest.StubChannel()
+    quiet = conftest.StubChannel()
+    topic = await _session_that_said_something(channel)
+    idle = await _session_that_said_something(quiet)
+    await quiet.runtime.subscriptions[idle].drain()
+    try:
+        assert conftest._topics_with_pending_records() == {str(topic)}
+
+        await channel.runtime.subscriptions[topic].drain()
+        assert conftest._topics_with_pending_records() == set()
+    finally:
+        await channel.runtime._detach(topic)
+        await quiet.runtime._detach(idle)
+
+
+def test_wait_work_idle_waits_for_records_but_not_an_idle_lifecycle(monkeypatch):
+    """A lifecycle the broker still marks active is not work teardown can drain:
+    once what the session said has landed, teardown returns at once."""
+    monkeypatch.setattr(conftest, "_CHANNELS", weakref.WeakSet())
+    channel = conftest.StubChannel()
+    topic = asyncio.run(_session_that_said_something(channel))
     runner = SimpleNamespace(
         _tasks=set(),
-        _broker=SimpleNamespace(
-            _active={"room": {"turn"}},
-        ),
+        _broker=SimpleNamespace(_active={str(topic): {"turn"}}),
+        active_work_count=lambda: 1,
     )
-    pending = [{"room"}, set()]
+    monkeypatch.setattr(conftest, "get_work_runner", lambda: runner)
     sleeps = []
 
-    monkeypatch.setattr(conftest, "get_work_runner", lambda: runner)
-    monkeypatch.setattr(
-        conftest,
-        "_topics_with_pending_hooks",
-        lambda: pending[0],
-    )
-
-    def finish_hook_write(seconds):
+    def the_reader_lands_it(seconds):
         sleeps.append(seconds)
-        pending.pop(0)
+        asyncio.run(channel.runtime.subscriptions[topic].drain())
 
-    monkeypatch.setattr(conftest.time, "sleep", finish_hook_write)
+    monkeypatch.setattr(conftest.time, "sleep", the_reader_lands_it)
 
     conftest.wait_work_idle()
 
     assert sleeps == [0.01]
-
-
-def test_pending_hook_topics_include_live_writes_and_exclude_dead_consumers(
-    monkeypatch,
-):
-    from app.domain.agent.harness.claude_code import hooks_substrate
-
-    topic_id = uuid.uuid4()
-    queue = asyncio.Queue()
-    queue.put_nowait({"hook_event_name": "Stop"})
-    consuming = asyncio.Lock()
-    live_loop = asyncio.new_event_loop()
-    closed_loop = asyncio.new_event_loop()
-    closed_loop.close()
-    subscription = SimpleNamespace(
-        sink=SimpleNamespace(queue=queue),
-        consuming=consuming,
-        consumer_task=SimpleNamespace(
-            done=lambda: False,
-            get_loop=lambda: live_loop,
-        ),
-    )
-    runtime = object.__new__(hooks_substrate.ClaudeCodeRuntime)
-    runtime._subscriptions = {topic_id: subscription}
-    monkeypatch.setattr(hooks_substrate, "_RUNTIMES", [runtime])
-
-    try:
-        assert conftest._topics_with_pending_hooks() == {str(topic_id)}
-
-        queue.get_nowait()
-        queue.task_done()
-        assert conftest._topics_with_pending_hooks() == set()
-
-        live_loop.run_until_complete(consuming.acquire())
-        assert conftest._topics_with_pending_hooks() == {str(topic_id)}
-        consuming.release()
-
-        subscription.consumer_task = SimpleNamespace(
-            done=lambda: False,
-            get_loop=lambda: closed_loop,
-        )
-        queue.put_nowait({"hook_event_name": "Stop"})
-        assert conftest._topics_with_pending_hooks() == set()
-    finally:
-        live_loop.close()

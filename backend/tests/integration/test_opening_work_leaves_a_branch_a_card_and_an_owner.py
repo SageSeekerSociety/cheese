@@ -1,6 +1,6 @@
 """开一条活留下的是一个分支、一张卡和一个负责人 —— 别的什么都不多（结论 31）。
 
-`cheese split` 从前还留下两样：这条活自己的那条会话，和它自己那份地点租约。做这
+`cheese_task` 从前还留下两样：这条活自己的那条会话，和它自己那份地点租约。做这
 条活的是房间会话里的一个原生子 agent，用的是父进程那双手（结论 43），所以那两样
 是多出来的 —— 多一条会话就是多一段要恢复、要回收、要算钱的对话，多一份租约就是
 多一台没人记得还的机器。
@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 
 from app.domain.agent.harness import deployment_harness
 from app.domain.agent_session.models import AgentSession
+from tests.integration.conftest import post_project
 
 _LEASE = {
     "kind": "device",
@@ -31,7 +32,7 @@ def _room_with_a_session_on_a_machine(client) -> tuple[str, str]:
     先让它有一条，后面「不多行、不多份」才说得出话 —— 从零行开始的话，写侧坏成
     什么样这条测试都是绿的。
     """
-    project = client.post("/projects", json={"name": "P", "owner_handle": "alice"})
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"})
     project_id = project.json()["data"]["id"]
     room_id = client.post(
         "/topics",

@@ -1,7 +1,7 @@
 """一台机器只有一种启动环境，所以代理要自己把 Claude Code 扶起来（结论 46）。
 
-A machine is launched with no base URL, this proxy on `HTTPS_PROXY` and a fake
-ticket — one shape, whether or not the deployment owns an Anthropic
+A session is launched with no base URL, this proxy on `HTTPS_PROXY` and its
+host's own Claude login — one shape, whether or not the deployment owns an Anthropic
 subscription at all. Claude Code asks for four things on its way up that have
 nothing to do with inference (identity, settings, policy, telemetry) plus its
 feature flags, and every one of them has to be answered here or the process
@@ -35,8 +35,8 @@ PROJECT = "11111111-1111-1111-1111-111111111111"
 TOPIC = "22222222-2222-2222-2222-222222222222"
 
 
-def _answer(path: str, host: str = "api.anthropic.com", rc: bool = True):
-    return core.control_answer(host, path, PROJECT, TOPIC, rc=rc)
+def _answer(path: str, host: str = "api.anthropic.com"):
+    return core.control_answer(host, path, PROJECT, TOPIC)
 
 
 # —— 应答表：每条路径一条断言（状态码 + 必需字段）————————————————————
@@ -70,41 +70,29 @@ def test_settings_are_answered_empty_rather_than_fetched():
     assert answer.body == b""
 
 
-def test_policy_allows_the_remote_control_the_platform_drives_every_turn_through():
+def test_policy_limits_are_answered_with_no_restriction():
     answer = _answer("/api/claude_code/policy_limits")
     assert answer.status == 200
-    body = json.loads(answer.body)
-    assert body["restrictions"]["allow_remote_control"]["allowed"] is True
+    assert json.loads(answer.body) == {"restrictions": {}}
 
 
-def test_feature_evaluation_turns_on_the_bridge_cheese_needs():
+def test_feature_evaluation_is_answered_here_and_turns_nothing_on():
+    """Cheese supplies no feature flags of its own; the evaluation is answered
+    so that it never reaches Anthropic on the platform's credential."""
     answer = _answer("/api/eval/anything?client=cli")
-    assert answer.status == 200
-    features = json.loads(answer.body)["features"]
-    assert features["tengu_ccr_bridge"]["defaultValue"] is True
-    assert features["tengu_ccr_v2_bridge_create_cli"]["defaultValue"] is True
-    assert features["tengu_ccr_v2_session_crud_cli"]["defaultValue"] is True
-
-
-def test_a_session_without_rc_is_still_answered_here_but_told_nothing_is_on():
-    """Answered either way — the table is what boots the process, and nothing
-    on it may reach Anthropic. What differs is the content: the bridge flags
-    are what make Claude Code open `/v1/code/…`, and a session whose token
-    carries no rc claim has no Cheese route for those to take."""
-    answer = _answer("/api/eval/anything?client=cli", rc=False)
     assert answer.status == 200
     assert json.loads(answer.body)["features"] == {}
 
 
 def test_telemetry_is_consumed_here_whichever_host_it_was_sent_to():
-    """RC payloads carry control-session identifiers; forwarding them would take
-    both the payload and an upstream credential past this boundary."""
+    """Forwarding telemetry would take both the payload and an upstream
+    credential past this boundary."""
     for host, path in (
         ("api.anthropic.com", "/api/event_logging/v2/batch"),
         ("api.statsig.com", "/v1/rgstr"),
         ("statsig.anthropic.com", "/v1/initialize"),
     ):
-        answer = core.control_answer(host, path, PROJECT, TOPIC, rc=True)
+        answer = core.control_answer(host, path, PROJECT, TOPIC)
         assert answer is not None, (host, path)
         assert answer.status == 200
         assert json.loads(answer.body) == {}
@@ -137,9 +125,9 @@ def test_the_login_hosts_are_not_answered_from_the_boot_table(host):
     /login` or `claude setup-token` — and those ask for the very same paths
     against a REAL Anthropic account. Answered from this table they would get
     Cheese's synthesised account back (uuid = a topic, email @cheese.local),
-    and the setup-token that login produces is the credential this proxy
-    injects on every subscription turn. So the boot rows answer one host, and
-    every other request on these two goes upstream untouched."""
+    and the login that produces is the credential sessions on that host carry
+    on every subscription turn. So the boot rows answer one host, and every
+    other request on these two goes upstream untouched."""
     for path in (
         "/api/oauth/profile",
         "/api/claude_code/settings",
@@ -147,7 +135,7 @@ def test_the_login_hosts_are_not_answered_from_the_boot_table(host):
         "/api/eval/anything",
         "/api/event_logging/v2/batch",
     ):
-        assert core.control_answer(host, path, PROJECT, TOPIC, rc=True) is None, path
+        assert core.control_answer(host, path, PROJECT, TOPIC) is None, path
 
 
 def test_a_row_that_names_no_host_answers_the_boot_host_only():
@@ -238,6 +226,29 @@ def test_a_body_with_no_model_member_is_refused_rather_than_run_as_it_came():
     assert rewrite.feed(body) == b""
     assert rewrite.feed(b"") == b""
     assert rewrite.missed is True
+
+
+def test_the_rewrite_keeps_what_it_replaced():
+    """分身继承识别靠它:改写发生时被替换掉的原始 model 值要留下来。
+
+    device 启动环境不钉模型,CC 给分身回显的是它自己的内建默认 —— 代理只有
+    在主对话改写现场才能观察到这个名字。haiku 放行不算替换:留下的值是
+    haiku,不是父会话的工作模型。"""
+    rewrite = core.ModelRewrite("kimi-k3")
+    rewrite.feed(b'{"model":"claude-sonnet-5","messages":[]}')
+    assert rewrite.original == "claude-sonnet-5"
+    assert rewrite.replaced is True
+
+    haiku = core.ModelRewrite("kimi-k3", keep_haiku=True)
+    haiku.feed(b'{"model":"claude-haiku-4-5","messages":[]}')
+    assert haiku.original == "claude-haiku-4-5"
+    assert haiku.replaced is False
+
+    missed = core.ModelRewrite("kimi-k3")
+    missed.feed(b'{"messages":[]}')
+    missed.feed(b"")
+    assert missed.original is None
+    assert missed.replaced is False
 
 
 def test_nothing_of_a_refused_body_goes_upstream_afterwards():

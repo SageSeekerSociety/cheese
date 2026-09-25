@@ -5,6 +5,7 @@ from datetime import date, datetime
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.email import is_placeholder_email
 from app.core.errors import UnprocessableEntityError
 from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile
@@ -14,7 +15,6 @@ from app.domain.user.passwords import (
     password_too_long,
 )
 from app.domain.user.repositories import (
-    UserFollowingRepository,
     UserProfileRepository,
     UserRepository,
     UserStatisticsRepository,
@@ -90,6 +90,15 @@ async def usernames_by_ids(
     """用户 id -> handle, keyed, for callers that need to look each one up."""
     users = await UserRepository(session).get_by_ids(list(set(user_ids)))
     return {uid: user.username for uid, user in users.items()}
+
+
+async def lookup_account(session: AsyncSession, q: str) -> dict | None:
+    """``{handle, name, avatar_id}`` for an exact username or email, or None."""
+    found = await UserRepository(session).lookup_account(q)
+    if found is None:
+        return None
+    handle, name, avatar_id = found
+    return {"handle": handle, "name": name, "avatar_id": avatar_id}
 
 
 async def search_accounts(
@@ -277,12 +286,10 @@ class UserAuthService:
         self,
         user_repo: UserRepository,
         profile_repo: UserProfileRepository,
-        follow_repo: UserFollowingRepository,
         stats_repo: UserStatisticsRepository,
     ) -> None:
         self._user_repo = user_repo
         self._profile_repo = profile_repo
-        self._follow_repo = follow_repo
         self._stats_repo = stats_repo
 
     async def authenticate(
@@ -462,29 +469,22 @@ class UserAuthService:
         profile: UserProfile,
         viewer_id: int | None = None,
     ) -> dict:
-        """Map User + UserProfile into a UserDto-compatible dict with counts & follow flag."""  # noqa: E501
+        """Map User + UserProfile into a UserDto-compatible dict with counts."""
         base = self._base_user_dto(user, profile)
-        followers = await self._follow_repo.count_followers(user.id)
-        following = await self._follow_repo.count_following(user.id)
-        is_follow = False
-        if viewer_id is not None and viewer_id != user.id:
-            is_follow = await self._follow_repo.is_following(
-                follower_id=viewer_id,
-                followee_id=user.id,
-            )
         stats = await self._stats_repo.aggregate(user.id)
+        if viewer_id == user.id:
+            # Only the owner is told: an account without an address of its own
+            # must add one before it can be recovered.
+            base["emailMissing"] = is_placeholder_email(user.email)
 
         base.update(
             {
-                "follow_count": following,
-                "fans_count": followers,
                 "question_count": stats["questionCount"],
                 "answer_count": stats["answerCount"],
                 "team_count": stats["teamCount"],
                 "task_participation_count": stats["taskParticipationCount"],
                 "knowledge_count": stats["knowledgeCount"],
                 "submission_count": stats["submissionCount"],
-                "is_follow": is_follow,
             }
         )
         return base

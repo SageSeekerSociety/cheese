@@ -69,13 +69,13 @@ async function approve() {
       </div>
 
       <v-alert v-if="!code" type="warning" density="comfortable" class="mb-4">
-        链接里没有设备码，请从 <code>cheese link</code> 打开的地址进入
+        链接里没有设备码，请从 <code>cheesehost link connect</code> 打开的地址进入
       </v-alert>
 
       <v-alert v-else-if="!loggedIn" type="info" density="comfortable" class="mb-4">
         请先登录，再批准这台设备归你所有
         <template #append>
-          <v-btn size="small" variant="tonal" :to="loginLink">去登录</v-btn>
+          <v-btn size="small" color="primary" variant="tonal" :to="loginLink">去登录</v-btn>
         </template>
       </v-alert>
 
@@ -111,7 +111,7 @@ async function approve() {
           >」已绑定到你
         </div>
         <div class="t-caption c-muted mb-4">
-          在命令行运行 <code>cheese link connect</code>，设备就会保持在线并接受任务
+          命令行里的 <code>cheesehost link connect</code> 会接着完成接入，设备随即保持在线、接受任务
         </div>
         <v-btn variant="tonal" :to="{ name: 'my-devices' }"> 去「我的设备」 </v-btn>
       </v-card>

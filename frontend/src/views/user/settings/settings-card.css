@@ -1,0 +1,121 @@
+/* The settings pages' shared frame: a page title with its lede, then cards of
+   rows, each row a label, what is there now, and the action on it. */
+
+.settings-page {
+  display: grid;
+  gap: 20px;
+  max-width: var(--page-w, 920px);
+  padding: 24px 32px 48px;
+}
+
+.settings-page__lede {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
+}
+
+.settings-card {
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.settings-card__head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-right: 16px;
+}
+
+/* Centred on the title's line, not on the head as a whole. */
+.settings-card__head > .v-btn {
+  flex-shrink: 0;
+  margin-top: 16px;
+}
+
+.settings-card__title {
+  padding: 20px 24px 8px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  color: var(--ink);
+}
+
+.settings-card__desc {
+  padding: 0 24px 12px;
+  margin-top: -4px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.srow {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  min-height: 56px;
+  padding: 10px 24px;
+  border-top: 1px solid var(--line);
+}
+
+/* A card without a title starts with its first row. */
+.srow:first-child {
+  border-top: 0;
+}
+
+.srow__k {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: var(--lh-14);
+  color: var(--ink);
+}
+
+.srow__k .v-icon {
+  color: var(--muted);
+}
+
+.srow__v {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.srow__strong {
+  color: var(--text);
+}
+
+@media (max-width: 599.98px) {
+  .settings-page {
+    padding: 16px 16px 32px;
+  }
+
+  .srow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 16px;
+    padding: 12px 16px;
+  }
+
+  .srow__v {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+
+  .settings-card__title {
+    padding: 16px 16px 8px;
+  }
+
+  .settings-card__desc {
+    padding: 0 16px 12px;
+  }
+}

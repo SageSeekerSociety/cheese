@@ -2,7 +2,7 @@
   <!-- 广告词只给第一次来的人看，而底栏点进来的是每天回来的人：手机上它连
          内边距要吃掉 128px，一屏去掉一大半，下面才是你来这儿要用的东西。 -->
   <div v-if="mdAndUp" class="header-corner-glow-flow">
-    <PageHeader icon="mdi-view-dashboard" title="题目板"></PageHeader>
+    <PageHeader icon="mdi-view-dashboard" title="空间"></PageHeader>
     <div class="w-100 pa-8 py-16">
       <div class="text-h4 text-high-emphasis">在知是，灵感启航。</div>
       <div class="text-subtitle-1 text-medium-emphasis mt-1">让你的学术好奇心，在此与一个好课题相遇。</div>
@@ -33,10 +33,10 @@
         }}</v-btn>
       </div>
       <div v-if="applicationOffset || applications.length === 50" class="d-flex justify-end">
-        <v-btn :disabled="!applicationOffset" @click="changeApplicationsPage(-50)">{{
+        <v-btn variant="text" :disabled="!applicationOffset" @click="changeApplicationsPage(-50)">{{
           t('spaces.review.previous')
         }}</v-btn>
-        <v-btn :disabled="applications.length < 50" @click="changeApplicationsPage(50)">{{
+        <v-btn variant="text" :disabled="applications.length < 50" @click="changeApplicationsPage(50)">{{
           t('spaces.review.next')
         }}</v-btn>
       </div>
@@ -50,14 +50,14 @@
         建一个项目，进去就能和芝士开工：说清楚你想做什么，它帮你查资料、写文档、拆任务。
       </p>
       <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="startProject">新建项目</v-btn>
-      <p class="text-caption text-medium-emphasis mt-3 mb-0">或者先逛逛下面的题目板，看看别人在做什么。</p>
+      <p class="text-caption text-medium-emphasis mt-3 mb-0">或者浏览下面的空间，看看别人在做什么</p>
     </v-sheet>
     <v-row no-gutters>
       <v-col cols="12">
         <v-card class="search-card elevation-0">
           <v-card-title class="d-flex align-center justify-space-between pb-0 pt-4 px-4">
             <div class="d-flex align-center">
-              <span class="text-h6">探索题目板</span>
+              <span class="text-h6">探索空间</span>
             </div>
             <v-btn
               v-if="AccountService.loggedIn"
@@ -93,7 +93,7 @@
             >
               <template #empty>
                 <div class="empty-state-container py-6">
-                  <v-empty-state title="暂无题目板" icon="mdi-google-maps" class="custom-empty-state" />
+                  <v-empty-state title="暂无空间" icon="mdi-google-maps" class="custom-empty-state" />
                 </div>
               </template>
               <v-row>
@@ -176,7 +176,9 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn :disabled="creating" @click="createDialog = false">{{ t('spaces.create.cancel') }}</v-btn>
+          <v-btn variant="text" :disabled="creating" @click="createDialog = false">{{
+            t('spaces.create.cancel')
+          }}</v-btn>
           <v-btn
             type="submit"
             color="primary"

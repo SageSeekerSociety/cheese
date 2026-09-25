@@ -1,659 +1,631 @@
 <template>
-  <!-- 图标是可点的（切换明文/脱敏），不是 PageHeader 的 icon 那种装饰图标，
-       所以走默认插槽自己排版；组件会在插槽后面补上 v-spacer。 -->
-  <PageHeader show-on-mobile>
-    <v-icon
-      v-if="!loadingPrecise"
-      :icon="showingPrecise ? 'mdi-eye-outline' : 'mdi-eye-off-outline'"
-      size="small"
-      style="cursor: pointer"
-      @click="fetchPreciseInfo"
-    ></v-icon>
-    <span class="text-subtitle-1">实名信息</span>
-  </PageHeader>
-  <v-container fluid>
-    <!-- 简洁隐私提示横条 -->
-    <v-card
-      class="mb-6 privacy-banner"
-      variant="flat"
-      rounded="lg"
-      color="surface-light"
-      elevation="0"
-      @click="showPrivacyDialog = true"
-    >
-      <v-card-text class="py-3">
-        <div class="d-flex align-center">
-          <v-icon icon="mdi-shield-lock-outline" color="primary" size="20" class="me-2"></v-icon>
-          <span class="text-body-2"
-            >某些题目需要实名信息用于验证身份，您的信息将<strong>安全加密</strong>，平台活动<strong
-              >完全匿名</strong
-            ></span
+  <div class="settings-page realname">
+    <header>
+      <h1 class="t-page-title">{{ t('account.realName.title') }}</h1>
+      <p class="settings-page__lede">{{ t('account.realName.lede') }}</p>
+    </header>
+
+    <!-- Held at the card's height until the record arrives, so the page does
+         not jump when it does. -->
+    <section v-if="!loaded" class="settings-card realname__pending" :aria-busy="!loadFailed">
+      <p v-if="loadFailed" class="realname__pending-note">{{ t('account.realName.loadFailed') }}</p>
+    </section>
+
+    <!-- Editing, or filling in for the first time. Save is the one main action
+         while the form is open, so it is the only amber (design-system §1.6). -->
+    <form v-else-if="editing" class="settings-card" novalidate @submit.prevent="save">
+      <h2 class="settings-card__title">
+        {{ record ? t('account.realName.editTitle') : t('account.realName.fillTitle') }}
+      </h2>
+      <div v-for="field in FIELDS" :key="field.key" class="srow srow--pair srow--field">
+        <label class="srow__k" :for="`realname-${field.key}`">
+          {{ t(field.label) }}
+          <span v-if="field.optional" class="realname__optional">{{ t('account.realName.optional') }}</span>
+        </label>
+        <v-text-field
+          :id="`realname-${field.key}`"
+          v-model="form[field.key]"
+          :autocomplete="field.key === 'realName' ? 'name' : 'off'"
+          variant="outlined"
+          density="compact"
+          :error-messages="errors[field.key]"
+          hide-details="auto"
+        />
+      </div>
+      <div class="realname__foot realname__foot--form">
+        <v-btn variant="text" color="on-surface" :disabled="saving" @click="cancel">
+          {{ t('account.realName.cancel') }}
+        </v-btn>
+        <v-btn type="submit" color="primary" variant="flat" :loading="saving">
+          {{ t('account.realName.save') }}
+        </v-btn>
+      </div>
+    </form>
+
+    <section v-else-if="record" class="settings-card">
+      <div class="settings-card__head">
+        <h2 class="settings-card__title">{{ t('account.realName.yours') }}</h2>
+        <div class="realname__actions">
+          <v-btn
+            variant="text"
+            color="on-surface"
+            :prepend-icon="full ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+            :loading="revealing"
+            @click="toggleFull"
           >
-          <v-spacer></v-spacer>
-          <span class="flex-shrink-0 ps-4 text-caption text-primary d-flex align-center">
-            查看隐私说明
-            <v-icon icon="mdi-chevron-right" size="small" class="ms-1"></v-icon>
+            {{ full ? t('account.realName.hideFull') : t('account.realName.showFull') }}
+          </v-btn>
+          <v-btn variant="outlined" color="on-surface" :loading="opening" @click="startEditing">
+            {{ t('account.realName.edit') }}
+          </v-btn>
+        </div>
+      </div>
+      <div v-for="field in FIELDS" :key="field.key" class="srow srow--pair">
+        <span class="srow__k">{{ t(field.label) }}</span>
+        <span
+          v-if="shown[field.key]"
+          class="realname__value"
+          :class="{ 'realname__value--mono': field.key === 'studentId' }"
+          >{{ shown[field.key] }}</span
+        >
+        <span v-else class="realname__value realname__value--none">{{ t('account.realName.notGiven') }}</span>
+      </div>
+      <div class="realname__foot">
+        <v-btn variant="text" class="realname__delete" :loading="deleting" @click="remove">
+          {{ t('account.realName.delete') }}
+        </v-btn>
+        <span class="realname__foot-note">{{ t('account.realName.deleteNote') }}</span>
+      </div>
+    </section>
+
+    <section v-else class="settings-card realname__empty">
+      <h2 class="t-title">{{ t('account.realName.emptyTitle') }}</h2>
+      <p class="realname__empty-body">{{ t('account.realName.emptyBody') }}</p>
+      <v-btn color="primary" variant="flat" @click="startEditing">{{ t('account.realName.fill') }}</v-btn>
+    </section>
+
+    <!-- Kept after a record is deleted: it says what already happened. -->
+    <section
+      v-if="loaded && (record || logTotal > 0)"
+      class="realname__log"
+      :aria-label="t('account.realName.log.title')"
+    >
+      <div class="realname__log-head">
+        <h2 class="t-title">{{ t('account.realName.log.title') }}</h2>
+        <span v-if="logTotal > 0" class="t-meta-read t-num">{{ logTotal }}</span>
+      </div>
+      <div class="settings-card">
+        <p v-if="!logs.length" class="realname__log-empty">
+          {{ logsFailed ? t('account.realName.log.loadFailed') : t('account.realName.log.empty') }}
+        </p>
+        <div
+          v-for="(entry, index) in logs"
+          :key="`${entry.accessTime}-${index}`"
+          class="log-row"
+          :class="{ 'log-row--own': isOwnView(entry) }"
+        >
+          <span v-if="isOwnView(entry)" class="log-row__mark" aria-hidden="true">
+            <v-icon icon="mdi-eye-outline" size="16" />
           </span>
+          <UserAvatar v-else :avatar="avatarOf(entry)" :name="nameOf(entry)" size="28" class="log-row__avatar" />
+          <span class="log-row__body">
+            <span class="log-row__what">{{ describe(entry) }}</span>
+            <span v-if="entry.accessEntityName" class="log-row__where">
+              {{
+                t('account.realName.log.where', {
+                  name: entry.accessEntityName,
+                  kind: entry.accessEntityIsCourse ? t('account.realName.log.course') : t('account.realName.log.space'),
+                })
+              }}
+            </span>
+          </span>
+          <time class="t-meta" :datetime="new Date(entry.accessTime).toISOString()">{{
+            formatTime(entry.accessTime)
+          }}</time>
         </div>
-      </v-card-text>
-    </v-card>
-
-    <v-form @submit.prevent="onSubmit">
-      <!-- 基本信息部分 -->
-      <div class="form-section">
-        <div class="d-flex align-center mb-2">
-          <v-icon icon="mdi-account-details-outline" color="primary" class="me-2"></v-icon>
-          <h3 class="text-subtitle-1 font-weight-medium mb-0">基本信息</h3>
-        </div>
-
-        <v-row>
-          <v-col cols="12" md="6">
-            <v-text-field
-              id="field-selectedRealName"
-              v-model="selectedRealName"
-              autocomplete="name"
-              name="selectedRealName"
-              label="真实姓名"
-              placeholder="请输入您的真实姓名"
-              v-bind="realNameProps"
-              variant="outlined"
-              hide-details
-              prepend-inner-icon="mdi-account"
-              class="fuzzy-field"
-              @click="onFieldFocus('realName')"
-              @blur="onFieldBlur('realName')"
-            >
-              <template v-if="isRealNameEdited" #append-inner>
-                <v-icon
-                  color="primary"
-                  icon="mdi-refresh"
-                  size="small"
-                  title="恢复原值"
-                  class="reset-icon"
-                  @click.stop="resetField('realName')"
-                ></v-icon>
-              </template>
-            </v-text-field>
-            <div v-if="hasRealNameInfo" class="text-caption mt-1 ms-2">
-              <span v-if="!isRealNameEdited && !showingPrecise" class="text-medium-emphasis">点击输入框编辑信息</span>
-              <span v-else-if="showingPrecise" class="text-primary">已显示完整信息</span>
-              <span v-else class="text-primary">已编辑，可点击恢复按钮还原</span>
-            </div>
-          </v-col>
-          <v-col cols="12" md="6">
-            <v-text-field
-              v-model="selectedStudentId"
-              autocomplete="off"
-              label="学号"
-              placeholder="请输入您的学号"
-              v-bind="studentIdProps"
-              variant="outlined"
-              hide-details
-              prepend-inner-icon="mdi-card-account-details-outline"
-              class="fuzzy-field"
-              @click="onFieldFocus('studentId')"
-              @blur="onFieldBlur('studentId')"
-            >
-              <template v-if="isStudentIdEdited" #append-inner>
-                <v-icon
-                  color="primary"
-                  icon="mdi-refresh"
-                  size="small"
-                  title="恢复原值"
-                  class="reset-icon"
-                  @click.stop="resetField('studentId')"
-                ></v-icon>
-              </template>
-            </v-text-field>
-            <div v-if="hasRealNameInfo" class="text-caption mt-1 ms-2">
-              <span v-if="!isStudentIdEdited && !showingPrecise" class="text-medium-emphasis">点击输入框编辑信息</span>
-              <span v-else-if="showingPrecise" class="text-primary">已显示完整信息</span>
-              <span v-else class="text-primary">已编辑，可点击恢复按钮还原</span>
-            </div>
-          </v-col>
-        </v-row>
-      </div>
-
-      <!-- 学业信息部分 -->
-      <div class="form-section mt-4">
-        <div class="d-flex align-center mb-2">
-          <v-icon icon="mdi-school-outline" color="primary" class="me-2"></v-icon>
-          <h3 class="text-subtitle-1 font-weight-medium mb-0">学业信息</h3>
-        </div>
-
-        <v-row>
-          <v-col cols="12" md="4">
-            <v-text-field
-              v-model="selectedGrade"
-              autocomplete="off"
-              label="年级"
-              placeholder="例如：2023级"
-              v-bind="gradeProps"
-              variant="outlined"
-              prepend-inner-icon="mdi-school"
-              hint="填写您的入学年份，如2023级"
-              persistent-hint
-            ></v-text-field>
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-text-field
-              v-model="selectedMajor"
-              autocomplete="off"
-              label="专业"
-              placeholder="请输入您的专业"
-              v-bind="majorProps"
-              variant="outlined"
-              prepend-inner-icon="mdi-book-education"
-              hint="填写您的专业名称"
-              persistent-hint
-            ></v-text-field>
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-text-field
-              v-model="selectedClassName"
-              autocomplete="off"
-              label="班级"
-              placeholder="请输入您的班级"
-              v-bind="classNameProps"
-              variant="outlined"
-              prepend-inner-icon="mdi-account-group"
-              hint="填写您所在的班级"
-              persistent-hint
-            ></v-text-field>
-          </v-col>
-        </v-row>
-      </div>
-
-      <div class="usage-note mt-6 mb-4">
-        <div class="usage-note-content">
-          <div class="d-flex align-center mb-2">
-            <v-icon icon="mdi-information-outline" color="primary" size="20" class="me-2"></v-icon>
-            <h3 class="text-subtitle-2 font-weight-medium mb-0">实名信息的使用场景</h3>
-          </div>
-          <p class="text-body-2 mb-0">您的实名信息仅用于：</p>
-          <div class="d-flex flex-wrap mt-1 usage-tags">
-            <span class="usage-tag">身份验证</span>
-            <span class="usage-tag">参与资格筛选</span>
-            <span class="usage-tag">项目结题认证</span>
-            <span class="usage-tag">评奖评优</span>
-            <span class="usage-tag">学分认定</span>
-          </div>
+        <div v-if="logsHaveMore" class="realname__log-more">
+          <v-btn variant="text" color="on-surface" size="small" :loading="loadingLogs" @click="loadLogs(false)">
+            {{ t('account.realName.log.more') }}
+          </v-btn>
         </div>
       </div>
+    </section>
 
-      <v-row>
-        <v-col class="d-flex justify-end gap-4">
-          <v-btn variant="outlined" @click="handleReset">重置</v-btn>
-          <v-btn color="primary" type="submit" :loading="submitting">保存信息</v-btn>
-        </v-col>
-      </v-row>
-    </v-form>
-  </v-container>
-
-  <!-- 隐私保护详情对话框 -->
-  <v-dialog v-model="showPrivacyDialog" max-width="600">
-    <v-card class="privacy-dialog" rounded="lg">
-      <v-card-text class="pt-6">
-        <div class="d-flex align-start mb-5">
-          <v-icon icon="mdi-shield-lock-outline" color="primary" size="28" class="me-3 mt-1"></v-icon>
-          <div>
-            <h3 class="text-h5 font-weight-medium mb-1">实名信息保护说明</h3>
-            <p class="text-body-2 text-medium-emphasis">我们如何保护您的信息安全并确保平台体验的匿名性</p>
-          </div>
-          <v-spacer></v-spacer>
-          <v-btn icon="mdi-close" variant="text" density="compact" @click="showPrivacyDialog = false"></v-btn>
-        </div>
-
-        <v-container class="px-0">
-          <!-- 为什么需要实名信息 -->
-          <div class="mb-4">
-            <h3 class="text-subtitle-1 font-weight-medium mb-2">为什么需要填写实名信息？</h3>
-            <p class="text-body-2">
-              某些题目需要收集实名信息用于身份验证、评审和颁奖等环节。我们仅收集必要的学校相关信息，并确保您在平台上的活动保持匿名性。
-            </p>
-          </div>
-
-          <v-row>
-            <v-col cols="12" sm="6">
-              <div class="privacy-feature-card">
-                <v-icon icon="mdi-incognito" color="primary" size="24" class="mb-2"></v-icon>
-                <h3 class="text-subtitle-1 font-weight-medium mb-1">匿名参与</h3>
-                <p class="text-body-2">平台上的日常活动保持匿名，其他用户无法看到您的真实身份信息</p>
-              </div>
-            </v-col>
-
-            <v-col cols="12" sm="6">
-              <div class="privacy-feature-card">
-                <v-icon icon="mdi-key-variant" color="primary" size="24" class="mb-2"></v-icon>
-                <h3 class="text-subtitle-1 font-weight-medium mb-1">加密存储</h3>
-                <p class="text-body-2">使用行业标准的加密技术保护您的个人资料，防止未授权访问</p>
-              </div>
-            </v-col>
-
-            <v-col cols="12" sm="6">
-              <div class="privacy-feature-card">
-                <v-icon icon="mdi-file-document-outline" color="primary" size="24" class="mb-2"></v-icon>
-                <h3 class="text-subtitle-1 font-weight-medium mb-1">用途限制</h3>
-                <p class="text-body-2">您的实名信息仅在必要的题目报名环节使用，不用于其他目的</p>
-              </div>
-            </v-col>
-
-            <v-col cols="12" sm="6">
-              <div class="privacy-feature-card">
-                <v-icon icon="mdi-eye-off-outline" color="primary" size="24" class="mb-2"></v-icon>
-                <h3 class="text-subtitle-1 font-weight-medium mb-1">身份隔离</h3>
-                <p class="text-body-2">严格隔离您的实名信息与平台账号，确保两者无法被关联</p>
-              </div>
-            </v-col>
-          </v-row>
-
-          <v-divider class="my-4"></v-divider>
-
-          <div class="d-flex align-start">
-            <v-icon icon="mdi-information-outline" color="primary" size="20" class="me-2 mt-1"></v-icon>
-            <p class="text-body-2">
-              我们的系统采用多层保护机制，在满足少数题目对实名信息的需求的同时，确保您在平台上的隐私安全。
-              所有对您信息的访问都会被记录，您可以随时查看这些记录。
-            </p>
-          </div>
-        </v-container>
-      </v-card-text>
-
-      <v-card-actions class="pb-5 px-6">
-        <v-spacer></v-spacer>
-        <v-btn color="primary" variant="tonal" @click="showPrivacyDialog = false"> 明白了 </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <router-link class="realname__policy" :to="{ name: 'LegalPrivacy' }" target="_blank" rel="noopener">
+      {{ t('account.realName.privacyPolicy') }}
+      <v-icon icon="mdi-open-in-new" size="14" />
+    </router-link>
+  </div>
 </template>
 
-<script lang="ts" setup>
-import type { RealNameInfo } from '@/network/api/users/types'
+<script setup lang="ts">
+import type { RealNameInfo, UserIdentityAccessLog } from '@/network/api/users/types'
 
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
-import { toTypedSchema } from '@vee-validate/zod'
-import { useForm } from 'vee-validate'
-import { z } from 'zod'
 
-import { vuetifyConfig } from '@/utils/form'
-import { withSudo } from '@/utils/sudo'
+import { getAvatarUrl } from '@/utils/materials'
+import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
-import PageHeader from '@/components/common/PageHeader.vue'
+import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
+
+import UserAvatar from '@/components/common/UserAvatar.vue'
+import i18n, { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
-import { ServerError } from '@/network/types/error'
+import { UserIdentityAccessType } from '@/network/api/users/types'
+import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
+import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
 
-const router = useRouter()
-const loading = ref(false)
-const loadingPrecise = ref(false)
-const showingPrecise = ref(false)
-const submitting = ref(false)
-const showPrivacyDialog = ref(false)
-const realNameInfo = ref<RealNameInfo>({
-  realName: '',
-  studentId: '',
-  grade: '',
-  major: '',
-  className: '',
-  phone: '',
-  email: '',
-})
-const hasRealNameInfo = ref(false)
-const isRealNameEdited = ref(false)
-const isStudentIdEdited = ref(false)
-const originalRealName = ref('')
-const originalStudentId = ref('')
+type Field = keyof RealNameInfo
 
-const {
-  handleSubmit,
-  defineField,
-  handleReset: resetFormToInitial,
-  resetForm,
-  setFieldValue,
-} = useForm({
-  validationSchema: toTypedSchema(
-    z.object({
-      realName: z.string().min(2, { message: '请输入至少2个字符的真实姓名' }),
-      studentId: z.string().min(5, { message: '请输入有效的学号' }),
-      grade: z.string().min(2, { message: '请输入有效的年级' }),
-      major: z.string().min(2, { message: '请输入有效的专业' }),
-      className: z.string().min(2, { message: '请输入有效的班级' }),
-    })
-  ),
-})
+const FIELDS: { key: Field; label: string; optional: boolean }[] = [
+  { key: 'realName', label: 'account.realName.name', optional: false },
+  { key: 'studentId', label: 'account.realName.studentId', optional: false },
+  { key: 'grade', label: 'account.realName.grade', optional: true },
+  { key: 'major', label: 'account.realName.major', optional: true },
+  { key: 'className', label: 'account.realName.className', optional: true },
+]
+const LOG_PAGE = 20
 
-const [selectedRealName, realNameProps] = defineField('realName', vuetifyConfig)
-const [selectedStudentId, studentIdProps] = defineField('studentId', vuetifyConfig)
-const [selectedGrade, gradeProps] = defineField('grade', vuetifyConfig)
-const [selectedMajor, majorProps] = defineField('major', vuetifyConfig)
-const [selectedClassName, classNameProps] = defineField('className', vuetifyConfig)
+const dialogs = useDialog()
+const fail = (error: unknown, fallback: string) => toast.error(requestErrorMessage(error, fallback))
 
-watch(selectedRealName, (newValue) => {
-  isRealNameEdited.value = newValue !== originalRealName.value
-})
+// ---- The record ----
 
-watch(selectedStudentId, (newValue) => {
-  isStudentIdEdited.value = newValue !== originalStudentId.value
-})
+const loaded = ref(false)
+const loadFailed = ref(false)
+/** What the page shows by default: name and student ID masked. Null when there is no record. */
+const record = ref<RealNameInfo | null>(null)
+/** The same record in full, once the person has confirmed who they are to see it. */
+const full = ref<RealNameInfo | null>(null)
+const shown = computed(() => full.value ?? record.value ?? emptyRecord())
 
-const clearField = (fieldName: 'realName' | 'studentId') => {
-  if (showingPrecise.value) return
-
-  if (fieldName === 'realName') {
-    if (!isRealNameEdited.value) {
-      setFieldValue('realName', '')
-      isRealNameEdited.value = true
-    }
-  } else {
-    if (!isStudentIdEdited.value) {
-      setFieldValue('studentId', '')
-      isStudentIdEdited.value = true
-    }
-  }
+function emptyRecord(): RealNameInfo {
+  return { realName: '', studentId: '', grade: '', major: '', className: '' }
 }
 
-const onFieldFocus = (fieldName: 'realName' | 'studentId') => {
-  if (hasRealNameInfo.value) {
-    clearField(fieldName)
-  }
-}
-
-const onFieldBlur = (fieldName: 'realName' | 'studentId') => {
-  if (fieldName === 'realName') {
-    if (selectedRealName.value === '') {
-      setFieldValue('realName', originalRealName.value)
-      isRealNameEdited.value = false
-    } else if (selectedRealName.value === originalRealName.value) {
-      isRealNameEdited.value = false
-    }
-  } else {
-    if (selectedStudentId.value === '') {
-      setFieldValue('studentId', originalStudentId.value)
-      isStudentIdEdited.value = false
-    } else if (selectedStudentId.value === originalStudentId.value) {
-      isStudentIdEdited.value = false
-    }
-  }
-}
-
-const resetField = (fieldName: 'realName' | 'studentId') => {
-  if (fieldName === 'realName') {
-    setFieldValue('realName', originalRealName.value)
-    isRealNameEdited.value = false
-  } else {
-    setFieldValue('studentId', originalStudentId.value)
-    isStudentIdEdited.value = false
-  }
-}
-
-const fetchRealNameInfo = async () => {
-  if (!currentUserId.value) return
-
-  loading.value = true
+async function load() {
+  const userId = currentUserId.value
+  if (!userId) return
   try {
-    const { data } = await UserApi.getRealNameInfo(currentUserId.value, false)
-    hasRealNameInfo.value = data.hasIdentity
-    if (data.hasIdentity && data.identity) {
-      realNameInfo.value = data.identity
-
-      originalRealName.value = data.identity.realName
-      originalStudentId.value = data.identity.studentId
-      isRealNameEdited.value = false
-      isStudentIdEdited.value = false
-      showingPrecise.value = false
-
-      resetForm({
-        values: {
-          realName: data.identity.realName,
-          studentId: data.identity.studentId,
-          grade: data.identity.grade,
-          major: data.identity.major,
-          className: data.identity.className,
-        },
-      })
-    }
-  } catch (error: any) {
-    console.error('获取实名信息失败', error)
-    toast.error(error.message || '获取实名信息失败')
-  } finally {
-    loading.value = false
+    const { data } = await UserApi.getRealNameInfo(userId)
+    record.value = data.hasIdentity && data.identity ? data.identity : null
+    full.value = null
+    loadFailed.value = false
+    loaded.value = true
+  } catch {
+    loadFailed.value = true
   }
 }
 
-const fetchPreciseInfo = async () => {
-  if (!currentUserId.value || !hasRealNameInfo.value || loadingPrecise.value || showingPrecise.value) return
+const revealing = ref(false)
 
-  loadingPrecise.value = true
-  showingPrecise.value = true
-
+/** Fetch the record in full. False when the person backed out or it failed. */
+async function reveal(): Promise<boolean> {
+  const userId = currentUserId.value
+  if (!userId) return false
+  revealing.value = true
   try {
-    const result = await withSudo(
-      async () => {
-        return await UserApi.getRealNameInfo(currentUserId.value!, true)
-      },
-      'viewRealNameInfo',
-      null,
-      router
-    )
-
-    if (result.data.hasIdentity && result.data.identity) {
-      setFieldValue('realName', result.data.identity.realName)
-      setFieldValue('studentId', result.data.identity.studentId)
-
-      originalRealName.value = result.data.identity.realName
-      originalStudentId.value = result.data.identity.studentId
-
-      isRealNameEdited.value = false
-      isStudentIdEdited.value = false
-
-      toast.success('已加载完整实名信息')
-    } else {
-      toast.error('未填写过实名信息')
-    }
-  } catch (error: any) {
-    console.error('获取精确实名信息失败', error)
-    toast.error(error?.message || '获取完整实名信息失败，请重试')
-    showingPrecise.value = false
+    const { data } = await withSudo('realname:view', (ticket) => UserApi.getPreciseRealNameInfo(userId, ticket))
+    full.value = data.identity ?? null
+    // Seeing it in full is itself recorded.
+    void loadLogs(true)
+    return full.value !== null
+  } catch (error) {
+    if (!(error instanceof SudoCancelledError)) fail(error, t('account.realName.viewFailed'))
+    return false
   } finally {
-    loadingPrecise.value = false
+    revealing.value = false
   }
 }
 
-// 提交表单
-const onSubmit = handleSubmit(async (values) => {
-  if (!currentUserId.value) return
+async function toggleFull() {
+  if (full.value) full.value = null
+  else await reveal()
+}
 
-  submitting.value = true
-  try {
-    await withSudo(
-      async () => {
-        const changedFields: Partial<RealNameInfo> = {}
+// ---- Editing ----
 
-        if (isRealNameEdited.value && values.realName !== originalRealName.value) {
-          changedFields.realName = values.realName
-        }
+const editing = ref(false)
+const opening = ref(false)
+const saving = ref(false)
+const attempted = ref(false)
+const form = reactive<RealNameInfo>(emptyRecord())
 
-        if (isStudentIdEdited.value && values.studentId !== originalStudentId.value) {
-          changedFields.studentId = values.studentId
-        }
-
-        if (values.grade !== realNameInfo.value.grade) changedFields.grade = values.grade
-        if (values.major !== realNameInfo.value.major) changedFields.major = values.major
-        if (values.className !== realNameInfo.value.className) changedFields.className = values.className
-
-        if (Object.keys(changedFields).length === 0) {
-          toast.info('未检测到任何修改')
-          submitting.value = false
-          return
-        }
-
-        console.log('提交的修改字段:', changedFields)
-
-        const { data } = await UserApi.patchRealNameInfo(currentUserId.value!, changedFields)
-
-        const wasPrecise = showingPrecise.value
-
-        toast.success('实名信息保存成功')
-
-        if (wasPrecise) {
-          await fetchPreciseInfo()
-        } else {
-          await fetchRealNameInfo()
-        }
-      },
-      'updateRealNameInfo',
-      null,
-      router
-    )
-  } catch (error: any) {
-    console.error('保存实名信息失败', error)
-    toast.error(error.message || '保存实名信息失败')
-  } finally {
-    submitting.value = false
+const errors = computed<Partial<Record<Field, string>>>(() => {
+  if (!attempted.value) return {}
+  return {
+    realName: form.realName.trim() ? undefined : t('account.realName.nameRequired'),
+    studentId: form.studentId.trim() ? undefined : t('account.realName.studentIdRequired'),
   }
 })
 
-// 实现自定义的重置处理函数
-const handleReset = () => {
-  // 如果当前正在显示精确信息，需要保持精确状态
-  if (showingPrecise.value) {
-    // 重新获取精确信息以保持精确状态
-    fetchPreciseInfo()
-  } else {
-    // 否则使用常规重置，重新加载模糊信息
-    resetFormToInitial()
-    fetchRealNameInfo()
+/**
+ * A masked value cannot go into a field, so changing an existing record starts
+ * from it in full; the person confirms who they are once, and the same
+ * confirmation covers the save that follows.
+ */
+async function startEditing() {
+  if (record.value && !full.value) {
+    opening.value = true
+    const ok = await reveal().finally(() => (opening.value = false))
+    if (!ok) return
   }
+  Object.assign(form, full.value ?? emptyRecord())
+  attempted.value = false
+  editing.value = true
+}
+
+function cancel() {
+  editing.value = false
+  attempted.value = false
+}
+
+async function save() {
+  attempted.value = true
+  const userId = currentUserId.value
+  if (!userId || errors.value.realName || errors.value.studentId || saving.value) return
+  const values: RealNameInfo = {
+    realName: form.realName.trim(),
+    studentId: form.studentId.trim(),
+    grade: form.grade.trim(),
+    major: form.major.trim(),
+    className: form.className.trim(),
+  }
+  saving.value = true
+  try {
+    await withSudo('realname:update', (ticket) => UserApi.updateRealNameInfo(userId, values, ticket))
+    editing.value = false
+    toast.success(t('account.realName.saved'))
+    await load()
+  } catch (error) {
+    if (!(error instanceof SudoCancelledError)) fail(error, t('account.realName.saveFailed'))
+  } finally {
+    saving.value = false
+  }
+}
+
+// ---- Deleting ----
+
+const deleting = ref(false)
+
+async function remove() {
+  const userId = currentUserId.value
+  if (!userId) return
+  const confirmed = await dialogs
+    .confirm(t('account.realName.deleteBody'), { title: t('account.realName.delete') })
+    .wait()
+    .catch(() => false)
+  if (!confirmed) return
+  deleting.value = true
+  try {
+    await withSudo('realname:delete', (ticket) => UserApi.deleteRealNameInfo(userId, ticket))
+    toast.success(t('account.realName.deleted'))
+    await load()
+  } catch (error) {
+    if (!(error instanceof SudoCancelledError)) fail(error, t('account.realName.deleteFailed'))
+  } finally {
+    deleting.value = false
+  }
+}
+
+// ---- Who read it ----
+
+const logs = ref<UserIdentityAccessLog[]>([])
+const logTotal = ref(0)
+const logsNext = ref<number | undefined>(undefined)
+const logsHaveMore = ref(false)
+const loadingLogs = ref(false)
+const logsFailed = ref(false)
+
+async function loadLogs(fromStart: boolean) {
+  const userId = currentUserId.value
+  if (!userId) return
+  loadingLogs.value = true
+  try {
+    const { data } = await UserApi.getRealNameAccessLogs(userId, fromStart ? undefined : logsNext.value, LOG_PAGE)
+    logs.value = fromStart ? data.logs : [...logs.value, ...data.logs]
+    logTotal.value = data.page.total ?? logs.value.length
+    logsNext.value = data.page.nextStart ?? undefined
+    logsHaveMore.value = data.page.hasMore
+    logsFailed.value = false
+  } catch {
+    logsFailed.value = true
+  } finally {
+    loadingLogs.value = false
+  }
+}
+
+const isOwnView = (entry: UserIdentityAccessLog) => entry.accessor.id === currentUserId.value
+
+const nameOf = (entry: UserIdentityAccessLog) => entry.accessor.nickname || entry.accessor.username
+
+const avatarOf = (entry: UserIdentityAccessLog) =>
+  isChosenAvatar(entry.accessor.avatarId) ? getAvatarUrl(entry.accessor.avatarId) : ''
+
+function describe(entry: UserIdentityAccessLog) {
+  if (entry.accessType === UserIdentityAccessType.EXPORT) {
+    return t('account.realName.log.exported', { name: nameOf(entry) })
+  }
+  return isOwnView(entry)
+    ? t('account.realName.log.youViewed')
+    : t('account.realName.log.viewed', { name: nameOf(entry) })
+}
+
+function formatTime(ms: number) {
+  const date = new Date(ms)
+  const sameYear = date.getFullYear() === new Date().getFullYear()
+  return new Intl.DateTimeFormat(i18n.global.locale.value, {
+    year: sameYear ? undefined : 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
 }
 
 onMounted(() => {
-  fetchRealNameInfo()
+  ensureDefaultAvatarId()
+  void load()
+  void loadLogs(true)
 })
 </script>
 
-<style scoped lang="scss">
-.v-card.highlighted {
-  border: 1px solid rgba(var(--v-theme-primary), 0.1);
+<style scoped src="./settings-card.css"></style>
+
+<style scoped>
+.realname {
+  max-width: var(--page-w-read);
 }
 
-.privacy-banner {
-  border: 1px solid rgba(var(--v-theme-primary), 0.08);
-  background: linear-gradient(to right, rgba(var(--v-theme-primary), 0.02), rgba(var(--v-theme-primary), 0.04));
-  transition: all 0.2s ease;
-  cursor: pointer;
+.realname__pending {
+  min-height: 296px;
+}
 
-  &:hover {
-    background: linear-gradient(to right, rgba(var(--v-theme-primary), 0.04), rgba(var(--v-theme-primary), 0.06));
-    border-color: rgba(var(--v-theme-primary), 0.12);
+.realname__pending-note {
+  padding: 24px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
+}
+
+.realname__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* A label and what is there, on one line. */
+.srow--pair {
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 24px;
+  min-height: 0;
+  padding: 12px 24px;
+}
+
+.srow--pair > .srow__k {
+  padding-top: 8px;
+}
+
+/* A row holding a field: the label sits on the field's first line. */
+.srow--field {
+  align-items: start;
+}
+
+.srow--field > .srow__k {
+  padding-top: 10px;
+}
+
+.realname__optional {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: var(--lh-13);
+  color: var(--faint);
+}
+
+.realname__value {
+  padding-top: 8px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.realname__value--mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.realname__value--none {
+  color: var(--faint);
+}
+
+.realname__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 12px 16px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.realname__foot--form {
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 16px 24px;
+  background: var(--canvas);
+}
+
+.realname__delete {
+  color: var(--danger-ink);
+}
+
+.realname__foot-note {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--faint);
+}
+
+.realname__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 32px 24px;
+}
+
+.realname__empty .t-title {
+  color: var(--ink);
+}
+
+.realname__empty-body {
+  font-size: 14px;
+  line-height: var(--lh-14-loose);
+  color: var(--muted);
+}
+
+.realname__log {
+  display: grid;
+  gap: 12px;
+}
+
+.realname__log-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.realname__log-head .t-title {
+  color: var(--ink);
+}
+
+.realname__log-empty {
+  padding: 16px 24px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
+}
+
+.log-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line);
+}
+
+.log-row:first-child {
+  border-top: 0;
+}
+
+.log-row__avatar,
+.log-row__mark {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.log-row__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--faint);
+  background: var(--fill-2);
+  border-radius: var(--radius-pill);
+}
+
+.log-row__body {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.log-row__what {
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--ink);
+}
+
+.log-row--own .log-row__what {
+  color: var(--muted);
+}
+
+.log-row__where {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.log-row time {
+  flex-shrink: 0;
+}
+
+.realname__log-more {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.realname__policy {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  justify-self: start;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  text-decoration: none;
+  transition: color var(--dur-quick) var(--ease-standard);
+}
+
+.realname__policy:hover {
+  color: var(--ink);
+}
+
+@media (max-width: 599.98px) {
+  .srow--pair {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    padding: 12px 16px;
   }
-}
 
-.privacy-dialog {
-  .privacy-feature-card {
-    height: 100%;
-    padding: 16px;
-    border-radius: 8px;
-    border: 1px solid rgba(var(--v-theme-primary), 0.08);
-    background: linear-gradient(135deg, rgba(var(--v-theme-primary), 0.02), rgba(var(--v-theme-primary), 0.04));
-  }
-}
-
-.form-section {
-  padding: 0 4px;
-}
-
-.usage-note {
-  position: relative;
-  border-radius: 8px;
-  overflow: hidden;
-
-  .usage-note-content {
-    padding: 16px 20px;
-    border-radius: 8px;
-    background: linear-gradient(135deg, rgba(var(--v-theme-primary), 0.03), rgba(var(--v-theme-primary), 0.07));
-    border: 1px solid rgba(var(--v-theme-primary), 0.1);
+  .srow--pair > .srow__k,
+  .realname__value {
+    padding-top: 0;
   }
 
-  .usage-tags {
-    margin-top: 8px;
-    gap: 8px;
-    display: flex;
+  .settings-card__head {
     flex-wrap: wrap;
   }
 
-  .usage-tag {
-    display: inline-flex;
-    align-items: center;
-    padding: 4px 12px;
-    border-radius: var(--radius-pill);
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: rgb(var(--v-theme-primary));
-    background-color: rgba(var(--v-theme-primary), 0.08);
-    white-space: nowrap;
-  }
-}
-
-// 可点击编辑的输入框样式
-.v-text-field {
-  &:has(input:not(:focus)) {
-    cursor: pointer;
+  .realname__actions {
+    justify-content: flex-start;
+    margin-top: 0;
+    padding: 0 16px 8px;
   }
 
-  &:deep() {
-    .v-field--focused .v-field__outline {
-      border-color: rgba(var(--v-theme-primary), 0.8) !important;
-    }
-  }
-}
-
-// 重置图标样式
-.reset-icon {
-  opacity: 0.7;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  margin-right: 4px;
-
-  &:hover {
-    opacity: 1;
-    transform: rotate(-15deg);
-  }
-}
-
-.fuzzy-field {
-  position: relative;
-}
-
-// 精确信息徽章的样式
-.v-chip {
-  transition: all 0.2s ease;
-
-  &:hover:not(:disabled) {
-    background-color: rgba(var(--v-theme-primary), 0.1);
-    transform: translateY(-1px);
+  .realname__foot--form {
+    padding: 12px 16px;
   }
 
-  &:active:not(:disabled) {
-    transform: translateY(0);
+  .realname__empty {
+    padding: 24px 16px;
   }
-}
 
-// 编辑指示器动画
-@keyframes pulse {
-  0% {
-    opacity: 0.5;
+  .log-row {
+    padding: 12px 16px;
   }
-  50% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0.5;
-  }
-}
-
-.text-primary {
-  animation: pulse 2s infinite ease-in-out;
 }
 </style>

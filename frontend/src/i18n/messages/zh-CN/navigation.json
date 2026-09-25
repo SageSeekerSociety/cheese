@@ -7,10 +7,13 @@
     "board": "看板",
     "calendar": "日历",
     "library": "资料库",
-    "members": "成员"
+    "members": "成员",
+    "docs": "项目文档",
+    "settings": "项目设置",
+    "general": "全局"
   },
-  "spaces": "题目板",
-  "teams": "小队",
+  "spaces": "空间",
+  "teams": "团队",
   "term": {
     "project": "项目",
     "topic": "话题"
@@ -27,7 +30,21 @@
     "queue": "队列",
     "dashboard": "看板",
     "models": "模型",
-    "spaces": "开板申请",
+    "spaces": "空间申请",
     "members": "成员"
+  },
+  "userMenu": {
+    "profile": "个人主页",
+    "settings": "个人设置",
+    "devices": "我的设备",
+    "appearance": "外观",
+    "language": "语言",
+    "logout": "退出登录",
+    "noIntro": "暂无个人简介",
+    "theme": {
+      "system": "跟随系统",
+      "light": "浅色",
+      "dark": "深色"
+    }
   }
 }

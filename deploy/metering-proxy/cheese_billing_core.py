@@ -21,14 +21,20 @@ with the backend via env; rotate them together.
 """
 
 import base64
+import gzip
 import hashlib
 import hmac
+import http.client
 import json
+import logging
+import os
 import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,6 +47,31 @@ from pathlib import Path
 ANTHROPIC_HOSTS = frozenset(
     {"api.anthropic.com", "console.anthropic.com", "platform.claude.com"}
 )
+
+# What every session carries as its Claude login: enough for Claude Code to
+# boot, and nothing that authenticates. This proxy replaces it with the
+# platform's credential (PlatformCredential) or, when there is none, answers or
+# refuses for it. The launch script writes the same value
+# (backend/app/domain/agent/harness/claude_code/device_launch.py).
+NO_LOGIN_PLACEHOLDER = "sk-ant-oat01-cheese-no-claude-login-on-this-host"
+
+# The non-model endpoints Claude Code calls at boot that only a real account can
+# answer, answered here when the platform has no credential, instead of a 503.
+# None of them gates a turn (measured on 2.1.277: a turn completes with all
+# three refused), so this only keeps refusals out of every boot; each response
+# schema is all-optional in the client. With a credential they go to Anthropic.
+NO_LOGIN_ANSWERS = {
+    "/api/claude_cli/bootstrap": b"{}",
+    "/api/claude_code_penguin_mode": b'{"enabled": false}',
+    "/api/oauth/validate": b"{}",
+}
+
+
+def no_login_answer(host: str, path: str) -> bytes | None:
+    """The local answer for a placeholder session's boot call, else None."""
+    if host != "api.anthropic.com":
+        return None
+    return NO_LOGIN_ANSWERS.get(path.split("?", 1)[0])
 
 
 def proxy_basic_password(header_value: str) -> str:
@@ -262,13 +293,6 @@ class Verdict:
     # this is the only thing that says which model the turn runs on. Empty means
     # the backend did not say, and the client's own choice is forwarded.
     model: str = ""
-    # `user:password` — which ccproxy identity to authenticate the upstream hop
-    # as for this project's turns. Present only when the backend knows the
-    # machine those turns run on; ccproxy scopes its fake→real ticket swap to
-    # the authenticated connection, so this is what lets the machine's own
-    # ticket be forwarded untouched instead of swapped for one the proxy holds.
-    # None = fall back to the deployment-wide identity, and to the swap.
-    upstream: str | None = None
     # True = NOBODY ANSWERED. This verdict was manufactured here — admission is
     # unconfigured, the project is unknown, or the backend could not be reached
     # — so every field on it is a default, `pool` included. Defaults to True so
@@ -306,7 +330,6 @@ def _post_admission(
     data = payload.get("data") or {}
     supply = data.get("supply") or {}
     pool = supply.get("pool")
-    upstream = supply.get("upstream")
     model = supply.get("model")
     kind = data.get("reason_kind")
     return Verdict(
@@ -316,15 +339,6 @@ def _post_admission(
         pool=pool if pool in (SUBSCRIPTION, GATEWAY) else SUBSCRIPTION,
         key=supply.get("key") or None,
         model=model if isinstance(model, str) else "",
-        # Shape-checked here rather than at use: a half credential ("m516:" or
-        # ":pw") would authenticate as nobody, and failing at the parse names
-        # the control plane as the source instead of surfacing as an upstream
-        # 407 several hops away.
-        upstream=upstream
-        if isinstance(upstream, str)
-        and len(upstream.split(":", 1)) == 2
-        and all(upstream.split(":", 1))
-        else None,
         # The backend answered; `pool` below is its word, not a default.
         fail_open=False,
     )
@@ -344,13 +358,10 @@ class AdmissionGate:
     had, rather than to a gateway whose per-project key it would not have.
 
     Cached per (project, topic), not per project. The budget half of the answer
-    is the project's, but the ``upstream`` half names ONE machine — the one that
-    topic's turns run on — and a project's topics can be spread over several. A
-    project-wide key hands the second topic the first one's machine identity for
-    the rest of the window, and ccproxy only honours a machine's ticket over that
-    machine's own connection, so the turn either 401s at the far edge or is
-    billed to the wrong machine. The extra key costs one admission call per topic
-    per window, which is what the endpoint was already sized for.
+    is the project's, but the model it binds comes from the topic's card, and a
+    project-wide key would hand the second topic the first one's binding for the
+    rest of the window. The extra key costs one admission call per topic per
+    window, which is what the endpoint was already sized for.
     """
 
     def __init__(
@@ -432,7 +443,7 @@ class AdmissionGate:
 # --- Claude Code's non-model startup endpoints -------------------------------
 #
 # 一个控制点（结论 46）。A machine is launched in one shape — no base URL, this
-# proxy on HTTPS_PROXY, a fake ticket — and that shape has to boot Claude Code
+# proxy on HTTPS_PROXY — and that shape has to boot Claude Code
 # on a deployment that owns no Anthropic subscription at all. Claude Code asks
 # for four things on its way up that have nothing to do with inference: who am
 # I, what are my settings, what is my policy, and here is my telemetry. Every
@@ -448,16 +459,13 @@ class AdmissionGate:
 # a second reader — cli/e2e scripts a stand-in Anthropic API from the same rows
 # and boots a REAL Claude Code against them, then fails on any non-model path
 # that real client asked for and this table did not answer 2xx. A row missing
-# here is a request that goes upstream on the platform's credential, and that
+# here is a request that goes upstream on the session's credential, and that
 # test is what finds one before a deployment does.
 
 TABLE_PATH = Path(__file__).resolve().with_name("control_answers.json")
 _TABLE = json.loads(TABLE_PATH.read_text(encoding="utf-8"))
 
 _ROWS: list[dict] = _TABLE["rows"]
-# Cheese supplies its own feature flags; these three are what turn on the
-# remote-control bridge the platform drives every session through.
-RC_FLAGS: dict = _TABLE["rc_flags"]
 # The host a row serves when it names none. Three names are MITM'd here and
 # only one of them carries a sandbox's boot: console.anthropic.com and
 # platform.claude.com carry interactive Claude Code's login and refresh, which
@@ -466,17 +474,6 @@ RC_FLAGS: dict = _TABLE["rc_flags"]
 # synthesised Cheese account, and the setup-token that IS this proxy's
 # subscription credential is what that login exists to produce.
 DEFAULT_ANSWER_HOSTS = frozenset({"api.anthropic.com"})
-# Telemetry hosts: the rows matched by host alone, whatever the path. RC
-# payloads carry control-session identifiers, so neither they nor an upstream
-# credential may cross this boundary. A row that also matches a path is not one
-# of these — its host is where the boot happens, and the caller treats a
-# telemetry host as one nothing else may be asked of.
-TELEMETRY_HOSTS = frozenset(
-    host
-    for row in _ROWS
-    if "exact" not in row and "prefix" not in row
-    for host in row["hosts"]
-)
 # How much of a /v1/messages head ModelRewrite may hold while it looks for the
 # top-level `model` member. See ModelRewrite.
 #
@@ -496,9 +493,7 @@ class Answer:
     body: bytes
 
 
-def control_answer(
-    host: str, path: str, project: str, topic: str, rc: bool = False
-) -> Answer | None:
+def control_answer(host: str, path: str, project: str, topic: str) -> Answer | None:
     """The proxy's own answer for a non-model endpoint, or None to forward.
 
     ``host`` is part of the question, not decoration: a row answers only the
@@ -508,12 +503,6 @@ def control_answer(
 
     ``project``/``topic`` are the VERIFIED place from the caller's scoped token:
     the identity Cheese asserts is Cheese's own, never an Anthropic account's.
-
-    ``rc`` says whether that token grants this session the Cheese RC transport.
-    Every path below is answered either way — the point is that none of them
-    reaches Anthropic — but only an RC session is told the bridge is on, because
-    those flags are what make Claude Code open `/v1/code/…`, and a session
-    without the claim has no RC route for them to take.
     """
     path = path.split("?", 1)[0]
     for row in _ROWS:
@@ -522,9 +511,7 @@ def control_answer(
         body = row["body"]
         if body is None:
             return Answer(row["status"], b"")
-        return Answer(
-            row["status"], json.dumps(_fill(body, project, topic, rc)).encode()
-        )
+        return Answer(row["status"], json.dumps(_fill(body, project, topic)).encode())
     return None
 
 
@@ -541,18 +528,16 @@ def _row_matches(row: dict, host: str, path: str) -> bool:
     return True
 
 
-def _fill(value, project: str, topic: str, rc: bool):
+def _fill(value, project: str, topic: str):
     """Substitute the table's placeholders with this caller's own facts."""
     if isinstance(value, dict):
-        return {k: _fill(v, project, topic, rc) for k, v in value.items()}
+        return {k: _fill(v, project, topic) for k, v in value.items()}
     if isinstance(value, list):
-        return [_fill(v, project, topic, rc) for v in value]
+        return [_fill(v, project, topic) for v in value]
     if value == "{project}":
         return project
     if value == "{topic}":
         return topic
-    if value == "{rc_flags}":
-        return dict(RC_FLAGS) if rc else {}
     return value
 
 
@@ -605,6 +590,13 @@ class ModelRewrite:
         # the model the card is bound to, and the exits are refuse or wait, not
         # run it on something else (I27). The caller reports the reason.
         self.missed = False
+        # 被替换前体里原样的 model 值（keep_haiku 放过的也算）——主对话这一
+        # 路读它，就能认出分身请求体里 CC 回显的父会话模型：device 启动环境
+        # 不钉模型（结论 46），CC 写的是它自己的内建默认，准入在席位配置里
+        # 永远找不到它（2026-09-23 的事故）。``replaced`` 为 False 时这个值
+        # 是 haiku 放行，不是父会话的工作模型。
+        self.original: str | None = None
+        self.replaced = False
 
     def feed(self, chunk: bytes) -> bytes:
         """One chunk in, the chunk to forward out. ``b""`` ends the stream."""
@@ -623,6 +615,10 @@ class ModelRewrite:
         span = top_level_model_span(self._buf)
         if span is not None:
             start, end = span
+            try:
+                self.original = json.loads(self._buf[start:end])
+            except ValueError:
+                self.original = None
             if self._keep_haiku and _is_haiku(self._buf[start:end]):
                 out = self._buf
             else:
@@ -631,6 +627,7 @@ class ModelRewrite:
                     + json.dumps(self._model).encode()
                     + self._buf[end:]
                 )
+                self.replaced = True
             self._done = True
             self._buf = b""
             return out
@@ -769,3 +766,308 @@ def is_haiku_name(value: str) -> bool:
     绑分身默认 —— 两条路都不进白名单校验。
     """
     return _is_haiku(value.encode())
+
+
+# --- the platform's Claude credential ----------------------------------------
+#
+# Sessions carry NO_LOGIN_PLACEHOLDER; this proxy is the only holder of the real
+# credential and puts it on each request on its way to Anthropic. The file holds
+# one of two shapes:
+#   - a bare token string: a one-year `claude setup-token`. It never rotates, so
+#     it is used as it is and nothing here writes the file.
+#   - a Claude Code `.credentials.json` document ({"claudeAiOauth": {...}}): an
+#     access token that lives ~8 hours plus the refresh token that renews it.
+#     This process refreshes it itself and writes the new pair back. The refresh
+#     token's own deadline (~30 days from login) does not move on refresh; once
+#     it passes, someone logs in again.
+# The file is re-read on every request, so writing, replacing or deleting it is
+# logging in, switching account or logging out, for every running session at
+# once. Only one holder may ever refresh a pair, because a refresh rotates it:
+# the login script moves the pair here and deletes the copy it was made in.
+#
+# The refresh request is byte for byte the one the pinned Claude Code sends
+# (`refresh_request`): URL, client id, JSON body in the same key order, scope
+# list, and its headers with their names, values and order.
+# scripts/remote_execution/refresh_contract.py captures the pinned build's own
+# refresh and fails when the two differ, so an upgrade that changes it is caught
+# before it ships.
+OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+_REFRESH_SCOPES = (
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
+    "user:plugins",
+)
+# Claude Code refreshes when the access token is within five minutes of expiry.
+REFRESH_MARGIN_S = 300
+# After a failed refresh that was not a refusal, wait before asking again: the
+# access token may still be valid, and every request would otherwise retry.
+REFRESH_BACKOFF_S = 60
+# Claude Code starts warning three days before the refresh token expires.
+LOGIN_WARNING_S = 3 * 86400
+
+# Why there is no credential to put on a request.
+NO_CREDENTIAL = "none"
+EXPIRED = "expired"
+LOGIN_REQUIRED = "login_required"
+
+_credential_log = logging.getLogger("cheese.metering")
+
+
+def refresh_request(body: dict) -> tuple[list[tuple[str, str]], bytes]:
+    """The refresh POST's headers, in the order they are sent, and its body."""
+    raw = json.dumps(body, separators=(",", ":")).encode()
+    headers = [
+        ("Accept", "application/json, text/plain, */*"),
+        ("Content-Type", "application/json"),
+        ("User-Agent", "axios/1.15.2"),
+        ("Content-Length", str(len(raw))),
+        ("Accept-Encoding", "gzip, compress, deflate, br"),
+        ("Host", urllib.parse.urlsplit(OAUTH_TOKEN_URL).hostname or ""),
+        ("Connection", "close"),
+    ]
+    return headers, raw
+
+
+def _decoded(raw: bytes, encoding: str) -> bytes:
+    if encoding == "gzip":
+        return gzip.decompress(raw)
+    if encoding == "deflate":
+        return zlib.decompress(raw)
+    if encoding == "br":
+        try:
+            import brotli  # mitmproxy's own dependency, present in the image
+        except ImportError as err:
+            raise OSError("a brotli response and no brotli module") from err
+        return brotli.decompress(raw)
+    return raw
+
+
+@dataclass(frozen=True)
+class Egress:
+    """The HTTP proxy a credential's requests to Anthropic leave through."""
+
+    host: str
+    port: int
+    # The value of the Proxy-Authorization header, "" when the proxy asks none.
+    authorization: str = ""
+
+    @classmethod
+    def parse(cls, url: str) -> "Egress | None":
+        parts = urllib.parse.urlsplit(url.strip())
+        if parts.scheme != "http" or not parts.hostname or not parts.port:
+            return None
+        authorization = ""
+        if parts.username is not None:
+            pair = (
+                f"{urllib.parse.unquote(parts.username)}:"
+                f"{urllib.parse.unquote(parts.password or '')}"
+            )
+            authorization = "Basic " + base64.b64encode(pair.encode()).decode()
+        return cls(parts.hostname, parts.port, authorization)
+
+
+def _post_refresh(
+    url: str,
+    body: dict,
+    timeout_s: float,
+    *,
+    egress: Egress | None = None,
+    connect=http.client.HTTPSConnection,
+) -> tuple[int, dict]:
+    """POST the refresh grant exactly as `refresh_request` lays it out, through
+    the credential's egress when it has one.
+
+    http.client rather than urllib: urllib re-cases header names and adds its
+    own, so the request would stop matching Claude Code's. Returns (status,
+    parsed body); raises OSError on transport problems.
+    """
+    parts = urllib.parse.urlsplit(url)
+    headers, raw = refresh_request(body)
+    if egress is None:
+        conn = connect(parts.hostname, parts.port, timeout=timeout_s)
+    else:
+        conn = connect(egress.host, egress.port, timeout=timeout_s)
+        tunnel_headers = (
+            {"Proxy-Authorization": egress.authorization}
+            if egress.authorization
+            else {}
+        )
+        conn.set_tunnel(parts.hostname, parts.port or 443, headers=tunnel_headers)
+    try:
+        conn.putrequest("POST", parts.path, skip_host=True, skip_accept_encoding=True)
+        for name, value in headers:
+            conn.putheader(name, value)
+        conn.endheaders(raw)
+        resp = conn.getresponse()
+        data = _decoded(resp.read(), resp.getheader("Content-Encoding", ""))
+        status = resp.status
+    except http.client.HTTPException as err:
+        raise OSError(str(err)) from err
+    finally:
+        conn.close()
+    try:
+        parsed = json.loads(data or b"{}")
+    except ValueError:
+        parsed = {}
+    return status, parsed if isinstance(parsed, dict) else {}
+
+
+class PlatformCredential:
+    """The Claude credential in the proxy's credential file, refreshed when it
+    is a pair."""
+
+    def __init__(self, path: Path, *, post=_post_refresh, now=time.time) -> None:
+        self.path = path
+        # The credential's egress, next to it: an `http://[user:pass@]host:port`
+        # proxy that every request made with this credential leaves through.
+        # Absent or empty, they go direct.
+        self.egress_path = path.with_name("egress")
+        self._post = post
+        self._now = now
+        self._lock = threading.Lock()
+        self._dead_refresh_tokens: set[str] = set()
+        self._last_failure = 0.0
+
+    def _read(self) -> tuple[dict, dict] | str:
+        """(document, claudeAiOauth) for a pair, the stripped string otherwise."""
+        try:
+            text = self.path.read_text().strip()
+        except OSError:
+            return ""
+        if not text.startswith("{"):
+            return text
+        try:
+            doc = json.loads(text)
+        except ValueError:
+            return ""
+        oauth = doc.get("claudeAiOauth") if isinstance(doc, dict) else None
+        if not isinstance(oauth, dict) or not oauth.get("accessToken"):
+            return ""
+        return doc, oauth
+
+    def egress(self) -> Egress | None:
+        """Where this credential's requests leave from; None is direct."""
+        try:
+            return Egress.parse(self.egress_path.read_text())
+        except OSError:
+            return None
+
+    def token(self) -> tuple[str, str]:
+        """(token to put on the request, "") or ("", why there is none)."""
+        read = self._read()
+        if isinstance(read, str):
+            return (read, "") if read else ("", NO_CREDENTIAL)
+        _doc, oauth = read
+        if oauth.get("refreshToken") in self._dead_refresh_tokens:
+            return "", LOGIN_REQUIRED
+        expires_at = oauth.get("expiresAt")
+        if isinstance(expires_at, int | float) and expires_at / 1000 <= self._now():
+            return "", EXPIRED
+        return str(oauth["accessToken"]), ""
+
+    def refresh_due(self) -> bool:
+        """Cheap check, safe on every request: is a refresh worth attempting?"""
+        read = self._read()
+        return not isinstance(read, str) and self._due(read[1])
+
+    def _due(self, oauth: dict) -> bool:
+        refresh_token = oauth.get("refreshToken")
+        if not refresh_token or refresh_token in self._dead_refresh_tokens:
+            return False
+        if self._now() - self._last_failure < REFRESH_BACKOFF_S:
+            return False
+        expires_at = oauth.get("expiresAt")
+        if not isinstance(expires_at, int | float):
+            return True
+        return expires_at / 1000 - self._now() <= REFRESH_MARGIN_S
+
+    def refresh_if_due(self) -> None:
+        """Refresh the pair once, however many requests found it due at once.
+
+        Blocking; the addon runs it off the event loop.
+        """
+        with self._lock:
+            # Re-read under the lock: whoever held it before may have refreshed
+            # already, or someone may have logged in again meanwhile.
+            read = self._read()
+            if isinstance(read, str) or not self._due(read[1]):
+                return
+            doc, oauth = read
+            refresh_token = str(oauth["refreshToken"])
+            body = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": OAUTH_CLIENT_ID,
+                "scope": " ".join(self._scopes(oauth)),
+            }
+            try:
+                egress = self.egress()
+                status, answer = self._post(
+                    OAUTH_TOKEN_URL,
+                    body,
+                    30.0,
+                    **({"egress": egress} if egress else {}),
+                )
+            except OSError as err:
+                self._last_failure = self._now()
+                _credential_log.warning("claude credential refresh failed: %s", err)
+                return
+            if status == 200 and answer.get("access_token"):
+                self._write(doc, oauth, answer)
+                return
+            self._last_failure = self._now()
+            if status in (400, 401) and answer.get("error") == "invalid_grant":
+                self._dead_refresh_tokens.add(refresh_token)
+                _credential_log.error(
+                    "claude credential refresh token refused (invalid_grant): "
+                    "log in again"
+                )
+                return
+            _credential_log.warning("claude credential refresh answered %s", status)
+
+    @staticmethod
+    def _scopes(oauth: dict) -> list[str]:
+        stored = oauth.get("scopes") if isinstance(oauth.get("scopes"), list) else []
+        extra = [
+            s for s in stored if s in ("user:projects:read", "user:projects:write")
+        ]
+        return [*_REFRESH_SCOPES, *extra]
+
+    def _write(self, doc: dict, oauth: dict, answer: dict) -> None:
+        now_ms = int(self._now() * 1000)
+        refreshed = {
+            **oauth,
+            "accessToken": answer["access_token"],
+            "refreshToken": answer.get("refresh_token") or oauth["refreshToken"],
+            "expiresAt": now_ms + int(answer.get("expires_in") or 0) * 1000,
+        }
+        if isinstance(answer.get("refresh_token_expires_in"), int | float):
+            refreshed["refreshTokenExpiresAt"] = (
+                now_ms + int(answer["refresh_token_expires_in"]) * 1000
+            )
+        if isinstance(answer.get("scope"), str) and answer["scope"].strip():
+            refreshed["scopes"] = answer["scope"].split()
+        tmp = self.path.with_name(f".{self.path.name}.tmp")
+        owner = os.stat(self.path)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # The proxy runs as root in its container; the file stays the host
+        # operator's, so the login script can still read and replace it.
+        try:
+            os.fchown(fd, owner.st_uid, owner.st_gid)
+        except PermissionError:
+            pass
+        with os.fdopen(fd, "w") as fh:
+            json.dump({**doc, "claudeAiOauth": refreshed}, fh, separators=(",", ":"))
+        os.replace(tmp, self.path)
+        login_by = refreshed.get("refreshTokenExpiresAt")
+        if isinstance(login_by, int | float):
+            left_s = login_by / 1000 - self._now()
+            if left_s <= LOGIN_WARNING_S:
+                _credential_log.warning(
+                    "claude login expires in %.1f days; log in again",
+                    left_s / 86400,
+                )

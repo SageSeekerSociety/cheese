@@ -3,35 +3,37 @@
 The field had seven readers and one writer (`POST /projects`), so a project
 that came into existence without an owner could never acquire one. That is not
 hypothetical: on the dogfood project the column sat NULL for six days. Nothing
-broke loudly — all seven readers fall back to `lead` — so the whole of the
-project's owner-level authority silently collapsed onto the single person
-holding that role, and nobody noticed until someone went looking.
+broke loudly — every reader falls back to someone else — so the project's
+owner-level authority silently collapsed, and nobody noticed until someone went
+looking.
 
-These tests pin the way out and the two rails on it: only a steward may move
-ownership, and it may only move to someone the roster already knows.
+These tests pin the way out and the two rails on it: only someone who manages
+the project (its owner, or a team owner/admin) may move ownership, and it may
+only move to someone on the project's team.
 """
 
 import uuid
 
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import (
+    add_external_member,
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client, owner: str | None = None) -> dict:
     body: dict = {"name": "P"}
     if owner is not None:
         body["owner_handle"] = owner
-    r = client.post("/projects", json=body, headers=session_auth_headers("alice"))
+    r = post_project(client, json=body, headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
 
-def _add_member(client, project_id: str, handle: str, role: str, *, actor: str) -> None:
-    r = client.post(
-        f"/projects/{project_id}/members",
-        json={"user_handle": handle, "role": role},
-        headers=session_auth_headers(actor),
-    )
-    assert r.status_code == 200, r.text
+def _add_member(client, project_id: str, handle: str, *, admin: bool = False) -> None:
+    """``handle`` joins the project's team; ``admin`` makes them a team admin."""
+    join_project_team(client, project_id, handle, admin=admin)
 
 
 def _set_owner(client, project_id: str, handle: str, *, actor: str):
@@ -48,7 +50,7 @@ def _owner_of(client, project_id: str) -> str | None:
 
 def test_the_owner_can_hand_the_project_to_another_member(client):
     p = _project(client, owner="alice")
-    _add_member(client, p["id"], "bob", "member", actor="alice")
+    _add_member(client, p["id"], "bob")
 
     r = _set_owner(client, p["id"], "bob", actor="alice")
 
@@ -57,12 +59,12 @@ def test_the_owner_can_hand_the_project_to_another_member(client):
     assert _owner_of(client, p["id"]) == "bob"
 
 
-def test_a_lead_can_claim_a_project_that_has_no_owner(client):
-    """The escape from #315's actual state: nobody holds the project, and the
-    lead is the only rung of authority that still answers. Before this route
-    there was no way out of that at all — the field was write-once at create."""
+def test_a_team_admin_can_take_the_project(client):
+    """The escape from #315's actual state: an admin of the project's team
+    answers for it and can make themselves its owner. Before this route there
+    was no way out at all — the field was write-once at create."""
     p = _project(client, owner="alice")
-    _add_member(client, p["id"], "dana", "lead", actor="alice")
+    _add_member(client, p["id"], "dana", admin=True)
 
     assert _set_owner(client, p["id"], "dana", actor="dana").status_code == 200
     assert _owner_of(client, p["id"]) == "dana"
@@ -70,7 +72,7 @@ def test_a_lead_can_claim_a_project_that_has_no_owner(client):
 
 def test_a_plain_member_cannot_take_the_project(client):
     p = _project(client, owner="alice")
-    _add_member(client, p["id"], "erin", "member", actor="alice")
+    _add_member(client, p["id"], "erin")
 
     r = _set_owner(client, p["id"], "erin", actor="erin")
 
@@ -95,15 +97,27 @@ def test_an_anonymous_caller_cannot_take_the_project(client):
     assert _owner_of(client, p["id"]) == "alice"
 
 
-def test_ownership_cannot_be_handed_to_someone_off_the_roster(client):
-    """An owner outside the roster is worse than no owner: `authorize_topic_access`
-    reads the roster, so that owner cannot open the project's own topics."""
+def test_ownership_cannot_be_handed_to_someone_off_the_team(client):
+    """An owner from outside the project's team is worse than no owner: they
+    would own a project they cannot open."""
     p = _project(client, owner="alice")
 
     r = _set_owner(client, p["id"], "stranger", actor="alice")
 
     assert r.status_code == 422
     assert "成员" in r.json()["message"]
+    assert _owner_of(client, p["id"]) == "alice"
+
+
+def test_ownership_cannot_go_to_an_external_member(client):
+    """An external member sees this one project and nothing else of the team;
+    the project is the team's, so its owner is someone from the team."""
+    p = _project(client, owner="alice")
+    add_external_member(client, p["id"], "guest", by="alice")
+
+    r = _set_owner(client, p["id"], "guest", actor="alice")
+
+    assert r.status_code == 422
     assert _owner_of(client, p["id"]) == "alice"
 
 
@@ -131,27 +145,16 @@ def test_a_missing_project_is_a_404_not_a_500(client):
     assert r.status_code == 404
 
 
-def test_creating_a_project_without_a_real_owner_says_so(client, caplog):
-    """#315's third recommendation, corrected against the code as it stands.
+def test_creating_a_project_without_a_real_owner_is_refused(client):
+    """#315: a project with no owner who is a person had nothing for its
+    authority to stand on. Every project now belongs to a team — a project with
+    no team given goes to its owner's personal team — so with no real owner there
+    is nowhere for it to belong, and it is refused rather than made ownerless.
+    Posted raw: the post_project helper would register an owner first."""
+    r = client.post("/projects", json={"name": "无主项目"})
 
-    The issue said the owner could "silently become None". When #332 was written
-    it couldn't — `resolve()` hands back the literal handle `anonymous`, which is
-    the same hole wearing a value: it matches no user account, so all seven
-    readers still collapse onto `lead`, while the column *looks* populated. So
-    the warning fires on "not a real person", not on "empty".
-
-    The stored value has since gone back to NULL, deliberately. `anonymous` in
-    that column also jams the ownerless-room escape hatch, which opens only on an
-    ABSENT owner and refuses to judge a handle by its name (nothing reserves that
-    username, so an account could hold it). NULL is the honest value for "we do
-    not know", and the warning below is what keeps it from being silent.
-    """
-    with caplog.at_level("WARNING", logger="cheesex.projects"):
-        r = client.post("/projects", json={"name": "无主项目"})
-
-    assert r.status_code == 200
-    assert r.json()["data"]["owner_handle"] is None
-    assert [rec for rec in caplog.records if "without a real owner" in rec.message]
+    assert r.status_code == 422, r.text
+    assert "项目需要归属一个团队" in r.text
 
 
 def test_creating_a_project_with_a_real_owner_stays_quiet(client, caplog):

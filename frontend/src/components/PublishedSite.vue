@@ -154,7 +154,7 @@ watch(
     <!-- 发布。按下去之前要看清的是两件事：发的是哪一版，发的是哪个入口。 -->
     <v-dialog :model-value="asking" max-width="440" @update:model-value="asking = false">
       <v-card>
-        <v-card-title class="t-title">{{ info.site ? '发布更新' : '发布网站' }}</v-card-title>
+        <v-card-title class="t-dialog-title">{{ info.site ? '发布更新' : '发布网站' }}</v-card-title>
         <v-card-text>
           <p v-if="info.unavailable_reason" role="status" class="t-body c-muted">{{ info.unavailable_reason }}</p>
           <p v-else-if="!info.candidates.length" class="t-body c-muted">项目已采纳的版本里没有可发布的网站</p>

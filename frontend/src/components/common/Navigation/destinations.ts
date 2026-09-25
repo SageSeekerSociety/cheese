@@ -30,9 +30,9 @@ const HOME: NavItem = { key: 'Home', type: 'item', title: '首页', to: '/', ico
 const SPACES: NavItem = {
   key: 'Spaces',
   type: 'item',
-  title: '题目板',
+  title: '首页',
   to: '/spaces',
-  icon: 'mdi-view-dashboard',
+  icon: 'mdi-home-outline',
   match: (path) => path === '/' || path.startsWith('/spaces') || path.startsWith('/teams') || path.startsWith('/work'),
 }
 
@@ -145,7 +145,8 @@ export function shortcutTarget(items: NavGenericItem[], digit: number): string |
 function tabParts(src: NavSources, shell: Shell): Record<string, NavItem> {
   const terms = termParams(shell)
   return {
-    spaces: { ...SPACES, title: t('navigation.spaces', terms) },
+    // 名字是「首页」而不是「空间」：它亮着的范围是整个首页层（我的工作 / 空间 / 团队）。
+    spaces: { ...SPACES, title: t('navigation.home', terms) },
     workspace: workspace(src),
     inbox: { ...INBOX, title: t('navigation.inbox', terms) },
   }

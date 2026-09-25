@@ -7,39 +7,27 @@
     </v-alert>
 
     <v-form ref="formRef" @submit.prevent="handleVerify">
-      <PasswordField
-        id="field-password"
-        v-model="password"
-        autocomplete="current-password"
-        name="password"
-        :label="t('account.field.password')"
-        :rules="passwordRules"
-        :error-messages="errorMessage"
-        required
-        class="mb-2"
-      />
+      <AccountField :label="t('account.field.password')" input-id="oauth-verify-password">
+        <PasswordField
+          id="oauth-verify-password"
+          v-model="password"
+          autocomplete="current-password"
+          name="password"
+          :rules="passwordRules"
+          :error-messages="errorMessage"
+          required
+        />
+      </AccountField>
 
-      <v-btn
-        type="submit"
-        block
-        color="primary"
-        size="large"
-        :loading="loading"
-        style="text-transform: none; font-weight: 500; height: 48px"
-        class="mb-4"
-      >
+      <v-btn type="submit" block color="primary" size="large" class="account-submit" :loading="loading">
         {{ t('account.oauth.verify.submit') }}
       </v-btn>
 
-      <v-btn
-        variant="text"
-        color="primary"
-        to="/account/signin"
-        style="text-transform: none; padding: 0; min-width: auto"
-        class="text-decoration-none"
-      >
-        {{ t('account.backToSignIn') }}
-      </v-btn>
+      <p class="account-foot">
+        <router-link to="/account/signin" class="account-link account-link--quiet">
+          {{ t('account.backToSignIn') }}
+        </router-link>
+      </p>
     </v-form>
   </div>
 </template>
@@ -48,6 +36,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
+import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import { t } from '@/i18n'

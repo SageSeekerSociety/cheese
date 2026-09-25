@@ -14,13 +14,13 @@ from sqlalchemy import select
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import looks_like_agent_handle
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, post_project
 
 
 def _project(client) -> dict:
-    return client.post(
-        "/projects", json={"name": "P", "owner_handle": "user-1"}
-    ).json()["data"]
+    return post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
+        "data"
+    ]
 
 
 def _room(client, project_id: str) -> dict:
@@ -40,13 +40,13 @@ def _thread(client, room_id: str, title: str = "子活") -> dict:
 def _record_screens(stub_hooks) -> list[str]:
     """每一次「起一块屏幕」的 topic id。起屏幕就是起容器，这是唯一看得见它的地方。"""
     seen: list[str] = []
-    original = stub_hooks.ensure_ready
+    original = stub_hooks.ensure
 
-    async def _spy(**kw):
-        seen.append(str(kw["session"].topic_id))
-        return await original(**kw)
+    async def _spy(session, opening):
+        seen.append(str(session.topic_id))
+        return await original(session, opening)
 
-    stub_hooks.ensure_ready = _spy
+    stub_hooks.ensure = _spy
     return seen
 
 

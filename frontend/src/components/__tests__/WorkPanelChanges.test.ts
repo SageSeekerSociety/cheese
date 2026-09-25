@@ -43,6 +43,8 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
+    // 总览里「进度」那一段会读它；这里不关心它，给一份空的。
+    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     listRoomTasks: vi.fn().mockImplementation((room: string) =>
       Promise.resolve({
         data: ['one', 'two'].map((name, index) => ({
@@ -65,8 +67,9 @@ vi.mock('../../api', async () => {
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getTerminal: vi.fn().mockResolvedValue({ available: false, backend: 'none' }),
+    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    getForgeConnection: vi.fn().mockResolvedValue({ kind: 'forgejo', connected: true, repo: 'o/r', url: null }),
     getGitDiff: (...a: unknown[]) => getGitDiff(...a),
     getPreview: vi.fn().mockResolvedValue(null),
     getTopicUsage: vi.fn().mockResolvedValue(null),
@@ -271,7 +274,7 @@ describe('文件面板', () => {
     await flush()
     expect(editor(container)!.value).toBe('A 话题的内容\n')
     expect(editor(container)!.readOnly).toBe(true)
-    expect(container.textContent).not.toContain('二进制文件，不能按文本编辑')
+    expect(container.textContent).not.toContain('非文本文件，无法编辑')
     expect(writeFile).not.toHaveBeenCalled()
   })
 
@@ -369,7 +372,7 @@ describe('文件面板', () => {
     await openFilesTool(container)
 
     expect(editor(container)).toBeNull()
-    expect(container.textContent).toContain('二进制文件，不能按文本编辑')
+    expect(container.textContent).toContain('非文本文件，无法编辑')
     expect(buttonByText(container, '保存')).toBeUndefined()
   })
 
@@ -388,7 +391,7 @@ describe('文件面板', () => {
     await openFilesTool(container)
 
     expect(editor(container)).toBeNull()
-    expect(container.textContent).toContain('文件太大')
+    expect(container.textContent).toContain('文件过大')
     expect(buttonByText(container, '保存')).toBeUndefined()
   })
 
@@ -404,8 +407,8 @@ describe('文件面板', () => {
     await fireEvent.click(buttonByText(container, '保存')!)
     await flush()
 
-    expect(container.textContent).toContain('这个文件在你编辑期间被改过')
-    const overwrite = buttons(container).find((b) => b.textContent?.includes('仍然覆盖保存'))
+    expect(container.textContent).toContain('这个文件已被修改')
+    const overwrite = buttons(container).find((b) => b.textContent?.includes('仍要保存'))
     expect(overwrite).toBeTruthy()
 
     // The explicit overwrite still detects another write after the refresh.

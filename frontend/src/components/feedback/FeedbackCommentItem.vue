@@ -17,7 +17,7 @@ import { relTime } from '@/lib/relTime'
 // - **点赞是中性色**。激活态是「底色出现 + 图标实心 + 文案从『赞』变『已赞』」
 //   三个信号一起变，颜色只是其中之一 —— 只靠底色的话，色觉障碍的读者看不出
 //   自己点没点过。琥珀（--accent）留给这一页唯一的主操作「发表评论」，不撒到
-//   评论区来（docs/design-system.md §0）。
+//   评论区来（docs/design-system.md §1.6）。
 // - **『回复 X』只在数据里有的时候才画**。`reply_to_handle` 是服务端折楼的时候
 //   存下来的快照：`parent_id` 永远指向顶层，所以「回的是楼里哪一条」在折过之后
 //   只能从这一列读，前端猜不出来。顶层评论恒为 NULL，因为它没有回复对象。
@@ -198,7 +198,7 @@ function confirmRemove() {
         hide-details
       />
       <!-- 楼内回复用中性色，不用琥珀：这一页唯一的主操作是底部的「发表评论」，
-           琥珀一次只能出现在一个地方（docs/design-system.md §0）。 -->
+           琥珀一次只能出现在一个地方（docs/design-system.md §1.6）。 -->
       <div class="fb-ci__form-actions">
         <v-btn variant="text" color="secondary" size="x-small" @click="emit('toggle-reply', comment.id)"> 取消 </v-btn>
         <v-btn

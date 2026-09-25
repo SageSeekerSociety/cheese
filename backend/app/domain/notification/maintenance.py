@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.core.email import get_email_sender
+from app.core.email import get_email_sender, is_placeholder_email
 from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ async def send_email(sessions, item):
         email = await session.scalar(
             select(User.email).where(User.id == item["recipientId"])
         )
-    if not email:
+    if not email or is_placeholder_email(email):
         raise ValueError("Email recipient has no address")
     subject, body_html = _compose_email(item)
     if not await get_email_sender().send(

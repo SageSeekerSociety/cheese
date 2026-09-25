@@ -7,17 +7,44 @@
 //
 // 页面上别的请求（topics/blocks/projects）在这个部署里不鉴权，所以只有铃铛会
 // 暴露出来。这份测试盯的就是「loggedIn 翻 true 时，手里是不是一个活令牌」。
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const refreshAccessToken = vi.fn()
 const getCurrentUser = vi.fn()
+// The refresh endpoint, answered the way the server would.
+const refresh = vi.fn()
 
 vi.mock('@/network/api/users', () => ({
   UserApi: {
-    refreshAccessToken: (...args: unknown[]) => refreshAccessToken(...args),
     getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
   },
 }))
+
+// Stands in for the browser's channel between tabs. A fresh one per test: the
+// real one would carry a message from one test's service into the next's.
+let tabs: Set<FakeChannel>
+class FakeChannel {
+  private handlers: ((event: MessageEvent) => void)[] = []
+  constructor(readonly name: string) {
+    tabs.add(this)
+  }
+  addEventListener(_type: 'message', handler: (event: MessageEvent) => void) {
+    this.handlers.push(handler)
+  }
+  postMessage(data: unknown) {
+    for (const other of tabs) {
+      if (other !== this && other.name === this.name) {
+        queueMicrotask(() => other.handlers.forEach((h) => h({ data } as MessageEvent)))
+      }
+    }
+  }
+  close() {
+    tabs.delete(this)
+  }
+}
+
+function answer(status: number, body: unknown = {}): Response {
+  return { ok: status >= 200 && status < 300, status, json: async () => body } as unknown as Response
+}
 
 // 一个 HS256 形状的假令牌：只有中段 payload 会被读，签名无所谓。
 function jwtWithExp(expSeconds: number): string {
@@ -36,23 +63,21 @@ async function freshService() {
   return mod.default
 }
 
-/**
- * 和被测代码同一份模块图里的 BusinessError。
- *
- * `vi.resetModules()` 之后 account.ts 会重新 import 一次错误类型，拿到的是一个
- * 新的类对象；spec 顶部静态 import 的那份和它 **不是同一个类**，`instanceof`
- * 判不出来（第一版就栽在这儿）。所以要在 reset 之后现取。
- */
-async function freshBusinessError() {
-  const mod = await import('@/network/types/error')
-  return mod.BusinessError
-}
-
 beforeEach(() => {
   localStorage.clear()
-  refreshAccessToken.mockReset()
+  refresh.mockReset()
   getCurrentUser.mockReset()
   getCurrentUser.mockResolvedValue({ data: { user: USER } })
+  tabs = new Set()
+  vi.stubGlobal('BroadcastChannel', FakeChannel)
+  vi.stubGlobal('fetch', async (url: string) => {
+    if (String(url).includes('refresh-token')) return refresh()
+    throw new Error(`unexpected request ${url}`)
+  })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('isTokenExpired', () => {
@@ -84,7 +109,7 @@ describe('AccountService.init()', () => {
     const account = await freshService()
     await account.init()
 
-    expect(refreshAccessToken).not.toHaveBeenCalled()
+    expect(refresh).not.toHaveBeenCalled()
     expect(account.loggedIn).toBe(true)
   })
 
@@ -93,12 +118,12 @@ describe('AccountService.init()', () => {
     const fresh = jwtWithExp(Date.now() / 1000 + 900)
     localStorage.setItem('accessToken', stale)
     localStorage.setItem('user', JSON.stringify(USER))
-    refreshAccessToken.mockResolvedValue({ data: { accessToken: fresh, user: USER } })
+    refresh.mockResolvedValue(answer(200, { data: { accessToken: fresh, user: USER } }))
 
     const account = await freshService()
     await account.init()
 
-    expect(refreshAccessToken).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
     expect(account.loggedIn).toBe(true)
     // 关键：loggedIn 翻 true 的那一刻，手里必须是新令牌，不能还是那个死的。
     expect(account.accessToken).toBe(fresh)
@@ -109,8 +134,7 @@ describe('AccountService.init()', () => {
     localStorage.setItem('accessToken', jwtWithExp(Date.now() / 1000 - 60))
     localStorage.setItem('user', JSON.stringify(USER))
     const account = await freshService()
-    const BusinessError = await freshBusinessError()
-    refreshAccessToken.mockRejectedValue(new BusinessError('Refresh token is missing', 401))
+    refresh.mockResolvedValue(answer(401))
 
     await account.init()
 
@@ -123,15 +147,14 @@ describe('AccountService.init()', () => {
     const stale = jwtWithExp(Date.now() / 1000 - 60)
     localStorage.setItem('accessToken', stale)
     localStorage.setItem('user', JSON.stringify(USER))
-    // 拦截器对「没拿到响应」的情况抛的是裸 Error，不是 BusinessError。
-    refreshAccessToken.mockRejectedValue(new Error('网络请求失败'))
+    refresh.mockRejectedValue(new TypeError('Failed to fetch'))
 
     const account = await freshService()
     await account.init()
 
     // 没有活令牌就不宣布登录——否则还是会撒 401。
     expect(account.loggedIn).toBe(false)
-    // 但刷新令牌还有 30 天，别拿网络抖动当登出理由。
+    // 但登录还没过期，别拿网络抖动当登出理由。
     expect(localStorage.getItem('accessToken')).toBe(stale)
     expect(localStorage.getItem('user')).not.toBeNull()
   })
@@ -139,7 +162,7 @@ describe('AccountService.init()', () => {
   it('续签返回体缺 accessToken/user 也算失败', async () => {
     localStorage.setItem('accessToken', jwtWithExp(Date.now() / 1000 - 60))
     localStorage.setItem('user', JSON.stringify(USER))
-    refreshAccessToken.mockResolvedValue({ data: { accessToken: '', user: null } })
+    refresh.mockResolvedValue(answer(200, { data: { accessToken: '', user: null } }))
 
     const account = await freshService()
     await account.init()
@@ -151,8 +174,39 @@ describe('AccountService.init()', () => {
     const account = await freshService()
     await account.init()
 
-    expect(refreshAccessToken).not.toHaveBeenCalled()
+    expect(refresh).not.toHaveBeenCalled()
     expect(account.loggedIn).toBe(false)
+  })
+})
+
+describe('another tab', () => {
+  it('signing out signs this tab out too', async () => {
+    localStorage.setItem('accessToken', jwtWithExp(Date.now() / 1000 + 600))
+    localStorage.setItem('user', JSON.stringify(USER))
+    const account = await freshService()
+    await account.init()
+    const other = new BroadcastChannel('cheese:session')
+
+    other.postMessage({ type: 'signed-out' })
+    await vi.waitFor(() => expect(account.loggedIn).toBe(false))
+
+    expect(account.accessToken).toBeNull()
+    other.close()
+  })
+
+  it('refreshing hands this tab the new token', async () => {
+    localStorage.setItem('accessToken', jwtWithExp(Date.now() / 1000 + 600))
+    localStorage.setItem('user', JSON.stringify(USER))
+    const account = await freshService()
+    await account.init()
+    const renewed = jwtWithExp(Date.now() / 1000 + 900)
+    const other = new BroadcastChannel('cheese:session')
+
+    other.postMessage({ type: 'token', token: renewed, user: USER })
+    await vi.waitFor(() => expect(account.accessToken).toBe(renewed))
+
+    expect(account.loggedIn).toBe(true)
+    other.close()
   })
 })
 

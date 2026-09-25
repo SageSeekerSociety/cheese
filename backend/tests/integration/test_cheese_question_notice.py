@@ -1,10 +1,10 @@
-"""芝士提出待确认问题后本轮停止等待 —— 看板要显示它，等回答的人要收到通知。
+"""芝士提出待回答的问题后本轮停止等待 —— 看板要显示它，等回答的人要收到通知。
 
 这是「下一步在人手上」里唯一**会中断运行**的一种：其余几种都是一轮结束之后的状态
-（验收卡已提交、检查未通过、交付被退回），而一个待确认问题把这一轮停在中途。中断
+（验收卡已提交、检查未通过、已退回），而一个待回答的问题把这一轮停在中途。中断
 本身在界面上没有任何痕迹 —— 房间只是安静下来，而安静与正在运行无法区分。
 
-所以两件事一起做：房间与任务进「待处理 · 待确认」，同时通知发起这一轮的人。芝士
+所以两件事一起做：房间与任务进「待处理 · 待回答」，同时通知发起这一轮的人。芝士
 是代他执行这件事的，这个问题也只有他能回答。
 
 判据是 #1084 定的那一条，不新增存储：**最近一条提问消息没有 `answered`**。
@@ -12,17 +12,16 @@
 
 import uuid
 
+from app.domain.room_task.presentation import NeedsYou
 from tests.conftest import seed_user
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.turn_log import open_turn
 
 
 def _room(client) -> tuple[str, str]:
     """alice 创建的房间 —— 创建者即名册上的第一个人，而提问要求调用者在名册内。"""
     auth = session_auth_headers("alice")
-    pid = client.post("/projects", json={"name": "P"}, headers=auth).json()["data"][
-        "id"
-    ]
+    pid = post_project(client, json={"name": "P"}, headers=auth).json()["data"]["id"]
     tid = client.post(
         "/topics", json={"project_id": pid, "title": "预算复核"}, headers=auth
     ).json()["data"]["id"]
@@ -72,11 +71,11 @@ def test_an_unanswered_question_puts_the_room_in_the_waiting_column(client):
 
     shown = _shown(client, pid, room)
     assert shown["column"] == "needs_you"
-    assert shown["display_status"] == "待确认"
+    assert shown["display_status"] == NeedsYou.awaiting_answer
 
 
 def test_answering_it_takes_the_room_back_out(client):
-    """已回答的问题不应让房间长期停留在待确认 —— 判据是**最近一条**。"""
+    """已回答的问题不应让房间长期停留在待回答 —— 判据是**最近一条**。"""
     seed_user(client, "alice")
     pid, room = _room(client)
     block = _ask(client, room)
@@ -88,14 +87,14 @@ def test_answering_it_takes_the_room_back_out(client):
 
 
 def test_a_second_question_after_an_answered_one_still_counts(client):
-    """回答之后又有新提问 —— 取最近一条，所以仍然停在待确认。"""
+    """回答之后又有新提问 —— 取最近一条，所以仍然停在待回答。"""
     seed_user(client, "alice")
     pid, room = _room(client)
     _answer(client, _ask(client, room))
 
     _ask(client, room, "那按项目的口径要不要含外包")
 
-    assert _shown(client, pid, room)["display_status"] == "待确认"
+    assert _shown(client, pid, room)["display_status"] == NeedsYou.awaiting_answer
 
 
 def test_the_person_who_started_the_turn_hears_the_question(client):

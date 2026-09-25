@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 BINDING_UNKNOWN_MESSAGE = "采纳未完成：暂时无法读取项目的代码仓库，稍后重试采纳"
 FORGE_KIND_UNKNOWN = "unknown"
-FORGE_UNKNOWN_DECLARATION = "ℹ️ 暂时读不出这个项目的托管方：采纳先等一下，稍后重试"
+FORGE_UNKNOWN_DECLARATION = "暂时无法读取项目的代码仓库，稍后重试"
 
 
 class ForgeKind(enum.StrEnum):

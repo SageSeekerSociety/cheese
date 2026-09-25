@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from tests.conftest import TEST_DATABASE_URL, seed_user
+from tests.integration.conftest import post_project
 
 
 def test_operator_update_persists_and_reaches_existing_api_client(client):
@@ -39,9 +40,9 @@ def test_operator_update_persists_and_reaches_existing_api_client(client):
 
     token = seed_user(client, "quota_operator")
     headers = {"Authorization": f"Bearer {token}"}
-    project = client.post(
-        "/projects", json={"name": "Team quota"}, headers=headers
-    ).json()["data"]
+    project = post_project(client, json={"name": "Team quota"}, headers=headers).json()[
+        "data"
+    ]
     team_id = str(project["team_id"])
     path = f"/teams/{team_id}/resource-quotas"
     assert (

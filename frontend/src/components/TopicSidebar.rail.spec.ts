@@ -141,13 +141,14 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('侧栏上常驻的是每天要用的那几样：全局、资料库和成员', () => {
+  it('侧栏上常驻的是每天要用的那几样：全局、资料库、成员和项目文档', () => {
     const { container } = mount()
     expect(container.querySelector('.proj-pages')).toBeNull()
     // 看板不在这里——它就是首页，项目名那一行点下去就到。日历一年点几次，收进了
     // 项目名旁边那个菜单。成员留在外面不是因为它天天用，而是因为「退出项目」长在
-    // 成员页上——名册一收进 ⋯，没注意到那个 ⋯ 的人就连怎么退出都找不到了。
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员'])
+    // 成员页上——名册一收进 ⋯，没注意到那个 ⋯ 的人就连怎么退出都找不到了。项目
+    // 文档和它们排在一起，不压在话题列表底下：话题一多，那个位置就看不见了。
+    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '项目文档'])
   })
 
   it('点项目名回项目首页，不打开任何房间', async () => {
@@ -323,38 +324,46 @@ describe('C5 行操作', () => {
   })
 })
 
-// 树上那颗「该谁动」的色点。它和看板用同一个来源（lib/board.ts），所以侧栏和板
-// 不可能给出两种说法——那正是这颗点存在的理由。
-describe('C6 该谁动的色点', () => {
-  function withPresentation(): Topic[] {
+// 行首只有一颗点，而且只为「在等你」亮：看板每一列的状态点对每一行都有，画进标题里
+// 就是满屏的点，哪一行都不显眼。看板上落在「待处理」列、但等的是别人的房间，在你的
+// 侧栏上不该和等你的那一个长得一样。
+describe('C6 等你的那一颗点', () => {
+  function rooms(): Topic[] {
     return [
       topic('root', null, 'root'),
-      { ...topic('a', 'root'), presentation: { column: 'needs_you', display_status: '等待验收' } },
-      { ...topic('b', 'root'), presentation: { column: 'building', display_status: '运行中' } },
+      {
+        ...topic('mine', 'root'),
+        awaits_me: true,
+        presentation: { column: 'needs_you', display_status: '待回答' },
+      },
+      {
+        ...topic('theirs', 'root'),
+        presentation: { column: 'needs_you', display_status: '待审阅' },
+      },
+      { ...topic('busy', 'root'), presentation: { column: 'building', display_status: '运行中' } },
     ]
   }
+  function rowOf(container: Element, title: string): HTMLElement {
+    const row = (Array.from(container.querySelectorAll('.topic-row')) as HTMLElement[]).find(
+      (r) => r.querySelector('.v-list-item-title')?.textContent?.trim() === title
+    )
+    if (!row) throw new Error(`没有找到 ${title} 这一行`)
+    return row
+  }
 
-  it('房间行按它自己的列上色，鼠标停上去说得出是哪一句', () => {
-    const { container } = mount({ topics: withPresentation() })
-    const dots = Array.from(container.querySelectorAll('.topic-row .board-dot')) as HTMLElement[]
-    expect(dots.length).toBe(2)
-    expect(dots.map((d) => d.getAttribute('title'))).toEqual(['等待验收', '运行中'])
-    // 「等你」是唯一的暖色实心点——整棵树上该抓眼睛的只有它。
-    expect(dots[0].getAttribute('style')).toContain('--warn')
-    expect(dots[1].getAttribute('style')).not.toContain('--warn')
+  it('只有等你的房间亮点', () => {
+    const { container } = mount({ topics: rooms() })
+    expect(rowOf(container, 'mine').querySelectorAll('[title="有待处理的事项"]').length).toBe(1)
+    expect(rowOf(container, 'theirs').querySelector('[title="有待处理的事项"]')).toBeNull()
+    expect(rowOf(container, 'busy').querySelector('[title="有待处理的事项"]')).toBeNull()
   })
 
-  it('后端没给就不画点，前端不另算一个顶上', () => {
-    // 顶一个上去的话，屏幕上那个颜色是哪个算法算的就说不清了；不画只是少一点信息。
-    const { container } = mount()
-    expect(container.querySelector('.topic-row .board-dot')).toBeNull()
-  })
-
-  it('色点不改变行上的文字', () => {
-    // 树上的字是人找一个房间的方式。加一颗点不能顺手改了它。
-    const plain = titlesIn(mount().container, '.topic-row')
-    const dotted = titlesIn(mount({ topics: withPresentation() }).container, '.topic-row')
-    expect(dotted).toEqual(plain)
+  it('看板状态不再以任何记号出现在标题里', () => {
+    const { container } = mount({ topics: rooms() })
+    for (const title of ['mine', 'theirs', 'busy']) {
+      const heading = rowOf(container, title).querySelector('.v-list-item-title')
+      expect(heading?.querySelector('[title]')).toBeNull()
+    }
   })
 })
 

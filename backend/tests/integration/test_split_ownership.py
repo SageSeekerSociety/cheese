@@ -4,7 +4,7 @@ A room stalls; someone else picks it up; 芝士 splits a sub-topic out of THEIR
 turn. The child used to inherit the parent room's owner regardless — which is not
 merely wrong bookkeeping: the child ends in an accept card, so the card landed on
 someone who had already stopped working on this, and the work stalled a second
-time. `cheese split` cannot supply the answer itself (it runs under the 分身's own
+time. `cheese_task` cannot supply the answer itself (it runs under the 分身's own
 `cheese-<hex12>` handle, and letting an agent name the driver would be forgeable
 anyway), so the endpoint reads it off the runner's live turn record.
 
@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock
 from app.api.deps import get_work_runner
 from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_token
+from tests.integration.conftest import post_project, session_token
 
 
 class _FakeTokens:
@@ -96,9 +96,7 @@ def _driving(monkeypatch, handle: str | None):
 
 
 def _project(client, owner: str) -> tuple[str, str]:
-    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
-        "data"
-    ]
+    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
     return p["id"], p["root_topic_id"]
 
 
@@ -108,18 +106,25 @@ def _agent() -> str:
 
 def _add_project_member(client, project_id: str, handle: str) -> None:
     """Splitting is a project-level permission, so a caller who is not on the
-    parent topic's roster still needs to be in the project."""
-    from app.domain.identity.actor import Actor
-    from app.domain.membership.services import MemberService
-    from app.domain.project.models import ProjectRole
+    parent topic's roster still needs to be in the project: on its team."""
+    from datetime import UTC, datetime
+
+    from app.domain.project.models import Project
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from tests.integration.conftest import registered
 
     async def _add() -> None:
         async with client.test_request_factory() as s:
-            await MemberService(s).add(
-                project_id=uuid.UUID(project_id),
-                user_handle=handle,
-                role=ProjectRole.member,
-                actor=Actor(handle="alice", user_id=None, via="token"),
+            project = await s.get(Project, uuid.UUID(project_id))
+            now = datetime.now(UTC)
+            s.add(
+                TeamUserRelation(
+                    team_id=project.team_id,
+                    user_id=await registered(s, handle),
+                    role=TeamMemberRole.MEMBER,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
             await s.commit()
 
@@ -127,7 +132,7 @@ def _add_project_member(client, project_id: str, handle: str) -> None:
 
 
 def _split(client, parent_id: str, *, by: str) -> dict:
-    """Dispatch work the way `cheese split` does from a 分身's sandbox: no human
+    """Dispatch work the way `cheese_task` does from a 分身's sandbox: no human
     token, the acting handle only in the body."""
     r = client.post(
         f"/topics/{parent_id}/split",
@@ -147,7 +152,7 @@ def _roster(client, topic_id: str) -> dict[str, str]:
 def _pr_body(client, pid: str, tid: str) -> str:
     """房间递卡开出的 PR，正文长什么样。
 
-    卡从**房间**递，因为递卡=封树开 PR，交付的是这条分支上一整批活（`cheese split`
+    卡从**房间**递，因为递卡=封树开 PR，交付的是这条分支上一整批活（`cheese_task`
     派出去的那些全在上面），支线自己递不了。
     """
     from app.domain.review import pr_publish

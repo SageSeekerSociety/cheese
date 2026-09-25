@@ -35,6 +35,7 @@ import {
 } from '../../lib/docEditState'
 import { compareRoundTrip, docExtensions, docReplaceRange, serializeDoc } from '../../lib/docMarkdown'
 import { createSlashCommands } from '../../lib/docSlashMenu'
+import { topicTitle } from '../../lib/topicState'
 import { myHandle } from '../../me'
 import CodeEditor from '../CodeEditor.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -55,8 +56,10 @@ const props = withDefaults(
     // Project topics (A2): resolve a doc node's upgraded_to_topic_id to the
     // subtopic's title + live status for the in-place live-ref badge.
     topicList?: Topic[]
+    /** 项目 AI 队友的名字：文档被它改过时，提示里说的是它，不写死「芝士」。 */
+    agentName?: string
   }>(),
-  { topicList: () => [] }
+  { topicList: () => [], agentName: '芝士' }
 )
 
 // open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
@@ -465,8 +468,8 @@ const paused = computed(() =>
 )
 const pausedHint = computed(() =>
   editable.value
-    ? '此文档含编辑器不完全支持的语法，自动保存已暂停；切到源码模式编辑即可保存'
-    : '只读模式下不会自动保存；切回编辑模式即可保存这些改动'
+    ? '这篇文档包含编辑器无法显示的格式，自动保存已暂停。在源码模式下编辑可以保存'
+    : '只读模式下不会自动保存，回到编辑后可以保存这些改动'
 )
 
 // Full markdown the file should contain if we saved right now.
@@ -1203,7 +1206,7 @@ async function showConflictWithServerDoc(topicId: string) {
     docVersion.value = block?.doc_version ?? 0
     externalDoc.value = block?.content ?? ''
   } catch {
-    errorMsg.value = '文档在别处被改过了，这次保存没写进去'
+    errorMsg.value = '文档已在别处更新，本次未保存'
   }
 }
 
@@ -1409,84 +1412,14 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
-      <!-- 文档自己的工具条。保存状态 / 只读 / 源码 只对这个 tab 有意义，所以住在
-           这个 tab 里 —— 每个 tab 自带自己的控件，后面四张卡才各改各的文件。 -->
-      <div class="doc-bar">
-        <v-spacer />
-        <span v-if="saveStatus === 'loading'" class="t-meta me-2">加载中…</span>
-        <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">保存中…</span>
-        <!-- 军规 1: autosave is paused — say so instead of faking progress. -->
-        <span v-else-if="saveStatus === 'paused'" class="doc-status-paused me-2" :title="pausedHint">
-          <v-icon size="13">mdi-pause-circle-outline</v-icon>
-          已暂停 · 改动未保存
-        </span>
-        <span v-else-if="saveStatus === 'saved'" class="d-inline-flex align-center ga-1 t-meta me-2">
-          <span class="status-dot status-dot--ok" />已保存
-        </span>
-        <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
-
-        <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
-             就回去。平常用不上，进去的入口在 ⋯ 里。 -->
-        <v-btn
-          v-if="!editable && !editingBlocked"
-          size="small"
-          variant="text"
-          color="medium-emphasis"
-          class="me-1"
-          title="回到编辑"
-          @click="toggleEditable"
-        >
-          只读
-        </v-btn>
-        <v-btn
-          v-if="sourceMode"
-          size="small"
-          variant="text"
-          class="me-1 tool-btn--active"
-          title="退出源码模式"
-          @click="toggleSourceMode"
-        >
-          源码
-        </v-btn>
-        <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
-          <template #activator="{ props: menuProps }">
-            <v-btn
-              v-bind="menuProps"
-              icon="mdi-dots-horizontal"
-              size="small"
-              variant="text"
-              color="medium-emphasis"
-              title="更多"
-              aria-label="更多"
-            />
-          </template>
-          <v-list density="compact" aria-label="文档选项">
-            <v-list-item
-              v-if="!editingBlocked"
-              :title="editable ? '设为只读' : '回到编辑'"
-              :disabled="sourceMode"
-              @click="toggleEditable"
-            />
-            <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
-                 syntax the visual editor can't fully represent (军规 1)。手机上不提供，
-                 见 editingBlocked。 -->
-            <v-list-item
-              v-if="mdAndUp"
-              :title="sourceMode ? '退出源码模式' : '源码模式'"
-              subtitle="直接编辑 markdown 原文"
-              @click="toggleSourceMode"
-            />
-          </v-list>
-        </v-menu>
-      </div>
       <!-- 军规 1 notices. Above the stage so they show in BOTH visual and
            source mode — the states they describe survive a mode switch. -->
       <!-- Edits a mode switch could not carry over: held, not dropped. -->
       <div v-if="hasPendingEdits" class="doc-notice">
         <v-icon size="16" class="doc-notice__icon">mdi-content-save-alert-outline</v-icon>
         <div class="doc-notice__text">
-          有未保存的改动没有带入当前编辑器，编辑器显示的是磁盘上的版本。改动仍然保留，可以随时取回。
-          <template v-if="pendingEdits.length > 1">共 {{ pendingEdits.length }} 份，先取回最近一份。</template>
+          未保存的改动已保留，编辑器中是已保存的版本。
+          <template v-if="pendingEdits.length > 1">共 {{ pendingEdits.length }} 份，将先恢复最近一份。</template>
         </div>
         <button type="button" class="doc-notice__btn" @click="applyPendingEdits">恢复我的改动</button>
         <button type="button" class="doc-notice__btn doc-notice__btn--quiet" @click="discardPendingEdits">丢弃</button>
@@ -1494,13 +1427,85 @@ onBeforeUnmount(() => {
       <!-- Server and local both moved: neither side wins silently. -->
       <div v-if="externalDoc !== null" class="doc-notice doc-notice--conflict">
         <v-icon size="16" class="doc-notice__icon">mdi-source-branch</v-icon>
-        <div class="doc-notice__text">芝士更新了磁盘上的这篇文档，而你有未保存的改动。两份都还在，选一份继续。</div>
-        <button type="button" class="doc-notice__btn" @click="viewExternalDoc">查看磁盘版本</button>
-        <button type="button" class="doc-notice__btn" @click="overwriteWithMine">用我的版本覆盖</button>
+        <div class="doc-notice__text">{{ agentName }}更新了这篇文档，你也有未保存的改动。两个版本都已保留</div>
+        <button type="button" class="doc-notice__btn" @click="viewExternalDoc">查看{{ agentName }}的版本</button>
+        <button type="button" class="doc-notice__btn" @click="overwriteWithMine">保留我的版本</button>
       </div>
 
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
+        <!-- 文档自己的工具条。保存状态 / 只读 / 源码 只对这个 tab 有意义，所以住在
+             这个 tab 里 —— 每个 tab 自带自己的控件，后面四张卡才各改各的文件。
+             它浮在文档右上角、标题上方那片留白里，不单占一行：平时它只有一颗 ⋯，
+             单占一行就是一条什么都没说的横杠。源码模式下编辑器顶到最上面，浮着会压住
+             代码，才回到自己的一行。 -->
+        <div class="doc-bar" :class="{ 'doc-bar--row': sourceMode }">
+          <span v-if="saveStatus === 'loading'" class="t-meta me-2">加载中…</span>
+          <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">保存中…</span>
+          <!-- 军规 1: autosave is paused — say so instead of faking progress. -->
+          <span v-else-if="saveStatus === 'paused'" class="doc-status-paused me-2" :title="pausedHint">
+            <v-icon size="13">mdi-pause-circle-outline</v-icon>
+            已暂停 · 改动未保存
+          </span>
+          <span v-else-if="saveStatus === 'saved'" class="d-inline-flex align-center ga-1 t-meta me-2">
+            <span class="status-dot status-dot--ok" />已保存
+          </span>
+          <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
+
+          <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
+               就回去。平常用不上，进去的入口在 ⋯ 里。 -->
+          <v-btn
+            v-if="!editable && !editingBlocked"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            class="me-1"
+            title="回到编辑"
+            @click="toggleEditable"
+          >
+            只读
+          </v-btn>
+          <v-btn
+            v-if="sourceMode"
+            size="small"
+            variant="text"
+            class="me-1 tool-btn--active"
+            title="退出源码模式"
+            @click="toggleSourceMode"
+          >
+            源码
+          </v-btn>
+          <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
+            <template #activator="{ props: menuProps }">
+              <v-btn
+                v-bind="menuProps"
+                icon="mdi-dots-horizontal"
+                size="small"
+                variant="text"
+                color="medium-emphasis"
+                title="更多"
+                aria-label="更多"
+              />
+            </template>
+            <v-list density="compact" aria-label="文档选项">
+              <v-list-item
+                v-if="!editingBlocked"
+                :title="editable ? '设为只读' : '回到编辑'"
+                :disabled="sourceMode"
+                @click="toggleEditable"
+              />
+              <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
+                   syntax the visual editor can't fully represent (军规 1)。手机上不提供，
+                   见 editingBlocked。 -->
+              <v-list-item
+                v-if="mdAndUp"
+                :title="sourceMode ? '退出源码模式' : '源码模式'"
+                subtitle="直接编辑 markdown 原文"
+                @click="toggleSourceMode"
+              />
+            </v-list>
+          </v-menu>
+        </div>
         <!-- 源码模式: the raw markdown file in Monaco. Full-bleed (no page
            column) — this is the file itself, not the document view. -->
         <div v-if="sourceMode" class="doc-source" @keydown="onDocKeydown">
@@ -1522,7 +1527,7 @@ onBeforeUnmount(() => {
         >
           <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
             <!-- Large document title (Feishu Docs), = the topic title -->
-            <h1 class="doc-page__title">{{ topic.title }}</h1>
+            <h1 class="doc-page__title">{{ topicTitle(topic) }}</h1>
             <!-- 军规 1 banner: this doc uses syntax the visual editor can't
                fully represent — autosave is paused, source mode is lossless. -->
             <div v-if="lossy" class="doc-lossy-banner">
@@ -1530,12 +1535,12 @@ onBeforeUnmount(() => {
               <div class="doc-lossy-banner__text">
                 {{
                   editingBlocked
-                    ? '此文档包含编辑器暂不完全支持的语法，改起来需要源码模式，手机上不提供。在电脑上打开可以编辑。'
-                    : '此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。自动保存已暂停，建议用源码模式编辑。'
+                    ? '这篇文档包含编辑器无法显示的格式，需要在源码模式下编辑。手机上暂不支持，可以在电脑上打开'
+                    : '这篇文档包含编辑器无法显示的格式，保存会丢失这些格式，因此自动保存已暂停。在源码模式下编辑可以保留原文'
                 }}
               </div>
               <button v-if="!editingBlocked" type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">
-                源码模式
+                切换到源码模式
               </button>
             </div>
             <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
@@ -1662,16 +1667,15 @@ onBeforeUnmount(() => {
         <v-card rounded="lg">
           <v-card-title class="text-subtitle-1 d-flex align-center ga-2">
             <v-icon size="20" color="warning">mdi-alert-outline</v-icon>
-            确认覆盖保存？
+            仍要保存？
           </v-card-title>
           <v-card-text class="text-body-2 pt-0">
-            此文档包含可视化编辑器暂不完全支持的语法。直接保存会按编辑器的理解重写文件，不支持的格式将丢失。
-            用源码模式编辑可以完整保留原文，你刚才的改动会被暂存，切过去之后可以一键取回。
+            编辑器无法显示的格式会丢失。在源码模式下编辑可以保留原文，你的改动会暂存
           </v-card-text>
           <v-card-actions>
             <v-spacer />
             <v-btn size="small" variant="text" @click="lossyConfirmOpen = false"> 取消 </v-btn>
-            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode()"> 用源码模式 </v-btn>
+            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode()"> 用源码模式编辑 </v-btn>
             <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave"> 仍要保存 </v-btn>
           </v-card-actions>
         </v-card>
@@ -1698,13 +1702,25 @@ onBeforeUnmount(() => {
    控件挂在 DocPanel 的 v-toolbar 上，那条 toolbar 同时还是「文档」标题、专注按钮
    和五个抽屉图标的家 —— 现在标题和专注归话题头部，抽屉图标变成了 tab。 */
 .doc-bar {
+  position: absolute;
+  top: 6px;
+  right: 14px;
+  z-index: 2;
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
+  min-height: 28px;
+  padding: 0 2px 0 6px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.doc-bar--row {
+  position: static;
+  flex: 0 0 auto;
+  justify-content: flex-end;
   min-height: 34px;
   padding: 0 6px;
   border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-radius: 0;
 }
 .doc {
   /* In the split workspace the doc is a full white surface that fills the pane —
@@ -1732,20 +1748,22 @@ onBeforeUnmount(() => {
   background: transparent;
   padding: 32px 48px 72px;
 }
+/* 和项目页的大标题同一档（.t-page-title 23/33）：这一栏只有对话那么宽，30px 的
+   标题和 16px 的正文放在 14px 的对话旁边，像另一个产品。 */
 .doc-page__title {
   max-width: 720px;
   margin: 0 auto 0.4em;
   font-family: var(--font-display);
-  font-size: 1.85rem;
+  font-size: 23px;
   font-weight: 650;
-  line-height: 1.3;
+  line-height: var(--lh-23);
   letter-spacing: -0.02em;
   color: var(--ink);
 }
 
 /* Tool icon when its drawer is open — neutral ink, not amber. */
 .tool-btn--active {
-  color: rgb(var(--v-theme-primary)) !important;
+  color: var(--ink) !important;
   background: transparent;
 }
 .doc-editor-wrap {
@@ -1849,15 +1867,18 @@ onBeforeUnmount(() => {
   }
 }
 /* Stage holds the editor and, when pinned, the docked tool panel beside it. */
+/* 竖着排：源码模式下工具条是压在编辑器上面的一行。平时它浮着，不占这一列。 */
 .doc-stage {
   position: relative;
   display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
 }
 .doc-body {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
 }
 .md-content :deep(p) {
   margin: 0 0 6px;
@@ -1885,8 +1906,9 @@ onBeforeUnmount(() => {
   min-height: 240px;
   max-width: 720px;
   margin: 0 auto;
-  line-height: 1.8;
-  font-size: 16px;
+  /* 连续正文那一档（.t-reading 15/24）。 */
+  font-size: 15px;
+  line-height: var(--lh-15-reading);
   color: var(--text);
 }
 .doc-editor :deep(.doc-prose:focus) {
@@ -1971,14 +1993,14 @@ onBeforeUnmount(() => {
   opacity: 0.4;
   cursor: default;
 }
-/* Feishu-style comment anchor: quiet dashed amber underline; hover lifts. */
+/* Feishu-style comment anchor: a quiet dashed underline; hover fills. */
 .doc-editor :deep(.comment-anchor) {
-  border-bottom: 1.5px dashed rgba(var(--v-theme-primary), 0.55);
+  border-bottom: 1.5px dashed var(--faint);
   padding-bottom: 1px;
   cursor: pointer;
 }
 .doc-editor :deep(.comment-anchor:hover) {
-  background: rgba(var(--v-theme-primary), 0.08);
+  background: var(--fill);
 }
 .doc-handle__grip {
   cursor: grab;
@@ -1995,29 +2017,28 @@ onBeforeUnmount(() => {
    evenly; vertical space leans UP (more before than after) so headings bind
    to their section. ---- */
 .doc-editor :deep(h1) {
-  font-size: 1.6em;
+  font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.015em;
-  line-height: 1.35;
+  line-height: var(--lh-18);
   margin: 1.1em 0 0.4em;
 }
 .doc-editor :deep(h2) {
-  font-size: 1.32em;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.4;
+  line-height: var(--lh-15-reading);
   margin: 1.15em 0 0.35em;
 }
 .doc-editor :deep(h3) {
-  font-size: 1.13em;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.45;
+  line-height: var(--lh-14);
   margin: 1em 0 0.3em;
 }
 .doc-editor :deep(h4) {
-  font-size: 1em;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: var(--lh-14);
   margin: 0.9em 0 0.25em;
   color: var(--ink);
 }
@@ -2067,7 +2088,7 @@ onBeforeUnmount(() => {
 .doc-editor :deep(ul[data-type='taskList'] input[type='checkbox']) {
   width: 15px;
   height: 15px;
-  accent-color: rgb(var(--v-theme-primary));
+  accent-color: var(--ink);
   cursor: pointer;
   vertical-align: middle;
   margin: 0;
@@ -2086,11 +2107,11 @@ onBeforeUnmount(() => {
 .doc-editor :deep(blockquote) {
   margin: 0.7em 0;
   padding: 6px 14px;
-  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-left: 3px solid var(--line-2);
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--accent) 4%, transparent);
-  color: rgba(var(--v-theme-on-surface), 0.72);
+  background: var(--fill);
+  color: var(--muted);
 }
 .doc-editor :deep(blockquote blockquote) {
   margin: 0.4em 0;
@@ -2133,12 +2154,12 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   /* 装饰性角标，不按可读下限走：它蹲在第一行代码的右上角，放大到 12px 就压住
      长行的字（量过：标签到 19px，第一行从 16px 起）。 */
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.04em;
   color: var(--faint);
   text-transform: lowercase;
   pointer-events: none;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--dur-quick) var(--ease-standard);
 }
 .doc-editor :deep(pre:hover)::before {
   opacity: 0;
@@ -2226,11 +2247,11 @@ onBeforeUnmount(() => {
 }
 /* Table rows breathe on hover (body only, not the header). */
 .doc-editor :deep(.doc-prose tbody tr:hover td) {
-  background: color-mix(in srgb, var(--accent) 3%, transparent);
+  background: var(--fill);
 }
 
 /* ---- 军规 1 UI ---- */
-/* Lossy-load banner: amber, quiet, right above the doc. */
+/* Lossy-load banner: a warning, so the warn triple — mark, wash, ink. */
 .doc-lossy-banner {
   display: flex;
   align-items: flex-start;
@@ -2239,14 +2260,14 @@ onBeforeUnmount(() => {
   margin: 0 auto 16px;
   padding: 9px 12px;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  border: 1px solid var(--warn);
+  background: var(--warn-wash);
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--text);
 }
 .doc-lossy-banner__icon {
-  color: var(--accent);
+  color: var(--warn);
   margin-top: 2px;
 }
 .doc-lossy-banner__text {
@@ -2255,17 +2276,17 @@ onBeforeUnmount(() => {
 }
 .doc-lossy-banner__btn {
   flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border: 1px solid var(--warn);
   background: var(--surface);
-  color: var(--accent-ink);
-  border-radius: 6px;
+  color: var(--warn-ink);
+  border-radius: var(--radius-sm);
   padding: 2px 10px;
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .doc-lossy-banner__btn:hover {
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background: var(--warn-wash);
 }
 /* Header status for the paused state — an honest, quiet warning, not the
    「编辑中…」 that used to impersonate a save in progress. */
@@ -2314,7 +2335,7 @@ onBeforeUnmount(() => {
   padding: 2px 10px;
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .doc-notice__btn:hover {
   background: color-mix(in srgb, var(--text) 6%, var(--surface));

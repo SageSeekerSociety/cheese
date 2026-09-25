@@ -7,9 +7,9 @@ from datetime import UTC
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.project.models import AiMode, Project, ProjectRole
+from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.task.models import Task, TaskMembership
 from app.domain.topic.models import TopicKind
@@ -18,6 +18,19 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _intent_brief(intent: str) -> str:
+    """把用户写的那句话拼成新生房间的简报；没写就返回空串，调用方不写任何东西。
+
+    纯模板，不调模型——``seed_brief_doc`` 的约定是「平台把已有的文字搬个地方」，
+    所以它署 system 而不是芝士（见 ``TopicService.seed_brief_doc`` 的注释）。这也
+    是赛题报名那条路径的形状：简报是拼出来的，房间里的第一句人话仍由人来说。
+    """
+    text = intent.strip()
+    if not text:
+        return ""
+    return f"## 这个项目要做什么\n\n{text}\n\n下一步：在下方对话中说明你要做什么。"
 
 
 class ProjectService:
@@ -39,24 +52,31 @@ class ProjectService:
         team_id: int | None = None,
         external_task_id: int | None = None,
         forge_kind: str = "forgejo",
+        intent: str = "",
     ) -> Project:
         """Create a project and its root topic (= 项目本身, spec §6).
 
-        Every project belongs to a team (项目归团队, v4): pass ``team_id`` for a
-        shared team; with None the owner's PERSONAL team is resolved (个人 =
-        单人真团队), so 个人项目 is just 个人团队的项目. Only when the owner
-        handle doesn't resolve to a user (agent handles, bare test fixtures)
-        does the row keep the legacy ``team_id NULL``.
+        Every project belongs to a team: pass ``team_id`` for a shared team; with
+        None the owner's personal team is used, so a personal project is its
+        team's project. With neither a team nor an owner who is a real user there
+        is nowhere for the project to belong, and it is refused.
+
+        ``intent`` is what the person said they wanted to do, when the creation
+        form asked (#946 片 C). It is stored as written and, if non-empty, copied
+        into the newborn room's document — see :func:`_intent_brief`.
         """
         owner_handle = owner_handle or None  # '' would seed a broken root roster
         if team_id is None and owner_handle:
             team_id = await self._resolve_personal_team_id(owner_handle)
+        if team_id is None:
+            raise ValidationError("项目需要归属一个团队")
         project = await self._repo.add(
             name=name,
             owner_handle=owner_handle,
             ai_mode=ai_mode,
             team_id=team_id,
             external_task_id=external_task_id,
+            intent=intent,
         )
         project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         root = await self._topics.add(
@@ -82,7 +102,6 @@ class ProjectService:
         # an agent that exists.
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
-        await self._seed_roster(project)
         # 总览 = 项目本体: its roster mirrors the whole project (fusion-design §3).
         # Seed it with every current project member; 芝士 is already seated above.
         # 问的是名册那一个读法，不是人那一半：本文件在 roster() 的下游（它 import
@@ -97,51 +116,16 @@ class ProjectService:
 
         if forge_kind == "forgejo":
             await provision_repository(project.id, self._session)
+        # What the person said they wanted to do, carried into the room they are
+        # about to land in. Without it the room opens empty and the only thing
+        # answering 「我该说什么」 is its starter block; with it, the first thing
+        # they read is their own sentence, and the next step is named.
+        brief = _intent_brief(intent)
+        if brief:
+            from app.domain.topic.services import TopicService
+
+            await TopicService(self._session).seed_brief_doc(root, brief)
         return project
-
-    async def _seed_roster(self, project: Project) -> None:
-        """新项目的名册：这个小队里的其他人。
-
-        项目本来就归小队（项目归团队 v4），所以一个小队开的项目，队里的人默认就是
-        项目成员——让他们一个一个再被邀请一遍，等于把「我们是一个队」这件事重说
-        一次。个人项目落在个人小队上，那里只有建项目的人自己，所以这条规则在那儿
-        什么也不做。
-
-        **建项目的人不写进这张表**，尽管他显然是这个项目的人。这不是遗漏：这个仓
-        里「谁是所有者」记在 ``Project.owner_handle`` 上，成员表存的是**其他**人，
-        很多地方按这个前提写（包括「把所有者加进名册」这个动作本身）。把他也塞进
-        来会让那些调用变成插重复键。名册上照样有他——``ProjectRepository.people``
-        读的时候补出那一行，所以少的只是一条**写**进去的记录。
-
-        每一步都尽量往下做：解析不出用户的 handle（agent、测试夹具）不该让建项目
-        整个失败——名册可以事后补，项目建不出来就什么都没有了。
-        """
-        from app.domain.membership.services import MemberService
-        from app.domain.team.services import team_service
-        from app.domain.user.repositories import UserRepository
-
-        members = MemberService(self._session)
-        if project.team_id is None:
-            return
-        try:
-            relations = await team_service(self._session).get_team_members(
-                project.team_id
-            )
-            users = await UserRepository(session=self._session).get_by_ids(
-                [r.user_id for r in relations]
-            )
-        except Exception:  # noqa: BLE001 — 名册补得上，项目建不出来就没了
-            logger.exception("seeding roster from team %s failed", project.team_id)
-            return
-        for relation in relations:
-            user = users.get(relation.user_id)
-            if user is None or user.username == project.owner_handle:
-                continue
-            await members.ensure_member(
-                project_id=project.id,
-                user_handle=user.username,
-                role=ProjectRole.member,
-            )
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
         """owner_handle == User.username (fusion A1) → that user's personal team,
@@ -224,10 +208,8 @@ class ProjectService:
         """Resolve quota ownership, including older personal-team projects."""
         return await self._repo.team_for_project(project_id)
 
-    async def teams_for_projects(
-        self, projects: list[Project]
-    ) -> dict[uuid.UUID, int | None]:
-        """`team_for_project` 的批量版（一条 JOIN 查回所有个人小队归属）。
+    async def teams_for_projects(self, projects: list[Project]) -> dict[uuid.UUID, int]:
+        """每个项目 → 它的团队。
 
         给别的领域（usage 的批量额度汇总）调的门 —— 跨领域走 service，不摸
         对方的 repository（架构守卫）。
@@ -267,23 +249,8 @@ class ProjectService:
         return await self._repo.list_for_space(space_id)
 
     async def list_for_team(self, team_id: int) -> list[Project]:
-        """A team's 项目 page. For a personal team this also folds in the owner's
-        legacy team-less projects (rows created before 项目归团队), newest first."""
-        from app.domain.team.services import team_service
-        from app.domain.user.repositories import UserRepository
-
-        projects = await self._repo.list_by_team(team_id)
-        team = await team_service(self._session).get_team(team_id)
-        if team is not None and team.personal_owner_user_id is not None:
-            owner = await UserRepository(session=self._session).get_by_id(
-                team.personal_owner_user_id
-            )
-            if owner is not None:
-                projects = projects + await self._repo.list_personal_legacy(
-                    owner.username
-                )
-                projects.sort(key=lambda p: p.created_at, reverse=True)
-        return projects
+        """A team's 项目 page, newest first."""
+        return await self._repo.list_by_team(team_id)
 
     async def _accept_task_protocol(self, project: Project, task_id: int) -> None:
         """Apply the 赛题's 机构协议 to a freshly created project (#370).

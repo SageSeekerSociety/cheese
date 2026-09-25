@@ -216,41 +216,6 @@
       '200':
         description: User's answers list
 
-/users/{userId}/followers:
-  get:
-    summary: Get user's followers
-    operationId: getUserFollowers
-    tags: [Users]
-    parameters:
-      - $ref: '../../common/parameters.yaml#/UserId'
-      - $ref: '../../common/parameters.yaml#/PageStart'
-      - $ref: '../../common/parameters.yaml#/PageSize'
-    responses:
-      '200':
-        description: User's followers list
-  post:
-    summary: Follow user
-    operationId: followUser
-    tags: [Users]
-    security:
-      - BearerAuth: []
-    parameters:
-      - $ref: '../../common/parameters.yaml#/UserId'
-    responses:
-      '200':
-        description: Followed successfully
-  delete:
-    summary: Unfollow user
-    operationId: unfollowUser
-    tags: [Users]
-    security:
-      - BearerAuth: []
-    parameters:
-      - $ref: '../../common/parameters.yaml#/UserId'
-    responses:
-      '200':
-        description: Unfollowed successfully
-
 /users/{userId}/follow/questions:
   get:
     summary: Get questions followed by user
@@ -263,19 +228,6 @@
     responses:
       '200':
         description: Followed questions list
-
-/users/{userId}/follow/users:
-  get:
-    summary: Get users followed by user
-    operationId: getUserFollowedUsers
-    tags: [Users]
-    parameters:
-      - $ref: '../../common/parameters.yaml#/UserId'
-      - $ref: '../../common/parameters.yaml#/PageStart'
-      - $ref: '../../common/parameters.yaml#/PageSize'
-    responses:
-      '200':
-        description: Followed users list
 
 # Passkey endpoints
 /users/auth/passkey/challenge:
@@ -637,14 +589,14 @@
       '200':
         description: Active sessions list
   delete:
-    summary: Logout all sessions
+    summary: Sign out every other session
     operationId: logoutAllSessions
     tags: [Users]
     security:
       - BearerAuth: []
     responses:
       '200':
-        description: All sessions terminated
+        description: Every session but the caller's is terminated
 
 /users/me/sessions/{sessionId}:
   delete:

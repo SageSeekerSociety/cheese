@@ -16,7 +16,7 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_accept_pr import (
     _give_card_a_pr,
     _rendered_head,
@@ -30,7 +30,7 @@ def remote_delivery(client, request):
 
 
 def _project(client) -> str:
-    r = client.post("/projects", json={"name": "P"})
+    r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

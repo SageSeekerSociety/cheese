@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ProjectMemberRow, Topic } from '@/cx_types'
+import type { AgentControlState, ProjectMemberRow, Topic } from '@/cx_types'
 import type { CardPhase } from '@/lib/topicState'
 
 import { computed, ref } from 'vue'
@@ -30,6 +30,8 @@ const emit = defineEmits<{
   (e: 'turn-done'): void
   // 芝士 开工 / 收工。必须一路透传：右边那格「现场」靠它在开工那一刻出现。
   (e: 'working', working: boolean): void
+  // 会话控制状态的那一帧。同样一路透传给现场那格的控制条。
+  (e: 'agent-control', state: AgentControlState): void
   (e: 'state-changed', payload: unknown): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string, taskId?: string | null): void
@@ -73,6 +75,7 @@ defineExpose({
       :unread-on-open="unreadOnOpen"
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
+      @agent-control="emit('agent-control', $event)"
       @state-changed="emit('state-changed', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path, taskId) => emit('open-file', path, taskId)"
@@ -80,17 +83,21 @@ defineExpose({
       @upgrade-message="emit('upgrade-message', $event)"
       @open-topic="emit('open-topic', $event)"
     >
-      <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
-      <template #timeline-end>
+      <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
+           见，但平时只占一行，不把对话挤到只剩几行。 -->
+      <template #above-composer>
         <TopicAcceptCard
           ref="acceptRef"
+          docked
           :topic-id="topic.id"
           :topic-status="topic.status"
           @phase="emit('phase', $event)"
           @review="emit('review')"
         />
-        <!-- Agent 反馈卡。和采纳框同一个位置：都是「这一轮结束时，平台要人做的
-             一个决定」。
+      </template>
+      <template #timeline-end>
+        <!-- Agent 反馈卡：「这一轮结束时，平台要人做的一个决定」，接在这一轮的
+             对话后面。
              什么时候出现由**服务端**说了算：它列出这个话题里还活着的提案卡
              （`GET /topics/{id}/feedback-proposals`），一张都没有就什么都不画。
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；

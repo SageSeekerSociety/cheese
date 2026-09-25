@@ -133,13 +133,8 @@ export function useNotificationRenderer() {
         }
         break
       case 'PROJECT_INVITE':
-        if (contextMetadata.projectId) {
-          return {
-            name: 'ProjectDetail',
-            params: { id: contextMetadata.projectId },
-          }
-        }
-        break
+        // 项目邀请在「待定」那一页答复：被邀请的人还不在项目里，进不了项目页。
+        return { name: 'HomeTeamsPending' }
     }
 
     return undefined

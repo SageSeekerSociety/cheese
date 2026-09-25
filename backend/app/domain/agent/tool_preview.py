@@ -17,8 +17,8 @@
 - **解析命令时先把没信息量的前置段落剥掉**（``cd``、``export``、开头的
   ``VAR=值``）。剩下那段的头一个词认得出来的，连动词一起换成更贴切的那个
   （``action``）—— 认不出来就原样显示，不猜：动词说错比英文更难读。
-- **一条命令里有 cheese CLI 那一段时，显示的就是那一段。** ``make && cheese doc
-  set`` 做的两件事里，房间要看见的是后一件：它改的是这个项目的东西，不只是这台
+- **一条命令里有 cheese CLI 那一段时，显示的就是那一段。** ``make && cheese
+  sync`` 做的两件事里，房间要看见的是后一件：它动的是这个项目的东西，不只是这台
   机器上的文件。圆点也判在同一段上（``cheese_subcommand``）—— 判断和显示咬在一
   起，才不会出现「这一行写着 make，点却是琥珀色的」。
 
@@ -113,17 +113,16 @@ _TOOL_ARG = {
     "ls": "path",
     "find": "pattern",
     "grep": "pattern",
-    # 平台 CLI 的命令，在 pi 房间里各是一个工具。这张表是判断题不是覆盖题 ——
-    # 收录的是「后面跟哪个参数才说得出这一步在动什么」有答案的那些。`cheese
-    # status`、`cheese members`、`cheese doc get` 这种只有动词就够了，硬找一个
-    # 参数填进去反而不如留空。
-    "cheese_chat_send": "content",
+    # 平台工具表里的工具，和 pi 房间里由 CLI 命令变成的工具。这张表是判断题不是
+    # 覆盖题 —— 收录的是「后面跟哪个参数才说得出这一步在动什么」有答案的那些。
+    # `cheese_status`、`cheese_members`、`cheese_doc_get` 这种只有动词就够了，硬找
+    # 一个参数填进去反而不如留空。
     "chat_send": "content",
     # 搜记录时说的是在找什么。翻最近一页、按 id 读一条或它的回复，参数不是没有
     # 就是一个 UUID，跟在动词后面等于什么都没说 —— 只留动词。
     "cheese_chat_search": "query",
-    "cheese_doc_set": "file",
-    "cheese_split": "title",
+    "cheese_doc_set": "path",
+    "cheese_task": "title",
     # 任务的 id 是个 UUID，跟在动词后面等于什么都没说 —— 同一条理由让上面那批
     # 路径要剪掉工作区前缀。关掉一条活时说的是为什么关。
     "cheese_close_task": "conclusion",
@@ -136,13 +135,12 @@ _TOOL_ARG = {
     "cheese_recall": "query",
     "cheese_notify": "title",
     "cheese_ask": "question",
-    "cheese_accept_request": "reviewer",
+    "cheese_accept_request": "subject",
     "cheese_describe": "subject",
     "cheese_tell": "message",
     "cheese_milestone": "title",
     "cheese_serve": "note",
     "cheese_show": "path",
-    "cheese_api": "path",
     # 后台任务。起任务时说的是那条命令 —— 任务号是刚生出来的，对读的人不说明
     # 任何事；往里打字时说的是打进去的那句，同理。
     "bash_start": "command",

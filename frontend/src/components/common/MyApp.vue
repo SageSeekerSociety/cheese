@@ -1,5 +1,5 @@
 <template>
-  <v-defaults-provider :defaults="{ VBtn: { color: 'primary', variant: 'flat' }, VCard: { flat: true } }">
+  <v-defaults-provider :defaults="{ VBtn: { variant: 'flat' }, VCard: { flat: true } }">
     <v-app :class="{ 'bg-page-background': pageBackground }">
       <v-sonner position="top-center" />
       <slot></slot>
