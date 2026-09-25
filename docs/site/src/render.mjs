@@ -62,7 +62,7 @@ ${footer(ctx)}
   <div class="ctx" id="ctx">${ic('doc')}<span>正在看</span><b id="ctxPage">${esc(title)}</b><label><input type="checkbox" id="ctxUse" checked>带上这一页</label></div>
   <div class="drawer-b" id="chat" aria-live="polite"></div>
   <div class="suggest" id="suggest"></div>
-  <div class="drawer-f"><form class="box" id="askForm"><input id="askInput" maxlength="500" placeholder="问一个关于知是的问题…" autocomplete="off"><button class="send" id="askSend" aria-label="发送">${ic('arrow')}</button></form><small id="askHint">回答来自这份文档，由 AI 生成，可能有误，以文档原文为准</small></div>
+  <div class="drawer-f"><form class="box" id="askForm"><input id="askInput" maxlength="500" placeholder="问一个关于知是的问题…" autocomplete="off"><button class="send" id="askSend" aria-label="发送">${ic('arrow')}</button></form><small id="askHint">回答由 AI 依据这份文档生成，可能有误，以原文为准。问题会被记录，用于改进文档。</small></div>
 </aside>
 <div class="toast" id="toast" role="status"></div>
 <script type="application/json" id="page-data">${JSON.stringify(pageData || {}).replace(/</g, '\\u003c')}</script>

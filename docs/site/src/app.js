@@ -170,9 +170,12 @@ function greet() {
   $('#suggest').innerHTML = SUGGEST.map((s) => `<button data-sug>${esc(s)}</button>`).join('')
 }
 // A small, safe subset of Markdown for answers: paragraphs, lists, bold, code, and links back into the docs.
-function renderAnswer(text) {
+// A link survives only if it points at a page the answer was given to cite; a
+// model that invents an address gets its words shown, not a dead link.
+function renderAnswer(text, sources = []) {
+  const pages = new Set(sources.map((c) => c.url.split('#')[0]))
   const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\((\/docs\/[\w/#-]+)\)/g, '<a class="link" href="$2">$1</a>')
+    .replace(/\[([^\]]+)\]\((\/docs\/[\w/#-]+)\)/g, (m, label, url) => pages.has(url.split('#')[0]) ? `<a class="link" href="${url}">${label}</a>` : label)
   const blocks = text.split(/\n{2,}/).map((b) => {
     const lines = b.split('\n')
     if (lines.every((l) => /^\s*([-*]|\d+\.)\s/.test(l))) return `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*([-*]|\d+\.)\s/, ''))}</li>`).join('')}</ul>`
@@ -223,11 +226,11 @@ async function ask(q) {
         if (!data) continue
         const d = JSON.parse(data)
         if (ev === 'sources') sources = d.sources || []
-        else if (ev === 'delta') { text += d.text; body.innerHTML = renderAnswer(text) + '<span class="stream-caret"></span>'; chat.scrollTop = chat.scrollHeight }
+        else if (ev === 'delta') { text += d.text; body.innerHTML = renderAnswer(text, sources) + '<span class="stream-caret"></span>'; chat.scrollTop = chat.scrollHeight }
         else if (ev === 'error') { text = text || d.message; body.innerHTML = `<p>${esc(d.message)}</p>` }
       }
     }
-    body.innerHTML = renderAnswer(text || '没有拿到回答，稍后再试。') + (sources.length ? `<div class="cites">${sources.map(citeHtml).join('')}</div>` : '')
+    body.innerHTML = renderAnswer(text || '没有拿到回答，稍后再试。', sources) + (sources.length ? `<div class="cites">${sources.map(citeHtml).join('')}</div>` : '')
     history.push({ role: 'user', content: q }, { role: 'assistant', content: text.slice(0, 1200) })
   } catch (e) {
     if (e.name !== 'AbortError') body.innerHTML = '<p>网络出了点问题，稍后再试。</p>'
