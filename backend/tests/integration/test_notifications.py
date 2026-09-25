@@ -200,7 +200,14 @@ def test_inbox_carries_decisions_accepts_and_change_alerts(client):
         title="安静的提醒",
         target_handle="alice",
     )
-    _one(client, pid, level="light", kind="heartbeat", title="beat", target_handle="alice")
+    _one(
+        client,
+        pid,
+        level="light",
+        kind="heartbeat",
+        title="beat",
+        target_handle="alice",
+    )
     # 进收件箱：decision_request + accept_request。
     decision = _one(
         client,
@@ -252,7 +259,14 @@ def test_the_project_badge_counts_what_the_inbox_lists(client):
     """
     pid = _create_project(client)
     _roster(client, pid, "alice")
-    _one(client, pid, level="strong", kind="change_alert", title="提醒", target_handle="alice")
+    _one(
+        client,
+        pid,
+        level="strong",
+        kind="change_alert",
+        title="提醒",
+        target_handle="alice",
+    )
     _one(
         client,
         pid,
@@ -262,7 +276,14 @@ def test_the_project_badge_counts_what_the_inbox_lists(client):
         target_handle="alice",
     )
     # silent 的两边都不算。
-    _one(client, pid, level="silent", kind="change_alert", title="安静的", target_handle="alice")
+    _one(
+        client,
+        pid,
+        level="silent",
+        kind="change_alert",
+        title="安静的",
+        target_handle="alice",
+    )
 
     badge = client.get(
         f"/projects/{pid}/alerts/unread-count", headers=session_auth_headers("alice")

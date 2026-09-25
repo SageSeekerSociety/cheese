@@ -18,13 +18,27 @@ function projectIdOf(page: Page): string {
 }
 
 test.describe('变更提醒', () => {
+  // 这几条落在「第一个项目」上 —— 所有 e2e 用例共用的那一个（alice 的种子项目），
+  // 收件箱按项目 + 人读。写下的未读提醒会变成别人的前提：2026-09-24 上 CI，这里
+  // 那条游到 room-work.spec.ts 去，「板里不另起标题」的断言就多出一个 h2 —— 它数
+  // 的是 `.board` 里的标题，而这一叠正嵌在板容器里。所以每条读完清干净：点了「去
+  // 话题」的那条没走完「收起来」，靠 afterEach 收尾（CI 上用例串行，前一条留下的
+  // 东西后一条真的看得见）。
+  let projectId = '';
+
   test.beforeEach(async ({ page }) => {
     await login(page);
     await openFirstProject(page);
+    projectId = projectIdOf(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    // beforeEach 半路挂掉时没有项目可清，别让收尾再报一条把人引开。
+    if (!projectId) return;
+    await api(page, 'post', `/projects/${projectId}/alerts/read-all`);
   });
 
   test('写一条出来，项目首页读得到，点「去话题」落到它说的那个话题', async ({ page }) => {
-    const projectId = projectIdOf(page);
     const stamp = Date.now();
 
     // 通知指向一个话题：通知只是提醒，东西在话题里，所以先开一间当落点。
@@ -60,7 +74,6 @@ test.describe('变更提醒', () => {
   });
 
   test('读过就收起来，角标跟着灭', async ({ page }) => {
-    const projectId = projectIdOf(page);
     const stamp = Date.now();
     const title = `收起来的提醒 ${stamp}`;
     await api(page, 'post', `/projects/${projectId}/alerts`, {
