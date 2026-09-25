@@ -48,6 +48,7 @@ import { useRoomRoster } from './room/composables/useRoomRoster'
 import { useRoomSocket } from './room/composables/useRoomSocket'
 import RollingNumber from './room/RollingNumber.vue'
 import RoomComposer from './room/RoomComposer.vue'
+import RoomHoverBar from './room/RoomHoverBar.vue'
 import RoomMessage from './room/RoomMessage.vue'
 import RoomNotice from './room/RoomNotice.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
@@ -309,6 +310,47 @@ const {
   rememberScroll,
   restoreScroll,
 } = useChatScroll()
+
+// ---- 悬停条：整列一个，跟着指针在消息之间滑（见 room/RoomHoverBar）。 ----
+// 指针落在一条消息上就移过去；落在行与行之间的空隙里就留在原地（从一行滑到下一行
+// 的路上不该让它一闪一闪）；落在别的行上（事件、标记、「正在处理」）或移出整列
+// 就收起。表情选择条开着的时候钉在那一行上，不跟指针走。
+const bar = reactive({ id: null as string | null, shown: false, top: 0, jump: false })
+const barBlock = computed(() => (bar.id ? messages.value.find((m) => m.id === bar.id) ?? null : null))
+
+function rowTop(row: HTMLElement): number | null {
+  const content = contentRef.value
+  return content ? row.getBoundingClientRect().top - content.getBoundingClientRect().top : null
+}
+
+function showBarAt(row: HTMLElement) {
+  const id = row.dataset.mid
+  const top = rowTop(row)
+  if (!id || top === null) return
+  if (reactionPickerFor.value && reactionPickerFor.value !== id) return
+  if (!bar.shown) {
+    // 从收起状态出现：直接落在这一行上，只淡入，不从上一次停的地方滑过来。
+    bar.jump = true
+    requestAnimationFrame(() => requestAnimationFrame(() => (bar.jump = false)))
+  }
+  bar.id = id
+  bar.top = top
+  bar.shown = true
+}
+
+function hideBar() {
+  if (reactionPickerFor.value) return
+  bar.shown = false
+}
+
+function onTimelinePointer(e: MouseEvent) {
+  const target = e.target as HTMLElement | null
+  if (!target || target.closest('.hover-bar')) return
+  const row = target.closest<HTMLElement>('[data-mid], .notice-row, .room-happening, .dispatched, .tl-mark, .im-row')
+  if (!row) return
+  if (row.matches('[data-actions]')) showBarAt(row)
+  else hideBar()
+}
 
 // 滚动事件：记下位置，顺带判断是不是滚到了要上一页的地方。
 function onTimelineScroll() {
@@ -811,6 +853,26 @@ defineExpose({ send, connected })
 // accidental merge.
 const rows = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(messages.value)))
 const visible = computed<Block[]>(() => rows.value.map((r) => r.block))
+
+// 它停着的那一行上面的东西变了（往上翻拼进来一页、上面一条长高了），行的位置跟着
+// 变：重新量一次，直接落过去，不演滑动——这一下不是指针在动。
+watch(
+  rows,
+  () =>
+    void nextTick(() => {
+      if (!bar.shown || !bar.id) return
+      const row = scrollRef.value?.querySelector<HTMLElement>(`[data-mid="${bar.id}"]`)
+      const top = row ? rowTop(row) : null
+      if (top === null) return (bar.shown = false)
+      if (top === bar.top) return
+      bar.jump = true
+      bar.top = top
+      requestAnimationFrame(() => requestAnimationFrame(() => (bar.jump = false)))
+    })
+)
+watch(reactionPickerFor, (open) => {
+  if (!open && !scrollRef.value?.matches(':hover')) bar.shown = false
+})
 
 // ---- 时间刻度 ----
 // 「这条属于哪一天」只在跨天时说一次。用本地日期而不是 UTC：读的人在哪个时区,
@@ -1327,10 +1389,24 @@ onBeforeUnmount(() => {
         data-testid="chat-scroll"
         @scroll="onTimelineScroll"
         @click="onMessagesClick"
+        @mouseover="onTimelinePointer"
+        @mouseleave="hideBar"
       >
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
         <div ref="contentRef" class="tl-content">
+          <RoomHoverBar
+            :block="barBlock"
+            :shown="bar.shown"
+            :top="bar.top"
+            :jump="bar.jump"
+            :is-agent="!!barBlock && isAgentBlock(barBlock)"
+            :picker-open="!!barBlock && reactionPickerFor === barBlock.id"
+            @react="onReact"
+            @toggle-picker="reactionPickerFor = reactionPickerFor === $event ? null : $event"
+            @reply="setReply"
+            @upgrade="emit('upgrade-message', $event)"
+          />
           <!-- 骨架和真的那几行同形同高：到货时骨架淡出，不推动下面的东西。 -->
           <Transition name="tl-skel">
             <LoadingSkeleton v-if="loadingHistory" variant="chat" />
@@ -1419,16 +1495,13 @@ onBeforeUnmount(() => {
               :time="fmtTime(m.created_at)"
               :refs="refMaps"
               :viewer="AUTHOR"
-              :picker-open="reactionPickerFor === m.id"
+              :active="bar.shown && bar.id === m.id"
               :ask-busy="askBusy === m.id"
               :summon-hint="showSummonHint(m, i) ? agentName : null"
               :summon-busy="summonBusy"
               @open-file="(path, taskId) => emit('open-file', path, taskId)"
               @open-topic="emit('open-topic', $event)"
-              @upgrade="emit('upgrade-message', $event)"
-              @reply="setReply"
               @react="onReact"
-              @toggle-picker="reactionPickerFor = reactionPickerFor === $event ? null : $event"
               @answer="pickOption"
               @download="downloadAttachment"
               @jump="scrollToMessage"
@@ -1466,7 +1539,6 @@ onBeforeUnmount(() => {
             :time="outgoingState(item)"
             :refs="refMaps"
             :viewer="AUTHOR"
-            :picker-open="false"
             :ask-busy="false"
             :summon-hint="null"
             :summon-busy="false"

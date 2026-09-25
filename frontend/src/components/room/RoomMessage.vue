@@ -9,7 +9,7 @@
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block } from '../../cx_types'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { artifactKind, artifactName, askAnswered, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
@@ -22,9 +22,6 @@ import ExternalTag from '../common/ExternalTag.vue'
 import RollingNumber from './RollingNumber.vue'
 
 import { t } from '@/i18n'
-
-/** MVP 表情选择器里那八个：常用的就够了，多了是一面墙。 */
-const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
 
 const props = defineProps<{
   block: Block
@@ -49,7 +46,8 @@ const props = defineProps<{
   refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
   /** 自己的 handle，用来标出哪些表情是自己点的。 */
   viewer: string
-  pickerOpen: boolean
+  /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
+  active?: boolean
   askBusy: boolean
   /**
    * 这条没叫芝士、而它是最后一条——传队友的名字表示要显示那行补救提示，null 表示不用。
@@ -67,10 +65,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open-file', path: string, taskId: string | null): void
   (e: 'open-topic', id: string): void
-  (e: 'upgrade', blockId: string): void
-  (e: 'reply', block: Block): void
   (e: 'react', block: Block, emoji: string): void
-  (e: 'toggle-picker', blockId: string): void
   (e: 'answer', block: Block, option: string): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
@@ -100,12 +95,7 @@ const agentHtml = computed(() =>
     .replaceAll('</pre>', '</pre></div>')
 )
 
-// 复制之后原地说一声「已复制」，一会儿再换回来。
 const COPIED_MS = 1500
-const copied = ref(false)
-let copiedTimer: ReturnType<typeof setTimeout> | undefined
-onBeforeUnmount(() => clearTimeout(copiedTimer))
-
 async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
@@ -113,17 +103,6 @@ async function copyText(text: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-// 整条消息复制成什么：芝士的回复复制 markdown 原文（代码块、列表贴到别处还是那个
-// 样子）；人说的话复制屏幕上读到的字（@ 的是名字，不是 handle）。
-const textEl = ref<HTMLElement | null>(null)
-async function copyMessage() {
-  const text = props.isAgent ? props.block.content : textEl.value?.textContent ?? props.block.content
-  if (!(await copyText(text))) return
-  copied.value = true
-  clearTimeout(copiedTimer)
-  copiedTimer = setTimeout(() => (copied.value = false), COPIED_MS)
 }
 
 // 选项作答：点下去的那一项先变实、其余淡下去，等答案落库再换成「谁选了什么」。
@@ -157,8 +136,10 @@ async function onAgentTextClick(e: MouseEvent) {
       'im-row--regroup': runStart && regroup,
       'im-row--self': mine,
       'im-row--pending': !!outgoing,
+      'im-row--active': active,
     }"
     :data-mid="block.id"
+    :data-actions="outgoing ? undefined : ''"
   >
     <!-- avatar gutter: only on the first of a run -->
     <div class="im-gutter">
@@ -235,7 +216,7 @@ async function onAgentTextClick(e: MouseEvent) {
       <div v-else-if="isAgent" class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />
       <!-- 现场尊重原文: human text renders verbatim — newlines and
          spacing preserved (pre-wrap), no markdown reflow. -->
-      <div v-else ref="textEl" class="im-text im-text--verbatim" v-html="renderPlain(block.content)" />
+      <div v-else class="im-text im-text--verbatim" v-html="renderPlain(block.content)" />
       <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
         <span class="outbox-fail__text">{{
           outgoing.error ? t('work.room.outbox.failed', { reason: outgoing.error }) : t('work.room.outbox.undelivered')
@@ -304,43 +285,6 @@ async function onAgentTextClick(e: MouseEvent) {
           <RollingNumber class="rx-count" :value="r.count" />
         </button>
       </TransitionGroup>
-    </div>
-
-    <!-- hover action bar, top-right of the row (Feishu). Only actions
-       we actually implement are shown (no dead buttons). 还没落库的那条没有:
-       回复和升级都要一个库里的 id，而表情要一条别人也看得见的消息。 -->
-    <div v-if="!outgoing" class="im-actions" :class="{ 'im-actions--open': pickerOpen }">
-      <button
-        type="button"
-        class="im-act rx-toggle"
-        :class="{ 'im-act--on': pickerOpen }"
-        title="添加表情"
-        @click="emit('toggle-picker', block.id)"
-      >
-        <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
-      </button>
-      <button type="button" class="im-act" title="回复" @click="emit('reply', block)">
-        <v-icon size="15">mdi-reply-outline</v-icon>
-      </button>
-      <button
-        type="button"
-        class="im-act"
-        :title="copied ? t('work.room.message.copied') : t('work.room.message.copy')"
-        @click="copyMessage"
-      >
-        <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
-      </button>
-      <button type="button" class="im-act" title="转为话题" @click="emit('upgrade', block.id)">
-        <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
-      </button>
-      <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
-      <Transition name="rx-picker">
-        <div v-if="pickerOpen" class="rx-picker">
-          <button v-for="e in QUICK_EMOJIS" :key="e" type="button" class="rx-pick" @click="emit('react', block, e)">
-            {{ e }}
-          </button>
-        </div>
-      </Transition>
     </div>
   </div>
 </template>
@@ -539,100 +483,6 @@ async function onAgentTextClick(e: MouseEvent) {
   font-size: 0.92em;
 }
 
-/* per-row hover action bar (Feishu), floats at the row's top-right */
-.im-actions {
-  position: absolute;
-  top: -12px;
-  right: 12px;
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-  opacity: 0;
-  transition: opacity var(--dur-quick) var(--ease-standard);
-  pointer-events: none;
-}
-/* One quiet square button per action: muted ink, fill on hover — the harsh
-   default round icon-buttons inside a rounded pill read as unfinished. */
-.im-act {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background-color var(--dur-quick) var(--ease-standard),
-    color var(--dur-quick) var(--ease-standard);
-}
-.im-act:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-.im-act--on {
-  background: var(--line-2);
-  color: var(--ink);
-}
-.im-row:hover .im-actions,
-.im-actions--open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* ---- Emoji reactions (Slack) ---- */
-/* MVP picker: a strip of the 8 common emoji, floating under the action bar.
-   从右上角那颗按钮下面长出来，收回也回到那里。 */
-.rx-picker-enter-active {
-  transition:
-    transform var(--dur-base) var(--ease-out),
-    opacity var(--dur-base) var(--ease-out);
-}
-.rx-picker-leave-active {
-  transition:
-    transform var(--dur-quick) var(--ease-in),
-    opacity var(--dur-quick) var(--ease-in);
-}
-.rx-picker-enter-from,
-.rx-picker-leave-to {
-  opacity: 0;
-  transform: translateY(-4px) scale(0.96);
-}
-.rx-picker {
-  transform-origin: top right;
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  display: flex;
-  gap: 2px;
-  padding: 4px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-2);
-  z-index: 5;
-}
-.rx-pick {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: none;
-  border-radius: var(--radius-sm);
-  /* 这个 16px 量的是一枚 emoji 字形，不是正文，所以不走字号阶梯；`line-height: 1`
-     同理——它是把字形在 28px 方格里居中的手段，不是一段话的行距。 */
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-.rx-pick:hover {
-  background: var(--fill);
-}
 /* 选项问题 buttons (cheese_ask): quiet outlined buttons. 悬停只加深一档，不上琥珀：
    一排选项里没有哪一个是「主操作」。 */
 .ask-row {
