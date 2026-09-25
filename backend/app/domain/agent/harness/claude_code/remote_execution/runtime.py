@@ -723,10 +723,23 @@ class Executor:
         return found
 
     def signal_command(self, command_id, number):
-        """Send a signal to a running command's group and every descendant."""
-        self._record(command_id)
+        """Send a signal to a running command's group and every descendant.
+
+        A stop for a command not started yet is kept: the prefix's start and
+        its stop travel separately, and a stop that overtook its start must
+        still hold, so that start is refused (`shell`)."""
+        record = self._record(command_id)
         with self.command_lock:
             entry = self.running.get(command_id)
+            if entry is None and not record.exists():
+                record.mkdir()
+                write_json(
+                    record / "command.json",
+                    {"watched": True, "stopped_before_start": True, "command": ""},
+                )
+                (record / "exit").write_text(str(-number))
+                self.log(command_id, "stopped before start", signal=number)
+                return {"running": False}
         if entry is None:
             return {"running": False}
         pid = entry["process"].pid
@@ -860,6 +873,10 @@ class Executor:
             with self.command_lock:
                 if record.exists():
                     meta = json.loads((record / "command.json").read_text())
+                    if meta.get("stopped_before_start"):
+                        # Its stop came first: it never runs, and reads as
+                        # ended by that signal.
+                        return {"started": False}
                     if meta.get("digest") != digest:
                         raise ValueError(
                             "Command ID already belongs to different input"

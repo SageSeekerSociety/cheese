@@ -413,6 +413,25 @@ DRIVER = textwrap.dedent(
 
     class Flaky(real):
         def call(self, method, params=None):
+            late = os.environ.get("DRIVER_LATE_START")
+            if late and (params or {{}}).get("operation") == "start":
+                # The start still on its way when this process is killed: a
+                # process of its own delivers it, after the given delay.
+                import subprocess
+                carrier = (
+                    "import json, sys, time; sys.path.insert(0, sys.argv[1]); "
+                    "import runtime; time.sleep(float(sys.argv[2])); "
+                    "runtime.request(sys.argv[3], 'control', json.loads(sys.argv[4]))"
+                )
+                subprocess.Popen(
+                    [sys.executable, "-c", carrier, {source!r}, late,
+                     self.config["state"], json.dumps(params)],
+                    start_new_session=True,
+                )
+                with open(os.environ["DRIVER_LOG"], "a") as log:
+                    log.write("start sent\\n")
+                import time
+                time.sleep(3600)
             if (params or {{}}).get("operation") == "read":
                 state["reads"] += 1
                 if state["reads"] > 1 and state["failed"] < failures:
@@ -432,7 +451,15 @@ DRIVER = textwrap.dedent(
 )
 
 
-def _driver(session, command, *, constants=None, failures=0, failure="out-of-reach"):
+def _driver(
+    session,
+    command,
+    *,
+    constants=None,
+    failures=0,
+    failure="out-of-reach",
+    late_start=None,
+):
     script = session.root / "driver.py"
     script.write_text(DRIVER.format(source=str(SOURCE)))
     log = session.root / "driver.log"
@@ -441,6 +468,7 @@ def _driver(session, command, *, constants=None, failures=0, failure="out-of-rea
         DRIVER_FAILURES=str(failures),
         DRIVER_FAILURE=failure,
         DRIVER_LOG=str(log),
+        **({"DRIVER_LATE_START": str(late_start)} if late_start else {}),
     )
     return (
         session.popen(
@@ -490,6 +518,43 @@ def test_a_command_that_ignores_the_stop_is_killed_after_the_grace(session, mach
     assert process.wait(timeout=30) < 0
     _wait_for(lambda: not _alive("^sleep 62$"))
     assert b"survived" not in session.output.read_bytes()
+
+
+def test_a_prefix_killed_outright_still_stops_its_command(session, machine):
+    # The build follows its TERM with a KILL about a second later; the prefix
+    # does not get a last word.
+    process = session.prefix(session.wrapped("touch started; sleep 63; touch survived"))
+    _wait_for(lambda: (machine.workspace / "started").exists())
+    process.kill()
+    process.wait(timeout=30)
+    _wait_for(lambda: not _alive("^sleep 63$"))
+    time.sleep(0.5)
+    assert not (machine.workspace / "survived").exists()
+
+
+def test_a_command_whose_start_was_in_flight_when_its_prefix_died_never_runs(
+    session, machine
+):
+    # A stop from the build, the prefix killed right after, and the start the
+    # prefix had sent reaching the executor only after that: the order the
+    # remote acceptance's TaskStop case hit on a loaded runner.
+    process, log = _driver(session, session.wrapped("sleep 2; touch ran"), late_start=2)
+    _wait_for(lambda: log.exists() and "start sent" in log.read_text())
+    process.send_signal(signal.SIGTERM)
+    time.sleep(0.2)
+    process.kill()
+    process.wait(timeout=30)
+    time.sleep(5)
+    assert not (machine.workspace / "ran").exists()
+
+
+def test_a_stop_that_overtakes_its_start_holds_and_the_start_is_refused(machine):
+    machine.control(operation="signal", command_id="early-stop", signal=15)
+    assert machine.start("early-stop", "touch ran") == {"started": False}
+    out, err, answer = machine.collect("early-stop")
+    assert (out, err, answer["exit"]) == (b"", b"", -15)
+    time.sleep(0.5)
+    assert not (machine.workspace / "ran").exists()
 
 
 def test_output_past_the_cap_stops_the_command(session, machine):
