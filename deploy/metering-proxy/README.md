@@ -26,11 +26,10 @@ proxy and gateway work; they are not a measurement of provider processing alone.
 Every sandbox's traffic passes through here, and the destination is a per-request
 decision rather than something pinned into the sandbox's launch environment:
 
-- `subscription` → forward to Anthropic with the session's own Claude
-  credential, untouched.
+- `subscription` → forward to Anthropic with the platform's Claude credential
+  in place of the session's placeholder.
 - `gateway` → rewrite to `CHEESE_GATEWAY_BASE` (LiteLLM) with the project's
-  virtual key in place of the session's credential, which never reaches the
-  gateway.
+  virtual key; the platform's Claude credential never reaches the gateway.
 
 The backend decides (`POST /llm/admission` answers both "may it run" and "where
 does it go"); this proxy only carries it out. That is why a project can change
@@ -118,24 +117,35 @@ an unauthenticated CONNECT response of 407; they do not call a model provider.
 
 After release, verify a sandbox turn, a usage row attributed to that turn, and a
 budget refusal for a test project whose compute grant is exhausted. Listener health alone does not
-verify that the session's credential reaches Anthropic, backend admission or
+verify that the platform's credential reaches Anthropic, backend admission or
 ledger ingestion.
 
 ## The Claude credential
 
-This proxy holds none. Every Claude Code session runs on the central session
-host and is logged in with that host's own Claude credential: the OS user's
-`~/.claude` login (an access token plus the refresh token Claude Code renews it
-with, shared by every session through `CLAUDE_SECURESTORAGE_CONFIG_DIR`), or a
-one-year `claude setup-token` placed at `~/.cheese/claude-setup-token`. The
-request's Authorization is that credential; it goes to Anthropic untouched,
-and is replaced by the project's virtual key when admission routes the request
-to the gateway.
+The proxy holds the platform's only Claude credential, in
+`<proxy home>/claude-credential/credential`, and no session holds any: every
+Claude Code session boots on `NO_LOGIN_PLACEHOLDER` (`cheese_billing_core.py`),
+which authenticates nothing. On a request bound for Anthropic the proxy puts
+the credential in place of the placeholder; on one admission routes to the
+gateway it puts the project's virtual key.
 
-A host with neither boots its sessions on `NO_LOGIN_PLACEHOLDER`
-(`cheese_billing_core.py`), which authenticates nothing: projects on the
-API-key pool still run. The boot calls only a real account can answer
-(`NO_LOGIN_ANSWERS`) are answered here for such a session. A request admission
-places on the subscription is refused with a 400 that says the host has no
-Claude login, which the client does not retry; one admission could not place
-gets a 503 and is retried.
+The file is re-read on every request, so logging in, switching account and
+logging out take effect at the next request of every running session. Use
+`claude-login.sh` on the box, as the directory's owner:
+
+- `claude-login.sh setup-token` stores a one-year token from
+  `claude setup-token`. Nothing renews it; replace it within the year.
+- `claude-login.sh login` signs in in the browser, in a throwaway config
+  directory, and moves the resulting pair here. The proxy renews the access
+  token itself, the way Claude Code does, and writes the new pair back; it is
+  the pair's only holder, so no rotation strands anyone. The refresh token's
+  own deadline, about 30 days from login, does not move: log in again before
+  it (`claude-login.sh status` shows when; the proxy also logs a warning in the
+  last three days).
+- `claude-login.sh logout` removes it.
+
+With no credential, projects on the API-key pool still run. The boot calls only
+a real account can answer (`NO_LOGIN_ANSWERS`) are answered here. A request
+admission places on the subscription is refused with a 400 naming the missing
+login, which the client does not retry; one admission could not place gets a
+503 and is retried.

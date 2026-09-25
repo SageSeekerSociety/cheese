@@ -9,7 +9,9 @@ name: Claude Code build contracts
 # stream-json protocol the Claude Code driver speaks (#1606) is unpublished
 # too; headless_contract.py checks the parts of it the driver relies on,
 # including through the remote-execution plugin, so changes to the plugin and
-# its executor run it as well.
+# its executor run it as well. And the metering proxy renews the platform's
+# Claude login with a copy of this build's token refresh, which
+# refresh_contract.py holds to the build's own, byte for byte.
 
 on:
   workflow_call:
@@ -60,6 +62,20 @@ jobs:
           python3 scripts/remote_execution/headless_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/mcp-contract/pinned/headless
+      - name: Install mitmproxy
+        # The refresh contract answers every request itself through it; the
+        # same release as the metering proxy's image.
+        if: ${{ !cancelled() }}
+        run: python3 -m venv "$RUNNER_TEMP/mitm" && "$RUNNER_TEMP/mitm/bin/pip" install -q mitmproxy==12.1.2
+      - name: Token refresh contract
+        # The metering proxy renews the platform's Claude login with a request
+        # that has to be this build's own, byte for byte.
+        if: ${{ !cancelled() }}
+        run: >-
+          python3 scripts/remote_execution/refresh_contract.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --mitmdump "$RUNNER_TEMP/mitm/bin/mitmdump"
+          --output tmp/mcp-contract/pinned/refresh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         # A quota-refused upload retries until the JOB timeout cancels the job
@@ -115,6 +131,16 @@ jobs:
           python3 scripts/remote_execution/headless_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/mcp-contract/latest/headless
+      - name: Install mitmproxy
+        if: ${{ !cancelled() }}
+        run: python3 -m venv "$RUNNER_TEMP/mitm" && "$RUNNER_TEMP/mitm/bin/pip" install -q mitmproxy==12.1.2
+      - name: Token refresh contract
+        if: ${{ !cancelled() }}
+        run: >-
+          python3 scripts/remote_execution/refresh_contract.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --mitmdump "$RUNNER_TEMP/mitm/bin/mitmdump"
+          --output tmp/mcp-contract/latest/refresh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         # A quota-refused upload retries until the JOB timeout cancels the job

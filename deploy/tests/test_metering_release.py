@@ -127,8 +127,9 @@ class MeteringReleaseTest(unittest.TestCase):
             mounts = {m["target"]: m["source"] for m in service["volumes"]}
             self.assertNotIn("/addons", mounts)
             self.assertEqual(mounts["/var/log/cheese"], str(home / "logs"))
-            # The proxy holds no model credential, so nothing mounts one.
-            self.assertNotIn("/etc/cheese/secrets", mounts)
+            self.assertEqual(
+                mounts["/etc/cheese/claude-credential"], str(home / "claude-credential")
+            )
             self.assertEqual(mounts["/home/mitmproxy/.mitmproxy"], str(home / "certs"))
 
     def test_requires_explicit_interruption_acknowledgement(self):

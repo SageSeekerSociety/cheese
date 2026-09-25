@@ -421,3 +421,264 @@ def test_requested_model_of_refuses_names_that_would_break_the_admission_header(
     assert core.requested_model_of(b'{"model":"openai/gpt-5","messages":[]}') == (
         "openai/gpt-5"
     )
+
+
+# --- the platform's Claude credential ----------------------------------------
+
+import threading as _threading  # noqa: E402
+
+
+class _Clock:
+    def __init__(self, t: float) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _pair_file(tmp_path, *, expires_in_s, now, **extra):
+    path = tmp_path / "credential"
+    oauth = {
+        "accessToken": "sk-ant-oat01-OLD",
+        "refreshToken": "sk-ant-ort01-OLD",
+        "expiresAt": int((now + expires_in_s) * 1000),
+        "refreshTokenExpiresAt": int((now + 20 * 86400) * 1000),
+        "scopes": ["user:inference", "user:profile"],
+        "subscriptionType": "max",
+        **extra,
+    }
+    path.write_text(json.dumps({"claudeAiOauth": oauth, "mcpOAuth": {"kept": 1}}))
+    return path
+
+
+def _granting(calls, **answer):
+    def post(url, body, timeout):
+        calls.append((url, body))
+        return 200, {
+            "access_token": "sk-ant-oat01-NEW",
+            "refresh_token": "sk-ant-ort01-NEW",
+            "expires_in": 28800,
+            "scope": "user:inference user:profile",
+            **answer,
+        }
+
+    return post
+
+
+def test_a_setup_token_is_used_as_it_is_and_never_refreshed(tmp_path):
+    path = tmp_path / "credential"
+    path.write_text("sk-ant-oat01-SETUP\n")
+    calls = []
+    cred = core.PlatformCredential(path, post=_granting(calls))
+
+    assert cred.token() == ("sk-ant-oat01-SETUP", "")
+    assert cred.refresh_due() is False
+    cred.refresh_if_due()
+    assert calls == []
+    assert path.read_text() == "sk-ant-oat01-SETUP\n"
+
+
+def test_a_fresh_pair_serves_its_access_token_without_asking_anyone(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=3600, now=clock.t)
+    calls = []
+    cred = core.PlatformCredential(path, post=_granting(calls), now=clock)
+
+    assert cred.token() == ("sk-ant-oat01-OLD", "")
+    assert cred.refresh_due() is False
+    cred.refresh_if_due()
+    assert calls == []
+
+
+def test_a_pair_near_expiry_is_refreshed_the_way_claude_code_does_it(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=120, now=clock.t)
+    calls = []
+    cred = core.PlatformCredential(path, post=_granting(calls), now=clock)
+
+    assert cred.refresh_due() is True
+    cred.refresh_if_due()
+
+    assert calls == [
+        (
+            "https://platform.claude.com/v1/oauth/token",
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": "sk-ant-ort01-OLD",
+                "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+                "scope": "user:profile user:inference user:sessions:claude_code "
+                "user:mcp_servers user:file_upload user:plugins",
+            },
+        )
+    ]
+    assert cred.token() == ("sk-ant-oat01-NEW", "")
+    written = json.loads(path.read_text())
+    oauth = written["claudeAiOauth"]
+    assert oauth["refreshToken"] == "sk-ant-ort01-NEW"
+    assert oauth["expiresAt"] == int(clock.t * 1000) + 28800 * 1000
+    # The server did not move the login deadline, so it stays where it was.
+    assert oauth["refreshTokenExpiresAt"] == int((clock.t + 20 * 86400) * 1000)
+    assert oauth["subscriptionType"] == "max"
+    assert written["mcpOAuth"] == {"kept": 1}
+    assert (path.stat().st_mode & 0o777) == 0o600
+    assert cred.refresh_due() is False
+
+
+def test_concurrent_requests_that_find_it_due_refresh_it_once(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=60, now=clock.t)
+    calls = []
+    granted = _granting(calls)
+    gate = _threading.Event()
+
+    def slow_post(url, body, timeout):
+        gate.wait(5)
+        return granted(url, body, timeout)
+
+    cred = core.PlatformCredential(path, post=slow_post, now=clock)
+    workers = [_threading.Thread(target=cred.refresh_if_due) for _ in range(8)]
+    for w in workers:
+        w.start()
+    gate.set()
+    for w in workers:
+        w.join(5)
+
+    assert len(calls) == 1
+    assert cred.token() == ("sk-ant-oat01-NEW", "")
+
+
+def test_a_refused_refresh_token_asks_for_a_new_login_and_stops_trying(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=60, now=clock.t)
+    calls = []
+
+    def refuse(url, body, timeout):
+        calls.append(body)
+        return 400, {"error": "invalid_grant"}
+
+    cred = core.PlatformCredential(path, post=refuse, now=clock)
+    cred.refresh_if_due()
+    clock.t += 3600
+    cred.refresh_if_due()
+
+    assert len(calls) == 1
+    assert cred.token() == ("", "login_required")
+
+
+def test_a_new_login_replaces_a_refused_one_without_a_restart(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=60, now=clock.t)
+    cred = core.PlatformCredential(
+        path,
+        post=lambda url, body, timeout: (400, {"error": "invalid_grant"}),
+        now=clock,
+    )
+    cred.refresh_if_due()
+    assert cred.token() == ("", "login_required")
+
+    _pair_file(tmp_path, expires_in_s=3600, now=clock.t, refreshToken="sk-ant-ort01-2")
+
+    assert cred.token() == ("sk-ant-oat01-OLD", "")
+
+
+def test_a_transient_failure_keeps_serving_the_valid_token_and_backs_off(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=200, now=clock.t)
+    calls = []
+
+    def unreachable(url, body, timeout):
+        calls.append(body)
+        raise OSError("connection reset")
+
+    cred = core.PlatformCredential(path, post=unreachable, now=clock)
+    cred.refresh_if_due()
+    clock.t += 10
+    cred.refresh_if_due()
+
+    assert len(calls) == 1
+    assert cred.token() == ("sk-ant-oat01-OLD", "")
+
+    clock.t += 60
+    cred.refresh_if_due()
+    assert len(calls) == 2
+
+
+def test_an_access_token_past_expiry_is_not_used(tmp_path):
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=-1, now=clock.t)
+
+    def unreachable(url, body, timeout):
+        raise OSError("down")
+
+    cred = core.PlatformCredential(path, post=unreachable, now=clock)
+    cred.refresh_if_due()
+
+    assert cred.token() == ("", "expired")
+
+
+def test_no_file_or_an_unreadable_one_is_being_logged_out(tmp_path):
+    assert core.PlatformCredential(tmp_path / "nope").token() == ("", "none")
+    broken = tmp_path / "broken"
+    broken.write_text("{not json")
+    assert core.PlatformCredential(broken).token() == ("", "none")
+
+
+def test_the_refresh_goes_on_the_wire_exactly_as_laid_out():
+    """The transport must not add, re-case or reorder anything: what reaches
+    the socket is the request `refresh_request` describes, byte for byte, and
+    that is what the contract compares with the pinned Claude Code's own."""
+    import http.client
+    import socket
+
+    received = bytearray()
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve():
+        conn, _ = listener.accept()
+        with conn:
+            while b"\r\n\r\n" not in received or not received.endswith(b"}"):
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                received.extend(chunk)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                b"Content-Length: 22\r\nConnection: close\r\n\r\n"
+                b'{"access_token":"new"}'
+            )
+
+    server = _threading.Thread(target=serve)
+    server.start()
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": "sk-ant-ort01-X",
+        "client_id": core.OAUTH_CLIENT_ID,
+        "scope": "user:profile user:inference",
+    }
+
+    status, answer = core._post_refresh(
+        f"http://127.0.0.1:{port}/v1/oauth/token",
+        body,
+        5,
+        connect=http.client.HTTPConnection,
+    )
+    server.join(5)
+    listener.close()
+
+    headers, raw = core.refresh_request(body)
+    expected = (
+        b"POST /v1/oauth/token HTTP/1.1\r\n"
+        + b"".join(f"{n}: {v}\r\n".encode() for n, v in headers)
+        + b"\r\n"
+        + raw
+    )
+    assert bytes(received) == expected
+    assert (status, answer) == (200, {"access_token": "new"})
+    assert raw == (
+        b'{"grant_type":"refresh_token","refresh_token":"sk-ant-ort01-X",'
+        b'"client_id":"9d1c250a-e61b-44d9-88ed-5944d1962f5e",'
+        b'"scope":"user:profile user:inference"}'
+    )

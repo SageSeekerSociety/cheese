@@ -84,8 +84,12 @@ def _load_addon(
     *,
     scoped_secret: str = "",
     allow_header_attr: str = "",
+    credential: str | None = None,
 ):
     """Load a FRESH billing_addon module with env captured for this test.
+
+    ``credential`` is the platform's Claude credential file's content; None
+    leaves the platform logged out.
 
     The addon reads all of these at import time, so env must be set before the
     module is loaded — hence a fresh module per call.
@@ -99,6 +103,11 @@ def _load_addon(
     monkeypatch.setenv("CHEESE_ADMISSION_URL", "")
     monkeypatch.setenv("CHEESE_GATEWAY_BASE", "")
     monkeypatch.setenv("CHEESE_TOKEN_CAP", "0")
+    credential_file = tmp_path / "claude-credential" / "credential"
+    credential_file.parent.mkdir(parents=True, exist_ok=True)
+    if credential is not None:
+        credential_file.write_text(credential)
+    monkeypatch.setenv("CHEESE_CLAUDE_CREDENTIAL", str(credential_file))
 
     _ADDON_LOADS += 1
     name = f"billing_addon_{_ADDON_LOADS}"
@@ -837,22 +846,135 @@ def test_a_login_less_session_boots_without_refusals(monkeypatch, tmp_path, path
     assert flow.request.host == "api.anthropic.com"
 
 
-def test_a_logged_in_session_asks_anthropic_for_its_own_boot_data(
-    monkeypatch, tmp_path
+def _platform_turn(
+    monkeypatch,
+    tmp_path,
+    *,
+    credential,
+    pool="subscription",
+    path="/v1/messages",
 ):
+    """A placeholder session's request while the platform holds `credential`."""
     secret = "s3cr3t"
-    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
-    _with_admission(mod, monkeypatch, pool="subscription", fail_open=False)
+    mod = _load_addon(
+        monkeypatch, tmp_path, scoped_secret=secret, credential=credential
+    )
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    _with_admission(
+        mod, monkeypatch, pool=pool, key="sk-virtual-project-key", fail_open=False
+    )
     mod.http_connect(
         _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
     )
-    flow = _session_flow(conn="c1")
-    flow.request.path = "/api/claude_cli/bootstrap"
+    flow = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    flow.request.path = path
+    return mod, flow
+
+
+def _pair(expires_in_s: float, refresh="sk-ant-ort01-PLATFORM") -> str:
+    return json.dumps(
+        {
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-oat01-PLATFORM-OLD",
+                "refreshToken": refresh,
+                "expiresAt": int((time.time() + expires_in_s) * 1000),
+            }
+        }
+    )
+
+
+def test_a_subscription_turn_goes_out_on_the_platforms_credential(
+    monkeypatch, tmp_path
+):
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP\n"
+    )
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is None
+    assert flow.request.host == "api.anthropic.com"
+    assert flow.request.headers["authorization"] == (
+        "Bearer sk-ant-oat01-PLATFORM-SETUP"
+    )
+
+
+def test_a_logged_in_platform_asks_anthropic_for_the_sessions_boot_data(
+    monkeypatch, tmp_path
+):
+    mod, flow = _platform_turn(
+        monkeypatch,
+        tmp_path,
+        credential="sk-ant-oat01-PLATFORM-SETUP",
+        path="/api/claude_cli/bootstrap",
+    )
 
     asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None, "a real login's boot data comes from Anthropic"
-    assert flow.request.headers["authorization"] == f"Bearer {SESSION_CREDENTIAL}"
+    assert flow.request.headers["authorization"] == (
+        "Bearer sk-ant-oat01-PLATFORM-SETUP"
+    )
+
+
+def test_a_login_about_to_expire_is_renewed_before_it_goes_out(monkeypatch, tmp_path):
+    mod, flow = _platform_turn(monkeypatch, tmp_path, credential=_pair(60))
+    refreshed = []
+
+    def grant(url, body, timeout):
+        refreshed.append(body["refresh_token"])
+        return 200, {"access_token": "sk-ant-oat01-PLATFORM-NEW", "expires_in": 28800}
+
+    mod.CREDENTIAL._post = grant
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert refreshed == ["sk-ant-ort01-PLATFORM"]
+    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM-NEW"
+
+
+def test_logging_out_takes_effect_at_the_next_request(monkeypatch, tmp_path):
+    """No session holds the credential, so removing the file is logging every
+    running session out at once."""
+    mod, first = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    asyncio.run(mod.requestheaders(first))
+    assert first.response is None
+
+    mod.CREDENTIAL.path.unlink()
+    second = _session_flow(bearer=core.NO_LOGIN_PLACEHOLDER, conn="c1")
+    asyncio.run(mod.requestheaders(second))
+
+    assert second.response is not None and second.response.status_code == 400
+    assert b"no Claude login" in second.response.content
+
+
+def test_a_refused_login_is_reported_as_one_to_renew_and_not_retried(
+    monkeypatch, tmp_path
+):
+    mod, flow = _platform_turn(monkeypatch, tmp_path, credential=_pair(60))
+    mod.CREDENTIAL._post = lambda url, body, timeout: (400, {"error": "invalid_grant"})
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is not None and flow.response.status_code == 400
+    assert b"has to be renewed" in flow.response.content
+
+
+def test_the_platforms_credential_never_reaches_the_gateway(monkeypatch, tmp_path):
+    mod, flow = _platform_turn(
+        monkeypatch,
+        tmp_path,
+        credential="sk-ant-oat01-PLATFORM-SETUP",
+        pool="gateway",
+    )
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.request.host == "litellm.invalid"
+    assert flow.request.headers["authorization"] == "Bearer sk-virtual-project-key"
+    assert not [v for v in flow.request.headers.values() if "PLATFORM" in v]
 
 
 def test_a_host_without_a_claude_login_still_serves_the_gateway(monkeypatch, tmp_path):
