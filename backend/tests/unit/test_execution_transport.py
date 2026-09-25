@@ -1273,32 +1273,18 @@ def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
     assert platform.seen[before:] == ["lease", "invoke"]
 
 
-def test_a_leased_session_starts_without_its_machine_when_it_cannot_have_it(
+def test_a_session_never_starts_at_the_machines_path_without_the_machine(
     leased_session,
 ):
-    """The room's conversation does not wait for its machine: a session whose
-    machine the platform cannot hand out right now starts at the machine's
-    path without it, and its first tool takes the lease as a session started
-    before its machine existed does."""
-    platform, work, launch = leased_session
+    """A lease the platform cannot hand out when the session starts fails the
+    start, with the platform's reason: a session at the machine's path that
+    has not read the project's instructions, hooks and MCP servers is not one
+    that machine would run."""
+    platform, _, launch = leased_session
     platform.lease = "unavailable"
-    started = launch()
-    target = json.loads(Path(started["execution"]).read_text())
-    assert started["workspace"] == str(work)
-    assert target["kind"] == "deferred"
+    with pytest.raises(RuntimeError, match="工作机器未连接"):
+        launch()
     assert platform.seen == ["lease"]
-
-    platform.lease = "ready"
-    client = executor_transport.RemoteClient(target)
-    request = {
-        "id": "first-write",
-        "tool": "Bash",
-        "args": {"command": f"printf remote > {work}/output.txt"},
-    }
-    with pytest.raises(RuntimeError, match="Always preserve the protected file"):
-        client.call("invoke", request)
-    assert "error" not in client.call("invoke", request)
-    assert (work / "output.txt").read_text() == "remote"
 
 
 @pytest.mark.parametrize("cancelled", [False, True])

@@ -774,10 +774,24 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
 
 
 class CenterHub(FakeHub):
-    """The session host: a connector whose screens run a Claude Code runner."""
+    """The session host, a connector whose screens run a Claude Code runner,
+    and the room's machine, connected while ``machine_up``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.machine_up = True
+        self.machine_asked = 0
 
     def is_online(self, device_id: str) -> bool:
-        return device_id == "center"
+        return device_id == "center" or (device_id == "executor" and self.machine_up)
+
+    async def call_executor(self, device_id, state, method, params, **options):
+        if device_id != "executor":
+            return await super().call_executor(device_id, state, method, params)
+        self.machine_asked += 1
+        if not self.machine_up:
+            raise TimeoutError("the machine does not answer")
+        return {"workspace": "/home/machine", "mcp_servers": []}
 
 
 def center_room(client, monkeypatch):
@@ -816,6 +830,7 @@ async def lease_machine(factory, topic, workspace):
             "status": "ready",
             "workspace": workspace,
             "url": "http://central-api/execution",
+            "state": "/home/machine/.cheese/executor",
         }
         await db.commit()
     return generation
@@ -886,6 +901,63 @@ async def test_a_session_started_on_its_leased_machine_stays(client, room, monke
         for _ in range(3):
             assert await turn(project, topic) is started
         assert hub.closed == closed
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_a_relaunch_waits_for_the_machine_to_answer(client, room, monkeypatch):
+    """A session is never started at its machine's path without the machine. A
+    turn that finds the placeholder session idle while its leased machine is
+    out of reach runs on it as it is, and the relaunch waits, as it waits for a
+    running task, for the first idle turn that finds the machine answering."""
+    project, topic = room
+    hub, turn = center_room(client, monkeypatch)
+
+    async def exercise():
+        first = await turn(project, topic)
+        await lease_machine(client.test_request_factory, topic, "/home/machine/p")
+        hub.ping = {"alive": True, "working": False, "tasks": {}}
+
+        hub.machine_up = False
+        for _ in range(2):
+            assert await turn(project, topic) is first
+        assert hub.closed == []
+
+        hub.machine_up = True
+        moved = await turn(project, topic)
+        assert moved.sid != first.sid and hub.closed == [first.sid]
+        assert launched(hub, moved)[0]["workspace"] == "/home/machine/p"
+
+        # On the machine, it stays there while the machine is out of reach.
+        hub.machine_up = False
+        asked = hub.machine_asked
+        assert await turn(project, topic) is moved
+        assert hub.machine_asked == asked and hub.closed == [first.sid]
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_a_session_started_while_its_machine_is_away_starts_at_the_placeholder(
+    client, room, monkeypatch
+):
+    """A session that has to start again — its process is gone — while its
+    leased machine is out of reach starts where it was, at the placeholder,
+    holding its lease for its first tool."""
+    project, topic = room
+    hub, turn = center_room(client, monkeypatch)
+
+    async def exercise():
+        first = await turn(project, topic)
+        await lease_machine(client.test_request_factory, topic, "/home/machine/p")
+        hub.machine_up = False
+        hub.ping = {"alive": False}
+        started = await turn(project, topic)
+        assert started.sid != first.sid
+        target, claims, _ = launched(hub, started)
+        assert target["workspace"] == "/unavailable-project"
+        assert claims["lease"]
 
     client.portal.call(exercise)
 

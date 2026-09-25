@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.sandbox_auth import bind_resource_token, token_agent_handle
-from app.domain.agent import private_chat
+from app.domain.agent import execution, private_chat
 from app.domain.agent.device_provider import (
     DeviceChannel,
 )
@@ -24,6 +24,11 @@ from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger(__name__)
+
+# How long a turn asks a session's leased machine whether it answers before
+# starting the session on it: a turn waits this long at most, and only when a
+# relaunch onto the machine is due or no session is running.
+MACHINE_PROBE_TIMEOUT_S = 15
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +68,40 @@ class CentralChannel(DeviceChannel):
     async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         own = await self._session_host_agent(session)
         return own._replace(deferred=needs_place)
+
+    async def _starts_on_machine(self, lease, center, topic_id, resource) -> bool:
+        """Whether this turn's launch puts the session on its leased machine.
+
+        A session is only ever started on the machine it can take right now:
+        one started on a machine it cannot reach would see the project without
+        the instructions, hooks and MCP servers it reads when it starts. So a
+        placeholder session stays one — its conversation and its mapped
+        commands still work — until a turn finds the machine answering, and a
+        relaunch put off that way waits as one put off by a running task does.
+        A session already on the machine stays there however the machine
+        answers: a machine that is out of reach is not a reason to move it.
+        """
+        existing = self._existing_screen(center, topic_id, resource)
+        if (
+            existing is not None
+            and (existing.execution_target or {}).get("workspace") == lease["workspace"]
+        ):
+            return True
+        if not self._hub.is_online(lease["device_id"]):
+            return False
+        try:
+            await execution.call(
+                lease, "ping", {}, hub=self._hub, timeout=MACHINE_PROBE_TIMEOUT_S
+            )
+        except Exception:  # noqa: BLE001 — any failure means not now, and is logged
+            logger.info(
+                "central_session_stays_deferred topic=%s device=%s",
+                topic_id,
+                lease["device_id"],
+                exc_info=True,
+            )
+            return False
+        return True
 
     async def restore(self, device_id: str | None = None) -> None:
         """Adopt the screens of this channel's sessions that outlived the backend.
@@ -199,11 +238,7 @@ class CentralChannel(DeviceChannel):
             raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
         await self._wait_for_session_host(center, session)
         values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
-        # The machine this session already holds, once its lease is ready. A
-        # session started before then saw the project at a placeholder; one
-        # started now sees it where the machine holds it, and that path is part
-        # of what it was started with (`_launch_identity`): so the first turn
-        # that finds a placeholder session idle relaunches it here.
+        # The machine this session already holds, once its lease is ready.
         lease = (place.lease if place else None) if precheck.deferred else None
         leased = (
             lease
@@ -240,7 +275,16 @@ class CentralChannel(DeviceChannel):
                     for key, value in values.items()
                     if key.startswith(("CHEESE_", "GIT_"))
                 },
-                "workspace": leased["workspace"] if leased else DEFERRED_WORKSPACE,
+                # A session started before its lease was ready sees the project
+                # at a placeholder. One started on the machine sees it where the
+                # machine holds it, and that path is part of what it was
+                # started with (`_launch_identity`), so the first turn that
+                # finds a placeholder session idle, with its machine there,
+                # relaunches it onto the machine.
+                "workspace": leased["workspace"]
+                if leased
+                and await self._starts_on_machine(leased, center, topic_id, resource)
+                else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
         else:
