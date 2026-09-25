@@ -92,28 +92,45 @@ def _spawn(command: str, cwd: str, environ: dict) -> tuple[int, int]:
     _sizes(slave)
     child = os.fork()
     if child == 0:
-        os.close(master)
-        os.setsid()
-        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-        for target in (0, 1, 2):
-            os.dup2(slave, target)
-        if slave > 2:
-            os.close(slave)
-        os.chdir(cwd)
-        # `dumb`, and this is the single most consequential line here. The
-        # reader is a language model reading a transcript, not eyes watching a
-        # screen. Told it has a capable terminal, Python's REPL, psql and most
-        # build tools redraw the current line on every keystroke — measured
-        # 2026-09-17, `print(6*7)` typed into `python3 -i` came back as two
-        # kilobytes of cursor motion with the `42` buried inside it. `dumb`
-        # asks all of them for the line-oriented behaviour instead, which is
-        # the only kind that survives being read later.
-        environment = {**os.environ, **environ, "TERM": "dumb"}
-        environment["COLUMNS"], environment["LINES"] = str(COLUMNS), str(ROWS)
-        os.execvpe("/bin/sh", ["/bin/sh", "-lc", command], environment)
-        os._exit(127)  # unreachable unless exec itself failed
+        # The child is a copy of this supervisor until exec replaces it, and
+        # must never return into it: an exception unwinding from here would
+        # run the supervisor's own cleanup and failure report — unlinking its
+        # control socket and writing `error` and `exit` over the ones the
+        # supervisor writes for this same job. What went wrong goes to the
+        # terminal, where a shell's own complaint would have gone.
+        try:
+            _become(command, cwd, environ, master, slave)
+        except BaseException as error:  # noqa: BLE001 — nothing may escape
+            try:
+                os.write(2, f"{type(error).__name__}: {error}\n".encode())
+            except OSError:
+                pass
+        os._exit(127)
     os.close(slave)
     return master, child
+
+
+def _become(command: str, cwd: str, environ: dict, master: int, slave: int) -> None:
+    """In the forked child: take the terminal and exec the command."""
+    os.close(master)
+    os.setsid()
+    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+    for target in (0, 1, 2):
+        os.dup2(slave, target)
+    if slave > 2:
+        os.close(slave)
+    os.chdir(cwd)
+    # `dumb`, and this is the single most consequential line here. The
+    # reader is a language model reading a transcript, not eyes watching a
+    # screen. Told it has a capable terminal, Python's REPL, psql and most
+    # build tools redraw the current line on every keystroke — measured
+    # 2026-09-17, `print(6*7)` typed into `python3 -i` came back as two
+    # kilobytes of cursor motion with the `42` buried inside it. `dumb`
+    # asks all of them for the line-oriented behaviour instead, which is
+    # the only kind that survives being read later.
+    environment = {**os.environ, **environ, "TERM": "dumb"}
+    environment["COLUMNS"], environment["LINES"] = str(COLUMNS), str(ROWS)
+    os.execvpe("/bin/sh", ["/bin/sh", "-lc", command], environment)
 
 
 #: 控制口不在任务目录里 —— 那里放不下它。
@@ -266,9 +283,17 @@ def _hold(args: argparse.Namespace) -> None:
         Path(address).unlink(missing_ok=True)
     # Written last and once: its presence is what "finished" means to a reader,
     # so it must not appear before the output it belongs to is on disk.
-    (args.dir / "exit").write_text(
+    _record_exit(args.dir, status)
+
+
+def _record_exit(directory: Path, status: int) -> None:
+    """Put `exit` in place whole. A reader takes its presence to mean the job
+    is over and parses it at once, so it is never seen empty or half-written."""
+    partial = directory / f"exit.{os.getpid()}"
+    partial.write_text(
         json.dumps({"status": status, "at": time.time()}), encoding="utf-8"
     )
+    os.replace(partial, directory / "exit")
 
 
 #: 看守进程自己死掉时的退出码，和命令的退出码取自同一个字段，所以要能分得开。
@@ -295,12 +320,8 @@ def main(argv: list[str] | None = None) -> None:
         # forever, having printed nothing, for a reason nobody can recover —
         # which is the same silence as no failure at all.
         (args.dir / "error").write_text(traceback.format_exc(), encoding="utf-8")
-        exit_file = args.dir / "exit"
-        if not exit_file.exists():
-            exit_file.write_text(
-                json.dumps({"status": _GUARDIAN_FAILED, "at": time.time()}),
-                encoding="utf-8",
-            )
+        if not (args.dir / "exit").exists():
+            _record_exit(args.dir, _GUARDIAN_FAILED)
         raise
 
 
