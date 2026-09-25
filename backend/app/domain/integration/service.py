@@ -143,14 +143,7 @@ def guard_mail_hosts(config: dict) -> None:
             raise ValidationError(f"找不到邮件服务器 {host}") from exc
         for info in infos:
             address = ipaddress.ip_address(info[4][0])
-            if (
-                address.is_private
-                or address.is_loopback
-                or address.is_link_local
-                or address.is_reserved
-                or address.is_multicast
-                or address.is_unspecified
-            ):
+            if not address.is_global or address.is_multicast:
                 raise ValidationError(f"邮件服务器 {host} 指向内网地址，不能使用")
 
 
