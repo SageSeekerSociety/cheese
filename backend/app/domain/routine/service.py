@@ -171,6 +171,15 @@ class RoutineService:
             agent = await self._agent_for(topic.id, agent_handle or by)
             if not owner_handle:
                 raise ValidationError("芝士起草时要写明是替谁设的（owner_handle）")
+            members, _ = await TopicMemberService(self._session).list_for_topic(
+                topic.id
+            )
+            seats = await TopicMemberService(self._session).agent_handles(topic.id)
+            people = {m.member_handle for m in members} - set(seats)
+            if owner_handle not in people:
+                raise ValidationError(
+                    f"{owner_handle} 不是这个房间里的人，结果没法通知给他"
+                )
             owner = owner_handle
         else:
             agent = await self._agent_for(topic.id, agent_handle)
@@ -507,7 +516,7 @@ async def _events_for(
     if trigger is RoutineTrigger.library_file_added:
         for entry in library.list_library_files(routine.project_id):
             when = datetime.fromtimestamp(entry["modified"], UTC)
-            if when > since:
+            if when >= since:
                 found.append(
                     (
                         f"library:{entry['path']}:{int(entry['modified'])}",
@@ -519,7 +528,7 @@ async def _events_for(
         query = select(Task).where(
             Task.project_id == routine.project_id,
             Task.closed_at.is_not(None),
-            Task.closed_at > since,
+            Task.closed_at >= since,
         )
         if in_room:
             query = query.where(Task.room_id == routine.topic_id)
@@ -543,7 +552,7 @@ async def _events_for(
         query = select(AcceptCard).where(
             AcceptCard.status == AcceptStatus.accepted,
             AcceptCard.decided_at.is_not(None),
-            AcceptCard.decided_at > since,
+            AcceptCard.decided_at >= since,
             AcceptCard.topic_id.in_(
                 select(Topic.id).where(Topic.project_id == routine.project_id)
             ),
