@@ -17,13 +17,15 @@ const MANUAL_REF = process.env.MANUAL_REF || ''
 const OUT = process.env.OUT || path.join(HERE, 'index.html')
 
 const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: 'Asia/Shanghai' } })
+// `local:<file>` pages are written here (content/) until they move into docs/manual.
 function readManual(file) {
+  if (file.startsWith('local:')) return fs.readFileSync(path.join(HERE, 'content', file.slice(6)), 'utf8')
   if (MANUAL_REF) return git('show', `${MANUAL_REF}:docs/manual/${file}`)
   const f = path.join(REPO, 'docs/manual', file)
   if (!fs.existsSync(f)) throw new Error(`docs/manual/${file} not in this checkout; until PR #1737 lands, run with MANUAL_REF=origin/task/126fa903`)
   return fs.readFileSync(f, 'utf8')
 }
-const manualDate = (file) => git('log', '-1', '--date=format-local:%Y-%m-%d', '--format=%ad', MANUAL_REF || 'HEAD', '--', `docs/manual/${file}`).trim()
+const manualDate = (file) => file.startsWith('local:') ? git('log', '-1', '--date=format-local:%Y-%m-%d', '--format=%ad', '--', `prototypes/docs-site/content/${file.slice(6)}`).trim() || '待提交' : git('log', '-1', '--date=format-local:%Y-%m-%d', '--format=%ad', MANUAL_REF || 'HEAD', '--', `docs/manual/${file}`).trim()
 
 // ---------- logo motion (direction A「冒孔」) lifted from the motion prototype ----------
 const tpl = fs.readFileSync(path.join(MOTION, 'template.html'), 'utf8')
@@ -47,7 +49,7 @@ const INFO = '<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"
 const slugOf = {}, WHERE = {}
 SECTIONS.forEach(([sec, , , groups]) => groups.forEach(([, items]) => items.forEach(([slug, , src]) => {
   WHERE[slug] = sec
-  if (typeof src === 'string') slugOf[src.replace(/\.md$/, '')] = slug
+  if (typeof src === 'string') slugOf[src.replace(/^local:/, '').replace(/\.md$/, '')] = slug
 })))
 DEV.forEach(([, items]) => items.forEach(([slug]) => { WHERE[slug] = 'dev' }))
 
@@ -68,11 +70,12 @@ function mdPage(file) {
     if (m) { const slug = slugOf[m[1]] || m[1]; return `<a class="link" href="#/${WHERE[slug] || 'start'}/${slug}${m[2] ? '#' + m[2] : ''}">${t}</a>` }
     return `<a class="link" href="${href}" target="_blank" rel="noopener">${t}</a>`
   }
+  renderer.image = ({ text }) => `<figure class="shot-todo"><span>截图待补：${esc(text || '界面截图')}</span></figure>`
   renderer.blockquote = function ({ tokens }) { return `<div class="callout note">${INFO}<div>${this.parser.parse(tokens)}</div></div>` }
   let html = marked.parse(raw, { renderer })
   let lede = ''
   html = html.replace(/^\s*<p>([\s\S]*?)<\/p>/, (_, p) => { lede = p; return '' })
-  return { lede, body: html, src: `docs/manual/${file}`, updated: manualDate(file) }
+  return { lede, body: html, src: file.startsWith('local:') ? `prototypes/docs-site/content/${file.slice(6)}` : `docs/manual/${file}`, updated: manualDate(file) }
 }
 
 const outlineBody = (points, dev) => `<div class="callout ${dev ? 'note' : 'warn'}">${INFO}<p>${dev ? '<strong>这篇还没写正文。</strong>下面是按当前代码核实过的要点，正文照着它展开。' : '<strong>这一页还没写。</strong>下面是它要讲的内容，上线前会补齐。'}</p></div>

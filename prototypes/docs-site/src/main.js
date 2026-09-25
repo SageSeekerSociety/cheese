@@ -47,7 +47,7 @@ function articleHtml(sec, page) {
   const list = flat(sec), i = list.findIndex((x) => x.slug === page), prev = list[i - 1], next = list[i + 1]
   const tmp = document.createElement('div'); tmp.innerHTML = d.body
   $$(':scope > *', tmp).forEach((el, k) => el.style.setProperty('--k', Math.min(k, 14)))
-  const fromRepo = d.src.startsWith('docs/manual/')
+  const fromRepo = /^(docs\/manual|prototypes\/docs-site\/content)\//.test(d.src)
   return `${sec === 'dev' ? `<div class="admin-note">${ic('lock', 'width:14px;height:14px')}<span><b>仅管理员可见</b>从后台管理进入。这一栏按当前代码撰写，不沿用仓库 docs/ 下的旧文档。</span></div>` : ''}
     <div class="crumb">${NAV[sec].label}<span>/</span><b>${groupOf(sec, page)}</b>${d.draft ? '<span class="draft-tag">待写</span>' : ''}</div>
     <div class="page-head"><h1>${d.title}<span class="h1-line"></span></h1>
