@@ -120,12 +120,13 @@ COPY --from=cli . .
 # the way to produce these for a local (non-Docker) backend.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    set -eu; for target in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do \
+    set -eu; for target in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64 windows-arm64 windows-amd64; do \
       os="${target%-*}"; arch="${target#*-}"; \
+      name=cheesehost; [ "$os" = windows ] && name=cheesehost.exe; \
       GOFLAGS=-mod=mod GOOS="$os" GOARCH="$arch" \
         go build -buildvcs=false -ldflags "-s -w -X main.version=cheesex-connector" \
-        -o "/out/$target/cheesehost" . ; \
-      echo "built $target/cheesehost"; \
+        -o "/out/$target/$name" . ; \
+      echo "built $target/$name"; \
     done
 
 # ---- Production ----
@@ -157,8 +158,9 @@ COPY --from=connector --chown=cheese:python /out ./connector-dist
 # Verify at the source layer rather than pulling/running the multi-GB image after
 # it was pushed. A missing COPY still fails the gated build, but without the
 # former three-minute registry round trip.
-RUN set -eu; for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do \
-      f="/app/connector-dist/$target/cheesehost"; \
+RUN set -eu; for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do \
+      name=cheesehost; case "$target" in windows-*) name=cheesehost.exe ;; esac; \
+      f="/app/connector-dist/$target/$name"; \
       test -s "$f"; \
       echo "verified $target ($(wc -c < "$f") bytes)"; \
     done

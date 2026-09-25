@@ -1,7 +1,6 @@
 """Read complete conversation records without triggering agent work."""
 
 import asyncio
-import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -293,12 +292,12 @@ def test_the_replies_tool_reads_through_the_real_route(client):
             return response.json()
 
     said = tools.run_platform_tool(
-        "cheese_chat_replies", {"message_id": str(parent), "json": True}, Host()
+        "cheese_chat_replies", {"message_id": str(parent)}, Host()
     )
-    result = json.loads(said)
-    assert result["reply_to"]["id"] == str(parent)
-    reply = result["data"][0]
-    assert reply["content"] == "uploads/spec.pdf"
-    assert reply["mime_type"] == "application/pdf"
-    assert reply["meta"]["filename"] == "spec.pdf"
-    assert reply["reactions"] == [{"emoji": "👍", "count": 1, "authors": ["alice"]}]
+    replying_to, reply = said.split("\n\n", 1)
+    assert replying_to.startswith("Replying to:")
+    assert f"id={parent}" in replying_to
+    assert "Review the attached document" in replying_to
+    assert f"id={child}" in reply
+    for value in ("uploads/spec.pdf", "application/pdf", "spec.pdf", "👍", "alice"):
+        assert value in reply

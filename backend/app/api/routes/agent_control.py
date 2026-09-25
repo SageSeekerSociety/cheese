@@ -1,11 +1,11 @@
 """The room's controls over its live session: what it shows, and what it sends.
 
 A control is a request the session answers (interrupt it, change its model,
-read its context usage) or one the room's executor answers, because the files
-and the commands live there (read a file, list the workspace diff, move a
-running command to the background). The runtime that holds the room says which
-are which (``SessionControls``); this route checks who is asking and sends each
-to whoever answers it.
+move a running command to the background, stop a task) or one the room's
+executor answers, because the files live there (read a file, list the
+workspace diff). The runtime that holds the room says which are which
+(``SessionControls``); this route checks who is asking and sends each to
+whoever answers it.
 """
 
 import uuid
@@ -34,9 +34,6 @@ from app.domain.topic.services import TopicService
 router = APIRouter(tags=["agent-control"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Chat = Annotated[ChatService, Depends(get_chat_service)]
-
-#: A task the executor runs, as the controls list it.
-EXECUTOR_TASK = "executor_bash"
 
 
 async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver) -> Actor:
@@ -85,30 +82,6 @@ def not_its_own(state: dict, actor: Actor) -> None:
         raise ForbiddenError("A session cannot decide its own controls")
 
 
-def answered_by_the_session(request: dict, state: dict, executor: frozenset) -> bool:
-    """Whether the session, rather than the executor, answers this request.
-
-    A task has two possible owners: a command the executor runs, and an agent
-    or command the harness runs itself. The task list says which each one is.
-    """
-    subtype = request.get("subtype")
-    if subtype not in executor:
-        return True
-    tasks = (state.get("tasks") or {}).values()
-    if subtype == "stop_task":
-        key, value = "task_id", request.get("task_id")
-    elif subtype == "background_tasks":
-        if not request.get("tool_use_id"):
-            return True
-        key, value = "tool_use_id", request.get("tool_use_id")
-    else:
-        return False
-    return any(
-        task.get(key) == value and task.get("task_type") != EXECUTOR_TASK
-        for task in tasks
-    )
-
-
 async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
     """The executor the room's session works on, for this generation of the room.
 
@@ -145,21 +118,9 @@ async def control(
     target = await executor_target(db, topic_id)
     # A control waits for a remote process; do not hold an idle transaction.
     await db.commit()
-    by_session = answered_by_the_session(request, state, runtime.executor_controls)
     try:
-        if by_session:
+        if request.get("subtype") not in runtime.executor_controls:
             response = await runtime.control(topic_id, request)
-            if target is not None and (
-                request.get("subtype") == "interrupt"
-                or (
-                    request.get("subtype") == "background_tasks"
-                    and not request.get("tool_use_id")
-                )
-            ):
-                # Interrupting the turn also stops the command it is waiting on
-                # there, and a move to the background with no call named moves
-                # the executor's foreground command too.
-                await private_chat.control(target, request)
         elif target is None:
             raise ConflictError("This room has no work machine for that control")
         else:

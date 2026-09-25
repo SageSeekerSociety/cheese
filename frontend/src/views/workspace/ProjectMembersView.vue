@@ -8,7 +8,8 @@
 //   - 外部成员：团队以外、被点名邀请进这一个项目的人，名字旁边挂「外部」。只有他们
 //     能从这里被移出。
 // 没有项目自己的角色：管理外部成员的是项目所有者和团队的所有者、管理员，由后端在
-// 项目上给出的 `can_manage_members` 说了算（后端动手时按同一条规则再判一次）。
+// 项目上给出的 `can_manage_members` 说了算（后端动手时按同一条规则再判一次）。它只在
+// `GET /projects/{id}` 上有，项目列表不带，所以这一页自己问一次。
 //
 // 一行 = 一个人 = 两件事：找到他（点开是他的主页，右边是私聊），和——如果他是外部成员
 // 而你管得了——把他移出。
@@ -26,6 +27,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import {
   ApiError,
+  getProject,
   inviteExternalMember,
   listProjectAgents,
   listProjectInvitations,
@@ -55,7 +57,15 @@ const store = useWorkspaceStore()
 const me = computed(() => myHandle())
 const project = computed(() => store.projects.find((p) => p.id === props.projectId) ?? null)
 const ownerHandle = computed<string>(() => String(project.value?.owner_handle ?? ''))
-const canManage = computed(() => project.value?.can_manage_members === true)
+const canManage = ref(false)
+watch(
+  () => props.projectId,
+  async (id) => {
+    canManage.value = false
+    canManage.value = (await getProject(id)).can_manage_members === true
+  },
+  { immediate: true }
+)
 
 function unreadWith(handle: string): number {
   return store.privateUnreadMap?.[handle] ?? 0

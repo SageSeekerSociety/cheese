@@ -689,11 +689,11 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
         assert current.work_lease["resource_id"] == resource_id
 
 
-async def test_agent_cloud_choice_requires_its_own_team_membership(client, monkeypatch):
+async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
+    """Being on the project is enough; the agent need not sit on the team itself."""
     from app.domain.agent import compute_configs
     from app.domain.project.models import Project
-    from app.domain.team.models import Team, TeamMemberRole
-    from app.domain.team.repositories import TeamRepository
+    from app.domain.team.models import Team
 
     project = post_project(
         client, json={"name": "Cloud authority", "owner_handle": "alice"}
@@ -742,11 +742,6 @@ async def test_agent_cloud_choice_requires_its_own_team_membership(client, monke
     path = f"/topics/{topic_id}/sessions/{session_id}/work-choice"
     body = {"choice": {"name": "Cloud", "profile": "cloud"}}
     headers = {"X-Cheese-Token": token}
-    denied = client.put(path, headers=headers, json=body)
-    assert denied.status_code == 403, denied.text
-    async with client.test_factory() as db:
-        await TeamRepository(db).add_member(team_id, actor_id, TeamMemberRole.MEMBER)
-        await db.commit()
     selected = client.put(path, headers=headers, json=body)
     assert selected.status_code == 200, selected.text
     assert selected.json()["data"]["session"]["choice"]["profile"] == "cloud"

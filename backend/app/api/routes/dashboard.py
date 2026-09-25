@@ -11,6 +11,7 @@ from app.api.response import ok
 from app.api.routes.machines import _require_project_access
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.errors import AuthenticationRequiredError
 from app.domain.dashboard.services import DashboardService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
@@ -117,6 +118,15 @@ async def contributions(
 
 
 @router.get("/users/{handle}/profile")
-async def user_profile(handle: str, db: DbSession) -> dict:
-    """个人主页 (spec §7.2): cross-project profile / portfolio."""
-    return ok(await DashboardService(db).user_profile(handle))
+async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -> dict:
+    """个人主页 (spec §7.2): cross-project profile / portfolio.
+
+    ``handle`` says whose page this is; the viewer comes from the credential,
+    and the page is cut to what that viewer may see. A person's projects are
+    project content, and what the agents remember about them is theirs alone,
+    so there is nothing on it for a caller nobody can identify."""
+    viewer = await resolver.resolve(fallback_handle=None)
+    resolver.reject_failed_credential(viewer)
+    if not viewer.authenticated:
+        raise AuthenticationRequiredError("查看个人主页需要先登录")
+    return ok(await DashboardService(db).user_profile(handle, viewer=viewer.handle))

@@ -1,8 +1,8 @@
-"""The pinned Claude Code build, for tests whose executor runs commands.
+"""The pinned Claude Code build, for tests whose executor runs it.
 
-Every command an executor runs goes through that build's `mcp serve`, so a
-test that runs one needs the build itself; python standing in for it no longer
-gets past the first `Bash`.
+An executor serves its file tools through that build's `mcp serve`, and its
+commands start from the shell snapshot that build writes, so a test that runs
+either needs the build itself.
 """
 
 import os

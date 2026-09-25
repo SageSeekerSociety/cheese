@@ -245,6 +245,7 @@ import UpdateBanner from '@/components/common/UpdateBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
+import { autoConnectThisComputer } from '@/lib/desktop'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { randomTeammateName } from '@/lib/projectAgents'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
@@ -381,6 +382,16 @@ watch(
     projectOrder.value = loadProjectOrder(myHandle())
     void loadCxProjects()
   }
+)
+
+// In the desktop app, being signed in is what makes this computer one of your
+// devices: at launch with a session, and at every sign-in (lib/desktop.ts).
+watch(
+  () => AccountService.loggedIn && AccountService.user?.id,
+  (userId) => {
+    if (typeof userId === 'number') void autoConnectThisComputer(userId)
+  },
+  { immediate: true }
 )
 
 // 上次开过的那个项目存在 workspace store 的布局里，所以冷启动也落得回去。

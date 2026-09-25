@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
@@ -15,6 +14,9 @@ import sys
 import time
 import uuid
 from pathlib import Path
+
+if sys.platform != "win32":
+    import fcntl
 
 VERSION = "2.1.277"
 # The platform's own directory inside a room's home, and the one it used before.
@@ -38,6 +40,49 @@ CHECKOUT_DIR = "room"
 class UpgradeDeferred(Exception):
     def __init__(self, info):
         self.info = info
+
+
+def lock(file):
+    """flock(LOCK_EX). This file arrives on stdin before any release is on disk,
+    so it cannot load portable.py for the Windows lock; this is the same one."""
+    if sys.platform == "win32":
+        import msvcrt
+
+        while True:
+            os.lseek(file.fileno(), 0x7FFFFFF0, os.SEEK_SET)
+            try:
+                msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                time.sleep(0.05)
+    fcntl.flock(file, fcntl.LOCK_EX)
+
+
+def portable(release):
+    return runpy.run_path(str(Path(release) / "remote-execution/portable.py"))
+
+
+def windows_shim(name, data):
+    """A `.cmd` that runs an extension-less script, or None for anything else.
+
+    Git Bash runs a script by its `#!` line; cmd.exe and CreateProcess only
+    run what PATHEXT names, so beside every such script sits a shim that hands
+    it to the interpreter its first line asks for, looked up on PATH.
+    """
+    if Path(name).suffix or not data.startswith(b"#!"):
+        return None
+    interpreter = data.split(b"\n", 1)[0][2:].decode().split()
+    program = Path(interpreter[0]).name
+    if program == "env" and len(interpreter) > 1:
+        program = interpreter[1]
+    return f'@"{program}" "%~dp0{Path(name).name}" %*\r\n'
+
+
+def temporary_beside(destination):
+    """A fresh name next to `destination`. On Windows it keeps `.exe` last,
+    since that is what makes a file something CreateProcess will start."""
+    name = destination.name + "." + uuid.uuid4().hex
+    return destination.with_name(name + (".exe" if sys.platform == "win32" else ""))
 
 
 def stage_release(platform_dir, payload):
@@ -69,6 +114,9 @@ def stage_release(platform_dir, payload):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
             path.chmod(0o700)
+            shim = windows_shim(name, data) if sys.platform == "win32" else None
+            if shim:
+                path.with_name(path.name + ".cmd").write_text(shim)
         (staged / "executor-files.json").write_text(json.dumps(list(contents)))
         staged.rename(release)
     return release, contents
@@ -81,17 +129,27 @@ def activate_release(platform_dir, release, names):
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_name(destination.name + ".next")
         temporary.unlink(missing_ok=True)
-        temporary.symlink_to(release / name)
+        if sys.platform == "win32":
+            # A symlink needs Developer Mode or an administrator there.
+            shutil.copyfile(release / name, temporary)
+        else:
+            temporary.symlink_to(release / name)
         temporary.replace(destination)
 
 
 def binary(owner, api, verified=None):
-    destination = owner / ".cheese/claude/versions" / VERSION
-    candidates = [destination, owner / ".local/bin/claude"]
+    windows = sys.platform == "win32"
+    executable = ".exe" if windows else ""
+    destination = owner / ".cheese/claude/versions" / (VERSION + executable)
+    candidates = [destination, owner / ".local/bin" / ("claude" + executable)]
     installed = shutil.which("claude")
     if installed:
         candidates.append(Path(installed))
     for candidate in candidates:
+        # Every file passes X_OK on Windows, and what npm installs there is a
+        # `claude.cmd` over node: only the binary itself is worth copying.
+        if windows and candidate.suffix.lower() != ".exe":
+            continue
         if candidate.is_file() and os.access(candidate, os.X_OK):
             stat = candidate.stat()
             identity = (
@@ -114,9 +172,7 @@ def binary(owner, api, verified=None):
             if result.returncode == 0 and result.stdout.split()[0] == VERSION:
                 if candidate != destination:
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    temporary = destination.with_name(
-                        destination.name + "." + uuid.uuid4().hex
-                    )
+                    temporary = temporary_beside(destination)
                     shutil.copyfile(candidate, temporary)
                     temporary.chmod(0o700)
                     temporary.replace(destination)
@@ -128,17 +184,24 @@ def binary(owner, api, verified=None):
     import platform
     from urllib.request import urlopen
 
-    architecture = {"x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}[
-        platform.machine()
+    architecture = {
+        "x86_64": "x64",
+        "arm64": "arm64",
+        "aarch64": "arm64",
+        # What Windows calls them.
+        "AMD64": "x64",
+        "ARM64": "arm64",
+    }[platform.machine()]
+    system = {"Linux": "linux", "Darwin": "darwin", "Windows": "win32"}[
+        platform.system()
     ]
-    system = {"Linux": "linux", "Darwin": "darwin"}[platform.system()]
     target = f"{system}-{architecture}"
     if system == "linux" and platform.libc_ver()[0] == "musl":
         target += "-musl"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(destination.name + "." + uuid.uuid4().hex)
+    temporary = temporary_beside(destination)
     with urlopen(
-        f"{api}/connector/claude/{VERSION}/{target}/claude", timeout=300
+        f"{api}/connector/claude/{VERSION}/{target}/claude{executable}", timeout=300
     ) as source:
         with temporary.open("xb") as output:
             shutil.copyfileobj(source, output)
@@ -221,12 +284,17 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
     platform_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     work.mkdir(parents=True, exist_ok=True)
-    with (platform_dir / "executor-bootstrap.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with (platform_dir / "executor-bootstrap.lock").open("a") as bootstrap_lock:
+        lock(bootstrap_lock)
         stop_previous_root(home)
         release, contents = stage_release(platform_dir, payload)
         env = dict(os.environ)
         for name in list(env):
+            # Except, on Windows, the one the connector sets for every command:
+            # Claude Code finds its shell there, and without it takes whatever
+            # Git the machine happens to have installed, or none.
+            if sys.platform == "win32" and name == "CLAUDE_CODE_GIT_BASH_PATH":
+                continue
             if (
                 name.startswith(("ANTHROPIC_", "CLAUDE_"))
                 or name == "CHEESE_MODEL_PROXY"
@@ -272,6 +340,11 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                 "CHEESE_PREVIEW_UP",
             }
         }
+        if sys.platform == "win32":
+            # HOME is what the room's POSIX programs read; Windows programs,
+            # Python's own Path.home() among them, read USERPROFILE instead. The
+            # room's home has to be the answer to both.
+            env["USERPROFILE"] = scoped_env["USERPROFILE"] = str(home)
         config = {
             "workspace": str(work),
             "claude": binary(owner, env["CHEESE_API"], verified),
@@ -368,14 +441,24 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                         timeout=30,
                     )
         activate_release(platform_dir, release, contents)
-        subprocess.Popen(
-            ["sh", str(release / "cheese-toolchain")],
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        toolchain_options = {
+            "env": env,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if sys.platform == "win32":
+            helpers = portable(release)
+            helpers["popen_daemon"](
+                helpers["which"](["sh", str(release / "cheese-toolchain")]),
+                **toolchain_options,
+            )
+        else:
+            subprocess.Popen(
+                ["sh", str(release / "cheese-toolchain")],
+                start_new_session=True,
+                **toolchain_options,
+            )
         if payload.get("environment"):
             directory = home / ".cheese-environment"
             directory.mkdir(exist_ok=True, mode=0o700)
@@ -433,18 +516,22 @@ def configure_idle(payload):
             platform_dir / "execution-owner.json", {"resource": home.name}
         )
         with log.open("a") as output:
-            process = subprocess.Popen(
-                [
-                    sys.executable,
-                    str(release / "remote-execution/bootstrap.py"),
-                    str(state),
-                ],
-                cwd=work,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=output,
-                start_new_session=True,
+            argv = [
+                sys.executable,
+                str(release / "remote-execution/bootstrap.py"),
+                str(state),
+            ]
+            options = {
+                "cwd": work,
+                "env": env,
+                "stdin": subprocess.DEVNULL,
+                "stdout": output,
+                "stderr": output,
+            }
+            process = (
+                portable(release)["popen_daemon"](argv, **options)
+                if sys.platform == "win32"
+                else subprocess.Popen(argv, start_new_session=True, **options)
             )
         deadline = time.monotonic() + 600
         while True:
@@ -497,6 +584,10 @@ def run(state):
         raise SystemExit(
             runner["run"](configuration, Path.home() / ".cheese-environment", command)
         )
+    if sys.platform == "win32":
+        # os.exec* on Windows starts a new process and ends this one, which to
+        # whoever started this one reads as the executor having exited.
+        raise SystemExit(subprocess.call(command))
     os.execvpe(command[0], command, os.environ)
 
 

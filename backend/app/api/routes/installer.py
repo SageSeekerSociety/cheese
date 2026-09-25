@@ -104,10 +104,14 @@ echo "installed to $dest/cheesehost"
 case ":$PATH:" in *":$dest:"*) : ;; *) echo "add $dest to your PATH" ;; esac
 # WS-stripping edge (e.g. a campus front proxy that only forwards HTTP): the
 # server baked a WS-capable control-channel URL above. Pre-write it into the
-# cli config's "ws" key — `cheesehost auth login` loads-then-saves, so it
+# cli config's "ws" key — the login loads-then-saves, so it
 # survives login. Login/approve/API/downloads all stay on ORIGIN.
 if [ -n "$WS_URL" ]; then
-  CFG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/cheese"
+  # Where cheesehost reads it: Go's os.UserConfigDir, which on macOS ignores XDG.
+  case "$os" in
+    darwin) CFG_DIR="$HOME/Library/Application Support/cheese" ;;
+    *) CFG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/cheese" ;;
+  esac
   CFG="$CFG_DIR/config.json"
   mkdir -p "$CFG_DIR"
   if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
@@ -128,7 +132,7 @@ PY
   fi
   echo "control channel pinned to $WS_URL (WS-stripping edge)"
 fi
-echo "next: cheesehost auth login $ORIGIN/connector"
+echo "next: cheesehost link connect $ORIGIN/connector   (logs in, then stays connected)"
 """
     return PlainTextResponse(script, media_type="text/x-shellscript")
 
@@ -144,12 +148,14 @@ echo "next: cheesehost auth login $ORIGIN/connector"
 # The platform string is the vendor's (`linux-x64`, `linux-arm64-musl`, …), not
 # our `<os>-<arch>` connector target: only the machine knows whether its libc is
 # musl, and our target names cannot express that distinction.
-@router.get("/claude/{version}/{platform}/claude")
-async def download_claude(version: str, platform: str) -> Response:
+@router.get("/claude/{version}/{platform}/{name}")
+async def download_claude(version: str, platform: str, name: str) -> Response:
     if not claude_dist.VERSION_RE.match(version):
         return PlainTextResponse("bad version", status_code=400)
     if not claude_dist.PLATFORM_RE.match(platform):
         return PlainTextResponse("unknown platform", status_code=400)
+    if name != claude_dist.binary_name(platform):
+        return PlainTextResponse("unknown file", status_code=404)
     try:
         binary = await claude_dist.ensure_cached(_dist_dir(), version, platform)
     except claude_dist.ClaudeDistError as exc:
@@ -158,9 +164,7 @@ async def download_claude(version: str, platform: str) -> Response:
         return PlainTextResponse(
             f"claude {version} unavailable: {exc}", status_code=503
         )
-    return FileResponse(
-        binary, media_type="application/octet-stream", filename="claude"
-    )
+    return FileResponse(binary, media_type="application/octet-stream", filename=name)
 
 
 # pi, served for the same reason and in the same shape. The artifact is a
@@ -216,10 +220,12 @@ async def download_toolchain(tool: str, platform: str) -> Response:
     )
 
 
-@router.get("/latest/{target}/cheesehost")
-async def download_binary(target: str) -> Response:
+@router.get("/latest/{target}/{name}")
+async def download_binary(target: str, name: str) -> Response:
     if not _TARGET_RE.match(target) or target not in _TARGETS:
         return PlainTextResponse("unknown target", status_code=404)
+    if name != connector_build.binary_name(target):
+        return PlainTextResponse("unknown file", status_code=404)
     binary = connector_build.binary_path(target)
     if binary is None:
         return PlainTextResponse(

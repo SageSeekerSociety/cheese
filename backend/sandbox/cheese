@@ -31,11 +31,11 @@ from __future__ import annotations
 
 import argparse
 import base64
-import fcntl
 import hashlib
 import json
 import os
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -45,6 +45,9 @@ import urllib.request
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+
+if sys.platform != "win32":
+    import fcntl
 
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
@@ -179,7 +182,6 @@ _CONTRIBUTOR = {
 _CHAT_SCOPE = {
     "topic": _text("房间 id，默认当前房间"),
     "task": _text("任务 id：读或校验这条任务卡的记录"),
-    "json": {"type": "boolean", "description": "返回完整 JSON，不受文本长度限制"},
 }
 _CHAT_PAGE = {
     "limit": {"type": "integer", "description": "每页条数 1..500，默认 50"},
@@ -859,8 +861,6 @@ def _chat_get(args: dict, host) -> str:
     length = _CHAT_TEXT_BUDGET if args.get("length") is None else args["length"]
     if not 1 <= length <= _CHAT_TEXT_BUDGET or offset < 0:
         raise PlatformToolError(f"length 取 1..{_CHAT_TEXT_BUDGET}，offset 不小于 0")
-    if args.get("json") and (offset or length != _CHAT_TEXT_BUDGET):
-        raise PlatformToolError("json 返回完整数据，不要同时给 offset 或 length")
     topic = args.get("topic") or host.environ.get("CHEESE_TOPIC", "")
     path = (
         f"/topics/{urllib.parse.quote(topic, safe='')}/history/"
@@ -869,8 +869,6 @@ def _chat_get(args: dict, host) -> str:
     block = host.request({"method": "GET", "path": path})["data"]
     if args.get("task") and block.get("task_id") != args["task"]:
         raise PlatformToolError("这条消息不属于那条任务卡")
-    if args.get("json"):
-        return json.dumps(block, ensure_ascii=False)
     text = _chat_message_text(block)
     end = offset + length
     shown = text[offset:end]
@@ -913,8 +911,6 @@ def _chat_page(tool: str):
             + urllib.parse.urlencode(params)
         )
         data = host.request({"method": "GET", "path": path})["data"]
-        if args.get("json"):
-            return json.dumps(data, ensure_ascii=False)
 
         def preview(block):
             text = _chat_message_text(block)
@@ -1478,6 +1474,34 @@ def _git_attribution(message_file: str) -> None:
         )
 
 
+def _lock(file) -> None:
+    """flock(LOCK_EX), or on Windows the byte-range lock beside this file."""
+    if sys.platform == "win32":
+        # This file is the executor release's `cheese`; the Windows primitives
+        # are shipped in the same release.
+        portable = Path(__file__).resolve().parent / "remote-execution/portable.py"
+        runpy.run_path(str(portable))["lock"](file)
+    else:
+        fcntl.flock(file, fcntl.LOCK_EX)
+
+
+def _worktree_relative(path: str) -> str:
+    """`path` relative to the worktree root, as the platform resolves it; or
+    `path` itself when it is outside, for the platform to judge.
+
+    With `/` between the parts whatever the machine: the platform reads it as a
+    POSIX path. And a path on another drive of a Windows machine is outside.
+    """
+    root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
+    try:
+        rel = os.path.relpath(os.path.abspath(path), root)
+    except ValueError:
+        return path
+    if rel.startswith(".."):
+        return path
+    return rel.replace(os.sep, "/")
+
+
 def _task_worktree(task_id: str, *, allow_closed: bool = False) -> Path:
     task_id = str(uuid.UUID(task_id))
     project = _need("CHEESE_PROJECT", PROJECT)
@@ -1497,7 +1521,7 @@ def _task_worktree(task_id: str, *, allow_closed: bool = False) -> Path:
     # Native subagents can request worktrees concurrently. Serialize creation
     # so an interrupted clone cannot be mistaken for a complete repository.
     with (cache / f"{project}.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        _lock(lock)
         if not repo.exists():
             _git_task(cache, "init", "--bare", str(repo))
         _git_task(repo, "config", "--replace-all", "credential.helper", "")
@@ -1629,7 +1653,7 @@ def _sync_task(task_id: str) -> None:
     log = admin / "cheese-sync.log"
     with log.open("a") as record:
         # A post-commit hook and the room's Stop hook can arrive together.
-        fcntl.flock(record, fcntl.LOCK_EX)
+        _lock(record)
         record.write(f"{datetime.now(UTC).isoformat()} start task={task_id}\n")
         record.flush()
         branch = None
@@ -2297,10 +2321,7 @@ def main() -> None:
         # but the agent's cwd may be a subdir (e.g. after `cd backend`). Normalize
         # the given path to worktree-root-relative so `cheese show x.html` from
         # /work/backend points at backend/x.html, not a missing /work/x.html.
-        root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
-        rel = os.path.relpath(os.path.abspath(a.path), root)
-        if rel.startswith(".."):  # outside the worktree — let the backend validate
-            rel = a.path
+        rel = _worktree_relative(a.path)
         kind = a.as_ or artifact_kind_for(a.path)
         try:
             raw = open(a.path, "rb").read()
@@ -2328,10 +2349,7 @@ def main() -> None:
         except OSError as exc:
             print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
             sys.exit(1)
-        root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
-        rel = os.path.relpath(os.path.abspath(a.path), root)
-        if rel.startswith(".."):
-            rel = a.path
+        rel = _worktree_relative(a.path)
         res = _call(
             "POST",
             f"/topics/{topic}/documents/convert",
@@ -2370,10 +2388,7 @@ def main() -> None:
         # The platform resolves paths against the worktree ROOT, and the agent's
         # cwd may be a subdir — same normalization as `show`, for the same
         # reason: an absolute path is refused outright there.
-        root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
-        rel = os.path.relpath(os.path.abspath(a.path), root)
-        if rel.startswith(".."):  # outside the worktree — let the backend judge
-            rel = a.path
+        rel = _worktree_relative(a.path)
         # Recalculation loads the whole workbook, so give it more than the
         # default 20s: a sheet with a few thousand formulas is ordinary.
         res = _call(

@@ -35,6 +35,11 @@ PANDOC_VERSION = "3.11"
 UV_VERSION = "0.12.15"
 FJ_VERSION = "0.6.0-cheese.2"
 GH_VERSION = "2.62.0"
+#: The runtime a Windows machine's connector provisions for itself, so that the
+#: `python3` and `sh` the platform runs everywhere exist there too. Windows only:
+#: every other machine brings its own.
+PYTHON_VERSION = "3.13.13"
+GIT_VERSION = "2.55.0.windows.5"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -44,6 +49,8 @@ _TYPST_BASE = f"https://github.com/typst/typst/releases/download/v{TYPST_VERSION
 _PANDOC_BASE = f"https://github.com/jgm/pandoc/releases/download/{PANDOC_VERSION}"
 _UV_BASE = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}"
 _GH_BASE = f"https://github.com/cli/cli/releases/download/v{GH_VERSION}"
+_PYTHON_BASE = f"https://www.python.org/ftp/python/{PYTHON_VERSION}"
+_GIT_BASE = f"https://github.com/git-for-windows/git/releases/download/v{GIT_VERSION}"
 _FJ_BASE = (
     "https://github.com/SageSeekerSociety/cheese/releases/download/"
     f"forgejo-cli-v{FJ_VERSION}"
@@ -53,8 +60,9 @@ _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 #: Platform strings are OURS, matching what the launcher computes on the machine
 #: (`<os>-<arch>`). typst and uv ship musl-static linux builds, so one artifact
 #: serves glibc and musl alike; pandoc's linux tarball wants glibc, which is why
-#: a musl machine is a documented gap rather than a silent one.
-PLATFORM_RE = re.compile(r"^(linux|darwin)-(x64|arm64)$")
+#: a musl machine is a documented gap rather than a silent one. Windows is x64
+#: only, and has no fj: nothing builds one yet.
+PLATFORM_RE = re.compile(r"^((linux|darwin)-(x64|arm64)|windows-x64)$")
 TOOL_RE = re.compile(r"^[a-z0-9-]{1,32}$")
 
 _ANY = "any"
@@ -108,6 +116,12 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         12793347,
         ".zip",
     ),
+    ("gh", "windows-x64"): Artifact(
+        f"{_GH_BASE}/gh_{GH_VERSION}_windows_amd64.zip",
+        "7fd29acdf2714d0129b7aedde215fa12e1cfb3ad5d39280893259bdeeceba209",
+        13139194,
+        ".zip",
+    ),
     ("fj", "linux-arm64"): Artifact(
         f"{_FJ_BASE}/fj-{FJ_VERSION}-aarch64-unknown-linux-gnu.tar.gz",
         "ae29e149de589d04d1e83fc9eb23eb8118bd9cc871bfb07dc8515fc874b2b412",
@@ -144,6 +158,12 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         14438168,
         ".tar.xz",
     ),
+    ("typst", "windows-x64"): Artifact(
+        f"{_TYPST_BASE}/typst-x86_64-pc-windows-msvc.zip",
+        "19ce3551153c2fe7ee9fa2f95208310c8f4d3209fedb699e0333faf8913f6736",
+        22463684,
+        ".zip",
+    ),
     ("pandoc", "linux-x64"): Artifact(
         f"{_PANDOC_BASE}/pandoc-{PANDOC_VERSION}-linux-amd64.tar.gz",
         "37edb3bbcf722f921a009941bf5874e2e0c09263226c9b4a2d980788cb062ab6",
@@ -166,6 +186,12 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         f"{_PANDOC_BASE}/pandoc-{PANDOC_VERSION}-arm64-macOS.zip",
         "15806bedf9517bfead72e88fe6a6696635c3691efbb6e152173440e9c5bb50b4",
         41832712,
+        ".zip",
+    ),
+    ("pandoc", "windows-x64"): Artifact(
+        f"{_PANDOC_BASE}/pandoc-{PANDOC_VERSION}-windows-x86_64.zip",
+        "2ab72baf2399450e148ddf7a2a8689806c42e1bba71862b57e220fd9b8456d3d",
+        41761100,
         ".zip",
     ),
     ("uv", "linux-x64"): Artifact(
@@ -191,6 +217,26 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         "dc304b9ed1b24174572290fba60ac3f6fe63c73a671f0439e62a91375841964d",
         16678128,
         ".tar.gz",
+    ),
+    ("uv", "windows-x64"): Artifact(
+        f"{_UV_BASE}/uv-x86_64-pc-windows-msvc.zip",
+        "477bd99a84e34891f2bd4c9152ddeb74e971accccbc59c0f0301f11f08a32d46",
+        17578593,
+        ".zip",
+    ),
+    # The connector's own runtime on Windows (see PYTHON_VERSION). The embeddable
+    # distribution is the interpreter and its standard library, nothing else.
+    ("python", "windows-x64"): Artifact(
+        f"{_PYTHON_BASE}/python-{PYTHON_VERSION}-embed-amd64.zip",
+        "8766a8775746235e23cf5aee5027ab1060bb981d93110577adcf3508aa0cbd55",
+        10950201,
+        ".zip",
+    ),
+    ("git", "windows-x64"): Artifact(
+        f"{_GIT_BASE}/PortableGit-2.55.0.5-64-bit.7z.exe",
+        "5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290",
+        58960208,
+        ".7z.exe",
     ),
     # Fonts carry no machine code, so one file serves every platform.
     ("font-sans", _ANY): Artifact(

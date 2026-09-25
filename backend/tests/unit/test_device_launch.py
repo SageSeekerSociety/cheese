@@ -683,19 +683,33 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     assert not previous_chat_skill.exists()
 
 
-def test_the_session_the_runner_starts_logs_in_with_the_hosts_own_store(tmp_path):
-    """The credentials step runs before the runner, and what it chose is what the
-    session the runner starts carries: the host user's store, and no token of
-    its own that would win over it."""
+def test_the_session_the_runner_starts_holds_no_claude_credential(tmp_path):
+    """Whatever the host holds, the session the runner starts carries the
+    placeholder the metering proxy swaps, and nothing that would win over it:
+    not an inherited token, not the host user's login, not a setup-token."""
+    import importlib.util
+
+    core_path = (
+        Path(__file__).resolve().parents[3]
+        / "deploy"
+        / "metering-proxy"
+        / "cheese_billing_core.py"
+    )
+    spec = importlib.util.spec_from_file_location("cheese_billing_core", core_path)
+    assert spec and spec.loader
+    core = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(core)
     owner, _session, _work, claude, env = _machine(tmp_path)
     (owner / ".claude/.credentials.json").write_text('{"claudeAiOauth": {}}')
+    (owner / ".cheese").mkdir(exist_ok=True)
+    (owner / ".cheese/claude-setup-token").write_text("sk-ant-oat01-SETUP\n")
     env["CLAUDE_CODE_OAUTH_TOKEN"] = "stale-inherited-token"
 
     result = _launch(tmp_path, env)
 
     assert result.returncode == 0, result.stderr
-    assert (claude.parent / "ran.store").read_text() == f"{owner}/.claude"
-    assert (claude.parent / "ran.token").read_text() == ""
+    assert (claude.parent / "ran.token").read_text() == core.NO_LOGIN_PLACEHOLDER
+    assert (claude.parent / "ran.store").read_text() == ""
 
 
 # --- the tunnel branch ------------------------------------------------------
@@ -1184,73 +1198,6 @@ def test_the_helper_is_verified_by_the_dash_syntax_check_too():
         ["sh", "-n"], input=CHEESE_TUNNEL_UP, text=True, capture_output=True
     )
     assert checked.returncode == 0, checked.stderr
-
-
-def _run_credentials_step(real_home, *, inherited_token: str | None = None) -> dict:
-    """Run the shipped credentials step under sh; return the env it leaves."""
-    script = _script()
-    start = script.index("# The session's Claude login is its host's own.")
-    end = script.index("cheese_launch_phase credentials_selected")
-    step = script[start:end]
-    env = {"PATH": "/usr/bin:/bin", "REAL_HOME": str(real_home)}
-    if inherited_token is not None:
-        env["CLAUDE_CODE_OAUTH_TOKEN"] = inherited_token
-    result = subprocess.run(
-        ["sh", "-c", step + "\nenv"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return dict(
-        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
-    )
-
-
-def test_a_session_shares_the_host_users_own_claude_login(tmp_path):
-    """One store for every session on the host: Claude Code's own refresh,
-    under its own lock, then renews the login for all of them. An inherited env
-    token would win over that store and never refresh, so it is not let through."""
-    (tmp_path / ".claude").mkdir()
-    (tmp_path / ".claude" / ".credentials.json").write_text('{"claudeAiOauth": {}}')
-
-    env = _run_credentials_step(tmp_path, inherited_token="stale-inherited-token")
-
-    assert env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == f"{tmp_path}/.claude"
-    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
-
-
-def test_a_host_with_no_claude_login_still_boots_on_the_meters_placeholder(tmp_path):
-    """A deployment without a Claude login still runs projects on the API-key
-    pool, so Claude Code has to boot; the value it boots on is the one the
-    metering proxy refuses for a subscription turn."""
-    import importlib.util
-
-    core_path = (
-        Path(__file__).resolve().parents[3]
-        / "deploy"
-        / "metering-proxy"
-        / "cheese_billing_core.py"
-    )
-    spec = importlib.util.spec_from_file_location("cheese_billing_core", core_path)
-    assert spec and spec.loader
-    core = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(core)
-
-    env = _run_credentials_step(tmp_path, inherited_token="stale-inherited-token")
-
-    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == core.NO_LOGIN_PLACEHOLDER
-    assert "CLAUDE_SECURESTORAGE_CONFIG_DIR" not in env
-
-
-def test_a_host_with_a_setup_token_logs_its_sessions_in_with_it(tmp_path):
-    (tmp_path / ".cheese").mkdir()
-    (tmp_path / ".cheese" / "claude-setup-token").write_text("sk-ant-oat01-SETUP\n")
-
-    env = _run_credentials_step(tmp_path, inherited_token="stale-inherited-token")
-
-    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-SETUP"
-    assert "CLAUDE_SECURESTORAGE_CONFIG_DIR" not in env
 
 
 def test_the_tunnel_password_stays_the_scoped_token():

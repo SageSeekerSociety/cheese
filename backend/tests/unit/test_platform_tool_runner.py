@@ -165,15 +165,22 @@ def test_replies_query_is_explicit_and_can_page():
     assert params["limit"] == ["3"]
 
 
-def test_json_preserves_every_field():
-    block = _message(meta={"future": {"data": [1, "x"]}}, content="x" * 20000)
+def test_chat_reads_answer_in_text_only():
+    """The text is the whole answer: no raw-JSON mode is offered, and nested
+    fields nobody has named yet still reach the reader."""
+    for tool in (
+        "cheese_chat_list",
+        "cheese_chat_search",
+        "cheese_chat_get",
+        "cheese_chat_replies",
+    ):
+        schema = next(t for t in cheese.PLATFORM_TOOLS.schemas() if t["name"] == tool)
+        assert "json" not in schema["inputSchema"]["properties"]
+    block = _message(meta={"future": {"data": [1, "x"]}})
     host = Host({("GET", f"/topics/{_ROOM}/history/{block['id']}"): block})
-    assert (
-        json.loads(
-            run("cheese_chat_get", {"message_id": block["id"], "json": True}, host)
-        )
-        == block
-    )
+    out = run("cheese_chat_get", {"message_id": block["id"]}, host)
+    assert f"id={block['id']}" in out
+    assert '"future": {"data": [1, "x"]}' in out
 
 
 def test_long_message_can_be_read_without_losing_the_tail():

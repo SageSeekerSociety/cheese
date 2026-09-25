@@ -295,7 +295,16 @@ def toolchain_fetcher() -> str:
     aarch64|arm64) _tarch=arm64 ;;
     *) exit 0 ;;
   esac
-  if [ "$(uname -s)" = Darwin ]; then _tos=darwin; else _tos=linux; fi
+  # Git Bash on Windows reports MINGW64_NT-<version>. There a binary is found
+  # and linked by its .exe name, and `ln` is a hard link: an MSYS symlink is a
+  # copy unless the machine allows real ones, and a copy of pandoc is 230MB.
+  _exe=""
+  _ln="ln -sf"
+  case "$(uname -s)" in
+    Darwin) _tos=darwin ;;
+    MINGW*|MSYS*|CYGWIN*) _tos=windows; _exe=.exe; _ln="ln -f" ;;
+    *) _tos=linux ;;
+  esac
   _tplat="$_tos-$_tarch"
   mkdir -p "$CHEESE_TOOLCHAIN/bin" || exit 0
   # `mkdir` is the lock: it is atomic on every filesystem a machine might use,
@@ -311,8 +320,8 @@ def toolchain_fetcher() -> str:
       _dest="$CHEESE_TOOLCHAIN/fonts/{fonts_pin}"
       [ -s "$_dest/$4" ] && return 0
     else
-      if [ -x "$_dest/$4" ]; then
-        ln -sf "$_dest/$4" "$CHEESE_TOOLCHAIN/bin/$4"
+      if [ -x "$_dest/$4$_exe" ]; then
+        $_ln "$_dest/$4$_exe" "$CHEESE_TOOLCHAIN/bin/$4$_exe"
         return 0
       fi
     fi
@@ -337,15 +346,15 @@ def toolchain_fetcher() -> str:
     ( cd "$_work" && tar -xf a 2>/dev/null ) \\
       || ( cd "$_work" && unzip -q a 2>/dev/null ) \\
       || {{ rm -rf "$_work"; return 0; }}
-    _found="$(find "$_work" -type f -name "$4" 2>/dev/null | head -n 1)"
+    _found="$(find "$_work" -type f -name "$4$_exe" 2>/dev/null | head -n 1)"
     if [ -z "$_found" ]; then
       rm -rf "$_work"
       return 0
     fi
     chmod +x "$_found" 2>/dev/null || true
-    mv "$_found" "$_dest/$4" || {{ rm -rf "$_work"; return 0; }}
+    mv "$_found" "$_dest/$4$_exe" || {{ rm -rf "$_work"; return 0; }}
     rm -rf "$_work"
-    ln -sf "$_dest/$4" "$CHEESE_TOOLCHAIN/bin/$4"
+    $_ln "$_dest/$4$_exe" "$CHEESE_TOOLCHAIN/bin/$4$_exe"
   }}
 
 {places}

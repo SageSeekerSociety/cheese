@@ -36,6 +36,9 @@ if [[ "$current_image" = "$METERING_PROXY_IMAGE" && "$current_health" = "true he
 fi
 release_dir="$proxy_home/releases/${sha}-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
 mkdir -p "$release_dir"
+# Created here, as the operator, so the login script can write the credential
+# into it; left to docker, the bind source would be created owned by root.
+mkdir -p "$proxy_home/claude-credential"
 previous_image="$(docker inspect cheese-metering-proxy --format '{{.Image}}')"
 previous_compose="$(docker inspect cheese-metering-proxy --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
 # Keep raw configuration, never docker compose config: its output contains secrets.

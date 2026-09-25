@@ -1,0 +1,14 @@
+{
+  "bundle": {
+    "targets": [
+      "dmg"
+    ],
+    "resources": {
+      "../resources/tmux": "tmux"
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    }
+  }
+}

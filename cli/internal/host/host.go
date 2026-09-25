@@ -27,7 +27,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
@@ -79,7 +78,7 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	tm, err := terminal.NewManager()
+	tm, err := newTerminalManager()
 	if err != nil {
 		return nil, err
 	}
@@ -127,8 +126,10 @@ func (h *Host) Run(ctx context.Context) error {
 	// the run. Note: a successful update never returns from performUpdate — it
 	// replaces the process image — so none of the deferred teardown above runs.
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGUSR2)
-	defer signal.Stop(sig)
+	if signals := updateSignals(); len(signals) > 0 {
+		signal.Notify(sig, signals...)
+		defer signal.Stop(sig)
+	}
 	go func() {
 		for {
 			select {
@@ -187,7 +188,7 @@ func (h *Host) performUpdate() {
 	// every hosted task survive as they do across an ordinary stop, and the new
 	// image reconnects and re-adopts them. If exec fails we deliberately do NOT exit —
 	// the tasks must live on; the already-replaced binary applies on next restart.
-	if err := syscall.Exec(self, os.Args, os.Environ()); err != nil {
+	if err := handOff(self); err != nil {
 		fmt.Fprintf(os.Stderr, "cheese: exec into new binary failed (applies on next restart): %v\n", err)
 	}
 }
@@ -279,6 +280,10 @@ func (h *Host) session(sid string) *sess {
 }
 
 func (h *Host) createSession(m link.Msg) {
+	if h.tm == nil {
+		_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: errNoScreens.Error()})
+		return
+	}
 	if h.session(m.Sid) != nil {
 		// Same-process reconnect: the screen is already live locally, and every
 		// way of reaching it is per-message, so there is nothing to re-establish.
@@ -377,6 +382,9 @@ func (h *Host) unsubscribeScreen(sid string) {
 }
 
 func (h *Host) closeSession(sid string) error {
+	if h.tm == nil {
+		return nil
+	}
 	h.mu.Lock()
 	s := h.sessions[sid]
 	h.mu.Unlock()
@@ -404,6 +412,9 @@ func (h *Host) closeSession(sid string) error {
 }
 
 func (h *Host) restoreSessions() ([]link.Msg, error) {
+	if h.tm == nil {
+		return nil, nil
+	}
 	identities, err := h.tm.Identities(h.base)
 	if err != nil {
 		return nil, err

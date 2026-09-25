@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package service runs `cheese` as a background service via kardianos/service,
 // so `cheese link connect` / `cheese link auto-connect` drive it under whatever
 // service manager the host uses (systemd, launchd). It is always the invoking

@@ -23,8 +23,17 @@ from pathlib import Path
 # The `<os>-<arch>` names the server publishes artifacts under. Go-style
 # (amd64/arm64), never uname-style (x86_64/aarch64) — the connector's own
 # `update.PlatformDir` and install.sh both build this exact string.
-TARGETS = frozenset({"darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"})
-TARGET_RE = re.compile(r"^(darwin|linux)-(amd64|arm64)$")
+TARGETS = frozenset(
+    {
+        "darwin-arm64",
+        "darwin-amd64",
+        "linux-arm64",
+        "linux-amd64",
+        "windows-arm64",
+        "windows-amd64",
+    }
+)
+TARGET_RE = re.compile(r"^(darwin|linux|windows)-(amd64|arm64)$")
 
 # Cached per target on (size, mtime_ns) rather than for the life of the process:
 # this answer decides whether every connected machine is told to reinstall
@@ -37,11 +46,16 @@ def dist_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "connector-dist"
 
 
+def binary_name(target: str) -> str:
+    """The file name of the connector for ``target``: Windows runs only .exe."""
+    return "cheesehost.exe" if target.startswith("windows-") else "cheesehost"
+
+
 def binary_path(target: str) -> Path | None:
     """The connector we serve for ``target``, or None if we serve none."""
     if target not in TARGETS:
         return None
-    binary = dist_dir() / target / "cheesehost"
+    binary = dist_dir() / target / binary_name(target)
     return binary if binary.is_file() else None
 
 

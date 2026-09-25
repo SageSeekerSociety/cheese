@@ -15,6 +15,8 @@ func TestPlatformDir(t *testing.T) {
 		{"linux", "arm64", "linux-arm64"},
 		{"darwin", "amd64", "darwin-amd64"},
 		{"darwin", "arm64", "darwin-arm64"},
+		{"windows", "amd64", "windows-amd64"},
+		{"windows", "arm64", "windows-arm64"},
 	}
 	for _, c := range cases {
 		got, err := platformDir(c.goos, c.goarch)
@@ -28,8 +30,8 @@ func TestPlatformDir(t *testing.T) {
 }
 
 func TestPlatformDirUnsupported(t *testing.T) {
-	if _, err := platformDir("windows", "amd64"); err == nil {
-		t.Error("expected error for windows")
+	if _, err := platformDir("freebsd", "amd64"); err == nil {
+		t.Error("expected error for freebsd")
 	}
 	if _, err := platformDir("linux", "riscv64"); err == nil {
 		t.Error("expected error for riscv64")
@@ -55,6 +57,10 @@ func TestBinaryURL(t *testing.T) {
 		{
 			"https://example.com/", "linux-arm64",
 			"https://example.com/connector/latest/linux-arm64/cheesehost",
+		},
+		{
+			"https://example.com/connector", "windows-amd64",
+			"https://example.com/connector/latest/windows-amd64/cheesehost.exe",
 		},
 	}
 	for _, c := range cases {
