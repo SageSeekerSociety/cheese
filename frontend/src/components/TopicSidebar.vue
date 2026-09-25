@@ -116,6 +116,7 @@ const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
   // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
   'project-library': { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
   'project-members': { label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
+  'project-skills': { label: 'navigation.project.skills', icon: 'mdi-book-cog-outline' },
 }
 const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
 

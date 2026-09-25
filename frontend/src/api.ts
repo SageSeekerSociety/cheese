@@ -1214,6 +1214,71 @@ export function libraryFileRawUrl(projectId: string, path: string): string {
   return `${BASE}/projects/${encodeURIComponent(projectId)}/library/raw?path=${encodeURIComponent(path)}`
 }
 
+export interface ProjectSkillContent {
+  title: string
+  description: string
+  inputs: string
+  steps: string
+  outputs: string
+  files: Record<string, string>
+}
+
+export interface ProjectSkill extends ProjectSkillContent {
+  id: string
+  project_id: string
+  name: string
+  state: 'draft' | 'active'
+  shipped_revision: number
+  proposed_by: string
+  confirmed_by: string | null
+  confirmed_at: string | null
+  source_topic_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectSkillRevision {
+  revision: number
+  content: ProjectSkillContent
+  confirmed_by: string
+  note: string
+  created_at: string
+}
+
+export function listProjectSkills(projectId: string): Promise<ListPayload<ProjectSkill>> {
+  return request<ListPayload<ProjectSkill>>(`/projects/${encodeURIComponent(projectId)}/skills`)
+}
+
+export function getProjectSkill(id: string): Promise<ProjectSkill & { revisions: ProjectSkillRevision[] }> {
+  return request<ProjectSkill & { revisions: ProjectSkillRevision[] }>(`/skills/${encodeURIComponent(id)}`)
+}
+
+export function createProjectSkill(
+  topicId: string,
+  body: ProjectSkillContent & { name: string }
+): Promise<ProjectSkill> {
+  return request<ProjectSkill>(`/topics/${encodeURIComponent(topicId)}/skills`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function updateProjectSkill(id: string, body: Partial<ProjectSkillContent>): Promise<ProjectSkill> {
+  return request<ProjectSkill>(`/skills/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
+export function confirmProjectSkill(id: string): Promise<ProjectSkill> {
+  return request<ProjectSkill>(`/skills/${encodeURIComponent(id)}/confirm`, { method: 'POST' })
+}
+
+export function restoreProjectSkill(id: string, revision: number): Promise<ProjectSkill> {
+  return request<ProjectSkill>(`/skills/${encodeURIComponent(id)}/revisions/${revision}/restore`, { method: 'POST' })
+}
+
+export function deleteProjectSkill(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/skills/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 export function deleteLibraryFile(projectId: string, path: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/projects/${encodeURIComponent(projectId)}/library?path=${encodeURIComponent(path)}`,

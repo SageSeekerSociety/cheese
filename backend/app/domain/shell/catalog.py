@@ -94,9 +94,9 @@ _DEFAULT = Shell(
     nav=Nav(
         rail=("home", "projects", "add"),
         tabs=("spaces", "workspace", "inbox"),
-        project=("calendar", "project-library", "project-members"),
+        project=("calendar", "project-library", "project-members", "project-skills"),
     ),
-    hidden=("calendar",),
+    hidden=("calendar", "project-skills"),
 )
 
 #: 办公: a project is a 工作, a topic is an 议题, and the day starts in 工作区.
@@ -113,6 +113,7 @@ _WORKBENCH = Shell(
             "project-library",
             "workspace-running",
             "project-members",
+            "project-skills",
         ),
     ),
     hidden=("calendar",),
