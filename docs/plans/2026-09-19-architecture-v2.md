@@ -1742,7 +1742,7 @@ so check there and not in the menu, the contract or the doc**」。
 **入口不是一个 base URL**：订阅流量不能设 `ANTHROPIC_BASE_URL`（Claude Code 会退出订阅模式；后端若重发请求，指纹不符会触发订阅风控），
 所以它走 `HTTPS_PROXY` 的 CONNECT 到平台的透明计量代理（`deploy/metering-proxy/`），代理向后端 `/llm/admission` 问准入后**原样转发**给 Anthropic；
 API-key 供应商那一路不是第二个入口：机器不带 base URL，分流在代理里按请求答，代理按 admission 的答复把这一路改写到网关。一个控制点，一种入口，都不重发请求。
-会话用中心会话机本机的 Claude 登录（本机用户的 `~/.claude`，各会话经 `CLAUDE_SECURESTORAGE_CONFIG_DIR` 共用这一份、由 Claude Code 自己续票；或一张 setup-token），计量代理和后端都不持有 Claude 凭据，执行机器上没有任何模型凭据；改走网关时代理把它换成项目的虚拟 key，不让它到 LiteLLM（他 2026-09-24 定，ccproxy 退役）。
+平台的 Claude 凭据只有计量代理持有：会话一律用不认证任何东西的占位票启动，发往 Anthropic 的请求由计量代理换上平台凭据，改走网关的换成项目虚拟 key；登录、换号、退出就是写入或删除计量代理的凭据文件，下一个请求起对所有会话生效；执行机器上没有任何模型凭据（他 2026-09-24 定，ccproxy 退役；同日因为要经常切换登录，改为计量代理持有）。
 I27 的拒绝点就是 `/llm/admission`：卡上的模型绑定在这里解析，选不到就拒绝并说出来，不换池。
 **只剩一种启动形状**（结论 46 补定）：机器永远以订阅形状起，分流发生在代理里（`deploy/metering-proxy/billing_addon.py:272 _route_to_gateway`，按 admission 的答复改写到网关，今天已在）。
 

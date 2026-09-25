@@ -55,10 +55,10 @@ from app.domain.agent.skills import SKILL_HEREDOC_MARKER, native_skill_files
 CLAUDE_PINNED_VERSION = "2.1.277"
 CLAUDE_MIN_VERSION = "2.1.277"
 
-# What a session carries when its host has no Claude login: enough for Claude
-# Code to boot, so a project on the API-key pool still runs. The metering proxy
-# refuses a subscription request that carries it
-# (deploy/metering-proxy/cheese_billing_core.py, the same value).
+# What every session carries as its Claude login. It authenticates nothing; the
+# metering proxy replaces it with the platform's credential, or answers for it
+# when there is none (deploy/metering-proxy/cheese_billing_core.py, the same
+# value).
 NO_LOGIN_PLACEHOLDER = "sk-ant-oat01-cheese-no-claude-login-on-this-host"
 
 
@@ -244,9 +244,8 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 # Without this, os.homedir() ignores our exported $HOME and claude lands in the
 # machine owner's real ~/.claude — which is why earlier launches had to REWRITE
 # the owner's settings.json to be routed at all, hijacking every claude the
-# owner starts by hand. With it, claude keeps its config out of the owner's
-# files; the one thing it shares with the host user is the Claude login, which
-# the credentials hole below points it at on purpose.
+# owner starts by hand. With it, claude never reads or writes the owner's
+# files.
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
 mkdir -p "$CLAUDE_CONFIG_DIR"
 export DISABLE_AUTOUPDATER=1
@@ -267,26 +266,15 @@ cat > "$CLAUDE_CONFIG_DIR/cheese-system-prompt.md" <<'SYSPROMPT'
 {system_prompt}SYSPROMPT
 """,
         credentials=f"""\
-# The session's Claude login is its host's own. A host with a one-year
-# `claude setup-token` at ~/.cheese/claude-setup-token uses that; it never
-# refreshes. Otherwise it is the OS user's `~/.claude` login, and every session
-# points its credential store at it with CLAUDE_SECURESTORAGE_CONFIG_DIR while
-# keeping its own config dir: one shared store is what lets Claude Code's own
-# refresh, under its own lock, renew the login for all of them — a private copy
-# per session would be stranded by the first sibling's refresh, since a refresh
-# rotates the pair. A host with neither still boots Claude Code on a
-# placeholder that authenticates nothing, so projects on the API-key pool run;
-# the metering proxy refuses a subscription turn that carries it. An inherited
-# env token would win over the store, so none is let through.
+# A session never holds a Claude credential. It boots on a placeholder that
+# authenticates nothing, and the metering proxy puts the real credential on
+# each request on its way to Anthropic when the platform has one, so logging
+# in or out takes effect for running sessions without a restart. An env token
+# is also one Claude Code never refreshes, so no session ever rotates a pair
+# the proxy holds. An inherited token would win over this one: none is let
+# through.
 unset CLAUDE_CODE_OAUTH_TOKEN
-if [ -s "$REAL_HOME/.cheese/claude-setup-token" ]; then
-  CLAUDE_CODE_OAUTH_TOKEN="$(cat "$REAL_HOME/.cheese/claude-setup-token")"
-  export CLAUDE_CODE_OAUTH_TOKEN
-elif [ -s "$REAL_HOME/.claude/.credentials.json" ]; then
-  export CLAUDE_SECURESTORAGE_CONFIG_DIR="$REAL_HOME/.claude"
-else
-  export CLAUDE_CODE_OAUTH_TOKEN="{NO_LOGIN_PLACEHOLDER}"
-fi
+export CLAUDE_CODE_OAUTH_TOKEN="{NO_LOGIN_PLACEHOLDER}"
 cheese_launch_phase credentials_selected
 """,
         prepare=f"""\

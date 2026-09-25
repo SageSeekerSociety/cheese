@@ -80,6 +80,7 @@ services:
       CHEESE_ALLOW_HEADER_ATTR: ${CHEESE_ALLOW_HEADER_ATTR:-}
       CHEESE_ADMISSION_URL: ${CHEESE_ADMISSION_URL:-}
       CHEESE_GATEWAY_BASE: ${CHEESE_GATEWAY_BASE:-}
+      CHEESE_CLAUDE_CREDENTIAL: /etc/cheese/claude-credential/credential
     volumes:
       # The ledger. This MUST resolve to the same host directory the backend's
       # SUBSCRIPTION_USAGE_LOG points into — the proxy writes the rows and the
@@ -90,3 +91,8 @@ services:
       # ledger simply stopped growing. No error, on either side.
       - ${USAGE_LOG_DIR:-./logs}:/var/log/cheese
       - ${CERTS_DIR:-./certs}:/home/mitmproxy/.mitmproxy
+      # The platform's Claude credential, the only copy anywhere: logging in or
+      # out is writing or deleting `credential` in this directory
+      # (claude-login.sh). Writable, because a login's pair is refreshed here
+      # and written back; a directory, so an atomic replace is seen at once.
+      - ${CLAUDE_CREDENTIAL_DIR:-./claude-credential}:/etc/cheese/claude-credential

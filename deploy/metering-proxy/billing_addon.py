@@ -1,9 +1,10 @@
 """mitmproxy addon: meter every Claude turn, cap it, and route it.
 
 This sits between a caller's Claude Code and the upstream. The caller is a
-session on the platform's own central session host, logged in with that host's
-Claude credential; the request's Authorization is that credential and goes to
-Anthropic untouched. This proxy holds no model credential of its own.
+session on the platform's central session host, and its Authorization is a
+placeholder that authenticates nothing. This proxy holds the platform's only
+Claude credential and puts it on each request bound for Anthropic, so logging
+the platform in or out reaches every running session at its next request.
 
 That placement makes this the only point that can:
   - meter a subscription turn's real cost (the subscription path deliberately
@@ -13,8 +14,8 @@ That placement makes this the only point that can:
     per-project via the backend's /llm/admission (#218), plus the rolling
     token window as the deployment-wide backstop,
   - send a project that admission places on the API-key pool to LiteLLM
-    instead, with the project's virtual key in place of the caller's
-    credential, which must never reach the gateway.
+    instead, with the project's virtual key; the platform's credential must
+    never reach the gateway.
 
 Attribution comes from the VERIFIED claims of the caller's scoped token (#198)
 when CHEESE_SCOPED_SECRET is set; the legacy x-cheese-attr header is honored
@@ -53,16 +54,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
     BINDING,
+    EXPIRED,
     GATEWAY,
     MODEL_REWRITE_LIMIT,
+    NO_CREDENTIAL,
     NO_LOGIN_PLACEHOLDER,
     AdmissionGate,
     Meter,
     ModelRewrite,
+    PlatformCredential,
     StreamingUsageExtractor,
     control_answer,
-    no_login_answer,
     is_haiku_name,
+    no_login_answer,
     proxy_basic_password,
     requested_model_of,
     verify_scoped_token,
@@ -94,6 +98,15 @@ ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 GATEWAY_BASE = os.environ.get("CHEESE_GATEWAY_BASE", "")  # "http://host:port"
 
 METER = Meter(USAGE_LOG, CAP_WINDOW_S)
+# The platform's Claude credential: the one thing that authenticates a
+# subscription request. Sessions never hold it. See PlatformCredential.
+CREDENTIAL = PlatformCredential(
+    Path(
+        os.environ.get(
+            "CHEESE_CLAUDE_CREDENTIAL", "/etc/cheese/claude-credential/credential"
+        )
+    )
+)
 ADMISSION = AdmissionGate(ADMISSION_URL, cache_s=ADMISSION_CACHE_S)
 
 if not ADMISSION_URL:
@@ -442,6 +455,7 @@ def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
         body = (
             no_login_answer(flow.request.host, flow.request.path)
             if _caller_bearer(flow) == NO_LOGIN_PLACEHOLDER
+            and not CREDENTIAL.token()[0]
             else None
         )
         if body is None:
@@ -488,8 +502,8 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # is taken back.
 
     # Multi-host by SNI: api.anthropic.com AND the login hosts
-    # (console.anthropic.com, platform.claude.com) arrive here, the latter
-    # carrying the session's own token refresh. Reverse mode would pin every
+    # (console.anthropic.com, platform.claude.com) are served here. Reverse
+    # mode would pin every
     # request to api.anthropic.com; instead forward each to the host it was
     # actually for, read from the TLS SNI.
     sni = getattr(flow.client_conn, "sni", None)
@@ -585,6 +599,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
             child_model=child_model,
         )
 
+    await _refresh_credential()
     _route(
         flow,
         verdict,
@@ -672,6 +687,7 @@ async def request(flow: http.HTTPFlow) -> None:
             subagent=True,
             requested_model=requested,
         )
+    await _refresh_credential()
     _route(
         flow,
         verdict,
@@ -680,6 +696,55 @@ async def request(flow: http.HTTPFlow) -> None:
         bearer=bearer,
         keep_haiku=False,
         buffered=True,
+    )
+
+
+async def _refresh_credential() -> None:
+    """Renew the platform's pair before a request needs it, off the event loop:
+    the refresh is a blocking HTTP call, and one slow token endpoint must not
+    stall every other flow through the proxy."""
+    if CREDENTIAL.refresh_due():
+        await asyncio.to_thread(CREDENTIAL.refresh_if_due)
+
+
+def _refuse_without_credential(flow, verdict, missing: str) -> None:
+    """Refuse a request bound for Anthropic when the platform holds no usable
+    Claude credential, as a refusal the client retries only when retrying can
+    help: Claude Code retries a 5xx silently for about three minutes before a
+    turn says anything, and does not retry a 400."""
+    if missing == EXPIRED:
+        _refuse(
+            flow,
+            503,
+            "api_error",
+            "cheese: the platform's Claude login has expired and is being "
+            "renewed; retry shortly",
+        )
+        return
+    if verdict is None or verdict.fail_open:
+        # Nobody answered where this goes. Without a credential only the
+        # gateway could serve it, and its key comes from admission: wait.
+        _refuse(
+            flow,
+            503,
+            "api_error",
+            "cheese: the control plane could not say where this request goes, "
+            "and the platform has no Claude login to fall back on; retry "
+            "shortly",
+        )
+        return
+    reason = (
+        "the platform has no Claude login"
+        if missing == NO_CREDENTIAL
+        else "the platform's Claude login was refused and has to be renewed"
+    )
+    _refuse(
+        flow,
+        400,
+        "invalid_request_error",
+        f"cheese: {reason}, so this project's subscription model cannot be "
+        "served; an operator has to log in with "
+        "deploy/metering-proxy/claude-login.sh",
     )
 
 
@@ -730,35 +795,14 @@ def _route(
                     _write_bound_model(flow, verdict.model)
                 return
 
-    # Everything from here goes to Anthropic on the session's own credential.
+    # Everything from here goes to Anthropic, on the platform's credential.
     if _caller_bearer(flow) == NO_LOGIN_PLACEHOLDER:
-        if verdict is not None and not verdict.fail_open:
-            # The control plane placed this on the subscription, and the host
-            # has no login: that will not change by retrying, so the refusal
-            # is one the client does not retry. A 503 here had Claude Code
-            # retry silently for about three minutes before saying anything.
-            _refuse(
-                flow,
-                400,
-                "invalid_request_error",
-                "cheese: the session host has no Claude login, so this "
-                "project's subscription model cannot be served; an operator "
-                "has to log the host in (or give it a setup-token)",
-            )
+        token, missing = CREDENTIAL.token()
+        if token:
+            flow.request.headers["authorization"] = f"Bearer {token}"
+        else:
+            _refuse_without_credential(flow, verdict, missing)
             return
-        # Nobody answered where this goes (admission unreachable or not
-        # configured). Without a login only the gateway could serve it, and
-        # the gateway needs the key admission hands out, so this waits for
-        # the control plane: retryable.
-        _refuse(
-            flow,
-            503,
-            "api_error",
-            "cheese: the control plane could not say where this request goes, "
-            "and the session host has no Claude login to fall back on; "
-            "retry shortly",
-        )
-        return
 
     if is_messages:
         if METER.would_exceed(TOKEN_CAP):

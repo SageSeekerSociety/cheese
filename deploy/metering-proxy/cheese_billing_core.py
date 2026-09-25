@@ -24,6 +24,8 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
+import os
 import re
 import threading
 import time
@@ -42,18 +44,18 @@ ANTHROPIC_HOSTS = frozenset(
     {"api.anthropic.com", "console.anthropic.com", "platform.claude.com"}
 )
 
-# What a session carries when its host has no Claude login: enough for Claude
-# Code to boot, so a project on the API-key pool still runs. It authenticates
-# nothing, and a subscription request carrying it is refused here rather than
-# sent to Anthropic. The launch script writes the same value
+# What every session carries as its Claude login: enough for Claude Code to
+# boot, and nothing that authenticates. This proxy replaces it with the
+# platform's credential (PlatformCredential) or, when there is none, answers or
+# refuses for it. The launch script writes the same value
 # (backend/app/domain/agent/harness/claude_code/device_launch.py).
 NO_LOGIN_PLACEHOLDER = "sk-ant-oat01-cheese-no-claude-login-on-this-host"
 
 # The non-model endpoints Claude Code calls at boot that only a real account can
-# answer, answered here for a session on the placeholder instead of a 503. None
-# of them gates a turn (measured on 2.1.277: a turn completes with all three
-# refused), so this only keeps refusals out of every boot; each response schema
-# is all-optional in the client. With a real login they go to Anthropic.
+# answer, answered here when the platform has no credential, instead of a 503.
+# None of them gates a turn (measured on 2.1.277: a turn completes with all
+# three refused), so this only keeps refusals out of every boot; each response
+# schema is all-optional in the client. With a credential they go to Anthropic.
 NO_LOGIN_ANSWERS = {
     "/api/claude_cli/bootstrap": b"{}",
     "/api/claude_code_penguin_mode": b'{"enabled": false}',
@@ -760,3 +762,214 @@ def is_haiku_name(value: str) -> bool:
     绑分身默认 —— 两条路都不进白名单校验。
     """
     return _is_haiku(value.encode())
+
+
+# --- the platform's Claude credential ----------------------------------------
+#
+# Sessions carry NO_LOGIN_PLACEHOLDER; this proxy is the only holder of the real
+# credential and puts it on each request on its way to Anthropic. The file holds
+# one of two shapes:
+#   - a bare token string: a one-year `claude setup-token`. It never rotates, so
+#     it is used as it is and nothing here writes the file.
+#   - a Claude Code `.credentials.json` document ({"claudeAiOauth": {...}}): an
+#     access token that lives ~8 hours plus the refresh token that renews it.
+#     This process refreshes it itself and writes the new pair back. The refresh
+#     token's own deadline (~30 days from login) does not move on refresh; once
+#     it passes, someone logs in again.
+# The file is re-read on every request, so writing, replacing or deleting it is
+# logging in, switching account or logging out, for every running session at
+# once. Only one holder may ever refresh a pair, because a refresh rotates it:
+# the login script moves the pair here and deletes the copy it was made in.
+#
+# The refresh request is Claude Code 2.1.281's own (`mie` in the shipped binary):
+# same URL, client id, JSON body in the same key order, scope list, and the
+# headers its axios instance sends.
+OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+_REFRESH_SCOPES = (
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
+    "user:plugins",
+)
+_REFRESH_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Content-Type": "application/json",
+    "User-Agent": "axios/1.15.2",
+}
+# Claude Code refreshes when the access token is within five minutes of expiry.
+REFRESH_MARGIN_S = 300
+# After a failed refresh that was not a refusal, wait before asking again: the
+# access token may still be valid, and every request would otherwise retry.
+REFRESH_BACKOFF_S = 60
+# Claude Code starts warning three days before the refresh token expires.
+LOGIN_WARNING_S = 3 * 86400
+
+# Why there is no credential to put on a request.
+NO_CREDENTIAL = "none"
+EXPIRED = "expired"
+LOGIN_REQUIRED = "login_required"
+
+_credential_log = logging.getLogger("cheese.metering")
+
+
+def _post_refresh(url: str, body: dict, timeout_s: float) -> tuple[int, dict]:
+    """POST the refresh grant. Returns (status, parsed body); raises on transport."""
+    req = urllib.request.Request(
+        url,
+        method="POST",
+        headers=_REFRESH_HEADERS,
+        data=json.dumps(body, separators=(",", ":")).encode(),
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 — fixed URL
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as err:
+        status, raw = err.code, err.read()
+    try:
+        parsed = json.loads(raw or b"{}")
+    except ValueError:
+        parsed = {}
+    return status, parsed if isinstance(parsed, dict) else {}
+
+
+class PlatformCredential:
+    """The Claude credential in the proxy's credential file, refreshed when it
+    is a pair."""
+
+    def __init__(self, path: Path, *, post=_post_refresh, now=time.time) -> None:
+        self.path = path
+        self._post = post
+        self._now = now
+        self._lock = threading.Lock()
+        self._dead_refresh_tokens: set[str] = set()
+        self._last_failure = 0.0
+
+    def _read(self) -> tuple[dict, dict] | str:
+        """(document, claudeAiOauth) for a pair, the stripped string otherwise."""
+        try:
+            text = self.path.read_text().strip()
+        except OSError:
+            return ""
+        if not text.startswith("{"):
+            return text
+        try:
+            doc = json.loads(text)
+        except ValueError:
+            return ""
+        oauth = doc.get("claudeAiOauth") if isinstance(doc, dict) else None
+        if not isinstance(oauth, dict) or not oauth.get("accessToken"):
+            return ""
+        return doc, oauth
+
+    def token(self) -> tuple[str, str]:
+        """(token to put on the request, "") or ("", why there is none)."""
+        read = self._read()
+        if isinstance(read, str):
+            return (read, "") if read else ("", NO_CREDENTIAL)
+        _doc, oauth = read
+        if oauth.get("refreshToken") in self._dead_refresh_tokens:
+            return "", LOGIN_REQUIRED
+        expires_at = oauth.get("expiresAt")
+        if isinstance(expires_at, int | float) and expires_at / 1000 <= self._now():
+            return "", EXPIRED
+        return str(oauth["accessToken"]), ""
+
+    def refresh_due(self) -> bool:
+        """Cheap check, safe on every request: is a refresh worth attempting?"""
+        read = self._read()
+        return not isinstance(read, str) and self._due(read[1])
+
+    def _due(self, oauth: dict) -> bool:
+        refresh_token = oauth.get("refreshToken")
+        if not refresh_token or refresh_token in self._dead_refresh_tokens:
+            return False
+        if self._now() - self._last_failure < REFRESH_BACKOFF_S:
+            return False
+        expires_at = oauth.get("expiresAt")
+        if not isinstance(expires_at, int | float):
+            return True
+        return expires_at / 1000 - self._now() <= REFRESH_MARGIN_S
+
+    def refresh_if_due(self) -> None:
+        """Refresh the pair once, however many requests found it due at once.
+
+        Blocking; the addon runs it off the event loop.
+        """
+        with self._lock:
+            # Re-read under the lock: whoever held it before may have refreshed
+            # already, or someone may have logged in again meanwhile.
+            read = self._read()
+            if isinstance(read, str) or not self._due(read[1]):
+                return
+            doc, oauth = read
+            refresh_token = str(oauth["refreshToken"])
+            body = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": OAUTH_CLIENT_ID,
+                "scope": " ".join(self._scopes(oauth)),
+            }
+            try:
+                status, answer = self._post(OAUTH_TOKEN_URL, body, 30.0)
+            except OSError as err:
+                self._last_failure = self._now()
+                _credential_log.warning("claude credential refresh failed: %s", err)
+                return
+            if status == 200 and answer.get("access_token"):
+                self._write(doc, oauth, answer)
+                return
+            self._last_failure = self._now()
+            if status in (400, 401) and answer.get("error") == "invalid_grant":
+                self._dead_refresh_tokens.add(refresh_token)
+                _credential_log.error(
+                    "claude credential refresh token refused (invalid_grant): "
+                    "log in again"
+                )
+                return
+            _credential_log.warning("claude credential refresh answered %s", status)
+
+    @staticmethod
+    def _scopes(oauth: dict) -> list[str]:
+        stored = oauth.get("scopes") if isinstance(oauth.get("scopes"), list) else []
+        extra = [
+            s for s in stored if s in ("user:projects:read", "user:projects:write")
+        ]
+        return [*_REFRESH_SCOPES, *extra]
+
+    def _write(self, doc: dict, oauth: dict, answer: dict) -> None:
+        now_ms = int(self._now() * 1000)
+        refreshed = {
+            **oauth,
+            "accessToken": answer["access_token"],
+            "refreshToken": answer.get("refresh_token") or oauth["refreshToken"],
+            "expiresAt": now_ms + int(answer.get("expires_in") or 0) * 1000,
+        }
+        if isinstance(answer.get("refresh_token_expires_in"), int | float):
+            refreshed["refreshTokenExpiresAt"] = (
+                now_ms + int(answer["refresh_token_expires_in"]) * 1000
+            )
+        if isinstance(answer.get("scope"), str) and answer["scope"].strip():
+            refreshed["scopes"] = answer["scope"].split()
+        tmp = self.path.with_name(f".{self.path.name}.tmp")
+        owner = os.stat(self.path)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # The proxy runs as root in its container; the file stays the host
+        # operator's, so the login script can still read and replace it.
+        try:
+            os.fchown(fd, owner.st_uid, owner.st_gid)
+        except PermissionError:
+            pass
+        with os.fdopen(fd, "w") as fh:
+            json.dump({**doc, "claudeAiOauth": refreshed}, fh, separators=(",", ":"))
+        os.replace(tmp, self.path)
+        login_by = refreshed.get("refreshTokenExpiresAt")
+        if isinstance(login_by, int | float):
+            left_s = login_by / 1000 - self._now()
+            if left_s <= LOGIN_WARNING_S:
+                _credential_log.warning(
+                    "claude login expires in %.1f days; log in again",
+                    left_s / 86400,
+                )
