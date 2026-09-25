@@ -286,5 +286,6 @@ def revision_out(row: RoomFileRevision) -> dict:
         "author_kind": row.author_kind,
         "source": row.source,
         "note": row.note,
+        "editor_key": row.editor_key,
         "created_at": row.created_at.isoformat(),
     }
