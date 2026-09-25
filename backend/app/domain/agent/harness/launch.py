@@ -81,10 +81,12 @@ class MachineLaunch:
     the session is started with, without having to read a line of it.
 
     ``contract`` is not shell: it is everything about this launch that a process
-    already running could not be made to adopt — the build, the argv, the flags
-    the room's shape decided. The channel folds it into what a live session is
-    compared against, so changing any of it closes the sessions holding the old
-    one instead of leaving them running something the code no longer describes.
+    already running could not be made to adopt — the build, the argv, the
+    environment, and every file the launch writes or process it starts that is
+    read once and kept. The room's own system prompt is not in it. The channel
+    folds it into what a live session is compared against, so changing any of
+    it closes the sessions holding the old one instead of leaving them running
+    something the code no longer describes.
     """
 
     command: str

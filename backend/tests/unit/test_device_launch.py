@@ -160,10 +160,32 @@ def test_a_resume_is_offered_to_the_runner_through_the_environment():
     assert env["CHEESE_RESUME_SESSION"] == "11111111-2222-3333-4444-555555555555"
 
 
-def test_the_contract_is_the_argv_a_live_session_cannot_adopt():
-    holes = device_launch.launch_holes(state=STATE)
-    assert holes.command == '"$CLAUDE_RUNNER"'
-    assert shlex.split(holes.contract) == LAUNCH_ARGS
+def test_the_contract_stays_put_across_the_rooms_own_turns():
+    """The system prompt is rebuilt every turn and the resume offer names the
+    conversation; neither is something a live session has to be replaced for."""
+    first = device_launch.launch_holes(state=STATE, system_prompt="你是芝士。")
+    later = device_launch.launch_holes(
+        state=STATE,
+        system_prompt="你是芝士。今天的记忆不一样了。",
+        resume_session_id="11111111-2222-3333-4444-555555555555",
+    )
+    assert first.command == '"$CLAUDE_RUNNER"'
+    assert later.contract == first.contract
+
+
+def test_the_contract_moves_with_whatever_the_session_reads_only_at_launch(
+    monkeypatch,
+):
+    before = device_launch.launch_holes(state=STATE).contract
+
+    monkeypatch.setattr(device_launch, "LAUNCH_ARGS", [*LAUNCH_ARGS, "--verbose"])
+    assert device_launch.launch_holes(state=STATE).contract != before
+    monkeypatch.undo()
+
+    monkeypatch.setattr(
+        device_launch, "session_settings", lambda: {"env": {"SOMETHING": "new"}}
+    )
+    assert device_launch.launch_holes(state=STATE).contract != before
 
 
 def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
