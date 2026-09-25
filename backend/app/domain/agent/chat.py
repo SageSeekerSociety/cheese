@@ -4120,7 +4120,7 @@ class ChatService:
                     },
                     sort_keys=True,
                 )
-                + ":explicit-chat-v4-native-model-choice"
+                + ":explicit-chat-v5-launch-model"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
