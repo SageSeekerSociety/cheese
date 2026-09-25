@@ -1029,6 +1029,28 @@ def test_only_the_credentials_requests_take_the_egress(monkeypatch, tmp_path):
     assert flow.server_conn.via is None
 
 
+def test_a_gateway_request_after_a_credential_request_keeps_its_own_route(
+    monkeypatch, tmp_path
+):
+    """mitmproxy hands the next request on a client connection the server
+    connection the previous one opened. After a subscription request (the
+    CLI's haiku calls) that connection goes through the egress, which refuses
+    anything but Anthropic: the project's gateway request must not inherit it."""
+    mod, flow = _platform_turn(
+        monkeypatch,
+        tmp_path,
+        credential="sk-ant-oat01-PLATFORM-SETUP",
+        pool="gateway",
+    )
+    mod.CREDENTIAL.egress_path.write_text("http://egress.example:3128\n")
+    flow.server_conn.via = ("http", ("egress.example", 3128))
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.request.host == "litellm.invalid"
+    assert flow.server_conn.via is None
+
+
 def test_without_an_egress_the_credentials_requests_go_direct(monkeypatch, tmp_path):
     mod, flow = _platform_turn(
         monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
