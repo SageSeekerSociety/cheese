@@ -18,11 +18,11 @@ import contextlib
 import json
 import os
 import re
+import select
 import shlex
 import signal
 import stat
 import subprocess
-import threading
 import time
 import uuid
 from pathlib import Path
@@ -647,8 +647,8 @@ def run_on_the_machine(target, command):
     command_id = "shell-" + uuid.uuid4().hex
     client = RemoteClient(target)
 
-    def call(operation, through=None, **params):
-        return (through or client).call(
+    def call(operation, **params):
+        return client.call(
             "control",
             {
                 "subtype": "shell",
@@ -658,35 +658,18 @@ def run_on_the_machine(target, command):
             },
         )
 
-    # A stop from the build is passed on by a thread of its own: TERM now,
-    # KILL once the grace has passed and the command still runs. The read in
-    # flight is left to finish — it answers as soon as the command has ended —
-    # so no request to the executor is ever abandoned halfway.
-    stop = {"number": None, "started": False}
-    ended = threading.Event()
-
-    def stopper(number):
-        stopping_client = RemoteClient(target)
-        for attempt in (number, signal.SIGKILL):
-            deadline = time.monotonic() + SHELL_STOP_GRACE_S
-            while not ended.is_set():
-                try:
-                    call("signal", through=stopping_client, signal=int(attempt))
-                    break
-                except Exception:  # noqa: BLE001 — the link may be down; retry
-                    if time.monotonic() > deadline:
-                        break
-                    stopping_client = RemoteClient(target)
-                    ended.wait(0.5)
-            if ended.wait(SHELL_STOP_GRACE_S):
-                return
+    # A stop has to reach the command even when this process does not live to
+    # send it: the build follows its TERM with a KILL about a second later, and
+    # a command whose start was still on its way would otherwise run on with
+    # nobody left to stop it. So a watcher that outlives this process delivers
+    # it (`_deliver_stop`), told through a pipe: `stop <n>` when the build asks,
+    # `done` when the command has ended, and nothing — the pipe closing — when
+    # this process was killed first.
+    watcher = _start_watcher(target, command_id)
 
     def on_signal(number, _frame):
-        if stop["number"] is not None:
-            return
-        stop["number"] = number
-        if stop["started"]:
-            threading.Thread(target=stopper, args=(number,), daemon=True).start()
+        with contextlib.suppress(OSError):
+            os.write(watcher, f"stop {number}\n".encode())
 
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, on_signal)
@@ -718,13 +701,7 @@ def run_on_the_machine(target, command):
             if "upgrading" not in str(exc) or time.monotonic() > deadline:
                 sys.stderr.write(f"{exc}\n")
                 return 1
-        if stop["number"] is not None:
-            # Stopped before it was known to run: nothing more to wait for.
-            return 128 + stop["number"]
         time.sleep(1)
-    stop["started"] = True
-    if stop["number"] is not None:
-        threading.Thread(target=stopper, args=(stop["number"],), daemon=True).start()
     offsets = {"out": 0, "err": 0}
     written = 0
     failing_since = None
@@ -764,9 +741,10 @@ def run_on_the_machine(target, command):
             _write_all(fd, data)
         if "exit" in answer:
             break
-    ended.set()
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, signal.SIG_IGN)
+    with contextlib.suppress(OSError):
+        os.write(watcher, b"done\n")
     if bash and "cwd" in answer:
         _report_directory(target, client, answer["cwd"], tail.group(1))
     with contextlib.suppress(Exception):
@@ -780,6 +758,81 @@ def run_on_the_machine(target, command):
             signal.signal(-code, signal.SIG_DFL)
         os.kill(os.getpid(), -code)
     return code
+
+
+def _start_watcher(target, command_id):
+    """Fork the process that stops the command when this one cannot; the
+    write end of its pipe. It is detached before the command is started, so
+    the build's kill of this process and its children never reaches it."""
+    read_end, write_end = os.pipe()
+    first = os.fork()
+    if first == 0:
+        try:
+            os.setsid()
+            if os.fork() == 0:
+                os.close(write_end)
+                # Nothing of the build's: holding its output file or a hook's
+                # pipes open would keep the call from ending.
+                quiet = os.open(os.devnull, os.O_RDWR)
+                for fd in (0, 1, 2):
+                    os.dup2(quiet, fd)
+                for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                    signal.signal(number, signal.SIG_IGN)
+                _deliver_stop(target, command_id, read_end)
+        finally:
+            os._exit(0)
+    os.close(read_end)
+    os.waitpid(first, 0)
+    return write_end
+
+
+def _deliver_stop(target, command_id, pipe):
+    """Wait on the prefix; stop its command unless it says it has ended.
+
+    `stop <n>` or the pipe closing without `done` stops it: signal n (TERM
+    when the prefix was killed), then KILL after the grace if it still runs.
+    A stop the executor gets before the start is kept there, and the start is
+    refused (`runtime.py` `shell`). Delivery is retried across a dropped link
+    for as long as the executor would keep the command for its reader.
+    """
+    received = b""
+    number = None
+    while number is None:
+        chunk = os.read(pipe, 256)
+        received += chunk
+        if b"done" in received:
+            return
+        found = re.search(rb"stop (\d+)", received)
+        if found:
+            number = int(found.group(1))
+        elif not chunk:
+            number = int(signal.SIGTERM)
+    client = RemoteClient(target)
+
+    def send(signalled):
+        deadline = time.monotonic() + 600
+        nonlocal client
+        while time.monotonic() < deadline:
+            try:
+                return client.call(
+                    "control",
+                    {
+                        "subtype": "shell",
+                        "operation": "signal",
+                        "command_id": command_id,
+                        "signal": int(signalled),
+                    },
+                )
+            except Exception:  # noqa: BLE001 — the link may be down; retry
+                client = RemoteClient(target)
+                time.sleep(1)
+        return {}
+
+    send(number)
+    ready = select.select([pipe], [], [], SHELL_STOP_GRACE_S)[0]
+    if ready and b"done" in received + os.read(pipe, 256):
+        return
+    send(signal.SIGKILL)
 
 
 def _report_directory(target, client, final, spelled):
