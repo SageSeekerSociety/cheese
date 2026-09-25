@@ -208,6 +208,21 @@ class BlockRepository:
         )
         return await self._session.scalar(stmt) is not None
 
+    async def has_action(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID, action: str
+    ) -> bool:
+        """Whether this turn already announced this kind of action here."""
+        stmt = (
+            select(Block.id)
+            .where(
+                Block.topic_id == topic_id,
+                Block.turn_id == turn_id,
+                Block.meta["action"].as_string() == action,
+            )
+            .limit(1)
+        )
+        return await self._session.scalar(stmt) is not None
+
     async def delete(self, block: Block) -> None:
         await self._session.delete(block)
         await self._session.flush()

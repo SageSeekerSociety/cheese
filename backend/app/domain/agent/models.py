@@ -108,6 +108,13 @@ class AgentTurn(Base):
     credits_refused_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # What ending this turn needs and nothing else records: where its model
+    # traffic went (which decides how its spend is read back) and the message it
+    # answers. Written when the turn is assembled, so a backend that picks the
+    # turn up after the one that started it is gone can still close its books.
+    # NULL on a turn nobody assembled — one a session started by itself.
+    route: Mapped[str | None] = mapped_column(String(32), default=None)
+    reply_to: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)
 
 
 class GatewayAdminAudit(UuidPk, Timestamps, Base):

@@ -450,6 +450,13 @@ class AgentRuntime(Protocol):
         """
         ...
 
+    async def stop_listening(self) -> None:
+        """Stop reading every session this process listens to, leaving the
+        sessions themselves running — the way out of a process that hands its
+        work to another (`app.core.ownership`). Two readers of one session land
+        what it says twice."""
+        ...
+
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
         """Land the tail a recovered session produced while nobody listened.
 

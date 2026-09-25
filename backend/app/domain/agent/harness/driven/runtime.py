@@ -607,6 +607,27 @@ class DrivenRuntime[H: Handle]:
         self.clocks.pop(topic, None)
         self.unreachable.pop(topic, None)
 
+    async def stop_listening(self) -> None:
+        """Stop reading every session, and leave every session running.
+
+        A read already under way finishes first. The landing cursor only moves
+        once a record is persisted, so whatever this process had not landed is
+        still unread for the process that listens next.
+        """
+        topics = list(self.subscriptions)
+        self.subscriptions.clear()
+        for topic in topics:
+            self._wake(topic)
+        polls = [task for task in self.tasks.values() if not task.done()]
+        if polls:
+            _, stuck = await asyncio.wait(polls, timeout=5)
+            for task in stuck:
+                task.cancel()
+            await asyncio.gather(*stuck, return_exceptions=True)
+        for held in (self.tasks, self.live, self.work, self.woken, self.clocks):
+            held.clear()
+        self.unreachable.clear()
+
     async def close(self, session: SessionRef) -> None:
         if subscription := self.subscriptions.get(session.topic_id):
             await subscription.drain()

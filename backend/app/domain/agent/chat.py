@@ -197,7 +197,6 @@ class _HookWorkState:
     #: agent 各数各的**，都从 1 开始，所以几份清单混进一个 list 里不只是看着乱：
     #: 分身的 `TaskUpdate("1")` 会去勾掉房间自己的第一条。
     worker_todo: dict[str, list[dict]] = field(default_factory=dict)
-    actions: list[str] = field(default_factory=list)
     #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。失败的结果
     #: 回来时要标的就是那一块。只在内存里、只活这一轮：成功的调用（绝大多数）因此
     #: 一个字节都不必落库，而重启丢掉的只是几个红点，不是记录。
@@ -626,10 +625,10 @@ def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
     return False
 
 
-# A platform tool → the action card 芝士 files for it at the end of the turn
-# (`_ACTION_LABEL`). Only the card: telling the room a panel went stale is the
-# job of the API handler that changed it (`announce_stale`), which knows the
-# change happened whoever called it. Keyed by the tool's short name
+# A platform tool → the action card 芝士 files for it when it calls it
+# (`_ACTION_LABEL`, `_announce_action`). Only the card: telling the room a panel
+# went stale is the job of the API handler that changed it (`announce_stale`),
+# which knows the change happened whoever called it. Keyed by the tool's short name
 # (`mcp__native__cheese_decision` → `cheese_decision`).
 _TOOL_ACTION = {
     "cheese_decision": "decision",
@@ -2140,6 +2139,21 @@ class ChatService:
         async with self._sessions() as session:
             return await BlockRepository(session).ai_turn_ids(turn_ids)
 
+    async def stop_listening(self, timeout_s: float) -> None:
+        """Hand every session this process listens to over to the next one.
+
+        A message written into a running session is stamped consumed only when
+        the session's receipt for it is read back; stop reading before that and
+        the next turn sends it again. So the receipts already on their way are
+        read first, for up to ``timeout_s``, and only then does this process
+        stop reading. A receipt still missing by then is the ordinary case of a
+        session that stopped reading, and replays like one.
+        """
+        deadline = time.monotonic() + timeout_s
+        while any(self._pending_receipts.values()) and time.monotonic() < deadline:
+            await asyncio.sleep(0.2)
+        await self._compute.stop_listening()
+
     async def recover_sessions(self, device_id: str | None = None) -> int:
         """Listen again to sessions that outlived this process, and land what
         they said while nobody was.
@@ -2368,12 +2382,15 @@ class ChatService:
 
         ``opened`` is a turn whose interval already exists: one a previous
         process of ours fed and delivered, which outlived it and is found again
-        by recovery. It gets the same context, and no second row.
+        by recovery. It gets the same context and no second row, and what the
+        process that assembled it wrote on that row: where its model traffic
+        went, the message it answers, and when it really started.
 
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
         from app.api.deps import get_work_runner
+        from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
@@ -2388,6 +2405,9 @@ class ChatService:
                 agent = await agents.for_topic(topic, project)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
+                row = (
+                    await AgentTurnRepository(session).get(turn_id) if opened else None
+                )
             if not opened:
                 await get_work_runner().open_turn_the_session_started(
                     self, topic_id, turn_id, author=acting_agent
@@ -2405,7 +2425,7 @@ class ChatService:
             topic_id=topic_id,
             work_id=turn_id,
             pending_ids=set(),
-            reply_to=None,
+            reply_to=row.reply_to if row is not None else None,
             roster=None,
             topic_refs=[],
             continuation_id=turn_id,
@@ -2414,11 +2434,12 @@ class ChatService:
             # that cannot invent spend: the gateway's log is drained by whatever
             # turn closes next, which is exactly what happened before any of
             # this existed.
-            route=self._session_route.get(topic_id, "native"),
+            route=(row.route if row is not None else None)
+            or self._session_route.get(topic_id, "native"),
             acting_agent=acting_agent,
             agent_pool=agent_pool,
             user_text="",
-            started_at=datetime.now(UTC),
+            started_at=row.started_at if row is not None else datetime.now(UTC),
             agent_instance_handle=agent.handle,
             known_commits=asyncio.ensure_future(
                 self._known_commits(project_id, topic_id)
@@ -2426,7 +2447,62 @@ class ChatService:
             self_started=not opened,
         )
         self._hook_work[(topic_id, turn_id)] = state
+        if opened:
+            # The session announced this turn's start to the process that fed
+            # it, so this one never heard it: without this a message sent now
+            # would start a turn beside it instead of joining it.
+            self._active_turn_ids[topic_id] = turn_id
         return state
+
+    async def _announce_action(self, state: _HookWorkState, resource: str) -> None:
+        """Say in the room what 芝士 just did, the moment it did it — once per
+        kind of action per turn, however many times the turn does it.
+
+        Asked of the room rather than remembered, so a turn another backend
+        picks up halfway does not announce twice, or forget what came before.
+        """
+        from app.domain.agent.runtime import get_broker
+
+        landed = landing(
+            EventAbout.room, project_id=state.project_id, room_id=state.topic_id
+        )
+        async with self._sessions() as session:
+            blocks = BlockRepository(session)
+            if await blocks.has_action(state.topic_id, state.work_id, resource):
+                return
+            block = await blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
+                author=state.acting_agent,
+                author_type=AuthorType.platform,
+                content=f"<@{state.acting_agent}> {_ACTION_LABEL[resource]}",
+                kind=BlockKind.event,
+                turn_id=state.work_id,
+                meta={"platform": True, "action": resource},
+            )
+            await session.commit()
+            payload = _block_payload(BlockOut.model_validate(block))
+        await get_broker().publish(
+            str(state.topic_id), {"type": "event_block", "block": payload}
+        )
+
+    async def _note_turn_context(
+        self, turn_id: uuid.UUID, *, route: str, reply_to: uuid.UUID | None
+    ) -> None:
+        """Best-effort, like the delivery stamp: losing it costs a turn picked
+        up by another backend its reply link and the accuracy of one route
+        label, never the turn."""
+        from app.domain.agent.repositories import AgentTurnRepository
+
+        try:
+            async with self._sessions() as session:
+                await AgentTurnRepository(session).note_context(
+                    turn_id, route=route, reply_to=reply_to
+                )
+                await session.commit()
+        except Exception:  # noqa: BLE001 — bookkeeping must not stop a turn
+            logger.exception("could not record the context of turn %s", turn_id)
 
     async def _consume_hook_event(
         self,
@@ -2544,10 +2620,9 @@ class ChatService:
                     frame = {"type": "event_block", "block": payload}
                     if state is not None and event.call_id:
                         state.steps[event.call_id] = uuid.UUID(payload["id"])
-                if state is not None:
-                    resource = _TOOL_ACTION.get(name)
-                    if resource is not None and resource not in state.actions:
-                        state.actions.append(resource)
+                resource = _TOOL_ACTION.get(name)
+                if state is not None and resource is not None:
+                    await self._announce_action(state, resource)
         elif isinstance(event, AgentStepFailed):
             # No frame: 现场 rebuilds its timeline when the tab is opened, and
             # this changes a line that is already in it rather than adding one.
@@ -2794,29 +2869,6 @@ class ChatService:
                         state.project_id,
                         usage_to_credits(u, spend_priced=state.route == "gateway"),
                     )
-            landed = landing(
-                EventAbout.room,
-                project_id=state.project_id,
-                room_id=state.topic_id,
-            )
-            for resource in state.actions:
-                block = await blocks.add(
-                    project_id=landed.project_id,
-                    topic_id=landed.topic_id,
-                    task_id=landed.task_id,
-                    author=state.acting_agent,
-                    author_type=AuthorType.platform,
-                    content=f"<@{state.acting_agent}> {_ACTION_LABEL[resource]}",
-                    kind=BlockKind.event,
-                    turn_id=state.work_id,
-                    meta={"platform": True, "action": resource},
-                )
-                action_frames.append(
-                    {
-                        "type": "event_block",
-                        "block": _block_payload(BlockOut.model_validate(block)),
-                    }
-                )
             # What this session was fed, including by a process that is gone.
             # Settled either way: a failed session must also drop the batches
             # an earlier process fed it, or a later clean Stop would read them
@@ -5033,6 +5085,9 @@ class ChatService:
         self._session_route[topic_id] = route
         while len(self._session_route) > _SESSION_ROUTES_KEPT:
             del self._session_route[next(iter(self._session_route))]
+        # And on the turn itself: the backend that ends this turn may not be
+        # this one (`_begin_self_started_turn`), and it remembers neither.
+        await self._note_turn_context(turn_id, route=route, reply_to=user_block_id)
         # Internal: the screen subscription, not this request, owns timeout and
         # thinking lifecycle. Runtime consumes this frame and disables its
         # request-scoped lifecycle before provider setup begins.

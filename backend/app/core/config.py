@@ -92,9 +92,11 @@ class Settings(BaseSettings):
     # leave room for the migration the deploy runs and for anyone holding a
     # psql. The owner registers devices and answers bindings; it never fans out
     # the way a page load does, so the compose file hands it DB_POOL_SIZE=5 and
-    # DB_MAX_OVERFLOW=5 and the backends take the rest: 2 x 35 + 10 + 10 = 90
-    # of the 97 a default PostgreSQL offers once its superuser reserve is taken
-    # out (tests/unit/test_db_pool_fits_the_server.py holds this arithmetic). A
+    # DB_MAX_OVERFLOW=5 and the backends take the rest. Each backend also holds
+    # one connection outside its pool for the owner lock (`core.ownership`):
+    # 2 x (35 + 1) + 10 + 10 = 92 of the 97 a default PostgreSQL offers once its
+    # superuser reserve is taken out (tests/unit/test_db_pool_fits_the_server.py
+    # holds this arithmetic). A
     # box whose server is configured larger can raise these; a box that adds a
     # fourth pool has to lower them. dev's server was raised to 200 on
     # 2026-09-18 (conf.d/10-connections.conf on cheese-dev-env1-postgresql).
@@ -667,6 +669,12 @@ class Settings(BaseSettings):
     # turn, and its whole purpose is catching the case where nothing else will
     # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # How long a backend on its way out waits for the prompts it is still
+    # sending, and the receipts it is still expecting, before it hands its
+    # sessions to the next backend anyway (`app.core.ownership`). It has to fit
+    # inside the container's `stop_grace_period` together with uvicorn's own
+    # graceful shutdown, or the handover is cut off by a SIGKILL halfway.
+    handover_timeout_s: float = Field(default=20.0, ge=0)
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)
     # How long a registered turn may produce nothing — no block, no frame —

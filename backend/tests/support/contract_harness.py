@@ -281,5 +281,8 @@ class ContractHarness:
     async def recover(self, device_id: str | None = None) -> list[SessionRef]:
         return [held.ref for held in self._held.values()]
 
+    async def stop_listening(self) -> None:
+        return None
+
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
         return None

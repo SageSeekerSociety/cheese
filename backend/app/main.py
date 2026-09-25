@@ -14,6 +14,7 @@ import importlib
 import logging
 import pkgutil
 import re
+import time
 
 # (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
@@ -57,7 +58,7 @@ configure_logging()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Schema is managed by Alembic migrations.
-    # Orphan sweep: resume turns the previous process died with (see
+    # Orphan sweep: resume turns the previous process left behind (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
     # A screen outlives this process, which is exactly why the hook credential
     # must survive a restart: its token is baked into the environment of the
@@ -142,83 +143,126 @@ async def lifespan(_: FastAPI):
             ),
         )
 
-    try:
-        recovered = await get_chat_service().recover_sessions()
-        if recovered:
-            get_logger("cheesex.runtime").info(
-                "hook_subscriptions_recovered", topics=recovered
-            )
-    except DeviceOffline as exc:
-        # Nothing to recover on a machine that is not there, and nothing to fix
-        # either: it comes back and reconnects, and `recover_business_state`
-        # runs this again for it. Reported as an error it was 9 alerts on the
-        # channel's first day, every one of them a laptop that was closed.
-        get_logger("cheesex.runtime").warning(
-            "hook subscriptions not recovered: device offline", device=exc.device_id
-        )
-    except Exception:  # noqa: BLE001 — never block startup
-        get_logger("cheesex.runtime").exception("hook subscription recovery failed")
-
-    try:
-        n = await get_work_runner().resume_orphans(get_chat_service())
-        if n:
-            get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)
-    except Exception:  # noqa: BLE001 — never block startup
-        get_logger("cheesex.runtime").exception("orphan sweep failed")
-
-    # 闸门孤儿卡扫底 (2026-08-11): the gate runner is an in-memory asyncio task,
-    # so a redeploy kills every check in flight and nobody ever calls
-    # finish_gate — the card sits in `pending_gate` forever AND blocks its topic
-    # from ever filing another card (create_card's mutex). This runs BEFORE the
-    # periodic loop starts, and does the whole point of the startup path: right
-    # now `gate.in_flight_card_ids()` is empty, so everything past the deadline
-    # is provably abandoned by the process that died, not by this one.
-    try:
-        swept = await background.sweep_abandoned_gates(get_chat_service())
-        if swept["condemned"] or swept["errors"]:
-            get_logger("cheesex.runtime").info(
-                "gate_sweep_startup",
-                condemned=len(swept["condemned"]),
-                errors=swept["errors"],
-            )
-    except Exception:  # noqa: BLE001 — never block startup
-        get_logger("cheesex.runtime").exception("startup gate sweep failed")
-
-    from app.api.deps import get_cloud_wakeup
+    from app.api.deps import get_cloud_wakeup, get_ownership
     from app.core.db import async_session_factory
+    from app.core.ownership import keep_holding
     from app.domain.machine.runner import MachineEnrollmentSweeper
-
-    jobs = background.periodic_jobs(
-        chat=get_chat_service(),
-        machines=MachineEnrollmentSweeper(
-            async_session_factory,
-            on_ready=get_cloud_wakeup().wake,
-            on_failed=get_cloud_wakeup().report_failures,
-        ),
-        sessions=async_session_factory,
-    )
-    for job in jobs:
-        job.start()
-    from app.core.loop_lag import watch_loop_lag
-    from app.core.net_io import watch_api_io, watch_net_io
     from app.domain.topic.retire import sweep_retired_storage
 
-    background.spawn(
-        sweep_retired_storage(async_session_factory), name="cleanup startup recovery"
-    )
+    # The running work — sessions to listen to, turns to watch, sweeps on a
+    # clock — belongs to one backend process at a time (`app.core.ownership`).
+    # During a rollout this one starts while the previous one still has it, so
+    # it serves requests at once but takes the work over only when the lock is
+    # released to it; a turn asked for in the meantime waits for that.
+    jobs: list[background.PeriodicRunner] = []
+    forge_events: list[asyncio.Task] = []
+    # Once this process has held the lock, it has sessions to hand back on the
+    # way out — even if it has since lost the lock (`keep_holding`).
+    held_the_work: list[asyncio.Task] = []
+    ownership = get_ownership()
+    get_work_runner().hold_turns()
+    get_work_runner().own_sessions(False)
+
+    async def take_over() -> None:
+        await ownership.acquire()
+        held_the_work.append(
+            asyncio.create_task(keep_holding(ownership), name="owner lock watch")
+        )
+        get_work_runner().own_sessions(True)
+        try:
+            await taken_over()
+        finally:
+            # A turn asked for while this process was waiting starts only now,
+            # against the sessions and turns it has just taken over — and starts
+            # even if some step of the takeover failed, which it logged.
+            get_work_runner().start_turns()
+
+    async def taken_over() -> None:
+        try:
+            recovered = await get_chat_service().recover_sessions()
+            if recovered:
+                get_logger("cheesex.runtime").info(
+                    "hook_subscriptions_recovered", topics=recovered
+                )
+        except DeviceOffline as exc:
+            # Nothing to recover on a machine that is not there, and nothing to fix
+            # either: it comes back and reconnects, and `recover_business_state`
+            # runs this again for it. Reported as an error it was 9 alerts on the
+            # channel's first day, every one of them a laptop that was closed.
+            get_logger("cheesex.runtime").warning(
+                "hook subscriptions not recovered: device offline", device=exc.device_id
+            )
+        except Exception:  # noqa: BLE001 — never block startup
+            get_logger("cheesex.runtime").exception("hook subscription recovery failed")
+
+        try:
+            n = await get_work_runner().resume_orphans(get_chat_service())
+            if n:
+                get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)
+        except Exception:  # noqa: BLE001 — never block startup
+            get_logger("cheesex.runtime").exception("orphan sweep failed")
+
+        try:
+            n = await get_work_runner().resume_lost_messages(get_chat_service())
+            if n:
+                get_logger("cheesex.runtime").info("lost_messages_resumed", rooms=n)
+        except Exception:  # noqa: BLE001 — never block startup
+            get_logger("cheesex.runtime").exception("lost message sweep failed")
+
+        # 闸门孤儿卡扫底 (2026-08-11): the gate runner is an in-memory asyncio task,
+        # so a redeploy kills every check in flight and nobody ever calls
+        # finish_gate — the card sits in `pending_gate` forever AND blocks its topic
+        # from ever filing another card (create_card's mutex). This runs BEFORE the
+        # periodic loop starts, and does the whole point of the startup path: right
+        # now `gate.in_flight_card_ids()` is empty, so everything past the deadline
+        # is provably abandoned by the process that died, not by this one.
+        try:
+            swept = await background.sweep_abandoned_gates(get_chat_service())
+            if swept["condemned"] or swept["errors"]:
+                get_logger("cheesex.runtime").info(
+                    "gate_sweep_startup",
+                    condemned=len(swept["condemned"]),
+                    errors=swept["errors"],
+                )
+        except Exception:  # noqa: BLE001 — never block startup
+            get_logger("cheesex.runtime").exception("startup gate sweep failed")
+
+        jobs[:] = background.periodic_jobs(
+            chat=get_chat_service(),
+            machines=MachineEnrollmentSweeper(
+                async_session_factory,
+                on_ready=get_cloud_wakeup().wake,
+                on_failed=get_cloud_wakeup().report_failures,
+            ),
+            sessions=async_session_factory,
+        )
+        for job in jobs:
+            job.start()
+        background.spawn(
+            sweep_retired_storage(async_session_factory),
+            name="cleanup startup recovery",
+        )
+        if settings.forge_event_relay_url:
+            from app.domain.review.events import listen
+
+            forge_events.append(
+                asyncio.create_task(
+                    listen(get_chat_service(), async_session_factory),
+                    name="forge events",
+                )
+            )
+
+    taking_over = asyncio.create_task(take_over(), name="take over running work")
+
+    from app.core.loop_lag import watch_loop_lag
+    from app.core.net_io import watch_api_io, watch_net_io
+
     background.spawn(watch_loop_lag(), name="event loop lag")
     # 网卡吞吐与本进程 HTTP 字节数。两者都是**进程内存**里的速率环（见
     # `core/net_io.py` 的模块 docstring：上行含计量代理到 LLM 的出向流量，
     # 不只是「我们用户的流量」），重启即清零。
     background.spawn(watch_net_io(), name="net io")
     background.spawn(watch_api_io(), name="api io")
-    forge_events = None
-    if settings.forge_event_relay_url:
-        from app.domain.review.events import listen
-
-        forge_events = asyncio.create_task(
-            listen(get_chat_service(), async_session_factory), name="forge events"
-        )
 
     # What the platform pool offers is the gateway's answer, kept warm here so
     # that asking for it never becomes a network call on the path that starts a
@@ -248,11 +292,41 @@ async def lifespan(_: FastAPI):
         try:
             yield
         finally:
-            if forge_events is not None:
-                forge_events.cancel()
-                await asyncio.gather(forge_events, return_exceptions=True)
+            # Hand the running work to the next process, in the order that lets
+            # it pick every turn up where it stands: no new turn starts here;
+            # the prompts on their way out arrive; the sessions stop being read
+            # here before anyone else reads them; only then is the lock let go.
+            get_work_runner().hold_turns()
+            get_work_runner().own_sessions(False)
+            taking_over.cancel()
+            await asyncio.gather(taking_over, return_exceptions=True)
+            for watch in held_the_work:
+                watch.cancel()
+            await asyncio.gather(*held_the_work, return_exceptions=True)
+            if held_the_work:
+                handover_started = time.monotonic()
+                undelivered = await get_work_runner().settle_deliveries(
+                    settings.handover_timeout_s
+                )
+                if undelivered:
+                    get_logger("cheesex.runtime").warning(
+                        "handing over turns whose prompt never arrived",
+                        turns=sorted(undelivered),
+                    )
+                await get_chat_service().stop_listening(
+                    max(
+                        0.0,
+                        settings.handover_timeout_s
+                        - (time.monotonic() - handover_started),
+                    )
+                )
+                await get_work_runner().let_go()
+            for task in forge_events:
+                task.cancel()
+            await asyncio.gather(*forge_events, return_exceptions=True)
             for job in reversed(jobs):
                 await job.stop()
+            await ownership.release()
             if hasattr(hub_runtime, "close"):
                 await hub_runtime.close()
 

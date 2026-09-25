@@ -269,6 +269,12 @@ class ComputePool:
             recovered.extend(sessions)
         return recovered
 
+    async def stop_listening(self) -> None:
+        """Stop reading every session, in every harness."""
+        for runtime in self._runtimes():
+            await runtime.stop_listening()
+        self._owners.clear()
+
     async def replay(self, session: "SessionRef", *, known_texts: set[str]) -> None:
         """Land what a recovered session produced while nobody listened."""
         for runtime in self._runtimes():
