@@ -113,6 +113,13 @@ test.describe("空间新界面（真路由）", () => {
     await expect(page.locator(".pub-row__title", { hasText: pendingName })).toBeVisible();
   });
 
+  test("打不开的空间给一句话，不是一张空表", async ({ page }) => {
+    await apiLogin(page);
+    // 不存在的空间：真接口答 404（不存在与没权限在它那儿是同一个回答）。
+    await page.goto("/spaces/99999999/board");
+    await expect(page.getByText("打不开这个空间")).toBeVisible();
+  });
+
   test("普通成员打不到管理员那三页，直接输地址也不行", async ({ page }) => {
     await apiLogin(page);
     const token = await apiToken(page);
@@ -124,18 +131,26 @@ test.describe("空间新界面（真路由）", () => {
       data: { username: "bobby", password: "demo12345" },
     });
     if (!other.ok()) throw new Error(`bobby 登录失败 → ${other.status()}`);
-    const otherToken = (await other.json()).data.accessToken as string;
+    const otherSession = (await other.json()).data as { accessToken: string; user: unknown };
 
     const join = await page.request.post("/api/spaces/join", {
-      headers: { Authorization: `Bearer ${otherToken}` },
+      headers: { Authorization: `Bearer ${otherSession.accessToken}` },
       data: { code: (await inviteCodeOf(page, auth, spaceId)) },
     });
     if (!join.ok()) throw new Error(`加入空间失败 → ${join.status()} ${await join.text()}`);
 
-    await page.goto("/spaces");
+    // **两个键都要换成 bobby 的**。只换 accessToken 不够：角色是拿 `user` 里的 handle
+    // 去比 `space.admins` 的，留着 alice 的话这一页会以所有者的身份打开，而应用自己
+    // 那次 `/users/me` 回来之前就判完了 —— 这条用例因此时绿时红。先落到应用 origin，
+    // 一次把两样写齐，再去目标地址。
+    const asset = await page.goto("/favicon.ico");
+    if (!asset?.ok()) throw new Error("拿不到应用的 origin");
     await page.evaluate(
-      ({ t }) => localStorage.setItem("accessToken", t),
-      { t: otherToken },
+      ({ session }) => {
+        localStorage.setItem("accessToken", session.accessToken);
+        localStorage.setItem("user", JSON.stringify(session.user));
+      },
+      { session: otherSession },
     );
 
     // 手打地址进「审核」：被送回首页，而不是看到一张空表。
