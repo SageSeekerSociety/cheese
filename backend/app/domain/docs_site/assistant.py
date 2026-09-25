@@ -176,7 +176,8 @@ async def stream_answer(
     Only the text is forwarded; the upstream's own framing, ids and headers
     never reach the browser. ``result`` is filled as the stream goes, so the
     caller can record what happened even if the reader disconnects midway."""
-    url = f"{settings.llm_gateway_admin_base.rstrip('/')}/v1/chat/completions"
+    base = (settings.llm_gateway_admin_base or "").rstrip("/")
+    url = f"{base}/v1/chat/completions"
     body = {
         "model": settings.docs_assistant_model,
         "messages": messages,

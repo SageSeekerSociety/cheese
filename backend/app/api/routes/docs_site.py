@@ -34,7 +34,7 @@ _background: set[asyncio.Task] = set()
 def ask_limits() -> AskLimits:
     global _limits
     if _limits is None:
-        _limits = AskLimits(get_redis_client())
+        _limits = AskLimits(get_redis_client)
     return _limits
 
 
@@ -142,7 +142,7 @@ async def ask(
     async def events():
         try:
             yield assistant.sse("sources", {"sources": assistant.sources_payload(hits)})
-            if not hits:
+            if key is None:  # nothing relevant, so no key was fetched either
                 result.outcome = "no_match"
                 yield assistant.sse("delta", {"text": assistant.NO_MATCH})
             else:
