@@ -627,21 +627,4 @@ onMounted(() => {
     transform: translateY(0);
   }
 }
-
-// 编辑指示器动画
-@keyframes pulse {
-  0% {
-    opacity: 0.5;
-  }
-  50% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0.5;
-  }
-}
-
-.text-primary {
-  animation: pulse 2s infinite ease-in-out;
-}
 </style>
