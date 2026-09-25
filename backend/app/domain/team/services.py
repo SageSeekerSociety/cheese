@@ -53,6 +53,14 @@ async def check_team_locking_status(session, team_id: int) -> None:
         raise ForbiddenError(msg)
 
 
+def _open_to_all(team: Team) -> bool:
+    """Whether someone outside ``team`` may see it: a public, shared team."""
+    return (
+        team.personal_owner_user_id is None
+        and team.visibility == TeamVisibility.PUBLIC.value
+    )
+
+
 def team_service(session: AsyncSession) -> "TeamService":
     """接在这个 session 上的 ``TeamService`` —— 本领域的标准接线。
 
@@ -99,16 +107,24 @@ class TeamService:
         """
         team = await self._repo.get_by_id(team_id)
         if team is not None and (
-            await self._repo.is_team_member(team_id, user_id)
-            or (
-                team.personal_owner_user_id is None
-                and team.visibility == TeamVisibility.PUBLIC.value
-            )
+            await self._repo.is_team_member(team_id, user_id) or _open_to_all(team)
         ):
             return team
         raise NotFoundError(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
+
+    async def teams_of_seen_by(self, user_id: int, viewer_id: int | None) -> list[Team]:
+        """The teams ``user_id`` is in that ``viewer_id`` may see, by the rule of
+        :meth:`visible_team`: the ones the viewer is also in, and the public
+        shared ones. A stealth team is not named to anyone outside it."""
+        theirs = await self._repo.list_teams_of_user(user_id=user_id)
+        mine = (
+            {t.id for t in await self._repo.list_teams_of_user(user_id=viewer_id)}
+            if viewer_id is not None
+            else set()
+        )
+        return [t for t in theirs if t.id in mine or _open_to_all(t)]
 
     async def _require_free_handle(self, handle: str) -> None:
         if not handle_is_available_shape(handle):

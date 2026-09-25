@@ -1,18 +1,24 @@
 """Aggregation routes — 成员页 (§7.2) and Space board (§7.3)."""
 
 import uuid
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok
 from app.api.routes.machines import _require_project_access
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    NotFoundError,
+    ValidationError,
+)
 from app.domain.dashboard.services import DashboardService
+from app.domain.memory.store import forget_fact_about
 from app.domain.project.repositories import ProjectRepository
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
@@ -117,6 +123,16 @@ async def contributions(
     return ok(await DashboardService(db).contributions(project_id))
 
 
+async def _signed_in(resolver: ActorResolver, what: str) -> str:
+    """The caller's handle; a personal page shows nothing to a caller nobody
+    can identify."""
+    viewer = await resolver.resolve(fallback_handle=None)
+    resolver.reject_failed_credential(viewer)
+    if not viewer.authenticated:
+        raise AuthenticationRequiredError(f"{what}需要先登录")
+    return viewer.handle
+
+
 @router.get("/users/{handle}/profile")
 async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -> dict:
     """个人主页 (spec §7.2): cross-project profile / portfolio.
@@ -125,8 +141,53 @@ async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -
     and the page is cut to what that viewer may see. A person's projects are
     project content, and what the agents remember about them is theirs alone,
     so there is nothing on it for a caller nobody can identify."""
-    viewer = await resolver.resolve(fallback_handle=None)
-    resolver.reject_failed_credential(viewer)
-    if not viewer.authenticated:
-        raise AuthenticationRequiredError("查看个人主页需要先登录")
-    return ok(await DashboardService(db).user_profile(handle, viewer=viewer.handle))
+    viewer = await _signed_in(resolver, "查看个人主页")
+    return ok(await DashboardService(db).user_profile(handle, viewer=viewer))
+
+
+@router.get("/users/{handle}/topics")
+async def user_topics(
+    handle: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    since: Annotated[date | None, Query(alias="from")] = None,
+    to: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+) -> dict:
+    """The topics a person has written in, the latest participation first.
+
+    ``from``/``to`` are UTC dates, both included — the days of the profile's
+    heatmap — and the counts are the ones inside them. Cut to the topics the
+    viewer may open, the same way as the profile."""
+    viewer = await _signed_in(resolver, "查看个人主页")
+    if since is not None and to is not None and since > to:
+        raise ValidationError("from 不能晚于 to")
+    return ok(
+        {
+            "topics": await DashboardService(db).participated_topics(
+                handle,
+                viewer=viewer,
+                since=_utc_midnight(since) if since else None,
+                until=_utc_midnight(to) + timedelta(days=1) if to else None,
+                limit=limit,
+            )
+        }
+    )
+
+
+def _utc_midnight(day: date) -> datetime:
+    return datetime.combine(day, time.min, tzinfo=UTC)
+
+
+@router.delete("/users/me/understanding/{entry_id}")
+async def forget_understanding(
+    entry_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Delete one thing an agent noted about the caller.
+
+    Only a note about the caller is theirs to delete. Any other id — someone
+    else's, an agent's own, one that does not exist — is the same 404."""
+    viewer = await _signed_in(resolver, "删除记忆")
+    if not await forget_fact_about(db, entry_id=entry_id, person_handle=viewer):
+        raise NotFoundError("记忆条目不存在")
+    return ok({"deleted": str(entry_id)})
