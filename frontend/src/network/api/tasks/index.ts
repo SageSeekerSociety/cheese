@@ -20,9 +20,12 @@ import type {
   TaskAIAdvice,
   TaskAIAdviceConversation,
   TaskAIAdviceConversationContext,
+  TaskAttachmentListResponseData,
   TaskParticipationInfo,
+  UploadTaskAttachmentResponseData,
 } from './types'
 
+import { AxiosProgressEvent } from 'axios'
 import { EventSource } from 'eventsource'
 
 import { NewApiInstance } from '../index'
@@ -88,6 +91,38 @@ export namespace TasksApi {
       url: `/tasks/${taskId}`,
       method: 'PATCH',
       data,
+    })
+
+  /** 一道题上的材料清单。看得见这道题的人都拿得到，能不能下载在 `canDownload` 里。 */
+  export const listAttachments = (taskId: number) =>
+    NewApiInstance.request<TaskAttachmentListResponseData>({
+      url: `/tasks/${taskId}/attachments`,
+      method: 'GET',
+    })
+
+  /** 传一个文件并挂到这道题上（出题人本人或板管理员）。 */
+  export const uploadAttachment = (
+    taskId: number,
+    file: File,
+    onProgress?: (progressEvent: AxiosProgressEvent) => void
+  ) => {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    return NewApiInstance.request<UploadTaskAttachmentResponseData>({
+      url: `/tasks/${taskId}/attachments`,
+      method: 'POST',
+      data: formData,
+      timeout: 60000,
+      onUploadProgress: onProgress,
+    })
+  }
+
+  /** 把一份材料从这道题上摘下来。存储上的对象留着（见后端 `TaskAttachmentService.remove`）。 */
+  export const removeAttachment = (taskId: number, attachmentId: number) =>
+    NewApiInstance.request({
+      url: `/tasks/${taskId}/attachments/${attachmentId}`,
+      method: 'DELETE',
     })
 
   export const del = (taskId: number) =>
