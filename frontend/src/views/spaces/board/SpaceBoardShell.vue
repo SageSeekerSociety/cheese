@@ -32,8 +32,7 @@ const NAV = computed(() =>
     { name: 'SpaceBoardAnnouncements', label: '公告', icon: 'mdi-bullhorn-outline', show: true },
     { name: 'SpaceBoardReview', label: '审核', icon: 'mdi-clipboard-check-outline', show: isManager.value },
     { name: 'SpaceBoardMembers', label: '成员', icon: 'mdi-account-group-outline', show: isManager.value },
-    // 数据看板暂时指向真平台已有的那九页（见 board/routes.ts 顶部说明）。
-    { name: 'SpacesDetailAnalytics', label: '数据看板', icon: 'mdi-chart-box-outline', show: isManager.value },
+    { name: 'SpaceBoardAnalytics', label: '数据看板', icon: 'mdi-chart-box-outline', show: isManager.value },
   ].filter((i) => i.show)
 )
 

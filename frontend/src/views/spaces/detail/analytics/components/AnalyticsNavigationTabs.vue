@@ -16,17 +16,23 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
+import { useAnalyticsRouteNames } from '@/lib/shellRouteNames'
+
 const route = useRoute()
 
 const spaceId = computed(() => Number(route.params.spaceId))
 
+/** 六格跳哪儿由挂着它的那棵树说了算（老的九页 / 新题目板外壳各一套名字），
+ *  见 `shellRouteNames.ts` 顶部。 */
+const names = useAnalyticsRouteNames()
+
 const tabs = [
-  { name: 'SpacesDetailAnalyticsOverview', label: '总览', icon: 'mdi-view-dashboard-outline' },
-  { name: 'SpacesDetailAnalyticsAlerts', label: '告警', icon: 'mdi-bell-alert-outline' },
-  { name: 'SpacesDetailAnalyticsPublishers', label: '老师', icon: 'mdi-account-tie-outline' },
-  { name: 'SpacesDetailAnalyticsTasks', label: '题目', icon: 'mdi-clipboard-text-outline' },
-  { name: 'SpacesDetailAnalyticsParticipants', label: '参与者', icon: 'mdi-account-group-outline' },
-  { name: 'SpacesDetailAnalyticsLearning', label: '学习', icon: 'mdi-school-outline' },
+  { name: names.overview, label: '总览', icon: 'mdi-view-dashboard-outline' },
+  { name: names.alerts, label: '告警', icon: 'mdi-bell-alert-outline' },
+  { name: names.publishers, label: '老师', icon: 'mdi-account-tie-outline' },
+  { name: names.tasks, label: '题目', icon: 'mdi-clipboard-text-outline' },
+  { name: names.participants, label: '参与者', icon: 'mdi-account-group-outline' },
+  { name: names.learning, label: '学习', icon: 'mdi-school-outline' },
 ]
 </script>
 

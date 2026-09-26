@@ -105,8 +105,7 @@ function deadlineText(ms: number | null | undefined): string {
 }
 
 function detailTo(taskId: number) {
-  // 详情暂时指向真平台已有的那一页（见 board/routes.ts）。
-  return { name: 'SpacesDetailTasksDetail', params: { spaceId: String(spaceId), taskId: String(taskId) } }
+  return { name: 'SpaceBoardTaskDetail', params: { spaceId: String(spaceId), taskId: String(taskId) } }
 }
 
 function insightsTo(taskId: number) {
@@ -114,7 +113,7 @@ function insightsTo(taskId: number) {
 }
 
 function publishTo() {
-  return { name: 'SpacesDetailPublishTask', params: { spaceId: String(spaceId) } }
+  return { name: 'SpaceBoardTaskPublish', params: { spaceId: String(spaceId) } }
 }
 
 function homeTo() {
