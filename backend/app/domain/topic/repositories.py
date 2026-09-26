@@ -24,6 +24,8 @@ from app.domain.identity.handles import (
 from app.domain.project.environment import project_environment
 from app.domain.project.models import Project
 from app.domain.topic.models import (
+    PLACEHOLDER_TITLE,
+    TitleSource,
     Topic,
     TopicKind,
     TopicMembership,
@@ -96,6 +98,12 @@ class TopicRepository:
             project_id=project_id,
             environment=project_environment(project.settings if project else None),
             title=title,
+            # A room created with a name was named by whoever created it.
+            title_source=(
+                TitleSource.placeholder
+                if title == PLACEHOLDER_TITLE
+                else TitleSource.human
+            ),
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
@@ -276,6 +284,7 @@ class TopicRepository:
             environment=project_environment(project.settings if project else None),
             title=title,
             kind=TopicKind.topic,
+            title_source=TitleSource.human,
             created_by=owner,
             is_private=True,
         )
