@@ -1,5 +1,28 @@
 import type { RouteRecordRaw } from 'vue-router'
 
+/**
+ * 老的空间树（`/spaces/:spaceId/…`）。
+ *
+ * **2026-09-26 起它不再是「进去」的落点。** 进一块板一律落在新题目板
+ * （`/spaces/:id/board`，见 `lib/courseNav.ts` 的 `spaceEntryRoute`）；这一棵现在的
+ * 身份是**管理面与课程面**：题目板头部那块下拉带人来的「编辑信息」「管理员设置」，
+ * 以及课那几屏（`course/*`，题目板外壳里那格「课程」）。
+ *
+ * **下面这几屏已经被题目板接手了，但一个都没删**：题目列表 → 题目板首页、我的发布 /
+ * 我的参与 → 「我的」、公告板 → 「公告」、审核题目 → 「审核」、题目详情 / 发题 /
+ * 九个分析页 → 第五批包进新外壳的同名页。留着的理由不是舍不得，是**删了会留死链，
+ * 而那些链来自不会退场的屏**：
+ * - `SpaceSidebar.vue`（老树自己的侧栏）每一格都指着它们；
+ * - 课那几屏指着它们 —— `course/Assignments.vue` 的发题按钮走 `SpacesDetailPublishTask`，
+ *   课程面是要长期在的；
+ * - 老树内部互相指着（`detail/Tasks.vue` → 详情/我的参与、`MyPublishing.vue` → 发题、
+ *   新外壳的 `board/routes.ts` 把 `SpacesDetailTasksList` 当作详情页的 `backTo`）；
+ * - 已经发出去的地址（书签、通知里的链接）没有重定向会直接 404。
+ *
+ * 所以退场的次序是：**先在老树内部把这些指针对到题目板上**，再删页。这一步没做，
+ * 因为「老树内部那一批指针」和「老树要不要整个收成一条重定向」是同一件事的两半，
+ * 得一起定 —— 属于下一批。
+ */
 export default {
   path: '/spaces/:spaceId',
   name: 'SpacesDetail',

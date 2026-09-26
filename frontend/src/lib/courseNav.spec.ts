@@ -47,19 +47,11 @@ describe('courseNav', () => {
     expect(isCourseTeacher([5], undefined)).toBe(false)
   })
 
-  it('sends a course to the course home and a board to the problem list', () => {
-    expect(spaceEntryRoute({ id: 7, isCourse: true })).toEqual({
-      name: 'SpacesCourseHome',
-      params: { spaceId: 7 },
-    })
-    expect(spaceEntryRoute({ id: 7, isCourse: false })).toEqual({
-      name: 'SpacesDetail',
-      params: { spaceId: 7 },
-    })
-    // 老题目板：服务端不说，就是没有壳 → 还是今天那条地址（它自己 redirect 到题目
-    // 列表），所以链接一个字符都没变。
+  it('sends every board to the board itself, courses included', () => {
+    // 新建的题目板**就是一门课**（#1448），所以按 `isCourse` 分岔等于「新板全开在
+    // 老树上」—— 落点不再看它。课那几屏由题目板外壳里那格「课程」接住。
     expect(spaceEntryRoute({ id: 7 })).toEqual({
-      name: 'SpacesDetail',
+      name: 'SpaceBoardHome',
       params: { spaceId: 7 },
     })
   })

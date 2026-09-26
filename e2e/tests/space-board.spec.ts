@@ -403,6 +403,34 @@ test.describe("空间新界面（真路由）", () => {
     // 真数据：这一板上确实有一道题。
     await expect(page.getByText("题目总数")).toBeVisible();
   });
+
+  test("从空间列表点进一块板，落的是题目板；课的几屏还在", async ({ page }) => {
+    await apiLogin(page);
+    const auth = { Authorization: `Bearer ${await apiToken(page)}` };
+    const { spaceId, name } = await createReviewedSpace(page, auth);
+
+    await page.goto("/spaces");
+    // 探索空间那张卡整张可点（`<v-card :to="spaceEntryRoute(space)">`）。同一块板在
+    // 上面「我的申请」里也有一行写着同一个名字，所以按类名限定到卡片本身，
+    // 不然 `getByText` 会同时命中两处、strict 模式直接判失败。
+    await page.locator(".space-card", { hasText: name }).click();
+
+    // 落点是题目板 —— 不是 `/spaces/{id}` 那条 redirect 到的老树。
+    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board$`));
+    for (const label of ["空间", "我的", "公告"]) {
+      await expect(page.getByRole("link", { name: label, exact: true })).toBeVisible();
+    }
+    // 老侧栏那几格一个都不在（「全部分类」是老树独有的一格）。
+    await expect(page.getByText("全部分类")).toHaveCount(0);
+
+    // 新建的板**都是课**（#1448），所以「课程」这格在。它是课那几屏唯一的入口 ——
+    // 进板的落点改成题目板之后，少了这一格，课里的人就回不到教学单元/作业/小测/小组。
+    await page.getByRole("link", { name: "课程", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/course$`));
+    // 建这块板的人就是所有者 = 这门课的老师，所以他看到的是课程总览（学生看到
+    // 「我的课程」，同一条路由两种人两种第一屏）。
+    await expect(page.getByRole("heading", { name: "课程总览" })).toBeVisible();
+  });
 });
 
 /** 空间建好时就带着一个邀请码（`createSpace` 的返回里那条），用它把别人放进来。 */
