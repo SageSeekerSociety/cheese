@@ -99,9 +99,10 @@ _DEFAULT = Shell(
             "project-library",
             "project-routines",
             "project-members",
+            "project-skills",
         ),
     ),
-    hidden=("calendar", "project-routines"),
+    hidden=("calendar", "project-routines", "project-skills"),
 )
 
 #: 办公: a project is a 工作, a topic is an 议题, and the day starts in 工作区.
@@ -119,6 +120,7 @@ _WORKBENCH = Shell(
             "project-routines",
             "workspace-running",
             "project-members",
+            "project-skills",
         ),
     ),
     hidden=("calendar",),

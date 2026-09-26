@@ -28,7 +28,7 @@ covers:
 
 ## 空间 {#spaces}
 
-空间有自己的角色：创建者、管理员（课程里就是教师）和成员。只有创建者能设置或撤销管理员（`backend/app/auth/space_access.py`）。
+空间有自己的角色：所有者（建空间的人）和管理员（课程里就是教师），成员是另一份名单。设置、撤销管理员和改角色都要求调用者自己是所有者（`backend/app/domain/space/services.py` 的 `add_admin`、`remove_admin`、`update_admin_role`）。所有权可以转交，转交后旧所有者降为管理员。「这人是不是这门课的教师」由 `backend/app/auth/space_access.py` 的 `is_space_admin` 回答。
 
 ## AI 队友 {#agents}
 

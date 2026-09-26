@@ -37,12 +37,13 @@ covers:
 | 主 API、前端 nginx | 机器连接服务（`release-device-connection.yml`） |
 | 会话沙盒镜像（新开的会话用新镜像） | 模型隧道与主机入口 nginx（`deploy/llm-tunnel/up.sh`） |
 | 网页渲染、Office 渲染 | 计量代理（`release-metering-proxy.yml`）、模型网关（`release-gateway.yml`） |
+| | 事件中继（`deploy/forge-events/compose.yml`，镜像单独钉住） |
 
 上传文件、工作区、会话记录都在主机目录里挂载进容器，发版不会动它们，见[数据存在哪](/dev/data)。
 
 ## 滚动发版时正在跑的轮怎么办 {#handover}
 
-滚动发版时新旧两个主 API 进程会同时连着同一个数据库。「谁在跑哪些轮、监听哪些会话」这类只能由一个进程负责的工作，用 Postgres 的会话级 advisory lock 决定归属（`backend/app/core/ownership.py`）：旧进程退出时释放锁，新进程接过去。旧进程关闭前最多等 `HANDOVER_TIMEOUT_S`（20 秒）把还在路上的消息交完，所以 compose 给主 API 留了 60 秒的停止宽限期。
+滚动发版时新旧两个主 API 进程会同时连着同一个数据库。「谁在跑哪些轮、监听哪些会话」这类只能由一个进程负责的工作，用 Postgres 的会话级 advisory lock 决定归属（`backend/app/core/ownership.py`）：旧进程退出时释放锁，新进程接过去。旧进程关闭前最多等 `HANDOVER_TIMEOUT_S`（20 秒）把还在路上的消息交完、等回执收齐，所以 compose 给主 API 留了 60 秒的停止宽限期。
 
 ## 日志 {#logs}
 

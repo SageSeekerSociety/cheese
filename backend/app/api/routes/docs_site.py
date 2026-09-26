@@ -8,21 +8,31 @@ import asyncio
 import logging
 import re
 import time
+import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.auth import ActorResolverDep
+from app.api.response import ok
 from app.api.routes.admin_common import DbSession, PlatformAdminDep
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
 from app.core.db import async_session_factory
+from app.core.errors import (
+    ForbiddenError,
+    NotFoundError,
+    SystemBusyError,
+    ValidationError,
+)
 from app.core.redis import get_redis_client
 from app.domain.admin.services import AdminService
-from app.domain.docs_site import access, assistant, retrieval
+from app.domain.docs_site import access, assistant, library, retrieval
 from app.domain.docs_site.limits import AskLimits
+from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/docs", tags=["docs"])
@@ -61,7 +71,10 @@ async def grant_dev_access(handle: PlatformAdminDep) -> Response:
 @router.get("/dev-access/check", include_in_schema=False)
 async def check_dev_access(request: Request, db: DbSession) -> Response:
     """nginx's ``auth_request`` for every file under /docs/dev/: 204 lets it through."""
-    handle = access.holder(request.cookies.get(access.COOKIE))
+    token = request.cookies.get(access.COOKIE)
+    if access.is_internal(token):
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+    handle = access.holder(token)
     if handle is None:
         return Response(status_code=401)
     if not await access.admins.contains(handle, AdminService(db).admin_handles):
@@ -186,3 +199,75 @@ async def _settle(
             )
     except Exception:  # noqa: BLE001 — a lost analytics row must not surface to anyone
         logger.warning("recording a docs question failed", exc_info=True)
+
+
+# ---------- the docs, for AI teammates: cheese_docs_search / cheese_docs_read ----
+
+
+class AgentDocsIn(BaseModel):
+    topic: uuid.UUID
+    query: str | None = Field(default=None, max_length=300)
+    page: str | None = Field(default=None, max_length=200)
+
+
+async def _agent_scope(
+    body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
+) -> bool:
+    """Authorize the caller for the room it names; whether it may read developer
+    pages is a property of that room's project, not of the caller."""
+    place = await TopicService(db).place_or_404(body.topic)
+    who = await actor.resolve(
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+    )
+    await actor.authorize_topic(
+        who, project_id=place.project_id, topic_id=place.room_id
+    )
+    return await library.reads_dev_docs(db, place.project_id)
+
+
+@router.post("/agent/search", include_in_schema=False)
+async def agent_search_docs(
+    body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
+) -> dict:
+    """cheese_docs_search: the best sections of the manual for a query."""
+    if not body.query or not body.query.strip():
+        raise ValidationError("query 不能为空")
+    dev = await _agent_scope(body, db, actor)
+    found = await library.search(body.query, dev=dev)
+    if found is None:
+        raise SystemBusyError("文档索引暂时读不到，稍后再试")
+    return ok(
+        {
+            "dev": dev,
+            "hits": [
+                {
+                    "title": f.title,
+                    "heading": f.heading,
+                    # Absolute, so the agent can hand the link to a person as is.
+                    "url": settings.frontend_url.rstrip("/") + f.url,
+                    "excerpt": f.excerpt,
+                    "dev": f.dev,
+                }
+                for f in found
+            ],
+        }
+    )
+
+
+@router.post("/agent/read", include_in_schema=False)
+async def agent_read_docs(
+    body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
+) -> dict:
+    """cheese_docs_read: one page's Markdown, as readers fetch it."""
+    if not body.page or not body.page.strip():
+        raise ValidationError("page 不能为空")
+    dev = await _agent_scope(body, db, actor)
+    try:
+        text = await library.read_page(body.page, dev=dev)
+    except library.DevDocsForbidden as exc:
+        raise ForbiddenError("开发文档只对知是自己的项目开放") from exc
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    if text is None:
+        raise NotFoundError(f"没有这一页：{body.page}")
+    return ok({"page": library.page_slug(body.page), "markdown": text})
