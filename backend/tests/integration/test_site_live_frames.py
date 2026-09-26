@@ -16,7 +16,11 @@ from sqlalchemy import select
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.block.models import Block
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
+
+
+def _alice() -> dict:
+    return session_auth_headers("alice")
 
 
 def _room(client) -> str:
@@ -91,9 +95,11 @@ def test_a_step_that_failed_reaches_the_socket_as_that_step_restated(
         if f["type"] == "event_block" and (f["block"]["meta"] or {}).get("tool")
     )
     updated = [f for f in frames if f["type"] == "block_updated"]
-    assert [f["block"]["id"] for f in updated] == [started["block"]["id"]]
-    assert updated[0]["block"]["meta"]["failed"] is True
-    assert updated[0]["block"]["meta"]["error"] == "bash: pandoc: command not found"
+    # Restated, never added: every update is that one step (its failure, and
+    # then what it printed).
+    assert {f["block"]["id"] for f in updated} == {started["block"]["id"]}
+    assert updated[-1]["block"]["meta"]["failed"] is True
+    assert updated[-1]["block"]["meta"]["error"] == "bash: pandoc: command not found"
 
 
 def test_a_streak_of_retries_is_one_line_that_counts_them(client, stub_hooks):
@@ -222,3 +228,65 @@ def test_a_socket_that_joins_mid_turn_learns_when_the_turn_started(client, stub_
     assert active["turn_ids"] == [started["turn_id"]]
     assert set(active["since"]) == {started["turn_id"]}
     assert isinstance(active["since"][started["turn_id"]], float)
+
+
+def test_what_a_step_printed_is_kept_on_it_capped_and_redacted(client, stub_hooks):
+    """Opening a step shows what the command printed: its end, at most 8 KiB,
+    with credentials masked. The page and the socket say only that there is
+    output; the text is fetched for the one step being opened."""
+    printed = (
+        "\n".join(f"line {n}" for n in range(3000)) + "\ntoken ghp_abcdefghijklmnop"
+    )
+
+    def turn(topic, prompt, reply):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        stub_hooks.uses(topic, "Bash", command="make test")
+        stub_hooks.returns(topic, "Bash", printed)
+        stub_hooks.stops(topic, "好了")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 跑测试"})
+        frames = _until(ws, _done)
+    wait_work_idle()
+
+    updated = [f["block"] for f in frames if f["type"] == "block_updated"]
+    assert len(updated) == 1
+    step_id = updated[0]["id"]
+    assert "output" not in updated[0]["meta"]
+    assert updated[0]["meta"]["output_bytes"] > 8 * 1024
+
+    page = client.get(
+        f"/topics/{room}/transcript", params={"limit": 50}, headers=_alice()
+    ).json()["data"]["data"]
+    listed = next(b for b in page if b["id"] == step_id)
+    assert "output" not in listed["meta"]
+
+    kept = client.get(
+        f"/topics/{room}/transcript/{step_id}/output", headers=_alice()
+    ).json()["data"]
+    assert len(kept["output"].encode()) <= 8 * 1024
+    assert kept["output"].endswith("token ***")
+    assert "line 2999" in kept["output"]
+    assert "line 0\n" not in kept["output"]
+    assert kept["bytes"] == updated[0]["meta"]["output_bytes"]
+
+
+def test_a_steps_output_is_read_only_through_its_own_room(client, stub_hooks):
+    """The output door is the transcript's door: someone else's room, or an id
+    that is not a step of this room, answers 404."""
+    room = _room(client)
+    other = _room(client)
+    stranger = str(uuid.uuid4())
+    response = client.get(
+        f"/topics/{other}/transcript/{stranger}/output", headers=_alice()
+    )
+    assert response.status_code == 404
+    assert (
+        client.get(
+            f"/topics/{room}/transcript/{stranger}/output", headers=_alice()
+        ).status_code
+        == 404
+    )

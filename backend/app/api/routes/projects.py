@@ -19,6 +19,7 @@ from app.api.deps import (
     get_profile_registry,
     project_device_online,
 )
+from app.api.place import authorized_place, project_reader
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -507,10 +508,10 @@ async def library_file_raw(
     topic: str = "",
 ) -> Response:
     """一份资料的字节。给下载，也给 `cheese library get`——芝士 要读一份没有被这条
-    消息带上的资料时，只能自己来取（那时带着它干活的那个话题，见 `_authorized_place`）。
+    消息带上的资料时，只能自己来取（那时带着它干活的那个话题，见 `authorized_place`）。
     """
     await ProjectService(db).get_or_404(project_id)
-    await _project_reader(db, resolver, project_id, topic)
+    await project_reader(db, resolver, project_id, topic)
     name = _library_path(path)
     data = library.read_library_file(project_id, name)
     filename = quote(name.rsplit("/", 1)[-1], safe="")
@@ -534,20 +535,6 @@ def _library_path(raw: str) -> str:
     return name
 
 
-async def _project_reader(
-    db: DbSession,
-    resolver: ActorResolverDep,
-    project_id: uuid.UUID,
-    topic_raw: str,
-) -> None:
-    """谁读得到这个项目的东西：项目成员，或者正在这个项目某个话题里干活的 芝士。"""
-    if topic_raw:
-        await _authorized_place(db, resolver, project_id, topic_raw)
-        return
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-
-
 @router.get("/{project_id}/library")
 async def list_library(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
@@ -557,7 +544,7 @@ async def list_library(
     Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
     room that has never seen that file."""
     await ProjectService(db).get_or_404(project_id)
-    await _project_reader(db, resolver, project_id, topic)
+    await project_reader(db, resolver, project_id, topic)
     files = library.list_library_files(project_id)
     return ok(page(files, len(files)))
 
@@ -572,7 +559,7 @@ async def list_artifacts(
     那个仓库那一项上（平台自己认）；交出去一份文件或一个地址的，递卡时点名的名字不
     在清单上就当场多一项。所以这里没有 POST，不是还没做。"""
     await ProjectService(db).get_or_404(project_id)
-    await _project_reader(db, resolver, project_id, topic)
+    await project_reader(db, resolver, project_id, topic)
     rows = await artifacts.list_for_project(db, project_id)
     items = [
         {
@@ -600,7 +587,7 @@ async def read_artifact(
     一版就是一张采纳了的卡，所以这里没有「版本表」——历史是数出来的，撤回一次采
     纳，它后面几版的号自己往前挪。"""
     await ProjectService(db).get_or_404(project_id)
-    await _project_reader(db, resolver, project_id, topic)
+    await project_reader(db, resolver, project_id, topic)
     row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
     listed = await artifacts.summary(db, row.id)
     history = await artifacts.versions(db, row.id)
@@ -645,7 +632,7 @@ async def compare_artifact_versions(
     topic: str = "",
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
-    await _project_reader(db, resolver, project_id, topic)
+    await project_reader(db, resolver, project_id, topic)
     await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
     history = {v.card_id: v for v in await artifacts.versions(db, artifact_id)}
     if before not in history or after not in history:
@@ -705,7 +692,7 @@ async def download_artifact_version(
     体没了，重建出来的可能和当时交出去的不是同一份东西，而用户要的是他交出去的那
     一份。"""
     await ProjectService(db).get_or_404(project_id)
-    await _project_reader(db, resolver, project_id, topic)
+    await project_reader(db, resolver, project_id, topic)
     await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
     version = next(
         (v for v in await artifacts.versions(db, artifact_id) if v.card_id == card_id),
@@ -852,12 +839,12 @@ async def list_decisions(
     ``/topics`` has always guarded.
 
     ``topic`` is the caller naming its place, and it is how 芝士 reads this at
-    all (``_project_reader``): a per-turn credential is minted for one turn in
+    all (``project_reader``): a per-turn credential is minted for one turn in
     one room, so a bare ``authorize_project`` refuses it — which left the one
     caller that WRITES decisions (``POST /topics/{id}/decision``, the
     ``cheese decision`` CLI) unable to read a single one back. Its own room's
     blocks were reachable; the project's record was not."""
-    await _project_reader(db, resolver, project_id, topic)
+    await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     blocks = await BlockRepository(db).list_by_kind_for_project(
         project_id, BlockKind.decision
@@ -883,7 +870,7 @@ async def list_weeklies(
     own words, and each is traceable to the room it was written in via
     `topic_id` — including the same ``topic`` place, so the caller that writes
     a weekly (``POST /topics/{id}/weekly``) can read the set back."""
-    await _project_reader(db, resolver, project_id, topic)
+    await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     blocks = await BlockRepository(db).list_by_kind_for_project(
         project_id, BlockKind.weekly
@@ -898,6 +885,7 @@ async def list_project_tasks(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    topic: str = "",
 ) -> dict:
     """Every thread in the project, each with the card it currently rides on.
 
@@ -916,8 +904,7 @@ async def list_project_tasks(
     so every client gives the same answer (`room_task/presentation.py`). Two
     round trips still: it is computed from the two batches already fetched.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     tasks = await TaskRepository(db).list_for_project(project_id)
     task_ids = [t.id for t in tasks]
@@ -963,39 +950,6 @@ async def list_project_tasks(
             }
         )
     return ok(page(items, len(items)))
-
-
-async def _authorized_place(
-    db: DbSession,
-    resolver: ActorResolverDep,
-    project_id: uuid.UUID,
-    topic_raw: str,
-) -> tuple[Place, Actor] | None:
-    """Resolve and authorize the caller-named place, when present, and say
-    who is calling — the pool a memory goes to is that caller's.
-
-    A place, not a room: `cheese_remember` is run by whoever is doing the work,
-    and that is usually a thread. Resolving only rooms answered 404 for the one
-    caller this endpoint exists for.
-
-    This is also how 芝士 reaches a project-level route at all: its credential
-    is minted for one turn in one place, so a bare `authorize_project` refuses
-    it (403) even though the token is valid and the project is right.
-    """
-    if not topic_raw:
-        return None
-    try:
-        topic_id = uuid.UUID(topic_raw)
-    except ValueError as exc:
-        raise ValidationError("topic 不是合法的话题 id") from exc
-    place = await TopicService(db).place_or_404(topic_id)
-    if place.project_id != project_id:
-        raise ForbiddenError("这个话题不属于 URL 中的项目")
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=project_id
-    )
-    await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
-    return place, actor
 
 
 async def _calling_agent(
@@ -1141,7 +1095,7 @@ async def add_memory(
     from app.domain.memory.store import memory_store
 
     project = await ProjectService(db).get_or_404(project_id)
-    caller = await _authorized_place(
+    caller = await authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
     place = caller[0] if caller else None
@@ -1189,7 +1143,7 @@ async def add_memory(
         return ok({"remembered": True, "layer": layer.value})
     if scope == "everyone":
         if caller is None:
-            # 这一路写的是总览的实况文档，而这个端点的授权全在 `_authorized_place`
+            # 这一路写的是总览的实况文档，而这个端点的授权全在 `authorized_place`
             # 里：不带 `topic`，`resolve` 与 `authorize_topic` 一次都不跑。落在记忆
             # 上时那只是自己池子里的一行，落在文档上就是替项目默认芝士往大家共看的
             # 那一份里添字，还在总览房间留一条「编辑了文档」。写入闸
@@ -1247,7 +1201,7 @@ async def search_memory(
     from app.domain.memory.store import memory_store
 
     project = await ProjectService(db).get_or_404(project_id)
-    caller = await _authorized_place(
+    caller = await authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
     place = caller[0] if caller else None

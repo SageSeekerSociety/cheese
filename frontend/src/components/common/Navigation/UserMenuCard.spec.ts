@@ -36,6 +36,7 @@ async function mount(intro = '') {
       { path: '/', component: stub },
       { path: '/users/:handle', name: 'UserPage', component: stub },
       { path: '/devices', name: 'my-devices', component: stub },
+      { path: '/connections', name: 'my-connections', component: stub },
       { path: '/users/settings/profile', name: 'UserSettingsProfile', component: stub },
     ],
   })

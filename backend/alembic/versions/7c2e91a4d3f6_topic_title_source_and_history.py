@@ -14,7 +14,7 @@ topic_titles keeps every title a room has had, for undo and for finding a room
 by an old name.
 
 Revision ID: 7c2e91a4d3f6
-Revises: 7b3e9d2c4a10
+Revises: 9e4a1c3b7d52
 """
 
 from collections.abc import Sequence
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "7c2e91a4d3f6"
-down_revision: str | Sequence[str] | None = "7b3e9d2c4a10"
+down_revision: str | Sequence[str] | None = "9e4a1c3b7d52"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

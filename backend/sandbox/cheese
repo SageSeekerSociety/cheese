@@ -25,6 +25,7 @@
   cheese convert 旧稿.doc --to docx         # 老格式升级;--to pdf 用来自己看版面
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
   cheese library get 预算表.xlsx             # 取一份资料到 ~/attachments/library/
+  cheese mail attachment <连接> <UID> 0     # 取邮件附件到 ~/attachments/mail/
 """
 
 from __future__ import annotations
@@ -2130,6 +2131,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", default=None, help="写到别处(默认 ~/attachments/library/<名字>)"
     )
 
+    pmail = sub.add_parser(
+        "mail",
+        help="把一封邮件的附件取到这台机器上,交给文件工具去读",
+        description=(
+            "邮件的搜索、正文、草稿都用 platform_request 调 /integrations/<连接>/mail/...;\n"
+            "附件是文件,要落到这台机器上才能读,所以走这里。\n"
+            "取下来的附件在 ~/attachments/mail/ 下,不写进工作目录。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    mailsub = pmail.add_subparsers(dest="mailcmd", required=True)
+    pmatt = mailsub.add_parser("attachment", help="取一封邮件的第 N 个附件")
+    pmatt.add_argument("integration", help="连接 id(GET /projects/<项目>/integrations 查)")
+    pmatt.add_argument("uid", help="邮件 UID(搜索结果里的 uid)")
+    pmatt.add_argument("index", type=int, help="第几个附件,从 0 开始(读邮件时列出)")
+    pmatt.add_argument("--folder", default="INBOX", help="邮件所在文件夹,默认 INBOX")
+    pmatt.add_argument("--out", default=None, help="写到别处(默认 ~/attachments/mail/<名字>)")
+
     part = sub.add_parser(
         "show",
         help="把工作区里的一份东西摆到房间里给人看",
@@ -2334,6 +2353,25 @@ def main() -> None:
                 None,
                 out=out,
             )
+    elif a.cmd == "mail":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if a.mailcmd == "attachment":
+            base = (
+                f"/integrations/{urllib.parse.quote(a.integration)}/mail/messages/"
+                f"{urllib.parse.quote(a.uid)}"
+            )
+            where = f"?topic={urllib.parse.quote(topic)}&folder={urllib.parse.quote(a.folder)}"
+            message = _call("GET", base + where)["data"]
+            names = [x["filename"] for x in message.get("attachments", [])]
+            if not 0 <= a.index < len(names):
+                print(f"[cheese] 这封邮件只有 {len(names)} 个附件:{names}", file=sys.stderr)
+                sys.exit(1)
+            name = os.path.basename(names[a.index]) or f"附件{a.index + 1}"
+            out = a.out or str(Path.home() / STAGED_DIR / "mail" / a.uid / name)
+            parent = os.path.dirname(out)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            _raw_request("GET", f"{base}/attachments/{a.index}{where}", None, out=out)
     elif a.cmd == "sync-agents":
         _sync_agents()
     elif a.cmd == "serve":

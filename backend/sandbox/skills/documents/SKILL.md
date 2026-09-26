@@ -211,7 +211,8 @@ for s in doc.sections:
 - **格式**：改的是已有文件时，跑 `office.py validate --base 原文件`，确认拒绝全部修订能回到原文；
   再跑 `office.py revisions` 核对改动就是用户要的那几处，`validate` 管不到这一条。
 - **内容**：把产出的文件读回来（`pandoc 产出.docx -t markdown`），对照原始材料，确认没有编造
-  数据、数字能对上。表格先 `cheese recalc`，确认算不出来的格一个都没有。
+  数据、数字能对上。表格按 `references/sheets.md` 的「交付前」三步走：`cheese recalc`、
+  `sheets.py refs`、`sheets.py check`，任何一步没过就修好，或者交付时明说没通过哪一条。
 - **版面**：中文有没有变成空心方框（缺字体时 typst 和 pandoc 都不报错）、纸张对不对、
   页数是不是和要求的差不多。**真的看一眼**：typst 排的用 `typst compile --format png`；
   Word 和幻灯片用 `cheese convert 文件.docx --to pdf`，再 `uv run --with pymupdf` 把那一页

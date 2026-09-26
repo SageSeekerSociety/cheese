@@ -24,6 +24,7 @@ from app.api.deps import (
     get_work_runner,
     project_device_online,
 )
+from app.api.place import project_reader
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -61,6 +62,7 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
     announce_stale,
 )
+from app.domain.agent.step_output import without_output
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
@@ -287,6 +289,7 @@ async def list_topics(
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
     active_since: datetime | None = None,
+    topic: str = "",
 ) -> dict:
     """The project's topics.
 
@@ -298,8 +301,7 @@ async def list_topics(
     Every row also carries 与我的相关性 (`i_participate`/`awaits_me`) for the
     caller — this is the endpoint the sidebar groups from.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    actor = await project_reader(db, resolver, project_id, topic)
     service = TopicService(db)
     topics, last_activity, total = await service.list_for_project(
         project_id, sort=sort, order=order, active_since=active_since
@@ -959,12 +961,45 @@ async def topic_transcript(
             kinds=kinds,
         )
         site, has_more = result.items, result.has_more
-    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in site]
+    # What a step printed stays behind: a page of 120 steps would otherwise
+    # carry up to 120 × 8 KiB. The row says it has some (`output_bytes`), and
+    # `step_output` below hands it over when somebody opens it.
+    items = [
+        without_output(BlockOut.model_validate(b).model_dump(mode="json")) for b in site
+    ]
     return ok(
         {
             **page(items, len(items)),
             "has_more": has_more,
             "oldest_id": str(site[0].id) if site else None,
+        }
+    )
+
+
+@router.get("/{topic_id}/transcript/{block_id}/output")
+async def step_output(
+    topic_id: uuid.UUID,
+    block_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """The tail of what one 现场 step printed, as kept (``step_output``)."""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    block = await BlockRepository(db).get(block_id)
+    # Same door as the transcript: this room's own line, never a card's.
+    if (
+        block is None
+        or block.topic_id != place.room_id
+        or block.task_id is not None
+        or block.kind != BlockKind.event
+    ):
+        raise NotFoundError("步骤不存在")
+    meta = block.meta or {}
+    return ok(
+        {
+            "output": str(meta.get("output") or ""),
+            "bytes": int(meta.get("output_bytes") or 0),
         }
     )
 
