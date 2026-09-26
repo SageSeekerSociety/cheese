@@ -60,6 +60,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open-file', path: string, taskId: string | null): void
   (e: 'open-topic', id: string): void
+  (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
   (e: 'answer', block: Block, option: string): void
   (e: 'download', block: Block): void
@@ -250,10 +251,14 @@ async function onAgentTextClick(e: MouseEvent) {
         v-if="block.upgraded_to_task_id || block.upgraded_to_topic_id"
         type="button"
         class="im-upgraded"
-        @click="emit('open-topic', (block.upgraded_to_task_id || block.upgraded_to_topic_id)!)"
+        @click="
+          block.upgraded_to_task_id
+            ? emit('open-card', block.upgraded_to_task_id)
+            : emit('open-topic', block.upgraded_to_topic_id!)
+        "
       >
         <v-icon size="13">mdi-arrow-top-right</v-icon>
-        已转为话题
+        {{ block.upgraded_to_task_id ? '已转为任务' : '已转为话题' }}
       </button>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
