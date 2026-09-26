@@ -6,7 +6,7 @@
 
 1. **教师读得到学生项目里的对话**（``app.auth.project_access`` 的第五条主张）；
 2. **教师打得了分**（评审四个接口）；
-3. **学生发不了题**（发布收权）；
+3. **板里的人都发得了题，但上板要所有者或管理员点头**（谁都能出题、管理员审核）；
 4. **学生导不出参与者花名册**（明文个人信息，403 而不是空 CSV）；
 5. **撤掉管理员，下一次请求就必须读不到** —— 判据每次现查，没有缓存。
 
@@ -82,8 +82,11 @@ def _make_member(
     )
 
 
-def _create_task(api_client: TestClient, board: dict, *, name: str) -> int:
-    resp = api_client.post(
+def _publish(
+    api_client: TestClient, board: dict, *, name: str, token: str | None = None
+):
+    """往这块板里发一道题，把响应如实交回调用方 —— 谁发得成由各自的用例断言。"""
+    return api_client.post(
         "/tasks",
         json={
             "name": name,
@@ -97,8 +100,12 @@ def _create_task(api_client: TestClient, board: dict, *, name: str) -> int:
             "defaultDeadline": 30,
             "deadline": int(time.time() * 1000) + 7 * 86400 * 1000,
         },
-        headers=_auth(board["creator_token"]),
+        headers=_auth(token or board["creator_token"]),
     )
+
+
+def _create_task(api_client: TestClient, board: dict, *, name: str) -> int:
+    resp = _publish(api_client, board, name=name)
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["task"]["id"]
 
@@ -306,43 +313,76 @@ def test_a_student_cannot_grade(api_client: TestClient, user_client: UserCreator
     assert resp.status_code == 403, resp.text
 
 
-# --- 3. 学生发不了题 ---------------------------------------------------------
+# --- 3. 谁发得了题、谁批得动 -------------------------------------------------
 
 
-def test_a_student_cannot_publish_a_task(
+def test_a_member_publishes_into_the_audit_queue(
     api_client: TestClient, user_client: UserCreator
 ):
-    """发布收权：填码进来的学生拿着 space id 也发不了题。"""
+    """题目板是一块任何人都能出题的板：填码进来的成员发得成题，但发出来的题一律
+    进待审队列（approved=NONE），要所有者或管理员点头才上板。"""
     board = _new_board(user_client, api_client)
 
-    student = user_client.create_user()
-    student_token = _login(user_client, api_client, student)
-    assert _make_member(api_client, board, student.user_id).status_code == 201
+    member = user_client.create_user()
+    member_token = _login(user_client, api_client, member)
+    assert _make_member(api_client, board, member.user_id).status_code == 201
 
-    resp = api_client.post(
-        "/tasks",
-        json={
-            "name": "学生想发的题",
-            "intro": "题",
-            "description": '{"type":"doc","content":[]}',
-            "space": board["space_id"],
-            "categoryId": board["category_id"],
-            "submitterType": "USER",
-            "resubmittable": True,
-            "editable": True,
-            "defaultDeadline": 30,
-        },
-        headers=_auth(student_token),
-    )
+    resp = _publish(api_client, board, name="成员发的题", token=member_token)
+    assert resp.status_code == 200, resp.text
+    task = resp.json()["data"]["task"]
+    assert task["approved"] == "NONE", task
+    assert task["creator"]["username"] == member.username
+
+
+def test_someone_outside_the_board_cannot_publish_a_task(
+    api_client: TestClient, user_client: UserCreator
+):
+    """没填码、没被加进来的人拿着 space id 也发不了题 —— 这道门问的是「你在不在
+    这块板里」，不是「你是不是管理员」。"""
+    board = _new_board(user_client, api_client)
+
+    stranger = user_client.create_user()
+    stranger_token = _login(user_client, api_client, stranger)
+
+    resp = _publish(api_client, board, name="外人想发的题", token=stranger_token)
     assert resp.status_code == 403, resp.text
+
+
+def test_the_member_who_published_it_still_cannot_approve_it(
+    api_client: TestClient, user_client: UserCreator
+):
+    """发得成不等于批得动：那道题要所有者或管理员 PATCH 才上板，发题的人自己按不动
+    这个开关。"""
+    board = _new_board(user_client, api_client)
+
+    member = user_client.create_user()
+    member_token = _login(user_client, api_client, member)
+    assert _make_member(api_client, board, member.user_id).status_code == 201
+
+    published = _publish(api_client, board, name="成员发的题", token=member_token)
+    task_id = published.json()["data"]["task"]["id"]
+
+    denied = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"approved": "APPROVED"},
+        headers=_auth(member_token),
+    )
+    assert denied.status_code == 403, denied.text
+
+    approved = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"approved": "APPROVED"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert approved.status_code == 200, approved.text
 
 
 def test_the_board_creator_can_still_publish_a_task(
     api_client: TestClient, user_client: UserCreator
 ):
-    """收权不能连创建者一起收掉 —— 否则正路也走不通了。"""
+    """放开「谁能发」不能连创建者一起收掉 —— 否则正路也走不通了。"""
     board = _new_board(user_client, api_client)
-    assert _create_task(api_client, board, name="教师发的题") > 0
+    assert _create_task(api_client, board, name="创建者发的题") > 0
 
 
 # --- 4. 学生导不出参与者花名册 -----------------------------------------------
