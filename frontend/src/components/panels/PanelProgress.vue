@@ -34,21 +34,13 @@ async function load() {
   }
   try {
     const progress = await getProgress(tid)
-    if (props.topic?.id === tid) items.value = progress.items ?? []
+    items.value = progress.items ?? []
   } catch {
     // 进度是背景信息，拿不到就不画，不为它报错。
   }
 }
 
-watch(
-  () => props.topic?.id,
-  () => {
-    items.value = []
-    open.value = false
-    void load()
-  },
-  { immediate: true }
-)
+void load()
 watch(
   () => props.refreshTick,
   () => void load()

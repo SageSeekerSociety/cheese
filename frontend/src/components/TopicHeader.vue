@@ -69,13 +69,12 @@ async function loadUsage() {
   usageLoading.value = true
   try {
     const [tu, pu] = await Promise.all([getTopicUsage(tid), getProjectUsage(pid)])
-    if (props.topic.id !== tid) return
     topicUsage.value = tu
     projectUsage.value = pu
   } catch {
     // Best-effort; the popover just shows 暂无数据.
   } finally {
-    if (props.topic.id === tid) usageLoading.value = false
+    usageLoading.value = false
   }
 }
 
@@ -84,16 +83,6 @@ async function loadUsage() {
 watch(usageOpen, (open) => {
   if (open) void loadUsage()
 })
-
-watch(
-  () => props.topic.id,
-  () => {
-    topicUsage.value = null
-    projectUsage.value = null
-    usageOpen.value = false
-    machineNotice.value = null
-  }
-)
 
 // 这个房间能看到整台机器。算力选择器收进了 ⋯，这件事不能跟着收：它是权限，不是
 // 设置，要一直看得见。选择器在菜单里也照常挂着（eager），由它告诉这里。
@@ -182,7 +171,7 @@ function toggleFocus() {
                不是某条消息的动作，所以不在输入区。 -->
           <div v-if="isWorkTopic" class="room-menu__row">
             <span class="room-menu__label">{{ t('work.room.menu.compute') }}</span>
-            <TopicComputePicker :key="topic.id" :topic-id="topic.id" @machine-access="machineNotice = $event" />
+            <TopicComputePicker :topic-id="topic.id" @machine-access="machineNotice = $event" />
           </div>
           <div class="room-menu__usage">
             <div class="room-menu__label">{{ t('work.room.menu.usage') }}</div>

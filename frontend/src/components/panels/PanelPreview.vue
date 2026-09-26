@@ -211,7 +211,7 @@ async function loadFile(path: string, opts: { silent?: boolean } = {}) {
   else loading.value = true
   try {
     const content = await readPreviewFile(tid, path)
-    if (current !== generation || props.topicId !== tid) return
+    if (current !== generation) return
     previewUrl.value = null
     previewAppNote.value = ''
     previewError.value = null
@@ -223,7 +223,7 @@ async function loadFile(path: string, opts: { silent?: boolean } = {}) {
     previewFile.value = content
     if (isWebPage(path)) await mountWebPage(tid, path, content, current, opts)
   } catch (e) {
-    if (current !== generation || props.topicId !== tid) return
+    if (current !== generation) return
     previewFile.value = null
     previewReadError.value = e instanceof Error ? e.message : '无法读取这个文件'
   } finally {
@@ -257,18 +257,18 @@ async function mountWebPage(
     session = await requestPreviewSession(tid)
   } catch (e) {
     // 文件读到了、只是这一次授权没签下来。说成「这个文件读不到」是假话——它读到了。
-    if (current !== generation || props.topicId !== tid) return
+    if (current !== generation) return
     previewError.value = e instanceof Error ? e.message : '预览授权失败'
     return
   }
-  if (current !== generation || props.topicId !== tid) return
+  if (current !== generation) return
   previewMime.value = webMimeOf(suffixOf(path))
   previewUrl.value = session.url
   webMountedVersion.value = content.version ?? null
   // Mount the named frame before POSTing: a missing target opens a new tab.
   loading.value = false
   await nextTick()
-  if (current !== generation || props.topicId !== tid) return
+  if (current !== generation) return
   postPreviewSession(session, { target: frameName, path: roomFileDestination(path) })
 }
 
@@ -280,7 +280,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
   const pid = props.projectId
   if (!tid || !pid) return
   const current = ++generation
-  const stillCurrent = () => current === generation && props.topicId === tid
+  const stillCurrent = () => current === generation
   if (opts.silent) refreshing.value = true
   else loading.value = true
   try {
@@ -421,22 +421,6 @@ onBeforeUnmount(() => {
   generation += 1
   stopAutoRefresh()
 })
-watch(
-  () => props.topicId,
-  () => {
-    generation += 1
-    previewUrl.value = null
-    previewAppNote.value = ''
-    previewNamedPath.value = ''
-    previewFile.value = null
-    previewError.value = null
-    previewReadError.value = null
-    previewNamed.value = false
-    loadedArtifact = null
-    webMountedVersion.value = null
-    if (props.active) void load()
-  }
-)
 </script>
 
 <template>

@@ -78,7 +78,6 @@ async function loadOlder() {
   const before = el ? { top: el.scrollTop, height: el.scrollHeight } : null
   try {
     const page = await getTranscript(tid, { limit: SITE_PAGE_SIZE, before: oldest.id })
-    if (props.topic?.id !== tid) return
     transcript.value = [...page.data, ...transcript.value]
     hasOlder.value = page.has_more === true
     // Prepending grows the content ABOVE the viewport; without this the reader
@@ -155,7 +154,6 @@ async function load() {
   errorMsg.value = null
   try {
     const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE })
-    if (props.topic?.id !== tid) return
     transcript.value = mergeSite(tx.data, transcript.value)
     if (!quiet) hasOlder.value = tx.has_more === true
     // Follow the tail on every open of a topic's 现场 — that is what "open on
@@ -164,7 +162,7 @@ async function load() {
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
-    if (props.topic?.id === tid) loading.value = false
+    loading.value = false
   }
 }
 
@@ -216,18 +214,6 @@ watch(
   { immediate: true }
 )
 
-// Topic switch: drop the previous topic's transcript so it can't flash in the new
-// 现场.
-watch(
-  () => props.topic?.id,
-  () => {
-    transcript.value = []
-    expandedSite.value = new Set()
-    errorMsg.value = null
-    if (props.active) void load()
-  }
-)
-
 // ---- 按队友看 ----
 // 一个房间可以先后、甚至同时交给几个队友。时间线是他们交错着的，而人来看的往往
 // 是其中一个在干什么。作者就是做这一步的那个队友：做过一步、说过一句的参与者。
@@ -242,10 +228,6 @@ const agents = computed(() => {
 })
 // null = 全部。
 const selectedAgent = ref<string | null>(null)
-watch(
-  () => props.topic?.id,
-  () => (selectedAgent.value = null)
-)
 const viewing = computed(() =>
   selectedAgent.value !== null && agents.value.includes(selectedAgent.value) ? selectedAgent.value : null
 )

@@ -475,16 +475,4 @@ describe('工作面板 · Tab 容器', () => {
     expect(container.querySelector('.comment-draft')).toBeNull()
     expect(addComment).not.toHaveBeenCalled()
   })
-
-  it('换话题回到文档 tab（旧行为：切话题会把抽屉关掉）', async () => {
-    const { container, rerender } = mountPanel('topic-A')
-    await flush()
-    await openTab(container, '改动')
-    expect(visible(container, '.panel-changes')).toBe(true)
-
-    await rerender({ topic: topic('topic-B'), activityTick: 0 })
-    await flush()
-    expect(visible(container, '.panel-overview')).toBe(true)
-    expect(visible(container, '.panel-changes')).toBe(false)
-  })
 })
