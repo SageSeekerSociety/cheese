@@ -204,6 +204,9 @@ describe('the student answering', () => {
     expect(page.getByText('spaces.course.quiz.pendingReview')).toBeTruthy()
     expect(page.getByText('spaces.course.quiz.awaitingTeacher')).toBeTruthy()
     expect(page.getByText('spaces.course.quiz.got')).toBeTruthy()
+    // 截止前还能改：交过卷之后作答项仍然可以动，按钮是「改完再交一次」。
+    expect(page.getByText('spaces.course.quiz.resubmit')).toBeTruthy()
+    expect(page.container.querySelectorAll('.v-input--disabled, .v-selection-control--disabled, [disabled]')).toHaveLength(0)
   })
 })
 
