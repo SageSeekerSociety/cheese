@@ -6,6 +6,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
+import { renderMarkdown } from '../../lib/renderMessage'
 import {
   countLines,
   eventArg,
@@ -52,6 +53,12 @@ const props = withDefaults(
   }>(),
   { active: false, memberNames: () => ({}), working: false, agentControl: null, agentName: '芝士' }
 )
+
+const emit = defineEmits<{
+  (e: 'open-file', path: string, taskId: string | null): void
+  (e: 'open-topic', id: string): void
+  (e: 'mention-click', handle: string): void
+}>()
 
 const loading = ref(false)
 const errorMsg = ref<string | null>(null)
@@ -319,6 +326,26 @@ function isSay(b: Block): boolean {
   return b.kind !== 'event' || isNarration(b.meta)
 }
 
+// 芝士说的话按 markdown 渲染，和对话栏走同一条路（lib/renderMessage）。
+// 这一栏原来是把原文摆出来（mono + pre-wrap，Claude Code 会话那种），但一段汇报
+// 落到人眼里就是一堆星号和反引号，粗体、列表、代码块全丢了信息。引用 token 也照
+// 对话栏展开成 chip —— 光看 `<@handle>` `<&path>` 是认不出人的。
+const sayRefs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
+
+function renderSay(text: string): string {
+  return renderMarkdown(text, sayRefs.value)
+}
+
+// chip 是 v-html 塞进来的，点击只能从容器上委派（同对话栏）。文件 chip 带上这条
+// 消息自己的 task_id：现场读的是别的任务的记录时，路径要在那个任务的目录里找。
+function onSayClick(event: MouseEvent, b: Block): void {
+  const chip = (event.target as HTMLElement | null)?.closest('.mention') as HTMLElement | null
+  if (!chip) return
+  if (chip.dataset.handle) emit('mention-click', chip.dataset.handle)
+  else if (chip.dataset.topic) emit('open-topic', chip.dataset.topic)
+  else if (chip.dataset.file) emit('open-file', chip.dataset.file, b.task_id ?? null)
+}
+
 const turns = computed(() => groupByTurn(visible.value))
 
 // 这一组还在跑吗：它的轮次在对话栏听到的在跑的轮次里。只看「房间有没有活」的话，
@@ -433,17 +460,15 @@ function isLive(index: number): boolean {
                   <span class="site-msg__name">{{ authorLabel(b) }}</span>
                   <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
                 </div>
-                <!-- Raw transcript text on purpose (决定: 现场内容改为raw): 现场 shows
-                   what 芝士 actually emitted — markdown syntax, <@handle> tokens
-                   and all — like a Claude Code session, NOT the rendered chat
-                   version. -->
+                <!-- 渲染成正文，不摆原文：现场读的也是人说的话，粗体、列表、代码块
+                   和对话栏一个样子（走同一个 renderMarkdown）。 -->
                 <div
-                  class="site-msg__raw"
-                  :class="{ 'site-msg__raw--clamped': isLongSiteEntry(b.content) && !expandedSite.has(b.id) }"
+                  class="site-msg__body md-content"
+                  :class="{ 'site-msg__body--clamped': isLongSiteEntry(b.content) && !expandedSite.has(b.id) }"
                   :style="{ '--site-clamp-lines': SITE_CLAMP_LINES }"
-                >
-                  {{ b.content }}
-                </div>
+                  @click="onSayClick($event, b)"
+                  v-html="renderSay(b.content)"
+                />
                 <!-- 过长时不直接摊开：一条几千字的输出会把它前后的所有东西挤出
                    屏幕，而 现场 的价值恰恰是「一眼看完发生了什么」。折叠到 12
                    行，想看全的自己点开。 -->
@@ -708,13 +733,11 @@ function isLive(index: number): boolean {
   opacity: 0;
   transition: opacity var(--dur-quick) var(--ease-standard);
 }
-/* 现场 is a transcript, not a doc — 芝士's messages are shown RAW (markdown
-   source, <@handle> tokens intact), Claude Code style: mono + pre-wrap. */
-.site-msg__raw {
-  font-family: var(--font-mono);
+/* 芝士说话的那一段：排版规则（标题、列表、代码块、表格）来自全局的 .md-content，
+   这里只定这一栏自己的字号 —— 现场比对话栏密，13px 和旁边那些工具行对得上。 */
+.site-msg__body {
   font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
+  line-height: 1.6;
   word-break: break-word;
   color: var(--text);
 }
@@ -722,7 +745,7 @@ function isLive(index: number): boolean {
    custom property rather than a literal here: the template asks that same
    module whether to render the 展开 button, so if the two drift an entry gets
    clamped with no way out of the clamp. */
-.site-msg__raw--clamped {
+.site-msg__body--clamped {
   display: -webkit-box;
   -webkit-line-clamp: var(--site-clamp-lines);
   line-clamp: var(--site-clamp-lines);
