@@ -909,6 +909,34 @@ button:not(.v-btn) {
   color: var(--muted);
 }
 
+/* 引用 chip：`<@handle>` `<&path>` `<#话题id>` 展开出来的可点小方块。
+   定义放在这里而不是产出它的那一个组件里：这份 markup 由 lib/renderMessage 一处
+   产出，用它的地方却早就不止一处——对话栏、现场、动作卡。以前它写在组件自己的
+   scoped 样式里，于是换一个 panel 渲染同一段字，chip 就退化成一行普通文字：点得到，
+   看不出来能点。文档编辑器里那几颗另有自己的色调（品牌主色，不是这里的琥珀墨色），
+   留它自己覆盖。 */
+.mention {
+  color: var(--accent-ink);
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+  padding: 0 3px;
+  font-weight: 500;
+  cursor: pointer;
+}
+/* @人 是链接，常年带下划线；文件/话题 chip 保持方块样，只在悬停时加线。 */
+.mention:not(.file-ref):not(.topic-ref) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.mention:hover {
+  text-decoration: underline;
+}
+/* 文件 chip 前那个 mdi 图标。 */
+.file-ref__icon {
+  margin-right: 3px;
+  font-size: 0.92em;
+}
+
 /* 藏起来但仍然存在：读屏读得到，脚本也点得动。
    给文件选择框用的时候这不是洁癖而是硬要求——iOS Safari 拒绝用脚本打开一个
    display:none / visibility:hidden 的 <input type=file>，按钮点下去毫无反应。

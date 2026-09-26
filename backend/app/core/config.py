@@ -270,6 +270,13 @@ class Settings(BaseSettings):
     # site, so the backend asks its own deployment for the same version readers
     # see. Unset, 问芝士 answers that it is unavailable.
     docs_index_url: str | None = "http://frontend/docs/ask-index.json"
+    # The developer pages' index, behind the /docs/dev/ gate; the backend passes
+    # it with an internal pass (docs_site/access.py). Agents read it only in
+    # projects whose repository is one of `docs_dev_repositories`.
+    docs_dev_index_url: str | None = "http://frontend/docs/dev/ask-index.json"
+    # Projects whose agents may read the developer docs: the ones working on
+    # this platform's own code ("owner/repo", case-insensitive).
+    docs_dev_repositories: list[str] = ["SageSeekerSociety/cheese"]
     # The gateway model 问芝士 answers with. Its virtual key is minted through
     # `llm_gateway_admin_base` and capped at this budget per 30 days.
     docs_assistant_model: str = "deepseek-flash"
