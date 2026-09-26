@@ -63,8 +63,9 @@ ${footer(ctx)}
   <div class="ctx" id="ctx">${ic('doc')}<span>正在看</span><b id="ctxPage">${esc(title)}</b><label><input type="checkbox" id="ctxUse" checked>带上这一页</label></div>
   <div class="drawer-b" id="chat" aria-live="polite"></div>
   <div class="suggest" id="suggest"></div>
-  <div class="drawer-f"><form class="box" id="askForm"><input id="askInput" maxlength="500" placeholder="问一个关于知是的问题…" autocomplete="off"><button class="send" id="askSend" aria-label="发送">${ic('arrow')}</button></form><small id="askHint">回答由 AI 依据这份文档生成，可能有误，以原文为准。问题会被记录，用于改进文档。</small></div>
+  <div class="drawer-f"><div class="ask-quote" id="askQuote" hidden><span class="aq-ico">${ic('quote')}</span><span class="aq-text" id="askQuoteText"></span><button type="button" class="aq-x" data-quote-clear aria-label="去掉引用" title="去掉引用">×</button></div><form class="box" id="askForm"><input id="askInput" maxlength="500" placeholder="问一个关于知是的问题…" autocomplete="off"><button class="send" id="askSend" aria-label="发送">${ic('arrow')}</button></form><small id="askHint">回答由 AI 依据这份文档生成，可能有误，以原文为准。问题会被记录，用于改进文档。</small></div>
 </aside>
+<button class="sel-ask" id="selAsk" type="button" hidden>${ic('chat')}<span>问芝士</span></button>
 <div class="toast" id="toast" role="status"></div>
 <script type="application/json" id="page-data">${JSON.stringify(pageData || {}).replace(/</g, '\\u003c')}</script>
 <script type="module" src="${assets.js}"></script>

@@ -42,7 +42,7 @@ const DOORS = {
 }
 
 // The pages people come to the docs for most.
-const POPULAR = ['quickstart', 'accept', 'agents', 'devices', 'quota', 'troubleshooting']
+const POPULAR = ['overview', 'quickstart', 'accept', 'agents', 'devices', 'troubleshooting']
 
 // 问芝士 walks a reader through the kinds of docs, one question per screen:
 // [kind label, icon, question, answer, page (slug, `dev/…`, or `changelog`)]

@@ -56,6 +56,8 @@ covers:
 
 浏览器端只渲染一小部分 Markdown，并且只保留指向这次检索到的段落的链接。
 
+**划词问芝士**：在文档页选中一段正文，选区旁出现「问芝士」按钮；点它会打开面板，并把选中的文字作为引用带进下一个问题（请求里的 `quote`，最多 600 字）。后端用「引用 + 问题」一起检索，引用和问题一样转义后放在 `<docs>` 围栏之外，只作为「问的是什么」，不作为回答依据。
+
 ## AI 队友查文档 {#agent-docs}
 
 AI 队友在平台里回答「怎么用」的问题时，用两个平台工具查文档：`cheese_docs_search`（关键词检索，和问芝士同一份索引、同一套排序）和 `cheese_docs_read`（读一页的 `.md` 原文）。后端接口是 `POST /docs/agent/search` 和 `POST /docs/agent/read`（`backend/app/domain/docs_site/library.py`）。
