@@ -163,6 +163,10 @@ class Settings(BaseSettings):
     # the compose file may claim it.
     deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
+    #: A person's mail server may resolve to a private or loopback address, and
+    #: may be spoken to without TLS. Only for a local test mail server: on a
+    #: deployment it would let anyone make the backend dial its own network.
+    integration_allow_private_hosts: bool = False
     # Dedicated content domain, outside the platform's registrable domain.
     # Empty until its wildcard DNS/TLS and host-preserving gateway are ready.
     sites_domain: str = ""

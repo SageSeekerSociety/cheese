@@ -1291,6 +1291,82 @@ export function deleteRoutine(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/routines/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+export interface Integration {
+  id: string
+  provider: 'mail' | 'feishu'
+  label: string
+  owner_handle: string
+  config: Record<string, unknown>
+  grants: string[]
+  status: 'ok' | 'auth_failed' | 'unreachable' | 'error'
+  last_error: string
+  last_checked_at: string | null
+  user_authorized: boolean
+}
+
+export interface MailDraft {
+  id: string
+  integration_id: string
+  project_id: string
+  topic_id: string | null
+  created_by: string
+  to: string[]
+  cc: string[]
+  subject: string
+  body: string
+  attachments: { path: string; name: string; size: number }[]
+  status: 'drafted' | 'sent' | 'failed' | 'discarded'
+  error: string
+  sent_at: string | null
+  created_at: string | null
+}
+
+export function listMyIntegrations(): Promise<ListPayload<Integration>> {
+  return request<ListPayload<Integration>>('/me/integrations')
+}
+
+export function connectMail(body: Record<string, unknown>): Promise<Integration> {
+  return request<Integration>('/me/integrations/mail', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function connectFeishu(body: Record<string, unknown>): Promise<Integration> {
+  return request<Integration>('/me/integrations/feishu', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function updateIntegration(id: string, body: Record<string, unknown>): Promise<Integration> {
+  return request<Integration>(`/me/integrations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export function checkIntegration(id: string): Promise<Integration> {
+  return request<Integration>(`/me/integrations/${encodeURIComponent(id)}/check`, { method: 'POST' })
+}
+
+export function deleteIntegration(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/me/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function feishuAuthorizeUrl(id: string): Promise<{ url: string; redirect_uri: string }> {
+  return request<{ url: string; redirect_uri: string }>(`/me/integrations/${encodeURIComponent(id)}/feishu/authorize`)
+}
+
+export function listMyMailDrafts(status: string): Promise<ListPayload<MailDraft>> {
+  return request<ListPayload<MailDraft>>(`/me/mail-drafts?status=${encodeURIComponent(status)}`)
+}
+
+export function sendMailDraft(id: string): Promise<{ draft: MailDraft; refused: string[]; notes: string[] }> {
+  return request<{ draft: MailDraft; refused: string[]; notes: string[] }>(
+    `/me/mail-drafts/${encodeURIComponent(id)}/send`,
+    { method: 'POST' }
+  )
+}
+
+export function discardMailDraft(id: string): Promise<MailDraft> {
+  return request<MailDraft>(`/me/mail-drafts/${encodeURIComponent(id)}/discard`, { method: 'POST' })
+}
+
 export function deleteLibraryFile(projectId: string, path: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/projects/${encodeURIComponent(projectId)}/library?path=${encodeURIComponent(path)}`,
