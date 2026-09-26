@@ -170,22 +170,31 @@ class ClaudeCodeChannel:
 
         The log is appended across launches, and an earlier launch's ending
         says nothing about this one, so only the part from this launch's own
-        record on is read.
+        record on is read. The machine puts the record's name on a line of its
+        own first, and only an answer that starts with it counts: the tail of
+        a long record loses its first line, and a reply that is not this
+        command's output names no ending at all.
         """
+        marker = ended(launch)
         try:
             result = await self.channel._hub.exec(
                 device_id,
                 [
                     "sh",
                     "-c",
-                    f'sed -n "/{ended(launch)}/,\\$p" "{state}/runner.log" '
-                    "2>/dev/null | tail -c 1200",
+                    f'record="$(sed -n "/{marker}/,\\$p" "{state}/runner.log" '
+                    '2>/dev/null)"; [ -n "$record" ] || exit 0; '
+                    f'printf "%s\\n" "{marker}"; '
+                    'printf "%s" "$record" | tail -c 1200',
                 ],
                 timeout=15,
             )
         except Exception:  # noqa: BLE001 — a failed read is not the runner's ending
             return ""
-        return (result.get("stdout") or "").strip()
+        said = result.get("stdout") or ""
+        if not said.startswith(marker + "\n"):
+            return ""
+        return said[len(marker) + 1 :].strip()
 
     async def _why(self, device_id: str, state: str, failure: Exception) -> str:
         """The log's last words, when the window ran out with no record of
