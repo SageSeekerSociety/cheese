@@ -1,6 +1,7 @@
 from collections import Counter
 from dataclasses import dataclass
 
+from app.domain.space.analytics_view_service import SUCCESS_STATUS
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -108,7 +109,9 @@ class SpaceAnalyticsService:
             participants_by_task.setdefault(membership.task_id, []).append(
                 membership.member_id
             )
-            if getattr(membership, "completion_status", "NOT_SUBMITTED") == "COMPLETED":
+            # SUCCESS_STATUS, not a private copy of the literal: a status value
+            # nothing in the domain ever writes counts zero for every row.
+            if getattr(membership, "completion_status", None) == SUCCESS_STATUS:
                 completed_users[membership.task_id] = (
                     completed_users.get(membership.task_id, 0) + 1
                 )
