@@ -96,7 +96,9 @@
       "noTeams": "你还没有加入任何组。",
       "nameLabel": "组名",
       "cancel": "取消",
-      "confirmCreate": "建组"
+      "confirmCreate": "建组",
+      "nameTaken": "这个组名已经有人用了，换一个试试",
+      "createFailed": "没建成，再试一次"
     },
     "units": {
       "title": "教学单元",
