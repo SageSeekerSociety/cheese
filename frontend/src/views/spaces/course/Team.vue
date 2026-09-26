@@ -116,6 +116,7 @@
           <v-text-field
             v-model="newTeamName"
             :label="t('spaces.course.team.nameLabel')"
+            :error-messages="createError"
             variant="outlined"
             density="comfortable"
             autocomplete="off"
@@ -145,6 +146,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { SpacesApi } from '@/network/api/spaces'
 import { TeamsApi } from '@/network/api/teams'
+import { BusinessError } from '@/network/types/error'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -157,6 +159,7 @@ const invitations = ref<TeamMembershipApplication[]>([])
 const requests = ref<TeamMembershipApplication[]>([])
 const createOpen = ref(false)
 const newTeamName = ref('')
+const createError = ref('')
 
 function displayName(person: { nickname?: string; username: string }): string {
   return person.nickname || person.username
@@ -197,12 +200,21 @@ async function cancel(requestId: number) {
 }
 
 async function createTeam() {
-  await TeamsApi.create({
-    name: newTeamName.value.trim(),
-    intro: '',
-    description: '',
-    avatarId: 1,
-  })
+  createError.value = ''
+  try {
+    await TeamsApi.create({
+      name: newTeamName.value.trim(),
+      intro: '',
+      description: '',
+      avatarId: 1,
+    })
+  } catch (error) {
+    // 没有这一段时，建组失败什么也不显示：按钮按了没反应，对话框原样开着。
+    // 组名全站唯一，撞名（409 + data.field=name）是最常见的一种，单独说清楚。
+    const taken = error instanceof BusinessError && error.code === 409 && error.error?.data?.field === 'name'
+    createError.value = taken ? t('spaces.course.team.nameTaken') : t('spaces.course.team.createFailed')
+    return
+  }
   newTeamName.value = ''
   createOpen.value = false
   await refresh()
