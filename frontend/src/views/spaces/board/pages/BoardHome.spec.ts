@@ -89,8 +89,8 @@ async function mount() {
       { path: '/spaces/:spaceId/board', name: 'SpaceBoardHome', component: BoardHome as Component },
       { path: '/spaces/:spaceId/board/mine', name: 'SpaceBoardMine', component: stub },
       { path: '/spaces/:spaceId/board/review', name: 'SpaceBoardReview', component: stub },
-      { path: '/spaces/:spaceId/tasks/publish', name: 'SpacesDetailPublishTask', component: stub },
-      { path: '/spaces/:spaceId/tasks/:taskId', name: 'SpacesDetailTasksDetail', component: stub },
+      { path: '/spaces/:spaceId/board/publish', name: 'SpaceBoardTaskPublish', component: stub },
+      { path: '/spaces/:spaceId/board/tasks/:taskId', name: 'SpaceBoardTaskDetail', component: stub },
     ],
   })
   await router.push(`/spaces/${SPACE_ID}/board`)

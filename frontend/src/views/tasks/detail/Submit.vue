@@ -35,7 +35,7 @@
               <v-btn
                 color="primary"
                 variant="text"
-                :to="{ name: 'TasksSubmissions', params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
+                :to="{ name: routeNames.submissions, params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
                 >查看我的提交记录</v-btn
               >
             </div>
@@ -222,10 +222,13 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { throttle } from 'lodash-es'
 
+import { useTaskRouteNames } from '@/lib/shellRouteNames'
 import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'
 
 const CountdownTimer = defineAsyncComponent(() => import('@/components/common/CountdownTimer.vue'))
+
+const routeNames = useTaskRouteNames()
 
 const props = defineProps<{
   taskData: Task | null
@@ -431,7 +434,7 @@ const submitTask = async () => {
 
     // 跳转到提交记录页面
     router.push({
-      name: 'TasksSubmissions',
+      name: routeNames.submissions,
       params: { spaceId: props.taskData.space?.id, taskId: props.taskData.id },
     })
   } catch (error) {

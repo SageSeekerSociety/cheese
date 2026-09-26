@@ -7,6 +7,42 @@ import type { Page } from "@playwright/test";
 export const DEMO_USERNAME = "alice";
 export const DEMO_PASSWORD = "demo12345";
 
+// 还欠着的协议同意，走接口补齐。
+//
+// 不补会怎样：应用一启动就查 `/users/me/consents`，有欠账就盖一层「协议已更新」的
+// 模态。底下那一页看得见、**点不着** —— 每一次点击都被那层 scrim 接走，报出来的是
+// `div.v-overlay__scrim intercepts pointer events`，看着像按钮坏了。协议什么时候
+// 会多欠一笔不由这一份测试说了算（改一次生效日期就多一笔），所以每个换成别人的
+// 用例都要过这一步，不能只靠种子里碰巧同意过的那个账号。
+//
+// 点模态上那颗按钮是**另一条路**（auth.spec.ts 测的就是它）；这里只关心页面本身。
+export async function acceptPendingConsents(page: Page, token: string): Promise<void> {
+  const headers = { Authorization: `Bearer ${token}` };
+  const pendingResponse = await page.request.get("/api/users/me/consents", {
+    headers,
+  });
+  if (!pendingResponse.ok())
+    throw new Error(`GET consents → ${pendingResponse.status()} ${await pendingResponse.text()}`);
+  const pending = ((await pendingResponse.json()).data as {
+    pending: { document: string; version: string }[];
+  }).pending;
+  if (!pending.length) return;
+  const documents = Object.fromEntries(
+    pending.map(({ document, version }) => [document, version]),
+  );
+  const accepted = await page.request.post("/api/users/me/consents", {
+    headers,
+    data: { documents },
+  });
+  if (!accepted.ok())
+    throw new Error(`POST consents → ${accepted.status()} ${await accepted.text()}`);
+  const current = await page.request.get("/api/users/me/consents", { headers });
+  if (!current.ok())
+    throw new Error(`GET consents → ${current.status()} ${await current.text()}`);
+  if (((await current.json()).data as { pending: unknown[] }).pending.length)
+    throw new Error("同意之后仍然有欠着的协议");
+}
+
 // Set up non-auth browser scenarios through the real login and consent APIs.
 // Each Playwright test has a fresh context; the UI login path is covered in
 // auth.spec.ts instead of paying for that form navigation in every scenario.
@@ -24,31 +60,7 @@ export async function apiLogin(page: Page) {
   if (loginData.requires2FA || !loginData.accessToken || !loginData.user)
     throw new Error("Demo login did not return a complete session");
 
-  const headers = { Authorization: `Bearer ${loginData.accessToken}` };
-  const pendingResponse = await page.request.get("/api/users/me/consents", {
-    headers,
-  });
-  if (!pendingResponse.ok())
-    throw new Error(`GET consents → ${pendingResponse.status()} ${await pendingResponse.text()}`);
-  const pending = ((await pendingResponse.json()).data as {
-    pending: { document: string; version: string }[];
-  }).pending;
-  if (pending.length) {
-    const documents = Object.fromEntries(
-      pending.map(({ document, version }) => [document, version]),
-    );
-    const accepted = await page.request.post("/api/users/me/consents", {
-      headers,
-      data: { documents },
-    });
-    if (!accepted.ok())
-      throw new Error(`POST consents → ${accepted.status()} ${await accepted.text()}`);
-    const current = await page.request.get("/api/users/me/consents", { headers });
-    if (!current.ok())
-      throw new Error(`GET consents → ${current.status()} ${await current.text()}`);
-    if (((await current.json()).data as { pending: unknown[] }).pending.length)
-      throw new Error("Demo account still has pending consents");
-  }
+  await acceptPendingConsents(page, loginData.accessToken);
 
   // This static asset gives the page the application's origin without booting
   // the SPA. Write storage once so later navigation cannot resurrect a session.

@@ -57,6 +57,7 @@ import { AIChatButton, LoadingErrorContainer, TaskDialogs, TaskHeader, TaskNavig
 import { useAIChat, useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from './composables'
 import { useEvents } from './events'
 
+import { useTaskRouteNames } from '@/lib/shellRouteNames'
 import { useNavigationStore } from '@/stores/navigation'
 
 const { setActions, clearActions, setTabs, clearTabs } = useNavigationStore()
@@ -64,6 +65,7 @@ const { setActions, clearActions, setTabs, clearTabs } = useNavigationStore()
 const activeTab = ref<string>()
 const router = useRouter()
 const { setDynamicTitle } = usePageTitle()
+const routeNames = useTaskRouteNames()
 
 // 使用任务模块的事件总线
 const events = useEvents()
@@ -99,7 +101,7 @@ const { onJoinTaskClicked, confirmLeaveTask } = taskParticipationModule
 
 // Navigate to the edit page
 const navigateToEditPage = () => {
-  router.push({ name: 'TasksEdit', params: { spaceId: taskData.value?.space?.id, taskId: taskId.value } })
+  router.push({ name: routeNames.edit, params: { spaceId: taskData.value?.space?.id, taskId: taskId.value } })
 }
 
 // Vuetify's VBtn TSX typing doesn't expose `onClick` in props.
@@ -169,7 +171,7 @@ onMounted(() => {
   // 加载任务数据
   loadTaskData().then(() => {
     if (taskData.value?.name) {
-      setDynamicTitle(taskData.value.name, 'SpacesDetailTasksDetail')
+      setDynamicTitle(taskData.value.name, routeNames.detail)
     }
     // 如果是小队赛题，加载已参与的小队
     if (taskData.value?.submitterType === 'TEAM') {

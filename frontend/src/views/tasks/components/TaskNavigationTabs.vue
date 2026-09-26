@@ -2,7 +2,11 @@
   <v-tabs v-model="model" show-arrows color="on-surface" slider-color="primary" bg-color="transparent">
     <v-tab
       :value="'overview'"
-      :to="{ name: 'TasksDetail', params: { spaceId: taskData.space?.id, taskId: taskData.id }, query: $route.query }"
+      :to="{
+        name: routeNames.overview,
+        params: { spaceId: taskData.space?.id, taskId: taskData.id },
+        query: $route.query,
+      }"
       exact
     >
       <v-icon start>mdi-information-outline</v-icon>
@@ -13,7 +17,7 @@
       v-if="isCreator || isAdmin"
       :value="'participants'"
       :to="{
-        name: 'TasksParticipants',
+        name: routeNames.participants,
         params: { spaceId: taskData.space?.id, taskId: taskData.id },
         query: $route.query,
       }"
@@ -26,7 +30,7 @@
       v-if="taskData.joined && taskData.submittable"
       :value="'submissions'"
       :to="{
-        name: 'TasksSubmissions',
+        name: routeNames.submissions,
         params: { spaceId: taskData.space?.id, taskId: taskData.id },
         query: $route.query,
       }"
@@ -38,7 +42,11 @@
     <v-tab
       v-if="taskData.joined && taskData.submittable"
       :value="'submit'"
-      :to="{ name: 'TasksSubmit', params: { spaceId: taskData.space?.id, taskId: taskData.id }, query: $route.query }"
+      :to="{
+        name: routeNames.submit,
+        params: { spaceId: taskData.space?.id, taskId: taskData.id },
+        query: $route.query,
+      }"
     >
       <v-icon start>mdi-upload</v-icon>
       提交
@@ -46,7 +54,11 @@
 
     <v-tab
       :value="'ai-advice'"
-      :to="{ name: 'TasksAIAdvice', params: { spaceId: taskData.space?.id, taskId: taskData.id }, query: $route.query }"
+      :to="{
+        name: routeNames.aiAdvice,
+        params: { spaceId: taskData.space?.id, taskId: taskData.id },
+        query: $route.query,
+      }"
     >
       <v-icon start>mdi-robot</v-icon>
       启星研导
@@ -55,9 +67,14 @@
 </template>
 
 <script setup lang="ts">
+import { useTaskRouteNames } from '@/lib/shellRouteNames'
 import { Task } from '@/types'
 
 const model = defineModel<string>()
+
+/** 同一条工具栏在两棵树里都出现（老的空间页 / 新的题目板外壳），跳哪儿由所在
+ *  的那棵树说了算 —— 见 `shellRouteNames.ts` 顶部。 */
+const routeNames = useTaskRouteNames()
 
 defineProps<{
   taskData: Task

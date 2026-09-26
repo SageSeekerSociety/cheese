@@ -10,11 +10,11 @@
  * `board` 不是它的子路径，所以不会被它接住，也就不会套上老侧栏。新界面有自己的
  * 外壳（`SpaceBoardShell.vue`）。
  *
- * **题目详情与发题这两条不在这里**：它们暂时指向真平台已有的那两页
- * （`SpacesDetailTasksDetail` / `SpacesDetailPublishTask`）。理由不是偷懒 ——
- * 那两页背后是成熟功能（按 `submissionSchema` 出表单的提交、逐版评审、AI 建议、
- * PDF 生成），在新外壳里重写一遍只会在「读路径」这一批里塞进一堆**写路径**。
- * 详情与发题各自的重做排在后面的批次里。
+ * **题目详情、发题、整板看板在第五批收进来了**：那三处背后是成熟功能（按
+ * `submissionSchema` 出表单的提交、逐版评审、AI 建议、PDF 生成、九个看板页），
+ * 所以老页面**一个字没改**，各由 `pages/` 下一层包着挂进这棵树 —— 每层文件顶部
+ * 写明它补的是什么（provide 路由名、页头、pinia 的 space store）。老地址照常
+ * 在原处服务，退场是下一批的事。
  */
 import type { RouteLocationNormalized, RouteRecordRaw } from 'vue-router'
 
@@ -49,6 +49,92 @@ export const SpaceBoardRoutes: RouteRecordRaw = {
       path: 'mine',
       name: 'SpaceBoardMine',
       component: () => import('./pages/Mine.vue'),
+    },
+    {
+      path: 'publish',
+      name: 'SpaceBoardTaskPublish',
+      component: () => import('./pages/TaskPublish.vue'),
+      meta: { backTo: 'SpaceBoardHome' },
+    },
+    {
+      // 题目详情这一条**带着五格**（概览 / 提交记录 / 参与者 / 交作业 / 启星研导），
+      // 和它底下那一页自己带的 `router-view` 对上：名字都在 `routeNames.ts` 里，
+      // 页面里跳转只认名字，所以老树那几条同名格子与这几条互不打架。
+      //
+      // `backTo` 声明的是一块板上的上一层（题目板首页），顶栏那颗 ← 走的是它；
+      // 老树里这一步是面包屑，新树没有面包屑（那几条路由没有 `meta.title`）。
+      path: 'tasks/:taskId',
+      name: 'SpaceBoardTaskDetail',
+      component: () => import('./pages/TaskDetail.vue'),
+      meta: { backTo: 'SpaceBoardHome' },
+      children: [
+        {
+          path: '',
+          name: 'SpaceBoardTaskOverview',
+          component: () => import('@/views/tasks/detail/Overview.vue'),
+        },
+        {
+          path: 'submissions',
+          name: 'SpaceBoardTaskSubmissions',
+          component: () => import('@/views/tasks/detail/Submissions.vue'),
+        },
+        {
+          path: 'participants',
+          name: 'SpaceBoardTaskParticipants',
+          component: () => import('@/views/tasks/detail/Participants.vue'),
+        },
+        {
+          path: 'submit',
+          name: 'SpaceBoardTaskSubmit',
+          component: () => import('@/views/tasks/detail/Submit.vue'),
+          meta: { backTo: 'SpaceBoardTaskOverview' },
+        },
+        {
+          path: 'ai-advice',
+          name: 'SpaceBoardTaskAIAdvice',
+          component: () => import('@/views/tasks/detail/AIAdvice.vue'),
+        },
+      ],
+    },
+    {
+      path: 'analytics',
+      name: 'SpaceBoardAnalytics',
+      component: () => import('./pages/Analytics.vue'),
+      redirect: { name: 'SpaceBoardAnalyticsOverview' },
+      // 整板看板是管理员那一格，直接输地址也要挡住 —— 与「审核」「成员」同一道门槛。
+      beforeEnter: managerOnly,
+      children: [
+        {
+          path: '',
+          name: 'SpaceBoardAnalyticsOverview',
+          component: () => import('@/views/spaces/detail/analytics/Overview.vue'),
+        },
+        {
+          path: 'alerts',
+          name: 'SpaceBoardAnalyticsAlerts',
+          component: () => import('@/views/spaces/detail/analytics/Alerts.vue'),
+        },
+        {
+          path: 'publishers',
+          name: 'SpaceBoardAnalyticsPublishers',
+          component: () => import('@/views/spaces/detail/analytics/Publishers.vue'),
+        },
+        {
+          path: 'tasks',
+          name: 'SpaceBoardAnalyticsTasks',
+          component: () => import('@/views/spaces/detail/analytics/Tasks.vue'),
+        },
+        {
+          path: 'participants',
+          name: 'SpaceBoardAnalyticsParticipants',
+          component: () => import('@/views/spaces/detail/analytics/Participants.vue'),
+        },
+        {
+          path: 'learning',
+          name: 'SpaceBoardAnalyticsLearning',
+          component: () => import('@/views/spaces/detail/analytics/Learning.vue'),
+        },
+      ],
     },
     {
       path: 'insights/:taskId',
