@@ -150,7 +150,8 @@ describe('房间时间线上的「已派出」标记', () => {
     expect(marker.textContent).toContain('进行中')
   })
 
-  it('点标记上的标题 = 打开那个子话题', async () => {
+  // 一件活不是地点：它没有 /topics/<id> 那一页，点它是在这个房间里打开那张卡。
+  it('点标记上的标题 = 在这个房间里打开那张卡', async () => {
     const id = freshRoom()
     listBlocks.mockResolvedValue({
       data: [message(id, 'b1', '2026-08-11T09:00:00Z', '开工')],
@@ -163,7 +164,8 @@ describe('房间时间线上的「已派出」标记', () => {
     const link = container.querySelector('[data-testid="dispatched-marker"] button')!
     await fireEvent.click(link)
 
-    expect(emitted()['open-topic']).toEqual([['sub-1']])
+    expect(emitted()['open-card']).toEqual([['sub-1']])
+    expect(emitted()['open-topic']).toBeUndefined()
   })
 
   it('刚拆出去、之后房间里还没人说话 —— 标记排在最后一条消息下面', async () => {
@@ -227,7 +229,66 @@ describe('房间时间线上的「已派出」标记', () => {
     await flush()
 
     expect(container.querySelectorAll('[data-testid="dispatched-marker"]')).toHaveLength(0)
-    expect(container.textContent).toContain('已转为话题')
+    expect(container.textContent).toContain('已转为任务')
+  })
+
+  it('升级出去的那条消息上的链接打开那张卡，不去一个不存在的话题', async () => {
+    const id = freshRoom()
+    listBlocks.mockResolvedValue({
+      data: [{ ...message(id, 'b1', '2026-08-11T09:00:00Z', '单开'), upgraded_to_task_id: 'sub-1' }],
+      has_more: false,
+    })
+
+    const upgraded = work(id, 'sub-1', '单开的活', '2026-08-11T09:04:31Z', { upgraded_from_block_id: 'b1' })
+    const { container, emitted } = mountPanel(room(id), [upgraded])
+    await flush()
+
+    await fireEvent.click(container.querySelector('.im-upgraded')!)
+
+    expect(emitted()['open-card']).toEqual([['sub-1']])
+    expect(emitted()['open-topic']).toBeUndefined()
+  })
+
+  it('正文里 <#活的id> 写出活的标题，点下去打开那张卡；<#话题id> 仍然打开话题', async () => {
+    const id = freshRoom()
+    listBlocks.mockResolvedValue({
+      data: [message(id, 'b1', '2026-08-11T09:10:00Z', '见 <#sub-1>，另见 <#' + id + '>')],
+      has_more: false,
+    })
+
+    const { container, emitted } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
+    await flush()
+
+    const chips = Array.from(container.querySelectorAll<HTMLElement>('.topic-ref'))
+    const taskChip = chips.find((c) => c.dataset.topic === 'sub-1')!
+    expect(taskChip.textContent).toBe('#进度层与记忆落地')
+    await fireEvent.click(taskChip)
+    await fireEvent.click(chips.find((c) => c.dataset.topic === id)!)
+
+    expect(emitted()['open-card']).toEqual([['sub-1']])
+    expect(emitted()['open-topic']).toEqual([[id]])
+  })
+
+  it('「派出一条活」那一行带一颗按钮，打开它派出去的那张卡', async () => {
+    const id = freshRoom()
+    listBlocks.mockResolvedValue({
+      data: [
+        {
+          ...message(id, 'e1', '2026-08-11T09:04:32Z', '派出一条活：进度层与记忆落地'),
+          kind: 'event',
+          author: 'system',
+          meta: { platform: true, action: 'split', task_id: 'sub-1' },
+        },
+      ],
+      has_more: false,
+    })
+
+    const { getByText, emitted } = mountPanel(room(id), [])
+    await flush()
+
+    await fireEvent.click(getByText('查看任务'))
+
+    expect(emitted()['open-card']).toEqual([['sub-1']])
   })
 
   // 「窗口上面还有没加载的历史时，落在窗口之前的标记先不显示」这条只在

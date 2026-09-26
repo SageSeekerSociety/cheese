@@ -361,9 +361,11 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
         previewUrl.value = null
         return
       }
-      // Markdown 由本组件渲染（previewMarkdownHtml），不进 iframe：预览域把 .md
-      // 原样按 text/markdown 发出来，浏览器只会显示源码。
-      if (documentType.value?.view === 'markdown') {
+      // 认得出的文档类型一律由本组件的查看器画，不进 iframe。Markdown 是因为预览域
+      // 按 text/markdown 发出来浏览器只显示源码；其余是因为「读得成文本」不代表它
+      // 是网页：一份字节其实是文字的 .pdf 会被按 application/pdf 发进沙箱 iframe，
+      // 浏览器画不出也不报错，面板就是一片空白。交给查看器，它会说清楚。
+      if (documentType.value) {
         previewUrl.value = null
         return
       }

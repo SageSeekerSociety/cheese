@@ -85,6 +85,32 @@ def temporary_beside(destination):
     return destination.with_name(name + (".exe" if sys.platform == "win32" else ""))
 
 
+PROJECT_SKILLS_MANIFEST = "skills/.cheese-project-skills.json"
+#: The platform's own skill folders; a project skill never takes these names.
+PLATFORM_SKILLS = frozenset({"documents", "cheese", "cheese-docs", "chat-detail"})
+
+
+def prune_project_skills(config_dir, names):
+    """Remove the project skills planted last time that are no longer shipped."""
+    manifest = config_dir / PROJECT_SKILLS_MANIFEST
+    try:
+        previous = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = []
+    for name in set(previous) - set(names):
+        if (
+            not isinstance(name, str)
+            or not name
+            or "/" in name
+            or name in (".", "..")
+            or name in PLATFORM_SKILLS
+        ):
+            continue
+        shutil.rmtree(config_dir / "skills" / name, ignore_errors=True)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps(sorted(names)), encoding="utf-8")
+
+
 def plant_native_skills(config_dir, skills):
     """Write the platform's skills where this machine's shell will look for them.
 
@@ -317,6 +343,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
         # Under the lock like everything else this writes: the temporary file
         # each copy goes through is one name, and two prepares of one room
         # would otherwise be renaming the same `.next` file.
+        prune_project_skills(config_dir, payload.get("project_skills") or [])
         plant_native_skills(config_dir, payload.get("skills") or {})
         stop_previous_root(home)
         release, contents = stage_release(platform_dir, payload)

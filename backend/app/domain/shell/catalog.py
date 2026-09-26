@@ -94,9 +94,15 @@ _DEFAULT = Shell(
     nav=Nav(
         rail=("home", "projects", "add"),
         tabs=("spaces", "workspace", "inbox"),
-        project=("calendar", "project-library", "project-members"),
+        project=(
+            "calendar",
+            "project-library",
+            "project-routines",
+            "project-members",
+            "project-skills",
+        ),
     ),
-    hidden=("calendar",),
+    hidden=("calendar", "project-routines", "project-skills"),
 )
 
 #: 办公: a project is a 工作, a topic is an 议题, and the day starts in 工作区.
@@ -111,8 +117,10 @@ _WORKBENCH = Shell(
         project=(
             "calendar",
             "project-library",
+            "project-routines",
             "workspace-running",
             "project-members",
+            "project-skills",
         ),
     ),
     hidden=("calendar",),
@@ -135,9 +143,10 @@ _COURSE_STUDENT = Shell(
             "calendar",
             "project-members",
             "workspace-running",
+            "project-routines",
         ),
     ),
-    hidden=("calendar", "project-members"),
+    hidden=("calendar", "project-members", "project-routines"),
     terms={"project": "课程", "topic": "提问"},
 )
 
@@ -154,9 +163,10 @@ _COURSE_TEACHER = Shell(
             "project-members",
             "project-library",
             "calendar",
+            "project-routines",
         ),
     ),
-    hidden=("project-library",),
+    hidden=("project-library", "project-routines"),
     terms={"project": "课程", "topic": "提问"},
 )
 

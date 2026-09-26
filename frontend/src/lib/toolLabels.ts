@@ -79,6 +79,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_serve: '设置预览',
   cheese_library_ls: '查看项目资料',
   cheese_library_get: '取用项目资料',
+  cheese_mail_attachment: '取用邮件附件',
   cheese_show: '展示文件',
   cheese_pull: '取房间文件最新版',
   cheese_template_list: '查看文档模板',

@@ -16,25 +16,42 @@ Thinking is dropped rather than shown. It is not a message the agent addressed
 to the room, and the room's timeline is what people read — the same call the
 Claude Code path already makes, where hooks never deliver it either.
 
-Tool returns are dropped too, with one exception: a failed one marks the step it
-belongs to. Everything else a tool returns is already visible through its effect,
-and a read's return is the whole file.
+A tool's return is written onto the step it belongs to (``AgentStepOutput``;
+the room keeps a capped tail of it), and a failed one also marks that step.
+
+A model call that failed is the one thing the entry log cannot finish saying.
+pi writes it as an assistant entry that stopped on ``error`` and only then
+decides, on its live stream, whether to try again. So that entry ends nothing
+here: the runner writes what pi decided into the same log right behind it
+(``journal.RETRYING`` / ``journal.GAVE_UP``), and the turn ends on the second.
 """
 
+import re
 from datetime import UTC, datetime
 
+from app.domain.agent.harness.pi.journal import GAVE_UP, RETRYING
 from app.domain.agent.service import (
     STEP_ERROR_MAX,
     AgentEvent,
     AgentMessage,
     AgentResult,
+    AgentRetrying,
     AgentStepFailed,
+    AgentStepOutput,
     AgentToolUse,
     AgentUsage,
 )
 
-# pi stops for a tool call and keeps going; every other reason ends the turn.
+# pi stops for a tool call and keeps going; every other reason ends the turn,
+# except a failed call, which ends it only once pi gives up on it (``GAVE_UP``).
 CONTINUES = "toolUse"
+FAILED = "error"
+#: The HTTP status pi puts at the head of a provider error ("503: {...}").
+STATUS = re.compile(r"\A(\d{3})\b")
+
+
+def _count(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _said(content: object) -> str:
@@ -98,6 +115,17 @@ class Assembler:
             self._accumulate(message)
 
     def accept(self, entry: dict) -> list[AgentEvent]:
+        if entry.get("type") == RETRYING:
+            return [
+                AgentRetrying(
+                    error=str(entry.get("errorMessage") or ""),
+                    attempt=_count(entry.get("attempt")),
+                    max_attempts=_count(entry.get("maxAttempts")),
+                    delay_ms=_count(entry.get("delayMs")),
+                )
+            ]
+        if entry.get("type") == GAVE_UP:
+            return [self._gave_up(entry)]
         if entry.get("type") != "message":
             return []
         message = entry.get("message") or {}
@@ -108,22 +136,28 @@ class Assembler:
             self.spent = AgentUsage()
             return []
         if role == "toolResult":
-            # A tool's return value does not become an event: a read's return is
-            # the whole file, and the room is for people to read. A FAILURE is
-            # the exception, because it is the one thing the room cannot learn
-            # from the effect — the effect of a failed step is that nothing
-            # happened, which looks exactly like a step that is still going.
-            # It marks the step already on the timeline rather than adding one.
-            if not message.get("isError"):
-                return []
+            # What the tool handed back goes onto its step, not onto a line of
+            # its own. A FAILURE also marks that step, because the effect of a
+            # failed step is that nothing happened, which looks exactly like a
+            # step that is still going.
             call = message.get("toolCallId")
             if not isinstance(call, str):
                 return []
-            text = " ".join(_said(message.get("content")).split())
-            return [AgentStepFailed(call_id=call, text=text[-STEP_ERROR_MAX:])]
+            returned = _said(message.get("content"))
+            steps: list[AgentEvent] = []
+            if message.get("isError"):
+                text = " ".join(returned.split())
+                steps.append(AgentStepFailed(call_id=call, text=text[-STEP_ERROR_MAX:]))
+            if returned.strip():
+                steps.append(AgentStepOutput(call_id=call, text=returned))
+            return steps
         if role != "assistant":
             return []
         self._accumulate(message)
+        if message.get("stopReason") == FAILED:
+            # Whatever it had streamed before failing is not what it said: a
+            # retry asks again from the same point and says it anew.
+            return []
         events: list[AgentEvent] = []
         said: list[str] = []
         for index, part in enumerate(message.get("content") or []):
@@ -157,3 +191,22 @@ class Assembler:
                 )
             )
         return events
+
+    def _gave_up(self, entry: dict) -> AgentResult:
+        """The turn ends on the failed call pi stopped retrying — in failure,
+        unless the platform itself asked pi to stop."""
+        said = str(entry.get("errorMessage") or "")
+        if entry.get("aborted"):
+            return AgentResult(
+                text="", session_id=self.session_id, usage=self.spent, harness="pi"
+            )
+        status = STATUS.match(said)
+        return AgentResult(
+            text=said or "AI 服务请求失败",
+            session_id=self.session_id,
+            usage=self.spent,
+            is_error=True,
+            errors=[said] if said else None,
+            api_error_status=int(status[1]) if status else None,
+            harness="pi",
+        )

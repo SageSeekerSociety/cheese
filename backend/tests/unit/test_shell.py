@@ -167,8 +167,14 @@ def test_default_is_todays_interface_verbatim() -> None:
     # 看板不在里面 —— 它就是 home，项目名那一行点下去就到。名册回到侧栏是
     # 「退出项目」的可发现性：那颗按钮长在名册页上，名册收进 ⋯ 之后没人找得到
     # 怎么退出。un-hiding 就是壳的「开」，仍在四条拨盘之内。
-    assert default.nav.project == ("calendar", "project-library", "project-members")
-    assert default.hidden == ("calendar",)
+    assert default.nav.project == (
+        "calendar",
+        "project-library",
+        "project-routines",
+        "project-members",
+        "project-skills",
+    )
+    assert default.hidden == ("calendar", "project-routines", "project-skills")
     assert default.terms == {}
     assert default.nav.rail == ("home", "projects", "add")
     assert default.nav.tabs == ("spaces", "workspace", "inbox")
@@ -183,7 +189,9 @@ def test_every_shell_names_only_known_keys() -> None:
         "workspace-running",
         "calendar",
         "project-library",
+        "project-routines",
         "project-members",
+        "project-skills",
     }
     for name, shell in CATALOG.items():
         assert set(shell.nav.rail) <= known_rail, name

@@ -5,6 +5,10 @@ the request id, bare events with none, and `get_entries` answering from a
 cursor. What it replays is the recorded entries of a real GLM-5.2 turn, so a
 test drives the runner over the same shapes a machine would produce.
 
+A fixture with a ``stream`` instead replays a recorded turn event by event: its
+entries become readable in the order pi wrote them, among the live events pi
+printed around them (a request failing, being retried, giving up).
+
 Deliberately not a mock inside the test process: the runner owns a subprocess,
 its pipes and its framing, and none of that is exercised by a fake object.
 """
@@ -34,7 +38,9 @@ def reply(request, kind, data=None, success=True):
 
 
 def main() -> None:
-    entries = json.loads(Path(sys.argv[1]).read_text())["entries"]
+    recording = json.loads(Path(sys.argv[1]).read_text())
+    stream = recording.get("stream")
+    entries = recording.get("entries", [])
     # `--session-id <id>` is how the platform names the session; echo it back
     # through get_session_stats so a test can see the id it asked for.
     arguments = sys.argv[2:]
@@ -49,6 +55,11 @@ def main() -> None:
     )
     produced: list[dict] = []
     prompts: list[str] = []
+    # What pi had written before any prompt (model and thinking level).
+    while (
+        stream and "entry" in stream[0] and stream[0]["entry"].get("type") != "message"
+    ):
+        produced.append(stream.pop(0)["entry"])
 
     for line in sys.stdin:
         line = line.rstrip("\r\n")
@@ -74,6 +85,13 @@ def main() -> None:
         elif kind in ("prompt", "steer"):
             prompts.append(command.get("message", ""))
             reply(request, kind)
+            if stream is not None:
+                for step in stream:
+                    if "entry" in step:
+                        produced.append(step["entry"])
+                    else:
+                        emit(step["event"])
+                continue
             emit({"type": "agent_start"})
             produced.extend(entries)
             # The doorbell the runner listens for; the record is get_entries.

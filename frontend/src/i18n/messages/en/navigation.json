@@ -10,7 +10,9 @@
     "members": "Members",
     "docs": "Project docs",
     "settings": "Project settings",
-    "general": "General"
+    "general": "General",
+    "routines": "Routines",
+    "skills": "Methods"
   },
   "spaces": "Spaces",
   "teams": "Teams",
@@ -46,6 +48,7 @@
       "system": "System",
       "light": "Light",
       "dark": "Dark"
-    }
+    },
+    "connections": "Connections"
   }
 }

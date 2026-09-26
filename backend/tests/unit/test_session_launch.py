@@ -53,7 +53,7 @@ def test_the_launch_writes_the_files_claude_reads_before_it_starts(tmp_path):
     }
     assert (config / "cheese-system-prompt.md").read_text() == "你是芝士。\n"
     for name, content in native_skill_files().items():
-        assert (config / name).read_text() == content + "\n", name
+        assert (config / name).read_text() == content, name
 
 
 def test_a_withdrawn_system_prompt_leaves_no_stale_one_behind(tmp_path):

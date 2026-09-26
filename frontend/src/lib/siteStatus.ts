@@ -84,8 +84,9 @@ export function siteStatus(blocks: Block[], working: boolean, turns: Record<stri
     return { state: 'retrying', attempt, ...base }
   }
   if (type === 'device_waiting' && last.meta?.state !== 'over') return { state: 'waiting', ...base }
-  // 一步开始了、还没听说它结束：它就是此刻在做的事。挂了的那一步已经结束了。
-  if (last.meta?.tool && !isNarration(last.meta) && !eventFailed(last)) {
+  // 一步开始了、还没听说它结束：它就是此刻在做的事。挂了的、交回了输出的，都已
+  // 经结束了。
+  if (last.meta?.tool && !isNarration(last.meta) && !eventFailed(last) && !last.meta.output_bytes) {
     return { state: 'acting', verb: eventVerb(last), ...base }
   }
   return { state: 'thinking', ...base }

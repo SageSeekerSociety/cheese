@@ -46,6 +46,8 @@ class Purpose(StrEnum):
     OAUTH_TOKEN = "oauth-token"
     LLM_SUBSCRIPTION_TOKEN = "llm-subscription-token"
     REALNAME = "realname"
+    INTEGRATION_SECRET = "integration-secret"
+    INTEGRATION_STATE = "integration-state"
 
 
 class DecryptionError(InternalServerError):

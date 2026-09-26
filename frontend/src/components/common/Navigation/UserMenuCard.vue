@@ -40,6 +40,9 @@
       <v-list-item :to="{ name: 'my-devices' }">
         <v-list-item-title>{{ t('navigation.userMenu.devices') }}</v-list-item-title>
       </v-list-item>
+      <v-list-item :to="{ name: 'my-connections' }">
+        <v-list-item-title>{{ t('navigation.userMenu.connections') }}</v-list-item-title>
+      </v-list-item>
     </v-list>
 
     <v-divider />

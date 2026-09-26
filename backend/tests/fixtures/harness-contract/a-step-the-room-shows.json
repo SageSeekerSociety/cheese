@@ -51,7 +51,23 @@
       ]
     },
     "codex": {
-      "difference": "no-call-id-on-tool-use"
+      "records": [
+        {
+          "method": "item/started",
+          "params": {
+            "threadId": "session-1",
+            "item": {
+              "type": "dynamicToolCall",
+              "id": "toolu_1",
+              "tool": "Bash",
+              "arguments": {
+                "command": "pytest -q"
+              },
+              "status": "inProgress"
+            }
+          }
+        }
+      ]
     }
   },
   "events": [
