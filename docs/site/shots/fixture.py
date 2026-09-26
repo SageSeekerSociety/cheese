@@ -35,7 +35,7 @@ from app.domain.review.models import AcceptCard, AcceptStatus  # noqa: E402
 
 BACKEND = os.environ.get("BACKEND", "http://127.0.0.1:8081")
 PROJECT = "校园活动报名小程序"
-NICKNAMES = {"alice": "林晓", "bobby": "陈默", "carol": "王珊"}
+NICKNAMES = {"alice": "林晓", "bobby": "陈默", "carol": "王珊", "david": "周然", "evelyn": "李想"}
 
 
 def login(name: str) -> dict[str, str]:

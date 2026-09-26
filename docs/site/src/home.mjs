@@ -96,25 +96,24 @@ export function homePage(ctx, { releases, faq, WHO, doors, pages, dev }) {
 
   <section class="tour" id="tour" style="--n:${steps.length}">
    <div class="x-head tour-head" data-reveal><span class="x-kick">问芝士，带你逛一遍文档</span><h2 class="display">不知道该看哪一页？<br>问就行。</h2><p>往下滚，每一屏问一个问题：芝士回答，再把你带到对应的那类文档。</p></div>
-   ${steps.map((_, i) => `<i class="tour-snap" style="--i:${i}" aria-hidden="true"></i>`).join('')}
+   ${steps.map((_, i) => `<i class="tour-snap" aria-hidden="true"></i>`).join('')}
    <i class="tour-anchor" aria-hidden="true"></i>
    <div class="tour-pin">
     <div class="tour-stage">
-     <div class="tour-browser">
-      <div class="tb-bar"><span class="tb-dots"><i></i><i></i><i></i></span><span class="tb-url" id="tourUrl">okcheese.com/docs/</span><span class="tb-load" id="tourLoad"></span></div>
-      <div class="tb-view">
-       <div class="tb-page on blank" data-i="-1"><div class="tb-blank"><img src="${ctx.assets.logo}" alt=""><p>问一个问题，芝士带你去对应的那一页</p></div></div>
-       ${steps.map((t, i) => `<a class="tb-page${t.page.locked ? ' locked' : ''}" data-i="${i}" href="${t.page.url}" tabindex="-1"><img src="${site(t.slug)}" alt="${esc(t.page.title)}" loading="lazy">${t.page.locked ? `<span class="tb-lock">${ic('lock', 'width:16px;height:16px')}开发文档只对平台管理员开放</span>` : ''}</a>`).join('')}
-      </div>
+     <div class="tour-bar"><div class="tour-kinds" id="tourKinds">${steps.map((t, i) => `<button data-tour="${i}">${ic(t.icon, 'width:14px;height:14px')}${esc(t.kind)}</button>`).join('')}</div><span class="tour-path" id="tourUrl">/docs/</span></div>
+     <div class="tour-sheet">
+      <div class="tb-page on blank" data-i="-1"><div class="tb-blank"><img src="${ctx.assets.logo}" alt=""><p>问一个问题，芝士带你去对应的那一页</p></div></div>
+      ${steps.map((t, i) => `<a class="tb-page${t.page.locked ? ' locked' : ''}" data-i="${i}" href="${t.page.url}" tabindex="-1"><picture><source media="(max-width: 820px)" srcset="${site(t.slug, true)}"><img src="${site(t.slug)}" alt="${esc(t.page.title)}" loading="lazy"></picture>${t.page.locked ? `<span class="tb-lock">${ic('lock', 'width:16px;height:16px')}开发文档只对平台管理员开放</span>` : ''}</a>`).join('')}
+      <span class="tb-load" id="tourLoad"></span>
      </div>
-     <div class="tour-kinds" id="tourKinds">${steps.map((t, i) => `<button data-tour="${i}">${ic(t.icon, 'width:14px;height:14px')}${esc(t.kind)}</button>`).join('')}</div>
     </div>
-    <aside class="tour-chat">
-     <div class="tour-chat-h"><span class="brand-mark sm"><img src="${ctx.assets.logo}" alt=""></span><div><b>问芝士</b><small>只根据这份文档回答，每条答案都附出处</small></div></div>
-     <div class="tc-log" id="tourLog" aria-live="polite"></div>
-     <button class="tc-input" data-open-ask><span id="tourTyping" data-placeholder="问一个关于知是的问题…">问一个关于知是的问题…</span><span class="tc-send">${ic('arrow')}</span></button>
-    </aside>
    </div>
+   <aside class="drawer tour-dock" id="tourDock" aria-label="问芝士导览">
+    <div class="drawer-h"><span class="brand-mark sm"><img src="${ctx.assets.logo}" alt=""></span><div style="flex:1;min-width:0;line-height:1.3"><b>问芝士</b><br><small>只根据这份文档回答，每条答案都附出处</small><span class="tour-last" id="tourLast"></span></div><span class="tour-count" id="tourCount"></span></div>
+    <div class="ctx">${ic('doc')}<span>正在看</span><b id="tourCtx">文档首页</b></div>
+    <div class="drawer-b" id="tourLog" aria-live="polite"></div>
+    <div class="drawer-f"><button class="box tour-input" data-open-ask><span id="tourTyping" data-placeholder="问一个关于知是的问题…">问一个关于知是的问题…</span><span class="send">${ic('arrow')}</span></button><small>这是一段演示；点输入框，就能真的问芝士。</small></div>
+   </aside>
    <ol class="tour-list">${steps.map((t) => `<li data-reveal><div class="q">${esc(t.q)}</div><div class="a">${esc(t.a)}</div>
     <a class="tl-page${t.page.locked ? ' locked' : ''}" href="${t.page.url}"><span class="tl-frame"><img src="${site(t.slug, true)}" alt="" loading="lazy"></span><span class="cite">${ic('doc', 'width:13px;height:13px')}${esc(t.page.label)} · ${esc(t.page.title)}</span></a></li>`).join('')}</ol>
    <script type="application/json" id="tourData">${JSON.stringify(steps.map((t) => ({ q: t.q, a: t.a, url: t.page.url, title: t.page.title, label: t.page.label }))).replace(/</g, '\\u003c')}</script>

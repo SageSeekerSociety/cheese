@@ -87,6 +87,7 @@ function renderMarkdown(md, { file }) {
     return `<a class="link" href="${esc(href)}" rel="noopener">${t}</a>`
   }
   renderer.image = ({ href, text }) => {
+    if (href.startsWith('/images/') && !fs.existsSync(path.join(MANUAL, 'public', href))) fail(`${file}: picture ${href} is not in docs/manual/public/images`)
     const src = href.startsWith('/') ? `/docs${href}` : href
     return `<figure><div class="shot"><img src="${esc(src)}" alt="${esc(text)}" loading="lazy"></div>${text ? `<figcaption>${esc(text)}</figcaption>` : ''}</figure>`
   }
@@ -96,7 +97,8 @@ function renderMarkdown(md, { file }) {
   let html
   try { html = marked.parse(md, { renderer }) } catch (e) { fail(`${file}: ${e.message}`) }
   let lede = ''
-  html = html.replace(/^\s*<p>([\s\S]*?)<\/p>/, (_, p) => { lede = p; return '' })
+  // The first paragraph is the lede (after the title's anchor, which stays in place).
+  html = html.replace(/^(\s*(?:<span [^>]*class="page-anchor"><\/span>)?\s*)<p>([\s\S]*?)<\/p>/, (_, anchor, p) => { lede = p; return anchor })
   // one search chunk per h2 section
   const chunks = html.split(/(?=<h2 id=")/).map((part) => {
     const h = /^<h2 id="([\w-]+)">([\s\S]*?)<a class="anchor"/.exec(part)
