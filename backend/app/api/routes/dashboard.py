@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok
 from app.api.routes.machines import _require_project_access
+from app.api.routes.spaces import get_space_service
 from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
@@ -23,7 +24,7 @@ from app.core.obs import get_logger
 from app.domain.dashboard.services import DashboardService
 from app.domain.memory.store import forget_fact_about
 from app.domain.project.repositories import ProjectRepository
-from app.domain.space.repositories import SpaceRepository
+from app.domain.space.services import SpaceService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
 _log = get_logger("cheesex.dashboard")
@@ -34,7 +35,10 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _require_board_reader(
-    db: AsyncSession, resolver: ActorResolver, space_id: int
+    db: AsyncSession,
+    resolver: ActorResolver,
+    space_id: int,
+    space_service: SpaceService,
 ) -> None:
     """Who may read a 机构看板 (spec §7.3).
 
@@ -57,7 +61,7 @@ async def _require_board_reader(
     actor = await resolver.require_verified_caller()
     if not actor.authenticated:
         return  # the sandbox override; there is no identity to ask membership of
-    if await SpaceRepository(db).get_by_id(space_id) is None:
+    if await space_service.get_space(space_id) is None:
         raise NotFoundError("Space not found")
     for project_id in await ProjectRepository(db).list_ids_for_space_tasks(space_id):
         if await may_read_project(db, project_id=project_id, handle=actor.handle):
@@ -68,9 +72,12 @@ async def _require_board_reader(
 
 @router.get("/spaces/{space_id}/dashboard")
 async def space_dashboard(
-    space_id: int, db: DbSession, resolver: ActorResolverDep
+    space_id: int,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    space_service: SpaceService = Depends(get_space_service),
 ) -> dict:
-    await _require_board_reader(db, resolver, space_id)
+    await _require_board_reader(db, resolver, space_id, space_service)
     return ok(await DashboardService(db).space_board(space_id))
 
 
