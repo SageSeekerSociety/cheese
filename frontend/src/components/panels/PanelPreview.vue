@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DocumentRevision, FileContent, PreviewInfo } from '../../cx_types'
 
-import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import {
@@ -24,6 +24,11 @@ import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
+
+// The editor and its history only load once someone opens them: most previews
+// never do, and every panel that shows a preview would otherwise carry them.
+const RoomFileEditor = defineAsyncComponent(() => import('./preview/RoomFileEditor.vue'))
+const RoomFileHistory = defineAsyncComponent(() => import('./preview/RoomFileHistory.vue'))
 
 const props = withDefaults(
   defineProps<{
@@ -117,6 +122,24 @@ const previewMarkdownHtml = computed(() => {
 // 那一页的字节由 `useDocumentBytes` 取：浏览器画不出来的先转 PDF，其余读原始字节。
 // 改动那一格取的是同一份东西，所以这件事只写在一处。
 const docNonce = ref(0)
+
+// 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。编辑器开在全屏
+// 对话框里；关掉之后预览按新版本重取。
+const EDITABLE_SUFFIXES = new Set(['docx', 'xlsx', 'pptx'])
+const canEdit = computed(() => EDITABLE_SUFFIXES.has(documentSuffix.value))
+const editing = ref<string | null>(null)
+const showHistory = ref(false)
+function afterRestore() {
+  docNonce.value += 1
+}
+function closeEditor() {
+  editing.value = null
+  docNonce.value += 1
+}
+function onEditorOpened(path: string) {
+  editing.value = path
+  emit('open-file', path)
+}
 const {
   bytes: docBytes,
   loading: docLoading,
@@ -562,6 +585,28 @@ watch(
         <span class="doc__type t-meta">{{ documentType.label }}</span>
         <v-spacer />
         <v-btn
+          v-if="canEdit && previewFile"
+          size="small"
+          variant="text"
+          color="primary"
+          prepend-icon="mdi-pencil-outline"
+          data-testid="edit-file"
+          @click="editing = previewFile.path"
+        >
+          编辑
+        </v-btn>
+        <v-btn
+          v-if="previewFile && !previewFile.path.startsWith('library/')"
+          size="small"
+          variant="text"
+          color="medium-emphasis"
+          prepend-icon="mdi-history"
+          data-testid="file-history"
+          @click="showHistory = !showHistory"
+        >
+          历史
+        </v-btn>
+        <v-btn
           size="small"
           variant="text"
           color="medium-emphasis"
@@ -571,6 +616,13 @@ watch(
           下载
         </v-btn>
       </div>
+      <RoomFileHistory
+        v-if="showHistory && topicId && previewFile"
+        :topic-id="topicId"
+        :path="previewFile.path"
+        :version="previewFile.version"
+        @restored="afterRestore"
+      />
 
       <v-alert v-if="downloadError" type="warning" density="compact" class="mx-3 mb-2">
         {{ downloadError }}
@@ -683,6 +735,17 @@ watch(
     <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
          论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
     <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
+
+    <v-dialog :model-value="!!editing" fullscreen @update:model-value="(open: boolean) => !open && closeEditor()">
+      <RoomFileEditor
+        v-if="editing && topicId"
+        :key="editing"
+        :topic-id="topicId"
+        :path="editing"
+        @close="closeEditor"
+        @opened="onEditorOpened"
+      />
+    </v-dialog>
   </div>
 </template>
 

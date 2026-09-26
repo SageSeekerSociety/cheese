@@ -2829,6 +2829,32 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         )
 
 
+async def record_shown(
+    db: AsyncSession, place: Place, path: str, *, author: str, mime: str | None = None
+) -> dict:
+    """List a room file among what the room has on show, and tell open clients.
+
+    What `cheese show` does after writing the file; a file a person creates in
+    the room (a copy, a new one from a template) is on show the same way."""
+    block = await BlockRepository(db).add(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        author=author,
+        author_type=AuthorType.participant,
+        content=path,
+        kind=BlockKind.artifact,
+        mime_type=mime or _ARTIFACT_MIME[artifact_kind_for(path)],
+        refs=[path],
+    )
+    payload = BlockOut.model_validate(block).model_dump(mode="json")
+    # Live, like a published message: the reader is usually in the room while
+    # 芝士 works, and the card has to appear then, not on the next reload.
+    await get_broker().publish(
+        str(place.room_id), {"type": "assistant_block", "block": payload}
+    )
+    return payload
+
+
 @router.post("/{topic_id}/shown")
 async def show_in_room(
     topic_id: uuid.UUID,
@@ -2841,7 +2867,7 @@ async def show_in_room(
     摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
     （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     declared = (body.get("as") or "").strip().lower()
     if declared == "app":
         # An app artifact points at the running server, not a file — the stored
@@ -2878,26 +2904,28 @@ async def show_in_room(
             raise ValidationError(
                 f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
             )
-        library.write_room_file(place.project_id, topic_id, path, raw)
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=topic_id,  # the place; `add` splits it
-        author=await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
-        ),
-        author_type=AuthorType.participant,
-        content=path,
-        kind=BlockKind.artifact,
-        mime_type=mime,
-        refs=[path],
+    author = await TopicMemberService(db).resolve_agent_handle(
+        topic_id, room_id=place.room_id
     )
-    payload = BlockOut.model_validate(block).model_dump(mode="json")
-    # Live, like a published message: the reader is usually in the room while
-    # 芝士 works, and the card has to appear then, not on the next reload.
-    await get_broker().publish(
-        str(topic_id), {"type": "assistant_block", "block": payload}
-    )
-    return ok(payload)
+    if as_ != "app" and ("content" in body or "content_b64" in body):
+        # Through the draft history: the state this replaces stays restorable,
+        # and `base_version` (the version `cheese pull` read) turns an overwrite
+        # of somebody's newer save into a 409.
+        base = body.get("base_version")
+        note = body.get("note")
+        await room_files.save_room_file(
+            db,
+            project_id=place.project_id,
+            room_id=place.room_id,
+            path=path,
+            data=raw,
+            author=author if actor.via == "cheese" else actor.handle,
+            author_kind="agent" if actor.via == "cheese" else "human",
+            source="ai" if actor.via == "cheese" else "upload",
+            note=note if isinstance(note, str) else None,
+            base_version=base if isinstance(base, str) and base else None,
+        )
+    return ok(await record_shown(db, place, path, author=author, mime=mime))
 
 
 @router.get("/{topic_id}/shown")
@@ -3123,7 +3151,18 @@ async def decide_document_revisions(
             clean, made, expected
         )
     else:
-        library.write_room_file(topic.project_id, topic_id, clean, made)
+        await room_files.save_room_file(
+            db,
+            project_id=topic.project_id,
+            room_id=topic_id,
+            path=clean,
+            data=made,
+            author=actor.handle,
+            author_kind="agent" if actor.via == "cheese" else "human",
+            source="editor",
+            note="处理修订",
+            base_version=expected,
+        )
     return ok(
         {
             "path": clean,

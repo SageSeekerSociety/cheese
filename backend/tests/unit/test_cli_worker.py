@@ -99,6 +99,7 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
     assert set(tools) == {
         "cheese_convert",
         "cheese_library_get",
+        "cheese_pull",
         "cheese_mail_attachment",
         "cheese_push_fix",
         "cheese_recalc",

@@ -353,6 +353,21 @@ if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   fi
 fi
 
+# The office editor and the backend share one signing secret: it is what makes
+# a save callback the editor's. Provisioned once and kept beside deploy.env, so a
+# redeploy never rotates it out from under an open document; a box that pins its
+# own in deploy.env keeps that one.
+if [ -z "${OFFICE_EDITOR_JWT_SECRET:-}" ]; then
+  _office_secret="$HOME/ops/office-editor.secret"
+  if [ ! -s "$_office_secret" ]; then
+    mkdir -p "$HOME/ops"
+    ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$_office_secret" )
+    log "provisioned the office editor's signing secret in $_office_secret"
+  fi
+  OFFICE_EDITOR_JWT_SECRET="$(cat "$_office_secret")"
+  export OFFICE_EDITOR_JWT_SECRET
+fi
+
 case "$PULL_ATTEMPTS" in
   ''|*[!0-9]*|0) fail "DEPLOY_PULL_ATTEMPTS must be a positive integer (got: '$PULL_ATTEMPTS')" ;;
 esac
@@ -561,6 +576,8 @@ case "$APP_IMAGE_SOURCE" in
     # screen. Nothing else in the platform is affected.
     dc pull office-render >/dev/null 2>&1 \
       || log "WARNING: office-render image unavailable; documents will offer download only"
+    dc pull office-editor >/dev/null 2>&1 \
+      || log "WARNING: office-editor image unavailable; room files stay read-only"
     # Same shape again: without the executor a private chat fails with an
     # explicit setup error, and nothing else is affected. The backend starts it
     # with `docker run` under a local name, which the image carries as a label;
@@ -923,6 +940,8 @@ start_optional_service browser-render cheese-browser-render \
   "fetching will fall back a rung"
 start_optional_service office-render cheese-office-render \
   "documents will offer download only"
+start_optional_service office-editor cheese-office-editor \
+  "room files stay read-only"
 
 log "waiting for health…"
 code=""

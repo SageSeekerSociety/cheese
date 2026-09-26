@@ -328,6 +328,21 @@ export default defineConfig({
         ws: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      // The office editor (OnlyOffice), mirroring nginx's /office-editor/: strip the
+      // prefix, and tell the editor where it is mounted so the URLs it writes back
+      // into its own pages keep the prefix.
+      '/office-editor': {
+        target: process.env.OFFICE_EDITOR_URL ?? 'http://127.0.0.1:18090',
+        // Host stays the page's: the editor writes its own absolute URLs from it.
+        ws: true,
+        rewrite: (path) => path.replace(/^\/office-editor/, ''),
+        configure: (proxy) => {
+          const mount = (req: { setHeader: (k: string, v: string) => void }, host?: string) =>
+            req.setHeader('X-Forwarded-Host', `${host ?? ''}/office-editor`)
+          proxy.on('proxyReq', (req, incoming) => mount(req, incoming.headers.host))
+          proxy.on('proxyReqWs', (req, incoming) => mount(req, incoming.headers.host))
+        },
+      },
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
       // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer:

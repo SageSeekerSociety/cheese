@@ -34,8 +34,9 @@ def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_
     monkeypatch.setenv("CHEESE_WORKTREE_ROOT", str(tmp_path))
     monkeypatch.setattr(cli, "TOPIC", "room")
     monkeypatch.setattr(cli.sys, "argv", ["cheese", "show", "report.html"])
+    monkeypatch.setenv("HOME", str(tmp_path))
     calls = []
-    monkeypatch.setattr(cli, "_call", lambda *args: calls.append(args))
+    monkeypatch.setattr(cli, "_call", lambda *args, **_: calls.append(args) or {})
 
     cli.main()
 
@@ -50,6 +51,52 @@ def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_
             },
         )
     ]
+
+
+def test_show_after_a_show_says_which_version_the_edit_was_made_on(
+    monkeypatch, tmp_path
+):
+    """第二次 show 带上第一次写下的版本：期间有人在编辑器里存过，平台才认得出来。"""
+    cli = _load()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CHEESE_WORKTREE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    bodies = []
+    monkeypatch.setattr(cli, "_call", lambda *args, **_: bodies.append(args[2]) or {})
+    (tmp_path / "a.md").write_text("one")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "show", "a.md"])
+    cli.main()
+    (tmp_path / "a.md").write_text("two")
+    monkeypatch.setattr(
+        cli.sys, "argv", ["cheese", "show", "a.md", "--note", "改了第二段"]
+    )
+    cli.main()
+
+    assert "base_version" not in bodies[0]
+    assert bodies[1]["base_version"] == cli.hashlib.sha256(b"one").hexdigest()[:16]
+    assert bodies[1]["note"] == "改了第二段"
+
+
+def test_show_refused_for_a_stale_base_tells_the_agent_to_pull(
+    monkeypatch, tmp_path, capsys
+):
+    cli = _load()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CHEESE_WORKTREE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(
+        cli, "_call", lambda *a, **k: {"ok": False, "status": 409, "error": {}}
+    )
+    (tmp_path / "a.md").write_text("mine")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "show", "a.md"])
+
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+
+    assert exited.value.code == 1
+    assert "cheese pull a.md" in capsys.readouterr().err
 
 
 def test_serve_declares_only_the_port_and_registers_the_app(monkeypatch):

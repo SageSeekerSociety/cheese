@@ -1929,6 +1929,32 @@ def _need(name: str, value: str) -> str:
     return value
 
 
+def _pulled_path() -> Path:
+    return Path.home() / ".cheese" / "pulled-versions.json"
+
+
+def _pulled_versions() -> dict:
+    """Which version of each room file this machine last read or wrote.
+
+    It is what `cheese show` sends as `base_version`: the platform refuses a
+    write whose base has since been replaced, so an edit made on an old copy
+    cannot silently overwrite what a person saved in the editor."""
+    try:
+        return json.loads(_pulled_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _remember_pulled(topic: str, rel: str, version: str) -> None:
+    versions = _pulled_versions()
+    versions[f"{topic}:{rel}"] = version
+    target = _pulled_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".next")
+    temporary.write_text(json.dumps(versions, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(target)
+
+
 def _raw_request(
     method: str, path: str, data: str | None, out: str | None = None
 ) -> None:
@@ -2215,11 +2241,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     part.add_argument("path", help="工作区相对路径,如 report.docx")
     part.add_argument(
+        "--note",
+        default=None,
+        help=(
+            "这一次改了什么,一句话。用户在编辑器里看这份文件时会看到它;"
+            "改的是房间里已有的一份时一定要写"
+        ),
+    )
+    part.add_argument(
         "--as",
         dest="as_",
         default=None,
         choices=sorted(ARTIFACT_KINDS),
         help="渲染类型(默认按扩展名判断)",
+    )
+
+    ppull = sub.add_parser(
+        "pull",
+        help="把房间里一份文件的最新保存取到这台机器上(用户可能在编辑器里改过)",
+        description=(
+            "房间里的文件用户能在线编辑。你手上那份可能已经旧了:用户改完保存,"
+            "房间里的才是最新的。在房间里已有的文件上接着改之前,先 pull。\n\n"
+            "pull 会记下取到的是哪一版;之后 cheese show 同一个路径时自动带上它。"
+            "如果这期间又有人保存过,show 会被拒绝(不会盖掉别人的修改)——"
+            "那就再 pull 一次,在最新那一版上重做你的改动。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ppull.add_argument("path", help="房间里的路径,如 output/报告.docx")
+    ppull.add_argument(
+        "-o", "--output", default=None, help="写到别处(默认写回同一个工作区路径)"
     )
 
     pcv = sub.add_parser(
@@ -2480,8 +2531,54 @@ def main() -> None:
             except UnicodeError as exc:
                 print(f"[cheese] {a.path} 不是文本文件: {exc}", file=sys.stderr)
                 sys.exit(1)
-        _call("POST", f"/topics/{topic}/shown", {"path": rel, "as": kind, **payload})
+        base = _pulled_versions().get(f"{topic}:{rel}")
+        extra = {"note": a.note} if a.note else {}
+        if base:
+            extra["base_version"] = base
+        res = _call(
+            "POST",
+            f"/topics/{topic}/shown",
+            {"path": rel, "as": kind, **payload, **extra},
+            tolerate=(409,),
+        )
+        if res.get("ok") is False:
+            print(
+                f"[cheese] 没有摆出来：房间里的 {rel} 在你取到之后被人保存过"
+                "（多半是用户在编辑器里改了）。直接写会盖掉他的修改。\n"
+                f"[cheese] 先 cheese pull {rel} 取最新一版，在那一版上重做你的改动，"
+                "再 show。",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _remember_pulled(topic, rel, hashlib.sha256(raw).hexdigest()[:16])
         print(f"已把 {rel} 摆出来给房间里的人看（{kind}）。")
+    elif a.cmd == "pull":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        rel = _worktree_relative(a.path)
+        out = a.output or a.path
+        parent = os.path.dirname(out)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        req = urllib.request.Request(
+            f"{API}/topics/{topic}/files/raw?path={urllib.parse.quote(rel)}"
+        )
+        if TOKEN:
+            req.add_header("X-Cheese-Token", TOKEN)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                body = r.read()
+                version = r.headers.get("X-Cheese-Version") or ""
+        except urllib.error.HTTPError as e:
+            print(
+                f"[cheese] 取不到 {rel}：HTTP {e.code} "
+                f"{e.read().decode(errors='replace')[:300]}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        with open(out, "wb") as f:
+            f.write(body)
+        _remember_pulled(topic, rel, version or hashlib.sha256(body).hexdigest()[:16])
+        print(f"已取到 {rel} 的最新一版（{version}，{len(body)} 字节），写入 {out}。")
     elif a.cmd == "convert":
         topic = _need("CHEESE_TOPIC", TOPIC)
         try:

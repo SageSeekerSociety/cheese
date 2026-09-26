@@ -258,3 +258,48 @@ class ProjectArtifact(UuidPk, Timestamps, Base):
     #: 一版」。写的是这样东西本身，所以它在第 1 版和第 20 版都成立；这一版做了什么
     #: 在卡的 `change_subject` 上，不在这里。
     about: Mapped[str] = mapped_column(String(80), default="", server_default="")
+
+
+class RoomFileRevision(UuidPk, Timestamps, Base):
+    """One saved state of a room file: the draft history a person can restore.
+
+    Every write that goes through `room_files.save_room_file` leaves one row,
+    whoever made it — a person saving in the editor, 芝士 publishing with
+    `cheese show`, a restore. The bytes live content-addressed beside the room
+    files (`library.revision_blob`), so two saves of the same content share one
+    copy and a restore never rewrites history: it is a new row.
+
+    This is not the artifact's version. A revision is "what the file looked
+    like after this save"; a delivered version is "what a reviewer accepted",
+    counted from accepted cards and kept in its own snapshot. Restoring a draft
+    cannot touch the latter.
+    """
+
+    __tablename__ = "room_file_revisions"
+    __table_args__ = (
+        UniqueConstraint("room_id", "path", "seq", name="uq_room_file_revision_seq"),
+        Index("ix_room_file_revisions_room_path", "room_id", "path"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE")
+    )
+    path: Mapped[str] = mapped_column(String(512))
+    seq: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(BigInteger)
+    author_handle: Mapped[str] = mapped_column(String(64))
+    #: human | agent — who is answerable for this state of the file.
+    author_kind: Mapped[str] = mapped_column(String(16))
+    #: upload | ai | editor | restore | scheduled — which door the bytes came in by.
+    source: Mapped[str] = mapped_column(String(16))
+    #: What changed, in the author's words. 芝士 passes it with `cheese show
+    #: --note`; the editor writes none.
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The editor session that saved this state. A session saves more than once
+    #: (each 「保存」, then on close), and its own previous save is not somebody
+    #: else's change — this is how the second save tells the two apart.
+    editor_key: Mapped[str | None] = mapped_column(String(128), nullable=True)

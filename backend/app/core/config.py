@@ -249,6 +249,20 @@ class Settings(BaseSettings):
     # download. Unset, the preview panel says so and still hands the file over.
     office_render_endpoint: str | None = None
 
+    # The office editor (OnlyOffice Document Server) people edit room files in.
+    # Four addresses because three parties reach each other differently: the
+    # browser loads the editor from `office_editor_url` (proxied by the
+    # frontend's nginx); the backend fetches a saved document back from
+    # `office_editor_internal_url`; the editor fetches and returns documents at
+    # `office_editor_backend_url`. `office_editor_jwt_secret` is shared with the
+    # editor's JWT_SECRET: it is what makes a save callback the editor's rather
+    # than anybody's. Without the secret the editor is off and files stay
+    # read-only previews.
+    office_editor_url: str = "/office-editor"
+    office_editor_internal_url: str = "http://cheese-office-editor"
+    office_editor_backend_url: str = "http://backend:8081"
+    office_editor_jwt_secret: str | None = None
+
     # --- LLM gateway admin (L1/L2 — defined in `app.domain.agent.gateway`) ---
     # When the pool routes through the self-hosted LiteLLM gateway, the backend can
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
