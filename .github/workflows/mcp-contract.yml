@@ -81,31 +81,6 @@ jobs:
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --mitmdump "$RUNNER_TEMP/mitm/bin/mitmdump"
           --output tmp/mcp-contract/pinned/refresh
-      - name: Install FUSE for the forwarded project view, and zsh
-        # The equivalence check mounts the view a room's session works in.
-        # libfuse2 (fusepy) mounts through `fusermount`; Ubuntu 24.04 ships
-        # only `fusermount3`, which takes the same arguments. zsh is the
-        # executor shell the second equivalence run and the shell contract use.
-        if: ${{ !cancelled() }}
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -yq fuse3 libfuse2t64 zsh
-          command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
-          python3 -m venv tmp/equivalence-venv
-          tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1
-      - name: Remote Bash is equivalent to Claude Code on the executor (bash)
-        # Runs even when an earlier check failed, so one run reports all.
-        if: ${{ !cancelled() }}
-        run: >-
-          tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
-          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
-          --shell bash --output tmp/mcp-contract/pinned/equivalence-bash
-      - name: Remote Bash is equivalent to Claude Code on the executor (zsh)
-        if: ${{ !cancelled() }}
-        run: >-
-          tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
-          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
-          --shell zsh --output tmp/mcp-contract/pinned/equivalence-zsh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         # A quota-refused upload retries until the JOB timeout cancels the job
@@ -116,6 +91,53 @@ jobs:
         with:
           name: mcp-contract-pinned-${{ github.sha }}
           path: tmp/mcp-contract/pinned/
+
+  equivalence:
+    # The same build as `pinned`. Each shell's run takes about six minutes;
+    # after the contracts above and one another they made `pinned` the
+    # longest job in Required CI, so the two shells run side by side here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [bash, zsh]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: scripts/remote_execution/package-lock.json
+      - run: npm ci --prefix scripts/remote_execution --no-audit --no-fund
+      - name: Let a session have its own namespace
+        run: .github/scripts/allow-user-namespaces.sh
+      - name: Install FUSE for the forwarded project view, and zsh
+        # The equivalence check mounts the view a room's session works in.
+        # libfuse2 (fusepy) mounts through `fusermount`; Ubuntu 24.04 ships
+        # only `fusermount3`, which takes the same arguments. zsh is the
+        # executor shell of the zsh run.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq fuse3 libfuse2t64 zsh
+          command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
+          python3 -m venv tmp/equivalence-venv
+          tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1
+      - name: Remote Bash is equivalent to Claude Code on the executor (${{ matrix.shell }})
+        run: >-
+          tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --shell ${{ matrix.shell }} --output tmp/mcp-contract/pinned/equivalence-${{ matrix.shell }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
+        if: always()
+        with:
+          name: mcp-contract-pinned-equivalence-${{ matrix.shell }}-${{ github.sha }}
+          path: tmp/mcp-contract/pinned/equivalence-${{ matrix.shell }}/
 
   latest:
     # The next upgrade, checked before it is what we are debugging. Deliberately
