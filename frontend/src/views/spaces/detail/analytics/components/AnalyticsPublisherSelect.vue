@@ -4,7 +4,7 @@
     autocomplete="off"
     :items="items"
     :loading="loading"
-    label="老师"
+    label="出题人"
     density="comfortable"
     hide-details
     variant="outlined"
@@ -29,7 +29,7 @@ const props = defineProps<{
 const model = defineModel<number | null>({ required: true })
 
 const loading = ref(false)
-const publishers = ref<Array<{ title: string; value: number | null }>>([{ title: '全部老师', value: null }])
+const publishers = ref<Array<{ title: string; value: number | null }>>([{ title: '全部出题人', value: null }])
 
 const params = computed(() => buildAnalyticsApiParams('publishers', props.filters))
 
@@ -38,7 +38,7 @@ const load = async () => {
   try {
     const { data } = await SpacesApi.getAnalyticsPublishers(props.spaceId, params.value)
     publishers.value = [
-      { title: '全部老师', value: null },
+      { title: '全部出题人', value: null },
       ...data.publishers.map((publisher) => ({
         title: publisher.publisherName,
         value: publisher.publisherId,

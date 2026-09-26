@@ -68,6 +68,7 @@ function mountPage() {
     routes: [
       { path: '/', name: 'root', component: { template: '<div />' } },
       { path: '/spaces/:spaceId', name: 'SpacesDetail', component: { template: '<div />' } },
+      { path: '/spaces/:spaceId/board', name: 'SpaceBoardHome', component: { template: '<div />' } },
       { path: '/spaces/:spaceId/course', name: 'SpacesCourseHome', component: { template: '<div />' } },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: { template: '<div />' } },
     ],
@@ -193,9 +194,10 @@ describe('space creation', () => {
     expect(page.getByText('spaces.create.courseTemplateTag')).toBeTruthy()
   })
 
-  it('lands the creator in the new course instead of back on the list', async () => {
+  it('lands the creator in the new board instead of back on the list', async () => {
     listProjects.mockResolvedValue({ data: [] })
-    // 建出来的题目板就是一门课（服务端说 `isCourse`），所以落点是课程首页。
+    // 建出来的题目板就是一门课（服务端说 `isCourse`）—— 落点**不看这个**：新板走的
+    // 就是新题目板，课那几屏在题目板外壳里那格「课程」后面。
     spacesCreate.mockResolvedValue({ data: { space: { id: 42, isCourse: true } } })
     const page = mountPage()
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
@@ -203,21 +205,8 @@ describe('space creation', () => {
     await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Programming course')
     await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
 
-    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesCourseHome'))
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpaceBoardHome'))
     expect(page.router.currentRoute.value.params.spaceId).toBe('42')
-  })
-
-  it('lands a board that is not a course on the problem list', async () => {
-    listProjects.mockResolvedValue({ data: [] })
-    spacesCreate.mockResolvedValue({ data: { space: { id: 43 } } })
-    const page = mountPage()
-    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
-    await flush()
-    await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Not a course')
-    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
-
-    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetail'))
-    expect(page.router.currentRoute.value.params.spaceId).toBe('43')
   })
 
   it('hands over the invite code first, then lands in the new board', async () => {
@@ -247,7 +236,7 @@ describe('space creation', () => {
     expect(page.router.currentRoute.value.name).toBe('root')
 
     await fireEvent.click(page.getByRole('button', { name: 'spaces.inviteCodes.openCourse' }))
-    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesCourseHome'))
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpaceBoardHome'))
     expect(page.router.currentRoute.value.params.spaceId).toBe('7')
   })
 
@@ -309,5 +298,23 @@ describe('题目板名录页的第一次落点', () => {
     await flush()
 
     expect(queryByText(START_HERE)).toBeNull()
+  })
+})
+
+// 顶上那格「我的申请」里也有一颗「进入」。它和下面的空间卡片走**同一个**落点函数
+// （`lib/courseNav.ts` 的 `spaceEntryRoute`），从前它自己拼 `/spaces/{id}` —— 每个人都
+// 得记得那条地址该去哪儿，就会有一个人忘了。
+describe('从申请列表进入一块板', () => {
+  it('进的是题目板，和列表卡片同一处', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    applications.mockResolvedValue({
+      data: { items: [{ id: 9, name: 'Algorithms', intro: '', reviewStatus: 'APPROVED' }] },
+    })
+    const page = mountPage()
+    await waitFor(() => expect(page.getByText('spaces.review.enter')).toBeTruthy())
+    await fireEvent.click(page.getByText('spaces.review.enter'))
+
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpaceBoardHome'))
+    expect(page.router.currentRoute.value.params.spaceId).toBe('9')
   })
 })

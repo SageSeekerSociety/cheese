@@ -1,17 +1,17 @@
-"""学习维度: 学生怎么与 AI 协作、卡在哪 (issue #945 的教师看板 · 学习).
+"""学习维度: 成员怎么与 AI 协作、卡在哪 (issue #945 的管理员看板 · 学习).
 
-旁边五格读的是 赛题 与报名表，答的是「这门课组织得怎么样」；这一格读的是**学生
-项目里的对话**，答的是「学生卡在哪，下一讲该讲什么」。两种数据，两种问题。
+旁边五格读的是 赛题 与报名表，答的是「这门课组织得怎么样」；这一格读的是**成员
+项目里的对话**，答的是「成员卡在哪，下一讲该讲什么」。两种数据，两种问题。
 
 三件事，一件一个方法：
 
-- ``filters``: 这门课里，看的人能看见哪些学生、哪些知识点。
-- ``questions``: 按学生 / 时间 / 知识点筛出学生说过的话，每条都带得回原文的坐标。
+- ``filters``: 这门课里，看的人能看见哪些成员、哪些知识点。
+- ``questions``: 按成员 / 时间 / 知识点筛出成员说过的话，每条都带得回原文的坐标。
 - ``queues`` / ``outline``: 共性问题两个队列，以及从勾中的几条拼出来的讲解提纲。
 
 **谁能看什么，不在这里判。** 每一个项目都得先过
 ``app.auth.project_access.may_read_project`` —— 同一条判据也在
-``ActorResolver.authorize_project`` 上。能打开课程页不等于能读这门课下每一个学生
+``ActorResolver.authorize_project`` 上。能打开课程页不等于能读这门课下每一个成员
 项目的对话，而「出题者能读自己那门课的产出」正是那份判据里已有的第四种主张。
 列表处用布尔版（一个列表不能为第 40 个项目抛 403 就整体失败），取原文处用抛错版
 （单条取，错了就该说出来）。两份判据同一处定义，不另写一份。
@@ -26,7 +26,7 @@
   (``space_categories``) —— 项目所从属的那道赛题挂在哪个分类下。那是课程设计者
   自己划的格子，够用，但它不是知识点。
 
-私聊不进这一格: ``Topic.is_private`` 为真的房间是学生自己的对话，跟教师看板无关
+私聊不进这一格: ``Topic.is_private`` 为真的房间是成员自己的对话，跟管理员看板无关
 (issue #945: 「个人私聊和其他项目不会出现在导师对话视图中」)。
 """
 
@@ -52,7 +52,7 @@ from app.domain.user.models import User, UserProfile
 
 # 一条「提问」在界面上占多少字。摘要是给人扫一眼的，完整的原文点回去看。
 QUOTE_LIMIT = 160
-# 一次最多带回多少条。教师看板是拿来挑几条讲的，不是拿来翻页的。
+# 一次最多带回多少条。管理员看板是拿来挑几条讲的，不是拿来翻页的。
 QUESTION_LIMIT = 300
 
 #: 没有落库的那一维，连理由一起报出去 —— 空队列和一个坏掉的队列必须分得开。
@@ -64,7 +64,7 @@ REVIEW_FLAG_MISSING = (
 
 
 class _Question:
-    """一条能点回原文的学生发言，以及它落在哪个知识点上。"""
+    """一条能点回原文的成员发言，以及它落在哪个知识点上。"""
 
     __slots__ = (
         "block_id",
@@ -135,7 +135,7 @@ class SpaceLearningService:
         同一条路机构看板已经在走。
 
         逐个项目过 ``may_read_project``: 课程页对所有人可见（``Role.GUEST`` 就能
-        读 Space），学生项目的对话不是。一个都不许读时就返回空表，页面画空态。
+        读 Space），成员项目的对话不是。一个都不许读时就返回空表，页面画空态。
         """
         ids = await ProjectRepository(self._session).list_ids_for_space_tasks(space_id)
         allowed: list[uuid.UUID] = []
@@ -228,7 +228,7 @@ class SpaceLearningService:
         from_dt: datetime | None,
         to_dt: datetime | None,
     ):
-        """学生说的话: 参与者写的、而且不是芝士（或它的分身）说的。
+        """成员说的话: 参与者写的、而且不是芝士（或它的分身）说的。
 
         「是不是人说的」问的是署名而不是档位 —— ``AuthorType`` 早就只剩
         「参与者 / 平台自己」两档，人和 agent 都是 participant（见
@@ -243,7 +243,7 @@ class SpaceLearningService:
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
-                # 私聊不属于教师看板。
+                # 私聊不属于管理员看板。
                 Topic.is_private.is_(False),
             )
             .order_by(Block.created_at.desc())
@@ -347,7 +347,7 @@ class SpaceLearningService:
     # ------------------------------------------------------------------
 
     async def filters(self, *, space_id: int, handle: str | None) -> dict[str, Any]:
-        """这门课里能筛的两维: 学生、知识点。时间是前端那一条，不在这里列。"""
+        """这门课里能筛的两维: 成员、知识点。时间是前端那一条，不在这里列。"""
         project_ids = await self._readable_project_ids(space_id=space_id, handle=handle)
         projects = await self._load_projects(project_ids)
 
@@ -370,7 +370,7 @@ class SpaceLearningService:
         to_ts: int | None,
         knowledge_point: int | None,
     ) -> dict[str, Any]:
-        """按学生 / 时间 / 知识点筛出来的学生发言，每条都能点回原文。"""
+        """按成员 / 时间 / 知识点筛出来的成员发言，每条都能点回原文。"""
         project_ids = await self._readable_project_ids(space_id=space_id, handle=handle)
         projects = await self._load_projects(project_ids)
         items = await self._collect_questions(
@@ -394,7 +394,7 @@ class SpaceLearningService:
         """共性问题两条来源，各自一个队列。
 
         第一条 (`reviewFlag`) 没有数据源，如实报缺。第二条 (`stuckPoints`) 是统计
-        出来的: 同一批学生发言按知识点归堆，数**有多少个不同的学生**在这堆里说过
+        出来的: 同一批成员发言按知识点归堆，数**有多少个不同的成员**在这堆里说过
         话 —— 「多少人卡在同一处」才是共性，一个人问十遍不是。
 
         每条都带一个 ``example``（一条真实的发言 + 它的房间坐标），所以整个队列
@@ -428,7 +428,7 @@ class SpaceLearningService:
             bucket["projects"].add(str(question.project_id))
             bucket["questionCount"] += 1
             # questions 是按 created_at 倒序来的，所以第一条就是最新的 —— 拿它当
-            # 例子，老师看到的是最近那个学生说的话。
+            # 例子，管理员看到的是最近那个成员说的话。
             if question.created_at.timestamp() * 1000 > bucket["latestAt"]:
                 bucket["latestAt"] = int(question.created_at.timestamp() * 1000)
                 bucket["example"] = question.to_api()
@@ -444,7 +444,7 @@ class SpaceLearningService:
             }
             for bucket in grouped.values()
         ]
-        # 先按「多少个学生撞上」排，再按问题条数 —— 一个学生问十遍不如十个学生各
+        # 先按「多少个成员撞上」排，再按问题条数 —— 一个成员问十遍不如十个成员各
         # 问一遍值得讲。
         stuck_points.sort(
             key=lambda item: (item["studentCount"], item["questionCount"]),
@@ -469,12 +469,12 @@ class SpaceLearningService:
     ) -> dict[str, Any]:
         """把勾中的几条拼成一份能直接上课用的提纲。
 
-        只拼，不生成: 提纲里的每一句都是某个学生真的说过的话，加一条原文坐标，
-        加它落在哪个知识点上，加它是第几讲。没有一句是新写的 —— 老师要的是「拿
+        只拼，不生成: 提纲里的每一句都是某个成员真的说过的话，加一条原文坐标，
+        加它落在哪个知识点上，加它是第几讲。没有一句是新写的 —— 管理员要的是「拿
         这几条去讲」，不是「让 AI 替我写一节课」。
 
         ``block_ids`` 指回具体的消息，所以这里能**逐条**再判一次权限: 勾的时候
-        能读，不等于递提纲的时候还能读（被移出项目、被撤权的老师都走过这条路）。
+        能读，不等于递提纲的时候还能读（被移出项目、被撤权的管理员都走过这条路）。
         """
         if not block_ids:
             return {"title": "", "sections": [], "missing": []}

@@ -173,9 +173,9 @@ const metricCards = computed(() => {
       icon: 'mdi-clipboard-text-outline',
     },
     {
-      label: '发题老师数',
+      label: '发题人数',
       value: formatCount(overview.value.entityMetrics.publisherCount),
-      description: '产生过有效题目的老师',
+      description: '产生过有效题目的出题人',
       icon: 'mdi-account-tie-outline',
       tone: 'info' as const,
     },
@@ -201,7 +201,7 @@ const metricCards = computed(() => {
       tone: 'success' as const,
     },
     {
-      label: '真实学生人数',
+      label: '真实成员人数',
       value: formatCount(overview.value.studentMetrics.studentCount),
       description: '团队按成员快照展开',
       icon: 'mdi-school-outline',
@@ -267,7 +267,7 @@ const pulseItems = computed(() => [
     hint: '阈值由后端固定为 7 天',
   },
   {
-    label: '长期不活跃老师',
+    label: '长期不活跃出题人',
     value: formatCount(alerts.value?.inactivePublisherCount),
     hint: '阈值由后端固定为 30 天',
   },

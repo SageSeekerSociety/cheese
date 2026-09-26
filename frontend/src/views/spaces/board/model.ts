@@ -88,6 +88,12 @@ export interface SpaceInfo {
   intro: string
   owner: Person
   admins: Person[]
+  /**
+   * 这块板是不是一门课（服务端算的，见 `types/spaces.ts` 的 `isCourse`）。
+   * 题目板外壳只拿它决定**露不露那格「课程」** —— 课那几屏（教学单元、作业、小测、
+   * 小组）在老树的 `SpacesCourse*` 上，没有这一格，课里的人从题目板就走不回去。
+   */
+  isCourse: boolean
 }
 
 export const ROLE_LABEL: Record<Role, string> = {

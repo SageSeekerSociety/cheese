@@ -1,14 +1,14 @@
-"""一门课的作业与验收：教师一屏看到整门课，学生看不到。
+"""一门课的作业与验收：管理员一屏看到整门课，成员看不到。
 
-产品的「作业与验收」是**教师版面**：这门课有几道作业、交了多少、还有多少人
+产品的「作业与验收」是**管理员版面**：这门课有几道作业、交了多少、还有多少人
 没交、多少份等着看。这条链路上有四处必须是真的，本文件按浏览器会收到的状态
 码与数字逐条断：
 
 1. **一屏看整门课**：一次请求拿到这门课里每个人的最新一版提交，每行知道它是
-   哪道题、哪条报名记录 —— 不再是「逐道题 × 逐个学生」地各问一次；
+   哪道题、哪条报名记录 —— 不再是「逐道题 × 逐个成员」地各问一次；
 2. **`reviewed=false` 就是验收队列**：打完分那一份立刻不在队列里；
 3. **数字对得上**：没交的人数 = 报名人数 − 交过东西的人数；
-4. **只有这门课的老师看得到**：在板里的学生答 403，不在板里的答 404（不确认
+4. **只有这门课的管理员看得到**：在板里的成员答 403，不在板里的答 404（不确认
    这个板存在），而且**别的板子的提交不会串进来**。
 """
 
@@ -92,7 +92,7 @@ def _approve_task(api_client: TestClient, board: dict, task_id: int) -> None:
 def _enroll(
     api_client: TestClient, board: dict, task_id: int, user, user_token: str
 ) -> int:
-    """一个学生报名一门课的某道作业，返回报名记录 id。"""
+    """一个成员报名一门课的某道作业，返回报名记录 id。"""
     join = api_client.post(
         f"/tasks/{task_id}/participants",
         params={"member": user.user_id},
@@ -130,7 +130,7 @@ def _queue(api_client: TestClient, board: dict, token: str, **params):
 
 
 def _course_with_two_assignments(api_client: TestClient, user_client: UserCreator):
-    """一门课 + 两道作业 + 两个学生，各交了一份。"""
+    """一门课 + 两道作业 + 两个成员，各交了一份。"""
     board = _new_board(user_client, api_client)
     task_a = _create_task(api_client, board, name="第 3 周作业")
     task_b = _create_task(api_client, board, name="第 4 周作业")
@@ -184,7 +184,7 @@ def test_the_numbers_add_up(api_client: TestClient, user_client: UserCreator):
     """报名人数、交过的人数、还等多少人、没交的人数 —— 四个数字互相对得上。"""
     s = _course_with_two_assignments(api_client, user_client)
 
-    # 第三个学生报了第 4 周作业但没交 —— 「没交」的那个人。
+    # 第三个成员报了第 4 周作业但没交 —— 「没交」的那个人。
     carol = user_client.create_user()
     carol_token = _login(user_client, api_client, carol)
     carol_m = _enroll(api_client, s, s["task_b"], carol, carol_token)
@@ -229,7 +229,7 @@ def test_the_queue_is_what_has_no_review_yet(
 def test_a_student_in_the_board_gets_403(
     api_client: TestClient, user_client: UserCreator
 ):
-    """填码进这门课的是学生 —— 整门课的提交不是他能看的，但板子本身他看得见，
+    """填码进这门课的是成员 —— 整门课的提交不是他能看的，但板子本身他看得见，
     所以是 403 而不是 404。"""
     s = _course_with_two_assignments(api_client, user_client)
     added = api_client.post(
@@ -281,7 +281,7 @@ def test_another_board_submissions_do_not_leak_in(
 def test_a_board_admin_who_did_not_publish_is_still_a_teacher(
     api_client: TestClient, user_client: UserCreator
 ):
-    """助教：不是出题者，但是这门课的管理员 —— 教师版面照样是他的。"""
+    """助教：不是出题者，但是这门课的管理员 —— 管理员版面照样是他的。"""
     s = _course_with_two_assignments(api_client, user_client)
     assistant = user_client.create_user()
     assistant_token = _login(user_client, api_client, assistant)

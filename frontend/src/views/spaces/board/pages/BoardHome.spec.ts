@@ -6,6 +6,8 @@
 //    不含待审题）。这两点分开钉：普通成员看不到那一块，管理员看得到。
 // 3. 角色是**空间装完之后**才算出来的 —— 所以「管理员的首页」这条用例里，
 //    `loadBoard` 必须先跑完；顺序错了那块提示就不出现。
+// 4. **「出题目」那颗按钮不按角色显隐**（#1783 之后发题是成员的能力）—— 它只该
+//    因为「你是不是这块板的人」而不出现，而那件事轮不到首页判。
 import type { Component } from 'vue'
 
 import { defineComponent, h } from 'vue'
@@ -142,5 +144,16 @@ describe('空间首页', () => {
     await mount()
     await waitFor(() => expect(document.body.textContent).toContain('在等你审'))
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ approved: 'NONE' }))
+  })
+
+  it('普通成员也看得到「出题目」，落点是新外壳那一页', async () => {
+    signIn('someone-else')
+    await mount()
+    await waitFor(() => expect(document.body.textContent).toContain('数据结构空间'))
+    const publish = Array.from(document.querySelectorAll('a')).find((a) => a.textContent?.includes('出题目'))
+    expect(publish).toBeTruthy()
+    // 老树与新外壳各有一个发题页，路由名不同、落点差一整棵路由 —— 指错了就把人
+    // 送回老侧栏，而这一批要的正是「进来就是新界面」。
+    expect(publish?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/board/publish`)
   })
 })

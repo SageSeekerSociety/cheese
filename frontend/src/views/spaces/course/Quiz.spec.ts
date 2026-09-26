@@ -1,7 +1,7 @@
 // 小测那一屏。这一份钉三件事：
-//   1. **学生的载荷里没有答案键** —— 截止前可以改答案重交，能拿到答案键就等于能抄；
-//   2. 交完卷当场看到客观题的分，简答显示「等老师判」；
-//   3. 老师那一栏把等着判的简答列出来，判分调的是那一条接口。
+//   1. **成员的载荷里没有答案键** —— 截止前可以改答案重交，能拿到答案键就等于能抄；
+//   2. 交完卷当场看到客观题的分，简答显示「等管理员判」；
+//   3. 管理员那一栏把等着判的简答列出来，判分调的是那一条接口。
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -147,7 +147,7 @@ describe('the student answering', () => {
         myAnswers: [],
       },
     })
-    // 老师那份有 answer；学生那份载荷里连这一格都没有（服务端分叉，前端不判权限）。
+    // 管理员那份有 answer；成员那份载荷里连这一格都没有（服务端分叉，前端不判权限）。
     const page = await mountPage()
     await flush()
 
@@ -258,7 +258,7 @@ describe('the teacher grading', () => {
     const page = await mountPage()
     await flush()
 
-    // 老师的卷面上有答案键，队列里有那一条等着判的简答。
+    // 管理员的卷面上有答案键，队列里有那一条等着判的简答。
     expect(page.getAllByText(/要点：边界条件/).length).toBeGreaterThan(0)
     expect(page.getByText('因为要先想边界')).toBeTruthy()
     // 复核队列与全班表里各出现一次（同一个人）。

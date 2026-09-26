@@ -127,7 +127,7 @@ _WORKBENCH = Shell(
     terms={"project": "工作", "topic": "议题"},
 )
 
-#: 课程 (学生): first screen is 看板 for now — the course template's real first
+#: 课程 (成员): first screen is 看板 for now — the course template's real first
 #: screen (本周任务, or the 助教 conversation in an 答疑 course) is a page this
 #: build does not have yet, and `home` may only name a route that exists. When
 #: that page lands, this one line moves and nothing else does. 提问 is the noun
@@ -150,7 +150,7 @@ _COURSE_STUDENT = Shell(
     terms={"project": "课程", "topic": "提问"},
 )
 
-#: 课程 (老师): the board first — a teacher's question is 「这个班现在有什么在等
+#: 课程 (管理员): the board first — a teacher's question is 「这个班现在有什么在等
 #: 我」, which is exactly the column the board sorts by. 名册 second.
 _COURSE_TEACHER = Shell(
     name="course-teacher",

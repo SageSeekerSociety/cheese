@@ -1,13 +1,13 @@
-"""课程里的人：教师看到的学生、他们的项目、他们的组。
+"""课程里的人：管理员看到的成员、他们的项目、他们的组。
 
-课程模板「学生与分组」那一屏的数据（``GET /spaces/{spaceId}/course/roster``）。
+课程模板「成员与分组」那一屏的数据（``GET /spaces/{spaceId}/course/roster``）。
 三件必须是真的：
 
-1. **名单上是学生** —— 成员表里的每个人，减去本版管理员（一位老师也可以是成员，
-   但他出现在学生名单里只会让人数说谎）；
+1. **名单上是成员** —— 成员表里的每个人，减去本版管理员（一位管理员也可以是成员，
+   但他出现在成员名单里只会让人数说谎）；
 2. **项目与人对得上** —— 项目记的是 ``owner_handle``，名单给人看的昵称，两者要在
    服务端合成一条，不能把这个 join 丢给前端；
-3. **门只对教师开** —— 学生读到 403，门外人仍是 404（不做存在性确认）。
+3. **门只对管理员开** —— 成员读到 403，门外人仍是 404（不做存在性确认）。
 
 机制全部复用别处：成员表（``space_member``）、项目（锚在这版的赛题上）、小队。
 本文件测的是它们被摆成「一门课」之后的可观测结果。
@@ -36,7 +36,7 @@ def _login(user_client: UserCreator, api_client: TestClient, user) -> str:
 
 
 def _new_board(user_client: UserCreator, api_client: TestClient) -> dict:
-    """建版的人（= 本版 OWNER / 教师）+ 一块已过审的题目板。"""
+    """建版的人（= 本版 OWNER / 管理员）+ 一块已过审的题目板。"""
     creator = user_client.create_user()
     creator_token = _login(user_client, api_client, creator)
     suffix = unique_int(10000000, 99999999)
@@ -97,7 +97,7 @@ def _create_project(
     api_client: TestClient, token: str, *, owner: str, task_id: int, team_id: int | None
 ) -> str:
     body: dict = {
-        "name": "学生的项目",
+        "name": "成员的项目",
         "owner_handle": owner,
         "external_task_id": task_id,
     }
@@ -108,7 +108,7 @@ def _create_project(
     return resp.json()["data"]["id"]
 
 
-# --- 1. 教师拿到的是学生、他们的项目、他们的组 ---------------------------------
+# --- 1. 管理员拿到的是成员、他们的项目、他们的组 ---------------------------------
 
 
 def test_a_teacher_reads_the_students_their_projects_and_their_teams(
@@ -153,7 +153,7 @@ def test_a_teacher_reads_the_students_their_projects_and_their_teams(
 
     students = {row["user"]["id"]: row for row in data["students"]}
     assert set(students) == {alice.user_id, bob.user_id}
-    # 建版的人（教师）不在学生名单里 —— 他不在 member 表里，本来也不该在。
+    # 建版的人（管理员）不在成员名单里 —— 他不在 member 表里，本来也不该在。
     assert board["creator"].user_id not in students
 
     # 项目挂在它主人的那一行上，队也对上了。
@@ -173,7 +173,7 @@ def test_a_teacher_reads_the_students_their_projects_and_their_teams(
     }
 
 
-# --- 2. 学生看得到自己那一行，看不到全班 ---------------------------------------
+# --- 2. 成员看得到自己那一行，看不到全班 ---------------------------------------
 
 
 def test_a_student_reads_their_own_group(
@@ -224,7 +224,7 @@ def test_a_student_reads_their_own_group(
     assert empty == {"projectId": None, "team": None}
 
 
-# --- 3. 门只对教师开 -----------------------------------------------------------
+# --- 3. 门只对管理员开 -----------------------------------------------------------
 
 
 def test_a_student_member_cannot_read_the_roster(
@@ -262,13 +262,13 @@ def test_an_outsider_does_not_learn_the_board_exists(
     assert resp.status_code == 404, resp.text
 
 
-# --- 3. 教师做管理员之后也在名单外 ---------------------------------------------
+# --- 3. 管理员做管理员之后也在名单外 ---------------------------------------------
 
 
 def test_someone_made_a_teacher_leaves_the_student_list(
     api_client: TestClient, user_client: UserCreator
 ):
-    """一位「既是成员、又被设成管理员」的人：他算教师，不再算学生。
+    """一位「既是成员、又被设成管理员」的人：他算管理员，不再算成员。
 
     成员表与管理员表是两件事（``space_member`` 管谁能看见，``space_admin_relation``
     管谁能管理），同一个人可以两行都有。名单按后者把他摘出去。

@@ -56,7 +56,7 @@ const SPACE = {
   name: '数据结构题板',
   intro: '',
   avatarId: null,
-  admins: [{ user: { id: OWNER_ID, nickname: '老师' }, role: 'OWNER' }],
+  admins: [{ user: { id: OWNER_ID, nickname: '管理员' }, role: 'OWNER' }],
   announcements: '[]',
   taskTemplates: '[]',
   classificationTopics: [],
@@ -70,7 +70,7 @@ const Page = defineComponent({
 })
 
 async function mountPage(currentUserId: number | null) {
-  AccountService.user = currentUserId === null ? null : ({ id: currentUserId, nickname: '老师' } as never)
+  AccountService.user = currentUserId === null ? null : ({ id: currentUserId, nickname: '管理员' } as never)
 
   const router = createRouter({
     history: createMemoryHistory(),

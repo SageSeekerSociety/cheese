@@ -390,7 +390,7 @@ function confirmPdf() {
             </li>
           </ul>
           <p v-else class="att__empty">
-            还没有附件。题目本身能说清就不必附；要给学生起步代码、样例数据、题面 PDF 时再附。
+            还没有附件。题目本身能说清就不必附；要给成员起步代码、样例数据、题面 PDF 时再附。
           </p>
 
           <div class="att__actions">

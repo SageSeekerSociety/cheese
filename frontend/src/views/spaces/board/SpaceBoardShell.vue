@@ -30,6 +30,16 @@ const NAV = computed(() =>
     { name: 'SpaceBoardHome', label: '空间', icon: 'mdi-view-grid-outline', show: true },
     { name: 'SpaceBoardMine', label: '我的', icon: 'mdi-account-outline', show: true },
     { name: 'SpaceBoardAnnouncements', label: '公告', icon: 'mdi-bullhorn-outline', show: true },
+    // 「课程」这一格是**课才有的**，且谁都看得见：新建的题目板都是课（#1448），
+    // 而进板的落点 2026-09-26 起一律是题目板 —— 少了这一格，课里的人和教学单元、
+    // 作业、小测、小组之间就断了路（那几屏在老树的 `SpacesCourse*` 上）。它不是
+    // 管理格，所以不看 `isManager`。
+    {
+      name: 'SpacesCourseHome',
+      label: '课程',
+      icon: 'mdi-school-outline',
+      show: space.value?.isCourse === true,
+    },
     { name: 'SpaceBoardReview', label: '审核', icon: 'mdi-clipboard-check-outline', show: isManager.value },
     { name: 'SpaceBoardMembers', label: '成员', icon: 'mdi-account-group-outline', show: isManager.value },
     { name: 'SpaceBoardAnalytics', label: '数据看板', icon: 'mdi-chart-box-outline', show: isManager.value },

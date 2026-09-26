@@ -106,9 +106,10 @@ const myPending = computed(() => pending.value.filter((t) => t.publisher.handle 
         <p class="home__sub">任何人都可以出题。题目发出后由所有者或管理员审核，通过后上板，谁都能领。</p>
       </div>
       <div class="home__hero-actions">
-        <!-- 发题暂时走真平台已有那一页（口径也还是现状：管理员专属）。见 routes.ts。 -->
+        <!-- 谁都看得到这颗按钮：发题是**成员**的能力（#1783 把接口那道门从
+             管理员换成 `may_publish_in_space`），上不上板才是管理员的判断。
+             从前这里按 `isManager` 显隐，等于按钮和它背后的接口说两套话。 -->
         <v-btn
-          v-if="isManager"
           color="primary"
           variant="flat"
           prepend-icon="mdi-plus"

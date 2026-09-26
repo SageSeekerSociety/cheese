@@ -15,8 +15,11 @@ export type Space = {
   reviewStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
   /**
    * 这块题目板是不是一门课 —— 服务端按它默认分组声明的壳算（`catalog.py` 的
-   * `is_course_shell`）。题目板自己的屏幕不是项目、读不到壳，所以它只能凭这个
-   * 答复决定「进来看课程首页还是题目列表」。老题目板没有声明 → false。
+   * `is_course_shell`）。**新建的板都是课**（#1448），所以这不是「新板 / 老板」之别。
+   *
+   * 它管两件事：老侧栏画课程那几格还是题目那几格（`SpaceSidebar.vue`），以及题目板
+   * 外壳里露不露那格「课程」（`board/SpaceBoardShell.vue`）。**「进去落在哪」不看
+   * 它** —— 每块板都落在题目板上，理由见 `lib/courseNav.ts` 的 `spaceEntryRoute`。
    */
   isCourse?: boolean
   /**
@@ -43,7 +46,7 @@ export type SpaceTeaching = {
   systemPrompt?: string | null
   /** 这是这门课的第几周。 */
   currentWeek?: number | null
-  /** 本周讲到的内容，用老师自己的话写。 */
+  /** 本周讲到的内容，用管理员自己的话写。 */
   allowedTopics?: string[]
   /** 这门课还没教到的东西 —— 解法这周不该依赖的构造。 */
   avoidInCode?: string[]
@@ -129,7 +132,7 @@ export type DomainGroup = {
   updatedAt: number
 }
 
-/** 课程里的人：学生、他的项目、他的组（`SpacesApi.getCourseRoster`，教师可见）。 */
+/** 课程里的人：成员、他的项目、他的组（`SpacesApi.getCourseRoster`，管理员可见）。 */
 export type CourseRosterPerson = {
   id: number
   username: string
@@ -156,7 +159,7 @@ export type CourseRoster = {
   teams: CourseRosterTeam[]
 }
 
-/** 学生自己那一行（`SpacesApi.getMyCourseGroup`）：我在哪个组、组里还有谁。 */
+/** 成员自己那一行（`SpacesApi.getMyCourseGroup`）：我在哪个组、组里还有谁。 */
 export type MyCourseGroup = {
   projectId: string | null
   team: { id: number; name: string; members: CourseRosterPerson[] } | null

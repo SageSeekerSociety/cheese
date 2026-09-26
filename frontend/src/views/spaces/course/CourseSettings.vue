@@ -182,7 +182,7 @@ function loadTeaching() {
 
 watch(courseCategoryId, loadTeaching, { immediate: true })
 
-/** 逗号分隔 → 字符串数组（空项丢掉，老师随手多打一个逗号不该变成一条空知识点）。 */
+/** 逗号分隔 → 字符串数组（空项丢掉，管理员随手多打一个逗号不该变成一条空知识点）。 */
 function splitList(value: string): string[] {
   return value
     .split(',')

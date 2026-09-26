@@ -116,7 +116,7 @@ beforeEach(() => {
   members = [
     { user_handle: 'alice', name: '爱丽丝', source: 'owner' },
     { user_handle: 'ligan', name: '李干', source: 'team', team_handle: 'zhishi' },
-    { user_handle: 'mentor1', name: '老师', source: 'external' },
+    { user_handle: 'mentor1', name: '管理员', source: 'external' },
     { user_handle: 'cheese-x', name: '芝士', source: 'agent', agent: true },
   ]
 })
