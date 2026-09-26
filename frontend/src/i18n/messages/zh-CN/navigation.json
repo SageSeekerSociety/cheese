@@ -10,7 +10,9 @@
     "members": "成员",
     "docs": "项目文档",
     "settings": "项目设置",
-    "general": "全局"
+    "general": "全局",
+    "routines": "定时与触发",
+    "skills": "工作方法"
   },
   "spaces": "空间",
   "teams": "团队",
@@ -21,6 +23,7 @@
   "workspace": "工作区",
   "feedback": {
     "label": "帮助与反馈",
+    "docs": "使用文档",
     "unread": "帮助与反馈，有未读更新",
     "center": "反馈中心",
     "mine": "我的反馈",
@@ -45,6 +48,7 @@
       "system": "跟随系统",
       "light": "浅色",
       "dark": "深色"
-    }
+    },
+    "connections": "我的连接"
   }
 }

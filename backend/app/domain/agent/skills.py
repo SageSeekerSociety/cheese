@@ -118,18 +118,18 @@ _SHIPPED_NATIVE_SKILLS = ("documents",)
 #: them — the agent reads a command, runs it, and gets "No such file". So the
 #: whole directory travels.
 #:
-#: It is a list of suffixes rather than "everything there" because of the
-#: device path: each file is written through a shell heredoc, so a font or a
-#: screenshot would arrive corrupted rather than fail. Anything added to a
-#: skill outside this list is caught by
+#: It is a list of suffixes rather than "everything there" because every path
+#: carries a file as text, so a font or a screenshot would arrive corrupted
+#: rather than fail. Anything added to a skill outside this list is caught by
 #: `tests/unit/test_native_skill_files.py` at build time instead of silently
 #: not being shipped.
-_SKILL_FILE_SUFFIXES = (".md", ".py", ".sh", ".txt", ".json", ".typ")
+SKILL_FILE_SUFFIXES = (".md", ".py", ".sh", ".txt", ".json", ".typ")
 
-#: The device path ends each file's heredoc with this line, so a file
-#: containing it would cut itself off at that line. The test asserts no skill
-#: file does.
-SKILL_HEREDOC_MARKER = "CHEESE_NATIVE_SKILL"
+
+#: Folder names a project's own skill may not take: the platform ships these.
+RESERVED_SKILL_NAMES = frozenset(
+    {*_SHIPPED_NATIVE_SKILLS, "cheese", "cheese-docs", "chat-detail", "cheese-chat"}
+)
 
 
 def native_skill_files() -> dict[str, str]:
@@ -140,7 +140,7 @@ def native_skill_files() -> dict[str, str]:
         if not root.is_dir():
             continue
         for source in sorted(root.rglob("*")):
-            if source.suffix not in _SKILL_FILE_SUFFIXES or source.is_symlink():
+            if source.suffix not in SKILL_FILE_SUFFIXES or source.is_symlink():
                 continue
             relative = source.relative_to(_NATIVE_SKILL_SRC).as_posix()
             files[f"skills/{relative}"] = source.read_text(encoding="utf-8")

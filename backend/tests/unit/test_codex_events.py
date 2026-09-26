@@ -4,7 +4,10 @@ from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
+    AgentRetrying,
     AgentSessionInfo,
+    AgentStepFailed,
+    AgentStepOutput,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolUse,
@@ -168,3 +171,71 @@ def test_child_events_do_not_replace_root_session_or_finish_its_turn():
         assert stopped[0].text == "found it"
         assert stopped[0].agent_id == child
     assert [message.text for message in assembler.give_up()] == ["root pending"]
+
+
+def _error(message: str, *, will_retry: bool) -> dict:
+    return {
+        "method": "error",
+        "params": {
+            "threadId": "thread",
+            "turnId": "turn",
+            "willRetry": will_retry,
+            "error": {"message": message},
+        },
+    }
+
+
+def test_a_retry_without_a_count_is_still_a_retry():
+    """「Reconnecting... waiting for network」 says no attempt number, and the
+    room still has to hear that the turn is retrying rather than thinking."""
+    [event] = Assembler().accept(
+        _error("Reconnecting... waiting for network", will_retry=True)
+    )
+    assert isinstance(event, AgentRetrying)
+    assert event.attempt is None
+    assert event.error == "Reconnecting... waiting for network"
+
+
+def test_an_error_that_will_not_be_retried_is_left_to_the_turn():
+    """The failure that ends the turn arrives with ``turn/completed``; saying
+    「retrying」 for it would promise a retry that never comes."""
+    assert Assembler().accept(_error("stream disconnected", will_retry=False)) == []
+
+
+def _tool_completed(**item) -> dict:
+    return {
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread",
+            "item": {
+                "type": "dynamicToolCall",
+                "id": "call-1",
+                "tool": "bash",
+                "arguments": {"command": "make"},
+                "contentItems": [{"type": "inputText", "text": "make: *** Error 2"}],
+                **item,
+            },
+        },
+    }
+
+
+def test_a_tool_call_the_platform_answered_as_failed_marks_its_step():
+    """The platform's own tool bridge answers a failed call with
+    ``success: false``; that step turns red like any harness's failed step."""
+    events = Assembler().accept(_tool_completed(status="completed", success=False))
+
+    assert [type(e) for e in events] == [AgentStepFailed, AgentStepOutput]
+    assert events[0].call_id == "call-1"
+    assert events[0].text == "make: *** Error 2"
+
+
+def test_an_item_codex_itself_reports_failed_marks_its_step():
+    events = Assembler().accept(_tool_completed(status="failed", success=None))
+
+    assert isinstance(events[0], AgentStepFailed)
+
+
+def test_a_tool_call_that_worked_is_not_marked_failed():
+    events = Assembler().accept(_tool_completed(status="completed", success=True))
+
+    assert [type(e) for e in events] == [AgentStepOutput]

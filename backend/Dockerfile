@@ -201,4 +201,8 @@ EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8081/healthz || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081"]
+# A bounded shutdown: requests still in flight get 10s, then the lifespan hands
+# the running work to the next backend (app/core/ownership.py). Unbounded, one
+# long-lived stream would hold the handover back until the container's
+# stop_grace_period ran out and SIGKILL cut it off.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--timeout-graceful-shutdown", "10"]

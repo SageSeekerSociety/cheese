@@ -18,10 +18,12 @@ from app.domain.comments import models as comments  # noqa: F401
 from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
+from app.domain.docs_site import models as docs_site  # noqa: F401
 from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
 from app.domain.idempotency import models as idempotency  # noqa: F401
 from app.domain.identity import models as identity  # noqa: F401
+from app.domain.integration import models as integration  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.legal import models as legal  # noqa: F401
 from app.domain.llm import models as llm  # noqa: F401
@@ -36,9 +38,11 @@ from app.domain.notification import push_models as notification_push  # noqa: F4
 from app.domain.oauth import models as oauth  # noqa: F401
 from app.domain.passkey import models as passkey  # noqa: F401
 from app.domain.project import models as project  # noqa: F401
+from app.domain.project_skill import models as project_skill  # noqa: F401
 from app.domain.questions import models as questions  # noqa: F401
 from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401
+from app.domain.routine import models as routine  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.subscription import models as subscription  # noqa: F401

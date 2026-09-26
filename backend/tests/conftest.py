@@ -54,6 +54,7 @@ os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", "test-anthropic-token")
 # engine is built from settings.database_url at import time). -------------------
 from app.core.config import settings  # noqa: E402
 from tests import isolation  # noqa: E402
+from tests.support.hang import HANG_S  # noqa: E402
 
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (serial)
 # The runner slot this run is on, empty everywhere but a pool machine with more
@@ -1060,6 +1061,11 @@ def client(
                         c.portal.call(app_engine.dispose)
     finally:
         app.dependency_overrides.clear()
+        # Leaving the app hands its work over and holds the runner's turns, which
+        # is right for a process that exits next. This one goes on to run tests
+        # that drive the same runner without an app around it.
+        get_work_runner().start_turns()
+        get_work_runner().own_sessions(True)
         asyncio.run(setup_engine.dispose())
 
 
@@ -1553,7 +1559,7 @@ async def _fail_on_background_work(label: str) -> None:
     }
     if not pending:
         return
-    _, still_pending = await asyncio.wait(pending, timeout=2.0)
+    _, still_pending = await asyncio.wait(pending, timeout=HANG_S)
     if not still_pending:
         return
     offenders = sorted(t.get_coro().__qualname__ for t in still_pending)

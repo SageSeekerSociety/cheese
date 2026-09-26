@@ -105,11 +105,17 @@ class _FakeBackend:
     def bind_unread_probe(self, probe) -> None:
         self.unread_probe = probe
 
+    def bind_reachability(self, consumer) -> None:
+        return None
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         return False
 
     async def recover(self, device_id=None):
         return []
+
+    async def stop_listening(self) -> None:
+        return None
 
     async def replay(self, session, *, known_texts):
         return None

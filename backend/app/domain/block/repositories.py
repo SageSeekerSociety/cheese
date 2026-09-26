@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
@@ -208,6 +208,21 @@ class BlockRepository:
         )
         return await self._session.scalar(stmt) is not None
 
+    async def has_action(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID, action: str
+    ) -> bool:
+        """Whether this turn already announced this kind of action here."""
+        stmt = (
+            select(Block.id)
+            .where(
+                Block.topic_id == topic_id,
+                Block.turn_id == turn_id,
+                Block.meta["action"].as_string() == action,
+            )
+            .limit(1)
+        )
+        return await self._session.scalar(stmt) is not None
+
     async def delete(self, block: Block) -> None:
         await self._session.delete(block)
         await self._session.flush()
@@ -318,7 +333,7 @@ class BlockRepository:
                 block.meta = meta
         await self._session.flush()
 
-    async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> bool:
+    async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> Block | None:
         """Record on a 现场 step that its tool came back an error.
 
         Written onto the step that is already there rather than as a second
@@ -326,16 +341,53 @@ class BlockRepository:
         own would put the verdict somewhere the eye has to pair back up with
         the action. Same `meta` replacement rule as `mark_consumed` — an
         in-place mutation of a JSON column never saves.
+
+        Returns the step as it now reads, for whoever tells the room; None when
+        it is gone.
         """
         block = await self._session.get(Block, block_id)
         if block is None:
-            return False
+            return None
         meta = {**(block.meta or {}), "failed": True}
         if error:
             meta["error"] = error
         block.meta = meta
         await self._session.flush()
-        return True
+        return block
+
+    async def record_step_output(
+        self, block_id: uuid.UUID, output: str, total_bytes: int
+    ) -> Block | None:
+        """Keep on a 现场 step the tail of what its tool printed
+        (``domain/agent/step_output``) and how long the whole was. Same `meta`
+        replacement rule as above."""
+        block = await self._session.get(Block, block_id)
+        if block is None:
+            return None
+        block.meta = {
+            **(block.meta or {}),
+            "output": output,
+            "output_bytes": total_bytes,
+            # When the step last changed: 现场 reads its latest activity off it.
+            "at": datetime.now(UTC).isoformat(),
+        }
+        await self._session.flush()
+        return block
+
+    async def restate(
+        self, block_id: uuid.UUID, *, content: str, meta: dict
+    ) -> Block | None:
+        """Say again, in place, what an event block says — a notice whose news
+        moved on (the third retry of the same request, the wait that ended)
+        rather than a second line for the same thing. `meta` is merged over
+        what is there, by replacement, for the same reason as above."""
+        block = await self._session.get(Block, block_id)
+        if block is None:
+            return None
+        block.content = content
+        block.meta = {**(block.meta or {}), **meta}
+        await self._session.flush()
+        return block
 
     async def update_node(
         self, block: Block, *, node_type: str, struct_order: float

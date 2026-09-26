@@ -1029,6 +1029,28 @@ def test_only_the_credentials_requests_take_the_egress(monkeypatch, tmp_path):
     assert flow.server_conn.via is None
 
 
+def test_a_gateway_request_after_a_credential_request_keeps_its_own_route(
+    monkeypatch, tmp_path
+):
+    """mitmproxy hands the next request on a client connection the server
+    connection the previous one opened. After a subscription request (the
+    CLI's haiku calls) that connection goes through the egress, which refuses
+    anything but Anthropic: the project's gateway request must not inherit it."""
+    mod, flow = _platform_turn(
+        monkeypatch,
+        tmp_path,
+        credential="sk-ant-oat01-PLATFORM-SETUP",
+        pool="gateway",
+    )
+    mod.CREDENTIAL.egress_path.write_text("http://egress.example:3128\n")
+    flow.server_conn.via = ("http", ("egress.example", 3128))
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.request.host == "litellm.invalid"
+    assert flow.server_conn.via is None
+
+
 def test_without_an_egress_the_credentials_requests_go_direct(monkeypatch, tmp_path):
     mod, flow = _platform_turn(
         monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
@@ -1099,6 +1121,56 @@ def test_a_streamed_message_is_metered_through_the_response_tee(monkeypatch, tmp
     flow.response.stream(b"")  # sentinel
 
     assert mod.METER.used() == 100  # 10 input + 90 output
+
+
+def test_a_compressed_streamed_message_is_metered(monkeypatch, tmp_path):
+    """Anthropic gzips the SSE of a client that accepts it, as Claude Code does.
+    The client still gets the compressed bytes untouched, and the turn still
+    lands on the meter."""
+    import gzip
+
+    mod = _load_addon(monkeypatch, tmp_path)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.response = _make_response()
+    flow.response.headers["content-encoding"] = "gzip"
+
+    mod.responseheaders(flow)
+
+    body = gzip.compress(
+        b"\n".join(
+            [
+                b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+                b'"usage":{"input_tokens":10,"output_tokens":1}}}',
+                b'data: {"type":"message_delta","usage":{"output_tokens":90}}',
+                b"",
+            ]
+        )
+    )
+    for i in range(0, len(body), 7):
+        chunk = body[i : i + 7]
+        assert flow.response.stream(chunk) == chunk
+    flow.response.stream(b"")
+
+    assert mod.METER.used() == 100
+
+
+def test_a_message_response_with_no_readable_usage_is_reported(
+    monkeypatch, tmp_path, caplog
+):
+    mod = _load_addon(monkeypatch, tmp_path)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.response = _make_response()
+    flow.response.headers["content-encoding"] = "compress"
+
+    mod.responseheaders(flow)
+    flow.response.stream(b"\x1f\x9d whatever")
+    with caplog.at_level("WARNING"):
+        flow.response.stream(b"")
+
+    assert mod.METER.used() == 0
+    assert "not metered" in caplog.text
 
 
 def test_a_non_message_response_streams_without_metering(monkeypatch, tmp_path):

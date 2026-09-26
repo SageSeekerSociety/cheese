@@ -37,7 +37,6 @@ describe('platformErrorPresentation', () => {
       title: '运行环境存储空间不足',
       body: '这轮因运行环境存储空间不足而暂停，项目文件和已完成的改动都还在。',
       status: expect.any(String),
-      icon: 'mdi-harddisk-alert',
       retryable: true,
     })
   })
@@ -72,7 +71,10 @@ describe('platformErrorPresentation', () => {
       )
     )
 
-    expect(out?.icon).toBe('mdi-package-variant-closed-remove')
+    const generic = platformErrorPresentation(
+      eventBlock({ event_type: 'platform_error', code: 'node_offline', retryable: true })
+    )
+    expect(out?.status).not.toBe(generic?.status)
   })
 
   it('does not turn ordinary system events into incident cards', () => {

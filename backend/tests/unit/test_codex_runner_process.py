@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import functools
 import io
 import json
 import os
@@ -10,6 +11,7 @@ import signal
 import subprocess
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import AsyncMock
 
@@ -25,10 +27,19 @@ from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.service import AgentMessage, AgentResult
 
 
+@pytest.fixture
+async def on_disk():
+    """The mirror's own thread, as a subscription gives ``receive`` one."""
+    disk = ThreadPoolExecutor(max_workers=1)
+    loop = asyncio.get_running_loop()
+    yield lambda work, *args: loop.run_in_executor(disk, functools.partial(work, *args))
+    disk.shutdown()
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("attempt_host_write", [False, True])
 async def test_standalone_owner_survives_client_disconnect(
-    tmp_path, attempt_host_write
+    tmp_path, attempt_host_write, on_disk
 ):
     requests = []
 
@@ -215,7 +226,7 @@ async def test_standalone_owner_survives_client_disconnect(
                 for row in records
             )
             mirror = tmp_path / "backend-events.sqlite"
-            await receive(mirror, rpc)
+            await receive(mirror, rpc, on_disk)
             backlog = CodexBacklog(mirror)
             events = [
                 event for row in backlog.unread() for event in backlog.assemble(row)
@@ -226,7 +237,7 @@ async def test_standalone_owner_survives_client_disconnect(
                 len([event for event in events if isinstance(event, AgentResult)]) == 1
             )
             # A second backend reader sees the same message identity until landing.
-            await receive(mirror, rpc)
+            await receive(mirror, rpc, on_disk)
             reopened = CodexBacklog(mirror)
             replay = [
                 event for row in reopened.unread() for event in reopened.assemble(row)

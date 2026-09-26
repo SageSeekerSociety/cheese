@@ -1,16 +1,25 @@
 """Translate app-server item boundaries into the shared room event vocabulary."""
 
+import re
 from datetime import UTC, datetime
 
 from app.domain.agent.service import (
+    STEP_ERROR_MAX,
     AgentEvent,
     AgentMessage,
     AgentResult,
+    AgentRetrying,
     AgentSessionInfo,
+    AgentStepFailed,
+    AgentStepOutput,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolUse,
 )
+
+#: "attempt/limit" inside the message of an `error` notification that will be
+#: retried.
+RETRY_COUNT = re.compile(r"(\d+)\s*/\s*(\d+)")
 
 
 class Assembler:
@@ -52,6 +61,21 @@ class Assembler:
         if method == "turn/started":
             self.last_text.pop(params["threadId"], None)
             return []
+        if method == "error" and params.get("willRetry"):
+            # The app-server's only word on a retry: the message the build
+            # wrote for it ("Reconnecting... 2/5"). The counters are read out
+            # of that line when it has them; a failure that will NOT be retried
+            # is the turn's to report, in `turn/completed`.
+            said = str((params.get("error") or {}).get("message") or "")
+            counted = RETRY_COUNT.search(said)
+            return [
+                AgentRetrying(
+                    error=said,
+                    attempt=int(counted[1]) if counted else None,
+                    max_attempts=int(counted[2]) if counted else None,
+                    **self.attribution(params.get("threadId") or ""),
+                )
+            ]
         if method == "item/agentMessage/delta":
             eid = f"codex:{params['threadId']}:{params['itemId']}"
             message = self.pending.setdefault(
@@ -95,9 +119,34 @@ class Assembler:
                         item["tool"],
                         item["arguments"],
                         eid=eid,
+                        # The item's own id: its completion names the same one.
+                        call_id=item["id"],
                         **self.attribution(params["threadId"]),
                     )
                 ]
+            if item["type"] == "dynamicToolCall":
+                said = "\n".join(
+                    part.get("text", "")
+                    for part in item.get("contentItems") or []
+                    if isinstance(part, dict) and part.get("type") == "inputText"
+                )
+                owner = self.attribution(params["threadId"])
+                steps: list[AgentEvent] = []
+                # The call's answer said it failed (`success: false`, which the
+                # platform's own tool bridge sets), or the item did.
+                if item.get("success") is False or item.get("status") == "failed":
+                    steps.append(
+                        AgentStepFailed(
+                            call_id=item["id"],
+                            text=" ".join(said.split())[-STEP_ERROR_MAX:],
+                            **owner,
+                        )
+                    )
+                if said.strip():
+                    steps.append(
+                        AgentStepOutput(call_id=item["id"], text=said, **owner)
+                    )
+                return steps
             return []
         if method == "turn/completed":
             turn = params["turn"]

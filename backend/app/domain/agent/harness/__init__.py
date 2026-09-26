@@ -80,6 +80,14 @@ ActivityConsumer = Callable[[uuid.UUID, uuid.UUID, uuid.UUID, bool], Awaitable[N
 # design: the write is delivery, this is the receipt.
 ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 
+# (project, topic, work id, reachable, reason) — the machine an open turn runs on
+# went out of reach (False, with what the runtime saw) or came back (True). Not
+# an event of the session's: the session is on the far side of the gap, and
+# only the runtime reading it can say that it is there.
+ReachabilityConsumer = Callable[
+    [uuid.UUID, uuid.UUID, uuid.UUID, bool, str], Awaitable[None]
+]
+
 # (topic) → the loop-clock reading at which the OLDEST message we injected and
 # have not seen consumed was written, or None when nothing is waiting.
 #
@@ -432,6 +440,10 @@ class AgentRuntime(Protocol):
         """Where 「还有没有消息在等着被读」 is asked."""
         ...
 
+    def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
+        """Where 「这一轮在等它的设备」 goes."""
+        ...
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         """Is there a session here this runtime can still reach?
 
@@ -448,6 +460,13 @@ class AgentRuntime(Protocol):
         they SAID while nobody was listening is ``replay``'s job — this only
         establishes that we are listening.
         """
+        ...
+
+    async def stop_listening(self) -> None:
+        """Stop reading every session this process listens to, leaving the
+        sessions themselves running — the way out of a process that hands its
+        work to another (`app.core.ownership`). Two readers of one session land
+        what it says twice."""
         ...
 
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
@@ -476,7 +495,7 @@ class SessionControls(Protocol):
     #: files and commands live on the executor.
     executor_controls: frozenset[str]
 
-    def control_state(self, topic_id: uuid.UUID) -> dict:
+    async def control_state(self, topic_id: uuid.UUID) -> dict:
         """What the room's controls show: the session, its tasks, its state."""
         ...
 

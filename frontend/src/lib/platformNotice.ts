@@ -52,12 +52,19 @@ function showsInRoom(block: Block): boolean {
 /** 谁在管这件事。扫一眼不点开就能决定跟不跟自己有关。 */
 export type WhoTag = 'platform' | 'cheese' | 'human'
 
+/** 本轮改动里的一个文件：路径和它自己的增删行数。 */
+export interface ChangedFile {
+  path: string
+  added: number
+  removed: number
+}
+
 /** 后端每轮算出来的改动摘要（`meta.changeset`）。 */
 export interface ChangeSummary {
   filesTotal: number
   added: number
   removed: number
-  files: string[]
+  files: ChangedFile[]
   filesOmitted: number
 }
 
@@ -71,7 +78,12 @@ function changeSummary(block: Block): ChangeSummary | null {
     added: num(c.added),
     removed: num(c.removed),
     files: Array.isArray(c.files)
-      ? c.files.map((f) => String((f as Record<string, unknown>)?.path ?? '')).filter(Boolean)
+      ? c.files
+          .map((f) => {
+            const file = (f ?? {}) as Record<string, unknown>
+            return { path: String(file.path ?? ''), added: num(file.added), removed: num(file.removed) }
+          })
+          .filter((f) => f.path)
       : [],
     filesOmitted: num(c.files_omitted),
   }
@@ -130,6 +142,8 @@ export const AGENT_STATUS_EVENTS = new Set([
   'pr_closed',
   'force_merged',
   'migration_collision',
+  'api_retry',
+  'device_waiting',
 ])
 
 /** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */

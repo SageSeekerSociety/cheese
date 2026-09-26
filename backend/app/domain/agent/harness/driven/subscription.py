@@ -11,12 +11,23 @@ What a harness supplies is what its protocol decides: how to pull from its
 runner, how to read its mirror, which records open and close a turn, what to do
 with a record produced before the first input, and — where the harness reports
 it — which record says an input was read.
+
+The mirror is a sqlite file that commits synchronously, and every room on a
+backend shares one event loop, so no read or write of the mirror runs on that
+loop: a drain lands a record per transaction, and on a slow disk each of those
+syncs would stall every room this backend serves. They run on the mirror's own
+thread (``on_disk``) instead. One thread per mirror is what keeps the mirror's
+semantics: sqlite connections stay on the thread that opened them, and the
+writes happen one at a time, in the order the drain asked for them, each
+awaited before the next is asked for.
 """
 
 import asyncio
+import functools
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from app.domain.agent.harness import (
@@ -95,9 +106,28 @@ class Subscription[B: Backlog]:
         self.receipts, self.pulse = receipts, pulse
         self.lock = asyncio.Lock()
         self.forgotten_at = 0.0
+        self.disk = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"mirror {session.topic_id}"
+        )
+
+    async def on_disk[T](self, work: Callable[..., T], /, *args, **kwargs) -> T:
+        """Run ``work`` on the mirror's thread, after whatever was asked before."""
+        return await asyncio.get_running_loop().run_in_executor(
+            self.disk, functools.partial(work, *args, **kwargs)
+        )
+
+    async def release(self) -> None:
+        """Let the mirror go once the write it may be in the middle of is done.
+
+        A drain cancelled while it waits on the mirror leaves that write running
+        on the mirror's thread; whoever opens the file next must start after it,
+        not beside it.
+        """
+        await asyncio.to_thread(self.disk.shutdown)
 
     async def receive(self) -> None:
-        """Pull whatever the runner has that the mirror does not."""
+        """Pull whatever the runner has that the mirror does not, touching the
+        mirror only through ``on_disk``."""
         raise NotImplementedError
 
     def reader(self) -> B:
@@ -128,7 +158,7 @@ class Subscription[B: Backlog]:
     async def drain(self) -> int:
         async with self.lock:
             await self.receive()
-            reader = self.reader()
+            reader = await self.on_disk(self.reader)
             delivered = 0
             for entry in reader.unread():
                 assert isinstance(entry.record, dict)
@@ -178,8 +208,8 @@ class Subscription[B: Backlog]:
                             False,
                         )
                 if not reader.unfinished():
-                    reader.landed(through=entry.key)
+                    await self.on_disk(reader.landed, through=entry.key)
             if time.monotonic() - self.forgotten_at >= RETENTION_EVERY_S:
                 self.forgotten_at = time.monotonic()
-                reader.forget(older_than_s=RETENTION_S)
+                await self.on_disk(reader.forget, older_than_s=RETENTION_S)
             return delivered

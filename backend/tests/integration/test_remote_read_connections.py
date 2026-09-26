@@ -14,6 +14,7 @@ from app.core.errors import GatewayUnavailableError
 from app.domain.project import forge
 from app.domain.repository.forge_files import ProjectFiles
 from tests.conftest import TEST_DATABASE_URL
+from tests.support.hang import HANG_S
 
 
 @pytest.mark.anyio
@@ -163,7 +164,7 @@ async def test_forge_cancellation_keeps_the_single_connection_pool_reusable(
             repository_data_task = asyncio.create_task(
                 forge.repository_data(uuid.uuid4(), session, release_session=True)
             )
-            await asyncio.wait_for(entered_remote.wait(), timeout=2)
+            await asyncio.wait_for(entered_remote.wait(), timeout=HANG_S)
 
             async with sessions() as concurrent_session:
                 assert await concurrent_session.scalar(text("SELECT 1")) == 1

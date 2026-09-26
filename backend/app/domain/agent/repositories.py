@@ -99,6 +99,19 @@ class AgentTurnRepository:
         )
         return set(rows)
 
+    async def note_context(
+        self, turn_id: uuid.UUID, *, route: str, reply_to: uuid.UUID | None
+    ) -> None:
+        """Record what ending this turn needs, for whichever backend ends it."""
+        await self._session.execute(
+            update(AgentTurn)
+            .where(AgentTurn.id == turn_id)
+            .values(route=route, reply_to=reply_to)
+        )
+
+    async def get(self, turn_id: uuid.UUID) -> AgentTurn | None:
+        return await self._session.get(AgentTurn, turn_id)
+
     async def mark_credits_refused(self, turn_id: uuid.UUID, at: datetime) -> bool:
         """Stamp that admission refused this turn for spent credits (#715).
 

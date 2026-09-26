@@ -188,6 +188,16 @@ ALWAYS_PUSH = (
     "下一轮，也到不了任何别人手里。提交了却没推等于没有。"
 )
 
+#: 步骤清单是平台工具，每个 harness 都是同一个 `todo_write`；各自自带的那一套在启动
+#: 时关掉（见各 harness 的 ``behaviour.py``），所以什么时候用它要在这里说一次。
+TODO_WRITE = (
+    "## 步骤清单（todo_write）\n"
+    "多步的活（大约三步以上）开工时先用 `todo_write` 写下计划，房间里正在进行的那条"
+    "消息会原地显示这份清单。同一时刻只让一项 in_progress；做完一项就再写一次，把它"
+    "标成 completed、把下一项标成 in_progress。每次都传完整的清单。简单的问答不用写。"
+    "清单只说做到哪了，要说的话照样用 `chat_send` 发。"
+)
+
 
 def build_system_prompt(
     base: str,
@@ -221,6 +231,7 @@ def build_system_prompt(
             "（只起一次，定了别反复改。）"
         )
     parts.append(ALWAYS_PUSH)
+    parts.append(TODO_WRITE)
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if teaching is not None and (section := teaching_section(teaching)):
@@ -245,9 +256,11 @@ def build_system_prompt(
             "内容也照常可读，只是不在这里列出来；**没列出来 ≠ 不存在**。需要找"
             "它们时自己查（返回全部话题，含 archived 的标题和 id）：\n"
             '`platform_request(method="GET", '
-            'path="/topics?project_id=<本项目 id>")`\n'
-            "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
-            + lines
+            'path="/topics?project_id=<本项目 id>&topic=<本话题 id>")`\n'
+            "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。"
+            "读项目级的清单（`/topics`、`/projects/<id>/tasks`、`decisions`、"
+            "`weeklies`、`milestones`、`library`、`artifacts`）都要带 "
+            "`topic=<本话题 id>` 点名你所在的位置，不带会 403——那不是没权限。\n" + lines
         )
     if artifacts is not None:
         # 产物清单进每一轮的开场 (#1085 结论三)。它在这里是为了让下一次交付点得准
@@ -459,7 +472,37 @@ def attachment_prompt_line(
     )
 
 
-def prompt_line(b, *, embeds_images: bool) -> str:
+# A quote is there to say WHICH message a reply answers and what it said, not to
+# replay it: a long report 芝士 wrote is already in its own session, and a reply
+# to it usually names one point. The cap keeps one reply from carrying pages.
+REPLY_QUOTE_LIMIT = 1500
+
+
+def reply_quote(parent, *, recipient: str | None) -> str:
+    """The lines under a reply that quote the message it answers.
+
+    In the room the reply shows its parent; the prompt used to carry only the
+    reply's own words, so 「@芝士 改一下这条」 reached 芝士 without 「这条」. The
+    parent is often not in the backlog either — an earlier turn already read it.
+
+    Every line starts with ``>`` so none of it can pass for a speaker line, and
+    it is quoted text in any case: the parent's author said it, not the person
+    replying."""
+    if parent.kind == BlockKind.attachment:
+        body = f"（文件 {parent.content}）"
+    else:
+        body = strip_platform_notice(parent.content).strip()
+        if len(body) > REPLY_QUOTE_LIMIT:
+            body = body[:REPLY_QUOTE_LIMIT] + "…"
+    whose = "你之前" if parent.author == recipient else f" [{parent.author}] "
+    lines = body.splitlines() or [""]
+    quoted = "\n".join(f"> {line}" if line else ">" for line in lines)
+    return f"> 回复的是{whose}的这条消息：\n{quoted}"
+
+
+def prompt_line(
+    b, *, embeds_images: bool, replied=None, recipient: str | None = None
+) -> str:
     """One speaker-labelled prompt line per pending human block.
 
     An attachment block is a worktree image, and the line has to describe how it
@@ -476,9 +519,16 @@ def prompt_line(b, *, embeds_images: bool) -> str:
     and handed nothing, an agent does not raise — it writes a confident answer
     about a picture it never saw, and nothing downstream marks that answer as
     invented. Saying "去打开这个文件" fails safe: worst case it reports it could
-    not read the path."""
+    not read the path.
+
+    ``replied`` is the block this one answers, when it is a reply: its quote
+    follows the line (`reply_quote`)."""
     if b.kind == BlockKind.attachment:
-        return attachment_prompt_line(
+        line = attachment_prompt_line(
             b.author, b.content, embeds_images=embeds_images, mime=b.mime_type or ""
         )
-    return f"[{b.author}]: {strip_platform_notice(b.content)}"
+    else:
+        line = f"[{b.author}]: {strip_platform_notice(b.content)}"
+    if replied is None:
+        return line
+    return f"{line}\n{reply_quote(replied, recipient=recipient)}"

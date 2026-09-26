@@ -331,11 +331,10 @@ async function onSetRole(handle: string, role: string) {
   color: var(--muted);
   font-size: 0.6rem;
 }
-/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）：--ink 的方块、反色的字。
-   --ink 随主题反转，所以字用 --surface 跟着反转。 */
+/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）：反色的方块。 */
 .members-mini__face--ai {
-  color: var(--surface);
-  background: var(--ink);
+  color: var(--inverse-ink);
+  background: var(--inverse-surface);
   border-radius: var(--radius-sm);
 }
 

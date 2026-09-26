@@ -92,9 +92,11 @@ class Settings(BaseSettings):
     # leave room for the migration the deploy runs and for anyone holding a
     # psql. The owner registers devices and answers bindings; it never fans out
     # the way a page load does, so the compose file hands it DB_POOL_SIZE=5 and
-    # DB_MAX_OVERFLOW=5 and the backends take the rest: 2 x 35 + 10 + 10 = 90
-    # of the 97 a default PostgreSQL offers once its superuser reserve is taken
-    # out (tests/unit/test_db_pool_fits_the_server.py holds this arithmetic). A
+    # DB_MAX_OVERFLOW=5 and the backends take the rest. Each backend also holds
+    # one connection outside its pool for the owner lock (`core.ownership`):
+    # 2 x (35 + 1) + 10 + 10 = 92 of the 97 a default PostgreSQL offers once its
+    # superuser reserve is taken out (tests/unit/test_db_pool_fits_the_server.py
+    # holds this arithmetic). A
     # box whose server is configured larger can raise these; a box that adds a
     # fourth pool has to lower them. dev's server was raised to 200 on
     # 2026-09-18 (conf.d/10-connections.conf on cheese-dev-env1-postgresql).
@@ -161,6 +163,10 @@ class Settings(BaseSettings):
     # the compose file may claim it.
     deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
+    #: A person's mail server may resolve to a private or loopback address, and
+    #: may be spoken to without TLS. Only for a local test mail server: on a
+    #: deployment it would let anyone make the backend dial its own network.
+    integration_allow_private_hosts: bool = False
     # Dedicated content domain, outside the platform's registrable domain.
     # Empty until its wildcard DNS/TLS and host-preserving gateway are ready.
     sites_domain: str = ""
@@ -258,6 +264,23 @@ class Settings(BaseSettings):
     # Requires per-token pricing configured on the gateway models to accrue spend;
     # unset = budgets are not set (L1 metering still works, token-based).
     llm_gateway_credit_usd: float | None = None
+
+    # --- Docs site (app/domain/docs_site) ---
+    # Where 问芝士 reads the docs from: the frontend image serves the built
+    # site, so the backend asks its own deployment for the same version readers
+    # see. Unset, 问芝士 answers that it is unavailable.
+    docs_index_url: str | None = "http://frontend/docs/ask-index.json"
+    # The gateway model 问芝士 answers with. Its virtual key is minted through
+    # `llm_gateway_admin_base` and capped at this budget per 30 days.
+    docs_assistant_model: str = "deepseek-flash"
+    docs_assistant_budget_usd: float = 20.0
+    # Per signed-in user, and across one backend process.
+    docs_assistant_hourly_limit: int = 20
+    docs_assistant_daily_limit: int = 100
+    docs_assistant_concurrency: int = 8
+    docs_question_retention_days: int = 90
+    # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
+    docs_dev_session_seconds: int = 3600
 
     # --- ChatGPT subscription import (app/domain/subscription) ---
     # A platform-level ChatGPT subscription rides the gateway as a runtime model
@@ -667,6 +690,12 @@ class Settings(BaseSettings):
     # turn, and its whole purpose is catching the case where nothing else will
     # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # How long a backend on its way out waits for the prompts it is still
+    # sending, and the receipts it is still expecting, before it hands its
+    # sessions to the next backend anyway (`app.core.ownership`). It has to fit
+    # inside the container's `stop_grace_period` together with uvicorn's own
+    # graceful shutdown, or the handover is cut off by a SIGKILL halfway.
+    handover_timeout_s: float = Field(default=20.0, ge=0)
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)
     # How long a registered turn may produce nothing — no block, no frame —

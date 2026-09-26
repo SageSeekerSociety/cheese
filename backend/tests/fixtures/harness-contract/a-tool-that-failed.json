@@ -48,7 +48,30 @@
       ]
     },
     "codex": {
-      "difference": "no-tool-failure-signal"
+      "records": [
+        {
+          "method": "item/completed",
+          "params": {
+            "threadId": "session-1",
+            "item": {
+              "type": "dynamicToolCall",
+              "id": "toolu_1",
+              "tool": "bash",
+              "arguments": {
+                "command": "pandoc a.md"
+              },
+              "status": "failed",
+              "success": false,
+              "contentItems": [
+                {
+                  "type": "inputText",
+                  "text": "bash: pandoc: command not found"
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
   },
   "events": [
@@ -56,6 +79,10 @@
       "kind": "step_failed",
       "call_id": "toolu_1",
       "text": "bash: pandoc: command not found"
+    },
+    {
+      "kind": "step_output",
+      "call_id": "toolu_1"
     }
   ],
   "extension": {

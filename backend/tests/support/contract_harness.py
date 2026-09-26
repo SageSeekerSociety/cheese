@@ -259,10 +259,11 @@ class ContractHarness:
         raise NotImplementedError("the contract harness runs no model")
         yield  # pragma: no cover - makes this an async generator
 
-    # The protocol asks a runtime to accept these four; it does not ask it to
+    # The protocol asks a runtime to accept these five; it does not ask it to
     # keep them. Nothing here ever produces an event, an activity ping, a
-    # receipt or an unread count, so a field holding the consumer would be
-    # state with no reader — the kind of thing this set exists to delete.
+    # receipt, an unread count or an unreachable machine, so a field holding
+    # the consumer would be state with no reader — the kind of thing this set
+    # exists to delete.
     def bind_events(self, consumer: Any) -> None:
         return None
 
@@ -275,11 +276,17 @@ class ContractHarness:
     def bind_unread_probe(self, probe: Any) -> None:
         return None
 
+    def bind_reachability(self, consumer: Any) -> None:
+        return None
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         return topic_id in self._held
 
     async def recover(self, device_id: str | None = None) -> list[SessionRef]:
         return [held.ref for held in self._held.values()]
+
+    async def stop_listening(self) -> None:
+        return None
 
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
         return None

@@ -141,6 +141,29 @@
   },
   "room": {
     "noTasks": "No tasks",
+    "site": {
+      "agents": {
+        "all": "All"
+      },
+      "output": {
+        "show": "Output ({size})",
+        "hide": "Hide output",
+        "loading": "Loading output",
+        "failed": "Could not load the output",
+        "tail": "Showing the last {size}"
+      },
+      "status": {
+        "thinking": "Thinking",
+        "acting": "{verb}",
+        "retrying": "Retrying",
+        "retryingCount": "Retrying (attempt {attempt})",
+        "waiting": "Waiting for the machine",
+        "stopped": "Stopped",
+        "idle": "Idle",
+        "elapsed": "{span} so far",
+        "quiet": "last activity {span} ago"
+      }
+    },
     "menu": {
       "more": "More",
       "focus": "Focus mode",
@@ -176,6 +199,37 @@
       "action": "Retry",
       "nothingPending": "Nothing to retry",
       "failed": "Retry failed"
+    },
+    "notice": {
+      "platform": "Platform",
+      "changedFiles": "Changed files",
+      "moreFiles": "{n} more files"
+    },
+    "message": {
+      "copy": "Copy",
+      "copied": "Copied"
+    },
+    "outbox": {
+      "failed": "Not sent: {reason}",
+      "undelivered": "Not delivered",
+      "edit": "Edit",
+      "editHint": "Put it back in the message box"
+    },
+    "newMessages": "new",
+    "composer": {
+      "replyTo": "Replying to {name}: {text}",
+      "cancelReply": "Cancel reply",
+      "removeAttachment": "Remove {name}",
+      "summon": "Hand to {name}",
+      "summonShort": "Hand off",
+      "summonOn": "{'@'}{name} is mentioned. Click to remove",
+      "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)"
+    },
+    "dispatched": {
+      "created": "New task",
+      "title": "“{title}”",
+      "done": "Done",
+      "running": "In progress"
     }
   },
   "members": {

@@ -3,10 +3,8 @@ import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
-import ViteFonts from 'unplugin-fonts/vite'
 // Utilities
 import { defineConfig } from 'vite'
-import viteCompression from 'vite-plugin-compression'
 import { prismjsPlugin } from 'vite-plugin-prismjs'
 import { VitePWA } from 'vite-plugin-pwa'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
@@ -24,24 +22,9 @@ export default defineConfig({
     // https://github.com/vuetifyjs/vuetify-loader/tree/next/packages/vite-plugin
     vuetify({
       autoImport: true,
-    }),
-    ViteFonts({
-      google: {
-        families: [
-          {
-            name: 'Roboto',
-            styles: 'wght@100;300;400;500;700;900',
-          },
-        ],
-      },
-      // unplugin-fonts preloads EVERY font file in the bundle unless told not
-      // to: `custom.preload` is on by default even when no custom fonts are
-      // declared. That put 64 `<link rel="preload" as="font">` on every page,
-      // 40 of them KaTeX faces the login page never renders, each a request
-      // that competes with the app's own chunks. `families: []` is there only
-      // because the type demands it; the line that matters is `preload: false`.
-      // The @font-face rules still fetch a face the moment something uses it.
-      custom: { families: [], preload: false },
+      // Vuetify writes `Roboto` into `html` and every `.text-*` typography
+      // class. This file points both at the app's own font stack.
+      styles: { configFile: 'src/styles/vuetify-settings.scss' },
     }),
     prismjsPlugin({
       // The list is what this product's code blocks actually contain — agent
@@ -82,7 +65,6 @@ export default defineConfig({
       theme: 'solarizedlight',
       css: true,
     }),
-    viteCompression(),
     // PWA / offline support. Goal (owner spec): the app shell + already-seen
     // content load offline; live features (WS chat, notifications)
     // degrade gracefully and auto-recover when the network returns. NO offline
@@ -177,13 +159,11 @@ export default defineConfig({
         // Keep '/' out of the precache's implicit '/index.html' alias so the
         // public navigation rule below can fetch the current HTML online.
         directoryIndex: null,
-        // Precache the app shell. maximumFileSizeToCacheInBytes is raised well
-        // above the 2 MiB default because this bundle is heavy (monaco / tiptap
-        // / prismjs-all) — the shell-critical chunks (vue, vuetify, entry) must
-        // land in precache or an offline reload white-screens. The genuinely
-        // huge, view-specific chunks that exceed even this are NOT precached;
-        // the /assets/ runtime cache below picks them up on first online visit
-        // instead, so precache stays bounded.
+        // Precache the app shell: the shell-critical chunks (vue, vuetify,
+        // entry) must land in precache or an offline reload white-screens.
+        // Chunks over workbox's 2 MiB default are NOT precached; the /assets/
+        // runtime cache below picks them up on first online visit instead, so
+        // precache stays bounded.
         //
         // `.woff` is deliberately absent while `.woff2` stays. Both formats of
         // the same faces ship (MDI 574 KB + 394 KB, plus 20 KaTeX pairs) and no
@@ -202,7 +182,7 @@ export default defineConfig({
         // waved it through and every install downloaded it. Same reason, same
         // treatment: keep both OUT of precache (that is "别缓存到爆"); the
         // /assets/ runtime cache below picks them up on first online use.
-        // `docs/**` is the user manual (docs/manual → public/docs), not part of
+        // `docs/**` is the docs site (docs/site → public/docs), not part of
         // this app's shell: precaching it made every install download 55 extra
         // files it may never open, and each edit to the manual would then have
         // to reach people through a service-worker update.
@@ -210,12 +190,6 @@ export default defineConfig({
         // 只有浏览器的安装弹窗会去取它，跟 App 能不能离线跑毫无关系，别让每次安装
         // 都白下 100 KB。
         globIgnores: ['**/*.worker-*.js', '**/monaco-*.js', 'docs/**', 'screenshots/**'],
-        // Raised from the 2 MiB default so the shell-critical `vendor` chunk
-        // (~5 MB) is precached — leaving it out is exactly the "离线白屏" the
-        // spec warns against. Do NOT tune this number to drop one specific
-        // chunk — it is a blanket rule and would take unrelated chunks with it.
-        // Anything that should not be precached goes in `globIgnores` by name.
-        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         // 这两行**故意不写**（原来写着 clientsClaim/skipWaiting，都是 true）。
         // 它们是「新 worker 立刻接管」的开关，留着就等于绕过 registerType: 'prompt'
@@ -384,10 +358,9 @@ export default defineConfig({
           // unassigned, Rollup merged it into the first manual chunk that
           // needed it, which after the split below was `monaco`, so the entry
           // and every route chunk imported `monaco` just to reach the helper
-          // and Monaco was back on the first paint. Pin it where the entry
-          // already goes.
+          // and Monaco was back on the first paint. Give it a chunk of its own.
           if (id.includes('vite/preload-helper')) {
-            return 'vendor'
+            return 'preload-helper'
           }
           if (id.includes('node_modules')) {
             // Monaco is the largest package in node_modules and only the code
@@ -434,10 +407,6 @@ export default defineConfig({
             if (id.includes('@editorjs')) {
               return 'editorjs'
             }
-            // katex 单独一个 chunk
-            if (id.includes('katex')) {
-              return 'katex'
-            }
             // dayjs 单独一个 chunk
             if (id.includes('dayjs')) {
               return 'dayjs'
@@ -450,8 +419,11 @@ export default defineConfig({
             if (id.includes('axios')) {
               return 'axios'
             }
-            // 其他 node_modules 内的包统一归到 vendor
-            return 'vendor'
+            // Everything else is left to Rollup, which places a package by who
+            // imports it. A catch-all `vendor` here once put exceljs, pdf.js,
+            // xterm, yjs and KaTeX on every first paint, although the code only
+            // reaches them through `import()`: a manual chunk ignores that and
+            // becomes a static import of the entry.
           }
         },
       },

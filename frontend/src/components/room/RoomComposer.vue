@@ -6,8 +6,8 @@
 // 它」谁也答不上来，而只有开关那条是通的。三个入口（手打 @、点按钮、⌘/Ctrl+
 // Enter）写的都是同一个 @，你看得见，也能自己删。
 //
-// 草稿和待发附件**不归它管**：那两样要跟着话题走、跨刷新活下来，而话题什么时候
-// 换只有房间知道。正文是 v-model，附件由房间传进来——它只负责画和发。
+// 草稿、回复对象和待发附件**不归它管**：那几样要跟着话题走、跨刷新活下来，而话题
+// 什么时候换只有房间知道。正文是 v-model，其余由房间传进来——它只负责画和发。
 import type { LibraryFile } from '../../api'
 import type { ChatAttachment, Topic } from '../../cx_types'
 
@@ -17,8 +17,13 @@ import { useDisplay } from 'vuetify'
 import { listProjectLibrary } from '../../api'
 import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
 import { IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
-import AttachmentTile from '../AttachmentTile.vue'
+import { avatarColor, avatarInitial } from '../../utils/avatar'
 import ExternalTag from '../common/ExternalTag.vue'
+
+import AttachmentChip from './AttachmentChip.vue'
+import ComposerChip from './ComposerChip.vue'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
@@ -36,6 +41,8 @@ const props = defineProps<{
   /** 已经传上去、等着跟下一条一起发出去的附件。 */
   atts: ChatAttachment[]
   attsUploading: boolean
+  /** 这条消息回复的是哪一条，读出来的样子（「回复 谁：说了什么」）。不回复时是 null。 */
+  replyLabel?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -45,6 +52,7 @@ const emit = defineEmits<{
   (e: 'drop-files', event: DragEvent): void
   (e: 'paste', event: ClipboardEvent): void
   (e: 'remove-att', index: number): void
+  (e: 'clear-reply'): void
   (e: 'add-library-file', path: string): void
 }>()
 
@@ -107,6 +115,8 @@ interface MentionItem {
   external?: boolean
   // 二级菜单里这一项属于哪一组（同一组的标题只画一次）。
   group?: string
+  // 人的 handle：头像的底色按它算，和时间线上这个人的头像同一个颜色。
+  handle?: string
 }
 // 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
 // at the top. expandMentions turns them into <@all>/<@here>.
@@ -185,6 +195,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
       sub: `@${m.handle}`,
       agent: m.agent,
       external: !!m.external,
+      handle: m.handle,
     })),
     ...props.topicList
       .filter((t) => t.kind !== 'root')
@@ -275,6 +286,13 @@ function mentionsAgent(expanded: string): boolean {
 const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
 // 这个房间的芝士是谁，现在知道了吗。
 const summonReady = computed(() => props.agentSeat !== null)
+// 那颗按钮上的字。窄屏收掉名字，只留「交给」；读屏读的一直是全名。
+const summonText = computed(() => ({
+  label: t('work.room.composer.summon', { name: props.agentName }),
+  short: t('work.room.composer.summonShort'),
+  on: t('work.room.composer.summonOn', { name: props.agentName }),
+  off: t('work.room.composer.summonOff', { name: props.agentName }),
+}))
 
 // 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
 // handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
@@ -373,6 +391,15 @@ function sendDraft(opts?: { summon?: boolean }) {
   emit('send', { content, summon: props.alwaysSummon || mentionsAgent(content) })
 }
 
+// 拿掉的那一枚离开时脱出排版（absolute），后面的才能滑过来补位；脱出之前先把它钉
+// 在原来的位置上，不然它会跳到这一行的最左边再淡出。
+function pinLeaving(el: Element) {
+  const chip = el as HTMLElement
+  chip.style.left = `${chip.offsetLeft}px`
+  chip.style.top = `${chip.offsetTop}px`
+  chip.style.width = `${chip.offsetWidth}px`
+}
+
 defineExpose({
   /** @ 完人、点完按钮、起手草稿写完之后要把光标还回来——这是最烦人的一处。 */
   focus() {
@@ -391,58 +418,88 @@ defineExpose({
     @drop.prevent="onDropFiles"
   >
     <!-- @-autocomplete: 没打字是「人 / 群播 / 资料库」这一级，打了字就是搜索。 -->
-    <div v-if="mentionMatches.length || mentionLevel === 'library'" class="mention-menu">
-      <div v-if="mentionLevel === 'library'" class="mention-menu-head" title="按 Esc 返回">
-        <v-icon size="13">mdi-folder-outline</v-icon>
-        <span class="mention-menu-name">资料库</span>
+    <Transition name="menu-rise">
+      <div v-if="mentionMatches.length || mentionLevel === 'library'" class="mention-menu">
+        <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
+        <Transition :name="mentionLevel === 'library' ? 'level-in' : 'level-out'" mode="out-in">
+          <div :key="mentionLevel" class="mention-menu-level">
+            <div v-if="mentionLevel === 'library'" class="mention-menu-head" title="按 Esc 返回">
+              <v-icon size="13">mdi-folder-outline</v-icon>
+              <span class="mention-menu-name">资料库</span>
+            </div>
+            <template v-for="(mm, i) in mentionMatches" :key="mm.kind + mm.insert">
+              <div v-if="mm.group && mm.group !== mentionMatches[i - 1]?.group" class="mention-menu-group">
+                {{ mm.group }}
+              </div>
+              <button type="button" class="mention-menu-item" @click="pickMention(mm)">
+                <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
+                  <v-icon size="13">mdi-bullhorn-outline</v-icon>
+                </span>
+                <span v-else-if="mm.kind === 'member' && mm.agent" class="mention-avatar mention-avatar--agent">{{
+                  avatarInitial(mm.label)
+                }}</span>
+                <span
+                  v-else-if="mm.kind === 'member'"
+                  class="mention-avatar"
+                  :style="{ backgroundColor: avatarColor(mm.handle) }"
+                  >{{ avatarInitial(mm.label) }}</span
+                >
+                <span v-else-if="mm.kind === 'category'" class="mention-avatar mention-avatar--file">
+                  <v-icon size="13">mdi-folder-outline</v-icon>
+                </span>
+                <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
+                  <v-icon size="13">mdi-file-outline</v-icon>
+                </span>
+                <span v-else class="mention-avatar mention-avatar--topic">
+                  <v-icon size="13">mdi-pound</v-icon>
+                </span>
+                <span class="mention-menu-name">{{ mm.label }}</span>
+                <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
+                <ExternalTag v-else-if="mm.external" />
+                <span class="mention-menu-sub">{{ mm.sub }}</span>
+                <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
+                <span v-else-if="i === 0" class="mention-menu-hint">Enter</span>
+              </button>
+            </template>
+            <div v-if="mentionLevel === 'library' && !mentionMatches.length" class="mention-menu-group">
+              暂无匹配的文件
+            </div>
+          </div>
+        </Transition>
       </div>
-      <template v-for="(mm, i) in mentionMatches" :key="mm.kind + mm.insert">
-        <div v-if="mm.group && mm.group !== mentionMatches[i - 1]?.group" class="mention-menu-group">
-          {{ mm.group }}
-        </div>
-        <button type="button" class="mention-menu-item" @click="pickMention(mm)">
-          <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
-            <v-icon size="13">mdi-bullhorn-outline</v-icon>
-          </span>
-          <span
-            v-else-if="mm.kind === 'member'"
-            class="mention-avatar"
-            :class="{ 'mention-avatar--agent': mm.agent }"
-            >{{ mm.label.slice(0, 1).toUpperCase() }}</span
-          >
-          <span v-else-if="mm.kind === 'category'" class="mention-avatar mention-avatar--file">
-            <v-icon size="13">mdi-folder-outline</v-icon>
-          </span>
-          <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
-            <v-icon size="13">mdi-file-outline</v-icon>
-          </span>
-          <span v-else class="mention-avatar mention-avatar--topic">
-            <v-icon size="13">mdi-pound</v-icon>
-          </span>
-          <span class="mention-menu-name">{{ mm.label }}</span>
-          <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
-          <ExternalTag v-else-if="mm.external" />
-          <span class="mention-menu-sub">{{ mm.sub }}</span>
-          <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
-          <span v-else-if="i === 0" class="mention-menu-hint">Enter</span>
-        </button>
-      </template>
-      <div v-if="mentionLevel === 'library' && !mentionMatches.length" class="mention-menu-group">暂无匹配的文件</div>
-    </div>
+    </Transition>
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
     <div class="composer-box">
-      <!-- 待发条: the attachments waiting to go with the next send. -->
-      <div v-if="atts.length" class="att-strip">
-        <AttachmentTile
-          v-for="(a, i) in atts"
-          :key="a.path"
-          :topic-id="topic!.id"
-          :attachment="a"
-          @remove="emit('remove-att', i)"
-        />
-      </div>
+      <!-- 这条消息带着的东西：回复的那条在最前，后面是待发的附件。一行排开，
+           不换行——多了就在这一行里横着滚，每一个都还拿得掉。 -->
+      <!-- 这一行长出来、收回去都是高度过渡；里面的标签一个个弹进来，拿掉一个时
+           后面的滑过来补位。 -->
+      <Transition name="chip-row">
+        <div v-if="replyLabel || atts.length" class="chip-row">
+          <TransitionGroup tag="div" name="chip" class="chip-list" @before-leave="pinLeaving">
+            <ComposerChip
+              v-if="replyLabel"
+              key="reply"
+              class="reply-chip"
+              quiet
+              :label="replyLabel"
+              :remove-label="t('work.room.composer.cancelReply')"
+              @remove="emit('clear-reply')"
+            >
+              <template #face><v-icon size="13">mdi-reply</v-icon></template>
+            </ComposerChip>
+            <AttachmentChip
+              v-for="(a, i) in atts"
+              :key="a.path"
+              :topic-id="topic!.id"
+              :attachment="a"
+              @remove="emit('remove-att', i)"
+            />
+          </TransitionGroup>
+        </div>
+      </Transition>
       <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
              半屏——而按钮的数量只会往上加。 -->
       <v-textarea
@@ -514,11 +571,13 @@ defineExpose({
           :class="{ 'summon-btn--on': summonOn }"
           :disabled="!summonReady"
           :aria-pressed="summonOn"
-          :title="summonOn ? `已 @${agentName}，点击取消` : `发送并交给${agentName}（⌘/Ctrl+Enter）`"
+          :aria-label="summonText.label"
+          :title="summonOn ? summonText.on : summonText.off"
           @click="toggleSummon"
         >
           <v-icon size="14">mdi-at</v-icon>
-          <span class="summon-btn-label">交给{{ agentName }}</span>
+          <span class="summon-btn-label" aria-hidden="true">{{ summonText.label }}</span>
+          <span class="summon-btn-short" aria-hidden="true">{{ summonText.short }}</span>
         </button>
         <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
                按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
@@ -552,9 +611,9 @@ defineExpose({
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   transition:
-    border-color 0.12s ease,
-    box-shadow 0.12s ease,
-    background-color 0.12s ease;
+    border-color var(--dur-quick) var(--ease-standard),
+    box-shadow var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
 }
 /* 聚焦时那条边只提一档：--muted 是正文级的灰，一压就把整个盒子变成了主角。 */
 .composer-box:focus-within {
@@ -574,6 +633,12 @@ defineExpose({
 .composer-input :deep(textarea) {
   font-size: 14px;
   line-height: var(--lh-14);
+  /* 多一行长高一行、发出去收回一行。auto-grow 的高度落在 min-height 上（Vuetify
+     经 --v-input-control-height 算出来），让它过渡过去，不跳。透明度那一条是
+     Vuetify 自己的，写在一起才不被盖掉。 */
+  transition:
+    min-height var(--dur-quick) var(--ease-standard),
+    opacity var(--dur-quick) var(--ease-standard);
 }
 /* Vuetify 给输入框留的顶部内边距是「浮动标签落下来时站的地方」：plain + comfortable
    下是 15px 的 --v-input-padding-top 再加 3.5px，而底部只有 3px。这个输入框没有
@@ -601,6 +666,17 @@ defineExpose({
   width: 28px;
   height: 28px;
 }
+/* 能发了，灰色的键过渡成琥珀；按下去沉一下，不等松手。 */
+.composer-send {
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard),
+    opacity var(--dur-quick) var(--ease-standard),
+    transform var(--dur-press) var(--ease-standard);
+}
+.composer-send:active:not(:disabled) {
+  transform: scale(0.92);
+}
 /* 「交给芝士」。它和发送并排，但绝不能也是实心琥珀——一行里只有一个实心块，
    那个位置是发送的。亮起来只改一条描边和墨色，形态不变。 */
 .summon-btn {
@@ -616,9 +692,8 @@ defineExpose({
   color: var(--muted);
   cursor: pointer;
   transition:
-    color 0.12s ease,
-    border-color 0.12s ease,
-    background-color 0.12s ease;
+    color var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
 }
 .summon-btn:hover:not(:disabled) {
   background: var(--fill);
@@ -629,24 +704,28 @@ defineExpose({
   opacity: 0.5;
 }
 /* 开着的时候要一眼认得出：这条消息会真的开出一轮，和「只是说了句话」是两回事。
-   描边那一档太轻了——它和没开的状态只差一条 1px 的线，而这一行右边还站着一颗实心
-   的发送按钮，线根本抢不到注意力。所以开态是填充的：比 hover 深一档的底、墨色
-   加粗的字。不用琥珀——琥珀是旁边那颗发送按钮的，两个琥珀的东西并排，人就分不
-   出该点哪个。 */
+   一条 1px 的描边抢不过旁边那颗实心的发送按钮，所以开态是填充的：比 hover 深一档
+   的底、墨色的字。只变底色，不加粗——字一加粗按钮就变宽，开关一下整行跟着挪。
+   不用琥珀：琥珀是旁边那颗发送按钮的，两个琥珀的东西并排，人就分不出该点哪个。 */
 .summon-btn--on {
-  border-color: transparent;
   background: var(--line-2);
   color: var(--ink);
-  font-weight: 600;
 }
 .summon-btn--on:hover:not(:disabled) {
   background: var(--line-2);
   color: var(--ink);
 }
-/* 窄屏上只留那个 @ 图标：这一行右边还站着算力和发送，三个都带字就换行了。 */
+/* 窄屏上名字收掉，留「交给」两个字：只剩一个 @ 图标的话，它读起来是「插入一个
+   @」，不是「这条交给它处理」。两个字加图标放得进这一行，不会换行。 */
+.summon-btn-short {
+  display: none;
+}
 @media (max-width: 480px) {
   .summon-btn-label {
     display: none;
+  }
+  .summon-btn-short {
+    display: inline;
   }
 }
 
@@ -696,20 +775,19 @@ defineExpose({
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  font-weight: 700;
-  /* Theme-invariant pair (same call as the default avatar in LeftAppRail): the
-     slate disc is one value in both themes, so its ink must be too. */
+  font-weight: 600;
+  /* 底色是 avatarColor() 按 handle 算出来的定值，和时间线上这个人的头像一个颜色，
+     两套主题下都不变，所以上面的字也得是定值。 */
   color: #fff;
-  background: #8a94a3;
   flex: none;
 }
-/* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：--ink 的圆角方块。它原来
+/* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：反色的圆角方块。它原来
    是一颗琥珀圆——琥珀留给主操作，不给头像。 */
 .mention-avatar--agent {
-  color: var(--surface);
-  background: var(--ink);
+  color: var(--inverse-ink);
+  background: var(--inverse-surface);
   border-radius: var(--radius-sm);
 }
 .mention-avatar--broadcast {
@@ -722,6 +800,47 @@ defineExpose({
 .mention-avatar--file {
   background: var(--fill);
   color: var(--muted);
+}
+.menu-rise-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.menu-rise-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.menu-rise-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.menu-rise-leave-to {
+  opacity: 0;
+}
+.mention-menu-level {
+  display: flex;
+  flex-direction: column;
+}
+.level-in-enter-active,
+.level-out-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.level-in-leave-active,
+.level-out-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.level-in-enter-from,
+.level-out-leave-to {
+  opacity: 0;
+  transform: translateX(16px);
+}
+.level-in-leave-to,
+.level-out-enter-from {
+  opacity: 0;
+  transform: translateX(-16px);
 }
 /* 二级菜单的头，和它里面的分组标题：两条都不是可选项，所以不长得像可选项。 */
 .mention-menu-head {
@@ -758,13 +877,64 @@ defineExpose({
   color: var(--faint);
 }
 
-/* 待发条。一格长什么样归 AttachmentTile，这里只排它们；行距留 10px，因为每格
-   右上角那个移除按钮探出了边界 6px。 */
-.att-strip {
+.chip-row {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+.chip-row-enter-active {
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.chip-row-leave-active {
+  transition:
+    grid-template-rows var(--dur-quick) var(--ease-in),
+    opacity var(--dur-quick) var(--ease-in);
+}
+.chip-row-enter-from,
+.chip-row-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+/* 行高收到 0 时，里面那一行自己的上下内边距也得跟着收，不然最后剩 6px 再一跳。 */
+.chip-row-enter-active .chip-list {
+  transition: padding var(--dur-base) var(--ease-out);
+}
+.chip-row-leave-active .chip-list {
+  transition: padding var(--dur-quick) var(--ease-in);
+}
+.chip-row-enter-from .chip-list,
+.chip-row-leave-to .chip-list {
+  padding-block: 0;
+}
+.chip-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.chip-leave-active {
+  position: absolute;
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.chip-enter-from,
+.chip-leave-to {
+  opacity: 0;
+  transform: scale(0.9);
+}
+.chip-move {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+/* 回复和附件那一行。不换行：换了行输入框就被一截一截往上顶。多出来的横着滚——
+   裁掉的话，第四个附件既看不见也拿不掉。 */
+.chip-list {
+  position: relative;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 10px 2px 6px;
+  gap: 6px;
+  padding: 2px 0 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 </style>

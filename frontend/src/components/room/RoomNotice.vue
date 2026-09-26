@@ -1,20 +1,25 @@
 <script setup lang="ts">
 // 平台替这个房间写下的一条：出了什么事、谁在处理、详情在一次点击之后。
 //
-// 一条通知和一条消息长得不一样是有意的——它不是谁说的话，是这个房间发生的事。
-// 六种档位共用同一个外框（`AgentNoticeFrame`），差别只在那一行里装什么。
+// 一条通知和一条消息长得不一样是有意的——它不是谁说的话。它按「是什么」分成两类：
+// - **谁做了一件事**（芝士改了文件、检查没过、运行环境就绪、平台记下一次报错）：
+//   一种行，记号在头像列、正文在消息的正文轴上、时间在行尾（`AgentNoticeFrame`）。
+//   档位之间只差那一行里装什么；轻重只改底色和状态字的颜色，不改形状。
+// - **房间里发生的事**（有人加入、话题归档）：没有署名的一行淡字，居中。
 //
 // 这里只画已经判好档的东西：判档在 lib/platformNotice.ts，署名和时间由房间算好
 // 传进来。它不认识名册，也不认识 socket。
 import type { Block } from '../../cx_types'
 import type { PlatformNotice } from '../../lib/platformNotice'
 
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { parseDiffLines } from '../../lib/diff'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import CloudStartupStatus from '../CloudStartupStatus.vue'
+
+import RollingNumber from './RollingNumber.vue'
 
 import { t } from '@/i18n'
 
@@ -40,8 +45,38 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string): void
+  (e: 'open-card', taskId: string): void
   (e: 'retry'): void
 }>()
+
+/** 没有署名的一行字：房间里发生的事，不是谁做的事。 */
+const happening = computed(() => props.notice.mode === 'plain' && !props.name)
+
+/** 本轮改动先列三个文件；其余的点一下再展开，不必去别处看。 */
+const FILES_SHOWN = 3
+const allFiles = ref(false)
+const changes = computed(() => (props.notice.mode === 'turn-summary' ? props.notice.changes : null))
+const shownFiles = computed(
+  () => (allFiles.value ? changes.value?.files : changes.value?.files.slice(0, FILES_SHOWN)) ?? []
+)
+/** 「另 N 个文件」里的 N：没列出来的，包括后端就没有发过来的那几个。 */
+const hiddenFiles = computed(() => (changes.value ? changes.value.filesTotal - shownFiles.value.length : 0))
+
+// 同类事件又来了一次：不加新行，这一行的计数滚一格、整行亮一下，说「又一次」。
+const repeats = computed(() =>
+  props.notice.mode === 'fold'
+    ? props.notice.count
+    : props.notice.mode === 'backend-error'
+      ? props.notice.error.count ?? 0
+      : 0
+)
+const bumped = ref(false)
+watch(repeats, async (next, prev) => {
+  if (next <= prev) return
+  bumped.value = false
+  await nextTick()
+  requestAnimationFrame(() => (bumped.value = true))
+})
 
 const showRetry = computed(
   () =>
@@ -60,11 +95,19 @@ function docDiffText(line: string): string {
   return /^(?:\s|&nbsp;)*$/.test(text) ? '' : text
 }
 
+// 「派出一条活」那一行带着它派出去的那件活：一件活不是地点，按钮打开的是这个房间里的那张卡。
+const splitTask = computed(() => {
+  if (props.notice.mode !== 'action' || props.notice.resource !== 'split') return null
+  const id = (props.block.meta as Record<string, unknown> | null | undefined)?.task_id
+  return typeof id === 'string' && id ? id : null
+})
+
 // 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么。
 const ACTION_META: Record<string, { btn: string }> = {
   doc: { btn: '查看文档' },
   decision: { btn: '查看决策记录' },
   topics: { btn: '' },
+  split: { btn: '查看任务' },
   milestone: { btn: '查看日历' },
   accept: { btn: '审阅' },
   notify: { btn: '' },
@@ -72,7 +115,12 @@ const ACTION_META: Record<string, { btn: string }> = {
 </script>
 
 <template>
-  <AgentNoticeFrame :name="name" :time="time">
+  <!-- 房间里发生的事：居中一行淡字。Content may carry a <@handle> actor token
+       (归档/加入…): render it through the SAME token→chip path as messages. -->
+  <div v-if="happening" class="room-happening im-event">
+    <span v-html="renderPlain(block.content)" /><span class="room-happening__time"> · {{ time }}</span>
+  </div>
+  <AgentNoticeFrame v-else :name="name" :time="time" :class="{ 'notice-bump': bumped }" @animationend="bumped = false">
     <div
       v-if="notice.mode === 'incident'"
       class="sys-row sys-row--danger platform-incident"
@@ -81,28 +129,32 @@ const ACTION_META: Record<string, { btn: string }> = {
       data-testid="platform-error-card"
     >
       <div class="sys-line">
-        <v-icon class="sys-mark" :icon="notice.incident.icon" size="15" />
-        <span class="sys-text">{{ notice.incident.title }}</span>
+        <span class="sys-text sys-lead">{{ notice.incident.title }}</span>
         <span class="sys-who">{{ notice.incident.status }}</span>
-        <button v-if="showRetry" type="button" class="sys-action" :disabled="retrying" @click="emit('retry')">
+        <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click="emit('retry')">
           {{ t('work.room.retry.action') }}
         </button>
       </div>
-      <div class="sys-sub">{{ notice.lead }}</div>
       <details v-if="notice.rest" class="sys-more">
-        <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+        <summary class="sys-line">
+          <span class="sys-text">{{ notice.lead }}</span>
+          <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
+        </summary>
         <pre class="sys-detail">{{ notice.rest }}</pre>
       </details>
+      <div v-else class="sys-line">
+        <span class="sys-text">{{ notice.lead }}</span>
+      </div>
     </div>
-    <!-- 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么 + 顺带更新了什么。
+    <!-- 本轮摘要 (spec §8.5 变更提醒): 这一轮改了哪些文件 + 顺带更新了什么。
      「查看改动」是这一行唯一的动作 —— 采纳是话题级的一次性动作，不是
      每轮都问一遍的东西（§14.6）。 -->
     <div v-else-if="notice.mode === 'turn-summary'" class="sys-row turn-summary">
       <div class="sys-line">
-        <span class="sys-mark sys-mark--dot" aria-hidden="true" />
         <span class="sys-text">
           <template v-if="notice.changes">
-            改动了 {{ notice.changes.filesTotal }} 个文件（+{{ notice.changes.added }} −{{ notice.changes.removed }}）
+            改动了 {{ notice.changes.filesTotal }} 个文件
+            <span class="sys-num">+{{ notice.changes.added }} −{{ notice.changes.removed }}</span>
           </template>
           <template v-for="(act, ai) in notice.actions" :key="ai">
             <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
@@ -112,35 +164,56 @@ const ACTION_META: Record<string, { btn: string }> = {
         <button
           v-if="notice.changes"
           type="button"
-          class="sys-action"
+          class="sys-btn"
           @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
         >
           查看改动
         </button>
       </div>
-      <div v-if="notice.changes?.files.length" class="sys-sub sys-files">
-        {{ notice.changes.files.join(' · ')
-        }}<template v-if="notice.changes.filesOmitted"> · 另 {{ notice.changes.filesOmitted }} 个</template>
+      <!-- 竖排，每个文件带自己的增删：路径一列，+n 和 −n 紧挨着各自对齐。 -->
+      <ul v-if="shownFiles.length" class="sys-files" :aria-label="t('work.room.notice.changedFiles')">
+        <li v-for="file in shownFiles" :key="file.path">
+          <span class="sys-files__path" :title="file.path">{{ file.path }}</span>
+          <span class="sys-files__added">+{{ file.added }}</span>
+          <span class="sys-files__removed">−{{ file.removed }}</span>
+        </li>
+      </ul>
+      <button
+        v-if="hiddenFiles > 0 && !allFiles && notice.changes!.files.length > FILES_SHOWN"
+        type="button"
+        class="sys-files-more"
+        @click="allFiles = true"
+      >
+        {{ t('work.room.notice.moreFiles', { n: hiddenFiles }) }}
+      </button>
+      <div v-else-if="hiddenFiles > 0" class="sys-files-rest">
+        {{ t('work.room.notice.moreFiles', { n: hiddenFiles }) }}
       </div>
     </div>
     <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
     <div v-else-if="notice.mode === 'action'" class="sys-row action-card">
       <div class="sys-line">
-        <span class="sys-mark sys-mark--dot" aria-hidden="true" />
         <!-- notice.text may carry a <@handle> actor token (编辑了文档): render
          through the shared token→chip path so the actor is clickable. -->
         <span class="sys-text" v-html="renderPlain(notice.text)" />
         <button
           v-if="ACTION_META[notice.resource]?.btn"
           type="button"
-          class="sys-action"
-          @click="emit('open-resource', notice.resource, block.turn_id ?? undefined)"
+          class="sys-btn"
+          @click="
+            splitTask
+              ? emit('open-card', splitTask)
+              : emit('open-resource', notice.resource, block.turn_id ?? undefined)
+          "
         >
           {{ ACTION_META[notice.resource].btn }}
         </button>
       </div>
       <details v-if="notice.detail" class="sys-more">
-        <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+        <summary class="sys-line">
+          <span class="sys-text">{{ notice.detailLabel || '展开详情' }}</span>
+          <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
+        </summary>
         <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
           <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
             <div
@@ -169,9 +242,9 @@ const ACTION_META: Record<string, { btn: string }> = {
       data-testid="backend-error-event"
     >
       <summary class="sys-line">
-        <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-        <span class="sys-text">{{ notice.error.line }}</span>
-        <span v-if="notice.error.count" class="sys-count">×{{ notice.error.count }}</span>
+        <span class="sys-text sys-lead">{{ notice.error.line }}</span>
+        <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
+        <span v-if="notice.error.count" class="sys-num">×<RollingNumber :value="notice.error.count" /></span>
       </summary>
       <div class="sys-fold">
         <div v-if="notice.error.where || notice.error.requestId" class="sys-meta">
@@ -192,20 +265,14 @@ const ACTION_META: Record<string, { btn: string }> = {
       data-testid="platform-notice"
     >
       <summary class="sys-line">
-        <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-        <span class="sys-text">{{ notice.line }}</span>
-        <span v-if="notice.count > 1" class="sys-count">×{{ notice.count }}</span>
+        <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }">{{ notice.line }}</span>
+        <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
+        <span v-if="notice.count > 1" class="sys-num">×<RollingNumber :value="notice.count" /></span>
         <span v-if="notice.whoLabel" class="sys-who">{{
           notice.who === 'cheese' ? `${name || agentName}正在处理` : notice.whoLabel
         }}</span>
         <!-- 在 summary 里点它不能顺带展开这一行。 -->
-        <button
-          v-if="showRetry"
-          type="button"
-          class="sys-action"
-          :disabled="retrying"
-          @click.prevent.stop="emit('retry')"
-        >
+        <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click.prevent.stop="emit('retry')">
           {{ t('work.room.retry.action') }}
         </button>
       </summary>
@@ -218,12 +285,8 @@ const ACTION_META: Record<string, { btn: string }> = {
         </div>
       </div>
     </details>
-    <!-- system / event blocks. Content may carry a <@handle> actor token
-     (归档/编辑…): render it through the SAME token→chip path as
-     messages so the actor is a clickable mention, not raw text. -->
     <div v-else-if="notice.mode === 'plain'" class="sys-row im-event">
       <div class="sys-line">
-        <span class="sys-mark sys-mark--dot" aria-hidden="true" />
         <span class="sys-text" v-html="renderPlain(block.content)" />
       </div>
     </div>
@@ -232,111 +295,116 @@ const ACTION_META: Record<string, { btn: string }> = {
 
 <style scoped>
 /* ---------------------------------------------------------------------------
-   平台行 —— 时间线上除了「人说的话」以外的一切，共用这一种形态。
-   之前这里有五套几何：居中淡行、居中动作行、16px 起的折叠卡、16px 起的报错卡、
-   还有一张 12px 圆角带渐变的事故卡。同一列里三条不同的左边缘（16 / 54 / 居中）
-   是它读起来乱的直接原因。现在只有一条轴：和消息正文对齐的 54px
-   （.im-row 的 16px padding + 28px 头像槽 + 10px gap）。
-   严重度只改**记号和底色**，绝不改形态。
+   事件行里装的东西。几何（记号列、正文轴、行尾时间）归外框 AgentNoticeFrame，
+   这里只管那一行字：正文、数字、状态、按钮、展开区。
    --------------------------------------------------------------------------- */
-.sys-row {
-  padding: 3px 16px 3px 54px;
-  font-size: 13px; /* 13px 是可读下限；平台行比正文低一档，不低于它 */
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-/* 分栏之下，「谁都没说这句话」需要自己的位置：一行字的平台行居中（飞书/微信
-   的通行做法）。**只有单行的那两种**——带右侧归属/状态列的动作卡、可折叠的
-   报错卡、事故卡仍然留在左轴上：把一张右侧有状态列的卡居中，那一列就没了落点。 */
-.sys-row.turn-summary,
-.sys-row.im-event {
-  padding-left: 16px;
-}
-.sys-row.turn-summary .sys-line,
-.sys-row.im-event .sys-line {
-  justify-content: center;
-}
-.sys-row.turn-summary .sys-text,
-.sys-row.im-event .sys-text {
-  flex: 0 1 auto;
-}
 details.sys-row > summary {
   cursor: pointer;
   list-style: none;
 }
-details.sys-row > summary::-webkit-details-marker {
+details.sys-row > summary::-webkit-details-marker,
+.sys-more > summary::-webkit-details-marker {
   display: none;
+}
+.sys-more > summary {
+  cursor: pointer;
+  list-style: none;
 }
 .sys-line {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
   min-width: 0;
-}
-/* 记号槽：宽度固定，所以圆点和图标不会把文字推成两个起点。 */
-.sys-mark {
-  flex: none;
-  width: 15px;
-  align-self: center;
-  color: var(--faint);
-}
-.sys-mark--dot {
-  position: relative;
-  height: 15px;
-}
-.sys-mark--dot::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 4px;
-  width: 6px;
-  height: 6px;
-  margin-top: -3px;
-  border-radius: 50%;
-  background: currentcolor;
+  min-height: 20px; /* 和 20px 的记号同高，单行时字落在记号中线上 */
 }
 .sys-text {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* 右侧固定放「归属 / 状态」和「动作」——扫一列就知道有没有在等自己。 */
+/* 需要人读的那一句（出了什么事）比旁边的说明深一档。 */
+.sys-lead {
+  color: var(--text);
+}
+/* 状态和按钮推到行尾：扫一列就知道有没有在等自己。 */
 .sys-who {
   flex: none;
+  margin-left: auto;
   font-size: 12px;
   color: var(--faint);
 }
-.sys-count {
+.sys-text + .sys-btn,
+.sys-chev + .sys-btn {
+  margin-left: auto;
+}
+.sys-num {
   flex: none;
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--faint);
 }
-.sys-action {
+/* 可展开的都带同一个箭头，点开转 90°。 */
+.sys-chev {
   flex: none;
-  border: none;
-  background: none;
-  padding: 0;
-  font-size: 13px;
-  color: var(--accent-ink); /* 记号色做文字对比度不够，见 design-system §1.6 */
-  cursor: pointer;
-}
-.sys-action:hover {
-  text-decoration: underline;
-}
-.sys-sub {
-  padding-left: 23px;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-.sys-fold,
-.sys-more {
-  padding-left: 23px;
-}
-.sys-more > summary {
-  cursor: pointer;
-  font-size: 12px;
+  margin-left: -4px;
   color: var(--faint);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+details[open] > summary > .sys-chev {
+  transform: rotate(90deg);
+}
+/* 展开收起过渡高度，不跳（设计系统 §9.2）。不认 ::details-content 的浏览器照旧
+   直接展开，什么都不缺。 */
+.sys-row,
+.sys-more {
+  interpolate-size: allow-keywords;
+}
+details::details-content {
+  height: 0;
+  overflow: clip;
+  transition:
+    height var(--dur-quick) var(--ease-in),
+    content-visibility var(--dur-quick) allow-discrete;
+}
+details[open]::details-content {
+  height: auto;
+  transition:
+    height var(--dur-base) var(--ease-out),
+    content-visibility var(--dur-base) allow-discrete;
+}
+/* 又来了一次：整行从 --fill 褪回去。 */
+.notice-bump {
+  animation: notice-bump var(--dur-slow) var(--ease-out);
+}
+@keyframes notice-bump {
+  from {
+    background-color: var(--fill-2);
+  }
+}
+/* 这一列里要人动手的那一步，全是这一种中性小按钮。琥珀只留给发送和审阅。 */
+.sys-btn {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
+}
+.sys-btn:hover:not(:disabled) {
+  background: var(--fill);
+  border-color: var(--faint);
+}
+.sys-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 .sys-meta {
   font-size: 12px;
@@ -387,34 +455,89 @@ details.sys-row > summary::-webkit-details-marker {
   border-top: 1px solid var(--line);
   padding-top: 4px;
 }
-/* 本轮摘要：文件清单是次要信息，压到元信息档，一行放不下就截断。 */
+/* 本轮改动的文件：一列路径，+n 和 −n 紧挨着各自对齐（右对齐的 +n、左对齐的 −n），
+   整块只有内容那么宽——拉满整行的话，数字离路径远到对不上是哪一行的。 */
 .sys-files {
-  font-size: 12px;
-  color: var(--faint);
+  display: grid;
+  grid-template-columns: minmax(0, max-content) auto auto;
+  justify-content: start;
+  align-items: baseline;
+  margin: 4px 0 2px;
+  padding: 0;
+  list-style: none;
   font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+.sys-files li {
+  display: contents;
+}
+.sys-files__path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.sys-files__added {
+  padding-left: 16px;
+  text-align: right;
+  color: var(--ok-ink);
+}
+.sys-files__removed {
+  padding-left: 6px;
+  color: var(--danger-ink);
+}
+.sys-files-more,
+.sys-files-rest {
+  padding: 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+.sys-files-more {
+  cursor: pointer;
+}
+.sys-files-more:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
 .sys-sep {
   color: var(--faint);
 }
-/* 两档色，底色一律取自色板的 -wash，不再手搓 color-mix。 */
+/* 轻重只改底色和状态字的颜色。底色块往左多出 8px，字仍在正文那条竖线上。 */
+.sys-row--warn,
+.sys-row--danger {
+  margin-left: -8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+}
 .sys-row--warn {
   background: var(--warn-wash);
 }
-.sys-row--warn .sys-mark {
-  color: var(--warn);
+.sys-row--warn .sys-who {
+  color: var(--warn-ink);
 }
 .sys-row--danger {
   background: var(--danger-wash);
 }
-.sys-row--danger .sys-mark {
-  color: var(--danger);
+.sys-row--danger .sys-who {
+  color: var(--danger-ink);
 }
-.sys-row--warn,
-.sys-row--danger {
-  padding-top: 6px;
-  padding-bottom: 6px;
+
+/* 房间里发生的事：谁都没做这件事，所以它不进头像列，也不上正文轴，居中一行淡字。 */
+.room-happening {
+  margin: 10px 16px;
+  text-align: center;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
+.room-happening :deep(.mention) {
+  color: var(--muted);
+  cursor: pointer;
+}
+.room-happening :deep(.mention:hover) {
+  text-decoration: underline;
 }
 </style>

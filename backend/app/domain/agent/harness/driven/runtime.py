@@ -34,6 +34,7 @@ from app.domain.agent.harness import (
     Backlog,
     EventConsumer,
     Opening,
+    ReachabilityConsumer,
     ReceiptConsumer,
     SessionRef,
     UnreadProbe,
@@ -167,6 +168,8 @@ class DrivenRuntime[H: Handle]:
         # lands; a second ending for it does not.
         self.closed: set[uuid.UUID] = set()
         self.unreachable: dict[uuid.UUID, float] = {}
+        # The open work each room was last told is waiting on its machine.
+        self.told_waiting: dict[uuid.UUID, uuid.UUID] = {}
         self.unread: UnreadProbe | None = None
         self.live: dict[uuid.UUID, H] = {}
         self.subscriptions: dict[uuid.UUID, Subscription] = {}
@@ -177,6 +180,7 @@ class DrivenRuntime[H: Handle]:
         self.consumer: EventConsumer | None = None
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
+        self.reachability: ReachabilityConsumer | None = None
 
     # --- what the harness supplies -------------------------------------------
 
@@ -234,6 +238,9 @@ class DrivenRuntime[H: Handle]:
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:
         self.unread = probe
+
+    def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
+        self.reachability = consumer
 
     def pulse(self, topic: uuid.UUID, marks: frozenset[str]) -> None:
         """What the subscription just read about the open turn."""
@@ -407,6 +414,7 @@ class DrivenRuntime[H: Handle]:
                     self.logger.warning(
                         "%s waiting for the device topic=%s", self.records, topic
                     )
+                await self._say_waiting(topic, "device offline")
                 if await self._gone(topic):
                     return
                 await asyncio.sleep(2)
@@ -423,6 +431,7 @@ class DrivenRuntime[H: Handle]:
                         topic,
                         exc,
                     )
+                await self._say_waiting(topic, f"runner not answering: {exc}")
                 if await self._gone(topic):
                     return
                 await asyncio.sleep(2)
@@ -440,6 +449,7 @@ class DrivenRuntime[H: Handle]:
                         topic,
                         exc,
                     )
+                await self._say_waiting(topic, f"device connection lost: {exc}")
                 if await self._gone(topic):
                     return
                 await asyncio.sleep(2)
@@ -453,6 +463,7 @@ class DrivenRuntime[H: Handle]:
                 if waiting:
                     waiting = False
                     self.logger.info("%s resumed topic=%s", self.records, topic)
+                    await self._say_resumed(topic)
                 # A room being worked reads at the floor, and so does one whose
                 # journal just gave us something — the next record of a stream
                 # is due immediately. A room nobody is talking to costs a call
@@ -465,6 +476,28 @@ class DrivenRuntime[H: Handle]:
                 else:
                     delay = min(delay * 2, READ_CEILING_S)
                 await self._wait(topic, delay)
+
+    async def _say_waiting(self, topic: uuid.UUID, reason: str) -> None:
+        """Tell the room its open turn is waiting on the machine — once per turn
+        per outage. A room with no turn open is not waiting for anything: its
+        machine being off is the ordinary state of a platform nobody is using."""
+        work = self.work.get(topic)
+        handle = self.live.get(topic)
+        if work is None or handle is None or self.told_waiting.get(topic) == work:
+            return
+        self.told_waiting[topic] = work
+        if self.reachability:
+            await self.reachability(
+                handle.session.project_id, topic, work, False, reason
+            )
+
+    async def _say_resumed(self, topic: uuid.UUID) -> None:
+        work = self.told_waiting.pop(topic, None)
+        handle = self.live.get(topic)
+        if work is None or handle is None or self.work.get(topic) != work:
+            return
+        if self.reachability:
+            await self.reachability(handle.session.project_id, topic, work, True, "")
 
     async def _gone(self, topic: uuid.UUID) -> bool:
         """Has the runner of an open turn been out of reach for too long?
@@ -600,12 +633,36 @@ class DrivenRuntime[H: Handle]:
         if task:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        self.subscriptions.pop(topic, None)
+        subscription = self.subscriptions.pop(topic, None)
         self.live.pop(topic, None)
         self.work.pop(topic, None)
         self.woken.pop(topic, None)
         self.clocks.pop(topic, None)
         self.unreachable.pop(topic, None)
+        if subscription is not None:
+            await subscription.release()
+
+    async def stop_listening(self) -> None:
+        """Stop reading every session, and leave every session running.
+
+        A read already under way finishes first. The landing cursor only moves
+        once a record is persisted, so whatever this process had not landed is
+        still unread for the process that listens next.
+        """
+        subscriptions = dict(self.subscriptions)
+        self.subscriptions.clear()
+        for topic in subscriptions:
+            self._wake(topic)
+        polls = [task for task in self.tasks.values() if not task.done()]
+        if polls:
+            _, stuck = await asyncio.wait(polls, timeout=5)
+            for task in stuck:
+                task.cancel()
+            await asyncio.gather(*stuck, return_exceptions=True)
+        await asyncio.gather(*(each.release() for each in subscriptions.values()))
+        for held in (self.tasks, self.live, self.work, self.woken, self.clocks):
+            held.clear()
+        self.unreachable.clear()
 
     async def close(self, session: SessionRef) -> None:
         if subscription := self.subscriptions.get(session.topic_id):

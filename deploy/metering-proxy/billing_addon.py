@@ -218,6 +218,10 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     flow.request.host = parsed.hostname
     flow.request.port = parsed.port or (443 if flow.request.scheme == "https" else 80)
     flow.request.headers["host"] = parsed.netloc
+    # mitmproxy hands this flow the server connection the previous request on
+    # the same client connection opened, egress included when that request
+    # carried the platform credential. The gateway is local: never through it.
+    flow.server_conn.via = None
     # LiteLLM authenticates with the project's virtual key. The caller's own
     # Claude credential is in this header and must NOT ride along to the
     # gateway, where it would sit in another service's reach and logs;
@@ -719,10 +723,9 @@ async def request(flow: http.HTTPFlow) -> None:
         requested = ""
     if requested and requested == PARENT_MODEL.get((project_id, topic_id)):
         # 体里的模型 == 主对话被改写前的那个值:这是 CC 的「继承」长相,不是
-        # 主 agent 的指定 —— fork 和不带 model 定义的分身都长这样。device
-        # 启动环境不钉模型(结论 46),CC 回显的是它自己的内建默认,这个名字
-        # 在准入的席位配置里不存在,送上去只会吃到一个张冠李戴的拒绝
-        # (2026-09-23,gateway 项目普通分身全灭 30 分钟)。按未指定处理。
+        # 主 agent 的指定 —— fork 和不带 model 定义的分身都长这样。CC 回显
+        # 的是它启动时拿到的模型名,送上去会被准入当成一次显式指定(2026-09-23,
+        # gateway 项目普通分身全灭 30 分钟)。按未指定处理。
         requested = ""
     verdict = None
     if project_id and ADMISSION_URL:
@@ -939,7 +942,8 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     is_message_200 = "/v1/messages" in flow.request.path and resp.status_code == 200
     if is_message_200 and "event-stream" in resp.headers.get("content-type", ""):
         project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
-        extractor = StreamingUsageExtractor()
+        encoding = resp.headers.get("content-encoding", "")
+        extractor = StreamingUsageExtractor(encoding)
 
         def tee(chunk: bytes) -> bytes:
             if chunk:
@@ -948,6 +952,14 @@ def responseheaders(flow: http.HTTPFlow) -> None:
                 extractor.close()
                 if extractor.usage:
                     METER.record(project_id, topic_id, extractor.usage, extractor.model)
+                else:
+                    # A turn that ran and cost nothing on the meter is the cap
+                    # silently switched off; say so rather than skip it.
+                    logger.warning(
+                        "no usage found in a subscription message response "
+                        "(content-encoding %r); the turn is not metered",
+                        encoding,
+                    )
             return chunk
 
         resp.stream = tee

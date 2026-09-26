@@ -63,6 +63,13 @@ services:
     # container (a restart) instead of taking down every other service on the
     # box. Raise it on hosts that run many concurrent subscription turns.
     mem_limit: 2g
+    # mitmproxy puts no timeout on opening an upstream connection, so an
+    # unreachable one (a credential egress across a flaky tailnet relay) waited
+    # out the kernel's 6 SYN retries, ~135 s, per request. At 3 it fails in
+    # ~20 s and the client's retries surface the failure instead of a silent
+    # room. Scoped to this container's network namespace.
+    sysctls:
+      net.ipv4.tcp_syn_retries: "3"
     command: >
       mitmdump --listen-host 0.0.0.0
       --mode reverse:https://api.anthropic.com@8443

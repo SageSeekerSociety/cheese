@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AgentControlState, Topic } from '@/cx_types'
+import type { AgentControlState, Block, Topic } from '@/cx_types'
 import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
@@ -112,6 +112,7 @@ const panelRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
   openFile?: (path: string, taskId?: string | null) => void
+  siteBlock?: (block: Block) => void
 } | null>(null)
 const chatColumn = ref<{
   connected: boolean
@@ -158,12 +159,15 @@ const chatEvents = {
   'turn-done': handleTurnDone,
   working: handleWorking,
   'agent-control': (state: AgentControlState) => (agentControl.value = state),
+  'site-block': (block: Block) => panelRef.value?.siteBlock?.(block),
+  'site-turns': (turns: Record<string, number>) => (siteTurns.value = turns),
   'state-changed': handleStateChanged,
   'mention-click': handleMentionClick,
   'open-file': (path: string, taskId?: string | null) => panelRef.value?.openFile?.(path, taskId),
   'open-resource': handleOpenResource,
   'upgrade-message': handleUpgradeMessage,
   'open-topic': openTopic,
+  'open-card': onOpenCard,
   phase: (p: CardPhase) => (cardPhase.value = p),
   review: onReview,
 }
@@ -172,6 +176,8 @@ const chatEvents = {
 const working = ref(false)
 // 会话控制状态的最近一帧，对话栏从 socket 上收到，现场那格的控制条读它。
 const agentControl = ref<AgentControlState | null>(null)
+// 正在跑的轮次各自从什么时候开始，对话栏从 socket 上算出来，现场的状态条读它。
+const siteTurns = ref<Record<string, number>>({})
 
 // ---- 话题此刻处在哪一段 (规则 3/4) ----
 // The accept card owns its own data, but not the one word that summarises it:
@@ -295,6 +301,7 @@ watch(
   async (id) => {
     working.value = false
     agentControl.value = null
+    siteTurns.value = {}
     if (!id) return
     unreadOnOpen.value = store.unreadMap[id] ?? 0
     // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
@@ -369,6 +376,7 @@ watch(
           :activity-tick="activityTick"
           :working="working"
           :agent-control="agentControl"
+          :site-turns="siteTurns"
           :topic-list="store.topics"
           :tab="panelTab"
           :phase="phase"

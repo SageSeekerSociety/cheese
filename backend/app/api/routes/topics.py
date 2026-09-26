@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
@@ -24,6 +24,7 @@ from app.api.deps import (
     get_work_runner,
     project_device_online,
 )
+from app.api.place import project_reader
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -61,6 +62,7 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
     announce_stale,
 )
+from app.domain.agent.step_output import without_output
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
@@ -115,7 +117,11 @@ from app.domain.room_task.services import (
 from app.domain.textfile import content_version
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
-from app.domain.topic.repositories import SortOrder, TopicSortField
+from app.domain.topic.repositories import (
+    SortOrder,
+    TopicProgressRepository,
+    TopicSortField,
+)
 from app.domain.topic.schemas import (
     CheckResultIn,
     ConclusionIn,
@@ -282,6 +288,7 @@ async def list_topics(
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
     active_since: datetime | None = None,
+    topic: str = "",
 ) -> dict:
     """The project's topics.
 
@@ -293,8 +300,7 @@ async def list_topics(
     Every row also carries 与我的相关性 (`i_participate`/`awaits_me`) for the
     caller — this is the endpoint the sidebar groups from.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    actor = await project_reader(db, resolver, project_id, topic)
     service = TopicService(db)
     topics, last_activity, total = await service.list_for_project(
         project_id, sort=sort, order=order, active_since=active_since
@@ -954,12 +960,45 @@ async def topic_transcript(
             kinds=kinds,
         )
         site, has_more = result.items, result.has_more
-    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in site]
+    # What a step printed stays behind: a page of 120 steps would otherwise
+    # carry up to 120 × 8 KiB. The row says it has some (`output_bytes`), and
+    # `step_output` below hands it over when somebody opens it.
+    items = [
+        without_output(BlockOut.model_validate(b).model_dump(mode="json")) for b in site
+    ]
     return ok(
         {
             **page(items, len(items)),
             "has_more": has_more,
             "oldest_id": str(site[0].id) if site else None,
+        }
+    )
+
+
+@router.get("/{topic_id}/transcript/{block_id}/output")
+async def step_output(
+    topic_id: uuid.UUID,
+    block_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """The tail of what one 现场 step printed, as kept (``step_output``)."""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    block = await BlockRepository(db).get(block_id)
+    # Same door as the transcript: this room's own line, never a card's.
+    if (
+        block is None
+        or block.topic_id != place.room_id
+        or block.task_id is not None
+        or block.kind != BlockKind.event
+    ):
+        raise NotFoundError("步骤不存在")
+    meta = block.meta or {}
+    return ok(
+        {
+            "output": str(meta.get("output") or ""),
+            "bytes": int(meta.get("output_bytes") or 0),
         }
     )
 
@@ -1202,19 +1241,90 @@ async def get_topic_progress(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    task: Annotated[uuid.UUID | None, Query()] = None,
 ) -> dict:
     """进度层 (#187): 芝士's checklist for this topic, as of the last turn to
     touch it. Read on topic open — between turns there is no WS stream to carry
-    it, and "做到哪了" has to be visible without summoning anyone."""
+    it, and "做到哪了" has to be visible without summoning anyone. With ``task``,
+    that card's list — the one its 分身 wrote — instead of the room's."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    items, updated_at = await TopicService(db).get_progress(topic_id)
+    items, updated_at = await TopicService(db).get_progress(topic_id, task_id=task)
     return ok(
         {
             "items": items,
             "updated_at": updated_at.isoformat() if updated_at else None,
         }
     )
+
+
+class TodoIn(BaseModel):
+    # 200 / 30: the limits `todo_write` states to the model (`sandbox/cheese`,
+    # TODO_MAX_CHARS / TODO_MAX_ITEMS). The CLI ships to machines on its own and
+    # cannot import them, so they are written twice.
+    content: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+    ]
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class ProgressIn(BaseModel):
+    todos: list[TodoIn] = Field(min_length=1, max_length=30)
+    # The card whose 分身 is writing. A 分身 runs inside the room's session, on
+    # the room's credentials, so the call cannot tell it apart from the room's
+    # own agent: it says so, the way `cheese_lock` names its task.
+    task: uuid.UUID | None = None
+
+
+@router.put("/{topic_id}/progress")
+async def write_topic_progress(
+    topic_id: uuid.UUID,
+    body: ProgressIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """`todo_write`: the agent's whole checklist for the running turn (进度层).
+
+    With ``task`` it is that card's 分身 writing, and the list is the card's:
+    stored under the card and pushed on the card's channel, the same channel its
+    attributed events go to (`chat.py`), leaving the room's own list alone.
+
+    Whole-list replace, so what the room shows is exactly what the agent last
+    said, never a merge of two plans. Stored first, then pushed as the `todo`
+    frame the room's working message renders in place. A platform tool, so it
+    reaches here the same way from every harness — the checklist is not
+    captured from any harness's own tool events.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+    )
+    if not actor.authenticated:
+        raise ForbiddenError("An authenticated agent must write this checklist")
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
+        raise ForbiddenError("An authenticated agent must write this checklist")
+    if body.task is not None:
+        task = await TaskRepository(db).get(body.task)
+        if task is None or task.room_id != place.room_id:
+            raise NotFoundError("Task not found in this room")
+    items = [
+        {"id": str(number), "subject": todo.content, "status": todo.status}
+        for number, todo in enumerate(body.todos, start=1)
+    ]
+    work = get_work_runner().live_work_for_topic(place.room_id)
+    await TopicProgressRepository(db).save(
+        place.room_id,
+        items,
+        task_id=body.task,
+        turn_id=uuid.UUID(work["turn_id"]) if work is not None else None,
+    )
+    await db.commit()
+    channel = str(body.task) if body.task is not None else str(topic_id)
+    await get_broker().publish(channel, {"type": "todo", "items": items})
+    return ok({"items": items})
 
 
 @router.get("/{topic_id}/doc")
@@ -1492,7 +1602,11 @@ async def acquire_session_work_lease(
     from app.core.errors import GatewayTimeoutError
 
     try:
-        async with asyncio.timeout(body.timeout):
+        # body.timeout caps how long the caller waits for a machine being
+        # prepared (wait_s). It is not the time to answer: a session that will
+        # not wait asks with ~0, and bounding the whole call by that answered
+        # 504 even when its machine was ready.
+        async with asyncio.timeout(max(body.timeout, work_lease.PREPARING_WAIT_S)):
             return ok(
                 await work_lease.ensure(
                     db,

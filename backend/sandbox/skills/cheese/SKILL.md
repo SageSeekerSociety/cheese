@@ -1,6 +1,6 @@
 ---
 name: cheese
-description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。平台动作（聊天、实况文档、任务卡、验收、记忆、通知等）都是 MCP 上的 cheese_* 工具和 chat_send；只有必须在工作机器上跑的（任务目录、同步、预览、文件转换）是 cheese 这个 CLI 的子命令，用 Bash 调；两边都没有的用 platform_request。普通输出和最终答复不会自动发送；代码和文件用原生工具。
+description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。平台动作（聊天、实况文档、任务卡、验收、记忆、通知等）都是 MCP 上的 cheese_* 工具、chat_send 和 todo_write；只有必须在工作机器上跑的（任务目录、同步、预览、文件转换）是 cheese 这个 CLI 的子命令，用 Bash 调；两边都没有的用 platform_request。普通输出和最终答复不会自动发送；代码和文件用原生工具。
 ---
 
 # cheese — 平台操作
@@ -52,7 +52,7 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 
 ## 你干活的每一步都显示在界面上,那些说明文字用中文写
 
-界面上有一条「施工现场」,你每调一次工具就多一行:一个中文动词,后面跟着这次调用里最能说明问题的那一截。**那一截优先取你自己填的说明字段**——`Bash` 的 `description`、`Agent` 的 `description`、`TaskCreate` 的 `subject`。它们不是给日志看的,是产品界面上的一行字,和你说的话一样会被人读到。
+界面上有一条「施工现场」,你每调一次工具就多一行:一个中文动词,后面跟着这次调用里最能说明问题的那一截。**那一截优先取你自己填的说明字段**——`Bash` 的 `description`、`Agent` 的 `description`；`todo_write` 那一行跟的是你标成 in_progress 的那一项。它们不是给日志看的,是产品界面上的一行字,和你说的话一样会被人读到。
 
 所以**这些字段一律用中文**,写这一步在干什么,不是写命令怎么拼的:`description: "查一下分页接口是怎么实现的"`,而不是把 `grep -rn cursor backend/` 复述一遍。没填的时候平台只能退回去显示命令原文,那一行就变成一串路径和参数,读的人看不出你在干什么。
 
@@ -140,7 +140,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 
 **这一版交出去的是什么，也在递卡时说清。** 三种交法，选一种：
 
-- `deliver=<路径>`：交出去的是一份文件（论文的 PDF、幻灯片、被改过的那份 .docx），路径相对任务工作目录。平台在递卡这一刻从任务工作目录里把它读下来留一份快照，所以这一版以后永远拿得到**当时交出去的那一份**，不是半年后重建一次的结果。单份最大 80MB。
+- `deliver=<路径>`：交出去的是一份文件（论文的 PDF、幻灯片、被改过的那份 .docx），路径相对任务工作目录。平台在递卡这一刻从任务工作目录里把它读下来留一份快照，所以这一版以后永远拿得到**当时交出去的那一份**，不是半年后重建一次的结果。单份最大 80MB。**交文件也要任务分支上有提交**：一张卡总骑在一个 PR 上，分支上没有提交会被打回（「没有可交付的提交」）。文件的源就是它该进的那个提交——把源放进仓库，成品留在工作目录里交。
 - `deliver_url=<网址>`：交出去的是一个地址（网站、看板）。只记这个指针。
 - 两个都不给：交出去的是**这次合并**本身。代码仓库这类项目交的就是主干往前走一步，没有可下载的东西。这一种不用声明产物（见上一节）。
 
@@ -151,6 +151,49 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 - **成品是从源构建出来的。源进库，成品不进**——任何时候都能重建它。五十版 20MB 的幻灯片只会出现在把构建产物也提交进去的时候。
 - **一版是一次交付，不是一次保存。**「第七版」指的是那次交付的那个提交，不是某个 PDF。
 - **是不是产物由声明决定，不由它在哪个目录决定。** 目录名会漂，声明不会。
+
+## 用户要「把这次的做法存下来」
+
+存成项目的**工作方法**：确认后，这个项目之后每个房间的新会话都会把它当技能带着（按名字就能调用，配套文件在 `$CLAUDE_CONFIG_DIR/skills/<名字>/` 下）。
+
+1. **抽成方法，不抄聊天记录。** 从这次的工作里提炼：`title`（名称）、`description`（用途：什么情况下用它，这一句决定以后会不会被想起来）、`inputs`（每次要用户给什么）、`steps`（步骤与规则，写成可重复执行的指令，含这次用户纠正过你的地方）、`outputs`（交什么、什么格式、放哪）。这次的具体文件名、数字、人名不要写进去，写成「用户给的 xx」。
+2. 这次用到、以后也要用的脚本或模板说明，放进 `files`（`{"scripts/check.py": "…内容…"}`，只能是文本文件）。
+3. 起草：`platform_request(method="POST", path="/topics/<本话题 id>/skills", body={"name": "weekly-report", "title": …, "description": …, "inputs": …, "steps": …, "outputs": …, "files": {…}})`。`name` 用小写字母、数字和连字符。
+4. 你起草或修改的都是**待确认**：把要点一两句说给用户，请他到项目菜单「工作方法」里点「确认保存」。修改已保存的方法用 `PATCH /skills/<id>?topic=<本话题 id>`，确认前各房间继续用原来那一版。查看：`GET /projects/<项目 id>/skills?topic=<本话题 id>`。
+
+**用一个工作方法时**：以这一次用户给的输入为准，缺必需的输入先问；不要沿用以前那次的材料。
+
+## 用户的邮箱和飞书文档
+
+项目成员可以在「我的连接」里接入自己的邮箱（IMAP/SMTP）或飞书，并勾选允许哪些项目的 AI 队友使用。你用的永远是**那个人的账号**，所以每一步都要说清楚动的是谁的邮箱、哪份文档。
+
+先看这个项目能用哪些：`platform_request(method="GET", path="/projects/<项目 id>/integrations?topic=<本话题 id>")`。没有就告诉用户去「我的连接」接入并授权这个项目，不要用别的办法绕。
+
+**邮件**（下面的路径都要带 `?topic=<本话题 id>`）：
+- 搜索：`POST /integrations/<连接>/mail/search`，body `{"query": …, "sender": …, "subject": …, "since": "2026-09-01", "folder": "INBOX"}`；中文关键词一次只能填一项。
+- 读一封：`GET /integrations/<连接>/mail/messages/<uid>`，返回正文、附件列表和 `source`。引用时写「<邮箱> 里 <日期> <发件人> 的《主题》」。
+- 附件：`cheese mail attachment <连接> <uid> <序号>` 取到 `~/attachments/mail/` 下，再按 documents 技能读。
+- 写草稿：`POST /integrations/<连接>/mail/drafts`，body `{"to": [...], "cc": [...], "subject": …, "body": …, "attachments": ["房间里的文件路径"], "in_reply_to": "<原邮件 message_id>"}`。附件要先 `cheese show` 放进房间。草稿会真的存进对方邮箱的草稿箱。
+- **你不能发送邮件。** 发送只能由邮箱主人在「我的连接 → 待发送」里核对收件人、主题、正文和附件后点确认。写完草稿就说「草稿已存进 X 的草稿箱，等他确认发送」，不要说「已发送」。
+
+**飞书文档**（同样带 `?topic=`）：
+- 搜索：`POST /integrations/<连接>/feishu/search` `{"query": …}`。只配了应用凭据时飞书不给搜，返回 403 就如实转告，请用户授权个人账号或直接给文档链接里的 id。
+- 读：`GET /integrations/<连接>/feishu/docs/<document_id>`，返回每段的 `block_id` 和文字。
+- 新建：`POST /integrations/<连接>/feishu/docs` `{"title": …, "content": "markdown"}`，返回真实链接，把链接给用户。
+- 修改：`PATCH /integrations/<连接>/feishu/docs/<document_id>`，`{"append": "追加的 markdown"}` 或 `{"block_id": …, "text": "这一段改成的内容"}`。改完用返回的内容核对一遍。
+
+报错照实说：`auth_failed` 是授权过期（请他到「我的连接」更新）、`forbidden` 是没有这份文档或这个项目的权限、`not_found` 是找不到、其余是服务出错。**没成功就不要说成功。**
+
+## 用户要「每周/每天做一次」或「某件事发生时就做」
+
+这是一条**定时与触发规则**，不是 `cheese_deliver_at` 闹钟：规则到点会真的让这个房间的 AI 队友开工一轮，做完交回结果并通知设规则的人，执行记录在项目的「定时与触发」页上（项目名旁 ⋯ 菜单）。
+
+1. 从对话里整理出：做什么（`instructions`）、用哪些资料（`context_scope`）、多久一次或哪种事件、几点、哪个时区、结果放房间哪个目录（`output_dir`）。**时间或范围有歧义就用 `cheese_ask` 问**，不要自己挑一个。
+2. 起草：`platform_request(method="POST", path="/topics/<本话题 id>/routines", body={...})`。body 字段：`title`、`instructions`、`context_scope`、`output_dir`、`trigger`（`schedule` / `library_file_added` / `task_closed` / `card_accepted`）、`spec`、`timezone`（默认 `Asia/Shanghai`）、`owner_handle`（替谁设的，结果通知给他）。`spec`：定时写 `{"freq": "weekly", "weekdays": [0], "time": "09:00"}`（0=周一），也可以是 `daily` + `time`、`monthly` + `day` + `time`、`hourly` + `minute`；事件写 `{"scope": "room"}` 或 `{"scope": "project"}`。
+3. 你起草的规则是**草稿，不会执行**。把配置用一两句话说给用户，请他打开项目名旁 ⋯ 菜单里的「定时与触发」（办公类项目在侧栏上）点「确认启用」。你没有确认、恢复、立即执行、删除的权限，也不要声称已经设好了。你修改一条已启用的规则，它会退回草稿，等人再次确认。
+4. 查看：`GET /projects/<项目 id>/routines?topic=<本话题 id>`；某条规则和它的执行记录：`GET /routines/<id>`；暂停：`POST /routines/<id>/pause`；修改：`PATCH /routines/<id>`。
+
+**被一条规则唤起时**（那一轮开头写着「【定时工作】」这类标题和执行 id）：按里面的工作内容和资料范围做，结果用 `cheese show` 放进指定目录。**做完必须交回结果**，成功失败都要交：`platform_request(method="POST", path="/routine-runs/<执行 id>/report", body={"status": "succeeded" 或 "failed", "summary": "…", "outputs": ["房间里的结果路径"]})`。失败要写清原因。没交回结果的一轮会被记为失败。
 
 ## 别自己打"假按钮/假链接"
 
@@ -171,6 +214,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | 工具 | 作用 |
 |---|---|
 | `chat_send(content, reply_to?, request_id?)` | 主动发送聊天消息。结果不确定时带上返回的 `request_id` 原样重试 |
+| `todo_write(todos, task?)` | 把这一轮的步骤清单整份写给房间，`todos` 每项是 `{content, status}`，status 取 pending / in_progress / completed。每次传完整的清单，上一份整份被替换；房间里正在进行的那条消息原地显示它，下一轮开场也会读到它。最多 30 项，每项 ≤200 字。**你是分身时带上你那条活的 id**（`task`）：清单记在那张卡上；不带，写的是房间自己的清单，会盖掉主线程的计划 |
 | `cheese_chat_list(topic?, task?, limit?, before? 或 after?, kind?, author?)` | 读最近的聊天记录（含结构化消息和表情），默认当前房间最近 50 条；带 `task` 读那条任务卡的记录。只读，不叫醒任何人、不标记消息已读。结果末尾带续读的调用，翻更早的照抄它 |
 | `cheese_chat_search(query, topic?, task?, limit?, before? 或 after?, kind?, author?)` | 按文字搜聊天记录：对正文、结构化消息信息和引用文字做不区分大小写的**字面**匹配，搜范围内全部记录。查不到就缩短关键词或换个说法，别断定没说过 |
 | `cheese_chat_get(message_id, offset?, length?)` | 读一条消息的全文（任何类型，含任务卡评论和文档节点）；超长的按 `offset` 续读 |
@@ -188,7 +232,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_describe(task, subject?, body?)` | 同步修改该任务尚未采纳的卡与 PR 的标题、正文；采纳时以卡为准 |
 | `cheese_tell(target, message)` | 在任务时间线上留消息；不启动或唤醒执行者。`target` 可用 id、`<#id>` 或标题指定 |
 | `cheese_milestone(title, due?)` | 把关键节点钉成里程碑；`due` 形如 2026-06-20 |
-| `cheese_notify(title, body?, level?, kind?, to?, options?)` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options`（选项列表）让人一键拍板。`to` 不填=发给**这个房间名册上的人**(不含芝士)——不是项目里所有人，别的房间的人看不到；名册上一个人都没有会报错，这时点名一个人再发 |
+| `cheese_notify(title, body?, level?, kind?, to?, options?)` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options`（选项列表）让人一键拍板。未读的 change_alert 和决策请求一样进收件人的收件箱，标题写成「变了什么」、正文写清在哪儿，对方从那条提醒直接进这个房间，点「知道了」才算已读。`to` 不填=发给**这个房间名册上的人**(不含芝士)——不是项目里所有人，别的房间的人看不到；名册上一个人都没有会报错，这时点名一个人再发 |
 | `cheese_members()` | 列出当前话题可点名的成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |
 | `cheese_status()` | 平台状态快照:本轮运行状态(正常运行中/接近硬顶)、本话题验收卡(含闸门失败输出)、磁盘/排队/额度水位。想知道"卡到哪了/闸门为什么红"时先调它,别去轮询原始 API |
 | `cheese_lock(task, kind?)` / `cheese_unlock(task, kind?)` | 占用、释放房间的重资源锁（`kind` 只有 heavy）；装依赖、跑大型测试或启动服务前按需占用。占不到时返回持有它的任务，不自动等待；锁在 30 分钟后到期 |
@@ -212,6 +256,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese push-fix [--task <活>] [--drop-dependency]` | 将该任务已提交的修订立即推送到现有 PR，并刷新卡；`--drop-dependency` 将 PR 改到项目默认分支并清除依赖和旧批准，先按上文整理和验证独立改动；CI 轮询只读提交，不替你提交工作文件 |
 | `cheese recover <任务 id>` | 将任务最近一次备份恢复到独立目录并返回该目录；保留原工作目录，备份中的未提交文件不会进入 PR |
 | `cheese library get <名字> [--out <路径>]` | 取一份资料到你自己 home 下的 `~/attachments/library/<名字>`——和随消息发来的那份同一个位置,不写进工作目录。用户提到一份你手上没有的就用它,别请他重传 |
+| `cheese mail attachment <连接> <uid> <序号> [--folder <文件夹>] [--out <路径>]` | 把用户邮箱里一封邮件的附件取到 `~/attachments/mail/<uid>/` 下，再按 documents 技能读。连接 id 和 uid 来自上面「用户的邮箱和飞书文档」那几个接口 |
 | `cheese show <路径> [--as <类型>]` | 把工作区里的一份东西摆到房间里给人看,渲染进右侧预览窗口；`--as` 指定渲染类型，默认按扩展名判断（网页、SVG、PDF、Office 文件、图片都能摆）。摆出来的东西留在这个房间里；人可以按「保存到资料库」把其中一份留下来供以后各房间取用 |
 | `cheese convert <路径> --to <格式> [--output <路径>]` | 把文档转成另一种格式。两个用途:**老格式升级**——`.doc` / `.ppt` / `.xls` 不是 zip,这台机器读不了也写不了,要改就先升级成 `.docx` / `.pptx` / `.xlsx`,**并且明确告诉用户这是格式升级**(转出来的和原件不是同一个文件,往后发哪一份由他决定);**自己看版面**——`--to pdf` 之后用 `uv run --with pymupdf` 把某页存成图片看看,排版错了不报错、文字提取也正确,只有看一眼才发现 |
 | `cheese recalc <路径> [--output <路径>]` | 重算一份 `.xlsx` 里的公式,并列出算不出来的格(按 `Sheet1!B7` 的形式)。**用程序改过表格就要调它**:写进文件的是公式本身,依赖被改单元格的那些公式存的还是旧结果,文件照样能打开、公式栏也对,只有数是错的,而且没有任何地方会报错。这台机器上没有会算公式的程序,平台那边有 |

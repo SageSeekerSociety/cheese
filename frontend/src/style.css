@@ -158,9 +158,14 @@
   --page-w-read: 660px; /* long-form reading column */
 
   /* ---- Type ---- */
+  /* System fonts only, nothing downloaded: a CJK web font is megabytes per
+     weight. Apple devices get PingFang, Huawei and Xiaomi phones get HarmonyOS
+     Sans and MiSans through `system-ui`, desktops that installed either get it
+     by name, and Windows falls back to Microsoft YaHei. */
   --font-sans:
-    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'PingFang SC',
+    'HarmonyOS Sans SC', 'MiSans', 'Hiragino Sans GB', 'Microsoft YaHei',
+    sans-serif;
   --font-display: 'Bricolage Grotesque', var(--font-sans);
   --font-mono:
     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -710,6 +715,96 @@ button:not(.v-btn) {
 .v-btn--disabled[class*='bg-'] {
   color: rgba(var(--v-theme-on-surface), 0.26) !important;
   background-color: rgb(var(--v-theme-surface)) !important;
+}
+
+/* 由 useRevealGate 管着的页面主体：闸开之前内容照常排版但不可见，转圈浮在最上面；
+   闸一开整页一起出现，不是一块一块把下面的往下推。 */
+.reveal-gate {
+  position: relative;
+}
+.reveal-gate--waiting > :not(.reveal-gate__wait) {
+  visibility: hidden;
+}
+.reveal-gate__wait {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+}
+
+/* Indeterminate progress bars, same motion as Vuetify's, moved by transform.
+   Vuetify animates the bars' `left` and `right`, so every frame is a layout
+   and a layout shift for as long as a bar is on screen: a settings page that
+   was loading read as dozens of shifts in the CLS count. Each keyframe here is
+   Vuetify's `left: L; right: R` written as translateX(L) scaleX(100% - L - R). */
+.v-progress-linear .v-progress-linear__indeterminate .long,
+.v-progress-linear .v-progress-linear__indeterminate .short {
+  left: 0;
+  right: 0;
+  transform-origin: left center;
+}
+.v-progress-linear .v-progress-linear__indeterminate .long {
+  animation-name: progress-long-ltr;
+}
+.v-progress-linear .v-progress-linear__indeterminate .short {
+  animation-name: progress-short-ltr;
+}
+.v-progress-linear.v-progress-linear--reverse .v-progress-linear__indeterminate .long {
+  left: 0;
+  right: 0;
+  animation-name: progress-long-rtl;
+}
+.v-progress-linear.v-progress-linear--reverse .v-progress-linear__indeterminate .short {
+  left: 0;
+  right: 0;
+  animation-name: progress-short-rtl;
+}
+@keyframes progress-long-ltr {
+  0%,
+  60% {
+    transform: translateX(-90%) scaleX(0.9);
+  }
+  100% {
+    transform: translateX(100%) scaleX(0.35);
+  }
+}
+@keyframes progress-short-ltr {
+  0% {
+    transform: translateX(-200%) scaleX(2);
+  }
+  60%,
+  100% {
+    transform: translateX(107%) scaleX(0.01);
+  }
+}
+@keyframes progress-long-rtl {
+  0%,
+  60% {
+    transform: translateX(100%) scaleX(0.9);
+  }
+  100% {
+    transform: translateX(-35%) scaleX(0.35);
+  }
+}
+@keyframes progress-short-rtl {
+  0% {
+    transform: translateX(100%) scaleX(2);
+  }
+  60%,
+  100% {
+    transform: translateX(-8%) scaleX(0.01);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* A still, full-width bar: the global fallback would turn the loop into a
+     strobe. */
+  .v-progress-linear .v-progress-linear__indeterminate .long {
+    animation: none;
+  }
+  .v-progress-linear .v-progress-linear__indeterminate .short {
+    display: none;
+  }
 }
 
 /* Page content width. Two values, both named — 项目内的页面（总览/日历/设置/

@@ -944,9 +944,9 @@ Claude Code serves them through its MCP transport, pi registers them as extensio
   今天 `agent_instance/configuration.py:104-113 _drives()` 的注释逐字说明了这个方向
   （「The credential, not the shape」，注释在 `:107-109`，读能力位的那一行在 `:110`）。
 - **起子 agent** 不上这张表（结论 43）：它不是一个可以声明有无的能力位，是接入资格，见上一小节。
-- 「有没有进度清单」**不合格**：那是产品概念。今天它钉死在 Claude Code 的四个工具名上
-  （`chat.py:569 _TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}`，
-  `chat.py:3271` 是 `TopicProgress` 唯一写入口）。后果见 7.2 那张表。
+- 「有没有进度清单」**不合格**：那是产品概念。它是平台工具 `todo_write`（`sandbox/cheese`
+  的 `PLATFORM_TOOLS`，唯一写入口是 `PUT /topics/{id}/progress`），不看骨架；各骨架自带的
+  那一套在启动时关掉，写在各自的行为声明里。
 - 「每轮结束自动同步」**不合格**：只有 Claude Code 有
   （`harness/claude_code/device_launch.py:303` 的 `exec cheese sync --all` 脚本 + `:767` 的 `sync_on_stop`）。
 - 「太久没说话要提醒」**不合格**：同一件产品功能有两个产生方——
@@ -1378,11 +1378,11 @@ Cloud 是一条持久的等待事件 + 连接器上来就自动重投，自托�
 
 骨架接口已经建好了（#1032 MERGED），缺的是**上游读它**，以及 4.2 那两条判据（准入 + 消费）。
 
-**四件要统一的事今天一件都不在骨架接口上**：
+**四件要统一的事**，进度清单已经是平台工具，另外三件今天都不在骨架接口上：
 
 | 要统一的 | 今天住在哪 | 谁有、谁没有 |
 |---|---|---|
-| 进度清单 | `chat.py:569 _TASK_TOOLS`（平台侧，钉死 cc 的四个工具名）+ 唯一写入口 `chat.py:3271` | 只有 cc；pi 房间的清单永远是空的，而 prompt 每轮都在读它 |
+| 进度清单 | 平台工具 `todo_write`（`sandbox/cheese` 的 `PLATFORM_TOOLS`）→ `PUT /topics/{id}/progress` | 三个骨架同一个工具；cc 的 TodoWrite/Task*、codex 的 `update_plan` 在启动时关掉，pi 不自带 |
 | 子 agent 归属 | `room_task/models.py` 的 `subagent_id`（平台侧） | 只有 cc / codex 产生；pi 读到「起完分身立刻 `cheese_bind`」而它没有分身可起。按结论 43，「事件带可归到卡的线程标识」是契约的硬性要求，平台侧不再猜归属 |
 | 静默提醒 | `chat.py:1533`（平台，英文）**加** `pi/platform.ts:624 QUIET_LIMIT = 10`（机器上的 TypeScript，中文） | 两套并行，见 9.4 |
 | 每轮自动同步 | `device_launch.py:303` 的 `cheese sync --all` 脚本 + `:767 sync_on_stop` | 只有 cc；同一条活交给 pi，代码 commit 了但没 push |
@@ -1745,6 +1745,7 @@ API-key 供应商那一路不是第二个入口：机器不带 base URL，分流
 平台的 Claude 凭据只有计量代理持有：会话一律用不认证任何东西的占位票启动，发往 Anthropic 的请求由计量代理换上平台凭据，改走网关的换成项目虚拟 key；登录、换号、退出就是写入或删除计量代理的凭据文件，下一个请求起对所有会话生效；执行机器上没有任何模型凭据（他 2026-09-24 定，ccproxy 退役；同日因为要经常切换登录，改为计量代理持有）。
 I27 的拒绝点就是 `/llm/admission`：卡上的模型绑定在这里解析，选不到就拒绝并说出来，不换池。
 **只剩一种启动形状**（结论 46 补定）：机器永远以订阅形状起，分流发生在代理里（`deploy/metering-proxy/billing_addon.py:272 _route_to_gateway`，按 admission 的答复改写到网关，今天已在）。
+启动时用 `ANTHROPIC_MODEL` 告诉 Claude Code 绑定的模型，只为让它按这个模型组装系统提示词和自我介绍；每个请求实际跑哪个模型仍然由准入决定、代理写进请求体（他 2026-09-25 定：不告诉它时，Opus 收到的是 Sonnet 那份提示词）。
 
 ### 已定四：反馈隐私部分的可见范围（结论 47）
 

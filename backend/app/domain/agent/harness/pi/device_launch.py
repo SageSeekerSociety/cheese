@@ -23,7 +23,7 @@ from app.domain.agent import machine_launcher
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.harness.pi.bundle import build
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
-from app.domain.agent.skills import native_skill_files
+from app.domain.project_skill.service import session_skill_files
 
 # The pinned agent, served by the platform the way the claude pin is: the
 # machine fetches it from us, never from the vendor. `pi_dist` carries the
@@ -223,7 +223,7 @@ class PiLaunch:
             "--offline",
         ]
 
-    def configuration(self) -> dict:
+    def configuration(self, project_id: str | None = None) -> dict:
         """What the runner reads. Paths are NOT in here on purpose — the shell
         knows them and JSON written by a shell cannot carry a system prompt
         safely, so the two travel separately and meet in the runner's argv."""
@@ -238,7 +238,7 @@ class PiLaunch:
             # Carried as content, not as paths: these are the platform's files,
             # and the machine has no copy of them. Same reason the system prompt
             # travels this way — the runner writes both and points pi at them.
-            "skills": native_skill_files(),
+            "skills": session_skill_files(project_id),
             # `--extension` paths are additive even under `--no-extensions`,
             # the same way `--skill` is under `--no-skills`: what the machine's
             # owner keeps in their home stays out, and the platform's own comes
@@ -264,7 +264,7 @@ class PiLaunch:
         once and keep.
         """
         configure = _configure(provider(place.api_base, self.model))
-        configuration = self.configuration()
+        configuration = self.configuration(place.project_id)
         contract = hashlib.sha256(
             json.dumps(
                 [configure, _prepare(place.state, {**configuration, "opening": None})]

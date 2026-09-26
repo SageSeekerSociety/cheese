@@ -33,7 +33,7 @@ from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.pi import catalog
-from app.domain.agent.harness.pi.journal import Journal
+from app.domain.agent.harness.pi.journal import GAVE_UP, RETRYING, Journal
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 
 # A live event that can only mean an entry was written. Anything else is
@@ -51,6 +51,20 @@ class Runner(runner.Runner[Journal]):
         self.working = False
         # 读到的是哪一版实况文档，写回时要出示（平台工具表的 `_doc_get`）。
         self.doc_versions: dict[str, int] = {}
+        # What the live stream said about a failed model call, waiting to be
+        # written after the entry it is about (see ``refresh``).
+        self.verdicts: list[dict] = []
+        # The failed call those verdicts are about: its message's timestamp,
+        # which is also on the entry pi wrote for it.
+        self.last_failure: object = None
+        # Whether a failed call waits for its verdict before it is written
+        # down (see ``refresh``). Off while the session's past is read in.
+        self.holding = False
+        # A failed call is being retried and nothing has concluded it yet.
+        self.failing = False
+        # The platform asked pi to stop: a retry cut short by it is not a
+        # failure of anything.
+        self.aborting = False
 
     # --- reading -------------------------------------------------------------
 
@@ -66,8 +80,54 @@ class Runner(runner.Runner[Journal]):
             self.working = True
         elif kind == "agent_settled":
             self.working = False
+        elif kind == "auto_retry_start":
+            self.failing = True
+            self._verdict(
+                RETRYING,
+                after=self.last_failure,
+                attempt=event.get("attempt"),
+                maxAttempts=event.get("maxAttempts"),
+                delayMs=event.get("delayMs"),
+                errorMessage=event.get("errorMessage"),
+            )
+        elif kind == "auto_retry_end":
+            if event.get("success"):
+                self.failing = False
+            elif self.failing:
+                # A retry cut short while it waited: no agent_end follows.
+                self._give_up(event.get("finalError"))
+        elif kind == "agent_end":
+            # The call that ended this run, if it failed. When pi is not trying
+            # again — a request it cannot retry, or the retries ran out — that
+            # failure is how the turn ends.
+            last = next(
+                (
+                    message
+                    for message in reversed(event.get("messages") or [])
+                    if isinstance(message, dict) and message.get("role") == "assistant"
+                ),
+                None,
+            )
+            if last is not None and last.get("stopReason") == "error":
+                self.last_failure = last.get("timestamp")
+                if not event.get("willRetry"):
+                    self._give_up(last.get("errorMessage"))
         if kind in SETTLES:
             self.doorbell.set()
+
+    def _verdict(self, kind: str, **fields) -> None:
+        self.verdicts.append({"type": kind, "id": f"cheese:{uuid.uuid4()}", **fields})
+        self.doorbell.set()
+
+    def _give_up(self, error: object) -> None:
+        self.failing = False
+        self._verdict(
+            GAVE_UP,
+            after=self.last_failure,
+            errorMessage=str(error or ""),
+            aborted=self.aborting,
+        )
+        self.aborting = False
 
     async def _answer_the_door(self) -> None:
         while True:
@@ -90,21 +150,48 @@ class Runner(runner.Runner[Journal]):
         if self.client is None:
             return
         async with self.refreshing:
+            # A failed call is held back until pi has said what it will do
+            # about it (a verdict names it by ``after``), then goes in with the
+            # verdict right behind it — so the log reads failure, verdict, next
+            # attempt, whatever order the pulls happen to run in. What pi wrote
+            # after a held entry waits with it: the cursor stays before it.
+            verdicts, self.verdicts = self.verdicts, []
             owner = json.loads(self.journal.recall("owner") or "{}")
-            while True:
+
+            def stamped(record: dict) -> dict:
+                return {**record, "cheese": owner} if owner else record
+
+            held = False
+            while not held:
                 since = self.journal.recall("received")
                 # A fresh session has no cursor, and pi REFUSES a null one
                 # ("Entry not found: null") rather than reading it as "from the
                 # start" — so the first pull asks without the field at all.
                 fields = {"since": since} if since is not None else {}
                 page = (await self.client.request("get_entries", **fields))["entries"]
-                if not page:
-                    return
-                self.journal.import_entries(
-                    [{**entry, "cheese": owner} for entry in page] if owner else page
-                )
+                rows: list[dict] = []
+                for entry in page:
+                    message = entry.get("message") or {}
+                    at = message.get("timestamp")
+                    behind = [
+                        v for v in verdicts if at is not None and v["after"] == at
+                    ]
+                    if (
+                        self.holding
+                        and message.get("stopReason") == "error"
+                        and not behind
+                    ):
+                        held = True
+                        break
+                    rows.append(stamped(entry))
+                    rows += [stamped(v) for v in behind]
+                    verdicts = [v for v in verdicts if v not in behind]
+                if rows:
+                    self.journal.import_entries(rows)
                 if len(page) < PAGE:
-                    return
+                    break
+            # Not placed yet: the entry each names is still to be pulled.
+            self.verdicts = verdicts + self.verdicts
 
     # --- the platform extension ----------------------------------------------
 
@@ -281,8 +368,11 @@ class Runner(runner.Runner[Journal]):
         self.listener = asyncio.create_task(self.client.listen())
         self.refresher = asyncio.create_task(self._answer_the_door())
         # Whatever the session already holds is ours to land before the first
-        # input: resuming a session means its history is already there.
+        # input: resuming a session means its history is already there. Nothing
+        # in it is waiting on a verdict: whatever pi was doing ended with the
+        # process that did it, so a failure in it is not held back.
         await self.refresh()
+        self.holding = True
         await self.listen(LINE_LIMIT)
         return session_id
 
@@ -318,6 +408,8 @@ class Runner(runner.Runner[Journal]):
         work_id: str | None,
     ) -> dict:
         assert self.client is not None
+        if not steering:
+            self.aborting = False
         if work_id is not None and not steering:
             # Persist attribution before the call: entries can appear
             # before the command's own acknowledgement comes back.
@@ -362,6 +454,7 @@ class Runner(runner.Runner[Journal]):
         if method == "abort":
             if self.client is None:
                 return {"aborted": False}
+            self.aborting = True
             await self.client.request("abort")
             self.working = False
             return {"aborted": True}

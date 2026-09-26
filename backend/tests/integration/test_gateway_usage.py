@@ -28,6 +28,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import registered
+from tests.support.hang import HANG_S
 
 
 def _replace_chat_sleep(monkeypatch, sleep):
@@ -180,6 +181,7 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(
     assert set(kwargs["env"]) == {
         "CHEESE_AGENT_CONFIG",
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+        "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
     }
 
@@ -334,11 +336,13 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
     _replace_chat_sleep(monkeypatch, wait_for_rows)
     pending = asyncio.create_task(svc._drain_gateway_usage(pid, tid, uuid.uuid4()))
     try:
-        await asyncio.wait_for(settling.wait(), timeout=2)
+        await asyncio.wait_for(settling.wait(), timeout=HANG_S)
         # New inference must proceed while an earlier turn waits for spend rows.
-        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+        assert (
+            await asyncio.wait_for(svc.project_gateway_key(pid), timeout=HANG_S) == key
+        )
         other = await asyncio.wait_for(
-            svc._drain_gateway_usage(pid, tid, uuid.uuid4()), timeout=1
+            svc._drain_gateway_usage(pid, tid, uuid.uuid4()), timeout=HANG_S
         )
         assert other is not None
         assert [(u.model, u.input_tokens, u.output_tokens) for u in other] == [
@@ -416,7 +420,9 @@ async def test_key_lookup_does_not_queue_behind_the_gateway_lock(
     # Some other caller is inside the lock: a mint, a re-price, or a drain.
     await svc._gateway_lock.acquire()
     try:
-        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+        assert (
+            await asyncio.wait_for(svc.project_gateway_key(pid), timeout=HANG_S) == key
+        )
     finally:
         svc._gateway_lock.release()
 
@@ -448,8 +454,10 @@ async def test_a_slow_spend_read_does_not_stall_key_lookup(
     fake.daily_spend_by_model = slow_daily_spend_by_model  # type: ignore[method-assign]
     pending = asyncio.create_task(svc._drain_gateway_usage(pid, tid, uuid.uuid4()))
     try:
-        await asyncio.wait_for(reading.wait(), timeout=2)
-        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+        await asyncio.wait_for(reading.wait(), timeout=HANG_S)
+        assert (
+            await asyncio.wait_for(svc.project_gateway_key(pid), timeout=HANG_S) == key
+        )
     finally:
         release.set()
 
@@ -577,6 +585,7 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
     assert set(kwargs["env"]) == {
         "CHEESE_AGENT_CONFIG",
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+        "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
     }
     assert kwargs["model"] == app_settings.agent_model
@@ -604,6 +613,7 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
     assert set(kwargs["env"]) == {
         "CHEESE_AGENT_CONFIG",
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+        "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
     }
     assert kwargs["model"] == "claude-sonnet-5"
@@ -644,6 +654,7 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     assert set(cloud_kwargs["env"]) == {
         "CHEESE_AGENT_CONFIG",
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+        "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
     }
     assert fake.minted == []  # no gateway key is minted for either
@@ -807,7 +818,7 @@ async def test_one_drain_covers_several_models_without_absorbing_them(
 
 @pytest.mark.anyio
 async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
-    business_db_factory, tmp_path
+    business_db_factory, tmp_path, monkeypatch
 ):
     """A Claude Code session's turn ends with no usage of its own — that is
     'unknown', not 'this turn was free'. Without a meter for the route, the row
@@ -816,10 +827,16 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
         business_db_factory, tmp_path, None, screen=QuietScreen()
     )
 
+    from app.core.config import settings
+
+    ran_on = settings.agent_model
     async for _ in svc.converse(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    # The deployment default is not what the turn ran on; the row must name
+    # the model the turn was launched with, whatever the default says by then.
+    monkeypatch.setattr(settings, "agent_model", "not-what-the-turn-ran-on")
     await finish_turn(svc, tid)
 
     from sqlalchemy import select
@@ -836,3 +853,4 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
         )
     assert rows and all(r.kind == "chat:unmetered" for r in rows)
     assert all(r.total_tokens == 0 for r in rows)
+    assert {r.model for r in rows} == {ran_on}

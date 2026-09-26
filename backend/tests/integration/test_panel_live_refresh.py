@@ -8,17 +8,21 @@ That a tool call was made is not evidence of either, so a call the backend
 never received refreshes nothing.
 """
 
+import asyncio
+import time
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.runtime import get_broker
+from app.domain.block.models import Block
 from app.main import app
-from tests.conftest import StubChannel
+from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import chat_ws_url, post_project
 from tests.integration.test_accept_pr import app_world as app_world
@@ -208,7 +212,7 @@ def test_a_call_the_backend_never_received_refreshes_nothing(
 
 
 def test_the_turn_still_files_its_action_card(client, tmp_path):
-    """The action card at the end of a turn is a separate record and stays."""
+    """The action card for what the turn did is a separate record and stays."""
 
     class _Decides(_CallsATool):
         tool = "mcp__native__cheese_decision"
@@ -220,3 +224,63 @@ def test_the_turn_still_files_its_action_card(client, tmp_path):
         and (f["block"].get("meta") or {}).get("action") == "decision"
         for f in seen
     )
+
+
+def _is_decision_card(frame: dict) -> bool:
+    return (
+        frame["type"] == "event_block"
+        and (frame["block"].get("meta") or {}).get("action") == "decision"
+    )
+
+
+def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path):
+    class _DecidesAndKeepsGoing(StubChannel):
+        def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+            del prompt, reply
+            self.starts(topic_id)
+            self.uses(
+                topic_id, "mcp__native__cheese_decision", eid="e-1", text="用 A 方案"
+            )
+            self.says(topic_id, "定了，接着改代码")
+
+    channel = _DecidesAndKeepsGoing()
+    service = ChatService(
+        session_factory=client.test_request_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([channel.runtime], channel.name),
+    )
+    app.dependency_overrides[get_chat_service] = lambda: service
+    _, topic_id = _room(client)
+
+    async def cards() -> int:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(Block).where(Block.topic_id == uuid.UUID(topic_id))
+            )
+            return sum((row.meta or {}).get("action") == "decision" for row in rows)
+
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 定一下方案"})
+        deadline = time.monotonic() + 5
+        while asyncio.run(cards()) != 1:
+            assert time.monotonic() < deadline, "the running turn announced nothing"
+            time.sleep(0.05)
+    retire_topic(client, topic_id)
+
+
+def test_a_turn_announces_each_kind_of_action_once(client, tmp_path):
+    class _DecidesTwice(StubChannel):
+        def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+            del prompt
+            self.starts(topic_id)
+            self.uses(
+                topic_id, "mcp__native__cheese_decision", eid="e-1", text="用 A 方案"
+            )
+            self.uses(
+                topic_id, "mcp__native__cheese_decision", eid="e-2", text="再加 B"
+            )
+            self.stops(topic_id, reply)
+
+    seen = _turn_frames(client, tmp_path, _DecidesTwice())
+    assert len([f for f in seen if _is_decision_card(f)]) == 1

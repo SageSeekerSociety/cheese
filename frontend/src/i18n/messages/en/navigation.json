@@ -10,7 +10,9 @@
     "members": "Members",
     "docs": "Project docs",
     "settings": "Project settings",
-    "general": "General"
+    "general": "General",
+    "routines": "Routines",
+    "skills": "Methods"
   },
   "spaces": "Spaces",
   "teams": "Teams",
@@ -21,6 +23,7 @@
   "workspace": "Workspace",
   "feedback": {
     "label": "Help and feedback",
+    "docs": "Docs",
     "unread": "Help and feedback, unread updates",
     "center": "Feedback center",
     "mine": "My feedback",
@@ -45,6 +48,7 @@
       "system": "System",
       "light": "Light",
       "dark": "Dark"
-    }
+    },
+    "connections": "Connections"
   }
 }

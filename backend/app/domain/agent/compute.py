@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from app.domain.agent.harness import (
         ActivityConsumer,
         EventConsumer,
+        ReachabilityConsumer,
         ReceiptConsumer,
         SessionControls,
         SessionRef,
@@ -234,6 +235,11 @@ class ComputePool:
         for runtime in self._runtimes():
             runtime.bind_unread_probe(probe)
 
+    def bind_reachability(self, consumer: "ReachabilityConsumer") -> None:
+        """Give every runtime the owner of 「这一轮在等它的设备」."""
+        for runtime in self._runtimes():
+            runtime.bind_reachability(consumer)
+
     def session_controls(self, topic_id: uuid.UUID) -> "SessionControls | None":
         """The runtime whose live session in this room takes controls, if any."""
         from app.domain.agent.harness import SessionControls
@@ -268,6 +274,12 @@ class ComputePool:
                 self._owners[session.topic_id] = runtime
             recovered.extend(sessions)
         return recovered
+
+    async def stop_listening(self) -> None:
+        """Stop reading every session, in every harness."""
+        for runtime in self._runtimes():
+            await runtime.stop_listening()
+        self._owners.clear()
 
     async def replay(self, session: "SessionRef", *, known_texts: set[str]) -> None:
         """Land what a recovered session produced while nobody listened."""
