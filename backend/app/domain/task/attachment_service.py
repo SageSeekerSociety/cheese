@@ -24,7 +24,6 @@ from app.auth.space_access import may_teach_task
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.core.storage import StorageBackend
 from app.domain.attachment.models import Attachment
-from app.domain.attachment.repositories import AttachmentRepository
 from app.domain.attachment.services import AttachmentService
 from app.domain.task.models import Task, TaskAttachment
 from app.domain.task.visibility_service import TaskVisibilityService
@@ -101,8 +100,9 @@ class TaskAttachmentService:
         self._session = session
         self._storage = storage
         self._links = TaskAttachmentRepository(session=session)
-        self._attachment_repo = AttachmentRepository(session=session)
-        self._files = AttachmentService(repo=self._attachment_repo, storage=storage)
+        # 附件那一域的文件行一律经它的 service 去拿，不自己摸它的 repository ——
+        # 跨领域摸 repository 是 `test_domain_import_guard.py` 拦的那一条。
+        self._files = AttachmentService.from_session(session=session, storage=storage)
         self._visibility = TaskVisibilityService(session=session)
 
     # ---- 看 ----
@@ -121,7 +121,7 @@ class TaskAttachmentService:
         links = await self._links.list_live(task_id=task.id)
         files = {
             attachment.id: attachment
-            for attachment in await self._attachment_repo.get_by_ids(
+            for attachment in await self._files.get_many(
                 [link.attachment_id for link in links]
             )
         }
@@ -181,7 +181,7 @@ class TaskAttachmentService:
 
         files = {
             attachment.id: attachment
-            for attachment in await self._attachment_repo.get_by_ids(ids)
+            for attachment in await self._files.get_many(ids)
         }
         missing = [i for i in ids if i not in files]
         if missing:
@@ -220,9 +220,8 @@ class TaskAttachmentService:
         if link is None:
             raise NotFoundError("Attachment not found")
 
-        attachment = await self._attachment_repo.get_by_id(attachment_id)
-        if attachment is None:
-            raise NotFoundError("Attachment not found")
+        # 拿不到就是 404 —— `get` 自己会抛，与上面那条关联行缺失同一个结局。
+        attachment = await self._files.get(attachment_id)
 
         storage_key = attachment.meta.get("storageKey")
         if not storage_key:
