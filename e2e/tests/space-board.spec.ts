@@ -11,10 +11,17 @@ import { acceptPendingConsents, apiLogin, apiToken } from "./helpers";
 // 造数要走 API 而不是点界面，是因为「建空间 → 平台审核 → 建题 → 过审」在界面上是
 // 四个页面、七八次点击；断言则**全部留在屏幕上**，那才是人真正看到的东西。
 //
-// 第五批把**详情、发题、整板看板**收进这棵路由之后，这一份也跟着长出三条：
-// 在新外壳里点题进详情、材料与视频还在、发出去的题落到审核队列、整板看板只对管理员
-// 开门。它们量的正是「老页面被包进新外壳」这件事本身 —— 老页面自己那些功能各自
-// 有自己的测试，这里要看的是**在另一棵树里还成不成立**。
+// 第五批把**详情、发题**收进这棵路由之后，这一份也跟着长出几条：在新外壳里点题进
+// 详情、材料与视频还在、发出去的题落到审核队列。它们量的正是「老页面被包进新外壳」
+// 这件事本身 —— 老页面自己那些功能各自有自己的测试，这里要看的是**在另一棵树里
+// 还成不成立**。
+//
+// **整板看板那一格换成了它自己的页面**（第七批）：`/board/analytics` 不再是老树那九页
+// 的副本，而是这块板自己的看板（六个 KPI、走势、题目构成、分类分布、最热的题、出题人
+// 排行、待处理）。所以这一份里那条用例改成了「**屏幕上那六个数就是接口给的那一份**」：
+// 先用管理员身份把 `/analytics/overview|alerts` 拿回来，再逐张卡去比 —— 单元测试用的
+// 是假接口，只有真栈上才量得到「真库里的数真的画到了屏幕上」。同一条用例走到页脚那条
+// 链、落到老地址，量的则是「老树那九页一页没删，路没断」。
 
 // 空间名在库里是唯一的，而两个用例可能在同一毫秒里各建一个 —— 带上随机尾巴。
 const unique = () => `E2E 空间 ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -228,7 +235,16 @@ test.describe("空间新界面（真路由）", () => {
     // 整板看板是同一道门槛 —— 手打地址同样被弹回首页，看不到里面的数。
     await page.goto(`/spaces/${spaceId}/board/analytics`);
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board$`));
-    await expect(page.getByRole("heading", { name: "总览" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "数据看板" })).toHaveCount(0);
+    // 那一板上的数一个都不许露出来（「题目总数」是六个 KPI 里第一张卡）。
+    await expect(page.getByText("题目总数")).toHaveCount(0);
+
+    // 屏幕上挡住之外，接口那一层也挡住：这块看板读的是管理员版面那一组接口，
+    // 普通成员连请求都发不出去（403），所以「换个地址栏绕过」这条路本来就不存在。
+    const denied = await page.request.get(`/api/spaces/${spaceId}/analytics/overview`, {
+      headers: { Authorization: `Bearer ${otherToken}` },
+    });
+    expect(denied.status()).toBe(403);
   });
 
   test("点一道题在新外壳里打开详情，导航还在；老地址也还开着", async ({ page }) => {
@@ -384,24 +400,79 @@ test.describe("空间新界面（真路由）", () => {
     await expect(page.locator(".queue__title", { hasText: taskName })).toBeVisible();
   });
 
-  test("管理员从新外壳进整板看板，看到真数", async ({ page }) => {
+  test("管理员从新外壳进整板看板，屏幕上的数就是接口给的那一份", async ({ page }) => {
     await apiLogin(page);
     const auth = { Authorization: `Bearer ${await apiToken(page)}` };
     const { spaceId } = await createReviewedSpace(page, auth);
-    const taskId = await createTask(page, auth, spaceId, "看板要有的一道题（E2E）");
-    await approveTask(page, auth, taskId);
+    const approvedName = "看板上已上板的一道题（E2E）";
+    const pendingName = "看板上还在等审的一道题（E2E）";
+    await approveTask(page, auth, await createTask(page, auth, spaceId, approvedName));
+    await createTask(page, auth, spaceId, pendingName);
+
+    // 先把接口那一份拿回来 —— 下面屏幕上量到的每个数都要与它逐个相等，而不是
+    // 与测试自己写的常数相等（常数只是防止「两边一起变成 0」这种同归于尽的假绿）。
+    const overview = (await (
+      await page.request.get(`/api/spaces/${spaceId}/analytics/overview`, { headers: auth })
+    ).json()).data as {
+      entityMetrics: Record<string, number>;
+      taskDistributions: { byApprovalStatus: { items: { label: string; count: number }[] } };
+    };
+    const alerts = (await (
+      await page.request.get(`/api/spaces/${spaceId}/analytics/alerts`, { headers: auth })
+    ).json()).data as { pendingTaskApprovalCount: number };
+    const m = overview.entityMetrics;
+    expect(m.taskCount).toBe(2);
+    expect(m.publisherCount).toBe(1);
+    expect(alerts.pendingTaskApprovalCount).toBe(1);
 
     await page.goto(`/spaces/${spaceId}/board`);
     await page.getByRole("link", { name: "数据看板", exact: true }).click();
 
-    // 第一格「总览」自己就挂在 /analytics 这个地址上（它的子路径是空串），
-    // 所以地址栏不变，变的是屏幕上真有这一格的内容。
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/analytics$`));
-    await expect(page.getByRole("heading", { name: "总览" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "数据看板" })).toBeVisible();
     // 外壳还在：看板是挂在新题目板里的，不是把老侧栏那套又搬回来。
     await expect(page.getByRole("link", { name: "数据看板", exact: true })).toBeVisible();
-    // 真数据：这一板上确实有一道题。
-    await expect(page.getByText("题目总数")).toBeVisible();
+
+    // 六张 KPI 卡上的数 == 接口给的那一份。
+    const kpi = (label: string) => page.locator(".metric", { hasText: label }).locator(".metric__value");
+    await expect(kpi("题目总数")).toHaveText(String(m.taskCount));
+    await expect(kpi("待审核")).toHaveText(String(alerts.pendingTaskApprovalCount));
+    await expect(kpi("领取主体")).toHaveText(String(m.participantCount));
+    await expect(kpi("提交主体")).toHaveText(String(m.submittedParticipantCount));
+    await expect(kpi("通过主体")).toHaveText(String(m.successfulParticipantCount));
+    await expect(kpi("完成率")).toHaveText(`${Math.round(m.successRate * 100)}%`);
+
+    // 题目构成那张状态条也照接口的 byApprovalStatus 画：一道已上板、一道待审核。
+    const statusOf = (label: string) =>
+      overview.taskDistributions.byApprovalStatus.items.find((i) => i.label === label)?.count ?? 0;
+    expect(statusOf("APPROVED")).toBe(1);
+    expect(statusOf("NONE")).toBe(1);
+    await expect(
+      page.locator(".split__legend li", { hasText: "已上板" }).locator(".split__num"),
+    ).toHaveText(String(statusOf("APPROVED")));
+    await expect(
+      page.locator(".split__legend li", { hasText: "待审核" }).locator(".split__num"),
+    ).toHaveText(String(statusOf("NONE")));
+
+    // 「最热的题」是逐题那一份排出来的，两道题都在里面。
+    await expect(page.locator(".bars__label", { hasText: approvedName })).toBeVisible();
+    await expect(page.locator(".bars__label", { hasText: pendingName })).toBeVisible();
+
+    // 待处理那一格：那张「几道题在等你审」的卡用的是 alerts 的数，进得去审核页。
+    await page.getByRole("tab", { name: /^待处理/ }).click();
+    await expect(page.getByText(`${alerts.pendingTaskApprovalCount} 道题在等你审`)).toBeVisible();
+    await expect(page.getByRole("link", { name: "去审核" })).toHaveAttribute(
+      "href",
+      `/spaces/${spaceId}/board/review`,
+    );
+
+    // 老树那九页一页没删：页脚那条链的**落点**是老地址，点过去也真能开出来。
+    await expect(page.getByRole("link", { name: "打开老版九页分析" })).toHaveAttribute(
+      "href",
+      `/spaces/${spaceId}/analytics`,
+    );
+    await page.goto(`/spaces/${spaceId}/analytics`);
+    await expect(page.getByRole("heading", { name: "总览" })).toBeVisible({ timeout: 60_000 });
   });
 
   test("从空间列表点进一块板，落的是题目板；课的几屏还在", async ({ page }) => {

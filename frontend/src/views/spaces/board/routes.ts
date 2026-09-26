@@ -10,11 +10,18 @@
  * `board` 不是它的子路径，所以不会被它接住，也就不会套上老侧栏。新界面有自己的
  * 外壳（`SpaceBoardShell.vue`）。
  *
- * **题目详情、发题、整板看板在第五批收进来了**：那三处背后是成熟功能（按
- * `submissionSchema` 出表单的提交、逐版评审、AI 建议、PDF 生成、九个看板页），
- * 所以老页面**一个字没改**，各由 `pages/` 下一层包着挂进这棵树 —— 每层文件顶部
- * 写明它补的是什么（provide 路由名、页头、pinia 的 space store）。老地址照常
- * 在原处服务，退场是下一批的事。
+ * **题目详情、发题在第五批收进来了**：那两处背后是成熟功能（按 `submissionSchema`
+ * 出表单的提交、逐版评审、AI 建议、PDF 生成），所以老页面**一个字没改**，各由
+ * `pages/` 下一层包着挂进这棵树 —— 每层文件顶部写明它补的是什么（provide 路由名、
+ * 页头、pinia 的 space store）。老地址照常在原处服务，退场是下一批的事。
+ *
+ * **整板看板这一格不再是老树那九页的副本**（第七批）：`/board/analytics` 现在渲染这
+ * 块板自己的看板（`pages/Analytics.vue`：六个 KPI、领取与提交走势、题目构成、分类分布、
+ * 最热的题、出题人排行、待处理），数字来自老树那九页背后同一组 `/spaces/{id}/analytics/*`
+ * 接口。老树那九页**一页没删**，仍在 `/spaces/:id/analytics/*` 上原样服务（见
+ * `router/spaces.ts` 文件头）；新看板页脚留了一条走过去的路 —— 逐题、逐人、逐出题人
+ * 翻明细去那里。所以这里不再有 `SpaceBoardAnalytics*` 那六条子路由：它们只是把老页面
+ * 套进新外壳，留着就是一堆没人渲染的死路由。
  */
 import type { RouteLocationNormalized, RouteRecordRaw } from 'vue-router'
 
@@ -97,44 +104,11 @@ export const SpaceBoardRoutes: RouteRecordRaw = {
       ],
     },
     {
+      // 整板看板是管理员那一格，直接输地址也要挡住 —— 与「审核」「成员」同一道门槛。
       path: 'analytics',
       name: 'SpaceBoardAnalytics',
       component: () => import('./pages/Analytics.vue'),
-      redirect: { name: 'SpaceBoardAnalyticsOverview' },
-      // 整板看板是管理员那一格，直接输地址也要挡住 —— 与「审核」「成员」同一道门槛。
       beforeEnter: managerOnly,
-      children: [
-        {
-          path: '',
-          name: 'SpaceBoardAnalyticsOverview',
-          component: () => import('@/views/spaces/detail/analytics/Overview.vue'),
-        },
-        {
-          path: 'alerts',
-          name: 'SpaceBoardAnalyticsAlerts',
-          component: () => import('@/views/spaces/detail/analytics/Alerts.vue'),
-        },
-        {
-          path: 'publishers',
-          name: 'SpaceBoardAnalyticsPublishers',
-          component: () => import('@/views/spaces/detail/analytics/Publishers.vue'),
-        },
-        {
-          path: 'tasks',
-          name: 'SpaceBoardAnalyticsTasks',
-          component: () => import('@/views/spaces/detail/analytics/Tasks.vue'),
-        },
-        {
-          path: 'participants',
-          name: 'SpaceBoardAnalyticsParticipants',
-          component: () => import('@/views/spaces/detail/analytics/Participants.vue'),
-        },
-        {
-          path: 'learning',
-          name: 'SpaceBoardAnalyticsLearning',
-          component: () => import('@/views/spaces/detail/analytics/Learning.vue'),
-        },
-      ],
     },
     {
       path: 'insights/:taskId',

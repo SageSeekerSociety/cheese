@@ -55,12 +55,6 @@ vi.mock('@/views/tasks/detail/Submissions.vue', () => ({ default: blank }))
 vi.mock('@/views/tasks/detail/Participants.vue', () => ({ default: blank }))
 vi.mock('@/views/tasks/detail/Submit.vue', () => ({ default: blank }))
 vi.mock('@/views/tasks/detail/AIAdvice.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Overview.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Alerts.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Publishers.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Tasks.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Participants.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Learning.vue', () => ({ default: blank }))
 
 import { SpaceBoardRoutes } from './routes'
 
@@ -106,19 +100,16 @@ describe('空间新界面那一棵路由', () => {
     expect((await open('/spaces/7/board/publish')).name).toBe('SpaceBoardTaskPublish')
   })
 
-  it('看板落进总览那一格，六格都在', async () => {
+  it('看板是它自己那一页，不再是老树那九页的副本', async () => {
     hoisted.manager = true
-    expect((await open('/spaces/7/board/analytics')).name).toBe('SpaceBoardAnalyticsOverview')
-    expect((await open('/spaces/7/board/analytics/alerts')).name).toBe('SpaceBoardAnalyticsAlerts')
-    expect((await open('/spaces/7/board/analytics/publishers')).name).toBe('SpaceBoardAnalyticsPublishers')
-    expect((await open('/spaces/7/board/analytics/tasks')).name).toBe('SpaceBoardAnalyticsTasks')
-    expect((await open('/spaces/7/board/analytics/participants')).name).toBe('SpaceBoardAnalyticsParticipants')
-    expect((await open('/spaces/7/board/analytics/learning')).name).toBe('SpaceBoardAnalyticsLearning')
+    expect((await open('/spaces/7/board/analytics')).name).toBe('SpaceBoardAnalytics')
+    // 那六条「把老分析页套进新外壳」的子路由没有了：留着也没人渲染。
+    // 老树那九页仍在 `/spaces/:id/analytics/*` 上原样服务（那一棵不在这一份里）。
+    expect((await open('/spaces/7/board/analytics/alerts')).name).toBe('catch-all')
   })
 
   it('看板对普通成员关上，直接输地址也进不去', async () => {
     expect((await open('/spaces/7/board/analytics')).name).toBe('SpaceBoardHome')
-    expect((await open('/spaces/7/board/analytics/alerts')).name).toBe('SpaceBoardHome')
   })
 
   it('换一个空间，路径里的 id 跟着换（不是写死的）', async () => {
