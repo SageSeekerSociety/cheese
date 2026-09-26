@@ -8,7 +8,7 @@ and its bytes are kept content-addressed beside the room files.
 New table only; downgrading drops it and the history it holds.
 
 Revision ID: b803df6cc480
-Revises: 9e4a1c3b7d52
+Revises: 5c1d8e7f2b90
 """
 
 from collections.abc import Sequence
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b803df6cc480"
-down_revision: str | Sequence[str] | None = "9e4a1c3b7d52"
+down_revision: str | Sequence[str] | None = "5c1d8e7f2b90"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
