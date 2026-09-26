@@ -4,6 +4,7 @@ from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
+    AgentRetrying,
     AgentSessionInfo,
     AgentSubagentStart,
     AgentSubagentStop,
@@ -168,3 +169,32 @@ def test_child_events_do_not_replace_root_session_or_finish_its_turn():
         assert stopped[0].text == "found it"
         assert stopped[0].agent_id == child
     assert [message.text for message in assembler.give_up()] == ["root pending"]
+
+
+def _error(message: str, *, will_retry: bool) -> dict:
+    return {
+        "method": "error",
+        "params": {
+            "threadId": "thread",
+            "turnId": "turn",
+            "willRetry": will_retry,
+            "error": {"message": message},
+        },
+    }
+
+
+def test_a_retry_without_a_count_is_still_a_retry():
+    """「Reconnecting... waiting for network」 says no attempt number, and the
+    room still has to hear that the turn is retrying rather than thinking."""
+    [event] = Assembler().accept(
+        _error("Reconnecting... waiting for network", will_retry=True)
+    )
+    assert isinstance(event, AgentRetrying)
+    assert event.attempt is None
+    assert event.error == "Reconnecting... waiting for network"
+
+
+def test_an_error_that_will_not_be_retried_is_left_to_the_turn():
+    """The failure that ends the turn arrives with ``turn/completed``; saying
+    「retrying」 for it would promise a retry that never comes."""
+    assert Assembler().accept(_error("stream disconnected", will_retry=False)) == []

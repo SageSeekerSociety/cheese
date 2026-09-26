@@ -141,6 +141,19 @@
   },
   "room": {
     "noTasks": "暂无任务",
+    "site": {
+      "status": {
+        "thinking": "思考中",
+        "acting": "正在{verb}",
+        "retrying": "重试中",
+        "retryingCount": "重试中（第 {attempt} 次）",
+        "waiting": "等待机器",
+        "stopped": "已停止",
+        "idle": "空闲",
+        "elapsed": "已用 {span}",
+        "quiet": "最近活动 {span}前"
+      }
+    },
     "menu": {
       "more": "更多",
       "focus": "专注模式",

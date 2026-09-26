@@ -62,6 +62,8 @@ from app.domain.agent.platform_failures import (
     classify_platform_failure,
 )
 from app.domain.agent.platform_notices import (
+    EVENT_API_RETRY,
+    EVENT_DEVICE_WAITING,
     EVENT_PROMPT_REPLAYED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
@@ -78,6 +80,7 @@ from app.domain.agent.service import (
     AgentEvent,
     AgentMessage,
     AgentResult,
+    AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
     AgentSubagentStart,
@@ -1216,6 +1219,7 @@ class ChatService:
         self._compute.bind_events(self._consume_hook_event, self._set_hook_activity)
         self._compute.bind_receipts(self.confirm_prompt_receipt)
         self._compute.bind_unread_probe(self.oldest_unread_at)
+        self._compute.bind_reachability(self._note_reachability)
         # Mid-turn messages whose write the transport accepted but whose
         # UserPromptSubmit receipt has not arrived yet (#539 decision A):
         # topic → [(injected text, block ids, consuming turn)]. The receipt
@@ -1259,6 +1263,10 @@ class ChatService:
         # message only after the exact UserPromptSubmit receipt.
         self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
+        # The notice each open turn is keeping current: a streak of retries, a
+        # wait for its machine. One line per streak, restated as it moves on.
+        self._retry_notes: dict[uuid.UUID, uuid.UUID] = {}
+        self._waiting_notes: dict[uuid.UUID, uuid.UUID] = {}
         # Which child agents the running sessions say are still doing something,
         # per room. Only the harness's own lifecycle events can answer this:
         # they fire in the session's process and carry the child's id, while
@@ -2540,6 +2548,12 @@ class ChatService:
         # the room's channel: the block lands in the thread, so a live watcher
         # would see an event that a reload then moves somewhere else.
         channel = str(task_id) if task_id is not None else str(topic_id)
+        if not isinstance(event, AgentRetrying):
+            # Anything else the turn does ends a streak of retries: the request
+            # went through. The next retry is news of its own.
+            self._retry_notes.pop(turn_id, None)
+        if isinstance(event, AgentResult):
+            self._waiting_notes.pop(turn_id, None)
         if isinstance(event, AgentSessionInfo):
             self._note_room_session(topic_id, event.session_id)
             await self._save_session_pointer(
@@ -2607,13 +2621,24 @@ class ChatService:
             if state is not None and resource is not None:
                 await self._announce_action(state, resource)
         elif isinstance(event, AgentStepFailed):
-            # No frame: 现场 rebuilds its timeline when the tab is opened, and
-            # this changes a line that is already in it rather than adding one.
-            # A step whose call we never saw (a restart mid-turn) is simply not
-            # marked — the timeline is still true, just less helpful.
+            # It changes a line that is already on the timeline rather than
+            # adding one, so it goes out as that line, restated. A step whose
+            # call we never saw (a restart mid-turn) is simply not marked — the
+            # timeline is still true, just less helpful.
             block_id = state.steps.get(event.call_id) if state is not None else None
             if block_id is not None:
-                await self._mark_step_failed(block_id, event.text)
+                payload = await self._mark_step_failed(block_id, event.text)
+                if payload is not None:
+                    frame = {"type": "block_updated", "block": payload}
+        elif isinstance(event, AgentRetrying):
+            await self._note_retry(
+                topic_id,
+                turn_id,
+                event,
+                author=state.acting_agent if state is not None else None,
+                task_id=task_id,
+                channel=channel,
+            )
         elif isinstance(event, AgentToolResult):
             payload = await self._persist_subagent_result(
                 project_id=project_id,
@@ -3598,14 +3623,182 @@ class ChatService:
             task_id=task_id,
         )
 
-    async def _mark_step_failed(self, block_id: uuid.UUID, error: str) -> None:
-        """Stamp a 现场 step as failed. Never fails a turn over a red dot."""
+    async def _mark_step_failed(self, block_id: uuid.UUID, error: str) -> dict | None:
+        """Stamp a 现场 step as failed, and hand back the step as it now reads.
+        Never fails a turn over a red dot."""
         try:
             async with self._sessions() as session:
-                await BlockRepository(session).mark_step_failed(block_id, error)
+                block = await BlockRepository(session).mark_step_failed(block_id, error)
+                payload = (
+                    _block_payload(BlockOut.model_validate(block))
+                    if block is not None
+                    else None
+                )
                 await session.commit()
+            return payload
         except Exception:  # noqa: BLE001 — a step's verdict is not worth a turn
             logger.warning("could not mark step %s failed", block_id)
+            return None
+
+    async def _note_retry(
+        self,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        event: AgentRetrying,
+        *,
+        author: str | None,
+        task_id: uuid.UUID | None,
+        channel: str,
+    ) -> None:
+        """Say the turn is retrying a failed request, on one line per streak.
+
+        The first retry of a streak lands a notice; every later one restates
+        that same line with the new count, so ten retries read as one line that
+        says 10 rather than ten lines. Not session output (`note_session_output`
+        is not told): nothing the session produced crossed here."""
+        count = (
+            f"{event.attempt}/{event.max_attempts}"
+            if event.attempt and event.max_attempts
+            else str(event.attempt or "")
+        )
+        content = "AI 服务请求失败，正在重试" + (f"（第 {count} 次）" if count else "")
+        said = " ".join(
+            part
+            for part in (
+                event.error,
+                f"HTTP {event.status}" if event.status is not None else "",
+            )
+            if part
+        )
+        meta = {
+            **notice(
+                EVENT_API_RETRY,
+                severity=SEVERITY_WARN,
+                who=WHO_PLATFORM,
+                detail=said or None,
+                detail_label="服务原话" if said else None,
+            ),
+            "attempt": event.attempt,
+            "max_attempts": event.max_attempts,
+            "delay_ms": event.delay_ms,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        await self._keep_note(
+            self._retry_notes,
+            topic_id,
+            turn_id,
+            content,
+            meta,
+            author=author,
+            task_id=task_id,
+            channel=channel,
+        )
+
+    async def _note_reachability(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        work_id: uuid.UUID,
+        reachable: bool,
+        reason: str,
+    ) -> None:
+        """Say the turn is waiting for its machine, and later that the wait is
+        over — the same line both times."""
+        del project_id
+        if reachable:
+            block_id = self._waiting_notes.pop(work_id, None)
+            if block_id is None:
+                return
+            await self._restate_note(
+                block_id,
+                "机器已恢复连接",
+                {"state": "over", "at": datetime.now(UTC).isoformat()},
+                str(topic_id),
+            )
+            return
+        state = self._hook_work.get((topic_id, work_id))
+        meta = {
+            **notice(
+                EVENT_DEVICE_WAITING,
+                severity=SEVERITY_WARN,
+                who=WHO_PLATFORM,
+                detail=reason or None,
+                detail_label="原因" if reason else None,
+            ),
+            "state": "waiting",
+            "at": datetime.now(UTC).isoformat(),
+        }
+        await self._keep_note(
+            self._waiting_notes,
+            topic_id,
+            work_id,
+            "等待机器连接",
+            meta,
+            author=state.acting_agent if state is not None else None,
+            task_id=None,
+            channel=str(topic_id),
+        )
+
+    async def _keep_note(
+        self,
+        notes: dict[uuid.UUID, uuid.UUID],
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        content: str,
+        meta: dict,
+        *,
+        author: str | None,
+        task_id: uuid.UUID | None,
+        channel: str,
+    ) -> None:
+        """Land the turn's notice of this kind, or restate the one it has."""
+        from app.domain.agent.runtime import get_broker
+
+        block_id = notes.get(turn_id)
+        if block_id is not None:
+            await self._restate_note(block_id, content, meta, channel)
+            return
+        try:
+            async with self._sessions() as session:
+                block = await announce(
+                    session,
+                    place_id=topic_id,
+                    content=content,
+                    meta=meta,
+                    # The agent whose turn this is: the notice is about its
+                    # work, and 现场 files it under whoever did the work.
+                    author=author or "system",
+                    turn_id=turn_id,
+                    task_id=task_id,
+                )
+                if block is None:
+                    return
+                payload = _block_payload(BlockOut.model_validate(block))
+                await session.commit()
+        except Exception:  # noqa: BLE001 — a status line is not worth a turn
+            logger.exception("could not note %s for turn %s", content, turn_id)
+            return
+        notes[turn_id] = uuid.UUID(payload["id"])
+        await get_broker().publish(channel, {"type": "event_block", "block": payload})
+
+    async def _restate_note(
+        self, block_id: uuid.UUID, content: str, meta: dict, channel: str
+    ) -> None:
+        from app.domain.agent.runtime import get_broker
+
+        try:
+            async with self._sessions() as session:
+                block = await BlockRepository(session).restate(
+                    block_id, content=content, meta=meta
+                )
+                if block is None:
+                    return
+                payload = _block_payload(BlockOut.model_validate(block))
+                await session.commit()
+        except Exception:  # noqa: BLE001 — a status line is not worth a turn
+            logger.exception("could not restate notice %s", block_id)
+            return
+        await get_broker().publish(channel, {"type": "block_updated", "block": payload})
 
     async def _persist_room_event(
         self,

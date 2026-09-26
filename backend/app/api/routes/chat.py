@@ -146,7 +146,13 @@ async def chat(
         # race.
         active_turn_ids = broker.active_turn_ids(channel)
         if active_turn_ids:
-            await send({"type": "turn_active", "turn_ids": active_turn_ids})
+            await send(
+                {
+                    "type": "turn_active",
+                    "turn_ids": active_turn_ids,
+                    "since": broker.active_turns_since(channel),
+                }
+            )
 
         relay_task = asyncio.create_task(relay(queue))
         try:

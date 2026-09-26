@@ -1,0 +1,49 @@
+{
+  "verb": "backlog",
+  "why": "A request that failed and is being sent again is the one stretch of a turn in which nothing at all reaches the room. The status line has to be able to say 重试中 instead of 思考中, and each harness reports it in its own words.",
+  "readers": [
+    "python"
+  ],
+  "harnesses": {
+    "claude-code": {
+      "records": [
+        {
+          "type": "system",
+          "subtype": "api_retry",
+          "attempt": 1,
+          "max_retries": 10,
+          "retry_delay_ms": 1200,
+          "error_status": 429,
+          "error": "rate_limit",
+          "uuid": "rec_1",
+          "session_id": "session-1"
+        }
+      ]
+    },
+    "pi": {
+      "difference": "no-retry-signal"
+    },
+    "codex": {
+      "records": [
+        {
+          "method": "error",
+          "params": {
+            "threadId": "session-1",
+            "turnId": "turn-1",
+            "willRetry": true,
+            "error": {
+              "message": "Reconnecting... 1/10"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "kind": "retrying",
+      "attempt": 1,
+      "max_attempts": 10
+    }
+  ]
+}
