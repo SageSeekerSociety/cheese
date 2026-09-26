@@ -66,6 +66,11 @@ function releaseLane(): void {
 // 后来的直接跟着它的结果走。
 const inFlight = new Map<string, Promise<Block[] | null>>()
 
+/** 这个话题正在飞的那条最新页请求；没有就是 undefined。 */
+export function pendingBlockRefresh(topicId: string): Promise<Block[] | null> | undefined {
+  return inFlight.get(topicId)
+}
+
 export function refreshBlockCache(topicId: string): Promise<Block[] | null> {
   const running = inFlight.get(topicId)
   if (running) return running

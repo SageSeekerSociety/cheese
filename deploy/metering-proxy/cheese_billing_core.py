@@ -117,6 +117,27 @@ def verify_scoped_token(
     return claims
 
 
+def _decoder(encoding: str):
+    """An incremental decoder for a response's Content-Encoding, or None when
+    this proxy cannot read it. The bytes forwarded to the client are never
+    touched; only the copy read for usage is decoded."""
+    encoding = encoding.strip().lower()
+    if encoding in ("", "identity"):
+        return lambda chunk: chunk
+    if encoding in ("gzip", "x-gzip", "deflate"):
+        # 47: zlib or gzip framing, detected from the header.
+        return zlib.decompressobj(47).decompress
+    if encoding == "br":
+        import brotli  # in the proxy image, not in the backend's test env
+
+        return brotli.Decompressor().process
+    if encoding == "zstd":
+        import zstandard  # in the proxy image, not in the backend's test env
+
+        return zstandard.ZstdDecompressor().decompressobj().decompress
+    return None
+
+
 class StreamingUsageExtractor:
     """Scrape a turn's usage/model out of an SSE response WITHOUT holding the
     whole body. Feed raw chunks as they pass through the proxy; only a single
@@ -125,12 +146,17 @@ class StreamingUsageExtractor:
 
     Anthropic puts input tokens on message_start and the output count on
     message_delta, so the usage is merged across events — neither alone is the
-    turn's cost."""
+    turn's cost.
 
-    def __init__(self) -> None:
+    ``encoding`` is the response's Content-Encoding. Anthropic compresses the
+    SSE of a client that accepts it, as Claude Code does, and read raw those
+    bytes hold no event at all: usage stayed empty and nothing was recorded."""
+
+    def __init__(self, encoding: str = "") -> None:
         self._buf = b""
         self.usage: dict = {}
         self.model = ""
+        self._decode = _decoder(encoding)
 
     # A usage-bearing SSE line is well under 1 KiB; nothing we meter is remotely
     # this large. The cap only guarantees the O(one line) memory bound survives
@@ -138,8 +164,9 @@ class StreamingUsageExtractor:
     _MAX_LINE = 1 << 20
 
     def feed(self, chunk: bytes) -> None:
-        if not chunk:
+        if not chunk or self._decode is None:
             return
+        chunk = self._decode(chunk)
         self._buf += chunk
         # Consume complete lines; keep the trailing partial for the next chunk.
         *lines, self._buf = self._buf.split(b"\n")

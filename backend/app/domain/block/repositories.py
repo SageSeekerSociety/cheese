@@ -333,7 +333,7 @@ class BlockRepository:
                 block.meta = meta
         await self._session.flush()
 
-    async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> bool:
+    async def mark_step_failed(self, block_id: uuid.UUID, error: str) -> Block | None:
         """Record on a 现场 step that its tool came back an error.
 
         Written onto the step that is already there rather than as a second
@@ -341,16 +341,34 @@ class BlockRepository:
         own would put the verdict somewhere the eye has to pair back up with
         the action. Same `meta` replacement rule as `mark_consumed` — an
         in-place mutation of a JSON column never saves.
+
+        Returns the step as it now reads, for whoever tells the room; None when
+        it is gone.
         """
         block = await self._session.get(Block, block_id)
         if block is None:
-            return False
+            return None
         meta = {**(block.meta or {}), "failed": True}
         if error:
             meta["error"] = error
         block.meta = meta
         await self._session.flush()
-        return True
+        return block
+
+    async def restate(
+        self, block_id: uuid.UUID, *, content: str, meta: dict
+    ) -> Block | None:
+        """Say again, in place, what an event block says — a notice whose news
+        moved on (the third retry of the same request, the wait that ended)
+        rather than a second line for the same thing. `meta` is merged over
+        what is there, by replacement, for the same reason as above."""
+        block = await self._session.get(Block, block_id)
+        if block is None:
+            return None
+        block.content = content
+        block.meta = {**(block.meta or {}), **meta}
+        await self._session.flush()
+        return block
 
     async def update_node(
         self, block: Block, *, node_type: str, struct_order: float

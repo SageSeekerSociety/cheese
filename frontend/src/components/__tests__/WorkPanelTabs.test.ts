@@ -174,7 +174,8 @@ describe('工作面板 · Tab 容器', () => {
     // 回到文档：编辑器还在（它从头到尾没被卸载过，切走一趟不会重建 tiptap）。
     await openTab(container, '总览')
     expect(visible(container, '.panel-overview')).toBe(true)
-    expect(container.querySelector('.doc-editor')).toBeTruthy()
+    // 文档那一格是异步组件（编辑器不挡房间首屏），等它自己到。
+    await vi.waitFor(() => expect(container.querySelector('.doc-editor')).toBeTruthy(), { timeout: 5000 })
   })
 
   // 旧代码里 `openTool.value = 'files'` 那一句。切分之后它变成三段接力
@@ -194,8 +195,14 @@ describe('工作面板 · Tab 容器', () => {
     const { container } = mountPanel()
     await flush()
 
-    const chip = container.querySelector<HTMLElement>('.doc-editor .mention.file-ref')
-    expect(chip, '文档里没渲染出 <&path> chip').toBeTruthy()
+    const chip = await vi.waitFor(
+      () => {
+        const found = container.querySelector<HTMLElement>('.doc-editor .mention.file-ref')
+        expect(found, '文档里没渲染出 <&path> chip').toBeTruthy()
+        return found
+      },
+      { timeout: 5000 }
+    )
     expect(chip!.dataset.file).toBe('src/b.ts')
 
     await fireEvent.click(chip!)

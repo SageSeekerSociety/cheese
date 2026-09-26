@@ -10,6 +10,8 @@ import type { MaybeRefOrGetter, Ref } from 'vue'
 
 import { getCurrentInstance, onActivated, ref, toValue, watch } from 'vue'
 
+import { holdRevealGate } from '@/composables/useRevealGate'
+
 import { fetchCachedPage, hasCachedPage, readCachedPage } from '@/lib/pageCache'
 
 export interface CachedResource<T> {
@@ -49,6 +51,8 @@ export function useCachedResource<T>(
   // 走到别的项目/别的成员去了，这份数据现在是错的，丢掉。
   let currentKey = toValue(key)
   let hasData = false
+  // 页面若提供了显示闸（useRevealGate），没有缓存时首次取数期间占住它。
+  const releaseGate = hasCachedPage(currentKey) ? () => {} : holdRevealGate()
 
   async function load(requestKey: string): Promise<void> {
     // 有东西在显示就绝不转圈：这一条是整个改动的目的。
@@ -70,6 +74,7 @@ export function useCachedResource<T>(
         loading.value = false
         refreshing.value = false
       }
+      releaseGate()
     }
   }
 

@@ -24,7 +24,13 @@ def declaration() -> Declaration:
         built_ins=frozenset(),
         how_disabled={
             BuiltIn.ASK: Difference.NOT_CHECKED_AGAINST_THE_PIN,
-            BuiltIn.TODO: Difference.NOT_CHECKED_AGAINST_THE_PIN,
+            # 0.85.1 的内置工具是 packages/coding-agent/src/core/tools/index.ts
+            # 的 ToolName：read、bash、powershell、edit、write、grep、find、ls，
+            # 没有清单工具；它的 README 写明「No built-in to-dos」。所以没有东西
+            # 要关，清单是平台建的 `todo_write`（sandbox/cheese 的
+            # PLATFORM_TOOLS，经 harness/pi/catalog.py 进 platform.ts 的
+            # registerPlatformTools）。
+            BuiltIn.TODO: Difference.NOT_BUILT_IN,
             BuiltIn.REMINDER: Difference.NOT_CHECKED_AGAINST_THE_PIN,
             BuiltIn.AUTO_SYNC: Difference.NOT_CHECKED_AGAINST_THE_PIN,
         },

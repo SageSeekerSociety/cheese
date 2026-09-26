@@ -226,6 +226,27 @@ class AgentSubagentStop:
     session_id: str | None = None
 
 
+@dataclass
+class AgentRetrying:
+    """A model request failed and the harness is about to send it again.
+
+    Nothing reaches the room while a harness retries — no message, no tool call
+    — so from outside a turn stuck in backoff looks exactly like a turn that is
+    thinking hard. This is the harness saying which one it is.
+
+    The counters are the harness's own and any of them may be missing: Claude
+    Code reports all of them, Codex says only that it will retry.
+    """
+
+    error: str = ""
+    attempt: int | None = None
+    max_attempts: int | None = None
+    delay_ms: int | None = None
+    #: The HTTP status of the failed request; None for a connection error.
+    status: int | None = None
+    thread_label: str | None = None
+
+
 AgentEvent = (
     AgentMessage
     | AgentToolUse
@@ -235,6 +256,7 @@ AgentEvent = (
     | AgentResult
     | AgentSubagentStart
     | AgentSubagentStop
+    | AgentRetrying
 )
 
 

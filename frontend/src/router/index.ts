@@ -16,7 +16,9 @@ import TeamsRoutes from './teams'
 import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
 
+import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { recordEntry } from '@/lib/projectEntry'
+import { myId } from '@/me'
 import { reloadForNewBuild } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
 import { SpaceBoardRoutes } from '@/views/spaces/board/routes'
@@ -162,6 +164,16 @@ router.afterEach((to, from) => {
     }
     return ''
   })
+})
+
+// 话题的消息和话题页的代码同时去取。不在这里起头的话，消息要等话题页那一串
+// chunk 下完、ChatPanel 挂上之后才开始请求，两段等待首尾相接，冷打开一个话题时
+// 那条最大的消息晚半秒以上才出现。缓存里已有的话题 ChatPanel 会立刻画出来，不必
+// 在这里再取一次；没登录就什么都不发。
+router.beforeEach((to) => {
+  if (to.name !== 'workspace-topic' || !myId()) return
+  const topicId = String(to.params.topicId)
+  if (!cachedWindow(topicId)) void refreshBlockCache(topicId)
 })
 
 // A lazily imported view is fetched at navigation time, so a release that

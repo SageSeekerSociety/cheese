@@ -4,7 +4,7 @@ A saved skill is edited in place; every confirmed version is kept as a revision
 so it can be read or restored, and only a confirmed revision ships to sessions.
 
 Revision ID: 5c1d8e7f2b90
-Revises: d4e7a2c91b35
+Revises: 52b13868b0e8
 """
 
 from collections.abc import Sequence
@@ -15,7 +15,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "5c1d8e7f2b90"
-down_revision: str | Sequence[str] | None = "d4e7a2c91b35"
+down_revision: str | Sequence[str] | None = "52b13868b0e8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

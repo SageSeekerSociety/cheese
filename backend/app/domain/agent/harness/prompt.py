@@ -188,6 +188,16 @@ ALWAYS_PUSH = (
     "下一轮，也到不了任何别人手里。提交了却没推等于没有。"
 )
 
+#: 步骤清单是平台工具，每个 harness 都是同一个 `todo_write`；各自自带的那一套在启动
+#: 时关掉（见各 harness 的 ``behaviour.py``），所以什么时候用它要在这里说一次。
+TODO_WRITE = (
+    "## 步骤清单（todo_write）\n"
+    "多步的活（大约三步以上）开工时先用 `todo_write` 写下计划，房间里正在进行的那条"
+    "消息会原地显示这份清单。同一时刻只让一项 in_progress；做完一项就再写一次，把它"
+    "标成 completed、把下一项标成 in_progress。每次都传完整的清单。简单的问答不用写。"
+    "清单只说做到哪了，要说的话照样用 `chat_send` 发。"
+)
+
 
 def build_system_prompt(
     base: str,
@@ -221,6 +231,7 @@ def build_system_prompt(
             "（只起一次，定了别反复改。）"
         )
     parts.append(ALWAYS_PUSH)
+    parts.append(TODO_WRITE)
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if teaching is not None and (section := teaching_section(teaching)):

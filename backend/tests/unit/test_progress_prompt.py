@@ -44,8 +44,8 @@ def test_blank_subject_still_renders_a_row():
 
 
 def test_agent_is_told_to_carry_finished_items_into_a_new_checklist():
-    # Load-bearing: the stored row is overwritten by the next turn's first
-    # TaskCreate, so a re-plan that lists only what's left erases the rest.
+    # Load-bearing: `todo_write` replaces the stored row whole, so a re-plan
+    # that lists only what's left erases the rest.
     text = "\n".join(_progress_lines(ITEMS))
     assert "completed" in text
     assert "只列剩下的" in text
