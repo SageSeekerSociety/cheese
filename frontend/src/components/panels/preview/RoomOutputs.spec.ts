@@ -15,9 +15,11 @@ import RoomOutputs from './RoomOutputs.vue'
 vi.mock('@/api', () => ({
   listRoomOutputs: vi.fn(),
   saveRoomOutputToLibrary: vi.fn(),
+  listDocumentTemplates: vi.fn(),
+  newFromTemplate: vi.fn(),
 }))
 
-const { listRoomOutputs, saveRoomOutputToLibrary } = await import('@/api')
+const { listRoomOutputs, saveRoomOutputToLibrary, listDocumentTemplates, newFromTemplate } = await import('@/api')
 
 const vuetify = createVuetify({ components, directives })
 
@@ -54,13 +56,44 @@ describe('这个房间里的东西', () => {
     expect(container.textContent).not.toContain('Vue dev server')
   })
 
-  it('房间里什么都没摆出来时这一块不出现', async () => {
+  it('房间里什么都没摆出来时，仍然能从模板新建一份', async () => {
     vi.mocked(listRoomOutputs).mockResolvedValue({ data: [], total: 0 })
 
-    const { container } = mount()
+    const { container, getByTestId } = mount()
 
     await waitFor(() => expect(listRoomOutputs).toHaveBeenCalled())
-    expect(container.querySelector('[data-testid="room-outputs"]')).toBeNull()
+    expect(getByTestId('new-from-template')).toBeTruthy()
+    expect(container.querySelectorAll('.outs-row')).toHaveLength(0)
+  })
+
+  it('选一份模板，按给的名字在房间里建出来并打开它', async () => {
+    vi.mocked(listDocumentTemplates).mockResolvedValue({
+      data: [{ id: 'weekly', name: '周报', suffix: 'docx', about: '本周完成、下周计划' }],
+      total: 1,
+    })
+    vi.mocked(newFromTemplate).mockResolvedValue({ path: '文档/周报.docx', version: 'v1' })
+    const { getByTestId, findByText, getByText, emitted } = mount()
+
+    await fireEvent.click(getByTestId('new-from-template'))
+    await fireEvent.click(await findByText('周报（.docx）'))
+    await fireEvent.click(getByText('新建并打开'))
+
+    await waitFor(() => expect(newFromTemplate).toHaveBeenCalledWith('t1', 'weekly', '文档/周报.docx'))
+    await waitFor(() => expect(emitted().open).toEqual([['文档/周报.docx']]))
+  })
+
+  it('取消就什么都不建', async () => {
+    vi.mocked(listDocumentTemplates).mockResolvedValue({
+      data: [{ id: 'report', name: '报告', suffix: 'docx', about: '' }],
+      total: 1,
+    })
+    const { getByTestId, findByText, getByText } = mount()
+
+    await fireEvent.click(getByTestId('new-from-template'))
+    await fireEvent.click(await findByText('报告（.docx）'))
+    await fireEvent.click(getByText('取消'))
+
+    expect(newFromTemplate).not.toHaveBeenCalled()
   })
 
   it('点名字就把那一份开出来 —— 上面那块只看得到最后一样', async () => {

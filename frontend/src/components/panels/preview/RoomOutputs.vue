@@ -12,11 +12,11 @@
 // 交付的那一下由 芝士 在递卡时声明，那条路和这个按钮无关。
 //
 // 只有一样东西时这一块照样出现：上面那块预览只是在看它，而这个动作只在这里有。
-import type { RoomOutput } from '@/api'
+import type { DocumentTemplate, RoomOutput } from '@/api'
 
 import { computed, ref, watch } from 'vue'
 
-import { listRoomOutputs, saveRoomOutputToLibrary } from '@/api'
+import { listDocumentTemplates, listRoomOutputs, newFromTemplate, saveRoomOutputToLibrary } from '@/api'
 import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{ topicId: string | null }>()
@@ -62,6 +62,53 @@ async function save(output: RoomOutput) {
   }
 }
 
+// 从标准模板新建：建出来的是房间里的一份文件，建好就打开，进编辑器接着写。
+const templates = ref<DocumentTemplate[]>([])
+const picking = ref<DocumentTemplate | null>(null)
+const newPath = ref('')
+const creating = ref(false)
+const choosing = ref(false)
+
+function toggleTemplates() {
+  choosing.value = !choosing.value
+  picking.value = null
+  if (choosing.value) void loadTemplates()
+}
+
+async function loadTemplates() {
+  const topicId = props.topicId
+  if (!topicId || templates.value.length) return
+  try {
+    templates.value = (await listDocumentTemplates(topicId)).data
+  } catch {
+    templates.value = []
+  }
+}
+
+function pick(template: DocumentTemplate) {
+  picking.value = template
+  newPath.value = `文档/${template.name}.${template.suffix}`
+}
+
+async function create() {
+  const topicId = props.topicId
+  const template = picking.value
+  if (!topicId || !template) return
+  creating.value = true
+  error.value = ''
+  try {
+    const made = await newFromTemplate(topicId, template.id, newPath.value.trim())
+    picking.value = null
+    choosing.value = false
+    await load()
+    emit('open', made.path)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '新建失败'
+  } finally {
+    creating.value = false
+  }
+}
+
 function name(path: string): string {
   return path.split('/').pop() || path
 }
@@ -81,8 +128,39 @@ defineExpose({ reload: load })
 </script>
 
 <template>
-  <section v-if="files.length" class="outs" data-testid="room-outputs">
-    <h3 class="outs__title t-eyebrow c-muted">这个房间里的东西</h3>
+  <section v-if="topicId" class="outs" data-testid="room-outputs">
+    <div class="outs__head">
+      <h3 class="outs__title t-eyebrow c-muted">这个房间里的东西</h3>
+      <v-btn
+        size="small"
+        variant="text"
+        prepend-icon="mdi-file-plus-outline"
+        data-testid="new-from-template"
+        @click="toggleTemplates"
+      >
+        从模板新建
+      </v-btn>
+    </div>
+    <ul v-if="choosing && !picking" class="outs__templates">
+      <li v-if="!templates.length" class="t-meta c-faint">正在读取模板…</li>
+      <li v-for="t in templates" :key="t.id">
+        <button type="button" class="outs__template" @click="pick(t)">
+          <span class="t-body">{{ t.name }}（.{{ t.suffix }}）</span>
+          <span class="t-meta c-faint">{{ t.about }}</span>
+        </button>
+      </li>
+    </ul>
+    <div v-if="picking" class="outs__new">
+      <v-text-field
+        v-model="newPath"
+        density="compact"
+        hide-details
+        autocomplete="off"
+        :label="`从「${picking.name}」新建，存成`"
+      />
+      <v-btn size="small" color="primary" variant="flat" :loading="creating" @click="create">新建并打开</v-btn>
+      <v-btn size="small" variant="text" @click="toggleTemplates">取消</v-btn>
+    </div>
     <p v-if="error" role="alert" class="outs__error t-meta">{{ error }}</p>
     <ul class="outs__list">
       <li v-for="output in files" :key="output.path" class="outs-row">
@@ -116,8 +194,39 @@ defineExpose({ reload: load })
   padding: 8px 12px 12px;
   border-top: 1px solid var(--line);
 }
+.outs__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 .outs__title {
   margin: 0 0 6px;
+}
+.outs__templates {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 6px;
+}
+.outs__template {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.outs__template:hover {
+  background: var(--canvas);
+}
+.outs__new {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 /* 错误是给人读的一行字，所以用墨色那一档，不是记号色。 */
 .outs__error {

@@ -82,6 +82,8 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_mail_attachment: '取用邮件附件',
   cheese_show: '展示文件',
   cheese_pull: '取房间文件最新版',
+  cheese_template_list: '查看文档模板',
+  cheese_template_new: '从模板新建文件',
   cheese_convert: '转换文档格式',
   cheese_recalc: '重算表格公式',
   cheese_feedback_propose: '提交反馈提案',
