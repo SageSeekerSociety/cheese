@@ -1,8 +1,8 @@
 <template>
   <!--
-    本周任务（学生）。和老师的「作业与验收」是同一条路由（`course/assignments`），
-    分叉在 CourseWork 里按 `space.admins` 判。老师那一屏是收作业的队列，接口只给
-    教师 —— 学生要看的是「每一周我要做什么、做到哪了」：这一周排在最前，往前的
+    本周任务（成员）。和管理员的「作业与验收」是同一条路由（`course/assignments`），
+    分叉在 CourseWork 里按 `space.admins` 判。管理员那一屏是收作业的队列，接口只给
+    管理员 —— 成员要看的是「每一周我要做什么、做到哪了」：这一周排在最前，往前的
     周次按倒序跟在后面，每一周的作业带着它的完成状态，有小测就给小测的入口。
   -->
   <v-sheet flat rounded="lg" class="pa-4">
@@ -95,7 +95,7 @@ const loading = ref(true)
 const units = ref<TeachingUnit[]>([])
 const participations = ref<SpaceMyParticipation[]>([])
 
-// 接口只给学生发布过的单元；周次越大越新，这一周（最大的那一周）排在最前。
+// 接口只给成员发布过的单元；周次越大越新，这一周（最大的那一周）排在最前。
 const weeks = computed(() => [...units.value].sort((a, b) => b.week - a.week))
 
 function workOf(unit: TeachingUnit): SpaceMyParticipation | undefined {

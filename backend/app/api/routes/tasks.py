@@ -1112,7 +1112,7 @@ async def _create_task_entity(
         await db.flush()
 
     # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
-    # 题目的提交页就一个输入项都没有，学生无处上传 —— 和 PATCH 写的是同一张表。
+    # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
     if submission_schema:
         await TaskSubmissionSchemaRepository(session=db).replace_schema(
             task.id, submission_schema

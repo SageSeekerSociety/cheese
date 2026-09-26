@@ -1,5 +1,5 @@
-// 学生的「本周任务」：和老师的「作业与验收」同一条路由，但学生看的是每一周要做
-// 什么 —— 老师那屏的收作业队列接口只给教师，学生打开只会是一张空的教师页。
+// 成员的「本周任务」：和管理员的「作业与验收」同一条路由，但成员看的是每一周要做
+// 什么 —— 管理员那屏的收作业队列接口只给管理员，成员打开只会是一张空的管理员页。
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
