@@ -46,6 +46,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string): void
   (e: 'retry'): void
+  // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
+  (e: 'undo-title', blockId: string): void
 }>()
 
 /** 没有署名的一行字：房间里发生的事，不是谁做的事。 */
@@ -99,6 +101,8 @@ const ACTION_META: Record<string, { btn: string }> = {
   doc: { btn: '查看文档' },
   decision: { btn: '查看决策记录' },
   topics: { btn: '' },
+  // 平台自动改了标题：行尾是撤销，不是「去看看」，见下面的模板分支。
+  title: { btn: '撤销' },
   milestone: { btn: '查看日历' },
   accept: { btn: '审阅' },
   notify: { btn: '' },
@@ -191,7 +195,11 @@ const ACTION_META: Record<string, { btn: string }> = {
           v-if="ACTION_META[notice.resource]?.btn"
           type="button"
           class="sys-btn"
-          @click="emit('open-resource', notice.resource, block.turn_id ?? undefined)"
+          @click="
+            notice.resource === 'title'
+              ? emit('undo-title', block.id)
+              : emit('open-resource', notice.resource, block.turn_id ?? undefined)
+          "
         >
           {{ ACTION_META[notice.resource].btn }}
         </button>

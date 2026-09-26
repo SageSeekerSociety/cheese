@@ -56,6 +56,9 @@ export interface Topic {
   project_id: string
   parent_id: string | null
   title: string
+  // 标题是谁定的：placeholder = 还叫「新话题」；auto = 平台起的（方向变了会再改）；
+  // human = 人定的（平台不再动它）。见 backend topic/naming.py。
+  title_source?: 'placeholder' | 'auto' | 'human'
   kind: string
   status: string
   created_at: string

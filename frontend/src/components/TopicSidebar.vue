@@ -62,8 +62,11 @@ const emit = defineEmits<{
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
-  // Rename a topic's title from the row's ⋯ actions.
-  (e: 'rename-topic', payload: { id: string; title: string }): void
+  // Rename a topic's title from the row's ⋯ actions. `suggested` = the person
+  // kept a 智能重命名 suggestion as it was.
+  (e: 'rename-topic', payload: { id: string; title: string; suggested?: boolean }): void
+  // 恢复自动命名: hand a title a person chose back to the platform.
+  (e: 'restore-auto-title', id: string): void
   // Open 项目文档 in the main area. The rail always asks for 章程 — the page
   // itself carries the tabs that reach the other three.
   (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
@@ -474,12 +477,36 @@ function startRename(t: Topic) {
 
 function cancelRename() {
   renamingTopicId.value = null
+  suggestingTopicId.value = null
+  suggestion.value = null
 }
 
 function saveRename(t: Topic) {
+  if (suggestingTopicId.value === t.id) return // the suggestion is still coming
   const title = normalizeTopicTitle(draftTitle.value, t.title)
+  const suggested = suggestion.value !== null && title === suggestion.value
   renamingTopicId.value = null
-  if (title) emit('rename-topic', { id: t.id, title })
+  suggestion.value = null
+  if (title) emit('rename-topic', { id: t.id, title, suggested })
+}
+
+// 智能重命名: the same inline field, prefilled with a name generated from what
+// the room is about now. Nothing changes until the person presses enter — the
+// suggestion is theirs to keep, edit or throw away (esc).
+const suggestingTopicId = ref<string | null>(null)
+const suggestion = ref<string | null>(null)
+
+async function startSuggest(t: Topic) {
+  startRename(t)
+  suggestingTopicId.value = t.id
+  suggestion.value = null
+  const title = await store.suggestTitle(t.id)
+  if (suggestingTopicId.value !== t.id) return
+  suggestingTopicId.value = null
+  if (title && renamingTopicId.value === t.id) {
+    suggestion.value = title
+    draftTitle.value = title
+  }
 }
 
 // 行操作收进一颗 ⋯ (C5): hover 只浮出一个入口，不再是三颗并排的按钮盖住标题
@@ -812,6 +839,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         hide-details
                         autofocus
                         :maxlength="TOPIC_TITLE_MAX_LENGTH"
+                        :loading="suggestingTopicId === row.topic.id"
+                        :placeholder="suggestingTopicId === row.topic.id ? '正在生成标题…' : undefined"
                         class="rename-field"
                         @click.stop
                         @keyup.enter="saveRename(row.topic)"
@@ -819,9 +848,14 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         @blur="saveRename(row.topic)"
                       />
                       <template v-else>
-                        <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
-                          row.topic.title
-                        }}</span>
+                        <span
+                          class="text-truncate"
+                          :class="{ 'title-unread': row.unreadTotal > 0 }"
+                          :title="
+                            row.topic.title_source === 'auto' ? '标题由平台自动命名，话题方向变了会更新' : undefined
+                          "
+                          >{{ row.topic.title }}</span
+                        >
                         <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
                         <span
                           v-if="row.collapsed && row.hiddenCount > 0"
@@ -870,6 +904,17 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                               prepend-icon="mdi-pencil-outline"
                               title="重命名"
                               @click="startRename(row.topic)"
+                            />
+                            <v-list-item
+                              prepend-icon="mdi-auto-fix"
+                              title="智能重命名"
+                              @click="startSuggest(row.topic)"
+                            />
+                            <v-list-item
+                              v-if="row.topic.title_source === 'human'"
+                              prepend-icon="mdi-autorenew"
+                              title="恢复自动命名"
+                              @click="emit('restore-auto-title', row.topic.id)"
                             />
                             <v-list-item
                               v-if="row.topic.can_archive"

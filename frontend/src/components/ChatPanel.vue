@@ -27,6 +27,7 @@ import {
   listRoomTasks,
   summonAgent,
   toggleReaction as apiToggleReaction,
+  undoTopicTitle,
 } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
@@ -683,6 +684,18 @@ function handleFrame(frame: WsServerFrame) {
 
 // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
 let disposed = false
+
+// 撤销一次自动改名（RoomNotice 那一行的按钮）。后端改完会发 `state: topics`，
+// 侧栏据此重读；这里再主动报一次，按下去就能看到名字回来。
+async function undoTitle(blockId: string) {
+  if (!props.topic) return
+  try {
+    await undoTopicTitle(props.topic.id, blockId)
+    emit('state-changed', 'topics')
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '撤销失败'
+  }
+}
 
 async function loadTopic(topic: Topic, entering = false) {
   const generation = ++historyGeneration
@@ -1488,6 +1501,7 @@ onBeforeUnmount(() => {
               :retrying="retryBusy"
               @animationend="settleArrival($event, m.id)"
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
+              @undo-title="undoTitle"
               @retry="retryNow"
             />
             <!-- message row -->
@@ -1509,13 +1523,13 @@ onBeforeUnmount(() => {
               :author-name="displayName(m)"
               :external="isExternal(m.author)"
               :avatar="avatarSrc(m.author)"
-              @animationend="settleArrival($event, m.id)"
               :is-agent="isAgentBlock(m)"
               :time="fmtTime(m.created_at)"
               :refs="refMaps"
               :viewer="AUTHOR"
               :active="bar.shown && bar.id === m.id"
               :ask-busy="askBusy === m.id"
+              @animationend="settleArrival($event, m.id)"
               @open-file="(path, taskId) => emit('open-file', path, taskId)"
               @open-topic="emit('open-topic', $event)"
               @react="onReact"
@@ -1553,7 +1567,6 @@ onBeforeUnmount(() => {
               :topic-id="topic?.id ?? null"
               :author-name="myName"
               :external="isExternal(AUTHOR)"
-              @animationend="settleSent($event, item.clientId)"
               :avatar="avatarSrc(AUTHOR)"
               :is-agent="false"
               :time="outgoingState(item)"
@@ -1561,6 +1574,7 @@ onBeforeUnmount(() => {
               :viewer="AUTHOR"
               :ask-busy="false"
               :outgoing="{ error: item.error, failed: item.state === 'failed' }"
+              @animationend="settleSent($event, item.clientId)"
               @retry="retrySend(item.clientId)"
               @edit="editSend(item)"
               @avatar-error="onAvatarError"

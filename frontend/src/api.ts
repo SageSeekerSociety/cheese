@@ -739,10 +739,51 @@ export function markTopicRead(topicId: string, handle: string): Promise<Record<s
   })
 }
 
-export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
+/** A person names the room. `suggested` = they confirmed a 智能重命名 suggestion
+ *  (recorded as such). Either way the platform stops renaming it on its own. */
+export function setTopicTitle(topicId: string, title: string, suggested = false): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title`, {
     method: 'POST',
-    body: JSON.stringify({ title }),
+    body: JSON.stringify(suggested ? { title, suggested: true } : { title }),
+  })
+}
+
+/** 智能重命名: a title for the room as it is now, for a person to confirm. Writes nothing. */
+export function suggestTopicTitle(topicId: string): Promise<{ title: string }> {
+  return request<{ title: string }>(`/topics/${encodeURIComponent(topicId)}/title/suggest`, {
+    method: 'POST',
+  })
+}
+
+/** Undo the automatic rename announced by `eventId`; the old title comes back and stays. */
+export function undoTopicTitle(topicId: string, eventId: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title/undo`, {
+    method: 'POST',
+    body: JSON.stringify({ event_id: eventId }),
+  })
+}
+
+/** 恢复自动命名: hand a title a person chose back to the platform. */
+export function restoreTopicAutoTitle(topicId: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title/auto`, { method: 'POST' })
+}
+
+export type TopicNamingMode = 'auto' | 'manual'
+export interface TopicNaming {
+  mode: TopicNamingMode
+  /** Whether the deployment can name rooms at all (a model gateway is configured). */
+  available: boolean
+  can_manage: boolean
+}
+
+export function getTopicNaming(projectId: string): Promise<TopicNaming> {
+  return request<TopicNaming>(`/projects/${encodeURIComponent(projectId)}/topic-naming`)
+}
+
+export function setTopicNaming(projectId: string, mode: TopicNamingMode): Promise<TopicNaming> {
+  return request<TopicNaming>(`/projects/${encodeURIComponent(projectId)}/topic-naming`, {
+    method: 'PUT',
+    body: JSON.stringify({ mode }),
   })
 }
 

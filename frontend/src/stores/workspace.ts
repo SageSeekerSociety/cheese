@@ -13,8 +13,11 @@ import {
   listProjects,
   listTopics,
   markTopicRead,
+  restoreTopicAutoTitle,
   setTopicTitle,
+  suggestTopicTitle,
   unarchiveTopic,
+  undoTopicTitle,
   upgradeBlock,
 } from '@/api'
 import { ApiError } from '@/api'
@@ -352,16 +355,49 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  async function renameTopic(topicId: string, title: string) {
+  function applyTopic(updated: Topic) {
+    const t = topics.value.find((x) => x.id === updated.id)
+    if (t) {
+      topicRevision += 1
+      t.title = updated.title
+      t.title_source = updated.title_source
+    }
+  }
+
+  // 人起的名字：平台之后不会再自动改它（见后端 topic/naming.py）。
+  async function renameTopic(topicId: string, title: string, suggested = false) {
     try {
-      const updated = await setTopicTitle(topicId, title)
-      const t = topics.value.find((x) => x.id === topicId)
-      if (t) {
-        topicRevision += 1
-        t.title = updated.title
-      }
+      applyTopic(await setTopicTitle(topicId, title, suggested))
     } catch (e) {
       reportError(e, '重命名失败')
+    }
+  }
+
+  /** 智能重命名：只拿一个建议，不改任何东西；人确认后才走 renameTopic。 */
+  async function suggestTitle(topicId: string): Promise<string | null> {
+    try {
+      return (await suggestTopicTitle(topicId)).title
+    } catch (e) {
+      reportError(e, '没能生成标题，稍后再试')
+      return null
+    }
+  }
+
+  /** 撤销房间里那条「标题自动更新为…」：原来的名字回来，并且算人定的。 */
+  async function undoAutoTitle(topicId: string, eventId: string) {
+    try {
+      applyTopic(await undoTopicTitle(topicId, eventId))
+    } catch (e) {
+      reportError(e, '撤销失败')
+    }
+  }
+
+  /** 恢复自动命名：把人定的名字交还给平台，方向变了它会再改。 */
+  async function restoreAutoTitle(topicId: string) {
+    try {
+      applyTopic(await restoreTopicAutoTitle(topicId))
+    } catch (e) {
+      reportError(e, '恢复自动命名失败')
     }
   }
 
@@ -466,6 +502,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     markRead,
     markDmRead,
     renameTopic,
+    suggestTitle,
+    undoAutoTitle,
+    restoreAutoTitle,
     archive,
     unarchive,
     create,
