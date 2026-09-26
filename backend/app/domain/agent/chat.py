@@ -48,6 +48,7 @@ from app.domain.agent.harness.prompt import (
     platform_prompt,
     prompt_line,
     publication_prompt,
+    reply_quote,
     strip_platform_notice,
 )
 from app.domain.agent.platform_failures import (
@@ -136,6 +137,7 @@ from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.environment import EnvironmentConfig, pin_environment
+from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
@@ -192,21 +194,10 @@ class _HookWorkState:
     # then left alone for the remaining two hours and fifty minutes. The room
     # showing nothing for that long is the complaint this reminder exists for.
     last_progress_reminder_at: datetime | None = None
-    todo: list[dict] = field(default_factory=list)
-    #: 每个分身自己那份清单，按它做的那条活分开。Claude Code 的任务编号是**每个
-    #: agent 各数各的**，都从 1 开始，所以几份清单混进一个 list 里不只是看着乱：
-    #: 分身的 `TaskUpdate("1")` 会去勾掉房间自己的第一条。
-    worker_todo: dict[str, list[dict]] = field(default_factory=dict)
     #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。失败的结果
     #: 回来时要标的就是那一块。只在内存里、只活这一轮：成功的调用（绝大多数）因此
     #: 一个字节都不必落库，而重启丢掉的只是几个红点，不是记录。
     steps: dict[str, uuid.UUID] = field(default_factory=dict)
-
-    def todo_of(self, work_id: uuid.UUID | None) -> list[dict]:
-        """这条事件该记进谁的清单。None = 房间自己的。"""
-        if work_id is None:
-            return self.todo
-        return self.worker_todo.setdefault(str(work_id), [])
 
     # The topic branch's commits as of turn start — what makes "this turn's
     # changes" answerable at turn end. A task rather than a value, because the
@@ -395,9 +386,11 @@ _PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
 #: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
 #: 色的点 —— 而那只是读了一个文件。
 _NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
-#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 是系统提示每一轮都在点名、于是
-#: extension 额外注册的别名；另外两个是平台自己的 MCP 工具。
-_PLATFORM_ALIASES = frozenset({"chat_send", "platform_request", "send_user_file"})
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 和 `todo_write` 是系统提示点名
+#: 的两样，名字照模型已经认得的说法起；另外两个是平台自己的 MCP 工具。
+_PLATFORM_ALIASES = frozenset(
+    {"chat_send", "todo_write", "platform_request", "send_user_file"}
+)
 
 #: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
 #: 服务器改名那一天这里会静态地失效，而失效的样子和时间线正常的样子一模一样。
@@ -592,37 +585,10 @@ def _change_summary_meta(changeset: _Changeset) -> dict:
     }
 
 
-# Claude Code's structured Task tools → a live working-log todo (§3.1.1). These
-# are the *process* (rendered as a checklist in the in-progress message), so they
-# are streamed live but NOT persisted as 现场 events.
-_TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}
-
 #: How many sessions' supply routes to remember. Well past the number of screens
 #: one backend drives at once, so in practice nothing is ever evicted; it is a
 #: ceiling on a dict nothing else prunes, not a policy.
 _SESSION_ROUTES_KEPT = 512
-
-
-def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
-    """Fold a TaskCreate/TaskUpdate event into the todo list. Returns whether the
-    list changed (ids are assigned by creation order, matching the model)."""
-    if name == "TaskCreate":
-        todo.append(
-            {
-                "id": str(len(todo) + 1),
-                "subject": str(args.get("subject", "")).strip() or "（任务）",
-                "status": "pending",
-            }
-        )
-        return True
-    if name == "TaskUpdate":
-        tid = str(args.get("taskId", ""))
-        status = str(args.get("status", "")) or "pending"
-        for item in todo:
-            if item["id"] == tid:
-                item["status"] = status
-                return True
-    return False
 
 
 # A platform tool → the action card 芝士 files for it when it calls it
@@ -856,8 +822,8 @@ def _progress_lines(items: list[dict]) -> list[str]:
     TopicProgress's docstring for why the two must not be merged.
 
     The instruction to re-list finished items when building a new checklist is
-    load-bearing: the stored row is overwritten by the next turn's first
-    TaskCreate, so a plan that silently drops what is already done would erase it.
+    load-bearing: `todo_write` replaces the stored row whole, so a plan that
+    silently drops what is already done would erase it.
     """
     if not items:
         return []
@@ -867,8 +833,9 @@ def _progress_lines(items: list[dict]) -> list[str]:
         subject = str(item.get("subject", "")).strip() or "（任务）"
         lines.append(f"    - [{mark}] {subject}")
     lines.append(
-        "  已完成的别重做，接着没做完的往下干。**重新建清单时把已完成的也列进去"
-        "并标成 completed**——清单会覆盖上面这份，只列剩下的等于把做过的抹掉。"
+        "  已完成的别重做，接着没做完的往下干。**用 `todo_write` 重新写清单时把已完成"
+        "的也列进去并标成 completed**——清单会整份覆盖上面这份，只列剩下的等于把做过"
+        "的抹掉。"
     )
     return lines
 
@@ -1560,6 +1527,19 @@ class ChatService:
             ):
                 yield frame
 
+    async def _reply_parent(self, block_ids: list[uuid.UUID]) -> Block | None:
+        """The message a just-posted send answers, if it is a reply.
+
+        Read back from the stored blocks rather than from the request: the
+        write already dropped a reply target outside this room."""
+        async with self._sessions() as session:
+            blocks = BlockRepository(session)
+            for block_id in block_ids:
+                block = await blocks.get(block_id)
+                if block is not None and block.reply_to is not None:
+                    return await blocks.get(block.reply_to)
+        return None
+
     async def merge_into_running_turn(
         self,
         topic_id: uuid.UUID,
@@ -1613,6 +1593,10 @@ class ChatService:
             )
             for image in images
         )
+        if (replied := await self._reply_parent(user_block_ids)) is not None:
+            lines.append(
+                reply_quote(replied, recipient=state.acting_agent if state else None)
+            )
         state = self._hook_work.get((topic_id, consuming_turn_id))
         line = publication_prompt("\n".join(lines))
         # Register BEFORE the write so a fast receipt cannot race the entry
@@ -1730,8 +1714,9 @@ class ChatService:
                         "this turn is still running, call chat_send now with "
                         "what you know so far and what you are waiting on — a "
                         "room that shows nothing cannot be told apart from one "
-                        "that is stuck. Ignore this only if the turn is already "
-                        "finished.",
+                        "that is stuck. If your plan has changed, also update "
+                        "it with todo_write. Ignore this only if the turn is "
+                        "already finished.",
                     )
                 # THAT a reminder fired was already visible — the periodic
                 # loop logs `chat progress reminder: <count>` on any cycle whose
@@ -2174,7 +2159,11 @@ class ChatService:
                 work = self._compute.work_in_flight(session.topic_id)
                 if work is not None and (session.topic_id, work) not in self._hook_work:
                     await self._begin_self_started_turn(
-                        session.project_id, session.topic_id, work, opened=True
+                        session.project_id,
+                        session.topic_id,
+                        work,
+                        opened=True,
+                        agent_handle=session.agent_handle or None,
                     )
                 # What the room already shows, so a message the live path DID
                 # persist before this process died is not landed twice. The room
@@ -2359,6 +2348,7 @@ class ChatService:
         turn_id: uuid.UUID,
         *,
         opened: bool = False,
+        agent_handle: str | None = None,
     ) -> "_HookWorkState | None":
         """Give a turn the session started for itself the context to end like
         any other: an interval a sweep can find, and everything its Stop needs.
@@ -2386,6 +2376,12 @@ class ChatService:
         process that assembled it wrote on that row: where its model traffic
         went, the message it answers, and when it really started.
 
+        ``agent_handle`` is the agent whose session this is, when the caller
+        knows it. Recovery does — it is on the session's own key — and must pass
+        it: the room's fallback is the project default, and a teammate's turn
+        recorded under the default holds every message addressed to that
+        teammate in ``wait_for_recipient`` until the turn ends by itself.
+
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
@@ -2402,7 +2398,7 @@ class ChatService:
                 if project is None:
                     return None
                 agents = AgentInstanceService(session)
-                agent = await agents.for_topic(topic, project)
+                agent = await self._session_agent(agents, topic, project, agent_handle)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
                 row = (
@@ -2592,37 +2588,24 @@ class ChatService:
         elif isinstance(event, AgentToolUse):
             name = _short_tool_name(event.name)
             args = event.input or {}
-            if state is not None and name in _TASK_TOOLS:
-                # 清单跟着做事的人走。一个分身的清单是它自己的计划，编号也是它
-                # 自己从 1 数的 —— 记进房间那份，房间的清单会被别人的进度改写。
-                todo = state.todo_of(task_id)
-                if _apply_task_event(todo, name, args):
-                    await self._persist_progress(
-                        topic_id, todo, turn_id, task_id=task_id
-                    )
-                    frame = {
-                        "type": "todo",
-                        "items": [dict(item) for item in todo],
-                    }
-            elif name not in _TASK_TOOLS:
-                payload = await self._persist_tool_event(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    name=name,
-                    tool_input=args,
-                    platform=_is_platform_tool(event.name, args),
-                    turn_id=turn_id,
-                    eid=eid or event.eid,
-                    platform_unsolicited=platform_unsolicited,
-                    task_id=task_id,
-                )
-                if payload is not None:
-                    frame = {"type": "event_block", "block": payload}
-                    if state is not None and event.call_id:
-                        state.steps[event.call_id] = uuid.UUID(payload["id"])
-                resource = _TOOL_ACTION.get(name)
-                if state is not None and resource is not None:
-                    await self._announce_action(state, resource)
+            payload = await self._persist_tool_event(
+                project_id=project_id,
+                topic_id=topic_id,
+                name=name,
+                tool_input=args,
+                platform=_is_platform_tool(event.name, args),
+                turn_id=turn_id,
+                eid=eid or event.eid,
+                platform_unsolicited=platform_unsolicited,
+                task_id=task_id,
+            )
+            if payload is not None:
+                frame = {"type": "event_block", "block": payload}
+                if state is not None and event.call_id:
+                    state.steps[event.call_id] = uuid.UUID(payload["id"])
+            resource = _TOOL_ACTION.get(name)
+            if state is not None and resource is not None:
+                await self._announce_action(state, resource)
         elif isinstance(event, AgentStepFailed):
             # No frame: 现场 rebuilds its timeline when the tab is opened, and
             # this changes a line that is already in it rather than adding one.
@@ -2716,7 +2699,7 @@ class ChatService:
                     frame = {"type": "event_block", "block": payload}
         if frame is not None:
             await broker.publish(channel, frame)
-            if frame["type"] in ("assistant_block", "event_block", "todo"):
+            if frame["type"] in ("assistant_block", "event_block"):
                 get_work_runner().note_session_output(
                     turn_id, tool=isinstance(event, AgentToolUse)
                 )
@@ -3256,6 +3239,25 @@ class ChatService:
             logger.exception("failed to 👀-ack block %s", user_block_id)
             return None
 
+    @staticmethod
+    async def _session_agent(
+        agents: AgentInstanceService,
+        topic: Topic,
+        project: Project,
+        agent_handle: str | None,
+    ) -> ResolvedAgent:
+        """The agent a known session belongs to, else the room's answer."""
+        if agent_handle:
+            try:
+                return agents.resolved(await agents.for_handle(project, agent_handle))
+            except NotFoundError:
+                logger.warning(
+                    "session agent %r is not in project %s; using the room's",
+                    agent_handle,
+                    project.id,
+                )
+        return await agents.for_topic(topic, project)
+
     async def _resolved_agent(
         self, session: AsyncSession, topic: Topic
     ) -> ResolvedAgent:
@@ -3557,33 +3559,6 @@ class ChatService:
                 state.last_chat_at = datetime.now(UTC)
                 state.last_progress_reminder_at = None
         return payload
-
-    async def _persist_progress(
-        self,
-        topic_id: uuid.UUID,
-        items: list[dict],
-        turn_id: uuid.UUID | None,
-        *,
-        task_id: uuid.UUID | None = None,
-    ) -> None:
-        """Write the topic's checklist through to storage (进度层, #187).
-
-        Best-effort on purpose: progress is a convenience for the NEXT turn, so a
-        storage hiccup must never take down the turn that is currently producing
-        real work. Same commit-now contract as _persist_tool_event — batching to
-        turn end would lose exactly the case this exists for (the turn dies)."""
-        try:
-            async with self._sessions() as session:
-                # The checklist belongs to whoever is working, not to the room
-                # it hangs in — two 分身 in one room keep two lists, each
-                # numbered from 1, and one shared list would have them ticking
-                # each other's items.
-                await TopicProgressRepository(session).save(
-                    topic_id, items, task_id=task_id, turn_id=turn_id
-                )
-                await session.commit()
-        except Exception:  # noqa: BLE001 — never fail a turn over its checklist
-            logger.warning("progress persist failed for topic %s", topic_id)
 
     async def _persist_tool_event(
         self,
@@ -4078,18 +4053,17 @@ class ChatService:
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
             #
-            # 模型和它的池也在里面，而这里的 model 只为容器那条路存在：
-            # `session_launch.py` 仍然把它拼进 `claude --model` 的 argv，那是启动
-            # 那一刻钉进进程、此后没有任何代码再比对的东西，而这个哈希是唯一比较
-            # 「屏幕是不是还配得上现在的选择」的地方。device 启动环境里已经没有模型
-            # 了（结论 46）：`device_provider.py` 既不传 `--model`，也不留那三个
-            # family 别名，每个请求的模型在计量代理问准入时解析、由代理写进请求体。
-            #
-            # 代价说清楚：model 留在哈希里，意味着改项目默认模型在两条路上都要到
-            # 下一个 task boundary 收屏重开一次，哪怕 device 上的下一个请求本来就
-            # 会拿到新绑定。容器那条路必须这样 —— 不放进来就是屏幕带着
-            # `--model glm-5.2` 继续跑而准入已经解析成订阅池，此后每一轮都死在
-            # 「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
+            # 模型和它的池也在里面：两条路都在启动那一刻把 model 钉进进程 ——
+            # 容器那条路是 `session_launch.py` 拼进 argv 的 `claude --model`，
+            # device 那条路是下面的 `ANTHROPIC_MODEL`。Claude Code 按它组装整套
+            # 系统提示词和自我介绍（Opus 与 Sonnet 用的是两份不同的提示词），
+            # 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，所以改
+            # 项目模型在两条路上都会到下一个 task boundary 收屏重开一次，提示词
+            # 随之换成新模型的。device 上每个请求实际跑哪个模型仍然只由准入决定
+            # （结论 46），计量代理把答案写进请求体；启动时的这个名字只决定提示
+            # 词，在重开之前的那几轮里它可能落后于绑定。容器那条路没有代理改写，
+            # 不放进哈希就是屏幕带着 `--model glm-5.2` 继续跑而准入已经解析成订阅
+            # 池，此后每一轮都死在「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
             (
                 json.dumps(
                     {
@@ -4103,7 +4077,7 @@ class ChatService:
                     },
                     sort_keys=True,
                 )
-                + ":explicit-chat-v4-native-model-choice"
+                + ":explicit-chat-v5-launch-model"
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
@@ -4112,6 +4086,9 @@ class ChatService:
             "env": {
                 "CHEESE_AGENT_CONFIG": config_hash,
                 "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+                # The bound model, so Claude Code builds the system prompt and
+                # self-description for the model the turn actually runs on.
+                "ANTHROPIC_MODEL": model,
                 "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
             },
             # Which conversation the turn belongs to, and so which session's
@@ -4842,8 +4819,25 @@ class ChatService:
             # or a returned conclusion. Say so, rather than handing
             # 芝士 bare text that looks like a person's message.
             embeds_images = getattr(provider, "embeds_images", True)
+            # A reply carries the message it answers: that message is seldom in
+            # the backlog (an earlier turn read it), and 「改一下这条」 without
+            # 「这条」 is a request 芝士 cannot act on. One already in the
+            # backlog is quoted there, so it is not quoted twice.
+            replied = {
+                b.id: parent
+                for b in pending
+                if b.reply_to is not None
+                and b.reply_to not in pending_ids
+                and (parent := await blocks.get(b.reply_to)) is not None
+            }
             backlog = "\n".join(
-                prompt_line(b, embeds_images=embeds_images) for b in pending
+                prompt_line(
+                    b,
+                    embeds_images=embeds_images,
+                    replied=replied.get(b.id),
+                    recipient=agent.handle,
+                )
+                for b in pending
             )
             prompt_text = backlog or platform_prompt(content)
             # 平台指令不会被待读消息挤掉。A platform turn EXISTS because of its
@@ -5114,12 +5108,9 @@ class ChatService:
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
 
-        # The turn's own checklist starts EMPTY even when prior_progress is not
-        # (see `_HookWorkState.todo`): _apply_task_event numbers items by
-        # position and the agent's Task numbering restarts from 1 on a fresh
-        # session, so seeding it would make the turn's first TaskUpdate("1")
-        # land on a leftover item. The old checklist reaches the agent through
-        # the prompt instead, and the UI through the restored frame here.
+        # The checklist the last turn left behind: the agent reads it in the
+        # prompt, the room gets it here, marked as not this turn's own. This
+        # turn's first `todo_write` replaces it.
         if prior_progress:
             yield {"type": "todo", "items": prior_progress, "restored": True}
         # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything

@@ -31,9 +31,12 @@ def declaration() -> Declaration:
                 "平台的等价物是 `cheese_ask`"
             ),
             BuiltIn.TODO: (
-                "TodoWrite and TaskCreate/Update/List/Get are denied by CLI "
-                "arguments and settings in every session. Tasks use Cheese cards; "
-                "TaskStop and SendMessage remain available for native children."
+                "harness/claude_code/cli.py 的 PLATFORM_MANAGED_TOOLS 里的 "
+                "TodoWrite、TaskCreate/Update/List/Get 进 DISALLOWED_TOOLS，"
+                "同 ASK 一样两侧都拒（--disallowedTools 和 settings.json 的 deny）；"
+                "TaskStop 和 SendMessage 留给原生分身。"
+                "平台的等价物是 `todo_write`（sandbox/cheese 的 PLATFORM_TOOLS，"
+                "落到 api/routes/topics.py 的 PUT /topics/{id}/progress）"
             ),
             BuiltIn.REMINDER: (
                 "CronCreate/Delete/List and ScheduleWakeup are denied by CLI "

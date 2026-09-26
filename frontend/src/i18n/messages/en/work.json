@@ -193,6 +193,15 @@
       "editHint": "Put it back in the message box"
     },
     "newMessages": "new",
+    "composer": {
+      "replyTo": "Replying to {name}: {text}",
+      "cancelReply": "Cancel reply",
+      "removeAttachment": "Remove {name}",
+      "summon": "Hand to {name}",
+      "summonShort": "Hand off",
+      "summonOn": "{'@'}{name} is mentioned. Click to remove",
+      "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)"
+    },
     "dispatched": {
       "created": "New task",
       "title": "“{title}”",

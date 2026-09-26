@@ -1,0 +1,38 @@
+name: Docs site
+
+# The docs site is built into the frontend image by build.yml — after merge.
+# A broken internal link, a developer page missing its kind/summary/covers or
+# naming code that has since moved, or a CLI/settings/workflow change the
+# reference generators cannot read would fail the build there, on main. This
+# runs the same build before merge, on everything it reads.
+on:
+  workflow_call:
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The changelog is built from release tags and the commits between.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Build the docs site
+        working-directory: docs/site
+        env:
+          OUT: ${{ runner.temp }}/docs
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build

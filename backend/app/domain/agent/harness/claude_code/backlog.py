@@ -11,6 +11,7 @@ import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from app.domain.agent.harness import HarnessEvent
 from app.domain.agent.harness.claude_code.events import Assembler, bind
@@ -62,21 +63,26 @@ def control_facts(record: dict, known: dict[str, str]) -> dict[str, str]:
     return {key: json.dumps({**current, **update, "task_id": task}, ensure_ascii=False)}
 
 
-async def receive(path: Path, call: Callable[[str, dict], Awaitable[dict]]) -> bool:
+async def receive(
+    path: Path,
+    call: Callable[[str, dict], Awaitable[dict]],
+    on_disk: Callable[..., Awaitable[Any]],
+) -> bool:
     """Mirror what the runner has that we do not; True if a task moved.
 
     Only tasks are worth telling an open room about: they start and finish
     while somebody watches, while the session's ``init`` is the same every turn
     and is read when the controls are opened.
     """
-    journal = Journal(path)
+    journal = await on_disk(Journal, path)
     moved = False
     try:
-        facts = journal.facts(FACT)
+        facts = await on_disk(journal.facts, FACT)
         controls = {
-            CONTROL + key: value for key, value in journal.facts(CONTROL).items()
+            CONTROL + key: value
+            for key, value in (await on_disk(journal.facts, CONTROL)).items()
         }
-        after = int(journal.recall("received") or 0)
+        after = int(await on_disk(journal.recall, "received") or 0)
         while True:
             entries = (await call("events", {"after": after}))["events"]
             learned: dict[str, str] = {}
@@ -88,12 +94,12 @@ async def receive(path: Path, call: Callable[[str, dict], Awaitable[dict]]) -> b
                 controls.update(changed)
                 learned.update(changed)
                 moved = moved or any(":task:" in key for key in changed)
-            journal.import_records(entries, learned)
+            await on_disk(journal.import_records, entries, learned)
             if len(entries) < PAGE:
                 return moved
             after = entries[-1]["sequence"]
     finally:
-        journal.close()
+        await on_disk(journal.close)
 
 
 def control_state(path: Path | None) -> dict:

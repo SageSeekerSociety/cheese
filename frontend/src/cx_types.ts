@@ -212,7 +212,7 @@ export interface DocumentRevision {
   date: string
 }
 
-// A working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a checklist
+// A working-log task item (the agent's `todo_write`, rendered as a checklist
 // in the in-progress message). Live during a turn; persisted between turns as
 // the topic's 进度层 (#187) so a new machine — and the room — can still see how
 // far the work got.

@@ -600,12 +600,14 @@ class DrivenRuntime[H: Handle]:
         if task:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        self.subscriptions.pop(topic, None)
+        subscription = self.subscriptions.pop(topic, None)
         self.live.pop(topic, None)
         self.work.pop(topic, None)
         self.woken.pop(topic, None)
         self.clocks.pop(topic, None)
         self.unreachable.pop(topic, None)
+        if subscription is not None:
+            await subscription.release()
 
     async def stop_listening(self) -> None:
         """Stop reading every session, and leave every session running.
@@ -614,9 +616,9 @@ class DrivenRuntime[H: Handle]:
         once a record is persisted, so whatever this process had not landed is
         still unread for the process that listens next.
         """
-        topics = list(self.subscriptions)
+        subscriptions = dict(self.subscriptions)
         self.subscriptions.clear()
-        for topic in topics:
+        for topic in subscriptions:
             self._wake(topic)
         polls = [task for task in self.tasks.values() if not task.done()]
         if polls:
@@ -624,6 +626,7 @@ class DrivenRuntime[H: Handle]:
             for task in stuck:
                 task.cancel()
             await asyncio.gather(*stuck, return_exceptions=True)
+        await asyncio.gather(*(each.release() for each in subscriptions.values()))
         for held in (self.tasks, self.live, self.work, self.woken, self.clocks):
             held.clear()
         self.unreachable.clear()

@@ -90,6 +90,8 @@ describe('输入区的两行', () => {
 
   it('这一行只放这条消息自己的动作', () => {
     const actions = composer().querySelector('.composer-actions')!
-    expect(actions.textContent?.replace(/\s/g, '')).toBe('交给芝士')
+    const summon = actions.querySelector('.summon-btn')!
+    // 带字的只有「交给芝士」那一颗：这一行的字全是它的。
+    expect(actions.textContent?.replace(/\s/g, '')).toBe(summon.textContent?.replace(/\s/g, ''))
   })
 })

@@ -66,8 +66,6 @@ describe('聊天里的外部成员', () => {
       viewer: 'alice',
       pickerOpen: false,
       askBusy: false,
-      summonHint: null,
-      summonBusy: false,
     }
     const block = { id: 'b1', author: 'carol', content: 'hi', kind: 'message', created_at: '' }
     const vuetify = createVuetify({ components, directives })

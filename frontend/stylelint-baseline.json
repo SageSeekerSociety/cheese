@@ -12,7 +12,7 @@
     "src/components/common/UserAvatar.vue": 1,
     "src/components/DeviceLiveViewer.vue": 3,
     "src/components/room/room-row.css": 1,
-    "src/components/room/RoomComposer.vue": 2,
+    "src/components/room/RoomComposer.vue": 1,
     "src/components/TopicMembers.vue": 2,
     "src/components/TopicSidebar.vue": 1,
     "src/views/tasks/components/TaskHeader.vue": 1,

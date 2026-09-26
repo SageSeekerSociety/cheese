@@ -12,7 +12,7 @@ def _is_child(record: dict, reader: CodexBacklog) -> bool:
 
 class Subscription(subscription.Subscription[CodexBacklog]):
     async def receive(self) -> None:
-        await receive(self.path, self.call)
+        await receive(self.path, self.call, self.on_disk)
 
     def reader(self) -> CodexBacklog:
         return CodexBacklog(self.path)

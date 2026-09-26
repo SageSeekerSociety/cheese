@@ -9,10 +9,12 @@
 
 import type { Token } from 'marked'
 import type { Block } from '@/cx_types'
+import type { RefMaps } from './renderMessage'
 
 import { isAgentBlock } from './authorship'
 import { fileLabel } from './fileKind'
 import { markdown } from './markdown'
+import { plainTokens } from './renderMessage'
 
 /** 附件块里装的是不是一张图。图要直接画出来，别的给一个下载入口。 */
 export function isImageBlock(block: Block): boolean {
@@ -40,12 +42,13 @@ function readableText(tokens: Token[]): string {
  * 引用一句话时显示的摘要。附件没有正文可引，就说它是什么。
  *
  * 芝士的话是 markdown，引用条里是一行纯文本：不先读成字，引到的就是
- * `**A / B / C**` 和一对反引号。人说的话原样显示，所以也原样引用。
+ * `**A / B / C**` 和一对反引号。人说的话原样显示，所以也原样引用。@ 人、提话题、
+ * 指文件的 token 两边都一样读成名字，和正文里 chip 上写的字一致。
  */
-export function replySnippet(block: Block): string {
+export function replySnippet(block: Block, maps: RefMaps): string {
   if (block.kind === 'attachment') return isImageBlock(block) ? '[图片]' : '[文件]'
   const source = isAgentBlock(block) ? readableText(markdown.lexer(block.content)) : block.content
-  const text = source.replace(/\s+/g, ' ').trim()
+  const text = plainTokens(source, maps).replace(/\s+/g, ' ').trim()
   return text.length > 24 ? text.slice(0, 24) + '…' : text
 }
 

@@ -50,6 +50,18 @@ export function highlightTokens(html: string, maps: RefMaps): string {
   )
 }
 
+// 同样的 token，读成一行纯文本里的字：@名字、#话题名、文件名。引用条和回复标签
+// 只有一行字、没有 chip，漏掉这一步，读者看到的就是 `<@cheese-3fa2>`。
+const RAW_TOKEN = /<([@#])([\w-]+)>|<&([\w./\u4e00-\u9fff-]+(?::\d+(?:-\d+)?)?)>/g
+
+export function plainTokens(text: string, maps: RefMaps): string {
+  return text.replace(RAW_TOKEN, (_m, k, id, fid) => {
+    if (fid) return fid.split('/').pop() || fid
+    if (k === '@') return `@${maps.mentionNames[id] || id}`
+    return `#${maps.topicTitles[id] || '话题'}`
+  })
+}
+
 // 芝士's markdown replies → safe HTML (spec §3: AI 必须说人话, 可读).
 // breaks:true — this is chat: a single newline the author typed IS a line
 // break; strict-markdown paragraph rules would silently swallow it.

@@ -1,5 +1,8 @@
 """Reconnect replays identical records; retention preserves child attribution."""
 
+import asyncio
+import functools
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock
 
 import pytest
@@ -8,6 +11,15 @@ from app.domain.agent.harness import Backlog
 from app.domain.agent.harness.codex.backlog import CodexBacklog, receive
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.service import AgentMessage, AgentSubagentStop
+
+
+@pytest.fixture
+async def on_disk():
+    """The mirror's own thread, as a subscription gives ``receive`` one."""
+    disk = ThreadPoolExecutor(max_workers=1)
+    loop = asyncio.get_running_loop()
+    yield lambda work, *args: loop.run_in_executor(disk, functools.partial(work, *args))
+    disk.shutdown()
 
 
 def entry(sequence, method, params):
@@ -19,14 +31,16 @@ def entry(sequence, method, params):
 
 
 @pytest.mark.anyio
-async def test_failed_receive_resumes_after_committed_page_without_consuming(tmp_path):
+async def test_failed_receive_resumes_after_committed_page_without_consuming(
+    tmp_path, on_disk
+):
     path = tmp_path / "mirror.sqlite"
     page = [entry(i, "fixture", {}) for i in range(1, 257)]
     failed = AsyncMock(side_effect=[{"events": page}, ConnectionError("offline")])
     with pytest.raises(ConnectionError):
-        await receive(path, failed)
+        await receive(path, failed, on_disk)
     resumed = AsyncMock(return_value={"events": [entry(257, "fixture", {})]})
-    await receive(path, resumed)
+    await receive(path, resumed, on_disk)
     resumed.assert_awaited_once_with("events", {"after": 256})
     backlog = CodexBacklog(path)
     assert isinstance(backlog, Backlog)
@@ -40,7 +54,9 @@ async def test_failed_receive_resumes_after_committed_page_without_consuming(tmp
 
 
 @pytest.mark.anyio
-async def test_reconnect_completes_partial_child_after_start_record_is_pruned(tmp_path):
+async def test_reconnect_completes_partial_child_after_start_record_is_pruned(
+    tmp_path, on_disk
+):
     path = tmp_path / "mirror.sqlite"
     start = entry(
         1,
@@ -62,7 +78,7 @@ async def test_reconnect_completes_partial_child_after_start_record_is_pruned(tm
             "delta": "part",
         },
     )
-    await receive(path, AsyncMock(return_value={"events": [start, partial]}))
+    await receive(path, AsyncMock(return_value={"events": [start, partial]}), on_disk)
     first = CodexBacklog(path)
     first.assemble(first.unread()[0])
     first.landed(through=first.unread()[0].key)
@@ -96,7 +112,7 @@ async def test_reconnect_completes_partial_child_after_start_record_is_pruned(tm
             },
         },
     )
-    await receive(path, AsyncMock(return_value={"events": [complete, stop]}))
+    await receive(path, AsyncMock(return_value={"events": [complete, stop]}), on_disk)
     second = CodexBacklog(path)
     events = [event for row in second.unread() for event in second.assemble(row)]
     assert isinstance(events[0], AgentMessage)

@@ -16,6 +16,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { t } from '@/i18n'
+
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -236,10 +238,10 @@ describe('对话栏自己的输入栏', () => {
     await flush()
     // 每一格都是同一个块：左边那个方格说明它是什么，右边一直写着名字。PDF 在
     // 方格里画首页——发之前要确认的是「附的是哪一份」，光有名字答不了。
-    const card = container.querySelector('.att-strip .att-card')!
-    expect(card.querySelector('.att-card__name')?.textContent).toBe('需求 文档.pdf')
+    const card = container.querySelector('.chip-list .chip')!
+    expect(card.querySelector('.chip__label')?.textContent).toBe('需求 文档.pdf')
     expect(card.querySelector('canvas')).toBeTruthy()
-    expect(container.querySelector('.att-strip img')).toBeNull()
+    expect(container.querySelector('.chip-list img')).toBeNull()
     await fireEvent.click(container.querySelector('[title="发送"]')!)
     await flush()
     expect(JSON.parse(sent[0].payload).attachments).toEqual([
@@ -273,11 +275,8 @@ describe('对话栏自己的输入栏', () => {
     })
     await flush()
 
-    const cards = Array.from(container.querySelectorAll('.att-strip .att-card'))
-    expect(cards.map((c) => c.querySelector('.att-card__name')?.textContent)).toEqual([
-      '截图.png',
-      'Writing替换词.docx',
-    ])
+    const cards = Array.from(container.querySelectorAll('.chip-list .chip'))
+    expect(cards.map((c) => c.querySelector('.chip__label')?.textContent)).toEqual(['截图.png', 'Writing替换词.docx'])
     // 同一个块、同一个方格。
     expect(cards.every((c) => c.querySelector('.att-face'))).toBe(true)
     // 图片是 <img>；.docx 走的是画布，因为它也有第一页可画——平台先把它转成 PDF。
@@ -311,8 +310,8 @@ describe('对话栏自己的输入栏', () => {
     })
     await flush()
 
-    const card = container.querySelector('.att-strip .att-card')!
-    expect(card.querySelector('.att-card__name')?.textContent).toBe('预算.xlsx')
+    const card = container.querySelector('.chip-list .chip')!
+    expect(card.querySelector('.chip__label')?.textContent).toBe('预算.xlsx')
     expect(card.querySelector('canvas')).toBeNull()
     expect(card.querySelector('.mdi-file-excel-outline')).toBeTruthy()
     expect(vi.mocked(api.previewDocumentPdf)).not.toHaveBeenCalled()
@@ -340,7 +339,7 @@ describe('对话栏自己的输入栏', () => {
     })
     await flush()
 
-    const card = container.querySelector('.att-strip .att-card')!
+    const card = container.querySelector('.chip-list .chip')!
     expect(card.getAttribute('title')).toBeNull()
     await fireEvent.mouseEnter(card)
     await flush()
@@ -363,7 +362,7 @@ describe('对话栏自己的输入栏', () => {
     const file = new File(['png'], '截图.png', { type: 'image/png' })
     await fireEvent.change(input, { target: { files: [file] } })
     await flush()
-    const img = container.querySelector<HTMLImageElement>('.att-strip img')!
+    const img = container.querySelector<HTMLImageElement>('.chip-list img')!
     expect(img.getAttribute('src')).toBe('blob:composer-thumb')
     expect(img.getAttribute('src')).not.toContain('/attachments/raw')
     expect(api.attachmentImageUrl).toHaveBeenCalledWith('topic-image', 'uploads/id/截图.png')
@@ -519,7 +518,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     await fireEvent.update(box, '看看这个')
-    const btn = getByRole('button', { name: /交给芝士/ })
+    const btn = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) })
     expect(btn.getAttribute('aria-pressed')).toBe('false')
 
     await fireEvent.click(btn)
@@ -536,7 +535,7 @@ describe('对话栏自己的输入栏', () => {
     await flush()
 
     const box = composerBox(container)!
-    const btn = getByRole('button', { name: /交给芝士/ })
+    const btn = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) })
     expect(btn.getAttribute('aria-pressed')).toBe('false')
     await fireEvent.update(box, '@芝士 看看这个')
     expect(btn.getAttribute('aria-pressed'), '正文里 @ 了它，按钮却没亮——两边说的不是同一件事').toBe('true')
@@ -564,7 +563,7 @@ describe('对话栏自己的输入栏', () => {
     const { container, getByRole } = mountPanel({}, 'topic-late-roster')
     await flush()
 
-    const before = getByRole('button', { name: /交给/ }) as HTMLButtonElement
+    const before = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) }) as HTMLButtonElement
     expect(before.disabled, '房间名册还没到，按钮却已经能点了——这时候它认的是项目名册上那行共用的芝士').toBe(true)
 
     release()
@@ -572,7 +571,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     await fireEvent.update(box, '看看这个')
-    await fireEvent.click(getByRole('button', { name: /交给芝士/ }))
+    await fireEvent.click(getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) }))
     expect(box.value).toBe('@芝士 看看这个')
 
     box.focus()

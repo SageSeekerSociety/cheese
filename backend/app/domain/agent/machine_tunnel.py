@@ -261,26 +261,79 @@ def _with_proxy_auth(head: bytes, token: str) -> bytes:
     return b"\r\n".join(lines)
 
 
-def _pump_local_to_ws(local: socket.socket, ws: socket.socket) -> None:
+# How long a pipe may carry no data, in either direction, before it is cut. A
+# live model stream is never this quiet (deltas, periodic pings), so silence
+# this long means some hop behind the gateway died without a close reaching
+# here — measured 2026-09-25: a deploy recreated the meter mid-turn and claude
+# waited minutes on a socket every hop still called ESTABLISHED. Only this end
+# is guaranteed to see it, because a close does not always cross the gateway.
+IDLE_TIMEOUT_S = 180.0
+_IDLE_CHECK_S = 5.0
+
+
+class _Activity:
+    def __init__(self) -> None:
+        self.last = time.monotonic()
+
+    def touch(self) -> None:
+        self.last = time.monotonic()
+
+
+def _pump_local_to_ws(
+    local: socket.socket, ws: socket.socket, activity: "_Activity | None" = None
+) -> None:
     try:
         while True:
             data = local.recv(_CHUNK)
             if not data:
                 return
+            if activity is not None:
+                activity.touch()
             send_frame(ws, data)
     except OSError:
         return
 
 
-def _pump_ws_to_local(ws: socket.socket, local: socket.socket) -> None:
+def _pump_ws_to_local(
+    ws: socket.socket, local: socket.socket, activity: "_Activity | None" = None
+) -> None:
     try:
         while True:
             message = recv_message(ws)
             if message is None:
                 return
+            if activity is not None:
+                activity.touch()
             local.sendall(message)
     except (OSError, TunnelError):
         return
+
+
+def _cut_when_idle(
+    activity: _Activity,
+    done: threading.Event,
+    sockets: "tuple[socket.socket, ...]",
+    idle_s: float,
+) -> None:
+    """Shut both sockets once the pair has been silent for ``idle_s``.
+
+    shutdown, not close: it wakes the pump threads blocked in recv, and the
+    ordinary end-of-pair path then closes everything exactly once."""
+    while True:
+        remaining = idle_s - (time.monotonic() - activity.last)
+        if remaining <= 0:
+            break
+        if done.wait(min(_IDLE_CHECK_S, remaining)):
+            return
+    logger.warning(
+        "tunnel carried nothing for %.0fs; closing it so the client retries",
+        idle_s,
+    )
+    for sock in sockets:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
 
 class TokenSource:
@@ -361,6 +414,7 @@ def handle_connection(
     *,
     ca_path: str | None = None,
     insecure: bool = False,
+    idle_timeout_s: float = IDLE_TIMEOUT_S,
 ) -> None:
     """One accepted CONNECT client gets one WebSocket, for its whole life.
 
@@ -398,9 +452,19 @@ def handle_connection(
         return
     send_frame(ws, _with_proxy_auth(head, secret))
 
-    up = threading.Thread(target=_pump_local_to_ws, args=(local, ws), daemon=True)
+    activity = _Activity()
+    done = threading.Event()
+    threading.Thread(
+        target=_cut_when_idle,
+        args=(activity, done, (local, ws), idle_timeout_s),
+        daemon=True,
+    ).start()
+    up = threading.Thread(
+        target=_pump_local_to_ws, args=(local, ws, activity), daemon=True
+    )
     up.start()
-    _pump_ws_to_local(ws, local)
+    _pump_ws_to_local(ws, local, activity)
+    done.set()
     # Either direction ending ends the pair — a half-open pipe leaves the caller
     # waiting on a response that can no longer arrive.
     for sock in (local, ws):

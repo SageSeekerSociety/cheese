@@ -1617,8 +1617,8 @@ export function answerOptions(blockId: string, option: string, author: string): 
   })
 }
 
-// 忘了 @ 的补救：叫芝士现在就读它还没读到的消息。不发新消息 —— 那条消息已经
-// 在时间线上了，补一条一模一样的只会让人分不清哪条是真的。
+// 叫芝士现在就读它还没读到的消息（一轮失败之后的「重试」）。不发新消息 —— 那些
+// 消息已经在时间线上了，补一条一模一样的只会让人分不清哪条是真的。
 // `started` 为 false 时说明这一下没必要（房间已经在干活，或者没有待读的东西）。
 export function summonAgent(topicId: string): Promise<{ started: boolean; reason?: string }> {
   return request<{ started: boolean; reason?: string }>(`/topics/${encodeURIComponent(topicId)}/summon`, {

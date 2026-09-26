@@ -131,7 +131,7 @@ gateway it puts the project's virtual key.
 
 The file is re-read on every request, so logging in, switching account and
 logging out take effect at the next request of every running session. Use
-`claude-login.sh` on the box, as the directory's owner:
+`<proxy home>/claude-login.sh` on the box, as the directory's owner (every release installs it there):
 
 - `claude-login.sh setup-token` stores a one-year token from
   `claude setup-token`. Nothing renews it; replace it within the year.

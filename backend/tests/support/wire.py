@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tests.support.hang import HANG_S
+
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "wire"
 
 
@@ -96,7 +98,7 @@ class RecordingDevice:
     async def send_json(self, message: dict[str, Any]) -> None:
         await self.sent.put(message)
 
-    async def next_call(self, timeout: float = 1) -> ExecutionCall:
+    async def next_call(self, timeout: float = HANG_S) -> ExecutionCall:
         """Wait for the `execution.call`, skipping an `update` pushed after the hello.
 
         `DeviceHub._update_if_stale` answers a `hello` that names no build with

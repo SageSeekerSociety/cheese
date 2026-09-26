@@ -436,3 +436,81 @@ def test_a_message_joins_the_turn_the_next_backend_picked_up(client):
             )
 
     assert asyncio.run(turns()) == 1
+
+
+def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
+    client,
+):
+    """A room's non-default teammate is mid-turn when the backend is replaced.
+
+    The new process must record the recovered turn as that teammate's. Recorded
+    under the project default instead, every later message to the teammate
+    waited in `wait_for_recipient` for 「another agent」 to finish — which was
+    the teammate's own turn — so nothing reached it until the turn ended
+    (dev, 2026-09-25, twice)."""
+    from app.domain.agent_instance.services import AgentInstanceService
+    from app.domain.identity.handles import agent_instance_handle
+    from app.domain.topic_membership.services import TopicMemberService
+
+    project = post_project(client, {"name": "Teammate"}).json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "队友", "created_by": "alice"},
+    ).json()["data"]["id"]
+    topic = uuid.UUID(room)
+
+    async def seat_teammate() -> None:
+        async with client.test_factory() as session:
+            made = await AgentInstanceService(session).create(
+                project_id=uuid.UUID(project["id"]),
+                handle="opus",
+                type_name=None,
+                display_name="Opus",
+            )
+            await TopicMemberService(session).ensure_agent_seat(
+                topic, agent_instance_handle(made.id)
+            )
+            await session.commit()
+
+    client.portal.call(seat_teammate)
+
+    def service(channel: StubChannel) -> ChatService:
+        return ChatService(
+            session_factory=client.test_request_factory,
+            base_system_prompt="你是芝士。",
+            workspace_root="/tmp/claude-records-ws",
+            compute=stub_compute(channel),
+        )
+
+    before = StillWorking()
+    old = service(before)
+    app.dependency_overrides[get_chat_service] = lambda: old
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@Opus 睡一会"})
+        _until(
+            ws,
+            lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
+        )
+    (running,) = old._hook_work.values()
+    assert running.agent_instance_handle == "opus"
+    client.portal.call(before.runtime.stop_listening)
+
+    after = StubChannel()
+    after.root = before.root
+    after.sessions = before.sessions
+    after.calls = before.calls
+    for session in after.sessions.values():
+        session.channel = after
+    replaced = service(after)
+    app.dependency_overrides[get_chat_service] = lambda: replaced
+    assert client.portal.call(replaced.recover_sessions) == 1
+
+    (recovered,) = replaced._hook_work.values()
+    assert recovered.agent_instance_handle == "opus"
+
+    async def waits_for_nobody() -> bool:
+        return await asyncio.wait_for(
+            replaced.wait_for_recipient(topic, "opus"), timeout=2
+        )
+
+    assert client.portal.call(waits_for_nobody) is False

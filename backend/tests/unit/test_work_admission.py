@@ -17,6 +17,7 @@ from app.domain.agent.runtime import (
     InProcessBroker,
     addressed_to_agent,
 )
+from tests.support.hang import HANG_S
 from tests.turn_log import a_topic
 
 
@@ -239,7 +240,7 @@ async def test_waiting_recipient_does_not_block_current_agent_followup():
         await runner.drain()
 
 
-async def _until(cond, timeout: float = 2.0) -> None:
+async def _until(cond, timeout: float = HANG_S) -> None:
     async with asyncio.timeout(timeout):
         while not cond():
             await asyncio.sleep(0.01)
@@ -247,7 +248,7 @@ async def _until(cond, timeout: float = 2.0) -> None:
 
 async def _frames_through(queue, final_type: str) -> list[dict]:
     frames = []
-    async with asyncio.timeout(2.0):
+    async with asyncio.timeout(HANG_S):
         while True:
             frame = await queue.get()
             frames.append(frame)

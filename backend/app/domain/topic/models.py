@@ -192,7 +192,7 @@ class TopicReadState(UuidPk, Timestamps, Base):
 class TopicProgress(UuidPk, Timestamps, Base):
     """进度层: what this topic's work has gotten through, so far (#187).
 
-    芝士's checklist (the Task tools' working log) used to live only in the
+    芝士's checklist (written with `todo_write`) used to live only in the
     turn's WS stream — it died with the turn, and with the machine. That made
     "换了机器不知道自己做到哪" structurally unavoidable: the room could show the
     code, the decisions and the doc, but never the半成品 in between.
@@ -204,9 +204,10 @@ class TopicProgress(UuidPk, Timestamps, Base):
     history (the timeline already keeps history).
 
     ``items`` is the checklist as the UI renders it: ``[{"id", "subject",
-    "status"}]``, status ∈ pending/in_progress/completed. Written the moment a
-    Task tool call streams in, exactly like 现场 events (chat.py) — a turn that
-    dies mid-flight must not take the progress with it, which is the whole point.
+    "status"}]``, status ∈ pending/in_progress/completed. Written the moment the
+    agent calls `todo_write` (``PUT /topics/{id}/progress``), not at turn end —
+    a turn that dies mid-flight must not take the progress with it, which is the
+    whole point.
     """
 
     __tablename__ = "topic_progress"

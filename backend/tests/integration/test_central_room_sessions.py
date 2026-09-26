@@ -47,6 +47,7 @@ from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_archive_retires_storage import _seed_device
 from tests.pinned_claude import claude_binary
 from tests.support import wire
+from tests.support.hang import HANG_S
 from tests.unit.test_device_provider import FakeHub
 
 AGENT = "agent"
@@ -562,7 +563,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
             await device_hub.on_device_message(
                 "executor", wire.execution_result(call.id)
             )
-            response = await asyncio.wait_for(waiter, 2)
+            response = await asyncio.wait_for(waiter, HANG_S)
             assert response.status_code == 200, response.text
             assert response.json() == {"content": "executor file"}
             assert (await owner.post(endpoint, json=payload)).status_code == 401
@@ -727,12 +728,16 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
         ).status_code
         == 401
     )
+
     # A room's live session, as the controls see it: reading a file is the
     # executor's to answer, so it goes to the lease the platform recorded.
+    async def control_state(_topic):
+        return {"id": "session-1", "tasks": {}}
+
     session = SimpleNamespace(
         controls=("read_file",),
         executor_controls=frozenset({"read_file"}),
-        control_state=lambda _topic: {"id": "session-1", "tasks": {}},
+        control_state=control_state,
     )
     fastapi_app.dependency_overrides[get_chat_service] = lambda: SimpleNamespace(
         session_controls=lambda _topic: session

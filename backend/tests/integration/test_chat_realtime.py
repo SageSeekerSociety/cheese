@@ -27,6 +27,7 @@ from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import registered
+from tests.support.hang import HANG_S
 
 
 def _said(message: dict) -> str:
@@ -473,7 +474,7 @@ async def test_other_teammate_message_waits_for_live_turn(
     await broker.receive_message(
         svc, topic_id, author="u", content="@Second Second task"
     )
-    await asyncio.wait_for(waiting.wait(), 2)
+    await asyncio.wait_for(waiting.wait(), HANG_S)
     assert screen.delivered == []
     assert screen.runs == 1
     screen.release.set()
@@ -608,7 +609,7 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
             )
         ]
 
-    frames = await asyncio.wait_for(post(), 2)  # pre-fix: deadlocks here
+    frames = await asyncio.wait_for(post(), HANG_S)  # pre-fix: deadlocks here
     assert [f["type"] for f in frames] == ["user_block", "done"]
     assert frames[0]["block"]["content"] == "我插一句"
     assert frames[0]["block"]["author"] == "user-2"
@@ -807,7 +808,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     await asyncio.wait_for(provider.started.wait(), 5)
 
     # Pre-fix this blocked until the active run finished.
-    frames = await asyncio.wait_for(summoned("user-2", "等一下，先别跑"), 2)
+    frames = await asyncio.wait_for(summoned("user-2", "等一下，先别跑"), HANG_S)
     assert all(frame["type"] != "done" for frame in frames)
     assert [p.split("\n\n", 1)[0] for p in provider.delivered] == [
         "[user-2]: 等一下，先别跑"
