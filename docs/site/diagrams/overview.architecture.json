@@ -420,7 +420,7 @@
   {
    "from": "backend",
    "to": "forge",
-   "label": "推分支 · 开 PR",
+   "label": "开 PR · 采纳合并",
    "variant": "dashed",
    "fromSide": "top",
    "toSide": "bottom"

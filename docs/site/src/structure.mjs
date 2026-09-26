@@ -10,7 +10,7 @@ export const SECTIONS = [
     ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
     ['教学', ['challenges', 'courses']],
-    ['资源', ['devices', 'quota']],
+    ['资源', ['devices', 'quota', 'feedback']],
   ]],
   ['faq', '常见问题', 'info', [['排障', ['troubleshooting']]]],
 ]
@@ -47,7 +47,7 @@ export const HIGHLIGHTS = {
 
 export const WHO = {
   学生: [['交一道题目', '在空间里找到老师的题目，和芝士一起做完再提交', 'student-tutorial'], ['让芝士讲清一个概念', '在话题里提问，追问到懂为止', 'working-with-cheese'], ['和同学组队做项目', '建团队、拉同学进项目，一起跟芝士干活', 'teams'], ['额度快用完了', '看自己和团队还剩多少额度', 'quota']],
-  '老师 / 助教': [['开一门课', '建课程、按周排单元', 'teacher-tutorial'], ['布置作业和测验', '挂到单元上，设好提交要求', 'courses'], ['收作业、打分', '看提交记录，打分，看学生卡在哪', 'submissions'], ['发布一道题目', '在空间里发题目、管参与者', 'challenges']],
+  '老师 / 助教': [['开一门课', '建课程、按周排单元', 'teacher-tutorial'], ['布置作业和测验', '挂到单元上，设好提交要求', 'courses'], ['收作业、打分', '在「作业与验收」里看提交、打分，看学生卡在哪', 'courses'], ['发布一道题目', '在空间里发题目、管参与者', 'challenges']],
   办公: [['让芝士整理一份周报', '把材料丢进话题，说清要什么格式', 'working-with-cheese'], ['把一件事交给芝士', '描述目标，中途补要求，最后验收', 'office-tutorial'], ['和同事一起推进项目', '团队、项目、话题，谁在做什么一目了然', 'projects'], ['把做好的网页发布出去', '项目里的网页一键发布成网站', 'sites']],
   团队项目: [['把一个功能交给芝士开发', '连上仓库，芝士开 PR，你验收后合并', 'accept'], ['给项目分派任务', '拆成几条任务并行推进，看板上看进度', 'tasks'], ['让芝士用我的电脑干活', '接入自己的电脑或服务器，按目录授权', 'devices'], ['把做好的网页发布出去', '项目里的网页一键发布成网站', 'sites']],
 }

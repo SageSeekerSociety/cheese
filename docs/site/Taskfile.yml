@@ -19,7 +19,7 @@ tasks:
     cmds:
       - npm run diagrams
 
-  room:
-    desc: Rebuild island/room.html, the workbench components the home page embeds
+  font:
+    desc: Re-cut the home page's display font to the characters its headings use (needs uv)
     cmds:
-      - npm run room
+      - bash gen/font.sh
