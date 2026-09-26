@@ -135,6 +135,8 @@ const emit = defineEmits<{
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
   (e: 'open-topic', topicId: string): void
+  // A task in this room (dispatched marker, upgraded message, <#task> chip): opens its card here.
+  (e: 'open-card', taskId: string): void
   // A clicked @mention chip (resolved by the parent: person → member page,
   // topic/doc → open that topic).
   (e: 'mention-click', name: string): void
@@ -190,14 +192,6 @@ watch(
     // not the raw literal — they are reserved handles, not roster members.
     mentionNames.all = '所有人'
     mentionNames.here = '在线成员'
-  },
-  { immediate: true, deep: true }
-)
-watch(
-  () => props.topicList,
-  (ts) => {
-    for (const k of Object.keys(topicTitles)) delete topicTitles[k]
-    for (const t of ts) topicTitles[t.id] = t.title
   },
   { immediate: true, deep: true }
 )
@@ -310,8 +304,11 @@ function onMessagesClick(e: MouseEvent) {
   const el = target?.closest('.mention') as HTMLElement | null
   if (!el) return
   if (el.dataset.handle) emit('mention-click', el.dataset.handle)
-  else if (el.dataset.topic) emit('open-topic', el.dataset.topic)
-  else if (el.dataset.file) {
+  else if (el.dataset.topic) {
+    const id = el.dataset.topic
+    if (roomTasks.value.some((task) => task.id === id)) emit('open-card', id)
+    else emit('open-topic', id)
+  } else if (el.dataset.file) {
     const row = el.closest('[data-mid]') as HTMLElement | null
     const task = rows.value.find(({ block }) => block.id === row?.dataset.mid)?.block.task_id
     emit('open-file', el.dataset.file, task ?? null)
@@ -1047,6 +1044,18 @@ watch(
   { immediate: true }
 )
 
+// <#id> 可以指一个话题，也可以指这个房间里的一件活：两边的标题都得认得，否则活的
+// chip 只会写「#话题」。
+watch(
+  [() => props.topicList, roomTasks],
+  ([ts, tasks]) => {
+    for (const k of Object.keys(topicTitles)) delete topicTitles[k]
+    for (const t of ts) topicTitles[t.id] = t.title
+    for (const t of tasks) topicTitles[t.id] = t.title
+  },
+  { immediate: true, deep: true }
+)
+
 const splitMarkers = computed(() =>
   placeSplitMarkers(roomTasks.value, {
     blocks: visible.value,
@@ -1510,7 +1519,7 @@ onBeforeUnmount(() => {
               v-for="marker in splitMarkers.before.get(m.id) ?? []"
               :key="marker.taskId"
               :marker="marker"
-              @open="emit('open-topic', $event)"
+              @open="emit('open-card', $event)"
             />
             <RoomNotice
               v-if="notice"
@@ -1526,6 +1535,7 @@ onBeforeUnmount(() => {
               :retrying="retryBusy"
               @animationend="settleArrival($event, m.id)"
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
+              @open-card="emit('open-card', $event)"
               @retry="retryNow"
             />
             <!-- message row -->
@@ -1556,6 +1566,7 @@ onBeforeUnmount(() => {
               @animationend="settleArrival($event, m.id)"
               @open-file="(path, taskId) => emit('open-file', path, taskId)"
               @open-topic="emit('open-topic', $event)"
+              @open-card="emit('open-card', $event)"
               @react="onReact"
               @answer="pickOption"
               @download="downloadAttachment"
@@ -1570,7 +1581,7 @@ onBeforeUnmount(() => {
             v-for="marker in splitMarkers.tail"
             :key="marker.taskId"
             :marker="marker"
-            @open="emit('open-topic', $event)"
+            @open="emit('open-card', $event)"
           />
 
           <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,

@@ -15,7 +15,6 @@ from app.domain.agent.skills import (
     _NATIVE_SKILL_SRC,
     _SHIPPED_NATIVE_SKILLS,
     SKILL_FILE_SUFFIXES,
-    SKILL_HEREDOC_MARKER,
     native_skill_files,
 )
 
@@ -65,12 +64,6 @@ def test_nothing_in_the_directory_is_left_behind_without_saying_so():
                 f"{relative} 的后缀 {path.suffix!r} 不在 SKILL_FILE_SUFFIXES 里，"
                 "它现在到不了用户的机器上"
             )
-
-
-def test_no_skill_file_ends_its_own_heredoc():
-    """设备那条路把每个文件写进 <<'CHEESE_NATIVE_SKILL'，文件里出现这一行就截断。"""
-    for name, content in _shipped().items():
-        assert SKILL_HEREDOC_MARKER not in content, name
 
 
 def test_keys_are_relative_to_the_config_directory():

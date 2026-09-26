@@ -4,8 +4,8 @@
   "nav": {
     "rail": ["home", "projects", "add"],
     "tabs": ["spaces", "workspace", "inbox"],
-    "project": ["calendar", "project-library", "project-members", "project-skills"]
+    "project": ["calendar", "project-library", "project-routines", "project-members", "project-skills"]
   },
-  "hidden": ["calendar", "project-skills"],
+  "hidden": ["calendar", "project-routines", "project-skills"],
   "terms": {}
 }

@@ -113,6 +113,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '资料库', hideTabs: true, backTo: 'workspace-project' },
     },
     {
+      // 定时与触发：房间里的 AI 队友按时间或按项目事件自己开工的那些规则。项目级，
+      // 因为一条规则的结果可能要看别的房间，而人要在一处看全这个项目有哪些在自己跑。
+      name: 'project-routines',
+      path: 'routines',
+      component: () => import('@/views/ProjectRoutinesView.vue'),
+      props: true,
+      meta: { title: '定时与触发', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
       // 工作方法：这个项目存下来的做法。项目级，因为存下来就是给之后每个房间用的。
       name: 'project-skills',
       path: 'skills',

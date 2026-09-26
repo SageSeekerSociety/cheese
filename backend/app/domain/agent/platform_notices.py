@@ -146,6 +146,11 @@ EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 EVENT_TIMED_DELIVERY: Final = "timed_delivery"
 #: 芝士把一次做法整理成了项目工作方法（skill），等人确认后才保存、才下发。
 EVENT_SKILL_PROPOSED: Final = "skill_proposed"
+#: 一条周期任务或事件触发规则开始了一次执行；结果或失败原因随后另起一条。
+EVENT_ROUTINE_RUN: Final = "routine_run"
+EVENT_ROUTINE_RESULT: Final = "routine_result"
+#: 芝士起草了一条周期任务/触发规则，等人确认后才会执行。
+EVENT_ROUTINE_PROPOSED: Final = "routine_proposed"
 #: AI 服务的一次请求失败了，会话正在按它自己的退避重试。重试期间房间里没有任何
 #: 输出，不说一声就和「在想」分不出来。同一段连续的重试只占一行，次数原地更新。
 EVENT_API_RETRY: Final = "api_retry"
@@ -205,6 +210,9 @@ EVENT_TYPES: Final = frozenset(
         EVENT_POLICY_PROPOSAL,
         EVENT_TIMED_DELIVERY,
         EVENT_SKILL_PROPOSED,
+        EVENT_ROUTINE_RUN,
+        EVENT_ROUTINE_RESULT,
+        EVENT_ROUTINE_PROPOSED,
         EVENT_API_RETRY,
         EVENT_DEVICE_WAITING,
     }

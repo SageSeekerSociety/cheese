@@ -23,7 +23,6 @@ from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.skills import (
     RESERVED_SKILL_NAMES,
     SKILL_FILE_SUFFIXES,
-    SKILL_HEREDOC_MARKER,
     native_skill_files,
 )
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
@@ -64,8 +63,6 @@ def _validate_files(files: dict) -> dict[str, str]:
             raise ValidationError(f"{raw}：内容要是文本")
         if len(content.encode()) > MAX_FILE_BYTES:
             raise ValidationError(f"{raw} 超过 {MAX_FILE_BYTES // 1000} KB")
-        if SKILL_HEREDOC_MARKER in content:
-            raise ValidationError(f"{raw} 含有保留字 {SKILL_HEREDOC_MARKER}")
         out[path.as_posix()] = content
     return out
 

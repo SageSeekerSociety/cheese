@@ -167,6 +167,7 @@ const chatEvents = {
   'open-resource': handleOpenResource,
   'upgrade-message': handleUpgradeMessage,
   'open-topic': openTopic,
+  'open-card': onOpenCard,
   phase: (p: CardPhase) => (cardPhase.value = p),
   review: onReview,
 }

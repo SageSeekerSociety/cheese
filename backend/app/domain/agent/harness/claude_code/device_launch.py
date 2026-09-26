@@ -16,6 +16,7 @@ launch; ``machine_launcher`` owns the other half and joins the two.
 
 import base64
 import dataclasses
+import gzip
 import hashlib
 import json
 import shlex
@@ -28,7 +29,6 @@ from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
-from app.domain.agent.skills import SKILL_HEREDOC_MARKER
 from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # --- the version this session is pinned to ----------------------------------
@@ -194,15 +194,21 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
     prune = project_skill_prune(project_skill_names(project_id))
-    skill_setup = "\n".join(
-        [prune]
-        + [
-            f'mkdir -p "$CLAUDE_CONFIG_DIR/{Path(name).parent}"\n'
-            f"cat > \"$CLAUDE_CONFIG_DIR/{name}\" <<'{SKILL_HEREDOC_MARKER}'\n"
-            f"{content}\n{SKILL_HEREDOC_MARKER}"
-            for name, content in session_skill_files(project_id).items()
-        ]
-    )
+    # Compressed: written out as heredocs the skills alone outgrew what one
+    # shell argument may hold, and they only grow. Base64 has no quote in it.
+    skills = base64.b64encode(
+        gzip.compress(json.dumps(session_skill_files(project_id)).encode(), mtime=0)
+    ).decode()
+    skill_setup = f"""{prune}
+python3 - "$CLAUDE_CONFIG_DIR" <<'CHEESE_SKILLS'
+import base64, gzip, json, os, sys
+files = json.loads(gzip.decompress(base64.b64decode("{skills}")))
+for name, content in files.items():
+    path = os.path.join(sys.argv[1], name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as out:
+        out.write(content)
+CHEESE_SKILLS"""
     settings_json = json.dumps(session_settings(), ensure_ascii=False)
     claude_args = " " + shlex.join(LAUNCH_ARGS)
     pinned_version = CLAUDE_PINNED_VERSION
