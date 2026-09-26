@@ -445,6 +445,21 @@ PLATFORM_TOOLS = ToolTable(
             ["url"],
         ),
         _tool(
+            "cheese_docs_search",
+            "按关键词检索知是的使用文档（怎么建项目、验收、设备、额度……），返回相关的页、"
+            "小节、链接和摘录。用户问平台怎么用时先查它再答，答案里附上链接；"
+            "知是自己的项目里也能搜到开发文档。关键词检索，没命中就换个说法再试。",
+            {"query": _text("关键词或问题")},
+            ["query"],
+        ),
+        _tool(
+            "cheese_docs_read",
+            "读知是文档的一整页 Markdown 原文。page 写页名（如 accept、quickstart），"
+            "开发文档写 dev/页名（只有知是自己的项目能读）；检索结果里的链接也可以直接给。",
+            {"page": _text("页名或链接，如 accept、/docs/accept#is-merge、dev/turn")},
+            ["page"],
+        ),
+        _tool(
             "cheese_lock",
             "为一条任务占用房间的重资源锁，装依赖、跑大型测试或起服务前用；"
             "占不到时说谁占着，不等待。",
@@ -686,6 +701,18 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             else f"/topics/{topic}/title"
         )
         return {"method": "POST", "path": path, "body": {"title": args["text"]}}
+    if tool == "cheese_docs_search":
+        return {
+            "method": "POST",
+            "path": "/docs/agent/search",
+            "body": {"query": args["query"], "topic": topic},
+        }
+    if tool == "cheese_docs_read":
+        return {
+            "method": "POST",
+            "path": "/docs/agent/read",
+            "body": {"page": args["page"], "topic": topic},
+        }
     if tool == "cheese_fetch":
         # 带上话题：不带的话每一次调用都会被判成 "Agent credential is invalid or
         # expired"——沙箱 token 是带作用域的。
@@ -1161,6 +1188,30 @@ def _say_recall(args, data, env) -> str:
     return "\n".join(f"- {hit.get('abstract', '')}" for hit in hits)
 
 
+def _say_docs_search(args, data, env) -> str:
+    hits = (data or {}).get("hits") or []
+    if not hits:
+        return (
+            "文档里没有检索到相关内容。（关键词检索：换个说法、或只用一两个关键词再试；"
+            "确实没有就如实告诉用户文档没写到）"
+        )
+    lines = []
+    for n, hit in enumerate(hits, 1):
+        where = hit.get("title", "")
+        if hit.get("heading"):
+            where += f" › {hit['heading']}"
+        tag = "（开发文档）" if hit.get("dev") else ""
+        lines.append(f"{n}. {where}{tag}\n   {hit.get('url', '')}\n   {hit.get('excerpt', '')}")
+    lines.append(
+        "\n要看整页用 cheese_docs_read(page=链接)。回答用户时附上对应链接。"
+    )
+    return "\n".join(lines)
+
+
+def _say_docs_read(args, data, env) -> str:
+    return (data or {}).get("markdown") or ""
+
+
 def _say_fetch(args, data, env) -> str:
     data = data or {}
     if not data.get("ok"):
@@ -1256,6 +1307,8 @@ _SAY = {
     "cheese_recall": _say_recall,
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
+    "cheese_docs_search": _say_docs_search,
+    "cheese_docs_read": _say_docs_read,
     "cheese_members": _say_members,
     "cheese_status": lambda a, d, e: _format_status(d or {}),
     "cheese_library_ls": _say_library,

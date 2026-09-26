@@ -16,6 +16,7 @@ import math
 import re
 import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import httpx
@@ -166,10 +167,16 @@ class IndexSource:
     """
 
     def __init__(
-        self, url: str | None, transport: httpx.AsyncBaseTransport | None = None
+        self,
+        url: str | None,
+        transport: httpx.AsyncBaseTransport | None = None,
+        *,
+        cookies: Callable[[], dict[str, str]] | None = None,
     ) -> None:
         self._url = url
         self._transport = transport
+        # For an index behind the /docs/dev/ gate: the pass, minted per fetch.
+        self._cookies = cookies
         self._index: DocsIndex | None = None
         self._at = 0.0
 
@@ -181,7 +188,12 @@ class IndexSource:
                 async with httpx.AsyncClient(
                     timeout=httpx.Timeout(5.0), transport=self._transport
                 ) as client:
-                    r = await client.get(self._url)
+                    r = await client.get(
+                        self._url,
+                        headers=_cookie_header(
+                            self._cookies() if self._cookies else {}
+                        ),
+                    )
                     r.raise_for_status()
                     rows = r.json()
                 self._index = DocsIndex(
@@ -203,4 +215,19 @@ class IndexSource:
         return self._index
 
 
+def _cookie_header(cookies: dict[str, str]) -> dict[str, str]:
+    if not cookies:
+        return {}
+    return {"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())}
+
+
+def _internal_pass() -> dict[str, str]:
+    from app.domain.docs_site import access
+
+    return {access.COOKIE: access.internal_pass()}
+
+
 source = IndexSource(settings.docs_index_url)
+# The developer pages, for agents in the platform's own project only
+# (docs_site/library.py). Never read by 问芝士.
+dev_source = IndexSource(settings.docs_dev_index_url, cookies=_internal_pass)
