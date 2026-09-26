@@ -119,7 +119,7 @@ def test_closing_without_a_word_keeps_what_the_worker_handed_back(client, stub_h
         agent_id="worker-1",
         summary="索引加好了，慢查询从 2.1s 降到 40ms",
     )
-    _pump(client, room_id)
+    _wait_work_idle()
 
     r = client.post(
         f"/topics/{room_id}/tasks/{task['id']}/close",
@@ -176,18 +176,6 @@ def _shown(client, room_id: str, task_id: str) -> dict:
     return next(t["presentation"] for t in listed if t["id"] == task_id)
 
 
-def _pump(client, room_id: str, rounds: int = 20) -> None:
-    """把 TestClient 那条事件循环叫醒几次。
-
-    记录落进房间是读者那条循环的事；测试这边只能一边问一边等它。
-    """
-    import time
-
-    for _ in range(rounds):
-        client.get(f"/topics/{room_id}", headers=_bearer("alice"))
-        time.sleep(0.02)
-
-
 def test_a_card_nobody_has_started_on_is_idle_not_out_of_contact(client):
     """还没分身开工的活是「待开工」，不是「失联」。
 
@@ -217,7 +205,7 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
     _wait_work_idle()
     # 分身开工：标识写在起它的那次调用里，平台因此知道是谁在做。
     stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
-    _pump(client, room_id)
+    _wait_work_idle()
     assert _shown(client, room_id, task["id"])["display_status"] == "运行中"
 
     _reports_back(
@@ -226,7 +214,7 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
         agent_id="worker-1",
         summary="我这边跑完了",
     )
-    _pump(client, room_id)
+    _wait_work_idle()
 
     blocks = client.get(
         f"/topics/{room_id}/tasks/{task['id']}", headers=_bearer("alice")
@@ -271,14 +259,14 @@ def test_the_last_stop_wins_and_an_unlabelled_worker_writes_nothing(client, stub
             agent_id="worker-1",
             summary=message,
         )
-        _pump(client, room_id)
+        _wait_work_idle()
     _reports_back(
         stub_hooks,
         uuid.UUID(room_id),
         agent_id="a-stranger",
         summary="…请用一句话概括",
     )
-    _pump(client, room_id)
+    _wait_work_idle()
 
     listed = client.get(f"/topics/{room_id}/tasks", headers=_bearer("alice")).json()[
         "data"
