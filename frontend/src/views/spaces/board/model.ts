@@ -72,6 +72,8 @@ export interface BoardTask {
 }
 
 export interface InviteCode {
+  /** 真库主键。改码与撤销都按它认人，所以它必须一路带到这里。 */
+  id: number
   code: string
   /** 可用人数上限；`null` = 不限（真库用 0 表示不限）。 */
   maxUses: number | null
@@ -79,7 +81,6 @@ export interface InviteCode {
   /** 有效期终点；`null` = 永不过期。 */
   expiresAt: string | null
   createdAt: string
-  revoked: boolean
 }
 
 export interface SpaceInfo {

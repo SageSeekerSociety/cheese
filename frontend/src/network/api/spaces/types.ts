@@ -61,6 +61,12 @@ export type PostSpaceInviteCodeRequestData = {
   expiresAt?: number | null
 }
 
+export type PatchSpaceInviteCodeRequestData = {
+  maxUses?: number
+  /** Absent leaves the date alone; an explicit null makes the code never expire. */
+  expiresAt?: number | null
+}
+
 export type PatchSpaceRequestData = {
   name?: string
   intro?: string
