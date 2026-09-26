@@ -9,7 +9,7 @@ import RoomMessage from '@/components/room/RoomMessage.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
 import { t } from '@/i18n'
 
-// The room on the public site: the workbench's own message rows fed a scripted
+// The room on the public site: the room's own message rows fed a scripted
 // project, so the demo looks like the product because it is the product's rows.
 // `step` is how far the story has scrolled; each step adds what happened next.
 
