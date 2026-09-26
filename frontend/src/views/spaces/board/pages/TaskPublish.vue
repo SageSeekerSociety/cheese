@@ -262,9 +262,10 @@ async function confirmPdf() {
     const { data } = await TasksApi.confirmFromPdf({
       drafts: picked.map(toDraftPayload),
       taskOptions: {
-        // 题干三件（name/intro/description）后端会**逐条用上面 drafts 里那一份覆盖**
-        // （`_apply_pdf_task_options`），所以这里填什么都不会落到题目上，
-        // 放第一条只为满足这个请求类型；每道题的出处标记在各自那份草稿的 intro 里。
+        // 这是**每道题共用**的那一半参数：后端把它和每条草稿合起来
+        // （`_apply_pdf_task_options`），name/intro/description 三件逐条被草稿里那份
+        // 覆盖（出处标记就在各自那份 intro 里），其余字段原样落下去。
+        // 老页那条路（`buildTaskOptions`）报的也是这一份形状，这里跟它同一口径。
         name: picked[0].name.trim(),
         description: picked[0].description,
         submitterType: 'USER',
@@ -273,6 +274,9 @@ async function confirmPdf() {
         defaultDeadline: 30,
         deadline: null,
         space: id,
+        // 提交表单这一项**建题那两条路都只做占位**（`create_task` 的 docstring：
+        // 「submissionSchema / topics 仅做占位处理，暂不影响提交与评分」），老页那条路
+        // 也照样报它。留着是为了两条路报同一份形状，不是因为它今天管用。
         submissionSchema: [{ prompt: '提交文件', type: 'FILE' }],
         // **不带 attachmentIds**：这条路不读它，理由见下面那张「附件」卡。
       },
@@ -487,12 +491,10 @@ async function confirmPdf() {
              而不是画两颗勾选、点了没反应。 -->
         <PanelCard title="附件：这条路今天带不了" data-testid="pdf-attachment-note">
           <p class="pdf__attachment">
-            PDF 生成出来的题<b>挂不上附件</b>：确认发布走下的是建题那条老路径，而它不认
-            <code>attachmentIds</code>
-            （后端 <code>_create_task_entity</code> 的 dict 分支只读 name/intro/description/space 那几项，
-            <code>routes/tasks.py</code>
-            里也写着「PDF 批量发布那条路今天还没有 attachmentIds 这个概念」）。所以这里没有原型里那两颗「把原 PDF /
-            抽出的插图一起附上」的勾选框：真接口带不了，画出来就是个假的。
+            PDF 生成出来的题<b>挂不上附件</b>：确认发布走下的是建题那条老路径，而那条路按一张写死的字段清单读参数，
+            <b>清单里没有 attachmentIds 这一项</b>（后端 _create_task_entity 的 dict 分支只给自己那条 POST /tasks
+            挂材料；routes/tasks.py 里也写着「PDF 批量发布那条路今天还没有 attachmentIds 这个概念」）。
+            所以这里没有原型里那两颗「把原 PDF / 抽出的插图一起附上」的勾选框：真接口带不了，画出来就是个假的。
           </p>
           <p class="pdf__attachment">
             不会因此丢东西：<b>抽出的插图本来就在题干里</b>（后端把它们传上存储，再把正文里的图片
