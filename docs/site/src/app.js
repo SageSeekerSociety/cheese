@@ -334,6 +334,54 @@ function onStoryScroll() {
   syncRoom()
 }
 
+// ---------- home: 问芝士 walks through the kinds of docs ----------
+// Each quarter-screen of scroll through #tour is one question: its answer
+// "streams" on the left and the matching page card slides in on the right.
+let tourStep = -1, tourTimer = 0
+function showTour(n) {
+  if (n === tourStep) return
+  tourStep = n
+  $$('#tour .tour-qa').forEach((el) => el.classList.toggle('on', +el.dataset.i === n))
+  $$('#tour .t-card').forEach((el) => { const i = +el.dataset.i; el.classList.toggle('on', i === n); el.classList.toggle('past', i < n) })
+  $$('#tourKinds button').forEach((b) => b.classList.toggle('on', +b.dataset.tour === n))
+  const a = $(`#tour .tour-qa[data-i="${n}"] .a`); if (!a) return
+  clearInterval(tourTimer)
+  const full = a.dataset.full || ''
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { a.textContent = full; return }
+  let k = 0
+  a.textContent = ''
+  a.classList.add('streaming')
+  tourTimer = setInterval(() => {
+    k += 2
+    a.textContent = full.slice(0, k)
+    if (k >= full.length) { clearInterval(tourTimer); a.classList.remove('streaming') }
+  }, 22)
+}
+function onTourScroll() {
+  const sec = $('#tour'); if (!sec || !sec.classList.contains('pinned')) return
+  const r = sec.getBoundingClientRect(), run = sec.offsetHeight - innerHeight
+  const p = Math.max(0, Math.min(0.999, -r.top / Math.max(run, 1)))
+  const n = Math.floor(p * $$('#tour .t-card').length)
+  sec.style.setProperty('--p', p)
+  showTour(n)
+}
+function mountTour() {
+  const sec = $('#tour'); if (!sec) return
+  const wide = matchMedia('(min-width: 961px)')
+  const apply = () => { sec.classList.toggle('pinned', wide.matches); if (wide.matches) onTourScroll() }
+  wide.addEventListener('change', apply); apply()
+  addEventListener('scroll', onTourScroll, { passive: true })
+  // A kind picked directly scrolls to its screen.
+  $('#tourKinds')?.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tour]'); if (!b) return
+    if (!sec.classList.contains('pinned')) { showTour(+b.dataset.tour); return }
+    const run = sec.offsetHeight - innerHeight, n = $$('#tour .t-card').length
+    scrollTo({ top: sec.offsetTop + run * ((+b.dataset.tour + 0.5) / n), behavior: 'smooth' })
+  })
+  // Without the pin (phones), every answer is simply shown.
+  if (!wide.matches) $$('#tour .tour-qa .a').forEach((a) => { a.textContent = a.dataset.full })
+}
+
 let home = null
 async function homeData() {
   home ||= await fetch('/docs/home.json').then((r) => r.json())
@@ -429,6 +477,6 @@ setupReveal(); setupSpot(); setupMagnetic(); setupToc()
 moveTabs(); moveSidePill(); moveFilter(); onScroll()
 document.fonts?.ready.then(() => { moveTabs(); moveSidePill() })
 loadDiagrams()
-if (PAGE.kind === 'home') { mountHero(); mountStory() }
+if (PAGE.kind === 'home') { mountHero(); mountStory(); mountTour() }
 if (PAGE.kind === 'dev-gate') devGate()
 if (location.hash) { const el = document.getElementById(location.hash.slice(1)); el?.classList.add('flash') }

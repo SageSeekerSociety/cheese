@@ -31,6 +31,7 @@
 │   ├── 验收与采纳 accept.md
 │   ├── 设备与运行环境 devices.md
 │   ├── 额度与算力 quota.md
+│   ├── 反馈中心 feedback.md
 │   └── 发布成果 sites.md
 └── 常见问题
     └── 常见问题与排障 troubleshooting.md

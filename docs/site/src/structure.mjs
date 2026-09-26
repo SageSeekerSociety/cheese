@@ -10,7 +10,7 @@ export const SECTIONS = [
     ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
     ['教学', ['challenges', 'courses']],
-    ['资源', ['devices', 'quota']],
+    ['资源', ['devices', 'quota', 'feedback']],
   ]],
   ['faq', '常见问题', 'info', [['排障', ['troubleshooting']]]],
 ]

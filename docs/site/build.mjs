@@ -356,6 +356,8 @@ const assets = {
   css: asset('app', 'css', css),
   logo: asset('logo', 'svg', LOGO_SVG),
   room: asset('room', 'html', fs.readFileSync(path.join(HERE, 'island/room.html'))),
+  // Smiley Sans (得意黑, OFL 1.1), subset to the home page's characters by gen/font.sh.
+  display: asset('display', 'woff2', fs.readFileSync(path.join(HERE, 'src/fonts/smiley-sans-display.woff2'))),
 }
 for (const p of Object.values(pages)) if (p.diagram) write(p.diagram.url.replace(/^\/docs\//, ''), fs.readFileSync(p.diagram.file))
 const images = path.join(MANUAL, 'public')
@@ -383,10 +385,11 @@ const devList = flatNav(devNav)
 devList.forEach((p, i) => write(`dev/${p.slug}.html`, docPage(ctx, p, devNav, devList[i - 1], devList[i + 1])))
 write('dev/index.html', redirectPage('/docs/dev/overview'))
 
-const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel }]))
+const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel, summary: p.summary }]))
+const devRefs = Object.fromEntries(devList.map((p) => [p.slug, { url: p.url, title: p.title, summary: p.summary }]))
 pageRefs.__logo = assets.logo
 const doors = SECTIONS.map(([key, label, icon]) => ({ key, label, icon, items: userNav[key].flatMap(([, items]) => items) }))
-write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs }))
+write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs, dev: devRefs }))
 write('changelog.html', changelogPage(ctx, RELEASES))
 write('changelog.xml', changelogFeed(RELEASES))
 write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest' }))

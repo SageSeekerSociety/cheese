@@ -125,6 +125,34 @@ def library(project_id: str) -> None:
     )
 
 
+def feedback(alice: dict) -> None:
+    """A few public feedback items, so the feedback center is not empty."""
+    existing = api("GET", "/feedback", alice) or {}
+    rows = existing.get("data", existing.get("items", [])) if isinstance(existing, dict) else []
+    if rows:
+        return
+    bobby = login("bobby")
+    for who, body in (
+        (alice, {
+            "kind": "bug", "title": "手机上验收卡的「采纳」按钮被输入框挡住",
+            "problem": "在 iPhone 上打开话题，验收卡滑到底时「采纳」按钮在输入框下面，点不到。",
+            "expectation": "按钮在输入框上方，或者输入框收起时能点到。",
+            "repro": "手机打开有验收卡的话题 → 滑到验收卡底部。",
+            "visibility": "public", "tags": ["移动端", "验收"],
+        }),
+        (bobby, {
+            "kind": "suggestion", "title": "看板能按负责人筛选",
+            "problem": "项目任务多了之后，想只看自己负责的那几条。",
+            "why": "每天早上要先找自己的活。", "visibility": "public", "tags": ["看板"],
+        }),
+        (bobby, {
+            "kind": "other", "title": "资料库能不能支持文件夹",
+            "problem": "资料多了以后都平铺在一起，找起来慢。", "visibility": "public",
+        }),
+    ):
+        api("POST", "/feedback", who, json=body)
+
+
 async def main() -> None:
     await names()
     alice = login("alice")
@@ -220,6 +248,7 @@ async def main() -> None:
         )
     )
     library(pid)
+    feedback(alice)
     print(f"project {pid}\nrooms {rooms}\ntasks {tasks}\nagent {agent}")
 
 
