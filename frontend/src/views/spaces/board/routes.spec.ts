@@ -40,6 +40,27 @@ vi.mock('./pages/Announcements.vue', () => ({ default: blank }))
 vi.mock('./pages/Review.vue', () => ({ default: blank }))
 vi.mock('./pages/Members.vue', () => ({ default: blank }))
 vi.mock('./pages/TaskInsights.vue', () => ({ default: blank }))
+// 第五批收进来的三处（底下都是老页面，包一层挂上来）。
+vi.mock('./pages/TaskDetail.vue', () => ({ default: blank }))
+vi.mock('./pages/TaskPublish.vue', () => ({ default: blank }))
+vi.mock('./pages/Analytics.vue', () => ({ default: blank }))
+
+// 那三层底下的真页面：这一份测的是**地址接没接住**，不是页面长什么样。不换掉的话，
+// 每个用例都要现场编一遍 Vuetify 那一堆 SFC —— 六个地址跑下来直接超时，而我们想
+// 知道的事（名字落在哪一格）跟编不编它们无关。
+//
+// 一条条写而不是循环：`vi.mock` 要能提上去，路径必须是字面量。
+vi.mock('@/views/tasks/detail/Overview.vue', () => ({ default: blank }))
+vi.mock('@/views/tasks/detail/Submissions.vue', () => ({ default: blank }))
+vi.mock('@/views/tasks/detail/Participants.vue', () => ({ default: blank }))
+vi.mock('@/views/tasks/detail/Submit.vue', () => ({ default: blank }))
+vi.mock('@/views/tasks/detail/AIAdvice.vue', () => ({ default: blank }))
+vi.mock('@/views/spaces/detail/analytics/Overview.vue', () => ({ default: blank }))
+vi.mock('@/views/spaces/detail/analytics/Alerts.vue', () => ({ default: blank }))
+vi.mock('@/views/spaces/detail/analytics/Publishers.vue', () => ({ default: blank }))
+vi.mock('@/views/spaces/detail/analytics/Tasks.vue', () => ({ default: blank }))
+vi.mock('@/views/spaces/detail/analytics/Participants.vue', () => ({ default: blank }))
+vi.mock('@/views/spaces/detail/analytics/Learning.vue', () => ({ default: blank }))
 
 import { SpaceBoardRoutes } from './routes'
 
@@ -73,6 +94,31 @@ describe('空间新界面那一棵路由', () => {
     expect((await open('/spaces/7/board/insights/42')).name).toBe('SpaceBoardTaskInsights')
     expect((await open('/spaces/7/board/review')).name).toBe('SpaceBoardReview')
     expect((await open('/spaces/7/board/members')).name).toBe('SpaceBoardMembers')
+  })
+
+  it('详情那五格也在这棵树上，名字与外壳自己那一套对得上', async () => {
+    hoisted.manager = true
+    expect((await open('/spaces/7/board/tasks/42')).name).toBe('SpaceBoardTaskOverview')
+    expect((await open('/spaces/7/board/tasks/42/submissions')).name).toBe('SpaceBoardTaskSubmissions')
+    expect((await open('/spaces/7/board/tasks/42/participants')).name).toBe('SpaceBoardTaskParticipants')
+    expect((await open('/spaces/7/board/tasks/42/submit')).name).toBe('SpaceBoardTaskSubmit')
+    expect((await open('/spaces/7/board/tasks/42/ai-advice')).name).toBe('SpaceBoardTaskAIAdvice')
+    expect((await open('/spaces/7/board/publish')).name).toBe('SpaceBoardTaskPublish')
+  })
+
+  it('看板落进总览那一格，六格都在', async () => {
+    hoisted.manager = true
+    expect((await open('/spaces/7/board/analytics')).name).toBe('SpaceBoardAnalyticsOverview')
+    expect((await open('/spaces/7/board/analytics/alerts')).name).toBe('SpaceBoardAnalyticsAlerts')
+    expect((await open('/spaces/7/board/analytics/publishers')).name).toBe('SpaceBoardAnalyticsPublishers')
+    expect((await open('/spaces/7/board/analytics/tasks')).name).toBe('SpaceBoardAnalyticsTasks')
+    expect((await open('/spaces/7/board/analytics/participants')).name).toBe('SpaceBoardAnalyticsParticipants')
+    expect((await open('/spaces/7/board/analytics/learning')).name).toBe('SpaceBoardAnalyticsLearning')
+  })
+
+  it('看板对普通成员关上，直接输地址也进不去', async () => {
+    expect((await open('/spaces/7/board/analytics')).name).toBe('SpaceBoardHome')
+    expect((await open('/spaces/7/board/analytics/alerts')).name).toBe('SpaceBoardHome')
   })
 
   it('换一个空间，路径里的 id 跟着换（不是写死的）', async () => {

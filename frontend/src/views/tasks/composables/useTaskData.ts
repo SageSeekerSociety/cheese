@@ -6,12 +6,14 @@ import { useRoute } from 'vue-router'
 import { truncateString } from '@/utils/form'
 import { getTaskStatusText, getTaskStatusType } from '@/utils/tasks'
 
+import { useTaskRouteNames } from '@/lib/shellRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import { TaskParticipationInfo } from '@/network/api/tasks/types'
 import AccountService from '@/services/account'
 
 export function useTaskData() {
   const route = useRoute()
+  const routeNames = useTaskRouteNames()
   const taskId = computed(() => Number(route.params.taskId))
 
   const taskData = ref<Task | null>(null)
@@ -43,11 +45,11 @@ export function useTaskData() {
         { title: '知是', to: { name: 'HomeDefault' } },
         {
           title: truncateString(taskData.value?.space.name, 12),
-          to: { name: 'SpacesDetail', params: { spaceId: taskData.value?.space.id } },
+          to: { name: routeNames.spaceHome, params: { spaceId: taskData.value?.space.id } },
         },
         {
           title: truncateString(taskData.value?.name, 12),
-          to: { name: 'TasksDetail', params: { spaceId: taskData.value.space.id, taskId: taskData.value.id } },
+          to: { name: routeNames.overview, params: { spaceId: taskData.value.space.id, taskId: taskData.value.id } },
         },
       ]
     }

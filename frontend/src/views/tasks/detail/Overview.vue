@@ -423,7 +423,7 @@
                 color="primary"
                 variant="tonal"
                 rounded="pill"
-                :to="{ name: 'TasksAIAdvice', params: { spaceId: taskData?.space?.id, taskId: taskData?.id } }"
+                :to="{ name: routeNames.aiAdvice, params: { spaceId: taskData?.space?.id, taskId: taskData?.id } }"
                 class="px-4"
               >
                 查看建议
@@ -458,8 +458,11 @@ import { listProjectsForTask } from '@/api'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import TaskAttachmentList from '@/components/tasks/TaskAttachmentList.vue'
+import { useTaskRouteNames } from '@/lib/shellRouteNames'
 import { TaskParticipationInfo } from '@/network/api/tasks/types'
 import AccountService from '@/services/account'
+
+const routeNames = useTaskRouteNames()
 
 /** Markdown 渲染器实例，用于将非 TipTap 格式的赛题描述渲染为 HTML */
 const markdownRenderer = new MarkdownRenderer()
@@ -627,7 +630,7 @@ const hasTeamsButNoneEligible = computed(() => {
 const goToAIAdvice = () => {
   if (props.taskData) {
     router.push({
-      name: 'TasksAIAdvice',
+      name: routeNames.aiAdvice,
       params: { spaceId: props.taskData.space?.id, taskId: props.taskData.id },
     })
   }
