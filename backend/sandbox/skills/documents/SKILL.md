@@ -38,7 +38,9 @@ command -v typst && command -v pandoc
 
 | 要做的 | 用 | 细节 |
 |---|---|---|
-| 读一份用户给的材料 | Word/PPT/ODT/HTML 用 `pandoc`，PDF 用 `pypdf` | `references/reading.md` |
+| 读用户给的材料、几份交叉核对、写带出处的结论 | `scripts/read.py`（带页码/段号/单元格，列出没读到的部分） | `references/sources.md` |
+| 补外部资料、找项目里已有的信息、标来源 | WebSearch/WebFetch/`cheese_fetch`；项目检索接口 | `references/sources.md` |
+| 只想快速看一眼 Word/PPT/ODT/HTML | `pandoc` | `references/reading.md` |
 | **在一份已有的 Word 上改** | `scripts/office.py` | `references/word.md` |
 | **在一份已有的 PPT 上改** | `scripts/office.py --plain` | `references/slides.md` |
 | 读或改一份表格 | `openpyxl`，改完 `cheese recalc`，再用 `scripts/sheets.py` 核对 | `references/sheets.md` |

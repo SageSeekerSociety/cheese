@@ -1214,6 +1214,83 @@ export function libraryFileRawUrl(projectId: string, path: string): string {
   return `${BASE}/projects/${encodeURIComponent(projectId)}/library/raw?path=${encodeURIComponent(path)}`
 }
 
+export interface Routine {
+  id: string
+  project_id: string
+  topic_id: string
+  title: string
+  instructions: string
+  context_scope: string
+  output_dir: string
+  trigger: 'schedule' | 'library_file_added' | 'task_closed' | 'card_accepted'
+  trigger_text: string
+  spec: Record<string, unknown>
+  timezone: string
+  state: 'draft' | 'active' | 'paused'
+  agent_handle: string
+  owner_handle: string
+  proposed_by: string
+  confirmed_by: string | null
+  confirmed_at: string | null
+  next_run_at: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface RoutineRun {
+  id: string
+  routine_id: string
+  trigger_detail: string
+  routine_revision: number
+  scheduled_for: string | null
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
+  summary: string
+  outputs: string[]
+  error: string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export type RoutineInput = Pick<
+  Routine,
+  'title' | 'instructions' | 'context_scope' | 'output_dir' | 'trigger' | 'spec' | 'timezone'
+>
+
+export function listProjectRoutines(projectId: string): Promise<ListPayload<Routine>> {
+  return request<ListPayload<Routine>>(`/projects/${encodeURIComponent(projectId)}/routines`)
+}
+
+export function getRoutine(id: string): Promise<Routine & { runs: RoutineRun[] }> {
+  return request<Routine & { runs: RoutineRun[] }>(`/routines/${encodeURIComponent(id)}`)
+}
+
+export function createRoutine(topicId: string, body: RoutineInput): Promise<Routine> {
+  return request<Routine>(`/topics/${encodeURIComponent(topicId)}/routines`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function updateRoutine(id: string, body: Partial<RoutineInput>): Promise<Routine> {
+  return request<Routine>(`/routines/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export function routineAction(
+  id: string,
+  action: 'confirm' | 'pause' | 'resume' | 'run-now'
+): Promise<Routine | RoutineRun> {
+  return request<Routine | RoutineRun>(`/routines/${encodeURIComponent(id)}/${action}`, { method: 'POST' })
+}
+
+export function deleteRoutine(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/routines/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 export interface Integration {
   id: string
   provider: 'mail' | 'feishu'

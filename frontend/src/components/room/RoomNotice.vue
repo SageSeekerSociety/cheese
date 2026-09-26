@@ -45,6 +45,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string): void
+  (e: 'open-card', taskId: string): void
   (e: 'retry'): void
 }>()
 
@@ -94,11 +95,19 @@ function docDiffText(line: string): string {
   return /^(?:\s|&nbsp;)*$/.test(text) ? '' : text
 }
 
+// 「派出一条活」那一行带着它派出去的那件活：一件活不是地点，按钮打开的是这个房间里的那张卡。
+const splitTask = computed(() => {
+  if (props.notice.mode !== 'action' || props.notice.resource !== 'split') return null
+  const id = (props.block.meta as Record<string, unknown> | null | undefined)?.task_id
+  return typeof id === 'string' && id ? id : null
+})
+
 // 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么。
 const ACTION_META: Record<string, { btn: string }> = {
   doc: { btn: '查看文档' },
   decision: { btn: '查看决策记录' },
   topics: { btn: '' },
+  split: { btn: '查看任务' },
   milestone: { btn: '查看日历' },
   accept: { btn: '审阅' },
   notify: { btn: '' },
@@ -191,7 +200,11 @@ const ACTION_META: Record<string, { btn: string }> = {
           v-if="ACTION_META[notice.resource]?.btn"
           type="button"
           class="sys-btn"
-          @click="emit('open-resource', notice.resource, block.turn_id ?? undefined)"
+          @click="
+            splitTask
+              ? emit('open-card', splitTask)
+              : emit('open-resource', notice.resource, block.turn_id ?? undefined)
+          "
         >
           {{ ACTION_META[notice.resource].btn }}
         </button>
