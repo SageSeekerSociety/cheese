@@ -23,6 +23,7 @@ from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
 from app.domain.idempotency import models as idempotency  # noqa: F401
 from app.domain.identity import models as identity  # noqa: F401
+from app.domain.integration import models as integration  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.legal import models as legal  # noqa: F401
 from app.domain.llm import models as llm  # noqa: F401
@@ -40,6 +41,7 @@ from app.domain.project import models as project  # noqa: F401
 from app.domain.questions import models as questions  # noqa: F401
 from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401
+from app.domain.routine import models as routine  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.subscription import models as subscription  # noqa: F401

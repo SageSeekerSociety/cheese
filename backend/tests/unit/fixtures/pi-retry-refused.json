@@ -1,0 +1,249 @@
+{
+ "why": "pi 0.85.1 (--mode rpc) against a provider that answered a 400 pi does not retry. Recorded like pi-retry-recovered.json.",
+ "stream": [
+  {
+   "entry": {
+    "type": "model_change",
+    "id": "f0c220bc",
+    "parentId": null,
+    "timestamp": "2026-09-26T01:48:34.235Z",
+    "provider": "cheese",
+    "modelId": "fake"
+   }
+  },
+  {
+   "entry": {
+    "type": "thinking_level_change",
+    "id": "f4f46f98",
+    "parentId": "f0c220bc",
+    "timestamp": "2026-09-26T01:48:34.235Z",
+    "thinkingLevel": "off"
+   }
+  },
+  {
+   "event": {
+    "type": "agent_start"
+   }
+  },
+  {
+   "event": {
+    "type": "turn_start"
+   }
+  },
+  {
+   "event": {
+    "type": "message_start",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "say something"
+      }
+     ],
+     "timestamp": 1790387314240
+    }
+   }
+  },
+  {
+   "entry": {
+    "type": "message",
+    "id": "15ce242b",
+    "parentId": "f4f46f98",
+    "timestamp": "2026-09-26T01:48:34.240Z",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "say something"
+      }
+     ],
+     "timestamp": 1790387314240
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_end",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "say something"
+      }
+     ],
+     "timestamp": 1790387314240
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_start",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387314245,
+     "errorMessage": "400: {\"message\":\"invalid field\",\"type\":\"invalid_request_error\"}"
+    }
+   }
+  },
+  {
+   "entry": {
+    "type": "message",
+    "id": "e241bf30",
+    "parentId": "15ce242b",
+    "timestamp": "2026-09-26T01:48:34.257Z",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387314245,
+     "errorMessage": "400: {\"message\":\"invalid field\",\"type\":\"invalid_request_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387314245,
+     "errorMessage": "400: {\"message\":\"invalid field\",\"type\":\"invalid_request_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "turn_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387314245,
+     "errorMessage": "400: {\"message\":\"invalid field\",\"type\":\"invalid_request_error\"}"
+    },
+    "toolResults": []
+   }
+  },
+  {
+   "event": {
+    "type": "agent_end",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "say something"
+       }
+      ],
+      "timestamp": 1790387314240
+     },
+     {
+      "role": "assistant",
+      "content": [],
+      "api": "openai-completions",
+      "provider": "cheese",
+      "model": "fake",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "error",
+      "timestamp": 1790387314245,
+      "errorMessage": "400: {\"message\":\"invalid field\",\"type\":\"invalid_request_error\"}"
+     }
+    ],
+    "willRetry": false
+   }
+  },
+  {
+   "event": {
+    "type": "agent_settled"
+   }
+  }
+ ]
+}

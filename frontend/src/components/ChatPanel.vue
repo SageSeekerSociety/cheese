@@ -749,6 +749,15 @@ async function loadTopic(topic: Topic, entering = false) {
     })
     .catch(() => {})
   reactionPickerFor.value = null
+  // 悬停条是绝对定位的：收起只是透明，它仍停在上一个话题那一行的 translateY 上，
+  // 仍算进这一栏的可滚动高度。从一个翻到很深的长话题切到短话题，它把滚动区撑高，
+  // 滚动位置就停在短话题的几行下面——整屏空白，刷新才好。`jump` 让它直接落回原
+  // 点而不是滑回去：滑的那几百毫秒里空白照样在。
+  bar.id = null
+  bar.shown = false
+  bar.jump = true
+  bar.top = 0
+  requestAnimationFrame(() => requestAnimationFrame(() => (bar.jump = false)))
   unreadAnchorId.value = null
   arrived.clear()
   older.clear()

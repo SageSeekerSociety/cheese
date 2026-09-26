@@ -142,6 +142,16 @@
   "room": {
     "noTasks": "No tasks",
     "site": {
+      "agents": {
+        "all": "All"
+      },
+      "output": {
+        "show": "Output ({size})",
+        "hide": "Hide output",
+        "loading": "Loading output",
+        "failed": "Could not load the output",
+        "tail": "Showing the last {size}"
+      },
       "status": {
         "thinking": "Thinking",
         "acting": "{verb}",

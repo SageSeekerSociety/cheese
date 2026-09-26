@@ -96,7 +96,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **消息 = 过程：连续流式实时**。todo/状态/流式答案，讲"怎么做"——越快越好、抖动无所谓，token 级跳动。todo 是平台工具 **`todo_write`**（每次传整份清单，三态 pending/in_progress/completed；三个骨架是同一个工具，各自自带的清单工具在启动时关掉）——写进进度层并推给房间，进行中的那条消息原地渲染成活清单。
 - **文档 = 状态：就绪式实时（离散、整段、不打扰）**。结论/产物进实况文档（§3.4，`cheese_doc_set`），讲"结果是什么"。**不是逐字流**：每次 `cheese_doc_set` = 一个自洽的完整版本就刷新一次（架构天然如此——整文件覆盖，一次一个完整版本）；回合中途也可多次更新（先计划后结果），只要每次都自洽。**不打断正在读/编辑文档的人**：用"芝士更新了文档 ⟳"的温和提示，别抢光标/别强行滚动重排。
 - **分工纪律**：todo/状态留在消息、结论进文档，**不重复**；消息收尾只给一句小结 + 指向文档，不堆全文（避开 Claude Code `track_progress` 结束塞大段 final summary 的"吵"问题）。这正是 §2.2「对话是过程、文档是状态」的双实时落地。
-- **现状**：✅ 整条消息（`MessageDisplay` 的多次刷新拼成一条）+ 现场工具事件（socket 推来即追加，顶部状态条说此刻在思考 / 做哪一步 / 重试 / 等机器，以及这一轮已用多久）+ 实况文档读写/工具事件刷新面板 + 进行中消息里的 todo 清单（`todo_write`，原地更新）；🟡 待做：@ 秒回占位消息、文档回合中途增量刷新。
+- **现状**：✅ 整条消息（`MessageDisplay` 的多次刷新拼成一条）+ 现场工具事件（socket 推来即追加，顶部状态条说此刻在思考 / 做哪一步 / 重试 / 等机器，以及这一轮已用多久；摊开一步可看它输出的末尾 8 KiB，凭据已抹掉；房间里不止一个队友时可按队友看）+ 实况文档读写/工具事件刷新面板 + 进行中消息里的 todo 清单（`todo_write`，原地更新）；🟡 待做：@ 秒回占位消息、文档回合中途增量刷新。
 - **参考 / prior art**：①范式——Anthropic **Claude Tag**（2026-06，常驻 Slack 的 AI 队友：@Claude、一频道一共享实例多人接力、拆 stages、ambient 盯/催、自排任务跨小时·天、审计日志），与本平台的 @芝士/话题/巡检/分身/现场高度同构，CheeseX 可定位为「Claude Tag for 学生项目制学习，但以文档为中心、git 原生、采纳=merge」（[anthropic.com](https://www.anthropic.com/news/introducing-claude-tag)）。②活消息机制——Claude Code 交互模式单条 tracking comment + `- [ ]/- [x]` 清单原地更新 + Task 工具（[github-actions](https://code.claude.com/docs/en/github-actions)、[todo-tracking](https://docs.claude.com/en/docs/agent-sdk/todo-tracking)）。
 
 ### 3.2 芝士（Agent）  ✅ 链路 / 🟡 部分能力

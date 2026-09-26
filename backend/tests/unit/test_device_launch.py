@@ -235,8 +235,9 @@ def test_how_deep_a_session_may_spawn_is_a_deployment_setting(monkeypatch):
 def _commands_in(script: str) -> list[str]:
     """The lines the shell would run, with heredoc bodies left out.
 
-    A skill travels inside the script — `cat > ... <<'CHEESE_NATIVE_SKILL'`, then
-    the file, then the marker. Those lines are DATA. Reading the script as a flat
+    Files travel inside the script as heredoc bodies — the skills as a small
+    Python program, the helpers as `cat > ... <<'MARKER'`. Those lines are DATA.
+    Reading the script as a flat
     list of lines would judge a Python variable named `node` to be a node
     command, which is exactly the mistake to avoid in a test about what the
     script runs.
