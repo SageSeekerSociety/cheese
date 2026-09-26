@@ -97,6 +97,14 @@ export type SpaceAnnouncement = {
   createdAt: number
   updatedAt: number
   publisher: string
+  /** 置顶。**可选，因为它比这个类型新**：加这一格之前发出去的公告都没有它，
+   *  读的时候缺省当 `false`（见 `views/spaces/board/model.ts` 的
+   *  `compareAnnouncements`）。它只决定显示顺序 —— 谁能看、谁能发一件都不改。
+   *
+   *  后端不认这个字段，也不需要认：公告是随空间一起 PATCH 下去的 jsonb 元素，
+   *  服务端从头到尾只做「是不是一个数组」的检查（`_expect_list` /
+   *  `_normalize_json_list`），元素里的键原样透传。所以加它**没有迁移、没有后端改动**。 */
+  pinned?: boolean
 }
 
 export type SpaceTaskTemplate = {
