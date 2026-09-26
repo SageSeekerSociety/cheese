@@ -190,6 +190,10 @@ class _HookWorkState:
     user_text: str
     started_at: datetime
     agent_instance_handle: str | None = None
+    # The model this turn's session was launched on, for the usage row a turn
+    # with no reported usage still writes. "" where this process never
+    # assembled a turn for the session (a screen recovered on the way up).
+    model: str = ""
     assistant_count: int = 0
     last_chat_at: datetime | None = None
     # When this turn was last told it had gone quiet — NOT whether it has been.
@@ -1288,6 +1292,9 @@ class ChatService:
         # this is a dict that only ever grows in a process that runs for weeks.
         # Losing an entry costs the accuracy of one label, never a wrong charge.
         self._session_route: dict[uuid.UUID, str] = {}
+        # The model each session was launched on, kept beside its route and for
+        # the same reason: a self-started turn has no prompt to resolve it from.
+        self._session_model: dict[uuid.UUID, str] = {}
         # Strong refs to in-flight background tasks (asyncio only keeps weak
         # refs; without this a pending commit could be GC'd).
         self._background_tasks: set[asyncio.Task] = set()
@@ -2445,6 +2452,7 @@ class ChatService:
             # this existed.
             route=(row.route if row is not None else None)
             or self._session_route.get(topic_id, "native"),
+            model=self._session_model.get(topic_id, ""),
             acting_agent=acting_agent,
             agent_pool=agent_pool,
             user_text="",
@@ -2858,7 +2866,7 @@ class ChatService:
                 await UsageRepository(session).add(
                     project_id=state.project_id,
                     topic_id=state.topic_id,
-                    model=settings.agent_model,
+                    model=state.model or settings.agent_model,
                     input_tokens=0,
                     output_tokens=0,
                     cost_usd=0.0,
@@ -2871,7 +2879,7 @@ class ChatService:
                     await UsageRepository(session).add(
                         project_id=state.project_id,
                         topic_id=state.topic_id,
-                        model=u.model or settings.agent_model,
+                        model=u.model or state.model or settings.agent_model,
                         input_tokens=u.input_tokens,
                         output_tokens=u.output_tokens,
                         cost_usd=u.cost_usd,
@@ -5287,6 +5295,10 @@ class ChatService:
         self._session_route[topic_id] = route
         while len(self._session_route) > _SESSION_ROUTES_KEPT:
             del self._session_route[next(iter(self._session_route))]
+        self._session_model.pop(topic_id, None)
+        self._session_model[topic_id] = model_kwargs["model"]
+        while len(self._session_model) > _SESSION_ROUTES_KEPT:
+            del self._session_model[next(iter(self._session_model))]
         # And on the turn itself: the backend that ends this turn may not be
         # this one (`_begin_self_started_turn`), and it remembers neither.
         await self._note_turn_context(turn_id, route=route, reply_to=user_block_id)
@@ -5359,6 +5371,7 @@ class ChatService:
                     topic_refs=topic_refs,
                     continuation_id=continuation_id,
                     route=route,
+                    model=model_kwargs["model"],
                     acting_agent=acting_agent,
                     agent_pool=agent_pool,
                     user_text=prompt_text,

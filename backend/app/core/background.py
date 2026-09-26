@@ -347,6 +347,7 @@ def periodic_jobs(
     from app.domain.notification.push_delivery import drain_push_queue
     from app.domain.project.forge import reconcile_repository_webhooks
     from app.domain.review import pr_poll
+    from app.domain.routine.service import sweep as sweep_routines
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
     from app.domain.usage.subscription_ingest import ingest_once
 
@@ -468,6 +469,13 @@ def periodic_jobs(
             "timed deliveries",
             30,
             lambda: deliver_due(sessions, chat=chat, runner=get_work_runner()),
+        ),
+        # 周期任务与事件触发：到点的计划、新发生的项目事件在这里变成一次执行，跑完的
+        # 执行在这里结账并通知设置它的人。
+        PeriodicRunner(
+            "routines",
+            30,
+            lambda: sweep_routines(sessions, chat=chat, runner=get_work_runner()),
         ),
         # A deadline nobody sweeps is a promise the platform made and quietly did
         # not keep: the moment it matters is the moment nobody is looking.
