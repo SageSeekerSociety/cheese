@@ -1,14 +1,17 @@
-// 第五批那三层「包一层」的接缝。
+// 第五批那两层「包一层」的接缝。
 //
-// 这三页底下都是老页面（详情、发题、整板看板），页面本身一行没改，所以唯一可能
-// 悄悄坏掉的地方在接缝上：
+// 这两页底下都是老页面（详情、发题），页面本身一行没改，所以唯一可能悄悄坏掉的
+// 地方在接缝上：
 //
 // - **详情**：provide 下去的路由名得是新树那一套。漏了不会报错 —— 只是在新外壳里
 //   点「提交记录」会把人连同页面送回老树。
 // - **发题**：那一页从 pinia 的 `space` store 拿空间，而它挂载时立刻
 //   `fetchCategories()`，`currentSpaceId` 为空时那方法**直接返回**（不报错）。
 //   所以「装完再挂」这件事错了，界面照样打得开，只是分类下拉是空的。
-// - **整板看板**：同上，另外六格 Tab 跳的也得是新树的名字。
+//
+// （整板看板原来也在这里 —— 它是同一个「把老页面套进新外壳」的形状。第七批之后它
+// 换成了这块板自己的页面（`Analytics.vue`），底下不再是老页面，接缝也就没有可测的
+// 东西了；那一页自己由 `Analytics.spec.ts` 测。）
 //
 // 所以每一条都让替身替掉底下那一页，**替身自己把接缝上的东西读出来渲染到 DOM**——
 // 断言的是「挂进去之后实际拿到什么」，不是「源码里写了什么」。
@@ -23,9 +26,8 @@ import { cleanup, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { BOARD_ANALYTICS_ROUTE_NAMES, BOARD_TASK_ROUTE_NAMES } from '../routeNames'
+import { BOARD_TASK_ROUTE_NAMES } from '../routeNames'
 
-import Analytics from './Analytics.vue'
 import TaskDetail from './TaskDetail.vue'
 import TaskPublish from './TaskPublish.vue'
 
@@ -103,33 +105,12 @@ vi.mock('@/views/spaces/detail/PublishTask.vue', async () => {
   }
 })
 
-// 看板底下那一层：替身报它拿到的六格名字。
-vi.mock('@/views/spaces/detail/analytics/AnalyticsLayout.vue', async () => {
-  const { defineComponent: dc, h: hh } = await import('vue')
-  const { useAnalyticsRouteNames } = await import('@/lib/shellRouteNames')
-  return {
-    default: dc({
-      name: 'AnalyticsProbe',
-      setup() {
-        const names = useAnalyticsRouteNames()
-        return () =>
-          hh('div', { 'data-testid': 'analytics-probe' }, [
-            ...Object.entries(names).map(([key, value]) =>
-              hh('span', { 'data-testid': `analytics-name-${key}` }, String(value))
-            ),
-          ])
-      },
-    }),
-  }
-})
-
 const SPACE_ID = 7
-const SECTIONS = ['overview', 'alerts', 'publishers', 'tasks', 'participants', 'learning'] as const
 
 const stub = { render: () => h('div') }
 
-/** 两棵树都在：新外壳要是哪一组 provide 漏了，Tab 会落到老树那些地址上 ——
- *  只放新树的话，漏 provide 只会得到一句「找不到路由」，测不出「走错了树」。 */
+/** 只有被测的那三层要落上去的那几条路由：这一份量的不是「地址接没接住」
+ *  （那是 `../routes.spec.ts`），而是「挂进去之后底下那一页从接缝上读到什么」。 */
 function makeRouter() {
   return createRouter({
     history: createMemoryHistory(),
@@ -137,18 +118,6 @@ function makeRouter() {
       { path: '/spaces/:spaceId/board', name: 'SpaceBoardHome', component: stub },
       { path: '/spaces/:spaceId/board/publish', name: 'SpaceBoardTaskPublish', component: stub },
       { path: '/spaces/:spaceId/board/tasks/:taskId', name: 'SpaceBoardTaskDetail', component: stub },
-      { path: '/spaces/:spaceId/board/analytics', name: 'SpaceBoardAnalytics', component: stub },
-      { path: '/spaces/:spaceId/analytics', name: 'SpacesDetailAnalytics', component: stub },
-      ...SECTIONS.map((section) => ({
-        path: `/spaces/:spaceId/board/analytics/${section === 'overview' ? '' : section}`,
-        name: `SpaceBoardAnalytics${section[0].toUpperCase()}${section.slice(1)}`,
-        component: stub,
-      })),
-      ...SECTIONS.map((section) => ({
-        path: `/spaces/:spaceId/analytics/${section === 'overview' ? '' : section}`,
-        name: `SpacesDetailAnalytics${section[0].toUpperCase()}${section.slice(1)}`,
-        component: stub,
-      })),
     ],
   })
 }
@@ -174,14 +143,7 @@ function nameOf(container: Element, key: string): string | null {
   return textOf(container, `task-name-${key}`)
 }
 
-/** 那排 Tab 里写着某个词的链接落到哪 —— 按标签找，而不是按顺序取第几个。 */
-function hrefOfTab(container: Element, label: string): string | null | undefined {
-  return Array.from(container.querySelectorAll('a'))
-    .find((a) => a.textContent?.includes(label))
-    ?.getAttribute('href')
-}
-
-describe('详情、发题、看板挂进新外壳', () => {
+describe('详情、发题挂进新外壳', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     spaceDetail.mockImplementation(async () => ({ data: { space: { id: SPACE_ID, name: '数据结构空间' } } }))
@@ -230,20 +192,5 @@ describe('详情、发题、看板挂进新外壳', () => {
     const { container } = await mountAt(`/spaces/${SPACE_ID}/board/publish`, TaskPublish)
     await waitFor(() => expect(container.querySelector('[data-testid="publish-probe"]')).not.toBeNull())
     expect(textOf(container, 'done-route')).toBe('SpaceBoardMine')
-  })
-
-  it('看板：六格名字是新树那一套', async () => {
-    const { container } = await mountAt(`/spaces/${SPACE_ID}/board/analytics`, Analytics)
-    await waitFor(() => expect(container.querySelector('[data-testid="analytics-probe"]')).not.toBeNull())
-    for (const [key, value] of Object.entries(BOARD_ANALYTICS_ROUTE_NAMES)) {
-      expect(textOf(container, `analytics-name-${key}`)).toBe(value)
-    }
-  })
-
-  it('看板：那排 Tab 点下去落的是新外壳的地址', async () => {
-    const { container } = await mountAt(`/spaces/${SPACE_ID}/board/analytics`, Analytics)
-    await waitFor(() => expect(container.querySelector('[data-testid="analytics-probe"]')).not.toBeNull())
-    expect(hrefOfTab(container, '告警')).toBe(`/spaces/${SPACE_ID}/board/analytics/alerts`)
-    expect(hrefOfTab(container, '出题人')).toBe(`/spaces/${SPACE_ID}/board/analytics/publishers`)
   })
 })

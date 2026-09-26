@@ -60,8 +60,10 @@ export function useTaskRouteNames(): TaskRouteNames {
 }
 
 /**
- * 数据看板那六格。同一件事：老树是 `SpacesDetailAnalytics*`，新外壳是
- * `SpaceBoardAnalytics*`。
+ * 数据看板那六格。**只有老树那一套了**：新外壳里 `/board/analytics` 换成了这块板
+ * 自己的看板（`views/spaces/board/pages/Analytics.vue`），不再把老页面套进去，
+ * 于是没有谁 provide 新名字 —— 留下来的这个注入键与那份兜底名单，服务的就是老树
+ * 那九页自己（`SpacesDetailAnalytics*`）。等老树退场时，这一整块可以一起走。
  */
 export interface AnalyticsRouteNames {
   overview: string
