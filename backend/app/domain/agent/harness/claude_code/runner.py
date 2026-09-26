@@ -28,6 +28,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -57,6 +58,20 @@ RETENTION_EVERY_S = 3600
 # worth more than stdout would have carried.
 FILE_TEXT_MAX = 30_000
 FINISHED = frozenset({"completed", "failed", "killed", "stopped"})
+# How much of what Claude Code said on a failed way up goes into the runner's
+# own log. The backend reads the last 1200 bytes of this launch's part of that
+# log (``channel._ended``), and the end of what a dying process printed is where
+# its reason is.
+LAST_WORDS = 1000
+# The platform names each launch in this variable. The runner's log is appended
+# across launches, so every record of a runner ending before its session came
+# up opens with ``ended(launch)``, and a backend waiting on one launch reads
+# only what that launch left.
+LAUNCH = "CHEESE_RUNNER_LAUNCH"
+
+
+def ended(launch: str) -> str:
+    return f"cheese-runner {launch} ended"
 
 
 def _is_claude(argv0: str) -> bool:
@@ -223,8 +238,10 @@ class Runner(runner.Runner[Journal]):
         state: Path,
         *,
         idle_exit_s: float = IDLE_EXIT_S,
+        launch: str = "",
     ):
         super().__init__(state, Journal, "records.sqlite")
+        self.launch = launch
         self.idle_exit_s = idle_exit_s
         self.write_lock = asyncio.Lock()
         self.controls: dict[str, asyncio.Future] = {}
@@ -293,6 +310,8 @@ class Runner(runner.Runner[Journal]):
         )
         self.last_work = self.journal.recall("last_work")
         self.errors = (self.state / "claude.log").open("ab")
+        # Earlier starts appended here too; this start's words begin here.
+        self.errors_from = self.errors.tell()
         self.process = await asyncio.create_subprocess_exec(
             "sh",
             "-c",
@@ -334,7 +353,31 @@ class Runner(runner.Runner[Journal]):
             if failed and resuming:
                 self.journal.remember("resume_failed", resuming)
             self.journal.remember("resuming", "")
+        if failed and process is not None:
+            self._last_words(process.returncode)
         await super().close()
+
+    def _last_words(self, status: int | None) -> None:
+        """Say why Claude Code never came up, where the backend will look.
+
+        Its socket goes with this runner, so a backend still waiting for the
+        session can only read the runner's own log (``channel._ended``). The reason
+        is in Claude Code's stderr — the executor client's ``bootstrap`` runs in
+        front of the binary and fails there, before any model is asked — and
+        without this the room was told only that the socket was missing.
+        """
+        with contextlib.suppress(OSError):
+            with (self.state / "claude.log").open("rb") as log:
+                end = log.seek(0, os.SEEK_END)
+                log.seek(max(self.errors_from, end - LAST_WORDS))
+                said = log.read().decode("utf-8", "replace").strip()
+            print(
+                f"{ended(self.launch)}: "
+                f"Claude Code exited with status {status} before it started"
+                + (f":\n{said}" if said else ", and said nothing"),
+                file=sys.stderr,
+                flush=True,
+            )
 
     # --- stdout --------------------------------------------------------------
 
