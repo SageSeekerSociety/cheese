@@ -214,6 +214,12 @@
       "summonShort": "Hand off",
       "summonOn": "{'@'}{name} is mentioned. Click to remove",
       "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)"
+    },
+    "dispatched": {
+      "created": "New task",
+      "title": "“{title}”",
+      "done": "Done",
+      "running": "In progress"
     }
   },
   "members": {

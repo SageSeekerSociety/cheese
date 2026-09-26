@@ -39,6 +39,8 @@ vi.mock('../../api', async () => {
 
 import ChatPanel from '../ChatPanel.vue'
 
+import { setLocale } from '@/i18n'
+
 let seq = 0
 /** 每个用例一个新房间 id —— 时间线窗口有个模块级缓存，共用 id 会串味。 */
 function freshRoom(): string {
@@ -123,6 +125,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 标记上的字走文案目录，而 happy-dom 起步是英文。
+  setLocale('zh-CN')
   vi.clearAllMocks()
 })
 

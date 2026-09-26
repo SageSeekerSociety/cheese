@@ -214,6 +214,12 @@
       "summonShort": "交给",
       "summonOn": "已 {'@'}{name}，点击取消",
       "summonOff": "发送并交给{name}（⌘/Ctrl+Enter）"
+    },
+    "dispatched": {
+      "created": "新建任务",
+      "title": "《{title}》",
+      "done": "已完成",
+      "running": "进行中"
     }
   },
   "members": {
