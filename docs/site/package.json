@@ -1,0 +1,14 @@
+{
+  "name": "cheese-docs-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "diagrams": "bash gen/diagrams.sh",
+    "room": "node island/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.8",
+    "marked": "18.0.14"
+  }
+}

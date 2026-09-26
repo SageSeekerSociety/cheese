@@ -86,7 +86,7 @@ assert_plan 'backend=true,sandbox=false,frontend=false,office_render=false,brows
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/sandbox/cheese
-assert_plan 'backend=true,sandbox=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
+assert_plan 'backend=true,sandbox=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
 
 # The private executor rebuilds from its recipe and every file it copies in.
 git -C "$test_repo" switch -q --detach "$base_sha"
@@ -118,6 +118,12 @@ assert_plan 'backend=false,sandbox=false,frontend=false,office_render=true,brows
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path docs/readme.md
 assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+
+# The docs site is built into the frontend image, so its sources rebuild it.
+git -C "$test_repo" switch -q --detach "$base_sha"
+mkdir -p "$test_repo/docs/manual"
+commit_path docs/manual/quickstart.md
+assert_plan 'backend=false,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" workflow_dispatch branch
 assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" push tag
 
