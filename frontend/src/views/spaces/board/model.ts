@@ -10,6 +10,7 @@
  * `deadline`、`SpaceInviteCode.max_uses` / `use_count` / `expires_at`。这里的
  * `BoardTask` 只是**把真 `Task` 摊平成界面好用的形状**，见 `store.ts` 的 `toBoardTask`。
  */
+import type { SpaceAnnouncement } from '@/types'
 
 /** 空间内的角色。与后端 `SpaceAdminRole`（OWNER=0 / ADMIN=1）对应，多出来的 MEMBER
  *  是「不在管理员名单里」这件事的显式名字。 */
@@ -122,4 +123,25 @@ export function deadlineText(task: BoardTask): string {
   if (days < 0) return `已截止 ${-days} 天`
   if (days === 0) return '今天截止'
   return `${days} 天后截止`
+}
+
+// --- 公告 --------------------------------------------------------------------
+
+/** 公告的显示顺序：**置顶排最前，其余按发布时间倒序**。公告列表与首页那条横幅共用
+ *  这一个判据 —— 两处各排一次，迟早会出现「横幅上是这条、列表第一条是另一条」。
+ *
+ *  `pinned` 缺省当 `false`：加这一格之前发出去的公告都没有它。时间也带一层兜底 ——
+ *  公告是 jsonb 里的一段，元素形状没有 schema 兜着。
+ *
+ *  这是**显示**口径，不是数据口径：`stores/space.ts` 的 `updateAnnouncement(index, …)`
+ *  是按下标写回的，把 store 里那份数组本身排序，改动会写到别的条目上。要排就排副本
+ *  （`sortAnnouncements`），不然就把原下标一起带在手上。 */
+export function compareAnnouncements(a: SpaceAnnouncement, b: SpaceAnnouncement): number {
+  if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
+  return (b.createdAt ?? 0) - (a.createdAt ?? 0)
+}
+
+/** 排好序的副本，store 里那份的顺序一个字节都不动。 */
+export function sortAnnouncements(list: SpaceAnnouncement[]): SpaceAnnouncement[] {
+  return [...list].sort(compareAnnouncements)
 }

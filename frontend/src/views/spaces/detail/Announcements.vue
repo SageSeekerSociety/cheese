@@ -188,17 +188,27 @@ const submitAnnouncement = async () => {
     toast.error(t('spaces.detail.noPermission'))
     return
   }
+  // 编辑是**整条替换**：`spaceStore.updateAnnouncement(index, …)` 按下标把那一格换成
+  // 这个新对象，没写进来的字段就没了。所以弹窗里没有的字段必须原样带过去 ——
+  // 眼下最要紧的是 `pinned`（新题目板那一批加的置顶）：老页面还挂着各自的地址，
+  // 「在新题目板置顶 → 来这边改个错别字 → 置顶没了」是真能走到的路。
+  // 以后再往公告元素里加字段，同样要在这里带上。
+  const editing = updatingAnnouncementIndex.value
+  const original = editing === undefined ? undefined : announcements.value[editing]
   const newAnnouncement: SpaceAnnouncement = {
     title: newAnnouncementTitle.value,
     content: newAnnouncementContent.value,
+    // 既有行为，这一批没动它：这边编辑会把发布时刻重写成现在。新题目板那一页保留
+    // 原来的 `createdAt`，两页在这一点上并不一致（改哪一边都算另一件事）。
     createdAt: Date.now(),
     updatedAt: Date.now(),
     publisher: AccountService._user.value?.nickname || '',
+    pinned: original?.pinned,
   }
 
   try {
-    if (updatingAnnouncementIndex.value !== undefined) {
-      await spaceStore.updateAnnouncement(updatingAnnouncementIndex.value, newAnnouncement)
+    if (editing !== undefined) {
+      await spaceStore.updateAnnouncement(editing, newAnnouncement)
     } else {
       await spaceStore.addAnnouncement(newAnnouncement)
     }

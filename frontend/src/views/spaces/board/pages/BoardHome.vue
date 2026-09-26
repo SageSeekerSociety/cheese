@@ -6,11 +6,14 @@
 // 看汇总），不决定**能看什么**。把这个分清楚，界面就不会长出一堆按角色复制的列表。
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { storeToRefs } from 'pinia'
 
 import PageBar from '../components/PageBar.vue'
 import TaskCard from '../components/TaskCard.vue'
-import { type BoardTask, isOpen } from '../model'
+import { type BoardTask, isOpen, sortAnnouncements } from '../model'
 import { boardTasks, isManager, kpis, loadPending, me, space } from '../store'
+
+import { useSpaceStore } from '@/stores/space'
 
 type SortKey = 'hot' | 'new' | 'deadline'
 
@@ -96,6 +99,31 @@ const closingSoon = computed(() =>
 
 /** 待审队列里属于「我出的」那几道。管理员自己出的题自己能审，所以这句话要在首页说出来。 */
 const myPending = computed(() => pending.value.filter((t) => t.publisher.handle === me.value.handle))
+
+/** 公告。**从空间 store 拿，和公告页是同一份** —— 不在这一页另取一次：管理员刚在
+ *  公告页置顶了一条，回到首页那条横幅要立刻跟着变，而公告页写回的就是这个 store。
+ *  （`loadBoard` 那次 `GET /spaces/{id}` 也带回了 announcements，但那一份只在外壳
+ *  换空间时才刷新，刚置顶完的那一下它还是旧的。） */
+const spaceStore = useSpaceStore()
+const { announcements } = storeToRefs(spaceStore)
+
+// 这一页换了空间不会重新 setup（同一条路由记录复用），所以要盯着参数再取一次。
+watch(
+  () => route.params.spaceId,
+  (id) => spaceStore.fetchSpace(Number(id)),
+  { immediate: true }
+)
+
+/** 横幅上挂的那一条：**置顶优先，其次最新**。口径与公告页是同一条判据
+ *  （`compareAnnouncements`），不是各排各的 —— 否则迟早会出现「横幅上是这条、
+ *  列表第一条是另一条」。一条公告都没有时它是 `null`，横幅整块不出现。 */
+const notice = computed(() => sortAnnouncements(announcements.value)[0] ?? null)
+
+/** 横幅上那句时间，口径与公告页一致：只说「今天 / N 天前」。 */
+function noticeWhen(ms: number): string {
+  const days = Math.max(0, Math.round((Date.now() - ms) / 86_400_000))
+  return days === 0 ? '今天' : `${days} 天前`
+}
 </script>
 
 <template>
@@ -118,6 +146,22 @@ const myPending = computed(() => pending.value.filter((t) => t.publisher.handle 
         </v-btn>
       </div>
     </div>
+
+    <!-- 公告：板上「置顶优先」的最新那一条，谁看到的都是同一条。点一下进公告页。
+         挂在这里而不是只放公告页，是因为公告的作用就是「不上那一页也看得见」。
+         一条公告都没有时这一块整块不出现。 -->
+    <router-link v-if="notice" :to="{ name: 'SpaceBoardAnnouncements', params: { spaceId } }" class="home__notice">
+      <v-icon icon="mdi-bullhorn-outline" size="18" class="home__notice-icon" />
+      <v-chip size="x-small" :color="notice.pinned ? 'primary' : 'default'" variant="tonal" label>
+        {{ notice.pinned ? '置顶' : '最新' }}
+      </v-chip>
+      <span class="home__notice-title">{{ notice.title }}</span>
+      <span class="home__notice-meta">
+        <template v-if="notice.publisher">{{ notice.publisher }} · </template>{{ noticeWhen(notice.createdAt) }}
+      </span>
+      <v-spacer />
+      <span class="home__notice-more">全部公告 <v-icon icon="mdi-chevron-right" size="16" /></span>
+    </router-link>
 
     <!-- 只给管理员看的一条待办：他们才是要动手审的人。普通用户看不到这一块。 -->
     <v-alert
@@ -216,6 +260,49 @@ const myPending = computed(() => pending.value.filter((t) => t.publisher.handle 
   margin: 6px 0 0;
   color: rgba(var(--v-theme-on-surface), 0.6);
   font-size: 0.86rem;
+}
+
+.home__notice {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  margin: 14px 0 0;
+  color: rgba(var(--v-theme-on-surface), 0.85);
+  font-size: 0.84rem;
+  text-decoration: none;
+  background: rgba(var(--v-theme-primary), 0.06);
+  border: 1px solid rgba(var(--v-theme-primary), 0.18);
+  border-radius: var(--radius-md);
+}
+
+.home__notice:hover {
+  background: rgba(var(--v-theme-primary), 0.11);
+}
+
+.home__notice-icon {
+  color: rgb(var(--v-theme-primary));
+}
+
+.home__notice-title {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home__notice-meta {
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  white-space: nowrap;
+}
+
+.home__notice-more {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  color: rgb(var(--v-theme-primary));
+  white-space: nowrap;
 }
 
 .home__todo {

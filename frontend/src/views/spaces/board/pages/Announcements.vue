@@ -3,11 +3,14 @@
 // 「谁来都能看到」，只在管理员那儿开一个入口是不够的。
 //
 // 它不是一个模型：公告是 `space.announcements` 这个 jsonb 数组里的一段，随空间一起
-// 写下去（`PATCH /spaces/{id}`），所以**发 / 改 / 删只有所有者与管理员能做** —— 那条
-// 路只对管理员开。成员打开这一页是纯读的，四个操作按钮一个都不出现。
+// 写下去（`PATCH /spaces/{id}`），所以**发 / 改 / 删 / 置顶只有所有者与管理员能做** ——
+// 那条路只对管理员开。成员打开这一页是纯读的，几个操作按钮一个都不出现。
 //
-// 与原型那一版的差别：**没有「置顶」**。真平台的公告元素里没有排序字段，加一个
-// 布尔字段是改模型的事，还没拍板（原型里那条开关的说明也是这么写的）。
+// 「置顶」（2026-09-26 这一批加上的）：公告元素多了一个可选的 `pinned` 布尔字段。
+// **后端一个字都没改** —— 服务端从头到尾只检查 announcements 是不是一个数组
+// （`_expect_list` / `_normalize_json_list`），元素里的键原样透传，所以没有迁移。
+// 排序口径只有一条，写在 `../model.ts` 的 `compareAnnouncements` 里，首页那条横幅
+// 用的是同一条。
 import type { SpaceAnnouncement } from '@/types'
 
 import { computed, defineAsyncComponent, ref } from 'vue'
@@ -15,6 +18,7 @@ import { useRoute } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { compareAnnouncements } from '../model'
 import { isManager } from '../store'
 
 import { useDialog } from '@/plugins/dialog'
@@ -37,10 +41,14 @@ const editing = ref(false)
 const editingIndex = ref<number | undefined>(undefined)
 const draftTitle = ref('')
 const draftContent = ref('')
+/** 「发布」弹窗里那个置顶开关。**只在发的时候有** —— 已经发出去的公告要置顶，
+ *  走卡片上那个单独的动作，见 `togglePin`。 */
+const draftPinned = ref(false)
 
 function openCreate() {
   draftTitle.value = ''
   draftContent.value = ''
+  draftPinned.value = false
   editingIndex.value = undefined
   editing.value = true
 }
@@ -65,19 +73,41 @@ async function remove(index: number) {
   toast.success('已删除')
 }
 
+/** 置顶 / 取消置顶。**单独一个动作，不塞进编辑弹窗** —— 编辑弹窗里的东西是攒在
+ *  一起提交的，置顶混进去就会跟着别的字段一起丢（取消编辑、或者哪次改动出事都算）。
+ *
+ *  写回走的是 `updateAnnouncement(index, …)`：它按**下标**改，所以这里传的是这条公告
+ *  在 store **原始数组**里的下标，不是排过序的位置。 */
+async function togglePin(index: number) {
+  const target = announcements.value[index]
+  if (!target) return
+  const next = !target.pinned
+  try {
+    // 整条写回：`updateAnnouncement` 是按下标替换的，只带 `pinned` 会把标题正文弄丢。
+    await spaceStore.updateAnnouncement(index, { ...target, pinned: next })
+    toast.success(next ? '已置顶' : '已取消置顶')
+  } catch {
+    toast.error(next ? '置顶失败' : '取消置顶失败')
+  }
+}
+
 async function submit() {
   if (!isManager.value) {
     toast.error('只有所有者与管理员能发公告')
     return
   }
   const now = Date.now()
+  const target = editingIndex.value === undefined ? undefined : announcements.value[editingIndex.value]
   const next: SpaceAnnouncement = {
     title: draftTitle.value,
     content: draftContent.value,
     // 编辑时保留原来的发布时刻，只推进 `updatedAt` —— 否则「什么时候发的」会被改没。
-    createdAt: editingIndex.value === undefined ? now : announcements.value[editingIndex.value].createdAt,
+    createdAt: target ? target.createdAt : now,
     updatedAt: now,
     publisher: AccountService._user.value?.nickname || '',
+    // 置顶只由两个地方决定：发的时候那个开关，和卡片上那个单独的动作。编辑弹窗里
+    // 没有这一项，所以编辑时**原样带过去** —— 不然改个错别字就把置顶弄丢了。
+    pinned: target ? target.pinned : draftPinned.value,
   }
   try {
     if (editingIndex.value === undefined) await spaceStore.addAnnouncement(next)
@@ -94,10 +124,11 @@ function preview(content: string, length = 110) {
   return text.length > length ? `${text.slice(0, length)}…` : text
 }
 
+/** 排过序的展示列表：**带上原始下标，一起排**。下标是给「编辑 / 删除 / 置顶」用的，
+ *  必须指回 store 里那条 —— 所以这里排的是副本，store 里那份数组的顺序一个字节
+ *  都不动（`sortAnnouncements` 也是这个道理，只是它不带下标）。 */
 const sorted = computed(() =>
-  announcements.value
-    .map((a, index) => ({ a, index }))
-    .sort((x, y) => (y.a.updatedAt ?? y.a.createdAt) - (x.a.updatedAt ?? x.a.createdAt))
+  announcements.value.map((a, index) => ({ a, index })).sort((x, y) => compareAnnouncements(x.a, y.a))
 )
 </script>
 
@@ -115,7 +146,10 @@ const sorted = computed(() =>
 
     <div v-if="sorted.length" class="ann__grid">
       <v-card v-for="{ a, index } in sorted" :key="index" flat rounded="lg" class="acard" @click="read(a)">
-        <h3 class="acard__title">{{ a.title }}</h3>
+        <div class="acard__head">
+          <h3 class="acard__title">{{ a.title }}</h3>
+          <v-chip v-if="a.pinned" size="x-small" color="primary" variant="tonal" label>置顶</v-chip>
+        </div>
         <p class="acard__preview">{{ preview(a.content) }}</p>
         <div class="acard__foot">
           <span>{{ a.publisher }}</span>
@@ -123,6 +157,15 @@ const sorted = computed(() =>
           <span v-if="a.updatedAt && a.updatedAt !== a.createdAt" class="acard__edited">已编辑</span>
           <v-spacer />
           <template v-if="isManager">
+            <!-- 置顶是**单独一个动作**，不藏在编辑弹窗里：弹窗里的东西是一起提交的，
+                 和别的字段混在一起就容易一起丢。 -->
+            <v-btn
+              :icon="a.pinned ? 'mdi-pin-off-outline' : 'mdi-pin-outline'"
+              :title="a.pinned ? '取消置顶' : '置顶'"
+              size="x-small"
+              variant="text"
+              @click.stop="togglePin(index)"
+            />
             <v-btn icon="mdi-pencil" size="x-small" variant="text" @click.stop="openEdit(index)" />
             <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="remove(index)" />
           </template>
@@ -142,6 +185,17 @@ const sorted = computed(() =>
         <h3 class="text-body-1 font-weight-bold mb-3">{{ editingIndex === undefined ? '发布公告' : '编辑公告' }}</h3>
         <v-text-field v-model="draftTitle" autocomplete="off" label="标题" variant="outlined" density="comfortable" />
         <TipTapEditor v-model="draftContent" output="html" label="正文" />
+        <!-- 置顶开关只在**发布**时出现。已经发出去的公告要置顶走卡片上那个动作，
+             那是一条独立的路 —— 混在这个弹窗里就会跟着别的字段一起丢。 -->
+        <v-switch
+          v-if="editingIndex === undefined"
+          v-model="draftPinned"
+          color="primary"
+          density="comfortable"
+          hide-details
+          label="置顶"
+          class="mt-2"
+        />
         <div class="d-flex justify-end ga-2 mt-4">
           <v-btn variant="text" @click="editing = false">取消</v-btn>
           <v-btn color="primary" variant="flat" @click="submit">发布</v-btn>
@@ -187,6 +241,14 @@ const sorted = computed(() =>
 
 .acard:hover {
   border-color: rgba(var(--v-theme-on-surface), 0.2);
+}
+
+.acard__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
 }
 
 .acard__title {
