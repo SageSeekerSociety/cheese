@@ -335,51 +335,115 @@ function onStoryScroll() {
 }
 
 // ---------- home: 问芝士 walks through the kinds of docs ----------
-// Each quarter-screen of scroll through #tour is one question: its answer
-// "streams" on the left and the matching page card slides in on the right.
-let tourStep = -1, tourTimer = 0
-function showTour(n) {
-  if (n === tourStep) return
-  tourStep = n
-  $$('#tour .tour-qa').forEach((el) => el.classList.toggle('on', +el.dataset.i === n))
-  $$('#tour .t-card').forEach((el) => { const i = +el.dataset.i; el.classList.toggle('on', i === n); el.classList.toggle('past', i < n) })
-  $$('#tourKinds button').forEach((b) => b.classList.toggle('on', +b.dataset.tour === n))
-  const a = $(`#tour .tour-qa[data-i="${n}"] .a`); if (!a) return
-  clearInterval(tourTimer)
-  const full = a.dataset.full || ''
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { a.textContent = full; return }
-  let k = 0
-  a.textContent = ''
-  a.classList.add('streaming')
-  tourTimer = setInterval(() => {
-    k += 2
-    a.textContent = full.slice(0, k)
-    if (k >= full.length) { clearInterval(tourTimer); a.classList.remove('streaming') }
-  }, 22)
+// Each screen of scroll through #tour is one question. Arriving at a question
+// types it into the chat, sends it, streams 芝士's answer and then turns the
+// browser on the left to the page it cites. Scrolling back takes messages off
+// again; jumping ahead plays the skipped ones instantly and animates the last.
+const TOUR = { steps: [], shown: -1, gen: 0, busy: false }
+const wait = (ms, gen) => new Promise((r) => setTimeout(() => r(gen === TOUR.gen), ms))
+function tourPage(n) {
+  $$('#tour .tb-page').forEach((el) => { const i = +el.dataset.i; el.classList.toggle('on', i === n); el.classList.toggle('past', i < n) })
+  const url = $('#tourUrl'), step = TOUR.steps[n]
+  if (url) { url.textContent = `okcheese.com${step ? step.url : '/docs/'}`; url.classList.add('flash'); setTimeout(() => url.classList.remove('flash'), 600) }
+  const load = $('#tourLoad'); if (load) { load.classList.remove('run'); load.classList.add('done') }
+}
+function tourKinds(n) {
+  $$('#tourKinds button').forEach((b) => { const i = +b.dataset.tour; b.classList.toggle('on', i === n); b.classList.toggle('seen', i < n) })
+}
+function tourBubble(i) {
+  const s = TOUR.steps[i], log = $('#tourLog')
+  const q = document.createElement('div'); q.className = 'tc-q'; q.dataset.i = i; q.textContent = s.q
+  const a = document.createElement('div'); a.className = 'tc-a'; a.dataset.i = i
+  a.innerHTML = `<img src="${$('.tour-chat-h img').getAttribute('src')}" alt=""><div><p></p></div>`
+  log.append(q, a)
+  return a
+}
+function tourCite(a, i) {
+  const s = TOUR.steps[i]
+  const c = document.createElement('a'); c.className = 'tc-cite'; c.href = s.url
+  c.innerHTML = `${ICON_DOC}${esc(s.label)} · ${esc(s.title)}`
+  $('div', a).append(c)
+}
+const ICON_DOC = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>'
+function tourInstant(i) {
+  const a = tourBubble(i); $('p', a).textContent = TOUR.steps[i].a; tourCite(a, i)
+}
+function tourScrollLog() { const log = $('#tourLog'); if (log) log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' }) }
+async function tourPlay(i, gen) {
+  const s = TOUR.steps[i], input = $('#tourTyping'), box = input.parentElement
+  // type the question into the box, then send it
+  box.classList.add('typing'); input.textContent = ''
+  for (let k = 1; k <= s.q.length; k++) { input.textContent = s.q.slice(0, k); if (!(await wait(45, gen))) return false }
+  if (!(await wait(250, gen))) return false
+  $('.tc-send', box).classList.add('hit'); setTimeout(() => $('.tc-send', box)?.classList.remove('hit'), 180)
+  box.classList.remove('typing'); input.textContent = input.dataset.placeholder
+  const a = tourBubble(i), p = $('p', a); tourScrollLog()
+  const load = $('#tourLoad'); if (load) { load.classList.remove('done'); void load.offsetWidth; load.classList.add('run') }
+  // thinking, then the answer streams
+  p.innerHTML = '<span class="tc-dots"><i></i><i></i><i></i></span>'
+  if (!(await wait(700, gen))) return false
+  p.textContent = ''; p.classList.add('streaming')
+  for (let k = 2; k < s.a.length + 2; k += 2) { p.textContent = s.a.slice(0, k); if (k % 16 === 0) tourScrollLog(); if (!(await wait(24, gen))) return false }
+  p.classList.remove('streaming'); tourCite(a, i); tourScrollLog()
+  if (!(await wait(350, gen))) return false
+  tourPage(i)
+  return true
+}
+async function tourGo(n) {
+  if (n === TOUR.shown && !TOUR.busy) return
+  const gen = ++TOUR.gen
+  // settle whatever was half played, then drop messages past n
+  const log = $('#tourLog'); if (!log) return
+  const box = $('#tourTyping'); box.parentElement.classList.remove('typing'); box.textContent = box.dataset.placeholder
+  $$('#tourLog [data-i]').forEach((el) => { if (+el.dataset.i > n || (TOUR.busy && +el.dataset.i === TOUR.shown)) el.remove() })
+  if (TOUR.busy) { TOUR.busy = false; TOUR.shown-- }
+  if (n <= TOUR.shown) { TOUR.shown = n; tourKinds(n); tourPage(n); return }
+  for (let i = TOUR.shown + 1; i < n; i++) tourInstant(i)
+  if (TOUR.shown + 1 < n) { tourPage(n - 1); tourScrollLog() }
+  TOUR.shown = n; tourKinds(n)
+  if (reduced) { tourInstant(n); tourPage(n); tourScrollLog(); return }
+  TOUR.busy = true
+  const done = await tourPlay(n, gen)
+  if (done && gen === TOUR.gen) TOUR.busy = false
 }
 function onTourScroll() {
   const sec = $('#tour'); if (!sec || !sec.classList.contains('pinned')) return
-  const r = sec.getBoundingClientRect(), run = sec.offsetHeight - innerHeight
-  const p = Math.max(0, Math.min(0.999, -r.top / Math.max(run, 1)))
-  const n = Math.floor(p * $$('#tour .t-card').length)
-  sec.style.setProperty('--p', p)
-  showTour(n)
+  const { start, step, top } = tourGeometry(sec)
+  if (top !== TOUR.top) { TOUR.top = top; tourLayout(sec) }   // the heading's font arrived, say
+  const y = scrollY - start
+  if (y < -innerHeight * 0.35) { if (TOUR.shown !== -1) tourGo(-1); return }
+  tourGo(Math.max(0, Math.min(TOUR.steps.length - 1, Math.floor((y + step * 0.5) / step))))
+}
+// Where the pinned stage starts sticking, and how much scroll one question
+// takes. Measured at .tour-anchor, the empty element just before the stage: a
+// sticky element's own offsetTop moves while it is stuck.
+function tourGeometry(sec) {
+  const hdr = $('#hdr')?.offsetHeight || 64, step = innerHeight * 0.86, top = $('.tour-anchor', sec).offsetTop - hdr
+  return { hdr, step, top, start: sec.offsetTop + top }
+}
+// The section is as tall as the questions need; each has a snap point.
+function tourLayout(sec) {
+  if (!sec.classList.contains('pinned')) { sec.style.height = ''; return }
+  const { hdr, step, top } = tourGeometry(sec), n = TOUR.steps.length
+  sec.style.height = `${top + hdr + (n - 1) * step + innerHeight + step * 0.4}px`
+  // html's scroll-padding-top (header + 20px) applies to snapping too
+  $$('.tour-snap', sec).forEach((el, i) => { el.style.top = `${top + hdr + 20 + i * step}px` })
 }
 function mountTour() {
   const sec = $('#tour'); if (!sec) return
+  try { TOUR.steps = JSON.parse($('#tourData').textContent) } catch { return }
   const wide = matchMedia('(min-width: 961px)')
-  const apply = () => { sec.classList.toggle('pinned', wide.matches); if (wide.matches) onTourScroll() }
+  const apply = () => { sec.classList.toggle('pinned', wide.matches); tourLayout(sec); if (wide.matches) onTourScroll() }
   wide.addEventListener('change', apply); apply()
+  addEventListener('resize', () => tourLayout(sec), { passive: true })
   addEventListener('scroll', onTourScroll, { passive: true })
-  // A kind picked directly scrolls to its screen.
+  // a kind picked directly scrolls to its screen
   $('#tourKinds')?.addEventListener('click', (e) => {
     const b = e.target.closest('[data-tour]'); if (!b) return
-    if (!sec.classList.contains('pinned')) { showTour(+b.dataset.tour); return }
-    const run = sec.offsetHeight - innerHeight, n = $$('#tour .t-card').length
-    scrollTo({ top: sec.offsetTop + run * ((+b.dataset.tour + 0.5) / n), behavior: 'smooth' })
+    if (!sec.classList.contains('pinned')) return
+    const { start, step } = tourGeometry(sec)
+    scrollTo({ top: start + +b.dataset.tour * step, behavior: 'smooth' })
   })
-  // Without the pin (phones), every answer is simply shown.
-  if (!wide.matches) $$('#tour .tour-qa .a').forEach((a) => { a.textContent = a.dataset.full })
 }
 
 let home = null

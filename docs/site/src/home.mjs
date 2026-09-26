@@ -51,58 +51,43 @@ export function sayHtml(who, what, WHO, pages, open = '') {
   }
 }
 
+// The docs' own pages, as a reader first sees them (shots/site.mjs).
+const site = (slug, phone) => `/docs/images/site/${phone ? 'm-' : ''}${slug.replace('/', '-')}.jpg`
+
 // One line per door: what that part of the docs is for, and the real screen
 // that shows it (docs/manual/public/images, taken by shots/shots.mjs).
 const DOORS = {
-  start: ['十分钟上手：建项目、开话题，把第一件事交给芝士，再验收它交回来的东西。', '/docs/images/room.jpg'],
-  tutorials: ['按身份把一件事从头走到尾：学生交作业、老师开课、办公协作。', '/docs/images/task-card.jpg'],
-  features: ['每个功能是什么、在哪、怎么用、有什么限制，按用途分组。', '/docs/images/board.jpg'],
-  faq: ['芝士没回复、机器没连上、额度用完……遇到问题先看这里，每条都写了怎么处理。', null],
+  start: ['十分钟上手：建项目、开话题，把第一件事交给芝士，再验收它交回来的东西。', site('quickstart')],
+  tutorials: ['按身份把一件事从头走到尾：学生交作业、老师开课、办公协作。', site('student-tutorial')],
+  features: ['每个功能是什么、在哪、怎么用、有什么限制，按用途分组。', site('rooms')],
+  faq: ['芝士没回复、机器没连上、额度用完……遇到问题先看这里，每条都写了怎么处理。', site('troubleshooting')],
 }
 
 // The pages people come to the docs for most.
 const POPULAR = ['quickstart', 'accept', 'agents', 'devices', 'quota', 'troubleshooting']
 
 // 问芝士 walks a reader through the kinds of docs, one question per screen:
-// [kind label, icon, question, answer, page (slug, `dev/…`, or `changelog`), screenshot]
+// [kind label, icon, question, answer, page (slug, `dev/…`, or `changelog`)]
 const TOUR = [
-  ['开始使用', 'rocket', '第一次用，该从哪开始？', '先建一个项目，在话题里把第一件事说清楚交给芝士。它做完会递一张验收卡，你采纳，改动就进了项目。整个过程十分钟能走完一遍。', 'quickstart', '/docs/images/room.jpg'],
-  ['教程', 'bulb', '学生怎么交作业？', '加入老师的空间，找到题目并领取，从题目建一个项目和芝士一起做，最后按题目要求提交。教程把这五步从头走到尾。', 'student-tutorial', '/docs/images/m-room.jpg'],
-  ['功能说明', 'layers', '验收和采纳是什么？', '芝士交活时会递一张验收卡：写着改了什么、推荐谁审。审过点「采纳」就合并进项目主线，不满意就「退回」并写明原因。', 'accept', '/docs/images/task-card.jpg'],
-  ['常见问题', 'info', '提示「机器未配置或未连接」怎么办？', '说明这个话题现在没有可用的运行设备。先在「我的设备」看设备是否在线，再核对话题选的运行环境。', 'troubleshooting', '/docs/images/devices.jpg'],
-  ['更新日志', 'tag', '最近改了什么？', '', 'changelog', null],
-  ['开发文档', 'code', '一条消息在后台是怎么变成一轮的？', '消息先落库，再看有没有点名 AI 队友；同一话题的轮串行，跑着的时候新消息直接送进正在运行的会话。开发文档只对平台管理员开放。', 'dev/turn', null],
+  ['开始使用', 'rocket', '第一次用，该从哪开始？', '先建一个项目，在话题里把第一件事说清楚交给芝士。它做完会递一张验收卡，你采纳，改动就进了项目。整个过程十分钟能走完一遍，从《快速开始》读起就行。', 'quickstart'],
+  ['教程', 'bulb', '我是学生，怎么交作业？', '加入老师的空间，找到题目并领取，从题目建一个项目和芝士一起做，最后按题目要求提交。《学生：从题目到提交》把这五步从头走到尾。', 'student-tutorial'],
+  ['功能说明', 'layers', '验收和采纳是什么？', '芝士交活时会递一张验收卡：写着改了什么、推荐谁审。审过点「采纳」就合并进项目主线，不满意就「退回」并写明原因。', 'accept'],
+  ['常见问题', 'info', '提示「机器未配置或未连接」怎么办？', '说明这个话题现在没有可用的运行设备。先在「我的设备」看设备是否在线，再核对话题选的运行环境；常见问题里每条都写了怎么处理。', 'troubleshooting'],
+  ['更新日志', 'tag', '最近改了什么？', '', 'changelog'],
+  ['开发文档', 'code', '一条消息在后台是怎么变成一轮的？', '消息先落库，再看有没有点名 AI 队友；同一话题的轮串行，跑着的时候新消息直接送进正在运行的会话。这部分在开发文档里，只对平台管理员开放。', 'dev/turn'],
 ]
 
-// Screens for the features wall, where there is one.
-const FEATURE_SHOT = {
-  rooms: '/docs/images/room.jpg', tasks: '/docs/images/board.jpg', accept: '/docs/images/task-card.jpg',
-  files: '/docs/images/library.jpg', devices: '/docs/images/devices.jpg', teams: '/docs/images/teams.jpg',
-  agents: '/docs/images/settings.jpg', projects: '/docs/images/work-home.jpg', feedback: '/docs/images/feedback.jpg',
-}
 
-function tourCard([kind, icon, , , slug, img], i, { pages, dev, latest }) {
-  const locked = slug.startsWith('dev/')
-  const page = slug === 'changelog'
-    ? { url: '/docs/changelog', title: '更新日志', summary: `${latest.ver} · ${latest.env}` }
-    : locked ? dev[slug.slice(4)] : pages[slug]
-  if (!page) return ''
-  const news = slug === 'changelog'
-    ? `<ul class="t-news">${['feat', 'imp'].flatMap((t) => (latest.hl[t] || []).map(([h]) => [t, h])).slice(0, 5).map(([t, h]) => `<li><span class="badge ${t}">${TAG[t]}</span>${esc(h)}</li>`).join('')}</ul>`
-    : ''
-  return `<article class="t-card${i ? '' : ' on'}${locked ? ' locked' : ''}" data-i="${i}">
-   <div class="t-card-top"><span class="t-kind">${ic(icon, 'width:14px;height:14px')}${esc(kind)}</span>${locked ? `<span class="t-lock">${ic('lock', 'width:12px;height:12px')}仅平台管理员</span>` : ''}</div>
-   <h3>${esc(page.title)}</h3>
-   <p>${esc(page.summary || '')}</p>
-   ${img ? `<div class="t-shot${img.includes('/m-') ? ' phone' : ''}"><img src="${img}" alt="" loading="lazy"></div>` : news || `<div class="t-lines" aria-hidden="true"><i></i><i></i><i></i><i></i></div>`}
-   <a class="pill alt" href="${page.url}">打开这一页 ${ic('arrow')}</a>
-  </article>`
+function tourPage(slug, { pages, dev, latest }) {
+  if (slug === 'changelog') return { url: '/docs/changelog', title: latest.ver, label: '更新日志' }
+  if (slug.startsWith('dev/')) { const p = dev[slug.slice(4)]; return p && { url: p.url, title: p.title, label: '开发文档', locked: true } }
+  const p = pages[slug]; return p && { url: p.url, title: p.title, label: p.sectionLabel }
 }
 
 function tourAnswer([, , , answer, slug], latest) {
   if (slug !== 'changelog') return answer
   const n = latest.list.length
-  return `${latest.ver}（${latest.env}）一共 ${n} 项改动，挑了几条你用得到的放在右边，每条都链到对应的代码改动。`
+  return `${latest.ver}（${latest.env}）一共 ${n} 项改动。更新日志把每一版改了什么写成人话，每条都链到对应的代码改动，也能用 RSS 订阅。`
 }
 
 export function homePage(ctx, { releases, faq, WHO, doors, pages, dev }) {
@@ -112,38 +97,53 @@ export function homePage(ctx, { releases, faq, WHO, doors, pages, dev }) {
   const say = sayHtml(firstWho, 0, WHO, pages)
   const count = doors.reduce((n, d) => n + d.items.length, 0)
   const features = doors.find((d) => d.key === 'features')?.items || []
+  const steps = TOUR.map(([kind, icon, q, a, slug]) => ({ kind, icon, q, slug, page: tourPage(slug, { pages, dev, latest }) }))
+    .filter((t) => t.page).map((t) => ({ ...t, a: tourAnswer(TOUR.find((x) => x[4] === t.slug), latest) }))
   const main = `<div class="home x">
-  <section class="d-hero">
+  <section class="x-hero">
    <div class="scene" aria-hidden="true"></div>
-   <div class="d-float" aria-hidden="true"><img class="f1" src="/docs/images/room.jpg" alt=""><img class="f2" src="/docs/images/board.jpg" alt=""><img class="f3" src="/docs/images/task-card.jpg" alt=""></div>
+   <div class="x-copy">
    <a class="badge-row" href="/docs/changelog"><b>${esc(latest.ver)}</b>${latest.list.length} 项改动 · 看看变了什么 ${ic('arrow')}</a>
-   <h1 class="d-title display"><span class="d-mark"><img src="${ctx.assets.logo}" alt=""></span><span class="d-word">知是文档</span></h1>
-   <p class="d-sub">怎么用知是，都在这里：从建第一个项目，到把芝士做出来的成果合进主线。</p>
-   <button class="d-search" data-open-search aria-label="搜索文档">${ic('search', 'width:20px;height:20px')}<span>搜索文档，或者直接问芝士</span><kbd>⌘K</kbd></button>
+   <span class="x-kick">知是 · Cheese 使用文档</span>
+   <h1 class="x-title display"><span class="line"><span>照着做，</span></span><span class="line"><span class="d-word">就做得到。</span></span></h1>
+   <p class="x-sub">从建第一个项目，到把芝士做出来的成果合进主线：每一步都写清楚在哪点、会看到什么。卡住了，直接问芝士。</p>
+   <div class="x-cta"><a class="pill lg magnetic" href="/docs/quickstart">快速开始 ${ic('arrow')}</a><button class="x-search" data-open-search>${ic('search', 'width:17px;height:17px')}<span>搜索文档，或直接问</span><kbd>⌘K</kbd></button></div>
    <div class="d-popular"><small>常看</small>${POPULAR.filter((s) => pages[s]).map((s) => `<a href="${pages[s].url}">${esc(pages[s].title)}</a>`).join('')}</div>
    <p class="d-count">${count} 篇使用文档 · 每一页都有 Markdown 原文 · 跟着代码一起更新</p>
+   </div>
+   <div class="x-mark" id="heroLogo" role="img" aria-label="知是的标志：一轮带孔的芝士，前面站着一只小老鼠" title="点一下重播"><img src="${ctx.assets.logo}" alt=""></div>
   </section>
 
-  <section class="tour" id="tour" style="--n:${TOUR.length}">
+  <section class="tour" id="tour" style="--n:${steps.length}">
+   <div class="x-head tour-head" data-reveal><span class="x-kick">问芝士，带你逛一遍文档</span><h2 class="display">不知道该看哪一页？<br>问就行。</h2><p>往下滚，每一屏问一个问题：芝士回答，再把你带到对应的那类文档。</p></div>
+   ${steps.map((_, i) => `<i class="tour-snap" style="--i:${i}" aria-hidden="true"></i>`).join('')}
+   <i class="tour-anchor" aria-hidden="true"></i>
    <div class="tour-pin">
-    <div class="tour-left">
-     <span class="x-kick">问芝士，带你逛一遍文档</span>
-     <h2 class="display">不知道该看哪一页？<br>问就行。</h2>
-     <div class="tour-kinds" id="tourKinds">${TOUR.map(([kind, icon], i) => `<button data-tour="${i}"${i ? '' : ' class="on"'}>${ic(icon, 'width:14px;height:14px')}${esc(kind)}</button>`).join('')}</div>
-     <div class="tour-chat" aria-live="polite">
-      <div class="tour-chat-h"><span class="brand-mark sm"><img src="${ctx.assets.logo}" alt=""></span><div><b>问芝士</b><small>只根据这份文档回答，每条答案都附出处</small></div></div>
-      ${TOUR.map((t, i) => `<div class="tour-qa${i ? '' : ' on'}" data-i="${i}"><div class="q">${esc(t[2])}</div><div class="a" data-full="${esc(tourAnswer(t, latest))}">${esc(tourAnswer(t, latest))}</div><div class="cite">${ic('doc', 'width:13px;height:13px')}${esc(t[0])}</div></div>`).join('')}
-      <button class="tour-ask" data-open-ask>${ic('chat')}<span>你也问一个</span>${ic('arrow')}</button>
+    <div class="tour-stage">
+     <div class="tour-browser">
+      <div class="tb-bar"><span class="tb-dots"><i></i><i></i><i></i></span><span class="tb-url" id="tourUrl">okcheese.com/docs/</span><span class="tb-load" id="tourLoad"></span></div>
+      <div class="tb-view">
+       <div class="tb-page on blank" data-i="-1"><div class="tb-blank"><img src="${ctx.assets.logo}" alt=""><p>问一个问题，芝士带你去对应的那一页</p></div></div>
+       ${steps.map((t, i) => `<a class="tb-page${t.page.locked ? ' locked' : ''}" data-i="${i}" href="${t.page.url}" tabindex="-1"><img src="${site(t.slug)}" alt="${esc(t.page.title)}" loading="lazy">${t.page.locked ? `<span class="tb-lock">${ic('lock', 'width:16px;height:16px')}开发文档只对平台管理员开放</span>` : ''}</a>`).join('')}
+      </div>
      </div>
+     <div class="tour-kinds" id="tourKinds">${steps.map((t, i) => `<button data-tour="${i}">${ic(t.icon, 'width:14px;height:14px')}${esc(t.kind)}</button>`).join('')}</div>
     </div>
-    <div class="tour-right">${TOUR.map((t, i) => tourCard(t, i, { pages, dev, latest })).join('')}</div>
+    <aside class="tour-chat">
+     <div class="tour-chat-h"><span class="brand-mark sm"><img src="${ctx.assets.logo}" alt=""></span><div><b>问芝士</b><small>只根据这份文档回答，每条答案都附出处</small></div></div>
+     <div class="tc-log" id="tourLog" aria-live="polite"></div>
+     <button class="tc-input" data-open-ask><span id="tourTyping" data-placeholder="问一个关于知是的问题…">问一个关于知是的问题…</span><span class="tc-send">${ic('arrow')}</span></button>
+    </aside>
    </div>
+   <ol class="tour-list">${steps.map((t) => `<li data-reveal><div class="q">${esc(t.q)}</div><div class="a">${esc(t.a)}</div>
+    <a class="tl-page${t.page.locked ? ' locked' : ''}" href="${t.page.url}"><span class="tl-frame"><img src="${site(t.slug, true)}" alt="" loading="lazy"></span><span class="cite">${ic('doc', 'width:13px;height:13px')}${esc(t.page.label)} · ${esc(t.page.title)}</span></a></li>`).join('')}</ol>
+   <script type="application/json" id="tourData">${JSON.stringify(steps.map((t) => ({ q: t.q, a: t.a, url: t.page.url, title: t.page.title, label: t.page.label }))).replace(/</g, '\\u003c')}</script>
   </section>
 
   <section class="x-sec">
    <div class="x-head" data-reveal><h2 class="display">知是能做的，都写在这里</h2><p>功能说明里的每一页：它是什么、在哪、怎么用。</p></div>
    <div class="wall">${features.map((p, k) => {
-     const shot = FEATURE_SHOT[p.slug]
+     const shot = site(p.slug)
      return `<a class="wall-item${shot ? ' has-shot' : ''}${k < 2 ? ' big' : ''}" href="${p.url}" data-reveal style="--d:${k % 6}">
       ${shot ? `<div class="wall-shot"><img src="${shot}" alt="" loading="lazy"></div>` : ''}
       <div class="wall-body"><small>${esc(p.group)}</small><b>${esc(p.title)}</b><p>${esc(p.summary || '')}</p><span class="go">阅读 ${ic('arrow', 'width:13px;height:13px')}</span></div>

@@ -356,8 +356,8 @@ const assets = {
   css: asset('app', 'css', css),
   logo: asset('logo', 'svg', LOGO_SVG),
   room: asset('room', 'html', fs.readFileSync(path.join(HERE, 'island/room.html'))),
-  // Smiley Sans (得意黑, OFL 1.1), subset to the home page's characters by gen/font.sh.
-  display: asset('display', 'woff2', fs.readFileSync(path.join(HERE, 'src/fonts/smiley-sans-display.woff2'))),
+  // 三极行楷简体-粗 (三极字库, free for commercial use), subset to the home page's display headings by gen/font.sh.
+  display: asset('display', 'woff2', fs.readFileSync(path.join(HERE, 'src/fonts/display.woff2'))),
 }
 for (const p of Object.values(pages)) if (p.diagram) write(p.diagram.url.replace(/^\/docs\//, ''), fs.readFileSync(p.diagram.file))
 const images = path.join(MANUAL, 'public')
