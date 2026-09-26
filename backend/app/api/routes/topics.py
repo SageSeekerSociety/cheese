@@ -3514,6 +3514,7 @@ async def upgrade_block(
     body: UpgradeBlockIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
 ) -> dict:
     """讨论升级：upgrade a block into a place of its own (eval A1).
 
@@ -3529,7 +3530,23 @@ async def upgrade_block(
     一轮：作者 `system`、提示词是平台写的一段开工说明，房间被平台叫醒去给这条活起名
     字、起分身。按结论 31，开一条活剩下的只有分支、卡和负责人，谁来做是负责人的事 ——
     所以平台在这里只做投递：房间时间线上落一条事件，收件人恰好是这条活的负责人。
+
+    这是一条**在房间里造东西**的写：升级的 block 住在哪个房间，就要在那个房间站得
+    住。以前两样都没有 —— block id 就是全部的门票，一个匿名调用者能往别人的房间里
+    落一张卡，`created_by` 填谁它就是谁的。凭据由 resolve/authorize_topic 认
+    （`app.api.auth`：会话说 token、agent 的 scoped token、或沙箱 token），房间由
+    block 自己带 —— block 的 `topic_id` 就是那个房间，不是它自己去请求体里说。
     """
+    block = await BlockRepository(db).get(block_id)
+    if block is None:
+        raise NotFoundError("Block not found")
+    parent = await TopicService(db).get_or_404(block.topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=parent.id, project_id=parent.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=parent.project_id, topic_id=parent.id
+    )
     room, thread, created = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
         created_by=body.created_by,

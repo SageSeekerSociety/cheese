@@ -138,6 +138,15 @@ async def update_milestone(
 
 
 @router.delete("/milestones/{milestone_id}")
-async def delete_milestone(milestone_id: uuid.UUID, db: DbSession) -> dict:
+async def delete_milestone(
+    milestone_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    # Same door as the update next door, and for a sharper reason: a milestone
+    # has no soft-delete column, so this write is `session.delete` — knowing the
+    # id was the whole credential, and an anonymous caller could hard-delete a
+    # milestone out of any project.
+    current = await MilestoneService(db).get_or_404(milestone_id)
+    actor = await resolver.resolve(fallback_handle=None, project_id=current.project_id)
+    await resolver.authorize_project(actor, project_id=current.project_id)
     await MilestoneService(db).delete(milestone_id)
     return ok(None)
