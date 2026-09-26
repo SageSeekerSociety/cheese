@@ -28,7 +28,10 @@
         <v-btn v-if="item.reviewStatus === 'REJECTED'" class="mt-2" variant="text" @click="openResubmit(item)">{{
           t('spaces.review.resubmit')
         }}</v-btn>
-        <v-btn v-if="item.reviewStatus === 'APPROVED'" class="mt-2" variant="text" :to="`/spaces/${item.id}`">{{
+        <!-- 这一格和下面的空间卡片走**同一个**落点函数（`spaceEntryRoute`），谁也别
+             自己拼地址 —— 从前这里写死 `/spaces/{id}`，那条地址 redirect 到老树，
+             于是「进去」有两套意思，改一处就会漏掉另一处。 -->
+        <v-btn v-if="item.reviewStatus === 'APPROVED'" class="mt-2" variant="text" :to="spaceEntryRoute(item)">{{
           t('spaces.review.enter')
         }}</v-btn>
       </div>
@@ -286,14 +289,14 @@ const createError = ref('')
 const createdInviteCode = ref<string | null>(null)
 const codeDialog = ref(false)
 const codeCopied = ref(false)
-// 刚建出来的版：建完要落到这门课上，不是回到名录页干看着一个空版。
+// 刚建出来的版：建完要落到这块板上，不是回到名录页干看着一个空版。
 const createdSpace = ref<Space | null>(null)
 
 function enterCreatedSpace() {
   codeDialog.value = false
   const space = createdSpace.value
   if (!space) return
-  // 落点由这块板自己说了算（新建的就是课程模板 → 课程首页）。
+  // 落点和列表卡片同一个函数：新建的板就是课，但落点不看这个 —— 都是题目板。
   void router.push(spaceEntryRoute(space))
 }
 

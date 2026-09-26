@@ -126,24 +126,30 @@ export function courseCells(isTeacher: boolean): readonly CourseNavCell[] {
 }
 
 /**
- * 「进去」一块题目板该落到哪：课 → 课程首页，其余 → 题目列表（今天的第一屏）。
+ * 「进去」一块题目板该落到哪：**题目板**（`/spaces/{id}/board`）。
  *
- * 落点必须在**点进去的那一刻**定，因为 `/spaces/{id}` 这个地址本身不区分两者 ——
- * 它一律 redirect 到题目列表（老题目板的零感知就是靠这条不许动）。所以课程那一路
- * 由入口链接显式带到 `SpacesCourseHome`：列表页、我的工作页都走这里。
+ * **这里不再按 `isCourse` 分岔（2026-09-26 改的）。** 从 #1448/#1454（2026-09-22）
+ * 起，新建的题目板**就是一门课**（默认分组声明课程壳，`DEFAULT_CATEGORY_SHELL_NAME`），
+ * 而那两版让课开在自己的课程首页上。于是按 `isCourse` 分岔的实际效果是——**新板
+ * 全都开在老树上**，这块新题目板一辈子只有那些 9-22 之前建的老板子走得到。重设计的
+ * 那句话是「打开空间就是新样子」，那就得真让每一次进板都落在新界面上。
  *
- * 顺带一个已知的边界：直接在地址栏敲 `/spaces/{id}`（或刷新一个这样的地址）会落
- * 到题目列表，课也一样 —— 没有请求就答不出「是不是课」，而为了答它把每次进板都
- * 拖一个往返，代价落在所有人身上。课里的侧栏第一格就是课程总览，回去只要一击。
+ * 课没有被丢掉：题目板外壳里给 `isCourse` 的板子多一格「课程」（`SpaceBoardShell.vue`），
+ * 教学单元、作业、小测、小组那几屏照旧在，只是从题目板作为入口多走一步。
+ *
+ * 落点必须由入口链接定，因为 `/spaces/{id}` 这个地址本身不区分 —— 它一律 redirect
+ * 到老树（`router/spaces.ts` 里那条 redirect 不许动，老链接的零感知靠它）。所以
+ * 列表页、我的工作页、申请列表三处都走这个函数，谁也别自己拼地址。
+ *
+ * 一个已知的边界：直接在地址栏敲 `/spaces/{id}`（或刷新一个这样的地址）仍然落到
+ * 老树 —— 那条地址是 redirect，读不到「该不该去题目板」，为它加一个往返不划算。
  */
-export function spaceEntryRoute(space: { id: number; isCourse?: boolean }): {
+export function spaceEntryRoute(space: { id: number }): {
   name: string
   params: { spaceId: number }
 } {
   return {
-    // 不是课的落点仍然是 `/spaces/{id}` 这个地址本身（它 redirect 到题目列表）——
-    // 老题目板的链接一个字符都不变。
-    name: space.isCourse ? 'SpacesCourseHome' : 'SpacesDetail',
+    name: 'SpaceBoardHome',
     params: { spaceId: space.id },
   }
 }
