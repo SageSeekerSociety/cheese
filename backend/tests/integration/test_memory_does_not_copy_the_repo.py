@@ -73,9 +73,9 @@ def test_a_fact_the_repo_does_not_carry_is_stored(client, monkeypatch):
 
     r = client.post(
         f"/projects/{pid}/memory",
-        json={"content": "王老师周三下午不看消息，有事提前一天问", "topic": tid},
+        json={"content": "王管理员周三下午不看消息，有事提前一天问", "topic": tid},
     )
     assert r.status_code == 200
     listed = client.get(f"/memory?project_id={pid}").json()["data"]["data"]
     stored = [e["content"] for e in listed]
-    assert stored == ["王老师周三下午不看消息，有事提前一天问"]
+    assert stored == ["王管理员周三下午不看消息，有事提前一天问"]

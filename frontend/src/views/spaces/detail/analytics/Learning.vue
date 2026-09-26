@@ -3,7 +3,7 @@
     <div class="section-toolbar">
       <div>
         <h2 class="section-toolbar__title">学习</h2>
-        <p class="section-toolbar__hint">学生与 AI 对话时卡住的地方，用来挑下一讲要讲的内容</p>
+        <p class="section-toolbar__hint">成员与 AI 对话时卡住的地方，用来挑下一讲要讲的内容</p>
       </div>
     </div>
 
@@ -13,7 +13,7 @@
           v-model="studentModel"
           autocomplete="off"
           :items="studentItems"
-          label="学生"
+          label="成员"
           density="comfortable"
           hide-details
           variant="outlined"
@@ -37,23 +37,23 @@
     <v-empty-state
       v-if="learningFilters && learningFilters.projectCount === 0"
       icon="mdi-account-search-outline"
-      title="暂无可查看的学生项目"
-      text="当前账号还读不到这门课下的学生项目，因此没有对话可以展示。"
+      title="暂无可查看的成员项目"
+      text="当前账号还读不到这门课下的成员项目，因此没有对话可以展示。"
     />
 
     <template v-else>
       <section class="learning-block">
         <div class="block-head">
           <h3 class="block-head__title">待处理队列</h3>
-          <p class="block-head__hint">共性卡点按有多少个学生撞上排序</p>
+          <p class="block-head__hint">共性卡点按有多少个成员撞上排序</p>
         </div>
 
         <v-card v-if="queues" flat rounded="lg" class="queue-card">
-          <div class="queue-card__title">学生标记「这道题我答不了」的问题</div>
+          <div class="queue-card__title">成员标记「这道题我答不了」的问题</div>
 
           <template v-if="queues.reviewFlag.available">
             <LearningQuoteItem v-for="item in queues.reviewFlag.items" :key="item.blockId" :excerpt="item" />
-            <p v-if="!queues.reviewFlag.items.length" class="queue-card__note">暂无学生标记的问题</p>
+            <p v-if="!queues.reviewFlag.items.length" class="queue-card__note">暂无成员标记的问题</p>
           </template>
 
           <template v-else>
@@ -76,13 +76,13 @@
           v-else-if="queues"
           icon="mdi-check-circle-outline"
           title="暂无共性卡点"
-          text="当前筛选范围下没有学生卡在同一处。"
+          text="当前筛选范围下没有成员卡在同一处。"
         />
       </section>
 
       <section class="learning-block">
         <div class="block-head">
-          <h3 class="block-head__title">学生发言</h3>
+          <h3 class="block-head__title">成员发言</h3>
           <p class="block-head__hint">共 {{ questions.length }} 条，勾选要带进提纲的</p>
         </div>
 
@@ -100,8 +100,8 @@
         <v-empty-state
           v-else-if="!loading"
           icon="mdi-comment-outline"
-          title="暂无学生发言"
-          text="当前筛选范围下没有学生的发言记录。"
+          title="暂无成员发言"
+          text="当前筛选范围下没有成员的发言记录。"
         />
       </section>
 
@@ -182,7 +182,7 @@ watch([studentModel, knowledgePointModel], async () => {
 })
 
 const studentItems = computed(() => [
-  { title: '全部学生', value: null },
+  { title: '全部成员', value: null },
   ...(learningFilters.value?.students ?? []).map((student) => ({ title: student.name, value: student.handle })),
 ])
 
@@ -195,8 +195,8 @@ const summary = computed(() => {
   if (!learningFilters.value) return ''
 
   return [
-    `可查看的学生项目 ${formatCount(learningFilters.value.projectCount)} 个`,
-    `学生 ${formatCount(learningFilters.value.students.length)} 人`,
+    `可查看的成员项目 ${formatCount(learningFilters.value.projectCount)} 个`,
+    `成员 ${formatCount(learningFilters.value.students.length)} 人`,
     `发言 ${formatCount(questions.value.length)} 条`,
     `共性卡点 ${formatCount(queues.value?.stuckPoints.length ?? 0)} 个`,
   ].join(' · ')
@@ -231,7 +231,7 @@ const loadQuestions = async () => {
     questions.value = data.questions
   } catch (error) {
     console.error('load learning questions failed', error)
-    toast.error('加载学生发言失败')
+    toast.error('加载成员发言失败')
   }
 }
 

@@ -936,7 +936,7 @@ class TaskSubmissionService:
         """一整门课的提交，按板子取一次（课程的「作业与验收」用）。
 
         每一行在 ``list_submissions`` 那份 DTO 之上多带三样：``taskId``（哪道
-        作业）、``taskTitle``（那道题叫什么，教师看的是「谁的哪份作业」）、
+        作业）、``taskTitle``（那道题叫什么，管理员看的是「谁的哪份作业」）、
         ``participantId``（报名记录 id，前端拿它去调提交与评审那几条既有接口）。
         """
         rows = await self._submission_repo.list_for_space(

@@ -26,7 +26,7 @@ export interface SpaceAnalyticsQueryState {
   participationApproved?: AnalyticsApproveFilter
   completionStatus?: AnalyticsCompletionStatus
   realName: AnalyticsRealNameFilter
-  /** 学习那一格独有: 学生的 handle。 */
+  /** 学习那一格独有: 成员的 handle。 */
   student?: string
   /** 学习那一格独有: 知识点（今天就是课程分类的 id）。 */
   knowledgePoint?: number
@@ -139,7 +139,7 @@ const withScopeParams = (filters: SpaceAnalyticsQueryState): AnalyticsApiParams 
   ...(filters.taskApproved && filters.taskApproved !== 'ALL' ? { taskApproved: filters.taskApproved } : {}),
 })
 
-/** 学习那一格的时间 / 学生范围。队列不认知识点，所以它单独来一份。 */
+/** 学习那一格的时间 / 成员范围。队列不认知识点，所以它单独来一份。 */
 export const buildLearningQueueParams = (filters: SpaceAnalyticsQueryState): AnalyticsApiParams => ({
   from: startOfUtcDayTimestamp(filters.from),
   to: endOfUtcDayTimestamp(filters.to),
@@ -154,8 +154,8 @@ export const buildAnalyticsApiParams = (
     return {}
   }
 
-  // 学习这一格读的是学生项目里的对话，不认分类 / 题目审批状态，所以只带时间与
-  // 学生、知识点三维 —— 后两维是它自己的。
+  // 学习这一格读的是成员项目里的对话，不认分类 / 题目审批状态，所以只带时间与
+  // 成员、知识点三维 —— 后两维是它自己的。
   if (section === 'learning') {
     return {
       ...buildLearningQueueParams(filters),

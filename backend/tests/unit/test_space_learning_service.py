@@ -1,4 +1,4 @@
-"""教师看板 · 学习这一格：谁能看、卡在哪、提纲从哪几条拼出来。
+"""管理员看板 · 学习这一格：谁能看、卡在哪、提纲从哪几条拼出来。
 
 这一格读的是对话，所以有一套自己的判据：每个项目逐条过 ``may_read_project``。
 测试把「课程 → 项目」那条路和那道门都换成假的（``_service``），剩下被测的是这一格
@@ -222,7 +222,7 @@ def _service(
 ) -> SpaceLearningService:
     """把「课程 → 项目」那条路和逐项目的门都换成假的。
 
-    ``readable`` 省掉就是全都读得了；给了就是「只有这些读得了」—— 页面上的学生
+    ``readable`` 省掉就是全都读得了；给了就是「只有这些读得了」—— 页面上的成员
     名单、队列、提纲三处都该跟着它一起缩。
     """
     ids = list(
@@ -333,9 +333,9 @@ async def test_queues_report_the_review_flag_signal_as_absent(monkeypatch):
 
 @pytest.mark.anyio
 async def test_queues_count_students_not_questions(monkeypatch):
-    """「多少人撞上」才是共性 —— 一个学生问十遍不如两个学生各问一遍。"""
+    """「多少人撞上」才是共性 —— 一个成员问十遍不如两个成员各问一遍。"""
     # 知识点读的是**项目**挂的那道赛题的课程分类（见模块说明：今天没有更细的一维），
-    # 学生就是项目的主人 —— 所以「两个学生撞上同一处」是**两个项目**归到同一个分类，
+    # 成员就是项目的主人 —— 所以「两个成员撞上同一处」是**两个项目**归到同一个分类，
     # 不是两个人的发言进了同一个房间。
     alice = project("Alice 的作业", "alice", 1)
     bob = project("Bob 的作业", "bob", 2)
@@ -667,12 +667,12 @@ async def test_outline_of_nothing_is_empty_not_an_error(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 学生的发言是哪几条 —— 假 session 判不了，编译出来看
+# 成员的发言是哪几条 —— 假 session 判不了，编译出来看
 # ---------------------------------------------------------------------------
 
 
 class TestStudentQuestionQuery:
-    """一条学生发言的判据：参与者写的、不是芝士写的、而且不在私聊里。"""
+    """一条成员发言的判据：参与者写的、不是芝士写的、而且不在私聊里。"""
 
     def _sql(self, **kwargs) -> str:
         kwargs.setdefault("from_dt", None)

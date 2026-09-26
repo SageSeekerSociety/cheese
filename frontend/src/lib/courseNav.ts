@@ -7,7 +7,7 @@
  * 默认分组声明的壳是课程壳（服务端算好，随 `Space.isCourse` 下来，见
  * `backend/app/domain/shell/catalog.py` 的 `is_course_shell`）。
  *
- * **教师 = 本版管理员**（#1450 定的）：`space.admins` 里那个人就是「谁在教这门
+ * **「谁在教这门课」= 本版管理员**（#1450 定的）：`space.admins` 里那个人是那个
  * 课」，名单是后端从 `space_admin_relation` 发下来的。这里不新造角色字段，也不
  * 自己再判一次权限 —— 屏上露哪几格跟着这份名单走，接口那一侧另有它自己的守卫。
  *
@@ -28,11 +28,11 @@ export interface CourseNavCell {
 }
 
 /**
- * 老师（本版管理员）看到的格：这门课现在有什么在等我。
+ * 管理员看到的格：这门课现在有什么在等我。
  *
  * 「设置」不在这里 —— 它不是一个页面，是那一整块现成的管理格（审核 / 模板 /
  * 分析 / 分类 / 邀请码），`SpaceSidebar` 照原样在它下面画。小测也不在这里：
- * 学生是从**这一周**进去答的（那一屏属于教学单元），不是一个常驻的格子。
+ * 成员是从**这一周**进去答的（那一屏属于教学单元），不是一个常驻的格子。
  */
 export const COURSE_TEACHER_CELLS: readonly CourseNavCell[] = [
   { route: 'SpacesCourseHome', icon: 'mdi-view-dashboard-outline', label: 'spaces.course.nav.overview' },
@@ -57,7 +57,7 @@ export const COURSE_TEACHER_CELLS: readonly CourseNavCell[] = [
   },
 ]
 
-/** 学生看到的格：我这门课要做什么。没有题目、没有报名、没有算力。 */
+/** 成员看到的格：我这门课要做什么。没有题目、没有报名、没有算力。 */
 export const COURSE_STUDENT_CELLS: readonly CourseNavCell[] = [
   { route: 'SpacesCourseHome', icon: 'mdi-school-outline', label: 'spaces.course.nav.myCourse' },
   {
@@ -154,7 +154,7 @@ export function spaceEntryRoute(space: { id: number }): {
   }
 }
 
-/** 这块板对这个人是不是「老师视角」。名单来自服务端，别在前端另判一次权限。 */
+/** 这块板对这个人是不是「管理员视角」。名单来自服务端，别在前端另判一次权限。 */
 export function isCourseTeacher(adminUserIds: readonly number[], userId: number | undefined): boolean {
   return userId !== undefined && adminUserIds.includes(userId)
 }

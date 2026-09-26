@@ -18,8 +18,8 @@ describe('courseNav', () => {
   })
 
   it('keeps the teacher-only cells out of the student sidebar', () => {
-    // 哪个学生都不该在侧栏看到「学生与分组」「共性问题」这些格：露出来就是把人送
-    // 到一串 403 上。教师那几格里至少这几个是学生不能有的。
+    // 哪个成员都不该在侧栏看到「成员与分组」「共性问题」这些格：露出来就是把人送
+    // 到一串 403 上。管理员那几格里至少这几个是成员不能有的。
     const studentRoutes = COURSE_STUDENT_CELLS.map((cell) => cell.route)
     expect(studentRoutes).not.toContain('SpacesCoursePeople')
     expect(studentRoutes).not.toContain('SpacesDetailAnalyticsLearning')
@@ -32,7 +32,7 @@ describe('courseNav', () => {
   })
 
   it('names the same route twice for the two meanings of one page', () => {
-    // 学生的「本周任务」和老师的「作业与验收」是同一条路由（`course/assignments`），
+    // 成员的「本周任务」和管理员的「作业与验收」是同一条路由（`course/assignments`），
     // 只是两边叫法不同 —— 所以它必须同时出现在两份清单里，且 label 不同。
     const student = COURSE_STUDENT_CELLS.find((cell) => cell.route === 'SpacesCourseAssignments')
     const teacher = COURSE_TEACHER_CELLS.find((cell) => cell.route === 'SpacesCourseAssignments')

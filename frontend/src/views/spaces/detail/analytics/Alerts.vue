@@ -104,7 +104,7 @@ const alertCards = computed(() => [
     hint: '后端阈值：7 天',
   },
   {
-    label: '长期不活跃老师',
+    label: '长期不活跃出题人',
     value: formatCount(alerts.value?.inactivePublisherCount),
     hint: '后端阈值：30 天',
   },
