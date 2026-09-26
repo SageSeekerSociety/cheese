@@ -14,6 +14,7 @@ import base64
 import hashlib
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,7 @@ from app.domain.agent.harness.channel import (
     Placement,
     ScreenSetupError,
 )
+from app.domain.agent.harness.claude_code.runner import LAUNCH, ended
 from app.domain.agent.harness.claude_code.runtime import Handle
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
@@ -45,7 +47,8 @@ logger = logging.getLogger(__name__)
 # running, while the runner binds its socket only after the launcher has
 # prepared the session (the executor's view of the project is mounted first),
 # so a cold room's first question often arrives before there is anything to
-# answer it.
+# answer it. A runner that has already ended says so in its log, and the wait
+# stops there.
 STARTUP_WAIT_S = 120.0
 STARTUP_POLL_S = 1.0
 
@@ -92,6 +95,7 @@ class ClaudeCodeChannel:
             agent_handle=agent,
         )
         placed: dict = {}
+        launch = uuid.uuid4().hex
 
         def runtime(resource) -> dict:
             placed.update(
@@ -107,7 +111,7 @@ class ClaudeCodeChannel:
         screen = await self.channel.ensure_ready(
             session=session,
             token=token,
-            env=opening.env,
+            env={**(opening.env or {}), LAUNCH: launch},
             memory_scope=opening.memory_scope,
             owner=opening.owner,
             turn_id=None,
@@ -119,7 +123,7 @@ class ClaudeCodeChannel:
             precheck=precheck,
             runtime_factory=runtime,
         )
-        status = await self._greet(screen.device_id, placed["state"])
+        status = await self._greet(screen.device_id, placed["state"], launch)
         return Handle(
             session,
             screen.device_id,
@@ -129,12 +133,14 @@ class ClaudeCodeChannel:
             self._mirror(session, placed["resource"] + agent),
         )
 
-    async def _greet(self, device_id: str, state: str) -> dict:
+    async def _greet(self, device_id: str, state: str, launch: str) -> dict:
         """The first call into a runner that may still be starting.
 
-        A refused socket is retried, not reported. Only a window that runs out
-        means the session is not coming: at that point the machine's own record
-        of why travels back with the refusal (``_why``).
+        A refused socket is retried while the runner may still be on its way,
+        and reported as soon as its log says this launch has ended: the socket
+        went with it, and nothing will answer however long the room waits.
+        Past the window with no such record, the session is not coming either,
+        and whatever the log last said travels back with the refusal.
         """
         deadline = time.monotonic() + STARTUP_WAIT_S
         while True:
@@ -152,15 +158,39 @@ class ClaudeCodeChannel:
                 # arrive as HTTP errors; whatever shape it takes, a ping that
                 # does not come back means the session cannot be reached yet.
                 failure = exc
-            if time.monotonic() >= deadline:
-                raise ScreenSetupError(
-                    "Claude Code 会话进程没有起来："
-                    + await self._why(device_id, state, failure)
-                )
+            reason = await self._ended(device_id, state, launch)
+            if not reason and time.monotonic() >= deadline:
+                reason = await self._why(device_id, state, failure)
+            if reason:
+                raise ScreenSetupError("Claude Code 会话进程没有起来：" + reason)
             await asyncio.sleep(STARTUP_POLL_S)
 
+    async def _ended(self, device_id: str, state: str, launch: str) -> str:
+        """What this launch's runner wrote on ending, or nothing yet.
+
+        The log is appended across launches, and an earlier launch's ending
+        says nothing about this one, so only the part from this launch's own
+        record on is read.
+        """
+        try:
+            result = await self.channel._hub.exec(
+                device_id,
+                [
+                    "sh",
+                    "-c",
+                    f'sed -n "/{ended(launch)}/,\\$p" "{state}/runner.log" '
+                    "2>/dev/null | tail -c 1200",
+                ],
+                timeout=15,
+            )
+        except Exception:  # noqa: BLE001 — a failed read is not the runner's ending
+            return ""
+        return (result.get("stdout") or "").strip()
+
     async def _why(self, device_id: str, state: str, failure: Exception) -> str:
-        """The runner's last words, when we have them."""
+        """The log's last words, when the window ran out with no record of
+        this launch ending: a runner that died before it could name its
+        launch still left a traceback there."""
         try:
             result = await self.channel._hub.exec(
                 device_id,
