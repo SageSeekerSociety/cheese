@@ -1131,7 +1131,7 @@ class TopicService:
         return await self._blocks.doc_root(place.room_id)
 
     async def get_progress(
-        self, topic_id: uuid.UUID
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
     ) -> tuple[list[dict], datetime | None]:
         """进度层 (#187): the checklist this topic's work left behind.
 
@@ -1140,7 +1140,9 @@ class TopicService:
         the caller handle a null row buys nothing.
         """
         place = await self.place_or_404(topic_id)
-        row = await TopicProgressRepository(self._session).get(place.room_id)
+        row = await TopicProgressRepository(self._session).get(
+            place.room_id, task_id=task_id
+        )
         if row is None:
             return [], None
         return [dict(item) for item in row.items], row.updated_at

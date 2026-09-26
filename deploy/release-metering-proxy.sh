@@ -27,6 +27,10 @@ working_dir="$(docker inspect cheese-metering-proxy --format '{{index .Config.La
   echo 'Existing metering proxy project or working directory differs from the configured target.' >&2
   exit 1
 }
+# The operator's login tool runs on this box, next to the credential it
+# writes. Installed before the unchanged-image exit below, so a release that
+# changes only the tool still delivers it.
+install -m 0755 "$here/metering-proxy/claude-login.sh" "$proxy_home/claude-login.sh"
 current_image="$(docker inspect cheese-metering-proxy --format '{{.Config.Image}}')"
 current_health="$(docker inspect cheese-metering-proxy --format '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}')"
 # Promoted tags can resolve to the running digest; keep its active streams intact.

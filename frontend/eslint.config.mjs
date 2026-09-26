@@ -18,7 +18,7 @@ export default [
   },
   {
     ignores: [
-      // 用户说明书的构建产物 (docs/manual → public/docs)。public/ 是 Vite 原样
+      // 文档站的构建产物 (docs/site → public/docs)。public/ 是 Vite 原样
       // 搬进 dist 的目录，所以文档站的 JS 会落在这个仓库里 —— 它不是我们写的
       // 代码，扫它只会得到八百条别人框架的报错。
       'public/docs/**',

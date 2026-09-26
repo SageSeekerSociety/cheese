@@ -21,6 +21,7 @@
   "workspace": "Workspace",
   "feedback": {
     "label": "Help and feedback",
+    "docs": "Docs",
     "unread": "Help and feedback, unread updates",
     "center": "Feedback center",
     "mine": "My feedback",

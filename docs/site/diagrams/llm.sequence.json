@@ -1,0 +1,201 @@
+{
+ "schema_version": 1,
+ "diagram_type": "sequence",
+ "meta": {
+  "title": "模型调用流程",
+  "subtitle": "每个请求先问准入，再按绑定的模型走订阅路或网关路",
+  "locale": "zh-CN",
+  "viewBox": [
+   1040,
+   816
+  ],
+  "animation": "trace",
+  "visual_preset": "signal-flow",
+  "quality_profile": "showcase",
+  "column_fit": "spread",
+  "views": [
+   {
+    "id": "admission",
+    "label": "准入",
+    "focus": [
+     "session",
+     "meter",
+     "api"
+    ],
+    "note": "计量代理转发前先问主 API：能不能跑、走哪条路、用哪个模型名。"
+   },
+   {
+    "id": "routes",
+    "label": "两条路",
+    "focus": [
+     "meter",
+     "gateway",
+     "vendor"
+    ],
+    "note": "订阅路原样转发；网关路换上项目虚拟 key。"
+   }
+  ]
+ },
+ "participants": [
+  {
+   "id": "session",
+   "type": "backend",
+   "label": "骨架会话",
+   "sublabel": "Claude Code"
+  },
+  {
+   "id": "meter",
+   "type": "security",
+   "label": "计量代理",
+   "sublabel": ":443 · :8444"
+  },
+  {
+   "id": "api",
+   "type": "backend",
+   "label": "主 API",
+   "sublabel": "/llm/admission"
+  },
+  {
+   "id": "gateway",
+   "type": "backend",
+   "label": "LiteLLM 网关",
+   "sublabel": "按 key 记账"
+  },
+  {
+   "id": "vendor",
+   "type": "external",
+   "label": "模型厂商",
+   "sublabel": "上游"
+  }
+ ],
+ "segments": [
+  {
+   "from": 170,
+   "to": 302,
+   "label": "准入"
+  },
+  {
+   "from": 326,
+   "to": 414,
+   "label": "订阅路"
+  },
+  {
+   "from": 438,
+   "to": 614,
+   "label": "网关路"
+  },
+  {
+   "from": 638,
+   "to": 726,
+   "label": "回到会话"
+  }
+ ],
+ "messages": [
+  {
+   "from": "session",
+   "to": "meter",
+   "y": 196,
+   "label": "POST /v1/messages（占位凭证）",
+   "variant": "emphasis"
+  },
+  {
+   "from": "meter",
+   "to": "api",
+   "y": 240,
+   "label": "准入：沙盒短期令牌",
+   "variant": "security"
+  },
+  {
+   "from": "api",
+   "to": "meter",
+   "y": 284,
+   "label": "allow + supply（pool · model · key）",
+   "variant": "return"
+  },
+  {
+   "from": "meter",
+   "to": "vendor",
+   "y": 352,
+   "label": "换上订阅凭证，其余字节不改",
+   "variant": "emphasis"
+  },
+  {
+   "from": "vendor",
+   "to": "meter",
+   "y": 396,
+   "label": "流式响应",
+   "variant": "return"
+  },
+  {
+   "from": "meter",
+   "to": "gateway",
+   "y": 464,
+   "label": "改写模型名，换上项目虚拟 key",
+   "variant": "emphasis"
+  },
+  {
+   "from": "gateway",
+   "to": "vendor",
+   "y": 508,
+   "label": "超 max_budget 即拒绝",
+   "variant": "security"
+  },
+  {
+   "from": "vendor",
+   "to": "gateway",
+   "y": 552,
+   "label": "tokens",
+   "variant": "return"
+  },
+  {
+   "from": "gateway",
+   "to": "meter",
+   "y": 596,
+   "label": "流式响应",
+   "variant": "return"
+  },
+  {
+   "from": "meter",
+   "to": "session",
+   "y": 664,
+   "label": "原样流回",
+   "variant": "return"
+  },
+  {
+   "from": "api",
+   "to": "session",
+   "y": 708,
+   "label": "额度用完：拒绝并在话题里提示",
+   "variant": "dashed"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "唯一的控制点",
+   "items": [
+    "每个请求现查准入，改绑模型不用重启会话",
+    "绑定解析不出来就拒绝，不悄悄换路",
+    "主 API 不可达时放行，靠代理自己的滚动上限兜底"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "上游 key 不出主机",
+   "items": [
+    "机器上只有自己的短期令牌",
+    "Codex、Pi 走 {平台}/llm/v1，由主 API 换 key",
+    "云机器经模型隧道回到计量代理"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "分身的模型",
+   "items": [
+    "x-cheese-child-model：按指定处理",
+    "只是继承父会话：走默认分身模型",
+    "不在允许范围：拒绝并列出可选模型"
+   ]
+  }
+ ]
+}

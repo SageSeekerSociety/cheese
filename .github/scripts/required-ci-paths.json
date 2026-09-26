@@ -82,5 +82,13 @@
     "backend/sandbox/cheese",
     ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/mcp-contract.yml"
+  ],
+  "docs": [
+    "docs/**",
+    "backend/**",
+    "frontend/**",
+    "deploy/**",
+    "cli/**",
+    ".github/**"
   ]
 }

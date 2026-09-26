@@ -17,8 +17,8 @@ includes:
     taskfile: ./e2e/Taskfile.yml
     dir: ./e2e
   docs:
-    taskfile: ./docs/manual/Taskfile.yml
-    dir: ./docs/manual
+    taskfile: ./docs/site/Taskfile.yml
+    dir: ./docs/site
 
 tasks:
   default:

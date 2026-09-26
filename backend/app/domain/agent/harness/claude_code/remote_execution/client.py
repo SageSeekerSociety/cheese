@@ -1598,7 +1598,9 @@ def transport(config, target_path):
                             if key not in ("id", "session_id")
                         },
                     }
-                elif tool.startswith("cheese_"):
+                elif tool in cheese.PLATFORM_TOOLS:
+                    # Every other row of the table. Membership, not a `cheese_`
+                    # prefix, decides: `todo_write` carries none.
                     payload = {
                         "id": payload["id"],
                         "session_id": payload["session_id"],
@@ -1634,7 +1636,7 @@ def transport(config, target_path):
                     receipt = deliver_send_user_file(
                         client, config, payload, args, invoke_on_the_machine
                     )
-                elif tool.startswith("cheese_"):
+                elif tool != "chat_send" and tool in cheese.PLATFORM_TOOLS:
                     receipt = platform_tool(tool, args, payload["id"])
                 else:
                     receipt = (

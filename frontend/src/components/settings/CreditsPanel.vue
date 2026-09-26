@@ -9,6 +9,8 @@ import type { ProjectCredits } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
 
+import { holdRevealGate } from '@/composables/useRevealGate'
+
 import { getProjectCredits } from '@/api'
 
 const props = defineProps<{ projectId: string }>()
@@ -43,11 +45,13 @@ async function load() {
   }
 }
 
+// 首次取数期间占住设置页的显示闸，见 useRevealGate。
+const releaseGate = holdRevealGate()
 watch(
   () => props.projectId,
   () => {
     credits.value = null
-    void load()
+    void load().finally(releaseGate)
   },
   { immediate: true }
 )

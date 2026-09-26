@@ -1,7 +1,7 @@
 """integrations / mail_drafts —— a person's mailbox and Feishu, lent to projects
 
 Revision ID: 9e4a1c3b7d52
-Revises: d4e7a2c91b35
+Revises: 52b13868b0e8
 """
 
 from collections.abc import Sequence
@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "9e4a1c3b7d52"
-down_revision: str | Sequence[str] | None = "d4e7a2c91b35"
+down_revision: str | Sequence[str] | None = "52b13868b0e8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

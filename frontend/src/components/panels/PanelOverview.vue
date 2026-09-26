@@ -10,12 +10,16 @@
 // 链接 —— 而不是「跳到一个新地点」：一件活不是地点。
 import type { Topic } from '../../cx_types'
 
-import { ref } from 'vue'
+import { defineAsyncComponent, ref } from 'vue'
 
 import PanelCard from './PanelCard.vue'
-import PanelDoc from './PanelDoc.vue'
 import PanelProgress from './PanelProgress.vue'
 import TaskProgress from './TaskProgress.vue'
+
+// 文档那一格带着整个编辑器（tiptap + ProseMirror + 代码高亮，约 250 KB gzip），
+// 静态引入的话打开一个房间要先把它下完、解析完，左边的消息才画得出来。它在这一列
+// 的最底下，晚一点到不会把别的东西往下推。
+const PanelDoc = defineAsyncComponent(() => import('./PanelDoc.vue'))
 
 const props = withDefaults(
   defineProps<{
@@ -41,7 +45,7 @@ const emit = defineEmits<{
   (e: 'open-file', path: string): void
 }>()
 
-const docRef = ref<InstanceType<typeof PanelDoc> | null>(null)
+const docRef = ref<{ pulse: () => void; highlightTurn: (turnId: string) => void } | null>(null)
 
 // 文档那一半的外部接口原样透出去 —— WorkPanel 拿着 ref 调它们（<&path> 芯片、
 // 高亮某一轮），合并 tab 不该让这些线断掉。

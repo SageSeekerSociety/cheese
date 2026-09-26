@@ -1123,6 +1123,56 @@ def test_a_streamed_message_is_metered_through_the_response_tee(monkeypatch, tmp
     assert mod.METER.used() == 100  # 10 input + 90 output
 
 
+def test_a_compressed_streamed_message_is_metered(monkeypatch, tmp_path):
+    """Anthropic gzips the SSE of a client that accepts it, as Claude Code does.
+    The client still gets the compressed bytes untouched, and the turn still
+    lands on the meter."""
+    import gzip
+
+    mod = _load_addon(monkeypatch, tmp_path)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.response = _make_response()
+    flow.response.headers["content-encoding"] = "gzip"
+
+    mod.responseheaders(flow)
+
+    body = gzip.compress(
+        b"\n".join(
+            [
+                b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+                b'"usage":{"input_tokens":10,"output_tokens":1}}}',
+                b'data: {"type":"message_delta","usage":{"output_tokens":90}}',
+                b"",
+            ]
+        )
+    )
+    for i in range(0, len(body), 7):
+        chunk = body[i : i + 7]
+        assert flow.response.stream(chunk) == chunk
+    flow.response.stream(b"")
+
+    assert mod.METER.used() == 100
+
+
+def test_a_message_response_with_no_readable_usage_is_reported(
+    monkeypatch, tmp_path, caplog
+):
+    mod = _load_addon(monkeypatch, tmp_path)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.response = _make_response()
+    flow.response.headers["content-encoding"] = "compress"
+
+    mod.responseheaders(flow)
+    flow.response.stream(b"\x1f\x9d whatever")
+    with caplog.at_level("WARNING"):
+        flow.response.stream(b"")
+
+    assert mod.METER.used() == 0
+    assert "not metered" in caplog.text
+
+
 def test_a_non_message_response_streams_without_metering(monkeypatch, tmp_path):
     """Everything that is not a metered message turn still streams (so nothing
     is buffered) but must not touch the meter."""
