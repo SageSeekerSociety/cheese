@@ -62,6 +62,8 @@ from app.domain.agent.platform_failures import (
     classify_platform_failure,
 )
 from app.domain.agent.platform_notices import (
+    EVENT_API_RETRY,
+    EVENT_DEVICE_WAITING,
     EVENT_PROMPT_REPLAYED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
@@ -78,6 +80,7 @@ from app.domain.agent.service import (
     AgentEvent,
     AgentMessage,
     AgentResult,
+    AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
     AgentSubagentStart,
@@ -194,21 +197,10 @@ class _HookWorkState:
     # then left alone for the remaining two hours and fifty minutes. The room
     # showing nothing for that long is the complaint this reminder exists for.
     last_progress_reminder_at: datetime | None = None
-    todo: list[dict] = field(default_factory=list)
-    #: 每个分身自己那份清单，按它做的那条活分开。Claude Code 的任务编号是**每个
-    #: agent 各数各的**，都从 1 开始，所以几份清单混进一个 list 里不只是看着乱：
-    #: 分身的 `TaskUpdate("1")` 会去勾掉房间自己的第一条。
-    worker_todo: dict[str, list[dict]] = field(default_factory=dict)
     #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。失败的结果
     #: 回来时要标的就是那一块。只在内存里、只活这一轮：成功的调用（绝大多数）因此
     #: 一个字节都不必落库，而重启丢掉的只是几个红点，不是记录。
     steps: dict[str, uuid.UUID] = field(default_factory=dict)
-
-    def todo_of(self, work_id: uuid.UUID | None) -> list[dict]:
-        """这条事件该记进谁的清单。None = 房间自己的。"""
-        if work_id is None:
-            return self.todo
-        return self.worker_todo.setdefault(str(work_id), [])
 
     # The topic branch's commits as of turn start — what makes "this turn's
     # changes" answerable at turn end. A task rather than a value, because the
@@ -397,9 +389,11 @@ _PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
 #: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
 #: 色的点 —— 而那只是读了一个文件。
 _NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
-#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 是系统提示每一轮都在点名、于是
-#: extension 额外注册的别名；另外两个是平台自己的 MCP 工具。
-_PLATFORM_ALIASES = frozenset({"chat_send", "platform_request", "send_user_file"})
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 和 `todo_write` 是系统提示点名
+#: 的两样，名字照模型已经认得的说法起；另外两个是平台自己的 MCP 工具。
+_PLATFORM_ALIASES = frozenset(
+    {"chat_send", "todo_write", "platform_request", "send_user_file"}
+)
 
 #: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
 #: 服务器改名那一天这里会静态地失效，而失效的样子和时间线正常的样子一模一样。
@@ -594,37 +588,10 @@ def _change_summary_meta(changeset: _Changeset) -> dict:
     }
 
 
-# Claude Code's structured Task tools → a live working-log todo (§3.1.1). These
-# are the *process* (rendered as a checklist in the in-progress message), so they
-# are streamed live but NOT persisted as 现场 events.
-_TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}
-
 #: How many sessions' supply routes to remember. Well past the number of screens
 #: one backend drives at once, so in practice nothing is ever evicted; it is a
 #: ceiling on a dict nothing else prunes, not a policy.
 _SESSION_ROUTES_KEPT = 512
-
-
-def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
-    """Fold a TaskCreate/TaskUpdate event into the todo list. Returns whether the
-    list changed (ids are assigned by creation order, matching the model)."""
-    if name == "TaskCreate":
-        todo.append(
-            {
-                "id": str(len(todo) + 1),
-                "subject": str(args.get("subject", "")).strip() or "（任务）",
-                "status": "pending",
-            }
-        )
-        return True
-    if name == "TaskUpdate":
-        tid = str(args.get("taskId", ""))
-        status = str(args.get("status", "")) or "pending"
-        for item in todo:
-            if item["id"] == tid:
-                item["status"] = status
-                return True
-    return False
 
 
 # A platform tool → the action card 芝士 files for it when it calls it
@@ -858,8 +825,8 @@ def _progress_lines(items: list[dict]) -> list[str]:
     TopicProgress's docstring for why the two must not be merged.
 
     The instruction to re-list finished items when building a new checklist is
-    load-bearing: the stored row is overwritten by the next turn's first
-    TaskCreate, so a plan that silently drops what is already done would erase it.
+    load-bearing: `todo_write` replaces the stored row whole, so a plan that
+    silently drops what is already done would erase it.
     """
     if not items:
         return []
@@ -869,8 +836,9 @@ def _progress_lines(items: list[dict]) -> list[str]:
         subject = str(item.get("subject", "")).strip() or "（任务）"
         lines.append(f"    - [{mark}] {subject}")
     lines.append(
-        "  已完成的别重做，接着没做完的往下干。**重新建清单时把已完成的也列进去"
-        "并标成 completed**——清单会覆盖上面这份，只列剩下的等于把做过的抹掉。"
+        "  已完成的别重做，接着没做完的往下干。**用 `todo_write` 重新写清单时把已完成"
+        "的也列进去并标成 completed**——清单会整份覆盖上面这份，只列剩下的等于把做过"
+        "的抹掉。"
     )
     return lines
 
@@ -1251,6 +1219,7 @@ class ChatService:
         self._compute.bind_events(self._consume_hook_event, self._set_hook_activity)
         self._compute.bind_receipts(self.confirm_prompt_receipt)
         self._compute.bind_unread_probe(self.oldest_unread_at)
+        self._compute.bind_reachability(self._note_reachability)
         # Mid-turn messages whose write the transport accepted but whose
         # UserPromptSubmit receipt has not arrived yet (#539 decision A):
         # topic → [(injected text, block ids, consuming turn)]. The receipt
@@ -1294,6 +1263,10 @@ class ChatService:
         # message only after the exact UserPromptSubmit receipt.
         self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
+        # The notice each open turn is keeping current: a streak of retries, a
+        # wait for its machine. One line per streak, restated as it moves on.
+        self._retry_notes: dict[uuid.UUID, uuid.UUID] = {}
+        self._waiting_notes: dict[uuid.UUID, uuid.UUID] = {}
         # Which child agents the running sessions say are still doing something,
         # per room. Only the harness's own lifecycle events can answer this:
         # they fire in the session's process and carry the child's id, while
@@ -1749,8 +1722,9 @@ class ChatService:
                         "this turn is still running, call chat_send now with "
                         "what you know so far and what you are waiting on — a "
                         "room that shows nothing cannot be told apart from one "
-                        "that is stuck. Ignore this only if the turn is already "
-                        "finished.",
+                        "that is stuck. If your plan has changed, also update "
+                        "it with todo_write. Ignore this only if the turn is "
+                        "already finished.",
                     )
                 # THAT a reminder fired was already visible — the periodic
                 # loop logs `chat progress reminder: <count>` on any cycle whose
@@ -2574,6 +2548,12 @@ class ChatService:
         # the room's channel: the block lands in the thread, so a live watcher
         # would see an event that a reload then moves somewhere else.
         channel = str(task_id) if task_id is not None else str(topic_id)
+        if not isinstance(event, AgentRetrying):
+            # Anything else the turn does ends a streak of retries: the request
+            # went through. The next retry is news of its own.
+            self._retry_notes.pop(turn_id, None)
+        if isinstance(event, AgentResult):
+            self._waiting_notes.pop(turn_id, None)
         if isinstance(event, AgentSessionInfo):
             self._note_room_session(topic_id, event.session_id)
             await self._save_session_pointer(
@@ -2622,45 +2602,43 @@ class ChatService:
         elif isinstance(event, AgentToolUse):
             name = _short_tool_name(event.name)
             args = event.input or {}
-            if state is not None and name in _TASK_TOOLS:
-                # 清单跟着做事的人走。一个分身的清单是它自己的计划，编号也是它
-                # 自己从 1 数的 —— 记进房间那份，房间的清单会被别人的进度改写。
-                todo = state.todo_of(task_id)
-                if _apply_task_event(todo, name, args):
-                    await self._persist_progress(
-                        topic_id, todo, turn_id, task_id=task_id
-                    )
-                    frame = {
-                        "type": "todo",
-                        "items": [dict(item) for item in todo],
-                    }
-            elif name not in _TASK_TOOLS:
-                payload = await self._persist_tool_event(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    name=name,
-                    tool_input=args,
-                    platform=_is_platform_tool(event.name, args),
-                    turn_id=turn_id,
-                    eid=eid or event.eid,
-                    platform_unsolicited=platform_unsolicited,
-                    task_id=task_id,
-                )
-                if payload is not None:
-                    frame = {"type": "event_block", "block": payload}
-                    if state is not None and event.call_id:
-                        state.steps[event.call_id] = uuid.UUID(payload["id"])
-                resource = _TOOL_ACTION.get(name)
-                if state is not None and resource is not None:
-                    await self._announce_action(state, resource)
+            payload = await self._persist_tool_event(
+                project_id=project_id,
+                topic_id=topic_id,
+                name=name,
+                tool_input=args,
+                platform=_is_platform_tool(event.name, args),
+                turn_id=turn_id,
+                eid=eid or event.eid,
+                platform_unsolicited=platform_unsolicited,
+                task_id=task_id,
+            )
+            if payload is not None:
+                frame = {"type": "event_block", "block": payload}
+                if state is not None and event.call_id:
+                    state.steps[event.call_id] = uuid.UUID(payload["id"])
+            resource = _TOOL_ACTION.get(name)
+            if state is not None and resource is not None:
+                await self._announce_action(state, resource)
         elif isinstance(event, AgentStepFailed):
-            # No frame: 现场 rebuilds its timeline when the tab is opened, and
-            # this changes a line that is already in it rather than adding one.
-            # A step whose call we never saw (a restart mid-turn) is simply not
-            # marked — the timeline is still true, just less helpful.
+            # It changes a line that is already on the timeline rather than
+            # adding one, so it goes out as that line, restated. A step whose
+            # call we never saw (a restart mid-turn) is simply not marked — the
+            # timeline is still true, just less helpful.
             block_id = state.steps.get(event.call_id) if state is not None else None
             if block_id is not None:
-                await self._mark_step_failed(block_id, event.text)
+                payload = await self._mark_step_failed(block_id, event.text)
+                if payload is not None:
+                    frame = {"type": "block_updated", "block": payload}
+        elif isinstance(event, AgentRetrying):
+            await self._note_retry(
+                topic_id,
+                turn_id,
+                event,
+                author=state.acting_agent if state is not None else None,
+                task_id=task_id,
+                channel=channel,
+            )
         elif isinstance(event, AgentToolResult):
             payload = await self._persist_subagent_result(
                 project_id=project_id,
@@ -2746,7 +2724,7 @@ class ChatService:
                     frame = {"type": "event_block", "block": payload}
         if frame is not None:
             await broker.publish(channel, frame)
-            if frame["type"] in ("assistant_block", "event_block", "todo"):
+            if frame["type"] in ("assistant_block", "event_block"):
                 get_work_runner().note_session_output(
                     turn_id, tool=isinstance(event, AgentToolUse)
                 )
@@ -3607,33 +3585,6 @@ class ChatService:
                 state.last_progress_reminder_at = None
         return payload
 
-    async def _persist_progress(
-        self,
-        topic_id: uuid.UUID,
-        items: list[dict],
-        turn_id: uuid.UUID | None,
-        *,
-        task_id: uuid.UUID | None = None,
-    ) -> None:
-        """Write the topic's checklist through to storage (进度层, #187).
-
-        Best-effort on purpose: progress is a convenience for the NEXT turn, so a
-        storage hiccup must never take down the turn that is currently producing
-        real work. Same commit-now contract as _persist_tool_event — batching to
-        turn end would lose exactly the case this exists for (the turn dies)."""
-        try:
-            async with self._sessions() as session:
-                # The checklist belongs to whoever is working, not to the room
-                # it hangs in — two 分身 in one room keep two lists, each
-                # numbered from 1, and one shared list would have them ticking
-                # each other's items.
-                await TopicProgressRepository(session).save(
-                    topic_id, items, task_id=task_id, turn_id=turn_id
-                )
-                await session.commit()
-        except Exception:  # noqa: BLE001 — never fail a turn over its checklist
-            logger.warning("progress persist failed for topic %s", topic_id)
-
     async def _persist_tool_event(
         self,
         *,
@@ -3672,14 +3623,182 @@ class ChatService:
             task_id=task_id,
         )
 
-    async def _mark_step_failed(self, block_id: uuid.UUID, error: str) -> None:
-        """Stamp a 现场 step as failed. Never fails a turn over a red dot."""
+    async def _mark_step_failed(self, block_id: uuid.UUID, error: str) -> dict | None:
+        """Stamp a 现场 step as failed, and hand back the step as it now reads.
+        Never fails a turn over a red dot."""
         try:
             async with self._sessions() as session:
-                await BlockRepository(session).mark_step_failed(block_id, error)
+                block = await BlockRepository(session).mark_step_failed(block_id, error)
+                payload = (
+                    _block_payload(BlockOut.model_validate(block))
+                    if block is not None
+                    else None
+                )
                 await session.commit()
+            return payload
         except Exception:  # noqa: BLE001 — a step's verdict is not worth a turn
             logger.warning("could not mark step %s failed", block_id)
+            return None
+
+    async def _note_retry(
+        self,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        event: AgentRetrying,
+        *,
+        author: str | None,
+        task_id: uuid.UUID | None,
+        channel: str,
+    ) -> None:
+        """Say the turn is retrying a failed request, on one line per streak.
+
+        The first retry of a streak lands a notice; every later one restates
+        that same line with the new count, so ten retries read as one line that
+        says 10 rather than ten lines. Not session output (`note_session_output`
+        is not told): nothing the session produced crossed here."""
+        count = (
+            f"{event.attempt}/{event.max_attempts}"
+            if event.attempt and event.max_attempts
+            else str(event.attempt or "")
+        )
+        content = "AI 服务请求失败，正在重试" + (f"（第 {count} 次）" if count else "")
+        said = " ".join(
+            part
+            for part in (
+                event.error,
+                f"HTTP {event.status}" if event.status is not None else "",
+            )
+            if part
+        )
+        meta = {
+            **notice(
+                EVENT_API_RETRY,
+                severity=SEVERITY_WARN,
+                who=WHO_PLATFORM,
+                detail=said or None,
+                detail_label="服务原话" if said else None,
+            ),
+            "attempt": event.attempt,
+            "max_attempts": event.max_attempts,
+            "delay_ms": event.delay_ms,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        await self._keep_note(
+            self._retry_notes,
+            topic_id,
+            turn_id,
+            content,
+            meta,
+            author=author,
+            task_id=task_id,
+            channel=channel,
+        )
+
+    async def _note_reachability(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        work_id: uuid.UUID,
+        reachable: bool,
+        reason: str,
+    ) -> None:
+        """Say the turn is waiting for its machine, and later that the wait is
+        over — the same line both times."""
+        del project_id
+        if reachable:
+            block_id = self._waiting_notes.pop(work_id, None)
+            if block_id is None:
+                return
+            await self._restate_note(
+                block_id,
+                "机器已恢复连接",
+                {"state": "over", "at": datetime.now(UTC).isoformat()},
+                str(topic_id),
+            )
+            return
+        state = self._hook_work.get((topic_id, work_id))
+        meta = {
+            **notice(
+                EVENT_DEVICE_WAITING,
+                severity=SEVERITY_WARN,
+                who=WHO_PLATFORM,
+                detail=reason or None,
+                detail_label="原因" if reason else None,
+            ),
+            "state": "waiting",
+            "at": datetime.now(UTC).isoformat(),
+        }
+        await self._keep_note(
+            self._waiting_notes,
+            topic_id,
+            work_id,
+            "等待机器连接",
+            meta,
+            author=state.acting_agent if state is not None else None,
+            task_id=None,
+            channel=str(topic_id),
+        )
+
+    async def _keep_note(
+        self,
+        notes: dict[uuid.UUID, uuid.UUID],
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        content: str,
+        meta: dict,
+        *,
+        author: str | None,
+        task_id: uuid.UUID | None,
+        channel: str,
+    ) -> None:
+        """Land the turn's notice of this kind, or restate the one it has."""
+        from app.domain.agent.runtime import get_broker
+
+        block_id = notes.get(turn_id)
+        if block_id is not None:
+            await self._restate_note(block_id, content, meta, channel)
+            return
+        try:
+            async with self._sessions() as session:
+                block = await announce(
+                    session,
+                    place_id=topic_id,
+                    content=content,
+                    meta=meta,
+                    # The agent whose turn this is: the notice is about its
+                    # work, and 现场 files it under whoever did the work.
+                    author=author or "system",
+                    turn_id=turn_id,
+                    task_id=task_id,
+                )
+                if block is None:
+                    return
+                payload = _block_payload(BlockOut.model_validate(block))
+                await session.commit()
+        except Exception:  # noqa: BLE001 — a status line is not worth a turn
+            logger.exception("could not note %s for turn %s", content, turn_id)
+            return
+        notes[turn_id] = uuid.UUID(payload["id"])
+        await get_broker().publish(channel, {"type": "event_block", "block": payload})
+
+    async def _restate_note(
+        self, block_id: uuid.UUID, content: str, meta: dict, channel: str
+    ) -> None:
+        from app.domain.agent.runtime import get_broker
+
+        try:
+            async with self._sessions() as session:
+                block = await BlockRepository(session).restate(
+                    block_id, content=content, meta=meta
+                )
+                if block is None:
+                    return
+                payload = _block_payload(BlockOut.model_validate(block))
+                await session.commit()
+        except Exception:  # noqa: BLE001 — a status line is not worth a turn
+            logger.exception("could not restate notice %s", block_id)
+            return
+        await get_broker().publish(channel, {"type": "block_updated", "block": payload})
 
     async def _persist_room_event(
         self,
@@ -5182,12 +5301,9 @@ class ChatService:
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
 
-        # The turn's own checklist starts EMPTY even when prior_progress is not
-        # (see `_HookWorkState.todo`): _apply_task_event numbers items by
-        # position and the agent's Task numbering restarts from 1 on a fresh
-        # session, so seeding it would make the turn's first TaskUpdate("1")
-        # land on a leftover item. The old checklist reaches the agent through
-        # the prompt instead, and the UI through the restored frame here.
+        # The checklist the last turn left behind: the agent reads it in the
+        # prompt, the room gets it here, marked as not this turn's own. This
+        # turn's first `todo_write` replaces it.
         if prior_progress:
             yield {"type": "todo", "items": prior_progress, "restored": True}
         # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything

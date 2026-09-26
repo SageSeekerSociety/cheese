@@ -1,0 +1,193 @@
+{
+ "schema_version": 1,
+ "diagram_type": "sequence",
+ "meta": {
+  "title": "任务 → 分支 → PR → 验收合并",
+  "subtitle": "机器直接推到代码托管，平台只读 CI 结果，采纳时核对显示的那一版",
+  "locale": "zh-CN",
+  "viewBox": [
+   1040,
+   792
+  ],
+  "animation": "trace",
+  "visual_preset": "signal-flow",
+  "quality_profile": "showcase",
+  "column_fit": "spread",
+  "views": [
+   {
+    "id": "open",
+    "label": "开 PR",
+    "focus": [
+     "agent",
+     "forge",
+     "api"
+    ],
+    "note": "任务机器直接推到托管平台，平台发现分支领先后开 draft PR。"
+   },
+   {
+    "id": "accept",
+    "label": "采纳",
+    "focus": [
+     "reviewer",
+     "api",
+     "forge"
+    ],
+    "note": "采纳时核对显示的那一版，再调用托管平台的合并接口。"
+   }
+  ]
+ },
+ "participants": [
+  {
+   "id": "agent",
+   "type": "cloud",
+   "label": "芝士",
+   "sublabel": "任务机器"
+  },
+  {
+   "id": "forge",
+   "type": "external",
+   "label": "代码托管",
+   "sublabel": "GitHub · Forgejo"
+  },
+  {
+   "id": "ci",
+   "type": "external",
+   "label": "CI",
+   "sublabel": "托管平台的 runner"
+  },
+  {
+   "id": "api",
+   "type": "backend",
+   "label": "主 API",
+   "sublabel": "验收 · 合并"
+  },
+  {
+   "id": "reviewer",
+   "type": "frontend",
+   "label": "验收人",
+   "sublabel": "验收面板"
+  }
+ ],
+ "segments": [
+  {
+   "from": 170,
+   "to": 346,
+   "label": "开 PR"
+  },
+  {
+   "from": 370,
+   "to": 502,
+   "label": "检查"
+  },
+  {
+   "from": 526,
+   "to": 702,
+   "label": "采纳"
+  }
+ ],
+ "messages": [
+  {
+   "from": "agent",
+   "to": "forge",
+   "y": 196,
+   "label": "推送任务分支",
+   "variant": "emphasis"
+  },
+  {
+   "from": "api",
+   "to": "forge",
+   "y": 240,
+   "label": "分支领先基准：开 draft PR",
+   "variant": "default"
+  },
+  {
+   "from": "agent",
+   "to": "api",
+   "y": 284,
+   "label": "cheese_ready / 递验收卡"
+  },
+  {
+   "from": "api",
+   "to": "forge",
+   "y": 328,
+   "label": "去掉 draft"
+  },
+  {
+   "from": "forge",
+   "to": "ci",
+   "y": 396,
+   "label": "触发必需检查"
+  },
+  {
+   "from": "ci",
+   "to": "forge",
+   "y": 440,
+   "label": "检查结果",
+   "variant": "return"
+  },
+  {
+   "from": "forge",
+   "to": "api",
+   "y": 484,
+   "label": "仓库变了（事件中继，只通知不转发内容）",
+   "variant": "dashed"
+  },
+  {
+   "from": "reviewer",
+   "to": "api",
+   "y": 552,
+   "label": "采纳：带着显示的那一版",
+   "variant": "security"
+  },
+  {
+   "from": "api",
+   "to": "forge",
+   "y": 596,
+   "label": "核对当前版本与检查，调用合并接口",
+   "variant": "emphasis"
+  },
+  {
+   "from": "forge",
+   "to": "api",
+   "y": 640,
+   "label": "已合并",
+   "variant": "return"
+  },
+  {
+   "from": "api",
+   "to": "reviewer",
+   "y": 684,
+   "label": "记录交付，关闭任务",
+   "variant": "return"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "一个任务一个 PR",
+   "items": [
+    "之后的推送更新同一个 PR",
+    "cheese push-fix 推到同一个 PR",
+    "改验收卡不会新开 PR"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "评审过的才能合",
+   "items": [
+    "采纳带着浏览器里显示的那一版",
+    "新推上来的提交不能悄悄替换",
+    "强制合并要在越过名单里并留下理由"
+   ]
+  },
+  {
+   "dot": "emerald",
+   "title": "以托管平台为准",
+   "items": [
+    "托管平台有分支保护时用它的结论",
+    "CI 在那边跑，平台只读结果",
+    "断开期间丢的事件靠定期对账补回"
+   ]
+  }
+ ]
+}

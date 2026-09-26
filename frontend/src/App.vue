@@ -28,7 +28,7 @@
       </keep-alive>
     </template>
 
-    <v-main class="bg-background h-100">
+    <v-main ref="mainRef" class="bg-background h-100" :class="{ 'app-main--pending': firstRoutePending }">
       <div class="border-t-sm bg-background h-100 overflow-hidden">
         <div id="app-scrollable" class="app-content h-100">
           <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
@@ -349,6 +349,22 @@ async function loadCxProjects() {
 }
 onMounted(loadCxProjects)
 
+// 首屏先画外壳（左栏），内容区等第一个路由画好再露出来。路由的懒加载 chunk 还没
+// 到的时候，项目侧栏也还没注册，内容区先按没有侧栏的宽度画出来，侧栏一到整块内容
+// 往右跳一个侧栏宽——每个项目页冷打开时最大的一次布局偏移。在那之前内容区不可见、
+// 也不做内边距过渡，露出来的时候已经在最终位置上。
+const firstRoutePending = ref(true)
+const mainRef = ref<{ $el: Element } | null>(null)
+onMounted(async () => {
+  await router.isReady().catch(() => {})
+  await nextTick()
+  // 读一次内边距，让侧栏撑出来的那个值在「不做过渡」时先落定；否则撤掉
+  // pending 和内边距变化挤在同一次样式计算里，过渡照样会演。不等帧：挂载时正
+  // 有重活（登录页的 WebGL 场景）的话，等下一帧会把整个内容区拖后几百毫秒。
+  if (mainRef.value) void getComputedStyle(mainRef.value.$el).paddingLeft
+  firstRoutePending.value = false
+})
+
 // A project can appear from outside this dialog — made on a team page, or by
 // a teammate — and the rail would keep showing the cached list until a reload.
 // Opening a project the rail does not know is the cheapest signal that the
@@ -571,6 +587,10 @@ function projectAvatar(name: string): string {
 </script>
 
 <style lang="scss" scoped>
+.app-main--pending {
+  visibility: hidden;
+  transition: none;
+}
 .app-content {
   min-height: 0;
   overflow: auto;

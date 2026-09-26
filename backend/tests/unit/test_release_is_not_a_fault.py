@@ -71,6 +71,7 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
     poller.woken = {}
     poller.tasks = {}
     poller.unreachable = {}
+    poller.told_waiting = {}
 
     class _NoSleep:
         """Real asyncio, minus the two-second wait between retries."""

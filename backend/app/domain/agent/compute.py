@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from app.domain.agent.harness import (
         ActivityConsumer,
         EventConsumer,
+        ReachabilityConsumer,
         ReceiptConsumer,
         SessionControls,
         SessionRef,
@@ -233,6 +234,11 @@ class ComputePool:
         still unread — the other half of the same bookkeeping."""
         for runtime in self._runtimes():
             runtime.bind_unread_probe(probe)
+
+    def bind_reachability(self, consumer: "ReachabilityConsumer") -> None:
+        """Give every runtime the owner of 「这一轮在等它的设备」."""
+        for runtime in self._runtimes():
+            runtime.bind_reachability(consumer)
 
     def session_controls(self, topic_id: uuid.UUID) -> "SessionControls | None":
         """The runtime whose live session in this room takes controls, if any."""

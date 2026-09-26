@@ -37,6 +37,11 @@ TASK = "9f8e7d6c-0000-4000-8000-000000000000"
 #: 读回来 —— 从表里读一遍再断言它等于自己，删掉一整行也是绿的。
 CALLS = {
     "chat_send": ({"content": "这一轮我在这里"}, "POST", "/topics/fixture/messages"),
+    "todo_write": (
+        {"todos": [{"content": "读现有实现", "status": "in_progress"}]},
+        "PUT",
+        "/topics/fixture/progress",
+    ),
     "cheese_chat_list": ({}, "GET", "/topics/fixture/history"),
     "cheese_chat_search": ({"query": "口径"}, "GET", "/topics/fixture/history"),
     "cheese_chat_get": (

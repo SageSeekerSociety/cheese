@@ -123,7 +123,9 @@ export function groupByTurn<T extends TurnLike>(blocks: T[]): SiteTurn<T>[] {
     }
   }
   for (const turn of turns) {
-    turn.steps = turn.entries.filter((b) => !isNarration(b.meta)).length
+    // 平台自己说的一句（重试、等机器、这一轮失败了）也不是它做的一步：带 `who`
+    // 的是平台提示（后端 platform_notices.notice 拼的）。
+    turn.steps = turn.entries.filter((b) => !isNarration(b.meta) && b.meta?.who === undefined).length
     const first = Date.parse(turn.entries[0].created_at)
     const last = Date.parse(turn.entries[turn.entries.length - 1].created_at)
     turn.seconds = Number.isFinite(first) && Number.isFinite(last) ? Math.max(0, Math.round((last - first) / 1000)) : 0

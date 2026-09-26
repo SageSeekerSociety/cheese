@@ -1,0 +1,471 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "知是 · Cheese 系统总览",
+  "locale": "zh-CN",
+  "quality_profile": "showcase",
+  "repository": {
+   "url": "https://github.com/SageSeekerSociety/cheese",
+   "revision": "3139bd290e1209b28860bd26b298be37f0e0c79a"
+  },
+  "viewBox": [
+   1330,
+   760
+  ],
+  "views": [
+   {
+    "id": "request",
+    "label": "一次页面请求",
+    "focus": [
+     "browser",
+     "frontend",
+     "backend",
+     "db"
+    ],
+    "note": "浏览器只和前端 nginx 打交道，/api 被反代到主 API。"
+   },
+   {
+    "id": "turn",
+    "label": "芝士的一轮",
+    "focus": [
+     "backend",
+     "sandbox",
+     "devconn",
+     "machines"
+    ],
+    "note": "主 API 在本机起沙盒容器，或经机器连接服务在远端机器上开屏。"
+   },
+   {
+    "id": "llm",
+    "label": "一次模型调用",
+    "focus": [
+     "sandbox",
+     "tunnel",
+     "meter",
+     "gateway",
+     "upstream",
+     "backend"
+    ],
+    "note": "所有模型流量先经计量代理，它问主 API 走订阅路还是网关路。"
+   },
+   {
+    "id": "code",
+    "label": "代码与交付",
+    "focus": [
+     "backend",
+     "forge",
+     "relay"
+    ],
+    "note": "推分支、开 PR 用短期令牌；仓库变动经事件中继推回来。"
+   }
+  ]
+ },
+ "components": [
+  {
+   "id": "browser",
+   "type": "frontend",
+   "label": "浏览器 / 桌面端",
+   "sublabel": "人",
+   "pos": [
+    30,
+    230
+   ],
+   "size": [
+    150,
+    64
+   ]
+  },
+  {
+   "id": "machines",
+   "type": "external",
+   "label": "设备与云机器",
+   "sublabel": "Go 连接器",
+   "pos": [
+    450,
+    620
+   ],
+   "size": [
+    170,
+    64
+   ]
+  },
+  {
+   "id": "frontend",
+   "type": "frontend",
+   "label": "前端 nginx",
+   "sublabel": "SPA · 反代 /api",
+   "pos": [
+    230,
+    230
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "deploy/compose/docker-compose.base.yml",
+     "line": 158,
+     "label": "frontend"
+    }
+   ]
+  },
+  {
+   "id": "devconn",
+   "type": "backend",
+   "label": "机器连接服务",
+   "sublabel": "常驻 · 设备与终端长连接",
+   "pos": [
+    230,
+    440
+   ],
+   "size": [
+    170,
+    64
+   ],
+   "sources": [
+    {
+     "path": "backend/app/device_connection_app.py",
+     "label": "入口"
+    },
+    {
+     "path": "deploy/compose/docker-compose.base.yml",
+     "line": 18
+    }
+   ]
+  },
+  {
+   "id": "tunnel",
+   "type": "backend",
+   "label": "模型隧道",
+   "sublabel": "常驻 · 远端机器的模型流量",
+   "pos": [
+    720,
+    440
+   ],
+   "size": [
+    180,
+    64
+   ],
+   "sources": [
+    {
+     "path": "backend/app/llm_tunnel_app.py",
+     "label": "入口"
+    }
+   ]
+  },
+  {
+   "id": "backend",
+   "type": "backend",
+   "label": "主 API",
+   "sublabel": "FastAPI · 投递与调度",
+   "pos": [
+    450,
+    230
+   ],
+   "size": [
+    170,
+    64
+   ],
+   "sources": [
+    {
+     "path": "backend/app/main.py",
+     "label": "入口"
+    },
+    {
+     "path": "deploy/compose/docker-compose.base.yml",
+     "line": 52
+    }
+   ]
+  },
+  {
+   "id": "db",
+   "type": "database",
+   "label": "Postgres + Valkey",
+   "sublabel": "备份到 R2",
+   "pos": [
+    230,
+    40
+   ],
+   "size": [
+    170,
+    60
+   ],
+   "sources": [
+    {
+     "path": "deploy/compose/docker-compose.etrip.yml",
+     "line": 23
+    }
+   ]
+  },
+  {
+   "id": "sandbox",
+   "type": "backend",
+   "label": "会话沙盒容器",
+   "sublabel": "Claude Code / Codex / Pi",
+   "pos": [
+    720,
+    230
+   ],
+   "size": [
+    180,
+    64
+   ],
+   "sources": [
+    {
+     "path": "backend/app/domain/agent/compute.py",
+     "label": "ComputePool"
+    }
+   ]
+  },
+  {
+   "id": "relay",
+   "type": "messagebus",
+   "label": "代码托管事件中继",
+   "sublabel": "webhook → WebSocket",
+   "pos": [
+    750,
+    50
+   ],
+   "size": [
+    180,
+    64
+   ],
+   "sources": [
+    {
+     "path": "backend/app/forge_events_app.py",
+     "label": "入口"
+    }
+   ]
+  },
+  {
+   "id": "meter",
+   "type": "security",
+   "label": "计量代理",
+   "sublabel": "mitmproxy · 记账",
+   "pos": [
+    960,
+    230
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "deploy/metering-proxy/README.md",
+     "label": "两条路"
+    }
+   ]
+  },
+  {
+   "id": "gateway",
+   "type": "security",
+   "label": "模型网关",
+   "sublabel": "LiteLLM · 项目虚拟 key",
+   "pos": [
+    960,
+    440
+   ],
+   "size": [
+    160,
+    64
+   ],
+   "sources": [
+    {
+     "path": "deploy/compose/docker-compose.gateway.yml"
+    }
+   ]
+  },
+  {
+   "id": "upstream",
+   "type": "cloud",
+   "label": "模型厂商",
+   "sublabel": "Anthropic 等",
+   "pos": [
+    1170,
+    330
+   ],
+   "size": [
+    130,
+    64
+   ]
+  },
+  {
+   "id": "forge",
+   "type": "cloud",
+   "label": "代码托管",
+   "sublabel": "GitHub · Forgejo",
+   "pos": [
+    1170,
+    50
+   ],
+   "size": [
+    130,
+    64
+   ],
+   "sources": [
+    {
+     "path": "backend/app/domain/agent/github_app.py",
+     "label": "App 令牌"
+    }
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "平台主机",
+   "wraps": [
+    "frontend",
+    "backend",
+    "sandbox",
+    "meter",
+    "gateway",
+    "devconn",
+    "tunnel"
+   ],
+   "pad": 22
+  }
+ ],
+ "connections": [
+  {
+   "from": "browser",
+   "to": "frontend",
+   "label": "HTTPS",
+   "variant": "emphasis"
+  },
+  {
+   "from": "frontend",
+   "to": "backend",
+   "label": "/api",
+   "variant": "emphasis",
+   "labelDy": 14
+  },
+  {
+   "from": "backend",
+   "to": "db",
+   "label": "SQL",
+   "fromSide": "left",
+   "toSide": "right"
+  },
+  {
+   "from": "backend",
+   "to": "sandbox",
+   "label": "起沙盒容器",
+   "variant": "emphasis"
+  },
+  {
+   "from": "backend",
+   "to": "devconn",
+   "label": "开屏 · 调执行机",
+   "fromSide": "bottom",
+   "toSide": "right"
+  },
+  {
+   "from": "machines",
+   "to": "devconn",
+   "label": "连接器长连接",
+   "fromSide": "left",
+   "toSide": "bottom"
+  },
+  {
+   "from": "machines",
+   "to": "tunnel",
+   "label": "模型流量",
+   "variant": "dashed",
+   "fromSide": "right",
+   "toSide": "bottom"
+  },
+  {
+   "from": "sandbox",
+   "to": "meter",
+   "label": "模型请求",
+   "variant": "emphasis"
+  },
+  {
+   "from": "tunnel",
+   "to": "meter",
+   "label": "CONNECT",
+   "variant": "dashed",
+   "fromSide": "right",
+   "toSide": "bottom"
+  },
+  {
+   "from": "meter",
+   "to": "upstream",
+   "label": "订阅路",
+   "variant": "security",
+   "fromSide": "right",
+   "toSide": "top"
+  },
+  {
+   "from": "meter",
+   "to": "gateway",
+   "label": "网关路",
+   "variant": "security",
+   "fromSide": "bottom",
+   "toSide": "top",
+   "labelDy": 60
+  },
+  {
+   "from": "gateway",
+   "to": "upstream",
+   "label": "上游 key",
+   "variant": "security",
+   "fromSide": "right",
+   "toSide": "bottom"
+  },
+  {
+   "from": "backend",
+   "to": "forge",
+   "label": "推分支 · 开 PR",
+   "variant": "dashed",
+   "fromSide": "top",
+   "toSide": "bottom"
+  },
+  {
+   "from": "forge",
+   "to": "relay",
+   "label": "webhook",
+   "fromSide": "left",
+   "toSide": "right"
+  },
+  {
+   "from": "relay",
+   "to": "backend",
+   "label": "仓库变动",
+   "variant": "dashed",
+   "fromSide": "left",
+   "toSide": "top"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "amber",
+   "title": "一份代码，四种启动",
+   "items": [
+    "主 API、机器连接服务、模型隧道、事件中继是同一个后端镜像换不同命令",
+    "发版只替换前端和主 API；机器连接和模型隧道常驻，远端的活不断",
+    "Office 和网页渲染、代码托管 Forgejo 也跑在同一台主机上，图里省略"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "密钥从不下发",
+   "items": [
+    "沙盒和远端机器只拿短期令牌",
+    "上游模型 key 在网关里，GitHub 私钥在主 API 里，按需换短期令牌"
+   ]
+  },
+  {
+   "dot": "cyan",
+   "title": "模型流量一个出口",
+   "items": [
+    "每个请求先问主 API /llm/admission：能不能跑、走哪条路",
+    "订阅路直接转厂商，网关路换项目虚拟 key 并记账"
+   ]
+  }
+ ]
+}

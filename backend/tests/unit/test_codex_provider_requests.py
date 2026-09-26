@@ -270,6 +270,8 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
                 "view_image",
                 "request_user_input",
                 "apply_patch",
+                # The build's own checklist; the room's is `todo_write`.
+                "update_plan",
             }
         )
         platform = [
@@ -318,7 +320,7 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
                 "Promise<unknown>; };\n```"
             )
             assert executors[0]["description"].count(declaration) == 1
-            for name in ("exec_command", "write_stdin", "view_image"):
+            for name in ("exec_command", "write_stdin", "view_image", "update_plan"):
                 assert f"### `{name}`" not in executors[0]["description"]
         else:
             tools = [

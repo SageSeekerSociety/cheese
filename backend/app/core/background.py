@@ -341,6 +341,7 @@ def periodic_jobs(
     from app.domain.agent.forgejo_tokens import purge_expired_tokens
     from app.domain.delivery.ledger import resend_unsent_deliveries
     from app.domain.delivery.timer import deliver_due
+    from app.domain.docs_site.assistant import purge_old_questions
     from app.domain.machine.warm import sweep_warm_pool
     from app.domain.notification.maintenance import drain_email_queue
     from app.domain.notification.push_delivery import drain_push_queue
@@ -457,6 +458,12 @@ def periodic_jobs(
         # 定时投递（结论 17）：一个参与者设下的闹钟，到点由这里递出去。没有它，
         # `timed_deliveries` 就只是一张没人读的愿望清单 —— 而这份清单存在的理由，
         # 正是「写完了、部署了、从来没跑过」这种失败。
+        # 问芝士 keeps what people asked for DOCS_QUESTION_RETENTION_DAYS and no longer.
+        PeriodicRunner(
+            "docs question retention",
+            86400,
+            lambda: purge_old_questions(sessions),
+        ),
         PeriodicRunner(
             "timed deliveries",
             30,

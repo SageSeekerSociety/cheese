@@ -1,28 +1,45 @@
 ---
 title: AI 队友
 slug: agents
-group: 干活
-order: 21
+group: 使用 Cheese
+order: 5
 ---
 
 # AI 队友 {#agents}
 
-芝士是和你一起干活的那个 AI 队友，每个项目可以有好几个，各有各的角色设定和记忆。
+AI 队友用于在项目中协助处理任务。项目可以使用多个 AI 队友；新话题默认使用项目中标为「默认」的队友。
 
-## `@` 它才会动 {#summon}
+## 修改 AI 队友 {#edit-agent}
 
-芝士是那个 AI 队友。你在房间里 **@ 它**，它才会动。
+已有 AI 队友的配置可以在「项目设置 → 队友」中修改。
 
-这一点值得单独说：**没有 @ 的消息它收不到。** 房间里人和人之间的对话不会惊动它，这是有意的——否则你和同事讨论两句它就插进来了。你想让它做事、或者想让它看见某条信息，就 @ 一下。
+1. 在话题页面点击项目标题旁的「项目菜单」，选择「项目设置」。
+2. 找到「队友」区域，在对应队友的卡片上点击「编辑」。
+3. 在「修改 AI 队友」弹窗中修改「名字」「角色设定」或模型设置，然后点击「保存」。
 
-每个队友有自己的角色设定和自己的记忆。它在这个项目里学到的东西会一直跟着它，换个房间也还记得。
+弹窗还显示队友的「标识」。页面提示，修改从下一轮开始生效，已有记忆保留。
 
-## 把队友请进房间 {#invite}
+也可以在项目「成员」页的「AI 队友」区域，点击对应队友的「设置」进入同一弹窗。
 
-新房间自带项目的默认队友。要让别的队友也参与，在房间顶部的名册里添加它，和添加一个人是同一个动作；不再需要它时同样从名册里移出。一个房间里可以坐好几个队友，各自记各自的，谁被 @ 到谁回答。
+## 项目默认 AI 队友 {#default-agent}
 
-## 用什么模型 {#runtime}
+新建话题会使用项目中标为「默认」的 AI 队友，创建话题时没有单独选择队友的步骤。
 
-Projects configure a main model and a separate default for native subagents, such as children spawned by Claude Code. A named AI teammate can optionally select a model from the project catalog; without an override it uses the project main model. Clearing the native subagent default makes those children use the project main model. Model selection does not change a teammate’s identity or memory. A configured model that is no longer available is refused rather than silently replaced.
+## 在话题中更换 AI 队友 {#change-agent-in-topic}
 
-Project creation includes naming its first AI teammate, with random-name suggestions; more teammates can be added later.
+话题中的 AI 队友可以通过「话题成员」调整。打开话题顶部的「话题成员」，对当前 AI 队友选择「移出话题」，再点击「加入」并选择另一位 AI 队友。更换后，话题成员和输入框中的目标队友会随之变化。
+
+## 让 AI 队友处理消息 {#summon}
+
+AI 队友空闲时，需要明确指定由队友处理消息，才会开始执行。可以使用以下方式：
+
+- 在消息中 `@` 队友后发送。输入框旁标有队友名字的「交给」按钮可以帮助插入 `@`。
+- 按 `Ctrl/Cmd+Enter`，发送消息并交给 AI 队友处理。
+
+空闲时直接发送的普通消息会留在话题中，不会自动触发处理。需要处理已发出的消息时，可以点击消息下方的「让它现在就动」。
+
+队友正在执行时，后续普通消息和补充要求在正常送达后会进入当前一轮。补充要求和消息排队时的处理方法见[与芝士协作](/working-with-cheese#add-context)。
+
+## 设置模型 {#runtime-and-model}
+
+AI 队友可以使用单独指定的模型，也可以使用项目主模型。在「修改 AI 队友」弹窗中找到「为这个队友指定模型」并设置；不指定时使用项目主模型。
