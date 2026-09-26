@@ -40,9 +40,9 @@ from tests.integration.test_project_reads_need_membership import off_the_street
 
 
 def _project(client, owner: str = "alice") -> dict:
-    return post_project(
-        client, json={"name": "P", "owner_handle": owner}
-    ).json()["data"]
+    return post_project(client, json={"name": "P", "owner_handle": owner}).json()[
+        "data"
+    ]
 
 
 def _insert_block(client, project_id: str, topic_id: str) -> str:
@@ -126,14 +126,14 @@ def test_a_block_id_alone_does_not_dispatch_a_card(client):
         assert r.status_code == 401, r.text
 
     wait_work_idle()
-    assert client.get(f"/topics/{p['root_topic_id']}/tasks").json()["data"][
-        "total"
-    ] == 0
+    room = f"/topics/{p['root_topic_id']}"
+    assert client.get(f"{room}/tasks").json()["data"]["total"] == 0
     # 房间时间线上也没有落下「一条消息已转为任务」那条事件。
-    room_msgs = client.get(f"/topics/{p['root_topic_id']}/blocks").json()["data"]["data"]
-    assert not [
-        b for b in room_msgs if (b.get("meta") or {}).get("detail", "").startswith("活 ")
-    ], room_msgs
+    said = [
+        b.get("content") or ""
+        for b in client.get(f"{room}/blocks").json()["data"]["data"]
+    ]
+    assert not [line for line in said if "转为任务" in line], said
 
 
 def test_a_space_id_alone_does_not_list_the_board(client):
