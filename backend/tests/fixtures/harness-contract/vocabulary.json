@@ -54,10 +54,8 @@
     }
   },
   "differences": {
-    "no-tool-failure-signal": "This harness reports nothing when a tool call fails, so a failed step reaches the room looking exactly like one that worked. A cell filled with this is a hole named, not a hole excused.",
     "no-subagent-threads": "This harness runs no second worker inside a session, so nothing can be attributed to one.",
     "no-subagent-tool-return": "This harness reports that a subagent stopped, but never what it handed back as a tool return.",
-    "no-session-id-of-its-own": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result.",
-    "no-retry-signal": "This harness says it is retrying only on its live event stream, which the platform reads as a doorbell and never as the record. The room hears nothing until the retried request lands or the turn fails."
+    "no-session-id-of-its-own": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result."
   }
 }
