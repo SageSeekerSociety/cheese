@@ -239,6 +239,9 @@
           </v-card-text>
         </v-card>
 
+        <!-- 题目附件：清单对看得见这道题的人都可见，能不能下载由服务端说 -->
+        <TaskAttachmentList :task-id="taskData?.id" />
+
         <v-card flat rounded="lg" class="mt-4 task-info-card" border="sm">
           <v-card-item>
             <template #prepend>
@@ -454,6 +457,7 @@ import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { listProjectsForTask } from '@/api'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
+import TaskAttachmentList from '@/components/tasks/TaskAttachmentList.vue'
 import { TaskParticipationInfo } from '@/network/api/tasks/types'
 import AccountService from '@/services/account'
 
