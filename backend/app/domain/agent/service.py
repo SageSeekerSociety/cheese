@@ -96,12 +96,27 @@ class AgentStepFailed:
 
 
 @dataclass
+class AgentStepOutput:
+    """What a tool call handed back, for the step already on the timeline.
+
+    Like ``AgentStepFailed`` it has no block of its own: it is written onto the
+    step it belongs to, where a reader who opens that line finds what the
+    command printed. The room persists only a capped, redacted tail of it
+    (``step_output``); the harness hands over what it has.
+    """
+
+    call_id: str
+    text: str = ""
+    thread_label: str | None = None
+
+
+@dataclass
 class AgentToolResult:
     """What a tool handed BACK to 芝士 — carried for the subagent tools only.
 
-    Every other tool's return value is already visible in the room through its
-    effect (a file changed, a command's output scrolled past). A subagent's is
-    not: it goes straight into the spawner's context and dies with the
+    Every other tool's return is written onto its own step
+    (``AgentStepOutput``), for whoever opens that line. A subagent's is more
+    than that: it goes straight into the spawner's context and dies with the
     container's transcript, so the room sees "派了一个分身去查 X" and never what
     the answer was. That is the one return worth an event of its own.
 
@@ -251,6 +266,7 @@ AgentEvent = (
     AgentMessage
     | AgentToolUse
     | AgentStepFailed
+    | AgentStepOutput
     | AgentToolResult
     | AgentSessionInfo
     | AgentResult

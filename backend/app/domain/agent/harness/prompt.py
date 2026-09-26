@@ -256,9 +256,11 @@ def build_system_prompt(
             "内容也照常可读，只是不在这里列出来；**没列出来 ≠ 不存在**。需要找"
             "它们时自己查（返回全部话题，含 archived 的标题和 id）：\n"
             '`platform_request(method="GET", '
-            'path="/topics?project_id=<本项目 id>")`\n'
-            "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
-            + lines
+            'path="/topics?project_id=<本项目 id>&topic=<本话题 id>")`\n'
+            "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。"
+            "读项目级的清单（`/topics`、`/projects/<id>/tasks`、`decisions`、"
+            "`weeklies`、`milestones`、`library`、`artifacts`）都要带 "
+            "`topic=<本话题 id>` 点名你所在的位置，不带会 403——那不是没权限。\n" + lines
         )
     if artifacts is not None:
         # 产物清单进每一轮的开场 (#1085 结论三)。它在这里是为了让下一次交付点得准
