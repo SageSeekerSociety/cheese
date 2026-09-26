@@ -106,7 +106,20 @@
     "retry": "重试",
     "loading": "加载中",
     "joinHint": "确认后你将成为团队成员，可以使用团队的项目和算力",
-    "join": "加入团队"
+    "join": "加入团队",
+    "edit": "编辑团队资料",
+    "editTitle": "编辑团队资料",
+    "avatarLabel": "团队头像",
+    "nameLabel": "团队名称",
+    "introLabel": "团队介绍",
+    "introHint": "显示在侧栏团队名字下面，最多 250 字",
+    "nameRequired": "请输入团队名称",
+    "nameTaken": "这个名称已被占用，换一个试试",
+    "forbidden": "只有团队所有者和管理员能修改资料",
+    "saved": "已保存",
+    "saveFailed": "保存失败，请稍后重试",
+    "save": "保存",
+    "cancel": "取消"
   },
   "newProject": {
     "title": "新建项目",
