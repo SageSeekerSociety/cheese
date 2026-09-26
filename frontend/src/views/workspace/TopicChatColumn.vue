@@ -44,6 +44,7 @@ const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string): void
   (e: 'upgrade-message', payload: unknown): void
   (e: 'open-topic', topicId: string): void
+  (e: 'open-card', taskId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
   (e: 'phase', phase: CardPhase): void
   // 采纳框上的「去看改动」：面板换到 改动 那一格。
@@ -88,6 +89,7 @@ defineExpose({
       @open-resource="(resource: string, turnId?: string) => emit('open-resource', resource, turnId)"
       @upgrade-message="emit('upgrade-message', $event)"
       @open-topic="emit('open-topic', $event)"
+      @open-card="emit('open-card', $event)"
     >
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
            见，但平时只占一行，不把对话挤到只剩几行。 -->
