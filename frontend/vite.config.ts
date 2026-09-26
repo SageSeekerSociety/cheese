@@ -495,6 +495,7 @@ export default defineConfig({
       'vuetify/components/VDialog',
       'vuetify/components/VDivider',
       'vuetify/components/VEmptyState',
+      'vuetify/components/VFileInput',
       'vuetify/components/VForm',
       'vuetify/components/VGrid',
       'vuetify/components/VIcon',
