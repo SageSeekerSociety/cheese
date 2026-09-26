@@ -106,7 +106,20 @@
     "retry": "Retry",
     "loading": "Loading",
     "joinHint": "Once you confirm, you become a team member and can use the team's projects and compute",
-    "join": "Join team"
+    "join": "Join team",
+    "edit": "Edit team profile",
+    "editTitle": "Edit team profile",
+    "avatarLabel": "Team avatar",
+    "nameLabel": "Team name",
+    "introLabel": "Team intro",
+    "introHint": "Shown under the team name in the sidebar, up to 250 characters",
+    "nameRequired": "Enter a team name",
+    "nameTaken": "That name is taken. Try another one",
+    "forbidden": "Only the team owner and admins can edit the profile",
+    "saved": "Saved",
+    "saveFailed": "Could not save. Please try again",
+    "save": "Save",
+    "cancel": "Cancel"
   },
   "newProject": {
     "title": "New project",

@@ -7,10 +7,21 @@
           <v-img :src="getAvatarUrl(teamData?.avatarId)" />
         </v-avatar>
         <div class="ml-3">
-          <div class="text-h6 team-name">{{ teamData?.name }}</div>
-          <div class="text-caption text-medium-emphasis">
-            {{ teamData?.personal ? '你的个人团队' : teamData?.intro }}
+          <div class="d-flex align-center">
+            <div class="text-h6 team-name">{{ teamData?.name }}</div>
+            <v-btn
+              v-if="isSelfAdmin"
+              class="edit-profile ml-1"
+              icon
+              size="x-small"
+              variant="text"
+              :aria-label="t('work.teamProfile.edit')"
+              @click="editProfileDialog = true"
+            >
+              <v-icon size="16">mdi-pencil-outline</v-icon>
+            </v-btn>
           </div>
+          <div class="text-caption text-medium-emphasis">{{ teamIntro }}</div>
         </div>
       </div>
     </div>
@@ -84,17 +95,27 @@
       </div>
     </div>
   </SecondaryNavigation>
+
+  <TeamProfileEditDialog
+    v-if="teamData"
+    v-model="editProfileDialog"
+    :team="teamData"
+    @updated="emit('updated', $event)"
+  />
 </template>
 
 <script setup lang="ts">
 import type { Team } from '@/types'
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import TeamProfileEditDialog from './TeamProfileEditDialog.vue'
+
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
+import { t } from '@/i18n'
 
 interface Props {
   teamData?: Team
@@ -102,8 +123,19 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const emit = defineEmits<{ updated: [team: Team] }>()
 
 const route = useRoute()
+
+const editProfileDialog = ref(false)
+
+// 看服务端给的 role，不看 admins.examples（那份名单最多 3 个人）；个人小队的本人
+// 创建时就是 OWNER，所以这里对个人小队成立，和成员页的 isSelfAdmin 同一条判据。
+const isSelfAdmin = computed(() => props.teamData?.role === 'OWNER' || props.teamData?.role === 'ADMIN')
+
+// 个人小队以前把这一行写死成「你的个人团队」，于是它的介绍改了也没处看。改成
+// 「有介绍就显示介绍，没有才回落成那句话」—— 团队小队本来就是这么显示的。
+const teamIntro = computed(() => props.teamData?.intro || (props.teamData?.personal ? '你的个人团队' : ''))
 
 const ownerAndAdminExamples = computed(() => {
   if (!props.teamData) {
@@ -144,6 +176,21 @@ const ownerAndAdminsText = computed(() => {
 .team-name {
   font-weight: 500;
   line-height: 1.2;
+}
+
+/* 铅笔是「看见了才想起来能改」的东西：平时压暗，鼠标上来或键盘聚焦才亮起来 */
+.edit-profile {
+  opacity: 0.55;
+  transition: opacity 0.2s ease;
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+  }
+}
+
+.team-header:hover .edit-profile {
+  opacity: 1;
 }
 
 .function-item {
