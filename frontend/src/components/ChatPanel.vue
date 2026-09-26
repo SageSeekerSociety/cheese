@@ -27,6 +27,7 @@ import {
   listRoomTasks,
   summonAgent,
   toggleReaction as apiToggleReaction,
+  undoTopicTitle,
 } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
@@ -717,6 +718,18 @@ function handleFrame(frame: WsServerFrame) {
 
 // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
 let disposed = false
+
+// 撤销一次自动改名（RoomNotice 那一行的按钮）。后端改完会发 `state: topics`，
+// 侧栏据此重读；这里再主动报一次，按下去就能看到名字回来。
+async function undoTitle(blockId: string) {
+  if (!props.topic) return
+  try {
+    await undoTopicTitle(props.topic.id, blockId)
+    emit('state-changed', 'topics')
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '撤销失败'
+  }
+}
 
 async function loadTopic(topic: Topic, entering = false) {
   const generation = ++historyGeneration
@@ -1544,6 +1557,7 @@ onBeforeUnmount(() => {
               :retrying="retryBusy"
               @animationend="settleArrival($event, m.id)"
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
+              @undo-title="undoTitle"
               @open-card="emit('open-card', $event)"
               @retry="retryNow"
             />

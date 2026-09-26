@@ -150,6 +150,7 @@ from app.domain.room_task import binding
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
+from app.domain.topic import naming
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -2291,6 +2292,10 @@ class ChatService:
                 self._active_turn_ids.pop(topic_id, None)
             frame = {"type": "turn_finished", "turn_id": str(work_id)}
         await get_broker().publish(str(topic_id), frame)
+        if not active:
+            # The agent has said what it understood: the moment to check the
+            # name the room got from its opening line (topic/naming.py).
+            naming.nudge(topic_id, "turn")
 
     def _note_room_session(self, topic_id: uuid.UUID, session_id: str) -> None:
         """The room is on a (possibly) different session now.
@@ -3201,6 +3206,9 @@ class ChatService:
                     },
                 )
             await session.commit()
+        # A person's words are what a room gets named by (topic/naming.py).
+        if names_a_person(author):
+            naming.nudge(place.room_id, "message")
         return payloads, anchor_id, block_ids, False
 
     #: How many un-marked messages one topic keeps waiting for a receipt.
@@ -4836,7 +4844,14 @@ class ChatService:
                 session_agent.handle,
                 harness=wanted_harness,
             )
-            untitled = topic.title == PLACEHOLDER_TITLE
+            # The platform names rooms itself (topic/naming.py). Only where it
+            # cannot — no gateway to call — is the agent still asked to, and
+            # never in a project that chose to name its rooms by hand.
+            untitled = (
+                topic.title == PLACEHOLDER_TITLE
+                and not naming.available()
+                and naming.naming_mode(project.settings if project else None) == "auto"
+            )
             # 进度层 (#187): the checklist the last turn left behind. Read inside
             # tx1 with everything else the prompt is built from, so no extra
             # round trip; empty list when this topic has never had one.

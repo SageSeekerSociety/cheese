@@ -20,12 +20,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.docs_site.models import DocsQuestion, ServiceCredential
+from app.domain.docs_site.models import DocsQuestion
 from app.domain.docs_site.retrieval import Hit
+from app.domain.service_keys import KeySpec, service_key
 
 logger = logging.getLogger(__name__)
 
@@ -112,53 +113,20 @@ def sources_payload(hits: list[Hit]) -> list[dict]:
 async def gateway_key(
     session: AsyncSession, transport: httpx.AsyncBaseTransport | None = None
 ) -> str | None:
-    """The virtual key 问芝士 calls the gateway with, minted on first use.
-
-    Minting is not idempotent on the gateway, so concurrent first calls across
-    processes serialise on an advisory lock and the loser reads the winner's key.
-    The key carries its own budget (``max_budget`` per 30 days) and rate limit,
-    so the gateway refuses spend beyond it even if everything above failed."""
-    if not settings.llm_gateway_admin_base or not settings.llm_gateway_admin_key:
-        return None
-    row = await session.get(ServiceCredential, KEY_NAME)
-    if row is not None:
-        return row.secret
-    await session.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": KEY_NAME}
+    """The virtual key 问芝士 calls the gateway with, minted on first use. It
+    carries its own budget (``max_budget`` per 30 days) and rate limit, so the
+    gateway refuses spend beyond it even if everything above failed."""
+    return await service_key(
+        session,
+        KeySpec(
+            name=KEY_NAME,
+            alias="docs-assistant",
+            model=settings.docs_assistant_model,
+            budget_usd=settings.docs_assistant_budget_usd,
+            rpm=120,
+        ),
+        transport,
     )
-    row = (
-        await session.execute(
-            select(ServiceCredential).where(ServiceCredential.name == KEY_NAME)
-        )
-    ).scalar_one_or_none()
-    if row is not None:
-        return row.secret
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(15.0), transport=transport
-        ) as client:
-            r = await client.post(
-                f"{settings.llm_gateway_admin_base.rstrip('/')}/key/generate",
-                headers={"Authorization": f"Bearer {settings.llm_gateway_admin_key}"},
-                json={
-                    "key_alias": "docs-assistant",
-                    "models": [settings.docs_assistant_model],
-                    "max_budget": settings.docs_assistant_budget_usd,
-                    "budget_duration": "30d",
-                    "rpm_limit": 120,
-                    "metadata": {"purpose": "docs-assistant"},
-                },
-            )
-            r.raise_for_status()
-            key = r.json().get("key")
-    except Exception:  # noqa: BLE001 — no key means the assistant is unavailable, not broken
-        logger.warning("minting the docs assistant gateway key failed", exc_info=True)
-        return None
-    if not isinstance(key, str) or not key:
-        return None
-    session.add(ServiceCredential(name=KEY_NAME, secret=key))
-    await session.commit()
-    return key
 
 
 def sse(event: str, data: dict) -> bytes:

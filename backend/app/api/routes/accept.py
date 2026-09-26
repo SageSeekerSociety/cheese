@@ -41,6 +41,7 @@ from app.domain.review.schemas import (
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
+from app.domain.topic import naming
 
 logger = logging.getLogger("cheesex.accept")
 
@@ -109,6 +110,8 @@ async def create_accept_card(
     # any more — see AcceptService.create_card).
     await db.commit()
     await announce_stale(topic_id, "accept")
+    # Work handed in for acceptance: a moment the room's direction may show.
+    naming.nudge(topic_id, "signal")
     if pr_publish.enabled():
         project_id = await svc.project_id_for_topic(topic_id)
         pr_publish.dispatch(

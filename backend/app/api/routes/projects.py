@@ -108,6 +108,7 @@ from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
 from app.domain.team.services import team_service
+from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -1544,6 +1545,48 @@ async def set_tier_policy(
     project.settings = values
     await db.flush()
     return await get_tier_policy(project_id, db, resolver)
+
+
+@router.get("/{project_id}/topic-naming")
+async def get_topic_naming(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """话题命名: ``auto`` (the platform names rooms and renames them when their
+    direction changes; the default) or ``manual`` (rooms are named by people).
+    See ``topic/naming.py``."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    can_manage = True
+    try:
+        await MemberService(db).require_manager(project_id, actor)
+    except ForbiddenError:
+        can_manage = False
+    return ok(
+        {
+            "mode": naming.naming_mode(project.settings),
+            "available": naming.available(),
+            "can_manage": can_manage,
+        }
+    )
+
+
+@router.put("/{project_id}/topic-naming")
+async def set_topic_naming(
+    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Switch the project's rooms between automatic and manual naming. Rooms a
+    person named keep their names either way."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    mode = body.get("mode")
+    if mode not in naming.MODES:
+        raise ValidationError(f"mode 只能是 {list(naming.MODES)} 之一")
+    project = await ProjectService(db).get_or_404(project_id)
+    project.settings = {**(project.settings or {}), naming.SETTINGS_KEY: mode}
+    await db.flush()
+    return await get_topic_naming(project_id, db, resolver)
 
 
 @router.get("/{project_id}/compute-profiles")
