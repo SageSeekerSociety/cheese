@@ -142,6 +142,9 @@
   "room": {
     "noTasks": "No tasks",
     "site": {
+      "agents": {
+        "all": "All"
+      },
       "output": {
         "show": "Output ({size})",
         "hide": "Hide output",

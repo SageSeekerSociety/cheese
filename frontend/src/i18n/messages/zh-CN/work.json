@@ -142,6 +142,9 @@
   "room": {
     "noTasks": "暂无任务",
     "site": {
+      "agents": {
+        "all": "全部"
+      },
       "output": {
         "show": "输出（{size}）",
         "hide": "收起输出",
