@@ -83,6 +83,7 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentSessionInfo,
     AgentStepFailed,
+    AgentStepOutput,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolResult,
@@ -92,6 +93,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
+from app.domain.agent.step_output import output_tail, without_output
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent.tool_preview import (
     SHELL_TOOLS,
@@ -189,6 +191,10 @@ class _HookWorkState:
     user_text: str
     started_at: datetime
     agent_instance_handle: str | None = None
+    # The model this turn's session was launched on, for the usage row a turn
+    # with no reported usage still writes. "" where this process never
+    # assembled a turn for the session (a screen recovered on the way up).
+    model: str = ""
     assistant_count: int = 0
     last_chat_at: datetime | None = None
     # When this turn was last told it had gone quiet — NOT whether it has been.
@@ -197,9 +203,9 @@ class _HookWorkState:
     # then left alone for the remaining two hours and fifty minutes. The room
     # showing nothing for that long is the complaint this reminder exists for.
     last_progress_reminder_at: datetime | None = None
-    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。失败的结果
-    #: 回来时要标的就是那一块。只在内存里、只活这一轮：成功的调用（绝大多数）因此
-    #: 一个字节都不必落库，而重启丢掉的只是几个红点，不是记录。
+    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。结果回来时要
+    #: 写上输出、挂了要标红的就是那一块。只在内存里、只活这一轮：重启丢掉的只是几
+    #: 截输出和几个红点，不是记录。
     steps: dict[str, uuid.UUID] = field(default_factory=dict)
 
     # The topic branch's commits as of turn start — what makes "this turn's
@@ -1287,6 +1293,9 @@ class ChatService:
         # this is a dict that only ever grows in a process that runs for weeks.
         # Losing an entry costs the accuracy of one label, never a wrong charge.
         self._session_route: dict[uuid.UUID, str] = {}
+        # The model each session was launched on, kept beside its route and for
+        # the same reason: a self-started turn has no prompt to resolve it from.
+        self._session_model: dict[uuid.UUID, str] = {}
         # Strong refs to in-flight background tasks (asyncio only keeps weak
         # refs; without this a pending commit could be GC'd).
         self._background_tasks: set[asyncio.Task] = set()
@@ -2440,6 +2449,7 @@ class ChatService:
             # this existed.
             route=(row.route if row is not None else None)
             or self._session_route.get(topic_id, "native"),
+            model=self._session_model.get(topic_id, ""),
             acting_agent=acting_agent,
             agent_pool=agent_pool,
             user_text="",
@@ -2629,7 +2639,15 @@ class ChatService:
             if block_id is not None:
                 payload = await self._mark_step_failed(block_id, event.text)
                 if payload is not None:
-                    frame = {"type": "block_updated", "block": payload}
+                    frame = {"type": "block_updated", "block": without_output(payload)}
+        elif isinstance(event, AgentStepOutput):
+            # Written onto the step, like a failure. The frame says only that
+            # the step now has output: the text is read when somebody opens it.
+            block_id = state.steps.get(event.call_id) if state is not None else None
+            if block_id is not None:
+                payload = await self._record_step_output(block_id, event.text)
+                if payload is not None:
+                    frame = {"type": "block_updated", "block": without_output(payload)}
         elif isinstance(event, AgentRetrying):
             await self._note_retry(
                 topic_id,
@@ -2853,7 +2871,7 @@ class ChatService:
                 await UsageRepository(session).add(
                     project_id=state.project_id,
                     topic_id=state.topic_id,
-                    model=settings.agent_model,
+                    model=state.model or settings.agent_model,
                     input_tokens=0,
                     output_tokens=0,
                     cost_usd=0.0,
@@ -2866,7 +2884,7 @@ class ChatService:
                     await UsageRepository(session).add(
                         project_id=state.project_id,
                         topic_id=state.topic_id,
-                        model=u.model or settings.agent_model,
+                        model=u.model or state.model or settings.agent_model,
                         input_tokens=u.input_tokens,
                         output_tokens=u.output_tokens,
                         cost_usd=u.cost_usd,
@@ -3638,6 +3656,25 @@ class ChatService:
             return payload
         except Exception:  # noqa: BLE001 — a step's verdict is not worth a turn
             logger.warning("could not mark step %s failed", block_id)
+            return None
+
+    async def _record_step_output(self, block_id: uuid.UUID, text: str) -> dict | None:
+        """Keep the tail of what a step printed. Never fails a turn over it."""
+        output, total = output_tail(text)
+        try:
+            async with self._sessions() as session:
+                block = await BlockRepository(session).record_step_output(
+                    block_id, output, total
+                )
+                payload = (
+                    _block_payload(BlockOut.model_validate(block))
+                    if block is not None
+                    else None
+                )
+                await session.commit()
+            return payload
+        except Exception:  # noqa: BLE001 — a step's output is not worth a turn
+            logger.warning("could not record the output of step %s", block_id)
             return None
 
     async def _note_retry(
@@ -5272,6 +5309,10 @@ class ChatService:
         self._session_route[topic_id] = route
         while len(self._session_route) > _SESSION_ROUTES_KEPT:
             del self._session_route[next(iter(self._session_route))]
+        self._session_model.pop(topic_id, None)
+        self._session_model[topic_id] = model_kwargs["model"]
+        while len(self._session_model) > _SESSION_ROUTES_KEPT:
+            del self._session_model[next(iter(self._session_model))]
         # And on the turn itself: the backend that ends this turn may not be
         # this one (`_begin_self_started_turn`), and it remembers neither.
         await self._note_turn_context(turn_id, route=route, reply_to=user_block_id)
@@ -5344,6 +5385,7 @@ class ChatService:
                     topic_refs=topic_refs,
                     continuation_id=continuation_id,
                     route=route,
+                    model=model_kwargs["model"],
                     acting_agent=acting_agent,
                     agent_pool=agent_pool,
                     user_text=prompt_text,

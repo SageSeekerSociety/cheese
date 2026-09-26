@@ -49,7 +49,7 @@
 
 | 住在别处 | |
 |---|---|
-| 知是 Vision（愿景与需求） | [飞书](https://acnxgqu0961c.feishu.cn/wiki/TQnywMqkHi8YhikInzccMOXOnsb) — 产品方向，去那评论 |
+| 知是愿景 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/Xr8rwqIrKiqQaVkGFnScJxYCnkb) — 产品方向，去那评论 |
 | 产品方向反馈 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/PtVAwDevmiKFnbkQiVAcuqNvnZf) |
 | 机器形态（Cloud / Hosted Sandbox / Hosted Machine） | **#358**——三类里两类还没传输，是演进中的设计 |
 | 算力模型为何是这个样子 | **#282**（一个字段挤着四件事）、**#442**（两种机器被建模成一种加两个开关） |

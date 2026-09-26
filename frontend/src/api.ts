@@ -1214,6 +1214,159 @@ export function libraryFileRawUrl(projectId: string, path: string): string {
   return `${BASE}/projects/${encodeURIComponent(projectId)}/library/raw?path=${encodeURIComponent(path)}`
 }
 
+export interface Routine {
+  id: string
+  project_id: string
+  topic_id: string
+  title: string
+  instructions: string
+  context_scope: string
+  output_dir: string
+  trigger: 'schedule' | 'library_file_added' | 'task_closed' | 'card_accepted'
+  trigger_text: string
+  spec: Record<string, unknown>
+  timezone: string
+  state: 'draft' | 'active' | 'paused'
+  agent_handle: string
+  owner_handle: string
+  proposed_by: string
+  confirmed_by: string | null
+  confirmed_at: string | null
+  next_run_at: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface RoutineRun {
+  id: string
+  routine_id: string
+  trigger_detail: string
+  routine_revision: number
+  scheduled_for: string | null
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
+  summary: string
+  outputs: string[]
+  error: string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export type RoutineInput = Pick<
+  Routine,
+  'title' | 'instructions' | 'context_scope' | 'output_dir' | 'trigger' | 'spec' | 'timezone'
+>
+
+export function listProjectRoutines(projectId: string): Promise<ListPayload<Routine>> {
+  return request<ListPayload<Routine>>(`/projects/${encodeURIComponent(projectId)}/routines`)
+}
+
+export function getRoutine(id: string): Promise<Routine & { runs: RoutineRun[] }> {
+  return request<Routine & { runs: RoutineRun[] }>(`/routines/${encodeURIComponent(id)}`)
+}
+
+export function createRoutine(topicId: string, body: RoutineInput): Promise<Routine> {
+  return request<Routine>(`/topics/${encodeURIComponent(topicId)}/routines`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function updateRoutine(id: string, body: Partial<RoutineInput>): Promise<Routine> {
+  return request<Routine>(`/routines/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export function routineAction(
+  id: string,
+  action: 'confirm' | 'pause' | 'resume' | 'run-now'
+): Promise<Routine | RoutineRun> {
+  return request<Routine | RoutineRun>(`/routines/${encodeURIComponent(id)}/${action}`, { method: 'POST' })
+}
+
+export function deleteRoutine(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/routines/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export interface Integration {
+  id: string
+  provider: 'mail' | 'feishu'
+  label: string
+  owner_handle: string
+  config: Record<string, unknown>
+  grants: string[]
+  status: 'ok' | 'auth_failed' | 'unreachable' | 'error'
+  last_error: string
+  last_checked_at: string | null
+  user_authorized: boolean
+}
+
+export interface MailDraft {
+  id: string
+  integration_id: string
+  project_id: string
+  topic_id: string | null
+  created_by: string
+  to: string[]
+  cc: string[]
+  subject: string
+  body: string
+  attachments: { path: string; name: string; size: number }[]
+  status: 'drafted' | 'sent' | 'failed' | 'discarded'
+  error: string
+  sent_at: string | null
+  created_at: string | null
+}
+
+export function listMyIntegrations(): Promise<ListPayload<Integration>> {
+  return request<ListPayload<Integration>>('/me/integrations')
+}
+
+export function connectMail(body: Record<string, unknown>): Promise<Integration> {
+  return request<Integration>('/me/integrations/mail', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function connectFeishu(body: Record<string, unknown>): Promise<Integration> {
+  return request<Integration>('/me/integrations/feishu', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function updateIntegration(id: string, body: Record<string, unknown>): Promise<Integration> {
+  return request<Integration>(`/me/integrations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export function checkIntegration(id: string): Promise<Integration> {
+  return request<Integration>(`/me/integrations/${encodeURIComponent(id)}/check`, { method: 'POST' })
+}
+
+export function deleteIntegration(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/me/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function feishuAuthorizeUrl(id: string): Promise<{ url: string; redirect_uri: string }> {
+  return request<{ url: string; redirect_uri: string }>(`/me/integrations/${encodeURIComponent(id)}/feishu/authorize`)
+}
+
+export function listMyMailDrafts(status: string): Promise<ListPayload<MailDraft>> {
+  return request<ListPayload<MailDraft>>(`/me/mail-drafts?status=${encodeURIComponent(status)}`)
+}
+
+export function sendMailDraft(id: string): Promise<{ draft: MailDraft; refused: string[]; notes: string[] }> {
+  return request<{ draft: MailDraft; refused: string[]; notes: string[] }>(
+    `/me/mail-drafts/${encodeURIComponent(id)}/send`,
+    { method: 'POST' }
+  )
+}
+
+export function discardMailDraft(id: string): Promise<MailDraft> {
+  return request<MailDraft>(`/me/mail-drafts/${encodeURIComponent(id)}/discard`, { method: 'POST' })
+}
+
 export function deleteLibraryFile(projectId: string, path: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/projects/${encodeURIComponent(projectId)}/library?path=${encodeURIComponent(path)}`,
@@ -1661,6 +1814,14 @@ export function getTranscript(
   const qs = q.toString()
   return request<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }>(
     `/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`
+  )
+}
+
+// 现场一步打印出来的东西：后端只留末尾一截（至多 8 KiB，凭据已抹掉）。列表和
+// socket 上只带它有多长（`meta.output_bytes`），摊开那一步时才来取这一份。
+export function getStepOutput(topicId: string, blockId: string): Promise<{ output: string; bytes: number }> {
+  return request<{ output: string; bytes: number }>(
+    `/topics/${encodeURIComponent(topicId)}/transcript/${encodeURIComponent(blockId)}/output`
   )
 }
 

@@ -10,7 +10,8 @@
     "members": "成员",
     "docs": "项目文档",
     "settings": "项目设置",
-    "general": "全局"
+    "general": "全局",
+    "routines": "定时与触发"
   },
   "spaces": "空间",
   "teams": "团队",
@@ -46,6 +47,7 @@
       "system": "跟随系统",
       "light": "浅色",
       "dark": "深色"
-    }
+    },
+    "connections": "我的连接"
   }
 }

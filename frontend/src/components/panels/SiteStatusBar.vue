@@ -15,6 +15,8 @@ const props = defineProps<{
   blocks: Block[]
   working: boolean
   turns: Record<string, number>
+  /** 房间里不止一个队友时，这一行说的是哪一个。 */
+  agent?: string
 }>()
 
 // 一轮在跑的时候每秒走一格，「已用」和「最近活动」才是活的；闲着的时候没有要走的
@@ -90,6 +92,7 @@ const shown = computed(() => props.working || status.value.lastAt !== null)
       class="status-dot site-status__dot"
       :class="[`status-dot--${TONE[status.state]}`, { 'site-status__dot--live': working }]"
     />
+    <span v-if="agent" class="site-status__agent">{{ agent }}</span>
     <span class="site-status__state" aria-live="polite">{{ label }}</span>
     <span v-if="elapsed !== null" class="t-meta">{{
       t('work.room.site.status.elapsed', { span: formatSpan(elapsed) })
@@ -113,6 +116,11 @@ const shown = computed(() => props.working || status.value.lastAt !== null)
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
+}
+.site-status__agent {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
 }
 .site-status__state {
   font-size: 13px;

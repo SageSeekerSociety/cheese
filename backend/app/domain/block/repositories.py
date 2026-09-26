@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
@@ -352,6 +352,25 @@ class BlockRepository:
         if error:
             meta["error"] = error
         block.meta = meta
+        await self._session.flush()
+        return block
+
+    async def record_step_output(
+        self, block_id: uuid.UUID, output: str, total_bytes: int
+    ) -> Block | None:
+        """Keep on a 现场 step the tail of what its tool printed
+        (``domain/agent/step_output``) and how long the whole was. Same `meta`
+        replacement rule as above."""
+        block = await self._session.get(Block, block_id)
+        if block is None:
+            return None
+        block.meta = {
+            **(block.meta or {}),
+            "output": output,
+            "output_bytes": total_bytes,
+            # When the step last changed: 现场 reads its latest activity off it.
+            "at": datetime.now(UTC).isoformat(),
+        }
         await self._session.flush()
         return block
 

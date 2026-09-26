@@ -155,6 +155,15 @@ STATS = (
     + row(5, text("A5", "合计"), formula("B5", "SUM(B2:B4)", "110880"))
 )
 
+#: 同一张统计表，每一行读的是明细里标着同一类别的那一行。
+STATS_ALIGNED = (
+    row(1, text("A1", "类别"), text("B1", "含税"))
+    + row(2, text("A2", "预览"), formula("B2", "明细!C3*1.1", "33880"))
+    + row(3, text("A3", "办公文件"), formula("B3", "明细!C4*1.1", "13860"))
+    + row(4, text("A4", "消息流"), formula("B4", "明细!C2*1.1", "63140"))
+    + row(5, text("A5", "合计"), formula("B5", "SUM(B2:B4)", "110880"))
+)
+
 
 def sheets(*args: str | Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -179,8 +188,8 @@ def rejected(*args: str | Path) -> str:
 
 def test_refs_names_the_cell_each_formula_reads(book):
     """引用表要写出坐标，跨 Sheet 的那一格也要写成 明细!C2，不能只写 C2。"""
-    out = ran("refs", book([("明细", DETAIL), ("统计", STATS)]))
-    assert "明细!C2" in out
+    out = ran("refs", book([("明细", DETAIL), ("统计", STATS_ALIGNED)]))
+    assert "明细!C3" in out
     assert "统计!B2" in out
 
 
@@ -199,9 +208,34 @@ def test_refs_points_out_a_reference_that_lands_on_an_empty_cell(book):
     stats = row(1, text("A1", "类别"), text("B1", "含税")) + row(
         2, text("A2", "消息流"), formula("B2", "明细!C5*1.1", "0")
     )
-    out = ran("refs", book([("明细", DETAIL), ("统计", stats)]))
+    out = rejected("refs", book([("明细", DETAIL), ("统计", stats)]))
     assert "其中是空格" in out
     assert "明细!C5" in out
+
+
+def test_refs_fails_when_a_row_reads_another_labels_row(book):
+    """预览那一行读明细第 2 行，而「预览」在明细第 3 行。
+
+    这是能从文件本身证明的错位，要让命令失败。
+    """
+    done = sheets("refs", book([("明细", DETAIL), ("统计", STATS)]))
+    assert done.returncode == 1, done.stdout
+    assert "标签对不上" in done.stdout
+    assert "「预览」在那张表的第 3 行" in done.stdout
+
+
+def test_refs_passes_when_every_row_reads_its_own_label(book):
+    """顺序不同没关系，只要每一行读的是同一个类别的那一行。"""
+    out = ran("refs", book([("明细", DETAIL), ("统计", STATS_ALIGNED)]))
+    assert "0 个标签对不上" in out
+
+
+def test_differently_labelled_sheets_are_not_accused(book):
+    """两张表用的标签体系不同，就无从判断，不能报错位。"""
+    stats = row(1, text("A1", "项"), text("B1", "值")) + row(
+        2, text("A2", "第一季度"), formula("B2", "明细!C2*1.1", "63140")
+    )
+    ran("refs", book([("明细", DETAIL), ("统计", stats)]))
 
 
 def test_a_function_name_is_not_read_as_a_reference(book):
@@ -261,7 +295,7 @@ def test_check_without_expectations_still_refuses_an_unrecalculated_file(book):
 
 
 def test_sheet_and_range_narrow_what_is_reported(book):
-    path = book([("明细", DETAIL), ("统计", STATS)])
+    path = book([("明细", DETAIL), ("统计", STATS_ALIGNED)])
     only_detail = ran("refs", path, "--sheet", "明细")
     assert "统计!B2" not in only_detail
     narrowed = ran("refs", path, "--range", "B2:B2")

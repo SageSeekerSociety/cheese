@@ -142,6 +142,16 @@
   "room": {
     "noTasks": "暂无任务",
     "site": {
+      "agents": {
+        "all": "全部"
+      },
+      "output": {
+        "show": "输出（{size}）",
+        "hide": "收起输出",
+        "loading": "正在读取输出",
+        "failed": "无法读取输出",
+        "tail": "仅显示最后 {size}"
+      },
       "status": {
         "thinking": "思考中",
         "acting": "正在{verb}",
