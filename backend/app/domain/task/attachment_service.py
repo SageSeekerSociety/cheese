@@ -180,8 +180,7 @@ class TaskAttachmentService:
         await self._ensure_publisher(task=task, user_id=user_id)
 
         files = {
-            attachment.id: attachment
-            for attachment in await self._files.get_many(ids)
+            attachment.id: attachment for attachment in await self._files.get_many(ids)
         }
         missing = [i for i in ids if i not in files]
         if missing:
