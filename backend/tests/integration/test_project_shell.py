@@ -61,8 +61,13 @@ def test_a_project_with_no_shell_anywhere_gets_the_default(client):
     # project name and left 资料库 on the rail; 成员 has since come back out
     # (退出项目 lives on the 名册 page and was unreachable behind the ⋯), so only
     # 日历 stays collapsed. A 壳 that still listed all seven would put them back.
-    assert shell["hidden"] == ["calendar"]
-    assert shell["nav"]["project"] == ["calendar", "project-library", "project-members"]
+    assert shell["hidden"] == ["calendar", "project-routines"]
+    assert shell["nav"]["project"] == [
+        "calendar",
+        "project-library",
+        "project-routines",
+        "project-members",
+    ]
     assert shell["terms"] == {}
 
 
