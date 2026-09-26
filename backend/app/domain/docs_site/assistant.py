@@ -75,8 +75,14 @@ def _escape(text: str) -> str:
     return text.replace("<", "‹").replace(">", "›")
 
 
-def build_messages(question: str, hits: list[Hit], history: list[dict]) -> list[dict]:
+def build_messages(
+    question: str, hits: list[Hit], history: list[dict], quote: str | None = None
+) -> list[dict]:
     """System rules, prior turns, then the retrieved sections and the question.
+
+    ``quote`` is text the reader selected on the page and asked about; it goes
+    in with the question, escaped like it — it is part of what is asked, not
+    a source to answer from.
 
     The sections go in the final user message, fenced and with angle brackets
     neutralised, so nothing inside them can close the fence or pose as a new
@@ -96,7 +102,9 @@ def build_messages(question: str, hits: list[Hit], history: list[dict]) -> list[
     messages.append(
         {
             "role": "user",
-            "content": f"<docs>\n{docs}\n</docs>\n\n问题：{_escape(question)}",
+            "content": f"<docs>\n{docs}\n</docs>\n\n"
+            + (f"读者选中的这段文字：「{_escape(quote)}」\n" if quote else "")
+            + f"问题：{_escape(question)}",
         }
     )
     return messages

@@ -154,6 +154,14 @@ function closeAll() {
 const history = []
 const SUGGEST = ['怎么邀请同学进项目？', '采纳和合并是一回事吗？', '能用我自己的电脑跑芝士吗？']
 let asking = null
+// 划词问芝士: text the reader selected and asked about, sent with the next question.
+let quote = ''
+function setQuote(text) {
+  quote = text
+  const box = $('#askQuote'); if (!box) return
+  box.hidden = !text
+  $('#askQuoteText').textContent = text.length > 120 ? text.slice(0, 120) + '…' : text
+}
 function openAsk(q) {
   $('#palette').classList.remove('open'); $('#drawer').classList.add('open')
   if (innerWidth <= 820) $('#scrim').classList.add('open'); else { $('#scrim').classList.remove('open'); document.body.classList.add('docked') }
@@ -184,9 +192,10 @@ function renderAnswer(text, sources = []) {
 const citeHtml = (c) => `<a class="cite" href="${esc(c.url)}">${ic('doc')}<span>${esc(c.title)}${c.heading ? ` · ${esc(c.heading)}` : ''}</span><small>${esc(c.url)}</small></a>`
 async function ask(q) {
   if (asking) return
-  const chat = $('#chat')
+  const chat = $('#chat'), quoted = quote
+  setQuote('')
   $('#suggest').innerHTML = ''
-  chat.insertAdjacentHTML('beforeend', `<div class="q">${esc(q)}</div><div class="a"><span class="brand-mark sm"><img src="${$('.brand-mark img').src}" alt=""></span><div class="body"><span class="typing"><i></i><i></i><i></i></span></div></div>`)
+  chat.insertAdjacentHTML('beforeend', `<div class="q">${quoted ? `<span class="q-quote">${esc(quoted.length > 120 ? quoted.slice(0, 120) + '…' : quoted)}</span>` : ''}${esc(q)}</div><div class="a"><span class="brand-mark sm"><img src="${$('.brand-mark img').src}" alt=""></span><div class="body"><span class="typing"><i></i><i></i><i></i></span></div></div>`)
   const body = $$('.a .body', chat).pop()
   chat.scrollTop = chat.scrollHeight
   const token = await freshToken()
@@ -201,7 +210,7 @@ async function ask(q) {
     const res = await fetch('/api/docs/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
-      body: JSON.stringify({ question: q, page: $('#ctxUse')?.checked && PAGE.kind === 'doc' ? PAGE.md.replace(/^\/docs\/|\.md$/g, '') : null, history: history.slice(-4) }),
+      body: JSON.stringify({ question: q, page: $('#ctxUse')?.checked && PAGE.kind === 'doc' ? PAGE.md.replace(/^\/docs\/|\.md$/g, '') : null, history: history.slice(-4), quote: quoted || null }),
       signal: asking.signal,
     })
     if (!res.ok || !res.body) {
@@ -229,13 +238,51 @@ async function ask(q) {
       }
     }
     body.innerHTML = renderAnswer(text || '没有拿到回答，稍后再试。', sources) + (sources.length ? `<div class="cites">${sources.map(citeHtml).join('')}</div>` : '')
-    history.push({ role: 'user', content: q }, { role: 'assistant', content: text.slice(0, 1200) })
+    history.push({ role: 'user', content: quoted ? `关于「${quoted.slice(0, 300)}」：${q}` : q }, { role: 'assistant', content: text.slice(0, 1200) })
   } catch (e) {
     if (e.name !== 'AbortError') body.innerHTML = '<p>网络出了点问题，稍后再试。</p>'
   } finally {
     asking = null; $('#askSend').disabled = false
     chat.scrollTop = chat.scrollHeight
   }
+}
+
+// ---------- 划词问芝士: select text in a page, ask about it ----------
+function selectedText() {
+  const sel = getSelection()
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null
+  const range = sel.getRangeAt(0), article = $('#article')
+  if (!article || !article.contains(range.commonAncestorContainer)) return null
+  const text = sel.toString().replace(/\s+/g, ' ').trim()
+  if (text.length < 2) return null
+  return { text: text.slice(0, 600), rect: range.getBoundingClientRect() }
+}
+function placeSelAsk() {
+  const btn = $('#selAsk'); if (!btn) return
+  const s = selectedText()
+  if (!s) { btn.hidden = true; return }
+  btn.hidden = false
+  const w = btn.offsetWidth, h = btn.offsetHeight
+  const x = Math.max(8, Math.min(innerWidth - w - 8, s.rect.left + s.rect.width / 2 - w / 2))
+  // above the selection; below it when there is no room (and on phones, clear of the system menu)
+  const above = s.rect.top - h - 10
+  const y = above > ($('#hdr')?.offsetHeight || 64) + 4 && !matchMedia('(pointer: coarse)').matches ? above : s.rect.bottom + 12
+  btn.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`
+}
+function mountSelAsk() {
+  const btn = $('#selAsk'); if (!btn || PAGE.kind !== 'doc') return
+  let t = 0
+  const later = () => { clearTimeout(t); t = setTimeout(placeSelAsk, 120) }
+  document.addEventListener('selectionchange', later)
+  addEventListener('scroll', () => { if (!btn.hidden) placeSelAsk() }, { passive: true })
+  // keep the selection: pressing the button must not clear it
+  btn.addEventListener('mousedown', (e) => e.preventDefault())
+  btn.addEventListener('click', () => {
+    const s = selectedText(); if (!s) return
+    setQuote(s.text)
+    getSelection()?.removeAllRanges(); btn.hidden = true
+    openAsk()
+  })
 }
 
 // ---------- copy ----------
@@ -436,7 +483,7 @@ async function devGate() {
 
 // ---------- events ----------
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-menu],[data-copy-page],[data-copy],[data-f],[data-sug],[data-role-tab],.code-tab,.side a[href^="#"]')
+  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-menu],[data-copy-page],[data-copy],[data-f],[data-sug],[data-role-tab],[data-quote-clear],.code-tab,.side a[href^="#"]')
   if (!t) { if (!e.target.closest('.menu')) $('#menu')?.classList.remove('open'); return }
   if (t.matches('[data-open-search]')) { e.preventDefault(); openSearch() }
   else if (t.matches('[data-open-ask]')) { e.preventDefault(); $('#menu')?.classList.remove('open'); if (t.closest('.hdr') && $('#drawer').classList.contains('open')) closeDock(); else openAsk() }
@@ -455,6 +502,7 @@ document.addEventListener('click', (e) => {
     $$('.day').forEach((d) => d.classList.toggle('hide', !d.querySelector('.item:not(.hide)')))
     onScroll()
   } else if (t.matches('[data-role-tab]')) showRole(+t.dataset.roleTab)
+  else if (t.matches('[data-quote-clear]')) { setQuote(''); $('#askInput')?.focus() }
   else if (t.matches('.code-tab')) t.parentElement.querySelectorAll('.code-tab').forEach((x) => x.classList.toggle('on', x === t))
   else if (t.matches('.side a[href^="#"]')) moveSidePill(t)
 })
@@ -498,5 +546,6 @@ moveTabs(); moveSidePill(); moveFilter(); onScroll()
 document.fonts?.ready.then(() => { moveTabs(); moveSidePill() })
 loadDiagrams()
 if (PAGE.kind === 'home') { mountHero(); mountTour() }
+mountSelAsk()
 if (PAGE.kind === 'dev-gate') devGate()
 if (location.hash) { const el = document.getElementById(location.hash.slice(1)); el?.classList.add('flash') }
