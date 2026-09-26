@@ -141,6 +141,12 @@
   },
   "room": {
     "noTasks": "No tasks",
+    "dispatched": {
+      "created": "New task",
+      "title": "“{title}”",
+      "done": "Done",
+      "running": "In progress"
+    },
     "menu": {
       "more": "More",
       "focus": "Focus mode",

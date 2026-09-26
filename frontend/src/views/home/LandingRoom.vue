@@ -45,6 +45,15 @@ const lines = computed<Line[]>(() => [
     artifact: true,
   },
   { at: 3, kind: 'message', id: 'm6', author: 'wang', text: t('publicSite.room.triedIt'), time: '15:12' },
+  {
+    at: 3,
+    kind: 'message',
+    id: 'm7',
+    author: AGENT,
+    text: t('publicSite.room.reportFile'),
+    time: '15:20',
+    artifact: true,
+  },
 ])
 
 const names = computed<Record<string, string>>(() => ({
@@ -116,16 +125,33 @@ function runStart(index: number) {
       </div>
       <Transition name="room-pane">
         <aside v-if="step >= 2" class="room-preview" inert>
-          <div class="room-preview-bar">{{ t('publicSite.room.previewTitle') }}</div>
-          <div class="room-preview-page">
-            <p class="room-preview-eyebrow">{{ t('publicSite.room.previewApp') }}</p>
-            <div class="room-preview-query">{{ t('publicSite.room.previewQuestion') }}</div>
-            <p class="room-preview-answer">{{ t('publicSite.room.previewAnswer') }}</p>
-            <div class="room-preview-cites">
-              <span>{{ t('publicSite.room.citeGuide') }}</span>
-              <span>{{ t('publicSite.room.citeMeeting') }}</span>
-            </div>
+          <div class="room-preview-bar">
+            {{ step >= 3 ? t('publicSite.room.previewReportTitle') : t('publicSite.room.previewTitle') }}
           </div>
+          <Transition name="room-pane" mode="out-in">
+            <div v-if="step < 3" key="page" class="room-preview-page">
+              <p class="room-preview-eyebrow">{{ t('publicSite.room.previewApp') }}</p>
+              <div class="room-preview-query">{{ t('publicSite.room.previewQuestion') }}</div>
+              <p class="room-preview-answer">{{ t('publicSite.room.previewAnswer') }}</p>
+              <div class="room-preview-cites">
+                <span>{{ t('publicSite.room.citeGuide') }}</span>
+                <span>{{ t('publicSite.room.citeMeeting') }}</span>
+              </div>
+            </div>
+            <!-- The deck the third agent made: once the prototype has been tried, the
+                 report is what goes up for review, so the pane follows it. -->
+            <div v-else key="deck" class="room-preview-page room-preview-deck">
+              <div class="room-slide">
+                <p class="room-preview-eyebrow">{{ t('publicSite.room.slideKicker') }}</p>
+                <p class="room-slide-title">{{ t('publicSite.room.slideTitle') }}</p>
+                <ul class="room-slide-points">
+                  <li>{{ t('publicSite.room.slideCite') }}</li>
+                  <li>{{ t('publicSite.room.slideCoverage') }}</li>
+                  <li>{{ t('publicSite.room.slideLatency') }}</li>
+                </ul>
+              </div>
+            </div>
+          </Transition>
           <Transition name="room-pane">
             <div v-if="step >= 3" class="room-review">
               <span class="room-review-text">{{ t('publicSite.room.reviewState') }}</span>
@@ -280,6 +306,39 @@ function runStart(index: number) {
   color: var(--muted);
   background: var(--fill-2);
   border-radius: var(--radius-sm);
+}
+
+.room-preview-deck {
+  justify-content: center;
+}
+
+.room-slide {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+}
+
+.room-slide-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: var(--lh-18);
+  color: var(--ink);
+}
+
+.room-slide-points {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 16px;
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
 }
 
 .room-review {

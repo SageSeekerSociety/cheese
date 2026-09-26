@@ -141,6 +141,12 @@
   },
   "room": {
     "noTasks": "暂无任务",
+    "dispatched": {
+      "created": "新建任务",
+      "title": "《{title}》",
+      "done": "已完成",
+      "running": "进行中"
+    },
     "menu": {
       "more": "更多",
       "focus": "专注模式",
