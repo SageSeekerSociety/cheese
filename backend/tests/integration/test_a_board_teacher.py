@@ -574,9 +574,11 @@ def test_the_analytics_surface_is_for_the_teacher(
         )
         assert resp.status_code == 403, (suffix, resp.status_code, resp.text)
 
-    # 创建者（管理员）自己进得去。/analytics/tasks 的默认 sortBy 是 publishedAt、
-    # 不在它自己的白名单里（与本次无关的既有限制），所以显式给一个合法排序。
-    for suffix in ("/analytics/overview", "/analytics/tasks?sortBy=createdAt"):
+    # 创建者（管理员）自己进得去，且两处都按默认参数调用 —— 不带查询参数
+    # 也必须 200。（`/analytics/tasks` 曾经默认 sortBy=publishedAt，落在自己
+    # 白名单之外，于是这里只能显式补一个 `?sortBy=createdAt` 绕过去；默认值
+    # 改成 `createdAt` 之后那个绕行和那段说明都不需要了。）
+    for suffix in ("/analytics/overview", "/analytics/tasks"):
         resp = api_client.get(
             f"/spaces/{board['space_id']}{suffix}",
             headers=_auth(board["creator_token"]),

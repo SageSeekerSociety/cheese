@@ -1472,7 +1472,12 @@ async def get_space_task_analytics(
     taskApproved: str | None = Query(default=None),
     hasPendingReview: bool | None = Query(default=None),
     hasPendingApproval: bool | None = Query(default=None),
-    sortBy: str = Query(default="publishedAt"),
+    # ``createdAt``, not ``publishedAt``: this route sorts inside
+    # ``SpaceAnalyticsViewService`` against ``TASK_SORT_FIELDS``, which has no
+    # ``publishedAt`` key (``/tasks`` maps that name onto ``createdAt`` first —
+    # this layer never did). A default outside the set 400s every caller that
+    # takes the documented default, which is exactly what it used to do.
+    sortBy: str = Query(default="createdAt"),
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
