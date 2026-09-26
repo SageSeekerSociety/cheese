@@ -406,11 +406,15 @@ const searchIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.map((c
 const publicPages = Object.values(pages).filter((p) => p.section !== 'dev')
 write('search.json', searchIndex(publicPages))
 write('dev/search.json', searchIndex(devList))
-// What 问芝士 answers from (backend: app/domain/docs_site/retrieval.py). Public pages only,
-// whole sections: the answer is shown to anyone signed in.
-write('ask-index.json', JSON.stringify(publicPages.flatMap((p) => p.chunks.filter((c) => c.text).map((c) => ({
+// What 问芝士 and the agents' cheese_docs_search read (backend: app/domain/docs_site/
+// retrieval.py), whole sections. Public pages in one file, developer pages in another
+// behind the /docs/dev/ gate: 问芝士's answers are shown to anyone signed in, and only
+// agents in the platform's own project may search developer pages.
+const askIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.filter((c) => c.text).map((c) => ({
   title: p.title, heading: c.heading, url: c.id ? `${p.url}#${c.id}` : p.url, text: (c.id ? c.text : `${plain(p.lede)} ${c.text}`).slice(0, 4000),
-})))))
+}))))
+write('ask-index.json', askIndex(publicPages))
+write('dev/ask-index.json', askIndex(devList))
 
 // ---------- for models: llms.txt, a .md twin per page, and the whole manual ----------
 const llms = (title, intro, nav) => [`# ${title}`, '', `> ${intro}`, '', ...nav.flatMap(([g, items]) => [`## ${g}`, '', ...items.map((p) => `- [${p.title}](${SITE}${p.mdUrl}): ${p.summary}`), ''])].join('\n')
