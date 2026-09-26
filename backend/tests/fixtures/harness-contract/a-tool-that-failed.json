@@ -56,6 +56,10 @@
       "kind": "step_failed",
       "call_id": "toolu_1",
       "text": "bash: pandoc: command not found"
+    },
+    {
+      "kind": "step_output",
+      "call_id": "toolu_1"
     }
   ],
   "extension": {

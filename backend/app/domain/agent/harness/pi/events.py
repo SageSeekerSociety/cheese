@@ -16,9 +16,8 @@ Thinking is dropped rather than shown. It is not a message the agent addressed
 to the room, and the room's timeline is what people read — the same call the
 Claude Code path already makes, where hooks never deliver it either.
 
-Tool returns are dropped too, with one exception: a failed one marks the step it
-belongs to. Everything else a tool returns is already visible through its effect,
-and a read's return is the whole file.
+A tool's return is written onto the step it belongs to (``AgentStepOutput``;
+the room keeps a capped tail of it), and a failed one also marks that step.
 """
 
 from datetime import UTC, datetime
@@ -29,6 +28,7 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentStepFailed,
+    AgentStepOutput,
     AgentToolUse,
     AgentUsage,
 )
@@ -108,19 +108,21 @@ class Assembler:
             self.spent = AgentUsage()
             return []
         if role == "toolResult":
-            # A tool's return value does not become an event: a read's return is
-            # the whole file, and the room is for people to read. A FAILURE is
-            # the exception, because it is the one thing the room cannot learn
-            # from the effect — the effect of a failed step is that nothing
-            # happened, which looks exactly like a step that is still going.
-            # It marks the step already on the timeline rather than adding one.
-            if not message.get("isError"):
-                return []
+            # What the tool handed back goes onto its step, not onto a line of
+            # its own. A FAILURE also marks that step, because the effect of a
+            # failed step is that nothing happened, which looks exactly like a
+            # step that is still going.
             call = message.get("toolCallId")
             if not isinstance(call, str):
                 return []
-            text = " ".join(_said(message.get("content")).split())
-            return [AgentStepFailed(call_id=call, text=text[-STEP_ERROR_MAX:])]
+            returned = _said(message.get("content"))
+            steps: list[AgentEvent] = []
+            if message.get("isError"):
+                text = " ".join(returned.split())
+                steps.append(AgentStepFailed(call_id=call, text=text[-STEP_ERROR_MAX:]))
+            if returned.strip():
+                steps.append(AgentStepOutput(call_id=call, text=returned))
+            return steps
         if role != "assistant":
             return []
         self._accumulate(message)

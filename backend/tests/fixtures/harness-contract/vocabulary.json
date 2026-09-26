@@ -17,10 +17,15 @@
       "required": ["call_id"],
       "why": "That step came back an error. It marks the step already on the timeline rather than adding one — and it is NOT the event a tool that returned produces, which is the whole of #1096."
     },
+    "step_output": {
+      "class": "AgentStepOutput",
+      "required": ["call_id"],
+      "why": "What that step handed back, for whoever opens its line. Written onto the step already on the timeline, never a line of its own; the room keeps only a capped tail."
+    },
     "tool_result": {
       "class": "AgentToolResult",
       "required": ["name", "text"],
-      "why": "What a tool handed back, carried for the subagent tools alone: every other return is already visible through its effect."
+      "why": "A subagent's conclusion, as its own event: it otherwise reaches only the thread that spawned it. Every other return is written onto its step (step_output)."
     },
     "session_info": {
       "class": "AgentSessionInfo",
@@ -50,7 +55,6 @@
   },
   "differences": {
     "no-tool-failure-signal": "This harness reports nothing when a tool call fails, so a failed step reaches the room looking exactly like one that worked. A cell filled with this is a hole named, not a hole excused.",
-    "no-call-id-on-tool-use": "This harness's tool call reaches the room carrying no id of its own. Its record has one, but that id arrives as the DELIVERY's id and nothing later names the call — this harness reports no failure for a call either (see no-tool-failure-signal) — so a failure here would have no step to mark.",
     "no-subagent-threads": "This harness runs no second worker inside a session, so nothing can be attributed to one.",
     "no-subagent-tool-return": "This harness reports that a subagent stopped, but never what it handed back as a tool return.",
     "no-session-id-of-its-own": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result.",

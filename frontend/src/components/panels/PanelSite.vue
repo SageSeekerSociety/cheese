@@ -24,6 +24,7 @@ import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 import SiteStatusBar from './SiteStatusBar.vue'
+import SiteStepOutput from './SiteStepOutput.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -337,6 +338,13 @@ function isLive(index: number): boolean {
               >
                 {{ eventError(b) }}
               </p>
+              <!-- 摊开的这一步打印了什么：收着，点了才取。 -->
+              <SiteStepOutput
+                v-if="topic && expandedSite.has(b.id) && b.meta?.output_bytes"
+                :topic-id="topic.id"
+                :block-id="b.id"
+                :bytes="b.meta.output_bytes"
+              />
             </div>
             <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
             <div v-else class="site-msg">
