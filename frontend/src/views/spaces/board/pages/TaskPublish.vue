@@ -26,12 +26,19 @@
 //   题干、能勾掉不要的**，确认之后**不跳走**、就地给回执，回执里给两个去处。
 //   走的就是 `POST /tasks/publish/from-pdf/preview|confirm`。
 //
-// 真接口回什么、就摆什么：预览回来的只有 `drafts`（name/intro/description/
-// space/categoryId）、`templateUsed`、`tokenUsed` 三样。结果区摆的三件事分别从这
-// 三样来 —— 插图数是**从草稿正文里的图片链接数出来的**（后端把抽出的插图传上存储、
-// 再把正文里的图片标记换成链接，所以图片在正文里），页码是**草稿在这份预览里的次
-// 序**（后端一页一页读、按页序返回，见 `draftPage` 的注释）。这里一件都不编。
-import type { PdfTaskDraftData } from '@/network/api/tasks/types'
+// 真接口回什么、就摆什么：预览回来的有 `drafts`（name/intro/description/
+// space/categoryId）、`templateUsed`、`tokenUsed`，以及 `attachments` —— 服务端在
+// 预览这一步就把**原 PDF 与抽出的插图**落成了文件行（挂在调用者名下），把 id 报回
+// 来。结果区摆的三件事分别从前三样来 —— 插图数是**从草稿正文里的图片链接数出来
+// 的**（后端把抽出的插图传上存储、再把正文里的图片标记换成链接，所以图片在正文
+// 里），页码是**草稿在这份预览里的次序**（后端一页一页读、按页序返回，见
+// `draftPage` 的注释）。这里一件都不编。
+//
+// 本批补上的是原型那两颗「附带给领取者」：原 PDF / 抽出的插图，勾了就跟着这批题
+// **每一道**一起发（确认时走 `taskOptions.attachmentIds`）。**勾只画接口真给了东西
+// 的那一颗** —— 哪一样服务端没落成文件行，就不画那一颗、并说明为什么（见
+// `pdfAttachments` 与 `attachmentIds` 的注释）。
+import type { PdfPublishAttachmentsData, PdfTaskDraftData } from '@/network/api/tasks/types'
 
 import { computed, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -117,6 +124,37 @@ const parsedMeta = ref<{ template: string; images: number; tokens: number } | nu
 /** 确认发布之后的回执。**不跳走**：就地告诉人刚发了什么、下一步去哪儿看。 */
 const receipt = ref<{ count: number; tasks: { id: number; name: string }[] } | null>(null)
 
+// --- 附带给领取者（本批新加的那两颗勾）---------------------------------------
+
+/**
+ * 预览时服务端**已经落成文件行**、因而可以勾来当附件的那些东西。
+ *
+ * 这是预览那一步的副作用（`POST /tasks/publish/from-pdf/preview` 把原 PDF 上传、
+ * 把抽出的插图登记成 `Attachment`，都挂在调用者名下），id 从响应里的 `attachments`
+ * 报回来。**老后端不回这一项**时这里是 `null` —— 那就一颗勾都不画，见下面那个
+ * `v-if`，不画一颗点了没用的假勾。
+ */
+const pdfAttachments = ref<PdfPublishAttachmentsData | null>(null)
+/** 两颗勾：默认都勾着（原型也是），但**只有接口真给了东西的那一颗才画**。 */
+const attachPdf = ref(true)
+const attachImages = ref(true)
+
+const pdfImages = computed(() => pdfAttachments.value?.images ?? [])
+
+/**
+ * 勾中的附件 id —— 原 PDF 在前、插图在后，**整份清单会挂到这批题的每一道上**
+ * （后端的 `attach_uploaded_to_tasks`）。一样都没勾就是空数组，这时确认请求里
+ * **不带 `attachmentIds` 这一项**，行为跟这条路今天完全一样。
+ */
+const attachmentIds = computed<number[]>(() => {
+  const a = pdfAttachments.value
+  if (!a) return []
+  const ids: number[] = []
+  if (attachPdf.value && a.pdf) ids.push(a.pdf.id)
+  if (attachImages.value) ids.push(...a.images.map((img) => img.id))
+  return ids
+})
+
 const pickedDrafts = computed(() => drafts.value.filter((d) => d.picked))
 
 const MARKDOWN_IMAGE = /!\[[^\]]*\]\([^)]*\)/g
@@ -169,6 +207,9 @@ function resetPdf() {
   fileInput.value = null
   drafts.value = []
   parsedMeta.value = null
+  pdfAttachments.value = null
+  attachPdf.value = true
+  attachImages.value = true
   receipt.value = null
   pdfError.value = ''
 }
@@ -199,6 +240,9 @@ async function parsePdf() {
   parsing.value = true
   drafts.value = []
   parsedMeta.value = null
+  pdfAttachments.value = null
+  attachPdf.value = true
+  attachImages.value = true
   try {
     const { data } = await TasksApi.previewFromPdf({
       spaceId: id,
@@ -227,6 +271,9 @@ async function parsePdf() {
       images: drafts.value.reduce((n, d) => n + d.images, 0),
       tokens: data.tokenUsed ?? 0,
     }
+    // 服务端顺带落好的附件行。老后端没有这一项时留 null —— 那时页面上不画勾，
+    // 并且说明是哪一样带不了。
+    pdfAttachments.value = data.attachments ?? null
   } catch (error) {
     pdfError.value = `解析失败：${failureText(error)}`
   } finally {
@@ -258,6 +305,9 @@ async function confirmPdf() {
 
   confirming.value = true
   pdfError.value = ''
+  // 勾中的那些文件。一样都没勾就是空数组 —— 那时**这一项不发给后端**，跑的还是这条
+  // 路今天那份参数（后端读到没有 `attachmentIds` 就一道题都不挂材料）。
+  const ids = attachmentIds.value
   try {
     const { data } = await TasksApi.confirmFromPdf({
       drafts: picked.map(toDraftPayload),
@@ -278,7 +328,9 @@ async function confirmPdf() {
         // 「submissionSchema / topics 仅做占位处理，暂不影响提交与评分」），老页那条路
         // 也照样报它。留着是为了两条路报同一份形状，不是因为它今天管用。
         submissionSchema: [{ prompt: '提交文件', type: 'FILE' }],
-        // **不带 attachmentIds**：这条路不读它，理由见下面那张「附件」卡。
+        // 上面那两颗勾勾中的文件：**每一道**都挂同一份（后端
+        // `attach_uploaded_to_tasks`）。没勾就整项不出现，这条路的形状与从前一致。
+        ...(ids.length ? { attachmentIds: ids } : {}),
       },
     })
 
@@ -469,6 +521,49 @@ async function confirmPdf() {
             所以那几张图跟着题干一起发出去。
           </p>
 
+          <!-- 附带给领取者：原型那两颗勾。**勾只画接口真落成了文件行的那些**，
+               哪一样没有就不画哪一颗、并说明为什么（见 `pdfAttachments` 的注释）。 -->
+          <div class="pdf__attach" data-testid="pdf-attachments">
+            <div class="pdf__attach-head">
+              <b>附带给领取者</b>
+              <span class="pdf__attach-note" data-testid="pdf-attach-count">
+                这 {{ attachmentIds.length }} 个文件会附在<b>每一道</b>生成出来的题上
+              </span>
+            </div>
+            <div class="pdf__attach-row">
+              <v-checkbox
+                v-if="pdfAttachments?.pdf"
+                v-model="attachPdf"
+                label="原 PDF"
+                density="compact"
+                hide-details
+                :disabled="confirming"
+                data-testid="pdf-attach-pdf"
+              />
+              <v-checkbox
+                v-if="pdfImages.length"
+                v-model="attachImages"
+                :label="`抽出的插图（${pdfImages.length} 张）`"
+                density="compact"
+                hide-details
+                :disabled="confirming"
+                data-testid="pdf-attach-images"
+              />
+            </div>
+            <p v-if="pdfAttachments?.pdf" class="pdf__attach-file" data-testid="pdf-attach-pdf-file">
+              原 PDF：{{ pdfAttachments.pdf.name }}
+            </p>
+            <p v-if="pdfImages.length" class="pdf__attach-file" data-testid="pdf-attach-image-files">
+              插图：{{ pdfImages.map((i) => i.name).join('、') }}
+            </p>
+            <p v-if="!pdfAttachments?.pdf" class="pdf__attach-why" data-testid="pdf-attach-pdf-why">
+              这一项<b>没画</b>「原 PDF」那颗勾：这次预览没有把 PDF 落成可附的文件（响应里没有这一项），勾了也带不走。
+            </p>
+            <p v-if="!pdfImages.length" class="pdf__attach-why" data-testid="pdf-attach-images-why">
+              这一项<b>没画</b>「抽出的插图」那颗勾：这次没有抽到能当附件的插图（没抽到图，或抽到的图没进到任何一条草稿正文里）。
+            </p>
+          </div>
+
           <div class="pdf__actions">
             <span class="pdf__actions-note">
               确认后这 {{ pickedDrafts.length }} 道都会进<b>待审核</b>队列 —— 解析归解析，上板还是要人审。
@@ -485,22 +580,6 @@ async function confirmPdf() {
               确认发布 {{ pickedDrafts.length }} 道
             </v-btn>
           </div>
-        </PanelCard>
-
-        <!-- 附件这条限制是真接口的现状，不是这一页没做 —— 所以写在页面上，
-             而不是画两颗勾选、点了没反应。 -->
-        <PanelCard title="附件：这条路今天带不了" data-testid="pdf-attachment-note">
-          <p class="pdf__attachment">
-            PDF 生成出来的题<b>挂不上附件</b>：确认发布走下的是建题那条老路径，而那条路按一张写死的字段清单读参数，
-            <b>清单里没有 attachmentIds 这一项</b>（后端 _create_task_entity 的 dict 分支只给自己那条 POST /tasks
-            挂材料；routes/tasks.py 里也写着「PDF 批量发布那条路今天还没有 attachmentIds 这个概念」）。
-            所以这里没有原型里那两颗「把原 PDF / 抽出的插图一起附上」的勾选框：真接口带不了，画出来就是个假的。
-          </p>
-          <p class="pdf__attachment">
-            不会因此丢东西：<b>抽出的插图本来就在题干里</b>（后端把它们传上存储，再把正文里的图片
-            标记换成链接，领取的人看得到那几张图），原 PDF 留在服务端不落库。要连原文件一起给成员，
-            走「手写一道」那条路里的「附件（可选）」卡片。
-          </p>
         </PanelCard>
       </template>
     </div>
@@ -646,15 +725,46 @@ async function confirmPdf() {
   line-height: 1.7;
 }
 
-.pdf__attachment {
-  margin: 0 0 10px;
-  color: rgba(var(--v-theme-on-surface), 0.72);
-  font-size: 0.8rem;
-  line-height: 1.8;
+.pdf__attach {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 
-.pdf__attachment:last-child {
-  margin-bottom: 0;
+.pdf__attach-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 0.84rem;
+}
+
+.pdf__attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.pdf__attach-note {
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  font-size: 0.76rem;
+}
+
+.pdf__attach-file {
+  margin: 0;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  font-size: 0.76rem;
+  line-height: 1.7;
+}
+
+.pdf__attach-why {
+  margin: 4px 0 0;
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  font-size: 0.76rem;
+  line-height: 1.7;
 }
 
 .pdf__actions {

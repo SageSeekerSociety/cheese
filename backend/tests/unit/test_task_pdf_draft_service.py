@@ -156,7 +156,7 @@ async def test_pdf_generation_bounds_concurrency_and_stops_at_max_tasks(
     monkeypatch.setattr(service, "_split_pdf_to_pages", fake_split)
     monkeypatch.setattr(service, "generate_task_payloads_from_text", fake_generate)
 
-    drafts, tokens = await service.generate_task_payloads_from_pdf(
+    drafts, tokens, illustrations = await service.generate_task_payloads_from_pdf(
         pdf_bytes=b"pdf",
         template={},
         space_id=1,
@@ -170,4 +170,6 @@ async def test_pdf_generation_bounds_concurrency_and_stops_at_max_tasks(
     assert max_active == 3
     assert processed_pages == 6
     assert tokens == 600
+    # 这几页没有图，报回来的插图就该是空的 —— 不是「有几页就报几张」。
+    assert illustrations == []
     assert not Path(temp_dir).exists()

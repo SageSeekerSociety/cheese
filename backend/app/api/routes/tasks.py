@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from io import BytesIO
 from typing import Annotated
 from urllib.parse import quote
 
@@ -21,6 +22,8 @@ from app.core.errors import (
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.attachment.models import Attachment
+from app.domain.attachment.repositories import AttachmentRepository
+from app.domain.attachment.services import AttachmentService
 from app.domain.llm.repositories import AIUserQuotaRepository
 from app.domain.llm.services import AiAdviceService
 from app.domain.space.rank_service import SpaceRankService
@@ -250,6 +253,27 @@ def _apply_pdf_task_options(
         merged["categoryId"] = draft["categoryId"]
 
     return merged
+
+
+def _pdf_attachment_ids(task_options: dict) -> list[int]:
+    """``taskOptions.attachmentIds``：这一批题共用的材料，勾了才有。
+
+    与其它字段一样是自由 dict（``ConfirmTaskPublishFromPdfRequest`` 不看里面的结
+    构），所以形状自己看住：不是列表、或者元素不是整数，是请求写错了 —— 与「没带这
+    个键」（不勾任何附件）不是同一件事，不能都当成空。
+    """
+    raw = task_options.get("attachmentIds")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise BadRequestError("attachmentIds must be a list")
+    ids: list[int] = []
+    for item in raw:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError) as exc:
+            raise BadRequestError(f"Invalid attachmentIds entry: {item!r}") from exc
+    return ids
 
 
 class TaskParticipantRequest(BaseModel):
@@ -1128,9 +1152,9 @@ async def create_task(
 
     if payload.attachment_ids:
         # 材料是随题一起发出去的，所以挂在这里做：题目已经建好（``_create_task_entity``
-        # 里 flush 过），权限那道门也已经在同一个请求里过了一次。PDF 批量发布那条路
-        # 今天还没有 attachmentIds 这个概念 —— 它的原 PDF 与抽出插图都在服务端手上，
-        # 怎么落成附件是另一批的事。
+        # 里 flush 过），权限那道门也已经在同一个请求里过了一次。文件先由调用者经
+        # ``POST /attachments`` 传上来，这里只认 id —— PDF 批量发布那条路（附件在服务
+        # 端手上）走的是 ``attach_uploaded_to_tasks``，同一批校验，只是能挂到多道题上。
         await _task_attachment_service(db).attach_uploaded(
             task=task,
             user_id=auth_user.user_id,
@@ -1153,6 +1177,28 @@ async def create_task(
 
 def _task_attachment_service(db) -> TaskAttachmentService:
     return TaskAttachmentService(session=db, storage=get_storage_backend())
+
+
+def _attachment_service(db) -> AttachmentService:
+    """还没挂到题上的文件那一层（``POST /attachments`` 用的同一个服务）。"""
+    return AttachmentService(
+        repo=AttachmentRepository(session=db), storage=get_storage_backend()
+    )
+
+
+def _uploaded_attachment_to_api(attachment: Attachment) -> dict:
+    """一个**还没挂到任何题上**的文件在预览响应里的样子。
+
+    与 ``_task_attachment_to_api`` 是同一套字段来源（名字、大小、类型都取自
+    ``meta``），只是没有那两样要有关联行才成立的东西：下载计数、挂上来的时间。同样
+    **不带 url** —— 存储给的是直链，发出去就等于绕开下载那道门。
+    """
+    return {
+        "id": attachment.id,
+        "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
+        "size": attachment.meta.get("size", 0),
+        "contentType": attachment.meta.get("contentType", "application/octet-stream"),
+    }
 
 
 async def _require_task(db, task_id: int) -> Task:
@@ -1341,7 +1387,11 @@ async def preview_task_from_pdf(
         default_topic_ids.append(default_topic.id)
 
     template = draft_service.pick_template(space.task_templates or [], template_index)
-    drafts, token_used = await draft_service.generate_task_payloads_from_pdf(
+    (
+        drafts,
+        token_used,
+        illustrations,
+    ) = await draft_service.generate_task_payloads_from_pdf(
         pdf_bytes=pdf_bytes,
         template=template,
         space_id=space_id,
@@ -1352,6 +1402,34 @@ async def preview_task_from_pdf(
         max_tasks=max_tasks,
     )
 
+    # 解析出来的东西落成**发布者本人名下**的附件行，把 id 交回给前端去勾：原 PDF 与
+    # 那几张插图在服务端手上，只有这里能登记它们。挂在 ``meta.uploaderId`` 上的名字
+    # 必须是调用者 —— 确认发布那一步拿 ``TaskAttachmentService`` 挂文件，它有一道校
+    # 验是「只能挂自己上传的文件」（附件 id 是可猜的连续整数，不校验就等于把别人的
+    # 文件挂到自己的题上）。服务端自己建的行如果不署名，这一批文件会被自己挡住。
+    #
+    # 提前落库的代价是「解析了却没发布」时留下没人引用的文件，这与素材库、PDF 导入
+    # 抽图今天的处境一样（``TaskAttachmentService.attach_uploaded`` 里那段说明）。
+    attachments = _attachment_service(db)
+    pdf_attachment = await attachments.upload(
+        file=BytesIO(pdf_bytes),
+        filename=pdf_file.filename or "document.pdf",
+        content_type="application/pdf",
+        uploader_id=auth_user.user_id,
+    )
+    illustration_attachments = [
+        await attachments.register_stored(
+            filename=illustration.filename,
+            content_type=illustration.content_type,
+            storage_key=illustration.storage_key,
+            url=illustration.url,
+            size=illustration.size,
+            uploader_id=auth_user.user_id,
+            file_hash=illustration.file_hash,
+        )
+        for illustration in illustrations
+    ]
+
     return {
         "code": 200,
         "message": "Task drafts previewed from PDF successfully.",
@@ -1359,6 +1437,15 @@ async def preview_task_from_pdf(
             "drafts": drafts,
             "templateUsed": template,
             "tokenUsed": token_used,
+            # 可以勾的东西：原 PDF 一份，抽出的插图若干张。前端照这个画勾选框，
+            # 勾中的 id 由确认发布那条请求带回来。
+            "attachments": {
+                "pdf": _uploaded_attachment_to_api(pdf_attachment),
+                "images": [
+                    _uploaded_attachment_to_api(attachment)
+                    for attachment in illustration_attachments
+                ],
+            },
         },
     }
 
@@ -1379,6 +1466,19 @@ async def confirm_publish_task_from_pdf(
     if len(drafts) > 20:
         raise BadRequestError("At most 20 drafts can be published at once")
 
+    # 勾中的附件跟着**每一道**生成出来的题走（不是随机分给某一道）：预览那一步把原
+    # PDF 与抽出的插图报了回来，人在这里勾「原 PDF / 抽出的插图」，所以这一批题拿到
+    # 的是同一份材料。不勾就一个都不带 —— 默认行为与这条路今天的样子完全一样。
+    attachment_ids = _pdf_attachment_ids(task_options)
+    if attachment_ids:
+        # **先校验、后建题**：一个挂不上的 id（不存在的、别人的、已经在别的题上的）
+        # 让整条请求立刻失败，一道题都不建。异常时 ``get_db`` 会回滚整个请求，所以顺
+        # 序本身不改变结果；但「先把题造出来、再靠回滚收走」把一批没材料的题压在一个
+        # 请求级保证上，而这件事本来可以不做。
+        await _task_attachment_service(db).ensure_attachable(
+            user_id=auth_user.user_id, attachment_ids=attachment_ids
+        )
+
     created_tasks: list[Task] = []
     space_id: int | None = None
     for draft in drafts:
@@ -1394,6 +1494,16 @@ async def confirm_publish_task_from_pdf(
                 space_id = int(task_payload["space"])
             except (TypeError, ValueError):
                 pass
+
+    if attachment_ids:
+        # 一道题一次挂完再进下一道？不 —— 校验（存在 / 是我的 / 还没挂在别处）在这一
+        # 批**开始之前**判一次，理由见 ``attach_uploaded_to_tasks``。校验不过就整个请
+        # 求回滚（``get_db`` 在异常时 rollback），不会留下一半带材料、一半不带的题。
+        await _task_attachment_service(db).attach_uploaded_to_tasks(
+            tasks=created_tasks,
+            user_id=auth_user.user_id,
+            attachment_ids=attachment_ids,
+        )
 
     task_models = [_task_to_api_model(task) for task in created_tasks]
     if space_id is not None:

@@ -127,6 +127,24 @@ function previewBody() {
     ],
     templateUsed: { title: '计算机系统基础 · 标准题模板' },
     tokenUsed: 18742,
+    // 预览这一步服务端顺带落好的附件行：原 PDF 一份、抽出的插图一张。id 是后端
+    // 数据库里的号，前端只负责在勾中的时候原样报回去。
+    attachments: {
+      pdf: {
+        id: 911,
+        name: '计算机系统基础-第五次作业.pdf',
+        size: 1024,
+        contentType: 'application/pdf',
+      },
+      images: [
+        {
+          id: 912,
+          name: 'input.pdf-0001-01.png',
+          size: 2048,
+          contentType: 'image/png',
+        },
+      ],
+    },
   }
 }
 
@@ -222,7 +240,7 @@ describe('发题页：手写一道 / 从 PDF 生成', () => {
     // 发出去的草稿：只有勾中的那一条，文字是改过的那份，出处标记加上去了。
     const sent = confirmFromPdf.mock.calls[0][0] as {
       drafts: { name: string; intro: string; description: string; space: number; categoryId?: number }[]
-      taskOptions: { space: number }
+      taskOptions: { space: number; attachmentIds?: number[] }
     }
     expect(sent.drafts).toHaveLength(1)
     expect(sent.drafts[0].name).toBe('用 gdb 定位一次段错误（改过）')
@@ -231,8 +249,8 @@ describe('发题页：手写一道 / 从 PDF 生成', () => {
     expect(sent.drafts[0].categoryId).toBe(3)
     // 出处标记在简介里（题目模型没有来源这一列）—— 队列那一行显示的就是简介。
     expect(sent.drafts[0].intro).toBe('【PDF · 第 1 页】用 gdb 找出崩在哪一行。')
-    // 这一版不带附件：那条路不读 attachmentIds，页面上另有一张卡说明这件事。
-    expect('attachmentIds' in sent.taskOptions).toBe(false)
+    // 两颗勾默认都勾着，所以这条请求里带着两份文件的行号：原 PDF 在前、插图在后。
+    expect(sent.taskOptions.attachmentIds).toEqual([911, 912])
 
     // 不跳走：地址栏还是发题这一页。
     expect(view.router.currentRoute.value.fullPath).toBe(before)
@@ -242,6 +260,68 @@ describe('发题页：手写一道 / 从 PDF 生成', () => {
     const hrefs = Array.from(view.container.querySelectorAll('a')).map((a) => a.getAttribute('href'))
     expect(hrefs).toContain(`/spaces/${SPACE_ID}/board/review`)
     expect(hrefs).toContain(`/spaces/${SPACE_ID}/board/mine`)
+  })
+
+  it('附件：两颗勾默认都勾着，标签写的是哪一份、几张，取消勾的那一份就不跟着走', async () => {
+    const view = await parsed(await mount())
+
+    // 拉起来就是原型那两颗勾，默认都勾着。
+    const pdfBox = view.getByLabelText('原 PDF') as HTMLInputElement
+    const imgBox = view.getByLabelText('抽出的插图（1 张）') as HTMLInputElement
+    expect(pdfBox.checked).toBe(true)
+    expect(imgBox.checked).toBe(true)
+    // 勾的是什么摆出来给人看：文件名字是接口回来的那一份。
+    expect(textOf(view.container, 'pdf-attach-pdf-file')).toBe('原 PDF：计算机系统基础-第五次作业.pdf')
+    expect(textOf(view.container, 'pdf-attach-image-files')).toBe('插图：input.pdf-0001-01.png')
+    expect(textOf(view.container, 'pdf-attach-count')).toBe('这 2 个文件会附在每一道生成出来的题上')
+
+    // 取消勾插图：跟着走的只剩原 PDF 那一份，数字也跟着掉。
+    await toggle(imgBox)
+    await waitFor(() =>
+      expect(textOf(view.container, 'pdf-attach-count')).toBe('这 1 个文件会附在每一道生成出来的题上')
+    )
+
+    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
+    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
+    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: { attachmentIds?: number[] } }
+    // 发出去的就是屏幕上勾着的那一份，行号原样 —— 原 PDF 在前。
+    expect(sent.taskOptions.attachmentIds).toEqual([911])
+  })
+
+  it('附件：一样都不勾的时候，请求里没有 attachmentIds 这一项（与从前一致）', async () => {
+    const view = await parsed(await mount())
+
+    await toggle(view.getByLabelText('原 PDF') as HTMLInputElement)
+    await toggle(view.getByLabelText('抽出的插图（1 张）') as HTMLInputElement)
+    await waitFor(() =>
+      expect(textOf(view.container, 'pdf-attach-count')).toBe('这 0 个文件会附在每一道生成出来的题上')
+    )
+
+    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
+    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
+    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: Record<string, unknown> }
+    expect('attachmentIds' in sent.taskOptions).toBe(false)
+  })
+
+  it('附件：接口没落成文件行的那一样不画勾，页面上说清为什么', async () => {
+    previewFromPdf.mockImplementation(async () => ({
+      data: { ...previewBody(), attachments: { pdf: null, images: [] } },
+    }))
+    const view = await parsed(await mount())
+
+    // 一颗勾都不画 —— 点了也带不走的东西，不画成勾。
+    expect(view.container.querySelector('[data-testid="pdf-attach-pdf"]')).toBeNull()
+    expect(view.container.querySelector('[data-testid="pdf-attach-images"]')).toBeNull()
+    expect(view.queryByLabelText('原 PDF')).toBeNull()
+    // 但要说清是哪一样、为什么。
+    expect(textOf(view.container, 'pdf-attach-pdf-why') ?? '').toContain('没画')
+    expect(textOf(view.container, 'pdf-attach-images-why') ?? '').toContain('没画')
+
+    // 确认发布照样走得通，请求形状与从前一样。
+    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
+    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
+    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: Record<string, unknown> }
+    expect('attachmentIds' in sent.taskOptions).toBe(false)
   })
 
   it('超限与错类型：一个请求都不发出去，屏幕上说清为什么', async () => {

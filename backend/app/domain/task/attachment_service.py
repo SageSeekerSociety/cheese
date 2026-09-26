@@ -170,42 +170,81 @@ class TaskAttachmentService:
         一道没有材料的题。前者的代价是用户中途放弃时留下一个没人引用的文件，这与
         素材库、PDF 导入抽图今天的处境一样。
 
-        两道校验收在这里，是因为**附件 id 是可猜的连续整数**：不校验的话，任何
-        登录用户都能把别人上传的文件（例如别人交作业时附的材料）挂到自己的题目上，
-        借这块板把它公开出去。
+        三道校验收在这里（``_ensure_attachable``），是因为**附件 id 是可猜的连续
+        整数**：不校验的话，任何登录用户都能把别人上传的文件（例如别人交作业时附的
+        材料）挂到自己的题目上，借这块板把它公开出去。
         """
         ids = list(dict.fromkeys(attachment_ids))
         if not ids:
             return 0
         await self._ensure_publisher(task=task, user_id=user_id)
+        await self.ensure_attachable(user_id=user_id, attachment_ids=ids)
 
+        for attachment_id in ids:
+            await self._links.create(task_id=task.id, attachment_id=attachment_id)
+        return len(ids)
+
+    async def attach_uploaded_to_tasks(
+        self, *, tasks: list[Task], user_id: int, attachment_ids: list[int]
+    ) -> int:
+        """一次把同一批文件挂到**多道**题上（``publish/from-pdf/confirm``）。
+
+        与 ``attach_uploaded`` 只差一件事：那里钉的是「一份材料属于一道题」，而 PDF
+        这条路要的是相反的东西 —— 那一份原 PDF 与它抽出来的插图跟着**每一道**生成出
+        来的题走，所以同一行附件会有多条关联行。「已经在某道题上」那道校验因此放在
+        这一批**开始之前**判一次，而不是每挂一道判一次：否则第一道题刚建好的关联会
+        把第二道题自己挡在门外。校验收在同一个 ``ensure_attachable`` 里，两条路
+        对「什么文件挂得上」的答案一样。
+        """
+        ids = list(dict.fromkeys(attachment_ids))
+        if not ids or not tasks:
+            return 0
+        for task in tasks:
+            await self._ensure_publisher(task=task, user_id=user_id)
+        await self.ensure_attachable(user_id=user_id, attachment_ids=ids)
+
+        for task in tasks:
+            for attachment_id in ids:
+                await self._links.create(task_id=task.id, attachment_id=attachment_id)
+        return len(tasks) * len(ids)
+
+    async def ensure_attachable(
+        self, *, user_id: int, attachment_ids: list[int]
+    ) -> None:
+        """这些 id 挂得上吗：存在、是我的、还没挂在别处。
+
+        公开出来是为了**建题之前**先问一次（``publish/from-pdf/confirm``）：一次校验
+        不过的批量请求，不该先把那几道题造出来、再指望请求级的回滚把它们收走。挂的时
+        候（``attach_uploaded`` / ``attach_uploaded_to_tasks``）还会各自再问一次 ——
+        这是服务自己的保证，不指望每个调用方都记得先问。
+        """
         files = {
             attachment.id: attachment
-            for attachment in await self._attachment_repo.get_by_ids(ids)
+            for attachment in await self._attachment_repo.get_by_ids(attachment_ids)
         }
-        missing = [i for i in ids if i not in files]
+        missing = [i for i in attachment_ids if i not in files]
         if missing:
             raise BadRequestError(
                 "Unknown attachment id(s)", data={"attachmentIds": missing}
             )
 
-        not_mine = [i for i in ids if files[i].meta.get("uploaderId") != user_id]
+        not_mine = [
+            i for i in attachment_ids if files[i].meta.get("uploaderId") != user_id
+        ]
         if not_mine:
             raise ForbiddenError(
                 "Only files you uploaded yourself can be attached",
                 data={"attachmentIds": not_mine},
             )
 
-        taken = await self._links.list_live_for_attachments(attachment_ids=ids)
+        taken = await self._links.list_live_for_attachments(
+            attachment_ids=attachment_ids
+        )
         if taken:
             raise BadRequestError(
                 "Attachment(s) already belong to a task",
                 data={"attachmentIds": [link.attachment_id for link in taken]},
             )
-
-        for attachment_id in ids:
-            await self._links.create(task_id=task.id, attachment_id=attachment_id)
-        return len(ids)
 
     async def download(
         self, *, task: Task, user_id: int, attachment_id: int
