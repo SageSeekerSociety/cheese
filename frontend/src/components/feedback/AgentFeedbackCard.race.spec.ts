@@ -108,4 +108,30 @@ describe('Agent 反馈卡换话题', () => {
 
     expect(baseElement.textContent).not.toContain('旧话题的提案')
   })
+
+  it('新话题的提案还没回来时，上一个话题的卡已经不在了', async () => {
+    const { pinia, vuetify, router, Wrapper } = setup()
+    const store = useFeedbackStore()
+    const next = deferred<FeedbackProposal[]>()
+    vi.spyOn(store, 'loadProposals').mockImplementation((topicId: string) =>
+      topicId === 't-old' ? Promise.resolve([proposal('b-old', '旧话题的提案')]) : next.promise
+    )
+
+    const { baseElement, rerender } = render(Wrapper, {
+      props: { topicId: 't-old' },
+      global: { plugins: [vuetify, router, pinia, i18n] },
+    })
+    await waitFor(() => {
+      expect(baseElement.textContent).toContain('旧话题的提案')
+    })
+
+    // 换到新话题，它的请求还在路上。这一段空档里对话栏画的必须是新话题 —— 哪怕它
+    // 暂时什么都没有 —— 而不是上一个话题留下的那张卡。
+    await rerender({ topicId: 't-new' })
+    expect(baseElement.textContent).not.toContain('旧话题的提案')
+
+    next.resolve([])
+    await new Promise((r) => setTimeout(r, 50))
+    expect(baseElement.textContent).not.toContain('旧话题的提案')
+  })
 })

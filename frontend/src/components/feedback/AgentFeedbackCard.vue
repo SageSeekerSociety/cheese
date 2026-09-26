@@ -73,7 +73,16 @@ async function load() {
 
 onMounted(load)
 // 换话题就重拉：这个组件在话题之间会被复用（同一个路由，只换参数）。
-watch(() => props.topicId, load)
+// 重拉之前先清空：手上这份是**上一个话题**的，新请求回来之前它会原样画在新话题的
+// 会话栏里 —— 一张别的话题的卡在这里停一个来回再消失，而它的内容本来就不该给这个
+// 话题的人看。
+watch(
+  () => props.topicId,
+  () => {
+    proposals.value = []
+    void load()
+  }
+)
 
 function visibleCards(): FeedbackProposal[] {
   return proposals.value.filter((p) => !dismissed.value.has(p.block_id))
