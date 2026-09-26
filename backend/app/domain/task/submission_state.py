@@ -20,7 +20,7 @@ the same way a writer of ``SUCCESS`` would. What it deliberately does not do is
 advance the axis itself; that is a separate, larger change.
 """
 
-from sqlalchemy import ColumnElement, exists, or_, select
+from sqlalchemy import ColumnElement, SQLColumnExpression, exists, or_, select
 
 from app.domain.task.models import (
     TaskMembership,
@@ -29,7 +29,7 @@ from app.domain.task.models import (
 )
 
 
-def has_work_in_hand(membership_id: ColumnElement[int]) -> ColumnElement[bool]:
+def has_work_in_hand(membership_id: SQLColumnExpression[int]) -> ColumnElement[bool]:
     """A correlated SQL predicate: does this membership have work in hand?
 
     ``membership_id`` is the membership-id column of the enclosing query (its
@@ -37,6 +37,11 @@ def has_work_in_hand(membership_id: ColumnElement[int]) -> ColumnElement[bool]:
     correlates against. Soft-deleted submissions and reviews are not there as
     far as their own readers in this domain are concerned — the repositories
     filter ``deleted_at IS NULL`` on both — so neither is counted here.
+
+    The parameter is typed ``SQLColumnExpression`` for the same reason as
+    ``app.domain.identity.handles.agent_handle_column``: callers hand in an ORM
+    mapped attribute such as ``TaskMembership.id``, which is not a
+    ``ColumnElement`` in the types even though it is one in the query.
     """
     # The review the membership is still waiting on: no live review row at all.
     still_in_the_queue = ~exists(
