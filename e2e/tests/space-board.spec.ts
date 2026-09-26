@@ -434,7 +434,14 @@ test.describe("空间新界面（真路由）", () => {
     await expect(page.getByRole("link", { name: "数据看板", exact: true })).toBeVisible();
 
     // 六张 KPI 卡上的数 == 接口给的那一份。
-    const kpi = (label: string) => page.locator(".metric", { hasText: label }).locator(".metric__value");
+    //
+    // 按**卡里的标签**找，不按整张卡的文字找：完成率那张卡的脚注写着「通过 / 领取主体」，
+    // 拿整卡文字去 filter('领取主体') 会同时命中两张卡（strict 模式直接判失败）——
+    // 这是这条用例真栈上踩到过的一次。
+    const kpi = (label: string) =>
+      page
+        .locator(".metric", { has: page.locator(".metric__label", { hasText: new RegExp(`^${label}$`) }) })
+        .locator(".metric__value");
     await expect(kpi("题目总数")).toHaveText(String(m.taskCount));
     await expect(kpi("待审核")).toHaveText(String(alerts.pendingTaskApprovalCount));
     await expect(kpi("领取主体")).toHaveText(String(m.participantCount));
