@@ -306,6 +306,7 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
+    _sync_project_skills(skills_dst, project_id)
     # Loosen perms so the sandbox container (a different uid) can read/write the
     # mount. Best-effort per entry: the container's Claude Code runs as its own
     # uid and creates files here across turns, which the backend (another uid)
@@ -321,6 +322,36 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     # whose container is reused for weeks still gets the current CLI.
     _stage_cheese_cli(d)
     return d
+
+
+def _sync_project_skills(skills_dst: Path, project_id: uuid.UUID) -> None:
+    """The project's confirmed skills beside the platform's; deleted ones go."""
+    import json
+    import shutil
+
+    from app.domain.agent.skills import RESERVED_SKILL_NAMES
+    from app.domain.project_skill.service import mirror_root
+
+    source = mirror_root(project_id)
+    shipped = sorted(p.name for p in source.iterdir()) if source.is_dir() else []
+    manifest = skills_dst / ".cheese-project-skills.json"
+    try:
+        previous = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = []
+    for name in {*previous, *shipped}:
+        if (
+            isinstance(name, str)
+            and name
+            and "/" not in name
+            and name not in (".", "..")
+            and name not in RESERVED_SKILL_NAMES
+        ):
+            shutil.rmtree(skills_dst / name, ignore_errors=True)
+    for name in shipped:
+        shutil.copytree(source / name, skills_dst / name)
+    skills_dst.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps(shipped), encoding="utf-8")
 
 
 def _stage_cheese_cli(session: Path) -> None:

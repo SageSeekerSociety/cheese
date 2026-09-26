@@ -172,8 +172,9 @@ def test_default_is_todays_interface_verbatim() -> None:
         "project-library",
         "project-routines",
         "project-members",
+        "project-skills",
     )
-    assert default.hidden == ("calendar", "project-routines")
+    assert default.hidden == ("calendar", "project-routines", "project-skills")
     assert default.terms == {}
     assert default.nav.rail == ("home", "projects", "add")
     assert default.nav.tabs == ("spaces", "workspace", "inbox")
@@ -190,6 +191,7 @@ def test_every_shell_names_only_known_keys() -> None:
         "project-library",
         "project-routines",
         "project-members",
+        "project-skills",
     }
     for name, shell in CATALOG.items():
         assert set(shell.nav.rail) <= known_rail, name
