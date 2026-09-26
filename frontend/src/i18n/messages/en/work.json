@@ -141,12 +141,6 @@
   },
   "room": {
     "noTasks": "No tasks",
-    "dispatched": {
-      "created": "New task",
-      "title": "“{title}”",
-      "done": "Done",
-      "running": "In progress"
-    },
     "menu": {
       "more": "More",
       "focus": "Focus mode",
@@ -198,7 +192,13 @@
       "edit": "Edit",
       "editHint": "Put it back in the message box"
     },
-    "newMessages": "new"
+    "newMessages": "new",
+    "dispatched": {
+      "created": "New task",
+      "title": "“{title}”",
+      "done": "Done",
+      "running": "In progress"
+    }
   },
   "members": {
     "leave": "Leave project",

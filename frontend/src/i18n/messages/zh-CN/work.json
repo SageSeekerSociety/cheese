@@ -141,12 +141,6 @@
   },
   "room": {
     "noTasks": "暂无任务",
-    "dispatched": {
-      "created": "新建任务",
-      "title": "《{title}》",
-      "done": "已完成",
-      "running": "进行中"
-    },
     "menu": {
       "more": "更多",
       "focus": "专注模式",
@@ -198,7 +192,13 @@
       "edit": "编辑",
       "editHint": "放回输入框"
     },
-    "newMessages": "条新消息"
+    "newMessages": "条新消息",
+    "dispatched": {
+      "created": "新建任务",
+      "title": "《{title}》",
+      "done": "已完成",
+      "running": "进行中"
+    }
   },
   "members": {
     "leave": "退出项目",
