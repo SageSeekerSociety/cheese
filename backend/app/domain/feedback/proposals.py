@@ -268,8 +268,23 @@ class ProposalService:
         cards = await self._proposals_since(
             topic_id, datetime.now(UTC) - timedelta(days=1)
         )
-        if any(card.get("fingerprint") == fingerprint for card in cards):
-            raise PreconditionFailedError("这个提案刚提过，不要重复提")
+        earlier = next(
+            (c for c in reversed(cards) if c.get("fingerprint") == fingerprint),
+            None,
+        )
+        if earlier is not None:
+            # Two wordings because the agent acts on this sentence, and the two
+            # states call for different next steps. Told only 「刚提过」 about a card
+            # nobody has sent, an agent asked to make it private concludes that
+            # cannot be done — yet the person pressing 「提交反馈」 picks public or
+            # private in the send form, so the change was one click away.
+            if earlier.get(ACCEPTED_FEEDBACK_KEY):
+                raise PreconditionFailedError("这个问题刚作为反馈发出去了，不要重复提")
+            raise PreconditionFailedError(
+                "这个提案刚提过，那张卡还在话题里等人发送，不要重复提。"
+                "标题、正文和可见性（公开/私密）都由按「提交反馈」的人在表单里定，"
+                "想改成私密，请他发送时在表单里选私密"
+            )
         if len(cards) >= settings.feedback_proposals_per_topic_per_day:
             raise PreconditionFailedError("今天这个话题的反馈提案已经够了，明天再说")
         return fingerprint

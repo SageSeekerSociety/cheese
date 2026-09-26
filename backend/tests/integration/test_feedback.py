@@ -1536,6 +1536,62 @@ def test_the_same_proposal_is_refused_the_second_time(client):
     assert again.status_code == 412
 
 
+def test_a_private_re_proposal_of_an_unsent_card_says_how_to_make_it_private(client):
+    """The refusal is what the agent tells the person, so it has to be true.
+
+    An agent that filed a card as public and was asked to make it private tried
+    the only thing it can do, re-propose with `visibility=private`, and read a
+    bare 「刚提过」 as "this cannot be done". The card was still unsent, and the
+    person sending it picks the visibility in the send form.
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+
+    assert _propose(client, topic, token, visibility="public").status_code == 200
+    again = _propose(client, topic, token, visibility="private")
+
+    assert again.status_code == 412
+    # The refusal names the way to what was asked for.
+    assert "私密" in again.json()["message"], again.json()["message"]
+
+    # Sending it private is the path the refusal names, and it works.
+    block_id = client.get(
+        f"/topics/{topic}/feedback-proposals", headers=session_auth_headers(REPORTER)
+    ).json()["data"][0]["block_id"]
+    sent = client.post(
+        f"/topics/{topic}/feedback-proposals/{block_id}/accept",
+        json={"title": "沙箱里 make 装不上依赖", "visibility": "private"},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["data"]["visibility"] == "private"
+
+
+def test_re_proposing_a_sent_card_is_not_refused_as_still_waiting(client):
+    """A sent card and an unsent one are refused for different reasons, and the
+    caller is told which: "ask them to pick private when sending" is false once
+    the card is already a report."""
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+
+    block_id = _propose(client, topic, token).json()["data"]["block_id"]
+    waiting = _propose(client, topic, token)
+    assert waiting.status_code == 412
+
+    sent = client.post(
+        f"/topics/{topic}/feedback-proposals/{block_id}/accept",
+        json={"title": "沙箱里 make 装不上依赖"},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert sent.status_code == 200, sent.text
+
+    after_send = _propose(client, topic, token)
+    assert after_send.status_code == 412
+    assert after_send.json()["message"] != waiting.json()["message"]
+
+
 def test_dismissing_a_proposal_is_remembered(client):
     project = _project(client, REPORTER)
     topic = _topic(client, project, REPORTER)
