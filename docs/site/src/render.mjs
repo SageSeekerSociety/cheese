@@ -172,16 +172,22 @@ export function downloadPage(ctx, desktop) {
    <div class="prose">
     <h2 id="desktop">桌面端<a class="anchor" href="#desktop">#</a></h2>
     <div class="dl-grid">
-     ${card('macOS', 'Apple 芯片（M 系列）', [['下载 .dmg', 'Cheese-arm64.dmg']], '打开 .dmg，把知是拖进「应用程序」。')}
-     ${card('macOS', 'Intel 芯片', [['下载 .dmg', 'Cheese-x64.dmg']], '打开 .dmg，把知是拖进「应用程序」。')}
+     ${card('macOS', 'Apple 芯片（M 系列）', [['下载 .dmg', 'Cheese-arm64.dmg']], '打开 .dmg，把 Cheese 拖进「应用程序」。')}
+     ${card('macOS', 'Intel 芯片', [['下载 .dmg', 'Cheese-x64.dmg']], '打开 .dmg，把 Cheese 拖进「应用程序」。')}
      ${card('Windows', 'x64', [['下载安装程序', 'Cheese-Setup-x64.exe']], '运行安装程序，按提示完成。')}
     </div>
-    <p>桌面端有新版本时会在后台自动下载，下次打开就是新的。所有版本见 <a class="link" href="${REPO}/releases/tag/desktop-latest" rel="noopener">GitHub 发布页</a>。</p>
+    <p>第一次打开若被系统拦下：Mac 到「系统设置 → 隐私与安全性」点「仍要打开」；Windows 点「更多信息 → 仍要运行」。登录后在「我的设备 → 添加设备」点「接入这台电脑」，芝士就能在这台电脑上干活。</p>
+    <p>桌面端每次启动都会检查新版本，下载完成后自动安装并重启。当前版本见 <a class="link" href="${REPO}/releases/tag/desktop-latest" rel="noopener">GitHub 发布页</a>。</p>
     <h2 id="connector">连接器<a class="anchor" href="#connector">#</a></h2>
-    <p>连接器是一个命令行程序：装在服务器或没有图形界面的电脑上，登录后平台就能在这台机器上替芝士干活。安装和接入步骤见<a class="link" href="/docs/devices#devices">设备与运行环境</a>。</p>
-    <div class="code"><div class="code-bar"><span class="code-tab on">登录并保持连接</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><span class="k">cheese</span> auth login
-<span class="k">cheese</span> link auto-connect
-<span class="k">cheese</span> status</pre></div>
+    <p>连接器 <code>cheesehost</code> 是一个命令行程序：装在服务器或不装桌面端的电脑上，批准后芝士就能在这台机器上干活。详细步骤见<a class="link" href="/docs/devices#devices">设备与运行环境</a>。</p>
+    <div class="code"><div class="code-bar"><span class="code-tab on">Mac / Linux</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><span class="c"># 安装连接器 cheesehost</span>
+curl -fsSL https://okcheese.com/connector/install.sh | sh
+<span class="c"># 登录并保持连接：打开它给出的链接，点「批准并绑定到我」</span>
+<span class="k">cheesehost</span> link connect https://okcheese.com/connector
+<span class="c"># 查看登录与连接状态</span>
+<span class="k">cheesehost</span> status</pre></div>
+    <div class="code"><div class="code-bar"><span class="code-tab on">Windows（PowerShell）</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre>irm https://okcheese.com/connector/install.ps1 | iex
+<span class="k">cheesehost</span> link connect https://okcheese.com/connector</pre></div>
    </div>
   </article></main></div>`
   return shell(ctx, { title: '下载 · 知是 · Cheese 文档', description: '下载知是桌面端（macOS、Windows）和连接器。', section: 'download', main, pageData: { kind: 'download' } })

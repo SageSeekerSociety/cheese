@@ -19,7 +19,7 @@ covers:
 
 ## 一条必过检查，按路径挑套件 {#required}
 
-分支保护只要求一个检查：`Required CI`（`.github/workflows/required-ci.yml`）。它先跑 `scope`，按这次合并改到的路径决定跑哪些套件（`.github/scripts/required-ci-paths.json`），再把选中的套件当作可复用工作流调用：
+分支保护只要求一个检查：工作流 `Required CI`（`.github/workflows/required-ci.yml`）里的 job `CI required`。它先跑 `scope`，按这次合并改到的路径决定跑哪些套件（`.github/scripts/required-ci-paths.json`），再把选中的套件当作可复用工作流调用：
 
 | 套件 | 工作流 | 查什么 |
 |---|---|---|
@@ -32,24 +32,30 @@ covers:
 | harness | `harness-contract.yml` | 骨架请求契约 |
 | mcp | `mcp-contract.yml` | Claude Code 构建契约 |
 | remote | `remote-execution.yml` | 远端执行验收 |
+| docs | `docs.yml` | 文档站构建：链接与锚点、每页的类型/摘要/涉及代码、参考页生成器 |
 
-最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py failures`）。改到这套检查本身时，所有套件都会跑。
+最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）。改到这套检查本身时，所有套件都会跑。
 
 这样做的好处：分支保护里只有一个名字，加减套件不用改仓库设置；只改文档不会触发后端测试，改了后端也不可能漏跑。
 
-## 为什么大多跑在 GitHub 托管的 runner 上 {#runners}
+## 哪些跑在托管 runner，哪些跑在自己的机器上 {#runners}
 
-仓库是公开的，托管 runner 不限时长，所以测试默认用 `ubuntu-latest`。只有需要主机上的镜像、真实设备或内网访问的任务（部署、端到端的部分场景、`CLAUDE.md` 审批）才用自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）。
+后端、前端、端到端和 guards 默认用 GitHub 托管的 `ubuntu-latest`：每台机器一次只跑一件事，没有时长上限。
+
+自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上跑两类：
+
+- 本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
+- 2026-08-13 组织的 Actions 计费失效后，托管 job 一度全部被拒，于是 cli 套件、远端执行验收和 `CLAUDE.md` 审批门也搬到了 `cheese-ci` 池。
 
 ## 合并之后 {#after-merge}
 
 1. `build.yml`：main 上的每个提交构建一整套镜像，以提交号为标签；没变的镜像直接给旧镜像加上新标签。这一步也把文档站构建进前端镜像。
-2. `deploy-dev.yml`：构建成功后自动把这个提交部署到测试环境，见[部署拓扑](/dev/topology)。
+2. `deploy-dev.yml`：镜像构建和这个提交的 `Required CI` 都成功后，自动部署到测试环境（也可以手动触发），见[部署拓扑](/dev/topology)。
 3. `deploy-prod.yml`：只在发布 GitHub Release 或手动指定提交时触发，并且要有人批准才会执行。
 
 ## PR 上的两个机器人 {#bots}
 
-- `claude-review.yml`：每个 PR 打开或更新时自动评审一次；在 PR 里写 `@claude` 可以追问。
+- `claude-review.yml`：在 PR 里写 `@claude` 可以让它评审或回答问题。每个 PR 自动评审一次的触发器 2026-08-09 起停用了（它在所有 PR 上失败，而失败的检查会卡住采纳）；要恢复，把 `pull_request:` 加回 `on:`，`auto-review` job 原样可用。
 - `claude-md-review.yml`：改了 `CLAUDE.md` 的 PR 需要人批准。`CLAUDE.md` 每一轮都会整份加载，一行错的指令会被每个 agent 执行，所以这是全仓库唯一一个需要人批准的文件。
 
 ## 定时巡检 {#scheduled}

@@ -355,7 +355,6 @@ const assets = {
   js: asset('app', 'js', js),
   css: asset('app', 'css', css),
   logo: asset('logo', 'svg', LOGO_SVG),
-  room: asset('room', 'html', fs.readFileSync(path.join(HERE, 'island/room.html'))),
   // 三极行楷简体-粗 (三极字库, free for commercial use), subset to the home page's display headings by gen/font.sh.
   display: asset('display', 'woff2', fs.readFileSync(path.join(HERE, 'src/fonts/display.woff2'))),
 }
@@ -385,7 +384,9 @@ const devList = flatNav(devNav)
 devList.forEach((p, i) => write(`dev/${p.slug}.html`, docPage(ctx, p, devNav, devList[i - 1], devList[i + 1])))
 write('dev/index.html', redirectPage('/docs/dev/overview'))
 
-const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel, summary: p.summary }]))
+// The first picture on a page, for the home page's cards.
+const firstImage = (md) => { const m = /!\[([^\]]*)\]\((\/images\/[^)\s]+)\)/.exec(md); return m ? { src: `/docs${m[2]}`, alt: m[1] } : null }
+const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel, group: p.group, summary: p.summary, image: firstImage(p.source) }]))
 const devRefs = Object.fromEntries(devList.map((p) => [p.slug, { url: p.url, title: p.title, summary: p.summary }]))
 pageRefs.__logo = assets.logo
 const doors = SECTIONS.map(([key, label, icon]) => ({ key, label, icon, items: userNav[key].flatMap(([, items]) => items) }))
@@ -400,7 +401,6 @@ for (const [from, to] of Object.entries(REDIRECTS)) {
   write(`${from}.html`, redirectPage(`/docs/${to}`))
 }
 // The home page's interactive parts need a small map of page links and the role data.
-write('home.json', JSON.stringify({ pages: pageRefs, who: WHO }))
 
 // ---------- search indexes: public and developer, kept apart ----------
 const searchIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.map((c) => ({

@@ -116,7 +116,7 @@
    "from": "meter",
    "to": "vendor",
    "y": 352,
-   "label": "换上订阅凭证，其余字节不改",
+   "label": "换上订阅凭证，写入模型名",
    "variant": "emphasis"
   },
   {
@@ -165,7 +165,7 @@
    "from": "api",
    "to": "session",
    "y": 708,
-   "label": "额度用完：拒绝并在话题里提示",
+   "label": "额度用完：拒绝准入（话题里另发提示）",
    "variant": "dashed"
   }
  ],
@@ -192,7 +192,7 @@
    "dot": "amber",
    "title": "分身的模型",
    "items": [
-    "x-cheese-child-model：按指定处理",
+    "child-model 与父会话不同：按指定处理",
     "只是继承父会话：走默认分身模型",
     "不在允许范围：拒绝并列出可选模型"
    ]

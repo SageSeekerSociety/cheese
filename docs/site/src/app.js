@@ -2,7 +2,6 @@
 // this script; it adds search, 问芝士, theme, and the home page's motion.
 import { build, stageFor, BUBBLE } from 'virtual:motion'
 import { ic } from './content.js'
-import { sayHtml } from './home.mjs'
 import { freshToken, signInUrl } from './session.js'
 
 const $ = (s, r = document) => r.querySelector(s)
@@ -80,14 +79,13 @@ function onScroll() {
     $('#tlFill').style.setProperty('--p', Math.max(0, Math.min(1, (mid - r.top) / r.height)))
     $$('.item', tl).forEach((it) => it.classList.toggle('lit', it.getBoundingClientRect().top < mid))
   }
-  onStoryScroll()
 }
 
 // ---------- theme: a circle of night spreading from where you clicked ----------
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark)
   try { localStorage.setItem('docs-dark', dark ? '1' : '0') } catch { /* private mode */ }
-  loadDiagrams(); syncRoom()
+  loadDiagrams()
 }
 function toggleTheme(x, y) {
   const to = !isDark()
@@ -273,7 +271,7 @@ function loadDiagrams() {
   $$('iframe[data-diagram]').forEach((f) => { const src = `${f.dataset.diagram}?embed=1&theme=${isDark() ? 'dark' : 'light'}`; if (f.getAttribute('src') !== src) f.setAttribute('src', src) })
 }
 
-// ---------- home: logo, pinned room story, role tabs, pickers ----------
+// ---------- home: logo ----------
 let heroVisible = true
 function mountHero() {
   const host = $('#heroLogo'); if (!host) return
@@ -292,46 +290,6 @@ function mountHero() {
   requestAnimationFrame(tick)
   new IntersectionObserver((es) => { heroVisible = es[0].isIntersecting }).observe(host)
   host.addEventListener('click', () => { clock = 0 })
-}
-
-// The room renders at a real device size and is scaled, never reflowed: desktop
-// visitors see the desktop workbench, phone visitors the phone one.
-const ROOM_SIZE = { desktop: [1200, 740], phone: [390, 760] }
-let storyStep = -1
-function fitRoom() {
-  const box = $('#roomFit'), f = $('#roomFrame'); if (!box || !f) return
-  const phone = matchMedia('(max-width: 820px), (pointer: coarse) and (max-width: 1024px)').matches
-  const [w, h] = ROOM_SIZE[phone ? 'phone' : 'desktop']
-  box.classList.toggle('phone', phone)
-  const maxH = phone ? Math.min(innerHeight * 0.72, 640) : Infinity
-  const k = Math.min(box.clientWidth / w, maxH / h, 1)
-  f.style.width = w + 'px'; f.style.height = h + 'px'; f.style.transform = `scale(${k})`
-  f.style.left = Math.max(0, (box.clientWidth - w * k) / 2) + 'px'
-  box.style.height = h * k + 'px'
-}
-function syncRoom() {
-  const w = $('#roomFrame')?.contentWindow
-  if (!w?.setStep) return
-  w.setTheme(isDark() ? 'dark' : 'light'); w.setStep(Math.max(storyStep, 0))
-}
-function mountStory() {
-  const f = $('#roomFrame'); if (!f) return
-  new ResizeObserver(fitRoom).observe($('#roomFit')); addEventListener('resize', fitRoom); fitRoom()
-  f.addEventListener('load', () => { syncRoom(); onStoryScroll() })
-  // Load the room (1.5 MB) only when the section is about to come into view.
-  const io = new IntersectionObserver((es) => { if (es[0].isIntersecting) { f.src = f.dataset.src; io.disconnect() } }, { rootMargin: '600px 0px' })
-  io.observe(f)
-}
-function onStoryScroll() {
-  const sec = $('#story'); if (!sec) return
-  const r = sec.getBoundingClientRect(), run = sec.offsetHeight - innerHeight
-  const p = Math.max(0, Math.min(1, -r.top / Math.max(run, 1)))
-  const steps = $$('#storySteps li'), n = Math.min(steps.length - 1, Math.floor(p * steps.length))
-  $('#storyBar')?.style.setProperty('--p', p)
-  if (n === storyStep) return
-  storyStep = n
-  steps.forEach((li, i) => { li.classList.toggle('on', i === n); li.classList.toggle('done', i < n) })
-  syncRoom()
 }
 
 // ---------- home: 问芝士 walks through the kinds of docs ----------
@@ -446,19 +404,10 @@ function mountTour() {
   })
 }
 
-let home = null
-async function homeData() {
-  home ||= await fetch('/docs/home.json').then((r) => r.json())
-  return home
-}
-const say = { who: '', what: 0, open: '' }
-async function renderSay() {
-  const { pages, who } = await homeData()
-  say.who ||= Object.keys(who)[0]
-  const h = sayHtml(say.who, say.what, who, pages, say.open)
-  $('#pickWho').innerHTML = h.who; $('#pickWhat').innerHTML = h.what; $('#sayOut').innerHTML = h.out
-  const work = $('#workPanel')
-  if (work.dataset.who !== say.who) { work.dataset.who = say.who; work.innerHTML = h.work }
+// ---------- home: role tabs ----------
+function showRole(i) {
+  $$('[data-role-tab]').forEach((b) => b.setAttribute('aria-selected', String(+b.dataset.roleTab === i)))
+  $$('.role-panel').forEach((p) => { const on = +p.dataset.role === i; p.classList.toggle('on', on); p.hidden = !on })
 }
 
 // ---------- developer docs: the admin check ----------
@@ -478,8 +427,7 @@ async function devGate() {
 
 // ---------- events ----------
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-menu],[data-copy-page],[data-copy],[data-f],[data-sug],[data-pick],[data-pick-opt],.code-tab,.side a[href^="#"]')
-  if (say.open && !e.target.closest('.x-menu,[data-pick]')) { say.open = ''; renderSay() }
+  const t = e.target.closest('[data-open-search],[data-open-ask],[data-close-ask],[data-new-chat],[data-menu],[data-copy-page],[data-copy],[data-f],[data-sug],[data-role-tab],.code-tab,.side a[href^="#"]')
   if (!t) { if (!e.target.closest('.menu')) $('#menu')?.classList.remove('open'); return }
   if (t.matches('[data-open-search]')) { e.preventDefault(); openSearch() }
   else if (t.matches('[data-open-ask]')) { e.preventDefault(); $('#menu')?.classList.remove('open'); if (t.closest('.hdr') && $('#drawer').classList.contains('open')) closeDock(); else openAsk() }
@@ -497,8 +445,7 @@ document.addEventListener('click', (e) => {
     $$('.item').forEach((i) => i.classList.toggle('hide', f !== 'all' && i.dataset.t !== f))
     $$('.day').forEach((d) => d.classList.toggle('hide', !d.querySelector('.item:not(.hide)')))
     onScroll()
-  } else if (t.matches('[data-pick-opt]')) { if (t.dataset.pickOpt === 'who') { say.who = t.dataset.v; say.what = 0 } else say.what = +t.dataset.v; say.open = ''; renderSay() }
-  else if (t.matches('[data-pick]')) { say.open = say.open === t.dataset.pick ? '' : t.dataset.pick; renderSay() }
+  } else if (t.matches('[data-role-tab]')) showRole(+t.dataset.roleTab)
   else if (t.matches('.code-tab')) t.parentElement.querySelectorAll('.code-tab').forEach((x) => x.classList.toggle('on', x === t))
   else if (t.matches('.side a[href^="#"]')) moveSidePill(t)
 })
@@ -524,7 +471,7 @@ document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openSearch() }
   else if (e.key === '/' && !typing) { e.preventDefault(); openSearch() }
   else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') { e.preventDefault(); $('#drawer').classList.contains('open') ? closeDock() : openAsk() }
-  else if (e.key === 'Escape') { if (say.open) { say.open = ''; renderSay() } closeAll() }
+  else if (e.key === 'Escape') closeAll()
 })
 $('#dockResize').addEventListener('pointerdown', (e) => {
   e.preventDefault(); document.body.classList.add('dragging')
@@ -541,6 +488,6 @@ setupReveal(); setupSpot(); setupMagnetic(); setupToc()
 moveTabs(); moveSidePill(); moveFilter(); onScroll()
 document.fonts?.ready.then(() => { moveTabs(); moveSidePill() })
 loadDiagrams()
-if (PAGE.kind === 'home') { mountHero(); mountStory(); mountTour() }
+if (PAGE.kind === 'home') { mountHero(); mountTour() }
 if (PAGE.kind === 'dev-gate') devGate()
 if (location.hash) { const el = document.getElementById(location.hash.slice(1)); el?.classList.add('flash') }

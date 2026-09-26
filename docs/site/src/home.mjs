@@ -1,6 +1,5 @@
 // The home page, rendered at build time. Interactive parts (logo motion, the
-// pinned room story and the 我是…我要… pickers) are wired up by src/app.js from
-// the same data, passed in the page's JSON.
+// 问芝士 tour, the role tabs) are wired up by src/app.js.
 import { esc, shell, ic, REPO } from './render.mjs'
 import { TAG } from './content.js'
 
@@ -12,14 +11,6 @@ export const WORK = [
 ]
 export const TOOLI = { 题目: 'doc', 话题文件: 'folder', 云机器: 'cpu', 课程: 'book', 提交记录: 'list', 评分标准: 'check', 文件: 'folder', 实况文档: 'doc', 仓库: 'git', 预览: 'layers', 设备: 'cpu' }
 
-// The room is the workbench's own components (island/), pinned while the page
-// scrolls; each quarter of the section's scroll adds the next thing that happens.
-export const STORY = [
-  ['交代一件事', '在话题里说清要什么、给谁、什么时候要。@ 芝士，它就接手。'],
-  ['拆成几件事同时做', '芝士复述它的理解，把活拆成几条任务并行推进，每条都有进度。'],
-  ['交付，当场预览', '做出来的文件直接出现在话题里，右侧就能打开看；你可以随时补一句要求。'],
-  ['改好，等你验收', '它按你的补充改完，递上验收：采纳就合进项目，不满意就退回。'],
-]
 export const ROLE_ICON = { 学生: 'book', '老师 / 助教': 'users', 办公: 'folder', 团队项目: 'git' }
 
 // What one of these people hands over and gets back: a worked example per role.
@@ -30,37 +21,27 @@ export function workPanel(who, pages) {
     <p class="w-text">${esc(task).replace('@芝士', '<span class="mention">@芝士</span>')}</p>
     <div class="w-tools">${tools.map((t) => `<span>${ic(TOOLI[t] || 'doc', 'width:13px;height:13px')}${t}</span>`).join('')}</div></div>
    <div class="w-result"><div class="w-av"><img src="${pages.__logo}" alt=""></div><div><small>芝士交回来</small><p>${esc(result)}</p><div class="w-files">${files.map((f) => `<span>${ic(f.startsWith('PR') ? 'git' : 'doc', 'width:13px;height:13px')}${esc(f)}</span>`).join('')}</div>
-    <a class="link" href="${target.url}">${esc(role)}怎么做：${esc(target.title)} →</a></div></div>`
+    <a class="link" href="${target.url}">完整步骤：${esc(target.title)} →</a></div></div>`
 }
 
-export function pickHtml(id, label, options, selected, open) {
-  return `<button class="x-pick-btn" data-pick="${id}" aria-haspopup="listbox" aria-expanded="${open === id}">${esc(label)}${ic('down')}</button>
-   <div class="x-menu${open === id ? ' open' : ''}" role="listbox">${options.map(([v, t, d, icon], i) => `<button role="option" data-pick-opt="${id}" data-v="${esc(v)}" class="${String(v) === String(selected) ? 'on' : ''}" style="--i:${i}"><span class="x-menu-ic">${ic(icon)}</span><span><b>${esc(t)}</b><small>${esc(d)}</small></span></button>`).join('')}</div>`
+// 按你的身份找: per role, a worked example and the things that role comes to do.
+function rolePanel(who, i, WHO, pages) {
+  const jobs = WHO[who].filter(([, , s]) => pages[s])
+  return `<div class="role-panel${i ? '' : ' on'}" role="tabpanel" id="role-${i}" data-role="${i}"${i ? ' hidden' : ''}>
+   <div class="role-example">${workPanel(who, pages)}</div>
+   <div class="role-jobs"><small>${esc(who)}常来做的事</small>${jobs.map(([t, d, s]) => `<a class="role-job" href="${pages[s].url}"><span class="rj-ic">${ic(s.endsWith('tutorial') ? 'bulb' : 'doc', 'width:16px;height:16px')}</span><span class="rj-body"><b>我要${esc(t)}</b><small>${esc(d)}</small></span><span class="rj-page">${esc(pages[s].title)}${ic('arrow', 'width:13px;height:13px')}</span></a>`).join('')}</div>
+  </div>`
 }
 
-export function sayHtml(who, what, WHO, pages, open = '') {
-  const roles = Object.keys(WHO).map((k) => [k, k, WHO[k].map((x) => x[0]).slice(0, 2).join('、') + '…', ROLE_ICON[k] || 'users'])
-  const jobs = WHO[who].map(([t, d, s], i) => [i, t, d, s.endsWith('tutorial') ? 'bulb' : 'doc'])
-  const [t, d, s] = WHO[who][what]
-  const target = pages[s]
-  return {
-    work: workPanel(who, pages),
-    who: pickHtml('who', who, roles, who, open),
-    what: pickHtml('what', WHO[who][what][0], jobs, what, open),
-    out: `<div class="x-say-card"><small>${esc(target.sectionLabel)} · ${esc(target.title)}</small><b>${esc(t)}</b><p>${esc(d)}</p><a class="pill" href="${target.url}">看看怎么做 ${ic('arrow')}</a></div>`,
-  }
-}
-
-// The docs' own pages, as a reader first sees them (shots/site.mjs).
+// The pages the tour visits, as a reader first sees them (shots/site.mjs).
 const site = (slug, phone) => `/docs/images/site/${phone ? 'm-' : ''}${slug.replace('/', '-')}.jpg`
 
-// One line per door: what that part of the docs is for, and the real screen
-// that shows it (docs/manual/public/images, taken by shots/shots.mjs).
+// One line per door: what that part of the docs is for.
 const DOORS = {
-  start: ['十分钟上手：建项目、开话题，把第一件事交给芝士，再验收它交回来的东西。', site('quickstart')],
-  tutorials: ['按身份把一件事从头走到尾：学生交作业、老师开课、办公协作。', site('student-tutorial')],
-  features: ['每个功能是什么、在哪、怎么用、有什么限制，按用途分组。', site('rooms')],
-  faq: ['芝士没回复、机器没连上、额度用完……遇到问题先看这里，每条都写了怎么处理。', site('troubleshooting')],
+  start: '十分钟上手：建项目、开话题，把第一件事交给芝士，再验收它交回来的东西。',
+  tutorials: '按身份把一件事从头走到尾：学生交作业、老师开课、办公协作。',
+  features: '每个功能是什么、在哪、怎么用、有什么限制，按用途分组。',
+  faq: '芝士没回复、机器没连上、额度用完……遇到问题先看这里，每条都写了怎么处理。',
 }
 
 // The pages people come to the docs for most.
@@ -93,8 +74,7 @@ function tourAnswer([, , , answer, slug], latest) {
 export function homePage(ctx, { releases, faq, WHO, doors, pages, dev }) {
   const latest = releases[0]
   const news = ['feat', 'imp'].flatMap((t) => (latest.hl[t] || []).map(([h, pr]) => [t, h, pr])).slice(0, 5)
-  const firstWho = Object.keys(WHO)[0]
-  const say = sayHtml(firstWho, 0, WHO, pages)
+  const roles = Object.keys(WHO)
   const count = doors.reduce((n, d) => n + d.items.length, 0)
   const features = doors.find((d) => d.key === 'features')?.items || []
   const steps = TOUR.map(([kind, icon, q, a, slug]) => ({ kind, icon, q, slug, page: tourPage(slug, { pages, dev, latest }) }))
@@ -140,36 +120,31 @@ export function homePage(ctx, { releases, faq, WHO, doors, pages, dev }) {
    <script type="application/json" id="tourData">${JSON.stringify(steps.map((t) => ({ q: t.q, a: t.a, url: t.page.url, title: t.page.title, label: t.page.label }))).replace(/</g, '\\u003c')}</script>
   </section>
 
+  <section class="x-sec d-doors-sec">
+   <div class="x-head" data-reveal><h2 class="display">文档分四块</h2><p>先上手，再按身份走一遍，用到哪个功能查哪个，卡住了看常见问题。</p></div>
+   <div class="d-doors">${doors.map((d, k) => `<div class="d-door" data-reveal style="--d:${k}">
+    <a class="x-door-head" href="${d.items[0].url}"><span class="x-door-ic">${ic(d.icon)}</span><b>${esc(d.label)}</b><small>${d.items.length} 篇</small></a>
+    <p>${esc(DOORS[d.key] || '')}</p>
+    <div class="x-door-list">${d.items.slice(0, 6).map((p) => `<a href="${p.url}">${esc(p.title)}${ic('arrow', 'width:13px;height:13px')}</a>`).join('')}${d.items.length > 6 ? `<a class="more" href="${d.items[6].url}">还有 ${d.items.length - 6} 篇${ic('arrow', 'width:13px;height:13px')}</a>` : ''}</div>
+   </div>`).join('')}</div>
+  </section>
+
   <section class="x-sec">
-   <div class="x-head" data-reveal><h2 class="display">知是能做的，都写在这里</h2><p>功能说明里的每一页：它是什么、在哪、怎么用。</p></div>
+   <div class="x-head" data-reveal><h2 class="display">知是能做的，都写在这里</h2><p>功能说明里的每一页：它是什么、在哪、怎么用，配着真实界面。</p></div>
    <div class="wall">${features.map((p, k) => {
-     const shot = site(p.slug)
-     return `<a class="wall-item${shot ? ' has-shot' : ''}${k < 2 ? ' big' : ''}" href="${p.url}" data-reveal style="--d:${k % 6}">
-      ${shot ? `<div class="wall-shot"><img src="${shot}" alt="" loading="lazy"></div>` : ''}
-      <div class="wall-body"><small>${esc(p.group)}</small><b>${esc(p.title)}</b><p>${esc(p.summary || '')}</p><span class="go">阅读 ${ic('arrow', 'width:13px;height:13px')}</span></div>
+     const ref = pages[p.slug] || p, img = ref.image
+     return `<a class="wall-item${k < 2 ? ' big' : ''}${img ? '' : ' no-img'}" href="${p.url}" data-reveal style="--d:${k % 6}">
+      <div class="mini-doc"><span class="mini-crumb">功能说明<i>/</i>${esc(p.group)}</span><b class="mini-title">${esc(p.title)}</b><span class="mini-rule"></span><p>${esc(p.summary || ref.summary || '')}</p>
+      ${img ? `<figure class="mini-fig"><img src="${img.src}" alt="${esc(img.alt)}" loading="lazy"></figure>` : ''}</div>
+      <span class="go">阅读这一页 ${ic('arrow', 'width:13px;height:13px')}</span>
      </a>`
    }).join('')}</div>
   </section>
 
-  <section class="x-sec d-doors-sec">
-   <div class="x-head" data-reveal><h2 class="display">文档分四块</h2><p>先上手，再按身份走一遍，用到哪个功能查哪个，卡住了看常见问题。</p></div>
-   <div class="d-doors">${doors.map((d, k) => {
-     const [line, img] = DOORS[d.key] || ['', null]
-     return `<div class="d-door${img ? '' : ' no-shot'}" data-reveal style="--d:${k}">
-    ${img ? `<a class="d-door-shot" href="${d.items[0].url}" tabindex="-1" aria-hidden="true"><img src="${img}" alt="" loading="lazy"></a>` : `<div class="d-door-art" aria-hidden="true">${ic(d.icon)}</div>`}
-    <div class="d-door-body">
-     <a class="x-door-head" href="${d.items[0].url}"><span class="x-door-ic">${ic(d.icon)}</span><b>${esc(d.label)}</b><small>${d.items.length} 篇</small></a>
-     <p>${esc(line)}</p>
-     <div class="x-door-list">${d.items.slice(0, 4).map((p) => `<a href="${p.url}">${esc(p.title)}${ic('arrow', 'width:13px;height:13px')}</a>`).join('')}</div>
-    </div></div>`
-   }).join('')}</div>
-  </section>
-
-  <section class="x-sec x-say" data-reveal>
-   <div class="x-head"><h2 class="display">按你的身份找</h2><p>挑一个身份和一件事，看它交出去、交回来是什么样，再去读对应的那一页。</p></div>
-   <p class="x-sentence">我是 <span class="x-pick" id="pickWho">${say.who}</span>，<br>我要 <span class="x-pick" id="pickWhat">${say.what}</span>。</p>
-   <div class="x-work" id="workPanel">${say.work}</div>
-   <div class="x-say-out" id="sayOut">${say.out}</div>
+  <section class="x-sec x-roles" data-reveal>
+   <div class="x-head"><h2 class="display">按你的身份找</h2><p>挑你的身份，看一件事交出去、交回来是什么样，再去读对应的那一页。</p></div>
+   <div class="role-tabs" role="tablist">${roles.map((r, i) => `<button role="tab" aria-selected="${!i}" aria-controls="role-${i}" data-role-tab="${i}">${ic(ROLE_ICON[r] || 'users', 'width:16px;height:16px')}${esc(r)}</button>`).join('')}</div>
+   ${roles.map((r, i) => rolePanel(r, i, WHO, pages)).join('')}
   </section>
 
   <section class="x-sec" data-reveal>

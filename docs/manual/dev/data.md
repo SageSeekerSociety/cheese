@@ -23,7 +23,7 @@ covers:
 | 记录、事件、权限 | Postgres | dev 和正式环境的数据库在单独的主机上；etrip 在容器里 |
 | 上传文件（题目 PDF、附件、头像） | 主机目录，挂到主 API 的 `/data/uploads`（`UPLOADS_HOST_PATH`） | 不在镜像里，发版不动 |
 | 会话文件、附件、迁移用的源仓库 | 主机目录，挂到 `/app/.workspaces`（`WORKSPACES_HOST_PATH`） | 活跃的代码仓库在代码托管上，不在这里 |
-| 项目网站的发布快照 | 工作区卷里的 `.sites/<项目>/<版本>` | 备份工作区卷时一起带上 |
+| 项目网站的发布快照 | 工作区卷里的 `.sites/<项目 id>/<发布记录 id>` | 备份工作区卷时一起带上 |
 | 代码 | 项目绑定的代码托管：平台自带的 Forgejo 或 GitHub | 采纳即合并到那里 |
 | 缓存 | Valkey | 丢了可以重建 |
 | 模型网关的账 | LiteLLM 自己的数据库（`litellm-db`） | 与平台数据库分开，网关升级碰不到平台数据 |
@@ -40,6 +40,9 @@ covers:
 | 转储的异地副本（Cloudflare R2） | `r2-upload.py` | 每次转储校验通过后 |
 | 上传文件增量镜像到 R2（远端不删） | `r2-sync-uploads.py` | 每小时 :30 |
 | 会话记录归档镜像到 R2 | 同一个脚本，`UPLOADS_PREFIX=transcripts` | 每小时 :45 |
+| etrip 的两个数据库与上传卷 | `etrip-backup.sh` | 每小时 :15 |
+
+会话记录归档那一行是在**保留历史**：现在已经没有新归档写进那个目录，它不再增长。
 
 ## 检查备份真的能用 {#verify}
 

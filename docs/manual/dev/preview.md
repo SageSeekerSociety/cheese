@@ -25,7 +25,7 @@ covers:
 ## 凭证怎么换 {#grant}
 
 1. 平台签一张 30 秒有效的预览凭证。
-2. 内容主机用它换一个 8 小时的 cookie：HttpOnly、Secure、SameSite=None、Partitioned。
+2. 内容主机用它换一个 8 小时的 cookie，HttpOnly。https 部署下还带 Secure、SameSite=None 和 Partitioned；项目网站那份是 SameSite=Lax，不带 Partitioned。话题预览的实现在 `backend/app/api/preview_host.py`，项目网站在 `backend/app/domain/site/hosting.py`。
 3. 之后每个 HTTP 请求和 WebSocket 连接都重新检查房间访问权：私有房间要求是房间成员。WebSocket 最晚在会话到期时断开。
 
 在预览里运行的应用可以正常用自己的 cookie 登录：这些 cookie 会被改写成只属于该主机的 Partitioned cookie；应用自己的 Bearer 鉴权原样转发。
@@ -37,7 +37,7 @@ covers:
 
 ## 发布快照 {#sites}
 
-发布把项目已采纳版本里被跟踪的文件复制成一个快照，存在工作区卷的 `.sites/<项目>/<版本>`。稳定入口是平台上的 `/sites/<项目 id>`：先让访问者登录，再打开内容源上的当前快照。之后采纳的改动不会自动发布；发布失败时保留上一版。上限 2000 个文件、100MB，入口 HTML 不超过 1MB。
+发布把项目已采纳版本里被跟踪的文件复制成一个快照，存在工作区卷的 `.sites/<项目 id>/<发布记录 id>`。稳定入口是平台上的 `/sites/<项目 id>`：先让访问者登录，再打开内容源上的当前快照。之后采纳的改动不会自动发布；发布失败时保留上一版。上限 2000 个文件、100MB，入口 HTML 不超过 1MB。
 
 ## 部署前提 {#deploy}
 
