@@ -198,6 +198,9 @@ class CreateTaskRequest(BaseModel):
     team_locking_policy: str = Field(default="NO_LOCK", alias="teamLockingPolicy")
     video_url: str | None = Field(default=None, alias="videoUrl")
     topics: list[int] = Field(default_factory=list)
+    submission_schema: list[dict] = Field(
+        default_factory=list, alias="submissionSchema"
+    )
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
@@ -898,6 +901,7 @@ async def _create_task_entity(
         topics = payload.topics
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
+        submission_schema = payload.submission_schema or []
     else:
         # Dict path — used by PDF-based creation flow
         required_fields = [
@@ -980,6 +984,13 @@ async def _create_task_entity(
                     topics.append(int(topic))
                 except (TypeError, ValueError):
                     continue
+
+        schema_raw = payload.get("submissionSchema") or []
+        submission_schema = (
+            [e for e in schema_raw if isinstance(e, dict)]
+            if isinstance(schema_raw, list)
+            else []
+        )
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
@@ -1086,6 +1097,14 @@ async def _create_task_entity(
             db.add(relation)
         await db.flush()
 
+    # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
+    # 题目的提交页就一个输入项都没有，学生无处上传 —— 和 PATCH 写的是同一张表。
+    if submission_schema:
+        await TaskSubmissionSchemaRepository(session=db).replace_schema(
+            task.id, submission_schema
+        )
+        await db.flush()
+
     return task
 
 
@@ -1104,7 +1123,7 @@ async def create_task(
     - 权限：调用者必须是 ``space`` 的管理员/创建者（= 教师），否则 403 ——
       从前这条 route 只要求提供 space 并验证 category 归属，任何登录用户都能发题，
       现在收权了（见 ``_create_task_entity`` 里的 ``may_publish_in_space``）；
-    - submissionSchema / topics 仅做占位处理，暂不影响提交与评分。
+    - submissionSchema 与 PATCH 一样写入提交表单；topics 只插关系行，不做校验。
     """
     task = await _create_task_entity(
         payload=payload,
