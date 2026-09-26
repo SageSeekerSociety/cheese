@@ -137,6 +137,8 @@ export namespace TasksApi {
     querySubmittability?: boolean
     queryJoined?: boolean
     queryTopics?: boolean
+    /** 让列表带上每道题的提交表单（审核页要显示「提交要求」才需要）。 */
+    querySubmissionSchema?: boolean
     keywords?: string
     approved?: 'APPROVED' | 'DISAPPROVED' | 'NONE'
     joined?: boolean
