@@ -21,7 +21,7 @@
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
-import type { AgentControlState, PreviewInfo, Topic } from '../cx_types'
+import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
 import type { TopicPhase } from '../lib/topicState'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -45,6 +45,8 @@ const props = withDefaults(
     working?: boolean
     // 会话控制状态的最近一帧，一路透传给现场那格的控制条。
     agentControl?: AgentControlState | null
+    // 正在跑的轮次各自的开始时间（毫秒），一路透传给现场那格的状态条。
+    siteTurns?: Record<string, number>
     // Project topics (A2): 文档 resolves live-ref badges and <#id> chips with it.
     topicList?: Topic[]
     // Which tab the URL asks for (`?tab=`). The address is the page's business,
@@ -69,6 +71,7 @@ const props = withDefaults(
   {
     working: false,
     agentControl: null,
+    siteTurns: () => ({}),
     topicList: () => [],
     openCardId: null,
     memberNames: () => ({}),
@@ -536,7 +539,14 @@ function setFiles(next: FileTab[]) {
   if (tid) filesByTopic.set(tid, next)
 }
 
-defineExpose({ pulse, highlightTurn, openFile })
+// 对话栏的 socket 上来了现场的一行：交给现场那格。那格还没打开过就不用管，它第一次
+// 打开时会整段读一遍。
+const siteRef = ref<InstanceType<typeof PanelSite> | null>(null)
+function siteBlock(block: Block) {
+  siteRef.value?.receive(block)
+}
+
+defineExpose({ pulse, highlightTurn, openFile, siteBlock })
 </script>
 
 <template>
@@ -626,9 +636,9 @@ defineExpose({ pulse, highlightTurn, openFile })
           <slot name="chat" />
         </div>
         <PanelOverview
-          :agent-name="agentName"
           v-show="active === 'overview'"
           ref="overviewRef"
+          :agent-name="agentName"
           :topic="topic"
           :activity-tick="activityTick"
           :topic-list="topicList"
@@ -642,11 +652,14 @@ defineExpose({ pulse, highlightTurn, openFile })
           @open-file="openFile"
         />
         <PanelSite
-          :agent-name="agentName"
           v-if="mounted.has('site')"
           v-show="active === 'site'"
+          ref="siteRef"
+          :agent-name="agentName"
           :topic="topic"
           :active="active === 'site'"
+          :running-turns="siteTurns"
+          :refresh-tick="refreshTick"
           :member-names="memberNames"
           :working="working"
           :agent-control="agentControl"

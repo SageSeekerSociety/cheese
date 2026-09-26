@@ -1,16 +1,22 @@
 """Translate app-server item boundaries into the shared room event vocabulary."""
 
+import re
 from datetime import UTC, datetime
 
 from app.domain.agent.service import (
     AgentEvent,
     AgentMessage,
     AgentResult,
+    AgentRetrying,
     AgentSessionInfo,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolUse,
 )
+
+#: "attempt/limit" inside the message of an `error` notification that will be
+#: retried.
+RETRY_COUNT = re.compile(r"(\d+)\s*/\s*(\d+)")
 
 
 class Assembler:
@@ -52,6 +58,21 @@ class Assembler:
         if method == "turn/started":
             self.last_text.pop(params["threadId"], None)
             return []
+        if method == "error" and params.get("willRetry"):
+            # The app-server's only word on a retry: the message the build
+            # wrote for it ("Reconnecting... 2/5"). The counters are read out
+            # of that line when it has them; a failure that will NOT be retried
+            # is the turn's to report, in `turn/completed`.
+            said = str((params.get("error") or {}).get("message") or "")
+            counted = RETRY_COUNT.search(said)
+            return [
+                AgentRetrying(
+                    error=said,
+                    attempt=int(counted[1]) if counted else None,
+                    max_attempts=int(counted[2]) if counted else None,
+                    **self.attribution(params.get("threadId") or ""),
+                )
+            ]
         if method == "item/agentMessage/delta":
             eid = f"codex:{params['threadId']}:{params['itemId']}"
             message = self.pending.setdefault(

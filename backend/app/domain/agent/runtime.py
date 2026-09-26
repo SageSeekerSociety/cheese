@@ -354,6 +354,15 @@ class InProcessBroker:
         """Stable snapshot for a reconnecting client."""
         return sorted(self._active.get(channel, ()))
 
+    def active_turns_since(self, channel: str) -> dict[str, float]:
+        """When each live turn on this channel started, in epoch seconds — so a
+        client that joins halfway through can say how long it has been going."""
+        return {
+            turn_id: self._active_since[(channel, turn_id)]
+            for turn_id in self.active_turn_ids(channel)
+            if (channel, turn_id) in self._active_since
+        }
+
     def active_channels(self) -> set[str]:
         """Channels whose session or request activity is currently live."""
         return set(self._active)

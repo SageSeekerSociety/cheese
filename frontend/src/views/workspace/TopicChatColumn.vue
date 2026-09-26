@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AgentControlState, ProjectMemberRow, Topic } from '@/cx_types'
+import type { AgentControlState, Block, ProjectMemberRow, Topic } from '@/cx_types'
 import type { CardPhase } from '@/lib/topicState'
 
 import { computed, ref } from 'vue'
@@ -32,6 +32,10 @@ const emit = defineEmits<{
   (e: 'working', working: boolean): void
   // 会话控制状态的那一帧。同样一路透传给现场那格的控制条。
   (e: 'agent-control', state: AgentControlState): void
+  // 现场时间线上新到或变了的一行、在跑的轮次各自的开始时间：一路透传给现场那格。
+  // 漏掉不报错，只是现场又回到「打开才刷新」。
+  (e: 'site-block', block: Block): void
+  (e: 'site-turns', turns: Record<string, number>): void
   (e: 'state-changed', payload: unknown): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string, taskId?: string | null): void
@@ -40,6 +44,7 @@ const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string): void
   (e: 'upgrade-message', payload: unknown): void
   (e: 'open-topic', topicId: string): void
+  (e: 'open-card', taskId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
   (e: 'phase', phase: CardPhase): void
   // 采纳框上的「去看改动」：面板换到 改动 那一格。
@@ -76,12 +81,15 @@ defineExpose({
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
       @agent-control="emit('agent-control', $event)"
+      @site-block="emit('site-block', $event)"
+      @site-turns="emit('site-turns', $event)"
       @state-changed="emit('state-changed', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path, taskId) => emit('open-file', path, taskId)"
       @open-resource="(resource: string, turnId?: string) => emit('open-resource', resource, turnId)"
       @upgrade-message="emit('upgrade-message', $event)"
       @open-topic="emit('open-topic', $event)"
+      @open-card="emit('open-card', $event)"
     >
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
            见，但平时只占一行，不把对话挤到只剩几行。 -->

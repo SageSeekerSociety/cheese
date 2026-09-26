@@ -80,6 +80,14 @@ ActivityConsumer = Callable[[uuid.UUID, uuid.UUID, uuid.UUID, bool], Awaitable[N
 # design: the write is delivery, this is the receipt.
 ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 
+# (project, topic, work id, reachable, reason) — the machine an open turn runs on
+# went out of reach (False, with what the runtime saw) or came back (True). Not
+# an event of the session's: the session is on the far side of the gap, and
+# only the runtime reading it can say that it is there.
+ReachabilityConsumer = Callable[
+    [uuid.UUID, uuid.UUID, uuid.UUID, bool, str], Awaitable[None]
+]
+
 # (topic) → the loop-clock reading at which the OLDEST message we injected and
 # have not seen consumed was written, or None when nothing is waiting.
 #
@@ -430,6 +438,10 @@ class AgentRuntime(Protocol):
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:
         """Where 「还有没有消息在等着被读」 is asked."""
+        ...
+
+    def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
+        """Where 「这一轮在等它的设备」 goes."""
         ...
 
     def holds(self, topic_id: uuid.UUID) -> bool:
