@@ -1,16 +1,16 @@
-"""小测 —— 一门课里的一周，学生答一次，客观题当场判、主观题等老师复核。
+"""小测 —— 一门课里的一周，成员答一次，客观题当场判、主观题等管理员复核。
 
 按浏览器会收到的状态码断言四件事：
 
-1. **可见性跟着单元走**：单元没发布，这一周的小测对学生**不存在**（404，不是
+1. **可见性跟着单元走**：单元没发布，这一周的小测对成员**不存在**（404，不是
    403）—— 不另造第二个发布开关；
-2. **答案键从不发给学生**：学生的载荷里没有 ``answer`` 这一格，只有他自己的得分
+2. **答案键从不发给成员**：成员的载荷里没有 ``answer`` 这一格，只有他自己的得分
    （截止前可以改答案重交，能拿到答案键就等于能抄）；
-3. **判分界就在题型上**：客观题交卷即出分，简答进老师的复核队列，判完这次作答
+3. **判分界就在题型上**：客观题交卷即出分，简答进管理员的复核队列，判完这次作答
    才算判完；
-4. **写的一次只有教师能过**，门外人连这块板都看不到。
+4. **写的一次只有管理员能过**，门外人连这块板都看不到。
 
-判据本身不在这里：教师是谁问 ``app.auth.space_access``，可见性是
+判据本身不在这里：管理员是谁问 ``app.auth.space_access``，可见性是
 ``quiz_services._require_published``。这里测的是它的可观测后果。
 """
 
@@ -124,9 +124,9 @@ def _published_unit(api_client: TestClient, board: dict, *, week: int = 4) -> in
 def test_the_quiz_does_not_exist_for_a_student_until_its_week_is_published(
     api_client: TestClient, user_client: UserCreator
 ):
-    """先建未发布的单元 + 小测：学生查它得到 404，老师自己看得到。
+    """先建未发布的单元 + 小测：成员查它得到 404，管理员自己看得到。
 
-    然后发布那一周 —— 同一个学生立刻看得到，不用改任何别的开关。
+    然后发布那一周 —— 同一个成员立刻看得到，不用改任何别的开关。
     """
     board = _new_board(user_client, api_client)
     student = user_client.create_user()
@@ -161,7 +161,7 @@ def test_the_quiz_does_not_exist_for_a_student_until_its_week_is_published(
 def test_the_answer_key_never_reaches_a_student(
     api_client: TestClient, user_client: UserCreator
 ):
-    """同一份卷子，老师那份带 ``answer``，学生那份连这一格都没有。
+    """同一份卷子，管理员那份带 ``answer``，成员那份连这一格都没有。
 
     截止前可以改答案重交（见下一个用例），所以答案键一旦发出去，交卷就变成了抄。
     """
@@ -198,7 +198,7 @@ def test_the_answer_key_never_reaches_a_student(
 def test_objective_answers_are_graded_on_submission_and_short_answers_wait(
     api_client: TestClient, user_client: UserCreator
 ):
-    """一次交卷里三种题：客观题当场判完，简答留在队列里；老师判完之后才算判完。"""
+    """一次交卷里三种题：客观题当场判完，简答留在队列里；管理员判完之后才算判完。"""
     board = _new_board(user_client, api_client)
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)
@@ -286,7 +286,7 @@ def test_a_second_submission_replaces_the_first_one(
 ):
     """截止前改答案重交是正常的：**一份作答被换掉**，不是多出一份。
 
-    交两次之后老师那里仍然只有一行 —— 「他到底交的哪一份」不该成为问题。
+    交两次之后管理员那里仍然只有一行 —— 「他到底交的哪一份」不该成为问题。
     """
     board = _new_board(user_client, api_client)
     student = user_client.create_user()
@@ -348,7 +348,7 @@ def test_a_closed_quiz_refuses_answers(
 def test_an_objective_answer_has_nothing_to_review(
     api_client: TestClient, user_client: UserCreator
 ):
-    """客观题交卷那一刻就判完了，所以它**不进复核队列** —— 老师那一栏是空的。
+    """客观题交卷那一刻就判完了，所以它**不进复核队列** —— 管理员那一栏是空的。
 
     「已经判完的题不能改分」那条规则在 ``tests/unit/test_quiz_grading.py`` 里测，
     这里只看得到它的后果：队列里没有他。
@@ -461,7 +461,7 @@ def test_only_the_teacher_writes_and_only_members_read(
     quiz_id = _quiz_id(api_client, board, unit)
 
     as_student = _create_quiz(
-        api_client, board, unit_id=unit, title="学生偷偷建一个", token=student_token
+        api_client, board, unit_id=unit, title="成员偷偷建一个", token=student_token
     )
     assert as_student.status_code == 403, as_student.text
     assert (
@@ -487,7 +487,7 @@ def test_only_the_teacher_writes_and_only_members_read(
 def test_the_unit_list_says_which_week_has_a_quiz(
     api_client: TestClient, user_client: UserCreator
 ):
-    """单元列表自带 ``quizId`` —— 学生首页靠它决定要不要给「本周有小测」那个入口。"""
+    """单元列表自带 ``quizId`` —— 成员首页靠它决定要不要给「本周有小测」那个入口。"""
     board = _new_board(user_client, api_client)
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)

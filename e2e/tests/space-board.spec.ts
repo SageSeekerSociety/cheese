@@ -434,7 +434,7 @@ test.describe("空间新界面（真路由）", () => {
     // 进板的落点改成题目板之后，少了这一格，课里的人就回不到教学单元/作业/小测/小组。
     await page.getByRole("link", { name: "课程", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/course$`));
-    // 建这块板的人就是所有者 = 这门课的老师，所以他看到的是课程总览（学生看到
+    // 建这块板的人就是所有者 = 这门课的管理员，所以他看到的是课程总览（成员看到
     // 「我的课程」，同一条路由两种人两种第一屏）。
     await expect(page.getByRole("heading", { name: "课程总览" })).toBeVisible();
   });

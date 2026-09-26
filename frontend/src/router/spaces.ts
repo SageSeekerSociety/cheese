@@ -170,10 +170,10 @@ export default {
     },
     // 一门课自己的几屏。题目板是不是课看 `Space.isCourse`（服务端按默认分组声明
     // 的壳算的），能不能看见哪几格看 `lib/courseNav.ts`。这六条路由**一次加齐**：
-    // 教学单元 / 作业与验收 / 学生与分组 / 小测 由后面的任务填组件，它们不再动这个
+    // 教学单元 / 作业与验收 / 成员与分组 / 小测 由后面的任务填组件，它们不再动这个
     // 文件，也不再动侧栏。
     //
-    // 注意 `SpacesCourseHome` 一条路由两种人看：老师看到课程总览，学生看到我的
+    // 注意 `SpacesCourseHome` 一条路由两种人看：管理员看到课程总览，成员看到我的
     // 课程。分叉在页面里按 `space.admins` 判，不按地址分叉 —— 同一个人今天教书、
     // 明天可能只是学员，地址不该因为「你是谁」而变。
     {
@@ -207,7 +207,7 @@ export default {
       name: 'SpacesCourseTeam',
       component: () => import('@/views/spaces/course/Team.vue'),
     },
-    // 课程模板的配置（模块开关 + 教学参数）。放在「设置」那一块下 —— 它是老师配
+    // 课程模板的配置（模块开关 + 教学参数）。放在「设置」那一块下 —— 它是管理员配
     // 这门课的地方，不是一个课程页；侧栏那一条也只对课程里出现。
     {
       path: 'course/settings',
@@ -278,8 +278,8 @@ export default {
           component: () => import('@/views/spaces/detail/analytics/Participants.vue'),
         },
         {
-          // 学习读的是学生项目里的对话，上面五格读的是赛题与报名表 —— 两套数据，
-          // 所以筛选那一栏里它只认时间，学生与知识点是这一格自己的。
+          // 学习读的是成员项目里的对话，上面五格读的是赛题与报名表 —— 两套数据，
+          // 所以筛选那一栏里它只认时间，成员与知识点是这一格自己的。
           path: 'learning',
           name: 'SpacesDetailAnalyticsLearning',
           component: () => import('@/views/spaces/detail/analytics/Learning.vue'),

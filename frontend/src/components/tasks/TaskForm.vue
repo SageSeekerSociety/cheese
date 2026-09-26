@@ -294,7 +294,7 @@
                 <template #activator="{ props }">
                   <v-icon size="small" color="primary" class="ml-2" v-bind="props">mdi-information-outline</v-icon>
                 </template>
-                <span>实名信息包括学生的真实姓名、学号、年级等信息</span>
+                <span>实名信息包括成员的真实姓名、学号、年级等信息</span>
               </v-tooltip>
             </div>
           </template>
@@ -586,7 +586,7 @@
                       </v-avatar>
                       <div>
                         <div class="text-subtitle-2 font-weight-medium mb-1">身份验证</div>
-                        <p class="text-body-2 text-medium-emphasis mb-0">验证参与者身份，帮助导师了解学生背景</p>
+                        <p class="text-body-2 text-medium-emphasis mb-0">验证参与者身份，帮助出题人了解成员背景</p>
                       </div>
                     </div>
                   </v-card-text>

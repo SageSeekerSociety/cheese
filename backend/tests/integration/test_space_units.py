@@ -3,11 +3,11 @@
 产品把课程定义成一串教学单元（周次 / 知识点 / 课件 / 作业 / 发布与截止）。本文件按
 浏览器会收到的状态码断言两件事：
 
-1. **学生只看得到发布过的**（``published_at`` 为 NULL 的单元对学生不存在）—— 这是
-   「随课程推进才能得到更多知识」的默认实现，不靠老师每周记得改配置；
-2. **写的一次只有教师能过**，门外人连这个题目板都看不到（404，不是 403）。
+1. **成员只看得到发布过的**（``published_at`` 为 NULL 的单元对成员不存在）—— 这是
+   「随课程推进才能得到更多知识」的默认实现，不靠管理员每周记得改配置；
+2. **写的一次只有管理员能过**，门外人连这个题目板都看不到（404，不是 403）。
 
-判据不在这里：教师是谁问 ``app.auth.space_access.is_space_admin``，可见性问
+判据不在这里：管理员是谁问 ``app.auth.space_access.is_space_admin``，可见性问
 ``_ensure_space_visible``。这里测的是它的可观测后果。
 """
 
@@ -31,7 +31,7 @@ def _login(user_client: UserCreator, api_client: TestClient, user) -> str:
 
 
 def _new_board(user_client: UserCreator, api_client: TestClient) -> dict:
-    """建版的人（教师 / OWNER）+ 一块已过审的题目板。"""
+    """建版的人（管理员 / OWNER）+ 一块已过审的题目板。"""
     creator = user_client.create_user()
     creator_token = _login(user_client, api_client, creator)
     suffix = unique_int(10000000, 99999999)
@@ -58,7 +58,7 @@ def _new_board(user_client: UserCreator, api_client: TestClient) -> dict:
 
 
 def _join(api_client: TestClient, board: dict, user_id: int) -> dict[str, str]:
-    """把人加进这个题目板，返回他的登录头。学生就是这么进来的。"""
+    """把人加进这个题目板，返回他的登录头。成员就是这么进来的。"""
     resp = api_client.post(
         f"/spaces/{board['space_id']}/members",
         json={"userId": user_id},
@@ -130,9 +130,9 @@ def _weeks(payload: dict) -> list[int]:
 def test_students_see_only_the_weeks_that_were_published(
     api_client: TestClient, user_client: UserCreator
 ):
-    """老师建第 3 周与第 8 周，只发布第 3 周。
+    """管理员建第 3 周与第 8 周，只发布第 3 周。
 
-    学生拿到的列表里没有第 8 周 —— 不是前端藏了，是接口就没给。老师自己两条都看得到，
+    成员拿到的列表里没有第 8 周 —— 不是前端藏了，是接口就没给。管理员自己两条都看得到，
     否则他没法继续编排还没到的那几周。
     """
     board = _new_board(user_client, api_client)
@@ -167,9 +167,9 @@ def test_students_see_only_the_weeks_that_were_published(
 def test_publishing_a_later_week_reaches_the_student_and_taking_one_back_hides_it(
     api_client: TestClient, user_client: UserCreator
 ):
-    """发布是一步动作，不是建单元时的选项：老师先建好第 4 周，等他真讲到再放出去。
+    """发布是一步动作，不是建单元时的选项：管理员先建好第 4 周，等他真讲到再放出去。
 
-    同一条 PATCH 也是「撤回发布」：published=false 之后学生立刻看不到它。
+    同一条 PATCH 也是「撤回发布」：published=false 之后成员立刻看不到它。
     """
     board = _new_board(user_client, api_client)
     student = user_client.create_user()
@@ -220,7 +220,7 @@ def test_a_unit_carries_the_weeks_assignment(
 def test_a_week_cannot_hand_out_another_boards_problem(
     api_client: TestClient, user_client: UserCreator
 ):
-    """挂别人的题会让学生的提交落进他没有名册的项目 —— 这是要当场拒掉的。"""
+    """挂别人的题会让成员的提交落进他没有名册的项目 —— 这是要当场拒掉的。"""
     board = _new_board(user_client, api_client)
     other_board = _new_board(user_client, api_client)
     foreign_task = _create_task(api_client, other_board, name="别的版的题")

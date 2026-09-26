@@ -26,7 +26,7 @@ const excerpt = (over: Partial<SpaceLearningExcerpt> = {}): SpaceLearningExcerpt
 })
 
 describe('学习的筛选', () => {
-  it('学生与知识点进出地址栏', () => {
+  it('成员与知识点进出地址栏', () => {
     const query = normalizeAnalyticsQuery({ student: 'zhangsan', knowledgePoint: '7' }, NOW)
 
     expect(query.student).toBe('zhangsan')
@@ -43,7 +43,7 @@ describe('学习的筛选', () => {
     expect(serializeAnalyticsQuery(query)).not.toHaveProperty('knowledgePoint')
   })
 
-  it('学习只带时间 / 学生 / 知识点，不把分类和题目审批状态带过去', () => {
+  it('学习只带时间 / 成员 / 知识点，不把分类和题目审批状态带过去', () => {
     const filters = normalizeAnalyticsQuery(
       {
         from: '2025-09-20',
@@ -64,7 +64,7 @@ describe('学习的筛选', () => {
     })
   })
 
-  it('队列不认知识点，只发时间与学生', () => {
+  it('队列不认知识点，只发时间与成员', () => {
     const filters = normalizeAnalyticsQuery({ from: '2025-09-20', to: '2026-03-19', knowledgePoint: '7' }, NOW)
 
     expect(buildLearningQueueParams(filters)).toEqual({

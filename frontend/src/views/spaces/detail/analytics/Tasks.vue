@@ -157,7 +157,7 @@ const sortOrderItems = [
 
 const headers = [
   { title: '题目', key: 'taskName', value: 'taskName' },
-  { title: '老师', key: 'publisher', value: 'publisher', align: 'center' as const },
+  { title: '出题人', key: 'publisher', value: 'publisher', align: 'center' as const },
   { title: '分类', key: 'category', value: 'category', align: 'center' as const },
   { title: '审批状态', key: 'approved', value: 'approved', align: 'center' as const },
   { title: '创建时间', key: 'createdAt', value: 'createdAt', align: 'center' as const },

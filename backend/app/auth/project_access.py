@@ -11,7 +11,7 @@ which had already drifted apart once (see below). An answer that lives in three
 places is three answers.
 
 What the answer is: **the owner, the roster, a member of the team the project
-belongs to, the 出题者 of the 赛题 the project was opened for, or a 教师 (an
+belongs to, the 出题者 of the 赛题 the project was opened for, or a 管理员 (an
 admin/creator) of the 题目板 that 赛题 sits on.** The first three are exactly
 the claims ``ProjectRepository.list_visible_to`` lists a project under, and
 that is not a coincidence kept for its own sake - a listing and a door have to
@@ -77,7 +77,7 @@ async def may_read_project(
     if await _is_asker_of_the_task(session, project=project, user_id=user.id):
         return True
     # The board's teacher: an admin (or creator) of the 题目板 the project's
-    # 赛题 sits on. The product now says a 题目板 is a course and its 教师 is
+    # 赛题 sits on. The product now says a 题目板 is a course and its 管理员 is
     # its 管理员 — the person who runs the board, not merely whoever set one
     # problem, and a course has many problems and several 助教. Deliberately
     # still ONE board and the people who administer it (see
@@ -109,7 +109,7 @@ async def _is_asker_of_the_task(
     participants, an allowed email domain) and wrong here: a class-wide domain
     allowlist would hand every student of a class the conversations of every
     team's project, which is the over-permission this module exists to close,
-    just with a school's blessing. The 出题者 is not 全站教师, either - this is
+    just with a school's blessing. The 出题者 is not 全站管理员, either - this is
     one person and the projects of one task.
     """
     if project.external_task_id is None:

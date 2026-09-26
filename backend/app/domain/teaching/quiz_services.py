@@ -48,7 +48,7 @@ class QuizService:
         self._units = units
 
     # ------------------------------------------------------------------
-    # 老师：出题
+    # 管理员：出题
     # ------------------------------------------------------------------
 
     async def create_quiz(
@@ -177,7 +177,7 @@ class QuizService:
         await self._questions.soft_delete(question=question)
 
     # ------------------------------------------------------------------
-    # 老师：看全班与复核
+    # 管理员：看全班与复核
     # ------------------------------------------------------------------
 
     async def submissions(self, *, space_id: int, quiz_id: int) -> dict[str, Any]:
@@ -273,7 +273,7 @@ class QuizService:
         return answer
 
     # ------------------------------------------------------------------
-    # 学生：看题、交卷、看分
+    # 成员：看题、交卷、看分
     # ------------------------------------------------------------------
 
     async def quiz_for_unit(
@@ -299,7 +299,7 @@ class QuizService:
         quiz = await self._get_quiz(space_id=space_id, quiz_id=quiz_id)
         unit = await self._get_unit(space_id=space_id, unit_id=quiz.unit_id)
         if not can_teach:
-            # 可见性只有一条：单元没发布，它的小测对学生不存在。
+            # 可见性只有一条：单元没发布，它的小测对成员不存在。
             _require_published(unit)
         return await self._payload(
             quiz=quiz, unit=unit, viewer_id=viewer_id, can_teach=can_teach
@@ -399,7 +399,7 @@ class QuizService:
             "maxScore": sum(question.points for question in questions),
         }
         if can_teach:
-            # 教师版那一屏同时要「全班交得怎么样」与「有什么等着我判」，一次给齐 ——
+            # 管理员版那一屏同时要「全班交得怎么样」与「有什么等着我判」，一次给齐 ——
             # 三条接口分开问除了多两个往返没有任何好处。
             collected = await self.submissions(space_id=quiz.space_id, quiz_id=quiz.id)
             payload["submissions"] = collected["submissions"]
@@ -422,7 +422,7 @@ class QuizService:
 
 
 def _require_published(unit: TeachingUnit) -> None:
-    """**可见性只有这一条**：单元没发布，它的小测对学生不存在（404，不是 403）。"""
+    """**可见性只有这一条**：单元没发布，它的小测对成员不存在（404，不是 403）。"""
     now = datetime.now(UTC)
     if unit.published_at is None or unit.published_at > now:
         raise NotFoundError("Quiz not found")
@@ -450,7 +450,7 @@ def _attempt_payload(attempt: QuizAttempt) -> dict[str, Any]:
 
 
 def _answers_payload(answers: list[QuizAnswer]) -> list[dict[str, Any]]:
-    """学生看到的每一题：**只有得分与评语，没有答案键** —— 见模块说明。"""
+    """成员看到的每一题：**只有得分与评语，没有答案键** —— 见模块说明。"""
     return [
         {
             "questionId": answer.question_id,
@@ -479,7 +479,7 @@ def _check_question(
     """把题型的形状检查做完并归一化答案键。
 
     **为什么要这么严**：答案键的形状错了不会报错，只会让这一题**永远判错**，
-    而且从学生那边看不出来（他只知道自己是 0 分）。所以宁可当场 400。
+    而且从成员那边看不出来（他只知道自己是 0 分）。所以宁可当场 400。
     """
     if kind not in QUESTION_KINDS:
         raise BadRequestError("Unknown question kind", data={"kind": kind})
@@ -521,7 +521,7 @@ def _check_question(
             )
         return [], accepted
 
-    # SHORT_ANSWER：机器不判分，``answer`` 只是写给老师看的参考要点。
+    # SHORT_ANSWER：机器不判分，``answer`` 只是写给管理员看的参考要点。
     if answer is None:
         return [], ""
     if isinstance(answer, str):
@@ -548,7 +548,7 @@ def _normalize(text: Any) -> str:
 
 def _grade_objective(*, question: QuizQuestion, response: Any) -> int:
     """客观题当场判分。**多选题全对才给分**（不做部分分）—— 部分分要定义「对一半
-    算几成」，那是一个教学判断，不该由这里替老师决定。"""
+    算几成」，那是一个教学判断，不该由这里替管理员决定。"""
     kind = question.kind
     if kind == SINGLE_CHOICE:
         return question.points if response == question.answer else 0

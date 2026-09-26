@@ -13,7 +13,7 @@
       {{ t('spaces.inviteCodes.help') }}
     </v-alert>
 
-    <!-- 课程链接：老师真正会发出去的东西。码还是要的（它是页面上的另一件事），
+    <!-- 课程链接：管理员真正会发出去的东西。码还是要的（它是页面上的另一件事），
          但群里贴的是一条能点的链接，而不是一串要人手工输入的字。 -->
     <v-card v-if="courseLinkUrl" variant="tonal" color="primary" class="mx-4 mb-4" rounded="lg">
       <v-card-title class="text-body-1">
@@ -156,7 +156,7 @@ async function load() {
 }
 
 /**
- * 课程链接是老师发出去的那一条。拿不到就不画这一块 —— 它是给能发码的人看的，
+ * 课程链接是管理员发出去的那一条。拿不到就不画这一块 —— 它是给能发码的人看的，
  * 后端也只让他们拿（不是管理员会 403），一句报错在这里没有用处。
  */
 async function loadCourseLink() {

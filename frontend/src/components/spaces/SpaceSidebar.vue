@@ -17,7 +17,7 @@
       <v-list>
         <v-list-item :title="t('spaces.detail.editInfo')" prepend-icon="mdi-pencil" @click="openEditProfile">
         </v-list-item>
-        <!-- 「管理员设置」= 设/撤教师。后端只认创建者（OWNER）做这件事，所以入口
+        <!-- 「管理员设置」= 设/撤管理员。后端只认创建者（OWNER）做这件事，所以入口
              也只对创建者可见，别的管理员点进去只会撞一串 403。 -->
         <v-list-item
           v-if="isCurrentUserOwner"
@@ -35,9 +35,9 @@
     <v-list nav density="compact" class="sidebar-list pa-2">
       <!--
         课程（`space.isCourse`）：题目板自己的屏幕不是项目、读不到壳，所以这一版
-        侧栏由 `lib/courseNav.ts` 按角色算 —— 老师（本版管理员）看课程总览/教学
-        单元/作业与验收/学生与分组/共性问题，学生看我的课程/本周任务/我的小组，
-        下面那块「管理员操作」对老师照旧在（它就是课程设置）。
+        侧栏由 `lib/courseNav.ts` 按角色算 —— 管理员看课程总览/教学
+        单元/作业与验收/成员与分组/共性问题，成员看我的课程/本周任务/我的小组，
+        下面那块「管理员操作」对管理员照旧在（它就是课程设置）。
 
         老题目板一行都不变：它 `isCourse` 是 false，走的还是下面那一段。
       -->
@@ -297,7 +297,7 @@ const isCurrentUserAtLeastAdmin = computed(() => {
 // 老题目板没有声明，是 false，侧栏它就一行都不变。
 const isCourse = computed(() => space.value?.isCourse === true)
 
-// 课程里露哪几格：老师 = 本版管理员（名单就是上面那份 `space.admins`，不另判权限），
+// 课程里露哪几格：管理员名单就是上面那份 `space.admins`，不另判权限），
 // 再按这门课拨过的模块开关筛一遍（缺省全开，老板子没有这个字段也全开）。
 const courseCells = computed(() =>
   visibleCourseCells(

@@ -46,7 +46,7 @@ export type SpaceTeaching = {
   systemPrompt?: string | null
   /** 这是这门课的第几周。 */
   currentWeek?: number | null
-  /** 本周讲到的内容，用老师自己的话写。 */
+  /** 本周讲到的内容，用管理员自己的话写。 */
   allowedTopics?: string[]
   /** 这门课还没教到的东西 —— 解法这周不该依赖的构造。 */
   avoidInCode?: string[]
@@ -132,7 +132,7 @@ export type DomainGroup = {
   updatedAt: number
 }
 
-/** 课程里的人：学生、他的项目、他的组（`SpacesApi.getCourseRoster`，教师可见）。 */
+/** 课程里的人：成员、他的项目、他的组（`SpacesApi.getCourseRoster`，管理员可见）。 */
 export type CourseRosterPerson = {
   id: number
   username: string
@@ -159,7 +159,7 @@ export type CourseRoster = {
   teams: CourseRosterTeam[]
 }
 
-/** 学生自己那一行（`SpacesApi.getMyCourseGroup`）：我在哪个组、组里还有谁。 */
+/** 成员自己那一行（`SpacesApi.getMyCourseGroup`）：我在哪个组、组里还有谁。 */
 export type MyCourseGroup = {
   projectId: string | null
   team: { id: number; name: string; members: CourseRosterPerson[] } | null

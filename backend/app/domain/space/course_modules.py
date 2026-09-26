@@ -18,13 +18,13 @@ from collections.abc import Mapping
 
 #: Every module a course may declare. The order is the order the 配置页 lists
 #: them in, so it reads like the course does: 教学内容 → 干什么 → 和谁一起 →
-#: 老师从中看出什么.
+#: 管理员从中看出什么.
 MODULE_KEYS: tuple[str, ...] = (
     "units",  # 教学单元：这门课的时间线
     "assignments",  # 作业与验收
     "quiz",  # 小测
     "team",  # 组队
-    "stuck",  # 共性问题（老师看学生卡在哪）
+    "stuck",  # 共性问题（管理员看成员卡在哪）
     "materials",  # 课件库
     "progress",  # 进度表（测试点通过率）
     "pool",  # 额度池

@@ -435,7 +435,7 @@ async def _ensure_space_visible(*, db, space_id: int, user_id: int) -> None:
 
 
 async def _ensure_space_admin(*, db, space_id: int, user_id: int) -> None:
-    """「教师版面的门」: 只有题目板的管理员/创建者能过。
+    """「管理员版面的门」: 只有题目板的管理员/创建者能过。
 
     先按 ``_ensure_space_visible`` 答 404 —— 一个你不在的题目板不该被确认存在；
     再看是不是管理员，不是就明确 403（不静默返回空内容：空 CSV 会让导出的人以为
@@ -444,11 +444,11 @@ async def _ensure_space_admin(*, db, space_id: int, user_id: int) -> None:
     和 ``_ensure_space_visible`` 一样，判据只有一处 —— ``app.auth.space_access``
     的 ``is_space_admin``，与打分、发题、项目对话读权同一个答案。
 
-    挂在这道门上的是一整块教师版面：参与者花名册的导出与分组统计（逐人/分组地
+    挂在这道门上的是一整块管理员版面：参与者花名册的导出与分组统计（逐人/分组地
     解密年级、专业、班级），以及概览、题目、发布者、提醒与其导出。前端本来就把
     整个「数据分析」入口挂在 ``isCurrentUserAtLeastAdmin`` 下面，所以这几次收窄
-    是把 API 对齐到界面已经说的那句话：这版只有教师看得到。
-    学习看板（``/analytics/learning/*``）不在此列 —— 它读的是学生项目里的对话，
+    是把 API 对齐到界面已经说的那句话：这版只有管理员看得到。
+    学习看板（``/analytics/learning/*``）不在此列 —— 它读的是成员项目里的对话，
     由 ``app.auth.project_access`` 逐个项目判，两套数据、两个门。
     """
     await _ensure_space_visible(db=db, space_id=space_id, user_id=user_id)
@@ -650,12 +650,12 @@ async def _build_course_roster_payload(
 ) -> dict:
     """这门课的人与组：结构来自 `CourseRosterService`，人味在这里补。
 
-    拼「学生 → 他的项目 → 他的组」要人的 handle（项目记的是 `owner_handle`），
+    拼「成员 → 他的项目 → 他的组」要人的 handle（项目记的是 `owner_handle`），
     而 handle 在 user 领域 —— 所以那一跳留在这边用现成的 `_hydrate_people` 走完，
     领域里那份服务只给平表。
 
-    管理员不算学生：教师名单（`space.admins`）与成员表是两件事，一位老师也可以
-    是成员，但他出现在「学生与分组」里只会让人数说谎。
+    管理员不算成员：管理员名单（`space.admins`）与成员表是两件事，一位管理员也可以
+    是成员，但他出现在「成员与分组」里只会让人数说谎。
     """
     roster = await CourseRosterService(db).roster(space_id)
     admin_ids = {rel.user_id for rel in await service.list_admins(space_id)}
@@ -1217,9 +1217,9 @@ async def get_course_roster(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    """这门课的人与组 —— 教师版面的「学生与分组」那一屏。
+    """这门课的人与组 —— 管理员版面的「成员与分组」那一屏。
 
-    只对本版管理员开门：它把全班的人、各自的项目与分组列在一张表上，那不是学生
+    只对本版管理员开门：它把全班的人、各自的项目与分组列在一张表上，那不是成员
     之间该互相看到的东西。判据是 ``_ensure_space_admin``（与打分、发题、读项目
     对话同一个答案），门外人先按可见性答 404，不做存在性确认。
     """
@@ -1237,10 +1237,10 @@ async def get_my_course_group(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    """学生自己那一行：我在这个课里的项目，以及我挂在哪个组上。
+    """成员自己那一行：我在这个课里的项目，以及我挂在哪个组上。
 
     与花名册（``/course/roster``）分开是因为门不同：那张表把全班列在一起，只有
-    教师能看；这一条问的全是关于我自己的事，所以任何能看到这块板的人都答得出。
+    管理员能看；这一条问的全是关于我自己的事，所以任何能看到这块板的人都答得出。
     """
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     viewer = await UserRepository(session=db).get_by_id(auth_user.user_id)
@@ -1645,8 +1645,8 @@ async def get_space_analytics_participants(
     db=Depends(get_db),
 ) -> dict:
     """Return participant population and completion analytics."""
-    # 这一格把 ``_decode_identity`` 出来的年级/专业/班级做成分组统计 —— 是学生
-    # 个人信息的聚合，所以和下面的导出同一个门：教师版面只有教师看。非管理员答
+    # 这一格把 ``_decode_identity`` 出来的年级/专业/班级做成分组统计 —— 是成员
+    # 个人信息的聚合，所以和下面的导出同一个门：管理员版面只有管理员看。非管理员答
     # 403（不是空的分布），原因和导出一样：空的会把「你没权限」说成「这个班没人」。
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
@@ -1691,7 +1691,7 @@ async def export_space_analytics_participants(
     target user to audit real-name data access, matching NT's
     `auditSpaceParticipantExport` behavior.
     """
-    # 教师版面：这份 CSV 逐行写着学生的真实姓名、学号、年级、专业、班级、电话、
+    # 管理员版面：这份 CSV 逐行写着成员的真实姓名、学号、年级、专业、班级、电话、
     # 邮箱（``_decode_identity`` 负责解密），所以只有题目板的管理员/创建者能拿。
     # 非管理员明确 403 —— 不返回空 CSV，空的会把「你没权限」误报成「这个班没人」。
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
@@ -1749,10 +1749,10 @@ async def export_space_analytics_participants(
     )
 
 
-# ── 学习: 学生怎么与 AI 协作、卡在哪 (issue #945 的教师看板) ────────────────────
+# ── 学习: 成员怎么与 AI 协作、卡在哪 (issue #945 的管理员看板) ────────────────────
 #
-# 上面那一组读 赛题 与报名表，这一组读学生项目里的**对话**，所以门也不同: 课程页
-# 本身对所有人可见（`Role.GUEST` 就能读 Space），学生项目的对话不是。判定不写在
+# 上面那一组读 赛题 与报名表，这一组读成员项目里的**对话**，所以门也不同: 课程页
+# 本身对所有人可见（`Role.GUEST` 就能读 Space），成员项目的对话不是。判定不写在
 # 这几条路由里 —— 它在 `app.auth.project_access`，由 `SpaceLearningService` 逐个
 # 项目过一次（`ActorResolver.authorize_project` 是同一个判据的请求内形态）。这里
 # 只负责「先登录」，和本文件其它路由同一个写法。
@@ -1792,14 +1792,14 @@ async def get_space_submissions(
     submission_service: TaskSubmissionService = Depends(get_space_submission_service),
     db=Depends(get_db),
 ) -> dict:
-    """一整门课的提交与验收队列 —— 教师看的那一屏。
+    """一整门课的提交与验收队列 —— 管理员看的那一屏。
 
-    按板子取一次，而不是逐道题 × 逐个学生地问（那是 N×M 次请求）。每行都带
-    `taskId` / `taskTitle` / `participantId`，教师看的是「谁的哪份作业」。
+    按板子取一次，而不是逐道题 × 逐个成员地问（那是 N×M 次请求）。每行都带
+    `taskId` / `taskTitle` / `participantId`，管理员看的是「谁的哪份作业」。
 
-    判据走那道现成的教师闸 `_ensure_space_admin`：不在这个板里答 404（不确认它
-    存在），在板里但不是管理员答 403。学生看自己那一份走既有的按题接口 ——
-    整门课的提交是教师版面。`reviewed=false` 就是验收队列；不给就是全部。
+    判据走那道现成的管理员闸 `_ensure_space_admin`：不在这个板里答 404（不确认它
+    存在），在板里但不是管理员答 403。成员看自己那一份走既有的按题接口 ——
+    整门课的提交是管理员版面。`reviewed=false` 就是验收队列；不给就是全部。
     """
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     if sortBy not in {"createdAt", "updatedAt"}:
@@ -1863,7 +1863,7 @@ async def get_space_learning_filters(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceLearningService = Depends(get_space_learning_service),
 ) -> dict:
-    """这一格能筛的两维: 学生、知识点。时间那一维在前端的筛选栏里。"""
+    """这一格能筛的两维: 成员、知识点。时间那一维在前端的筛选栏里。"""
     _ = auth_user
     actor = await resolver.resolve(fallback_handle=None)
     data = await service.filters(space_id=space_id, handle=_learning_handle(actor))
@@ -1884,7 +1884,7 @@ async def get_space_learning_questions(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceLearningService = Depends(get_space_learning_service),
 ) -> dict:
-    """按学生 / 时间 / 知识点筛出来的学生发言，每条都带得回原文的坐标。"""
+    """按成员 / 时间 / 知识点筛出来的成员发言，每条都带得回原文的坐标。"""
     _ = auth_user
     actor = await resolver.resolve(fallback_handle=None)
     data = await service.questions(
@@ -2519,7 +2519,7 @@ async def patch_space_manager(
 
 # ── 教学单元（一门课的时间线） ─────────────────────────────────────────────────
 #
-# 读的一次给所有人，写的一次给教师：学生只看得到发布过的，而「发布过」这个判断在
+# 读的一次给所有人，写的一次给管理员：成员只看得到发布过的，而「发布过」这个判断在
 # ``TeachingUnitService`` 的查询里，不在这里的分支里 —— 前端过滤过不了这一关，
 # 将来 agent 注入也复用同一条查询。
 
@@ -2650,7 +2650,7 @@ def _quiz_to_api_model(quiz: Quiz) -> dict:
 def _quiz_question_to_api_model(
     question: QuizQuestion, *, include_answer: bool
 ) -> dict:
-    """``include_answer`` 只对教师为真 —— **答案键从不发给学生**（见模块说明）。"""
+    """``include_answer`` 只对管理员为真 —— **答案键从不发给成员**（见模块说明）。"""
     out = {
         "id": question.id,
         "position": question.position,
@@ -2686,7 +2686,7 @@ def _quiz_answer_to_api_model(answer: QuizAnswer) -> dict:
 def _quiz_payload_to_api_model(payload: dict) -> dict:
     """一条小测页要的全部东西，按看的人分两种形状。
 
-    学生那份**没有答案键**，只有自己那一次作答与每题得分；教师那份有答案键，并多
+    成员那份**没有答案键**，只有自己那一次作答与每题得分；管理员那份有答案键，并多
     一个「判完了没有」。分叉放在这里一次做完，别让每条路由各判一次。
     """
     quiz = payload.get("quiz")
@@ -2737,7 +2737,7 @@ def _teaching_unit_to_api_model(
         "assignmentTaskId": unit.assignment_task_id,
         "publishedAt": _ts(unit.published_at),
         "dueAt": _ts(unit.due_at),
-        # 这一周有没有小测（NULL = 没有）。学生首页靠它决定要不要给「本周有小测」
+        # 这一周有没有小测（NULL = 没有）。成员首页靠它决定要不要给「本周有小测」
         # 那个入口，所以它跟着单元列表一起下来，而不是让前端逐周去问一次。
         "quizId": quiz_id,
     }
@@ -2865,7 +2865,7 @@ async def delete_space_unit(
 #
 # 可见性只有一条：**单元发布了，这一周的小测才存在**（服务里那一处
 # ``_require_published``），所以这里没有第二个发布开关。写的一次只走
-# ``_ensure_space_admin``（本版管理员 = 这门课的老师），读的一次先过可见性。
+# ``_ensure_space_admin``（本版管理员名单就是 ``space.admins``），读的一次先过可见性。
 # ---------------------------------------------------------------------------
 
 

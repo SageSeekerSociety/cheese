@@ -30,12 +30,12 @@ export const formatLearningTime = (value?: null | number) => (value ? dayjs(valu
 
 /**
  * 提纲里的讲次顺序 = 勾选顺序（后端按传过去的 blockIds 先后分节），所以这里**只
- * 去重、不排序** —— 重排一次就等于把老师排好的讲次打乱。
+ * 去重、不排序** —— 重排一次就等于把管理员排好的讲次打乱。
  */
 export const dedupeBlockIds = (blockIds: string[]) => [...new Set(blockIds)]
 
 /**
- * 一条发言点回原文的坐标: 学生项目 + 话题，外加那条消息自己。
+ * 一条发言点回原文的坐标: 成员项目 + 话题，外加那条消息自己。
  *
  * `blockId` 一起带过去是因为它是后端给的坐标，房间页现在还没有「按消息定位」的
  * 能力（消息是分页加载的，锚点可能根本不在列表里），所以摘要在列表里就已经给

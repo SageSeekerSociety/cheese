@@ -85,7 +85,7 @@ class Project(UuidPk, Timestamps, Base):
         ),
         nullable=True,
     )
-    # 一页纸总结 (spec §7.3/F2): AI-maintained one-pager, 老师 30 秒读懂。
+    # 一页纸总结 (spec §7.3/F2): AI-maintained one-pager, 管理员 30 秒读懂。
     summary: Mapped[str] = mapped_column(Text, default="", server_default="")
     # 用户自己写的一句话：这个项目打算做什么（#946 片 C，建项目时问的那一句）。
     # 与 summary 的分工是「谁说的」：summary 是 AI 维护的一页纸，这一条是用户的
