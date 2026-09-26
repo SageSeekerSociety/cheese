@@ -194,21 +194,10 @@ class _HookWorkState:
     # then left alone for the remaining two hours and fifty minutes. The room
     # showing nothing for that long is the complaint this reminder exists for.
     last_progress_reminder_at: datetime | None = None
-    todo: list[dict] = field(default_factory=list)
-    #: 每个分身自己那份清单，按它做的那条活分开。Claude Code 的任务编号是**每个
-    #: agent 各数各的**，都从 1 开始，所以几份清单混进一个 list 里不只是看着乱：
-    #: 分身的 `TaskUpdate("1")` 会去勾掉房间自己的第一条。
-    worker_todo: dict[str, list[dict]] = field(default_factory=dict)
     #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。失败的结果
     #: 回来时要标的就是那一块。只在内存里、只活这一轮：成功的调用（绝大多数）因此
     #: 一个字节都不必落库，而重启丢掉的只是几个红点，不是记录。
     steps: dict[str, uuid.UUID] = field(default_factory=dict)
-
-    def todo_of(self, work_id: uuid.UUID | None) -> list[dict]:
-        """这条事件该记进谁的清单。None = 房间自己的。"""
-        if work_id is None:
-            return self.todo
-        return self.worker_todo.setdefault(str(work_id), [])
 
     # The topic branch's commits as of turn start — what makes "this turn's
     # changes" answerable at turn end. A task rather than a value, because the
@@ -397,9 +386,11 @@ _PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
 #: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
 #: 色的点 —— 而那只是读了一个文件。
 _NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
-#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 是系统提示每一轮都在点名、于是
-#: extension 额外注册的别名；另外两个是平台自己的 MCP 工具。
-_PLATFORM_ALIASES = frozenset({"chat_send", "platform_request", "send_user_file"})
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 和 `todo_write` 是系统提示点名
+#: 的两样，名字照模型已经认得的说法起；另外两个是平台自己的 MCP 工具。
+_PLATFORM_ALIASES = frozenset(
+    {"chat_send", "todo_write", "platform_request", "send_user_file"}
+)
 
 #: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
 #: 服务器改名那一天这里会静态地失效，而失效的样子和时间线正常的样子一模一样。
@@ -594,37 +585,10 @@ def _change_summary_meta(changeset: _Changeset) -> dict:
     }
 
 
-# Claude Code's structured Task tools → a live working-log todo (§3.1.1). These
-# are the *process* (rendered as a checklist in the in-progress message), so they
-# are streamed live but NOT persisted as 现场 events.
-_TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}
-
 #: How many sessions' supply routes to remember. Well past the number of screens
 #: one backend drives at once, so in practice nothing is ever evicted; it is a
 #: ceiling on a dict nothing else prunes, not a policy.
 _SESSION_ROUTES_KEPT = 512
-
-
-def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
-    """Fold a TaskCreate/TaskUpdate event into the todo list. Returns whether the
-    list changed (ids are assigned by creation order, matching the model)."""
-    if name == "TaskCreate":
-        todo.append(
-            {
-                "id": str(len(todo) + 1),
-                "subject": str(args.get("subject", "")).strip() or "（任务）",
-                "status": "pending",
-            }
-        )
-        return True
-    if name == "TaskUpdate":
-        tid = str(args.get("taskId", ""))
-        status = str(args.get("status", "")) or "pending"
-        for item in todo:
-            if item["id"] == tid:
-                item["status"] = status
-                return True
-    return False
 
 
 # A platform tool → the action card 芝士 files for it when it calls it
@@ -858,8 +822,8 @@ def _progress_lines(items: list[dict]) -> list[str]:
     TopicProgress's docstring for why the two must not be merged.
 
     The instruction to re-list finished items when building a new checklist is
-    load-bearing: the stored row is overwritten by the next turn's first
-    TaskCreate, so a plan that silently drops what is already done would erase it.
+    load-bearing: `todo_write` replaces the stored row whole, so a plan that
+    silently drops what is already done would erase it.
     """
     if not items:
         return []
@@ -869,8 +833,9 @@ def _progress_lines(items: list[dict]) -> list[str]:
         subject = str(item.get("subject", "")).strip() or "（任务）"
         lines.append(f"    - [{mark}] {subject}")
     lines.append(
-        "  已完成的别重做，接着没做完的往下干。**重新建清单时把已完成的也列进去"
-        "并标成 completed**——清单会覆盖上面这份，只列剩下的等于把做过的抹掉。"
+        "  已完成的别重做，接着没做完的往下干。**用 `todo_write` 重新写清单时把已完成"
+        "的也列进去并标成 completed**——清单会整份覆盖上面这份，只列剩下的等于把做过"
+        "的抹掉。"
     )
     return lines
 
@@ -1749,8 +1714,9 @@ class ChatService:
                         "this turn is still running, call chat_send now with "
                         "what you know so far and what you are waiting on — a "
                         "room that shows nothing cannot be told apart from one "
-                        "that is stuck. Ignore this only if the turn is already "
-                        "finished.",
+                        "that is stuck. If your plan has changed, also update "
+                        "it with todo_write. Ignore this only if the turn is "
+                        "already finished.",
                     )
                 # THAT a reminder fired was already visible — the periodic
                 # loop logs `chat progress reminder: <count>` on any cycle whose
@@ -2622,37 +2588,24 @@ class ChatService:
         elif isinstance(event, AgentToolUse):
             name = _short_tool_name(event.name)
             args = event.input or {}
-            if state is not None and name in _TASK_TOOLS:
-                # 清单跟着做事的人走。一个分身的清单是它自己的计划，编号也是它
-                # 自己从 1 数的 —— 记进房间那份，房间的清单会被别人的进度改写。
-                todo = state.todo_of(task_id)
-                if _apply_task_event(todo, name, args):
-                    await self._persist_progress(
-                        topic_id, todo, turn_id, task_id=task_id
-                    )
-                    frame = {
-                        "type": "todo",
-                        "items": [dict(item) for item in todo],
-                    }
-            elif name not in _TASK_TOOLS:
-                payload = await self._persist_tool_event(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    name=name,
-                    tool_input=args,
-                    platform=_is_platform_tool(event.name, args),
-                    turn_id=turn_id,
-                    eid=eid or event.eid,
-                    platform_unsolicited=platform_unsolicited,
-                    task_id=task_id,
-                )
-                if payload is not None:
-                    frame = {"type": "event_block", "block": payload}
-                    if state is not None and event.call_id:
-                        state.steps[event.call_id] = uuid.UUID(payload["id"])
-                resource = _TOOL_ACTION.get(name)
-                if state is not None and resource is not None:
-                    await self._announce_action(state, resource)
+            payload = await self._persist_tool_event(
+                project_id=project_id,
+                topic_id=topic_id,
+                name=name,
+                tool_input=args,
+                platform=_is_platform_tool(event.name, args),
+                turn_id=turn_id,
+                eid=eid or event.eid,
+                platform_unsolicited=platform_unsolicited,
+                task_id=task_id,
+            )
+            if payload is not None:
+                frame = {"type": "event_block", "block": payload}
+                if state is not None and event.call_id:
+                    state.steps[event.call_id] = uuid.UUID(payload["id"])
+            resource = _TOOL_ACTION.get(name)
+            if state is not None and resource is not None:
+                await self._announce_action(state, resource)
         elif isinstance(event, AgentStepFailed):
             # No frame: 现场 rebuilds its timeline when the tab is opened, and
             # this changes a line that is already in it rather than adding one.
@@ -2746,7 +2699,7 @@ class ChatService:
                     frame = {"type": "event_block", "block": payload}
         if frame is not None:
             await broker.publish(channel, frame)
-            if frame["type"] in ("assistant_block", "event_block", "todo"):
+            if frame["type"] in ("assistant_block", "event_block"):
                 get_work_runner().note_session_output(
                     turn_id, tool=isinstance(event, AgentToolUse)
                 )
@@ -3606,33 +3559,6 @@ class ChatService:
                 state.last_chat_at = datetime.now(UTC)
                 state.last_progress_reminder_at = None
         return payload
-
-    async def _persist_progress(
-        self,
-        topic_id: uuid.UUID,
-        items: list[dict],
-        turn_id: uuid.UUID | None,
-        *,
-        task_id: uuid.UUID | None = None,
-    ) -> None:
-        """Write the topic's checklist through to storage (进度层, #187).
-
-        Best-effort on purpose: progress is a convenience for the NEXT turn, so a
-        storage hiccup must never take down the turn that is currently producing
-        real work. Same commit-now contract as _persist_tool_event — batching to
-        turn end would lose exactly the case this exists for (the turn dies)."""
-        try:
-            async with self._sessions() as session:
-                # The checklist belongs to whoever is working, not to the room
-                # it hangs in — two 分身 in one room keep two lists, each
-                # numbered from 1, and one shared list would have them ticking
-                # each other's items.
-                await TopicProgressRepository(session).save(
-                    topic_id, items, task_id=task_id, turn_id=turn_id
-                )
-                await session.commit()
-        except Exception:  # noqa: BLE001 — never fail a turn over its checklist
-            logger.warning("progress persist failed for topic %s", topic_id)
 
     async def _persist_tool_event(
         self,
@@ -5182,12 +5108,9 @@ class ChatService:
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
 
-        # The turn's own checklist starts EMPTY even when prior_progress is not
-        # (see `_HookWorkState.todo`): _apply_task_event numbers items by
-        # position and the agent's Task numbering restarts from 1 on a fresh
-        # session, so seeding it would make the turn's first TaskUpdate("1")
-        # land on a leftover item. The old checklist reaches the agent through
-        # the prompt instead, and the UI through the restored frame here.
+        # The checklist the last turn left behind: the agent reads it in the
+        # prompt, the room gets it here, marked as not this turn's own. This
+        # turn's first `todo_write` replaces it.
         if prior_progress:
             yield {"type": "todo", "items": prior_progress, "restored": True}
         # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything
