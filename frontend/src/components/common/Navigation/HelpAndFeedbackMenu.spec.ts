@@ -115,6 +115,14 @@ describe('帮助与反馈入口', () => {
     await waitFor(() => expect(document.body.textContent).toContain('管理后台'))
   })
 
+  it('使用文档那一项整页跳到 /docs/，不交给应用的路由', async () => {
+    const { container } = await mount()
+    await fireEvent.click(container.querySelector('.help-entry') as HTMLElement)
+    await waitFor(() => expect(document.body.textContent).toContain('使用文档'))
+    const link = Array.from(document.querySelectorAll('a')).find((a) => a.textContent?.includes('使用文档'))
+    expect(link?.getAttribute('href')).toBe('/docs/')
+  })
+
   it('compact（手机）不画文字标签，但仍然是一颗点得开的按钮', async () => {
     const { container } = await mount({ compact: true }, { admin: true })
     const entry = container.querySelector('.help-entry') as HTMLElement

@@ -141,6 +141,19 @@
   },
   "room": {
     "noTasks": "No tasks",
+    "site": {
+      "status": {
+        "thinking": "Thinking",
+        "acting": "{verb}",
+        "retrying": "Retrying",
+        "retryingCount": "Retrying (attempt {attempt})",
+        "waiting": "Waiting for the machine",
+        "stopped": "Stopped",
+        "idle": "Idle",
+        "elapsed": "{span} so far",
+        "quiet": "last activity {span} ago"
+      }
+    },
     "menu": {
       "more": "More",
       "focus": "Focus mode",
@@ -201,6 +214,12 @@
       "summonShort": "Hand off",
       "summonOn": "{'@'}{name} is mentioned. Click to remove",
       "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)"
+    },
+    "dispatched": {
+      "created": "New task",
+      "title": "“{title}”",
+      "done": "Done",
+      "running": "In progress"
     }
   },
   "members": {

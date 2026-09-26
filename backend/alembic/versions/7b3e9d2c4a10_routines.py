@@ -4,7 +4,7 @@ A routine is the rule a person confirmed; a run is one time it fired, unique per
 (routine, occurrence) so a planned moment or an event is dispatched once.
 
 Revision ID: 7b3e9d2c4a10
-Revises: d4e7a2c91b35
+Revises: 52b13868b0e8
 """
 
 from collections.abc import Sequence
@@ -15,7 +15,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "7b3e9d2c4a10"
-down_revision: str | Sequence[str] | None = "d4e7a2c91b35"
+down_revision: str | Sequence[str] | None = "52b13868b0e8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

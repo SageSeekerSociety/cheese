@@ -117,6 +117,27 @@ def verify_scoped_token(
     return claims
 
 
+def _decoder(encoding: str):
+    """An incremental decoder for a response's Content-Encoding, or None when
+    this proxy cannot read it. The bytes forwarded to the client are never
+    touched; only the copy read for usage is decoded."""
+    encoding = encoding.strip().lower()
+    if encoding in ("", "identity"):
+        return lambda chunk: chunk
+    if encoding in ("gzip", "x-gzip", "deflate"):
+        # 47: zlib or gzip framing, detected from the header.
+        return zlib.decompressobj(47).decompress
+    if encoding == "br":
+        import brotli  # in the proxy image, not in the backend's test env
+
+        return brotli.Decompressor().process
+    if encoding == "zstd":
+        import zstandard  # in the proxy image, not in the backend's test env
+
+        return zstandard.ZstdDecompressor().decompressobj().decompress
+    return None
+
+
 class StreamingUsageExtractor:
     """Scrape a turn's usage/model out of an SSE response WITHOUT holding the
     whole body. Feed raw chunks as they pass through the proxy; only a single
@@ -125,12 +146,17 @@ class StreamingUsageExtractor:
 
     Anthropic puts input tokens on message_start and the output count on
     message_delta, so the usage is merged across events — neither alone is the
-    turn's cost."""
+    turn's cost.
 
-    def __init__(self) -> None:
+    ``encoding`` is the response's Content-Encoding. Anthropic compresses the
+    SSE of a client that accepts it, as Claude Code does, and read raw those
+    bytes hold no event at all: usage stayed empty and nothing was recorded."""
+
+    def __init__(self, encoding: str = "") -> None:
         self._buf = b""
         self.usage: dict = {}
         self.model = ""
+        self._decode = _decoder(encoding)
 
     # A usage-bearing SSE line is well under 1 KiB; nothing we meter is remotely
     # this large. The cap only guarantees the O(one line) memory bound survives
@@ -138,8 +164,9 @@ class StreamingUsageExtractor:
     _MAX_LINE = 1 << 20
 
     def feed(self, chunk: bytes) -> None:
-        if not chunk:
+        if not chunk or self._decode is None:
             return
+        chunk = self._decode(chunk)
         self._buf += chunk
         # Consume complete lines; keep the trailing partial for the next chunk.
         *lines, self._buf = self._buf.split(b"\n")
@@ -544,9 +571,10 @@ def _fill(value, project: str, topic: str):
 class ModelRewrite:
     """Write the admitted model name into a streamed ``/v1/messages`` body.
 
-    The launch environment names no model any more (结论 46): the binding on the
-    card is resolved at admission, and this is where the answer reaches the one
-    place either pool reads a model from. LiteLLM reads it because a subagent
+    The binding on the card is resolved at admission (结论 46), and this is
+    where the answer reaches the one place either pool reads a model from. The
+    model Claude Code was launched with only shapes its own prompt, and can lag
+    a binding changed since. LiteLLM reads it because a subagent
     would otherwise ask it for ``claude-3-5-haiku-*``, which it does not serve;
     the subscription reads it because a project bound to opus would otherwise
     run on whatever family the CLI defaults to.
@@ -591,9 +619,9 @@ class ModelRewrite:
         # run it on something else (I27). The caller reports the reason.
         self.missed = False
         # 被替换前体里原样的 model 值（keep_haiku 放过的也算）——主对话这一
-        # 路读它，就能认出分身请求体里 CC 回显的父会话模型：device 启动环境
-        # 不钉模型（结论 46），CC 写的是它自己的内建默认，准入在席位配置里
-        # 永远找不到它（2026-09-23 的事故）。``replaced`` 为 False 时这个值
+        # 路读它，就能认出分身请求体里 CC 回显的父会话模型：CC 写的是它启动
+        # 时拿到的模型名，准入会把它当成一次显式指定（2026-09-23 的事故）。
+        # ``replaced`` 为 False 时这个值
         # 是 haiku 放行，不是父会话的工作模型。
         self.original: str | None = None
         self.replaced = False

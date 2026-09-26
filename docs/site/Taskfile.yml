@@ -1,0 +1,25 @@
+version: '3'
+
+tasks:
+  install:
+    desc: Install the docs site's build dependencies
+    cmds:
+      - npm ci --no-audit --no-fund
+    sources:
+      - package-lock.json
+
+  build:
+    desc: Build the docs site (docs/manual → frontend/public/docs; OUT=<dir> to build elsewhere)
+    deps: [install]
+    cmds:
+      - npm run build
+
+  diagrams:
+    desc: Regenerate the archify diagrams under diagrams/ (needs a local archify checkout)
+    cmds:
+      - npm run diagrams
+
+  room:
+    desc: Rebuild island/room.html, the workbench components the home page embeds
+    cmds:
+      - npm run room

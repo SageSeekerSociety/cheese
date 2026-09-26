@@ -206,6 +206,20 @@ def test_tools_without_a_telling_argument_show_only_their_verb():
     assert tool_preview("Read", {}) == ToolPreview()
 
 
+def test_a_checklist_update_shows_the_step_being_worked_on():
+    """整份清单跟在「更新任务清单」后面读不成一句话；读的人要知道现在在做哪一步。"""
+    todos = [
+        {"content": "读现有实现", "status": "completed"},
+        {"content": "写  接口\n和测试", "status": "in_progress"},
+        {"content": "开 PR", "status": "pending"},
+    ]
+    assert tool_preview("todo_write", {"todos": todos}).text == "写 接口 和测试"
+    # 全做完、或者还没开始：没有哪一步在做，就只有动词。
+    done = [{**todo, "status": "completed"} for todo in todos]
+    assert tool_preview("todo_write", {"todos": done}) == ToolPreview()
+    assert tool_preview("todo_write", {"todos": "not a list"}) == ToolPreview()
+
+
 def test_non_dict_input_is_survivable():
     assert tool_preview("Bash", "not a dict") == ToolPreview()  # type: ignore[arg-type]
 

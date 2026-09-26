@@ -212,7 +212,7 @@ export interface DocumentRevision {
   date: string
 }
 
-// A working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a checklist
+// A working-log task item (the agent's `todo_write`, rendered as a checklist
 // in the in-progress message). Live during a turn; persisted between turns as
 // the topic's 进度层 (#187) so a new machine — and the room — can still see how
 // far the work got.
@@ -322,7 +322,8 @@ export type WsServerFrame =
   | { type: 'turn_finished'; turn_id: string }
   // Sent once on WS connect when a turn is already mid-stream on this topic,
   // so a re-entering client rebuilds the 正在思考 indicator.
-  | { type: 'turn_active'; turn_ids?: string[] }
+  // `since`: when each of them started, epoch seconds.
+  | { type: 'turn_active'; turn_ids?: string[]; since?: Record<string, number> }
   // A just-persisted block turned out to be a provider-error echo — remove it.
   | { type: 'retract_block'; block_id: string }
   // An existing block's data changed in place (e.g. an option question got
