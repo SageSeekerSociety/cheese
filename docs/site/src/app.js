@@ -411,8 +411,6 @@ function mountTour() {
   })
   // tapping the folded sheet on a phone opens it back up
   $('#tourDock .drawer-h')?.addEventListener('click', () => $('#tourDock').classList.remove('mini'))
-  // asking for real hands over to the real panel
-  $('#tourDock .tour-input')?.addEventListener('click', () => $('#tourDock').classList.remove('open'))
 }
 
 // ---------- home: role tabs ----------

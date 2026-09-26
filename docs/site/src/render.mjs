@@ -83,8 +83,10 @@ export function footer(ctx) {
 }
 
 // ---------- doc pages ----------
-function sidebar(nav, current, base) {
-  return `<aside class="side" id="side" aria-label="本栏目录"><div class="side-inner"><span class="side-pill" id="sidePill"></span>${nav.map(([g, items]) => `<div class="side-group"><h4>${esc(g)}</h4>${items.map((p) => `<a href="${base}${p.slug}" data-slug="${p.slug}"${p.slug === current ? ' class="on" aria-current="page"' : ''}>${esc(p.title)}</a>`).join('')}</div>`).join('')}</div></aside>`
+// `copy` renders it as a picture of itself (the home page's tour): no ids, no
+// hooks for the page's own sidebar behaviour.
+export function sidebar(nav, current, base, copy = false) {
+  return `<aside class="side"${copy ? '' : ' id="side"'} aria-label="本栏目录"><div class="side-inner">${copy ? '' : '<span class="side-pill" id="sidePill"></span>'}${nav.map(([g, items]) => `<div class="side-group"><h4>${esc(g)}</h4>${items.map((p) => `<a href="${base}${p.slug}"${copy ? '' : ` data-slug="${p.slug}"`}${p.slug === current ? ' class="on" aria-current="page"' : ''}>${esc(p.title)}</a>`).join('')}</div>`).join('')}</div></aside>`
 }
 
 function toc(page) {

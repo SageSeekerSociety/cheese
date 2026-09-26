@@ -392,7 +392,7 @@ const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section
 const devRefs = Object.fromEntries(devList.map((p) => [p.slug, { url: p.url, title: p.title, summary: p.summary }]))
 pageRefs.__logo = assets.logo
 const doors = SECTIONS.map(([key, label, icon]) => ({ key, label, icon, items: userNav[key].flatMap(([, items]) => items) }))
-write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs, dev: devRefs }))
+write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs, dev: devRefs, full: pages, nav: userNav }))
 write('changelog.html', changelogPage(ctx, RELEASES))
 write('changelog.xml', changelogFeed(RELEASES))
 write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest' }))

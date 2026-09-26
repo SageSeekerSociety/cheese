@@ -1099,10 +1099,22 @@ html:has(.tour.pinned){scroll-snap-type:y proximity}
 .tb-page{position:absolute;inset:0;display:block;opacity:0;transform:translateY(6%) scale(.985);transition:opacity .5s var(--out),transform .75s var(--out);pointer-events:none}
 .tb-page.past{transform:translateY(-5%) scale(.985)}
 .tb-page.on{opacity:1;transform:none;pointer-events:auto}
-.tb-page picture,.tb-page img{display:block;width:100%;height:100%}
-.tb-page img{object-fit:cover;object-position:top left}
-.tb-page.locked img{filter:blur(5px) saturate(.8)}
-.tb-lock{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:8px;padding:12px 18px;border-radius:14px;background:var(--surface);border:1px solid var(--line-2);box-shadow:var(--shadow-lg);color:var(--ink);font-size:15px;font-weight:500;white-space:nowrap}
+/* each page is the site's own markup, inert */
+.tb-page{overflow:hidden;background:var(--bg)}
+.ts-layout{display:grid;grid-template-columns:232px minmax(0,1fr);height:100%}
+.tour-sheet .side{position:static;height:100%;overflow:hidden;padding:26px 10px 0 14px;border-right:1px solid var(--line);background:none;transform:none;width:auto}
+.ts-main{position:relative;height:100%;overflow:hidden;padding:34px 48px 0;mask-image:linear-gradient(to bottom,#000 78%,transparent)}
+.ts-main .article{max-width:760px;margin:0}
+.ts-main .page-head h1{font-size:34px}
+.ts-main .lede{font-size:16.5px;margin:14px 0 22px}
+.ts-news{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.ts-news li{display:flex;align-items:baseline;gap:10px;padding:10px 12px;border-radius:12px;background:var(--panel);font-size:14.5px;color:var(--ink)}
+.ts-locked{mask-image:none}
+.ts-bones{display:grid;gap:14px;margin-top:10px;filter:blur(1.5px)}
+.ts-bones i{display:block;height:14px;border-radius:7px;background:color-mix(in srgb,var(--ink) 9%,transparent)}
+.ts-bones i:first-child{height:34px;width:60%;margin-bottom:10px}
+.ts-bones i:nth-child(3){width:86%}.ts-bones i:nth-child(4){width:70%}.ts-bones i:nth-child(6){width:78%}.ts-bones i:nth-child(7){width:52%}
+.tb-lock{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:8px;padding:12px 18px;border-radius:14px;background:var(--surface);border:1px solid var(--line-2);box-shadow:var(--shadow-lg);color:var(--ink);font-size:15px;font-weight:500;white-space:nowrap}
 .tb-blank{height:100%;display:grid;place-content:center;justify-items:center;gap:14px;color:var(--muted);font-size:15px;background:radial-gradient(60% 60% at 50% 45%,var(--accent-wash),transparent)}
 .tb-blank img{width:88px;height:88px;animation:moonglow 5s ease-in-out infinite}
 .tb-load{position:absolute;left:0;top:0;height:3px;width:100%;transform-origin:0 50%;transform:scaleX(0);background:linear-gradient(90deg,var(--accent-2),var(--accent));opacity:0;z-index:2}
@@ -1124,7 +1136,7 @@ html:has(.tour.pinned){scroll-snap-type:y proximity}
 @keyframes tc-dot{0%,100%{opacity:.3;transform:none}50%{opacity:1;transform:translateY(-3px)}}
 .tc-cite{display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:4px 10px;border-radius:999px;background:var(--accent-wash);color:var(--accent-ink);font-size:12.5px;animation:rise .35s var(--out) both}
 .tc-cite .ico{width:13px;height:13px}
-.tour-input{width:100%;text-align:left;color:var(--faint);font-size:14px;min-height:48px;cursor:text}
+.tour-input{width:100%;text-align:left;color:var(--faint);font-size:14px;min-height:48px;cursor:default;user-select:none}
 .tour-input>span:first-child{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tour-input.typing{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 14%,transparent)}
 .tour-input.typing>span:first-child{color:var(--ink)}
@@ -1139,11 +1151,14 @@ html:has(.tour.pinned){scroll-snap-type:y proximity}
   .tour-stage{max-width:none}
   .tour-bar{display:none}
   .tour-sheet{border-radius:16px}
+  .ts-layout{grid-template-columns:1fr}
+  .tour-sheet .side{display:none}
+  .ts-main{padding:22px 18px 0}
+  .ts-main .page-head h1{font-size:26px}
   .tour-dock{height:min(58vh,480px)!important;transition:transform .45s var(--out),height .45s var(--out)!important}
   .tour-dock.mini{height:72px!important;cursor:pointer}
   .tour-dock.mini .drawer-h br{display:none}
   .tour-dock.mini .brand-mark{width:28px;height:28px}
-  .tb-page img{height:auto;min-height:100%;object-fit:cover;object-position:top center}
   .tour-dock.mini .ctx,.tour-dock.mini .drawer-b,.tour-dock.mini .drawer-f small{display:none}
   .tour-dock.mini .drawer-h{height:72px;padding:14px 8px 10px 16px;border-bottom:0}
   .tour-dock.mini .drawer-h small{display:none}
@@ -1158,11 +1173,7 @@ html:has(.tour.pinned){scroll-snap-type:y proximity}
 .tour-list{list-style:none;margin:0;padding:0;display:grid;gap:36px}
 .tour-list .q{margin-left:auto;width:fit-content;max-width:85%;background:var(--btn);color:var(--btn-ink);border-radius:16px 16px 4px 16px;padding:9px 14px;font-size:15px}
 .tour-list .a{margin-top:12px;font-size:15px;line-height:1.8;color:var(--text)}
-.tl-page{display:grid;justify-items:center;gap:10px;margin-top:14px}
-.tl-frame{display:block;width:min(260px,70%);border-radius:26px;border:6px solid var(--ink);overflow:hidden;box-shadow:var(--shadow-lg);aspect-ratio:390/760;background:var(--bg)}
-.tl-frame img{width:100%;height:100%;object-fit:cover;object-position:top}
-.tl-page.locked img{filter:blur(4px)}
-.tl-page .cite{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--accent-wash);color:var(--accent-ink);font-size:12.5px}
+.tour-list .cite{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:4px 10px;border-radius:999px;background:var(--accent-wash);color:var(--accent-ink);font-size:12.5px}
 
 /* ---------- home: features wall ----------
    Each card is a small copy of the page it links to: breadcrumb, title with

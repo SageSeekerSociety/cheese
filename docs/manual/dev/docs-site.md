@@ -29,7 +29,7 @@ covers:
 
 首页（`docs/site/src/home.mjs`）不写死内容：分组来自 `structure.mjs`，常见问题来自 `troubleshooting.md`，更新来自 git 历史，`build.mjs` 只负责把数据传进去。
 
-- 「问芝士」导览每一屏对应一类文档的一页，左侧浏览器里的截图由 `shots/site.mjs` 拍文档站自己的页面。改了导览要同步改脚本里的 `TOUR`，然后先构建再拍：`OUT=/tmp/site npm run build && node gen/serve.mjs /tmp/site`，另开终端运行 `node shots/site.mjs`。
+- 「问芝士」导览每一屏对应一类文档的一页。左侧那一页不是截图，是用站点自己的侧栏和正文组件现场渲染的开头几节（`inert`，只看不能点），所以文档改了它跟着变，暗色也自动跟随；开发文档那一屏只画锁住的轮廓，不把内容放进公开首页。
 - 使用文档里的界面截图由 `shots/shots.mjs` 在 `shots/fixture.py` 造出的示例项目里拍（需要本地全套服务），落到 `docs/manual/public/images/`。截图是真实界面，页面上的本地地址会换成 `https://okcheese.com`。
 - 首页标题用一份切过子集的显示字体（三极行楷简体，免费商用）：`gen/font.sh` 只保留首页标题用到的字，生成 `src/fonts/display.woff2`。改了首页标题文案要重跑，否则新字会回落成普通字体。
 

@@ -1,6 +1,6 @@
 // The home page, rendered at build time. Interactive parts (logo motion, the
 // 问芝士 tour, the role tabs) are wired up by src/app.js.
-import { esc, shell, ic, REPO } from './render.mjs'
+import { esc, shell, ic, REPO, sidebar } from './render.mjs'
 import { TAG } from './content.js'
 
 export const WORK = [
@@ -33,9 +33,6 @@ function rolePanel(who, i, WHO, pages) {
   </div>`
 }
 
-// The pages the tour visits, as a reader first sees them (shots/site.mjs).
-const site = (slug, phone) => `/docs/images/site/${phone ? 'm-' : ''}${slug.replace('/', '-')}.jpg`
-
 // One line per door: what that part of the docs is for.
 const DOORS = {
   start: '十分钟上手：建项目、开话题，把第一件事交给芝士，再验收它交回来的东西。',
@@ -65,13 +62,37 @@ function tourPage(slug, { pages, dev, latest }) {
   const p = pages[slug]; return p && { url: p.url, title: p.title, label: p.sectionLabel }
 }
 
+// What the tour shows for a page: the page itself, drawn with the site's own
+// sidebar and article markup (inert — a picture of the page, not a second copy
+// to use). Only its opening sections, without ids. Developer pages stay behind
+// their gate: the home page is public, so they show as a locked outline.
+function tourSheet(slug, { full, nav, latest }) {
+  if (slug === 'changelog') {
+    const items = ['feat', 'imp'].flatMap((t) => (latest.hl[t] || []).map(([h]) => [t, h])).slice(0, 6)
+    return `<div class="ts-main"><article class="article"><div class="crumb">更新日志<span>/</span><b>${esc(latest.env)}</b></div><div class="page-head"><h1>${esc(latest.ver)}<span class="h1-line"></span></h1></div>
+     <p class="lede">这一版一共 ${latest.list.length} 项改动。按版本列出你用得到的变化，写成人话；每一条都链到对应的 PR。</p>
+     <ul class="ts-news">${items.map(([t, h]) => `<li><span class="badge ${t}">${TAG[t]}</span>${esc(h)}</li>`).join('')}</ul></article></div>`
+  }
+  if (slug.startsWith('dev/')) {
+    return `<div class="ts-main ts-locked"><article class="article"><div class="crumb">开发文档<span>/</span><b>流程</b></div><div class="ts-bones" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
+     <span class="tb-lock">${ic('lock', 'width:16px;height:16px')}开发文档只对平台管理员开放</span></div>`
+  }
+  const p = full[slug]
+  const sections = p.html.split(/(?=<h2 )/).slice(0, 3).join('').replace(/ id="[^"]*"/g, '')
+  return `<div class="ts-layout">${sidebar(nav[p.section], slug, '/docs/', true)}<div class="ts-main"><article class="article">
+    <div class="crumb">${esc(p.sectionLabel)}<span>/</span><b>${esc(p.group)}</b></div>
+    <div class="page-head"><h1>${esc(p.title)}<span class="h1-line"></span></h1></div>
+    ${p.lede ? `<p class="lede">${p.lede}</p>` : ''}
+    <div class="prose">${sections}</div></article></div></div>`
+}
+
 function tourAnswer([, , , answer, slug], latest) {
   if (slug !== 'changelog') return answer
   const n = latest.list.length
   return `${latest.ver}（${latest.env}）一共 ${n} 项改动。更新日志把每一版改了什么写成人话，每条都链到对应的代码改动，也能用 RSS 订阅。`
 }
 
-export function homePage(ctx, { releases, faq, WHO, doors, pages, dev }) {
+export function homePage(ctx, { releases, faq, WHO, doors, pages, dev, full, nav }) {
   const latest = releases[0]
   const news = ['feat', 'imp'].flatMap((t) => (latest.hl[t] || []).map(([h, pr]) => [t, h, pr])).slice(0, 5)
   const roles = Object.keys(WHO)
@@ -103,7 +124,7 @@ export function homePage(ctx, { releases, faq, WHO, doors, pages, dev }) {
      <div class="tour-bar"><div class="tour-kinds" id="tourKinds">${steps.map((t, i) => `<button data-tour="${i}">${ic(t.icon, 'width:14px;height:14px')}${esc(t.kind)}</button>`).join('')}</div><span class="tour-path" id="tourUrl">/docs/</span></div>
      <div class="tour-sheet">
       <div class="tb-page on blank" data-i="-1"><div class="tb-blank"><img src="${ctx.assets.logo}" alt=""><p>问一个问题，芝士带你去对应的那一页</p></div></div>
-      ${steps.map((t, i) => `<a class="tb-page${t.page.locked ? ' locked' : ''}" data-i="${i}" href="${t.page.url}" tabindex="-1"><picture><source media="(max-width: 820px)" srcset="${site(t.slug, true)}"><img src="${site(t.slug)}" alt="${esc(t.page.title)}" loading="lazy"></picture>${t.page.locked ? `<span class="tb-lock">${ic('lock', 'width:16px;height:16px')}开发文档只对平台管理员开放</span>` : ''}</a>`).join('')}
+      ${steps.map((t, i) => `<div class="tb-page" data-i="${i}" inert>${tourSheet(t.slug, { full, nav, latest })}</div>`).join('')}
       <span class="tb-load" id="tourLoad"></span>
      </div>
     </div>
@@ -112,10 +133,10 @@ export function homePage(ctx, { releases, faq, WHO, doors, pages, dev }) {
     <div class="drawer-h"><span class="brand-mark sm"><img src="${ctx.assets.logo}" alt=""></span><div style="flex:1;min-width:0;line-height:1.3"><b>问芝士</b><br><small>只根据这份文档回答，每条答案都附出处</small><span class="tour-last" id="tourLast"></span></div><span class="tour-count" id="tourCount"></span></div>
     <div class="ctx">${ic('doc')}<span>正在看</span><b id="tourCtx">文档首页</b></div>
     <div class="drawer-b" id="tourLog" aria-live="polite"></div>
-    <div class="drawer-f"><button class="box tour-input" data-open-ask><span id="tourTyping" data-placeholder="问一个关于知是的问题…">问一个关于知是的问题…</span><span class="send">${ic('arrow')}</span></button><small>这是一段演示；点输入框，就能真的问芝士。</small></div>
+    <div class="drawer-f"><div class="box tour-input" aria-hidden="true"><span id="tourTyping" data-placeholder="问一个关于知是的问题…">问一个关于知是的问题…</span><span class="send">${ic('arrow')}</span></div><small>这是一段演示；要问自己的问题，点顶栏的「问芝士」。</small></div>
    </aside>
    <ol class="tour-list">${steps.map((t) => `<li data-reveal><div class="q">${esc(t.q)}</div><div class="a">${esc(t.a)}</div>
-    <a class="tl-page${t.page.locked ? ' locked' : ''}" href="${t.page.url}"><span class="tl-frame"><img src="${site(t.slug, true)}" alt="" loading="lazy"></span><span class="cite">${ic('doc', 'width:13px;height:13px')}${esc(t.page.label)} · ${esc(t.page.title)}</span></a></li>`).join('')}</ol>
+    <a class="cite" href="${t.page.url}">${ic('doc', 'width:13px;height:13px')}${esc(t.page.label)} · ${esc(t.page.title)}</a></li>`).join('')}</ol>
    <script type="application/json" id="tourData">${JSON.stringify(steps.map((t) => ({ q: t.q, a: t.a, url: t.page.url, title: t.page.title, label: t.page.label }))).replace(/</g, '\\u003c')}</script>
   </section>
 
