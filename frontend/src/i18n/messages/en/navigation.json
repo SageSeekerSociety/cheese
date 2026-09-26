@@ -48,6 +48,7 @@
       "system": "System",
       "light": "Light",
       "dark": "Dark"
-    }
+    },
+    "connections": "Connections"
   }
 }

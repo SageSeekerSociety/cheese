@@ -499,7 +499,7 @@ def test_naming_a_place_does_not_widen_what_an_agent_may_read(client):
     auth = _agent(client, project, origin)
     # 不点名位置：一轮的凭据本来就不是项目级凭据，照旧 403。
     assert client.get(f"/projects/{pid}/decisions", headers=auth).status_code == 403
-    # 点一个不属于这个项目的房间：``_authorized_place`` 挡掉。
+    # 点一个不属于这个项目的房间：``authorized_place`` 挡掉。
     foreign, _, foreign_room = _rooms(client)
     assert (
         client.get(
@@ -525,3 +525,27 @@ def test_naming_a_place_does_not_widen_what_an_agent_may_read(client):
         == 200
     )
     assert foreign["id"] != pid
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/projects/{pid}/tasks", "/projects/{pid}/milestones", "/topics?project_id={pid}"],
+)
+def test_agent_finds_the_projects_rooms_and_work_through_its_place(client, path):
+    """同一个项目里别的房间、别的活、里程碑，芝士点名自己的位置就读得到。
+
+    这是「不必让用户把项目里已有的东西逐条贴进来」的前提：房间、任务、里程碑这三份
+    清单过去只认项目级凭据，一轮的凭据点了位置也是 403。不点位置、点别的项目的房间，
+    仍然读不到。
+    """
+    project, origin, _ = _rooms(client)
+    pid = project["id"]
+    auth = _agent(client, project, origin)
+    url = path.format(pid=pid)
+    sep = "&" if "?" in url else "?"
+    assert client.get(url, headers=auth).status_code == 403
+    assert client.get(f"{url}{sep}topic={origin}", headers=auth).status_code == 200
+    _, _, foreign_room = _rooms(client)
+    assert (
+        client.get(f"{url}{sep}topic={foreign_room}", headers=auth).status_code == 403
+    )

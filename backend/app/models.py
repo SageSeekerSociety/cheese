@@ -23,6 +23,7 @@ from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
 from app.domain.idempotency import models as idempotency  # noqa: F401
 from app.domain.identity import models as identity  # noqa: F401
+from app.domain.integration import models as integration  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.legal import models as legal  # noqa: F401
 from app.domain.llm import models as llm  # noqa: F401

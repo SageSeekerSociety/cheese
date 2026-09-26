@@ -1,6 +1,6 @@
 {
   "verb": "backlog",
-  "why": "The other side of the same rule. A tool that worked produces no event at all: its return is already visible through its effect, and a Read's return is the whole file. Surfacing every return would double the timeline to say what the effect already said.",
+  "why": "The other side of the same rule. A tool that worked is not a failure: what it handed back goes onto its step, for whoever opens that line, and nothing marks the step red. It never becomes a line of its own — that would double the timeline to say what the step already says.",
   "readers": [
     "python",
     "extension"
@@ -59,14 +59,28 @@
               "tool": "bash",
               "arguments": {
                 "command": "pytest -q"
-              }
+              },
+              "status": "completed",
+              "success": true,
+              "contentItems": [
+                {
+                  "type": "inputText",
+                  "text": "42 passed"
+                }
+              ]
             }
           }
         }
       ]
     }
   },
-  "events": [],
+  "events": [
+    {
+      "kind": "step_output",
+      "call_id": "toolu_1",
+      "text": "42 passed"
+    }
+  ],
   "extension": {
     "why": "A platform tool that exited 0 is not an error, and a publish that landed is what resets the quiet counter — that is the whole of what the room can see.",
     "tool": "chat_send",

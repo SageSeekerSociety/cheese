@@ -15,6 +15,7 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentStepFailed,
+    AgentStepOutput,
     AgentToolUse,
 )
 
@@ -114,9 +115,14 @@ def test_every_tool_call_carries_the_id_its_result_names():
     assert returned <= called
 
 
-def test_a_tool_that_worked_reaches_the_room_through_its_effect_only():
-    # 录下来这一轮四次调用全成功 —— 现场里不该因此多出任何一条。
-    assert not [e for e in landed() if isinstance(e, AgentStepFailed)]
+def test_a_tool_that_worked_is_not_marked_failed_and_its_output_goes_on_its_step():
+    # 录下来这一轮四次调用全成功 —— 没有一步变红，每一截输出都落在它自己那一步上。
+    events = landed()
+    assert not [e for e in events if isinstance(e, AgentStepFailed)]
+    called = {e.call_id for e in events if isinstance(e, AgentToolUse)}
+    outputs = [e for e in events if isinstance(e, AgentStepOutput)]
+    assert outputs, "the recording's tools printed nothing"
+    assert {e.call_id for e in outputs} <= called
 
 
 def test_a_failed_tool_says_which_step_failed_and_why():
@@ -126,9 +132,10 @@ def test_a_failed_tool_says_which_step_failed_and_why():
 
     events = Assembler("session-1").accept(entry)
 
-    assert [type(e) for e in events] == [AgentStepFailed]
+    assert [type(e) for e in events] == [AgentStepFailed, AgentStepOutput]
     assert events[0].call_id == entry["message"]["toolCallId"]
     assert events[0].text == "pandoc: not found"
+    assert events[1].text == "pandoc: not found"
 
 
 def test_a_long_failure_keeps_its_ending():

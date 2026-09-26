@@ -146,6 +146,8 @@ EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 EVENT_TIMED_DELIVERY: Final = "timed_delivery"
 #: 芝士把一次做法整理成了项目工作方法（skill），等人确认后才保存、才下发。
 EVENT_SKILL_PROPOSED: Final = "skill_proposed"
+#: 芝士在某人的邮箱里写好了一封草稿；发不发由邮箱主人确认。
+EVENT_MAIL_DRAFTED: Final = "mail_drafted"
 #: 一条周期任务或事件触发规则开始了一次执行；结果或失败原因随后另起一条。
 EVENT_ROUTINE_RUN: Final = "routine_run"
 EVENT_ROUTINE_RESULT: Final = "routine_result"
@@ -210,6 +212,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_POLICY_PROPOSAL,
         EVENT_TIMED_DELIVERY,
         EVENT_SKILL_PROPOSED,
+        EVENT_MAIL_DRAFTED,
         EVENT_ROUTINE_RUN,
         EVENT_ROUTINE_RESULT,
         EVENT_ROUTINE_PROPOSED,
