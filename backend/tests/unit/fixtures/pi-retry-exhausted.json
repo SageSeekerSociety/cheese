@@ -1,0 +1,770 @@
+{
+ "why": "pi 0.85.1 (--mode rpc) against a provider that answered 503 every time, so its three retries ran out. Recorded like pi-retry-recovered.json.",
+ "stream": [
+  {
+   "entry": {
+    "type": "model_change",
+    "id": "bd394e7e",
+    "parentId": null,
+    "timestamp": "2026-09-26T01:48:19.019Z",
+    "provider": "cheese",
+    "modelId": "fake"
+   }
+  },
+  {
+   "entry": {
+    "type": "thinking_level_change",
+    "id": "752c4999",
+    "parentId": "bd394e7e",
+    "timestamp": "2026-09-26T01:48:19.019Z",
+    "thinkingLevel": "off"
+   }
+  },
+  {
+   "event": {
+    "type": "agent_start"
+   }
+  },
+  {
+   "event": {
+    "type": "turn_start"
+   }
+  },
+  {
+   "event": {
+    "type": "message_start",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "say something"
+      }
+     ],
+     "timestamp": 1790387299024
+    }
+   }
+  },
+  {
+   "entry": {
+    "type": "message",
+    "id": "b295dbeb",
+    "parentId": "752c4999",
+    "timestamp": "2026-09-26T01:48:19.024Z",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "say something"
+      }
+     ],
+     "timestamp": 1790387299024
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_end",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "say something"
+      }
+     ],
+     "timestamp": 1790387299024
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_start",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299029,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "entry": {
+    "type": "message",
+    "id": "adf2cbd8",
+    "parentId": "b295dbeb",
+    "timestamp": "2026-09-26T01:48:19.042Z",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299029,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299029,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "turn_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299029,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    },
+    "toolResults": []
+   }
+  },
+  {
+   "event": {
+    "type": "agent_end",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "say something"
+       }
+      ],
+      "timestamp": 1790387299024
+     },
+     {
+      "role": "assistant",
+      "content": [],
+      "api": "openai-completions",
+      "provider": "cheese",
+      "model": "fake",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "error",
+      "timestamp": 1790387299029,
+      "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+     }
+    ],
+    "willRetry": true
+   }
+  },
+  {
+   "event": {
+    "type": "auto_retry_start",
+    "attempt": 1,
+    "maxAttempts": 3,
+    "delayMs": 50,
+    "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+   }
+  },
+  {
+   "event": {
+    "type": "agent_start"
+   }
+  },
+  {
+   "event": {
+    "type": "turn_start"
+   }
+  },
+  {
+   "event": {
+    "type": "message_start",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299096,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "entry": {
+    "type": "message",
+    "id": "a877430b",
+    "parentId": "adf2cbd8",
+    "timestamp": "2026-09-26T01:48:19.098Z",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299096,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299096,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "turn_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299096,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    },
+    "toolResults": []
+   }
+  },
+  {
+   "event": {
+    "type": "agent_end",
+    "messages": [
+     {
+      "role": "assistant",
+      "content": [],
+      "api": "openai-completions",
+      "provider": "cheese",
+      "model": "fake",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "error",
+      "timestamp": 1790387299096,
+      "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+     }
+    ],
+    "willRetry": true
+   }
+  },
+  {
+   "event": {
+    "type": "auto_retry_start",
+    "attempt": 2,
+    "maxAttempts": 3,
+    "delayMs": 100,
+    "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+   }
+  },
+  {
+   "event": {
+    "type": "agent_start"
+   }
+  },
+  {
+   "event": {
+    "type": "turn_start"
+   }
+  },
+  {
+   "event": {
+    "type": "message_start",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299201,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "entry": {
+    "type": "message",
+    "id": "20c810a0",
+    "parentId": "a877430b",
+    "timestamp": "2026-09-26T01:48:19.204Z",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299201,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299201,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "turn_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299201,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    },
+    "toolResults": []
+   }
+  },
+  {
+   "event": {
+    "type": "agent_end",
+    "messages": [
+     {
+      "role": "assistant",
+      "content": [],
+      "api": "openai-completions",
+      "provider": "cheese",
+      "model": "fake",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "error",
+      "timestamp": 1790387299201,
+      "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+     }
+    ],
+    "willRetry": true
+   }
+  },
+  {
+   "event": {
+    "type": "auto_retry_start",
+    "attempt": 3,
+    "maxAttempts": 3,
+    "delayMs": 200,
+    "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+   }
+  },
+  {
+   "event": {
+    "type": "agent_start"
+   }
+  },
+  {
+   "event": {
+    "type": "turn_start"
+   }
+  },
+  {
+   "event": {
+    "type": "message_start",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299408,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "entry": {
+    "type": "message",
+    "id": "ac43370a",
+    "parentId": "20c810a0",
+    "timestamp": "2026-09-26T01:48:19.414Z",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299408,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299408,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "turn_end",
+    "message": {
+     "role": "assistant",
+     "content": [],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "timestamp": 1790387299408,
+     "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+    },
+    "toolResults": []
+   }
+  },
+  {
+   "event": {
+    "type": "agent_end",
+    "messages": [
+     {
+      "role": "assistant",
+      "content": [],
+      "api": "openai-completions",
+      "provider": "cheese",
+      "model": "fake",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "error",
+      "timestamp": 1790387299408,
+      "errorMessage": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+     }
+    ],
+    "willRetry": false
+   }
+  },
+  {
+   "event": {
+    "type": "auto_retry_end",
+    "success": false,
+    "attempt": 3,
+    "finalError": "503: {\"message\":\"503 service unavailable\",\"type\":\"server_error\"}"
+   }
+  },
+  {
+   "event": {
+    "type": "agent_settled"
+   }
+  }
+ ]
+}

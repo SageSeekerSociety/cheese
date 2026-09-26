@@ -4,11 +4,13 @@ import re
 from datetime import UTC, datetime
 
 from app.domain.agent.service import (
+    STEP_ERROR_MAX,
     AgentEvent,
     AgentMessage,
     AgentResult,
     AgentRetrying,
     AgentSessionInfo,
+    AgentStepFailed,
     AgentStepOutput,
     AgentSubagentStart,
     AgentSubagentStop,
@@ -128,14 +130,23 @@ class Assembler:
                     for part in item.get("contentItems") or []
                     if isinstance(part, dict) and part.get("type") == "inputText"
                 )
-                if said.strip():
-                    return [
-                        AgentStepOutput(
+                owner = self.attribution(params["threadId"])
+                steps: list[AgentEvent] = []
+                # The call's answer said it failed (`success: false`, which the
+                # platform's own tool bridge sets), or the item did.
+                if item.get("success") is False or item.get("status") == "failed":
+                    steps.append(
+                        AgentStepFailed(
                             call_id=item["id"],
-                            text=said,
-                            **self.attribution(params["threadId"]),
+                            text=" ".join(said.split())[-STEP_ERROR_MAX:],
+                            **owner,
                         )
-                    ]
+                    )
+                if said.strip():
+                    steps.append(
+                        AgentStepOutput(call_id=item["id"], text=said, **owner)
+                    )
+                return steps
             return []
         if method == "turn/completed":
             turn = params["turn"]
