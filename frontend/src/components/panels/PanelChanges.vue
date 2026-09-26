@@ -11,7 +11,7 @@
 import type { FileSource, GitCommit, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { FileDiff } from '../../lib/diff'
 
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import {
@@ -26,6 +26,7 @@ import {
   workspaceFileRawUrl,
   writeFile,
 } from '../../api'
+import { useTopicMemory } from '../../composables/useTopicMemory'
 import { parseDiffLines, splitDiffByFile } from '../../lib/diff'
 import { useDocumentBytes } from '../../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../../lib/fileKind'
@@ -97,11 +98,11 @@ async function loadOverview(openOnly = false) {
       .map(async (task) => {
         try {
           const result = await getGitDiff(project, room, task.id)
-          if (props.topicId !== room || sourceEpoch !== epoch) return
+          if (sourceEpoch !== epoch) return
           overviewDiffs.value[task.id] = splitDiffByFile(result.diff)
           delete overviewErrors.value[task.id]
         } catch (error) {
-          if (props.topicId !== room || sourceEpoch !== epoch) return
+          if (sourceEpoch !== epoch) return
           overviewErrors.value[task.id] = error instanceof Error ? error.message : '改动加载失败'
           delete overviewDiffs.value[task.id]
         }
@@ -116,7 +117,7 @@ async function loadTasks() {
   taskLoadError.value = null
   try {
     const tasks = await listRoomTasks(room, { limit: 1 })
-    if (props.topicId !== room || request !== taskRequest) return
+    if (request !== taskRequest) return
     taskOptions.value = tasks.data.filter((task) => !!task.branch_name)
     if (!tasksLoaded.value) {
       tasksLoaded.value = true
@@ -128,7 +129,7 @@ async function loadTasks() {
     }
     if (overview.value) await loadOverview()
   } catch (error) {
-    if (props.topicId === room && request === taskRequest) {
+    if (request === taskRequest) {
       taskLoadError.value = error instanceof Error ? error.message : '任务加载失败'
     }
   }
@@ -184,14 +185,14 @@ async function loadGit(opts: { silent?: boolean } = {}) {
       getGitLog(pid, tid, task).catch(() => ({ data: [] as GitCommit[], total: 0 })),
       getGitDiff(pid, tid, task, fileSource.value),
     ])
-    // Guard against a topic switch mid-flight.
-    if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch) return
+    // Guard against a source switch mid-flight.
+    if (selectedTask.value !== task || sourceEpoch !== epoch) return
     gitCommits.value = log.data
     gitDiff.value = diff.diff
   } catch (e) {
     if (sourceEpoch === epoch) errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
-    if (props.topicId === tid && selectedTask.value === task && sourceEpoch === epoch) {
+    if (selectedTask.value === task && sourceEpoch === epoch) {
       loading.value = false
       refreshing.value = false
     }
@@ -235,8 +236,9 @@ const fileReadOnly = computed(
     openIsImage.value
 )
 // Drafts belong to a source and path, including the version they were edited from.
-const drafts = reactive(new Map<string, { content: string; saved: string; version: string | null }>())
-const lastFiles = new Map<string, string>()
+// They outlive this panel (it is rebuilt for every topic): an unsaved edit left in
+// one topic's file is still there when the reader comes back to it.
+const { drafts, lastFiles } = useTopicMemory()
 function sourceKey() {
   return `${selectedTask.value ?? `project:${props.projectId}`}:${fileSource.value}`
 }
@@ -262,7 +264,10 @@ function warnBeforeUnload(event: BeforeUnloadEvent) {
   event.returnValue = ''
 }
 window.addEventListener('beforeunload', warnBeforeUnload)
-onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnload))
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', warnBeforeUnload)
+  keepDraft()
+})
 
 // Set when the backend rejected a save as a conflict. Nobody wins by default —
 // the human sees it and picks.
@@ -435,9 +440,9 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
-// 文件 state is per-topic. openPath/fileDraft describe a file in the CURRENT
-// topic's worktree, so a topic switch must drop them: carrying them over meant
-// the next 保存 wrote topic A's draft into topic B's tree, at A's path.
+// 文件 state is per-source. openPath/fileDraft describe a file in the CURRENT
+// source's worktree, so switching source must drop them: carrying them over meant
+// the next 保存 wrote one worktree's draft into another's tree, at the same path.
 function resetFilePanel() {
   files.value = []
   openPath.value = null
@@ -481,9 +486,9 @@ async function doLoadFiles() {
   errorMsg.value = null
   try {
     const listed = (await listFiles(pid, tid, task, fileSource.value)).data
-    // Guard against a topic switch mid-flight — without it the previous topic's
-    // listing repopulates the new panel.
-    if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch) return
+    // Guard against a source switch mid-flight — without it the previous source's
+    // listing repopulates the panel.
+    if (selectedTask.value !== task || sourceEpoch !== epoch) return
     files.value = listed
     const want = pendingOpen
     if (want) {
@@ -513,7 +518,7 @@ async function doLoadFiles() {
     if (sourceEpoch !== epoch) return
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
-    if (props.topicId === tid && selectedTask.value === task && sourceEpoch === epoch) loading.value = false
+    if (selectedTask.value === task && sourceEpoch === epoch) loading.value = false
   }
 }
 
@@ -546,9 +551,9 @@ async function selectFile(path: string) {
   }
   try {
     const f = await readFile(pid, path, tid ?? undefined, task, fileSource.value)
-    // A topic switch mid-flight must not land the previous topic's file — and
-    // its draft — in the new topic's panel.
-    if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
+    // A source switch mid-flight must not land the previous source's file — and
+    // its draft — in the panel.
+    if (selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
     openPath.value = path
     // Binary and oversized files arrive with no content: they open read-only,
     // so the draft stays empty and there is nothing to write back.
@@ -569,7 +574,7 @@ async function selectFile(path: string) {
     }
     revealInTree(path)
   } catch (e) {
-    if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
+    if (selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
     errorMsg.value = e instanceof Error ? e.message : '读取文件失败'
   }
 }
@@ -591,12 +596,12 @@ async function writeOpenFile(expected: string | null) {
     if (drafts.get(key)?.content === draft) drafts.delete(key)
     // The answer is only about the file that was open in the topic that was
     // open — anything else finished after a switch and must be dropped.
-    if (props.topicId !== tid || selectedTask.value !== task || openPath.value !== path || sourceEpoch !== epoch) return
+    if (selectedTask.value !== task || openPath.value !== path || sourceEpoch !== epoch) return
     fileSaved.value = draft
     fileVersion.value = res.version
     fileConflict.value = false
   } catch (e) {
-    if (props.topicId !== tid || selectedTask.value !== task || openPath.value !== path || sourceEpoch !== epoch) return
+    if (selectedTask.value !== task || openPath.value !== path || sourceEpoch !== epoch) return
     if (e instanceof ApiError && e.status === 409) {
       // 芝士 wrote this file since it was read. Neither side wins by default:
       // show the conflict and let the human reload or overwrite on purpose.
@@ -605,7 +610,7 @@ async function writeOpenFile(expected: string | null) {
       errorMsg.value = e instanceof Error ? e.message : '保存失败'
     }
   } finally {
-    if (props.topicId === tid && selectedTask.value === task && sourceEpoch === epoch) fileSaving.value = false
+    if (selectedTask.value === task && sourceEpoch === epoch) fileSaving.value = false
   }
 }
 
@@ -762,23 +767,6 @@ function openOverview() {
   void loadOverview()
 }
 
-watch(
-  () => props.topicId,
-  () => {
-    keepDraft()
-    clearSource()
-    taskOptions.value = []
-    tasksLoaded.value = false
-    overviewDiffs.value = {}
-    overviewErrors.value = {}
-    expandedTasks.value = new Set()
-    requestedPath.value = null
-    selectedTask.value = props.taskId ?? null
-    overview.value = !props.taskId
-    showAll.value = false
-    if (props.active) void loadAll()
-  }
-)
 watch(
   () => props.taskId,
   (task) => {

@@ -64,22 +64,18 @@ async function load() {
     // 历史都吐回来，而一个跑久了的房间有近两百条活。这里只要每条最新的那一块，
     // 用来说「最后活动」。
     const payload = await listRoomTasks(roomId, { limit: 1 })
-    if (props.topic?.id === roomId) {
-      rows.value = payload.data
-      emit('count', payload.data.length)
-    }
+    rows.value = payload.data
+    emit('count', payload.data.length)
   } catch {
     errorMsg.value = '任务列表加载失败'
   } finally {
-    if (props.topic?.id === roomId) loading.value = false
+    loading.value = false
   }
 }
 
 watch(
-  () => [props.topic?.id, props.active, props.refreshTick] as const,
-  ([, isActive], prev) => {
-    const placeChanged = prev?.[0] !== props.topic?.id
-    if (placeChanged) rows.value = []
+  () => [props.active, props.refreshTick] as const,
+  ([isActive]) => {
     if (isActive) void load()
   },
   { immediate: true }

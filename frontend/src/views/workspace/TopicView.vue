@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useTopicMemory } from '@/composables/useTopicMemory'
 
 import { listTopicMembers } from '@/api'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
@@ -20,9 +21,9 @@ import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 // 话题视图: ONE topic header, then the chat | 工作面板 split. The input bar is
 // the chat column's own — it used to span both columns from here, which read as
 // addressing the whole topic while 99% of what it sent was a chat message only
-// the left column shows. Which topic is open is a route param — this component
-// is reused across topic switches, so everything topic-scoped below keys off
-// `props.topicId`.
+// the left column shows. Which topic is open is a route param, and ProjectShell
+// keys this view on it: every topic gets a fresh instance, so nothing below — or in
+// any child — can carry one topic's state into the next.
 defineOptions({ name: 'TopicView' })
 
 const props = defineProps<{ projectId: string; topicId: string }>()
@@ -100,7 +101,7 @@ function openTopic(topicId: string) {
 // width control in the workspace now — the tool drawer used to carry a second
 // one of its own (`cheesex.toolWidth`), plus a 钉住 toggle that decided whether
 // the doc made room for it at all.
-const focusMode = ref(false) // 专注模式 (spec §7.1): session-only, a transient mode
+const { focusMode } = useTopicMemory() // 专注模式 (spec §7.1): session-only, a transient mode
 // 收起 / 拉开的那一下里，栏在变窄变宽，里面的东西不跟着变：几百条消息每一帧按新
 // 宽度重新折行，既费又难看。把里面钉在这一栏落定时的宽度上，栏只是把它裁开、露出。
 function freezeChatWidth(el: Element) {
@@ -192,12 +193,6 @@ const phase = computed<TopicPhase | undefined>(() => {
   if (cardPhase.value === undefined) return undefined
   return topicPhase({ status: selectedTopic.value?.status, working: working.value, card: cardPhase.value })
 })
-watch(
-  () => props.topicId,
-  () => {
-    cardPhase.value = undefined
-  }
-)
 
 // 芝士 开工 / 收工，由对话栏按轮次生命周期报上来。这是 `working` 唯一的开关：
 // 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到它第
@@ -270,48 +265,32 @@ async function handleUpgradeMessage(messageId: string) {
   else openTopic(upgraded.id)
 }
 
-// Everything topic-scoped resets when the URL names a different topic.
 // 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
 // 所以在归零之前抓一次，交给对话栏去画那条线。
-const unreadOnOpen = ref(0)
+const unreadOnOpen = store.unreadMap[props.topicId] ?? 0
 
 // 这个房间名册上每个 handle 叫什么。「现场」那一格给每一行署名用它，人和 AI 队
 // 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
 // 那一格自己不拉名册，所以在这里拉一次传下去。
 const memberNames = ref<Record<string, string>>({})
-async function loadMemberNames(id: string) {
+async function loadMemberNames() {
   try {
-    const payload = await listTopicMembers(id)
-    if (props.topicId === id)
-      memberNames.value = Object.fromEntries(payload.data.map((m) => [m.member_handle, m.name || m.member_handle]))
+    const payload = await listTopicMembers(props.topicId)
+    memberNames.value = Object.fromEntries(payload.data.map((m) => [m.member_handle, m.name || m.member_handle]))
   } catch {
     // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。
   }
 }
-watch(
-  () => props.topicId,
-  () => {
-    memberNames.value = {}
-    if (props.topicId) void loadMemberNames(props.topicId)
-  },
-  { immediate: true }
-)
-watch(
-  () => props.topicId,
-  async (id) => {
-    working.value = false
-    agentControl.value = null
-    siteTurns.value = {}
-    if (!id) return
-    unreadOnOpen.value = store.unreadMap[id] ?? 0
-    // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
-    // 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
-    // 等于对每一条支线都白打一次会 404 的请求。
-    await store.loadPlace(id)
-    store.markRead(id)
-  },
-  { immediate: true }
-)
+void loadMemberNames()
+
+// 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
+// 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
+// 等于对每一条支线都白打一次会 404 的请求。
+async function openPlace() {
+  await store.loadPlace(props.topicId)
+  store.markRead(props.topicId)
+}
+void openPlace()
 </script>
 
 <template>
