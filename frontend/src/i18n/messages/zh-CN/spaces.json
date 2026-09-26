@@ -253,6 +253,11 @@
         "save": "保存",
         "cancel": "取消"
       }
+    },
+    "weeks": {
+      "now": "这一周",
+      "openWork": "去交作业",
+      "openQuiz": "去做小测"
     }
   },
   "create": {

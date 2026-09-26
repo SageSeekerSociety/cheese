@@ -1,8 +1,5 @@
-// 学生的「我的课程」上那格「本周任务」：接口只把老师**发布过**的单元给他，所以学生
-// 这一侧不用再判一次发布状态 —— 但也因此，拿到不止一条时得自己认出「这一周」。
-// 这一份钉两件事：
-//   1. 多条已发布单元里，显示的是周次最大的那一条
-//   2. 这一周有要交的东西时给一个通往它的按钮；没有就不给
+// 学生的「本周任务」：和老师的「作业与验收」同一条路由，但学生看的是每一周要做
+// 什么 —— 老师那屏的收作业队列接口只给教师，学生打开只会是一张空的教师页。
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -31,7 +28,7 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
-import StudentHome from './StudentHome.vue'
+import StudentWeeks from './StudentWeeks.vue'
 
 function unit(overrides: Record<string, unknown> = {}) {
   return {
@@ -61,15 +58,21 @@ async function mountPage() {
         component: { template: '<div />' },
       },
       {
+        path: '/spaces/:spaceId/course/assignments',
+        name: 'SpacesCourseAssignments',
+        component: { template: '<div />' },
+      },
+      { path: '/spaces/:spaceId/course/quiz', name: 'SpacesCourseQuiz', component: { template: '<div />' } },
+      {
         path: '/spaces/:spaceId/tasks/:taskId',
         name: 'SpacesDetailTasksDetail',
         component: { template: '<div />' },
       },
     ],
   })
-  await router.push('/spaces/7/course')
+  await router.push('/spaces/7/course/assignments')
   await router.isReady()
-  return render(StudentHome, { global: { plugins: [vuetify, router, createPinia()] } })
+  return render(StudentWeeks, { global: { plugins: [vuetify, router, createPinia()] } })
 }
 
 beforeAll(() => {
@@ -99,46 +102,33 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
-describe('this week', () => {
-  it('shows the latest published week, and a way to hand its work in', async () => {
+describe('本周任务 for a student', () => {
+  it('lists every published week, newest first, with the status of each assignment', async () => {
     listUnits.mockResolvedValue({
       data: {
         units: [
-          unit({ id: 1, week: 2, title: '分支与循环' }),
-          unit({ id: 2, week: 3, title: '数组', assignmentTaskId: 42 }),
+          unit({ id: 1, week: 1, title: '变量与输入输出', assignmentTaskId: 41 }),
+          unit({ id: 2, week: 2, title: '分支与循环', assignmentTaskId: 42, quizId: 9 }),
         ],
         canTeach: false,
       },
     })
-    const page = await mountPage()
-
-    await waitFor(() => expect(page.getByText('数组')).toBeTruthy())
-    expect(page.queryByText('分支与循环')).toBeNull()
-    expect(page.getByText('spaces.course.myCourse.week:{"week":3}')).toBeTruthy()
-    expect(page.getByRole('link', { name: 'spaces.course.myCourse.openWork' })).toBeTruthy()
-  })
-
-  it('does not say there is nothing to hand in when the week has an assignment but no quiz', async () => {
-    listUnits.mockResolvedValue({ data: { units: [unit({ id: 2, week: 3, assignmentTaskId: 42 })], canTeach: false } })
-    const page = await mountPage()
-
-    await waitFor(() => expect(page.getByRole('link', { name: 'spaces.course.myCourse.openWork' })).toBeTruthy())
-    expect(page.queryByText('spaces.course.myCourse.nothingToHandIn')).toBeNull()
-  })
-
-  it('says nothing is handed in this week when the week has no work', async () => {
-    listUnits.mockResolvedValue({
-      data: { units: [unit({ id: 2, week: 3, title: '数组' })], canTeach: false },
+    getMyParticipations.mockResolvedValue({
+      data: { participations: [{ participationId: 1, taskId: 41, taskName: '温度换算', completionStatus: 'SUCCESS' }] },
     })
     const page = await mountPage()
 
-    await waitFor(() => expect(page.getByText('数组')).toBeTruthy())
-    expect(page.getByText('spaces.course.myCourse.nothingToHandIn')).toBeTruthy()
+    await waitFor(() => expect(page.getByText('分支与循环')).toBeTruthy())
+    const weeks = Array.from(page.container.querySelectorAll('[data-week]')).map((el) => el.getAttribute('data-week'))
+    expect(weeks).toEqual(['2', '1'])
+    expect(page.getByText('spaces.course.weeks.now')).toBeTruthy()
+    expect(page.getAllByRole('link', { name: 'spaces.course.weeks.openWork' })).toHaveLength(2)
+    expect(page.getByRole('link', { name: 'spaces.course.weeks.openQuiz' })).toBeTruthy()
+    expect(page.getByTestId('work-status').textContent).toContain('spaces.course.myCourse.status.success')
   })
 
-  it('leaves the week empty when the teacher has published nothing', async () => {
+  it('says so when nothing has been published', async () => {
     const page = await mountPage()
-
     await waitFor(() => expect(page.getByText('spaces.course.myCourse.thisWeekEmpty')).toBeTruthy())
   })
 })

@@ -253,6 +253,11 @@
         "save": "Save",
         "cancel": "Cancel"
       }
+    },
+    "weeks": {
+      "now": "This week",
+      "openWork": "Open the assignment",
+      "openQuiz": "Take the quiz"
     }
   },
   "create": {

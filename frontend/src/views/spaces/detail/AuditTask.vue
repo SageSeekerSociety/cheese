@@ -294,7 +294,7 @@ watch(
   (id) => {
     if (id) refresh()
   },
-  { immediate: true },
+  { immediate: true }
 )
 </script>
 

@@ -14,9 +14,9 @@ vi.mock('vue-i18n', async () => {
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
 })
 
-import { useSpaceStore } from '@/stores/space'
-
 import AuditTask from './AuditTask.vue'
+
+import { useSpaceStore } from '@/stores/space'
 
 describe('审核题目', () => {
   it('loads the waiting tasks once the space is known, even when opened before it', async () => {
@@ -27,7 +27,9 @@ describe('审核题目', () => {
     expect(mocks.list).not.toHaveBeenCalled()
 
     store.currentSpaceId = 8
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ space: 8, approved: 'NONE' })))
+    await waitFor(() =>
+      expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ space: 8, approved: 'NONE' }))
+    )
     view.unmount()
   })
 })
