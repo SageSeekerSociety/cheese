@@ -176,12 +176,12 @@ export const pendingTasks = computed(() => tasks.value.filter((t) => t.state ===
 
 export const codes = computed<InviteCode[]>(() =>
   rawCodes.value.map((c) => ({
+    id: c.id,
     code: c.code,
     maxUses: c.maxUses ? c.maxUses : null,
     useCount: c.useCount,
     expiresAt: c.expiresAt == null ? null : iso(c.expiresAt),
     createdAt: iso(c.createdAt),
-    revoked: false,
   }))
 )
 
