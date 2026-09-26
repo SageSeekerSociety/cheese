@@ -76,8 +76,8 @@ watch(() => props.projectId, load)
         >
           <span class="naming-option__dot" aria-hidden="true" />
           <span class="naming-option__text">
-            <span class="t-body">{{ o.title }}</span>
-            <span class="t-caption c-muted">{{ o.detail }}</span>
+            <span class="naming-option__title">{{ o.title }}</span>
+            <span class="naming-option__detail c-muted">{{ o.detail }}</span>
           </span>
         </button>
       </div>
@@ -137,5 +137,15 @@ watch(() => props.projectId, load)
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.naming-option__title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.naming-option__detail {
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>
