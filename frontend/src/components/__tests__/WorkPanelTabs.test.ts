@@ -112,6 +112,18 @@ function visible(container: Element, selector: string): boolean {
   return !!el && el.style.display !== 'none'
 }
 
+// 这个文件每条用例都 mount 一整个工作面板（里面还有异步加载的文档编辑器），CI
+// 的 runner 上一条要好几秒。vitest 的默认整条用例超时是 5000ms —— 和下面等异步
+// 组件的 `vi.waitFor` 预算一样大。两者一样大时，谁先掐由机器负载决定：负载一高
+// 就是外层先掐，失败信息只剩一句裸的 `Test timed out in 5000ms`，看不出等的是哪
+// 一步。2026-09-26 就这么把已批准的 PR #1786 从合并队列里摘掉过一次（queue 构建
+// 36246349981）。所以：整条的预算明确写大，内层的等待预算写成比它小 —— 真等不到时
+// 说话的是那句断言（「等什么没等到」），不是超时本身。
+const TEST_TIMEOUT = 20_000
+const WAIT_TIMEOUT = 10_000
+
+vi.setConfig({ testTimeout: TEST_TIMEOUT })
+
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
@@ -175,7 +187,9 @@ describe('工作面板 · Tab 容器', () => {
     await openTab(container, '总览')
     expect(visible(container, '.panel-overview')).toBe(true)
     // 文档那一格是异步组件（编辑器不挡房间首屏），等它自己到。
-    await vi.waitFor(() => expect(container.querySelector('.doc-editor')).toBeTruthy(), { timeout: 5000 })
+    await vi.waitFor(() => expect(container.querySelector('.doc-editor')).toBeTruthy(), {
+      timeout: WAIT_TIMEOUT,
+    })
   })
 
   // 旧代码里 `openTool.value = 'files'` 那一句。切分之后它变成三段接力
@@ -201,7 +215,7 @@ describe('工作面板 · Tab 容器', () => {
         expect(found, '文档里没渲染出 <&path> chip').toBeTruthy()
         return found
       },
-      { timeout: 5000 }
+      { timeout: WAIT_TIMEOUT }
     )
     expect(chip!.dataset.file).toBe('src/b.ts')
 
