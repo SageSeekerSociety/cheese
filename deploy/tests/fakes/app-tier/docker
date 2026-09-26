@@ -28,6 +28,41 @@ fi
 if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
   exit 1
 fi
+
+# The image names the daemon holds, as the containerd image store keeps them:
+# each name is an image of its own, and `image prune -a` keeps only the names a
+# container was created from — another name for the same content is pruned.
+# Only when a test asks for it, in APP_TIER_IMAGE_STORE (names, and one
+# "container image" line per container).
+if [ -n "${APP_TIER_IMAGE_STORE:-}" ]; then
+  names="$APP_TIER_IMAGE_STORE/names"
+  roots="$APP_TIER_IMAGE_STORE/roots"
+  touch "$names" "$roots"
+  case "${1:-} ${2:-}" in
+    "pull "*) printf '%s\n' "$2" >> "$names" ;;
+    "tag "*) printf '%s\n' "$3" >> "$names" ;;
+    "create "*)
+      container=""
+      previous=""
+      for word in "$@"; do
+        [ "$previous" = --name ] && container="$word"
+        previous="$word"
+      done
+      printf '%s %s\n' "$container" "${!#}" >> "$roots"
+      ;;
+    "rm -f") grep -v "^${3:-} " "$roots" > "$roots.next" || true; mv "$roots.next" "$roots" ;;
+    "rename "*)
+      awk -v from="$2" -v to="$3" '$1 == from { $1 = to } { print }' "$roots" \
+        > "$roots.next"
+      mv "$roots.next" "$roots"
+      ;;
+    "image prune")
+      awk 'NR == FNR { kept[$2] = 1; next } kept[$0]' "$roots" "$names" \
+        > "$names.next"
+      mv "$names.next" "$names"
+      ;;
+  esac
+fi
 if [[ "$*" == *"scripts.migrate_forge"* ]]; then
   if [[ "$*" == *" --check"* ]]; then
     exit "${APP_TIER_FORGE_CHECK:-0}"
@@ -136,6 +171,12 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ] && \
   [[ "$*" == *com.cheese.local-image* ]]; then
   printf '%s\n' "${APP_TIER_PRIVATE_EXECUTOR_NAME-cheese-private-executor:9.9.9}"
   exit 0
+fi
+
+if [ -n "${APP_TIER_IMAGE_STORE:-}" ] && [ "${1:-}" = image ] && \
+  [ "${2:-}" = inspect ]; then
+  grep -Fqx -- "${!#}" "$APP_TIER_IMAGE_STORE/names"
+  exit
 fi
 
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
