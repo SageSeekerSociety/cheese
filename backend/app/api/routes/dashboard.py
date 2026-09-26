@@ -10,25 +10,67 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok
 from app.api.routes.machines import _require_project_access
+from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
+    ForbiddenError,
     NotFoundError,
     ValidationError,
 )
+from app.core.obs import get_logger
 from app.domain.dashboard.services import DashboardService
 from app.domain.memory.store import forget_fact_about
 from app.domain.project.repositories import ProjectRepository
+from app.domain.space.repositories import SpaceRepository
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+
+_log = get_logger("cheesex.dashboard")
 
 router = APIRouter(prefix="", tags=["dashboard"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
+async def _require_board_reader(
+    db: AsyncSession, resolver: ActorResolver, space_id: int
+) -> None:
+    """Who may read a 机构看板 (spec §7.3).
+
+    Every row on the board is one project's content: its id, its name, its
+    ``owner_handle``, its topic counts and its milestones
+    (``DashboardService._project_card``) — the same content
+    ``/projects/{id}/usage`` and ``/contributions`` next door have always
+    guarded. So the door is theirs: a verified caller, standing in at least one
+    of the projects the board lists. The space id is a small enumerable integer,
+    and it used to be the whole credential.
+
+    Not a project route, though, so there is no single project whose membership
+    to answer for: a caller who is in none of them is refused outright rather
+    than handed a board trimmed to nothing, which would read as 「这个板是空的」.
+    ``require_verified_caller`` carries the rest of the house rule — the global
+    sandbox token is the trusted dev credential and stays gate-only
+    (``app.api.auth``), which is what keeps the empty board reachable from a
+    test or a dev box.
+    """
+    actor = await resolver.require_verified_caller()
+    if not actor.authenticated:
+        return  # the sandbox override; there is no identity to ask membership of
+    if await SpaceRepository(db).get_by_id(space_id) is None:
+        raise NotFoundError("Space not found")
+    for project_id in await ProjectRepository(db).list_ids_for_space_tasks(space_id):
+        if await may_read_project(db, project_id=project_id, handle=actor.handle):
+            return
+    _log.info("space_board_denied", handle=actor.handle, space=space_id)
+    raise ForbiddenError("你不是这个看板里任何项目的成员，无权查看")
+
+
 @router.get("/spaces/{space_id}/dashboard")
-async def space_dashboard(space_id: int, db: DbSession) -> dict:
+async def space_dashboard(
+    space_id: int, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await _require_board_reader(db, resolver, space_id)
     return ok(await DashboardService(db).space_board(space_id))
 
 
