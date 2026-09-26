@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service
+from app.api.deps import get_broker, get_chat_service
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import (
@@ -27,6 +27,7 @@ from app.core.errors import (
 )
 from app.domain.agent import private_chat
 from app.domain.agent.chat import ChatService
+from app.domain.agent.runtime import InProcessBroker
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.actor import Actor
 from app.domain.topic.services import TopicService
@@ -34,6 +35,7 @@ from app.domain.topic.services import TopicService
 router = APIRouter(tags=["agent-control"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Chat = Annotated[ChatService, Depends(get_chat_service)]
+Broker = Annotated[InProcessBroker, Depends(get_broker)]
 
 
 async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver) -> Actor:
@@ -96,6 +98,22 @@ async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
     return None
 
 
+async def say_who_stopped(
+    chat: ChatService,
+    broker: InProcessBroker,
+    topic_id: uuid.UUID,
+    work: uuid.UUID,
+    actor: Actor,
+) -> None:
+    """A stopped run is a line in the room, under the run it ended: a turn
+    that just goes quiet reads the same as one that is still stuck."""
+    block = await chat.post_system_event(
+        topic_id, f"<@{actor.handle}> 停止了这次运行", work
+    )
+    if block is not None:
+        await broker.publish(str(topic_id), {"type": "event_block", "block": block})
+
+
 @router.post("/topics/{topic_id}/agent/control", operation_id="agent-control")
 async def control(
     topic_id: uuid.UUID,
@@ -103,6 +121,7 @@ async def control(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Chat,
+    broker: Broker,
 ) -> dict:
     actor = await controller(topic_id, db, resolver)
     runtime = chat.session_controls(topic_id)
@@ -132,6 +151,8 @@ async def control(
         raise
     except Exception as exc:  # noqa: BLE001 — the room reads why it failed
         response = {"subtype": "error", "error": str(exc) or type(exc).__name__}
+    if stopped := response.pop("work_id", None):
+        await say_who_stopped(chat, broker, topic_id, uuid.UUID(stopped), actor)
     return ok(
         {
             "request_id": data.request_id,

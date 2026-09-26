@@ -21,10 +21,12 @@ import {
   attachmentRawUrl,
   downloadFile,
   ensureFreshToken,
+  getAgentControl,
   getProgress,
   isRetryableGetFailure,
   listBlocks,
   listRoomTasks,
+  sendAgentControl,
   summonAgent,
   toggleReaction as apiToggleReaction,
 } from '../api'
@@ -209,6 +211,30 @@ const awaitingReply = ref(false)
 const reachedAgent = ref(false)
 const activeTurnIds = ref<Set<string>>(new Set())
 watch(awaitingReply, (v) => emit('working', v))
+
+// 停止就放在「正在处理…」旁边：人想叫停的时候眼睛就在这里。卡住的会话恰好是那个
+// 听不见话的——在对话里说「停」只会排到它后面去——所以这里走会话控制，平台直接
+// 把这次运行结束掉，不等会话答应。结束以后「正在处理…」跟着 turn_finished 消失。
+const stopping = ref(false)
+async function stopRun() {
+  const topicId = props.topic?.id
+  if (!topicId || stopping.value) return
+  stopping.value = true
+  try {
+    const state = await getAgentControl(topicId)
+    if (!state.id) throw new Error(t('work.room.stop.notStarted', { name: agentName.value }))
+    const result = await sendAgentControl(topicId, state.id, { subtype: 'interrupt' })
+    const response = result.result?.response
+    if (response?.subtype === 'error') throw new Error(response.error ?? '')
+    if (response?.response?.stopped === false) {
+      throw new Error(t('work.room.stop.notStarted', { name: agentName.value }))
+    }
+  } catch (e) {
+    errorMsg.value = t('work.room.stop.failed', { reason: e instanceof Error ? e.message : String(e) })
+  } finally {
+    stopping.value = false
+  }
+}
 // 每个在跑的轮次从什么时候开始。中途连进来的，后端在 turn_active 上带着开始时间；
 // 没带的（老后端）只能从连上的这一刻算。
 const turnStarts = ref<Record<string, number>>({})
@@ -1669,6 +1695,16 @@ onBeforeUnmount(() => {
                     }}</span>
                   </Transition>
                   <span class="caret" />
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    class="im-stop"
+                    prepend-icon="mdi-stop"
+                    :title="t('work.room.stop.title', { name: agentName })"
+                    :loading="stopping"
+                    @click="stopRun"
+                    >{{ t('work.room.stop.action') }}</v-btn
+                  >
                 </div>
               </div>
             </div>
@@ -1905,6 +1941,11 @@ onBeforeUnmount(() => {
   font-weight: 500;
   color: var(--muted);
 }
+.im-stop {
+  margin-left: 8px;
+  color: var(--muted);
+}
+
 .caret {
   display: inline-block;
   width: 2px;

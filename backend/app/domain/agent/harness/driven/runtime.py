@@ -68,6 +68,9 @@ RUNNER_GONE_S = 120.0
 # tool call or an ending for ``no_progress_s`` is a loop; a session that has
 # gone quiet is judged by whether its process is alive, not by this.
 TALKING_S = 300.0
+# How long a person's stop waits for the session to take the interrupt. The
+# turn is already over by then; this only bounds the request they are waiting on.
+STOP_INTERRUPT_S = 5.0
 
 
 @dataclass
@@ -302,6 +305,42 @@ class DrivenRuntime[H: Handle]:
 
     async def _end_by_verdict(self, handle: H, result: AgentResult) -> None:
         """End the turn in the room's books, and take the work away."""
+        await self._end(handle, result, "verdict")
+        try:
+            await self.interrupt(handle.session)
+        except Exception:  # noqa: BLE001 — the turn is already ended here
+            self.logger.exception("%s interrupt after a verdict failed", self.label)
+
+    async def stop(self, topic: uuid.UUID) -> uuid.UUID | None:
+        """A person pressed stop. End the open turn now; returns the work ended.
+
+        Ended in the room's books first, not left to the session's own ending:
+        a person reaches for stop exactly when the session is not answering —
+        a runner out of reach is waited on for ``RUNNER_GONE_S``, and whatever
+        is said meanwhile queues behind it. Nothing broke, so the ending is not
+        an error: what the turn was fed counts as read and is not sent into the
+        next turn again. The interrupt that follows is best effort, and what
+        the session prints for this work afterwards is not a second ending.
+        """
+        handle = self.live.get(topic)
+        if handle is None or topic not in self.work:
+            return None
+        work = self.work[topic]
+        await self._end(handle, AgentResult(text="", session_id=None), "stop")
+        try:
+            async with asyncio.timeout(STOP_INTERRUPT_S):
+                await self.interrupt(handle.session)
+        except Exception as exc:  # noqa: BLE001 — the turn is already ended here
+            self.logger.warning(
+                "%s interrupt after a stop did not land topic=%s: %r",
+                self.label,
+                topic,
+                exc,
+            )
+        return work
+
+    async def _end(self, handle: H, result: AgentResult, why: str) -> None:
+        """End the open turn in the room's books with ``result``."""
         topic = handle.session.topic_id
         work = self.work[topic]
         await self._consume(
@@ -311,21 +350,17 @@ class DrivenRuntime[H: Handle]:
             AgentResult(
                 text=result.text,
                 session_id=self.conversation(handle),
-                is_error=True,
+                is_error=result.is_error,
                 failure_code=result.failure_code,
                 agent_handle=handle.agent_handle,
                 harness=self.harness,
             ),
-            f"{self.harness}:{self.conversation(handle)}:verdict:{work}",
+            f"{self.harness}:{self.conversation(handle)}:{why}:{work}",
             False,
             False,
         )
         await self._activity(handle.session.project_id, topic, work, False)
         self.closed.add(work)
-        try:
-            await self.interrupt(handle.session)
-        except Exception:  # noqa: BLE001 — the turn is already ended here
-            self.logger.exception("%s interrupt after a verdict failed", self.label)
 
     async def _consume(self, project, topic, work, event, eid, seen, unsolicited):
         if isinstance(event, AgentResult) and work in self.closed:

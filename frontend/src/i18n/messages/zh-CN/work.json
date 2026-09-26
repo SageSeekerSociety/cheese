@@ -229,6 +229,12 @@
       "editHint": "放回输入框"
     },
     "newMessages": "条新消息",
+    "stop": {
+      "action": "停止",
+      "title": "停止{name}这次运行",
+      "failed": "停止失败：{reason}",
+      "notStarted": "{name}尚未开始运行"
+    },
     "composer": {
       "replyTo": "回复 {name}：{text}",
       "cancelReply": "取消回复",
