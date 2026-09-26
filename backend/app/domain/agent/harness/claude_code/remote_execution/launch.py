@@ -24,7 +24,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     session_transfer,
 )
 from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
-from app.domain.agent.skills import native_skill_files
+from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):
 # every task checkout backed up and pushed.
@@ -93,7 +93,10 @@ def payload_for(project_id, resource_id, env, known_files=None):
         # installs them (bootstrap.prepared writes them out). Kept out of
         # `file_sources()` on purpose: a skill edit is not a reason to
         # restart every room's executor, and the release digest would make it one.
-        "skills": native_skill_files(),
+        "skills": session_skill_files(project_id),
+        # The project's own skills, by folder: one deleted since the last
+        # prepare is removed from the machine instead of lingering there.
+        "project_skills": project_skill_names(project_id),
         "file_names": list(files),
         "files": {
             name: base64.b64encode(content.encode()).decode()

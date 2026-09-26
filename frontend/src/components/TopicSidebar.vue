@@ -117,6 +117,7 @@ const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
   'project-library': { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
   'project-members': { label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
   'project-routines': { label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
+  'project-skills': { label: 'navigation.project.skills', icon: 'mdi-book-cog-outline' },
 }
 const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
 

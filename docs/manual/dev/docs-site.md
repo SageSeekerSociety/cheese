@@ -22,7 +22,7 @@ covers:
 - 每个地址都是一个预渲染好的 HTML 文件，`src/app.js` 只负责交互：搜索、问芝士、深浅色、首页动效。
 - 站点结构写在 `docs/site/src/structure.mjs`，这是导航和分组的唯一来源。
 - 开发文档每页开头必须声明类型和摘要；「流程」和「参考」两类还要列出涉及的代码路径（`covers`）。缺字段、类型不在四类之内、或 `covers` 指向不存在的路径，构建都会失败；站内链接和锚点也必须全部有效。
-- 构建同时产出：公开和开发两份搜索索引、`llms.txt` 与每页的 `.md` 原文、全部文档的压缩包、更新日志 RSS，以及问芝士用的 `ask-index.json`（只含公开页）。
+- 构建同时产出：公开和开发两份搜索索引、`llms.txt` 与每页的 `.md` 原文、全部文档的压缩包、更新日志 RSS，以及问芝士和 AI 队友检索用的 `ask-index.json`（公开页）与 `dev/ask-index.json`（开发文档，在门后）。
 - 参考页（CLI、环境变量、CI）和索引页由构建时读代码生成，不手写。
 
 ## 首页与截图 {#home}
@@ -56,6 +56,14 @@ covers:
 
 浏览器端只渲染一小部分 Markdown，并且只保留指向这次检索到的段落的链接。
 
+## AI 队友查文档 {#agent-docs}
+
+AI 队友在平台里回答「怎么用」的问题时，用两个平台工具查文档：`cheese_docs_search`（关键词检索，和问芝士同一份索引、同一套排序）和 `cheese_docs_read`（读一页的 `.md` 原文）。后端接口是 `POST /docs/agent/search` 和 `POST /docs/agent/read`（`backend/app/domain/docs_site/library.py`）。
+
+- 使用文档对所有项目开放。
+- 开发文档只对「在做知是本身」的项目开放：项目绑定的仓库在 `DOCS_DEV_REPOSITORIES` 里（默认 `SageSeekerSociety/cheese`）。别的项目检索不到开发文档，点名读 `dev/…` 返回 403。
+- 开发文档的索引 `dev/ask-index.json` 和 `.md` 原文都在 `/docs/dev/` 的门后面。后端读它们时带一张内部通行证（`access.internal_pass`，单独的 audience，五分钟有效），门的检查接口认它；浏览器拿不到这种通行证。
+
 ## 相关设置 {#settings}
 
-全部见 [环境变量全表](/dev/ref-env)，以 `DOCS_` 开头：`DOCS_INDEX_URL`、`DOCS_ASSISTANT_MODEL`、`DOCS_ASSISTANT_BUDGET_USD`、`DOCS_ASSISTANT_HOURLY_LIMIT`、`DOCS_ASSISTANT_DAILY_LIMIT`、`DOCS_ASSISTANT_CONCURRENCY`、`DOCS_QUESTION_RETENTION_DAYS`、`DOCS_DEV_SESSION_SECONDS`。网关地址和管理密钥沿用 `LLM_GATEWAY_ADMIN_BASE`、`LLM_GATEWAY_ADMIN_KEY`；没配置时问芝士显示暂未开放。
+全部见 [环境变量全表](/dev/ref-env)，以 `DOCS_` 开头：`DOCS_INDEX_URL`、`DOCS_DEV_INDEX_URL`、`DOCS_DEV_REPOSITORIES`、`DOCS_ASSISTANT_MODEL`、`DOCS_ASSISTANT_BUDGET_USD`、`DOCS_ASSISTANT_HOURLY_LIMIT`、`DOCS_ASSISTANT_DAILY_LIMIT`、`DOCS_ASSISTANT_CONCURRENCY`、`DOCS_QUESTION_RETENTION_DAYS`、`DOCS_DEV_SESSION_SECONDS`。网关地址和管理密钥沿用 `LLM_GATEWAY_ADMIN_BASE`、`LLM_GATEWAY_ADMIN_KEY`；没配置时问芝士显示暂未开放。
