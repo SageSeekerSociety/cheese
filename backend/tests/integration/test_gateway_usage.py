@@ -818,7 +818,7 @@ async def test_one_drain_covers_several_models_without_absorbing_them(
 
 @pytest.mark.anyio
 async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
-    business_db_factory, tmp_path
+    business_db_factory, tmp_path, monkeypatch
 ):
     """A Claude Code session's turn ends with no usage of its own — that is
     'unknown', not 'this turn was free'. Without a meter for the route, the row
@@ -827,10 +827,16 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
         business_db_factory, tmp_path, None, screen=QuietScreen()
     )
 
+    from app.core.config import settings
+
+    ran_on = settings.agent_model
     async for _ in svc.converse(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    # The deployment default is not what the turn ran on; the row must name
+    # the model the turn was launched with, whatever the default says by then.
+    monkeypatch.setattr(settings, "agent_model", "not-what-the-turn-ran-on")
     await finish_turn(svc, tid)
 
     from sqlalchemy import select
@@ -847,3 +853,4 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
         )
     assert rows and all(r.kind == "chat:unmetered" for r in rows)
     assert all(r.total_tokens == 0 for r in rows)
+    assert {r.model for r in rows} == {ran_on}
