@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { FeedbackProposal } from '@/cx_types'
 
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
@@ -61,28 +61,10 @@ const pending = ref<string | null>(null)
 const formOpen = ref(false)
 
 async function load() {
-  const asked = props.topicId
-  const list = await store.loadProposals(asked)
-  // 换话题时这个组件被复用（同一个路由、只换参数），两次请求可能交叉：先发出的那次
-  // 后到，就会把**上一个话题**的提案画在当前话题的会话栏里。而在这张卡上按「提交
-  // 反馈」，递出去的是 `props.topicId` + 那个 block_id —— 服务端按话题校验 block，
-  // 这条请求必回 404。所以回来时对一下这次问的是不是现在这个话题。
-  if (props.topicId !== asked) return
-  proposals.value = list
+  proposals.value = await store.loadProposals(props.topicId)
 }
 
 onMounted(load)
-// 换话题就重拉：这个组件在话题之间会被复用（同一个路由，只换参数）。
-// 重拉之前先清空：手上这份是**上一个话题**的，新请求回来之前它会原样画在新话题的
-// 会话栏里 —— 一张别的话题的卡在这里停一个来回再消失，而它的内容本来就不该给这个
-// 话题的人看。
-watch(
-  () => props.topicId,
-  () => {
-    proposals.value = []
-    void load()
-  }
-)
 
 function visibleCards(): FeedbackProposal[] {
   return proposals.value.filter((p) => !dismissed.value.has(p.block_id))

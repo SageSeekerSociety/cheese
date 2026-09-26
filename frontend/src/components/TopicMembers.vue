@@ -6,7 +6,7 @@
 // badge, mirroring the @-mention menu.
 import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
 import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
 import { t } from '../i18n'
@@ -36,10 +36,9 @@ async function load() {
   if (!props.topicId) return
   loading.value = true
   error.value = ''
-  const forTopic = props.topicId
   try {
-    const payload = await listTopicMembers(forTopic)
-    if (props.topicId === forTopic) members.value = payload.data
+    const payload = await listTopicMembers(props.topicId)
+    members.value = payload.data
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载成员失败'
   } finally {
@@ -47,7 +46,7 @@ async function load() {
   }
 }
 
-watch(() => props.topicId, load, { immediate: true })
+void load()
 
 // 一份名册：AI 队友就是上面的一行，不在人数外面再挂一个。列表本来就是这样渲染
 // 的（`members` 全量），只有这颗按钮上的头像堆和人数把它挑出去单独摆，读起来像

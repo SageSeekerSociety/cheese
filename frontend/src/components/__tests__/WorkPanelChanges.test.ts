@@ -14,8 +14,10 @@
  * half of the 改动 tab; every assertion below is unchanged, which is the point —
  * the切分 was supposed to move this code, not alter it.)
  */
+import type { PropType } from 'vue'
 import type { FileContent, Topic } from '../../cx_types'
 
+import { defineComponent } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -80,6 +82,8 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { provideTopicMemory } from '@/composables/useTopicMemory'
+
 import { listRoomTasks } from '../../api'
 import WorkPanel from '../WorkPanel.vue'
 
@@ -99,6 +103,21 @@ function mountPanel(id: string) {
       plugins: [vuetify],
     },
   })
+}
+
+/** The panel as the topic page holds it: rebuilt for every topic (ProjectShell keys
+ *  the page on the topic id), with the memory that outlives topics provided above. */
+function mountSwitchable(id: string) {
+  const vuetify = createVuetify({ components, directives })
+  const Page = defineComponent({
+    components: { WorkPanel },
+    props: { topic: { type: Object as PropType<Topic>, required: true } },
+    setup() {
+      provideTopicMemory()
+    },
+    template: '<WorkPanel :key="topic.id" :topic="topic" :activity-tick="0" />',
+  })
+  return render(Page, { props: { topic: topic(id) }, global: { plugins: [vuetify] } })
 }
 
 /** Let the panel's chained awaits (list → read) settle. */
@@ -209,7 +228,7 @@ describe('文件面板', () => {
   // path was still valid in the new topic, so nothing forced a re-read, and the
   // editor kept showing — and 保存 kept writing — the other topic's content.
   it('切到别的话题后，编辑器显示的是新话题的文件，不是上个话题的草稿', async () => {
-    const { container, rerender } = mountPanel('topic-A')
+    const { container, rerender } = mountSwitchable('topic-A')
     await flush()
     await openFilesTool(container)
 
@@ -219,7 +238,7 @@ describe('文件面板', () => {
 
     // Switch to B, which has its own a.py.
     readFile.mockResolvedValue(textFile('a.py', 'B 话题的内容\n', 'vB'))
-    await rerender({ topic: topic('topic-B'), activityTick: 0 })
+    await rerender({ topic: topic('topic-B') })
     await flush()
     await openFilesTool(container) // the panel went back to 文档 with the switch
 
@@ -227,14 +246,14 @@ describe('文件面板', () => {
   })
 
   it('切话题后按保存，写的是新话题的内容和版本，不会把上个话题的草稿写进来', async () => {
-    const { container, rerender } = mountPanel('topic-A')
+    const { container, rerender } = mountSwitchable('topic-A')
     await flush()
     await openFilesTool(container)
     await fireEvent.update(editor(container)!, '我在 A 话题里改的\n')
     await flush()
 
     readFile.mockResolvedValue(textFile('a.py', 'B 话题的内容\n', 'vB'))
-    await rerender({ topic: topic('topic-B'), activityTick: 0 })
+    await rerender({ topic: topic('topic-B') })
     await flush()
     await openFilesTool(container)
 
@@ -250,6 +269,26 @@ describe('文件面板', () => {
 
     expect(writeFile).toHaveBeenCalledTimes(1)
     expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '在 B 里改的\n', 'topic-B', 'vB', 'task-topic-B')
+  })
+
+  it('an unsaved edit is still there after going to another topic and coming back', async () => {
+    const { container, rerender } = mountSwitchable('topic-A')
+    await flush()
+    await openFilesTool(container)
+    await fireEvent.update(editor(container)!, '我在 A 话题里改的\n')
+    await flush()
+
+    readFile.mockResolvedValue(textFile('a.py', 'B 话题的内容\n', 'vB'))
+    await rerender({ topic: topic('topic-B') })
+    await flush()
+    await openFilesTool(container)
+    expect(editor(container)!.value).toBe('B 话题的内容\n')
+
+    readFile.mockResolvedValue(textFile('a.py', 'A 话题的内容\n'))
+    await rerender({ topic: topic('topic-A') })
+    await flush()
+    await openFilesTool(container)
+    expect(editor(container)!.value).toBe('我在 A 话题里改的\n')
   })
 
   it('保存时带上读到的版本，好让后端拦住抢跑的写', async () => {
