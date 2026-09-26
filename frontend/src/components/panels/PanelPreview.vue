@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DocumentRevision, FileContent, PreviewInfo } from '../../cx_types'
 
-import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import {
@@ -23,9 +23,12 @@ import AttachmentImage from '../AttachmentImage.vue'
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
-import RoomFileEditor from './preview/RoomFileEditor.vue'
-import RoomFileHistory from './preview/RoomFileHistory.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
+
+// The editor and its history only load once someone opens them: most previews
+// never do, and every panel that shows a preview would otherwise carry them.
+const RoomFileEditor = defineAsyncComponent(() => import('./preview/RoomFileEditor.vue'))
+const RoomFileHistory = defineAsyncComponent(() => import('./preview/RoomFileHistory.vue'))
 
 const props = withDefaults(
   defineProps<{
