@@ -60,7 +60,7 @@
           <v-radio-group
             v-if="question.kind === 'SINGLE_CHOICE'"
             :model-value="draft[question.id]"
-            :disabled="closed || submitted"
+            :disabled="closed"
             hide-details="auto"
             @update:model-value="draft[question.id] = $event"
           >
@@ -81,7 +81,7 @@
               :label="option"
               density="comfortable"
               hide-details="auto"
-              :disabled="closed || submitted"
+              :disabled="closed"
               @update:model-value="toggleChoice(question.id, index, $event)"
             ></v-checkbox>
           </div>
@@ -89,7 +89,7 @@
           <v-radio-group
             v-else-if="question.kind === 'TRUE_FALSE'"
             :model-value="draft[question.id]"
-            :disabled="closed || submitted"
+            :disabled="closed"
             hide-details="auto"
             @update:model-value="draft[question.id] = $event"
           >
@@ -101,7 +101,7 @@
             v-else-if="question.kind === 'FILL_BLANK'"
             autocomplete="off"
             :model-value="textAnswer(question.id)"
-            :disabled="closed || submitted"
+            :disabled="closed"
             variant="outlined"
             density="comfortable"
             hide-details="auto"
@@ -112,7 +112,7 @@
             v-else
             autocomplete="off"
             :model-value="textAnswer(question.id)"
-            :disabled="closed || submitted"
+            :disabled="closed"
             variant="outlined"
             density="comfortable"
             rows="3"

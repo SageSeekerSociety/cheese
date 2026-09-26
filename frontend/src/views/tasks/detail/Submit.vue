@@ -275,13 +275,31 @@ const submissionContent = ref<{ contentText?: string; contentAttachment?: File }
 // 用户截止时间
 const userDeadline = computed(() => currentIdentity.value?.deadline ?? null)
 
-// 是否已达到提交次数上限（对于不可重复提交的任务）
-const reachedSubmissionLimit = computed(() => {
-  if (!props.taskData) return false
-  if (props.taskData.resubmittable) return false
+// 是否已达到提交次数上限（对于不可重复提交的任务）：这个身份已经交过一版。
+// 可重复提交的题不查；查不到（网络、权限）就当没交过 —— 真交第二次时服务端会拒。
+const alreadySubmitted = ref(false)
+const reachedSubmissionLimit = computed(() =>
+  Boolean(props.taskData && !props.taskData.resubmittable && alreadySubmitted.value)
+)
 
-  return false
-})
+watch(
+  () => [props.taskData?.id, props.taskData?.resubmittable, currentIdentity.value?.id] as const,
+  async ([taskId, resubmittable, identityId]) => {
+    alreadySubmitted.value = false
+    if (!taskId || resubmittable || !identityId) return
+    try {
+      const { data } = await TasksApi.listSubmissions(taskId, identityId, {
+        pageSize: 1,
+        sort_by: 'createdAt',
+        sort_order: 'desc',
+      })
+      alreadySubmitted.value = data.submissions.length > 0
+    } catch {
+      alreadySubmitted.value = false
+    }
+  },
+  { immediate: true }
+)
 
 // 节流的进度更新函数
 const updateProgress = throttle((progressEvent: any) => {
