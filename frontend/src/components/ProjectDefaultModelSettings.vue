@@ -3,6 +3,8 @@ import type { ProjectDefaultModel } from '../api'
 
 import { computed, onMounted, ref, watch } from 'vue'
 
+import { holdRevealGate } from '@/composables/useRevealGate'
+
 import { getProjectDefaultModel, setProjectDefaultModel } from '../api'
 import { t } from '../i18n'
 
@@ -69,7 +71,9 @@ async function resetToDeploymentDefault() {
   draft.value = null
 }
 
-onMounted(load)
+// 首次取数期间占住设置页的显示闸，见 useRevealGate。
+const releaseGate = holdRevealGate()
+onMounted(() => load().finally(releaseGate))
 watch(() => props.projectId, load)
 </script>
 

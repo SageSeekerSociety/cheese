@@ -495,6 +495,14 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
     """一次工具调用在现场怎么显示。"""
     if not isinstance(args, dict):
         return ToolPreview()
+    if name == "todo_write":
+        # 整份清单是一个列表，照原样跟在动词后面读不成一句话。这一步在动的是
+        # 正在做的那一项。
+        todos = args.get("todos")
+        for todo in todos if isinstance(todos, list) else []:
+            if isinstance(todo, dict) and todo.get("status") == "in_progress":
+                return ToolPreview(_collapse(todo.get("content") or "")[:PREVIEW_MAX])
+        return ToolPreview()
     if name in SHELL_TOOLS:
         # pi 的 bash 没有 description 这个参数，所以它总是走下面的解析那条路 ——
         # 四档退让本来就是为「只有一行命令」写的，不必为它再分一支。

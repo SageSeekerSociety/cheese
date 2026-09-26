@@ -100,8 +100,8 @@ tmp/
 # Synthetic provider requests and isolated harness test runs.
 /logs/harness-contracts/
 
-# 说明书站的构建产物与依赖（站的根就是 docs/manual）
+# 文档站的构建产物与依赖（docs/site 构建出 frontend/public/docs）
 frontend/public/docs/
-docs/manual/.vitepress/cache/
-docs/manual/node_modules/
+docs/site/node_modules/
+frontend/.docs-island-build/
 frontend/dist-dashboard-proto/

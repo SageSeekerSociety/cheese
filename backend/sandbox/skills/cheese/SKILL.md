@@ -1,6 +1,6 @@
 ---
 name: cheese
-description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。平台动作（聊天、实况文档、任务卡、验收、记忆、通知等）都是 MCP 上的 cheese_* 工具和 chat_send；只有必须在工作机器上跑的（任务目录、同步、预览、文件转换）是 cheese 这个 CLI 的子命令，用 Bash 调；两边都没有的用 platform_request。普通输出和最终答复不会自动发送；代码和文件用原生工具。
+description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。平台动作（聊天、实况文档、任务卡、验收、记忆、通知等）都是 MCP 上的 cheese_* 工具、chat_send 和 todo_write；只有必须在工作机器上跑的（任务目录、同步、预览、文件转换）是 cheese 这个 CLI 的子命令，用 Bash 调；两边都没有的用 platform_request。普通输出和最终答复不会自动发送；代码和文件用原生工具。
 ---
 
 # cheese — 平台操作
@@ -52,7 +52,7 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 
 ## 你干活的每一步都显示在界面上,那些说明文字用中文写
 
-界面上有一条「施工现场」,你每调一次工具就多一行:一个中文动词,后面跟着这次调用里最能说明问题的那一截。**那一截优先取你自己填的说明字段**——`Bash` 的 `description`、`Agent` 的 `description`、`TaskCreate` 的 `subject`。它们不是给日志看的,是产品界面上的一行字,和你说的话一样会被人读到。
+界面上有一条「施工现场」,你每调一次工具就多一行:一个中文动词,后面跟着这次调用里最能说明问题的那一截。**那一截优先取你自己填的说明字段**——`Bash` 的 `description`、`Agent` 的 `description`；`todo_write` 那一行跟的是你标成 in_progress 的那一项。它们不是给日志看的,是产品界面上的一行字,和你说的话一样会被人读到。
 
 所以**这些字段一律用中文**,写这一步在干什么,不是写命令怎么拼的:`description: "查一下分页接口是怎么实现的"`,而不是把 `grep -rn cursor backend/` 复述一遍。没填的时候平台只能退回去显示命令原文,那一行就变成一串路径和参数,读的人看不出你在干什么。
 
@@ -171,6 +171,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | 工具 | 作用 |
 |---|---|
 | `chat_send(content, reply_to?, request_id?)` | 主动发送聊天消息。结果不确定时带上返回的 `request_id` 原样重试 |
+| `todo_write(todos, task?)` | 把这一轮的步骤清单整份写给房间，`todos` 每项是 `{content, status}`，status 取 pending / in_progress / completed。每次传完整的清单，上一份整份被替换；房间里正在进行的那条消息原地显示它，下一轮开场也会读到它。最多 30 项，每项 ≤200 字。**你是分身时带上你那条活的 id**（`task`）：清单记在那张卡上；不带，写的是房间自己的清单，会盖掉主线程的计划 |
 | `cheese_chat_list(topic?, task?, limit?, before? 或 after?, kind?, author?)` | 读最近的聊天记录（含结构化消息和表情），默认当前房间最近 50 条；带 `task` 读那条任务卡的记录。只读，不叫醒任何人、不标记消息已读。结果末尾带续读的调用，翻更早的照抄它 |
 | `cheese_chat_search(query, topic?, task?, limit?, before? 或 after?, kind?, author?)` | 按文字搜聊天记录：对正文、结构化消息信息和引用文字做不区分大小写的**字面**匹配，搜范围内全部记录。查不到就缩短关键词或换个说法，别断定没说过 |
 | `cheese_chat_get(message_id, offset?, length?)` | 读一条消息的全文（任何类型，含任务卡评论和文档节点）；超长的按 `offset` 续读 |

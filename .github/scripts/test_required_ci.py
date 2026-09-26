@@ -85,9 +85,26 @@ class RequiredCITest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(gate.select([path])["mcp"])
 
+    def test_docs_site_sources_build_the_site_before_merge(self):
+        # Everything the docs build reads: pages, the generator, the files its
+        # CLI, settings and CI references are generated from, and any code a
+        # developer page names in ``covers`` (a vanished path fails the build).
+        for path in (
+            "backend/app/domain/chat/service.py",
+            "frontend/src/main.ts",
+            "docs/manual/quickstart.md",
+            "docs/manual/dev/turn.md",
+            "docs/site/build.mjs",
+            "backend/sandbox/cheese",
+            "backend/app/core/config.py",
+            ".github/workflows/test.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["docs"])
+
     def test_documentation_still_runs_guards(self):
         selected = gate.select(["docs/architecture.md"])
-        self.assertEqual({k for k, v in selected.items() if v}, {"guards"})
+        self.assertEqual({k for k, v in selected.items() if v}, {"guards", "docs"})
 
     def test_remote_dependencies_select_both_acceptance_jobs(self):
         for path in (

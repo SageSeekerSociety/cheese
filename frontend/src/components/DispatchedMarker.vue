@@ -13,12 +13,17 @@ import type { SplitMarker } from '../lib/splitMarkers'
 
 import { computed } from 'vue'
 
+import { t } from '@/i18n'
+
 const props = defineProps<{ marker: SplitMarker }>()
 const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
 
 // closed = 那件事做完了。同一行改口而不是换一种标记：读的人关心的是「这段归谁」，
 // 而不是这条支线的生命周期。
-const note = computed(() => (props.marker.status === 'closed' ? '已完成' : '进行中'))
+const note = computed(() =>
+  props.marker.status === 'closed' ? t('work.room.dispatched.done') : t('work.room.dispatched.running')
+)
+const title = computed(() => t('work.room.dispatched.title', { title: props.marker.title }))
 
 function open() {
   emit('open', props.marker.taskId)
@@ -29,7 +34,8 @@ function open() {
   <div class="dispatched" data-testid="dispatched-marker" :data-task-id="marker.taskId">
     <v-icon size="13" class="dispatched__icon">mdi-call-split</v-icon>
     <span class="dispatched__text">
-      新建任务<button type="button" class="dispatched__link" @click="open">《{{ marker.title }}》</button> ·
+      {{ t('work.room.dispatched.created')
+      }}<button type="button" class="dispatched__link" @click="open">{{ title }}</button> ·
       {{ note }}
     </span>
   </div>

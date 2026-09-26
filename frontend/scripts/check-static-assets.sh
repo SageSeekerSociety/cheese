@@ -61,9 +61,9 @@ if [ "$css_count" -eq 0 ]; then
   failures=$((failures + 1))
 fi
 
-# The user manual ships inside this image (docs/manual → public/docs → dist).
+# The docs site ships inside this image (docs/site → public/docs → dist).
 # It is built by a step OUTSIDE the docker build, because the build context is
-# frontend/ and the manual's sources are not in it. Forget that step and the
+# frontend/ and the docs' sources are not in it. Forget that step and the
 # image still builds, still passes every other check, and /docs is simply 404 —
 # a silent hole in something we hand out links to. So it is a hard requirement
 # here, where a missing file already fails the build and the healthcheck.

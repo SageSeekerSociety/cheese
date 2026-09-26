@@ -182,7 +182,7 @@ export default defineConfig({
         // waved it through and every install downloaded it. Same reason, same
         // treatment: keep both OUT of precache (that is "别缓存到爆"); the
         // /assets/ runtime cache below picks them up on first online use.
-        // `docs/**` is the user manual (docs/manual → public/docs), not part of
+        // `docs/**` is the docs site (docs/site → public/docs), not part of
         // this app's shell: precaching it made every install download 55 extra
         // files it may never open, and each edit to the manual would then have
         // to reach people through a service-worker update.

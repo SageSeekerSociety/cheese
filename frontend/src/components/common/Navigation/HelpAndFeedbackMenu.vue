@@ -31,7 +31,10 @@ const hasUnread = computed(() => store.counts.unread > 0)
 /** 菜单项。管理后台那一项**只在服务端说我是管理员时**出现 —— `store.isAdmin` 读的是
  *  `/feedback/meta` 的回答，不是前端按 handle 猜的。 */
 const items = computed(() => {
-  const all = [
+  // 使用文档是 nginx 直接发的静态站（/docs/），不在这个应用的路由里，所以走 href
+  // 整页跳转而不是 `to`：交给路由器只会落到应用自己的 404。
+  const all: { key: string; label: string; to?: string; href?: string }[] = [
+    { key: 'docs', href: '/docs/', label: t('navigation.feedback.docs') },
     { key: 'center', to: '/feedback', label: t('navigation.feedback.center') },
     { key: 'mine', to: '/feedback/mine', label: t('navigation.feedback.mine') },
   ]
@@ -83,7 +86,7 @@ watch(loggedIn, refresh, { immediate: true })
     </template>
 
     <v-list class="menu-list" nav density="compact" min-width="160">
-      <v-list-item v-for="item in items" :key="item.key" :to="item.to">
+      <v-list-item v-for="item in items" :key="item.key" :to="item.to" :href="item.href">
         <v-list-item-title>{{ item.label }}</v-list-item-title>
       </v-list-item>
     </v-list>
