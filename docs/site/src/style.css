@@ -199,11 +199,14 @@ h1{font-family:var(--serif);font-weight:700;font-size:40px;line-height:1.2;color
 .step::after{content:"";position:absolute;left:15.5px;top:40px;bottom:6px;width:1px;background:linear-gradient(var(--accent),transparent)}
 .step:last-child::after{display:none}
 .step h3{margin:3px 0 8px!important;font-size:17.5px}
-figure{margin:4px 0 18px}
-figure .shot{border:1px solid var(--line-2);border-radius:16px;overflow:hidden;background:radial-gradient(120% 90% at 50% 0%,var(--accent-wash),var(--panel));display:grid;place-items:center;padding:24px;perspective:900px}
-figure img{max-width:100%;max-height:330px;display:block;border-radius:10px;box-shadow:var(--shadow-lg);transform:rotateX(8deg) scale(.96);transition:transform .8s var(--out)}
-figure:hover img{transform:none}
-figcaption{font-size:13px;color:var(--faint);margin-top:8px;text-align:center}
+figure{margin:6px 0 22px}
+/* Screenshots are read, not admired: full width, upright, a click opens them full size. */
+figure .shot{border:1px solid var(--line-2);border-radius:14px;overflow:hidden;background:var(--panel);padding:8px;display:flex;justify-content:center}
+figure img{max-width:100%;max-height:620px;height:auto;display:block;border-radius:8px;box-shadow:0 1px 3px rgba(60,40,10,.12);cursor:zoom-in}
+figcaption{font-size:13px;line-height:1.6;color:var(--muted);margin-top:8px;text-align:center}
+.lightbox{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:24px;background:rgba(20,16,10,.78);cursor:zoom-out;animation:fade-in .2s both}
+.lightbox img{max-width:100%;max-height:100%;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+@keyframes fade-in{from{opacity:0}}
 .bubble{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line-2);border-radius:16px;padding:14px;background:var(--surface);margin:0 0 18px;box-shadow:var(--shadow)}
 .avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;flex:none}
 .bubble .mention{color:var(--accent-ink);background:var(--accent-wash);border-radius:4px;padding:0 3px}

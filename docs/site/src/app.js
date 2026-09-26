@@ -250,6 +250,24 @@ async function copyPage() {
   } catch { toast('复制失败，可以打开 Markdown 原文手动复制') }
 }
 
+// ---------- screenshots: click to see full size ----------
+function openShot(img) {
+  const box = document.createElement('div')
+  box.className = 'lightbox'
+  box.setAttribute('role', 'dialog')
+  box.setAttribute('aria-label', img.alt || '截图')
+  box.innerHTML = `<img src="${img.currentSrc || img.src}" alt="">`
+  const close = () => { box.remove(); document.removeEventListener('keydown', onKey) }
+  const onKey = (e) => { if (e.key === 'Escape') close() }
+  box.addEventListener('click', close)
+  document.addEventListener('keydown', onKey)
+  document.body.append(box)
+}
+document.addEventListener('click', (e) => {
+  const img = e.target.closest?.('figure .shot img')
+  if (img) openShot(img)
+})
+
 // ---------- diagrams: archify viewers follow the site theme ----------
 function loadDiagrams() {
   $$('iframe[data-diagram]').forEach((f) => { const src = `${f.dataset.diagram}?embed=1&theme=${isDark() ? 'dark' : 'light'}`; if (f.getAttribute('src') !== src) f.setAttribute('src', src) })
