@@ -566,6 +566,9 @@ case "$APP_IMAGE_SOURCE" in
     # with `docker run` under a local name, which the image carries as a label;
     # a stopped container keeps it through the image prune, handed over at the
     # end like the sandbox retainer so a rollback still finds the old one.
+    # The retainer is created from the local name, not the registry one: the
+    # containerd image store keeps each name as an image of its own, and
+    # `image prune -a` spares only the names a container was created from.
     private_executor="ghcr.io/sageseekersociety/cheese/private-executor:$IMAGE_TAG"
     private_executor_retainer="${PROJECT}-private-executor-image-retainer-next"
     # A retainer a failed deploy left behind must not be promoted for this one.
@@ -578,7 +581,7 @@ case "$APP_IMAGE_SOURCE" in
       && docker tag "$private_executor" "$private_executor_name" \
       && docker create --name "$private_executor_retainer" \
         --label "com.cheese.image-retainer=private-executor" \
-        --entrypoint /bin/true "$private_executor" >/dev/null 2>&1; then
+        --entrypoint /bin/true "$private_executor_name" >/dev/null 2>&1; then
       log "private-chat executor available as $private_executor_name"
     else
       log "WARNING: private-executor image unavailable; private chats cannot start"
