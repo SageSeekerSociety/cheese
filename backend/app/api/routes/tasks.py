@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile, status
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
@@ -16,7 +18,9 @@ from app.core.errors import (
     NotFoundError,
     QuotaExceededError,
 )
+from app.core.storage import get_storage_backend
 from app.db.session import get_db
+from app.domain.attachment.models import Attachment
 from app.domain.llm.repositories import AIUserQuotaRepository
 from app.domain.llm.services import AiAdviceService
 from app.domain.space.rank_service import SpaceRankService
@@ -28,7 +32,13 @@ from app.domain.space.repositories import (
     SpaceUserRankRepository,
 )
 from app.domain.tag.repositories import TagRepository
-from app.domain.task.models import Task, TaskMembership, TaskTagRelation
+from app.domain.task.attachment_service import TaskAttachmentService
+from app.domain.task.models import (
+    Task,
+    TaskAttachment,
+    TaskMembership,
+    TaskTagRelation,
+)
 from app.domain.task.repositories import (
     AIConversationRepository,
     AIMessageRepository,
@@ -202,6 +212,9 @@ class CreateTaskRequest(BaseModel):
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
     )
+    # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时一次挂上
+    # —— 见 ``TaskAttachmentService.attach_uploaded`` 里对这条顺序的说明。
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
 
 
 PDF_DRAFT_CONTENT_FIELDS = {"name", "intro", "description"}
@@ -1112,6 +1125,17 @@ async def create_task(
         creator_user_id=auth_user.user_id,
     )
 
+    if payload.attachment_ids:
+        # 材料是随题一起发出去的，所以挂在这里做：题目已经建好（``_create_task_entity``
+        # 里 flush 过），权限那道门也已经在同一个请求里过了一次。PDF 批量发布那条路
+        # 今天还没有 attachmentIds 这个概念 —— 它的原 PDF 与抽出插图都在服务端手上，
+        # 怎么落成附件是另一批的事。
+        await _task_attachment_service(db).attach_uploaded(
+            task=task,
+            user_id=auth_user.user_id,
+            attachment_ids=payload.attachment_ids,
+        )
+
     task_model = _task_to_api_model(task)
     task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[
         0
@@ -1124,6 +1148,145 @@ async def create_task(
             "task": task_model,
         },
     }
+
+
+def _task_attachment_service(db) -> TaskAttachmentService:
+    return TaskAttachmentService(session=db, storage=get_storage_backend())
+
+
+async def _require_task(db, task_id: int) -> Task:
+    task = await TaskRepository(session=db).get_by_id(task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+    return task
+
+
+def _task_attachment_to_api(*, attachment: Attachment, link: TaskAttachment) -> dict:
+    """一个附件在接口上的样子。
+
+    **不带 url**：存储给的是直链（本地 ``/uploads/...``、S3 公开地址），把它发出去
+    就等于把「下载限人」这道门绕过去了。要文件就走下面那个下载端点，门在那里。
+    """
+    return {
+        "id": attachment.id,
+        "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
+        "size": attachment.meta.get("size", 0),
+        "contentType": attachment.meta.get("contentType", "application/octet-stream"),
+        "uploaderId": attachment.meta.get("uploaderId"),
+        "downloadCount": link.download_count,
+        "createdAt": int(link.created_at.timestamp() * 1000),
+    }
+
+
+@router.get(
+    "/{taskId}/attachments",
+    summary="List Task Attachments",
+)
+async def list_task_attachments(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    """清单对**看得见这道题的人**都可见，能不能下载单独用一个标志告诉前端。
+
+    判据放在服务里，两件事一起算：看得见才给清单（否则 403），能不能下载按
+    「出题人 / 板管理员 / 已领取者」。前端只据此决定那行显示「下载」还是
+    「领取这道题之后才能下载」，不自己猜。
+    """
+    task = await _require_task(db, task_id)
+    files, links, can_download = await _task_attachment_service(db).list_for_task(
+        task=task, user_id=auth_user.user_id
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "attachments": [
+                _task_attachment_to_api(attachment=attachment, link=link)
+                for attachment, link in zip(files, links, strict=True)
+            ],
+            "canDownload": can_download,
+        },
+    }
+
+
+@router.post(
+    "/{taskId}/attachments",
+    summary="Upload Task Attachment",
+    status_code=201,
+)
+async def upload_task_attachment(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    file: Annotated[UploadFile, File(...)],
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    """传一个文件并挂到这道题上：出题人本人或板管理员。
+
+    大小不在这里判：前面那道 nginx 是 100M（``frontend/nginx.conf``），与素材库、
+    ``POST /attachments`` 同一个口径。真要有更细的限制，应该三处一起定。
+    """
+    task = await _require_task(db, task_id)
+    attachment, link = await _task_attachment_service(db).add(
+        task=task,
+        user_id=auth_user.user_id,
+        file=file.file,
+        filename=file.filename or "unnamed",
+        content_type=file.content_type,
+    )
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {
+            "attachment": _task_attachment_to_api(attachment=attachment, link=link)
+        },
+    }
+
+
+@router.get(
+    "/{taskId}/attachments/{attachmentId}/download",
+    summary="Download Task Attachment",
+)
+async def download_task_attachment(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    attachment_id: Annotated[int, Path(ge=1, alias="attachmentId")],
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> Response:
+    content, filename, content_type = await _task_attachment_service(db).download(
+        task=await _require_task(db, task_id),
+        user_id=auth_user.user_id,
+        attachment_id=attachment_id,
+    )
+    # ``filename*=UTF-8''…`` 而不是裸引号：中文文件名直接写进 header 会让
+    # Starlette 按 latin-1 编码时报错（下载一个中文名的材料变成 500）。
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": (
+                "attachment; filename*=UTF-8''" + quote(filename, safe="")
+            )
+        },
+    )
+
+
+@router.delete(
+    "/{taskId}/attachments/{attachmentId}",
+    summary="Remove Task Attachment",
+    status_code=204,
+)
+async def remove_task_attachment(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    attachment_id: Annotated[int, Path(ge=1, alias="attachmentId")],
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> None:
+    await _task_attachment_service(db).remove(
+        task=await _require_task(db, task_id),
+        user_id=auth_user.user_id,
+        attachment_id=attachment_id,
+    )
 
 
 @router.post(

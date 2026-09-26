@@ -21,7 +21,7 @@ class TaskVisibilityService:
             return True
         if await self._is_space_admin(space_id=task.space_id, user_id=user_id):
             return True
-        if await self._is_participant(task_id=task.id, user_id=user_id):
+        if await self.is_participant(task_id=task.id, user_id=user_id):
             return True
         if not task.access_control_enabled:
             return True
@@ -85,7 +85,13 @@ class TaskVisibilityService:
         relation = await self._admin_repo.get_relation(space_id, user_id)
         return relation is not None
 
-    async def _is_participant(self, *, task_id: int, user_id: int) -> bool:
+    async def is_participant(self, *, task_id: int, user_id: int) -> bool:
+        """这个人领没领这道题（个人报名，或所在小队报名）。
+
+        公开的，因为「看得见」与「可以下载题目附件」问的是同一条主张：能下载的人
+        是出题人 / 板管理员 / 领取者 —— 前两条站在 ``app.auth.space_access`` 那边，
+        最后一条就是这里。同一条判据给两处用，就不该有两份写法。
+        """
         stmt = select(TaskMembership.id).where(
             TaskMembership.task_id == task_id,
             TaskMembership.deleted_at.is_(None),

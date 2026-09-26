@@ -28,6 +28,7 @@ task_submission_review_seq = Sequence("task_submission_review_seq")
 task_ai_advice_context_seq = Sequence("task_ai_advice_context_seq")
 task_submission_schema_seq = Sequence("task_submission_schema_seq")
 task_access_domain_seq = Sequence("task_access_domain_seq")
+task_attachment_seq = Sequence("task_attachment_seq")
 
 
 class Task(Base):
@@ -331,6 +332,47 @@ class TaskAIAdviceContext(Base):
     )
     section: Mapped[str | None] = mapped_column(String(64), nullable=True)
     section_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class TaskAttachment(Base):
+    """一个文件挂在一道题上 —— 出题时带上的材料，领取者与审核者可以下载。
+
+    **不是** ``attachment`` 表本身，也不是它的替代：那一行文件仍然在
+    ``attachment`` 里（type/url/meta，meta 里带着 filename / contentType /
+    storageKey / size / uploaderId），由 ``POST /attachments`` 上传、由
+    ``app.core.storage`` 落到存储上。这张表只回答「它属于哪道题」以及题目这一侧
+    的事情（下载次数、什么时候挂上、什么时候被拿下来）。两件事分开，是因为同一个
+    文件在不同的上下文里可以是不同东西：交作业时附上的那份属于某个 ``submission``，
+    出题人放在题目上的那份属于某道 ``task``，共用一行文件记录不等于共用一个语义。
+
+    删除是**软删这一行**，存储上的对象留着 —— 见 ``TaskAttachmentService.remove``
+    的说明。
+    """
+
+    __tablename__ = "task_attachment"
+
+    id: Mapped[int] = mapped_column(BigInteger, task_attachment_seq, primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("task.id"), nullable=False
+    )
+    # ``attachment.id`` 是 Integer（autoincrement），外键类型必须一致。
+    attachment_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("attachment.id"), nullable=False
+    )
+    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
