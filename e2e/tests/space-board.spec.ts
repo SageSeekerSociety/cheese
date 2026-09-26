@@ -384,6 +384,147 @@ test.describe("空间新界面（真路由）", () => {
     await expect(page.locator(".queue__title", { hasText: taskName })).toBeVisible();
   });
 
+  test("从 PDF 生成：草稿能改能勾，确认之后队列那一行带着出处", async ({ page }) => {
+    await apiLogin(page);
+    const auth = { Authorization: `Bearer ${await apiToken(page)}` };
+    const { spaceId } = await createReviewedSpace(page, auth);
+
+    // 一块板自带一个默认分类（`General`）。确认发布真的会把 `categoryId` 传给后端，
+    // 编一个不属于这块板的 id 会被 `_validate_and_get_category_id` 挡回来，所以从这
+    // 块板自己的分类里取一个 —— 顺带也量到「类目是这块板的类目」。
+    const categories = await page.request.get(`/api/spaces/${spaceId}/categories`, { headers: auth });
+    if (!categories.ok()) throw new Error(`GET categories → ${categories.status()} ${await categories.text()}`);
+    const categoryId = ((await categories.json()).data.categories as { id: number }[])[0].id;
+
+    await page.goto(`/spaces/${spaceId}/board/publish`);
+
+    // 默认那一颗是「手写一道」：老发题页原样在底下（它自己那张「PDF 快速发布」卡也
+    // 还在 —— 老页一个字不动是本批的约束）。
+    //
+    // 这一屏要等 60 秒：发题页是这套栈里最重的一屏（老页把 tiptap 那一整片拖进来），
+    // vite 冷启动时现编它要几十秒，而**第一次**进它的就是这条用例 —— 别的用例都从
+    // 题目板首页绕。默认那 5 秒在这一屏上量的是 dev server 的编译速度，不是这一页
+    // 对不对（单跑这一条时实测三次里前两次都栽在这里）。
+    await expect(page.getByText("PDF 快速发布")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByLabel("题目名称")).toBeVisible();
+
+    await page.getByRole("button", { name: "从 PDF 生成" }).click();
+    await expect(page.getByRole("heading", { name: "从 PDF 生成题目" })).toBeVisible();
+    // 换过去之后老页让位：屏幕上换成这一条路，老页那三块一块都不在。
+    await expect(page.getByText("PDF 快速发布")).toHaveCount(0);
+    await expect(page.getByLabel("题目名称")).toHaveCount(0);
+    // 三条上限写在页面上，不是只写在代码里。
+    await expect(page.getByText(/只收 PDF，单个文件最大 15MB，一次最多解析 20 道题/)).toBeVisible();
+
+    // 解析这一步要跑大模型，而这套栈里没有推理后端（stub-gateway 只答 LLM 网关那几条
+    // 管理接口，真发出去只会拿到「LLM is not configured」）。所以**只拦这一步**，答案
+    // 照真接口的形状给（`{code,message,data:{drafts,templateUsed,tokenUsed}}`，草稿那几
+    // 项就是 `PdfTaskDraftData`）；确认发布、审核队列、页面上其余每一样都还是真栈在答。
+    let gotPreview = "";
+    let previewType = "";
+    await page.route("**/api/tasks/publish/from-pdf/preview", async (route) => {
+      previewType = route.request().headers()["content-type"] ?? "";
+      gotPreview = (route.request().postDataBuffer() ?? Buffer.alloc(0)).toString("utf8");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: 200,
+          message: "Task drafts previewed from PDF successfully.",
+          data: {
+            drafts: [
+              {
+                name: "用 gdb 定位一次段错误",
+                intro: "用 gdb 找出崩在哪一行。",
+                description: "给定一段会崩的程序。\n\n![第 2 页-图 1](https://storage.test/task-images/a.png)",
+                space: spaceId,
+                categoryId,
+              },
+              {
+                name: "手写一个最简内存分配器",
+                intro: "实现 malloc / free 的最简版本。",
+                description: "实现 malloc / free 的最简版本，说明碎片是怎么来的。",
+                space: spaceId,
+                categoryId,
+              },
+            ],
+            templateUsed: { title: "计算机系统基础 · 标准题模板" },
+            tokenUsed: 18742,
+          },
+        }),
+      });
+    });
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "计算机系统基础-第五次作业.pdf",
+      mimeType: "application/pdf",
+      // 解析那一步被上面拦下了，所以这份字节不必真能解析 —— 但它是**这份**文件：
+      // 下面从那次请求自己的正文里把它读回来。
+      buffer: Buffer.from("%PDF-1.4\n% E2E: the parse step is stubbed, the file is not.\n"),
+    });
+    await page.getByRole("button", { name: "解析成题目草稿" }).click();
+
+    // 结果区摆的是接口回来的那三件事，外加一句「草稿还不是题目」。
+    await expect(page.getByTestId("pdf-template")).toContainText("计算机系统基础 · 标准题模板");
+    await expect(page.getByTestId("pdf-images")).toContainText("抽出插图 1 张");
+    await expect(page.getByTestId("pdf-tokens")).toContainText("消耗 18,742 tokens");
+    await expect(page.getByTestId("pdf-meta")).toContainText("还没有成为题目");
+
+    // 浏览器真的把这份 PDF 发出去了：字段和文件是从那次请求**自己的** multipart 正文里
+    // 读出来的，不是从屏幕上的字猜的。
+    expect(previewType).toContain("multipart/form-data");
+    expect(formField(gotPreview, "spaceId")).toBe(String(spaceId));
+    expect(formField(gotPreview, "maxTasks")).toBe("20");
+    expect(gotPreview).toContain('name="file"; filename="');
+    expect(gotPreview).toContain("第五次作业.pdf");
+    expect(gotPreview).toContain("%PDF-1.4");
+
+    // 两条草稿都在，出处页标在每一条上。
+    const rows = page.locator(".pdf__row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0).getByTestId("draft-origin")).toHaveText("PDF · 第 1 页");
+    await expect(rows.nth(1).getByTestId("draft-origin")).toHaveText("PDF · 第 2 页");
+
+    // 勾掉第二条：按钮上的数字跟着走。
+    await expect(page.getByRole("button", { name: "确认发布 2 道" })).toBeVisible();
+    await rows.nth(1).getByRole("checkbox").uncheck();
+    await expect(page.getByRole("button", { name: "确认发布 1 道" })).toBeVisible();
+
+    // 就地改标题与题干 —— 发出去的就是屏幕上这一份。
+    const edited = "用 gdb 定位一次段错误（E2E 改过）";
+    await rows.nth(0).getByLabel("标题").fill(edited);
+    await rows.nth(0).getByLabel("题干").fill("改过的题干：把崩的那一行的寄存器状态交上来。");
+
+    // 确认发布走的是**真接口**（这一步没拦），发完**不跳走**。
+    const confirmResponse = page.waitForResponse(
+      (r) => r.url().includes("/tasks/publish/from-pdf/confirm") && r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "确认发布 1 道" }).click();
+    expect((await confirmResponse).status()).toBe(200);
+    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/publish$`));
+
+    // 就地回执：刚发了一道，两个去处都指向新外壳那棵树。
+    const receipt = page.getByTestId("pdf-receipt");
+    await expect(receipt).toContainText("刚发的 1 道题");
+    await expect(receipt.getByRole("link", { name: edited })).toBeVisible();
+    await expect(page.getByRole("link", { name: "去审核队列" })).toHaveAttribute(
+      "href",
+      `/spaces/${spaceId}/board/review`,
+    );
+    await expect(page.getByRole("link", { name: "去「我的」看这几道" })).toHaveAttribute(
+      "href",
+      `/spaces/${spaceId}/board/mine`,
+    );
+
+    // 落进审核队列的那一行带着出处 —— 队列那一行显示的就是简介，标记写在简介里。
+    await page.goto(`/spaces/${spaceId}/board/review`);
+    const queued = page.locator(".queue__row", { hasText: edited });
+    await expect(queued).toBeVisible();
+    await expect(queued).toContainText("【PDF · 第 1 页】");
+    // 勾掉的那一条没发出去。
+    await expect(page.locator(".queue__row", { hasText: "手写一个最简内存分配器" })).toHaveCount(0);
+  });
+
   test("管理员从新外壳进整板看板，看到真数", async ({ page }) => {
     await apiLogin(page);
     const auth = { Authorization: `Bearer ${await apiToken(page)}` };
@@ -432,6 +573,18 @@ test.describe("空间新界面（真路由）", () => {
     await expect(page.getByRole("heading", { name: "课程总览" })).toBeVisible();
   });
 });
+
+/**
+ * 从 multipart 正文里读一个普通字段的值。
+ *
+ * 光 `toContain('name="spaceId"')` 说明不了字段值对不对，而「值对不对」正是这条用例
+ * 要量的东西（空间 id、上限 20 都是浏览器自己填进表单的）。够用就行：只读普通字段，
+ * 值里不含 CR —— 这份表单里没有会破例的那种值。
+ */
+function formField(body: string, name: string): string | null {
+  const m = body.match(new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)`));
+  return m ? m[1] : null;
+}
 
 /** 空间建好时就带着一个邀请码（`createSpace` 的返回里那条），用它把别人放进来。 */
 async function inviteCodeOf(
