@@ -5999,7 +5999,12 @@ class ChatService:
         )
 
         system_prompt = build_system_prompt(
-            self._base_prompt, load_skills(HEARTBEAT_SKILLS), None, []
+            # 巡检那一轮不注入记忆索引：它不是某个人的会话，这一路没有
+            # 「本轮说话的人」，注入谁的 private 都不对。
+            self._base_prompt,
+            load_skills(HEARTBEAT_SKILLS),
+            None,
+            None,
         )
         prompt = (
             "现在做一次定期巡检。下面是项目当前状态。请：先在回复里写下你的巡检"
@@ -6106,7 +6111,7 @@ class ChatService:
             self._base_prompt,
             "",  # This call returns a project summary, without chat publication.
             None,
-            [],
+            None,  # 一页纸总结也不注入记忆索引：它讲的是项目状态，不是某个人。
             role,
         )
         prompt = (

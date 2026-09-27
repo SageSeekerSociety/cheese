@@ -142,7 +142,7 @@ async def write_memory_file(
     which = _scope_of(str(body.get("scope") or "team"))
     owner = _owner_of(which, (body.get("owner_handle") or "").strip() or None)
     actor = await _readable(db, resolver, project_id, owner)
-    path = _checked_path(body.get("path"))
+    path = _checked_path(str(body.get("path") or ""))
     content = body.get("content")
     if not isinstance(content, str):
         raise ValidationError("content 必须是字符串")
