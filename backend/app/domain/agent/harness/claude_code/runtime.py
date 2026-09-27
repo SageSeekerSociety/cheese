@@ -81,7 +81,8 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
     controls = CONTROLS
     # The files live on the executor, so it answers these.
     executor_controls = frozenset(REMOTE_CONTROLS)
-    # 会话把记忆存成 `$HOME/.cheese/memory/` 下的文件，runner 对得了账（下面那个
+    # 会话把记忆存成会话机上 `~/.cheese/memory/` 下的文件（文件工具在那里读写，
+    # 见 `remote_execution/proxy.js` 的 `memoryPath`），runner 对得了账（下面那个
     # `memory()`），所以系统提示词里的「记忆」那一段对它说的是真话。
     keeps_memory = True
 
