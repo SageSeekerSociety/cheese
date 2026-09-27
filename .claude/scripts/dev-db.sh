@@ -10,9 +10,9 @@
 # progress/diagnostic message goes to stderr.
 #
 # Binaries come from two prebuilt wheels fetched by `uv run --no-project` on a
-# pinned Python 3.12: `pgserver` (relocatable PostgreSQL 16) and `redislite`
-# (bundled redis-server 6.2). They are deliberately NOT backend dependencies —
-# see the note at resolve_bins() below.
+# pinned Python 3.12: `postgresql-binaries` (relocatable PostgreSQL 16 with the
+# contrib extensions) and `redislite` (bundled redis-server 6.2). They are
+# deliberately NOT backend dependencies — see the note at resolve_bins() below.
 set -euo pipefail
 
 DATA_DIR="${CHEESEX_DEV_DB_DIR:-${TMPDIR:-/tmp}/cheesex-dev-db}"
@@ -38,36 +38,47 @@ BIN_CACHE="$DATA_DIR/bins.env"
 log() { printf '%s\n' "$*" >&2; }
 die() { printf 'dev-db: %s\n' "$*" >&2; exit 1; }
 
-# `pgserver` publishes wheels for cp39–cp312 only, and this project is
-# requires-python >=3.13 — so it CANNOT go into backend's dependency groups
-# without breaking resolution (`uv` errors: "no wheels with a matching Python ABI
-# tag"). Instead both wheels are version-pinned here and fetched onto their own
-# throwaway 3.12 interpreter. That interpreter runs nothing but the servers; the
-# test suite still runs on the project's 3.13. uv caches wheels and interpreter,
-# so only the first call downloads, and the resolved paths are then cached in
-# $BIN_CACHE so repeat starts skip uv entirely.
+# The Postgres build must ship contrib: the migrations run
+# `CREATE EXTENSION pg_trgm`, which a core-only build (such as the `pgserver`
+# wheel) cannot satisfy, so `alembic upgrade head` would fail on it.
+# `postgresql-binaries` repackages the theseus-rs/postgresql-binaries release
+# tarball unchanged, contrib included; its bin() unpacks it next to itself on
+# first call. Keep it on major 16 to match the deployed paradedb image.
+#
+# These are test-host tools, not something the backend imports, so they stay
+# out of backend's dependency groups. `redislite` publishes wheels up to cp312
+# only (elsewhere it compiles redis from its sdist), so both wheels are fetched
+# onto their own throwaway 3.12 interpreter. That interpreter runs nothing but
+# the servers; the test suite still runs on the project's 3.13. uv caches wheels
+# and interpreter, so only the first call downloads, and the resolved paths are
+# then cached in $BIN_CACHE so repeat starts skip uv entirely.
+PG_WHEEL='postgresql-binaries==16.15.0'
+REDIS_WHEEL='redislite==6.2.912183'
 resolve_bins() {
+    # BIN_PINS makes a cache written for other pins count as stale: the binaries
+    # it points at usually still exist and run, so the -x checks alone pass.
     if [ -f "$BIN_CACHE" ]; then
         # shellcheck disable=SC1090
         . "$BIN_CACHE"
-        if [ -x "${PG_BIN:-}/pg_ctl" ] && [ -x "${REDIS_BIN:-}/redis-server" ]; then
+        if [ "${BIN_PINS:-}" = "$PG_WHEEL $REDIS_WHEEL" ] \
+            && [ -x "${PG_BIN:-}/pg_ctl" ] && [ -x "${REDIS_BIN:-}/redis-server" ]; then
             return
         fi
-        log "cached binary paths went stale (uv cache pruned?) — re-resolving"
+        log "cached binary paths are stale (pins changed or uv cache pruned) — re-resolving"
     fi
 
     log "resolving server binaries via uv (first run downloads ~50MB, then cached)"
     local out
     out="$(uv run --no-project --python 3.12 \
-        --with 'pgserver==0.1.4' --with 'redislite==6.2.912183' \
+        --with "$PG_WHEEL" --with "$REDIS_WHEEL" \
         python -c '
-import pathlib, pgserver, redislite
-print("PG_BIN=" + str(pathlib.Path(pgserver.__file__).parent / "pginstall" / "bin"))
+import pathlib, postgresql_binaries, redislite
+print("PG_BIN=" + str(postgresql_binaries.bin()))
 print("REDIS_BIN=" + str(pathlib.Path(redislite.__file__).parent / "bin"))
 ')" || die "could not resolve server binaries (is uv installed and the network up?)"
 
     mkdir -p "$DATA_DIR"
-    printf '%s\n' "$out" > "$BIN_CACHE"
+    printf '%s\nBIN_PINS=%q\n' "$out" "$PG_WHEEL $REDIS_WHEEL" > "$BIN_CACHE"
     # shellcheck disable=SC1090
     . "$BIN_CACHE"
     [ -x "$PG_BIN/pg_ctl" ] || die "pg_ctl not executable at $PG_BIN"
