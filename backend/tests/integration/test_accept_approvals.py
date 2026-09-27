@@ -9,7 +9,12 @@ AI cannot vote (collaborative mode, same rule as "AI 不能验收自己").
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 from tests.integration.test_accept import _make_card as _remote_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
@@ -26,7 +31,14 @@ def _authenticated_project_owner(client):
 def _make_project(client) -> str:
     r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # alice owns every project here (the fixture above sends her token), and bob
+    # is the second voter these cases need. Approving is a card decision like
+    # any other: since 2026-09-26 it requires room membership (`_card_actor`),
+    # so the other voter has to be a real participant of the project — a
+    # stranger's vote is refused on purpose, see test_accept_authorization.py.
+    join_project_team(client, pid, "bob")
+    return pid
 
 
 def _make_topic(client, project_id: str) -> str:
@@ -129,11 +141,16 @@ def test_approvals_then_accept_merges(client):
 
 def test_ai_cannot_approve_collaborative(client):
     # Default project ai_mode is collaborative — same red line as accepting.
+    # The vote comes from the seat that is really in the room's roster: the bare
+    # ``cheese`` handle is on no roster, so it would be refused for membership
+    # before the AI rule this case is about could fire (`_forbid_ai` matches the
+    # whole ``cheese-<topic hex>`` namespace).
     pid = _make_project(client)
     tid = _make_topic(client, pid)
+    ai = room_agent_seat(client, tid)
     card = _make_card(client, tid)
 
-    r = _approve(client, card["id"], "cheese")
+    r = _approve(client, card["id"], ai)
     assert r.status_code == 422
     assert "AI 不能" in r.json()["message"]
 

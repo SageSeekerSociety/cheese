@@ -5,9 +5,9 @@ with a simulated remote forge: delivery keeps the room active, agents cannot
 approve their own work, and rejection and revocation preserve task state.
 
 The decision endpoints (accept/reject/revoke/reassign/approve) require a real
-authenticated actor (Authorization: Bearer <session token>) and, for
-accept/reject, that the actor IS the card's routed reviewer — see
-test_accept_authorization.py for the security-focused cases.
+authenticated actor (Authorization: Bearer <session token>) who is a member of
+the card's room, and, for accept/reject, that the actor IS the card's routed
+reviewer — see test_accept_authorization.py for the security-focused cases.
 """
 
 import uuid
@@ -15,7 +15,12 @@ import uuid
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
 
@@ -28,7 +33,16 @@ def remote_delivery(client, app_world):
 def _make_project(client) -> str:
     r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # 2026-09-26: 决定一张验收卡的每条路由现在都要求调用者是话题成员 (`_card_actor`
+    # 里的 `authorize_topic`，与 `_task_actor` 同一条线)。alice / bob 在这个文件里
+    # 本来是"报个 handle 就能表决"的世界里的裸 handle；让他们像真实参与者一样进
+    # 项目，每个用例要测的才还是它自己那条规则（谁被指派、谁已经表决过……），而不是
+    # 所有用例一起撞在同一个 403 上。成员资格本身的安全回归在
+    # test_accept_authorization.py。
+    for handle in ("alice", "bob"):
+        join_project_team(client, pid, handle)
+    return pid
 
 
 def _make_topic(client, project_id: str) -> str:
@@ -155,15 +169,20 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
 
 def test_ai_cannot_accept_own_work_collaborative(client):
     # Default project ai_mode is collaborative. Route the card TO the AI so the
-    # reviewer-identity check passes and `_forbid_ai` is what actually fires.
+    # reviewer-identity check passes and `_forbid_ai` is what actually fires —
+    # and to the seat that is really in this room's roster, so the room-membership
+    # gate on the decision routes passes too. The bare ``cheese`` handle is on no
+    # roster; every topic's 分身 acts as ``cheese-<topic hex>`` (see
+    # `_forbid_ai`, which matches the whole namespace).
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid, "cheese")
+    ai = room_agent_seat(client, tid)
+    cid = _make_card(client, tid, ai)
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "cheese", "head_sha": _rendered_head(client, cid)},
-        headers=session_auth_headers("cheese"),
+        json={"decided_by": ai, "head_sha": _rendered_head(client, cid)},
+        headers=session_auth_headers(ai),
     )
     assert r.status_code == 422
 
@@ -333,9 +352,14 @@ def test_no_new_card_after_delivery(client):
 
 
 def test_revoke_requires_authority(client):
-    # Only the accepter (or owner/lead) can revoke — not any handle.
+    # Only the accepter (or owner/lead) can revoke — not any other member. The
+    # stranger is deliberately a full participant of the project: a non-member
+    # is refused one layer earlier (the room-membership gate on `_card_actor`,
+    # see test_accept_authorization.py), and this case is about the authority
+    # rule that still has to hold *inside* the room.
     pid = _make_project(client)
     tid = _make_topic(client, pid)
+    join_project_team(client, pid, "stranger")
     cid = _make_card(client, tid)
     client.post(
         f"/accept-cards/{cid}/accept",

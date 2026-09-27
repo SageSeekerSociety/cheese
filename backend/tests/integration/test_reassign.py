@@ -1,6 +1,10 @@
 """改验收人 — reassign a pending accept card (spec §4.4)."""
 
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_accept import _make_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
@@ -12,6 +16,12 @@ def _topic_and_card(client) -> str:
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
+    # 2026-09-26: /reassign 和被指派的审阅人一起，现在都要求话题成员资格
+    # (`_card_actor`)。user-1 是被指派的那个人，alice 是改派的人 —— 两个都得真在
+    # 这个项目里，才轮得到改派本身那条规则被检验。改派的目标（mentor-1）不需要是
+    # 成员：显式指定优先没变，只是指定一个房间外的人会得到一张他采纳不了的卡。
+    for handle in ("user-1", "alice"):
+        join_project_team(client, p["id"], handle)
     return _make_card(client, t["id"], "user-1")
 
 
