@@ -11,7 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from app.domain.agent.capability import BuiltIn, Missing
 from app.domain.agent.harness import Opening
+from app.domain.agent.harness.codex import declaration as codex_declaration
 from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.runner import Runner
 from app.domain.agent.harness.driven.runner import socket_path
@@ -45,34 +47,30 @@ def _offered(request: dict) -> set[str]:
     return names
 
 
+#: The two tools Codex asks a person with. Nobody in a room answers them; the
+#: room's question tool is `cheese_ask`.
+QUESTION_TOOLS = {"request_user_input", "request_user_input_async"}
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    "model",
-    [
-        pytest.param(
-            model,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "Codex 0.154.0 offers request_user_input_async to catalog "
-                    "models that list it, with no config switch (#1880)"
-                ),
-            ),
-        )
-        if model == "gpt-6-astra"
-        else model
-        for model in MODELS
-    ],
-)
-async def test_no_model_is_offered_a_native_question_tool(tmp_path, model):
-    """Nobody in a room answers Codex's own question tools; questions go through
-    `cheese_ask`. Strict, so the pin that can switch the async one off turns
-    this red and the gap in codex/behaviour.py gets closed."""
+@pytest.mark.parametrize("model", MODELS)
+async def test_the_question_tools_a_model_is_offered_are_the_ones_declared(
+    tmp_path, model
+):
+    """The ASK cell in codex/behaviour.py either says how Codex's question tools
+    are switched off or records the gap it cannot switch off (#1880). Either
+    way it must be true of the pinned binary: a tool offered under a cell that
+    says it is off, or a gap the binary no longer has, both turn this red."""
     requests = await _drive(tmp_path, model)
     assert requests
-    for request in requests:
-        offered = _offered(request)
-        assert not offered & {"request_user_input", "request_user_input_async"}
+    offered = set().union(*(_offered(r) for r in requests)) & QUESTION_TOOLS
+    if isinstance(codex_declaration().how_disabled[BuiltIn.ASK], Missing):
+        # The recorded gap: only catalog models that list the async tool get it,
+        # and among the fixtures that is gpt-6-astra.
+        expected = {"request_user_input_async"} if model == "gpt-6-astra" else set()
+        assert offered == expected
+    else:
+        assert not offered
 
 
 async def _drive(tmp_path, model) -> list[dict]:
