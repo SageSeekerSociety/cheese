@@ -9,11 +9,12 @@
     rounded="lg"
     :border="false"
     class="app-rail-item"
-    :aria-label="item.title"
+    :aria-label="badgeLabel"
     :class="{
       'app-rail-item-cheese': item.icon === 'cheese',
       'app-rail-item--tile': item.img,
       'app-rail-item--add': item.add,
+      'app-rail-item--icon': item.icon && item.icon !== 'cheese' && !item.add && !item.img,
       'app-rail-item--dragging': dragging,
       'app-rail-item--drop-before': dropEdge === 'before',
       'app-rail-item--drop-after': dropEdge === 'after',
@@ -51,6 +52,10 @@
            a button rather than a project tile -->
       <v-icon size="22" class="app-rail-add-icon">{{ item.icon }}</v-icon>
     </template>
+    <template v-else-if="item.icon">
+      <v-icon size="24">{{ item.icon }}</v-icon>
+    </template>
+    <span v-if="badge" class="app-rail-item__badge" aria-hidden="true">{{ badge > 99 ? '99+' : badge }}</span>
   </v-card>
   <template v-else>
     <!-- separates 本体(首页) from the project list — a short, visible rule -->
@@ -91,6 +96,13 @@ const emit = defineEmits<{
 const { item } = toRefs(navBarProps)
 
 const projectId = computed(() => (item.value.type === 'item' ? item.value.projectId : undefined))
+
+const badge = computed(() => (item.value.type === 'item' ? item.value.badge || 0 : 0))
+// 角标是画给眼睛的（aria-hidden），读屏从名字里听到件数。
+const badgeLabel = computed(() => {
+  if (item.value.type !== 'item') return undefined
+  return badge.value ? `${item.value.title}（${badge.value}）` : item.value.title
+})
 
 function onDragStart(e: DragEvent) {
   const id = projectId.value
@@ -259,6 +271,37 @@ function warmDestination() {
       0 0 0 3px var(--canvas),
       0 0 0 5px rgb(var(--v-theme-primary));
   }
+}
+
+// 普通图标格（「待办」）：和首页那一格同一块底，选中时用琥珀色的图标说「你在这儿」。
+.app-rail-item.app-rail-item--icon {
+  overflow: visible;
+
+  &[aria-current] {
+    color: rgb(var(--v-theme-primary));
+  }
+}
+
+// 件数角标：和看板、待办页那颗「待处理」标记同一个暖色。外圈一道 rail 底色，
+// 让它压在格子角上时边缘是清楚的。字是固定的深墨色而不是白：白字压在这个
+// 暖色上只有 2.4:1，深墨在两套主题的 --warn 上都在 7:1 以上（和芝士图标选中时
+// 的墨色同一个理由）。
+.app-rail-item__badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--warn);
+  box-shadow: 0 0 0 2px var(--canvas);
+  color: #23242a;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  pointer-events: none;
 }
 
 // "add project" affordance: a dashed rounded square with a muted plus, distinct

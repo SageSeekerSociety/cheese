@@ -96,8 +96,7 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '连接设备', isFullPage: true },
   },
   {
-    // 「待办」: 手机底栏三格之一。桌面同样缺这个页面——今天离它最近的只有顶栏
-    // 那颗铃铛的下拉，没有路由、没有页面。
+    // 「待办」: 手机底栏三格之一，桌面是 rail 上紧贴首页的那一格。
     name: 'inbox',
     path: '/inbox',
     component: () => import('@/views/InboxView.vue'),
