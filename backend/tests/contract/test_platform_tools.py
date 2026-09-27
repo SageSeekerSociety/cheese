@@ -79,16 +79,6 @@ CALLS = {
     ),
     "cheese_title": ({"text": "推荐原型"}, "POST", "/topics/fixture/title"),
     "cheese_decision": ({"text": "用 CF"}, "POST", "/topics/fixture/decision"),
-    "cheese_remember": (
-        {"fact": "技术栈=FastAPI"},
-        "POST",
-        "/projects/fixture-project/memory",
-    ),
-    "cheese_recall": (
-        {"query": "技术栈"},
-        "POST",
-        "/projects/fixture-project/memory/search",
-    ),
     "cheese_notify": (
         {"title": "看一眼"},
         "POST",

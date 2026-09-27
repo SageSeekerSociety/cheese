@@ -33,6 +33,7 @@ from app.domain.agent.harness import (
     ActivityConsumer,
     Backlog,
     EventConsumer,
+    MemoryConsumer,
     Opening,
     ReachabilityConsumer,
     ReceiptConsumer,
@@ -139,6 +140,11 @@ class SessionChannel[H: Handle](Protocol):
 class DrivenRuntime[H: Handle]:
     harness: str
     embeds_images = True
+    #: Whether this harness's sessions keep memory as files and can reconcile
+    #: them (``memory()`` below). False by default, and that default is the
+    #: safe one: the system prompt's memory section says 「写进这里，平台下一轮
+    #: 就有一份」, which is a lie for a harness with no way back.
+    keeps_memory = False
     #: How messages a person may read name the harness.
     label: str
     #: How the poller's log lines name what it reads.
@@ -184,6 +190,11 @@ class DrivenRuntime[H: Handle]:
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
         self.reachability: ReachabilityConsumer | None = None
+        # 带下划线，因为它不能和下面那个 `memory()`（这一侧往会话里问一次对账）
+        # 同名：`self.memory = None` 会把那个方法盖掉，而 `AgentRuntime` 是
+        # `runtime_checkable` 的 Protocol，`isinstance` 拿不到方法就答否——
+        # 于是每一个 runtime 都「跑不了 harness」。别的消费者没这个问题。
+        self._memory: MemoryConsumer | None = None
 
     # --- what the harness supplies -------------------------------------------
 
@@ -244,6 +255,44 @@ class DrivenRuntime[H: Handle]:
 
     def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
         self.reachability = consumer
+
+    def bind_memory(self, consumer: MemoryConsumer) -> None:
+        self._memory = consumer
+
+    def _memory_hook(self, topic: uuid.UUID) -> Callable[[], Awaitable[None]]:
+        """`reconcile_memory` 绑到这一间房，给订阅那一侧的一轮结束用（它不带参数）。
+
+        三个 harness 都从这里取，所以「一轮结束时对一次账」是这套骨架的事实，
+        而不是谁恰好写了一句：会话不存记忆文件的那几个问下去也会得到 None。
+        """
+
+        async def hook() -> None:
+            await self.reconcile_memory(topic)
+
+        return hook
+
+    async def reconcile_memory(self, topic: uuid.UUID) -> None:
+        """Ask the room to reconcile its memory tree, and never fail the turn on it.
+
+        A memory tree that could not be reconciled is a memory that is a turn
+        behind — the next moment asks again, with the same three sides. Letting
+        the exception through would end a turn that was otherwise fine, over the
+        room's notes.
+        """
+        if self._memory is None:
+            return
+        try:
+            await self._memory(topic)
+        except Exception:
+            self.logger.exception("memory reconciliation failed topic=%s", topic)
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """A harness whose sessions keep memory files answers this; others cannot.
+
+        The default is ``None`` — «这里没有记忆文件», which the caller reads as
+        「这一轮不用对账」 and not as a failure.
+        """
+        return None
 
     def pulse(self, topic: uuid.UUID, marks: frozenset[str]) -> None:
         """What the subscription just read about the open turn."""
@@ -613,6 +662,9 @@ class DrivenRuntime[H: Handle]:
         )
         self.work[session.topic_id] = work_id
         self._wake(session.topic_id)
+        # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
+        # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
+        await self.reconcile_memory(session.topic_id)
         try:
             await self.channel.call(
                 handle,

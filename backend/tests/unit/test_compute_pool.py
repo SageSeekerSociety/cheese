@@ -64,6 +64,8 @@ class _FakeBackend:
 
     embeds_images = True
     provisions_machine = False
+    # 会话不存记忆文件（下面的 `memory()` 答 None），和它答的那条契约一致。
+    keeps_memory = False
 
     def __init__(self, name: str, harness: str = "claude-code"):
         self.name = name
@@ -106,6 +108,13 @@ class _FakeBackend:
         self.unread_probe = probe
 
     def bind_reachability(self, consumer) -> None:
+        return None
+
+    def bind_memory(self, consumer) -> None:
+        return None
+
+    async def memory(self, topic_id, request):
+        # 这个 double 的会话不存记忆文件：「这里没有」而不是「失败了」。
         return None
 
     def holds(self, topic_id: uuid.UUID) -> bool:

@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.backlog import (
     ClaudeCodeBacklog,
@@ -80,6 +81,9 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
     controls = CONTROLS
     # The files live on the executor, so it answers these.
     executor_controls = frozenset(REMOTE_CONTROLS)
+    # 会话把记忆存成 `$HOME/.cheese/memory/` 下的文件，runner 对得了账（下面那个
+    # `memory()`），所以系统提示词里的「记忆」那一段对它说的是真话。
+    keeps_memory = True
 
     def conversation(self, handle: Handle) -> str:
         return handle.session_id
@@ -104,7 +108,24 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             announce=announce,
             receipts=receipt,
             pulse=self.pulse,
+            memory=self._memory_hook(handle.session.topic_id),
         )
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """One memory reconciliation, over the runner that owns this session.
+
+        A session that is not there (or a device that dropped) answers ``None``:
+        the platform's copy is still the truth and nothing is lost — the agent's
+        edits stay on that machine's disk and come back the next time it is
+        reached, the same shape as every other call on this path.
+        """
+        handle = self.live.get(topic_id)
+        if handle is None:
+            return None
+        try:
+            return await self.channel.call(handle, "memory", request)
+        except (DeviceCallError, DeviceOffline):
+            return None
 
     def backlog(self, session: SessionRef) -> ClaudeCodeBacklog:
         handle = self.live.get(session.topic_id)

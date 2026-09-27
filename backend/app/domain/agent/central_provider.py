@@ -256,12 +256,10 @@ class CentralChannel(DeviceChannel):
             session_id=str(session_id),
             lease_generation=(leased or {}).get("generation"),
         )
-        # 记忆算谁的，只决定记忆算谁的：它跟着 ``memory_scope`` 走，不跟着「这
-        # 一轮租没租手」走。
-        if memory_scope == "personal":
-            values["CHEESE_MEMORY_SCOPE"] = "personal"
-            if owner:
-                values["CHEESE_OWNER"] = owner
+        # 记忆算谁的（``memory_scope`` / ``owner``）到这一层就为止了：它曾经从这
+        # 里塞进 ``CHEESE_MEMORY_SCOPE``/``CHEESE_OWNER`` 两个环境变量给 ``cheese
+        # remember`` 用，而那个工具已经撤掉（记忆现在直接写文件），两个变量最后
+        # 一个读取方也没了。
         # 这一轮没有租手 (``precheck`` 说的)，所以它跑在这条会话自己的草稿区里：
         # 一个有界的一次性容器，开在会话机上，不是一个地点 (结论 19)。
         if precheck.deferred:

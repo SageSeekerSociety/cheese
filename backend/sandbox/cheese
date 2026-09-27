@@ -388,28 +388,6 @@ PLATFORM_TOOLS = ToolTable(
             ["text"],
         ),
         _tool(
-            "cheese_remember",
-            "记一条事实进你自己的项目记忆，只有你读得到，不会自动出现在上下文里，"
-            "要用 cheese_recall 查。只记跨话题成立、从代码和 git 历史读不出的；"
-            "相对时间换成绝对日期。",
-            {
-                "fact": _text("一条事实，一句话"),
-                "core": {
-                    "type": "boolean",
-                    "description": "核心记忆，每轮全量注入；只给永远成立的身份、"
-                    "规则和目标，预算很小",
-                },
-            },
-            ["fact"],
-        ),
-        _tool(
-            "cheese_recall",
-            "按关键词检索你自己的记忆，不是语义检索。自动注入的只有核心记忆，"
-            "其余只能从这里拿；一次没查到不等于没有，换个说法或只用一两个词再试。",
-            {"query": _text("关键词或问题")},
-            ["query"],
-        ),
-        _tool(
             "cheese_notify",
             "给人发通知，进通知面板；要人在对话里一键拍板用 cheese_ask。"
             "to 不填是发给这个房间名册上的人（不含芝士），不是项目里所有人。"
@@ -567,8 +545,6 @@ _NEEDS_PROJECT = frozenset(
     {
         "cheese_milestone",
         "cheese_notify",
-        "cheese_recall",
-        "cheese_remember",
         "cheese_library_ls",
     }
 )
@@ -717,24 +693,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         if args.get("prompt"):
             body["prompt"] = args["prompt"]
         return {"method": "POST", "path": "/fetch", "body": body}
-    if tool in {"cheese_remember", "cheese_recall"}:
-        remember = tool == "cheese_remember"
-        body = {
-            "content" if remember else "query": args["fact" if remember else "query"],
-            "topic": topic,
-        }
-        if remember and args.get("core"):
-            body["layer"] = "core"
-        owner = env.get("CHEESE_OWNER", "")
-        if env.get("CHEESE_MEMORY_SCOPE", "project") == "personal" and owner:
-            # 私聊里记的是这个芝士对它主人的看法——池子按
-            # `<project>:<agent handle>:<person>` 分，属于这个项目里的这个实例。
-            body.update(scope="user", owner=owner)
-        return {
-            "method": "POST",
-            "path": f"/projects/{project}/memory{'' if remember else '/search'}",
-            "body": body,
-        }
     if tool == "cheese_ask":
         options = [value.strip() for value in args["option"] if value.strip()]
         if not 2 <= len(options) <= 4:
@@ -1167,24 +1125,6 @@ def _say_notify(args, data, env) -> str:
     return f"已发送通知给 {'、'.join(who)}。" if who else "已发送通知。"
 
 
-def _say_remember(args, data, env) -> str:
-    kind = "核心记忆（每轮都在场）" if args.get("core") else "记忆"
-    personal = env.get("CHEESE_MEMORY_SCOPE") == "personal" and env.get("CHEESE_OWNER")
-    return f"已记入{'个人' if personal else '项目'}{kind}。"
-
-
-def _say_recall(args, data, env) -> str:
-    hits = (data or {}).get("hits") or []
-    if not hits:
-        # 关键词检索没命中 ≠ 没有这条记忆。一次空结果当成「确认不存在」，就会一头
-        # 撞上那条记忆本来要拦住的坑。
-        return (
-            "没有找到相关记忆。（关键词检索，不是语义检索：换个说法、"
-            "或只用其中一两个关键词再试一次）"
-        )
-    return "\n".join(f"- {hit.get('abstract', '')}" for hit in hits)
-
-
 def _say_docs_search(args, data, env) -> str:
     hits = (data or {}).get("hits") or []
     if not hits:
@@ -1300,8 +1240,6 @@ _SAY = {
         else f"话题标题已设为：{a['text']}"
     ),
     "cheese_decision": lambda a, d, e: "已记入决策记录。",
-    "cheese_remember": _say_remember,
-    "cheese_recall": _say_recall,
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
     "cheese_docs_search": _say_docs_search,

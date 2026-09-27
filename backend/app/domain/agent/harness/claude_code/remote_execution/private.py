@@ -114,8 +114,6 @@ def ensure(config, directory, environ):
                 "CHEESE_PROJECT",
                 "CHEESE_TOPIC",
                 "CHEESE_AUTHOR",
-                "CHEESE_MEMORY_SCOPE",
-                "CHEESE_OWNER",
             )
             if key in environ
         }

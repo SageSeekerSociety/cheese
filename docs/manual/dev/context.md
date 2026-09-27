@@ -29,7 +29,7 @@ covers:
 7. **当前阶段的操作说明**：由 `stages.py` 按话题所处阶段（任务执行、闸门、等采纳、合并冲突、已归档）把那一阶段的说明静态拼进去，模型没有「要不要读」的选择权。
 8. 项目里活跃的话题列表、产物清单、成员名册与点名方式。
 9. 项目总览的实况文档和当前话题的实况文档，各限 6000 字（`OVERVIEW_DOC_CHAR_BUDGET`、`TOPIC_DOC_CHAR_BUDGET`），超了就压缩并提示用 `cheese_doc_get` 读全文。
-10. 核心记忆；其余记忆不自动出现，只提示条数，要用 `cheese_recall` 检索。
+10. **记忆的 L1 索引**：`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`（`memory_index`）。正文在会话目录的文件里，模型自己去读（见[记忆](/dev/memory#layers)）。
 11. 会话开场时的运行环境（机器、限制），标明是平台元信息而不是用户输入。
 
 Claude Code 在会话启动时读一次系统提示词（`--append-system-prompt-file`），所以系统提示词的改动在**下一次冷启动**时生效；正在跑的会话保持它启动时的那份。

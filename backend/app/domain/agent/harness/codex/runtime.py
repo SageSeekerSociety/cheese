@@ -45,6 +45,7 @@ class CodexRuntime(DrivenRuntime[Handle]):
             self._consume,
             self._activity,
             pulse=self.pulse,
+            memory=self._memory_hook(handle.session.topic_id),
         )
 
     def backlog(self, session: SessionRef) -> CodexBacklog:

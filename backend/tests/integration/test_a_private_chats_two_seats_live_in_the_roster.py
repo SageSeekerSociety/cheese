@@ -1,7 +1,9 @@
 """私聊的两席在名册上：「谁被点名」由此推出，不需要 @（结论 19、20）。
 
 一间私聊就是项目内名册两席的房间。所以「对面是谁」只有名册一个出处：谁答这间房、
-个人记忆记在谁名下、未读按谁归类、再打开是不是同一间，四个问题问的都是这两席。
+未读按谁归类、再打开是不是同一间，这几个问题问的都是这两席。（「个人记忆记在谁名
+下」曾经也在这里问——写记忆的旧入口连同按名册两席做的授权一起停用了，记忆改成写
+文件，私有一层现在守的是 `memory_files` 那个作用域。）
 
 名册是唯一的出处：同一件事没有第二个地方记着，所以这里的每一条断言都只能是名册答
 出来的。
@@ -121,34 +123,6 @@ def test_a_dm_names_its_teammate_from_the_roster(client):
 
     assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
     assert _who_answers(client, dm) == "reviewer"
-
-
-def test_personal_memory_in_a_dm_is_authorized_by_the_two_seats(client):
-    """个人记忆只在当事人自己的私聊里读写。当事人是谁，名册说了算。"""
-    project_id = _project(client)
-    dm = _dm(client, project_id, "user-1")
-
-    mine = client.post(
-        f"/projects/{project_id}/memory",
-        json={
-            "content": "偏好简洁汇报",
-            "scope": "user",
-            "owner": "user-1",
-            "topic": dm,
-        },
-    )
-    assert mine.status_code == 200, mine.text
-
-    someone_elses = client.post(
-        f"/projects/{project_id}/memory",
-        json={
-            "content": "别人的事",
-            "scope": "user",
-            "owner": "user-2",
-            "topic": dm,
-        },
-    )
-    assert someone_elses.status_code == 403, someone_elses.text
 
 
 def test_a_dm_badge_is_keyed_by_the_other_seat(client):

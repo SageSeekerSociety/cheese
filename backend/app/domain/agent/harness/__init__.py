@@ -80,6 +80,15 @@ ActivityConsumer = Callable[[uuid.UUID, uuid.UUID, uuid.UUID, bool], Awaitable[N
 # design: the write is delivery, this is the receipt.
 ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 
+# (topic) — lay this room's memory tree down in its session, and take back what
+# the agent wrote into it. Asked at two moments, and both ask the same question:
+# just before an input goes in (so the session reads the platform's version)
+# and just after a turn ends (so what it wrote comes back in the turn it was
+# written in). It takes only the topic because everything else it needs — the
+# project, who is speaking, the reach to the session — lives on the side that
+# owns the room (`chat.ChatService`).
+MemoryConsumer = Callable[[uuid.UUID], Awaitable[None]]
+
 # (project, topic, work id, reachable, reason) — the machine an open turn runs on
 # went out of reach (False, with what the runtime saw) or came back (True). Not
 # an event of the session's: the session is on the far side of the gap, and
@@ -442,6 +451,26 @@ class AgentRuntime(Protocol):
 
     def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
         """Where 「这一轮在等它的设备」 goes."""
+        ...
+
+    def bind_memory(self, consumer: MemoryConsumer) -> None:
+        """Where 「记忆该对账了」 goes: before an input, and after a turn."""
+        ...
+
+    # 这个 harness 的会话会不会把记忆存成文件、并答得了对账（``memory()`` 有没有
+    # 真答事）。系统提示词里那一段「记忆」按它注不注入：写下来的文件永远同步不回
+    # 来的骨架，那份说明书只会让 agent 以为自己在写项目记忆。和 ``harness`` 一样
+    # 是事实，不是开关——每一条通道都答得出自己这一侧有没有这条回路。
+    keeps_memory: bool
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """Relay one memory reconciliation to this room's session.
+
+        ``None`` is the answer of a runtime whose sessions keep no memory files
+        (and of a room with no live session): 「这事这里没有」, not a failure —
+        the caller has nothing to fall back to and writing memory twice would be
+        worse than not writing it at all.
+        """
         ...
 
     def holds(self, topic_id: uuid.UUID) -> bool:
