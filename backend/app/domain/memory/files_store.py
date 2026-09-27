@@ -231,6 +231,25 @@ class MemoryFileStore:
         return row.content
 
 
+async def private_owners(session: AsyncSession, project_id: uuid.UUID) -> list[str]:
+    """这个项目里有哪些人的 private 树，人名序。
+
+    一轮会话只铺在场的几个人的 private（`memory_index` 的预算那一段），而整理要
+    看的是**这个项目全部**的私人记忆：它是唯一一个把整棵树放在一起看的时刻，漏掉
+    一个没说过话的人，等于他的记忆没有人整理。所以这里不问「谁在场」，问「谁有」。
+    """
+    rows = await session.scalars(
+        select(MemoryFileRecord.owner_handle)
+        .where(
+            MemoryFileRecord.project_id == project_id,
+            MemoryFileRecord.scope == MemoryFileScope.private,
+        )
+        .distinct()
+        .order_by(MemoryFileRecord.owner_handle)
+    )
+    return [handle for handle in rows.all() if handle]
+
+
 async def memory_index(
     session: AsyncSession,
     project_id: uuid.UUID,

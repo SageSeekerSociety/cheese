@@ -785,6 +785,13 @@ class Settings(BaseSettings):
     # 0 disables the periodic sweep (the startup one still runs).
     gate_sweep_interval_s: int = 300
 
+    # --- 记忆整理 dream (2026-09-27) ---
+    # 多久问一次「有没有项目该整理记忆了」。这一档**不是**整理的周期：该不该跑由
+    # 项目自己的花销和上次整理的时刻决定（`domain/memory/dream.py`），这里只是那
+    # 台钟走多快。所以它可以跑得勤（问一次很便宜，不该整理的项目问完就返回），而
+    # 真正跑起来的整理是几分钟一轮的会话。0 关掉这个 job。
+    memory_dream_sweep_interval_s: int = 600
+
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.

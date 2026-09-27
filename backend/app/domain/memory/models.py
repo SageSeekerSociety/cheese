@@ -12,6 +12,8 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -255,3 +257,73 @@ class MemoryFileRecord(UuidPk, Timestamps, Base):
     # 谁改的。人做的和芝士做的走同一个字段——这一列回答的是「这一版是谁写的」，
     # 而两种写入在下面这条变更记录里长得一样。
     updated_by: Mapped[str] = mapped_column(String(64), default="")
+
+
+class MemoryDreamRunStatus(enum.StrEnum):
+    """一次整理跑到哪了。
+
+    ``refused`` 是**没有开跑**：防删护栏（`dream.removal_refused`）在写回之前
+    就判了「这一次删得不像人删的」，于是整轮作废、平台上一条都没少。它和
+    ``failed`` 分开，因为读的人要做的下一步不一样——失败要去查会话，被拦下来
+    要去看看是不是真的想删那么多。
+    """
+
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    refused = "refused"
+
+
+class MemoryDreamState(UuidPk, Timestamps, Base):
+    """一个项目的整理账本：上次整理是什么时候，以及现在有没有人在整理。
+
+    **一个项目一行**，唯一约束就是「一把锁」在数据库那一侧的样子。锁用
+    ``claimed_at`` 做占位的比较并交换（`dream.claim`）：一行 UPDATE，谁先把它从
+    「没有 / 过期」改成「现在」谁就跑，另一个人拿不到就是拿不到——不用把一次可能
+    几分钟的整理包在一个长事务里，也就不会因为整理没跑完而挡住这个项目别的事。
+
+    ``last_dream_at`` 是**触发阈值的时间原点**：累计 token 只算它之后的
+    （`dream.pending_output_tokens`）。写在这里而不是从 `resource_usage` 反推，
+    是因为「上次整理到哪」不是一份能重新算出来的东西——整理自己花掉的那部分要
+    按 kind 剔掉，两次整理之间平台还可能重启。
+    """
+
+    __tablename__ = "memory_dream_states"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    #: 上次整理**成功**结束的时刻；从没整理过就是 NULL（阈值的原点取更早的那个）。
+    last_dream_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 现在是谁占着这把锁。过期由 `dream.claim` 判（`CLAIM_TTL`），不是靠
+    #: 有人来清——被打断的一次整理（进程没了、机器没了）不该把这个项目锁死。
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class MemoryDreamRun(UuidPk, Timestamps, Base):
+    """一次整理的记录。整理是一轮真正的会话，跑完了才知道它动了什么。"""
+
+    __tablename__ = "memory_dream_runs"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default=MemoryDreamRunStatus.running.value
+    )
+    #: 这一轮起点时累计了多少 token（触发它的那个数）。记录它，是为了回答
+    #: 「这次为什么跑起来了」，以及事后核对阈值。
+    tokens_at_start: Mapped[int] = mapped_column(BigInteger, default=0)
+    #: 整理自己在这一步之前已经花掉的输出 token，收尾时写回，用来核对「不计自身」。
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 芝士自己写的交代（那一轮的最后一段），或失败/被拦下来的原因。
+    summary: Mapped[str] = mapped_column(Text, default="")
+    #: 这一轮动过的文件（`team/x.md`、`private/alice/y.md`），给人一眼扫。
+    files_changed: Mapped[list] = mapped_column(JSON, default=list)
