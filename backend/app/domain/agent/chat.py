@@ -151,7 +151,7 @@ from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
-from app.domain.topic import naming
+from app.domain.topic import doc_nudge, naming
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.overview import (
     ACTIVE_TOPICS_LIMIT,
@@ -2328,6 +2328,9 @@ class ChatService:
             # The agent has said what it understood: the moment to check the
             # name the room got from its opening line (topic/naming.py).
             naming.nudge(topic_id, "turn")
+            # 同一个时刻也看一眼文档：干过活的房间文档还空着，就请这个队友补上
+            # （topic/doc_nudge.py）。
+            doc_nudge.nudge(topic_id, self)
 
     def _note_room_session(self, topic_id: uuid.UUID, session_id: str) -> None:
         """The room is on a (possibly) different session now.

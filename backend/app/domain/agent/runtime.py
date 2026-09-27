@@ -54,6 +54,7 @@ from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, addre
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.identity.handles import agent_instance_handle, names_a_person
+from app.domain.topic import doc_nudge
 from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.runtime")
@@ -2127,6 +2128,9 @@ class AgentWorkRunner:
                 await self._broker.publish(
                     channel, {"type": "turn_finished", "turn_id": str(turn_id)}
                 )
+                # 会话没接手收尾的那种轮次，结束就在这里：和会话自报结束那一处
+                # （`ChatService._set_hook_activity`）一样看一眼文档。
+                doc_nudge.nudge(topic_id, chat_service)
             # Drop the liveness mark here, not in `_execute`: a turn killed by
             # task cancellation (CancelledError is a BaseException — it misses
             # every `except` inside `_execute`, including the registry cleanup)

@@ -159,6 +159,9 @@ EVENT_API_RETRY: Final = "api_retry"
 #: 这一轮开着，而跑它的机器够不着（离线、会话进程还没起来、连接在换）。平台在等
 #: 它回来；回来了同一行改成已恢复（`meta.state = "over"`）。
 EVENT_DEVICE_WAITING: Final = "device_waiting"
+#: 一间干过活的工作话题还没有实况文档，平台请刚才在这里干活的队友补第一版
+#: （`domain/topic/doc_nudge.py`）。每间房最多一次。
+EVENT_DOC_MISSING: Final = "doc_missing"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -218,6 +221,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ROUTINE_PROPOSED,
         EVENT_API_RETRY,
         EVENT_DEVICE_WAITING,
+        EVENT_DOC_MISSING,
     }
 )
 
