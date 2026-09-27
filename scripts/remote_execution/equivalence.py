@@ -260,6 +260,10 @@ def project(path):
         "user.name=fixture",
         "-c",
         "user.email=f@example.invalid",
+        # The commit would otherwise start `git maintenance` in the background,
+        # whose lock file can vanish while `rebuild` copies this directory.
+        "-c",
+        "maintenance.auto=false",
     ]
     env = dict(
         os.environ,
