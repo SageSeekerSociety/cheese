@@ -11,6 +11,7 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -80,7 +81,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
                     project_id=project.id, title="Work", created_by="u"
                 )
             topic_id = topic.id
-            topic.compute_profile = "cloud"
+            topic.compute_config = standard_choice("cloud").model_dump()
             await session.commit()
         async for _ in svc.converse(
             topic_id=topic_id,

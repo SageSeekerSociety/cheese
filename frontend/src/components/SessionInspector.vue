@@ -1,0 +1,240 @@
+<script setup lang="ts">
+import type { AgentControlState } from '../api'
+
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+
+import { getAgentControl, sendAgentControl } from '../api'
+
+import { t } from '@/i18n'
+
+// 现场 only watches: everything here reads the session's state, and nothing
+// changes the session, the room or the machine.
+const props = defineProps<{
+  topicId: string
+  active: boolean
+  /** The room's socket already carries this state. A parent that passes it puts
+   * the panel on the frames and drops it to the idle cadence below; a parent
+   * that does not keeps asking every two seconds. */
+  pushed?: AgentControlState | null
+}>()
+const LIVE_POLL_MS = 2000
+// Only a floor under a frame that never arrived: a socket that dropped, a room
+// opened in a view with no socket. Everything this panel shows arrives pushed.
+const IDLE_POLL_MS = 30000
+const state = ref<AgentControlState | null>(null)
+const error = ref('')
+const busy = ref(false)
+const expanded = ref(false)
+const output = ref<unknown>(null)
+let timer: ReturnType<typeof setTimeout> | undefined
+let generation = 0
+
+function adopt(next: AgentControlState) {
+  if (next.id !== state.value?.id) output.value = null
+  state.value = next
+}
+
+async function refresh(epoch = generation) {
+  try {
+    const next = await getAgentControl(props.topicId)
+    if (epoch === generation) adopt(next)
+  } catch (e) {
+    if (epoch === generation) error.value = e instanceof Error ? e.message : t('work.room.site.session.loadFailed')
+  }
+}
+
+async function poll(epoch: number) {
+  await refresh(epoch)
+  const every = props.pushed === undefined ? LIVE_POLL_MS : IDLE_POLL_MS
+  if (epoch === generation && props.active) timer = setTimeout(() => void poll(epoch), every)
+}
+
+// A frame lands: take it as the whole state, the same shape the request returns.
+watch(
+  () => props.pushed,
+  (next) => {
+    if (next) adopt(next)
+  }
+)
+
+watch(
+  () => props.active,
+  () => {
+    generation += 1
+    clearTimeout(timer)
+    state.value = null
+    error.value = ''
+    if (props.active) void poll(generation)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => {
+  generation += 1
+  clearTimeout(timer)
+})
+
+const tasks = computed(() => Object.values(state.value?.tasks ?? {}))
+const taskKeys: Record<string, string> = {
+  running: 'work.room.site.session.task.running',
+  queued: 'work.room.site.session.task.queued',
+  pending: 'work.room.site.session.task.pending',
+  completed: 'work.room.site.session.task.completed',
+  failed: 'work.room.site.session.task.failed',
+  killed: 'work.room.site.session.task.stopped',
+  stopped: 'work.room.site.session.task.stopped',
+  task_started: 'work.room.site.session.task.running',
+  task_progress: 'work.room.site.session.task.running',
+}
+function taskLabel(task: { status?: string; subtype?: string }) {
+  return t(taskKeys[task.status ?? task.subtype ?? ''] ?? 'work.room.site.session.task.unknown')
+}
+
+// Each of these only reads. `initialize` answers with what the session was
+// started with (its commands, models, account) and changes nothing.
+const reads = [
+  { value: 'initialize', label: 'work.room.site.session.reads.initialize', fields: [] },
+  { value: 'file_suggestions', label: 'work.room.site.session.reads.file_suggestions', fields: ['query'] },
+  { value: 'read_file', label: 'work.room.site.session.reads.read_file', fields: ['path'] },
+  { value: 'get_workspace_diff', label: 'work.room.site.session.reads.get_workspace_diff', fields: [] },
+  { value: 'get_context_usage', label: 'work.room.site.session.reads.get_context_usage', fields: [] },
+  { value: 'get_usage', label: 'work.room.site.session.reads.get_usage', fields: [] },
+  { value: 'mcp_status', label: 'work.room.site.session.reads.mcp_status', fields: [] },
+] as const
+type Read = (typeof reads)[number]['value']
+const readItems = computed(() => reads.map((read) => ({ value: read.value, title: t(read.label) })))
+const fieldLabels: Record<string, string> = {
+  query: 'work.room.site.session.fields.query',
+  path: 'work.room.site.session.fields.path',
+}
+const reading = ref<Read>('initialize')
+const values = ref<Record<string, string>>({})
+const fields = computed(() => reads.find((read) => read.value === reading.value)!.fields)
+
+async function look() {
+  if (!state.value?.id || busy.value) return
+  const epoch = generation
+  const request: Record<string, unknown> = {
+    subtype: reading.value,
+    ...Object.fromEntries(fields.value.map((field) => [field, values.value[field] ?? ''])),
+  }
+  if (reading.value === 'read_file') request.encoding = 'utf8'
+  busy.value = true
+  error.value = ''
+  output.value = null
+  try {
+    const result = await sendAgentControl(props.topicId, state.value.id, request)
+    if (epoch !== generation) return
+    const response = result.result?.response
+    if (response?.subtype === 'error') throw new Error(response.error ?? t('work.room.site.session.askFailed'))
+    output.value = response?.response ?? null
+  } catch (e) {
+    if (epoch === generation) error.value = e instanceof Error ? e.message : t('work.room.site.session.askFailed')
+  } finally {
+    busy.value = false
+  }
+}
+
+const formattedOutput = computed(() => {
+  if (typeof output.value === 'string') return output.value
+  if (output.value && typeof output.value === 'object') {
+    const data = output.value as Record<string, unknown>
+    if (typeof data.contents === 'string') return data.contents
+    if (typeof data.content === 'string') return data.content
+    if (typeof data.diff === 'string') return data.diff
+    return JSON.stringify(data, null, 2)
+  }
+  return ''
+})
+</script>
+
+<template>
+  <section class="session-inspector" :aria-label="t('work.room.site.session.label')">
+    <div class="inspector-bar">
+      <span>{{ t(state?.connected ? 'work.room.site.session.connected' : 'work.room.site.session.none') }}</span>
+      <v-btn size="small" variant="text" :aria-expanded="expanded" @click="expanded = !expanded">{{
+        t(expanded ? 'work.room.site.session.collapse' : 'work.room.site.session.expand')
+      }}</v-btn>
+    </div>
+    <v-alert v-if="error" type="error" density="compact" class="ma-2">{{ error }}</v-alert>
+    <div v-if="expanded" class="inspector-body">
+      <ul v-if="tasks.length" class="inspector-tasks">
+        <li v-for="task in tasks" :key="task.task_id">
+          {{ task.description ?? task.task_id }} · {{ taskLabel(task) }}
+        </li>
+      </ul>
+      <form class="inspector-form" @submit.prevent="look">
+        <v-select
+          v-model="reading"
+          autocomplete="off"
+          :items="readItems"
+          :label="t('work.room.site.session.what')"
+          density="compact"
+          hide-details
+        />
+        <v-text-field
+          v-for="field in fields"
+          :key="field"
+          v-model="values[field]"
+          autocomplete="off"
+          :label="t(fieldLabels[field])"
+          density="compact"
+          hide-details
+          required
+        />
+        <v-btn type="submit" size="small" color="primary" variant="tonal" :disabled="busy || !state?.connected">{{
+          t('work.room.site.session.view')
+        }}</v-btn>
+      </form>
+      <pre v-if="formattedOutput" class="inspector-output">{{ formattedOutput }}</pre>
+    </div>
+  </section>
+</template>
+
+<style scoped>
+.session-inspector {
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.inspector-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+}
+
+.inspector-body {
+  max-height: 50vh;
+  padding: 8px;
+  overflow: auto;
+}
+
+.inspector-tasks {
+  margin: 0;
+  padding: 0 8px 8px;
+  list-style: none;
+}
+
+.inspector-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px;
+}
+
+pre {
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inspector-output {
+  padding: 12px;
+  background: var(--fill);
+  border-radius: var(--radius-md);
+}
+</style>

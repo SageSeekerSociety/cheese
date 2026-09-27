@@ -27,7 +27,6 @@ vi.mock('../../api', async () => {
     listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     listTopicMembers: (...a: unknown[]) => listTopicMembers(...a),
-    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
@@ -468,6 +467,36 @@ describe('平台提示：事故卡的正文压成一行', () => {
     const shown = visibleText(more)
     expect(shown).toContain('平台正在自动清理构建缓存')
     expect(shown).toContain('清理完成后可以 @芝士 重试这一轮')
+  })
+})
+
+describe('平台提示：会话没起来', () => {
+  const LOG = [
+    'cheese-runner 0f0f ended: Claude Code exited with status 1 before it started:',
+    'Traceback (most recent call last):',
+    'executor_transport.PlatformHTTPError: Platform HTTP 504',
+  ].join('\n')
+
+  it('房间里只有那一句话，它启动时打印的原文展开了也不在房间里', async () => {
+    const { container } = mountRoom([
+      event('', 'Claude Code 启动失败：这个房间的工作机器还在准备', {
+        event_type: 'platform_error',
+        code: 'session_start_work_machine_preparing',
+        severity: 'error',
+        title: '会话没有启动',
+        retryable: true,
+        failed: true,
+        error: LOG,
+      }),
+    ])
+    await flush()
+
+    const card = container.querySelector('[data-testid="platform-error-card"]')!
+    expect(visibleText(card)).toContain('Claude Code 启动失败：这个房间的工作机器还在准备')
+    for (const details of Array.from(container.querySelectorAll('details'))) expand(details)
+    await flush()
+    const everything = visibleText(container)
+    for (const line of LOG.split('\n')) expect(everything).not.toContain(line)
   })
 })
 

@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false, total: 0, oldest_id: null }),
-  getProgress: vi.fn().mockResolvedValue({ items: [] }),
   listRoomTasks: vi.fn().mockResolvedValue({ data: [] }),
   listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
   chatWsUrl: () => 'ws://test/chat',

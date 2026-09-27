@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { Component } from 'vue'
-import type { AcceptCard, Block, MergeStateInfo, RoomTask } from '@/cx_types'
+import type { AcceptCard, Block, MergeStateInfo, RoomTask, WsServerFrame } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -23,12 +23,14 @@ vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ project: null
 const getRoomTask = vi.fn()
 const sayOnRoomTask = vi.fn()
 const getAcceptCards = vi.fn()
+const getProgress = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
     getAcceptCards: (...a: unknown[]) => getAcceptCards(...a),
+    getProgress: (...a: unknown[]) => getProgress(...a),
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
     getRoomTask: (...a: unknown[]) => getRoomTask(...a),
     sayOnRoomTask: (...a: unknown[]) => sayOnRoomTask(...a),
@@ -72,6 +74,29 @@ function card(over: Partial<RoomTask & { blocks: Block[] }> = {}): RoomTask & { 
   } as RoomTask & { blocks: Block[] }
 }
 
+// 卡自己的那条频道。只要知道连的是哪个地址、能往里塞一帧。
+class FakeWebSocket {
+  static OPEN = 1
+  static instances: FakeWebSocket[] = []
+
+  readyState = FakeWebSocket.OPEN
+  onmessage: ((event: MessageEvent) => void) | null = null
+  onopen: (() => void) | null = null
+  onclose: (() => void) | null = null
+  onerror: (() => void) | null = null
+
+  constructor(readonly url: string) {
+    FakeWebSocket.instances.push(this)
+  }
+
+  close() {}
+  send() {}
+
+  emit(frame: WsServerFrame) {
+    this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent)
+  }
+}
+
 let vuetify: ReturnType<typeof createVuetify>
 
 beforeAll(() => {
@@ -100,6 +125,10 @@ beforeEach(() => {
   getRoomTask.mockReset()
   sayOnRoomTask.mockReset()
   getAcceptCards.mockReset()
+  getProgress.mockReset()
+  getProgress.mockResolvedValue({ items: [], updated_at: null })
+  FakeWebSocket.instances = []
+  vi.stubGlobal('WebSocket', FakeWebSocket)
   // 默认没有验收卡：绝大多数用例里的卡不值得验收，验收框那一块不出现。
   getAcceptCards.mockResolvedValue({ data: [], total: 0 })
   getRoomTask.mockResolvedValue(card())
@@ -395,5 +424,78 @@ describe('卡上的「审阅」', () => {
     await waitFor(() => getByRole('button', { name: '审阅' }))
     await fireEvent.click(getByRole('button', { name: '审阅' }))
     expect(emitted().review).toBeTruthy()
+  })
+})
+
+// 分身干活时写下的步骤清单（`todo_write` 带着卡的 id）存在卡上、推在卡自己的频道上。
+// 房间那条频道收不到它，所以卡得自己读、自己订。
+describe('卡上的步骤清单', () => {
+  const PLAN = [
+    { id: '1', subject: '读分页的旧实现', status: 'completed' as const },
+    { id: '2', subject: '加 cursor 参数', status: 'in_progress' as const },
+    { id: '3', subject: '补测试', status: 'pending' as const },
+  ]
+
+  function cardSocket(): FakeWebSocket {
+    const socket = FakeWebSocket.instances.filter((s) => s.url.includes('/topics/task-1/chat')).at(-1)
+    if (!socket) throw new Error('卡的频道没连上')
+    return socket
+  }
+
+  it('打开卡就读这张卡存下的那份，读的是卡的，不是房间的', async () => {
+    getProgress.mockResolvedValue({ items: PLAN, updated_at: '2026-09-27T00:00:00Z' })
+    const { findByTestId } = mount()
+    const block = await findByTestId('card-progress')
+    expect(getProgress).toHaveBeenCalledWith('room-1', 'task-1')
+    expect(block.textContent).toContain('读分页的旧实现')
+    expect(block.textContent).toContain('补测试')
+    expect(block.textContent).toContain('完成 1/3')
+  })
+
+  it('分身改了清单，卡上跟着换成新的那一份', async () => {
+    getProgress.mockResolvedValue({ items: PLAN, updated_at: '2026-09-27T00:00:00Z' })
+    const { findByTestId } = mount()
+    await findByTestId('card-progress')
+
+    cardSocket().emit({
+      type: 'todo',
+      items: [
+        { id: '1', subject: '读分页的旧实现', status: 'completed' },
+        { id: '2', subject: '加 cursor 参数', status: 'completed' },
+        { id: '3', subject: '补测试', status: 'in_progress' },
+      ],
+    })
+    await waitFor(async () => expect((await findByTestId('card-progress')).textContent).toContain('完成 2/3'))
+  })
+
+  it('打开时还没有清单，分身第一次写下它就出现', async () => {
+    const { findByTestId, queryByTestId, findByText } = mount()
+    await findByText('这条先别动 routes')
+    expect(queryByTestId('card-progress')).toBeNull()
+
+    cardSocket().emit({ type: 'todo', items: PLAN })
+    expect((await findByTestId('card-progress')).textContent).toContain('加 cursor 参数')
+  })
+
+  it('没有清单就整段不画', async () => {
+    const { findByText, queryByTestId } = mount()
+    await findByText('这条先别动 routes')
+    await waitFor(() => expect(getProgress).toHaveBeenCalled())
+    expect(queryByTestId('card-progress')).toBeNull()
+  })
+
+  it('读回来得晚的旧清单不盖掉频道上已经到的新清单', async () => {
+    let answer: (v: unknown) => void = () => {}
+    getProgress.mockReturnValue(new Promise((resolve) => (answer = resolve)))
+    const { findByTestId } = mount()
+    await waitFor(() => expect(getProgress).toHaveBeenCalled())
+
+    cardSocket().emit({ type: 'todo', items: [{ id: '1', subject: '新的一步', status: 'in_progress' }] })
+    answer({ items: PLAN, updated_at: '2026-09-27T00:00:00Z' })
+
+    const block = await findByTestId('card-progress')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(block.textContent).toContain('新的一步')
+    expect(block.textContent).not.toContain('读分页的旧实现')
   })
 })

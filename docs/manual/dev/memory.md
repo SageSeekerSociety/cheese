@@ -20,6 +20,8 @@ covers:
 
 芝士的记忆是**会话目录里一棵文件树**：`.cheese/memory/` 下，一个作用域一个目录，一条记忆一个 markdown 文件。数据库是真相，会话里那一份是副本——每一轮输入之前铺下去，这一轮结束之后收回来。
 
+这棵树在**会话机**上，在会话自己的家里（`~/.cheese/memory/`），不在执行机上：runner 在那里对账，而 agent 的文件工具（Read / Write / Edit）平时跑在执行机上，只有碰到这棵树的路径时留在会话机（`remote_execution/proxy.js` 的 `memoryPath`，守卫是 `client.py` 的 `own_memory`）。agent 按 `~/.cheese/memory/...` 写，或者按它 shell 里的 `$HOME`（那是执行机的家）拼出一个绝对路径，落到的都是这一棵。shell 看不到它，所以 `rm` 删不掉一条记忆：删一条就用 Write 把它写成空内容。runner 收树时把写空了的那条（索引除外，空索引就是一份空索引）当成会话删了，照样过批量删除那道闸，并把那个空文件从会话机上清掉（`runner.read_memory`）。
+
 > 讲：分层、两个作用域、写入与对账的时机、上限与权限。不讲：整理（dream）和旧表迁移，见后续。
 
 ## 分层 {#layers}
@@ -34,7 +36,7 @@ covers:
 
 `MEMORY.md` 本身没有 frontmatter，永远不写正文——它是目录，不是文件（`parse_index` / `fit_index`，`files.py`）。
 
-**这一段只对会对账的骨架注入。** L1 加说明书（`MEMORY_INSTRUCTIONS`）进系统提示词的条件是 `build_system_prompt(keeps_memory=True)`，由调用方按当前 runtime 的事实传入（`AgentRuntime.keeps_memory`：Claude Code 是 `True`，codex、pi 是 `False`）。说明书写的是「写进 `$HOME/.cheese/memory/`，下一轮平台那一份里有它」，而 codex、pi 没有这条回路——照它写下的文件永远同步不回来，agent 却以为自己在写项目记忆。巡检和一页纸总结那两轮自己传 `False`：它们不是某个人的会话，那两段跟它们做的事无关。
+**这一段只对会对账的骨架注入。** L1 加说明书（`MEMORY_INSTRUCTIONS`）进系统提示词的条件是 `build_system_prompt(keeps_memory=True)`，由调用方按当前 runtime 的事实传入（`AgentRuntime.keeps_memory`：Claude Code 是 `True`，codex、pi 是 `False`）。说明书写的是「写进 `~/.cheese/memory/`，下一轮平台那一份里有它」，而 codex、pi 没有这条回路——照它写下的文件永远同步不回来，agent 却以为自己在写项目记忆。巡检和一页纸总结那两轮自己传 `False`：它们不是某个人的会话，那两段跟它们做的事无关。
 
 四类记忆（`type`）：`user`（这个人是谁、懂什么）、`feedback`（活该怎么干，含被认可的判断）、`project`（项目里正在进行的事，代码里读不出来的）、`reference`（外部系统的入口）。各自的 `scope` 规矩、正文怎么组织（feedback / project 要写 `**Why:**` 和 `**How to apply:**`）、什么**不**该写——整段在 `instructions.py` 的 `MEMORY_INSTRUCTIONS` 里，照搬 Claude Code 2.1.283 的 memory 段翻成中文，**原样进系统提示词**。
 

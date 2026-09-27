@@ -175,6 +175,45 @@
         "idle": "空闲",
         "elapsed": "已用 {span}",
         "quiet": "最近活动 {span}前"
+      },
+      "frontendError": "前端报错",
+      "span": {
+        "seconds": "{s} 秒",
+        "minutes": "{m} 分 {s} 秒",
+        "hours": "{h} 小时 {m} 分"
+      },
+      "session": {
+        "label": "会话详情",
+        "connected": "会话已连接",
+        "none": "没有在运行的会话",
+        "expand": "查看详情",
+        "collapse": "收起详情",
+        "view": "查看",
+        "what": "查看内容",
+        "loadFailed": "读取会话状态失败",
+        "askFailed": "没能读到",
+        "task": {
+          "running": "运行中",
+          "queued": "排队中",
+          "pending": "等待中",
+          "completed": "已完成",
+          "failed": "失败",
+          "stopped": "已停止",
+          "unknown": "状态待更新"
+        },
+        "reads": {
+          "initialize": "会话状态",
+          "file_suggestions": "查找文件",
+          "read_file": "查看文件",
+          "get_workspace_diff": "工作区变更",
+          "get_context_usage": "上下文用量",
+          "get_usage": "账号用量",
+          "mcp_status": "外部工具连接"
+        },
+        "fields": {
+          "query": "文件名",
+          "path": "文件路径"
+        }
       }
     },
     "menu": {
@@ -233,7 +272,12 @@
     },
     "message": {
       "copy": "复制",
-      "copied": "已复制"
+      "copied": "已复制",
+      "edit": "编辑",
+      "edited": "已编辑",
+      "save": "保存",
+      "cancel": "取消",
+      "saveFailed": "保存失败"
     },
     "outbox": {
       "failed": "发送失败：{reason}",
@@ -242,12 +286,6 @@
       "editHint": "放回输入框"
     },
     "newMessages": "条新消息",
-    "stop": {
-      "action": "停止",
-      "title": "停止{name}这次运行",
-      "failed": "停止失败：{reason}",
-      "notStarted": "{name}尚未开始运行"
-    },
     "composer": {
       "replyTo": "回复 {name}：{text}",
       "cancelReply": "取消回复",
@@ -262,6 +300,9 @@
       "title": "《{title}》",
       "done": "已完成",
       "running": "进行中"
+    },
+    "checklist": {
+      "updatedAt": "清单更新于 {time}"
     }
   },
   "members": {

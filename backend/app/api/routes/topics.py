@@ -36,7 +36,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.announce import announce, notify_question
-from app.domain.agent.chat import ChatService
+from app.domain.agent.chat import ChatService, publication_text
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.agent.market import (
@@ -64,7 +64,14 @@ from app.domain.agent.runtime import (
 )
 from app.domain.agent.step_output import without_output
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
+from app.domain.block.editing import edit_message
+from app.domain.block.models import (
+    CHECKLIST_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+    agent_notice,
+)
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.addressing import Event as Addressee
@@ -1319,6 +1326,33 @@ class ProgressIn(BaseModel):
     # the room's credentials, so the call cannot tell it apart from the room's
     # own agent: it says so, the way `cheese_lock` names its task.
     task: uuid.UUID | None = None
+    # Post a new checklist message instead of editing the current one. Which
+    # request a list belongs to is the agent's call: it sets this when someone
+    # brings it a new one.
+    new: bool = False
+    # One line on what landed, written when the work is done; shown under the
+    # list in the same message. Same ceiling as an item.
+    result: (
+        Annotated[
+            str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+        ]
+        | None
+    ) = None
+
+
+# The step markers of the checklist message's text. The room draws its own
+# icons from `meta.checklist`; this text is what every other reader gets — the
+# agent reading the history, a copy, a notification preview.
+_CHECKLIST_MARK = {"completed": "✓", "in_progress": "✱", "pending": "○"}
+
+
+def _checklist_text(items: list[dict], result: str | None) -> str:
+    """The checklist as the message's text: one line per step, and the result
+    line under it once there is one."""
+    lines = [f"{_CHECKLIST_MARK[item['status']]} {item['subject']}" for item in items]
+    if result:
+        lines += ["", f"✅ {result}"]
+    return "\n".join(lines)
 
 
 @router.put("/{topic_id}/progress")
@@ -1327,18 +1361,25 @@ async def write_topic_progress(
     body: ProgressIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """`todo_write`: the agent's whole checklist for the running turn (进度层).
+    """`todo_write`: the agent's whole checklist (进度层), and its message.
+
+    Whole-list replace, so what is stored is exactly what the agent last said,
+    never a merge of two plans. The stored list is what 总览 shows and what the
+    room's next turn is handed back.
+
+    In the room the list is an ordinary message by the agent. The first call
+    posts it; later calls edit the agent's current checklist message through
+    the same edit every author has (`domain/block/editing`); ``new`` posts a
+    fresh one.
 
     With ``task`` it is that card's 分身 writing, and the list is the card's:
     stored under the card and pushed on the card's channel, the same channel its
-    attributed events go to (`chat.py`), leaving the room's own list alone.
+    attributed events go to (`chat.py`), leaving the room's own list and
+    conversation alone.
 
-    Whole-list replace, so what the room shows is exactly what the agent last
-    said, never a merge of two plans. Stored first, then pushed as the `todo`
-    frame the room's working message renders in place. A platform tool, so it
-    reaches here the same way from every harness — the checklist is not
-    captured from any harness's own tool events.
+    A platform tool, so it reaches here the same way from every harness.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
@@ -1359,17 +1400,53 @@ async def write_topic_progress(
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)
     ]
-    work = get_work_runner().live_work_for_topic(place.room_id)
+    runner = get_work_runner()
+    work = runner.live_work_for_topic(place.room_id)
+    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
     await TopicProgressRepository(db).save(
-        place.room_id,
-        items,
-        task_id=body.task,
-        turn_id=uuid.UUID(work["turn_id"]) if work is not None else None,
+        place.room_id, items, task_id=body.task, turn_id=turn_id
     )
     await db.commit()
-    channel = str(body.task) if body.task is not None else str(topic_id)
-    await get_broker().publish(channel, {"type": "todo", "items": items})
-    return ok({"items": items})
+    if body.task is not None:
+        await get_broker().publish(str(body.task), {"type": "todo", "items": items})
+        return ok({"items": items})
+    text = _checklist_text(items, body.result)
+    checklist = {"items": items, "result": body.result}
+    current = (
+        None
+        if body.new
+        else await BlockRepository(db).current_checklist(place.room_id, actor.handle)
+    )
+    if current is not None:
+        message = await edit_message(
+            db,
+            get_broker(),
+            current.id,
+            editor=actor.handle,
+            content=text,
+            checklist=checklist,
+        )
+        return ok({"items": items, "message_id": message["id"], "posted": False})
+    message = await chat._persist_assistant_message(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        text=await publication_text(db, place.project_id, place.room_id, text),
+        turn_id=turn_id,
+        reply_to=None,
+        roster=None,
+        topic_refs=[],
+        publish=True,
+        author=actor.handle,
+        own_output=True,
+        extra_meta={CHECKLIST_META_KEY: checklist},
+    )
+    assert message is not None  # a publication with no eid never deduplicates
+    await get_broker().publish(
+        str(place.room_id), {"type": "assistant_block", "block": message}
+    )
+    if turn_id is not None:
+        runner.note_session_output(turn_id, tool=False)
+    return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
 @router.get("/{topic_id}/doc")
@@ -1520,21 +1597,24 @@ async def get_topic_compute_profile(
     device_online = await project_device_online(db, topic.project_id)
     device_service = sql_device_service(db)
     devices = await device_service.list_devices_for_project(topic.project_id)
-    # #282 §四 / #358 · whether THIS topic's agent can see the whole machine. The
-    # effective answer is the visibility on the topic↔machine binding (device
-    # affinity freezes a topic to one machine on its first turn); a topic
-    # on platform compute or not yet pinned has none. Surfaced so the room can show
-    # a visible safety badge for a Hosted Machine turn instead of the platform
-    # granting whole-machine access silently (原则八).
     binding = await device_service.topic_binding(topic_id)
     if current == COMPUTE_DEVICE and binding is not None:
         choice.device_id = binding.device_id
         if topic.compute_config is None:
             named = next((d for d in devices if d.device_id == binding.device_id), None)
             choice.name = named.name if named else "自有设备"
-    effective_visibility: str | None = None
-    if binding is not None:
-        effective_visibility = binding.visibility.value
+    # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
+    # machine. Read from the sessions' own machines, not the room's pin: a
+    # session that picked a device automatically, or moved to one later, has
+    # the same access and no pin. Surfaced so the room shows a visible safety
+    # badge instead of the platform granting whole-machine access silently
+    # (原则八).
+    from app.domain.machine.session_work import room_machine_visibility
+
+    visibility = await room_machine_visibility(
+        db, topic, project.settings if project else None
+    )
+    effective_visibility = visibility.value if visibility is not None else None
     return ok(
         {
             "current": current,
@@ -1562,14 +1642,14 @@ async def get_topic_compute_profile(
                 await AgentSessionService(db).has_run(topic_id)
                 or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
             ),
-            "inherited": topic.compute_profile is None,
+            "inherited": topic.compute_config is None,
             "profiles": [
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
             ],
             "visibility": {
                 "options": [asdict(v) for v in visibility_listings()],
-                # "host" | "isolated" | null (platform compute / not yet pinned).
+                # "host" | "isolated" | null (no agent here on an enrolled machine).
                 "effective": effective_visibility,
                 # The one boolean the room's badge keys on: this turn can see and
                 # operate the whole machine.
@@ -1827,12 +1907,12 @@ async def set_topic_compute_profile(
         if started and isinstance(verdict, gate.Allowed):
             verdict = gate.because_the_room_is_running(call, actor.handle)
     if isinstance(verdict, gate.Proposal):
-        # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
+        # 这次调用没有发生：绑定不写，`topic.compute_config` 不动。房间里多的
         # 是一条提议，下一步在 approver 手上。
         await propose(db, verdict, place_id=topic_id)
         await db.flush()
         # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
-        # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
+        # `room_choice` 算出来，不是 `topic` 上那一列还没被写过的值。第一轮之前
         # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
         # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
         # 法，先信谁？
@@ -1843,7 +1923,7 @@ async def set_topic_compute_profile(
                 "choice": current.model_dump(),
                 "device_id": current.device_id,
                 "locked": started,
-                "inherited": topic.compute_profile is None,
+                "inherited": topic.compute_config is None,
                 "proposal": {
                     "approver": verdict.approver,
                     "tier": verdict.call.tier,
@@ -1882,7 +1962,6 @@ async def set_topic_compute_profile(
             visibility=await device_service.binding_visibility(device_id),
         )
 
-    topic.compute_profile = name
     topic.compute_config = choice.model_dump()
     await db.flush()
     return ok(
@@ -1937,9 +2016,7 @@ async def publish_chat_message(
             or parent.task_id is not None
         ):
             raise ValidationError("reply_to must belong to this conversation")
-    content = await canonicalize_refs(
-        db, place.project_id, content, exclude_topic_id=place.room_id
-    )
+    content = await publication_text(db, place.project_id, place.room_id, content)
     # The input request can finish while its terminal session is still working.
     runner = get_work_runner()
     work = runner.live_work_for_topic(place.room_id)

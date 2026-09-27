@@ -1235,6 +1235,15 @@ export function toggleReaction(
   )
 }
 
+// Edit a message you sent. Everyone in the room, you included, also gets the
+// edited block as a `block_updated` frame.
+export function editMessage(blockId: string, content: string): Promise<Block> {
+  return request<Block>(`/blocks/${encodeURIComponent(blockId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ content }),
+  })
+}
+
 // ---- 资料库 ----
 
 // 用户给这个项目的文件，按原名。项目一级，所以一个房间引用得到另一个房间上传的
@@ -1828,9 +1837,11 @@ export function getOverviewAuto(topicId: string): Promise<OverviewAuto> {
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
 // Read on topic open — between turns there is no WS stream to carry it, and
 // "做到哪了" has to be visible without summoning anyone. `items` is [] for a
-// topic that never had a checklist.
-export function getProgress(topicId: string): Promise<TopicProgress> {
-  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
+// topic that never had a checklist. With `taskId`, that card's list — the one
+// its 分身 wrote — instead of the room's.
+export function getProgress(topicId: string, taskId?: string): Promise<TopicProgress> {
+  const q = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
 }
 
 // PUT upserts the living doc and appends a "📝 编辑了文档" event to the

@@ -80,7 +80,7 @@ def test_writing_memory_through_this_endpoint_is_retired_and_says_where(client):
     `scope="everyone"` 那一路先停：它把总览文档写成了一份只增不减的观察清单
     （话题「记忆机制照搬CC」）。剩下的写入面随后一起收掉——`cheese_remember` 写
     的是条目池，而条目池已经不再注入任何地方，所以「已记入」是一句谎话。旧会话
-    里的调用方读到的这句要说清记忆现在是什么形状：`$HOME/.cheese/memory/` 下的
+    里的调用方读到的这句要说清记忆现在是什么形状：`~/.cheese/memory/` 下的
     文件。总览文档只写「项目是什么」。
     """
     project_id, topic_id = _project_and_room(client)
@@ -95,7 +95,7 @@ def test_writing_memory_through_this_endpoint_is_retired_and_says_where(client):
         refused = client.post(f"/projects/{project_id}/memory", json=body)
         assert refused.status_code == 422, refused.text
         assert "停用" in refused.text
-        assert "$HOME/.cheese/memory/" in refused.text
+        assert "~/.cheese/memory/" in refused.text
     assert FACT not in _doc_text(client, overview)
 
 

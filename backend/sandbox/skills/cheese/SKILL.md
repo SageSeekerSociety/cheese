@@ -217,7 +217,8 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | 工具 | 作用 |
 |---|---|
 | `chat_send(content, reply_to?, request_id?)` | 主动发送聊天消息。结果不确定时带上返回的 `request_id` 原样重试 |
-| `todo_write(todos, task?)` | 把这一轮的步骤清单整份写给房间，`todos` 每项是 `{content, status}`，status 取 pending / in_progress / completed。每次传完整的清单，上一份整份被替换；房间里正在进行的那条消息原地显示它，下一轮开场也会读到它。最多 30 项，每项 ≤200 字。**你是分身时带上你那条活的 id**（`task`）：清单记在那张卡上；不带，写的是房间自己的清单，会盖掉主线程的计划 |
+| `chat_edit(message_id, content)` | 改你自己发过的一条消息：正文整段替换，房间里实时看到，消息标上「已编辑」。只能改自己发的，`message_id` 是 `chat_send` 返回的 id |
+| `todo_write(todos, new?, result?, task?)` | 把步骤清单整份写进房间，`todos` 每项是 `{content, status}`，status 取 pending / in_progress / completed。第一次调用发一条你的清单消息，之后每次调用改的是当前那条；还在做同一个请求就一直改它，有人提了新的请求就带 `new: true` 另发一条。做完时再调用一次：所有项标 completed，`result` 写一句落下了什么，接在清单下面。每次传完整的清单，上一份整份被替换；下一轮开场也会读到它。最多 30 项，每项 ≤200 字。**你是分身时带上你那条活的 id**（`task`）：清单记在那张卡上，不发到房间里；不带，写的是房间自己的清单，会盖掉主线程的计划 |
 | `cheese_chat_list(topic?, task?, limit?, before? 或 after?, kind?, author?)` | 读最近的聊天记录（含结构化消息和表情），默认当前房间最近 50 条；带 `task` 读那条任务卡的记录。只读，不叫醒任何人、不标记消息已读。结果末尾带续读的调用，翻更早的照抄它 |
 | `cheese_chat_search(query, topic?, task?, limit?, before? 或 after?, kind?, author?)` | 按文字搜聊天记录：对正文、结构化消息信息和引用文字做不区分大小写的**字面**匹配，搜范围内全部记录。查不到就缩短关键词或换个说法，别断定没说过 |
 | `cheese_chat_get(message_id, offset?, length?)` | 读一条消息的全文（任何类型，含任务卡评论和文档节点）；超长的按 `offset` 续读 |
@@ -281,4 +282,4 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 
 平台工具和 `cheese` 的子命令都经平台鉴权并记录。
 
-**会话是可丢的，记录不是。** 每一轮只带来还没被读过的新消息；会话新开（部署、机器回收、归档后重开）时你不记得之前聊了什么，房间里的人却默认你记得。这时别猜、别问「之前说到哪了」——用 `cheese_chat_list` 读最近的记录，要找某句原话或某个决定用 `cheese_chat_search`，看某条消息底下的讨论用 `cheese_chat_replies`。查别人的原话和回复关系用这几个；查记下来的事实读 `.cheese/memory/` 下那份索引和文件，两者不互相覆盖。
+**会话是可丢的，记录不是。** 每一轮只带来还没被读过的新消息；会话新开（部署、机器回收、归档后重开）时你不记得之前聊了什么，房间里的人却默认你记得。这时别猜、别问「之前说到哪了」——用 `cheese_chat_list` 读最近的记录，要找某句原话或某个决定用 `cheese_chat_search`，看某条消息底下的讨论用 `cheese_chat_replies`。查别人的原话和回复关系用这几个；查记下来的事实用文件工具读 `~/.cheese/memory/` 下那份索引和文件（删一条记忆就用 Write 把它写成空内容），两者不互相覆盖。

@@ -129,15 +129,13 @@ class Topic(UuidPk, Timestamps, Base):
         Enum(TopicStatus, native_enum=False, length=16),
         default=TopicStatus.active,
     )
-    # Default compute pool for the sessions started in this room. NULL = explicit
-    # project default, then the deployment default. It is a default and not a
-    # placement: where a conversation actually runs is its own session's business
-    # (`agent_sessions.runtime_location` / `.work_lease`). Switchable only until
-    # the room has run — i.e. until a session here has a resume token — after
-    # which it is frozen, matching the device-affinity boundary.
-    compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # A room keeps its script revision when project settings change.
     environment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The compute choice (`ComputeChoice`) every new agent session in this room
+    # starts on. NULL = the project default. Written in full the first time the
+    # room runs, so a later session gets what the first one got. It is a default
+    # and not a placement: where a conversation actually runs is its own
+    # session's business (`agent_sessions.execution_request` / `.work_lease`).
     compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the

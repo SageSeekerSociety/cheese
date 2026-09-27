@@ -1,6 +1,7 @@
 """ComputePool: which machine a turn lands on (design §3 / review R2)."""
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -396,5 +397,9 @@ def test_resolve_compute_id_uses_room_then_explicit_project_default():
         default=ComputeChoice(name="Lab", profile="device", device_id="lab")
     )
     values = {"compute_configs": configs.model_dump()}
-    assert _resolve_compute_id(values, "cloud") == "cloud"
+    cloud = ComputeChoice(name="Cloud", profile="cloud")
+    room = SimpleNamespace(compute_config=cloud.model_dump())
+    fresh = SimpleNamespace(compute_config=None)
+    assert _resolve_compute_id(values, room) == "cloud"
+    assert _resolve_compute_id(values, fresh) == "device"
     assert _resolve_compute_id(values) == "device"

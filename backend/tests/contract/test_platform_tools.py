@@ -37,6 +37,11 @@ TASK = "9f8e7d6c-0000-4000-8000-000000000000"
 #: 读回来 —— 从表里读一遍再断言它等于自己，删掉一整行也是绿的。
 CALLS = {
     "chat_send": ({"content": "这一轮我在这里"}, "POST", "/topics/fixture/messages"),
+    "chat_edit": (
+        {"message_id": "m-1", "content": "改过的这一句"},
+        "PATCH",
+        "/blocks/m-1",
+    ),
     "todo_write": (
         {"todos": [{"content": "读现有实现", "status": "in_progress"}]},
         "PUT",
@@ -179,6 +184,7 @@ def _serve(executor):
         do_GET = _serve
         do_POST = _serve
         do_PUT = _serve
+        do_PATCH = _serve
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

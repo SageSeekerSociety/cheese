@@ -144,15 +144,10 @@ async function switchTo(page: import("@playwright/test").Page, username: string)
   return session.accessToken;
 }
 
-// 串行：这一份要**现建空间**再当场审过，两个用例并发跑同一套栈时，后一个的
-// `POST /admin/spaces/{id}/review` 会拿到 404 —— 单独跑各自都绿。这不是本页的问题
-// （同一个空间在同一台栈上来回建，本来就该排队），所以这里显式串起来，
-// 不去和一个属于建空间那条路的现象缠斗。
-//
 // 时限放宽到 3 分钟：第一次进题目详情要让 vite **现编**那一大片依赖树
 // （tiptap / prism / 聊天），冷启动时可以慢到几十秒（见 playwright.config.ts
 // 里 timeout 那段注释），默认那 60 秒不够「冷编译一次 + 后面几步断言」。
-test.describe.configure({ mode: "serial", timeout: 180_000 });
+test.describe.configure({ timeout: 180_000 });
 
 test.describe("空间新界面（真路由）", () => {
   test("所有者打开 /spaces/:id/board，看到真数据", async ({ page }) => {

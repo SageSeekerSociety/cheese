@@ -136,6 +136,17 @@ export interface BlockMeta {
   // 一份周报讲的那一周（kind=weekly）。并排摆着的几份周报，是它把它们分开的。
   since?: string
   until?: string
+  // 作者改过这条消息（ISO 时间）。有它，消息就标「已编辑」。
+  edited_at?: string
+  // 这条是队友的步骤清单（`todo_write`）：房间照它画清单，正文是给别的读者的同一份话。
+  // 更早的清单消息这里只有一个 `true`，照普通消息画。
+  checklist?: ChecklistMeta | boolean
+}
+
+export interface ChecklistMeta {
+  items: TodoItem[]
+  /** 做完时队友写的一句结果。 */
+  result: string | null
 }
 
 export interface Block {
@@ -314,9 +325,8 @@ export type WsServerFrame =
   | { type: 'user_block'; block: Block }
   // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
-  // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
-  // turn start; without the flag the UI cannot tell it from live progress.
-  | { type: 'todo'; items: TodoItem[]; restored?: boolean }
+  // A 分身's checklist, on its card's channel (the room's own list is a message).
+  | { type: 'todo'; items: TodoItem[] }
   | { type: 'state'; resource: string }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
@@ -344,7 +354,6 @@ export type WsServerFrame =
 
 export interface AgentControlState {
   id: string | null
-  agent_handle?: string | null
   connected: boolean
   controls?: string[]
   tasks?: Record<
@@ -1034,9 +1043,9 @@ export interface ProjectMachineCreate {
   diskGb: number
 }
 
-// #282 §四 / #358 · whether a topic's turn can see the whole machine it runs on.
-// `effective` is the visibility of the device the topic is pinned to ('host' |
-// 'isolated' | null when on platform compute / not yet pinned); `machine_access`
+// #282 §四 / #358 · whether an agent in this room can see a whole enrolled machine.
+// `effective` is the widest visibility any agent session here has on the enrolled
+// machine it works on ('host' | 'isolated' | null when none is on one); `machine_access`
 // is the one flag the room's Hosted Machine badge keys on; `notice` is the honest
 // #282 UI line, used as the badge's tooltip. `options` carries the two 档 with
 // their capability copy (isolated = boxed default, host = whole-machine, 申请制).

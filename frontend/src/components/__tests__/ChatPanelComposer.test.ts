@@ -25,7 +25,6 @@ vi.mock('../../api', async () => {
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
     listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     // 芝士的座位在**话题**名册上，一个话题一个分身。项目名册上没有它——这正是
     // 「线上 @ 不出芝士」那次的成因，所以这里照真实形状摆：分身 handle 带话题
@@ -413,24 +412,6 @@ describe('对话栏自己的输入栏', () => {
     const chip = container.querySelector('.probe-chip')
     expect(chip, 'composer-chips 插槽没渲染').toBeTruthy()
     expect(chip!.closest('.composer'), 'chips 没落在输入栏那一行里').toBeTruthy()
-  })
-
-  // 「发出去」和「送到芝士手上」不是一件事：中间隔着一次投递，它可能失败退回队列，
-  // 冷启动时还可能一分多钟里根本没有会话。所以刚发完只说在送，说它在处理要等芝士的
-  // 👀 回执（后端 chat.confirm_prompt_receipt 落的，意思是会话已经把消息拿进去了）。
-  it('刚发出去时只说正在送，不说芝士在处理', async () => {
-    // 自己的话题 id：草稿是模块级的，用默认那个会把这条没发完的字留给下一条用例
-    const view = mountPanel({}, 'seen-indicator')
-    await flush()
-
-    const box = composerBox(view.container)!
-    box.focus()
-    await fireEvent.update(box, '@芝士 看看这个')
-    await fireEvent.keyDown(box, { key: 'Enter' })
-    await flush()
-
-    expect(view.getByText('正在交给芝士…')).toBeTruthy()
-    expect(view.queryByText('芝士正在处理…')).toBeNull()
   })
 
   // 帧上没有「叫不叫它」那一位：叫谁写在正文里，后端从正文解析。

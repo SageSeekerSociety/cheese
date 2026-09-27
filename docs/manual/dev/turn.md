@@ -18,6 +18,35 @@ covers:
 
 > 讲：一轮的生命周期和各环节的模块。不讲：模型请求本身，见[模型调用流程](/dev/llm)；机器怎么接进来，见[设备与机器接入](/dev/machines)。
 
+下面把这个过程放一遍。每一步下面的链接指到本节对应的那一段。
+
+```demo-steps
+title: 一条消息怎么变成芝士的一轮
+note: 七步都在这一页里有对应的一节，按顺序走一遍
+steps:
+  - label: 发消息与寻址
+    desc: 消息落库，点名通知和它在同一个短事务里写好。跑不跑一轮只看寻址结果：点到的人里有没有 AI 队友。
+    link: /dev/turn#address
+  - label: 排队还是插话
+    desc: 人的消息先广播出去，再进这个话题的串行锁。没有在跑的一轮就开一轮，有就把它送进正在跑的会话。
+    link: /dev/turn#serialize
+  - label: 找到会话、选机器
+    desc: ComputePool 回答这一轮在哪跑：本机沙盒容器、中心会话加远端执行、用户接入的设备，或者云机器。需要落会话时先花最多 15 秒探一下机器还在不在。
+    link: /dev/turn#compute
+  - label: 启动或续跑骨架
+    desc: 骨架是 Claude Code、Codex、Pi 三种之一，会话 id 存在话题上，下一轮续跑同一个会话。同时按话题所处阶段注入那一段操作说明。
+    link: /dev/turn#harness
+  - label: 芝士怎么说话
+    desc: 普通输出不进房间，要发言必须调用 chat_send。工具调用和施工现场的进度记成活动块，太久不发言平台会投一条内部提醒。
+    link: /dev/turn#publish
+  - label: 失败、超时与发版
+    desc: 机器的错记在设备上、由人决定怎么处理；带幂等 id 的副作用先记一行，重派时分得清做没做过；发版时旧进程把在跑的轮交给新进程。
+    link: /dev/turn#failure
+  - label: 话题命名
+    desc: 不在这一轮里做。平台在后台用一个小模型起名、校准、跟进，标题由谁定记在 topics.title_source 上。
+    link: /dev/turn#naming
+```
+
 ## 1. 发消息与寻址 {#address}
 
 用户消息由 `ChatService.post_user_message` 在一个短事务里落库，并同时写好点名通知（`backend/app/domain/agent/chat.py`）。浏览器重试同一条消息时按 `client_id` 去重，不会发两遍。
@@ -58,6 +87,7 @@ covers:
 
 - **机器的错**：记在设备上而不是话题上。同一台机器连续两次同类失败会被隔离一段时间；话题不会被悄悄换到另一台机器，由人决定怎么处理（`host_failure.py`）。
 - **结果未知的副作用**：带幂等 id 的执行器调用会先在平台侧记一行（`dispatch_log.py`），机器突然没了之后，重派时能分清「确定没做」和「可能做过」。
+- **会话没起来**：会话（Claude Code、pi 或 Codex）在启动时就退出了（拿不到工作机器、缺程序、执行容器建不起来、另一个会话进程还占着目录等），房间里只有平台的一句话，按 runner 日志里的记录归类（`platform_failures.classify_session_start`），认不出的原因也只说「原因没能识别」；那次启动打印的原文在现场同一行下面，点开可看全文。
 - **额度用完**：准入拒绝，房间里出现平台提示。
 - **发版**：旧的主 API 进程把正在跑的轮交给新进程；新进程用 `recover_sessions` 重新监听这些会话，并补上没人监听那段时间里它们说过的话。
 

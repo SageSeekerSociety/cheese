@@ -190,9 +190,11 @@ ALWAYS_PUSH = (
 #: 时关掉（见各 harness 的 ``behaviour.py``），所以什么时候用它要在这里说一次。
 TODO_WRITE = (
     "## 步骤清单（todo_write）\n"
-    "多步的活（大约三步以上）开工时先用 `todo_write` 写下计划，房间里正在进行的那条"
-    "消息会原地显示这份清单。同一时刻只让一项 in_progress；做完一项就再写一次，把它"
-    "标成 completed、把下一项标成 in_progress。每次都传完整的清单。简单的问答不用写。"
+    "多步的活（大约三步以上）开工时先用 `todo_write` 写下计划，它在房间里发成你的一条"
+    "清单消息；之后每次写都是改这同一条。同一时刻只让一项 in_progress；做完一项就再写"
+    "一次，把它标成 completed、把下一项标成 in_progress。每次都传完整的清单。做完时"
+    "再写一次，所有项标 completed，用 result 写一句落下了什么。有人提了新的请求，就带"
+    " new=true 另起一条。简单的问答不用写。"
     "清单只说做到哪了，要说的话照样用 `chat_send` 发。"
 )
 
@@ -231,7 +233,7 @@ def build_system_prompt(
 
     ``keeps_memory`` 说的是**这一轮跑的 harness 会不会把记忆文件对账回平台**
     （``AgentRuntime.keeps_memory``，调用方按当前 runtime 传入）。默认不注：记忆
-    那一段（说明书 + L1 索引）讲的是「写进 `$HOME/.cheese/memory/`，下一轮平台的
+    那一段（说明书 + L1 索引）讲的是「写进 `~/.cheese/memory/`，下一轮平台的
     那一份里有它」，而 codex、pi 没有这条回路——照说明书写下的文件永远同步不回
     来，agent 却以为自己在写项目记忆。索引同理：正文铺不下去，注入的也就只是一
     串指向不存在的文件的指针。巡检和一页纸总结那两轮自己也传 False：它们不是某

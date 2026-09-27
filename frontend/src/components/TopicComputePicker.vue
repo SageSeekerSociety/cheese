@@ -83,7 +83,7 @@ watch(menuOpen, (open) => {
 <template>
   <div class="compute-picker">
     <template v-if="state">
-      <SessionWorkPicker :topic-id="topicId" :profile="state" />
+      <SessionWorkPicker :topic-id="topicId" :profile="state" @changed="load" />
       <span v-if="state.visibility?.machine_access" class="cp-machine" :title="state.visibility.notice">
         <span class="status-dot status-dot--warn" /> 可访问整台设备
       </span>

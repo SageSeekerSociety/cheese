@@ -451,7 +451,6 @@ class MachineService:
         if choice.profile != "cloud":
             raise ValidationError("当前房间未选择云端配置")
         topic.compute_config = choice.model_dump()
-        topic.compute_profile = "cloud"
         agent = await IdentityService(self._session).ensure_room_agent_user(topic_id)
         return await self.provision(
             project_id=topic.project_id,
