@@ -317,7 +317,7 @@ function expandMentions(text: string): string {
 //
 // 名册到了之后，@ 名单上别的 AI 队友也算叫：一个话题可以 @ 好几位，@ 到的那位
 // 就是开这一轮的那位（不在房间里的会被请进来）。只认座位那一位时，@ 第二位队友
-// 发出去，界面上既不说「正在交给」，那颗按钮也不亮，看起来就像只有芝士叫得动。
+// 发出去，那颗按钮不亮，看起来就像只有芝士叫得动。
 function mentionsAgent(expanded: string): boolean {
   if (mentionsHandle(expanded, props.agentSeat?.handle)) return true
   if (props.agentSeat === null) return false

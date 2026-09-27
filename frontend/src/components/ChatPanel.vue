@@ -21,12 +21,10 @@ import {
   attachmentRawUrl,
   downloadFile,
   ensureFreshToken,
-  getAgentControl,
   getProgress,
   isRetryableGetFailure,
   listBlocks,
   listRoomTasks,
-  sendAgentControl,
   summonAgent,
   toggleReaction as apiToggleReaction,
   undoTopicTitle,
@@ -203,17 +201,14 @@ const messages = ref<Block[]>([])
 const loadingHistory = ref(false)
 
 // Slack-style discrete messages: 芝士 doesn't stream tokens — each complete
-// message lands as an `assistant_block` frame. `awaitingReply` drives the
-// 正在看… indicator from summon until every active turn explicitly finishes.
+// message lands as an `assistant_block` frame. `awaitingReply` is true from
+// summon until every active turn explicitly finishes, and is reported upward as
+// `working` (the 现场 status line reads it).
 const awaitingReply = ref(false)
-// 这一轮的消息到没到芝士手上。平台收下和会话读到是两件事，中间隔着一次投递：
-// 它可能失败退回队列，冷启动时还可能一分多钟里根本没有会话。所以这条指示分两
-// 段说，翻页的那一下就是芝士的 👀 回执。
-const reachedAgent = ref(false)
 const activeTurnIds = ref<Set<string>>(new Set())
 watch(awaitingReply, (v) => emit('working', v))
 
-// 这一轮是哪位队友在干活。房间里可以坐好几位 AI，「正在处理」说的得是被叫到、
+// 这一轮是哪位队友在干活。房间里可以坐好几位 AI，步骤清单那一行署的得是被叫到、
 // 正在干的那一位——拿名册上排第一的那位顶替，另一位干活时界面就写着别人的名字。
 // 认的依次是：这一轮里它署名的记录、它落下的 👀 回执、发出去那句话点的名；一样都
 // 还没有时退回房间的座位。
@@ -229,29 +224,6 @@ watch(awaitingReply, (v) => {
   if (!v) workingHandle.value = null
 })
 
-// 停止就放在「正在处理…」旁边：人想叫停的时候眼睛就在这里。卡住的会话恰好是那个
-// 听不见话的——在对话里说「停」只会排到它后面去——所以这里走会话控制，平台直接
-// 把这次运行结束掉，不等会话答应。结束以后「正在处理…」跟着 turn_finished 消失。
-const stopping = ref(false)
-async function stopRun() {
-  const topicId = props.topic?.id
-  if (!topicId || stopping.value) return
-  stopping.value = true
-  try {
-    const state = await getAgentControl(topicId)
-    if (!state.id) throw new Error(t('work.room.stop.notStarted', { name: agentName.value }))
-    const result = await sendAgentControl(topicId, state.id, { subtype: 'interrupt' })
-    const response = result.result?.response
-    if (response?.subtype === 'error') throw new Error(response.error ?? '')
-    if (response?.response?.stopped === false) {
-      throw new Error(t('work.room.stop.notStarted', { name: agentName.value }))
-    }
-  } catch (e) {
-    errorMsg.value = t('work.room.stop.failed', { reason: e instanceof Error ? e.message : String(e) })
-  } finally {
-    stopping.value = false
-  }
-}
 // 每个在跑的轮次从什么时候开始。中途连进来的，后端在 turn_active 上带着开始时间；
 // 没带的（老后端）只能从连上的这一刻算。
 const turnStarts = ref<Record<string, number>>({})
@@ -374,7 +346,7 @@ const {
 
 // ---- 悬停条：整列一个，跟着指针在消息之间滑（见 room/RoomHoverBar）。 ----
 // 指针落在一条消息上就移过去；落在行与行之间的空隙里就留在原地（从一行滑到下一行
-// 的路上不该让它一闪一闪）；落在别的行上（事件、标记、「正在处理」）或移出整列
+// 的路上不该让它一闪一闪）；落在别的行上（事件、标记、步骤清单）或移出整列
 // 就收起。表情选择条开着的时候钉在那一行上，不跟指针走。
 const bar = reactive({ id: null as string | null, shown: false, top: 0, jump: false })
 const barBlock = computed(() => (bar.id ? messages.value.find((m) => m.id === bar.id) ?? null : null))
@@ -646,7 +618,6 @@ function handleFrame(frame: WsServerFrame) {
         if (r.emoji !== '👀') continue
         const by = r.authors.find((a) => a !== AUTHOR)
         if (by === undefined) continue
-        reachedAgent.value = true
         if (awaitingReply.value) noteWorker(by)
       }
       // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
@@ -740,9 +711,6 @@ function handleFrame(frame: WsServerFrame) {
       awaitingReply.value = true
       // 中途连进来的：这一轮里已经落下的记录说得出是谁在干。
       for (const m of messages.value) noteTurnBlock(m)
-      // 这个话题上有活在跑，就说明消息早到它手上了。回执是精确的那一路，这是
-      // 兜底的一路：重连进来、或者会话自己开的一轮，本来就不该说「正在送给」。
-      reachedAgent.value = true
       break
     case 'turn_started': {
       const next = new Set(activeTurnIds.value)
@@ -750,7 +718,6 @@ function handleFrame(frame: WsServerFrame) {
       activeTurnIds.value = next
       turnBegan(frame.turn_id)
       awaitingReply.value = true
-      reachedAgent.value = true
       break
     }
     case 'turn_finished': {
@@ -996,11 +963,10 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   errorMsg.value = null
   sentNow.add(enqueue({ content: trimmed, replyTo: replyTarget.value?.id ?? undefined, atts }))
   replyTarget.value = null
-  // Only show the "awaiting reply" indicator when 芝士 was summoned — an
-  // instant local ack, before anything has been delivered anywhere yet.
+  // Only a summon starts awaiting a reply — an instant local ack, before
+  // anything has been delivered anywhere yet.
   if (summon) {
     awaitingReply.value = true
-    reachedAgent.value = false
     // 点了哪位就是交给哪位；没点名的交给房间的座位。
     workingHandle.value = null
     for (const [, handle] of trimmed.matchAll(/<@([^>\s]+)>/g)) {
@@ -1699,13 +1665,10 @@ onBeforeUnmount(() => {
             />
           </TransitionGroup>
 
-          <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
-             from summon until every explicitly active turn finishes; the live
-             working-log checklist stays visible for the whole turn. -->
-          <!-- 进场上浮淡入；芝士的回复落地、这一轮结束时，它淡出，回复就在它原来的
-             位置上接着往下读。 -->
+          <!-- 这一轮的步骤清单（`todo_write`），只在一轮进行中显示。进场上浮淡入；这一轮
+             结束时淡出，回复就在它原来的位置上接着往下读。 -->
           <Transition name="tl-working" @leave="collapseLeave">
-            <div v-if="awaitingReply || liveTodo" class="im-row">
+            <div v-if="liveTodo" class="im-row">
               <div class="im-gutter">
                 <CheeseAvatar :size="28" :name="workingName" />
               </div>
@@ -1719,7 +1682,7 @@ onBeforeUnmount(() => {
                    总览: parked at the end of the conversation it sat under every new
                    message, pushing the talk up. 新的一项依次浮上来；状态变了图标原地
                    换、删除线淡进来。 -->
-                <TransitionGroup v-if="liveTodo" tag="ul" name="todo" class="todo-list">
+                <TransitionGroup tag="ul" name="todo" class="todo-list">
                   <li
                     v-for="(item, ti) in todoItems"
                     :key="item.id"
@@ -1733,27 +1696,6 @@ onBeforeUnmount(() => {
                     <span class="todo-text">{{ item.subject }}</span>
                   </li>
                 </TransitionGroup>
-
-                <!-- Instant ack before the first message / during cold start. 「正在交给」
-                   换成「正在处理」时交叉淡变，不跳。 -->
-                <div v-if="awaitingReply" class="im-text">
-                  <Transition name="tl-swap" mode="out-in">
-                    <span :key="reachedAgent ? 'working' : 'handing'" class="text-medium-emphasis">{{
-                      reachedAgent ? `${workingName}正在处理…` : `正在交给${workingName}…`
-                    }}</span>
-                  </Transition>
-                  <span class="caret" />
-                  <v-btn
-                    size="small"
-                    variant="text"
-                    class="im-stop"
-                    prepend-icon="mdi-stop"
-                    :title="t('work.room.stop.title', { name: workingName })"
-                    :loading="stopping"
-                    @click="stopRun"
-                    >{{ t('work.room.stop.action') }}</v-btn
-                  >
-                </div>
               </div>
             </div>
           </Transition>
@@ -1989,25 +1931,6 @@ onBeforeUnmount(() => {
   font-weight: 500;
   color: var(--muted);
 }
-.im-stop {
-  margin-left: 8px;
-  color: var(--muted);
-}
-
-.caret {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  vertical-align: text-bottom;
-  margin-left: 1px;
-  background: var(--ink);
-  animation: blink 1s step-end infinite;
-}
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
-}
 /* 骨架到货时淡出。离场时它脱离文档流，下面已经排好的真行不会被它推一下。 */
 .tl-content {
   position: relative;
@@ -2020,7 +1943,7 @@ onBeforeUnmount(() => {
 .tl-skel-leave-to {
   opacity: 0;
 }
-/* 「芝士正在处理」那一行：进来上浮淡入，这一轮结束时淡出。 */
+/* 步骤清单那一行：进来上浮淡入，这一轮结束时淡出。 */
 .tl-working-enter-active {
   transition:
     opacity var(--dur-base) var(--ease-out),
@@ -2038,16 +1961,6 @@ onBeforeUnmount(() => {
   transform: translateY(4px);
 }
 .tl-working-leave-to {
-  opacity: 0;
-}
-.tl-swap-enter-active {
-  transition: opacity var(--dur-base) var(--ease-out);
-}
-.tl-swap-leave-active {
-  transition: opacity var(--dur-quick) var(--ease-in);
-}
-.tl-swap-enter-from,
-.tl-swap-leave-to {
   opacity: 0;
 }
 /* 新消息提示：浮在时间线底部正中，从下面升上来。 */
@@ -2139,12 +2052,6 @@ onBeforeUnmount(() => {
   from,
   25% {
     background-color: var(--accent-wash);
-  }
-}
-/* 关掉动效时光标常亮：它说的「还在往下写」靠的是在不在，不是闪不闪。 */
-@media (prefers-reduced-motion: reduce) {
-  .caret {
-    animation: none;
   }
 }
 </style>
