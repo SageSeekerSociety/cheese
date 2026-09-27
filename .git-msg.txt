@@ -1,6 +1,0 @@
-fix(tasks): close the PDF preview route to non-members
-
-预览是发题的前半截, confirm 那条路逐条落进 _create_task_entity 时已经
-过 may_publish_in_space 那道门, 只有预览这条漏着. 判据与措辞照抄同一处.
-
-Co-Authored-By: Claude Code <noreply@anthropic.com>
