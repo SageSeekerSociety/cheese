@@ -1299,6 +1299,9 @@ class ChatService:
         # message only after the exact UserPromptSubmit receipt.
         self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
+        # 房间里此刻那个会话是哪位队友的（最近一次 AgentSessionInfo 说的）。会话
+        # 自己开一轮时没有人告诉我们它是谁的，就按这个认。
+        self._room_session_agents: dict[uuid.UUID, str] = {}
         # The notice each open turn is keeping current: a streak of retries, a
         # wait for its machine. One line per streak, restated as it moves on.
         self._retry_notes: dict[uuid.UUID, uuid.UUID] = {}
@@ -2451,7 +2454,10 @@ class ChatService:
                 agents = AgentInstanceService(session)
                 agent = await self._session_agent(agents, topic, project, agent_handle)
                 agent_pool = memory_pool(topic.project_id, agent)
-                acting_agent = await self._agent_handle(session, topic_id)
+                # 署这个会话所属队友的名，不是房间的默认队友：一间坐着几位队友
+                # 的房间里，别人的会话自己开的一轮署成默认那位，现场和「正在处
+                # 理」就会把干活的人认错。
+                acting_agent = await self._acting_handle(session, topic_id, agent)
                 row = (
                     await AgentTurnRepository(session).get(turn_id) if opened else None
                 )
@@ -2576,7 +2582,12 @@ class ChatService:
             # an interval a sweep can find, and the context its Stop needs to
             # close the books. Opened on OUTPUT rather than on the first hook of
             # any kind, because only output guarantees the Stop that closes it.
-            state = await self._begin_self_started_turn(project_id, topic_id, turn_id)
+            state = await self._begin_self_started_turn(
+                project_id,
+                topic_id,
+                turn_id,
+                agent_handle=self._room_session_agents.get(topic_id),
+            )
         # Whose work this is. Deliberately NOT asked of AgentResult: that event
         # is the turn ending, which is the session's business no matter what id
         # rode in on it — re-addressing it would close a turn somewhere else.
@@ -2600,6 +2611,8 @@ class ChatService:
             self._waiting_notes.pop(turn_id, None)
         if isinstance(event, AgentSessionInfo):
             self._note_room_session(topic_id, event.session_id)
+            if event.agent_handle:
+                self._room_session_agents[topic_id] = event.agent_handle
             await self._save_session_pointer(
                 topic_id,
                 event.session_id,
@@ -3911,6 +3924,11 @@ class ChatService:
             meta = {**meta, "eid": eid}
         if platform_unsolicited:
             meta = {**meta, "platform_unsolicited": True}
+        # 这一步是这一轮的执行者做的，署它的名。房间的默认队友只是没有这一轮账目
+        # 时的回落：几位队友同坐一间房时，拿默认那位署名会把现场整轮记到别人头上。
+        state = (
+            self._hook_work.get((topic_id, turn_id)) if turn_id is not None else None
+        )
         async with self._sessions() as session:
             blocks = BlockRepository(session)
             if eid and await blocks.has_eid(topic_id, eid):
@@ -3928,7 +3946,11 @@ class ChatService:
                 project_id=landed.project_id,
                 topic_id=landed.topic_id,
                 task_id=landed.task_id,
-                author=await self._agent_handle(session, topic_id),
+                author=(
+                    state.acting_agent
+                    if state is not None
+                    else await self._agent_handle(session, topic_id)
+                ),
                 author_type=author_type,
                 content=content,
                 kind=BlockKind.event,
