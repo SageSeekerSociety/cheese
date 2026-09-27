@@ -484,4 +484,13 @@ def periodic_jobs(
             settings.task_deadline_sweep_interval_s,
             lambda: sweep_expired_deadlines(sessions),
         ),
+        # 记忆整理（dream）：一个项目写得够多、也够久没整理过，就在这里跑一次
+        # （判据在 `domain/memory/dream.py`）。这条钟是整理唯一的入口——没有它，
+        # 整理这件事就是「写完了、部署了、从来没跑过」，而记忆是**所有人的**，坏
+        # 掉了没有第二个人会发现。
+        PeriodicRunner(
+            "memory dream",
+            settings.memory_dream_sweep_interval_s,
+            chat.sweep_memory_dreams,
+        ),
     ]

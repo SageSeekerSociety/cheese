@@ -729,7 +729,14 @@ class Runner(runner.Runner[Journal]):
                 (root / path).unlink(missing_ok=True)
         self._keep_refused(root, outcome.refused)
         _write_memory(root, MEMORY_BASELINE, json.dumps(outcome.baseline))
-        return {"files": outcome.files, "refused": outcome.refused}
+        # `held` 跟着回去：会话这一侧的兜底挡下的那些删除，平台那一侧看不见
+        # （`files` 里它们已经被放回去了）。整理那一轮要知道这件事——「这次删得
+        # 太多」是它必须说出来的一句话，而不是只在会话机的 stderr 里响一次。
+        return {
+            "files": outcome.files,
+            "refused": outcome.refused,
+            "held": list(outcome.held),
+        }
 
     @staticmethod
     def _keep_refused(root: Path, refused: dict[str, str]) -> None:

@@ -1,7 +1,7 @@
 ---
 title: 记忆
 kind: 流程
-summary: 芝士的记忆是会话目录里一棵文件树：L1 索引每轮注入、L2 文件自己读、L3 原料不进来。这份文档讲树怎么分层、两个作用域各是谁的、写入与对账在什么时刻发生、上限与超限行为，以及为什么从「条目池 + 关键词召回」换成这一套。
+summary: 芝士的记忆是会话目录里一棵文件树：L1 索引每轮注入、L2 文件自己读、L3 原料不进来。这份文档讲树怎么分层、两个作用域各是谁的、写入与对账在什么时刻发生、上限与超限行为、整理（dream）与旧表迁移怎么跑，以及为什么从「条目池 + 关键词召回」换成这一套。
 covers:
   - backend/app/domain/memory/files.py
   - backend/app/domain/memory/files_store.py
@@ -9,7 +9,14 @@ covers:
   - backend/app/domain/memory/session.py
   - backend/app/domain/memory/instructions.py
   - backend/app/domain/memory/models.py
+  - backend/app/domain/memory/dream.py
+  - backend/app/domain/memory/dream_prompt.py
+  - backend/app/domain/memory/migration.py
+  - backend/app/domain/memory/migration_service.py
+  - backend/app/domain/memory/reads.py
   - backend/app/api/routes/memory_files.py
+  - backend/app/api/routes/admin_memory.py
+  - backend/scripts/memory_migration.py
   - backend/app/domain/agent/chat.py
   - backend/app/domain/agent/harness/prompt.py
   - backend/app/domain/agent/harness/claude_code/runner.py
@@ -22,7 +29,7 @@ covers:
 
 这棵树在**会话机**上，在会话自己的家里（`~/.cheese/memory/`），不在执行机上：runner 在那里对账，而 agent 的文件工具（Read / Write / Edit）平时跑在执行机上，只有碰到这棵树的路径时留在会话机（`remote_execution/proxy.js` 的 `memoryPath`，守卫是 `client.py` 的 `own_memory`）。agent 按 `~/.cheese/memory/...` 写，或者按它 shell 里的 `$HOME`（那是执行机的家）拼出一个绝对路径，落到的都是这一棵。shell 看不到它，所以 `rm` 删不掉一条记忆：删一条就用 Write 把它写成空内容。runner 收树时把写空了的那条（索引除外，空索引就是一份空索引）当成会话删了，照样过批量删除那道闸，并把那个空文件从会话机上清掉（`runner.read_memory`）。
 
-> 讲：分层、两个作用域、写入与对账的时机、上限与权限。不讲：整理（dream）和旧表迁移，见后续。
+> 讲：分层、两个作用域、写入与对账的时机、上限与权限、整理（dream）、旧表迁移、正文读数。不讲：每个 `type` 该怎么写（那是 `instructions.py` 里那段散文）。
 
 ## 分层 {#layers}
 
@@ -113,6 +120,64 @@ L1 索引：**200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`），超
 
 同一个方向上的收尾：`cheese_recall` 命令撤了，`/projects/{id}/memory/search` 那条路由撤了，`memory/pools.py` 删了，关键词切分（`memory/keywords.py`）只剩一个调用方——写记忆之前拿最重的几个词去检出目录里查一遍（`memory/redundant.py`）。旧表 `memory_entries` 不 drop，界面上还在读它。
 
-## 整理与迁移 {#later}
+## 整理（dream） {#dream}
 
-记忆整理（dream）与旧表迁移，见后续。
+人不会记得去整理记忆，所以整理自己发生。**触发判据是这个项目最近花了多少**——记忆是会话的副产品，最近写得越多，它越可能已经乱到值得梳一遍。两个条件都满足才跑：
+
+| 条件 | 默认 | 在哪配 |
+|---|---|---|
+| 自上次整理以来累计的 `resource_usage.output_tokens` | 2,000,000 | `project.settings["memory_dream"]["threshold_output_tokens"]` |
+| 距上次整理至少 | 4 小时 | `project.settings["memory_dream"]["min_interval_hours"]` |
+
+两个数写进项目设置而不是散在代码里，因为它们量的是**这个项目**的节奏：一个一天到晚在跑的代码项目和一个一周动两次的文档项目，同一个数没有意义。
+
+- **不算 dream 自己花的。** 聚合按前缀剔掉 `kind = memory_dream` 的用量（`DREAM_KIND`）。网关的用量是延迟落库的，一条晚到的、时间戳落在新窗口里的 dream 用量只有 kind 认得出来；`last_dream_at` 在收尾时推进到整理结束的那一刻，两件事分开做。
+- **按项目一把锁。** 锁是 `memory_dream_states.claimed_at` 上的一次比较并交换（`dream.claim`），抢不到就跳过这一次，不排队——下一次巡检很快就到，排队只会让一个项目的整理堆成队列。
+- **跑在已有的巡检上**，不新开调度器：`PeriodicRunner` 里那条 `sweep_memory_dreams`（每 `settings.memory_dream_sweep_interval_s`，默认 600 秒）挨个项目问一句该不该，**串行**跑（一次整理是一轮真会话，可能几分钟）。
+- **这一轮删得太多就先当它没删。** 一次整理删掉某个作用域一半以上、且超过 3 条，判为「这不像是整理，更像是那棵树出了事」：整轮作废、平台上一条都不少（`dream.removal_refused`，数值和会话侧那次对账共用一份 `tree.BULK_DELETE_*`）。批量删除是个信号，不是一步操作。
+- **拒绝也记一次账。** 拒绝执行的那次照样推进 `last_dream_at`：不推进的话下一次巡检立刻再跑一遍，一个坏掉的树会把 token 烧在一遍遍重复的拒绝上。拒绝本身记在 `memory_dream_runs`（`status=refused`），给人看。
+
+**怎么跑。** 派法和巡检一样（`platform_work` + `run_turn`）：跑在这个项目**默认芝士**的会话上，用它自己的模型。读进来的是 team 和每个人的 private 的 L1 索引加 L2 正文、有新增对话的房间的记录与活文档、是代码项目的话还有仓库和 `CLAUDE.md`。工具只有只读的那些，加一只能在记忆目录里写和删的手。提示词照搬 Claude Code 2.1.283 的 dream 段（`strings` 从二进制里取出来，见 `dream_prompt.py`），翻成中文、按芝士的量纲改过：四段（Orient / Gather / Consolidate / Prune-and-index）、团队记忆那一段、以及「拿记忆和 `CLAUDE.md` 对一遍」都在。**两条规矩一字不改**：private 的内容永远不许升级进 team；和 `CLAUDE.md` 冲突时只做标注，不改 `CLAUDE.md`。
+
+**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、房间事件都一样）。收尾时在**总览房间**发一条折叠事件，列出改动的文件和 diff，**不点任何人的名**，然后把判据那个计数器归零。
+
+## 旧表迁移（`memory_entries` → 文件树） {#migration}
+
+换文件式记忆之前，记忆是 `memory_entries` 里一条条独立的句子，按 `<项目>:<agent>` 和 `<项目>:<agent>:<人>` 分池。这次迁移把它们搬进上面那棵树。**这是一次性的，而且只搬一次**：搬完新树就是我们读的那一份。
+
+**来源三处，一条都不许漏：**
+
+1. `memory_entries` 里 `scope = agent_project` 的活条目（那个 agent 在项目里学到的）；
+2. 同一张表里 `scope = user` 的池（某个 agent 关于某个人的认识）；
+3. 项目总览文档里的「大家都该知道的」和「项目记忆（由记忆整理迁入）」两节。
+
+**去处五选一，每条都有：** `team`（新建一条全项目共读的）、`private/<handle>`（新建一条只属于某人的）、`merge`（并进一条已经存在的记忆）、`suggest`（只建议写进 `CLAUDE.md` / `SKILL.md`，**一个字都不自动改**）、`discard`（不值得变成记忆，但理由要写出来）。去处由模型判（它读得到正文，这是「进 team 还是进某个人的 private」唯一的判据），判完的结论和报告一起**存下来**——人复核的是那一份，落笔时重放它，不问第二次模型。
+
+**先报告，人点头，才写。** 三步，中间那步是人：
+
+| 动作 | 命令 | 做了什么 |
+|---|---|---|
+| `dry-run` | `uv run python -m scripts.memory_migration --project <项目名或 id>` | 读旧记忆、问模型、存一份计划，**新树一个字都不写**；报告发进项目总览房间 |
+| `approve` | 同一个脚本 `--plan <id> --approve` | 复核人（`settings.memory_migration_reviewer`，一个人）点头 |
+| `apply` | 同一个脚本 `--plan <id> --apply` | 按那份计划写进 `memory_files`，一次事务，一条冲突就整次不写 |
+
+接口是同一个东西的另一条路（`/admin/memory/migration/...`，门是 `PlatformAdminDep`），留着是为了复核和落笔能在一个页面上点；`dry-run` 要读整个项目的旧记忆再问一遍模型，几分钟起步，走脚本比走 HTTP 合适。
+
+报告上的每一条是「哪一条旧记忆 → 去哪儿 + 一句话理由」，加上要写的新文件的正文预览。两条硬规矩在 `migration._check` 里，不成立时**整份计划不成立**、不是跳过那一条：
+
+- 从「关于某个人」的池子来的条目，去处不能是 `team`（private 的内容不许升级成全项目的规矩）；
+- `user` 这个 `type` 只出现在 private 里。
+
+落笔前还会核一次旧记忆的指纹（`sources_digest`）：复核那几分钟里旧表被谁改过，这份报告描述的就已经不是现在的旧表了，重跑 `dry-run`。`MemoryFileStore.write` 那一关管另一半——复核之后有人改过那棵树，写下去就是覆盖他的改动，那里 409，整次都不写。
+
+**旧表在这条路上是只读的**：搬完不删、不改、不标记，`apply` 对它只有一次 `SELECT`。删表是另一个迁移，等搬完看一阵（30 天）再做。已经搬过的 `source_id` 记在计划里，第二次 `dry-run` 不会再搬一遍。
+
+这次迁移的另一个目标是 **team 的 L1 索引回到 ≤ 120 行**（`migration.TEAM_INDEX_GOAL_LINES`）。那是**目标不是闸**：超了照样出报告，但报告上会红着写出来——压不回去这件事得让人看见。上限本身是 200 行（`INDEX_MAX_LINES`），那是「读不读得到」的线。
+
+## 正文到底被读过几次 {#reads}
+
+索引每轮注入，正文要 agent 自己去读一个文件——这整套机制成立的前提就是**它会去读**。所以有一个数：`Read` 打到 `.cheese/memory/` 下的、不是 `MEMORY.md` 的那些调用，**按项目、按天**（`domain/memory/reads.py`）。
+
+数的是事件块（`blocks.kind = 'event'`，`meta.tool` / `meta.detail`），所以没有新表、没有新迁移，历史是免费的。判据用 `meta.detail`（**未剪裁**的参数原文）而不是 `meta.arg`：后者是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录不准。天按 **UTC** 切（`platform_stats.windows.utc_day`）——单参数的 `date_trunc('day', timestamptz)` 按会话时区切天，而部署的会话时区不一定是 UTC（本机是 `Asia/Shanghai`），那会把每天的边界挪几小时，还会让返回的日期和实际分桶的那条边界差一天。
+
+查：`GET /admin/memory/reads?days=7&project_id=…`（默认七天）。它回答的是「有没有人翻开」，不是「有没有用上」——读了没读懂照样 +1，要回答后者得看别的东西。试点要回答的问题是「一周下来是不是接近 0」；真是 0 的话，下一步是让索引行本身更有信息量，或者把最常要用的几条正文也放进注入预算，不是回去做关键词召回。
