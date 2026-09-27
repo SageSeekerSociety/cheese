@@ -90,7 +90,10 @@ jobs:
               maxUsedSpace = "3GB"
               minFreeSpace = "10GB"
       - name: Build private execution image
-        run: docker buildx build --builder "$PRIVATE_BUILDER" --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.282 .
+        run: >-
+          docker buildx build --builder "$PRIVATE_BUILDER" --load
+          --label cheese.ci.private-executor=true
+          -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.282 .
       - name: Keep the private image available during tests
         id: private-image
         # Cached images retain their creation date. A running container keeps
@@ -141,6 +144,16 @@ jobs:
       - name: Release the private image
         if: ${{ always() && steps.private-image.outcome == 'success' }}
         run: docker rm --force cheese-private-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      # Every run loads a fresh build under the same tag, which leaves the
+      # previous one untagged, and nothing else removes it: on 2026-09-27 sixty
+      # of them held about 4 GB on one box and kept it under the disk guard's
+      # floor. Only untagged images with this label go: a job reaches its image
+      # by tag, so an untagged one is out of every job's reach, and prune skips
+      # any a container still holds. The next run loads from the slot's builder
+      # cache, not from these images.
+      - name: Remove superseded private images
+        if: ${{ always() }}
+        run: docker image prune --force --filter label=cheese.ci.private-executor=true
       - name: Produce private-chat CLEAN evidence
         id: private_evidence
         if: ${{ !cancelled() }}
