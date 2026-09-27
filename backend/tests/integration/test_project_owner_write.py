@@ -91,6 +91,25 @@ def _shared_team_project(client, *, owner: str = "alice", name: str = "P") -> di
     return resp.json()["data"]
 
 
+def _root_topic(client, project_id: str, *, actor: str = "alice") -> dict:
+    """The project's 项目总览 room — the one the owner is seeded into."""
+    r = client.get(
+        f"/topics?project_id={project_id}", headers=session_auth_headers(actor)
+    )
+    assert r.status_code == 200, r.text
+    root = next(
+        (row for row in r.json()["data"]["data"] if row.get("kind") == "root"), None
+    )
+    assert root is not None, r.text
+    return root
+
+
+def _room_roster(client, topic_id: str, *, actor: str) -> list[dict]:
+    r = client.get(f"/topics/{topic_id}/members", headers=session_auth_headers(actor))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
 def _add_member(client, project_id: str, handle: str, *, admin: bool = False) -> None:
     """``handle`` joins the project's team; ``admin`` makes them a team admin."""
     join_project_team(client, project_id, handle, admin=admin)
@@ -175,6 +194,101 @@ def test_the_transferor_is_out_for_good(client):
         f"/topics?project_id={p['id']}", headers=session_auth_headers("alice")
     )
     assert listed.status_code in (403, 404), listed.text
+
+
+def test_the_transferor_loses_the_projects_rooms_too(client):
+    """项目那一层的门关上不算数。
+
+    A project's membership admits you to every one of its topics, but a ROOM
+    keeps its own roster and `authorize_topic_access` reads the roster before it
+    ever asks about the project. Creating the project seeded the owner as the
+    root topic's own `owner` row, so a transfer that only swaps
+    `owner_handle` leaves the giver in every room: still delivered 项目总览's
+    messages, still speaking in it, still managing its roster. That is the
+    difference between 转让 and 借, so the transfer hands the seats over.
+
+    Both directions are asserted — the same calls must have worked BEFORE the
+    transfer, or the 403 afterwards proves only that the room was shut to
+    everyone.
+    """
+    p = _project(client, owner="alice")
+    _register(client, "carol")
+    root = _root_topic(client, p["id"])
+    before = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert before.status_code == 200, before.text
+    assert _room_roster(client, root["id"], actor="alice")
+
+    assert _set_owner(client, p["id"], "carol", actor="alice").status_code == 200
+
+    after = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert after.status_code in (403, 404), after.text
+    people = client.get(
+        f"/topics/{root['id']}/members", headers=session_auth_headers("alice")
+    )
+    assert people.status_code in (403, 404), people.text
+
+
+def test_the_recipient_takes_the_rooms_over(client):
+    """接手人接手的是同一把椅子，不是被塞进来当个普通成员。
+
+    So they end up the root topic's OWNER, which is the only role that manages
+    it — the roster read alone would not show that, so the room is also managed
+    from their account afterwards (seat someone into 项目总览).
+    """
+    p = _project(client, owner="alice")
+    _register(client, "carol")
+    root = _root_topic(client, p["id"])
+    # Before the transfer she cannot even reach the room, let alone manage it.
+    early = client.post(
+        f"/topics/{root['id']}/members",
+        json={"handle": "carol", "role": "member"},
+        headers=session_auth_headers("carol"),
+    )
+    assert early.status_code == 403, early.text
+
+    assert _set_owner(client, p["id"], "carol", actor="alice").status_code == 200
+
+    rows = _room_roster(client, root["id"], actor="carol")
+    carol = next(row for row in rows if row["member_handle"] == "carol")
+    assert carol["role"] == "owner"
+    # Managing the room: only its owner/admin may seat anyone, and only
+    # someone the project has may be seated — so the person comes into the
+    # project first, through the new owner.
+    add_external_member(client, p["id"], "dana", by="carol")
+    seated = client.post(
+        f"/topics/{root['id']}/members",
+        json={"handle": "dana", "role": "member"},
+        headers=session_auth_headers("carol"),
+    )
+    assert seated.status_code == 200, seated.text
+
+
+def test_a_team_member_keeps_the_projects_rooms(client):
+    """The other branch must not be swept up by this.
+
+    When the recipient is already on the project's team the giver stays in the
+    project — by way of that team — so their room seats are not leftovers to be
+    cleaned up. Revoking them there would evict someone who is still a member,
+    which is why the handover is called on the personal-project branch only.
+    """
+    p = _shared_team_project(client)
+    _add_member(client, p["id"], "bob")
+    root = _root_topic(client, p["id"])
+    held = next(
+        row
+        for row in _room_roster(client, root["id"], actor="alice")
+        if row["member_handle"] == "alice"
+    )
+    assert held["role"] == "owner"
+
+    r = _set_owner(client, p["id"], "bob", actor="alice")
+
+    assert r.status_code == 200, r.text
+    still = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert still.status_code == 200, still.text
+    rows = _room_roster(client, root["id"], actor="alice")
+    alice = next(row for row in rows if row["member_handle"] == "alice")
+    assert alice["role"] == "owner"
 
 
 def test_an_unknown_recipient_is_refused_by_name(client):

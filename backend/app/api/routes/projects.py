@@ -1633,7 +1633,14 @@ async def set_project_owner(
       it for good. Without the move it would not be a transfer at all: the
       project would sit in the transferor's team, where ``may_read_project``
       still reads it for them and ``MemberService.manages`` — team owner — is
-      still true, so the same route could take the owner right back.
+      still true, so the same route could take the owner right back. On this
+      branch only, their ROOM seats go with the project too
+      (:meth:`TopicMemberService.hand_over_project_seats`): a project's
+      membership admits you to its topics, but each room keeps its own roster
+      and ``authorize_topic_access`` reads that first — so without the handover
+      the giver keeps receiving and speaking in 项目总览, which is 借 again,
+      one floor down. On the branch above the giver stays in the project on
+      purpose and their seats are left alone.
     * **Off it, otherwise** — refused: the project is some team's, and the only
       people who may own it are that team's.
 
@@ -1667,6 +1674,26 @@ async def set_project_owner(
     previous = project.owner_handle
     project.owner_handle = handle
     await db.flush()
+    if team_changed_from is not None and previous is not None:
+        # The move is not finished by swapping the field: the transferor still
+        # holds the topic seats they were seeded with (as the owner, the root
+        # topic's own `owner` row), and `authorize_topic_access` reads a room's
+        # roster BEFORE it asks whether you are a project member — so the seats
+        # keep every room open to them after the project's own door has shut.
+        # Handing those seats to the recipient first is what makes 「转完你就真
+        # 的出去了」 true rather than aspirational. Only on this branch: on the
+        # project's own team the giver stays a member on purpose.
+        moved = await TopicMemberService(db).hand_over_project_seats(
+            project_id=project_id, from_handle=previous, to_handle=handle
+        )
+        logger.info(
+            "project seats handed over project=%s from=%s to=%s rooms=%s by=%s",
+            project_id,
+            previous,
+            handle,
+            len(moved),
+            steward,
+        )
     # Ownership moves are rare, consequential, and (per #315) previously
     # impossible — worth a permanent record of who moved it and from what.
     logger.info(

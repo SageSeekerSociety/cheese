@@ -510,6 +510,53 @@ class TopicMemberService:
             raise ValidationError("不能移除最后一个 owner")
         await self._repo.delete(member)
 
+    async def hand_over_project_seats(
+        self, *, project_id: uuid.UUID, from_handle: str, to_handle: str
+    ) -> list[uuid.UUID]:
+        """把转让人在这个项目的每一间房里坐的椅子交给接手人，再撤掉他自己。
+
+        只有**转让一个属于转让人自己的项目**时才该走这里（``set_project_owner``
+        的第三档：项目搬进接手人的个人团队）。第二档不动：接手人本来就是团队成员，
+        转让人自己也还在项目里，他的席位不是遗留物，动它就是把人从自己的项目里踢出
+        去。
+
+        为什么非有这一步：项目成员身份是进得来这个项目全部话题的凭据，但**房间**还
+        有它自己的一本名册，而 ``authorize_topic_access`` 先认名册、后认项目成员。
+        建项目时 ``seed_root`` 把所有者种成了根话题的 owner，所以只换
+        ``owner_handle`` 的话，转让人照旧是每间房的在册成员：项目那一层的门关上了，
+        房间那一层还开着——他照样收得到「项目总览」的消息，照样发得了言，也照样管得
+        了那间房的成员。那不是转让，是把名字换了（2026-09-27，项目跟着人走这件事的
+        另一半）。
+
+        先坐后撤，次序就是这一步的全部要点。``revoke_project_seats`` 在「他是这间房
+        最后一个 owner」时会拒绝——无主房间在产品里是死路——而转让人在根话题上正是
+        最后一个 owner。先把继任者按**他原来的角色**坐进去，那条例外就不再适用：不是
+        把例外放宽，是让它不再成立。反过来说，不在这里放行、不留 ``force=True``、不
+        静默跳过：继任之后还有哪间房撤不掉，那是 bug，该炸就炸（``revoke_project_seats``
+        的 ``ValidationError`` 会把整笔转让一起回滚）。
+
+        角色照抄（owner 还是 owner，member 还是 member）：接手人接手的是同一把椅子，
+        不是被塞进来当个普通成员。他本来就在那间房时 ``_ensure_member`` 是空操作——
+        不动他现有的角色。这一点有个后果值得知道：接手人在根话题上已经是普通成员的
+        话，坐进去不会把他升成 owner，于是转让人仍是最后一个 owner，转让被拒并点名
+        是哪间房。要一个更聪明的结果就得替他改角色，而「按名册原样接手」不是那样的
+        一句话。
+
+        私聊不碰：同 ``revoke_project_seats``，私聊不是项目发的通行证
+        （``TopicRepository.list_for_project`` 本来就不含它）。
+        """
+        topics = await self._topics.list_for_project(project_id)
+        if not topics:
+            return []
+        roles = await self._repo.roles_for_member([t.id for t in topics], from_handle)
+        if not roles:
+            return []
+        for topic_id, role in roles.items():
+            await self._ensure_member(topic_id, to_handle, role=role)
+        return await self.revoke_project_seats(
+            project_id=project_id, member_handle=from_handle
+        )
+
     async def revoke_project_seats(
         self, *, project_id: uuid.UUID, member_handle: str
     ) -> list[uuid.UUID]:
