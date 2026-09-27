@@ -149,7 +149,6 @@ from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import binding
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.room_task.repositories import TaskRepository
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic import naming
@@ -4726,8 +4725,10 @@ class ChatService:
             # 名册上的名字才是 @ 得到的名字；查不到就照 handle 写，那是真的。
             return f"@{name_of.get(handle, handle)}" if handle else None
 
+        from app.domain.room_task.services import TaskService
+
         latest_card: dict[uuid.UUID, Task] = {}
-        for card in await TaskRepository(session).list_for_project(project.id):
+        for card in await TaskService(session).list_in_project(project.id):
             # Oldest first: the newest card in each room wins.
             latest_card[card.room_id] = card
 
