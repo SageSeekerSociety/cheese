@@ -1,10 +1,10 @@
 <template>
   <!--
-    我的课程（学生）。他一进这门课要看到两件事：**这一周要做什么**，和**我这门课
-    做到哪了**。没有题目、没有报名、没有算力 —— 那些词在学生这一侧不存在。
+    我的课程（成员）。他一进这门课要看到两件事：**这一周要做什么**，和**我这门课
+    做到哪了**。没有题目、没有报名、没有算力 —— 那些词在成员这一侧不存在。
 
-    「这一周」来自老师发布过的教学单元（接口只给发布过的），作业那一格指回那道题
-    本来的提交入口 —— 提交与评审还是现成的那一套，学生这一侧不出现「题」这个字。
+    「这一周」来自管理员发布过的教学单元（接口只给发布过的），作业那一格指回那道题
+    本来的提交入口 —— 提交与评审还是现成的那一套，成员这一侧不出现「题」这个字。
   -->
   <v-sheet flat rounded="lg" class="pa-4">
     <h1 class="text-h6 mb-3">{{ t('spaces.course.myCourse.title') }}</h1>
@@ -108,9 +108,9 @@ const participations = ref<SpaceMyParticipation[]>([])
 const units = ref<TeachingUnit[]>([])
 const loadingWeek = ref(true)
 
-// 「这一周」= 已发布里周次最大的那个。接口只把发布过的给学生（未发布的他根本查不
+// 「这一周」= 已发布里周次最大的那个。接口只把发布过的给成员（未发布的他根本查不
 // 到），所以这里不用再判一次发布状态；按 week 取最大而不是按 publishedAt —— 课程的
-// 次序是周次，发布先后只是老师什么时候按的按钮。
+// 次序是周次，发布先后只是管理员什么时候按的按钮。
 const currentUnit = computed<TeachingUnit | null>(() => {
   if (!units.value.length) return null
   return units.value.reduce((latest, unit) => (unit.week > latest.week ? unit : latest))
@@ -151,7 +151,7 @@ onMounted(async () => {
     participations.value = []
   }
   try {
-    // 这里拿到的只有老师发布过的单元 —— 接口那一侧就只给发布过的。
+    // 这里拿到的只有管理员发布过的单元 —— 接口那一侧就只给发布过的。
     const { data } = await SpacesApi.listUnits(id)
     units.value = data.units
   } catch {

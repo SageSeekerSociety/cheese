@@ -34,14 +34,14 @@ const props = defineProps<{
   point: SpaceLearningStuckPoint
 }>()
 
-// 勾中一个卡点就把它的那条示例发言带进提纲 —— 老师勾的是「这个知识点要讲」，
+// 勾中一个卡点就把它的那条示例发言带进提纲 —— 管理员勾的是「这个知识点要讲」，
 // 而能带走的东西只有后端给的那一条例子。
 const checked = defineModel<boolean>('checked', { default: false })
 
 const label = computed(() => knowledgePointLabel(props.point.knowledgePoint))
 
 const counts = computed(
-  () => `${props.point.studentCount} 个学生 · ${props.point.projectCount} 个项目 · ${props.point.questionCount} 条发言`
+  () => `${props.point.studentCount} 个成员 · ${props.point.projectCount} 个项目 · ${props.point.questionCount} 条发言`
 )
 </script>
 

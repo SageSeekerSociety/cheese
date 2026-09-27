@@ -1,6 +1,6 @@
 <template>
   <!--
-    `course/assignments` 一条路由两种人看：老师看收作业的队列（作业与验收），学生
+    `course/assignments` 一条路由两种人看：管理员看收作业的队列（作业与验收），成员
     看每一周要做什么（本周任务）。和 CourseHome 一样按 `space.admins` 分叉，不按
     地址 —— 侧栏里两边指的是同一格，只是叫法不同。
   -->

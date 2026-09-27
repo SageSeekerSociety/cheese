@@ -69,7 +69,7 @@ async def test_merely_sharing_a_word_is_not_the_same_fact():
     """只共用一个词不算。这个阈值比 `cheese_recall` 严是有代价的一边倒：拒错了，
     那条事实就没被记下来，而记忆不可再生（结论 61）。"""
     hit = await already_in_repo(
-        "王老师周三下午不看消息，有事提前一天问",
+        "王管理员周三下午不看消息，有事提前一天问",
         _checkout(
             {"path": "README.md", "line": 3, "text": "周三 的 CI 跑得比较慢"},
         ),
@@ -140,7 +140,7 @@ def test_the_line_stating_the_fact_survives_a_repo_full_of_one_keyword(tmp_path)
 def test_a_checkout_that_does_not_carry_the_fact_says_so(tmp_path):
     checkout = _a_checkout(tmp_path / "web", {"README.md": "CI 在 Actions 上跑\n"})
 
-    found = _executor(checkout).repo_search({"terms": ["王老师", "周三下午"]})
+    found = _executor(checkout).repo_search({"terms": ["王管理员", "周三下午"]})
 
     assert found == {"searched": True, "hits": []}
 

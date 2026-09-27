@@ -82,8 +82,10 @@ afterEach(cleanup)
 const routes = [
   { path: '/work', name: 'HomeWork', component: MyWork },
   { path: '/spaces', name: 'HomeSpaces', component: { template: '<div>空间列表</div>' } },
-  // 名字照真路由：`spaceEntryRoute` 按名字解析，不是课就落在这条上。
-  { path: '/spaces/:spaceId', name: 'SpacesDetail', component: { template: '<div>空间</div>' } },
+  // 名字照真路由：`spaceEntryRoute` 按名字解析，不是课就落在题目板这条上，是课走
+  // 下面那条（课自己那几屏，课程首页）。
+  { path: '/spaces/:spaceId/board', name: 'SpaceBoardHome', component: { template: '<div>题目板</div>' } },
+  { path: '/spaces/:spaceId/course', name: 'SpacesCourseHome', component: { template: '<div>课程</div>' } },
   {
     path: '/projects/:projectId',
     name: 'workspace-project',
@@ -245,7 +247,7 @@ describe('我的工作页', () => {
     await waitFor(() =>
       expect(
         Array.from(view.container.querySelectorAll('.my-work__chips a')).map((el) => el.getAttribute('href'))
-      ).toContain('/spaces/7')
+      ).toContain('/spaces/7/board')
     )
     // 空间列表降级成这一块之后，`/spaces` 这个地址仍然到得了。
     expect((await findText(view, '全部空间')).closest('a')?.getAttribute('href')).toBe('/spaces')

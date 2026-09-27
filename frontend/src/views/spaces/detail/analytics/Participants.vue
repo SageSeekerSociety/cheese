@@ -83,9 +83,9 @@
       </v-col>
       <v-col cols="12" md="6" lg="3">
         <AnalyticsMetricCard
-          label="实名学生数"
+          label="实名成员数"
           :value="formatCount(participants.studentMetrics.studentsWithRealNameCount)"
-          description="已实名的真实学生"
+          description="已实名的真实成员"
           icon="mdi-card-account-details-outline"
           tone="info"
         />

@@ -29,7 +29,7 @@ const names = useAnalyticsRouteNames()
 const tabs = [
   { name: names.overview, label: '总览', icon: 'mdi-view-dashboard-outline' },
   { name: names.alerts, label: '告警', icon: 'mdi-bell-alert-outline' },
-  { name: names.publishers, label: '老师', icon: 'mdi-account-tie-outline' },
+  { name: names.publishers, label: '出题人', icon: 'mdi-account-tie-outline' },
   { name: names.tasks, label: '题目', icon: 'mdi-clipboard-text-outline' },
   { name: names.participants, label: '参与者', icon: 'mdi-account-group-outline' },
   { name: names.learning, label: '学习', icon: 'mdi-school-outline' },

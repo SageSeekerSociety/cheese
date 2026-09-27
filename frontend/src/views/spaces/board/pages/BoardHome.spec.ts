@@ -1,4 +1,4 @@
-// 空间首页接真数据这条路上最容易错的四件事，各钉一条：
+// 空间首页接真数据这条路上最容易错的五件事，各钉一条：
 //
 // 1. **列表只放已上板的题**。`GET /tasks` 那条列表里待审的题也在（对管理员）；
 //    首页要是把它们和上板的混在一起，等于把「审核」这一步在界面上抹掉了。
@@ -6,7 +6,9 @@
 //    不含待审题）。这两点分开钉：普通成员看不到那一块，管理员看得到。
 // 3. 角色是**空间装完之后**才算出来的 —— 所以「管理员的首页」这条用例里，
 //    `loadBoard` 必须先跑完；顺序错了那块提示就不出现。
-// 4. **公告横幅挂的是置顶那条，不是最新那条**，一条公告都没有时整块不出现。
+// 4. **「出题目」那颗按钮不按角色显隐**（#1783 之后发题是成员的能力）—— 它只该
+//    因为「你是不是这块板的人」而不出现，而那件事轮不到首页判。
+// 5. **公告横幅挂的是置顶那条，不是最新那条**，一条公告都没有时整块不出现。
 //    这一条和公告页共用一个排序判据，所以它同时也在钉「两处不会各排各的」。
 import type { Component } from 'vue'
 
@@ -170,6 +172,18 @@ describe('空间首页', () => {
     await waitFor(() => expect(document.body.textContent).toContain('在等你审'))
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ approved: 'NONE' }))
   })
+
+  it('普通成员也看得到「出题目」，落点是新外壳那一页', async () => {
+    signIn('someone-else')
+    await mount()
+    await waitFor(() => expect(document.body.textContent).toContain('数据结构空间'))
+    const publish = Array.from(document.querySelectorAll('a')).find((a) => a.textContent?.includes('出题目'))
+    expect(publish).toBeTruthy()
+    // 老树与新外壳各有一个发题页，路由名不同、落点差一整棵路由 —— 指错了就把人
+    // 送回老侧栏，而这一批要的正是「进来就是新界面」。
+    expect(publish?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/board/publish`)
+  })
+
   it('横幅挂的是置顶那条，不是最新那条', async () => {
     signIn('someone-else')
     // 置顶的那条是**最老**的：要是横幅挑的是「最新的」，这条用例就会红 ——

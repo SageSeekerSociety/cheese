@@ -2,7 +2,7 @@
   <div class="analytics-section">
     <div class="section-toolbar">
       <div>
-        <h2 class="section-toolbar__title">老师分析</h2>
+        <h2 class="section-toolbar__title">出题人分析</h2>
       </div>
 
       <div class="section-toolbar__actions">
@@ -26,7 +26,7 @@
           variant="outlined"
           class="sort-field"
         />
-        <AnalyticsExportButton section="publishers" :space-id="spaceId" :filters="filters" label="导出老师视图" />
+        <AnalyticsExportButton section="publishers" :space-id="spaceId" :filters="filters" label="导出出题人视图" />
       </div>
     </div>
 
@@ -97,7 +97,7 @@ const load = async () => {
     publishers.value = data.publishers
   } catch (error) {
     console.error('load analytics publishers failed', error)
-    toast.error('加载老师分析失败')
+    toast.error('加载出题人分析失败')
   } finally {
     loading.value = false
   }
@@ -112,7 +112,7 @@ watch(
 )
 
 const headers = [
-  { title: '老师', key: 'publisherName', value: 'publisherName' },
+  { title: '出题人', key: 'publisherName', value: 'publisherName' },
   { title: '题目数', key: 'taskCount', value: 'taskCount', align: 'center' as const },
   { title: '报名主体', key: 'participantCount', value: 'participantCount', align: 'center' as const },
   {
@@ -154,7 +154,7 @@ const rankings = computed(() => {
 
   return [
     {
-      title: '最活跃老师',
+      title: '最活跃出题人',
       name: byTask?.publisherName || '-',
       meta: `${formatCount(byTask?.taskCount)} 个题目`,
     },

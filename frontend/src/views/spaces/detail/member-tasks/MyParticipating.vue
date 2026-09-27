@@ -28,7 +28,7 @@
             tone="warning"
             label="待审核"
             :value="formatCount(overview?.pendingApprovalCount)"
-            helper="报名还在等待老师或管理员确认"
+            helper="报名还在等待管理员或管理员确认"
           />
         </v-col>
         <v-col cols="12" sm="6" xl="3">
@@ -46,7 +46,7 @@
             tone="info"
             label="待评审"
             :value="formatCount(overview?.pendingReviewCount)"
-            helper="作品已经提交，等待老师给出评审结果"
+            helper="作品已经提交，等待管理员给出评审结果"
           />
         </v-col>
         <v-col cols="12" sm="6" xl="3">

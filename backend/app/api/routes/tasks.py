@@ -911,7 +911,7 @@ async def _ensure_task_visible_for_ordinary_user(
     task: Task,
     auth_user: AuthUserInfo,
 ) -> None:
-    # 出题者与本版管理员不受 visibleTaskLimit 限制 —— 这道闸是给领取者看的。
+    # 出题者或本版管理员不受 visibleTaskLimit 限制 —— 这道闸是给成员看的。
     if await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         return
     space_repo = SpaceRepository(session=db)
@@ -1118,16 +1118,16 @@ async def _create_task_entity(
     if space is None or space.review_status != "APPROVED":
         raise BadRequestError("Space must be approved before creating tasks")
 
-    # 发题的门：**这个板里的任何人都能发**（判据在 ``app.auth.space_access``，
-    # 和评审、导出参与者问的是同一处）。发出来的题一律 approved=2（待审，仓库里
-    # 写死），上板要过 ``PATCH /tasks/{id}`` 那道只对所有者与管理员开的门 ——
-    # 权限不在「谁能发」上收，而在「谁能批」上。放在这里而不是两个路由各写一遍，
-    # 是因为 ``POST /tasks`` 与 PDF 批量发布（``publish/from-pdf/confirm``）都从
-    # 这里走，漏掉任一条就等于少了一道门。
+    # 发题的门是「本板的成员」，判据在 ``app.auth.space_access.may_publish_in_space``
+    # —— 更早它是管理员专属（收权：那时的 ``POST /tasks`` 几乎不校验，任何登录用户
+    # 拿着 space id 就能发），#1783 之后放开成任何人：发题是成员的能力，上不上板才是
+    # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里而不是两个
+    # 路由各写一遍，是因为 ``POST /tasks`` 与 PDF 批量发布
+    # （``publish/from-pdf/confirm``）都从这里走，漏掉任一条就等于少了半道门。
     if not await may_publish_in_space(
         session=db, space_id=space_id, user_id=creator_user_id
     ):
-        raise ForbiddenError("Only a board manager can publish tasks here")
+        raise ForbiddenError("Only a member of this board can publish tasks here")
 
     # 确认 space 存在并获取有效的 category id（传入或默认）
     effective_category_id = await _validate_and_get_category_id(
@@ -1193,7 +1193,7 @@ async def _create_task_entity(
         await db.flush()
 
     # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
-    # 题目的提交页就一个输入项都没有，学生无处上传 —— 和 PATCH 写的是同一张表。
+    # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
     if submission_schema:
         await TaskSubmissionSchemaRepository(session=db).replace_schema(
             task.id, submission_schema
@@ -1610,8 +1610,8 @@ async def create_task_participant(
     if task is None:
         raise NotFoundError("Task not found")
 
-    # 出题者与本版管理员可以替别人报名，也可以把没审过的题先加进课程，不必等它
-    # approved —— 这两条都是「出题人或管理员对这道题能做的事」，和评审同一个判据。
+    # 出题者或本版管理员可以替成员报名，也可以把没审过的题先加进课程，
+    # 不必等它 approved —— 这两条都是「管理员对这道题能做的事」，和评审同一个判据。
     is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
     if member != auth_user.user_id and not is_teacher:
         raise ForbiddenError("Only task owner can add other participants")
@@ -2093,8 +2093,8 @@ async def patch_task(
 
     from app.domain.space.repositories import SpaceAdminRelationRepository
 
-    # is_space_admin 仍单独保留：下面「审批/驳回」只认管理员与所有者，不是「出题者
-    # 或管理员」那个更宽的问题，不能拿 may_teach_task 顶。
+    # is_space_admin 仍单独保留：下面「审批/驳回」只认管理员，出题者不可自审 ——
+    # 那是一个比「管理员」更窄的问题，不能拿 may_teach_task 顶。
     admin_repo = SpaceAdminRelationRepository(session=db)
     is_space_admin = (
         await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
@@ -2540,7 +2540,7 @@ async def delete_task_participant(
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
 
-    # 出题者与本版管理员能撤任何报名；领取者只能撤自己的。
+    # 出题者或本版管理员能撤任何报名；成员只能撤自己的。
     is_self = not membership.is_team and membership.member_id == auth_user.user_id
     if not is_self and not await may_teach_task(
         session=db, task=task, user_id=auth_user.user_id
@@ -2671,7 +2671,7 @@ async def resubmit_task(
     if task is None:
         raise NotFoundError("Task not found")
 
-    # 重提审核是发布侧的动作：出题者与本版管理员都能做。
+    # 重提审核是发布侧的动作：出题者或本版管理员都能做。
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError(
             "Only the task creator or a board manager can resubmit "
@@ -2911,8 +2911,8 @@ async def get_task_submissions(
     if membership is None or membership.task_id != task_id:
         raise NotFoundError.for_resource("participant", participant_id)
 
-    # 出题者与本版管理员看得到这道题下任何人的提交；领取者只看自己（或自己所在
-    # 小队）的那一份。
+    # 出题者或本版管理员看得到这道题下任何人的提交；成员只看自己（或自己
+    # 所在小队）的那一份。
     is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
     is_own_participant = (
         membership.member_id == auth_user.user_id and not membership.is_team
