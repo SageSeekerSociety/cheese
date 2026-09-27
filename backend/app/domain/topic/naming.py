@@ -79,6 +79,11 @@ TITLE_MAX_CHARS = 24
 # 「在吗」「@芝士」 wait for the next message or the end of the first turn.
 _SUBSTANTIVE_CHARS = 5
 _CALIBRATE_AFTER_PEOPLE = 3
+# Room for the model to think before it writes. The gateway counts that
+# thinking against this cap, and a title is only a few tokens: at 120 the
+# budget ran out before the title was written in six calls out of ten
+# (2026-09-27, deepseek-flash), which left the room nameless.
+_ANSWER_TOKENS = 800
 
 SYSTEM_PROMPT = "\n".join(
     [
@@ -327,9 +332,21 @@ def parse_verdict(content: str) -> Verdict | None:
     )
 
 
+@dataclass(frozen=True)
+class Answer:
+    """What the model said, and whether it got to finish saying it.
+
+    ``truncated`` means the gateway answered all right, but the model ran out
+    of room before it wrote anything usable. That is not the gateway failing,
+    so it is kept apart from an answer that never arrived at all."""
+
+    verdict: Verdict | None
+    truncated: bool = False
+
+
 async def _ask(
     key: str, material: str, transport: httpx.AsyncBaseTransport | None
-) -> Verdict | None:
+) -> Answer:
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(settings.topic_naming_timeout_seconds),
@@ -344,17 +361,19 @@ async def _ask(
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": material},
                     ],
-                    "max_tokens": 120,
+                    "max_tokens": _ANSWER_TOKENS,
                     "temperature": 0.2,
                     "response_format": {"type": "json_object"},
                 },
             )
             r.raise_for_status()
-            content = r.json()["choices"][0]["message"]["content"] or ""
+            choice = r.json()["choices"][0]
+            content = choice["message"]["content"] or ""
+            truncated = choice.get("finish_reason") == "length"
     except Exception:  # noqa: BLE001 — see the module docstring
         logger.info("topic naming call failed", exc_info=True)
-        return None
-    return parse_verdict(content)
+        return Answer(verdict=None)
+    return Answer(verdict=parse_verdict(content), truncated=truncated)
 
 
 # ---------- deciding when ----------
@@ -614,14 +633,18 @@ async def run(
             key = await service_key(session, _key_spec(), transport)
             if key is None:
                 return None
-            verdict = await _ask(key, material, transport)
-            if verdict is None:
-                if redis is not None:
+            answer = await _ask(key, material, transport)
+            if answer.verdict is None:
+                # An answer cut off before it said anything is not the gateway
+                # failing, so the room is not made to wait out the backoff for
+                # it: the next message in the room asks again. Nothing was
+                # written, so the room keeps its title either way.
+                if not answer.truncated and redis is not None:
                     await _redis_call(
                         redis.set, _redis_key("backoff", room_id), "1", ex=120
                     )
                 return None
-            renamed = await _write(session, room, stage=stage, verdict=verdict)
+            renamed = await _write(session, room, stage=stage, verdict=answer.verdict)
             if stage == "follow" and redis is not None:
                 await _redis_call(redis.delete, _redis_key("pending", room_id))
     finally:
@@ -732,5 +755,5 @@ async def suggest(
     key = await service_key(session, _key_spec(), transport)
     if key is None:
         return None
-    verdict = await _ask(key, material, transport)
-    return verdict.title if verdict is not None else None
+    answer = await _ask(key, material, transport)
+    return answer.verdict.title if answer.verdict is not None else None

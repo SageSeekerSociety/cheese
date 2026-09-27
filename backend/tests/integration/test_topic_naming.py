@@ -5,8 +5,11 @@ What is pinned: an unnamed room is named from its first real message; the name
 is checked once against the first turn; later changes wait for a signal and a
 throttle; a name a person chose is never overwritten, including by a rename
 computed while the person was renaming; an automatic rename can be undone and a
-room handed back; a project on manual naming is left alone. The gateway is a
-MockTransport that answers from a script and records what it was asked.
+room handed back; a project on manual naming is left alone; an answer cut off
+before the model wrote anything leaves the room as it was without counting as a
+failed call, while one that never arrives at all still backs the room off. The
+gateway is a MockTransport that answers from a script and records what it was
+asked.
 """
 
 import asyncio
@@ -29,8 +32,13 @@ from tests.integration.conftest import post_project
 
 @pytest.fixture
 def gateway(monkeypatch: pytest.MonkeyPatch) -> dict:
-    """The LiteLLM gateway, stubbed: ``answers`` is what the model says next."""
-    seen: dict = {"answers": [], "asked": [], "mints": 0}
+    """The LiteLLM gateway, stubbed: ``answers`` is what the model says next.
+
+    An answer is the JSON object the model replies with, or an
+    ``httpx.Response`` for a call that does not come back the usual way (the
+    model cut off mid-thought, an upstream error). ``bodies`` is what the model
+    was asked."""
+    seen: dict = {"answers": [], "asked": [], "bodies": [], "mints": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/key/generate":
@@ -39,10 +47,18 @@ def gateway(monkeypatch: pytest.MonkeyPatch) -> dict:
         if request.url.path == "/v1/chat/completions":
             body = json.loads(request.content)
             seen["asked"].append(body["messages"][-1]["content"])
+            seen["bodies"].append(body)
             answer = seen["answers"].pop(0) if seen["answers"] else {"keep": True}
+            if isinstance(answer, httpx.Response):
+                return answer
             content = answer if isinstance(answer, str) else json.dumps(answer)
             return httpx.Response(
-                200, json={"choices": [{"message": {"content": content}}]}
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": content}, "finish_reason": "stop"}
+                    ]
+                },
             )
         return httpx.Response(404)
 
@@ -166,6 +182,20 @@ def _named(client, alice, gateway, title: str = "dev 外网访问慢排查") -> 
     return rid
 
 
+def _cut_off() -> httpx.Response:
+    """The model spent its whole budget thinking and never wrote a title."""
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": ""}, "finish_reason": "length"}]},
+    )
+
+
+def _backed_off(room_id: str) -> bool:
+    """Whether the room is being made to wait before the gateway is asked again."""
+    r = redis.Redis.from_url(settings.redis_url)
+    return bool(r.exists(f"topic-naming:backoff:{room_id}"))
+
+
 # ---------- naming ----------
 
 
@@ -202,6 +232,43 @@ def test_an_unnamed_room_waits_for_something_worth_naming_it_by(client, alice, g
     # Naming an unnamed room is not announced; it is recorded.
     assert _events(client, rid) == []
     assert _history(client, rid) == [("dev 外网访问慢排查", "auto", "name")]
+
+
+def test_a_title_cut_off_before_it_was_written_is_not_a_failure(client, alice, gateway):
+    pid = _project(client, alice)
+    rid = _room(client, alice, pid)
+    _say(client, rid, "帮我排查一下 dev 机器从外网访问很慢的问题")
+
+    gateway["answers"].append(_cut_off())
+    assert _run(client, rid, "message") is None
+    # Nothing was written, and the room is not made to wait for it: the next
+    # message in the room asks the gateway again.
+    assert _row(client, rid).title == "新话题"
+    assert not _backed_off(rid)
+    gateway["answers"].append({"keep": False, "title": "dev 外网访问慢排查"})
+    assert _run(client, rid, "message") is not None
+    assert len(gateway["asked"]) == 2
+
+
+def test_a_gateway_that_does_not_answer_backs_the_room_off(client, alice, gateway):
+    pid = _project(client, alice)
+    rid = _room(client, alice, pid)
+    _say(client, rid, "帮我排查一下 dev 机器从外网访问很慢的问题")
+
+    gateway["answers"].append(httpx.Response(503, json={"error": "no upstream"}))
+    assert _run(client, rid, "message") is None
+    assert _backed_off(rid)
+    # And the room waits rather than asking again on the next message.
+    assert _run(client, rid, "message") is None
+    assert len(gateway["asked"]) == 1
+
+
+def test_the_naming_call_leaves_the_model_room_to_think_first(client, alice, gateway):
+    """It thinks before it writes, and the gateway counts that thinking against
+    this cap: 400 was enough for every call, 120 for four in ten (2026-09-27,
+    deepseek-flash), and the truncated ones left the room nameless."""
+    _named(client, alice, gateway)
+    assert gateway["bodies"][-1]["max_tokens"] >= 400
 
 
 def test_the_first_turn_checks_the_name_once(client, alice, gateway):
