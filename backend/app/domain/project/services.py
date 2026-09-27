@@ -293,7 +293,15 @@ class ProjectService:
         )
         # An application can prepare its workspace before approval, but cannot
         # claim the competition's resource pack while it is pending/rejected.
-        if membership is not None and membership.approved != 0:
+        #
+        # 这句话以前只写了「pending/rejected 不给」，条件也跟着写成
+        # `membership is not None and ...`，于是漏掉了它前半句最该挡住的那种人：
+        # **压根没报名**（`membership is None`）反而一路往下，每个新项目都白拿一份
+        # 资源包。过审（`ApproveType.APPROVED == 0`）是**唯一**发放条件，所以判据读作
+        # 「存在一条已通过的报名」——没有报名与没过审在这里是同一件事：不是这个赛题的
+        # 参与者，就不领它的资源包。审批之后那次发放走 `activate_participation`，所以
+        # 「先建工作区、过审时再拿资源」这条正路一点没变。
+        if membership is None or membership.approved != 0:
             return
         category = (
             await self._session.get(SpaceCategory, task.category_id)
