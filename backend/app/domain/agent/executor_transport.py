@@ -231,6 +231,19 @@ class PlatformHost:
         )
 
 
+def _replace_file(path, text):
+    """Replace a session file whole, readable only by its owner. Every command
+    start of a leased session rewrites the token and the target (`acquire`),
+    and the commands that start beside it (a background Bash and the hook
+    after it, parallel Bash calls) read them at any moment: a file truncated
+    and then written shows them an empty token in between."""
+    temporary = f"{path}.{uuid.uuid4().hex}"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w") as stream:
+        stream.write(text)
+    os.replace(temporary, path)
+
+
 class RemoteClient:
     def __init__(self, config, *, shared_connection=False):
         import threading
@@ -518,21 +531,12 @@ class RemoteClient:
         self.config.update(target)
         token_file = self.config.get("token_file")
         if token_file:
-            from pathlib import Path
-
-            Path(token_file).write_text(result["token"])
-            Path(token_file).chmod(0o600)
+            _replace_file(token_file, result["token"])
         else:
             self.config["execution_token"] = result["token"]
         target_file = self.config.get("target_file")
         if target_file:
-            from pathlib import Path
-
-            path = Path(target_file)
-            temporary = path.with_name(path.name + "." + uuid.uuid4().hex)
-            temporary.write_text(json.dumps(self.config))
-            temporary.chmod(0o600)
-            temporary.replace(path)
+            _replace_file(target_file, json.dumps(self.config))
         previous = getattr(self.transport, "connection", None)
         if previous is not None:
             previous.close()
@@ -589,10 +593,9 @@ class RemoteClient:
                     raise RuntimeError(
                         "Project context leaves the forwarded project boundary"
                     )
-                tree_path = Path(target_file).with_name("context-tree.json")
-                temporary = tree_path.with_name(tree_path.name + "." + uuid.uuid4().hex)
-                temporary.write_text(json.dumps(tree))
-                temporary.replace(tree_path)
+                _replace_file(
+                    Path(target_file).with_name("context-tree.json"), json.dumps(tree)
+                )
                 context = self.call("context", {"known_files": {}})
                 if context.get("instructions"):
                     # No project operation has run yet. Let the caller read its
