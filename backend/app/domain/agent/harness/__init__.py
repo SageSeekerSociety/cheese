@@ -454,7 +454,7 @@ class AgentRuntime(Protocol):
         ...
 
     def bind_memory(self, consumer: MemoryConsumer) -> None:
-        """Where 「记忆该对账了」 goes: right before an input, and right after a turn."""
+        """Where 「记忆该对账了」 goes: before an input, and after a turn."""
         ...
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:

@@ -185,7 +185,11 @@ class DrivenRuntime[H: Handle]:
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
         self.reachability: ReachabilityConsumer | None = None
-        self.memory: MemoryConsumer | None = None
+        # 带下划线，因为它不能和下面那个 `memory()`（这一侧往会话里问一次对账）
+        # 同名：`self.memory = None` 会把那个方法盖掉，而 `AgentRuntime` 是
+        # `runtime_checkable` 的 Protocol，`isinstance` 拿不到方法就答否——
+        # 于是每一个 runtime 都「跑不了 harness」。别的消费者没这个问题。
+        self._memory: MemoryConsumer | None = None
 
     # --- what the harness supplies -------------------------------------------
 
@@ -248,7 +252,19 @@ class DrivenRuntime[H: Handle]:
         self.reachability = consumer
 
     def bind_memory(self, consumer: MemoryConsumer) -> None:
-        self.memory = consumer
+        self._memory = consumer
+
+    def _memory_hook(self, topic: uuid.UUID) -> Callable[[], Awaitable[None]]:
+        """`reconcile_memory` 绑到这一间房，给订阅那一侧的一轮结束用（它不带参数）。
+
+        三个 harness 都从这里取，所以「一轮结束时对一次账」是这套骨架的事实，
+        而不是谁恰好写了一句：会话不存记忆文件的那几个问下去也会得到 None。
+        """
+
+        async def hook() -> None:
+            await self.reconcile_memory(topic)
+
+        return hook
 
     async def reconcile_memory(self, topic: uuid.UUID) -> None:
         """Ask the room to reconcile its memory tree, and never fail the turn on it.
@@ -258,10 +274,10 @@ class DrivenRuntime[H: Handle]:
         the exception through would end a turn that was otherwise fine, over the
         room's notes.
         """
-        if self.memory is None:
+        if self._memory is None:
             return
         try:
-            await self.memory(topic)
+            await self._memory(topic)
         except Exception:
             self.logger.exception("memory reconciliation failed topic=%s", topic)
 

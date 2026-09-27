@@ -95,9 +95,6 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
         async def announce() -> None:
             await self.announce(handle.session.topic_id)
 
-        async def memory() -> None:
-            await self.reconcile_memory(handle.session.topic_id)
-
         return Subscription(
             handle.session,
             handle.mirror,
@@ -108,7 +105,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             announce=announce,
             receipts=receipt,
             pulse=self.pulse,
-            memory=memory,
+            memory=self._memory_hook(handle.session.topic_id),
         )
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
