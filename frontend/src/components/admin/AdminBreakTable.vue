@@ -146,7 +146,6 @@ function widthOf(value: number): string {
   line-height: var(--lh-12);
 }
 
-
 .abt__skeleton {
   display: flex;
   flex-direction: column;

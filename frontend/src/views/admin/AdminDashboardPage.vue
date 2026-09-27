@@ -2165,7 +2165,10 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   border-bottom: 1px solid var(--line);
   scrollbar-width: none;
-  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  /* 遮罩只看 alpha，颜色本身不显示 —— 但**不能写字面量**（`color-no-hex` 拦的正是
+     「一个在深色主题下不成立的颜色」），所以借 `--ink`（两种主题下都不透明）当
+     「不透明」用。 */
+  mask-image: linear-gradient(to right, var(--ink) calc(100% - 32px), transparent);
 }
 
 .ad__kinds::-webkit-scrollbar {
@@ -2641,10 +2644,12 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 列数凑不上卡数时（比如 2 列 5 张）仍会落单一张，让它铺满整行 —— 半行空白比
-   「这一块只有这一张」更像出了错。**只在 <1320 这两档**：≥1320 的 auto-fit 本来就
-   是「几张卡铺满整行」，跨列反而会把 5 张卡从「一行 5 张」拆成「4 + 1」。 */
-@container (max-width: 1319px) {
+/* **只有两列这一档**（窄屏）才把落单的末位铺满整行：2 列 5 张 = 2 + 2 + 1，最后一行
+   半格空白看着像出了错；铺满以后是「2 + 2 + 一整行」，读起来是有意的。
+   这里**不能**用「张数是奇数就跨列」这种更宽的判据：它只在列数是偶数时对 —— 5 张卡在
+   5 列里本来就铺满一整行（1440 视口下 auto-fit 正好是 5 列），跨列反而把它拆成
+   「4 + 1」，那正是这一版要修掉的那个洞。 */
+@container (max-width: 559px) {
   .ad__kpis > :deep(*:last-child:nth-child(odd)) {
     grid-column: 1 / -1;
   }
