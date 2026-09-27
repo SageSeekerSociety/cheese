@@ -1,4 +1,9 @@
 const execution = __EXECUTION_CONFIG__;
+// The native server's platform tools: every row of `PLATFORM_TOOLS` in the
+// shipped cheese.py, written in with the config (`release.hook_module`).
+// Membership decides, never a name prefix: `todo_write` carries none, and a
+// call that misses this set reaches the server without its `id`.
+const platformTools = new Set(__PLATFORM_TOOLS__.map((name) => "mcp__native__" + name));
 const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 
 // The session sees the project at the executor's own path (`client.py`
@@ -81,7 +86,7 @@ export function register(on) {
     if (tool === "Agent" && args.isolation) {
       return { deny: `Agent isolation "${args.isolation}" is unavailable here because the project lives on the work machine; omit isolation, since the subagent's file and shell tools already run there. Only when the work is itself a deliverable to track and review, create it with \`cheese_task\`, prepare its directory with \`cheese worktree <id>\`, and give the subagent that directory.` };
     }
-    if (tool === "mcp__native__chat_send" || tool === "mcp__native__platform_request" || tool.startsWith("mcp__native__cheese_")) {
+    if (tool === "mcp__native__platform_request" || platformTools.has(tool)) {
       try {
         const response = await $.mcp.call("native", tool.slice("mcp__native__".length), {
           ...args, id: tool_use_id, session_id: await $.session.id(),

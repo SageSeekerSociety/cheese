@@ -53,21 +53,26 @@ def test_only_a_running_command_holds_an_idle_upgrade(tmp_path, running):
     assert executor.upgrading is not running
 
 
+_release_spec = importlib.util.spec_from_file_location(
+    "execution_release", RUNTIME.with_name("release.py")
+)
+release = importlib.util.module_from_spec(_release_spec)
+_release_spec.loader.exec_module(release)
+
+
 def _proxy_source() -> str:
-    return (
-        (RUNTIME.parent / "proxy.js")
-        .read_text()
-        .replace(
-            "__EXECUTION_CONFIG__",
-            json.dumps(
-                {
-                    "central_config": "/config",
-                    "central_workspace": "/view",
-                    "workspace": "/work",
-                    "session_workspace": "/work",
-                }
-            ),
-        )
+    """proxy.js as the plugin loads it: config and the platform tool table in."""
+    return release.hook_module(
+        (RUNTIME.parent / "proxy.js").read_text(),
+        {
+            "central_config": "/config",
+            "central_workspace": "/view",
+            "workspace": "/work",
+            "session_workspace": "/work",
+        },
+        release.platform_tool_names(
+            (RUNTIME.parents[6] / "sandbox/cheese").read_text()
+        ),
     )
 
 

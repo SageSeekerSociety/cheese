@@ -1,8 +1,9 @@
 """The room's checklist and its silence rule are the same on every harness.
 
 `todo_write` and `chat_send` are platform tools, and each harness reaches the
-backend through code of its own: Claude Code through the session's MCP
-transport process, Codex through the handler app-server calls for a dynamic
+backend through code of its own: Claude Code through the plugin module that
+takes the model's tool call (`proxy.js`) and the session's MCP transport
+process it hands the call to, Codex through the handler app-server calls for a dynamic
 tool, pi through its runner answering the extension's `cli` request. Each is
 run here the way production runs it, down to its own HTTP client. The only
 stand-in is the network: a relay on localhost that hands each request to this
@@ -14,8 +15,10 @@ somewhere else, or not at all, fails here by name.
 """
 
 import asyncio
+import base64
 import json
 import os
+import subprocess
 import sys
 import threading
 import uuid
@@ -29,7 +32,10 @@ from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness.claude_code.remote_execution import client as central
-from app.domain.agent.harness.claude_code.remote_execution import runtime
+from app.domain.agent.harness.claude_code.remote_execution import (
+    release,
+    runtime,
+)
 from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.pi import catalog
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
@@ -42,6 +48,35 @@ PLAN = [
     {"content": "改接口", "status": "in_progress"},
     {"content": "补测试", "status": "pending"},
 ]
+
+
+# The build's side of a Claude Code tool call: load the plugin module, hand it
+# the call exactly as the model made it (`mcp__native__<tool>` plus the build's
+# `tool_use_id`), and carry each `$.mcp.call` it makes to the transport process
+# over this script's stdio. Falling through to `next` means the build would
+# call the tool itself, without the `id` the transport needs.
+_PROXY_CALL = """
+import readline from 'node:readline';
+import {readFile} from 'node:fs/promises';
+const {register} = await import('data:text/javascript;base64,' + process.argv[1]);
+const [tool, args] = JSON.parse(process.argv[2]);
+const replies = readline.createInterface({input: process.stdin})
+  [Symbol.asyncIterator]();
+const handlers = {};
+register((event, handler) => { handlers[event] = handler; });
+const $ = {
+  session: {id: async () => 'fixture'},
+  mcp: {call: async (server, name, params) => {
+    process.stdout.write(JSON.stringify({server, name, arguments: params}) + '\\n');
+    return JSON.parse((await replies.next()).value);
+  }},
+  fs: {read: async (path) => readFile(path, 'utf8')},
+};
+const outcome = await handlers['tool.call']($, {
+  tool: 'mcp__native__' + tool, tool_use_id: 'toolu_fixture', ...args,
+}, async () => ({deny: 'fell through to the build, which calls it without an id'}));
+process.stdout.write(JSON.stringify({outcome}) + '\\n');
+"""
 
 
 def _relay(client) -> ThreadingHTTPServer:
@@ -123,22 +158,48 @@ def harness(request, client, room, tmp_path, monkeypatch):
             log,
         )
         closers[:0] = [process.close, log.close]
+        module = release.hook_module(
+            Path(central.__file__).with_name("proxy.js").read_text(),
+            {"central_config": str(tmp_path), "session_workspace": str(tmp_path)},
+            release.platform_tool_names(CLI.read_text()),
+        )
 
         def call(tool, arguments):
-            result = process.call(
-                "tools/call",
-                {
-                    "name": tool,
-                    "arguments": {
-                        "id": str(uuid.uuid4()),
-                        "session_id": "fixture",
-                        **arguments,
-                    },
-                },
+            node = subprocess.Popen(
+                [
+                    "node",
+                    "--input-type=module",
+                    "-e",
+                    _PROXY_CALL,
+                    base64.b64encode(module.encode()).decode(),
+                    json.dumps([tool, arguments]),
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                text=True,
             )
-            outcome = json.loads(result["content"][0]["text"])
+            for line in node.stdout:
+                message = json.loads(line)
+                if "outcome" in message:
+                    break
+                assert message["server"] == "native", message
+                try:
+                    reply = process.call(
+                        "tools/call",
+                        {"name": message["name"], "arguments": message["arguments"]},
+                    )
+                except RuntimeError as error:
+                    reply = {
+                        "isError": True,
+                        "content": [{"type": "text", "text": str(error)}],
+                    }
+                node.stdin.write(json.dumps(reply) + "\n")
+                node.stdin.flush()
+            node.stdin.close()
+            assert node.wait(timeout=30) == 0
+            outcome = message["outcome"]
             assert "deny" not in outcome, outcome
-            return outcome["result"]["stdout"]
+            return "".join(block["text"] for block in outcome["result"])
 
     elif request.param == "codex":
         for name, value in env.items():

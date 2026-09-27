@@ -141,6 +141,14 @@ def _ensure_sync_agents_hook(hooks: dict) -> None:
         )
 
 
+def cheese_source() -> Path:
+    """The platform tool table: shipped beside this helper, or the checkout's."""
+    shipped = Path(__file__).with_name("cheese.py")
+    if shipped.is_file():
+        return shipped
+    return Path(__file__).resolve().parents[6] / "sandbox/cheese"
+
+
 def prepare(
     directory,
     target: dict[str, Any],
@@ -284,25 +292,24 @@ def prepare(
         json.dumps({"name": "cheese-remote-execution", "version": "0.1.0"})
     )
     (plugin / "hooks/hooks.json").write_text('{"modules":["proxy.js"]}')
-    module = (Path(__file__).parent / "proxy.js").read_text()
-    module = module.replace("__EXECUTION_CONFIG__", json.dumps(target))
-    (plugin / "hooks/proxy.js").write_text(module)
+    if __package__:
+        from .release import allow_native_tools, hook_module, platform_tool_names
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import allow_native_tools, hook_module, platform_tool_names
+
+    platform_tools = platform_tool_names(cheese_source().read_text())
+    (plugin / "hooks/proxy.js").write_text(
+        hook_module(
+            (Path(__file__).parent / "proxy.js").read_text(), target, platform_tools
+        )
+    )
     settings = json.loads(json.dumps(base_settings or {}))
     # The project's own tool hooks, which the build fires and the shell prefix
     # runs on the executor (never here: they are not in `central_hooks`).
     for event, groups in ((context_tree or {}).get("hooks") or {}).items():
         settings.setdefault("hooks", {}).setdefault(event, []).extend(groups)
-    permissions = settings.setdefault("permissions", {})
-    allowed = permissions.setdefault("allow", [])
-    for tool in (
-        "invoke",
-        "chat_send",
-        "platform_request",
-        "project_tools",
-        "cheese_*",
-    ):
-        if f"mcp__native__{tool}" not in allowed:
-            allowed.append(f"mcp__native__{tool}")
+    allow_native_tools(settings, platform_tools)
     hooks = settings.setdefault("hooks", {})
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
@@ -1351,10 +1358,9 @@ def transport(config, target_path):
         from context_service import serve
 
     client = RemoteClient(config)
-    cheese_source = Path(__file__).with_name("cheese.py")
-    if not cheese_source.is_file():
-        cheese_source = Path(__file__).resolve().parents[6] / "sandbox/cheese"
-    cheese = SourceFileLoader("cheese_request_plans", str(cheese_source)).load_module()
+    cheese = SourceFileLoader(
+        "cheese_request_plans", str(cheese_source())
+    ).load_module()
     output_lock = threading.Lock()
     active = {}
     active_lock = threading.RLock()
