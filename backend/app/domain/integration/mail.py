@@ -199,6 +199,78 @@ def _criteria(
     return parts or ["ALL"], None
 
 
+#: How many of the server's newest candidates are checked here, and of those
+#: how many are opened to look for a keyword in the body.
+SCAN_LIMIT = 300
+BODY_CHECK_LIMIT = 40
+
+
+def _contains(haystack: str, needle: str) -> bool:
+    return needle.casefold() in (haystack or "").casefold()
+
+
+def _headers(box: imaplib.IMAP4, uids: list[str]) -> dict[str, tuple[str, str]]:
+    """{uid: (subject, from)} for many messages in one round trip."""
+    if not uids:
+        return {}
+    status, parts = box.uid(
+        "FETCH", ",".join(uids), "(UID BODY.PEEK[HEADER.FIELDS (SUBJECT FROM)])"
+    )
+    found: dict[str, tuple[str, str]] = {}
+    if status != "OK":
+        return found
+    for part in parts or []:
+        if not isinstance(part, tuple):
+            continue
+        hit = re.search(rb"UID (\d+)", part[0])
+        if not hit:
+            continue
+        header = email.message_from_bytes(part[1], policy=email.policy.default)
+        found[hit.group(1).decode()] = (
+            _decode(header.get("Subject")),
+            _decode(header.get("From")),
+        )
+    return found
+
+
+def _verified(
+    box: imaplib.IMAP4,
+    candidates: list[str],
+    *,
+    query: str | None,
+    sender: str | None,
+    subject: str | None,
+    limit: int,
+) -> list[str]:
+    """The candidates that really match, newest first.
+
+    Seen on dev, 2026-09-27: QQ Mail answered `SEARCH CHARSET UTF-8 SUBJECT
+    {芝士测试}` with every message in the inbox, and the teammate was handed
+    verification codes and receipts it had not asked for. The server's answer
+    is a candidate list; the filter that decides is this one.
+    """
+    headers = _headers(box, candidates)
+    matched: list[str] = []
+    opened = 0
+    for uid in candidates:
+        subj, frm = headers.get(uid, ("", ""))
+        if subject and not _contains(subj, subject):
+            continue
+        if sender and not _contains(frm, sender):
+            continue
+        if query and not (_contains(subj, query) or _contains(frm, query)):
+            if opened >= BODY_CHECK_LIMIT:
+                continue
+            opened += 1
+            text, _how = _body(_fetch(box, uid))
+            if not _contains(text, query):
+                continue
+        matched.append(uid)
+        if len(matched) >= limit:
+            break
+    return matched
+
+
 def search(
     settings: MailSettings,
     *,
@@ -225,10 +297,20 @@ def search(
             raise IntegrationError("error", f"邮箱不支持这个搜索（{exc}）") from exc
         if status != "OK":
             raise IntegrationError("error", f"搜索失败：{data}")
-        uids = (data[0] or b"").split()[-limit:][::-1]
+        newest = [u.decode() for u in (data[0] or b"").split()][::-1]
+        if query or sender or subject:
+            uids = _verified(
+                box,
+                newest[:SCAN_LIMIT],
+                query=query,
+                sender=sender,
+                subject=subject,
+                limit=limit,
+            )
+        else:
+            uids = newest[:limit]
         results = []
-        for raw_uid in uids:
-            uid = raw_uid.decode()
+        for uid in uids:
             status, parts = box.uid(
                 "FETCH", uid, "(BODY.PEEK[HEADER] BODYSTRUCTURE RFC822.SIZE)"
             )
