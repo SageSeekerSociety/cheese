@@ -35,4 +35,10 @@ async def review_space(
     item = await SpaceReviewService(db).review(
         space_id, approved=body.approved, reason=body.reason, reviewer=handle
     )
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told "approved" could
+    # publish into the space on its next request and still find it PENDING
+    # ("Space must be approved before creating tasks"). Same reason as the
+    # commit in ``create_space``.
+    await db.commit()
     return {"code": 200, "data": {"application": item}}
