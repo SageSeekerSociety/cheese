@@ -38,7 +38,7 @@ from pathlib import Path
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.driven import runner
-from app.domain.memory.files import MEMORY_ROOT, check_scoped_path
+from app.domain.memory.files import INDEX_NAME, MEMORY_ROOT, check_scoped_path
 from app.domain.memory.tree import (
     BULK_DELETE_MIN,
     BULK_DELETE_RATIO,
@@ -653,8 +653,13 @@ class Runner(runner.Runner[Journal]):
 
     # --- memory: the tree the agent and the platform both write --------------
 
-    def read_memory(self, managed: set[str]) -> dict[str, str]:
-        """受管作用域里现在有哪些文件、正文各是什么。
+    def read_memory(self, managed: set[str]) -> tuple[dict[str, str], set[str]]:
+        """受管作用域里现在有哪些文件、正文各是什么，和被写空了的那几条。
+
+        一条记忆（索引以外）被写成空内容就是删掉了它：agent 手里能碰到这棵树的
+        只有 Read / Write / Edit，shell 在另一台机器上，`rm` 碰不到这里。所以空
+        的那一条不算「在」，对账把它当成会话删了（照样过批量删除那道闸）。索引
+        写空是另一回事：那是一份空索引，照常收。
 
         只读一层、只收 `.md`、名字还得过 `check_scoped_path`：这棵树的形状是定死
         的（一个作用域一层，一条记忆一个文件），子目录里冒出来的东西、随手写下的
@@ -663,6 +668,7 @@ class Runner(runner.Runner[Journal]):
         """
         root = memory_root()
         found: dict[str, str] = {}
+        emptied: set[str] = set()
         for prefix in sorted(managed):
             try:
                 entries = sorted((root / prefix).iterdir())
@@ -674,10 +680,14 @@ class Runner(runner.Runner[Journal]):
                     check_scoped_path(path)
                     if not entry.is_file():
                         continue
-                    found[path] = entry.read_text(encoding="utf-8")
+                    content = entry.read_text(encoding="utf-8")
                 except (OSError, ValueError, UnicodeDecodeError):
                     continue
-        return found
+                if not content.strip() and entry.name != INDEX_NAME:
+                    emptied.add(path)
+                else:
+                    found[path] = content
+        return found, emptied
 
     def sync_memory(self, params: dict) -> dict:
         """对一次账：平台这一份铺下来，会话改过的带回去。
@@ -692,7 +702,7 @@ class Runner(runner.Runner[Journal]):
         root = memory_root()
         baseline = _recall_baseline(root)
         managed = prefixes_of(scopes, baseline)
-        disk = self.read_memory(managed)
+        disk, emptied = self.read_memory(managed)
         outcome = sync_tree(scopes=scopes, disk=disk, baseline=baseline)
         if outcome.held:
             # 拦下来的是「这一次没照做」：平台上一条都没少，会话里那几个文件下一轮
@@ -710,7 +720,9 @@ class Runner(runner.Runner[Journal]):
             _write_memory(root, path, content)
         # 两方都没有、只有 baseline 里还有的那一条（平台删了，会话也没写回去），
         # 到这里才从磁盘上消失：先算完再删，删的不是「还没看过的东西」。
-        for path in set(disk) | set(baseline):
+        # 写空了的那一条也在这里清掉，下一轮的树里就没有一个空壳；批量删除被拦下
+        # 时它在 `outcome.files` 里，上面已经把平台那一版写回去了。
+        for path in set(disk) | set(baseline) | emptied:
             if path in outcome.files:
                 continue
             with contextlib.suppress(OSError):

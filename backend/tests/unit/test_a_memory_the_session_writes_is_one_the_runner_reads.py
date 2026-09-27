@@ -231,3 +231,46 @@ def test_what_the_platform_lays_down_is_what_the_agent_reads(tmp_path, monkeypat
         ],
     )
     assert "有结论就先说结论" in captured["result"]
+
+
+def test_a_memory_written_empty_is_deleted_and_an_empty_index_is_kept(
+    tmp_path, monkeypatch
+):
+    """The agent's shell is on another machine, so `rm` cannot reach the tree:
+    writing a memory empty is how it deletes one. The index is different — an
+    empty index is an empty index, not a deleted one."""
+    index = "- [先给结论](answer-first.md) — 有结论就先说结论\n"
+    scopes = {"team": {"answer-first.md": _TEAM, "MEMORY.md": index}}
+    home = tmp_path / "owner/.cheese/home/project/room"
+    assert _reconciled(home, monkeypatch, scopes) == {
+        "team/answer-first.md": _TEAM,
+        "team/MEMORY.md": index,
+    }
+    _session_writes(
+        tmp_path,
+        monkeypatch,
+        [
+            {
+                "name": "Write",
+                "input": {
+                    "file_path": "~/.cheese/memory/team/answer-first.md",
+                    "content": "",
+                },
+            },
+            {
+                "name": "Write",
+                "input": {
+                    "file_path": "~/.cheese/memory/team/MEMORY.md",
+                    "content": "",
+                },
+            },
+        ],
+    )
+    assert _reconciled(home, monkeypatch, scopes) == {"team/MEMORY.md": ""}
+    assert not (home / ".cheese/memory/team/answer-first.md").exists()
+    # The platform, answered with that tree, deletes the memory; the next
+    # reconciliation has nothing to lay back down.
+    assert _reconciled(home, monkeypatch, {"team": {"MEMORY.md": ""}}) == {
+        "team/MEMORY.md": ""
+    }
+    assert not (home / ".cheese/memory/team/answer-first.md").exists()

@@ -20,7 +20,7 @@ covers:
 
 芝士的记忆是**会话目录里一棵文件树**：`.cheese/memory/` 下，一个作用域一个目录，一条记忆一个 markdown 文件。数据库是真相，会话里那一份是副本——每一轮输入之前铺下去，这一轮结束之后收回来。
 
-这棵树在**会话机**上，在会话自己的家里（`~/.cheese/memory/`），不在执行机上：runner 在那里对账，而 agent 的文件工具（Read / Write / Edit）平时跑在执行机上，只有碰到这棵树的路径时留在会话机（`remote_execution/proxy.js` 的 `memoryPath`，守卫是 `client.py` 的 `own_memory`）。agent 按 `~/.cheese/memory/...` 写，或者按它 shell 里的 `$HOME`（那是执行机的家）拼出一个绝对路径，落到的都是这一棵。shell 看不到它。
+这棵树在**会话机**上，在会话自己的家里（`~/.cheese/memory/`），不在执行机上：runner 在那里对账，而 agent 的文件工具（Read / Write / Edit）平时跑在执行机上，只有碰到这棵树的路径时留在会话机（`remote_execution/proxy.js` 的 `memoryPath`，守卫是 `client.py` 的 `own_memory`）。agent 按 `~/.cheese/memory/...` 写，或者按它 shell 里的 `$HOME`（那是执行机的家）拼出一个绝对路径，落到的都是这一棵。shell 看不到它，所以 `rm` 删不掉一条记忆：删一条就用 Write 把它写成空内容。runner 收树时把写空了的那条（索引除外，空索引就是一份空索引）当成会话删了，照样过批量删除那道闸，并把那个空文件从会话机上清掉（`runner.read_memory`）。
 
 > 讲：分层、两个作用域、写入与对账的时机、上限与权限。不讲：整理（dream）和旧表迁移，见后续。
 

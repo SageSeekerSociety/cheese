@@ -140,7 +140,7 @@ def test_the_sidecar_is_not_a_memory_and_never_goes_back(tmp_path, monkeypatch):
     """它只是给写的人重读的一份旁路文件：不进树、不进索引、也不回平台。"""
     session, root, outcome = _after_a_conflict(tmp_path, monkeypatch)
 
-    assert session.read_memory({"team"}) == {"team/a.md": _LATER}
+    assert session.read_memory({"team"}) == ({"team/a.md": _LATER}, set())
     assert outcome["files"] == {"team/a.md": _LATER}
     # 回写那一侧同样过不去：写入端按路径对号入座，而这个路径先得过这一关。
     with pytest.raises(MemoryFileError):
