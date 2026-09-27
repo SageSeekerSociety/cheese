@@ -14,9 +14,11 @@ import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
+
+import { t } from '@/i18n'
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -163,5 +165,41 @@ describe('手机上的切换项目', () => {
     // 菜单里仍然有那几页（日历、成员、项目设置），但没有一行是项目 —— 没得换。
     expect(rows).not.toContain('P1')
     expect(rows).toContain('项目设置')
+  })
+})
+
+// 「转让项目」现在也在这个菜单里（成员页那颗按钮保留）。谁能转，项目行自己说得出：
+// 所有者本人，或者管得了成员的团队管理员。判据读不出来的人（比如只是团队成员）
+// 不该看到这一行 —— 递到退不掉/转不动的人手里，就是把人骗进一个会被拒的弹窗。
+describe('项目菜单里的「转让项目」', () => {
+  const current = (extra: Record<string, unknown>) => [{ ...projects[0], ...extra }, ...projects.slice(1)]
+  // 菜单行按当前语言渲染，别把中文写进断言里（测试环境的语言跟着 navigator 走）；
+  // `openProjectMenu` 把行文字里的空白都压掉了，比对的那一份也要一样压。
+  const label = t('work.members.transfer').replace(/\s+/g, '')
+
+  // 「我是谁」读的是登录后落下的那一份账号（`myHandle()`），照 DmView.spec.ts 那样种上。
+  beforeEach(() => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
+  })
+
+  it('我自己的项目：看得到', async () => {
+    const { container, baseElement } = mount({ page: false, projects: current({ owner_handle: 'me' }) })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(label))).toBe(true)
+  })
+
+  it('不是我、也管不了成员：看不到', async () => {
+    const { container, baseElement } = mount({ page: false, projects })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(label))).toBe(false)
+  })
+
+  it('管得了成员的团队管理员：看得到', async () => {
+    const { container, baseElement } = mount({
+      page: false,
+      projects: current({ owner_handle: 'someone-else', can_manage_members: true }),
+    })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(label))).toBe(true)
   })
 })

@@ -25,6 +25,7 @@ import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+import TransferProjectDialog from './TransferProjectDialog.vue'
 
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -97,9 +98,10 @@ function startResize(e: MouseEvent) {
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
 //
-// 「退出项目 / 转让项目」只在成员页：那里有名册，知道我是所有者、负责人还是团队带进来
-// 的人，而这几种人能不能退、能不能转各不相同。这里只知道项目行上的所有者，按它判
-// 会把退出递给退不掉的人。
+// 「退出项目」只在成员页：那里有名册，知道我是所有者、负责人还是团队带进来的人，
+// 而这几种人能不能退各不相同。项目行上读不出这些，按它判会把退出递给退不掉的人。
+// 「转让项目」两处都有（这里一条，成员页那颗按钮保留）——它只需要「我是不是所有者
+// 或这个项目的团队管理员」，项目行自己就带着这个答案。
 const router = useRouter()
 const route = useRoute()
 
@@ -181,6 +183,21 @@ function openProject(projectId: string) {
   if (projectId === props.selectedProjectId) return
   router.push({ name: 'workspace-project', params: { projectId } })
 }
+
+// 「转让项目」在这个菜单里也有一条（成员页那颗按钮保留，别删）。谁转得动，项目行
+// 自己就说得出：所有者，或者管得了这个项目的团队管理员（`can_manage_members`）——
+// 和成员页那颗按钮同一个判据，后端动手时按同一条规则再判一次。
+//
+// 「退出项目」仍然只在成员页：那要看名册才知道我是所有者、因团队而在这里的人、还是
+// 外部成员，这几种人能不能退各不相同，而项目行上读不出来——按它判会把退出递给退不掉
+// 的人。
+const transferOpen = ref(false)
+const currentProject = computed(() => props.projects.find((p) => p.id === props.selectedProjectId) ?? null)
+const canTransfer = computed(
+  () =>
+    !!currentProject.value &&
+    (currentProject.value.owner_handle === myHandle() || currentProject.value.can_manage_members === true)
+)
 
 // New topic: don't ask the human for a title — create an untitled one and open
 // it; the title is derived from the first message (and 芝士 can refine it).
@@ -629,10 +646,20 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 :disabled="!selectedProjectId"
                 @click="openProjectPage('project-settings')"
               />
+              <!-- 只有转得动的人看得见：必然被拒的按钮比不给更糟。 -->
+              <v-list-item
+                v-if="canTransfer"
+                prepend-icon="mdi-account-arrow-right-outline"
+                :title="t('work.members.transfer')"
+                :disabled="!selectedProjectId"
+                @click="transferOpen = true"
+              />
             </v-list>
           </v-menu>
         </div>
       </Teleport>
+
+      <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
       <div class="rail-scroll flex-grow-1 overflow-y-auto">
