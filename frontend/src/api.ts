@@ -1819,9 +1819,11 @@ export function getDoc(topicId: string): Promise<Block | null> {
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
 // Read on topic open — between turns there is no WS stream to carry it, and
 // "做到哪了" has to be visible without summoning anyone. `items` is [] for a
-// topic that never had a checklist.
-export function getProgress(topicId: string): Promise<TopicProgress> {
-  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
+// topic that never had a checklist. With `taskId`, that card's list — the one
+// its 分身 wrote — instead of the room's.
+export function getProgress(topicId: string, taskId?: string): Promise<TopicProgress> {
+  const q = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
 }
 
 // PUT upserts the living doc and appends a "📝 编辑了文档" event to the

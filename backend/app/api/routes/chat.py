@@ -55,6 +55,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.authz.policy import refuse_unauthenticated_chat
 from app.domain.identity.actor import Actor
+from app.domain.room_task.services import TaskService
 
 router = APIRouter(tags=["chat"])
 _log = get_logger("cheesex.chat_ws")
@@ -125,11 +126,18 @@ async def chat(
                 allow_anonymous=settings.chat_ws_allow_anonymous,
             )
             if refusal is None and conn_actor.authenticated:
-                project_id = await resolver.project_of_topic(topic_id)
+                # A card is not a room, but it has a channel of its own: its
+                # 分身's events and checklist go out on the card id (chat.py,
+                # `todo_write`). Whoever may watch it is whoever may enter its
+                # room, found through the card; otherwise an outsider holding
+                # the id from a `?card=` link finds no room and is let in.
+                card = await TaskService(auth_session).get(topic_id)
+                room_id = card.room_id if card is not None else topic_id
+                project_id = await resolver.project_of_topic(room_id)
                 if project_id is not None:
                     try:
                         await resolver.authorize_topic(
-                            conn_actor, project_id=project_id, topic_id=topic_id
+                            conn_actor, project_id=project_id, topic_id=room_id
                         )
                     except ForbiddenError as exc:
                         refusal = ("forbidden", exc.args[0])

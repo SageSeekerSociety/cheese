@@ -6,11 +6,11 @@
 // 你还在这个房间里，只是从看板往下钻了一层，`?card=` 把这一层写进地址。
 //
 // 屏幕上每一个状态词都是后端 `presentation` 算好的，这一段一个都不推。
-import type { Block, RoomTask } from '../../cx_types'
+import type { Block, RoomTask, TodoItem } from '../../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { getRoomTask, sayOnRoomTask } from '../../api'
+import { getProgress, getRoomTask, sayOnRoomTask } from '../../api'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
 import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
@@ -19,8 +19,13 @@ import { type RefMaps, renderMarkdown as renderWithRefs, renderPlain } from '../
 import { eventArg, eventFailed, eventVerb, isNarration } from '../../lib/siteLog'
 import { myHandle } from '../../me'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import { useRoomSocket } from '../room/composables/useRoomSocket'
 import RoomNotice from '../room/RoomNotice.vue'
 import TopicAcceptCard from '../TopicAcceptCard.vue'
+
+import TodoChecklist from './TodoChecklist.vue'
+
+import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -94,6 +99,64 @@ watch(
     if (cardChanged) card.value = null
     // 换了卡要给加载态，同一张卡跟着房间的动静重取就不要——闪一下空白比不刷新更糟。
     if (isActive) void load(!cardChanged)
+  },
+  { immediate: true }
+)
+
+// 做这张卡的分身写下的步骤清单（`todo_write` 带着卡的 id）。它存在卡上、推在卡自己
+// 的频道上，房间那条频道收不到——所以打开卡先读一次存下的，再订这张卡的频道跟着它
+// 改。和房间的清单一样整份替换：屏幕上永远是分身最后说的那一份。
+const checklist = ref<TodoItem[]>([])
+const checklistDone = computed(() => checklist.value.filter((i) => i.status === 'completed').length)
+// 读存下的那份还没回来，频道上先到了一份新的：那一份更新，读回来的旧的不能盖掉它。
+let liveSeq = 0
+
+async function loadChecklist() {
+  const room = props.roomId
+  const id = props.cardId
+  if (!room || !id) return
+  const seq = liveSeq
+  try {
+    const progress = await getProgress(room, id)
+    if (props.roomId !== room || props.cardId !== id || seq !== liveSeq) return
+    checklist.value = progress.items ?? []
+  } catch {
+    // 清单是背景信息，拿不到就不画，不为它报错。
+  }
+}
+
+const cardSocket = useRoomSocket({
+  topicId: () => (props.active ? props.cardId ?? undefined : undefined),
+  onFrame(frame) {
+    if (frame.type === 'todo') {
+      liveSeq += 1
+      checklist.value = frame.items
+    } else if (frame.type === 'error' && cardSocket.isConnectRefusal(frame.code)) {
+      cardSocket.connectRefused.value = true
+    }
+  },
+  onOpen: () => {},
+  onDrop: () => {},
+  // 断线期间可能漏掉了几次改动：重读一次，再连回去。
+  reconnect(id) {
+    void loadChecklist()
+    cardSocket.open(id)
+  },
+  // 这条频道只用来跟清单，断线不值得在卡上挂一条横幅；重连照常。
+  errorMsg: ref(null),
+})
+
+watch(
+  () => [props.roomId, props.cardId, props.active] as const,
+  ([room, id, isActive], prev) => {
+    if (prev?.[1] !== id) checklist.value = []
+    if (!room || !id || !isActive) {
+      cardSocket.close()
+      return
+    }
+    cardSocket.connectRefused.value = false
+    cardSocket.open(id)
+    void loadChecklist()
   },
   { immediate: true }
 )
@@ -218,6 +281,17 @@ async function send() {
       <div v-if="card.conclusion" class="panel-card__block" data-testid="card-conclusion">
         <div class="panel-card__block-head t-meta">结论</div>
         <div class="panel-card__block-body card-markdown t-body" v-html="renderMarkdown(card.conclusion)" />
+      </div>
+      <!-- 分身的步骤清单，排在过程上面：先看它打算怎么做、做到了哪一步，再往下翻
+           它具体做过什么。一项都没有就整段不画。 -->
+      <div v-if="checklist.length" class="panel-card__block" data-testid="card-progress">
+        <div class="panel-card__block-head panel-card__progress-head t-meta">
+          <span>{{ t('work.room.progress.title') }}</span>
+          <span class="panel-card__tally">
+            {{ t('work.room.progress.tally', { done: checklistDone, total: checklist.length }) }}
+          </span>
+        </div>
+        <TodoChecklist :items="checklist" />
       </div>
 
       <div ref="timelineRef" class="panel-card__timeline">
@@ -344,6 +418,14 @@ async function send() {
 .panel-card__block-head {
   color: var(--faint);
   padding-bottom: 2px;
+}
+.panel-card__progress-head {
+  display: flex;
+  align-items: center;
+}
+.panel-card__tally {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 .panel-card__block-body {
   color: var(--ink);
