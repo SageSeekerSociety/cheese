@@ -36,7 +36,8 @@ _APPEND_RE = re.compile(
     r"(?m)^[ \t]*(?:[-*>][ \t]*)?(?:\*\*)?(?:" + _APPEND_WORDS + r")[：:]"
 )
 _CHAT_LINE_RE = re.compile(r"^[ \t]*\[[^\]\n]{1,40}\][：:][ \t]*")
-_SHELL_LINE_RE = re.compile(r"^[ \t]*(?:\$|>|❯)[ \t]+\S")
+#: 不收 `>`：那是 Markdown 的引用块，连着几行引用是正常的文档写法。
+_SHELL_LINE_RE = re.compile(r"^[ \t]*(?:\$|❯)[ \t]+\S")
 _FENCE_RE = re.compile(r"(?m)^[ \t]*(```|~~~)")
 
 

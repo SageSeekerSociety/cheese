@@ -97,3 +97,9 @@ def test_every_warning_carries_the_fix_not_just_the_fault():
         assert any(
             word in warning for word in ("改掉", "删掉", "只留", "留在", "不要")
         ), warning
+
+
+def test_a_run_of_quoted_lines_is_not_a_pasted_terminal():
+    """`>` 开头的是 Markdown 引用块，连着几行是正常写法，不是终端粘贴。"""
+    doc = "## 当前结论\n\n> 第一句引用\n> 第二句引用\n> 第三句引用\n> 第四句\n"
+    assert not any("命令" in w for w in living_doc_warnings(doc))
