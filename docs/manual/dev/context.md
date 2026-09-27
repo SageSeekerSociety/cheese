@@ -1,6 +1,6 @@
 ---
 title: 提示词注入与上下文管理
-kind: 流程
+kind: 概念
 summary: 芝士每一轮拿到哪些上下文、按什么顺序、各占多少预算，平台怎么区分人话、平台指令和外部内容，以及不同场景下有什么不同。
 covers:
   - backend/app/domain/agent/harness/prompt.py
@@ -18,7 +18,77 @@ covers:
 
 ## 系统提示词由什么组成 {#system}
 
-`build_system_prompt`（`backend/app/domain/agent/harness/prompt.py`）每一轮都从数据库重新组装，按这个顺序：
+`build_system_prompt`（`backend/app/domain/agent/harness/prompt.py`）每一轮都从数据库重新组装，按下面的顺序：
+
+```demo-timeline
+title: 芝士的一轮上下文
+data: prompt-blocks
+unit: tokens
+estimate: true
+note: 每一步的数字是估算：那块提示词的字符数 ÷ 1.6。柱子只数启动阶段装进去的这些块
+steps:
+  - label: 底稿
+    check: 底稿
+    desc: 部署时配置的那一段开头（settings.agent_system_prompt），后面每一块都接在它后面。
+  - label: 起名
+    check: 起名
+    desc: 话题还没有名字、平台又自己起不了名时，第一条是「先给本话题起名」。平台能起名时由它起。
+  - label: 随时 push
+    check: 随时 push
+    desc: 「随时推送」的约定，所有 agent 都一样，主 agent 也不例外。
+  - label: todo 清单
+    check: 步骤清单
+    desc: 步骤清单（todo_write）的用法：多步的活开工时先写计划。
+  - label: 专家角色
+    check: 角色
+    desc: 这个 AI 队友的专家角色。项目没给它角色时，这一段就不在。
+  - label: 教学范围
+    check: 教学范围
+    desc: 课程项目的本周进度和这周还不该用的知识点。只有课程项目有这一段。
+  - label: 技能
+    check: collaborator
+    desc: 这个场景的操作技能：skill_library/ 里按 scenarios: 标签选出的文件，同一标签的全部拼上。
+  - label: 阶段说明
+    check: 阶段的操作说明
+    desc: 当前阶段的操作说明，由 stages.py 按话题所处阶段静态拼进来，模型没有「要不要读」的选择权。
+  - label: 话题列表
+    check: 项目话题
+    desc: 项目里活跃的话题，用来交叉引用（标题前加 @ 会渲染成可点的链接）。
+  - label: 产物清单
+    check: 产物清单
+    desc: 这个项目的产物清单，交出去的东西一项一行。
+  - label: 成员名册
+    check: 成员
+    desc: 项目成员和怎么点名。
+  - label: 项目总览
+    check: 项目总览
+    desc: 项目总览的实况文档，限 6000 字（OVERVIEW_DOC_CHAR_BUDGET），超了压缩并提示用 cheese_doc_get 读全文。
+  - label: 实况文档
+    check: 实况文档
+    desc: 当前话题的实况文档，同样限 6000 字（TOPIC_DOC_CHAR_BUDGET）。
+  - label: 记忆
+    check: 记忆（memory）
+    desc: 记忆这一块：跑的是会把记忆文件对账回平台的骨架（keeps_memory），或者这一轮带了记忆时才在。记忆怎么用、超限了读得到什么，写在这里。
+  - label: 记忆索引
+    check: 你的记忆
+    desc: L1 索引，team/MEMORY.md 加本轮说话那个人的 private/<handle>/MEMORY.md，正文在会话目录的文件里，模型自己去读。
+  - label: 运行环境
+    check: 运行环境
+    desc: 会话开场时的运行环境（机器、限制），标明是平台元信息而不是用户输入。
+then:
+  - label: 人的消息
+    desc: 到这一步，装配好的提示词和待读的消息一起交给模型。每一轮的用户消息里只放待读的消息，每条前面带说话人标签（prompt_line）。
+    gate: true
+    go: 人发了消息
+  - label: 工具调用与结果
+    desc: 模型读文件、跑命令、调平台工具，结果一条条回到上下文里。外部内容以工具结果的形式出现，而不是混进用户消息。
+  - label: 压缩
+    desc: 窗口快满时，骨架自己把前面的对话压成摘要腾出位置。这一步是骨架（这里就是 Claude Code）的事，平台不参与。
+```
+
+上面这份是真实的装配顺序：每一步就是 `build_system_prompt` 输出里的一块，按行首的 `## ` 切开，数字也是从同一份输出算出来的，只折算了单位。每一块的原文、出现条件和预算见[系统提示词参考](/dev/ref-prompt)。
+
+这些块按读法归成这几组：
 
 1. 话题还没有名字、且平台自己起不了名（部署没配模型网关）时，第一条是「先给话题起名」。平台能起名时由它起，见[话题命名](/dev/turn#naming)。
 2. 「随时推送」的约定。

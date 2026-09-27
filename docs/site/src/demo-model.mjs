@@ -16,7 +16,7 @@
 //   < <= > >= == !=             comparison, one per expression
 //   !  &&  ||                   logic, with `&&` binding tighter than `||`
 
-const TWO = ['>=', '<=', '==', '!=']
+const TWO = ['>=', '<=', '==', '!=', '&&', '||']
 const ONE = '+-*/%()<>!'
 
 function lex(src) {

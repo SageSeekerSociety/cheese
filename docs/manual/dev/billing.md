@@ -41,6 +41,50 @@ covers:
 
 ## 两道刹车 {#brakes}
 
+```demo-sim
+title: 两道刹车读同一份额度
+note: 按 1 额度 = 1 万 token 折算，拖一拖看两道刹车各自什么时候拦
+vars:
+  - key: tokens
+    label: 已经用掉的 token
+    unit: 千
+    min: 0
+    max: 1000
+    step: 20
+    value: 300
+  - key: total
+    label: 团队给的额度
+    unit: 额度
+    min: 10
+    max: 100
+    step: 10
+    value: 50
+derived:
+  - key: spent
+    expr: tokens / 10
+  - key: left
+    expr: total - spent
+rules:
+  - label: 额度用完
+    when: 'left <= 0'
+    text: 准入拒绝，房间里出现平台提示；项目虚拟 key 的 max_budget 也已经在网关上把调用挡住了。
+    tone: bad
+  - label: 快用完了
+    when: 'left <= total * 0.1'
+    text: 准入还放行，但剩下的额度撑不了多久，下一个请求就可能被拦。
+    tone: warn
+  - label: 放行
+    text: 准入放行，网关那边也还没到 max_budget。两道刹车读的是同一份额度，一个按额度数、一个按美元。
+    tone: ok
+out:
+  - label: 已用，折算成额度
+    expr: spent
+    unit: 额度
+  - label: 还剩（负数即超了）
+    expr: left
+    unit: 额度
+```
+
 1. **准入**：每个请求之前，主 API 比较已用额度和总额度，用完就拒绝。这一道在计量代理那边是软的：拿不到准入答案时放行，由订阅路自己的滚动 token 上限兜底。
 2. **网关预算**：项目虚拟 key 的 `max_budget` 按额度设置，网关直接拒绝超额调用。
 

@@ -1296,6 +1296,8 @@ html.js .dm-step.on .dm-dot{transform:scale(1.6)}
 .sm-toggle{display:flex;align-items:center;gap:8px}
 .sm-toggle input{accent-color:var(--accent);width:15px;height:15px}
 .sm-toggle .sm-val{margin-left:auto}
+.sm-choice{align-items:center}
+.sm-choice select{grid-column:2;max-width:15em;padding:3px 8px;border:1px solid var(--line-2);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px}
 .sm-rules{display:flex;flex-direction:column;gap:6px;margin:0 0 12px;padding:0;list-style:none}
 .sm-rule{display:flex;gap:8px;align-items:baseline;padding:7px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:13px;line-height:1.55;color:var(--muted);opacity:.55;transition:opacity .25s,background .25s,border-color .25s}
 .sm-rule b{flex:none;font-weight:600;color:var(--ink)}
