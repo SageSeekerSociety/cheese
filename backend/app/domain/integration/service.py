@@ -135,13 +135,14 @@ def draft_view(row: MailDraft) -> dict:
 #: 2026-09-27: imap.qq.com → 198.18.0.198. Such an address says nothing about
 #: where the name really points, so the real answer is asked for instead.
 FAKE_IP_RANGE = ipaddress.ip_network("198.18.0.0/15")
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
-def _real_addresses(host: str) -> list[ipaddress._BaseAddress]:
+def _real_addresses(host: str) -> list[IPAddress]:
     """The host's addresses from public DNS over HTTPS, past the local proxy."""
     import httpx
 
-    found: list[ipaddress._BaseAddress] = []
+    found: list[IPAddress] = []
     for kind in ("A", "AAAA"):
         try:
             answer = httpx.get(
@@ -160,7 +161,7 @@ def _real_addresses(host: str) -> list[ipaddress._BaseAddress]:
     return found
 
 
-def _refuse_if_internal(host: str, address: ipaddress._BaseAddress) -> None:
+def _refuse_if_internal(host: str, address: IPAddress) -> None:
     if not address.is_global or address.is_multicast:
         raise ValidationError(f"邮件服务器 {host} 指向内网地址，不能使用")
 
