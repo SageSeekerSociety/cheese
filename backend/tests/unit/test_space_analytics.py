@@ -50,7 +50,12 @@ def membership(task_id: int, member_id: int, approved: int, space_id: int):
         task_id=task_id,
         member_id=member_id,
         approved=approved,
-        completion_status="COMPLETED" if approved == 0 else "NOT_SUBMITTED",
+        # "SUCCESS" is the value the rest of the domain writes for a finished
+        # membership (analytics_view_service.SUCCESS_STATUS /
+        # member_publishing_service.SUCCESS_STATUSES). "COMPLETED" is not a
+        # completion status this codebase has anywhere, which is exactly why a
+        # fixture that invented it hid the broken comparison it fed.
+        completion_status="SUCCESS" if approved == 0 else "NOT_SUBMITTED",
         space_id=space_id,
     )
 
@@ -123,6 +128,31 @@ async def test_publishers_participation_groups_by_owner():
     counts = {row["publisherId"]: row["taskCount"] for row in participation}
     assert counts.get(10) == 2
     assert counts.get(11) == 1
+
+
+@pytest.mark.anyio
+async def test_publishers_participation_counts_success_as_completed_users():
+    """completedUsers counts the memberships the domain marks SUCCESS.
+
+    GET /spaces/{spaceId}/publishers/participation reports this number per
+    publisher, so a membership whose completion_status is the real success value
+    must show up — whichever literal the comparison happens to use.
+    """
+    repo = DummyTaskRepo([task(1, 5, 1, 0, 10), task(2, 5, 1, 0, 10)])
+    membership_repo = DummyMembershipRepo(
+        [
+            membership(1, 201, 0, 5),  # approved -> "SUCCESS"
+            membership(1, 202, 1, 5),  # not approved -> "NOT_SUBMITTED"
+            membership(2, 203, 0, 5),  # approved -> "SUCCESS"
+        ]
+    )
+    service = SpaceAnalyticsService(task_repo=repo, membership_repo=membership_repo)
+
+    participation = await service.get_publishers_participation(space_id=5)
+    rows = {row["publisherId"]: row for row in participation}
+
+    assert rows[10]["completedUsers"] == 2
+    assert rows[10]["participants"] == 3
 
 
 @pytest.mark.anyio
