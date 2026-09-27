@@ -509,6 +509,99 @@ describe('对话栏自己的输入栏', () => {
     expect(document.activeElement).toBe(box)
   })
 
+  /** @ 候选列表里的键盘导航。
+   *
+   * 这块菜单以前只能用鼠标点：上下键什么也不做，回车永远挑第一项。名单有七个的时
+   * 候，想 @ 第三个人就得把手从键盘上拿开——而这正是人在打字的时刻。键盘回来的同
+   * 时，鼠标那条路不能坏（划过仍然高亮、回车仍然挑中划过的那一项），所以两条路改的
+   * 是同一个下标。
+   */
+  describe('@ 候选菜单的键盘导航', () => {
+    function itemsOf(container: Element): HTMLElement[] {
+      return Array.from(container.querySelectorAll<HTMLElement>('.mention-menu-item'))
+    }
+    function activeIndex(container: Element): number {
+      return itemsOf(container).findIndex((el) => el.classList.contains('is-active'))
+    }
+    async function openMenu(topicId: string) {
+      const { container } = mountPanel({}, topicId)
+      await flush()
+      const box = composerBox(container)!
+      box.focus()
+      await fireEvent.update(box, '@')
+      await flush()
+      expect(container.querySelector('.mention-menu'), '@ 候选没弹出来').toBeTruthy()
+      return { container, box }
+    }
+
+    it('↑/↓ 换高亮，走到头绕回另一头', async () => {
+      const { container, box } = await openMenu('topic-keys-1')
+      const n = itemsOf(container).length
+      expect(n).toBeGreaterThan(2)
+      expect(activeIndex(container)).toBe(0)
+
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      expect(activeIndex(container)).toBe(1)
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      expect(activeIndex(container)).toBe(2)
+      await fireEvent.keyDown(box, { key: 'ArrowUp' })
+      expect(activeIndex(container)).toBe(1)
+
+      // 从第一项往上：绕到最后一项。名单短，两头都该走得到。
+      await fireEvent.keyDown(box, { key: 'ArrowUp' })
+      await fireEvent.keyDown(box, { key: 'ArrowUp' })
+      expect(activeIndex(container)).toBe(n - 1)
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      expect(activeIndex(container)).toBe(0)
+    })
+
+    it('回车挑的是高亮那一项，不是固定的第一项', async () => {
+      const { box } = await openMenu('topic-keys-2')
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      await fireEvent.keyDown(box, { key: 'Enter' })
+      await flush()
+
+      // 走到第三项是群播 @all。这里钉的正是键盘导航本身：回车跟着高亮走，第一项
+      // （芝士）没被挑中——正文说了算。
+      expect(box.value).toBe('@all ')
+      // 挑完就是接着打字的时刻，焦点不该被那次回车带走。
+      expect(document.activeElement).toBe(box)
+    })
+
+    it('鼠标划过和 ↑/↓ 是同一套高亮', async () => {
+      const { container, box } = await openMenu('topic-keys-3')
+      await fireEvent.mouseEnter(itemsOf(container)[2])
+      expect(activeIndex(container)).toBe(2)
+
+      // 划过之后接着按 ↓：从划过的那一项往下走，不是从第一项重来。
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      expect(activeIndex(container)).toBe(3)
+      await fireEvent.keyDown(box, { key: 'Enter' })
+      await flush()
+      expect(box.value).toBe('@here ')
+    })
+
+    it('Esc 收起候选，再打字又打开；收起的时候回车是发送', async () => {
+      const { container, box } = await openMenu('topic-keys-4')
+      await fireEvent.keyDown(box, { key: 'Escape' })
+      expect(container.querySelector('.mention-menu')).toBeNull()
+
+      // @ 是临时收起，不是从正文里拿掉：这时回车该把这条消息发出去。
+      await fireEvent.keyDown(box, { key: 'Enter' })
+      await flush()
+      const message = sent
+        .map((s) => JSON.parse(s.payload) as { content?: string })
+        .find((p) => typeof p.content === 'string')
+      expect(message?.content).toBe('@')
+
+      box.focus()
+      await fireEvent.update(box, '@a')
+      await flush()
+      expect(container.querySelector('.mention-menu')).toBeTruthy()
+    })
+  })
+
   // 「交给芝士」这颗按钮唯一被允许做的事，就是替你打那五个字。它自己不存状态：
   // 一个能和正文说不一样的话的开关（亮着、正文里却没有 @），会让「这条到底算不
   // 算叫了它」变成没人答得上来的问题——上一版正是因为这个被整颗删掉的。
