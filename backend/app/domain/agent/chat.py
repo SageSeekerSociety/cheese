@@ -154,22 +154,16 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import binding
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.models import Task
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic import naming
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.overview import (
-    ACTIVE_TOPICS_LIMIT,
-    CLOSED_TOPICS_LIMIT,
-    DECISIONS_LIMIT,
-    MILESTONES_LIMIT,
-    first_sentence,
     project_brief,
     render_overview,
     render_overview_auto,
-    topic_conclusion,
 )
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -847,20 +841,6 @@ _OPEN_CARD_STATUSES = (
     AcceptStatus.gate_blocked,
     AcceptStatus.conflict,
 )
-
-#: 里程碑的状态说成人话：注入的那一行是给模型读的，`upcoming` 不是中文提示词里
-#: 该出现的词。
-_MILESTONE_STATE = {"upcoming": "进行中", "done": "已完成", "missed": "已逾期"}
-
-
-def _decision_summary(content: str) -> str:
-    """决策卡正文的第一句 —— 注入的是索引，全文在那张卡上。"""
-    for line in content.splitlines():
-        text = line.strip().lstrip("#-*> ").strip()
-        if text:
-            return first_sentence(text) or text
-    return content.strip()
-
 
 _PROGRESS_MARK = {"completed": "x", "in_progress": "~", "pending": " "}
 
@@ -4186,7 +4166,6 @@ class ChatService:
     ) -> None:
         """把做这条活的分身记在卡上。"""
         from app.domain.delivery.agent import instance_for_seat
-        from app.domain.room_task.models import Task
         from app.domain.room_task.services import TaskService
 
         if turn_id is None or not parent_session_id:
@@ -4833,123 +4812,18 @@ class ChatService:
         """
         in_overview_room = project.root_topic_id == room_id
         source = room_doc if in_overview_room else overview_doc
-        return render_overview(
-            brief=project_brief(source or ""),
-            auto=(
-                await self._overview_auto(session, project, all_topics, roster)
-                if in_overview_room
-                else ""
-            ),
-        )
+        auto = ""
+        if in_overview_room:
+            from app.domain.topic.services import TopicService
 
-    async def _overview_auto(
-        self,
-        session: AsyncSession,
-        project: Project,
-        all_topics: list[Topic],
-        roster: list[dict],
-    ) -> str:
-        """②~⑤ 的每一行：活跃话题、最近决策卡、里程碑、已结束话题的结论。
-
-        全部来自结构化数据，所以**没有一句是手抄的**——谁改了源头，下一次注入就是
-        新的。负责人取该话题最新那张任务卡的 owner：一个房间可以有好几张卡，最新
-        的那张才说得出现在谁在做。
-        """
-        name_of = {m["handle"]: m["name"] for m in roster}
-
-        def person(handle: str | None) -> str | None:
-            # 名册上的名字才是 @ 得到的名字；查不到就照 handle 写，那是真的。
-            return f"@{name_of.get(handle, handle)}" if handle else None
-
-        from app.domain.room_task.services import TaskService
-
-        latest_card: dict[uuid.UUID, Task] = {}
-        for card in await TaskService(session).list_in_project(project.id):
-            # Oldest first: the newest card in each room wins.
-            latest_card[card.room_id] = card
-
-        def card_state(topic_id: uuid.UUID) -> str:
-            card = latest_card.get(topic_id)
-            if card is None:
-                return "还没开活"
-            return "在做" if card.status == TaskStatus.open else "已收工"
-
-        live = [
-            t
-            for t in all_topics
-            if t.kind != TopicKind.root and t.status != TopicStatus.archived
-        ][:ACTIVE_TOPICS_LIMIT]
-        closed = sorted(
-            (
-                t
-                for t in all_topics
-                if t.kind != TopicKind.root and t.status == TopicStatus.archived
-            ),
-            key=lambda t: t.archived_at or t.updated_at,
-            reverse=True,
-        )[:CLOSED_TOPICS_LIMIT]
-        # 只取要渲染的那几间房的文档：一屏之外的结论没人读，问了也是白问。
-        docs = await BlockRepository(session).doc_roots(
-            [t.id for t in (*live, *closed)]
-        )
-
-        def conclusion(topic: Topic, *, prefer_card: bool) -> str | None:
-            """话题现在的一句话结论：卡上那句优先，没有就看它自己的实况文档。"""
-            card = latest_card.get(topic.id)
-            if prefer_card and card is not None and card.conclusion:
-                return first_sentence(card.conclusion)
-            doc = docs.get(topic.id)
-            return topic_conclusion(doc.content) if doc is not None else None
-
-        decisions = (
-            await BlockRepository(session).list_by_kind_for_project(
-                project.id, BlockKind.decision
+            # ②~⑤ 的取数在 topic 领域，和前端那一条
+            # （`TopicService.overview_auto`）是同一份：两个读者，一份来源。
+            auto = render_overview_auto(
+                **await TopicService(session).overview_auto_data(
+                    project.id, all_topics=all_topics, roster=roster
+                )
             )
-        )[:DECISIONS_LIMIT]
-        milestones = (await MilestoneRepository(session).list_for_project(project.id))[
-            :MILESTONES_LIMIT
-        ]
-        title_of = {t.id: t.title for t in all_topics}
-        return render_overview_auto(
-            active_topics=[
-                {
-                    "id": str(t.id),
-                    "title": t.title,
-                    "owner": person(
-                        card.owner_handle
-                        if (card := latest_card.get(t.id)) is not None
-                        else None
-                    ),
-                    "status": card_state(t.id),
-                    "conclusion": conclusion(t, prefer_card=False),
-                }
-                for t in live
-            ],
-            decisions=[
-                {
-                    "text": _decision_summary(block.content),
-                    "topic_id": str(block.topic_id),
-                    "topic": title_of.get(block.topic_id),
-                }
-                for block in decisions
-            ],
-            milestones=[
-                {
-                    "title": m.title,
-                    "due": m.due_date.date().isoformat() if m.due_date else None,
-                    "status": _MILESTONE_STATE.get(m.status.value, m.status.value),
-                }
-                for m in milestones
-            ],
-            closed_topics=[
-                {
-                    "id": str(t.id),
-                    "title": t.title,
-                    "conclusion": conclusion(t, prefer_card=True),
-                }
-                for t in closed
-            ],
-        )
+        return render_overview(brief=project_brief(source or ""), auto=auto)
 
     async def _assemble_turn(
         self,

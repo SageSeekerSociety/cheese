@@ -1392,6 +1392,27 @@ async def get_topic_doc(
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
 
 
+@router.get("/{topic_id}/overview")
+async def get_topic_overview(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """总览房间的自动区（#1889）：②~⑤，结构化，给文档面板正文下方那一栏。
+
+    总览文档是五块：① 写在文档正文里，②~⑤ 由平台现拼。注入 agent 提示词的
+    那一份是同一批数据的 markdown 排版（`topic/overview.py`），这里给的是能
+    逐个点击的结构化条目。
+
+    授权和读文档那一份完全一样：先认出「谁在这儿」，再看他在不在这个房间的
+    名册上。只有根话题有总览，别处 404（见 `TopicService.overview_auto`）。
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    blocks = await TopicService(db).overview_auto(topic_id)
+    return ok({"root_topic_id": str(place.room_id), "blocks": blocks})
+
+
 @router.put("/{topic_id}/doc")
 async def edit_topic_doc(
     topic_id: uuid.UUID,

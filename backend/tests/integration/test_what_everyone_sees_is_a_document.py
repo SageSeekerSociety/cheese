@@ -25,7 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import chat_ws_url, post_project, registered
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_project,
+    registered,
+    session_auth_headers,
+)
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -312,3 +317,93 @@ def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
     assert "给高中生做算法课" in prompt
     assert "## 最近决策" not in prompt
     assert DECISION not in prompt
+
+
+def test_the_panel_gets_the_same_four_blocks_as_structured_data(client):
+    """前端那一栏读的是同一份 ②~⑤，只是给的是点得动的条目。
+
+    提示词那一份 markdown 是给模型读的；这一份每条要带上自己的去处（话题 id /
+    决策卡 id / 里程碑 id）和一句话结论。人看总览时读到的东西，和芝士那一轮读到
+    的是同一次取数（`TopicService.overview_auto_data`）——两个读者，一份来源。
+    """
+    project_id, topic_id = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    client.post(f"/topics/{topic_id}/decision", json={"decision": DECISION})
+    client.post(f"/projects/{project_id}/milestones", json={"title": "中期答辩"})
+    ended = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "做完的房间", "created_by": "user-1"},
+    ).json()["data"]["id"]
+    archived = client.post(
+        f"/topics/{ended}/archive",
+        json={"by": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
+    assert archived.status_code == 200, archived.text
+
+    body = client.get(f"/topics/{overview}/overview").json()["data"]
+    assert body["root_topic_id"] == overview
+    # 块按 ②③④⑤ 排，空块整块不出现（同提示词那一份）。
+    assert [b["key"] for b in body["blocks"]] == [
+        "active_topics",
+        "decisions",
+        "milestones",
+        "closed_topics",
+    ]
+    blocks = {b["key"]: b for b in body["blocks"]}
+    assert [b["title"] for b in body["blocks"]] == [
+        "现在在做什么",
+        "最近决策",
+        "里程碑",
+        "已结束的话题",
+    ]
+
+    # ② 活跃话题：去处是那个房间，状态是它最新的那张卡（还没开活）。
+    (active,) = blocks["active_topics"]["items"]
+    assert active["kind"] == "topic"
+    assert active["topic_id"] == topic_id
+    assert active["title"] == "干活的房间"
+    assert active["status"] == "还没开活"
+    assert active["owner"] is None
+
+    # ③ 最近决策：一条决策卡，去哪儿看全文是它所在的话题。
+    (decision,) = blocks["decisions"]["items"]
+    assert decision["kind"] == "decision"
+    assert decision["text"] == DECISION
+    assert decision["topic_id"] == topic_id
+    assert decision["topic_title"] == "干活的房间"
+    assert decision["block_id"]
+
+    # ④ 里程碑：状态给原值（界面按它上点），日期没定就是没有。
+    (milestone,) = blocks["milestones"]["items"]
+    assert milestone["kind"] == "milestone"
+    assert milestone["title"] == "中期答辩"
+    assert milestone["status"] == "upcoming"
+    assert milestone["due"] is None
+
+    # ⑤ 已结束的话题：归档的那一间落在这里，不在 ②。
+    (closed,) = blocks["closed_topics"]["items"]
+    assert closed["kind"] == "topic"
+    assert closed["topic_id"] == ended
+    assert closed["title"] == "做完的房间"
+
+
+def test_only_the_overview_room_has_an_overview(client):
+    """别的房间名下没有这么一件东西，是 404 而不是一个空壳。
+
+    总览是项目级的：一个干活的房间读它自己的实况文档，没有人从那里看项目全局。
+    给它拼一份出来，等于凭空多出一个「这个房间的总览」。
+    """
+    project_id, topic_id = _project_and_room(client)
+    resp = client.get(f"/topics/{topic_id}/overview")
+    assert resp.status_code == 404, resp.text
+
+
+def test_a_stranger_cannot_read_the_overview(client):
+    """权限和读总览文档一样：认得出来是谁，还得在名册上。"""
+    project_id, _ = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    resp = client.get(
+        f"/topics/{overview}/overview", headers=session_auth_headers("stranger")
+    )
+    assert resp.status_code == 403, resp.text
