@@ -103,9 +103,7 @@ def _review(
     payload: dict = {"approved": approved}
     if reason:
         payload["rejectReason"] = reason
-    resp = api_client.patch(
-        f"/tasks/{task_id}", json=payload, headers=_auth(token)
-    )
+    resp = api_client.patch(f"/tasks/{task_id}", json=payload, headers=_auth(token))
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["task"]
 
