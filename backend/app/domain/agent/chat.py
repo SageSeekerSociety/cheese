@@ -56,6 +56,7 @@ from app.domain.agent.platform_failures import (
     PROVIDER_OVERLOADED_CODE,
     PROVIDER_UNREACHABLE_CODE,
     RESPONSE_TRUNCATED_CODE,
+    SESSION_START_CODES,
     TOOL_UNAVAILABLE_CODE,
     TURN_TIMEOUT_MESSAGE,
     classify_cli_notice,
@@ -716,7 +717,9 @@ def _proposal_frames(landed: dict | None) -> list[dict]:
     return frames
 
 
-def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
+def _turn_failure_notice(
+    text: str, code: str | None, *, log: str | None = None
+) -> tuple[str, dict]:
     """A failed turn's room line and the structured card behind it.
 
     Every failure gets one, classified or not. 平台提示统一契约: the room line
@@ -732,7 +735,10 @@ def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
     """
     failure = classify_platform_failure(text, code=code)
     if failure is not None:
-        return failure.content, failure.meta
+        if failure.code in SESSION_START_CODES and text.strip():
+            # The sentence it was raised with can name what was found.
+            return text.strip(), _with_log(failure.meta, log)
+        return failure.content, _with_log(failure.meta, log)
     detail = (text or "").strip()
     if _is_out_of_credit(detail):
         # A spent balance is not a wait — no amount of retrying refills it, and
@@ -761,6 +767,14 @@ def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
         detail_label="详细说明",
         retryable=retryable,
     )
+
+
+def _with_log(meta: dict, log: str | None) -> dict:
+    """What the failing process printed, on the fields only 现场 shows: a
+    failed row there, with the text as its error. The room reads neither."""
+    if not log or not log.strip():
+        return meta
+    return {**meta, "failed": True, "error": log.strip()}
 
 
 # CLI 自己印在对话里的那几句英文,换成平台自己的中文提示卡。
@@ -2903,7 +2917,9 @@ class ChatService:
 
                     line, meta = CREDITS_EXHAUSTED_EVENT, CREDITS_EXHAUSTED_META
                 else:
-                    line, meta = _turn_failure_notice(event.text, event.failure_code)
+                    line, meta = _turn_failure_notice(
+                        event.text, event.failure_code, log=event.log
+                    )
                 error_line, error_code = line, meta.get("code")
                 payload = await self.post_system_event(
                     topic_id, line, turn_id, meta=meta
@@ -5830,6 +5846,7 @@ class ChatService:
                     session_id=resume_session_id,
                     is_error=True,
                     failure_code=failure_code,
+                    log=getattr(exc, "log", None),
                 ),
                 None,
                 False,

@@ -416,15 +416,19 @@ function isLive(index: number): boolean {
               </button>
               <span v-else class="site-act__argtext"></span>
               <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
-              <!-- 挂了的那一步：错误摘要另起一行，缩进到参数那一列，和上面对齐。 -->
-              <p
+              <!-- 挂了的那一步：错误摘要另起一行，缩进到参数那一列，和上面对齐。
+                   它自己也能点开：一个会话没起来时，这里是它启动时打印的原文，
+                   而那一行没有参数可点。 -->
+              <button
                 v-if="eventFailed(b) && eventError(b)"
+                type="button"
                 class="site-act__error"
                 :class="{ 'site-act__error--full': expandedSite.has(b.id) }"
                 data-testid="site-act-error"
+                @click="toggleSiteEntry(b.id)"
               >
                 {{ eventError(b) }}
-              </p>
+              </button>
               <!-- 摊开的这一步打印了什么：收着，点了才取。 -->
               <SiteStepOutput
                 v-if="topic && expandedSite.has(b.id) && b.meta?.output_bytes"
@@ -629,8 +633,14 @@ function isLive(index: number): boolean {
    + 间隙 —— 写成 calc 而不是量出来的一个数，改了上面这一行不用回来改它。 */
 .site-act__error {
   flex: 0 0 100%;
+  min-width: 0;
   margin: 2px 0 0;
-  padding-left: calc(5px + 8px + 4em + 8px);
+  padding: 0 0 0 calc(5px + 8px + 4em + 8px);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   color: var(--danger-ink);
   /* 13px 而不是 12：这一行是挂了的那一步上唯一有人真去读的字。 */
   font-size: 13px;
@@ -638,6 +648,11 @@ function isLive(index: number): boolean {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.site-act__error:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 .site-act__error--full {
   white-space: pre-wrap;
