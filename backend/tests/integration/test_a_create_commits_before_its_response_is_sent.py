@@ -240,9 +240,10 @@ def test_a_space_is_committed_before_its_201_is_sent(asgi: _Asgi, author) -> Non
     _assert_committed_before_responding(asgi)
 
 
-def _publish_a_task(asgi: _Asgi, db_session: AsyncSession, _portal, token: str) -> None:
-    """Create a board, approve it, and publish one task into it; the last
-    request made is the ``POST /tasks``."""
+def _an_approved_board(
+    asgi: _Asgi, db_session: AsyncSession, _portal, token: str
+) -> int:
+    """Create a board through the app and approve it; returns its id."""
     asgi.post(
         "/spaces",
         _space_body(f"Committed task board ({uuid.uuid4().hex[:8]})"),
@@ -260,6 +261,13 @@ def _publish_a_task(asgi: _Asgi, db_session: AsyncSession, _portal, token: str) 
         await db_session.flush()
 
     _portal.call(_approve)
+    return space_id
+
+
+def _publish_a_task(asgi: _Asgi, db_session: AsyncSession, _portal, token: str) -> None:
+    """Create a board, approve it, and publish one task into it; the last
+    request made is the ``POST /tasks``."""
+    space_id = _an_approved_board(asgi, db_session, _portal, token)
 
     asgi.post(
         "/tasks",
@@ -306,6 +314,44 @@ def test_a_task_approval_is_committed_before_its_response_is_sent(
 
     assert asgi.status == 200, asgi.body
     assert json.loads(asgi.body)["data"]["task"]["approved"] == "APPROVED"
+    _assert_committed_before_responding(asgi)
+
+
+def test_pdf_drafts_are_committed_before_their_response_is_sent(
+    asgi: _Asgi, db_session: AsyncSession, _portal, author
+) -> None:
+    """Found behind the task-approval fix (#1886), with a delay injected before
+    the teardown commit in ``get_db``::
+
+        POST /tasks/publish/from-pdf/confirm   200
+        (the review queue opened next)         <- the confirmed task is missing
+    """
+    _, token = author
+    space_id = _an_approved_board(asgi, db_session, _portal, token)
+
+    asgi.post(
+        "/tasks/publish/from-pdf/confirm",
+        {
+            "drafts": [
+                {
+                    "name": f"Drafted task ({uuid.uuid4().hex[:8]})",
+                    "intro": "An intro.",
+                    "description": "A description.",
+                }
+            ],
+            "taskOptions": {
+                "space": space_id,
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+            },
+        },
+        token=token,
+    )
+
+    assert asgi.status == 200, asgi.body
+    assert json.loads(asgi.body)["data"]["count"] == 1
     _assert_committed_before_responding(asgi)
 
 
