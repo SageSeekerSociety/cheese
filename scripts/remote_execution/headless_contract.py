@@ -1159,11 +1159,17 @@ def transcript_path(home, session_id):
     return matches[0] if matches else None
 
 
-def settled(path, text, timeout=30):
-    """Wait until the transcript at `path` records `text`."""
+def settled(home, session_id, text, timeout=30):
+    """Wait until the session's transcript exists and records `text`.
+
+    The file is looked up on every poll: the CLI creates it when it first
+    writes, which on a busy runner can come after the turn's reply has shown,
+    and a path resolved once, before that, stays None for the whole wait.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if path and path.exists() and text in path.read_text():
+        path = transcript_path(home, session_id)
+        if path and text in path.read_text():
             return True
         time.sleep(0.2)
     return False
@@ -1180,7 +1186,7 @@ def resuming(binary, root):
     cli = Interactive(binary, root, "resuming-cli", home, ["--session-id", first])
     try:
         asked = cli.say("INTERACTIVE_MARKER first turn")
-        written = settled(transcript_path(home, first), "ACCEPTANCE_DONE")
+        written = settled(home, first, "ACCEPTANCE_DONE")
     finally:
         cli.stop()
     yield (
@@ -1216,7 +1222,7 @@ def resuming(binary, root):
             "-p --resume keeps the session id and appends to the same transcript",
             bool(init)
             and init.get("session_id") == first
-            and settled(transcript_path(home, first), "HEADLESS_AFTER", 5),
+            and settled(home, first, "HEADLESS_AFTER", 5),
             f"resumed {first}, init reports {init and init.get('session_id')}",
         )
         session.close_stdin()
@@ -1247,7 +1253,7 @@ def resuming(binary, root):
             None,
         )
         history = json.dumps(request.get("messages")) if request else ""
-        appended = settled(transcript_path(home, second), "INTERACTIVE_AFTER")
+        appended = settled(home, second, "INTERACTIVE_AFTER")
     finally:
         cli.stop()
     yield (

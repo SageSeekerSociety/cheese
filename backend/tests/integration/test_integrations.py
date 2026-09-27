@@ -265,6 +265,7 @@ class FeishuStub:
     def __init__(self):
         self.docs = {"doc-ok": ["第一段", "第二段"]}
         self.calls = []
+        self.no_drive_scope = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -304,6 +305,10 @@ class FeishuStub:
                 200, json={"code": 0, "data": {"document": {"title": "项目周报"}}}
             )
         if path.endswith("/metas/batch_query"):
+            if self.no_drive_scope:
+                return httpx.Response(
+                    400, json={"code": 99991672, "msg": "Access denied. drive"}
+                )
             return httpx.Response(
                 200,
                 json={
@@ -363,6 +368,31 @@ def test_feishu_read_create_edit_and_refusals(client, feishu_stub):
         f"/integrations/{fid}/feishu/search?topic={room}", json={"query": "周报"}
     )
     assert no_search.status_code == 403, "app-only credentials pretended to search"
+
+
+def test_an_app_without_the_drive_scope_still_reads_and_writes(client, feishu_stub):
+    """dev, 2026-09-27: the document scopes were granted, the drive metadata one
+    was not, and the whole read failed on the link lookup at the end."""
+    feishu_stub.no_drive_scope = True
+    person, project, room = _setup(client)
+    fid = client.post(
+        "/me/integrations/feishu",
+        json={"app_id": "cli_x", "app_secret": "s", "grants": [project]},
+        headers=person,
+    ).json()["data"]["id"]
+
+    read = client.get(f"/integrations/{fid}/feishu/docs/doc-ok?topic={room}")
+    assert read.status_code == 200, read.text
+    data = read.json()["data"]
+    assert [b["text"] for b in data["blocks"]] == ["第一段", "第二段"]
+    assert data["url"] is None
+
+    created = client.post(
+        f"/integrations/{fid}/feishu/docs?topic={room}",
+        json={"title": "周报", "content": "本周"},
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["data"]["document_id"] == "doc-new"
 
 
 def test_a_mail_server_on_the_platforms_own_network_is_refused(

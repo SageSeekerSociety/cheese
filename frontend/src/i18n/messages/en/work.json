@@ -216,7 +216,8 @@
     "notice": {
       "platform": "Platform",
       "changedFiles": "Changed files",
-      "moreFiles": "{n} more files"
+      "moreFiles": "{n} more files",
+      "goConfirm": "Review and confirm"
     },
     "message": {
       "copy": "Copy",

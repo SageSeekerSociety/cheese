@@ -10,6 +10,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import ProjectSkillsView from './ProjectSkillsView.vue'
 
+const routeQuery: Record<string, string> = {}
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }))
+
 vi.mock('../api', () => ({
   listProjectSkills: vi.fn(),
   listTopics: vi.fn(),
@@ -67,6 +70,7 @@ const base = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  for (const k of Object.keys(routeQuery)) delete routeQuery[k]
   vi.mocked(listTopics).mockResolvedValue({
     data: [{ id: 'room-1', title: '周报房间', status: 'active' }],
     total: 1,
@@ -92,6 +96,13 @@ function buttonIn(scope: Element, label: string): HTMLElement | undefined {
 const row = (c: Element, id: string) => c.querySelector(`[data-skill="${id}"]`)!
 
 describe('工作方法', () => {
+  it('从房间的「去确认」点进来，那一条被指出来', async () => {
+    routeQuery.skill = 'new-1'
+    const { container } = mount()
+    await waitFor(() => expect(row(container, 'new-1').classList.contains('row--focus')).toBe(true))
+    expect(row(container, 'live-1').classList.contains('row--focus')).toBe(false)
+  })
+
   it('芝士整理的方法要人点确认才保存', async () => {
     vi.mocked(confirmProjectSkill).mockResolvedValue({
       ...base,

@@ -1618,6 +1618,7 @@ onBeforeUnmount(() => {
               :retrying="retryBusy"
               :me="AUTHOR"
               :mail-outcome="notice.mode === 'mail-draft' ? mailEnds.get(notice.mail.draftId) ?? null : null"
+              :project-id="topic?.project_id ?? null"
               @animationend="settleArrival($event, m.id)"
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
               @undo-title="undoTitle"

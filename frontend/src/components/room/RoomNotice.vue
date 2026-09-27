@@ -15,6 +15,7 @@ import type { MailOutcome, PlatformNotice } from '../../lib/platformNotice'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { parseDiffLines } from '../../lib/diff'
+import { confirmTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import CloudStartupStatus from '../CloudStartupStatus.vue'
@@ -46,6 +47,8 @@ const props = defineProps<{
   me?: string | null
   /** 这封邮件草稿后来怎样了（`mail-draft` 档用）。 */
   mailOutcome?: MailOutcome | null
+  /** 房间所在的项目：「去确认」要带人去项目级的页面。 */
+  projectId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -91,6 +94,9 @@ const showRetry = computed(
     ((props.notice.mode === 'incident' && props.notice.incident.retryable) ||
       (props.notice.mode === 'fold' && props.notice.retryable))
 )
+
+// 芝士起草的规则 / 工作方法：这一行直接通到要确认的那一条。
+const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
 
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
@@ -283,6 +289,9 @@ const ACTION_META: Record<string, { btn: string }> = {
           notice.who === 'cheese' ? `${name || agentName}正在处理` : notice.whoLabel
         }}</span>
         <!-- 在 summary 里点它不能顺带展开这一行。 -->
+        <router-link v-if="confirmAt" :to="confirmAt" class="sys-btn" data-testid="notice-confirm" @click.stop>
+          {{ t('work.room.notice.goConfirm') }}
+        </router-link>
         <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click.prevent.stop="emit('retry')">
           {{ t('work.room.retry.action') }}
         </button>

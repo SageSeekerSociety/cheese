@@ -414,6 +414,30 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   return { mode: 'plain' }
 }
 
+/** 芝士起草、等人确认的那一件：它在哪一页、哪一条。 */
+export interface ConfirmTarget {
+  name: 'project-routines' | 'project-skills'
+  params: { projectId: string }
+  query: Record<string, string>
+}
+
+/**
+ * 「芝士起草了规则 / 整理了工作方法」那一行要带一颗「去确认」。
+ *
+ * 确认入口在项目名旁的 ⋯ 菜单里，人在房间读到这一行时不知道去哪找（chiruotong
+ * 在 dev 上实测找不到）。这一行本身就知道是哪一条，所以直接指过去。
+ */
+export function confirmTarget(block: Block, projectId: string | null | undefined): ConfirmTarget | null {
+  const m = meta(block)
+  if (!projectId) return null
+  const kind = str(m?.event_type)
+  if (kind === 'routine_proposed' && str(m?.routine_id))
+    return { name: 'project-routines', params: { projectId }, query: { routine: str(m?.routine_id) } }
+  if (kind === 'skill_proposed' && str(m?.skill_id))
+    return { name: 'project-skills', params: { projectId }, query: { skill: str(m?.skill_id) } }
+  return null
+}
+
 /** 连续折叠时，这条事件归哪一类；null = 不参与按类别折叠。 */
 function foldKey(block: Block): string | null {
   const m = meta(block)
