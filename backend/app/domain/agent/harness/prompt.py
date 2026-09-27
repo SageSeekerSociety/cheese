@@ -113,14 +113,10 @@ TOPIC_DOC_CHAR_BUDGET = 6000
 _DOC_HEADING_RE = re.compile(r"(?m)^#{1,6} .*$")
 _TEMP_SECTION_RE = re.compile(r"临时|TODO|待办|草稿|暂定|scratch|todo", re.IGNORECASE)
 _PROGRESS_SECTION_RE = re.compile(r"进展|进度|状态|日志|记录|下一步|本周|历史")
-#: 机器写进总览的两段共享事实：丢它们等于静默删掉全项目共同状态，钉死最后才动。
-_KEEP_LAST_SECTIONS = ("大家都该知道的", "项目记忆（由记忆整理迁入）")
 
 
 def _doc_drop_class(label: str) -> int:
     """0 = 先丢（临时/待办），1 = 次之（进展/记录），2 = 最后才动。"""
-    if any(name in label for name in _KEEP_LAST_SECTIONS):
-        return 2
     if _TEMP_SECTION_RE.search(label):
         return 0
     if _PROGRESS_SECTION_RE.search(label):
@@ -344,9 +340,9 @@ def build_system_prompt(
         parts.append(
             "## 项目总览的实况文档（全项目共看的那一份，不是本话题的）\n"
             "这是这个项目所有人和所有芝士共同看的那一份状态：项目在做什么、"
-            "定了什么、谁在负责。**你观察到「所有人都该知道」的事实，写进它**"
-            "（`cheese_remember` 带 `everyone`），不要记进只有你自己读得到的"
-            "记忆池。\n"
+            "定了什么、谁在负责。它不是观察清单：项目目标、范围、对外口径这类"
+            "所有人都该知道的，改写进它的「项目是什么」一节（到总览房间用 "
+            "`cheese_doc_set` 整份更新），不要逐条往后追加。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,

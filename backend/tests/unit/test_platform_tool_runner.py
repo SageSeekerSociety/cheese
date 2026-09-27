@@ -486,18 +486,14 @@ def test_a_lock_someone_else_holds_is_a_refusal():
 # --- memory, roster, status and the rest -----------------------------------
 
 
-def test_everyone_outranks_the_private_chats_personal_memory():
-    """私聊里的 `everyone` 写的是文档，不是对这一位的个人记忆。"""
+def test_remember_no_longer_offers_writing_for_everyone():
+    """`everyone` 已停用：工具不再提供这个参数，私聊里记的仍是个人记忆。"""
+    tool = next(
+        t for t in cheese.PLATFORM_TOOLS.schemas() if t["name"] == "cheese_remember"
+    )
+    assert "everyone" not in json.dumps(tool, ensure_ascii=False)
     personal = {"CHEESE_MEMORY_SCOPE": "personal", "CHEESE_OWNER": "alice"}
     host = Host(environ=personal)
-    assert "项目总览的实况文档" in run(
-        "cheese_remember", {"fact": "x", "everyone": True}, host
-    )
-    assert host.requests[-1]["body"] == {
-        "content": "x",
-        "topic": _ROOM,
-        "scope": "everyone",
-    }
     assert "个人记忆" in run("cheese_remember", {"fact": "x"}, host)
     assert host.requests[-1]["body"] == {
         "content": "x",
