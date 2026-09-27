@@ -272,6 +272,28 @@ async def test_the_room_is_given_the_tools_the_installed_cli_actually_has(
 
 
 @pytest.mark.anyio
+async def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has(
+    tmp_path, monkeypatch
+):
+    """The prompt names the publishing tool on every turn. A session given no
+    tool by that name is told to do the one thing it cannot, and says nothing
+    to anybody."""
+    from app.domain.agent.harness import prompt
+
+    published = prompt.publication_prompt("x")
+    named = {word.strip("`. ") for word in published.split() if "chat_send" in word}
+    assert named, "the room's prompt no longer names a publishing tool"
+    runner = await with_tools(tmp_path, monkeypatch)
+    try:
+        spec = json.loads(
+            (runner.state / "extension/platform.json").read_text(encoding="utf-8")
+        )
+        assert named <= {tool["name"] for tool in spec["tools"]}
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
 async def test_a_machine_without_the_cli_still_opens_and_says_why(
     tmp_path, monkeypatch
 ):

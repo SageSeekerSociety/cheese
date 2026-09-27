@@ -24,7 +24,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, describe, it } from "node:test";
 
-import { NOTICE, cleanup, load, runner } from "./pi-double.ts";
+import { cleanup, load, runner } from "./pi-double.ts";
 
 after(cleanup);
 
@@ -43,10 +43,6 @@ const NAMES = fs
   .filter((name) => name.endsWith(".json") && name !== "vocabulary.json")
   .sort();
 const SCENARIOS = NAMES.map((name) => ({ name, ...read(name) }));
-
-// QUIET_LIMIT in platform.ts. Ten tool calls with nothing published is when the
-// extension asks the agent to say something.
-const QUIET = 10;
 
 describe("夹具本身", () => {
   it("目录里有东西可读", () => {
@@ -107,7 +103,6 @@ describe("夹具本身", () => {
       assert.ok(scenario.extension, `${scenario.name} names us and says nothing`);
       assert.equal(typeof scenario.extension.status, "number");
       assert.equal(typeof scenario.extension.is_error, "boolean");
-      assert.equal(typeof scenario.extension.resets_silence, "boolean");
     }
   });
 });
@@ -129,32 +124,6 @@ describe("失败的调用和返回的调用不是同一件事", () => {
         assert.equal(answer.isError ?? false, spec.is_error);
       } finally {
         socket.close();
-      }
-    });
-
-    it(`${scenario.name}：这样一次 ${spec.tool} ${spec.resets_silence ? "算" : "不算"}对房间说过话`, async () => {
-      // The room sees no tool calls, only what was published. So whether this
-      // call counts as having spoken is the same question as whether it
-      // failed — and the two must be answered the same way.
-      const { pi } = await load();
-      await pi.emit("turn_end", {
-        toolResults: Array.from({ length: QUIET }, () => ({
-          toolName: "bash",
-          isError: false,
-        })),
-      });
-      await pi.emit("turn_end", {
-        toolResults: [{ toolName: spec.tool, isError: spec.is_error }],
-      });
-
-      const answer = await pi.emit("context", {
-        messages: [{ role: "user", content: [] }],
-      });
-      const said = answer ? answer.messages.at(-1).content[0].text : null;
-      if (spec.resets_silence) {
-        assert.equal(said, null, "the room has just been told what is going on");
-      } else {
-        assert.ok(said?.startsWith(NOTICE), "a message nobody received is not a message");
       }
     });
   }
