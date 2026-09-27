@@ -14,14 +14,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import PreviewPages from './PreviewPages.vue'
 
 /** pdf.js 是假的：这条测的是「谁作废了谁」，不是 pdf.js 会不会解析。
- *  `calls` 是自己数的，不用 vi.fn：组件是动态 import（`await import('pdfjs-dist')`），
+ *  `calls` 是自己数的，不用 vi.fn：组件是动态 import（`await import('pdfjs-dist/legacy/build/pdf.mjs')`），
  *  这个假模块要等 library() 真的跑起来才建起来——beforeEach 里够不着它。 */
 const pdf = vi.hoisted(() => ({
   resolveDoc: null as null | ((doc: unknown) => void),
   calls: 0,
 }))
 
-vi.mock('pdfjs-dist', () => {
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
   const getDocument = () => {
     pdf.calls += 1
     return {
@@ -37,7 +37,7 @@ vi.mock('pdfjs-dist', () => {
   return { GlobalWorkerOptions: {}, getDocument, TextLayer, version: 'test' }
 })
 
-vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '/pdf.worker.mjs' }))
+vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({ default: '/pdf.worker.mjs' }))
 
 /** 一页假的：viewport 与 render 都够组件把画布造出来。 */
 function page(number: number) {
