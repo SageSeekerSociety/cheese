@@ -1,6 +1,8 @@
 import mimetypes
 from typing import Any, BinaryIO
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import ForbiddenError, InternalServerError, NotFoundError
 from app.core.storage import StorageBackend, compute_file_hash, generate_storage_key
 from app.domain.attachment.models import Attachment, AttachmentType
@@ -26,6 +28,18 @@ class AttachmentService:
     ) -> None:
         self._repo = repo
         self._storage = storage
+
+    @classmethod
+    def from_session(
+        cls, *, session: AsyncSession, storage: StorageBackend
+    ) -> "AttachmentService":
+        """拿 session 直接造一个 —— 给**别的领域**用。
+
+        别的领域要的是「附件这个 service」，不该知道它底下那个 repository 叫什么、
+        怎么造：那一步是跨领域摸 repository，``tests/unit/test_domain_import_guard.py``
+        拦的就是它。
+        """
+        return cls(repo=AttachmentRepository(session=session), storage=storage)
 
     async def upload(
         self,

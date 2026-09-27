@@ -41,6 +41,32 @@ export type PostTaskRequestData = {
   videoUrl?: string | null
   endedAt?: number | null
   hasEndedAt?: boolean
+  /** 随题一起发出去的材料。文件先经 `AttachmentsApi`（`POST /attachments`）传上来拿到
+   *  id，建题时一次挂上——见 `TaskAttachmentPicker` 里对这条顺序的说明。 */
+  attachmentIds?: number[]
+}
+
+/** 一道题上的一份材料。**没有 url**：存储给的是直链，发出来就等于绕过下载那道门，
+ *  取文件只能走 `taskAttachmentRawUrl()`。 */
+export interface TaskAttachmentData {
+  id: number
+  name: string
+  size: number
+  contentType: string
+  uploaderId?: number | null
+  downloadCount: number
+  createdAt: number
+}
+
+export type TaskAttachmentListResponseData = {
+  attachments: TaskAttachmentData[]
+  /** 这个人能不能下载。前端据此决定那一行显示「下载」还是「领取这道题之后才能下载」，
+   *  不自己拿角色猜——判据只有服务端一份。 */
+  canDownload: boolean
+}
+
+export type UploadTaskAttachmentResponseData = {
+  attachment: TaskAttachmentData
 }
 
 /**
