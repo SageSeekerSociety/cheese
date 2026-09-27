@@ -414,11 +414,11 @@ watch(
         </div>
       </section>
 
-      <h2 class="t-title settings-group">运行环境</h2>
+      <h2 class="t-title settings-group">工作电脑</h2>
       <section class="page-section">
         <div class="page-section-head">
           <v-icon size="14" class="c-faint">mdi-server-outline</v-icon>
-          <span class="page-section-title">默认与常用算力</span>
+          <span class="page-section-title">默认工作电脑与常用配置</span>
         </div>
         <div class="page-section-body">
           <ProjectComputeSettings :project-id="projectId" />
@@ -882,7 +882,7 @@ watch(
   background: var(--surface);
 }
 /* 区块节奏。区块不是卡片：区块标题是 eyebrow，划分靠留白加一条顶部发丝线。
-   标题行、标题、正文三条用 :deep()，因为队友、运行环境、额度那几块是子组件自己画
+   标题行、标题、正文三条用 :deep()，因为队友、工作电脑、额度那几块是子组件自己画
    的区块头，只写 scoped 的话样式到不了它们里面，标题就按浏览器默认的 16px 画，
    比上面那一级组标题还大。 */
 .page-section {

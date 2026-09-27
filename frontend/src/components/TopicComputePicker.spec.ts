@@ -71,7 +71,7 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
       options: [],
       effective: null,
       machine_access: false,
-      notice: '让它看到可访问整台设备',
+      notice: '让它看到能访问整台机器',
     },
     ...overrides,
   }
@@ -166,12 +166,12 @@ describe('room compute choices', () => {
       profile({
         choice: lab,
         locked: true,
-        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到可访问整台设备' },
+        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到能访问整台机器' },
       })
     )
     mountPicker()
     expect(await screen.findByText('实验室工作站')).toBeTruthy()
-    expect(screen.getByText('可访问整台设备')).toBeTruthy()
+    expect(screen.getByText('能访问整台机器')).toBeTruthy()
     expect(screen.getByRole('button', { name: '更换工作电脑' })).toBeTruthy()
   })
   it('shows the whole-machine notice once a teammate moves onto a team device', async () => {
@@ -186,7 +186,7 @@ describe('room compute choices', () => {
     getTopicComputeProfile.mockResolvedValueOnce(profile({ locked: true })).mockResolvedValue(
       profile({
         locked: true,
-        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到可访问整台设备' },
+        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到能访问整台机器' },
       })
     )
     getSessionWorkLeases.mockResolvedValue({ sessions: [analyst] })
@@ -194,10 +194,10 @@ describe('room compute choices', () => {
     mountPicker()
     await fireEvent.click(await screen.findByRole('button', { name: '更换工作电脑' }))
     await screen.findByText(/当前电脑/)
-    expect(screen.queryByText('可访问整台设备')).toBeNull()
+    expect(screen.queryByText('能访问整台机器')).toBeNull()
     await fireEvent.mouseDown(screen.getByLabelText('工作电脑'))
     await fireEvent.click(await screen.findByRole('option', { name: '办公室 Mac mini' }))
     await fireEvent.click(screen.getByRole('button', { name: '确认更换' }))
-    expect(await screen.findByText('可访问整台设备')).toBeTruthy()
+    expect(await screen.findByText('能访问整台机器')).toBeTruthy()
   })
 })

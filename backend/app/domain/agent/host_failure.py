@@ -102,7 +102,7 @@ async def judge_host_failure(
         return HostVerdict(
             quarantined=True,
             device_id=device_id,
-            message=f"云端机器「{name}」连续失败",
+            message=f"云端工作电脑「{name}」连续失败",
             event_meta=_failure_meta(
                 failure,
                 verdict,

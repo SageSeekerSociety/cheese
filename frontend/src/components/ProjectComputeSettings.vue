@@ -20,7 +20,7 @@ async function load() {
   try {
     state.value = await getProjectComputeConfigs(props.projectId)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载算力配置失败'
+    error.value = e instanceof Error ? e.message : '加载工作电脑设置失败'
   }
 }
 async function save(defaultChoice: ComputeChoice, favorites: ComputeChoice[]) {
@@ -33,7 +33,7 @@ async function save(defaultChoice: ComputeChoice, favorites: ComputeChoice[]) {
     window.dispatchEvent(new Event('project-compute-updated'))
     adding.value = false
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存算力配置失败'
+    error.value = e instanceof Error ? e.message : '保存工作电脑设置失败'
   } finally {
     busy.value = false
   }
@@ -62,7 +62,7 @@ watch(() => props.projectId, load)
 
 <template>
   <div>
-    <p class="t-body c-muted mb-4">房间直接使用项目默认；临时选择只影响当前房间。已运行的房间保留原环境</p>
+    <p class="t-body c-muted mb-4">新房间默认用这一台；已开工的 AI 队友继续用自己那台</p>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <template v-if="state">
       <div v-for="choice in compactChoices(state.default, state.favorites)" :key="choiceKey(choice)" class="config-row">
@@ -99,7 +99,7 @@ watch(() => props.projectId, load)
         @select="add"
       />
       <p v-if="!state.can_manage" class="text-body-2 text-medium-emphasis mt-3">
-        项目负责人管理默认和常用配置；你仍可在房间中临时选择算力
+        项目负责人管理默认和常用配置；房间里可以另选工作电脑
       </p>
     </template>
   </div>

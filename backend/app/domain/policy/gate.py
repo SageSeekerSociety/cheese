@@ -192,7 +192,7 @@ def because_the_room_is_running(call: Call, actor: str) -> Proposal:
 
 _WHAT: Final[dict[Resource, str]] = {
     Resource.model: "模型",
-    Resource.machine: "算力",
+    Resource.machine: "工作电脑",
 }
 
 

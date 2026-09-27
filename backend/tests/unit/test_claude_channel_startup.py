@@ -177,7 +177,7 @@ async def test_a_session_that_dies_on_its_way_up_is_reported_at_once(tmp_path):
     assert waited < 30, f"the room waited {waited:.0f}s for a runner already gone"
     # The room gets one sentence; what the bootstrap printed goes with it for
     # 现场, and none of it is in the sentence.
-    assert host.refusal == "Claude Code 启动失败：这个房间的工作机器还在准备"
+    assert host.refusal == "Claude Code 启动失败：这个房间的工作电脑还在准备"
     assert host.refused is not None and host.refused.log
     assert "Platform HTTP 504" in host.refused.log
     assert "status 1" in host.refused.log

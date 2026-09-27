@@ -106,8 +106,8 @@ class PlatformFailure:
 
 STORAGE_EXHAUSTED = PlatformFailure(
     code=STORAGE_EXHAUSTED_CODE,
-    title="运行环境存储空间不足",
-    content="运行环境存储空间不足，本轮已暂停，平台正在清理。",
+    title="工作电脑存储空间不足",
+    content="工作电脑存储空间不足，本轮已暂停，平台正在清理。",
     detail=(
         "项目文件和已完成的改动都还在。清理完成后可以重试；如果反复出现，联系管理员。"
     ),
@@ -119,8 +119,8 @@ STORAGE_EXHAUSTED = PlatformFailure(
 
 RUNTIME_IMAGE_MISSING = PlatformFailure(
     code=RUNTIME_IMAGE_MISSING_CODE,
-    title="运行环境镜像暂时不可用",
-    content="本轮未开始，平台正在重新准备运行环境。",
+    title="工作电脑的镜像暂时不可用",
+    content="本轮未开始，平台正在重新准备工作电脑。",
     detail=(
         "本轮还没有开始执行，项目文件没有受到影响。"
         "稍后可以重试；如果反复出现，联系管理员。"
@@ -188,7 +188,7 @@ PROMPT_UNDELIVERED = PlatformFailure(
     content="本轮未开始，消息没有送进会话，会话也没有任何响应。",
     detail=(
         "这不是 AI 服务的问题，请求没有到达模型。"
-        "消息发往运行环境里的 claude 会话，但会话没有接收："
+        "消息发往工作电脑上的 claude 会话，但会话没有接收："
         "常见原因是会话停在一个等待回答的界面上，或者它所在的终端已经关闭。"
         "工作区里的文件和已完成的改动都没有受到影响。"
         "重试会重新打开会话；如果连续几次都这样，把这条提示转给管理员。"
@@ -252,17 +252,17 @@ SESSION_START_RUNNER_BUSY = _start_failure(
 )
 SESSION_START_WORK_MACHINE_PREPARING = _start_failure(
     "session_start_work_machine_preparing",
-    "这个房间的工作机器还在准备",
+    "这个房间的工作电脑还在准备",
     retryable=True,
 )
 SESSION_START_WORK_MACHINE_OFFLINE = _start_failure(
     "session_start_work_machine_offline",
-    "这个房间的工作机器没有连接",
+    "这个房间的工作电脑没有连接",
     retryable=True,
 )
 SESSION_START_WORK_MACHINE_REFUSED = _start_failure(
     "session_start_work_machine_refused",
-    "没能取得这个房间的工作机器",
+    "没能取得这个房间的工作电脑",
     retryable=True,
 )
 SESSION_START_EXECUTOR_IMAGE_MISSING = _start_failure(

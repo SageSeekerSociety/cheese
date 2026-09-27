@@ -107,12 +107,11 @@ class EnvironmentPreparationError(ScreenSetupError):
 DEVICE_ISOLATED_UNSUPPORTED_MESSAGE = (
     "话题与机器的绑定登记为『沙盒』档（visibility=isolated），但按房间隔离的容器传输"
     "尚未实现（#358 第二步）；平台拒绝以裸跑代替——那等于静默把整台机器暴露给这个"
-    "房间。请把这台机器改登记为『整台机器（Hosted Machine）』后再继续。"
+    "房间。把这台机器改登记为「整台机器」后再继续。"
 )
 
 DEVICE_NOT_HOSTED_MESSAGE = (
-    "话题当前绑定的是云端连接器，不是 Hosted 机器；Hosted 解析器拒绝把云端端点"
-    "当作人的机器运行。"
+    "话题当前绑定的是云端工作电脑，不是自有设备；平台不会把云端机器当作自有设备运行。"
 )
 
 

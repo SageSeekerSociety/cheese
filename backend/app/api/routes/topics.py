@@ -1703,7 +1703,7 @@ async def request_session_work_choice(
     try:
         choice = ComputeChoice.model_validate(body.get("choice"))
     except SchemaError as exc:
-        raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+        raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
     return ok(
         {
             "session": await work_lease.request_choice(
@@ -1754,7 +1754,7 @@ async def acquire_session_work_lease(
                 )
             )
     except TimeoutError as exc:
-        raise GatewayTimeoutError("工作机器仍在准备，对话和平台工具仍可用") from exc
+        raise GatewayTimeoutError("工作电脑仍在准备，对话和平台工具仍可用") from exc
 
 
 @router.put("/{topic_id}/compute-profile")
@@ -1804,7 +1804,9 @@ async def set_topic_compute_profile(
         or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
     )
     if started and not asked_by_this_rooms_turn:
-        raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
+        raise ValidationError(
+            "这个房间已开工，房间的配置不能再改；可以给每个 AI 队友单独更换工作电脑"
+        )
     name = (body.get("profile") or "").strip() or compute_default_name()
     try:
         choice = ComputeChoice.model_validate(
@@ -1816,7 +1818,7 @@ async def set_topic_compute_profile(
             }
         )
     except SchemaError as exc:
-        raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+        raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
     if scoped_session:
         from app.domain.machine import session_work as work_lease
 
@@ -1835,7 +1837,7 @@ async def set_topic_compute_profile(
         raise ValidationError("device_id 必须是字符串")
     device_id = (raw_device_id or "").strip() or None
     if name != COMPUTE_DEVICE and device_id is not None:
-        raise ValidationError("只有自托管设备可以指定 device_id")
+        raise ValidationError("只有自有设备可以指定 device_id")
 
     device_online = await project_device_online(db, topic.project_id)
     allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
@@ -1843,7 +1845,7 @@ async def set_topic_compute_profile(
     # now and waits for that exact box. The automatic option keeps the old rule and
     # is selectable only when at least one project-scoped device is online.
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
-        raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
+        raise ValidationError(f"这类工作电脑尚未接入，暂不可选：{name!r}")
     if body.get("choice"):
         await validate_choice(db, topic.project_id, choice)
 

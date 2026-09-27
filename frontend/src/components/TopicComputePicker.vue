@@ -40,7 +40,7 @@ async function load() {
   try {
     state.value = await getTopicComputeProfile(props.topicId)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载算力失败'
+    error.value = e instanceof Error ? e.message : '加载工作电脑失败'
   } finally {
     loading.value = false
   }
@@ -62,7 +62,7 @@ async function pick(choice: ComputeChoice) {
     menuOpen.value = false
     more.value = false
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '选择算力失败'
+    error.value = e instanceof Error ? e.message : '选择工作电脑失败'
   } finally {
     saving.value = false
   }
@@ -85,7 +85,7 @@ watch(menuOpen, (open) => {
     <template v-if="state">
       <SessionWorkPicker :topic-id="topicId" :profile="state" @changed="load" />
       <span v-if="state.visibility?.machine_access" class="cp-machine" :title="state.visibility.notice">
-        <span class="status-dot status-dot--warn" /> 可访问整台设备
+        <span class="status-dot status-dot--warn" /> 能访问整台机器
       </span>
       <span v-if="state.locked" class="cp-chip" :title="t('work.sessionMachine.initial')">
         <v-icon size="13">mdi-lock-outline</v-icon> {{ state.choice.name }}
@@ -100,8 +100,8 @@ watch(menuOpen, (open) => {
           </button>
         </template>
         <v-card class="cp-menu">
-          <div class="cp-heading">选择运行环境</div>
-          <p class="cp-hint">仅影响当前房间，首次运行后固定</p>
+          <div class="cp-heading">选择工作电脑</div>
+          <p class="cp-hint">这个房间的 AI 队友开工时用这一台</p>
           <button
             v-for="choice in choices"
             :key="choiceKey(choice)"
@@ -138,7 +138,7 @@ watch(menuOpen, (open) => {
         </v-card>
       </v-menu>
     </template>
-    <button v-else-if="error" type="button" class="cp-chip" @click="load">算力加载失败，重试</button>
+    <button v-else-if="error" type="button" class="cp-chip" @click="load">工作电脑加载失败，重试</button>
   </div>
 </template>
 

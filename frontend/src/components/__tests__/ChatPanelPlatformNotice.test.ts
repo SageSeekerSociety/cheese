@@ -324,7 +324,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
         who: 'platform',
         detail: '本话题会保留这条消息，机器就绪后自动继续。',
       }),
-      event('', 'Cloud 机器已接入，正在继续刚才的消息', {
+      event('', '云端工作电脑已接入，正在继续刚才的消息', {
         event_type: 'cloud_provisioning',
         state: 'ready',
         who: 'platform',
@@ -334,7 +334,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
 
     const rows = container.querySelectorAll('[data-testid="platform-notice"]')
     expect(rows).toHaveLength(1)
-    expect(visibleText(rows[0])).toContain('运行环境已就绪')
+    expect(visibleText(rows[0])).toContain('工作电脑已就绪')
     expect(rows[0].closest('.agent-status')?.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('芝士')
     expect(visibleText(rows[0])).not.toContain('正在创建')
     expect(visibleText(rows[0])).not.toContain('平台已处理')
@@ -356,7 +356,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
     ])
     await flush()
     const shown = visibleText(container.querySelector('[data-testid="platform-notice"]')!)
-    expect(shown).toContain('正在准备运行环境')
+    expect(shown).toContain('正在准备工作电脑')
     expect(shown).not.toContain('已处理')
   })
 
@@ -479,7 +479,7 @@ describe('平台提示：会话没起来', () => {
 
   it('房间里只有那一句话，它启动时打印的原文展开了也不在房间里', async () => {
     const { container } = mountRoom([
-      event('', 'Claude Code 启动失败：这个房间的工作机器还在准备', {
+      event('', 'Claude Code 启动失败：这个房间的工作电脑还在准备', {
         event_type: 'platform_error',
         code: 'session_start_work_machine_preparing',
         severity: 'error',
@@ -492,7 +492,7 @@ describe('平台提示：会话没起来', () => {
     await flush()
 
     const card = container.querySelector('[data-testid="platform-error-card"]')!
-    expect(visibleText(card)).toContain('Claude Code 启动失败：这个房间的工作机器还在准备')
+    expect(visibleText(card)).toContain('Claude Code 启动失败：这个房间的工作电脑还在准备')
     for (const details of Array.from(container.querySelectorAll('details'))) expand(details)
     await flush()
     const everything = visibleText(container)

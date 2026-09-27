@@ -1237,7 +1237,7 @@ class LeasingPlatform:
                             "token": "execution-only",
                         }
                         if platform.lease == "ready"
-                        else {"unavailable": "工作机器未连接；对话和平台工具仍可用。"}
+                        else {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
                     }
                 else:
                     platform.seen.append(body["method"])
@@ -1346,7 +1346,7 @@ def test_a_session_never_starts_at_the_machines_path_without_the_machine(
     that machine would run."""
     platform, _, launch = leased_session
     platform.lease = "unavailable"
-    with pytest.raises(RuntimeError, match="工作机器未连接"):
+    with pytest.raises(RuntimeError, match="工作电脑未连接"):
         launch()
     assert platform.seen == ["lease"]
 
@@ -1372,7 +1372,7 @@ def test_a_tool_waits_while_its_machine_is_prepared_unless_it_is_cancelled(
                 seen.append("lease")
                 result = {
                     "data": {
-                        "unavailable": "Cloud 机器正在准备；对话和平台工具仍可用。",
+                        "unavailable": "云端工作电脑正在准备；对话和平台工具仍可用。",
                         "preparing": True,
                     }
                     if seen.count("lease") < 3

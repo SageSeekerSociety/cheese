@@ -84,7 +84,7 @@ watch(usageOpen, (open) => {
   if (open) void loadUsage()
 })
 
-// 这个房间能看到整台机器。算力选择器收进了 ⋯，这件事不能跟着收：它是权限，不是
+// 这个房间能看到整台机器。工作电脑选择器收进了 ⋯，这件事不能跟着收：它是权限，不是
 // 设置，要一直看得见。选择器在菜单里也照常挂着（eager），由它告诉这里。
 const machineNotice = ref<string | null>(null)
 
@@ -121,7 +121,7 @@ function toggleFocus() {
           <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
           <span v-if="isWorkTopic" class="pr-state" :class="state.cls">{{ state.label }}</span>
           <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
-            <span class="status-dot status-dot--warn" />可访问整台设备
+            <span class="status-dot status-dot--warn" />能访问整台机器
           </span>
           <span v-if="!connected" class="topic-header__disconnected" role="status">未连接</span>
         </span>
@@ -145,9 +145,9 @@ function toggleFocus() {
       />
 
       <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
-           改一项设置 / 看一个数」分成三段：专注模式、运行环境、用量，编号垫在最底下。
+           改一项设置 / 看一个数」分成三段：专注模式、工作电脑、用量，编号垫在最底下。
            连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。
-           eager：算力选择器要在菜单合着的时候就挂上，才能说出「整台机器」。 -->
+           eager：工作电脑选择器要在菜单合着的时候就挂上，才能说出「整台机器」。 -->
       <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end" eager>
         <template #activator="{ props: menuProps }">
           <v-btn
@@ -167,8 +167,7 @@ function toggleFocus() {
             <v-icon size="16">{{ focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand' }}</v-icon>
             <span>{{ focus ? t('work.room.menu.exitFocus') : t('work.room.menu.focus') }}</span>
           </button>
-          <!-- 算力：这个话题的轮次在哪儿跑。它是话题的属性（发完第一条就锁死），
-               不是某条消息的动作，所以不在输入区。 -->
+          <!-- 工作电脑：这个房间的 AI 队友在哪儿干活。它不是某条消息的动作，所以不在输入区。 -->
           <div v-if="isWorkTopic" class="room-menu__row">
             <span class="room-menu__label">{{ t('work.room.menu.compute') }}</span>
             <TopicComputePicker :topic-id="topic.id" @machine-access="machineNotice = $event" />

@@ -252,7 +252,7 @@ class MachineService:
         limit = await get_machine_limit(self._session, team_id)
         if len(existing) >= limit:
             raise ValidationError(
-                f"团队云虚拟机已使用 {len(existing)} / {limit} 台，"
+                f"团队云端机器已使用 {len(existing)} / {limit} 台，"
                 "请先释放不再使用的机器"
             )
         project_used = sum(m.project_id == project_id for m in existing)

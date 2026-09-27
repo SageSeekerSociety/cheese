@@ -328,7 +328,7 @@ async def test_a_recognised_cause_is_said_in_one_sentence(channel, impatient):
             SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"),
             Opening(system_prompt="x"),
         )
-    assert str(refused.value) == "pi 启动失败：这个房间的工作机器还在准备"
+    assert str(refused.value) == "pi 启动失败：这个房间的工作电脑还在准备"
     assert refused.value.log and "Platform HTTP 504" in refused.value.log
 
 

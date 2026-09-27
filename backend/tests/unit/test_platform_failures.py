@@ -231,17 +231,17 @@ _START_LOGS = {
     "lease answered 504": (
         _LEASE + "executor_transport.PlatformHTTPError: Platform HTTP 504: "
         '{"code":504,"message":"GatewayTimeoutError"}',
-        "Claude Code 启动失败：这个房间的工作机器还在准备",
+        "Claude Code 启动失败：这个房间的工作电脑还在准备",
     ),
     "lease found no machine": (
         _LEASE + 'raise RuntimeError(result["unavailable"])\n'
-        "RuntimeError: 工作机器未连接；对话和平台工具仍可用。",
-        "Claude Code 启动失败：这个房间的工作机器没有连接",
+        "RuntimeError: 工作电脑未连接；对话和平台工具仍可用。",
+        "Claude Code 启动失败：这个房间的工作电脑没有连接",
     ),
     "lease refused otherwise": (
         _LEASE + "executor_transport.PlatformHTTPError: Platform HTTP 403: "
         '{"message":"Device is not hosted"}',
-        "Claude Code 启动失败：没能取得这个房间的工作机器",
+        "Claude Code 启动失败：没能取得这个房间的工作电脑",
     ),
     "docker run exit 125": (
         _RECORD + "subprocess.CalledProcessError: Command '['docker', 'run', "
@@ -333,7 +333,7 @@ def test_the_sentence_names_the_harness_that_was_starting():
 
     assert (
         classify_session_start(log, harness="Codex").content
-        == "Codex 启动失败：这个房间的工作机器还在准备"
+        == "Codex 启动失败：这个房间的工作电脑还在准备"
     )
 
 
