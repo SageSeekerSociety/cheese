@@ -30,6 +30,7 @@ import {
 import ProjectComputeSettings from '../components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '../components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings.vue'
+import ProjectTopicNamingSettings from '../components/ProjectTopicNamingSettings.vue'
 import AgentTeamSettings from '../components/settings/AgentTeamSettings.vue'
 import CreditsPanel from '../components/settings/CreditsPanel.vue'
 import { parseApprovalsInput, parseCheckPaths } from '../lib/branchProtection'
@@ -400,6 +401,16 @@ watch(
         </div>
         <div class="page-section-body">
           <ProjectDefaultModelSettings :project-id="projectId" />
+        </div>
+      </section>
+
+      <section class="page-section">
+        <div class="page-section-head">
+          <v-icon size="14" class="c-faint">mdi-format-title</v-icon>
+          <span class="page-section-title">话题命名</span>
+        </div>
+        <div class="page-section-body">
+          <ProjectTopicNamingSettings :project-id="projectId" />
         </div>
       </section>
 
