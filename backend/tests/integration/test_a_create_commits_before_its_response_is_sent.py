@@ -43,6 +43,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.common.auth import create_access_token
 from app.core import db as core_db
+from app.core.config import settings
 from app.domain.space.models import Space
 from tests.integration.conftest import registered
 
@@ -267,6 +268,35 @@ def test_a_task_is_committed_before_its_response_is_sent(
             "defaultDeadline": 30,
         },
         token=token,
+    )
+
+    assert asgi.status == 200, asgi.body
+    _assert_committed_before_responding(asgi)
+
+
+def test_a_space_review_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, _portal, db_session: AsyncSession, author, monkeypatch
+) -> None:
+    """The e2e flake this pins (merge queue, run 36341262532)::
+
+    POST /admin/spaces/<id>/review   200   <- the client is told "approved"
+    POST /tasks                      400   <- "Space must be approved ..."
+    """
+    _, token = author
+    reviewer = f"commit-order-reviewer-{uuid.uuid4().hex[:8]}"
+    reviewer_id = _portal.call(registered, db_session, reviewer)
+    monkeypatch.setattr(settings, "platform_admin_handles", [reviewer])
+
+    asgi.post(
+        "/spaces", _space_body(f"Reviewed space ({uuid.uuid4().hex[:8]})"), token=token
+    )
+    assert asgi.status == 201, asgi.body
+    space_id = json.loads(asgi.body)["data"]["space"]["id"]
+
+    asgi.post(
+        f"/admin/spaces/{space_id}/review",
+        {"approved": True, "reason": ""},
+        token=create_access_token(reviewer_id, handle=reviewer),
     )
 
     assert asgi.status == 200, asgi.body
