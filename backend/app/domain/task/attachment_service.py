@@ -26,6 +26,7 @@ from app.core.storage import StorageBackend
 from app.domain.attachment.models import Attachment
 from app.domain.attachment.services import AttachmentService
 from app.domain.task.models import Task, TaskAttachment
+from app.domain.task.repositories import TaskRepository
 from app.domain.task.visibility_service import TaskVisibilityService
 
 
@@ -100,6 +101,7 @@ class TaskAttachmentService:
         self._session = session
         self._storage = storage
         self._links = TaskAttachmentRepository(session=session)
+        self._tasks = TaskRepository(session=session)
         # 附件那一域的文件行一律经它的 service 去拿，不自己摸它的 repository ——
         # 跨领域摸 repository 是 `test_domain_import_guard.py` 拦的那一条。
         self._files = AttachmentService.from_session(session=session, storage=storage)
@@ -133,6 +135,30 @@ class TaskAttachmentService:
         ]
         can_download = await self._may_download(task=task, user_id=user_id)
         return [f for f, _ in pairs], [link for _, link in pairs], can_download
+
+    async def may_read_file(self, *, attachment_id: int, user_id: int) -> bool | None:
+        """这个文件在**题目这一侧**归谁读 —— 没有挂在任何题上时返回 ``None``。
+
+        返回 ``None`` 不是 ``False``：它说的是「题目这一域没有主张」，不是「不许」。
+        通用附件路由（``routes/attachments.py``）拿这个答案决定要不要再问别的判据，
+        题目域自己的路由用不着它 —— 那边调的是 ``download``，一开始就知道是哪道题。
+
+        每道挂着它的题都问一次「谁能拿这道题的材料」（``_may_download``：出题人 /
+        板管理员 / 已领取的人），任何一道成立就成立。同一个文件正常只属于一道题
+        （``attach_uploaded`` 拦了第二次挂载），真出现多道时按最宽的那道放行。
+        """
+        links = await self._links.list_live_for_attachments(
+            attachment_ids=[attachment_id]
+        )
+        if not links:
+            return None
+        for link in links:
+            task = await self._tasks.get_by_id(link.task_id)
+            if task is None:
+                continue
+            if await self._may_download(task=task, user_id=user_id):
+                return True
+        return False
 
     async def _may_download(self, *, task: Task, user_id: int) -> bool:
         if await may_teach_task(self._session, task=task, user_id=user_id):

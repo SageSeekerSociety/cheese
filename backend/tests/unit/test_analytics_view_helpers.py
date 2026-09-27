@@ -4,12 +4,15 @@ Covers the static parsing, normalization, bucketing, and utility methods
 without requiring DB access or complex context setup.
 """
 
+import csv
+import io
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.csv_export import csv_row
 from app.core.errors import BadRequestError
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 
@@ -373,26 +376,80 @@ class TestBuildDistribution:
 
 
 # ---------------------------------------------------------------------------
-# _csv_row
+# csv_row -- the one renderer every export in the backend goes through
 # ---------------------------------------------------------------------------
+
+
+def _cells(rendered: str) -> list[str]:
+    """Read a rendered row back the way a spreadsheet would."""
+    return next(csv.reader(io.StringIO(rendered)))
 
 
 class TestCsvRow:
     def test_basic(self):
-        result = SpaceAnalyticsViewService._csv_row("a", "b", "c")
+        result = csv_row("a", "b", "c")
         assert result == "a,b,c"
 
     def test_with_none(self):
-        result = SpaceAnalyticsViewService._csv_row("a", None, "c")
+        result = csv_row("a", None, "c")
         assert result == "a,,c"
 
     def test_with_quotes(self):
-        result = SpaceAnalyticsViewService._csv_row('has "quotes"', "normal")
+        result = csv_row('has "quotes"', "normal")
         assert '"' in result  # CSV quoting applied
 
     def test_with_commas(self):
-        result = SpaceAnalyticsViewService._csv_row("has, comma", "normal")
+        result = csv_row("has, comma", "normal")
         assert '"has, comma"' in result
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "=cmd|'/C calc'!A1",
+            '=HYPERLINK("http://evil.example","click")',
+            "+1+1",
+            "-1+1",
+            "@SUM(1+1)",
+            "\t=cmd|'/C calc'!A1",
+        ],
+    )
+    def test_a_cell_that_would_be_a_formula_is_neutralised(self, payload: str):
+        """Excel/WPS strip the quoting and then evaluate, so the cell itself
+        must stop looking like a formula: it reads back as text with a leading
+        apostrophe, never as the payload itself."""
+        cell = _cells(csv_row(payload, "normal"))[0]
+        assert cell == "'" + payload
+        assert _cells(csv_row(payload, "normal"))[1] == "normal"
+
+    @pytest.mark.parametrize(
+        ("values", "expected"),
+        [
+            (("plain", "b"), "plain,b"),
+            (("", "b"), ",b"),
+            (("has, comma", "b"), '"has, comma",b'),
+            (('has "quotes"', "b"), '"has ""quotes""",b'),
+            (("line\nbreak", "b"), '"line\nbreak",b'),
+            (("carriage\r\nreturn", "b"), '"carriage\r\nreturn",b'),
+            (("中文姓名", "b"), "中文姓名,b"),
+            (("13800138000", "b"), "13800138000,b"),
+            (("-5", "b"), "-5,b"),
+            (("-5.25", "b"), "-5.25,b"),
+            (("-1e3", "b"), "-1e3,b"),
+            ((None, "b"), ",b"),
+            ((7, "b"), "7,b"),
+        ],
+    )
+    def test_ordinary_values_render_byte_for_byte_as_before(self, values, expected):
+        """Only cells that read as a formula may change: quotes, commas, line
+        breaks, CJK text, plain numbers and negatives keep the exact bytes the
+        pre-fix renderer produced, so downstream parsers see no difference."""
+        assert csv_row(*values) == expected
+
+    def test_a_plain_decimal_is_not_a_formula(self):
+        """A negative number is a value: an apostrophe would make it text and
+        break the sheet's arithmetic. A typed int never needed the guard."""
+        assert csv_row("-5", "-5.25", "3") == "-5,-5.25,3"
+        assert csv_row(-5, -5.25, 3) == "-5,-5.25,3"
 
 
 # ---------------------------------------------------------------------------

@@ -1389,6 +1389,22 @@ async def preview_task_from_pdf(
     if space is None:
         raise NotFoundError("Space not found")
 
+    # 发题的门，与 ``_create_task_entity`` 是同一句、同一处口径
+    # （``may_publish_in_space``：「这个板里的人都能发」）。预览是发题的前半截 ——
+    # `confirm` 那条路逐条落进 `_create_task_entity` 时已经过这道门，只有预览这一
+    # 条漏着：从前只 `require_auth_user`，于是板外的登录用户拿别人的 `spaceId`
+    # （小整数、可枚举）就能让模型为这块板花掉 token，并把 `task_templates` 原样
+    # 读回去（返回体的 `templateUsed`）—— 而同一份模板在 `GET /spaces/{spaceId}`
+    # 上要先 ``_ensure_space_visible`` 才看得到。
+    #
+    # 门放在读 PDF 之前：挡的是「谁可以让这块板干活」，不是「响应里少写几个字段」。
+    # 措辞照抄发题那道门（它自己那句「board manager」与判据的注释在
+    # `space_access.may_publish_in_space` 里已有交代）——两处一句话，不另立说法。
+    if not await may_publish_in_space(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    ):
+        raise ForbiddenError("Only a board manager can publish tasks here")
+
     resolved_category_id = category_id
     if resolved_category_id is None:
         category_repo = SpaceCategoryRepository(session=db)
@@ -2726,7 +2742,25 @@ async def get_task_participant(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     db=Depends(get_db),
 ) -> dict:
-    _ = auth_user
+    """一条报名记录，判据与上面的列表版**一模一样**。
+
+    返回体里带着报名者填的 ``email`` / ``phone``（``_membership_to_api_model``），而
+    ``participantId`` 是小整数、可枚举 —— 从前这里那句 ``_ = auth_user`` 等于把报名
+    表交给任何登录用户。单条是列表的一种取法，没有理由比列表更宽：看得了名单的人
+    （``may_teach_task``）才看得到单条。
+
+    403 而不是 404，口径照抄列表版：同一个调用者在同一个资源上，列表版已经用 403
+    说了「你看不了这份名单」；换 404 是另一句话（「这道题上没有这个人」），而调用者
+    早已知道这个人存在。
+    """
+    task_repo = TaskRepository(session=db)
+    task = await task_repo.get_by_id(task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only task owner or space admin can view participants")
+
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
