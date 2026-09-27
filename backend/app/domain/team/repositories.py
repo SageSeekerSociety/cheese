@@ -3,10 +3,12 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, and_, func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.domain.team.models import (
+    PERSONAL_TEAM_ROW,
     ApplicationStatus,
     ApplicationType,
     Team,
@@ -219,23 +221,36 @@ class TeamRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
-    async def create_personal_team(self, user_id: int, name: str) -> Team:
+    async def create_personal_team(self, user_id: int, name: str) -> Team | None:
         """Provision a user's personal team directly (bypasses the name-uniqueness
-        check of the public create flow — personal teams are internal, one per user)."""
+        check of the public create flow — personal teams are internal, one per user).
+
+        None when the user already has one. The unique index on the owner makes a
+        concurrent caller's insert wait for this one's transaction and then do
+        nothing, so two first requests cannot both create a team.
+        """
         now = datetime.now(UTC)
-        team = Team(
-            name=name,
-            intro="",
-            description="",
-            avatar_id=0,
-            personal_owner_user_id=user_id,
-            created_at=now,
-            updated_at=now,
-            deleted_at=None,
+        team_id = await self._session.scalar(
+            pg_insert(Team)
+            .values(
+                name=name,
+                intro="",
+                description="",
+                avatar_id=0,
+                personal_owner_user_id=user_id,
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[Team.personal_owner_user_id],
+                index_where=PERSONAL_TEAM_ROW,
+            )
+            .returning(Team.id)
         )
-        self._session.add(team)
-        await self._session.flush()
-        return team
+        if team_id is None:
+            return None
+        return await self._session.get(Team, team_id)
 
     async def add_member(
         self, team_id: int, user_id: int, role: int
