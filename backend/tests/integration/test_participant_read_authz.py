@@ -129,7 +129,9 @@ def _claim(api_client: TestClient, task_id: int, token: str) -> int:
     return int(resp.json()["data"]["participant"]["id"])
 
 
-def _single(api_client: TestClient, task_id: int, participant_id: int, token: str | None):
+def _single(
+    api_client: TestClient, task_id: int, participant_id: int, token: str | None
+):
     return api_client.get(
         f"/tasks/{task_id}/participants/{participant_id}",
         headers=_auth(token) if token else {},
@@ -211,7 +213,7 @@ def test_a_board_manager_still_reads_the_participant(
 def test_a_participant_from_another_task_is_still_not_found(
     api_client: TestClient, user_client: UserCreator, board: dict
 ):
-    """`membership.task_id != task_id` 那条绑定没被碰松：换个 taskId 找不到这张报名表。"""
+    """`membership.task_id != task_id` 那条绑定没被碰松：换个 taskId 找不到它。"""
     with_participant = _create_task(api_client, board, name="报名表在这道题上")
     empty = _create_task(api_client, board, name="这道题上没有这张报名表")
     _, applicant_token = _member_of(user_client, api_client, board)
