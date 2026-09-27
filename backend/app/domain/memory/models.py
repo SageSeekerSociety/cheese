@@ -17,6 +17,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     Uuid,
@@ -25,6 +26,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+from app.domain.memory.files import MemoryFileScope
 
 
 class MemoryScope(enum.StrEnum):
@@ -202,3 +204,53 @@ class MemoryEntry(UuidPk, Timestamps, Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("memory_dreams.id", ondelete="SET NULL"), nullable=True, index=True
     )
+
+
+class MemoryFileRecord(UuidPk, Timestamps, Base):
+    """一条记忆：一个 markdown 文件，按项目 + 作用域 + 路径定位（见 `files.py`）。
+
+    这张表是真相，会话目录里那一份是副本：agent 用原生的 Write/Edit 改副本，
+    平台按版本号同步回这里，冲突拒绝并让它重读。所以每次写入都带 `version`，
+    每次成功都 `version + 1`——「文件在会话里被改过、库里那一份已经不是它了」
+    这件事必须有地方能看出来，否则两边同时改就是后写的那个静默赢。
+
+    ``owner_handle`` 对 team 记忆是**空串**，不是 NULL。设计上写的是「可空」，
+    但可空在这里会真的坏事：唯一约束在 SQL 里是 NULL != NULL，同一个项目里
+    `MEMORY.md` 于是可以插进去任意多行不带 owner 的 team 记忆，而那正是
+    「先查重再新建」要挡的东西——约束不生效的地方，查重就只剩一次竞态。空串
+    让这一列在任何情况下都参与唯一约束，而「空串 = team」由 `prefix_of` 一手
+    决定，没有第二个地方可以读错。
+    """
+
+    __tablename__ = "memory_files"
+
+    # 一个作用域一份索引、一条记忆一个文件：这张唯一约束就是「先查重，再新建」
+    # 在数据库那一侧的样子。按 (项目, 作用域, 人, 路径) 而不是按 id 查，走的就是
+    # 它。
+    __table_args__ = (
+        Index(
+            "uq_memory_files_scope_path",
+            "project_id",
+            "scope",
+            "owner_handle",
+            "path",
+            unique=True,
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    scope: Mapped[MemoryFileScope] = mapped_column(
+        Enum(MemoryFileScope, native_enum=False, length=8), index=True
+    )
+    # 空串 = team（见类注释）；private 时是这个人的 handle。
+    owner_handle: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    # 本作用域目录内的相对路径：`MEMORY.md` 或 `<slug>.md`。
+    path: Mapped[str] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text)
+    # 乐观锁：会话副本带着它下去，回写时必须原样带回来。
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # 谁改的。人做的和芝士做的走同一个字段——这一列回答的是「这一版是谁写的」，
+    # 而两种写入在下面这条变更记录里长得一样。
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
