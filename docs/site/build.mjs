@@ -87,6 +87,7 @@ function renderMarkdown(md, { file }) {
     return `<a class="link" href="${esc(href)}" rel="noopener">${t}</a>`
   }
   renderer.image = ({ href, text }) => {
+    if (href.startsWith('/images/') && !fs.existsSync(path.join(MANUAL, 'public', href))) fail(`${file}: picture ${href} is not in docs/manual/public/images`)
     const src = href.startsWith('/') ? `/docs${href}` : href
     return `<figure><div class="shot"><img src="${esc(src)}" alt="${esc(text)}" loading="lazy"></div>${text ? `<figcaption>${esc(text)}</figcaption>` : ''}</figure>`
   }
@@ -96,7 +97,8 @@ function renderMarkdown(md, { file }) {
   let html
   try { html = marked.parse(md, { renderer }) } catch (e) { fail(`${file}: ${e.message}`) }
   let lede = ''
-  html = html.replace(/^\s*<p>([\s\S]*?)<\/p>/, (_, p) => { lede = p; return '' })
+  // The first paragraph is the lede (after the title's anchor, which stays in place).
+  html = html.replace(/^(\s*(?:<span [^>]*class="page-anchor"><\/span>)?\s*)<p>([\s\S]*?)<\/p>/, (_, anchor, p) => { lede = p; return anchor })
   // one search chunk per h2 section
   const chunks = html.split(/(?=<h2 id=")/).map((part) => {
     const h = /^<h2 id="([\w-]+)">([\s\S]*?)<a class="anchor"/.exec(part)
@@ -142,6 +144,123 @@ for (const f of fs.readdirSync(path.join(MANUAL, 'dev'))) {
   if ((data.kind === '流程' || data.kind === '参考') && !covers.length) fail(`${where}: a ${data.kind} page must list the code it covers`)
   for (const c of covers) if (!fs.existsSync(path.join(REPO, c))) fail(`${where}: covers ${c}, which does not exist — update the page or the path`)
   devFiles[f.slice(0, -3)] = { data: { ...data, covers }, body, file }
+}
+
+// ---------- system prompt reference: the blocks, from the code that builds them ----------
+// gen/prompt.py runs `build_system_prompt` with one sample per switch and splits
+// what comes back; this only lays it out, so a block that is added or renamed
+// shows up here by itself.
+const PROMPT_SRC = 'backend/app/domain/agent/harness/prompt.py'
+const GITHUB = 'https://github.com/SageSeekerSociety/cheese'
+const blob = (path, line) => `${GITHUB}/blob/main/${path}${line ? `#L${line}` : ''}`
+
+// A fence wide enough to hold the text: a block may quote three backticks at the
+// agent, and an ordinary fence would end right there.
+const fenceFor = (text) => {
+  let width = 3
+  for (const run of text.match(/`+/g) || []) width = Math.max(width, run.length + 1)
+  return '`'.repeat(width)
+}
+const code = (text, lang = 'text') => `${fenceFor(text)}${lang}\n${text}\n${fenceFor(text)}`
+const fold = (summary, body) => `<details class="fold"><summary>${summary}</summary>\n\n${body}\n\n</details>`
+// <summary> is HTML, not markdown, so inline `code` is turned into an element by hand.
+const inline = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>')
+const cell = (s) => mdCell(inline(s))
+// A block is normally a `## ` part; the `skills` argument is the exception — it
+// is a skill body with a `# ` heading of its own, so the page says so.
+const blockLabel = (b) => (b.base ? '底稿（`base` 参数）' : b.headline ? b.title : `（不带标题的一段：${b.title}）`)
+
+function promptReference() {
+  const shell = devFiles['ref-prompt']
+  if (!shell) fail('docs/manual/dev/ref-prompt.md is missing — gen/prompt.py embeds its sections into it')
+  const p = gen('prompt.py')
+  const out = []
+
+  if (p.mode !== 'exec') out.push(`> 这一页这次是**静态解析**出来的：${p.note}。下面标着「动态生成」的块是源码里的表达式，不是渲染后的文本。`)
+  if (p.unknown_params?.length) out.push(`> \`build_system_prompt\` 有了生成器还不认识的参数：${p.unknown_params.map((name) => inline(name)).join('、')}——它们的样本值是按类型补的，见[样本参数](#samples)。` + `参数是自己加的，就把 \`docs/site/gen/prompt.py\` 里对应的一组样本补上。`)
+  if (p.failed_samples?.length) out.push(`> 有样本跑不出来，它们没有出现在下面的表里：${p.failed_samples.map((f) => `${inline(f.name)}（${inline(f.error)}）`).join('、')}。`)
+
+  out.push(`## 装配顺序 {#blocks}
+
+每一轮的系统提示词都由这些块拼起来，顺序就是这个顺序，块之间空一行（\`"\\n\\n".join(parts)\`）。「出现条件」是这一块的开关：不满足就整块不出现，一个字都不加。
+
+| # | 块 | 出现条件 | 预算 |
+|---|---|---|---|
+${p.blocks.map((b, i) => `| ${i + 1} | ${cell(blockLabel(b))}${b.origin === 'dynamic' ? ' · 动态生成' : ''} | ${cell(b.condition)} | ${b.budget ? `${inline(b.budget.const)} = ${b.budget.value} 字符` : '—'} |`).join('\n')}`)
+
+  out.push(`## 每一块的原文 {#texts}
+
+按装配顺序逐块展开。\`{…}\` 是只有到运行时才有的值（参数、函数返回值）。
+
+${p.blocks.map((b) => fold(`${inline(blockLabel(b))} · ${b.chars} 字符`, [
+    `条件：${inline(b.condition)}`,
+    b.budget ? `预算：${inline(b.budget.const)} = ${b.budget.value} 字符，超了按丢弃顺序压缩，并在末尾附一行说明` : '',
+    b.origin === 'dynamic' ? `动态生成：这一块来自源码里的表达式，行号 ${b.source_line ? `[${b.source_line}](${blob(PROMPT_SRC, b.source_line)})` : '见上'}` : '',
+    code(b.text),
+    ...b.variants.map(([name, text]) => `**${inline(name)} 时的另一种形态**\n\n${code(text)}`),
+  ].filter(Boolean).join('\n\n'))).join('\n\n')}`)
+
+  if (p.samples.length) out.push(`## 样本参数 {#samples}
+
+原文不是「大概长这样」写的：它是用下面这些参数真跑一遍 \`build_system_prompt\` 得到的输出。「最小」是除底稿外什么都不传的样子，「全部打开」是每个开关都给值。
+
+| 样本 | 参数 | 说明 |
+|---|---|---|
+${p.samples.map((s) => `| ${s.name} | ${s.params.map((x) => inline(x)).join('<br>')} | ${cell(s.about)} |`).join('\n')}`)
+
+  const st = p.stages
+  out.push(`## 阶段的操作说明 {#stages}
+
+一个话题在任一时刻处在流程的某一段。\`stages.py\` 把「现在在哪一段」算成一个 \`TopicStage\`，平台据此**只注入这一段**的说明。渐进的是「平台注入哪一段」，不是「模型决定读哪一段」——说明是静态拼进系统提示词的，模型没有「要不要读」的选择权。
+
+### 卡状态算成哪一段 {#stage-cards}
+
+| 验收卡的状态 | 算作哪一阶段 |
+|---|---|
+${st.card_map.map(([card, stage]) => `| \`${card}\` | \`${stage}\` |`).join('\n')}
+
+同时有多张 open 卡时取第一个命中的（\`_CARD_PRECEDENCE\`）：${st.precedence.map((x) => `\`${x}\``).join(' → ')}。没有活卡时才看话题本身：已结束是 \`archived\`，否则是 \`delegating\`。
+
+### 每一段注入什么 {#stage-guides}
+
+| 阶段 | 什么时候是这一段 | 注入的说明 |
+|---|---|---|
+${st.members.map((m) => `| \`${m.value}\` | ${cell(m.note)} | ${m.skills.length ? m.skills.map((k) => `[\`${k.file.split('/').pop()}\`](${blob(k.file)})`).join('<br>') : '（还没有写）'} |`).join('\n')}
+
+每一段的说明原文（\`skill_library/\` 里带 \`stage:\` 标签的文件，标签怎么写见[技能库](#library)）：
+
+${st.members.map((m) => m.skills.map((k) => fold(`${m.value} · ${inline(k.title)}`, `${inline(k.description)}\n\n${code(k.body)}`)).join('\n\n')).filter(Boolean).join('\n\n')}`)
+
+  out.push(`## 技能库 {#library}
+
+\`skills\` 参数是一段拼接：\`skill_library/\` 里 \`scenarios:\` 命中本场景的文件，按文件名顺序，正文之间用 \`\\n\\n---\\n\\n\` 连起来（\`skills.load_scenario\`）。系统提示词里的「场景技能」那一块就是它；\`stage:\` 前缀的标签不是场景，由话题所处的阶段决定（见上一节）。
+
+| 文件 | 名称 | 场景标签 | 说明 |
+|---|---|---|---|
+${p.library.files.map((f) => `| [\`${f.file}\`](${blob(f.file)}) | ${cell(f.title)} | ${f.scenarios.map((t) => `\`${t}\``).join(' ')} | ${cell(f.description)} |`).join('\n')}
+
+正文（\`name\` 是技能系统里的名字，\`scenarios\` 是它出现的场景。只带 \`stage:\` 标签的文件不在下面重复一遍，它们的正文在上一节）：
+
+${p.library.files.filter((f) => f.scenarios.some((t) => !t.startsWith('stage:'))).map((f) => fold(`${inline(f.title)} · ${f.chars} 字符`, code(f.body))).join('\n\n')}`)
+
+  out.push(`## 相关常量 {#constants}
+
+\`prompt.py\` 里模块级的东西：预算、上限，和那些整段拼进提示词的文本。行号链到 GitHub 上的源码。
+
+| 常量 | 类型 | 值 | 代码里的说明 |
+|---|---|---|---|
+${p.constants.map((c) => {
+    const shown = c.kind === 'int' ? `\`${c.value}\`` : c.value.length <= 40 ? `\`${c.value}\`` : `${c.value.length} 字符${c.in_blocks.length ? '，见上面「' + inline(c.in_blocks[0]) + '」那一块' : ''}`
+    return `| [\`${c.name}\`](${blob(PROMPT_SRC, c.line)}) | ${c.kind === 'int' ? '整数' : '文本'} | ${shown} | ${cell(c.comment || '—')} |`
+  }).join('\n')}`)
+
+  return {
+    title: shell.data.title,
+    kind: shell.data.kind,
+    summary: shell.data.summary,
+    covers: shell.data.covers,
+    body: `${shell.body.trimEnd()}\n\n${out.join('\n\n')}\n`,
+  }
 }
 
 // developer pages, generated from the code they describe
@@ -230,6 +349,7 @@ ${Object.entries(suites).map(([s, pats]) => `| \`${s}\` | ${pats.map((p) => `\`$
 ${workflows.map((w) => `| \`${w.f}\` | ${mdCell(w.name)} | ${w.triggers.map((t) => `\`${t}\``).join(' ')}${w.cron.length ? `<br>定时 ${w.cron.map((c) => `\`${c}\``).join(' ')}` : ''} | ${mdCell(w.lead).slice(0, 220)} |`).join('\n')}
 `,
   }
+  out['ref-prompt'] = promptReference()
   return out
 }
 
@@ -355,7 +475,8 @@ const assets = {
   js: asset('app', 'js', js),
   css: asset('app', 'css', css),
   logo: asset('logo', 'svg', LOGO_SVG),
-  room: asset('room', 'html', fs.readFileSync(path.join(HERE, 'island/room.html'))),
+  // 三极行楷简体-粗 (三极字库, free for commercial use), subset to the home page's display headings by gen/font.sh.
+  display: asset('display', 'woff2', fs.readFileSync(path.join(HERE, 'src/fonts/display.woff2'))),
 }
 for (const p of Object.values(pages)) if (p.diagram) write(p.diagram.url.replace(/^\/docs\//, ''), fs.readFileSync(p.diagram.file))
 const images = path.join(MANUAL, 'public')
@@ -383,10 +504,13 @@ const devList = flatNav(devNav)
 devList.forEach((p, i) => write(`dev/${p.slug}.html`, docPage(ctx, p, devNav, devList[i - 1], devList[i + 1])))
 write('dev/index.html', redirectPage('/docs/dev/overview'))
 
-const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel }]))
+// The first picture on a page, for the home page's cards.
+const firstImage = (md) => { const m = /!\[([^\]]*)\]\((\/images\/[^)\s]+)\)/.exec(md); return m ? { src: `/docs${m[2]}`, alt: m[1] } : null }
+const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel, group: p.group, summary: p.summary, image: firstImage(p.source) }]))
+const devRefs = Object.fromEntries(devList.map((p) => [p.slug, { url: p.url, title: p.title, summary: p.summary }]))
 pageRefs.__logo = assets.logo
 const doors = SECTIONS.map(([key, label, icon]) => ({ key, label, icon, items: userNav[key].flatMap(([, items]) => items) }))
-write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs }))
+write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs, dev: devRefs, full: pages, nav: userNav }))
 write('changelog.html', changelogPage(ctx, RELEASES))
 write('changelog.xml', changelogFeed(RELEASES))
 write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest' }))
@@ -397,7 +521,6 @@ for (const [from, to] of Object.entries(REDIRECTS)) {
   write(`${from}.html`, redirectPage(`/docs/${to}`))
 }
 // The home page's interactive parts need a small map of page links and the role data.
-write('home.json', JSON.stringify({ pages: pageRefs, who: WHO }))
 
 // ---------- search indexes: public and developer, kept apart ----------
 const searchIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.map((c) => ({

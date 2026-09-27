@@ -46,6 +46,7 @@ command -v typst && command -v pandoc
 | 读或改一份表格 | `openpyxl`，改完 `cheese recalc`，再用 `scripts/sheets.py` 核对 | `references/sheets.md` |
 | 做/读 PDF | `typst` / `pypdf` | `references/pdf.md` |
 | 造一份全新的文件 | `python-docx` / `python-pptx` / `openpyxl` / `typst` | 本文件下面 |
+| 按模板做（标准模板，或「照这份的格式」） | `cheese template new`、`scripts/template.py inspect / fill` | `references/templates.md` |
 | `.doc` / `.ppt` / `.xls` | 先 `cheese convert` 升级格式，再改 | `references/reading.md` |
 
 参考文件在技能目录的 `references/` 下，和 `scripts/office.py` 在同一个地方（下一节有定位
@@ -202,6 +203,26 @@ for s in doc.sections:
 括号里是他当时看到的内容。表格给的是单元格地址，`openpyxl` 直接按这个地址取；文档给的是
 页码和原文，先跑 `office.py text` 定位到段，再用这段原文做 `--replace`。改完仍然要
 重新点名一次。
+
+### 用户可能在房间里直接改过它
+
+摆出来的 Word、表格、幻灯片，用户能在房间里打开编辑、保存。**保存过的那一份才是依据**，
+你手上的可能已经旧了。所以在房间里已有的一份文件上接着改，顺序是：
+
+```bash
+cheese pull output/报告.docx            # 取房间里最新保存的一版，覆盖本地这份
+# ……在这一份上改……
+cheese show output/报告.docx --note "改了第三节的结论，其余未动"
+```
+
+- `--note` 写这一次改了什么。用户在编辑器里会看到这句话，他靠它知道哪里动过。
+- 你 pull 之后又有人保存过，`show` 会被拒绝，不会盖掉他的修改。这时再 `pull` 一次，在最新
+  那一版上把你的改动重做，别把旧本地文件硬塞回去。
+- 每次保存平台都留一版，用户能自己恢复到任何一版，所以不用为「留底」另存副本。
+- 保存不等于交付。这份文件要**正式交出去**时，把房间里最新的那一版取进任务目录再递卡：
+  `cheese pull output/报告.docx -o <任务目录>/output/报告.docx`，然后
+  `cheese_accept_request(deliver="output/报告.docx", ...)`。交出去的是递卡那一刻的快照，
+  之后房间里再怎么改、恢复到哪一版，都不影响已经交出去的那份。
 
 ## 交付前自己看一眼
 

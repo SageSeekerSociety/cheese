@@ -40,7 +40,8 @@
       "invited": "Invited"
     },
     "errors": {
-      "inviteFailed": "Couldn't invite: {reason}"
+      "inviteFailed": "Couldn't invite: {reason}",
+      "loadFailed": "Could not load who you can invite."
     }
   }
 }

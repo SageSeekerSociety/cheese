@@ -363,6 +363,10 @@ defineExpose({ pulse, highlightTurn })
 
 const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
 
+// Set when the panel unmounts. Requests still in flight then land on a destroyed
+// editor, so every write after an await checks it.
+let disposed = false
+
 // 评论 (B4): inline comments anchored to doc nodes. anchorNodes lists the doc's
 // paragraphs so an anchored comment (reply_to = node id) can be located and
 // flashed; comments without an anchor are page-level.
@@ -371,6 +375,7 @@ const anchorNodes = ref<Block[]>([])
 
 async function loadComments(tid: string) {
   const [cs, ns] = await Promise.all([getComments(tid), getDocNodes(tid)])
+  if (disposed) return
   comments.value = cs.data
   anchorNodes.value = ns.data
   // Same fetch feeds the in-doc live-ref badges (widget decorations).
@@ -1071,8 +1076,9 @@ async function loadDoc(topicId: string) {
   loading.value = true
   try {
     const block = await getDoc(topicId)
-    // Avoid races on fast topic switching.
-    if (props.topic?.id !== topicId) return
+    // The panel may be gone by now (a topic switch rebuilds it): its editor is
+    // destroyed and must not be written to.
+    if (disposed) return
     installDoc(block?.content ?? '')
     docVersion.value = block?.doc_version ?? 0
     dirty.value = false
@@ -1082,7 +1088,7 @@ async function loadDoc(topicId: string) {
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载文档失败'
   } finally {
-    if (props.topic?.id === topicId) loading.value = false
+    loading.value = false
   }
 }
 
@@ -1096,7 +1102,7 @@ async function reloadFromActivity(topicId: string) {
   if (saving.value) return
   try {
     const block = await getDoc(topicId)
-    if (props.topic?.id !== topicId || saving.value) return
+    if (disposed || saving.value) return
     const full = block?.content ?? ''
     const plan = planExternalUpdate({ dirty: dirty.value, incoming: full, rawDoc: rawDoc.value })
     // Whatever we do with the content, this IS the server's version now — the
@@ -1202,7 +1208,7 @@ async function save(force = false) {
 async function showConflictWithServerDoc(topicId: string) {
   try {
     const block = await getDoc(topicId)
-    if (props.topic?.id !== topicId) return
+    if (disposed) return
     docVersion.value = block?.doc_version ?? 0
     externalDoc.value = block?.content ?? ''
   } catch {
@@ -1344,31 +1350,7 @@ function onSourceInput(v: string) {
   }
 }
 
-// Topic switch: full reload.
-watch(
-  () => props.topic?.id,
-  (id) => {
-    // Doc fidelity state is per-topic — reset before the new doc loads.
-    sourceMode.value = false
-    lossy.value = false
-    lossyConfirmOpen.value = false
-    pendingEdits.value = []
-    externalDoc.value = null
-    codeCopy.value = null
-    if (id) loadDoc(id)
-    else {
-      lastSavedMarkdown.value = ''
-      rawDoc.value = ''
-      titlePrefix.value = ''
-      sourceDraft.value = ''
-      dirty.value = false
-      setEditorMarkdown('')
-    }
-    // 现场 / 改动 / 预览 each drop their own per-topic state — see their
-    // components. WorkPanel puts the panel back on this tab.
-  },
-  { immediate: true }
-)
+if (props.topic) loadDoc(props.topic.id)
 
 // AI activity: soft reload (respects unsaved edits).
 watch(
@@ -1396,6 +1378,7 @@ watch(liveRefFingerprint, () => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   editor.value?.destroy()
 })
 </script>
@@ -1545,7 +1528,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
               <!-- 正文还在路上时画它的节奏，别把编辑器摆出来：一个空的编辑器会亮出
-                   「芝士会在这里维护文档」那句占位话，而那句话的意思是「这篇文档是
+                   「AI 队友会在这里维护文档」那句占位话，而那句话的意思是「这篇文档是
                    空的」——文档有内容、只是还没到，说的就是假话。编辑器本身不卸载
                    （v-show），卸了它每换一个话题都要重建一次。 -->
               <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
@@ -1779,7 +1762,7 @@ onBeforeUnmount(() => {
    its left edge instead of cutting through a misaligned overlay. PM renders
    an empty doc as <p><br class="ProseMirror-trailingBreak"></p>. */
 .doc-editor :deep(.doc-prose > p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child))::before {
-  content: '芝士会在这里维护文档，你也可以直接编辑';
+  content: 'AI 队友会在这里维护文档，你也可以直接编辑';
   color: rgba(var(--v-theme-on-surface), 0.38);
   pointer-events: none;
   float: left;

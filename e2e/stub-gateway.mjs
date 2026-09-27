@@ -2,10 +2,11 @@
 // 没有网关的部署就只剩它配置里的那一个。这里只答这一个问题。
 //
 // This is not an inference provider and does not become one: it answers the
-// admin question "what do you route", and 404s everything else, which the
-// backend treats the same way it treats a gateway it cannot reach (every admin
-// call there is best-effort by construction). Turns still have nothing to run
-// on, which is the point of the e2e environment.
+// admin question "what do you route", the one small model call topic naming
+// makes (below), and 404s everything else, which the backend treats the same
+// way it treats a gateway it cannot reach (every admin call there is
+// best-effort by construction). Turns still have nothing to run on, which is
+// the point of the e2e environment.
 import { createServer } from 'node:http';
 
 const PORT = Number(process.env.STUB_GATEWAY_PORT || 4010);
@@ -37,8 +38,51 @@ const MODELS = [
   },
 ];
 
-createServer((request, response) => {
+// Topic naming (backend topic/naming.py) is the one job that asks this stub a
+// model question. It gets a canned, recognisable answer — the room's goal or
+// latest message, cut short — so a browser can watch a room get named, renamed
+// and undone. It says nothing about how good real titles are.
+function stubTitle(material) {
+  const goal = /<goal>([\s\S]*?)<\/goal>/.exec(material)?.[1];
+  const people = [...material.matchAll(/<message role="person">([\s\S]*?)<\/message>/g)];
+  const source = goal ?? people.at(-1)?.[1] ?? '';
+  const text = source
+    .replace(/^#+\s*\S*\s*/gm, '')
+    .replace(/@\S+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `E2E ${text.slice(0, 10)}`.trim();
+}
+
+function readJson(request) {
+  return new Promise((resolve) => {
+    let body = '';
+    request.on('data', (chunk) => (body += chunk));
+    request.on('end', () => {
+      try {
+        resolve(JSON.parse(body || '{}'));
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
+createServer(async (request, response) => {
   const path = (request.url || '').split('?')[0];
+  if (path === '/key/generate' && request.method === 'POST') {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ key: 'sk-stub-virtual' }));
+    return;
+  }
+  if (path === '/v1/chat/completions' && request.method === 'POST') {
+    const body = await readJson(request);
+    const material = body.messages?.at(-1)?.content ?? '';
+    const content = JSON.stringify({ keep: false, title: stubTitle(material) });
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content } }] }));
+    return;
+  }
   if (path === '/model/info' || path === '/v1/model/info') {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ data: MODELS }));
@@ -50,7 +94,7 @@ createServer((request, response) => {
     return;
   }
   response.writeHead(404, { 'content-type': 'application/json' });
-  response.end(JSON.stringify({ error: 'stub gateway answers /model/info only' }));
+  response.end(JSON.stringify({ error: 'stub gateway answers /model/info and topic naming only' }));
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`stub gateway on :${PORT}`);
 });

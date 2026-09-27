@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.models import AgentTurn
@@ -55,8 +56,17 @@ from app.domain.topic_membership.services import TopicMemberService
 MISSED_GRACE = timedelta(minutes=15)
 #: A queued run whose turn never began is reported as not started after this.
 START_TIMEOUT = timedelta(hours=2)
-#: A turn that ended without a report gets this long for a late report to land.
-REPORT_GRACE = timedelta(minutes=2)
+#: How long a delivered run may go without a report before it counts as failed.
+#: A turn row cannot say when the work ended: in a live session every input's
+#: row is delivered and stopped within milliseconds, and the business backend
+#: does not see whether the device's session is still busy. So the only clock
+#: is the longest a turn may run at all, plus a little for the report to land;
+#: a real failure is caught sooner by the room's own turn-failed notice.
+REPORT_TIMEOUT = timedelta(seconds=settings.agent_turn_hard_ceiling_s) + timedelta(
+    minutes=5
+)
+NO_REPORT = "AI 队友一直没有交回结果"
+
 #: Loop breaker: an event rule fires at most this often per hour.
 EVENT_RUNS_PER_HOUR = 6
 
@@ -338,7 +348,8 @@ class RoutineService:
             raise ForbiddenError("只有执行这条周期任务的 AI 队友能交回结果")
         if status not in (RunStatus.succeeded, RunStatus.failed):
             raise ValidationError("status 只能是 succeeded 或 failed")
-        if run.status in TERMINAL_RUN_STATUSES:
+        late = run.status == RunStatus.failed and run.error == NO_REPORT
+        if run.status in TERMINAL_RUN_STATUSES and not late:
             raise ValidationError("这次执行已经结束了")
         if status == RunStatus.failed and not summary.strip():
             raise ValidationError("失败要写明原因")
@@ -349,6 +360,11 @@ class RoutineService:
             run.error = run.summary
         run.finished_at = now()
         run.started_at = run.started_at or run.finished_at
+        if late:
+            # The owner was told it failed; tell them how it actually went.
+            run.notified = False
+            if status == RunStatus.succeeded:
+                run.error = ""
         await self._session.flush()
         return run
 
@@ -664,28 +680,32 @@ async def _settle_open_runs(session: AsyncSession) -> None:
         )
         if turn is not None and run.turn_id is None:
             run.turn_id = turn.id
-        if turn is not None and turn.stopped_at is not None:
-            if turn.delivered_at is None:
-                run.status = RunStatus.failed.value
-                run.error = "这一轮没能开始：" + (
-                    await _turn_failure(session, turn.id)
-                    or delivery.last_error
-                    or "执行环境没有接住这次工作"
-                )
-                run.finished_at = turn.stopped_at
-                continue
-            if run.status == RunStatus.queued.value:
-                run.status = RunStatus.running.value
-                run.started_at = turn.delivered_at
-            if stamp - turn.stopped_at > REPORT_GRACE:
-                run.status = RunStatus.failed.value
-                run.error = "AI 队友这一轮已经结束，但没有交回结果"
-                run.finished_at = turn.stopped_at
+        if (
+            turn is not None
+            and turn.delivered_at is None
+            and turn.stopped_at is not None
+        ):
+            run.status = RunStatus.failed.value
+            run.error = "这一轮没能开始：" + (
+                await _turn_failure(session, turn.id)
+                or delivery.last_error
+                or "执行环境没有接住这次工作"
+            )
+            run.finished_at = turn.stopped_at
             continue
         if turn is not None and turn.delivered_at is not None:
             if run.status == RunStatus.queued.value:
                 run.status = RunStatus.running.value
                 run.started_at = turn.delivered_at
+            failure = await _turn_failure(session, turn.id)
+            if failure:
+                run.status = RunStatus.failed.value
+                run.error = "这一轮出错了：" + failure
+                run.finished_at = turn.stopped_at or stamp
+            elif stamp - turn.delivered_at > REPORT_TIMEOUT:
+                run.status = RunStatus.failed.value
+                run.error = NO_REPORT
+                run.finished_at = stamp
             continue
         if stamp - run.created_at > START_TIMEOUT:
             run.status = RunStatus.failed.value

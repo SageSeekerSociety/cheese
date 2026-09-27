@@ -51,7 +51,7 @@ def test_no_product_code_reads_or_writes_the_project_pool() -> None:
     assert not offenders, (
         "这些地方还在读写项目记忆池：\n  "
         + "\n  ".join(offenders)
-        + "\n\n没有项目记忆池（结论 7）。所有人都该看见的事实写进项目总览的实况"
-        "文档（`cheese_remember` 带 `everyone`，落到根房间的 doc 块）；一个实例自己"
-        "学到的写进它自己的池（`memory_pool`）。"
+        + "\n\n没有项目记忆池（结论 7）。所有人都该看见的项目目标、范围写进项目"
+        "总览实况文档的「项目是什么」一节；一个实例自己学到的写进它自己的池"
+        "（`memory_pool`）。"
     )

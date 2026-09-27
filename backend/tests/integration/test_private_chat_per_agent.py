@@ -15,11 +15,25 @@ import uuid
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client) -> str:
     return post_project(client, json={"name": "Demo"}).json()["data"]["id"]
+
+
+def _on_the_roster(client, project_id: str, *handles: str) -> None:
+    """把这些人放进项目名册 —— 徽章图是项目的读路由，先过项目的门。
+
+    这份用例里的人和队友本来就是项目里的参与者；在这道门之前，他们不必被列进
+    名册也能读到自己的角标。
+    """
+    for handle in handles:
+        join_project_team(client, project_id, handle)
 
 
 def _agents(client, project_id: str) -> list[dict]:
@@ -155,6 +169,7 @@ def test_a_dm_is_two_members_the_person_and_the_teammates_seat(client):
 
 def test_unread_is_counted_per_teammate(client):
     project_id = _project(client)
+    _on_the_roster(client, project_id, "user-1")
     default = next(a for a in _agents(client, project_id) if a["is_default"])
     _add_agent(client, project_id, "reviewer", "评审")
 
@@ -174,6 +189,7 @@ def test_a_teammate_badge_cannot_be_confused_with_a_persons(client):
     """Teammate handles are chosen per project, so one can be named after a
     person on the roster. The two DMs must still be told apart."""
     project_id = _project(client)
+    _on_the_roster(client, project_id, "user-1")
     _add_agent(client, project_id, "mentor-1", "同名队友")
 
     with_person = client.get(

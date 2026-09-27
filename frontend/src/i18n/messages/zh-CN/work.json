@@ -106,7 +106,20 @@
     "retry": "重试",
     "loading": "加载中",
     "joinHint": "确认后你将成为团队成员，可以使用团队的项目和算力",
-    "join": "加入团队"
+    "join": "加入团队",
+    "edit": "编辑团队资料",
+    "editTitle": "编辑团队资料",
+    "avatarLabel": "团队头像",
+    "nameLabel": "团队名称",
+    "introLabel": "团队介绍",
+    "introHint": "显示在侧栏团队名字下面，最多 250 字",
+    "nameRequired": "请输入团队名称",
+    "nameTaken": "这个名称已被占用，换一个试试",
+    "forbidden": "只有团队所有者和管理员能修改资料",
+    "saved": "已保存",
+    "saveFailed": "保存失败，请稍后重试",
+    "save": "保存",
+    "cancel": "取消"
   },
   "newProject": {
     "title": "新建项目",
@@ -203,7 +216,8 @@
     "notice": {
       "platform": "平台",
       "changedFiles": "改动的文件",
-      "moreFiles": "另 {n} 个文件"
+      "moreFiles": "另 {n} 个文件",
+      "goConfirm": "去确认"
     },
     "message": {
       "copy": "复制",
@@ -216,6 +230,12 @@
       "editHint": "放回输入框"
     },
     "newMessages": "条新消息",
+    "stop": {
+      "action": "停止",
+      "title": "停止{name}这次运行",
+      "failed": "停止失败：{reason}",
+      "notStarted": "{name}尚未开始运行"
+    },
     "composer": {
       "replyTo": "回复 {name}：{text}",
       "cancelReply": "取消回复",

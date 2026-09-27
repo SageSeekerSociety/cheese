@@ -16,6 +16,7 @@ sed -i "s|__API_UPSTREAM__|${API_UPSTREAM:-backend:8081}|g" /etc/nginx/nginx.con
 sed -i "s|__DEVICE_CONNECTION_UPSTREAM__|${DEVICE_CONNECTION_UPSTREAM:-device-connection:8082}|g" /etc/nginx/nginx.conf
 sed -i "s|__FORGEJO_UPSTREAM__|${FORGEJO_UPSTREAM:-backend:8081}|g" /etc/nginx/nginx.conf
 sed -i "s|__FORGE_EVENTS_UPSTREAM__|${FORGE_EVENTS_UPSTREAM:-backend:8081}|g" /etc/nginx/nginx.conf
+sed -i "s|__OFFICE_EDITOR_UPSTREAM__|${OFFICE_EDITOR_UPSTREAM:-cheese-office-editor:80}|g" /etc/nginx/nginx.conf
 
 /usr/local/bin/check-static-assets /usr/share/nginx/html
 

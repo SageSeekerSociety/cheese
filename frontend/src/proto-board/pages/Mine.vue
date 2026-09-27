@@ -36,11 +36,18 @@ const pubStats = computed(() => {
   const submitted = list.reduce((n, t) => n + t.submitted, 0)
   const passed = list.reduce((n, t) => n + t.passed, 0)
   const pending = list.filter((t) => t.state === 'PENDING').length
+  // 「等我判」= 交了作业、我还没判的人。假数据里就是 SUBMITTED 那一档：判过的人非
+  // PASSED 即 REJECTED，没交的人还是 IN_PROGRESS，所以这一档正好是待判队列。
+  // 真页面读的是 `publishing.pendingReviewCount`（2026-09-27 与 caisongyang 定的口径）。
+  const toReview = list.reduce((n, t) => n + t.claims.filter((c) => c.status === 'SUBMITTED').length, 0)
   return {
     tasks: list.length,
     claims,
     pending,
+    // 平均完成率与「等我判」不重复：前者说「已判的那部分里通过多少」，是结果质量；
+    // 后者说「还有多少没判」，是队列积压。
     completion: submitted ? Math.round((passed / submitted) * 100) : 0,
+    toReview,
     // 「还在动」= 有领取、没到截止。用来回答「我这题是不是凉了」。
     live: list.filter((t) => t.state === 'PUBLISHED' && bj(t)).length,
   }
@@ -90,6 +97,14 @@ function fill(t: { claims: unknown[]; participantLimit: number | null }) {
           :value="`${pubStats.completion}%`"
           icon="mdi-progress-check"
           hint="已通过 / 已提交"
+        />
+        <!-- 措辞与真页面逐字一致（frontend/src/views/spaces/board/pages/Mine.vue 的「等我判」）。 -->
+        <MetricCard
+          label="等我判"
+          :value="pubStats.toReview"
+          icon="mdi-clipboard-check-outline"
+          :tone="pubStats.toReview ? 'warn' : 'muted'"
+          hint="有人交了作业还没判"
         />
       </div>
 

@@ -118,6 +118,14 @@ describe('this week', () => {
     expect(page.getByRole('link', { name: 'spaces.course.myCourse.openWork' })).toBeTruthy()
   })
 
+  it('does not say there is nothing to hand in when the week has an assignment but no quiz', async () => {
+    listUnits.mockResolvedValue({ data: { units: [unit({ id: 2, week: 3, assignmentTaskId: 42 })], canTeach: false } })
+    const page = await mountPage()
+
+    await waitFor(() => expect(page.getByRole('link', { name: 'spaces.course.myCourse.openWork' })).toBeTruthy())
+    expect(page.queryByText('spaces.course.myCourse.nothingToHandIn')).toBeNull()
+  })
+
   it('says nothing is handed in this week when the week has no work', async () => {
     listUnits.mockResolvedValue({
       data: { units: [unit({ id: 2, week: 3, title: '数组' })], canTeach: false },

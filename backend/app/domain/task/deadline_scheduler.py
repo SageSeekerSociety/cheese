@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.domain.task.models import TaskMembership
+from app.domain.task.submission_state import has_work_in_hand
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,15 @@ COMPLETION_STATUS_FAILED = "FAILED"
 #: `SUBMITTED_STATUSES`, next to `SUCCESS` and `FAILED`, not among the ongoing
 #: ones. The two states below are the ones where nothing was handed in: never
 #: submitted, or sent back and not resubmitted.
+#:
+#: Those two states are what the status *means*, not what it currently says.
+#: Nothing but the claim path and this sweep writes `completion_status`, so a
+#: membership that handed work in still reads `NOT_SUBMITTED` whether its review
+#: is pending or already accepted — both fall in the set below and both would be
+#: failed for work they did. The status is therefore necessary but not
+#: sufficient: `has_work_in_hand` asks the submission tables the question the
+#: status was trusted to answer, and only a membership with nothing in hand is
+#: swept. See `app.domain.task.submission_state`.
 _SWEEPABLE_STATUSES = [
     COMPLETION_STATUS_REJECTED_RESUBMITTABLE,
     COMPLETION_STATUS_NOT_SUBMITTED,
@@ -48,6 +58,10 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
                     TaskMembership.deadline < now,
                     TaskMembership.completion_status.in_(_SWEEPABLE_STATUSES),
                     TaskMembership.deleted_at.is_(None),
+                    # The status alone cannot tell "never handed in" from
+                    # "handed in and the review has not caught up" — only a
+                    # membership with nothing in hand is out of time.
+                    ~has_work_in_hand(TaskMembership.id),
                 )
             )
             .limit(PAGE_SIZE)

@@ -33,7 +33,7 @@ covers:
 
 同一台主机上，按 `deploy/compose/` 下的 compose 文件起：
 
-- **前端 nginx**（`frontend` 镜像）：托管单页应用，把 `/api` 反代到主 API、`/connector` 反代到机器连接服务。
+- **前端 nginx**（`frontend` 镜像）：托管单页应用，把 `/api` 反代到主 API；`/connector/agent` 和 `/connector/session/<id>/screen` 这两条长连接去机器连接服务，其余 `/connector/*` 仍由主 API 提供。
 - **会话沙盒容器**：不是 compose 服务，而是主 API 通过 `docker.sock` 起的兄弟容器（`SANDBOX_IMAGE`），里面跑 Claude Code、Codex 或 Pi。
 - **计量代理**（mitmproxy，`deploy/metering-proxy/`）：所有模型流量的出口，见[模型调用流程](/dev/llm)。
 - **模型网关**（LiteLLM，`deploy/compose/docker-compose.gateway.yml`）：项目虚拟 key 与预算刹车。独立一套 compose，发版不碰它。

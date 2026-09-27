@@ -97,7 +97,8 @@ async function onArchiveTopic(topicId: string) {
     @select-docs="openDocs"
     @archive-topic="onArchiveTopic"
     @unarchive-topic="store.unarchive"
-    @rename-topic="(p) => store.renameTopic(p.id, p.title)"
+    @rename-topic="(p) => store.renameTopic(p.id, p.title, p.suggested)"
+    @restore-auto-title="(id) => store.restoreAutoTitle(id)"
     @create-topic="onCreateTopic"
   />
 </template>

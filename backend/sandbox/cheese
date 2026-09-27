@@ -373,7 +373,9 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_title",
-            "给本话题起或改标题，≤12 字；话题还叫「新话题」时这是开工第一步。"
+            "有人明确要你给本话题改名时才用，≤12 字；平台会自己给话题起名、"
+            "方向变了再改，这样改出的名字按人定的处理，之后不再自动改。"
+            "话题的提示里要你先起名时（平台暂时不能起名）也用它。"
             "带 task 给房间里的一条活起名。",
             {"text": _text("标题"), "task": _text("给这条活而不是本话题起名")},
             ["text"],
@@ -396,12 +398,6 @@ PLATFORM_TOOLS = ToolTable(
                     "type": "boolean",
                     "description": "核心记忆，每轮全量注入；只给永远成立的身份、"
                     "规则和目标，预算很小",
-                },
-                "everyone": {
-                    "type": "boolean",
-                    "description": "所有人都该知道：写进项目总览实况文档并署名，"
-                    "人和所有芝士都读得到；决策仍用 cheese_decision，节点仍用 "
-                    "cheese_milestone",
                 },
             },
             ["fact"],
@@ -730,11 +726,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         if remember and args.get("core"):
             body["layer"] = "core"
         owner = env.get("CHEESE_OWNER", "")
-        if remember and args.get("everyone"):
-            # 写给所有人看的不是记忆，是项目总览的实况文档。这一路盖过私聊那一路：
-            # 说了「所有人」，就不是只记给这一位看的。
-            body["scope"] = "everyone"
-        elif env.get("CHEESE_MEMORY_SCOPE", "project") == "personal" and owner:
+        if env.get("CHEESE_MEMORY_SCOPE", "project") == "personal" and owner:
             # 私聊里记的是这个芝士对它主人的看法——池子按
             # `<project>:<agent handle>:<person>` 分，属于这个项目里的这个实例。
             body.update(scope="user", owner=owner)
@@ -1090,7 +1082,13 @@ def _doc_set(args: dict, host) -> str:
         ) from exc
     version = (result.get("data") or {}).get("doc_version", 0)
     host.doc_versions[topic] = version
-    return f"已更新实况文档（第 {version} 版）。"
+    lines = [f"已更新实况文档（第 {version} 版）。"]
+    # 格式警告（#1889 第 3 条）：写入照样成功，但「哪里不像状态」要当场改。
+    # 它跟着这次写入回来，不另发一条通知——改的机会就是现在，而此刻在写字的人
+    # 只看得见这次工具返回。
+    for warning in result.get("warnings") or []:
+        lines.append(f"⚠️ {warning}")
+    return "\n".join(lines)
 
 
 def _task_relative(path: str, task: str) -> str:
@@ -1170,8 +1168,6 @@ def _say_notify(args, data, env) -> str:
 
 
 def _say_remember(args, data, env) -> str:
-    if args.get("everyone"):
-        return "已写进项目总览的实况文档（所有人和所有芝士看的是同一份）。"
     kind = "核心记忆（每轮都在场）" if args.get("core") else "记忆"
     personal = env.get("CHEESE_MEMORY_SCOPE") == "personal" and env.get("CHEESE_OWNER")
     return f"已记入{'个人' if personal else '项目'}{kind}。"
@@ -1929,6 +1925,32 @@ def _need(name: str, value: str) -> str:
     return value
 
 
+def _pulled_path() -> Path:
+    return Path.home() / ".cheese" / "pulled-versions.json"
+
+
+def _pulled_versions() -> dict:
+    """Which version of each room file this machine last read or wrote.
+
+    It is what `cheese show` sends as `base_version`: the platform refuses a
+    write whose base has since been replaced, so an edit made on an old copy
+    cannot silently overwrite what a person saved in the editor."""
+    try:
+        return json.loads(_pulled_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _remember_pulled(topic: str, rel: str, version: str) -> None:
+    versions = _pulled_versions()
+    versions[f"{topic}:{rel}"] = version
+    target = _pulled_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".next")
+    temporary.write_text(json.dumps(versions, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(target)
+
+
 def _raw_request(
     method: str, path: str, data: str | None, out: str | None = None
 ) -> None:
@@ -2215,11 +2237,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     part.add_argument("path", help="工作区相对路径,如 report.docx")
     part.add_argument(
+        "--note",
+        default=None,
+        help=(
+            "这一次改了什么,一句话。用户在编辑器里看这份文件时会看到它;"
+            "改的是房间里已有的一份时一定要写"
+        ),
+    )
+    part.add_argument(
         "--as",
         dest="as_",
         default=None,
         choices=sorted(ARTIFACT_KINDS),
         help="渲染类型(默认按扩展名判断)",
+    )
+
+    ppull = sub.add_parser(
+        "pull",
+        help="把房间里一份文件的最新保存取到这台机器上(用户可能在编辑器里改过)",
+        description=(
+            "房间里的文件用户能在线编辑。你手上那份可能已经旧了:用户改完保存,"
+            "房间里的才是最新的。在房间里已有的文件上接着改之前,先 pull。\n\n"
+            "pull 会记下取到的是哪一版;之后 cheese show 同一个路径时自动带上它。"
+            "如果这期间又有人保存过,show 会被拒绝(不会盖掉别人的修改)——"
+            "那就再 pull 一次,在最新那一版上重做你的改动。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ppull.add_argument("path", help="房间里的路径,如 output/报告.docx")
+    ppull.add_argument(
+        "-o", "--output", default=None, help="写到别处(默认写回同一个工作区路径)"
+    )
+
+    ptpl = sub.add_parser(
+        "template",
+        help="平台的标准模板:列出来,或从一份模板在房间里新建一个文件",
+        description=(
+            "报告、方案、周报、项目汇报、调研汇报、数据统计分析,各有一份带样式和\n"
+            "【占位】的标准模板。new 在房间里建一份副本(用户马上就能在编辑器里打开),\n"
+            "同时取到这台机器上;再用 documents 技能的 template.py fill 填占位,\n"
+            "改完 cheese show。用户给了自己的文件当模板时不走这里,见 templates.md。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    tplsub = ptpl.add_subparsers(dest="tplcmd", required=True)
+    tplsub.add_parser("list", help="列出可用的模板")
+    ptplnew = tplsub.add_parser("new", help="从模板在房间里新建一份,并取到本地")
+    ptplnew.add_argument("template", help="模板 id,如 report、weekly、analysis")
+    ptplnew.add_argument(
+        "path", help="房间里的路径,扩展名要和模板一致,如 文档/周报.docx"
     )
 
     pcv = sub.add_parser(
@@ -2480,8 +2546,87 @@ def main() -> None:
             except UnicodeError as exc:
                 print(f"[cheese] {a.path} 不是文本文件: {exc}", file=sys.stderr)
                 sys.exit(1)
-        _call("POST", f"/topics/{topic}/shown", {"path": rel, "as": kind, **payload})
+        base = _pulled_versions().get(f"{topic}:{rel}")
+        extra = {"note": a.note} if a.note else {}
+        if base:
+            extra["base_version"] = base
+        res = _call(
+            "POST",
+            f"/topics/{topic}/shown",
+            {"path": rel, "as": kind, **payload, **extra},
+            tolerate=(409,),
+        )
+        if res.get("ok") is False:
+            print(
+                f"[cheese] 没有摆出来：房间里的 {rel} 在你取到之后被人保存过"
+                "（多半是用户在编辑器里改了）。直接写会盖掉他的修改。\n"
+                f"[cheese] 先 cheese pull {rel} 取最新一版，在那一版上重做你的改动，"
+                "再 show。",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _remember_pulled(topic, rel, hashlib.sha256(raw).hexdigest()[:16])
         print(f"已把 {rel} 摆出来给房间里的人看（{kind}）。")
+    elif a.cmd == "template":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if a.tplcmd == "list":
+            rows = _call("GET", f"/topics/{topic}/files/templates").get("data") or {}
+            for row in rows.get("data") or []:
+                print(
+                    f"{row['id']:<14} {row['name']}（.{row['suffix']}）  {row['about']}"
+                )
+            return
+        rel = _worktree_relative(a.path)
+        made = _call(
+            "POST",
+            f"/topics/{topic}/files/new",
+            {"template": a.template, "path": rel},
+        )
+        version = (made.get("data") or {}).get("version") or ""
+        req = urllib.request.Request(
+            f"{API}/topics/{topic}/files/raw?path={urllib.parse.quote(rel)}"
+        )
+        if TOKEN:
+            req.add_header("X-Cheese-Token", TOKEN)
+        with urllib.request.urlopen(req, timeout=60) as r:
+            body = r.read()
+        parent = os.path.dirname(a.path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(a.path, "wb") as f:
+            f.write(body)
+        _remember_pulled(topic, rel, version)
+        print(
+            f"已从模板 {a.template} 在房间里新建 {rel}，并取到本地 {a.path}。"
+            "填好占位后 cheese show 它。"
+        )
+    elif a.cmd == "pull":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        rel = _worktree_relative(a.path)
+        out = a.output or a.path
+        parent = os.path.dirname(out)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        req = urllib.request.Request(
+            f"{API}/topics/{topic}/files/raw?path={urllib.parse.quote(rel)}"
+        )
+        if TOKEN:
+            req.add_header("X-Cheese-Token", TOKEN)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                body = r.read()
+                version = r.headers.get("X-Cheese-Version") or ""
+        except urllib.error.HTTPError as e:
+            print(
+                f"[cheese] 取不到 {rel}：HTTP {e.code} "
+                f"{e.read().decode(errors='replace')[:300]}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        with open(out, "wb") as f:
+            f.write(body)
+        _remember_pulled(topic, rel, version or hashlib.sha256(body).hexdigest()[:16])
+        print(f"已取到 {rel} 的最新一版（{version}，{len(body)} 字节），写入 {out}。")
     elif a.cmd == "convert":
         topic = _need("CHEESE_TOPIC", TOPIC)
         try:

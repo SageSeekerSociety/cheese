@@ -23,6 +23,9 @@ class TopicOut(BaseModel):
     project_id: uuid.UUID
     parent_id: uuid.UUID | None
     title: str
+    # Who chose the title: "placeholder" (unnamed), "auto" (the platform, which
+    # may rename it) or "human" (kept as is). See topic/naming.py.
+    title_source: str = "human"
     kind: TopicKind
     status: TopicStatus
     created_at: datetime

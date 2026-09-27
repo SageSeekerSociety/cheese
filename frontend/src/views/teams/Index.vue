@@ -51,6 +51,7 @@
                   color="primary"
                   placeholder="输入团队名称..."
                   :rules="[(v) => !!v || '请输入团队名称']"
+                  :error-messages="teamNameError"
                   class="mb-4"
                   rounded="md"
                 ></v-text-field>
@@ -114,6 +115,7 @@ const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Edit
 
 const createTeamDialog = ref(false)
 const teamName = ref('')
+const teamNameError = ref('')
 const teamHandle = ref('')
 const teamHandleError = ref('')
 const addressPrefix = `${window.location.host}/teams/`
@@ -134,6 +136,7 @@ const createTeam = async () => {
     return
   }
 
+  teamNameError.value = ''
   teamHandleError.value = ''
   try {
     creatingTeam.value = true
@@ -161,6 +164,12 @@ const createTeam = async () => {
   } catch (error) {
     if (error instanceof BusinessError && error.error?.data?.field === 'handle') {
       teamHandleError.value = error.code === 409 ? t('work.teamLink.handleTaken') : t('work.teamLink.handleInvalid')
+      return
+    }
+    // 团队名全站唯一，撞名是 409 + data.field=name：用户换个名字就能解决，
+    // 所以落到名字那一格，不能混进「稍后重试」—— 重试多少次都一样失败。
+    if (error instanceof BusinessError && error.code === 409 && error.error?.data?.field === 'name') {
+      teamNameError.value = t('work.teamProfile.nameTaken')
       return
     }
     toast.error('创建团队失败，请稍后重试')

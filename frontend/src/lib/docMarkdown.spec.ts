@@ -240,6 +240,66 @@ describe('round-trip corpus', () => {
     expectClean('直接贴地址 https://example.com/page 这样。')
   })
 
+  // The parser reads any standard tag name as HTML and hands it to the schema,
+  // which has no node for a lone one — so `<img>` used to take the words next
+  // to it out of the document. It is text the author wrote, and stays text.
+  it('a bare tag inside a sentence survives as literal text', () => {
+    expectClean('前端优先渲染 <img>、@error 退回彩色首字母。')
+  })
+
+  it('a bare tag alone in its paragraph survives', () => {
+    expectClean('<img>\n\n下一段')
+    expectClean('前文\n\n<div>\n\n后文')
+    expectClean('前文\n<img>\n后文')
+  })
+
+  it('an orphan closing tag survives', () => {
+    expectClean('孤立 </p> 标签')
+  })
+
+  // `<br>` is a hard break and `<hr>` a thematic break — the schema holds both,
+  // so a lone one keeps rendering as what it is.
+  it('lone <br> and <hr> keep their meaning', () => {
+    editor.commands.setContent('a <br> b', { contentType: 'markdown' })
+    expect(editor.getHTML()).toContain('<br')
+    editor.commands.setContent('上文\n\n---\n\n下文', { contentType: 'markdown' })
+    expect(editor.getHTML()).toContain('<hr')
+  })
+
+  it('real elements still parse as elements', () => {
+    editor.commands.setContent('<a href="https://example.com">见</a>', { contentType: 'markdown' })
+    expect(editor.getHTML()).toContain('href="https://example.com"')
+    editor.commands.setContent('<b>粗</b>', { contentType: 'markdown' })
+    expect(editor.getHTML()).toContain('<strong>')
+  })
+
+  // GFM runs an autolink to the next whitespace and Chinese has none, so the
+  // rest of the sentence used to become part of the URL — href included.
+  it('an autolink stops before the Chinese that follows it', () => {
+    editor.commands.setContent('见 http://host/status，通了(200，22ms)就说明后端健康', { contentType: 'markdown' })
+    expect(editor.getHTML()).toContain('href="http://host/status"')
+    expectClean('见 http://host/status，通了(200，22ms)就说明后端健康')
+  })
+
+  it('autolink boundaries: fullwidth punctuation, trailing comma, balanced parens', () => {
+    expectClean('（http://x.example/a）括号')
+    expectClean('见 https://a.example/x，后面。')
+    editor.commands.setContent('见 https://a.example/x(b)，后面', { contentType: 'markdown' })
+    expect(editor.getHTML()).toContain('href="https://a.example/x(b)"')
+  })
+
+  it('plain and www autolinks are unaffected', () => {
+    expectClean('直接贴地址 https://example.com/page 这样。')
+    expectClean('www.example.com中文')
+  })
+
+  // The visible text of an email autolink carries no `mailto:` prefix, so the
+  // serializer used to write the link syntax into the file on every save.
+  it('an email address is written back bare', () => {
+    expectClean('manual-approval@v1.13.1 这个版本')
+    expectClean('见 a@b.com 结束')
+  })
+
   it('full composite document', () => {
     expectClean(
       [
