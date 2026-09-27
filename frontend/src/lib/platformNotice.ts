@@ -156,9 +156,71 @@ export interface NoticeOccurrence {
   detail: string
 }
 
+/** 芝士写好、等邮箱主人确认的一封邮件（`meta.mail`）。 */
+export interface MailDraftView {
+  draftId: string
+  owner: string
+  account: string
+  to: string[]
+  cc: string[]
+  subject: string
+  body: string
+  attachments: { name: string; size: number | null }[]
+}
+
+/** 那封草稿后来怎样了（`mail_result` 事件）。 */
+export interface MailOutcome {
+  status: 'sent' | 'failed' | 'discarded'
+  sentAt: string | null
+  reason: string | null
+}
+
+function mailDraftView(block: Block): MailDraftView | null {
+  const m = meta(block)
+  if (str(m?.event_type) !== 'mail_drafted') return null
+  const mail = m?.mail as Record<string, unknown> | undefined
+  const draftId = str(m?.mail_draft_id)
+  if (!mail || !draftId) return null
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : [])
+  return {
+    draftId,
+    owner: str(mail.owner),
+    account: str(mail.account),
+    to: list(mail.to),
+    cc: list(mail.cc),
+    subject: str(mail.subject),
+    body: str(mail.body),
+    attachments: Array.isArray(mail.attachments)
+      ? mail.attachments.map((a) => {
+          const item = a as Record<string, unknown>
+          return { name: str(item.name), size: typeof item.size === 'number' ? item.size : null }
+        })
+      : [],
+  }
+}
+
+/** 房间里每封草稿的下落：draft id → 最后一条结果。 */
+export function mailOutcomes(blocks: Block[]): Map<string, MailOutcome> {
+  const found = new Map<string, MailOutcome>()
+  for (const block of blocks) {
+    const m = meta(block)
+    if (block.kind !== 'event' || str(m?.event_type) !== 'mail_result') continue
+    const status = str(m?.status)
+    if (status !== 'sent' && status !== 'failed' && status !== 'discarded') continue
+    found.set(str(m?.mail_draft_id), {
+      status,
+      sentAt: str(m?.sent_at) || null,
+      reason: str(m?.detail) || null,
+    })
+  }
+  return found
+}
+
 export type PlatformNotice =
   /** 现场抽屉的东西（前端报错），房间里不显示。 */
   | { mode: 'hidden' }
+  /** 芝士写好的一封邮件：在房间里看全、由邮箱主人在这里确认发送。 */
+  | { mode: 'mail-draft'; mail: MailDraftView }
   /** 基础设施事故卡：正文压成一行，剩下的进展开区。 */
   | {
       mode: 'incident'
@@ -319,6 +381,9 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   const error = backendErrorPresentation(block)
   if (error) return { mode: 'backend-error', error }
 
+  const mail = mailDraftView(block)
+  if (mail) return { mode: 'mail-draft', mail }
+
   if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) {
     const latest = run[run.length - 1] ?? block
     const state = str(meta(latest)?.state)
@@ -352,6 +417,8 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
 /** 连续折叠时，这条事件归哪一类；null = 不参与按类别折叠。 */
 function foldKey(block: Block): string | null {
   const m = meta(block)
+  // 每封草稿是一张要单独确认的卡，折在一起就只剩一张能点。
+  if (str(m?.event_type) === 'mail_drafted') return null
   // Cloud lifecycle updates share one row even when the final event has no detail.
   if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) return 'cloud_provisioning'
   // 只有「折叠行」这一档参与按类别折叠：它有展开区，能把被折进来的每一条原文都
