@@ -1,3 +1,6 @@
-test(authz): keep the new tests inside the line limit
+test(tasks): the PDF preview route hands a board's template to anyone
+
+实测坐实：登录的板外用户拿别人的 spaceId 能 200 拿回 templateUsed，
+并让模型为这块板花掉 token。
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>
