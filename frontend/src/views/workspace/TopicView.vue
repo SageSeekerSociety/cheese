@@ -175,7 +175,7 @@ const chatEvents = {
 
 // 芝士 是不是正在这个话题里干活 —— 话题头上的状态词和工作面板的 tab 都读它。
 const working = ref(false)
-// 会话控制状态的最近一帧，对话栏从 socket 上收到，现场那格的控制条读它。
+// 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
 const agentControl = ref<AgentControlState | null>(null)
 // 正在跑的轮次各自从什么时候开始，对话栏从 socket 上算出来，现场的状态条读它。
 const siteTurns = ref<Record<string, number>>({})

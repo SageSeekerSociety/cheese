@@ -1,11 +1,11 @@
-"""The room's controls over its live session: what it shows, and what it sends.
+"""What the room can see of its live session: its state, and what it asks.
 
-A control is a request the session answers (interrupt it, change its model,
-move a running command to the background, stop a task) or one the room's
-executor answers, because the files live there (read a file, list the
-workspace diff). The runtime that holds the room says which are which
-(``SessionControls``); this route checks who is asking and sends each to
-whoever answers it.
+The room watches its session and never steers it, so every request here only
+reads. The session answers some (its context usage, its MCP servers); the
+room's executor answers the rest, because the files live there (read a file,
+list the workspace diff). The runtime that holds the room says which are
+which (``SessionControls``); this route checks who is asking and sends each
+to whoever answers it.
 """
 
 import uuid
@@ -16,18 +16,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_broker, get_chat_service
+from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
     ConflictError,
-    ForbiddenError,
     ValidationError,
 )
 from app.domain.agent import private_chat
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import InProcessBroker
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.actor import Actor
 from app.domain.topic.services import TopicService
@@ -35,17 +33,16 @@ from app.domain.topic.services import TopicService
 router = APIRouter(tags=["agent-control"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Chat = Annotated[ChatService, Depends(get_chat_service)]
-Broker = Annotated[InProcessBroker, Depends(get_broker)]
 
 
 async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver) -> Actor:
-    """Whoever is in this room may read and control a session here."""
+    """Whoever is in this room may look at a session here."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, project_id=place.project_id, topic_id=place.room_id
     )
     if not actor.authenticated:
-        raise AuthenticationRequiredError("Login required to control a session")
+        raise AuthenticationRequiredError("Login required to view a session")
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -72,18 +69,6 @@ class ControlIn(BaseModel):
     request: dict[str, Any]
 
 
-def not_its_own(state: dict, actor: Actor) -> None:
-    """A session may not decide its own controls.
-
-    Raising its own permission mode, or stopping the thing it is being watched
-    doing, is the party under review acting as the reviewer. The question is
-    whether this actor IS this session — asked of the session, which knows,
-    and never of the room, which may seat several agents.
-    """
-    if actor.handle == state.get("agent_handle"):
-        raise ForbiddenError("A session cannot decide its own controls")
-
-
 async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
     """The executor the room's session works on, for this generation of the room.
 
@@ -98,22 +83,6 @@ async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
     return None
 
 
-async def say_who_stopped(
-    chat: ChatService,
-    broker: InProcessBroker,
-    topic_id: uuid.UUID,
-    work: uuid.UUID,
-    actor: Actor,
-) -> None:
-    """A stopped run is a line in the room, under the run it ended: a turn
-    that just goes quiet reads the same as one that is still stuck."""
-    block = await chat.post_system_event(
-        topic_id, f"<@{actor.handle}> 停止了这次运行", work
-    )
-    if block is not None:
-        await broker.publish(str(topic_id), {"type": "event_block", "block": block})
-
-
 @router.post("/topics/{topic_id}/agent/control", operation_id="agent-control")
 async def control(
     topic_id: uuid.UUID,
@@ -121,16 +90,14 @@ async def control(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Chat,
-    broker: Broker,
 ) -> dict:
-    actor = await controller(topic_id, db, resolver)
+    await controller(topic_id, db, resolver)
     runtime = chat.session_controls(topic_id)
     if runtime is None:
         raise ConflictError("No session is running in this room")
     state = await runtime.control_state(topic_id)
     if state.get("id") != data.session_id:
-        raise ConflictError("The active session changed; refresh before controlling it")
-    not_its_own(state, actor)
+        raise ConflictError("The active session changed; refresh and ask again")
     request = data.request
     if request.get("subtype") not in runtime.controls:
         raise ValidationError("Unsupported control; see the session's controls list")
@@ -151,8 +118,6 @@ async def control(
         raise
     except Exception as exc:  # noqa: BLE001 — the room reads why it failed
         response = {"subtype": "error", "error": str(exc) or type(exc).__name__}
-    if stopped := response.pop("work_id", None):
-        await say_who_stopped(chat, broker, topic_id, uuid.UUID(stopped), actor)
     return ok(
         {
             "request_id": data.request_id,

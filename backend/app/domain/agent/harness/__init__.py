@@ -511,21 +511,22 @@ class AgentRuntime(Protocol):
 
 @runtime_checkable
 class SessionControls(Protocol):
-    """A runtime whose live session takes the room's controls.
+    """A runtime whose live session answers what the room asks to see.
 
     Not one of the verbs: a harness with no control channel is still a
-    harness, and the room then simply shows no controls for it. Asked of the
-    runtime that holds a room (``ComputePool.session_controls``).
+    harness, and the room then simply shows less of it. Every control here
+    only reads; the room watches its session and never steers it. Asked of
+    the runtime that holds a room (``ComputePool.session_controls``).
     """
 
-    #: What the room may send a session, by subtype.
+    #: What the room may ask a session, by subtype.
     controls: tuple[str, ...]
     #: Which of those the room's executor answers rather than the session: the
     #: files and commands live on the executor.
     executor_controls: frozenset[str]
 
     async def control_state(self, topic_id: uuid.UUID) -> dict:
-        """What the room's controls show: the session, its tasks, its state."""
+        """What the room shows of the session: its id, its tasks, its state."""
         ...
 
     async def control(self, topic_id: uuid.UUID, request: dict) -> dict:

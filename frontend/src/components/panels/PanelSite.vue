@@ -20,9 +20,9 @@ import {
   SITE_CLAMP_LINES,
 } from '../../lib/siteLog'
 import { isPlatformEvent } from '../../lib/toolLabels'
-import AgentControls from '../AgentControls.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import SessionInspector from '../SessionInspector.vue'
 
 import SiteStatusBar from './SiteStatusBar.vue'
 import SiteStepOutput from './SiteStepOutput.vue'
@@ -41,7 +41,7 @@ const props = withDefaults(
     // 这个房间现在有没有活在跑。现场自己听不到轮次帧（WS 在对话栏那边），而
     // 「最后一组还没完」和「最后一组是上一轮留下的」看起来一模一样。
     working?: boolean
-    // 房间 socket 上最近一帧会话控制状态（对话栏收到，经 TopicView 转过来）。
+    // 房间 socket 上最近一帧会话状态（对话栏收到，经 TopicView 转过来）。
     agentControl?: AgentControlState | null
     // 在跑的轮次 id → 开始时间（毫秒），对话栏从 socket 上算的。哪一组「进行中」、
     // 状态条上「已用多久」都读它。
@@ -346,7 +346,7 @@ function isLive(index: number): boolean {
 
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
+      <SessionInspector v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
       <div v-if="agents.length > 1" class="site-agents" role="tablist">
         <button
           type="button"

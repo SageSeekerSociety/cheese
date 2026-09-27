@@ -30,7 +30,7 @@ const emit = defineEmits<{
   (e: 'turn-done'): void
   // 芝士 开工 / 收工。必须一路透传：右边那格「现场」靠它在开工那一刻出现。
   (e: 'working', working: boolean): void
-  // 会话控制状态的那一帧。同样一路透传给现场那格的控制条。
+  // 会话状态的那一帧。同样一路透传给现场那格的会话详情。
   (e: 'agent-control', state: AgentControlState): void
   // 现场时间线上新到或变了的一行、在跑的轮次各自的开始时间：一路透传给现场那格。
   // 漏掉不报错，只是现场又回到「打开才刷新」。

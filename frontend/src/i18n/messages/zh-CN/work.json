@@ -181,6 +181,39 @@
         "seconds": "{s} 秒",
         "minutes": "{m} 分 {s} 秒",
         "hours": "{h} 小时 {m} 分"
+      },
+      "session": {
+        "label": "会话详情",
+        "connected": "会话已连接",
+        "none": "没有在运行的会话",
+        "expand": "查看详情",
+        "collapse": "收起详情",
+        "view": "查看",
+        "what": "查看内容",
+        "loadFailed": "读取会话状态失败",
+        "askFailed": "没能读到",
+        "task": {
+          "running": "运行中",
+          "queued": "排队中",
+          "pending": "等待中",
+          "completed": "已完成",
+          "failed": "失败",
+          "stopped": "已停止",
+          "unknown": "状态待更新"
+        },
+        "reads": {
+          "initialize": "会话状态",
+          "file_suggestions": "查找文件",
+          "read_file": "查看文件",
+          "get_workspace_diff": "工作区变更",
+          "get_context_usage": "上下文用量",
+          "get_usage": "账号用量",
+          "mcp_status": "外部工具连接"
+        },
+        "fields": {
+          "query": "文件名",
+          "path": "文件路径"
+        }
       }
     },
     "menu": {

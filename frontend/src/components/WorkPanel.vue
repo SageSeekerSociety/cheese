@@ -45,7 +45,7 @@ const props = withDefaults(
     activityTick: number
     // 芝士 正在这个话题里干活 —— tab 栏据此给「现场」加一个跳动的点。
     working?: boolean
-    // 会话控制状态的最近一帧，一路透传给现场那格的控制条。
+    // 会话状态的最近一帧，一路透传给现场那格的会话详情。
     agentControl?: AgentControlState | null
     // 正在跑的轮次各自的开始时间（毫秒），一路透传给现场那格的状态条。
     siteTurns?: Record<string, number>
