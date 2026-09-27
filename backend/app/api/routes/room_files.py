@@ -28,7 +28,7 @@ from app.api.routes.topics import (
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ConflictError, NotFoundError, ValidationError
-from app.domain.documents import editor
+from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project import room_files
@@ -186,6 +186,51 @@ async def copy_into_room(
         author_kind=author_kind(actor),
         source="upload",
         note=f"从 {source} 复制",
+    )
+    await record_shown(db, place, target, author=actor.handle)
+    await db.commit()
+    return ok({"path": target, "version": made.sha256[:16]})
+
+
+@router.get("/topics/{topic_id}/files/templates")
+async def list_templates(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await _in_room(db, resolver, topic_id)
+    items = [t.as_dict() for t in catalogue.TEMPLATES]
+    return ok(page(items, len(items)))
+
+
+@router.post("/topics/{topic_id}/files/new")
+async def new_from_template(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """A new room document, copied from a standard template.
+
+    The name must keep the template's format: a 「报告」 saved as .xlsx would be a
+    file that no program opens as what its name says.
+    """
+    place, actor = await _in_room(db, resolver, topic_id)
+    template = catalogue.find(str(body.get("template") or ""))
+    if template is None:
+        raise ValidationError("没有这个模板")
+    target = _room_path(str(body.get("path") or ""))
+    if not target.lower().endswith(f".{template.suffix}"):
+        raise ValidationError(f"「{template.name}」模板要存成 .{template.suffix}")
+    if await asyncio.to_thread(
+        library.room_file_exists, place.project_id, place.room_id, target
+    ):
+        raise ConflictError("房间里已经有同名的文件", data={"path": target})
+    made = await room_files.save_room_file(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=target,
+        data=await asyncio.to_thread(catalogue.template_bytes, template),
+        author=actor.handle,
+        author_kind=author_kind(actor),
+        source="template",
+        note=f"从「{template.name}」模板新建",
     )
     await record_shown(db, place, target, author=actor.handle)
     await db.commit()

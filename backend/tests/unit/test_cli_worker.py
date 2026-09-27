@@ -108,6 +108,8 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
         "cheese_show",
         "cheese_sync",
         "cheese_sync_agents",
+        "cheese_template_list",
+        "cheese_template_new",
         "cheese_worktree",
     }
     assert tools["cheese_worktree"]["inputSchema"]["required"] == ["task_id"]
