@@ -84,6 +84,12 @@ services:
       # reaches its browser rung — no error anywhere, just worse coverage — so
       # this belongs here and not in a doc telling an operator to set it.
       - FETCH_BROWSER_ENDPOINT=${FETCH_BROWSER_ENDPOINT:-http://cheese-browser-render:8900}
+      # The office-editor service below. The secret is shared with the editor's
+      # JWT_SECRET (deploy-docker.sh provisions it once and keeps it in ops/);
+      # empty, the room shows files read-only and says editing is off.
+      - OFFICE_EDITOR_JWT_SECRET=${OFFICE_EDITOR_JWT_SECRET:-}
+      - OFFICE_EDITOR_INTERNAL_URL=${OFFICE_EDITOR_INTERNAL_URL:-http://cheese-office-editor}
+      - OFFICE_EDITOR_BACKEND_URL=${OFFICE_EDITOR_BACKEND_URL:-http://backend:8081}
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads
@@ -186,6 +192,7 @@ services:
       # deploy-docker.sh moves between backends during a rollout.
       - API_UPSTREAM=${API_UPSTREAM:-backend:8081}
       - DEVICE_CONNECTION_UPSTREAM=${DEVICE_CONNECTION_UPSTREAM:-device-connection:8082}
+      - OFFICE_EDITOR_UPSTREAM=${OFFICE_EDITOR_UPSTREAM:-cheese-office-editor:80}
     # Lets API_UPSTREAM name the host; unused otherwise.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -294,6 +301,40 @@ services:
       interval: 30s
       timeout: 8s
       start_period: 20s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
+  # The editor people open a room's Word, spreadsheet and slide files in
+  # (OnlyOffice Document Server, AGPL community edition, used unmodified as a
+  # separate service). It edits the Office file itself: what it saves back is the
+  # .docx/.xlsx/.pptx the room holds. The browser reaches it through the
+  # frontend's /office-editor/ location; it fetches and saves documents at the
+  # backend over this network. Optional like the renderers above: without it the
+  # room still previews files, and says editing is unavailable.
+  office-editor:
+    image: ${OFFICE_EDITOR_IMAGE:-onlyoffice/documentserver:8.3@sha256:0daa2d1d414d49286bfa9495fc0c936e7e73edaf8944a61102a7a6353a952297}
+    container_name: cheese-office-editor
+    environment:
+      - JWT_ENABLED=true
+      - JWT_SECRET=${OFFICE_EDITOR_JWT_SECRET:-}
+      - JWT_HEADER=Authorization
+      # Documents come from and go back to the backend on the compose network,
+      # which is a private address; the editor refuses those unless told.
+      - ALLOW_PRIVATE_IP_ADDRESS=true
+      - ALLOW_META_IP_ADDRESS=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    mem_limit: 4g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthcheck"]
+      interval: 30s
+      timeout: 8s
+      start_period: 90s
       retries: 3
     restart: unless-stopped
     logging:
