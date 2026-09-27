@@ -1295,6 +1295,30 @@ class TaskSubmissionSchemaRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_by_task_ids(
+        self, task_ids: Sequence[int]
+    ) -> dict[int, list[TaskSubmissionSchemaEntry]]:
+        """一次取回多道题的表单，按题目分组（组内仍按 ``index`` 排）。
+
+        列表接口一屏就要给一整页题配上表单，逐题各发一条就是 20 条查询；
+        这条是它的批量版本。
+        """
+        if not task_ids:
+            return {}
+        stmt: Select[tuple[TaskSubmissionSchemaEntry]] = (
+            select(TaskSubmissionSchemaEntry)
+            .where(TaskSubmissionSchemaEntry.task_id.in_(task_ids))
+            .order_by(
+                TaskSubmissionSchemaEntry.task_id.asc(),
+                TaskSubmissionSchemaEntry.index.asc(),
+            )
+        )
+        result = await self._session.execute(stmt)
+        grouped: dict[int, list[TaskSubmissionSchemaEntry]] = {}
+        for entry in result.scalars().all():
+            grouped.setdefault(entry.task_id, []).append(entry)
+        return grouped
+
     async def replace_schema(
         self,
         task_id: int,
