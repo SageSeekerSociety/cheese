@@ -131,9 +131,8 @@ from app.domain.identity.handles import (
     names_a_person,
 )
 from app.domain.membership.roster import roster_rows
+from app.domain.memory.files_store import MemoryIndex, memory_index
 from app.domain.memory.models import MemoryScope
-from app.domain.memory.pools import pools_for_turn
-from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotificationLevel, NotificationType
@@ -263,7 +262,10 @@ class _TurnContext:
     # 项目总览那一份实况文档：全项目共看的东西住在这里（结论 7）。总览房间自己
     # 那一轮是 None —— 它的 `doc_text` 就是这一份，说两遍只会让模型以为是两份。
     overview_doc_text: str | None
-    memories: RecallResult
+    # 这一轮注入的 L1 记忆索引（team 一份 + 本轮发言人各一份）。正文不在里面：
+    # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
+    # `memory/instructions.py`）。None = 「这一轮没走注入那条路」。
+    memory: MemoryIndex | None
     prior_progress: list[dict]
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
@@ -3327,39 +3329,6 @@ class ChatService:
             raise NotFoundError("Project not found")
         return await AgentInstanceService(session).for_topic(place.room, project)
 
-    async def _recall_agent_memories(
-        self,
-        memory,
-        session: AsyncSession,
-        *,
-        topic: Topic,
-        agent: ResolvedAgent | None = None,
-    ) -> RecallResult:
-        """What this 芝士 carries into every turn inside this project.
-
-        Its own pool and one pool per person sitting with it (`pools_for_turn`
-        picks them; every key starts with this project's id, so nothing another
-        project learned about the same person is reachable from here). That is
-        the whole list — every memory belongs to one agent instance (结论 8),
-        so no pool here is shared with anyone.
-
-        什么都该看见的那些事实不在这里：它们是文档（结论 7），本轮另外读——
-        项目总览那一份和本房间那一份，作为文档进提示词，不冒充记忆。
-
-        Only the core layer comes back; everything else is counted, not
-        carried, and reached with `recall`. A pool nobody is told is bigger
-        than what arrived is how memory quietly stops existing.
-        """
-        resolved = (
-            agent if agent is not None else await self._resolved_agent(session, topic)
-        )
-        pools = pools_for_turn(
-            topic.project_id,
-            resolved.handle,
-            await TopicMemberService(session).people_handles(topic.id),
-        )
-        return await recall_pools(memory, pools)
-
     async def _acting_handle(
         self, session: AsyncSession, topic_id: uuid.UUID, agent: ResolvedAgent
     ) -> str:
@@ -4669,7 +4638,6 @@ class ChatService:
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
-            memory = memory_store(session)
 
             # WHERE this turn runs. A room — the only thing a turn runs in.
             place = await PlaceResolver(session).resolve(topic_id)
@@ -4753,8 +4721,15 @@ class ChatService:
             doc_root = await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
             phases_ms["identity"] = (time.monotonic() - started) * 1000
-            memories = await self._recall_agent_memories(
-                memory, session, topic=topic, agent=agent
+            # 只加载「本轮发言人」的那一份 private 索引（team 那一份每间房都
+            # 有）：一个项目里的人可以很多，而注入是每一轮都要付的。
+            memory = await memory_index(
+                session,
+                topic.project_id,
+                speaker_handles=[
+                    *(b.author for b in pending),
+                    *((private_owner,) if private_owner else ()),
+                ],
             )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
@@ -5131,7 +5106,7 @@ class ChatService:
             agent_pool=agent_pool,
             doc_text=doc_text,
             overview_doc_text=overview_doc_text,
-            memories=memories,
+            memory=memory,
             pending_ids=pending_ids,
             notice_ids=[b.id for b in notices],
             prior_progress=prior_progress,
@@ -5205,7 +5180,7 @@ class ChatService:
         agent_pool = prepared.agent_pool
         doc_text = prepared.doc_text
         overview_doc_text = prepared.overview_doc_text
-        memories = prepared.memories
+        memory = prepared.memory
         needs_place = prepared.needs_place
         pending_ids = prepared.pending_ids
         consumed_ids = pending_ids + prepared.notice_ids
@@ -5247,7 +5222,7 @@ class ChatService:
             self._base_prompt,
             skills,
             doc_text,
-            memories.facts,
+            memory,
             role,
             # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前
             # 加 @」，而一个停用了的实例没有人在驱动它——@ 它等于把活扔进一个没人
@@ -5258,8 +5233,6 @@ class ChatService:
             untitled,
             artifacts=artifact_refs,
             overview_doc=overview_doc_text,
-            memories_omitted=memories.omitted,
-            memories_core_omitted=memories.core_omitted,
             teaching=teaching,
             session_opening=_session_opening_lines(
                 progress=prior_progress,
@@ -5526,7 +5499,6 @@ class ChatService:
             projects = ProjectRepository(session)
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
-            memory = memory_store(session)
 
             project = await projects.get(project_id)
             if project is None:
@@ -5552,7 +5524,7 @@ class ChatService:
                 # 原始素材，不是房间里的一句话：房间读的是芝士消化出来的结构化文档。
                 meta={"in_room": False},
             )
-            memories = await self._recall_agent_memories(memory, session, topic=topic)
+            memory = await memory_index(session, project_id, speaker_handles=[author])
             topic_id = topic.id
             compute_id = _resolve_compute_id(
                 project.settings,
@@ -5564,9 +5536,7 @@ class ChatService:
             self._base_prompt,
             load_skills(ACTIVITY_SKILLS),
             None,
-            memories.facts,
-            memories_omitted=memories.omitted,
-            memories_core_omitted=memories.core_omitted,
+            memory,
         )
         prompt = (
             "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
