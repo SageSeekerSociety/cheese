@@ -9,6 +9,7 @@ without one or never starts, by what the ledger and the turn record show.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
@@ -57,6 +58,22 @@ MISSED_GRACE = timedelta(minutes=15)
 START_TIMEOUT = timedelta(hours=2)
 #: A turn that ended without a report gets this long for a late report to land.
 REPORT_GRACE = timedelta(minutes=2)
+NO_REPORT = "AI 队友这一轮已经结束，但没有交回结果"
+
+#: When each open run's room was last seen working. A turn row does not say when
+#: the work ended: in a live session every input's row is delivered and stopped
+#: within milliseconds, including a run folded into work already under way. So
+#: the grace runs from the later of the row's stop and the room last being busy.
+#: Kept in memory: after a restart the session that was working is gone too.
+_last_busy: dict[uuid.UUID, datetime] = {}
+
+
+def _room_busy(topic_id: uuid.UUID) -> bool:
+    from app.domain.agent.runtime import get_broker
+
+    return get_broker().in_flight(str(topic_id))
+
+
 #: Loop breaker: an event rule fires at most this often per hour.
 EVENT_RUNS_PER_HOUR = 6
 
@@ -338,7 +355,8 @@ class RoutineService:
             raise ForbiddenError("只有执行这条周期任务的 AI 队友能交回结果")
         if status not in (RunStatus.succeeded, RunStatus.failed):
             raise ValidationError("status 只能是 succeeded 或 failed")
-        if run.status in TERMINAL_RUN_STATUSES:
+        late = run.status == RunStatus.failed and run.error == NO_REPORT
+        if run.status in TERMINAL_RUN_STATUSES and not late:
             raise ValidationError("这次执行已经结束了")
         if status == RunStatus.failed and not summary.strip():
             raise ValidationError("失败要写明原因")
@@ -349,6 +367,9 @@ class RoutineService:
             run.error = run.summary
         run.finished_at = now()
         run.started_at = run.started_at or run.finished_at
+        if late:
+            # The owner was told it failed; tell them how it actually went.
+            run.notified = False
         await self._session.flush()
         return run
 
@@ -633,7 +654,9 @@ async def _turn_failure(session: AsyncSession, turn_id: uuid.UUID) -> str | None
     )
 
 
-async def _settle_open_runs(session: AsyncSession) -> None:
+async def _settle_open_runs(
+    session: AsyncSession, busy: Callable[[uuid.UUID], bool] = _room_busy
+) -> None:
     stamp = now()
     runs = list(
         await session.scalars(
@@ -677,10 +700,15 @@ async def _settle_open_runs(session: AsyncSession) -> None:
             if run.status == RunStatus.queued.value:
                 run.status = RunStatus.running.value
                 run.started_at = turn.delivered_at
-            if stamp - turn.stopped_at > REPORT_GRACE:
+            if busy(turn.topic_id):
+                _last_busy[run.id] = stamp
+                continue
+            quiet_from = max(turn.stopped_at, _last_busy.get(run.id, turn.stopped_at))
+            if stamp - quiet_from > REPORT_GRACE:
                 run.status = RunStatus.failed.value
-                run.error = "AI 队友这一轮已经结束，但没有交回结果"
-                run.finished_at = turn.stopped_at
+                run.error = NO_REPORT
+                run.finished_at = quiet_from
+                _last_busy.pop(run.id, None)
             continue
         if turn is not None and turn.delivered_at is not None:
             if run.status == RunStatus.queued.value:
@@ -759,13 +787,19 @@ async def _announce_finished(session: AsyncSession) -> None:
         )
 
 
-async def sweep(sessions: SessionFactory, *, chat, runner) -> dict[str, int]:
+async def sweep(
+    sessions: SessionFactory,
+    *,
+    chat,
+    runner,
+    busy: Callable[[uuid.UUID], bool] = _room_busy,
+) -> dict[str, int]:
     async with sessions() as session:
         scheduled = await _fire_schedules(session)
         triggered = await _fire_events(session)
         await session.commit()
     async with sessions() as session:
-        await _settle_open_runs(session)
+        await _settle_open_runs(session, busy)
         await _announce_finished(session)
         await session.commit()
     dispatched = 0
