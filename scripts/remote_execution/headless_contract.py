@@ -1705,7 +1705,12 @@ def remotebackground(binary, root):
         if not started:
             return
         ended, _ = session.wait(is_("result"), 30, mark)
+        # The turn can end before the executor has spawned the command.
+        deadline = time.monotonic() + 5
         running = alive("sleep 12")
+        while not running and time.monotonic() < deadline:
+            time.sleep(0.2)
+            running = alive("sleep 12")
         yield (
             "the turn ends while the command keeps running on the executor",
             ended is not None and running,
