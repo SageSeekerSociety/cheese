@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -17,13 +18,64 @@ from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 from tests.support.harness_prompts import event_prompts, system_prompt
 
+MODELS = ["gpt-5.3-codex", "gpt-6-astra"]
+
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("model", ["gpt-5.3-codex", "gpt-6-astra"])
+@pytest.mark.parametrize("model", MODELS)
 async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     tmp_path,
     model,
 ):
+    await _drive(tmp_path, model)
+
+
+def _offered(request: dict) -> set[str]:
+    """Every tool name one recorded request puts in front of the model."""
+    specs = list(request.get("tools", []))
+    for item in request["input"]:
+        if item["type"] == "additional_tools":
+            specs += [tool for group in item["tools"] for tool in group["tools"]]
+    names = {spec.get("name") for spec in specs}
+    # A lite model reaches the dynamic tools through `exec`, whose description
+    # declares each one under a `### name` heading.
+    for spec in specs:
+        if spec.get("name") == "exec":
+            names |= set(re.findall(r"^### `([^`]+)`", spec["description"], re.M))
+    return names
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param(
+            model,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "Codex 0.154.0 offers request_user_input_async to catalog "
+                    "models that list it, with no config switch (#1880)"
+                ),
+            ),
+        )
+        if model == "gpt-6-astra"
+        else model
+        for model in MODELS
+    ],
+)
+async def test_no_model_is_offered_a_native_question_tool(tmp_path, model):
+    """Nobody in a room answers Codex's own question tools; questions go through
+    `cheese_ask`. Strict, so the pin that can switch the async one off turns
+    this red and the gap in codex/behaviour.py gets closed."""
+    requests = await _drive(tmp_path, model)
+    assert requests
+    for request in requests:
+        offered = _offered(request)
+        assert not offered & {"request_user_input", "request_user_input_async"}
+
+
+async def _drive(tmp_path, model) -> list[dict]:
     requests = []
 
     class Provider(BaseHTTPRequestHandler):
@@ -362,3 +414,4 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
         if part.get("text") in inputs
     ]
     assert recorded_inputs == inputs
+    return requests
