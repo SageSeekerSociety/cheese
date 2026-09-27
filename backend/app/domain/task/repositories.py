@@ -153,12 +153,22 @@ class TaskRepository:
             sort_col = func.coalesce(Task.published_at, Task.created_at)
         elif sort_by == "deadline":
             sort_col = Task.deadline
+        elif sort_by == "reviewedAt":
+            sort_col = Task.reviewed_at
         else:
             sort_col = Task.updated_at
 
         desc = sort_order.lower() == "desc"
+        # reviewedAt 是后加的列，老题（以及这条迁移之前审过的题）它是 NULL。Postgres
+        # 的 DESC 默认把 NULL 排在最前，而那正是「最近处理过」最不想要的一头 ——
+        # 一屏全是不知道谁审过的旧题。这一列显式 NULLS LAST；其它列保持默认。
         if desc:
-            stmt = stmt.order_by(sort_col.desc(), Task.id.desc())
+            primary = (
+                sort_col.desc().nullslast()
+                if sort_by == "reviewedAt"
+                else sort_col.desc()
+            )
+            stmt = stmt.order_by(primary, Task.id.desc())
         else:
             stmt = stmt.order_by(sort_col.asc(), Task.id.asc())
 

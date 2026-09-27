@@ -379,10 +379,17 @@ def _task_to_api_model(task: Task) -> dict:
     )
     published_at = getattr(task, "published_at", None)
     ended_at = getattr(task, "ended_at", None)
+    # 审核痕迹是后加的两列：老题（以及还没审过的题）没有它，一律回 null ——
+    # 界面上「没有审核人」与「不知道审核人」是同一件事，不做区分。
+    reviewed_by = getattr(task, "reviewed_by", None)
+    reviewed_at = getattr(task, "reviewed_at", None)
     published_at_ms = (
         int(published_at.timestamp() * 1000) if published_at is not None else None
     )
     ended_at_ms = int(ended_at.timestamp() * 1000) if ended_at is not None else None
+    reviewed_at_ms = (
+        int(reviewed_at.timestamp() * 1000) if reviewed_at is not None else None
+    )
     registration_start_ms = (
         int(task.registration_start_at.timestamp() * 1000)
         if task.registration_start_at is not None
@@ -421,6 +428,8 @@ def _task_to_api_model(task: Task) -> dict:
         "updatedAt": updated_at_ms,
         "publishedAt": published_at_ms,
         "endedAt": ended_at_ms,
+        "reviewedBy": reviewed_by,
+        "reviewedAt": reviewed_at_ms,
     }
 
 
@@ -2174,6 +2183,11 @@ async def patch_task(
             task.approved = next_approved
         if payload.reject_reason is not None:
             task.reject_reason = payload.reject_reason
+        # 审核痕迹只在这里写：过了上面那道门才落，通过和驳回是同一次写入，落的是
+        # 审核人（不是出题人）与此刻。驳回后作者重新提交、再被审时覆盖成最新一次
+        # —— 「审没审过」看 approved，这两列说的是「上一次是谁、什么时候点的」。
+        task.reviewed_by = auth_user.user_id
+        task.reviewed_at = datetime.now(UTC)
 
     if "ended_at" in payload.model_fields_set or payload.has_ended_at is not None:
         if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
@@ -2336,7 +2350,13 @@ async def get_tasks(
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     # 解析 sortBy / sortOrder，和 Kotlin 行为保持一致：非法值视为 400。
-    if sort_by not in {"createdAt", "updatedAt", "deadline", "publishedAt"}:
+    if sort_by not in {
+        "createdAt",
+        "updatedAt",
+        "deadline",
+        "publishedAt",
+        "reviewedAt",
+    }:
         raise BadRequestError(f"Invalid sortBy: {sort_by}")
     if sort_order not in {"asc", "desc"}:
         raise BadRequestError(f"Invalid sortOrder: {sort_order}")
