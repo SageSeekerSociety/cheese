@@ -626,6 +626,10 @@ def test_a_scoped_token_for_another_project_cannot_notify_here(client):
 
 def test_topic_unread_refuses_an_unverified_or_mismatched_handle(client):
     pid = _project(client)
+    # alice is on the roster: this test is about WHOSE mailbox is being asked
+    # for, and the route asks the project door first (a non-member gets 403 for
+    # the project before the mailbox question is ever reached).
+    _add_member(client, pid, "alice")
 
     r = client.get(f"/projects/{pid}/topic-unread", params={"handle": "bob"})
     assert r.status_code == 401, r.text

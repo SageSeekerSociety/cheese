@@ -140,9 +140,7 @@ def test_the_unread_routes_still_tell_missing_credentials_from_missing_projects(
 
     # 没有凭据：401，两条路由都是。
     assert _topic_unread(client, project_id, handle="", headers={}).status_code == 401
-    assert (
-        _private_unread(client, project_id, handle="", headers={}).status_code == 401
-    )
+    assert _private_unread(client, project_id, handle="", headers={}).status_code == 401
 
     # 项目不存在：404，两条路由都是 —— 哪怕这个名字是陌生人的。
     r = _topic_unread(client, missing, handle="outsider-1")
