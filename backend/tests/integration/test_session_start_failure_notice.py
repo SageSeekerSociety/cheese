@@ -9,7 +9,7 @@ site's transcript.
 
 import pytest
 
-from app.domain.agent.harness.claude_code.channel import _refused
+from app.domain.agent.harness.channel import startup_refused
 from tests.conftest import StubChannel
 from tests.integration.conftest import chat_ws_url, post_project
 
@@ -28,7 +28,7 @@ SENTENCE = "Claude Code 启动失败：这个房间的工作机器还在准备"
 class DiesOnItsWayUp(StubChannel):
     async def ensure(self, session, opening):
         del session, opening
-        raise _refused(LOG, timed_out=False)
+        raise startup_refused(LOG, harness="Claude Code")
 
 
 @pytest.fixture

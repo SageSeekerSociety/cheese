@@ -247,7 +247,7 @@ _START_LOGS = {
         _RECORD + "subprocess.CalledProcessError: Command '['docker', 'run', "
         "'--detach', 'cheese-private-executor:2.1.282']' returned non-zero exit "
         "status 125.",
-        "Claude Code 启动失败：执行容器没能创建，常见原因是机器上缺少执行镜像",
+        "Claude Code 启动失败：执行容器没能创建",
     ),
     "executor image missing": (
         _RECORD + "Unable to find image 'cheese-private-executor:2.1.282' locally\n"
@@ -326,6 +326,15 @@ def test_a_session_that_did_not_start_gets_one_sentence(case):
     # of the turn boundary, and none of these indicts the machine.
     assert classify_platform_failure("", code=failure.code) is not None
     assert failure.code not in HOST_SCOPED_CODES
+
+
+def test_the_sentence_names_the_harness_that_was_starting():
+    log, _ = _START_LOGS["lease answered 504"]
+
+    assert (
+        classify_session_start(log, harness="Codex").content
+        == "Codex 启动失败：这个房间的工作机器还在准备"
+    )
 
 
 def test_a_session_that_never_ended_nor_came_up_says_it_ran_out_of_time():

@@ -271,8 +271,16 @@ SESSION_START_EXECUTOR_IMAGE_MISSING = _start_failure(
     retryable=False,
 )
 SESSION_START_EXECUTOR_FAILED = _start_failure(
-    "session_start_executor_failed",
-    "执行容器没能创建，常见原因是机器上缺少执行镜像",
+    "session_start_executor_failed", "执行容器没能创建", retryable=False
+)
+SESSION_START_EXECUTOR_NAME_TAKEN = _start_failure(
+    "session_start_executor_name_taken",
+    "上一个执行容器还没有清理掉",
+    retryable=True,
+)
+SESSION_START_DOCKER_UNAVAILABLE = _start_failure(
+    "session_start_docker_unavailable",
+    "机器上的 Docker 没有运行或无法访问",
     retryable=False,
 )
 SESSION_START_MODEL_LOGIN = _start_failure(
@@ -306,6 +314,8 @@ _SESSION_START_FAILURES = (
     SESSION_START_WORK_MACHINE_REFUSED,
     SESSION_START_EXECUTOR_IMAGE_MISSING,
     SESSION_START_EXECUTOR_FAILED,
+    SESSION_START_EXECUTOR_NAME_TAKEN,
+    SESSION_START_DOCKER_UNAVAILABLE,
     SESSION_START_MODEL_LOGIN,
     SESSION_START_PLATFORM_CREDENTIAL,
     SESSION_START_PLATFORM_ERROR,
@@ -362,8 +372,25 @@ def _named(
     return replace(failure, content=_START + sentence.format(name=name))
 
 
-def classify_session_start(log: str, *, timed_out: bool = False) -> PlatformFailure:
-    """Which sentence the room gets for a Claude Code session that did not start.
+def classify_session_start(
+    log: str, *, harness: str = "Claude Code", timed_out: bool = False
+) -> PlatformFailure:
+    """Which sentence the room gets for a session that did not start.
+
+    ``harness`` is the name the sentence opens with (Claude Code, pi, Codex).
+    The causes are the same programs failing the same ways whichever harness
+    was starting: the executor client, docker, the platform's lease."""
+    failure = _classify_session_start(log, timed_out=timed_out)
+    if harness == "Claude Code":
+        return failure
+    return replace(
+        failure,
+        content=f"{harness} 启动失败：" + failure.content.removeprefix(_START),
+    )
+
+
+def _classify_session_start(log: str, *, timed_out: bool) -> PlatformFailure:
+    """The classification, worded for Claude Code.
 
     ``log`` is what its runner's log said: this launch's record, or with
     ``timed_out`` the log's tail when no record came in the whole wait. The
@@ -385,12 +412,17 @@ def classify_session_start(log: str, *, timed_out: bool = False) -> PlatformFail
             return SESSION_START_WORK_MACHINE_OFFLINE
         return SESSION_START_WORK_MACHINE_REFUSED
     if "docker" in lowered:
-        # `docker run` of the executor container. Its stderr is captured by
-        # the caller and not printed, so exit status 125 (the daemon refused
-        # the run) is often all there is.
+        # The executor container, as docker's own stderr describes it
+        # (`remote_execution/private.py` keeps it in the failure it raises).
         if any(failure in lowered for failure in _RUNTIME_IMAGE_FAILURES):
             return SESSION_START_EXECUTOR_IMAGE_MISSING
-        if "calledprocesserror" in lowered:
+        if "is already in use by container" in lowered:
+            return SESSION_START_EXECUTOR_NAME_TAKEN
+        if "cannot connect to the docker daemon" in lowered or (
+            "permission denied" in lowered and "docker daemon socket" in lowered
+        ):
+            return SESSION_START_DOCKER_UNAVAILABLE
+        if "calledprocesserror" in lowered or "docker run" in lowered:
             return SESSION_START_EXECUTOR_FAILED
     if (
         "run /login" in text
