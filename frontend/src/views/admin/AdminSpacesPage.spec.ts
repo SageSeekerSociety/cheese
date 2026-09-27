@@ -148,6 +148,20 @@ describe('space review queue · 列表', () => {
     expect(page.getByText('Weekly exercises, graded')).toBeTruthy()
   })
 
+  // 种子里常见的一种：description 就是 intro 开头那句，不判包含的话同一句话会出现
+  // 两次（第二遍是前一遍的前缀）。包含时只画长的那句。
+  it('一句是另一句的开头时只画长的那句', async () => {
+    reviews.mockResolvedValue({
+      data: {
+        items: [application({ intro: 'Hands-on d3. Anyone may join.', description: 'Hands-on d3.' })],
+      },
+    })
+    const page = mountPage()
+    await page.findByText('Programming course')
+    expect(page.getByText('Hands-on d3. Anyone may join.')).toBeTruthy()
+    expect(page.queryByText('Hands-on d3.')).toBeNull()
+  })
+
   it('已驳回的那一条不再给按钮，并说出驳回原因', async () => {
     reviews.mockResolvedValue({
       data: { items: [application({ reviewStatus: 'REJECTED', reviewReason: 'not a course' })] },

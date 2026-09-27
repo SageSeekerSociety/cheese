@@ -702,10 +702,11 @@ onMounted(load)
 /* 组头那一格的**内边距和行高都不另写**：表壳给 8px 上下 × 12px 左右，行高也由它
    钉成和数据行一样。原来这里写的是 `padding: 0 12px` + `height: 32px` —— 表壳的
    规则压得过它，那两条从来没生效过，留着只会误导。 */
+/* **这一格不能写 `display: flex`**：`<td>` 一旦不是 table-cell，`colspan="6"` 就
+   作废，浏览器把它当普通块级盒子，宽度退回第一列 —— 组头那条底色于是只剩表格左边
+   一小段（1440px 上看着像半条带子）。名字和人数本来就是行内元素，写不写都在一行上。 */
 .am__groupcell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  white-space: nowrap;
 }
 
 .am__grouplabel {
@@ -716,6 +717,7 @@ onMounted(load)
 }
 
 .am__groupcount {
+  margin-left: 6px;
   color: var(--faint);
   font-size: 12px;
   font-variant-numeric: tabular-nums;

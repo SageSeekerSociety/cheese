@@ -1120,6 +1120,18 @@ onMounted(load)
   .amd__body {
     padding: 12px 16px 16px;
   }
+
+  /* 时间窗口这一组比标题还宽（三段加起来 ~260px），而页头那一行是**一起缩**的：
+     不干预的话被挤掉的是标题 —— 390px 上「模型管理」会只剩「模型…」。让工具槽
+     自己占一整行，标题就还在一整行上。（`:deep` 只为了改页头那一行的折行，尺寸、
+     字号、内边距都还是 `AdminPageHeader` 自己的。） */
+  .amd__inner :deep(.aph__row) {
+    flex-wrap: wrap;
+  }
+
+  .amd__inner :deep(.aph__tools) {
+    flex: 1 1 100%;
+  }
 }
 
 .amd__section {

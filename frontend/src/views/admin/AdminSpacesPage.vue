@@ -108,13 +108,18 @@ async function decide(item: SpaceApplication, approved: boolean) {
   }
 }
 
-/** 申请上那句话。`intro` 与 `description` 常常一模一样（建版时同一次填的），
- *  两句都画就是同一句话在一个人身上说两遍。以 `description` 为主，`intro` 只在
- *  确实不一样时跟在下面；`description` 为空时退回 `intro`。 */
+/** 申请上那句话。`intro` 与 `description` 是建版时同一次填的两个框，一句话常常
+ *  两边都有——种子里甚至是「描述就是介绍的开头那句」。两句都画，人读到的是同一句
+ *  话在一行申请上说两遍。
+ *  所以：谁长留谁，另一句只有在**不互相包含**时才跟在下面（真的说了两件事），
+ *  `description` 为空时退回 `intro`。 */
 function blurb(item: SpaceApplication): { main: string; extra: string } {
-  const main = item.description || item.intro || ''
-  const extra = item.intro && item.intro !== main ? item.intro : ''
-  return { main, extra }
+  const one = item.description || ''
+  const two = item.intro || ''
+  const contains = one && two && (one.includes(two) || two.includes(one))
+  if (contains) return { main: one.length >= two.length ? one : two, extra: '' }
+  if (!one || !two) return { main: one || two, extra: '' }
+  return one.length >= two.length ? { main: one, extra: two } : { main: two, extra: one }
 }
 
 /** 头像 URL：`avatarId` 缺失时给空串，`UserAvatar` 自己画彩色首字母。 */
