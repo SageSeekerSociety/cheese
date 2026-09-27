@@ -63,6 +63,69 @@ def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch)
     assert seen == ["first", "rotated"]
 
 
+def test_a_command_starting_while_another_takes_the_lease_has_the_token(
+    tmp_path, monkeypatch
+):
+    """A session that took its machine through a lease takes it again at every
+    command start, and keeps the token the lease hands it in the token file.
+    Commands start side by side (a background Bash and the PostToolUse hook
+    that follows it, parallel Bash calls): none may find the file empty while
+    another start is writing it."""
+    lease = {
+        "data": {
+            "target": {"kind": "device", "url": "http://executor.test"},
+            "token": "execution-only",
+        }
+    }
+    token = tmp_path / "execution.token"
+    token.write_text("execution-only")
+    config = {
+        "kind": "device",
+        "url": "http://executor.test",
+        "lease_path": "/lease",
+        "target_file": str(tmp_path / "execution.json"),
+        "token_file": str(token),
+    }
+
+    class Connection:
+        def request(self, method, path, *, body, headers):
+            pass
+
+        def getresponse(self):
+            return self
+
+        status = 200
+
+        def read(self):
+            return json.dumps(lease).encode()
+
+    def connection(self):
+        self.transport.headers = {}
+        return Connection(), ""
+
+    monkeypatch.setattr(executor_transport.RemoteClient, "connection", connection)
+    monkeypatch.setenv("CHEESE_API", "http://platform.test")
+    done = threading.Event()
+
+    def take_the_lease():
+        client = executor_transport.RemoteClient(dict(config))
+        for _ in range(3000):
+            client.acquire(deadline=0)
+        done.set()
+
+    taking = threading.Thread(target=take_the_lease)
+    taking.start()
+    failures = 0
+    starting = executor_transport.RemoteClient(dict(config))
+    while not done.is_set():
+        try:
+            starting.platform_request({"method": "POST", "path": "/lease"})
+        except RuntimeError:
+            failures += 1
+    taking.join()
+    assert failures == 0
+
+
 def test_platform_requests_read_the_rotated_room_token(tmp_path, monkeypatch):
     token = tmp_path / "execution.token"
     token.write_text("first")
