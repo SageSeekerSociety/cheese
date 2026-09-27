@@ -2726,7 +2726,25 @@ async def get_task_participant(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     db=Depends(get_db),
 ) -> dict:
-    _ = auth_user
+    """一条报名记录，判据与上面的列表版**一模一样**。
+
+    返回体里带着报名者填的 ``email`` / ``phone``（``_membership_to_api_model``），而
+    ``participantId`` 是小整数、可枚举 —— 从前这里那句 ``_ = auth_user`` 等于把报名
+    表交给任何登录用户。单条是列表的一种取法，没有理由比列表更宽：看得了名单的人
+    （``may_teach_task``）才看得到单条。
+
+    403 而不是 404，口径照抄列表版：同一个调用者在同一个资源上，列表版已经用 403
+    说了「你看不了这份名单」；换 404 是另一句话（「这道题上没有这个人」），而调用者
+    早已知道这个人存在。
+    """
+    task_repo = TaskRepository(session=db)
+    task = await task_repo.get_by_id(task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only task owner or space admin can view participants")
+
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
