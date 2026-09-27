@@ -233,7 +233,8 @@ PLATFORM_TOOLS = ToolTable(
             "todo_write",
             "把步骤清单整份写进房间：第一次调用发一条清单消息，之后每次调用改的是你"
             "当前那条清单消息。还在做同一个请求就一直改这一条；有人提了新的请求，带上"
-            "new=true 另发一条。每次传完整的清单，不是增量；"
+            "new=true 另发一条。做完时再调用一次，所有项标 completed，并用 result "
+            "写一句落下了什么，它接在清单下面。每次传完整的清单，不是增量；"
             f"最多 {TODO_MAX_ITEMS} 项，每项 ≤{TODO_MAX_CHARS} 字；"
             "同一时刻只让一项 in_progress。你是替一条活干活的分身时带上那条活的 id，"
             "清单记在那张卡上，不发到房间里。",
@@ -259,6 +260,9 @@ PLATFORM_TOOLS = ToolTable(
                     "type": "boolean",
                     "description": "有人提了新的请求时设为 true：另发一条清单消息",
                 },
+                "result": _text(
+                    f"做完时写一句结果（≤{TODO_MAX_CHARS} 字），显示在清单下面"
+                ),
                 "task": _text("你是分身时，你做的那条活的 id"),
             },
             ["todos"],
@@ -614,7 +618,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "body": {
                 "todos": args["todos"],
                 **({"new": True} if args.get("new") is True else {}),
-                **_given(args, "task"),
+                **_given(args, "task", "result"),
             },
         }
     if tool == "cheese_doc_get":

@@ -1330,20 +1330,28 @@ class ProgressIn(BaseModel):
     # request a list belongs to is the agent's call: it sets this when someone
     # brings it a new one.
     new: bool = False
+    # One line on what landed, written when the work is done; shown under the
+    # list in the same message. Same ceiling as an item.
+    result: (
+        Annotated[
+            str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+        ]
+        | None
+    ) = None
 
 
-_CHECKLIST_MARK = {"completed": "[x]", "in_progress": "[ ]", "pending": "[ ]"}
+# The step markers of the checklist message's text. The room draws its own
+# icons from `meta.checklist`; this text is what every other reader gets — the
+# agent reading the history, a copy, a notification preview.
+_CHECKLIST_MARK = {"completed": "✓", "in_progress": "✱", "pending": "○"}
 
 
-def _checklist_text(items: list[dict]) -> str:
-    """The checklist as the message the room reads: a markdown task list, with
-    the step in progress in bold (a task list has only two states)."""
-    lines = []
-    for item in items:
-        subject = item["subject"]
-        if item["status"] == "in_progress":
-            subject = f"**{subject}**"
-        lines.append(f"- {_CHECKLIST_MARK[item['status']]} {subject}")
+def _checklist_text(items: list[dict], result: str | None) -> str:
+    """The checklist as the message's text: one line per step, and the result
+    line under it once there is one."""
+    lines = [f"{_CHECKLIST_MARK[item['status']]} {item['subject']}" for item in items]
+    if result:
+        lines += ["", f"✅ {result}"]
     return "\n".join(lines)
 
 
@@ -1402,7 +1410,8 @@ async def write_topic_progress(
     if body.task is not None:
         await get_broker().publish(str(body.task), {"type": "todo", "items": items})
         return ok({"items": items})
-    text = _checklist_text(items)
+    text = _checklist_text(items, body.result)
+    checklist = {"items": items, "result": body.result}
     current = (
         None
         if body.new
@@ -1410,7 +1419,12 @@ async def write_topic_progress(
     )
     if current is not None:
         message = await edit_message(
-            db, get_broker(), current.id, editor=actor.handle, content=text
+            db,
+            get_broker(),
+            current.id,
+            editor=actor.handle,
+            content=text,
+            checklist=checklist,
         )
         return ok({"items": items, "message_id": message["id"], "posted": False})
     message = await chat._persist_assistant_message(
@@ -1424,7 +1438,7 @@ async def write_topic_progress(
         publish=True,
         author=actor.handle,
         own_output=True,
-        extra_meta={CHECKLIST_META_KEY: True},
+        extra_meta={CHECKLIST_META_KEY: checklist},
     )
     assert message is not None  # a publication with no eid never deduplicates
     await get_broker().publish(

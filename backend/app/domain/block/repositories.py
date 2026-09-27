@@ -391,13 +391,21 @@ class BlockRepository:
         await self._session.flush()
         return block
 
-    async def replace_content(self, block: Block, content: str) -> Block:
-        """Replace a message's text and stamp when that happened."""
-        block.content = content
-        block.meta = {
-            **(block.meta or {}),
-            EDITED_AT_META_KEY: datetime.now(UTC).isoformat(),
+    async def replace_content(
+        self, block: Block, content: str, *, checklist: dict | None = None
+    ) -> Block:
+        """Replace a message's text and stamp when that happened. The checklist
+        it carries is replaced along with it, or dropped: text written some
+        other way no longer says what the old list said."""
+        meta = {
+            key: value
+            for key, value in (block.meta or {}).items()
+            if key != CHECKLIST_META_KEY
         }
+        if checklist is not None:
+            meta[CHECKLIST_META_KEY] = checklist
+        block.content = content
+        block.meta = {**meta, EDITED_AT_META_KEY: datetime.now(UTC).isoformat()}
         await self._session.flush()
         return block
 
@@ -409,7 +417,7 @@ class BlockRepository:
                 *self._in_place(room_id, None),
                 Block.kind == BlockKind.message,
                 Block.author == author,
-                Block.meta[CHECKLIST_META_KEY].as_string() == "true",
+                Block.meta[CHECKLIST_META_KEY].as_string().is_not(None),
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
             .limit(1)

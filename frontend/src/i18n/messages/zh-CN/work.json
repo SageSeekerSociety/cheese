@@ -288,6 +288,9 @@
       "title": "《{title}》",
       "done": "已完成",
       "running": "进行中"
+    },
+    "checklist": {
+      "updatedAt": "清单更新于 {time}"
     }
   },
   "members": {

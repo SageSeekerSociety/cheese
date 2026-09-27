@@ -33,8 +33,12 @@ async def edit_message(
     *,
     editor: str,
     content: str,
+    checklist: dict | None = None,
 ) -> dict:
-    """Replace the text of ``editor``'s own message, commit, and tell the room."""
+    """Replace the text of ``editor``'s own message, commit, and tell the room.
+
+    ``checklist`` is `todo_write` editing its checklist message: the list
+    travels with the text. Any other edit of that message leaves plain text."""
     blocks = BlockRepository(session)
     block = await blocks.get(block_id)
     if not _a_room_message(block):
@@ -47,7 +51,7 @@ async def edit_message(
         raise ValidationError("content must not be blank")
     # Stored as sending this text would have stored it, by the same code.
     text = await text_as_sent(session, block.topic_id, editor, text)
-    await blocks.replace_content(block, text)
+    await blocks.replace_content(block, text, checklist=checklist)
     payload = BlockOut.model_validate(block).model_dump(mode="json")
     # The frame replaces the line whole, so it carries what else is on it.
     payload["reactions"] = await blocks.reactions_for_block(block.id)

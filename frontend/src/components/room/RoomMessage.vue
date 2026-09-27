@@ -19,6 +19,7 @@ import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 
+import ChecklistMessage from './ChecklistMessage.vue'
 import RollingNumber from './RollingNumber.vue'
 
 import { t } from '@/i18n'
@@ -82,6 +83,12 @@ const emit = defineEmits<{
 
 // 作者改过它：正文后面标一句「已编辑」。
 const edited = computed(() => !!props.block.meta?.edited_at)
+
+// 队友的步骤清单：照结构画，不照正文画。
+const checklist = computed(() => {
+  const value = props.block.meta?.checklist
+  return value && typeof value === 'object' ? value : null
+})
 
 // 改消息的输入框。打开时放进原文、光标落在末尾；Enter 保存、Shift+Enter 换行、
 // Esc 放弃，和发消息的输入框同一套手势。输入法组字时的 Enter 是选字，不算。
@@ -274,6 +281,12 @@ async function onAgentTextClick(e: MouseEvent) {
           </button>
         </div>
       </div>
+      <ChecklistMessage
+        v-else-if="checklist"
+        :checklist="checklist"
+        :updated-at="block.meta?.edited_at ?? block.created_at"
+        :edited="edited"
+      />
       <template v-else-if="isAgent">
         <div class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />
         <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
