@@ -48,6 +48,19 @@ CONCLUSION_TITLES = ("当前结论", "结论")
 _SENTENCE_END_RE = re.compile(r"[。！？!?；;]|\.\s")
 
 
+def render_overview(*, brief: str, auto: str) -> str:
+    """注入用的整份总览：① 的正文，加上（只在总览房间里）②~⑤。
+
+    ① 空着时说「还没写」并给一句要写什么——留白读起来像「这个项目没有目标」，
+    而事实只是没人写过。
+    """
+    unwritten = (
+        f"（还没写。这里写目标、范围（做/不做）、对外口径，≤{BRIEF_CHAR_BUDGET} 字。）"
+    )
+    head = f"## {BRIEF_TITLE}\n\n" + (brief or unwritten)
+    return head + (f"\n\n{auto}" if auto else "")
+
+
 def _sections(content: str) -> list[tuple[int, str, str]]:
     """``(级别, 标题, 正文)``，按出现顺序。纯文本切分，不认代码围栏——实况
     文档的标题不该长在代码块里。"""

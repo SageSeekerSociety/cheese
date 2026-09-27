@@ -49,6 +49,15 @@ def _overview_room(client, project_id: str) -> str:
     return client.get(f"/projects/{project_id}").json()["data"]["root_topic_id"]
 
 
+def _say(client, topic_id: str, text: str = "@芝士 现在什么状态") -> None:
+    """在这一轮里说一句话，等它跑完。提示词落在 `stub_hooks` 上。"""
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": text})
+        while True:
+            if ws.receive_json()["type"] in ("done", "error"):
+                break
+
+
 def _doc_text(client, topic_id: str) -> str:
     doc = client.get(f"/topics/{topic_id}/doc").json()["data"]
     return (doc or {}).get("content", "")
@@ -153,11 +162,7 @@ def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_
     project_id, topic_id = _project_and_room(client)
     _write_for_everyone(client, project_id, topic_id, FACT)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 现在什么状态"})
-        while True:
-            if ws.receive_json()["type"] in ("done", "error"):
-                break
+    _say(client, topic_id)
 
     prompt = stub_hooks.last_system_prompt
     assert prompt is not None
@@ -363,12 +368,76 @@ def test_the_overview_room_does_not_read_its_own_document_twice(client, stub_hoo
         json={"content": FACT, "author": "user-1", "expected_version": 0},
     )
 
-    with client.websocket_connect(chat_ws_url(overview, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 现在什么状态"})
-        while True:
-            if ws.receive_json()["type"] in ("done", "error"):
-                break
+    _say(client, overview)
 
     prompt = stub_hooks.last_system_prompt
     assert prompt is not None
     assert prompt.count(FACT) == 1
+
+
+DECISION = "分页用 cursor，不用 offset"
+
+
+def test_the_overview_room_reads_the_other_four_blocks_from_the_data(
+    client, stub_hooks
+):
+    """总览房间那一轮，②~⑤ 现拼：话题、决策卡、里程碑都不在文档正文里。
+
+    这一块有个前提：注入的那一份必须**不是**文档原文。人写进正文的副本，和平台
+    从结构化数据拼的那一份，是两个版本；一旦拼接，读到的人分不出哪个算数。
+    """
+    project_id, topic_id = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    client.post(
+        f"/topics/{topic_id}/decision",
+        json={"decision": DECISION},
+    )
+    client.post(
+        f"/projects/{project_id}/milestones",
+        json={"title": "中期答辩"},
+    )
+    client.put(
+        f"/topics/{overview}/doc",
+        json={
+            "content": "## 项目是什么\n\n给高中生做算法课。\n\n"
+            "## 最近决策\n\n- 这一条是手抄的，不算数。\n",
+            "author": "user-1",
+            "expected_version": 0,
+        },
+    )
+
+    _say(client, overview)
+
+    prompt = stub_hooks.last_system_prompt
+    assert prompt is not None
+    assert "给高中生做算法课" in prompt
+    for heading in ("## 现在在做什么", "## 最近决策", "## 里程碑"):
+        assert heading in prompt
+    assert "干活的房间" in prompt
+    assert DECISION in prompt
+    assert "中期答辩" in prompt
+    # 手抄进正文的那一份谁都读不到：写在那儿等于没写。
+    assert "这一条是手抄的" not in prompt
+
+
+def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
+    """别的房间只注入 ①，②~⑤ 要哪一块自己查——不必每轮往每间房塞项目快照。"""
+    project_id, topic_id = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    client.post(f"/topics/{topic_id}/decision", json={"decision": DECISION})
+    client.put(
+        f"/topics/{overview}/doc",
+        json={
+            "content": "## 项目是什么\n\n给高中生做算法课。\n",
+            "author": "user-1",
+            "expected_version": 0,
+        },
+    )
+
+    _say(client, topic_id)
+
+    prompt = stub_hooks.last_system_prompt
+    assert prompt is not None
+    assert "给高中生做算法课" in prompt
+    assert "## 最近决策" not in prompt
+    assert DECISION not in prompt

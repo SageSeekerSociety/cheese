@@ -59,7 +59,9 @@ def test_the_current_conclusion_block_yields_its_first_sentence():
         "分页方案已定：用 cursor（决策见 @分页调研）。\n待办：@张衡 过一遍。\n"
     )
 
-    assert topic_conclusion(topic_doc) == "分页方案已定：用 cursor（决策见 @分页调研）。"
+    assert topic_conclusion(topic_doc) == (
+        "分页方案已定：用 cursor（决策见 @分页调研）。"
+    )
     assert topic_conclusion("## 目标\n\n支持翻页。\n") is None
 
 
@@ -98,15 +100,19 @@ def test_an_empty_block_is_not_rendered_at_all():
     assert "## 最近决策" not in text
     assert "## 里程碑" not in text
     assert "## 已结束的话题" not in text
-    assert render_overview_auto(
-        active_topics=[], decisions=[], milestones=[], closed_topics=[]
-    ) == ""
+    assert (
+        render_overview_auto(
+            active_topics=[], decisions=[], milestones=[], closed_topics=[]
+        )
+        == ""
+    )
 
 
 def test_each_block_stops_at_its_own_count():
     text = render_overview_auto(
         active_topics=[
-            _topic(id=f"t-{n}", title=f"话题 {n}") for n in range(ACTIVE_TOPICS_LIMIT + 5)
+            _topic(id=f"t-{n}", title=f"话题 {n}")
+            for n in range(ACTIVE_TOPICS_LIMIT + 5)
         ],
         decisions=[
             {"text": f"决策 {n}", "topic": "分页接口", "topic_id": "t-1"}
