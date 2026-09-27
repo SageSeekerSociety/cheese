@@ -129,6 +129,43 @@ def draft_view(row: MailDraft) -> dict:
     }
 
 
+#: RFC 2544's benchmarking range. Nothing public lives there, which is why
+#: fake-ip proxies (Clash, mihomo, sing-box) hand it out as placeholders: every
+#: outside name resolves into it and the proxy connects by name. Seen on dev,
+#: 2026-09-27: imap.qq.com → 198.18.0.198. Such an address says nothing about
+#: where the name really points, so the real answer is asked for instead.
+FAKE_IP_RANGE = ipaddress.ip_network("198.18.0.0/15")
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+
+def _real_addresses(host: str) -> list[IPAddress]:
+    """The host's addresses from public DNS over HTTPS, past the local proxy."""
+    import httpx
+
+    found: list[IPAddress] = []
+    for kind in ("A", "AAAA"):
+        try:
+            answer = httpx.get(
+                settings.integration_doh_url,
+                params={"name": host, "type": kind},
+                timeout=8,
+            ).json()
+        except Exception:  # noqa: BLE001 — any failure means "not verified"
+            continue
+        for record in answer.get("Answer") or []:
+            if record.get("type") in (1, 28):
+                try:
+                    found.append(ipaddress.ip_address(record["data"]))
+                except (KeyError, ValueError):
+                    continue
+    return found
+
+
+def _refuse_if_internal(host: str, address: IPAddress) -> None:
+    if not address.is_global or address.is_multicast:
+        raise ValidationError(f"邮件服务器 {host} 指向内网地址，不能使用")
+
+
 def guard_mail_hosts(config: dict) -> None:
     """Refuse a mail server that is this platform's own network, or plaintext."""
     if settings.integration_allow_private_hosts:
@@ -143,8 +180,16 @@ def guard_mail_hosts(config: dict) -> None:
             raise ValidationError(f"找不到邮件服务器 {host}") from exc
         for info in infos:
             address = ipaddress.ip_address(info[4][0])
-            if not address.is_global or address.is_multicast:
-                raise ValidationError(f"邮件服务器 {host} 指向内网地址，不能使用")
+            if address in FAKE_IP_RANGE:
+                real = _real_addresses(host)
+                if not real:
+                    raise ValidationError(
+                        f"查不到邮件服务器 {host} 的真实地址，暂时不能使用"
+                    )
+                for actual in real:
+                    _refuse_if_internal(host, actual)
+                continue
+            _refuse_if_internal(host, address)
 
 
 class IntegrationService:

@@ -114,6 +114,30 @@ def test_ai_blocks_are_authored_by_the_agent_that_was_addressed(client):
     assert _ai_authors(client, topic_id) == {ops}
 
 
+def test_site_steps_are_authored_by_the_agent_that_was_addressed(client, stub_hooks):
+    """现场的每一步也署被叫到的那位，不是房间的默认队友。
+
+    署成默认那位时，一间坐着两位队友的房间里，现场和「正在处理」会把干活的认成
+    先入座的那个——报上来的样子就是「只有芝士有这个界面」。"""
+    project_id, topic_id = _project_and_topic(client)
+    own = _own_agent(client, topic_id)
+    ops = _seat_second_agent(client, project_id, topic_id, "ops")
+
+    def emit_turn(topic, prompt, reply):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        stub_hooks.uses(topic, "Grep", pattern="TODO", path="src")
+        stub_hooks.says(topic, reply)
+        stub_hooks.stops(topic, reply)
+
+    stub_hooks.emit_turn = emit_turn
+    _turn(client, topic_id, f"<@{ops}> hi")
+
+    tr = client.get(f"/topics/{topic_id}/transcript").json()["data"]["data"]
+    steps = {b["author"] for b in tr if (b.get("meta") or {}).get("tool")}
+    assert steps == {ops}, f"现场的步骤署成了 {steps}（默认队友是 {own}）"
+
+
 def test_the_summon_receipt_carries_the_same_agent(client):
     """The 👀 receipt is authored by the platform, so it must agree with the
     message author — otherwise the room shows a reaction from someone absent."""

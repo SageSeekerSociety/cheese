@@ -289,6 +289,13 @@ class TopicService:
             if parent is None:
                 raise NotFoundError("Parent topic not found")
             _require_room(parent)
+            # 父房间必须是**本项目的**房间：`_require_room` 只问 kind，不问归属，
+            # 所以拿别人项目里的根房间当 parent，就能把自己的房间挂进那片树——对方的
+            # `/children` 从此列出一个他管不着的房间，而树的形状是他以为只有自己人
+            # 的地方。跨项目的父子关系没有第二种解释，按「这个父不存在」回答
+            # （和 `milestones.py` 对同类越界的措辞一致）。
+            if parent.project_id != project_id:
+                raise NotFoundError("Parent topic not found")
         topic = await self._repo.add(
             project_id=project_id,
             title=title,

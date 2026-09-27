@@ -130,7 +130,7 @@ describe('没有数据源的那一格如实报缺', () => {
 
     await findByText(REVIEW_REASON)
     // 没有内容就是没有内容 —— 不许拿别的队列顶上。
-    expect(queryByText('暂无学生标记的问题')).toBeNull()
+    expect(queryByText('暂无成员标记的问题')).toBeNull()
   })
 })
 
@@ -191,7 +191,7 @@ describe('待处理队列', () => {
 })
 
 describe('筛选', () => {
-  it('地址栏里的学生与知识点进到发言请求里，队列只收时间与学生', async () => {
+  it('地址栏里的成员与知识点进到发言请求里，队列只收时间与成员', async () => {
     route.query = { student: 'zhangsan', knowledgePoint: '7' }
     mount()
 
@@ -206,7 +206,7 @@ describe('筛选', () => {
 })
 
 describe('空态', () => {
-  it('一个学生项目都读不到时，画的是空态而不是空列表', async () => {
+  it('一个成员项目都读不到时，画的是空态而不是空列表', async () => {
     getLearningFilters.mockResolvedValue({ data: { students: [], knowledgePoints: [], projectCount: 0 } })
     getLearningQueues.mockResolvedValue({
       data: { reviewFlag: { available: false, reason: REVIEW_REASON, items: [] }, stuckPoints: [] },
@@ -215,14 +215,14 @@ describe('空态', () => {
 
     const { findByText } = mount()
 
-    await findByText('暂无可查看的学生项目')
+    await findByText('暂无可查看的成员项目')
   })
 
-  it('筛掉全部发言时写「暂无学生发言」', async () => {
+  it('筛掉全部发言时写「暂无成员发言」', async () => {
     getLearningQuestions.mockResolvedValue({ data: { questions: [], total: 0 } })
 
     const { findByText } = mount()
 
-    await findByText('暂无学生发言')
+    await findByText('暂无成员发言')
   })
 })

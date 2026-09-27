@@ -46,7 +46,8 @@
       "invited": "已邀请"
     },
     "errors": {
-      "inviteFailed": "邀请失败：{reason}"
+      "inviteFailed": "邀请失败：{reason}",
+      "loadFailed": "读不到可以邀请的人。"
     }
   }
 }

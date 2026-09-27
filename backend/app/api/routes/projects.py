@@ -23,6 +23,7 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
+    AuthenticationRequiredError,
     ConflictError,
     ForbiddenError,
     NotFoundError,
@@ -149,6 +150,33 @@ async def _project_payload(db: DbSession, project: Project) -> dict:
     return (await _project_payloads(db, [project]))[0]
 
 
+async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> None:
+    """把项目生在一个团队里的，只能是那个团队的人。
+
+    ``body.team_id`` 以前原样送到 ``ProjectService.create``，于是任何人——包括一个
+    什么凭据都没带的调用方——都能把项目种进别人的团队：它会出现在那个团队的
+    ``GET /projects?team_id=`` 列表里，挂着那个团队的名字和调用方自己的
+    ``owner_handle``。团队域的路由用 ``require_permission(Action.X, Resource.Y,
+    "teamId")`` 回答同一个问题；这里团队是**请求体**里给的、不是路径里的，所以同一个
+    判断得显式做一遍。
+
+    和 ``ActorResolver.authorize_team`` 的关键区别：这里**不挂**
+    ``authz_enforce_topic_access`` 那个开关。开关管的是「谁能**读**别人项目的对话」，
+    一个运维把它关掉，不该顺手把「写进这一行的那支外键」也变成不校验——那不是放宽
+    可见性，那是让一次落库失去完整性。
+
+    正常创建路径一点不受影响：前端送来的 ``team_id`` 永远是调用者自己的团队；个人项目
+    根本不送 ``team_id``（由 ``_resolve_personal_team_id`` 从所有者推出来）。这里挡住的
+    是「点名一个自己不在的团队」，以及按构造不在任何团队里的匿名调用方。
+    """
+    if not who.authenticated:
+        raise AuthenticationRequiredError("登录后才能把项目建在团队里")
+    if who.user_id is None or not await team_service(db).is_team_member(
+        team_id, who.user_id
+    ):
+        raise ForbiddenError("你不是这个团队的成员，不能把项目建在这个团队里")
+
+
 @router.get("/resource-limits")
 async def resource_limits(db: DbSession) -> dict:
     """Creation defaults, available before a project exists."""
@@ -168,6 +196,10 @@ async def create_project(
     # the listing — now scoped to the caller — would hide a project from the very
     # person who just made it.
     who = await resolver.resolve(fallback_handle=body.owner_handle)
+    # 项目归团队 (v4) 的那支外键也是**请求体**给的，所以它跟 owner_handle 一样要在这里
+    # 过一道：问的不是「这个团队在不在」，是「你是不是这个团队的人」。
+    if body.team_id is not None:
+        await _require_team_membership(db, who, body.team_id)
     # An unidentified caller resolves to the literal `anonymous` (auth.py), and
     # storing that as the owner is worse than storing nothing: it reads like a
     # person everywhere downstream, and it blocks the ownerless-room escape

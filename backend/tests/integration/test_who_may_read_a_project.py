@@ -11,7 +11,7 @@
 2. **出题者不是越权。** 赛题报名项目归报名者所有（``for_participation`` 把报名者
    写成 ``owner_handle``），出题者不在任何名册上。他能读这道赛题的项目，理由是
    ``Project.external_task_id`` → ``Task.creator_id``：「这道题是我出的」——不是
-   「我是老师」。所以同题的其他参与者读不到（那是把别人的项目给竞争对手看）。
+   「我是管理员」。所以同题的其他参与者读不到（那是把别人的项目给竞争对手看）。
 3. **同一判断覆盖到别的门。** 项目文件与实时终端过去各有一份自己的「成员或所有者」
    拷贝，其中两份漏了「项目所属小队」。撤权后它们必须和别的门同时关，队友也必须
    和名册上的人一样进得来。
@@ -252,7 +252,7 @@ def test_a_removed_teammate_loses_the_team_claim_too(client):
 def test_the_asker_reads_the_project_their_task_produced(client):
     """#945 要的就是这条：出题者读得到本题关联的项目。
 
-    项目是学生开的、学生拥有的 —— 出题者不在名册上，也不在小队里。他进来的凭据
+    项目是成员开的、成员拥有的 —— 出题者不在名册上，也不在小队里。他进来的凭据
     是「这道题是我出的」。
     """
     task_id = _task_by(client, "teacher")
@@ -270,7 +270,7 @@ def test_the_asker_reads_the_project_their_task_produced(client):
 
 
 def test_an_asker_is_not_a_key_to_every_project(client):
-    """出题者 ≠ 全站教师，也 ≠ 出过题的任何人。
+    """出题者 ≠ 全站管理员，也 ≠ 出过题的任何人。
 
     同一道题的项目他读得到；别人出的题的项目，他和陌生人一样被拒。
     """

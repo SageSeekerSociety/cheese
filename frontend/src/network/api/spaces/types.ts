@@ -268,7 +268,7 @@ export type SpaceAnalyticsParticipants = {
   trends: SpaceAnalyticsParticipantTrends
 }
 
-// 学习维度 (教师看板 · 学习): 学生说过的话、卡点、讲解提纲。读的是学生项目里的
+// 学习维度 (管理员看板 · 学习): 成员说过的话、卡点、讲解提纲。读的是成员项目里的
 // 对话，不是赛题与报名表，所以类型和上面那一组分开。
 export type SpaceLearningStudent = {
   handle: string
@@ -286,7 +286,7 @@ export type SpaceLearningFilters = {
   projectCount: number
 }
 
-/** 一条能点回原文的学生发言 —— 队列、发言列表、提纲里的摘录都是它。 */
+/** 一条能点回原文的成员发言 —— 队列、发言列表、提纲里的摘录都是它。 */
 export type SpaceLearningExcerpt = {
   blockId: string
   topicId: string
@@ -325,7 +325,7 @@ export type SpaceLearningQueues = {
     reason: string
     items: SpaceLearningQuestion[]
   }
-  /** 按「多少个学生撞上」排好的共性卡点。 */
+  /** 按「多少个成员撞上」排好的共性卡点。 */
   stuckPoints: SpaceLearningStuckPoint[]
 }
 
@@ -527,7 +527,7 @@ export type TeachingUnit = {
   assignmentTaskId: number | null
   publishedAt: number | null
   dueAt: number | null
-  /** 这一周的小测；null = 没有。学生首页靠它决定要不要给「本周有小测」那个入口。 */
+  /** 这一周的小测；null = 没有。成员首页靠它决定要不要给「本周有小测」那个入口。 */
   quizId: number | null
 }
 
@@ -578,7 +578,7 @@ export type QuizQuestion = {
   prompt: string
   options: string[]
   points: number
-  /** 只有老师那份有 —— 学生的载荷里没有这一格（答案键从不发给学生）。 */
+  /** 只有管理员那份有 —— 成员的载荷里没有这一格（答案键从不发给成员）。 */
   answer?: unknown
 }
 
@@ -587,7 +587,7 @@ export type QuizAttempt = {
   userId: number
   submittedAt: number
   gradedAt: number | null
-  /** 学生那份才有：已经判出来的分，与「还有题等着老师判」。 */
+  /** 成员那份才有：已经判出来的分，与「还有题等着管理员判」。 */
   score?: number
   pendingReview?: boolean
 }
@@ -600,7 +600,7 @@ export type QuizAnswer = {
   needsReview: boolean
 }
 
-/** 一行「谁交的」。老师的载荷里才有。 */
+/** 一行「谁交的」。管理员的载荷里才有。 */
 export type QuizSubmission = {
   attemptId: number
   userId: number
@@ -611,7 +611,7 @@ export type QuizSubmission = {
   user?: { id: number; username: string; nickname?: string }
 }
 
-/** 复核队列里的一项：一道等着老师判的简答。 */
+/** 复核队列里的一项：一道等着管理员判的简答。 */
 export type QuizReviewItem = {
   answerId: number
   attemptId: number
@@ -627,9 +627,9 @@ export type QuizReviewItem = {
 }
 
 /**
- * 小测页的全部东西。`quiz` 为 null = 这一周还没有小测（学生什么都看不到）。
+ * 小测页的全部东西。`quiz` 为 null = 这一周还没有小测（成员什么都看不到）。
  *
- * **学生那份没有 `answer`，也没有 `submissions` / `reviewQueue`** —— 分叉在服务端
+ * **成员那份没有 `answer`，也没有 `submissions` / `reviewQueue`** —— 分叉在服务端
  * 一次做完，前端不自己判一次权限。
  */
 export type TeachingQuizData = {

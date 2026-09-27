@@ -244,6 +244,6 @@ describe('详情、发题、看板挂进新外壳', () => {
     const { container } = await mountAt(`/spaces/${SPACE_ID}/board/analytics`, Analytics)
     await waitFor(() => expect(container.querySelector('[data-testid="analytics-probe"]')).not.toBeNull())
     expect(hrefOfTab(container, '告警')).toBe(`/spaces/${SPACE_ID}/board/analytics/alerts`)
-    expect(hrefOfTab(container, '老师')).toBe(`/spaces/${SPACE_ID}/board/analytics/publishers`)
+    expect(hrefOfTab(container, '出题人')).toBe(`/spaces/${SPACE_ID}/board/analytics/publishers`)
   })
 })

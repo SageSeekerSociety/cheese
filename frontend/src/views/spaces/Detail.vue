@@ -46,7 +46,7 @@
 
           <v-divider class="my-4" />
 
-          <!-- 成员 → 设为管理员：报名的学生默认只是成员，教师角色由创建者按人授予。
+          <!-- 成员 → 设为管理员：报名的成员默认只是成员，管理员角色由创建者按人授予。
                后端只认创建者（OWNER）做这件事，所以这一段整块只对创建者可见。 -->
           <v-list-subheader>{{ t('spaces.detail.members') }}</v-list-subheader>
           <v-list v-if="memberRows.length">
@@ -408,7 +408,7 @@ const isCurrentUserOwner = computed(() => {
   return space.value?.admins?.some((admin) => admin.user.id === currentUser.value?.id && admin.role === 'OWNER')
 })
 
-// 板里的成员（学生）——「设为管理员」的候选。管理员本来就不在成员表里（授管理员
+// 板里的成员（成员）——「设为管理员」的候选。管理员本来就不在成员表里（授管理员
 // 是往 space_admin_relation 写一行，不是往成员表写），所以这里按 userId 去个重，
 // 免得同一个刚被授过权的人在两段列表里各出现一次。
 const members = ref<SpaceMember[]>([])

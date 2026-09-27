@@ -2,10 +2,10 @@
   <!--
     小测。一条路由两种人看（`canTeach` 由服务端给，前端不自己再判一次权限）：
 
-    - **学生**：这一周的小测，答完交卷 —— 客观题当场出分，简答显示「等老师判」。
-    - **老师**：出题（卷面 + 答案键）、看全班交得怎么样、判简答的复核队列。
+    - **成员**：这一周的小测，答完交卷 —— 客观题当场出分，简答显示「等管理员判」。
+    - **管理员**：出题（卷面 + 答案键）、看全班交得怎么样、判简答的复核队列。
 
-    答案键只有老师那份载荷里有；学生那份连这一格都没有（截止前可以改答案重交，
+    答案键只有管理员那份载荷里有；成员那份连这一格都没有（截止前可以改答案重交，
     能拿到答案键就等于能抄）。
   -->
   <v-sheet flat rounded="lg" class="pa-4">
@@ -34,7 +34,7 @@
         {{ error }}
       </v-alert>
 
-      <!-- 学生：答完就看分 -->
+      <!-- 成员：答完就看分 -->
       <v-sheet v-if="!canTeach" flat rounded="lg" class="section pa-4 mb-4">
         <div v-if="submitted" class="d-flex align-baseline flex-wrap ga-2 mb-3">
           <span class="text-subtitle-1">
@@ -139,7 +139,7 @@
         </p>
       </v-sheet>
 
-      <!-- 老师：卷面 + 复核队列 + 全班 -->
+      <!-- 管理员：卷面 + 复核队列 + 全班 -->
       <template v-else>
         <v-sheet flat rounded="lg" class="section pa-4 mb-4">
           <div class="d-flex align-center mb-3">
@@ -475,7 +475,7 @@ const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
 
-/** 学生答的草稿：题号 → 答案。形状随题型（服务端按同一套规则判）。 */
+/** 成员答的草稿：题号 → 答案。形状随题型（服务端按同一套规则判）。 */
 const draft = ref<Record<number, unknown>>({})
 
 const quiz = computed(() => data.value?.quiz ?? null)
@@ -568,7 +568,7 @@ async function loadUnits() {
   }
 }
 
-/** 地址带 `?unit=` 就回答那一周；没带（学生从别处点进来）就找**最近一周有小测的**。 */
+/** 地址带 `?unit=` 就回答那一周；没带（成员从别处点进来）就找**最近一周有小测的**。 */
 function targetUnitId(): number | null {
   const fromQuery = Number(route.query.unit)
   if (Number.isFinite(fromQuery) && fromQuery > 0) return fromQuery
@@ -604,7 +604,7 @@ function draftFromAnswers(answers: QuizAnswer[]): Record<number, unknown> {
   return out
 }
 
-// ── 学生：交卷 ──────────────────────────────────────────────────────────
+// ── 成员：交卷 ──────────────────────────────────────────────────────────
 
 async function submitAttempt() {
   if (!quiz.value) return
@@ -626,7 +626,7 @@ async function submitAttempt() {
   saving.value = false
 }
 
-// ── 老师：小测本身 ──────────────────────────────────────────────────────
+// ── 管理员：小测本身 ──────────────────────────────────────────────────────
 
 const quizDialogOpen = ref(false)
 const quizForm = ref({ title: '', dueAt: '' })
@@ -666,7 +666,7 @@ async function saveQuiz() {
   saving.value = false
 }
 
-// ── 老师：出题 ──────────────────────────────────────────────────────────
+// ── 管理员：出题 ──────────────────────────────────────────────────────────
 
 const questionDialogOpen = ref(false)
 const editingQuestion = ref<QuizQuestion | null>(null)
@@ -784,7 +784,7 @@ function answerKeyLabel(question: QuizQuestion): string {
   return String(key ?? '')
 }
 
-// ── 老师：判分 ──────────────────────────────────────────────────────────
+// ── 管理员：判分 ──────────────────────────────────────────────────────────
 
 const gradeDialogOpen = ref(false)
 const grading = ref<QuizReviewItem | null>(null)

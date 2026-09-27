@@ -9,13 +9,13 @@ without one or never starts, by what the ledger and the turn record show.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.models import AgentTurn
@@ -56,23 +56,16 @@ from app.domain.topic_membership.services import TopicMemberService
 MISSED_GRACE = timedelta(minutes=15)
 #: A queued run whose turn never began is reported as not started after this.
 START_TIMEOUT = timedelta(hours=2)
-#: A turn that ended without a report gets this long for a late report to land.
-REPORT_GRACE = timedelta(minutes=2)
-NO_REPORT = "AI 队友这一轮已经结束，但没有交回结果"
-
-#: When each open run's room was last seen working. A turn row does not say when
-#: the work ended: in a live session every input's row is delivered and stopped
-#: within milliseconds, including a run folded into work already under way. So
-#: the grace runs from the later of the row's stop and the room last being busy.
-#: Kept in memory: after a restart the session that was working is gone too.
-_last_busy: dict[uuid.UUID, datetime] = {}
-
-
-def _room_busy(topic_id: uuid.UUID) -> bool:
-    from app.domain.agent.runtime import get_broker
-
-    return get_broker().in_flight(str(topic_id))
-
+#: How long a delivered run may go without a report before it counts as failed.
+#: A turn row cannot say when the work ended: in a live session every input's
+#: row is delivered and stopped within milliseconds, and the business backend
+#: does not see whether the device's session is still busy. So the only clock
+#: is the longest a turn may run at all, plus a little for the report to land;
+#: a real failure is caught sooner by the room's own turn-failed notice.
+REPORT_TIMEOUT = timedelta(seconds=settings.agent_turn_hard_ceiling_s) + timedelta(
+    minutes=5
+)
+NO_REPORT = "AI 队友一直没有交回结果"
 
 #: Loop breaker: an event rule fires at most this often per hour.
 EVENT_RUNS_PER_HOUR = 6
@@ -370,6 +363,8 @@ class RoutineService:
         if late:
             # The owner was told it failed; tell them how it actually went.
             run.notified = False
+            if status == RunStatus.succeeded:
+                run.error = ""
         await self._session.flush()
         return run
 
@@ -654,9 +649,7 @@ async def _turn_failure(session: AsyncSession, turn_id: uuid.UUID) -> str | None
     )
 
 
-async def _settle_open_runs(
-    session: AsyncSession, busy: Callable[[uuid.UUID], bool] = _room_busy
-) -> None:
+async def _settle_open_runs(session: AsyncSession) -> None:
     stamp = now()
     runs = list(
         await session.scalars(
@@ -687,33 +680,32 @@ async def _settle_open_runs(
         )
         if turn is not None and run.turn_id is None:
             run.turn_id = turn.id
-        if turn is not None and turn.stopped_at is not None:
-            if turn.delivered_at is None:
-                run.status = RunStatus.failed.value
-                run.error = "这一轮没能开始：" + (
-                    await _turn_failure(session, turn.id)
-                    or delivery.last_error
-                    or "执行环境没有接住这次工作"
-                )
-                run.finished_at = turn.stopped_at
-                continue
-            if run.status == RunStatus.queued.value:
-                run.status = RunStatus.running.value
-                run.started_at = turn.delivered_at
-            if busy(turn.topic_id):
-                _last_busy[run.id] = stamp
-                continue
-            quiet_from = max(turn.stopped_at, _last_busy.get(run.id, turn.stopped_at))
-            if stamp - quiet_from > REPORT_GRACE:
-                run.status = RunStatus.failed.value
-                run.error = NO_REPORT
-                run.finished_at = quiet_from
-                _last_busy.pop(run.id, None)
+        if (
+            turn is not None
+            and turn.delivered_at is None
+            and turn.stopped_at is not None
+        ):
+            run.status = RunStatus.failed.value
+            run.error = "这一轮没能开始：" + (
+                await _turn_failure(session, turn.id)
+                or delivery.last_error
+                or "执行环境没有接住这次工作"
+            )
+            run.finished_at = turn.stopped_at
             continue
         if turn is not None and turn.delivered_at is not None:
             if run.status == RunStatus.queued.value:
                 run.status = RunStatus.running.value
                 run.started_at = turn.delivered_at
+            failure = await _turn_failure(session, turn.id)
+            if failure:
+                run.status = RunStatus.failed.value
+                run.error = "这一轮出错了：" + failure
+                run.finished_at = turn.stopped_at or stamp
+            elif stamp - turn.delivered_at > REPORT_TIMEOUT:
+                run.status = RunStatus.failed.value
+                run.error = NO_REPORT
+                run.finished_at = stamp
             continue
         if stamp - run.created_at > START_TIMEOUT:
             run.status = RunStatus.failed.value
@@ -787,19 +779,13 @@ async def _announce_finished(session: AsyncSession) -> None:
         )
 
 
-async def sweep(
-    sessions: SessionFactory,
-    *,
-    chat,
-    runner,
-    busy: Callable[[uuid.UUID], bool] = _room_busy,
-) -> dict[str, int]:
+async def sweep(sessions: SessionFactory, *, chat, runner) -> dict[str, int]:
     async with sessions() as session:
         scheduled = await _fire_schedules(session)
         triggered = await _fire_events(session)
         await session.commit()
     async with sessions() as session:
-        await _settle_open_runs(session, busy)
+        await _settle_open_runs(session)
         await _announce_finished(session)
         await session.commit()
     dispatched = 0

@@ -171,14 +171,28 @@ def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatc
     # A shared team carol owns, alice an ordinary member: alice manages the
     # project only while she owns it.
     import asyncio
+    from datetime import UTC, datetime
 
     from app.api.routes import github_install
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
     from tests.integration.conftest import a_team, registered
 
     async def _team() -> int:
         async with client.test_factory() as session:
             team_id = await a_team(session, "carol")
-            await registered(session, "alice")
+            # alice is on the team from the start: naming a team is a claim the
+            # CALLER has to be able to make (see `_require_team_membership`), and
+            # she is the one creating the project below.
+            now = datetime.now(UTC)
+            session.add(
+                TeamUserRelation(
+                    team_id=team_id,
+                    user_id=await registered(session, "alice"),
+                    role=TeamMemberRole.MEMBER,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
             await session.commit()
             return team_id
 
@@ -191,6 +205,7 @@ def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatc
             "forge_kind": "github_app",
             "team_id": team_id,
         },
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     join_project_team(client, pid, "alice")
     join_project_team(client, pid, "bob")

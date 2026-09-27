@@ -1,8 +1,8 @@
-// 「学生与分组」（老师）那一屏：名单、分组、还没进组的人。
+// 「成员与分组」（管理员）那一屏：名单、分组、还没进组的人。
 //
 // 这一份钉三件事：
 //   1. 服务端给什么人、什么组，屏上就出现什么人、什么组 —— 前端不再自己算一遍；
-//   2. 还没有组的学生单独列出来（老师要找的是他们）；
+//   2. 还没有组的成员单独列出来（管理员要找的是他们）；
 //   3. 读不到（不是管理员、或者板没过审）时是空的一屏，不炸、也不编数据。
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -119,7 +119,7 @@ describe('students and groups', () => {
     getCourseRoster.mockResolvedValue(roster())
     const page = await mountPage()
     await waitFor(() => expect(page.getByText('Bob')).toBeTruthy())
-    // Bob 没有项目也没有组：他落在「还没有组的学生」那一块，项目位置写的是空态。
+    // Bob 没有项目也没有组：他落在「还没有组的成员」那一块，项目位置写的是空态。
     expect(page.getByText('spaces.course.people.noProject')).toBeTruthy()
   })
 

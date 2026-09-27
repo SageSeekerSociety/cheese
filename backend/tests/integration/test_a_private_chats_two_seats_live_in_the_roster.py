@@ -128,6 +128,8 @@ def test_a_dm_names_its_teammate_from_the_roster(client):
 def test_a_dm_badge_is_keyed_by_the_other_seat(client):
     """未读按对面那一席归类：人按 handle，队友按 agent: 前缀。"""
     project_id = _project(client)
+    # 徽章图是项目的读路由，先过项目的门 —— 说话的人本来就在名册上。
+    join_project_team(client, project_id, "user-1")
     _add_agent(client, project_id, "reviewer", "评审")
     with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
     with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")

@@ -147,6 +147,8 @@ export const space = computed<SpaceInfo | null>(() => {
     intro: s.intro,
     owner: toPerson(owner?.user),
     admins: s.admins.map((a) => toPerson(a.user)),
+    // 服务端不说就是「不是课」：老接口、老数据都不带这个字段，而它们本来就不是课。
+    isCourse: s.isCourse === true,
   }
 })
 
