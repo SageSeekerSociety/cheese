@@ -422,10 +422,10 @@ _PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
 #: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
 #: 色的点 —— 而那只是读了一个文件。
 _NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
-#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 和 `todo_write` 是系统提示点名
-#: 的两样，名字照模型已经认得的说法起；另外两个是平台自己的 MCP 工具。
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send`、`chat_edit` 和 `todo_write`
+#: 的名字照模型已经认得的说法起；另外两个是平台自己的 MCP 工具。
 _PLATFORM_ALIASES = frozenset(
-    {"chat_send", "todo_write", "platform_request", "send_user_file"}
+    {"chat_send", "chat_edit", "todo_write", "platform_request", "send_user_file"}
 )
 
 #: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
@@ -3607,6 +3607,7 @@ class ChatService:
         author: str | None = None,
         publication_id: str | None = None,
         own_output: bool = False,
+        extra_meta: dict | None = None,
     ) -> dict | None:
         """Persist output immediately; only explicit publications enter chat.
 
@@ -3653,6 +3654,8 @@ class ChatService:
             meta = {**(meta or {}), "eids": list(eids)}
         if platform_unsolicited:
             meta = {**(meta or {}), "platform_unsolicited": True}
+        if extra_meta:
+            meta = {**(meta or {}), **extra_meta}
         known_ids = [e for e in dict.fromkeys((eid, *eids)) if e]
         async with self._sessions() as session:
             blocks = BlockRepository(session)
@@ -5716,11 +5719,6 @@ class ChatService:
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
 
-        # The checklist the last turn left behind: the agent reads it in the
-        # prompt, the room gets it here, marked as not this turn's own. This
-        # turn's first `todo_write` replaces it.
-        if prior_progress:
-            yield {"type": "todo", "items": prior_progress, "restored": True}
         # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything
         # but deliberately NOT awaited here: git_log ensures the repo exists, and
         # on a cold project that is a git init plus a base commit. Awaited in

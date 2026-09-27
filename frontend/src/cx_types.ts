@@ -136,6 +136,8 @@ export interface BlockMeta {
   // 一份周报讲的那一周（kind=weekly）。并排摆着的几份周报，是它把它们分开的。
   since?: string
   until?: string
+  // 作者改过这条消息（ISO 时间）。有它，消息就标「已编辑」。
+  edited_at?: string
 }
 
 export interface Block {
@@ -314,9 +316,8 @@ export type WsServerFrame =
   | { type: 'user_block'; block: Block }
   // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
-  // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
-  // turn start; without the flag the UI cannot tell it from live progress.
-  | { type: 'todo'; items: TodoItem[]; restored?: boolean }
+  // A 分身's checklist, on its card's channel (the room's own list is a message).
+  | { type: 'todo'; items: TodoItem[] }
   | { type: 'state'; resource: string }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }

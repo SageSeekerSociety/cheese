@@ -25,6 +25,8 @@ const props = defineProps<{
   jump: boolean
   isAgent: boolean
   pickerOpen: boolean
+  /** 这条是我自己发的消息：多一颗「编辑」。 */
+  editable: boolean
 }>()
 
 const emit = defineEmits<{
@@ -32,6 +34,7 @@ const emit = defineEmits<{
   (e: 'toggle-picker', blockId: string): void
   (e: 'reply', block: Block): void
   (e: 'upgrade', blockId: string): void
+  (e: 'edit', block: Block): void
 }>()
 
 // 整条消息复制成什么：芝士的回复复制 markdown 原文（代码块、列表贴到别处还是那个
@@ -87,6 +90,15 @@ async function copy() {
       </button>
       <button type="button" class="hover-bar__act" title="回复" @click="emit('reply', block)">
         <v-icon size="15">mdi-reply-outline</v-icon>
+      </button>
+      <button
+        v-if="editable"
+        type="button"
+        class="hover-bar__act"
+        :title="t('work.room.message.edit')"
+        @click="emit('edit', block)"
+      >
+        <v-icon size="15">mdi-pencil-outline</v-icon>
       </button>
       <button
         type="button"
