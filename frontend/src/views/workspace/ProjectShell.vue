@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
+import { provideTopicMemory } from '@/composables/useTopicMemory'
+
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
@@ -20,6 +22,8 @@ const PROJECT_FRAME_TITLE = 'project-frame'
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
 const store = useWorkspaceStore()
+// The topic page below is rebuilt per topic; what it keeps across topics lives here.
+provideTopicMemory()
 
 // The route is the single source of truth for "what am I looking at" — the
 // store only mirrors it so background refreshes know which badge not to light.
@@ -82,7 +86,13 @@ const hasError = computed<boolean>({
     <!-- 进不来的时候，整块内容区换成说明，而不是让人对着一个空壳猜。侧栏和顶栏
          留着，因为「离开这里」的路都在那上面。 -->
     <ProjectAccessNotice v-if="store.accessDenied" :reason="store.accessDenied" />
-    <router-view v-else />
+    <!-- 一个话题一个实例：换话题就换一整棵组件树。复用同一个实例的话，每个挂在话题
+         下面的组件都得自己记得在换话题时清空、并丢掉上一个话题迟到的响应——漏一处，
+         上一个话题的东西就会在下一个话题里露出来。只有话题页带 topicId，别的页
+         不受影响。 -->
+    <router-view v-else v-slot="{ Component, route: current }">
+      <component :is="Component" :key="current.params.topicId" />
+    </router-view>
 
     <v-snackbar v-model="hasError" color="error" timeout="4000" location="bottom">
       {{ store.error }}

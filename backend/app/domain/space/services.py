@@ -44,6 +44,18 @@ _INVITE_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _INVITE_CODE_LENGTH = 10
 
 
+def _validated_max_uses(value: object) -> int:
+    """The one place that decides what counts as a usable 人数预算.
+
+    Shared by minting and by editing so the two cannot drift into disagreeing
+    about what a code may hold. ``bool`` is rejected explicitly because it is
+    an ``int`` in Python and ``True`` would otherwise read as a budget of 1.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise BadRequestError("maxUses must be a positive integer")
+    return value
+
+
 @dataclass(frozen=True)
 class SpaceLabel:
     """How a board is named where something happened on it."""
@@ -700,9 +712,9 @@ class SpaceService:
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         await self._get_space_or_error(space_id)
 
-        uses = DEFAULT_SPACE_INVITE_CODE_MAX_USES if max_uses is None else max_uses
-        if isinstance(uses, bool) or not isinstance(uses, int) or uses < 1:
-            raise BadRequestError("maxUses must be a positive integer")
+        uses = _validated_max_uses(
+            DEFAULT_SPACE_INVITE_CODE_MAX_USES if max_uses is None else max_uses
+        )
 
         return await self._require_invite_code_repo().create_code(
             space_id=space_id,
@@ -711,6 +723,77 @@ class SpaceService:
             expires_at=expires_at,
             created_by=actor_user_id,
         )
+
+    async def update_invite_code(
+        self,
+        *,
+        space_id: int,
+        actor_user_id: int | None,
+        code_id: int,
+        max_uses: int | None = None,
+        max_uses_set: bool = False,
+        expires_at: datetime | None = None,
+        expires_at_set: bool = False,
+    ) -> SpaceInviteCode:
+        """Adjust how many people a live code admits, or when it stops working.
+
+        Both fields are optional and ``*_set`` says whether the caller meant
+        them: an absent ``expiresAt`` leaves the date alone, an explicit null
+        clears it (the code then never expires). Only the field count is
+        validated away, so a code that was handed out with ``maxUses: 5`` can
+        be widened later without touching the people already in.
+
+        Lowering ``maxUses`` below the code's use count is refused rather than
+        clamped. The result of allowing it — a code that reads as usable but
+        refuses everyone — is the kind of quiet failure the person adjusting it
+        would go looking for in the wrong place.
+        """
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        invite = await self._get_invite_code_or_error(
+            space_id=space_id, code_id=code_id
+        )
+
+        if max_uses_set:
+            uses = _validated_max_uses(max_uses)
+            if uses < invite.use_count:
+                raise BadRequestError(
+                    "maxUses cannot be lower than the code's use count",
+                    data={"maxUses": uses, "useCount": invite.use_count},
+                )
+            invite.max_uses = uses
+        if expires_at_set:
+            invite.expires_at = expires_at
+
+        return await self._require_invite_code_repo().save(invite)
+
+    async def revoke_invite_code(
+        self, *, space_id: int, actor_user_id: int | None, code_id: int
+    ) -> None:
+        """Take a code out of circulation. Redeeming it stops working at once.
+
+        The refusal is not implemented here: ``consume_use`` already declines
+        a row whose ``deleted_at`` is set, and that is the same statement that
+        decides every other redemption. A revoke that relied on a check of its
+        own would be a second copy of that rule, free to drift.
+        """
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        invite = await self._get_invite_code_or_error(
+            space_id=space_id, code_id=code_id
+        )
+        await self._require_invite_code_repo().revoke(invite)
+
+    async def _get_invite_code_or_error(
+        self, *, space_id: int, code_id: int
+    ) -> SpaceInviteCode:
+        invite = await self._require_invite_code_repo().get_for_space(
+            space_id=space_id, code_id=code_id
+        )
+        if invite is None:
+            raise NotFoundError(
+                "Invite code not found",
+                data={"spaceId": space_id, "codeId": code_id},
+            )
+        return invite
 
     async def _generate_invite_code(self) -> str:
         invite_repo = self._require_invite_code_repo()

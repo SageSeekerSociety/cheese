@@ -159,15 +159,18 @@ class SpaceMemberParticipatingService:
 
         def sort_key(row: dict) -> tuple:
             value = row.get(normalized_sort_by)
-            # Keep None values stable at the tail regardless of order.
+            # Keep None values stable at the tail regardless of order: the
+            # missing-flag is pre-flipped for descending, because `reverse`
+            # would otherwise turn it into "missing first".
             is_missing = value is None
+            missing_rank = (not is_missing) if reverse else is_missing
             fallback: object
             if normalized_sort_by == "completionStatus":
                 fallback = ""
             else:
                 fallback = 0
             return (
-                is_missing,
+                missing_rank,
                 value if value is not None else fallback,
                 row["participationId"],
             )

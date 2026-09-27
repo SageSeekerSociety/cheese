@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 #: The controls a room may send a session. Each is a ``control_request`` on the
 #: session's stdin (`scripts/remote_execution/headless_contract.py` checks them
 #: against the pinned build), except the file ones the room's executor answers
-#: (``routes/agent_control.py``).
+#: (``routes/agent_control.py``). ``interrupt`` also ends the room's open turn
+#: whether or not the session answers it (``DrivenRuntime.stop``).
 CONTROLS = (
     "initialize",
     "interrupt",
@@ -145,6 +146,16 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
         handle = self.live.get(topic)
         if handle is None:
             raise LookupError("No session is running in this room")
+        if request.get("subtype") == "interrupt":
+            # The room's stop. Not relayed as a bare control: the session may
+            # be the thing not answering, and a turn it does end on a bare
+            # control ends as a failure whose messages are sent again.
+            work = await self.stop(topic)
+            return {
+                "subtype": "success",
+                "response": {"stopped": work is not None},
+                **({"work_id": str(work)} if work is not None else {}),
+            }
         return await self.channel.call(handle, "control", {"request": request})
 
     async def announce(self, topic: uuid.UUID) -> None:

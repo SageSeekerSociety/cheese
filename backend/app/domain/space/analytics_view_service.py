@@ -911,8 +911,10 @@ class SpaceAnalyticsViewService:
             approved_count = sum(
                 1 for m in members if m.approved == APPROVED_MAP["APPROVED"]
             )
+            # Same judgement as the overview: a member has submitted iff a
+            # submission row exists (see _compute_entity_metrics).
             submitted_count = sum(
-                1 for m in members if m.completion_status in SUBMITTED_STATUSES
+                1 for m in members if ctx.submissions_by_membership_id.get(m.id)
             )
             success_count = sum(
                 1 for m in members if m.completion_status == SUCCESS_STATUS
@@ -949,7 +951,12 @@ class SpaceAnalyticsViewService:
         pending_approval = sum(1 for m in members if m.approved == APPROVED_MAP["NONE"])
         approved = sum(1 for m in members if m.approved == APPROVED_MAP["APPROVED"])
         rejected = sum(1 for m in members if m.approved == APPROVED_MAP["DISAPPROVED"])
-        submitted = sum(1 for m in members if m.completion_status in SUBMITTED_STATUSES)
+        # Same judgement as the overview / publishers table: a member has
+        # submitted iff a submission row exists (not completion_status, which
+        # nothing advances server-side).
+        submitted = sum(
+            1 for m in members if ctx.submissions_by_membership_id.get(m.id)
+        )
 
         # pendingReview: a membership counts once if it has submissions
         # but none of them has been reviewed yet.

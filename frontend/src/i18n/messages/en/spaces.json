@@ -96,7 +96,9 @@
       "noTeams": "You are not in any group yet.",
       "nameLabel": "Group name",
       "cancel": "Cancel",
-      "confirmCreate": "Create"
+      "confirmCreate": "Create",
+      "nameTaken": "That name is taken. Try another one",
+      "createFailed": "Couldn't create the group. Try again"
     },
     "units": {
       "title": "Teaching units",

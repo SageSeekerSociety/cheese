@@ -5,8 +5,8 @@
 // - **谁能发**：所有者与管理员。判据和真平台一致 —— 公告没有自己的接口，它是随
 //   空间一起 PATCH 下去的（`space.announcements`），而那条路只对管理员开
 //   （`SpaceService.update_space` 里的 `_ensure_admin`）。所以普通成员这一页是纯读的。
-// - **置顶**：真平台没有。公告就是一段数组，没有排序字段。这是这次新增的一条，
-//   落真代码要给元素加一个布尔字段。
+// - **置顶**：这条设计已经落到真平台了（2026-09-26 那一批）—— 公告元素多了一个可选
+//   的 `pinned` 布尔字段，真界面在 `views/spaces/board/` 下。
 // - **正文**：真平台是 tiptap 出来的富文本 HTML，这里按纯文本折成段落与列表
 //   （见 `announcementBlocks`），因为原型里没有编辑器。
 import { computed, ref } from 'vue'
@@ -215,7 +215,8 @@ function confirmDelete() {
           />
           <v-switch v-model="draftPinned" color="primary" density="compact" hide-details label="置顶" class="mt-2" />
           <p class="ann__hint">
-            「置顶」这一项真平台现在没有：公告只是一段数组，没有排序字段。落真代码要给元素加一个布尔字段。
+            「置顶」已经落到真平台了（2026-09-26 那一批）：公告元素多了一个可选的布尔字段 `pinned`， 真界面在
+            `views/spaces/board/` 下。老树的公告页没有这一项，编辑时会把它原样带过去。
           </p>
         </v-card-text>
         <v-divider />

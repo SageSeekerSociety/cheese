@@ -69,6 +69,10 @@ export function useChatScroll(): ChatScroll {
   // 的人就看着最新几条滑到键盘底下（真机反馈 2026-09-17）。两个都在同一个
   // observer 里，重钉只有一条路径，不会互相打架。
   let contentObserver: ResizeObserver | null = null
+  // A pane with no layout ignores `scrollTop` — the chat column is hidden while 专注模式
+  // is on, and a topic opened then mounts its pane hidden. The saved position waits
+  // here and is applied when the pane gets a size, which the observer below sees.
+  let pendingTop: number | null = null
   watch([contentRef, scrollRef], ([content, pane]) => {
     contentObserver?.disconnect()
     contentObserver = null
@@ -76,6 +80,13 @@ export function useChatScroll(): ChatScroll {
     contentObserver = new ResizeObserver(() => {
       const sc = scrollRef.value
       if (!sc) return
+      if (pendingTop !== null) {
+        if (!sc.clientHeight) return
+        sc.scrollTop = pendingTop
+        pendingTop = null
+        atBottom.value = isAtBottom(sc)
+        return
+      }
       if (atBottom.value && !isAtBottom(sc)) sc.scrollTop = sc.scrollHeight
     })
     if (content) contentObserver.observe(content)
@@ -121,7 +132,8 @@ export function useChatScroll(): ChatScroll {
 
   function rememberScroll(topicId: string | undefined) {
     const el = scrollRef.value
-    if (!el || !topicId) return
+    // A hidden pane has no position to report; what is remembered stays.
+    if (!el || !topicId || !el.clientHeight) return
     atBottom.value = isAtBottom(el)
     scrollMemory.set(topicId, { top: el.scrollTop, atBottom: atBottom.value })
   }
@@ -134,7 +146,13 @@ export function useChatScroll(): ChatScroll {
       const el = scrollRef.value
       if (!el) return
       const saved = scrollMemory.get(topicId)
+      pendingTop = null
       if (saved && !saved.atBottom) {
+        if (!el.clientHeight) {
+          pendingTop = saved.top
+          atBottom.value = false
+          return
+        }
         el.scrollTop = saved.top
         atBottom.value = isAtBottom(el)
       } else {

@@ -2911,6 +2911,32 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         )
 
 
+async def record_shown(
+    db: AsyncSession, place: Place, path: str, *, author: str, mime: str | None = None
+) -> dict:
+    """List a room file among what the room has on show, and tell open clients.
+
+    What `cheese show` does after writing the file; a file a person creates in
+    the room (a copy, a new one from a template) is on show the same way."""
+    block = await BlockRepository(db).add(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        author=author,
+        author_type=AuthorType.participant,
+        content=path,
+        kind=BlockKind.artifact,
+        mime_type=mime or _ARTIFACT_MIME[artifact_kind_for(path)],
+        refs=[path],
+    )
+    payload = BlockOut.model_validate(block).model_dump(mode="json")
+    # Live, like a published message: the reader is usually in the room while
+    # 芝士 works, and the card has to appear then, not on the next reload.
+    await get_broker().publish(
+        str(place.room_id), {"type": "assistant_block", "block": payload}
+    )
+    return payload
+
+
 @router.post("/{topic_id}/shown")
 async def show_in_room(
     topic_id: uuid.UUID,
@@ -2923,7 +2949,7 @@ async def show_in_room(
     摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
     （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     declared = (body.get("as") or "").strip().lower()
     if declared == "app":
         # An app artifact points at the running server, not a file — the stored
@@ -2960,26 +2986,28 @@ async def show_in_room(
             raise ValidationError(
                 f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
             )
-        library.write_room_file(place.project_id, topic_id, path, raw)
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=topic_id,  # the place; `add` splits it
-        author=await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
-        ),
-        author_type=AuthorType.participant,
-        content=path,
-        kind=BlockKind.artifact,
-        mime_type=mime,
-        refs=[path],
+    author = await TopicMemberService(db).resolve_agent_handle(
+        topic_id, room_id=place.room_id
     )
-    payload = BlockOut.model_validate(block).model_dump(mode="json")
-    # Live, like a published message: the reader is usually in the room while
-    # 芝士 works, and the card has to appear then, not on the next reload.
-    await get_broker().publish(
-        str(topic_id), {"type": "assistant_block", "block": payload}
-    )
-    return ok(payload)
+    if as_ != "app" and ("content" in body or "content_b64" in body):
+        # Through the draft history: the state this replaces stays restorable,
+        # and `base_version` (the version `cheese pull` read) turns an overwrite
+        # of somebody's newer save into a 409.
+        base = body.get("base_version")
+        note = body.get("note")
+        await room_files.save_room_file(
+            db,
+            project_id=place.project_id,
+            room_id=place.room_id,
+            path=path,
+            data=raw,
+            author=author if actor.via == "cheese" else actor.handle,
+            author_kind="agent" if actor.via == "cheese" else "human",
+            source="ai" if actor.via == "cheese" else "upload",
+            note=note if isinstance(note, str) else None,
+            base_version=base if isinstance(base, str) and base else None,
+        )
+    return ok(await record_shown(db, place, path, author=author, mime=mime))
 
 
 @router.get("/{topic_id}/shown")
@@ -3205,7 +3233,18 @@ async def decide_document_revisions(
             clean, made, expected
         )
     else:
-        library.write_room_file(topic.project_id, topic_id, clean, made)
+        await room_files.save_room_file(
+            db,
+            project_id=topic.project_id,
+            room_id=topic_id,
+            path=clean,
+            data=made,
+            author=actor.handle,
+            author_kind="agent" if actor.via == "cheese" else "human",
+            source="editor",
+            note="处理修订",
+            base_version=expected,
+        )
     return ok(
         {
             "path": clean,
@@ -3596,6 +3635,7 @@ async def upgrade_block(
     body: UpgradeBlockIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
 ) -> dict:
     """讨论升级：upgrade a block into a place of its own (eval A1).
 
@@ -3611,7 +3651,23 @@ async def upgrade_block(
     一轮：作者 `system`、提示词是平台写的一段开工说明，房间被平台叫醒去给这条活起名
     字、起分身。按结论 31，开一条活剩下的只有分支、卡和负责人，谁来做是负责人的事 ——
     所以平台在这里只做投递：房间时间线上落一条事件，收件人恰好是这条活的负责人。
+
+    这是一条**在房间里造东西**的写：升级的 block 住在哪个房间，就要在那个房间站得
+    住。以前两样都没有 —— block id 就是全部的门票，一个匿名调用者能往别人的房间里
+    落一张卡，`created_by` 填谁它就是谁的。凭据由 resolve/authorize_topic 认
+    （`app.api.auth`：会话说 token、agent 的 scoped token、或沙箱 token），房间由
+    block 自己带 —— block 的 `topic_id` 就是那个房间，不是它自己去请求体里说。
     """
+    block = await BlockRepository(db).get(block_id)
+    if block is None:
+        raise NotFoundError("Block not found")
+    parent = await TopicService(db).get_or_404(block.topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=parent.id, project_id=parent.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=parent.project_id, topic_id=parent.id
+    )
     room, thread, created = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
         created_by=body.created_by,

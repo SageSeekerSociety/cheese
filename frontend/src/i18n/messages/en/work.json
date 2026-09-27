@@ -229,6 +229,12 @@
       "editHint": "Put it back in the message box"
     },
     "newMessages": "new",
+    "stop": {
+      "action": "Stop",
+      "title": "Stop this run by {name}",
+      "failed": "Could not stop: {reason}",
+      "notStarted": "{name} has not started running yet"
+    },
     "composer": {
       "replyTo": "Replying to {name}: {text}",
       "cancelReply": "Cancel reply",
