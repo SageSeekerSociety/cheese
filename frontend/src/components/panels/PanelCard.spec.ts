@@ -158,7 +158,7 @@ describe('一张卡按卡渲染', () => {
     await waitFor(() => getByText('开始改后端'))
     expect(container.textContent).not.toContain('<@caisongyang>')
     expect(container.querySelector('.card-markdown h2 .mention')?.textContent).toBe('@蔡松洋')
-    const who = [...container.querySelectorAll('.card-msg__who')].map((n) => n.textContent)
+    const who = Array.from(container.querySelectorAll('.card-msg__who')).map((n) => n.textContent)
     expect(who).toEqual(['芝士', '蔡松洋'])
     expect(container.textContent).not.toContain('cheese-c82aeb40555a')
   })
