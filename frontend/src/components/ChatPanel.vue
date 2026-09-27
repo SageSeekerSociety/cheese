@@ -35,7 +35,7 @@ import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/block
 import { replySnippet } from '../lib/blockDisplay'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
-import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
+import { AGENT_STATUS_EVENTS, collapseNotices, mailOutcomes, type PlatformNotice } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { topicShortId, topicStateBadge } from '../lib/topicState'
@@ -993,6 +993,8 @@ defineExpose({ send, connected })
 // event blocks, because an event is a hard boundary and must prevent an
 // accidental merge.
 const rows = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(messages.value)))
+// 房间里每封邮件草稿后来怎样了：确认卡片据此变成终态。
+const mailEnds = computed(() => mailOutcomes(messages.value))
 const visible = computed<Block[]>(() => rows.value.map((r) => r.block))
 
 // 它停着的那一行上面的东西变了（往上翻拼进来一页、上面一条长高了），行的位置跟着
@@ -1580,6 +1582,8 @@ onBeforeUnmount(() => {
               :refs="refMaps"
               :can-retry="canRetryAt(i)"
               :retrying="retryBusy"
+              :me="AUTHOR"
+              :mail-outcome="notice.mode === 'mail-draft' ? mailEnds.get(notice.mail.draftId) ?? null : null"
               :project-id="topic?.project_id ?? null"
               @animationend="settleArrival($event, m.id)"
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"

@@ -154,6 +154,9 @@ EVENT_TIMED_DELIVERY: Final = "timed_delivery"
 EVENT_SKILL_PROPOSED: Final = "skill_proposed"
 #: 芝士在某人的邮箱里写好了一封草稿；发不发由邮箱主人确认。
 EVENT_MAIL_DRAFTED: Final = "mail_drafted"
+#: 那封草稿的下落：邮箱主人发出了、发送失败了，或者放弃了。房间里的确认卡片据此
+#: 改成终态。
+EVENT_MAIL_RESULT: Final = "mail_result"
 #: 一条周期任务或事件触发规则开始了一次执行；结果或失败原因随后另起一条。
 EVENT_ROUTINE_RUN: Final = "routine_run"
 EVENT_ROUTINE_RESULT: Final = "routine_result"
@@ -220,6 +223,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_TIMED_DELIVERY,
         EVENT_SKILL_PROPOSED,
         EVENT_MAIL_DRAFTED,
+        EVENT_MAIL_RESULT,
         EVENT_ROUTINE_RUN,
         EVENT_ROUTINE_RESULT,
         EVENT_ROUTINE_PROPOSED,
