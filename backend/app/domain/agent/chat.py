@@ -6611,7 +6611,6 @@ async def text_as_sent(
     return (await person_mentions(session, topic, content, agent)).content
 
 
-
 async def _output_tokens_since(
     session: AsyncSession, project_id: uuid.UUID, since: datetime
 ) -> int:
