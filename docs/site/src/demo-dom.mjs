@@ -16,6 +16,10 @@ function mountSteps(el) {
   const steps = $$('[data-dm-step]', el)
   const n = steps.length
   if (!n) return
+  // Dimming and the controls hang off `.dm-live`, not off `html.js`: if this
+  // script never loads, the demo stays a plain list you can read instead of a
+  // list faded to a quarter.
+  el.classList.add('dm-live')
   const range = $('[data-dm-range]', el)
   const count = $('[data-dm-count]', el)
   const fillEl = $('[data-dm-fill]', el)

@@ -151,9 +151,11 @@ export function parameters(spec, values = {}) {
 export function simulate(spec, values) {
   const vals = parameters(spec, values)
   const out = (spec.out || []).map((o) => {
-    let value
-    try { value = evaluate(o.expr, vals) } catch (e) { value = `（${e.message}）` }
-    return { label: o.label, unit: o.unit || '', value, text: show(value) }
+    let value, error = null
+    try { value = evaluate(o.expr, vals) } catch (e) { value = `（${e.message}）`; error = e.message }
+    // The build refuses to ship a readout that does not evaluate at its
+    // defaults; the browser keeps going, because it runs on every input.
+    return { label: o.label, unit: o.unit || '', value, error, text: show(value) }
   })
   const hit = (spec.rules || []).findIndex((r) => r.when === undefined || truthy(evaluate(r.when, vals)))
   const rules = (spec.rules || []).map((r, i) => ({ label: r.label || '', text: fill(r.text, vals), tone: r.tone || '', hit: i === hit }))

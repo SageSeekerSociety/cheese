@@ -1240,8 +1240,10 @@ html:has(.tour.pinned){scroll-snap-type:y proximity}
 /* ---------- interactive demos ----------
    Written in a Markdown fence, prerendered by src/demos.mjs, switched on by
    src/demo-dom.mjs. Everything they say is already in the HTML: with the script
-   off, a demo is a list you read top to bottom, and only `html.js` dims the
-   steps that have not come up yet. */
+   off, a demo is a list you read top to bottom. The dimming and the controls
+   hang off `.dm-live`, which src/demo-dom.mjs puts on the figure once it has
+   wired it up — so a bundle that never loads costs the behaviour, not the
+   text. */
 .demo{margin:0 0 28px;padding:16px 18px 14px;border:1px solid var(--line-2);border-radius:16px;background:var(--surface);box-shadow:var(--shadow);font-size:14px}
 .demo .dm-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin-bottom:12px}
 .demo .dm-title{font-size:15.5px;font-weight:650;color:var(--ink);letter-spacing:-.01em}
@@ -1249,7 +1251,7 @@ html:has(.tour.pinned){scroll-snap-type:y proximity}
 
 /* controls: hidden without the script, and on a narrow screen */
 .dm-ctl{display:none;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
-html.js .dm-ctl{display:flex}
+html.js .demo.dm-live .dm-ctl{display:flex}
 .dm-btn{display:grid;place-items:center;width:32px;height:32px;border:1px solid var(--line-2);border-radius:9px;background:var(--surface);color:var(--text);font-size:13px;transition:border-color .2s,color .2s}
 .dm-btn:hover{border-color:var(--accent);color:var(--accent-ink)}
 .dm-play{width:auto;padding:0 13px}
@@ -1262,19 +1264,19 @@ html.js .dm-ctl{display:flex}
 .dm-segs{display:flex;gap:2px;height:12px;margin:5px 0 14px}
 .dm-seg{flex:0 0 auto;width:var(--w);height:100%;padding:0;opacity:.85;transition:opacity .3s}
 .dm-seg i{display:block;height:100%;border-radius:2px;background:var(--c)}
-html.js .dm-seg{opacity:.28}
-html.js .dm-seg.on{opacity:.85}
-html.js .dm-seg:hover{opacity:1}
+html.js .demo.dm-live .dm-seg{opacity:.28}
+html.js .demo.dm-live .dm-seg.on{opacity:.85}
+html.js .demo.dm-live .dm-seg:hover{opacity:1}
 
 /* the steps: a rail, a title, a sentence, sometimes a number */
 .dm-list{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none}
 .dm-step{display:flex;gap:10px;padding:8px 10px;border-radius:11px;transition:background .3s,opacity .3s}
-html.js .dm-step{opacity:.28}
-html.js .dm-step.done{opacity:.6}
-html.js .dm-step.on{opacity:1;background:var(--panel)}
+html.js .demo.dm-live .dm-step{opacity:.28}
+html.js .demo.dm-live .dm-step.done{opacity:.6}
+html.js .demo.dm-live .dm-step.on{opacity:1;background:var(--panel)}
 .dm-rail{flex:none;width:16px;display:flex;justify-content:center;padding-top:7px}
 .dm-dot{width:8px;height:8px;border-radius:50%;background:var(--c);transition:transform .4s var(--spring)}
-html.js .dm-step.on .dm-dot{transform:scale(1.6)}
+html.js .demo.dm-live .dm-step.on .dm-dot{transform:scale(1.6)}
 .dm-body{flex:1;min-width:0}
 .demo .dm-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
 .demo .dm-line b{font-size:14px;font-weight:620;color:var(--ink)}
@@ -1317,11 +1319,16 @@ html:not(.js) .sm-nojs{display:block}
 /* narrow screens: the controls and the bar go, the steps read as a plain list */
 @media (max-width:700px){
   .dm-ctl,.dm-bar{display:none !important}
-  html.js .dm-step{opacity:1}
+  html.js .demo.dm-live .dm-step{opacity:1}
   .sm-grid{gap:14px}
 }
 @media (prefers-reduced-motion: reduce){
   .dm-fill,.dm-dot,.dm-step,.dm-seg,.sm-rule{transition:none}
   .dm-play{display:none}
-  html.js .dm-step.on .dm-dot{transform:none}
+  html.js .demo.dm-live .dm-step.on .dm-dot{transform:none}
+  /* Everything at once, not "everything, faded to how-far-along-you-are":
+     the script starts a reduced-motion demo at the last step. */
+  html.js .demo.dm-live .dm-step,
+  html.js .demo.dm-live .dm-step.done{opacity:1}
+  html.js .demo.dm-live .dm-seg{opacity:.85}
 }

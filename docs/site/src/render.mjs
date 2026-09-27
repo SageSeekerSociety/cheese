@@ -3,6 +3,14 @@
 import { ic, TAG, STEPS } from './content.js'
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+
+// A link written the way a page writes it: `/dev/turn#address`, `/accept.md`.
+// Both Markdown links and a demo fence's `link:` go through this, so a fence
+// cannot quietly ship an address the site does not serve.
+export function docHref(href) {
+  const m = /^\/((?:dev\/)?[\w-]+)(?:\.md)?(?:#([\w-]+))?$/.exec(String(href))
+  return m ? `/docs/${m[1]}${m[2] ? `#${m[2]}` : ''}` : String(href)
+}
 export const REPO = 'https://github.com/SageSeekerSociety/cheese'
 
 // ---------- shell ----------

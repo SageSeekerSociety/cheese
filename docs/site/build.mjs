@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 import * as esbuild from 'esbuild'
 import { marked } from 'marked'
 import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS, WHO } from './src/structure.mjs'
-import { esc, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
+import { esc, docHref, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
 import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset } from './src/demos.mjs'
 import { homePage } from './src/home.mjs'
 
@@ -83,8 +83,7 @@ function renderMarkdown(md, { file }) {
   }
   renderer.link = function ({ href, tokens }) {
     const t = this.parser.parseInline(tokens)
-    const m = /^\/((?:dev\/)?[\w-]+)(?:\.md)?(#[\w-]+)?$/.exec(href)
-    if (m) return `<a class="link" href="/docs/${m[1]}${m[2] || ''}">${t}</a>`
+    if (!href.startsWith('#') && docHref(href) !== href) return `<a class="link" href="${docHref(href)}">${t}</a>`
     if (href.startsWith('#')) return `<a class="link" href="${href}">${t}</a>`
     return `<a class="link" href="${esc(href)}" rel="noopener">${t}</a>`
   }

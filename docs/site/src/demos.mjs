@@ -22,7 +22,7 @@
 // it, and `key: value` lines indented under an item. Anything else fails the
 // build, loudly, with the line number.
 
-import { esc } from './render.mjs'
+import { esc, docHref } from './render.mjs'
 import { num, show, simulate, fill, evaluate } from './demo-model.mjs'
 
 export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim']
@@ -146,7 +146,7 @@ function renderSteps(spec, where, timeline) {
       <div class="dm-body">
         ${bits.length ? `<div class="dm-line">${bits.join('')}</div>` : ''}
         <p class="dm-desc">${esc(s.desc)}</p>
-        ${s.link ? `<a class="link dm-link" href="${esc(s.link)}">这一页讲细节</a>` : ''}
+        ${s.link ? `<a class="link dm-link" href="${esc(docHref(s.link))}">${esc(s.linkText || '看这一节')}</a>` : ''}
         ${s.gate ? `<button class="dm-go" data-dm-go hidden>${esc(s.go || '继续')} <span aria-hidden="true">▶</span></button>` : ''}
       </div>
     </li>`
@@ -210,6 +210,8 @@ function renderSim(spec, where) {
   const defaults = Object.fromEntries(vars.map((v) => [v.key, v.value]))
   let state
   try { state = simulate(spec, defaults) } catch (e) { missing(where, `a rule does not evaluate: ${e.message}`) }
+  const broken = state.out.find((o) => o.error)
+  if (broken) missing(where, `«${broken.label}» 的算式在默认参数下算不出来：${broken.error}`)
 
   const varHtml = vars.map((v) => {
     if (v.kind === 'toggle') {
