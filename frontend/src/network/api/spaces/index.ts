@@ -23,6 +23,7 @@ import type {
   PatchSpaceAdminRequestData,
   PatchSpaceCategoryRequestData,
   PatchSpaceDomainGroupRequestData,
+  PatchSpaceInviteCodeRequestData,
   PatchSpaceRequestData,
   PatchTeachingUnitRequestData,
   PostQuizAttemptRequestData,
@@ -174,6 +175,19 @@ export namespace SpacesApi {
       url: `/spaces/${spaceId}/invite-codes`,
       method: 'POST',
       data,
+    })
+
+  export const updateInviteCode = (spaceId: number, codeId: number, data: PatchSpaceInviteCodeRequestData) =>
+    NewApiInstance.request<{ inviteCode: SpaceInviteCode }>({
+      url: `/spaces/${spaceId}/invite-codes/${codeId}`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const revokeInviteCode = (spaceId: number, codeId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/invite-codes/${codeId}`,
+      method: 'DELETE',
     })
 
   export const update = (spaceId: number, data: PatchSpaceRequestData) =>

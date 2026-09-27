@@ -95,6 +95,8 @@ CALLS = {
         "/projects/fixture-project/alerts",
     ),
     "cheese_fetch": ({"url": "https://example.test"}, "POST", "/fetch"),
+    "cheese_docs_search": ({"query": "验收"}, "POST", "/docs/agent/search"),
+    "cheese_docs_read": ({"page": "accept"}, "POST", "/docs/agent/read"),
     "cheese_lock": ({"task": TASK}, "POST", "/topics/fixture/lock"),
     "cheese_unlock": ({"task": TASK}, "POST", "/topics/fixture/unlock"),
     "cheese_members": ({}, "GET", "/topics/fixture/members"),

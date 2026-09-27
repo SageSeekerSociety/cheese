@@ -59,6 +59,8 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_close_task: '关闭任务',
   cheese_push_fix: '更新任务 PR',
   cheese_fetch: '读取网页',
+  cheese_docs_search: '检索文档',
+  cheese_docs_read: '阅读文档',
   cheese_lock: '锁定资源',
   cheese_unlock: '释放资源',
   cheese_decision: '记录决策',

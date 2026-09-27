@@ -869,6 +869,31 @@ class TestTaskSubmissionIntegration:
             task.get("deadline") - new_deadline
         ) < 1000  # Allow for small time differences
 
+    def test_create_keeps_submission_schema(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
+        """The publish page sends its form with the new task; without it the
+        task's submit page has nothing to fill in and nowhere to upload."""
+        data = setup_task_for_submission
+        creator = data["creator"]
+
+        task_id = self._create_task(
+            api_client,
+            creator.token,
+            data["space_id"],
+            data["category_id"],
+            data["suffix"],
+        )
+
+        get_resp = api_client.get(
+            f"/tasks/{task_id}",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["task"]["submissionSchema"] == [
+            {"prompt": "Text Entry", "type": "TEXT"}
+        ]
+
     def test_update_submission_schema(
         self, setup_task_for_submission: dict, api_client: TestClient
     ):

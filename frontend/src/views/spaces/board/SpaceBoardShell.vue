@@ -8,13 +8,15 @@
 // 2. 导航用**命名路由**而不是写死的 `/`、`/mine`：这一棵挂在 `/spaces/:id/board`
 //    下面，路径里带着空间 id，写死字符串会把人送到别处去。
 //
-// 还没接上的入口（邀请码的改码、编辑信息）先指向**真平台已有的那些页**，不装作
-// 新界面已经能改 —— 它们各自的接口还没落地（见任务的分批说明）。
+// 「编辑信息」那颗入口还指向**真平台已有的那一页**，不装作新界面已经能改 ——
+// 它的接口还没落地（见任务的分批说明）。邀请码不是了：改码与撤销的接口在第 3 批落地，
+// 那块内容现在就在这块下拉里（`InviteCodesDialog`），不再跳旧页。
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import InviteCodesDialog from './components/InviteCodesDialog.vue'
 import { ROLE_LABEL } from './model'
-import { failed, isManager, isOwner, loadBoard, me, role, space } from './store'
+import { codes, failed, isManager, isOwner, loadBoard, loadCodes, me, role, space } from './store'
 
 const props = defineProps<{ spaceId: number }>()
 
@@ -22,8 +24,16 @@ const route = useRoute()
 const router = useRouter()
 
 const menuOpen = ref(false)
+const inviteOpen = ref(false)
 
 const spaceName = computed(() => space.value?.name ?? '空间')
+
+/** 下拉上那一行摘要：现在用的是哪个码、用了多少。 */
+const codeSummary = computed(() => {
+  const first = codes.value[0]
+  if (!first) return '还没有码'
+  return `${first.code} · ${first.useCount} / ${first.maxUses ?? '不限'} 人已用`
+})
 
 const NAV = computed(() =>
   [
@@ -42,10 +52,15 @@ function isActive(name: string) {
 }
 
 // 从空间 A 换到空间 B 时外壳组件会被复用（同一条路由记录），setup 不会再跑一次，
-// 所以换 id 这件事必须靠 watch —— 否则新空间会顶着上一个空间的名字和角色。 */
+// 所以换 id 这件事必须靠 watch —— 否则新空间会顶着上一个空间的名字和角色。
 watch(
   () => props.spaceId,
-  (id) => loadBoard(id),
+  async (id) => {
+    await loadBoard(id)
+    // 邀请码只有所有者与管理员拿得到（接口对成员 403），所以只替他们问 ——
+    // 下拉上那一行摘要是给这块下拉的主人看的，普通成员没有这颗下拉。
+    if (isManager.value) await loadCodes()
+  },
   { immediate: true }
 )
 </script>
@@ -77,8 +92,8 @@ watch(
             <v-list-item
               prepend-icon="mdi-ticket-confirmation-outline"
               title="邀请码"
-              subtitle="改用已有页面管理"
-              @click="(menuOpen = false), router.push({ name: 'SpacesDetailManageInviteCodes', params: { spaceId } })"
+              :subtitle="codeSummary"
+              @click="(menuOpen = false), (inviteOpen = true)"
             />
             <v-list-item
               prepend-icon="mdi-account-multiple-outline"
@@ -139,6 +154,10 @@ watch(
       />
       <router-view v-else />
     </main>
+
+    <!-- 邀请码弹窗。只有管理员挂得上（那颗下拉本来就只有他们看得见），
+         接口那一侧也是这个判据。 -->
+    <InviteCodesDialog v-if="isManager" v-model="inviteOpen" :space-id="spaceId" />
   </div>
 </template>
 

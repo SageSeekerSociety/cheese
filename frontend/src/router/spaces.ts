@@ -166,7 +166,8 @@ export default {
     {
       path: 'course/assignments',
       name: 'SpacesCourseAssignments',
-      component: () => import('@/views/spaces/course/Assignments.vue'),
+      // 老师：作业与验收；学生：本周任务。分叉同 SpacesCourseHome。
+      component: () => import('@/views/spaces/course/CourseWork.vue'),
     },
     {
       path: 'course/people',

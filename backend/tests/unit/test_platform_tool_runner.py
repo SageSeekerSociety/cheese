@@ -597,3 +597,55 @@ def test_a_room_tool_refuses_without_a_room():
             host,
         )
     assert host.requests == []
+
+
+# ---------- the docs ----------
+
+
+def test_a_docs_search_lists_where_to_read_next():
+    host = Host(
+        {
+            ("POST", "/docs/agent/search"): {
+                "dev": True,
+                "hits": [
+                    {
+                        "title": "验收与采纳",
+                        "heading": "采纳交付",
+                        "url": "https://okcheese.com/docs/accept#is-merge",
+                        "excerpt": "确认改动符合要求后点击「采纳」。",
+                        "dev": False,
+                    },
+                    {
+                        "title": "一轮",
+                        "heading": "",
+                        "url": "https://okcheese.com/docs/dev/turn",
+                        "excerpt": "串行锁。",
+                        "dev": True,
+                    },
+                ],
+            }
+        }
+    )
+    said = cheese.run_platform_tool("cheese_docs_search", {"query": "怎么采纳"}, host)
+    assert host.requests[0]["body"] == {"query": "怎么采纳", "topic": _ROOM}
+    assert "1. 验收与采纳 › 采纳交付" in said
+    assert "https://okcheese.com/docs/accept#is-merge" in said
+    assert "2. 一轮（开发文档）" in said
+    assert "cheese_docs_read" in said
+
+
+def test_an_empty_docs_search_says_to_rephrase_not_that_nothing_exists():
+    host = Host({("POST", "/docs/agent/search"): {"dev": False, "hits": []}})
+    said = cheese.run_platform_tool("cheese_docs_search", {"query": "火星"}, host)
+    assert "换个说法" in said
+
+
+def test_a_docs_read_returns_the_page_itself():
+    host = Host(
+        {("POST", "/docs/agent/read"): {"page": "accept", "markdown": "# 验收"}}
+    )
+    assert (
+        cheese.run_platform_tool("cheese_docs_read", {"page": "accept"}, host)
+        == "# 验收"
+    )
+    assert host.requests[0]["body"] == {"page": "accept", "topic": _ROOM}

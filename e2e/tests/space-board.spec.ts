@@ -159,6 +159,12 @@ test.describe("空间新界面（真路由）", () => {
     // 普通成员连入口都没有。
     await expect(page.getByRole("link", { name: "审核", exact: true })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "数据看板", exact: true })).toHaveCount(0);
+
+    // 但「出题目」是有的：这块板任何人都能出题，成员发出来的题进待审队列，
+    // 由所有者或管理员审。少一颗按钮就等于这条要求没落地。
+    await expect(page.getByRole("link", { name: "出题目" })).toBeVisible();
+    await page.getByRole("link", { name: "出题目" }).click();
+    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/tasks/publish$`));
   });
 });
 

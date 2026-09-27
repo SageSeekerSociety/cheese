@@ -238,6 +238,18 @@ jobs:
           mkdir -p "$DOCKER_CONFIG"
           echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
           echo "ACCEPTANCE_OWNER_PORT=$((18783 + ${CHEESE_CI_SLOT:-0}))" >> "$GITHUB_ENV"
+      # The cleanup at the end of this job only runs for a job that reaches it;
+      # a cancelled or killed run leaves its owner container behind, still
+      # publishing this slot's port, and every later run on the slot then dies
+      # at `docker run` ("failed to set up container networking"). A slot runs
+      # one acceptance at a time, so whatever holds its port now is a leftover.
+      - name: Free this slot's owner port
+        run: |
+          set -euo pipefail
+          docker ps --all --quiet --filter "publish=$ACCEPTANCE_OWNER_PORT" | while read -r container; do
+            echo "removing leftover container $container on port $ACCEPTANCE_OWNER_PORT"
+            docker rm --force "$container"
+          done
       - name: Run acceptance
         id: run_acceptance
         env:

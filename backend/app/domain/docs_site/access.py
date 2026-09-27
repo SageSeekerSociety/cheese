@@ -9,6 +9,10 @@ pages, search index, .md twins, diagrams alike.
 ``verify`` re-checks that the holder is still an admin, so removing someone
 from the admin list closes the door within ``ADMIN_CACHE_SECONDS`` rather than
 when their pass expires.
+
+The backend itself also reads behind the gate — the developer pages' search
+index and .md twins, for agents in the platform's own project — with an
+``internal_pass``: a separate audience that no browser is ever given.
 """
 
 import time
@@ -21,6 +25,8 @@ from app.core.config import settings
 COOKIE = "cheese_docs_dev"
 COOKIE_PATH = "/docs/dev"
 AUDIENCE = "docs-dev"
+INTERNAL_AUDIENCE = "docs-dev-internal"
+INTERNAL = "service:docs-index"
 ADMIN_CACHE_SECONDS = 60
 
 
@@ -39,6 +45,36 @@ def issue(handle: str, now: datetime | None = None) -> tuple[str, int]:
         algorithm="HS256",
     )
     return token, ttl
+
+
+def internal_pass(now: datetime | None = None) -> str:
+    """A five-minute pass for the backend's own reads under /docs/dev/."""
+    now = now or datetime.now(UTC)
+    return jwt.encode(
+        {
+            "sub": INTERNAL,
+            "aud": INTERNAL_AUDIENCE,
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+        },
+        settings.jwt_secret,
+        algorithm="HS256",
+    )
+
+
+def is_internal(token: str | None) -> bool:
+    if not token:
+        return False
+    try:
+        claims = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            audience=INTERNAL_AUDIENCE,
+        )
+    except jwt.PyJWTError:
+        return False
+    return claims.get("sub") == INTERNAL
 
 
 def holder(token: str | None) -> str | None:
