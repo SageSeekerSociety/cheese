@@ -570,10 +570,8 @@ class QuestionInvitationService:
             "invitation": _invitation_to_dto(invitation, user=user_dto),
         }
 
-    async def get_invitation(self, *, invitation_id: int) -> dict:
-        invitation = await self._repo.get_by_id(invitation_id)
-        if invitation is None:
-            raise NotFoundError("Invitation not found", data={"id": invitation_id})
+    async def get_invitation(self, *, question_id: int, invitation_id: int) -> dict:
+        invitation = await self._invitation_in_question(question_id, invitation_id)
         profile = await self._profile_repo.get_profile_by_user_id(invitation.user_id)
         user_dto = _profile_to_user(profile) if profile else None
         dto = _invitation_to_dto(invitation, user=user_dto)
@@ -583,14 +581,48 @@ class QuestionInvitationService:
             )
         return dto
 
-    async def delete_invitation(self, *, invitation_id: int, user_id: int) -> None:
-        invitation = await self._repo.get_by_id(invitation_id)
-        if invitation is None:
-            raise BadRequestError("Invitation not found")
+    async def delete_invitation(
+        self, *, question_id: int, invitation_id: int, user_id: int
+    ) -> None:
+        invitation = await self._invitation_in_question(
+            question_id, invitation_id, missing_is_bad_request=True
+        )
         question = await self._question_repo.get_by_id(invitation.question_id)
         if question is None or question.created_by_id != user_id:
             raise ForbiddenError("Only the question owner can delete invitations")
         await self._repo.hard_delete(invitation)
+
+    async def _invitation_in_question(
+        self,
+        question_id: int,
+        invitation_id: int,
+        *,
+        missing_is_bad_request: bool = False,
+    ):
+        """邀请必须挂在 URL 里那个题目上 —— 这是地址的一部分，不是装饰。
+
+        两条读法以前都不成立：详情只看 `invitation_id`（`_ = question_id`），删除
+        也一样。于是 `/questions/{随便哪道题}/invitations/{i}` 回的是邀请 i 本身，
+        父级 id 写错了也照样命中。这个函数把「id 对」和「题对」合成一件事，两个
+        调用方都只能从这里拿邀请 —— 「同一个缺陷在另一条路由上又出现一次」在这
+        个形状里没有地方可写。
+
+        不一致回 **404**（`NotFoundError`）而不是 403：错配的 id 不指向任何东西，
+        403 会承认「这张邀请存在，只是不给你看」，把存在性漏给调用者。
+
+        `missing_is_bad_request` 是给 DELETE 留的那半：**那张邀请根本不存在**时它
+        一直回 400（`test_cancel_invitation_not_found` 钉着这个形状），这次不动
+        它 —— 两条路由对「没有这张邀请」本来就答得不一样（GET 404 / DELETE 400），
+        这个差别是旧的，不是这里引入的。
+        """
+        invitation = await self._repo.get_by_id(invitation_id)
+        if invitation is None:
+            if missing_is_bad_request:
+                raise BadRequestError("Invitation not found")
+            raise NotFoundError("Invitation not found", data={"id": invitation_id})
+        if invitation.question_id != question_id:
+            raise NotFoundError("Invitation not found", data={"id": invitation_id})
+        return invitation
 
     async def get_recommendations(self, *, question_id: int, limit: int) -> list[dict]:
         await self._ensure_question_exists(question_id)

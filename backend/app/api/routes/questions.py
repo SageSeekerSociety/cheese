@@ -527,6 +527,28 @@ async def attitude_question(
     return {"code": 200, "message": "OK", "data": {"attitudes": attitudes}}
 
 
+# ── 邀请的读侧 ──────────────────────────────────────────────────────────
+#
+# 这一族有三条读路由：列表、推荐、详情。三条以前**都不问「你是谁」**（连
+# `require_auth_user` 都没有），详情那条还不看 URL 里的 `question_id`
+# （`_ = question_id`），于是不带任何凭据、顺着小整数 id 就能拼出「谁被邀请去答了
+# 哪些题、答没答」。
+#
+# 口径是**任何登录用户**，理由是同族的写侧就是这个口径：`create_invitation` 只问
+# 「登录了没有」（`invite_user_to_answer` 上面那条），页面上也是这么用的 ——
+# `views/question/Detail.vue` 的邀请对话框只要题目有赏金、没采纳答案就出现，没有
+# 作者判断，`components/questions/InvitationList.vue` 就直接调这三条。要收成
+# 「只有出题人」的话，改的不止读侧，还有写侧和页面上的对话框 —— 那是产品口径的
+# 决定，不是权限修复能顺手带走的东西。今天也没有免登录的公开入口读邀请：详情那条
+# 全仓库没有调用方，列表和推荐只从登录后的页面里调。
+#
+# 详情（和它下面的 DELETE）还要**绑父级**：`question_id` 与邀请自己的
+# `question_id` 不一致 → 404。错配的 id 不指向任何东西，403 会承认这张邀请存在。
+# 绑定写在 `QuestionInvitationService` 里，因为它是一个领域规则、不是一处路由的
+# 装饰：路由只负责把 URL 里那个 id 交进去，`_ = question_id` 这种「读进来再丢掉」
+# 的写法从此无处可写。
+
+
 @router.get(
     "/{question_id}/invitations",
     summary="List Question Invitations",
@@ -535,6 +557,7 @@ async def list_question_invitations(
     question_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
     items, page = await service.list_invitations(
@@ -587,6 +610,7 @@ async def invite_user_to_answer(
 async def get_invitation_recommendations(
     question_id: Annotated[int, Path(ge=0)],
     limit: int = Query(default=10, ge=1, le=50),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
     users = await service.get_recommendations(question_id=question_id, limit=limit)
@@ -600,10 +624,12 @@ async def get_invitation_recommendations(
 async def get_invitation_detail(
     question_id: Annotated[int, Path(ge=0)],
     invitation_id: Annotated[int, Path(ge=0)],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
-    _ = question_id
-    invitation = await service.get_invitation(invitation_id=invitation_id)
+    invitation = await service.get_invitation(
+        question_id=question_id, invitation_id=invitation_id
+    )
     return {"code": 200, "message": "OK", "data": {"invitation": invitation}}
 
 
@@ -617,8 +643,9 @@ async def delete_invitation(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
-    _ = question_id
     await service.delete_invitation(
-        invitation_id=invitation_id, user_id=auth_user.user_id
+        question_id=question_id,
+        invitation_id=invitation_id,
+        user_id=auth_user.user_id,
     )
     return {"code": 200, "message": "OK", "data": {"deleted": True}}
