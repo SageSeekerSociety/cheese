@@ -175,6 +175,12 @@
         "idle": "空闲",
         "elapsed": "已用 {span}",
         "quiet": "最近活动 {span}前"
+      },
+      "frontendError": "前端报错",
+      "span": {
+        "seconds": "{s} 秒",
+        "minutes": "{m} 分 {s} 秒",
+        "hours": "{h} 小时 {m} 分"
       }
     },
     "menu": {

@@ -175,6 +175,12 @@
         "idle": "Idle",
         "elapsed": "{span} so far",
         "quiet": "last activity {span} ago"
+      },
+      "frontendError": "Frontend error",
+      "span": {
+        "seconds": "{s}s",
+        "minutes": "{m}m {s}s",
+        "hours": "{h}h {m}m"
       }
     },
     "menu": {
