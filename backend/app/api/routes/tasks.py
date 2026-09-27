@@ -2293,6 +2293,11 @@ async def patch_task(
 
     task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told a task is approved
+    # could open the board on its next request and not find the task there yet.
+    # Same reason as the commit in ``create_task``.
+    await db.commit()
 
     # Fetch submissionSchema for response
     schema_repo = TaskSubmissionSchemaRepository(session=db)
