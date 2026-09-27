@@ -73,6 +73,20 @@ watch(
   }
 )
 
+/** 平均完成率 = 已通过 / 已提交，整数百分比。
+ *
+ *  分母为 0 时取 0（与后端 `member_publishing_service` 的 `success_rate` 同口径）——
+ *  不取 0 的话这个格子会写成 `NaN%`。
+ *
+ *  两个数都来自这一页已经在读的那次 `me/publishing` 概览，不再单发请求：analytics
+ *  那条路上的「成功数」只认 `completion_status == SUCCESS`，而这一列在新后端只有
+ *  领取与逾期两处写入、恒不推进，用它算出来会是一张永远 0% 的卡。 */
+const completionRate = computed(() => {
+  const overview = publishing.value
+  if (!overview || !overview.submittedParticipantCount) return 0
+  return Math.round((overview.successfulParticipantCount / overview.submittedParticipantCount) * 100)
+})
+
 /** 状态 → 文案与语气。上板与驳回之外，还有「过审了但过了截止日」。 */
 function publishedState(t: SpaceMyPublishedTask): { text: string; tone: string } {
   if (t.visibilityStatus === 'PENDING_APPROVAL') return { text: '待审核', tone: 'tone-warn' }
@@ -155,6 +169,7 @@ function homeTo() {
           :tone="publishing.pendingTaskApprovalCount ? 'warn' : 'muted'"
           :hint="publishing.pendingTaskApprovalCount ? '还在队列里，审过才上板' : '没有卡在审核的'"
         />
+        <MetricCard label="平均完成率" :value="`${completionRate}%`" icon="mdi-progress-check" hint="已通过 / 已提交" />
         <MetricCard
           label="等我判"
           :value="publishing.pendingReviewCount"
