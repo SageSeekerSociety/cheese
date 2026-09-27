@@ -80,10 +80,12 @@ TITLE_MAX_CHARS = 24
 _SUBSTANTIVE_CHARS = 5
 _CALIBRATE_AFTER_PEOPLE = 3
 # Room for the model to think before it writes. The gateway counts that
-# thinking against this cap, and a title is only a few tokens: at 120 the
-# budget ran out before the title was written in six calls out of ten
-# (2026-09-27, deepseek-flash), which left the room nameless.
-_ANSWER_TOKENS = 800
+# thinking against this cap while a title itself is a few tokens: measured
+# 2026-09-27 on deepseek-flash, thirty naming calls on one prompt spent 62–688
+# tokens (median 135), and at 120 six of ten calls came back empty with the
+# title never written — the room stayed 「新话题」. The cap sits above the
+# largest answer seen; the call's own timeout bounds the rest.
+_ANSWER_TOKENS = 1024
 
 SYSTEM_PROMPT = "\n".join(
     [

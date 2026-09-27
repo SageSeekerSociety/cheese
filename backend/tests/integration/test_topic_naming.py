@@ -265,10 +265,11 @@ def test_a_gateway_that_does_not_answer_backs_the_room_off(client, alice, gatewa
 
 def test_the_naming_call_leaves_the_model_room_to_think_first(client, alice, gateway):
     """It thinks before it writes, and the gateway counts that thinking against
-    this cap: 400 was enough for every call, 120 for four in ten (2026-09-27,
-    deepseek-flash), and the truncated ones left the room nameless."""
+    this cap beside a title of a few tokens. Thirty calls on one prompt spent
+    62–688 of them (2026-09-27, deepseek-flash); the calls that ran out came
+    back empty and left the room nameless."""
     _named(client, alice, gateway)
-    assert gateway["bodies"][-1]["max_tokens"] >= 400
+    assert gateway["bodies"][-1]["max_tokens"] >= 700
 
 
 def test_the_first_turn_checks_the_name_once(client, alice, gateway):
