@@ -4,7 +4,8 @@ CC 的 dream 是「一次对记忆文件的反思式整理」，四个阶段：O
 Gather recent signal（找这段时间新出现的、值得留下的事）、Consolidate（写进记忆
 文件）、Prune and index（修剪，并把索引压回上限）。原文从本机的 CC 二进制里取：
 
-    strings -n 20 /usr/local/bin/claude > /tmp/cc.txt
+    strings -n 20 /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe \
+        > /tmp/cc.txt
     python3 - <<'EOF'
     ... 搜 "# Dream: Memory Consolidation" ...
     EOF
@@ -19,7 +20,7 @@ Gather recent signal（找这段时间新出现的、值得留下的事）、Con
 2. CC 的 dream 可以 grep 会话 transcript；芝士跑在项目工作机的沙箱里，手上只有当前
    这一份仓库和平台给的那一段输入，所以那一档换成「上面给的输入」。
 3. 两条芝士自己的规矩，CC 没有：**private 的内容不许升级进 team**（CC 的对应物是
-   「不要把你的个人记忆塞进 team/」，芝более硬：这条在下面再说一遍，因为芝士的
+   「不要把你的个人记忆塞进 team/」，芝士更硬：这条在下面再说一遍，因为芝士的
    private 是「人 × 项目」，写错地方等于替某个人公开了他的偏好）；**和 CLAUDE.md
    冲突时只标注、不改 CLAUDE.md**（CC 原文就有，这里保留并写死）。
 
