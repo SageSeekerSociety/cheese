@@ -199,6 +199,9 @@ const {
     approved: 'NONE',
     queryTopics: true,
     querySpace: true,
+    // 这一屏要显示「提交要求」，而列表默认不带那张表单 —— 不点名要，
+    // 底下那块永远走「无提交要求」那一支。
+    querySubmissionSchema: true,
   })
   return { data: data.tasks as AuditTask[], page: data.page }
 })

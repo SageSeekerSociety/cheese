@@ -894,6 +894,74 @@ class TestTaskSubmissionIntegration:
             {"prompt": "Text Entry", "type": "TEXT"}
         ]
 
+    def test_list_reports_submission_schema_when_asked(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
+        """审核页整屏都是从 ``GET /tasks`` 列表里读出来的，它要说出作者要求
+        交什么。列表只在被点名时才带这张表单 —— 不问的调用方（列表调用方很多）
+        收到的还是今天那个空数组。带出来的那份必须和详情接口口径一致：
+        提交页的表单就是照详情那份渲染的。"""
+        data = setup_task_for_submission
+        creator = data["creator"]
+
+        task_id = self._create_task(
+            api_client,
+            creator.token,
+            data["space_id"],
+            data["category_id"],
+            data["suffix"],
+        )
+
+        def listed_task(wanted_id: int, **extra_query: object) -> dict:
+            resp = api_client.get(
+                "/tasks",
+                params={"space": data["space_id"], "pageSize": 100, **extra_query},
+                headers={"Authorization": f"Bearer {creator.token}"},
+            )
+            assert resp.status_code == 200, (
+                f"Task list failed: {resp.status_code}: {resp.text}"
+            )
+            found = [t for t in resp.json()["data"]["tasks"] if t["id"] == wanted_id]
+            assert len(found) == 1, f"task {wanted_id} missing from {resp.text}"
+            return found[0]
+
+        def detail_schema_of(wanted_id: int) -> list[dict]:
+            resp = api_client.get(
+                f"/tasks/{wanted_id}",
+                headers={"Authorization": f"Bearer {creator.token}"},
+            )
+            assert resp.status_code == 200
+            return resp.json()["data"]["task"]["submissionSchema"]
+
+        # 同一页里再放一道表单不同的题：一页一次取回来必须各归各位，
+        # 不能把某一道的表单发给另一道。
+        other_id = self._create_task(
+            api_client,
+            creator.token,
+            data["space_id"],
+            data["category_id"],
+            data["suffix"],
+        )
+        patch_resp = api_client.patch(
+            f"/tasks/{other_id}",
+            json={"submissionSchema": [{"prompt": "Other Entry", "type": "FILE"}]},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert patch_resp.status_code == 200, patch_resp.text
+
+        assert detail_schema_of(task_id) == [{"prompt": "Text Entry", "type": "TEXT"}]
+        assert detail_schema_of(other_id) == [{"prompt": "Other Entry", "type": "FILE"}]
+
+        # 不问就不给：这是既有行为，不改其它调用方的收包。
+        assert listed_task(task_id)["submissionSchema"] == []
+        assert listed_task(other_id)["submissionSchema"] == []
+
+        # 问了就得有，每道题各自与自己的详情口径一致 —— 审核页显示的就是这一份。
+        for wanted_id in (task_id, other_id):
+            assert listed_task(wanted_id, querySubmissionSchema=True)[
+                "submissionSchema"
+            ] == detail_schema_of(wanted_id)
+
     def test_update_submission_schema(
         self, setup_task_for_submission: dict, api_client: TestClient
     ):
