@@ -97,7 +97,9 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # 私聊是名册两席的房间（结论 19）: it is told how to publish in its system
         # prompt like any room, and still told what is particular to a private chat.
         assert "chat_send" in screen.last_system_prompt
-        assert ("cheese_remember" in screen.last_system_prompt) is private
+        # 私聊独有的那段技能说明（`# 私聊`）只进私聊的提示词。停用之前这里看的是
+        # 工具表里 `cheese_remember` 那一行——工具没了，换这段。
+        assert ("\n# 私聊\n" in screen.last_system_prompt) is private
         assert not central.prompts
         assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
         async with factory() as session:

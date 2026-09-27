@@ -131,7 +131,6 @@ _TOOL_ARG = {
     "cheese_unlock": "kind",
     "cheese_decision": "text",
     "cheese_title": "text",
-    "cheese_remember": "fact",
     "cheese_notify": "title",
     "cheese_ask": "question",
     "cheese_accept_request": "subject",

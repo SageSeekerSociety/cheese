@@ -5608,8 +5608,9 @@ class ChatService:
         )
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
-        # In a private chat, `cheese_remember` targets the owner's personal memory
-        # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
+        # In a private chat the turn's memory is the owner's own, so the sandbox
+        # comes up in the personal scope (spec §8.4). The provider runs a plain
+        # model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(
             project_id,
             provider,

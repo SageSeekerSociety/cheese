@@ -13,10 +13,9 @@ import uuid
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.memory.models import MemoryScope, user_scope_id
-from app.domain.memory.store import DbMemoryStore
+from app.domain.memory.store import DbMemoryStore, memory_store
 from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
@@ -137,27 +136,24 @@ def test_the_summon_receipt_carries_the_same_agent(client):
         raise AssertionError("the 👀 receipt never landed")
 
 
-def _acting(project_id: str, topic_id: str, seat: str | None) -> dict[str, str]:
-    """`cheese_remember` runs on the acting agent's own token; without one the
-    write lands as the room's default."""
-    if seat is None:
-        return {}
-    return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id, topic_id=topic_id, agent_handle=seat
-        )
-    }
+def _remember(client, project_id: str, fact: str, *, seat: str | None = None) -> None:
+    """把一条事实写进某个 agent 的池子，直接按键。
 
+    写那一侧（`cheese_remember`）已经整个撤掉，条目池只剩读侧；`seat` 是哪位
+    队友的座位 handle，不给就是项目默认那位。
+    """
 
-def _remember(
-    client, project_id: str, topic_id: str, fact: str, *, seat: str | None = None
-) -> None:
-    r = client.post(
-        f"/projects/{project_id}/memory",
-        json={"content": fact, "topic": topic_id},
-        headers=_acting(project_id, topic_id, seat),
-    )
-    assert r.status_code == 200, r.text
+    async def _seed() -> None:
+        async with client.test_factory() as s:
+            project = await ProjectService(s).get_or_404(uuid.UUID(project_id))
+            service = AgentInstanceService(s)
+            writer = await service.for_seat_handle(project, seat)
+            if writer is None:
+                writer = await service.for_project(project)
+            await memory_store(s).remember(*memory_pool(project.id, writer), fact)
+            await s.commit()
+
+    asyncio.run(_seed())
 
 
 def _pool(client, project_id: str, handle: str) -> list[str]:
@@ -165,7 +161,7 @@ def _pool(client, project_id: str, handle: str) -> list[str]:
 
     关键词检索那条读路径（`/projects/{id}/memory/search`）连同条目池的读侧一
     起撤了，所以这里读记忆列表本身。归属这件事它答得一样清楚：池是按 agent 分
-    的，写入分给谁，就是谁的池里有它。
+    的，写进哪一位的池子，哪一位点名读得到。
     """
     return [e["content"] for e in _list_memory(client, project_id, agent_handle=handle)]
 
@@ -173,9 +169,9 @@ def _pool(client, project_id: str, handle: str) -> list[str]:
 def _seat_a_new_agent(client, project_id: str, topic_id: str, handle: str) -> str:
     """Put a SECOND agent in this project and seat it in this room.
 
-    Which agent a memory belongs to is decided by who was acting when it was
-    written, not by the room: a room seats any number of teammates, and each
-    writes to its own pool. Returns the seat handle the new one acts as.
+    Which agent a memory belongs to is decided by whose pool it went into, not
+    by the room: a room seats any number of teammates, and each has its own.
+    Returns the seat handle the new one acts as.
     """
     created = client.post(f"/projects/{project_id}/agents", json={"handle": handle})
     assert created.status_code == 200, created.text
@@ -189,11 +185,11 @@ def _seat_a_new_agent(client, project_id: str, topic_id: str, handle: str) -> st
     return seat
 
 
-def test_a_memory_written_without_a_place_is_the_projects_own_cheese(client):
-    """没有共享池（结论 7）：不带话题的那一次写入也归一位芝士，就是项目自己那位。
+def test_a_memory_without_a_seat_is_the_projects_own_cheese(client):
+    """没有共享池（结论 7）：不带座位的那一条也归一位芝士，就是项目自己那位。
 
-    所以它落在项目默认那位的池里，而另一位队友的池里没有——写入分给谁，决定的
-    就是谁的池里有它，不存在一个谁都能写、谁都能读的中间地带。座位在哪间房不作
+    所以它落在项目默认那位的池里，而另一位队友的池里没有——写进谁的池子，决定的
+    就是谁点名读得到，不存在一个谁都能写、谁都能读的中间地带。座位在哪间房不作
     数：池是按 agent 分的，点名读的也是 agent。
     """
     project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
@@ -207,9 +203,7 @@ def test_a_memory_written_without_a_place_is_the_projects_own_cheese(client):
     # 另一位队友坐进一间房，好让它是一位真的队友；项目默认那位由项目自己坐。
     _seat_a_new_agent(client, project_id, _topic("A"), "ops")
 
-    client.post(
-        f"/projects/{project_id}/memory", json={"content": "本项目用 uv 管依赖"}
-    )
+    _remember(client, project_id, "本项目用 uv 管依赖")
 
     assert "本项目用 uv 管依赖" in _pool(client, project_id, "cheese")
     assert "本项目用 uv 管依赖" not in _pool(client, project_id, "ops")
@@ -278,8 +272,8 @@ def test_human_members_are_not_mistaken_for_agents(client):
 def _remember_about(client, project_id: str, person: str, fact: str) -> None:
     """项目默认芝士对某个人的一条记忆。
 
-    直接按键写库：写的那一侧（私聊里的 `cheese_remember`）有自己的测试，这一组
-    问的是列出来的时候都带回了什么。"""
+    直接按键写库：写的那一侧（私聊里的 `cheese_remember`）已经撤掉，这一组问的
+    是列出来的时候都带回了什么。"""
 
     async def _seed() -> None:
         async with client.test_factory() as s:
@@ -304,16 +298,12 @@ def _list_memory(
 
 
 def test_listing_a_project_shows_what_its_agents_remembered(client):
-    """`cheese_remember` always carries a topic, so every agent write lands in
-    an agent pool. If listing skipped those, the memory panel showed an empty
-    project while the live pool kept growing — unauditable by construction."""
+    """每一条 agent 记忆都落在某个 agent 的池子里（写那一侧撤掉前如此，撤掉后池
+    子里的行仍是这个形状）。列表要是漏了它们，界面上的记忆面板就会在池子还在长
+    的时候显示一个空项目——凭空审计不到。"""
     project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
-    topic_id = client.post(
-        "/topics",
-        json={"project_id": project_id, "title": "T", "created_by": "alice"},
-    ).json()["data"]["id"]
 
-    _remember(client, project_id, topic_id, "部署脚本在 deploy/deploy.sh")
+    _remember(client, project_id, "部署脚本在 deploy/deploy.sh")
 
     entries = _list_memory(client, project_id)
     assert [e["content"] for e in entries] == ["部署脚本在 deploy/deploy.sh"]
@@ -335,10 +325,10 @@ def test_listing_covers_every_agent_pool_in_the_project(client):
             json={"project_id": project_id, "title": title, "created_by": "alice"},
         ).json()["data"]["id"]
 
-    cheese_room, ops_room = _topic("A"), _topic("B")
+    ops_room = _topic("B")
     ops = _seat_a_new_agent(client, project_id, ops_room, "ops")
-    _remember(client, project_id, cheese_room, "部署脚本在 deploy/deploy.sh")
-    _remember(client, project_id, ops_room, "告警阈值是 p99 500ms", seat=ops)
+    _remember(client, project_id, "部署脚本在 deploy/deploy.sh")
+    _remember(client, project_id, "告警阈值是 p99 500ms", seat=ops)
 
     everything = _list_memory(client, project_id)
     assert {e["content"] for e in everything} == {
@@ -363,11 +353,7 @@ def test_one_projects_agent_pool_never_leaks_into_another(client):
         for n in ("P1", "P2")
     ]
     for pid, fact in zip(ids, ("P1 的事", "P2 的事"), strict=True):
-        topic_id = client.post(
-            "/topics",
-            json={"project_id": pid, "title": "T", "created_by": "alice"},
-        ).json()["data"]["id"]
-        _remember(client, pid, topic_id, fact)
+        _remember(client, pid, fact)
 
     assert [e["content"] for e in _list_memory(client, ids[0])] == ["P1 的事"]
     assert [e["content"] for e in _list_memory(client, ids[1])] == ["P2 的事"]
@@ -380,11 +366,7 @@ def test_listing_answers_what_was_remembered_about_me(client):
     project_id = post_project(
         client, json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]["id"]
-    topic_id = client.post(
-        "/topics",
-        json={"project_id": project_id, "title": "T", "created_by": "alice"},
-    ).json()["data"]["id"]
-    _remember(client, project_id, topic_id, "芝士自己记的")
+    _remember(client, project_id, "芝士自己记的")
     _remember_about(client, project_id, "alice", "他要结论在最前面")
 
     about = _list_memory(

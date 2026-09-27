@@ -1,15 +1,23 @@
 """An agent's memory follows the agent, and a room is where agents sit.
 
-The behaviour these tests pin down is the one the whole change exists for: what
-芝士 learns in one room of a project is available in every other room of that
-project, because the memory belongs to the AGENT rather than to the room it
-happened to be learned in. A room does not point at an agent: it seats any
-number of them on its roster, the way it seats people, and which one a memory
-belongs to is decided by who was acting when it was written.
+The shape these tests pin down: a memory pool is keyed by the AGENT rather than
+by the room it was learned in, so one 芝士 working in two rooms of a project
+keeps one pool. A room does not point at an agent: it seats any number of them
+on its roster, the way it seats people.
+
+写入那一侧（`cheese_remember`）已经整个撤掉——记忆改成直接写会话目录下的文件
+（见系统提示的「记忆」一节），条目池只剩读侧（界面上的记忆面板）。所以这几条用
+例自己按键写库，守的是读侧按 agent 分池这件事。
 """
 
+import asyncio
+import uuid
+
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
+from app.domain.memory.store import memory_store
+from app.domain.project.services import ProjectService
 from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
 
 
@@ -28,26 +36,30 @@ def _topic(client, project_id: str, title: str = "room", by: str = "u") -> str:
     return r.json()["data"]["id"]
 
 
-def _token(client, project_id: str, topic_id: str, agent: dict | None) -> str:
-    """The token the sandbox calls `cheese_remember` with. It names who is
-    acting when the caller picked a teammate; without one it is the room's
-    own turn token, which writes as the room's default."""
-    return mint_scoped_token(
-        project_id=project_id,
-        topic_id=topic_id,
-        agent_handle=agent_instance_handle(agent["id"]) if agent else None,
-    )
-
-
 def _remember(
-    client, project_id: str, topic_id: str, content: str, *, agent: dict | None = None
+    client, project_id: str, content: str, *, agent: dict | None = None
 ) -> None:
-    r = client.post(
-        f"/projects/{project_id}/memory",
-        json={"content": content, "topic": topic_id},
-        headers={"X-Cheese-Token": _token(client, project_id, topic_id, agent)},
-    )
-    assert r.status_code == 200, r.text
+    """把一条事实写进某个 agent 的池子，直接按键。
+
+    写的那一侧已经撤了，但「写进谁的池子」这件事在数据里还是真的：座位 handle
+    说了是哪位队友，不给就是项目默认那位——原来那句「没有 token 就以房间默认的
+    身份写」说的也是这个。
+    """
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:
+            project = await ProjectService(session).get_or_404(uuid.UUID(project_id))
+            service = AgentInstanceService(session)
+            seat = agent_instance_handle(agent["id"]) if agent else None
+            writer = await service.for_seat_handle(project, seat)
+            if writer is None:
+                writer = await service.for_project(project)
+            await memory_store(session).remember(
+                *memory_pool(project.id, writer), content
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
 
 
 def _pool(client, project_id: str, *, agent: dict | None = None) -> list[str]:
@@ -95,16 +107,15 @@ def _add_agent(client, project_id: str, **body) -> dict:
 # --- memory follows the agent ------------------------------------------------
 
 
-def test_what_one_room_learns_the_whole_project_knows(client):
+def test_what_is_learned_in_one_room_the_whole_project_reads(client):
     """The point of the whole change: one 芝士 per project, one memory.
 
     池是按 agent 分的，问它的时候一间房都不用提——学在哪间、从哪间读，都是
     同一个池。
     """
     pid = _project(client)
-    kitchen = _topic(client, pid, "kitchen")
 
-    _remember(client, pid, kitchen, "部署脚本在 deploy.sh")
+    _remember(client, pid, "部署脚本在 deploy.sh")
 
     assert _pool(client, pid) == ["部署脚本在 deploy.sh"]
 
@@ -118,8 +129,8 @@ def test_two_agents_in_one_room_do_not_share_a_memory(client):
     room = _topic(client, pid, "shared")
     _seat(client, room, reviewer)
 
-    _remember(client, pid, room, "默认芝士记的事")
-    _remember(client, pid, room, "评审记的事", agent=reviewer)
+    _remember(client, pid, "默认芝士记的事")
+    _remember(client, pid, "评审记的事", agent=reviewer)
 
     assert _pool(client, pid) == ["默认芝士记的事"]
     assert _pool(client, pid, agent=reviewer) == ["评审记的事"]
@@ -203,7 +214,7 @@ def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
     )
     assert r.status_code == 200, r.text
     # 一张卡不是地点：拆出来的活在房间那一个会话里做，记忆也从房间记。
-    _remember(client, pid, room, "分身查出来的事", agent=reviewer)
+    _remember(client, pid, "分身查出来的事", agent=reviewer)
     assert _pool(client, pid, agent=reviewer) == ["分身查出来的事"]
 
 
@@ -237,7 +248,7 @@ def test_renaming_an_agent_keeps_the_memory_it_had(client):
     reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
     room = _topic(client, pid, "review")
     _seat(client, room, reviewer)
-    _remember(client, pid, room, "评审记的事", agent=reviewer)
+    _remember(client, pid, "评审记的事", agent=reviewer)
 
     r = _update_agent(client, pid, reviewer["id"], display_name="严格评审")
     assert r.status_code == 200, r.text
@@ -302,7 +313,7 @@ def test_retiring_an_agent_keeps_it_and_its_memory(client):
     reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
     room = _topic(client, pid, "review")
     seat = _seat(client, room, reviewer)
-    _remember(client, pid, room, "评审记的事", agent=reviewer)
+    _remember(client, pid, "评审记的事", agent=reviewer)
 
     r = client.delete(f"/projects/{pid}/agents/{reviewer['id']}")
     assert r.status_code == 200, r.text

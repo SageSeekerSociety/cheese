@@ -357,17 +357,6 @@ def test_manager_agent_can_issue_credentials_and_revocation_retires_them_all(cli
         )
 
 
-def test_turn_memory_remains_available_with_just_its_room_membership(client):
-    project, origin, _ = _rooms(client)
-    auth = _agent(client, project, origin)
-    response = client.post(
-        f"/projects/{project['id']}/memory",
-        json={"topic": origin, "content": "A room-local observation"},
-        headers=auth,
-    )
-    assert response.status_code == 200, response.text
-
-
 def test_cloud_management_requires_team_standing_even_with_an_agent_credential(
     client,
 ):
@@ -387,6 +376,8 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
     project, origin, _ = _rooms(client)
     join_project_team(client, project["id"], _seated_agent(client, origin), admin=True)
     auth = _agent(client, project, origin, scope="topic")
+    # 这不是一张「房间级凭据什么都干不了」的清单，只有管理动作在这里：写记忆那
+    # 一条曾经做对照（它 200），而写记忆的旧入口已经停用，对照没了就只剩正题。
     for path, body in (
         ("members", {"user_handle": "bob"}),
         ("agent-credential", {}),
@@ -398,14 +389,6 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
             ).status_code
             == 403
         )
-    assert (
-        client.post(
-            f"/projects/{project['id']}/memory",
-            json={"topic": origin, "content": "Room memory"},
-            headers=auth,
-        ).status_code
-        == 200
-    )
 
 
 def test_people_and_agents_can_ask_and_record_decisions_with_their_own_identity(client):
