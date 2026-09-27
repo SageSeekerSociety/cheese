@@ -247,6 +247,9 @@ class CreateSpaceInviteCodeRequest(BaseModel):
 
     max_uses: int | None = Field(default=None, alias="maxUses")
     expires_at: int | None = Field(default=None, alias="expiresAt")
+    # 这张码给谁 / 干什么用. Optional and free text; omitted or blank is stored
+    # as NULL, which the read side reports as "no note" rather than "".
+    note: str | None = Field(default=None, alias="note")
 
 
 class PatchSpaceInviteCodeRequest(BaseModel):
@@ -255,12 +258,15 @@ class PatchSpaceInviteCodeRequest(BaseModel):
     Both fields are nullable and both are optional, and the two mean different
     things: an absent ``expiresAt`` leaves the date alone, an explicit null
     clears it. The route reads ``model_fields_set`` to tell them apart.
+    ``note`` follows the same rule: absent leaves the 说明 alone, null (or a
+    blank string, which the service normalises to the same thing) clears it.
     """
 
     model_config = ConfigDict(populate_by_name=True)
 
     max_uses: int | None = Field(default=None, alias="maxUses")
     expires_at: int | None = Field(default=None, alias="expiresAt")
+    note: str | None = Field(default=None, alias="note")
 
 
 class AddSpaceManagerRequest(BaseModel):
@@ -483,7 +489,17 @@ def _space_to_api_model(space: Space) -> dict:
     }
 
 
-def _invite_code_to_api_model(invite: SpaceInviteCode) -> dict:
+def _invite_code_to_api_model(
+    invite: SpaceInviteCode, created_by: dict | None = None
+) -> dict:
+    """One code as the 邀请码 screen reads it.
+
+    ``createdBy`` is the same hydrated person object a member row carries, and
+    is passed in rather than read off the row because turning a user id into a
+    name is a batched query the caller already runs for the whole list. It is
+    ``None`` when the row names nobody — the screen says 未知 rather than
+    rendering an empty name.
+    """
     created_at_ms = (
         int(invite.created_at.timestamp() * 1000) if invite.created_at else 0
     )
@@ -498,14 +514,59 @@ def _invite_code_to_api_model(invite: SpaceInviteCode) -> dict:
         "useCount": invite.use_count,
         "expiresAt": expires_at_ms,
         "createdAt": created_at_ms,
+        "note": invite.note,
+        "createdBy": created_by,
     }
 
 
-def _member_to_api_model(member: SpaceMember, user_info: dict | None = None) -> dict:
+async def _invite_codes_to_api_models(
+    invites: Sequence[SpaceInviteCode],
+    *,
+    user_repo: UserRepository,
+    profile_repo: UserProfileRepository,
+) -> list[dict]:
+    """The list form of the above, with its makers hydrated in one query.
+
+    Two queries for however many codes, the same shape ``_hydrate_members``
+    uses: a per-row lookup would grow with the number of codes on the board.
+    """
+    maker_ids = [c.created_by for c in invites if c.created_by is not None]
+    people = (
+        await _hydrate_people(maker_ids, user_repo=user_repo, profile_repo=profile_repo)
+        if maker_ids
+        else {}
+    )
+    return [
+        _invite_code_to_api_model(
+            invite, people.get(invite.created_by) if invite.created_by else None
+        )
+        for invite in invites
+    ]
+
+
+def _member_to_api_model(
+    member: SpaceMember,
+    user_info: dict | None = None,
+    invite_code: SpaceInviteCode | None = None,
+) -> dict:
+    """One member row of the 成员 page.
+
+    ``inviteCode`` is the 「加入方式」 column: the code this membership came in
+    on, or **null**, which is the answer for two cases the row cannot tell
+    apart — a member who predates the column (nobody recorded the code) and one
+    the owner added directly (no code was involved). The screen renders both as
+    未知: null means "not on record", and dressing it up as a blank or a 0
+    would claim something the row does not say.
+    """
     joined_at_ms = int(member.created_at.timestamp() * 1000) if member.created_at else 0
     result: dict = {"userId": member.user_id, "joinedAt": joined_at_ms}
     if user_info is not None:
         result["user"] = user_info
+    result["inviteCode"] = (
+        {"id": invite_code.id, "code": invite_code.code}
+        if invite_code is not None
+        else None
+    )
     return result
 
 
@@ -633,13 +694,33 @@ async def _hydrate_members(
     *,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
+    invite_code_repo: SpaceInviteCodeRepository,
 ) -> list[dict]:
+    """Roster rows, with the people and the codes they came in on.
+
+    Both lookups are batched for the same reason, and it is the same reason the
+    people half was batched before: a per-row lookup makes rendering a board
+    cost grow with the class. The codes are fetched through
+    ``get_by_ids``, which deliberately keeps soft-deleted codes — 加入方式 has
+    to keep naming the code that let someone in after it is revoked, and that
+    is precisely when somebody goes looking at this column.
+    """
     people = await _hydrate_people(
         [member.user_id for member in members],
         user_repo=user_repo,
         profile_repo=profile_repo,
     )
-    return [_member_to_api_model(member, people[member.user_id]) for member in members]
+    codes = await invite_code_repo.get_by_ids(
+        [m.invite_code_id for m in members if m.invite_code_id is not None]
+    )
+    return [
+        _member_to_api_model(
+            member,
+            people[member.user_id],
+            codes.get(member.invite_code_id) if member.invite_code_id else None,
+        )
+        for member in members
+    ]
 
 
 async def _build_course_roster_payload(
@@ -905,12 +986,21 @@ async def create_space(
     codes = await service.list_invite_codes(
         space_id=space.id, actor_user_id=auth_user.user_id
     )
+    # Same shape the 邀请码 screen reads, its maker hydrated and all: the
+    # creator is looking at this payload right after the board appears, and a
+    # code that arrives without the same fields the list gives it is how two
+    # views of one row drift apart.
+    items = await _invite_codes_to_api_models(
+        codes,
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
     return {
         "code": 201,
         "message": "Created",
         "data": {
             "space": space_data,
-            "inviteCode": _invite_code_to_api_model(codes[0]) if codes else None,
+            "inviteCode": items[0] if items else None,
         },
     }
 
@@ -1209,6 +1299,7 @@ async def list_space_members(
         members,
         user_repo=UserRepository(session=db),
         profile_repo=UserProfileRepository(session=db),
+        invite_code_repo=SpaceInviteCodeRepository(session=db),
     )
     return {"code": 200, "message": "OK", "data": {"members": items}}
 
@@ -1311,6 +1402,7 @@ async def add_space_member(
         [member],
         user_repo=user_repo,
         profile_repo=UserProfileRepository(session=db),
+        invite_code_repo=SpaceInviteCodeRepository(session=db),
     )
     return {"code": 201, "message": "Created", "data": {"member": items[0]}}
 
@@ -1358,15 +1450,17 @@ async def list_space_invite_codes(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     codes = await service.list_invite_codes(
         space_id=space_id, actor_user_id=auth_user.user_id
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"inviteCodes": [_invite_code_to_api_model(c) for c in codes]},
-    }
+    items = await _invite_codes_to_api_models(
+        codes,
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+    return {"code": 200, "message": "OK", "data": {"inviteCodes": items}}
 
 
 @router.post(
@@ -1379,6 +1473,7 @@ async def create_space_invite_code(
     payload: CreateSpaceInviteCodeRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     expires_at = None
     if payload.expires_at is not None:
@@ -1388,12 +1483,14 @@ async def create_space_invite_code(
         actor_user_id=auth_user.user_id,
         max_uses=payload.max_uses,
         expires_at=expires_at,
+        note=payload.note,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"inviteCode": _invite_code_to_api_model(invite)},
-    }
+    items = await _invite_codes_to_api_models(
+        [invite],
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+    return {"code": 201, "message": "Created", "data": {"inviteCode": items[0]}}
 
 
 @router.patch(
@@ -1406,6 +1503,7 @@ async def patch_space_invite_code(
     payload: PatchSpaceInviteCodeRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     expires_at = None
     if payload.expires_at is not None:
@@ -1418,12 +1516,15 @@ async def patch_space_invite_code(
         max_uses_set="max_uses" in payload.model_fields_set,
         expires_at=expires_at,
         expires_at_set="expires_at" in payload.model_fields_set,
+        note=payload.note,
+        note_set="note" in payload.model_fields_set,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"inviteCode": _invite_code_to_api_model(invite)},
-    }
+    items = await _invite_codes_to_api_models(
+        [invite],
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+    return {"code": 200, "message": "OK", "data": {"inviteCode": items[0]}}
 
 
 @router.delete(
