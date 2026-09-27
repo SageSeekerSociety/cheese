@@ -132,7 +132,9 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
     excluded = await MemberRepository(session).excluded_handles(project_id)
     if excluded:
         owner = project.owner_handle if project is not None else None
-        rows = [row for row in rows if row.handle not in excluded or row.handle == owner]
+        rows = [
+            row for row in rows if row.handle not in excluded or row.handle == owner
+        ]
     # 授权行那一半里也坐着 agent：``MemberService.add`` 是平台给队友放座位的原语，
     # 而队友的实例不一定建在这个项目里。谁是 agent 由 binding 答，一次问完整张表。
     agents = await IdentityService(session).agents_among([row.handle for row in rows])

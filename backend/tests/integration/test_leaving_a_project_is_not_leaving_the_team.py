@@ -251,7 +251,7 @@ def test_a_teammate_leaves_the_project_and_loses_it_room_by_room(client, bearer)
     assert "cap" in room_handles(client, root, who="cap")
 
 
-def test_leaving_a_project_does_not_touch_the_team_or_its_other_projects(client, bearer):
+def test_leaving_a_project_does_not_touch_the_team(client, bearer):
     """小队里那点身份一个字节没变，该小队名下别的项目照常 —— 连侧栏也照常列它。
 
     这是同一条产品决定的另一半（退的是这个项目），也让「修法做过头」当场红掉：顺手
@@ -402,7 +402,8 @@ def test_someone_who_was_an_external_member_and_is_now_on_the_team_leaves_for_re
     tid = team_of(client, owner="cap")
     pid = project_in(client, tid, owner="cap")
     root = root_topic(client, pid, who="cap")
-    accept(client, invite(client, pid, by="cap", who="mate").json()["data"]["id"], "mate")
+    sent = invite(client, pid, by="cap", who="mate")
+    accept(client, sent.json()["data"]["id"], "mate")
     assert roster(client, pid, who="cap")["mate"]["source"] == "external"
     # 之后才进小队 —— 两处身份现在都成立。
     from app.domain.team.models import TeamMemberRole, TeamUserRelation

@@ -16,9 +16,9 @@ belongs to (minus anyone who has left THIS project - see
 or a 管理员 (an admin/creator) of the 题目板 that 赛题 sits on.** The first three
 are exactly the claims ``ProjectRepository.list_visible_to`` lists a project
 under, and that is not a coincidence kept for its own sake - a listing and a
-door have to agree. The fourth and fifth are not in that listing (a teacher's sidebar does
-not want forty projects they do not work in); they are here because the
-student dashboard needs to open one that a class produced.
+door have to agree. The fourth and fifth are not in that listing (a teacher's
+sidebar does not want forty projects they do not work in); they are here
+because the student dashboard needs to open one that a class produced.
 ``_is_asker_of_the_task`` explains why the fourth stops at the task's creator;
 the fifth is the board's teacher, in ``app.auth.space_access``. Until
 2026-09-04 two of the three copies accepted only the first two, so a teammate
