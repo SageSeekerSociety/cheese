@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.services import IdentityService
+from app.domain.membership.repositories import MemberRepository
 from app.domain.project.services import ProjectService
 
 
@@ -52,9 +53,13 @@ class Member:
     # 默认会改判给另一位，于是两者必然不同——界面照前者写名字，答话的是后者。人恒
     # 为 False。
     project_default: bool = False
-    # 人怎么在这里的：``owner`` 项目所有者、``team`` 所属团队的成员（退出团队就离
-    # 开）、``external`` 接受邀请进来的外部成员（界面上带「外部」标记，只有这一种
-    # 能从项目里移出）。队友是 ``agent``，或者有座位行时为空。
+    # 人怎么在这里的：``owner`` 项目所有者、``team`` 所属团队的成员、``external``
+    # 接受邀请进来的外部成员（界面上带「外部」标记）。队友是 ``agent``，或者有座位
+    # 行时为空。
+    #
+    # 「怎么来的」不是「怎么走的」：``team`` 那一行是读时从小队继承的，他在小队里就
+    # 一直有；他自己按下「退出项目」之后这一行整个消失，而小队里那一下没变
+    # （``ProjectMemberExclusion``）。
     source: str | None = None
     team_id: int | None = None
     # The handle of that team, which the row's 「来自团队」 link goes to.
@@ -100,6 +105,12 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
 
     队友那几行还带着「是不是这个项目的默认队友」：一间没有 AI 席位的老房间落到谁身
     上由它决定，而这张表是界面唯一能知道那是谁的地方。
+
+    名册上少一个人还有第三个来路：**他退出了这个项目**。队友的身份是小队给的，读时
+    继承，所以「退出项目」不改小队，而是记在 ``ProjectMemberExclusion`` 上，这里要
+    认它 —— 不认的话他在名册上照样有一行 ``source == 'team'``，而那句话说的是他还在
+    这个项目里。所有者不在其内：排除说的是「小队带来的人不在这儿」，所有者是另一条
+    来路（他也走不了 ``leave``），而且一个退出过项目的人后来接手了它照样是所有者。
     """
     projects = ProjectService(session)
     project = await projects.get(project_id)
@@ -118,6 +129,10 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
         )
         for person in await projects.people(project_id)
     ]
+    excluded = await MemberRepository(session).excluded_handles(project_id)
+    if excluded:
+        owner = project.owner_handle if project is not None else None
+        rows = [row for row in rows if row.handle not in excluded or row.handle == owner]
     # 授权行那一半里也坐着 agent：``MemberService.add`` 是平台给队友放座位的原语，
     # 而队友的实例不一定建在这个项目里。谁是 agent 由 binding 答，一次问完整张表。
     agents = await IdentityService(session).agents_among([row.handle for row in rows])
