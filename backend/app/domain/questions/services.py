@@ -598,7 +598,7 @@ class QuestionInvitationService:
         invitation_id: int,
         *,
         missing_is_bad_request: bool = False,
-    ):
+    ) -> QuestionInvitation:
         """邀请必须挂在 URL 里那个题目上 —— 这是地址的一部分，不是装饰。
 
         两条读法以前都不成立：详情只看 `invitation_id`（`_ = question_id`），删除
