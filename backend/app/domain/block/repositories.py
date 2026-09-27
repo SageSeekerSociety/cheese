@@ -415,6 +415,30 @@ class BlockRepository:
         )
         return (await self._session.scalars(stmt)).first()
 
+    async def doc_roots(self, topic_ids: list[uuid.UUID]) -> dict[uuid.UUID, Block]:
+        """Several rooms' living docs at once, keyed by room id.
+
+        总览要列每个活跃话题的「当前结论」：一间房一次往返，而这是每一轮都要拼
+        的东西，170 间房就是 170 次。只取房间自己那一份（``task_id`` 为空）——
+        线程的文档是那张卡的东西，不是房间的状态。
+        """
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(Block)
+            .where(
+                Block.topic_id.in_(topic_ids),
+                Block.task_id.is_(None),
+                Block.kind == BlockKind.doc,
+            )
+            .order_by(Block.created_at)
+        )
+        roots: dict[uuid.UUID, Block] = {}
+        for block in (await self._session.scalars(stmt)).all():
+            # Oldest first, so the first one seen is the room's canonical doc.
+            roots.setdefault(block.topic_id, block)
+        return roots
+
     async def list_doc_nodes(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
     ) -> list[Block]:

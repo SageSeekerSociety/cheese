@@ -235,3 +235,42 @@ def test_creating_the_first_doc_expects_no_doc(client):
     )
     assert second.status_code == 409
     assert client.get(f"/topics/{tid}/doc").json()["data"]["content"] == "# 甲"
+
+
+def test_a_doc_that_reads_like_a_log_is_written_anyway_and_flagged(client):
+    """写入时检查（#1889 第 3 条）：写入照样成功，警告跟着这一次响应回来。
+
+    拦下来是错的——让人先猜格式再写字，比一条警告贵得多；静默接受也是错的——
+    下一次读它的人读到的还是流水账。所以两样都要：文档是新的，警告也在。
+    """
+    tid = _topic(client)
+    logged = (
+        "## 进展日志\n\n"
+        "2026-09-01 起了个架子\n"
+        "2026-09-02 接上了接口\n"
+        "2026-09-03 修好了两个 bug\n"
+    )
+
+    r = client.put(
+        f"/topics/{tid}/doc",
+        json={"content": logged, "author": "user-1", "expected_version": 0},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["data"]["content"] == logged
+    assert any("进展日志" in w for w in r.json()["warnings"])
+    assert client.get(f"/topics/{tid}/doc").json()["data"]["content"] == logged
+
+
+def test_a_doc_written_as_state_comes_back_with_no_warnings(client):
+    tid = _topic(client)
+    state = "## 目标\n\n支持翻页。\n\n## 当前结论\n\n用 cursor，不用 offset。\n"
+
+    r = client.put(
+        f"/topics/{tid}/doc",
+        json={"content": state, "author": "user-1", "expected_version": 0},
+    )
+
+    assert r.status_code == 200
+    # 一个干净的响应里没有这个字段：空表和「没有警告」在这里是同一件事。
+    assert "warnings" not in r.json()

@@ -116,6 +116,7 @@ from app.domain.room_task.services import (
 )
 from app.domain.textfile import content_version
 from app.domain.topic import naming
+from app.domain.topic.doc_checks import living_doc_warnings
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import (
@@ -1421,7 +1422,13 @@ async def edit_topic_doc(
         # is what lets the receipt stamp it consumed instead of it being said
         # twice.
         await chat.notify_running_turn(topic_id, line, blocks=[notice.id])
-    return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
+    # 写入检查（#1889 第 3 条）：**照样写入**，只把「哪里不像状态」跟着响应
+    # 带回去，让写它的人当场改。拦下来是错的——让人先猜格式再写字，比一条警告
+    # 贵得多；而只写进日志的警告等于没写（没人读日志，写它的人也不在那儿）。
+    return ok(
+        BlockOut.model_validate(doc).model_dump(mode="json"),
+        warnings=living_doc_warnings(content),
+    )
 
 
 @router.get("/{topic_id}/compute-profile")

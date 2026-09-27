@@ -147,11 +147,23 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import binding
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic import naming
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.overview import (
+    ACTIVE_TOPICS_LIMIT,
+    CLOSED_TOPICS_LIMIT,
+    DECISIONS_LIMIT,
+    MILESTONES_LIMIT,
+    first_sentence,
+    project_brief,
+    render_overview,
+    render_overview_auto,
+    topic_conclusion,
+)
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
@@ -261,8 +273,11 @@ class _TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
-    # 项目总览那一份实况文档：全项目共看的东西住在这里（结论 7）。总览房间自己
-    # 那一轮是 None —— 它的 `doc_text` 就是这一份，说两遍只会让模型以为是两份。
+    # 注入用的项目总览：① 从总览文档里取，②~⑤ 从结构化数据现拼（#1889 第 1 条），
+    # 不是文档原文。每个房间都有 ①；②~⑤ 只在总览房间拼，别处按需自己查。
+    #
+    # 总览房间自己那一轮没有 `doc_text` —— 这一份就是它的实况文档，同一份东西说
+    # 两遍只会让模型以为是两份。
     overview_doc_text: str | None
     memories: RecallResult
     prior_progress: list[dict]
@@ -818,6 +833,20 @@ _OPEN_CARD_STATUSES = (
     AcceptStatus.gate_blocked,
     AcceptStatus.conflict,
 )
+
+#: 里程碑的状态说成人话：注入的那一行是给模型读的，`upcoming` 不是中文提示词里
+#: 该出现的词。
+_MILESTONE_STATE = {"upcoming": "进行中", "done": "已完成", "missed": "已逾期"}
+
+
+def _decision_summary(content: str) -> str:
+    """决策卡正文的第一句 —— 注入的是索引，全文在那张卡上。"""
+    for line in content.splitlines():
+        text = line.strip().lstrip("#-*> ").strip()
+        if text:
+            return first_sentence(text) or text
+    return content.strip()
+
 
 _PROGRESS_MARK = {"completed": "x", "in_progress": "~", "pending": " "}
 
@@ -4649,6 +4678,143 @@ class ChatService:
         await session.commit()
         return _block_payload(BlockOut.model_validate(block))
 
+    async def _project_overview(
+        self,
+        session: AsyncSession,
+        *,
+        project: Project,
+        room_id: uuid.UUID,
+        room_doc: str | None,
+        overview_doc: str | None,
+        all_topics: list[Topic],
+        roster: list[dict],
+    ) -> str:
+        """注入用的项目总览：① 从总览文档来，②~⑤ 从结构化数据现拼（#1889）。
+
+        在总览房间（项目根话题）里，总览就是本房间的实况文档，五块都拼给它；别的
+        房间只注入 ① —— 它们读到「这个项目是什么」就够了，其余四块要哪一块就自己
+        去查哪一块，不必每轮往每间房塞一份项目快照。
+        """
+        in_overview_room = project.root_topic_id == room_id
+        source = room_doc if in_overview_room else overview_doc
+        return render_overview(
+            brief=project_brief(source or ""),
+            auto=(
+                await self._overview_auto(session, project, all_topics, roster)
+                if in_overview_room
+                else ""
+            ),
+        )
+
+    async def _overview_auto(
+        self,
+        session: AsyncSession,
+        project: Project,
+        all_topics: list[Topic],
+        roster: list[dict],
+    ) -> str:
+        """②~⑤ 的每一行：活跃话题、最近决策卡、里程碑、已结束话题的结论。
+
+        全部来自结构化数据，所以**没有一句是手抄的**——谁改了源头，下一次注入就是
+        新的。负责人取该话题最新那张任务卡的 owner：一个房间可以有好几张卡，最新
+        的那张才说得出现在谁在做。
+        """
+        name_of = {m["handle"]: m["name"] for m in roster}
+
+        def person(handle: str | None) -> str | None:
+            # 名册上的名字才是 @ 得到的名字；查不到就照 handle 写，那是真的。
+            return f"@{name_of.get(handle, handle)}" if handle else None
+
+        from app.domain.room_task.services import TaskService
+
+        latest_card: dict[uuid.UUID, Task] = {}
+        for card in await TaskService(session).list_in_project(project.id):
+            # Oldest first: the newest card in each room wins.
+            latest_card[card.room_id] = card
+
+        def card_state(topic_id: uuid.UUID) -> str:
+            card = latest_card.get(topic_id)
+            if card is None:
+                return "还没开活"
+            return "在做" if card.status == TaskStatus.open else "已收工"
+
+        live = [
+            t
+            for t in all_topics
+            if t.kind != TopicKind.root and t.status != TopicStatus.archived
+        ][:ACTIVE_TOPICS_LIMIT]
+        closed = sorted(
+            (
+                t
+                for t in all_topics
+                if t.kind != TopicKind.root and t.status == TopicStatus.archived
+            ),
+            key=lambda t: t.archived_at or t.updated_at,
+            reverse=True,
+        )[:CLOSED_TOPICS_LIMIT]
+        # 只取要渲染的那几间房的文档：一屏之外的结论没人读，问了也是白问。
+        docs = await BlockRepository(session).doc_roots(
+            [t.id for t in (*live, *closed)]
+        )
+
+        def conclusion(topic: Topic, *, prefer_card: bool) -> str | None:
+            """话题现在的一句话结论：卡上那句优先，没有就看它自己的实况文档。"""
+            card = latest_card.get(topic.id)
+            if prefer_card and card is not None and card.conclusion:
+                return first_sentence(card.conclusion)
+            doc = docs.get(topic.id)
+            return topic_conclusion(doc.content) if doc is not None else None
+
+        decisions = (
+            await BlockRepository(session).list_by_kind_for_project(
+                project.id, BlockKind.decision
+            )
+        )[:DECISIONS_LIMIT]
+        milestones = (await MilestoneRepository(session).list_for_project(project.id))[
+            :MILESTONES_LIMIT
+        ]
+        title_of = {t.id: t.title for t in all_topics}
+        return render_overview_auto(
+            active_topics=[
+                {
+                    "id": str(t.id),
+                    "title": t.title,
+                    "owner": person(
+                        card.owner_handle
+                        if (card := latest_card.get(t.id)) is not None
+                        else None
+                    ),
+                    "status": card_state(t.id),
+                    "conclusion": conclusion(t, prefer_card=False),
+                }
+                for t in live
+            ],
+            decisions=[
+                {
+                    "text": _decision_summary(block.content),
+                    "topic_id": str(block.topic_id),
+                    "topic": title_of.get(block.topic_id),
+                }
+                for block in decisions
+            ],
+            milestones=[
+                {
+                    "title": m.title,
+                    "due": m.due_date.date().isoformat() if m.due_date else None,
+                    "status": _MILESTONE_STATE.get(m.status.value, m.status.value),
+                }
+                for m in milestones
+            ],
+            closed_topics=[
+                {
+                    "id": str(t.id),
+                    "title": t.title,
+                    "conclusion": conclusion(t, prefer_card=True),
+                }
+                for t in closed
+            ],
+        )
+
     async def _assemble_turn(
         self,
         *,
@@ -4782,7 +4948,8 @@ class ChatService:
             # 人和 agent 共同看的那一份（结论 7）：项目总览房间的实况文档。它不是
             # 记忆，所以不走召回那条路——写它的人（或 agent）留了痕，读它的每一间
             # 房间读到的是同一份，而这正是共享记忆池做不到的两件事。
-            # 总览房间自己那一轮不读第二遍：`doc_text` 已经是它。
+            # 总览房间自己那一轮不读第二遍：`doc_text` 已经是它（下面注入那一步会
+            # 把两者合起来，那里才是「注入什么」的决定）。
             overview_root = (
                 await blocks.doc_root(project.root_topic_id)
                 if project is not None
@@ -4809,10 +4976,28 @@ class ChatService:
             # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
             # ——用户自己打 @某个归档话题也必须还能变成链接）；
             # `topic_refs_for_prompt` 只是**渲染**进 system prompt 的子集。
+            all_topics = await topics.list_for_project(topic.project_id)
             topic_refs, topic_refs_for_prompt = _topic_ref_lists(
-                await topics.list_for_project(topic.project_id),
-                exclude_id=topic.id,
+                all_topics, exclude_id=topic.id
             )
+            if project is not None and project.root_topic_id is not None:
+                # 项目总览（#1889 第 1 条）：注入的不是文档原文，而是「① 从文档
+                # 来 + ②~⑤ 从结构化数据现拼」的那一份。手抄进正文的旧内容因此读
+                # 不到——写在那儿的副本没人读，也就没人再写。
+                #
+                # 在总览房间它同时就是本房间的实况文档：同一份东西说两遍，模型会
+                # 以为是两份，所以那里把 `doc_text` 交出去（它只喂提示词）。
+                overview_doc_text = await self._project_overview(
+                    session,
+                    project=project,
+                    room_id=place.room_id,
+                    room_doc=doc_text,
+                    overview_doc=overview_doc_text,
+                    all_topics=all_topics,
+                    roster=roster,
+                )
+                if project.root_topic_id == place.room_id:
+                    doc_text = None
             # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。不租地点的一轮里
             # 没有交付，那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，
             # 前者要说话（第一次交付只能新建），后者一个字都不说，所以给的是 None。
@@ -5762,6 +5947,9 @@ class ChatService:
                 else None
             )
             overview_doc = overview_root.content if overview_root else ""
+            # 只要第 ① 块（#1889 第 1 条）：②~⑤ 由结构化数据现拼，手抄进正文的
+            # 那些副本是旧账，照抄一份进去等于把两个版本并排交给写总结的人。
+            brief = project_brief(overview_doc)
             agents = AgentInstanceService(session)
             agent = await agents.for_project(project)
             role = await agents.system_prompt(agent)
@@ -5781,14 +5969,15 @@ class ChatService:
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"
-            "## 项目总览的实况文档\n"
+            # 话题和里程碑上面已经按结构化数据列了，这里只补上「项目是什么」。
+            "## 项目是什么\n"
             + (
                 fit_doc_to_budget(
-                    overview_doc.strip(),
+                    brief,
                     OVERVIEW_DOC_CHAR_BUDGET,
                     full_read_hint="在项目根话题里调 `cheese_doc_get` 读全文",
                 )
-                if overview_doc.strip()
+                if brief
                 else "（暂无）"
             )
         )
