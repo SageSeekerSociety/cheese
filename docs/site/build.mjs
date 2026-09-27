@@ -87,6 +87,7 @@ function renderMarkdown(md, { file }) {
     return `<a class="link" href="${esc(href)}" rel="noopener">${t}</a>`
   }
   renderer.image = ({ href, text }) => {
+    if (href.startsWith('/images/') && !fs.existsSync(path.join(MANUAL, 'public', href))) fail(`${file}: picture ${href} is not in docs/manual/public/images`)
     const src = href.startsWith('/') ? `/docs${href}` : href
     return `<figure><div class="shot"><img src="${esc(src)}" alt="${esc(text)}" loading="lazy"></div>${text ? `<figcaption>${esc(text)}</figcaption>` : ''}</figure>`
   }
@@ -96,7 +97,8 @@ function renderMarkdown(md, { file }) {
   let html
   try { html = marked.parse(md, { renderer }) } catch (e) { fail(`${file}: ${e.message}`) }
   let lede = ''
-  html = html.replace(/^\s*<p>([\s\S]*?)<\/p>/, (_, p) => { lede = p; return '' })
+  // The first paragraph is the lede (after the title's anchor, which stays in place).
+  html = html.replace(/^(\s*(?:<span [^>]*class="page-anchor"><\/span>)?\s*)<p>([\s\S]*?)<\/p>/, (_, anchor, p) => { lede = p; return anchor })
   // one search chunk per h2 section
   const chunks = html.split(/(?=<h2 id=")/).map((part) => {
     const h = /^<h2 id="([\w-]+)">([\s\S]*?)<a class="anchor"/.exec(part)
@@ -355,7 +357,8 @@ const assets = {
   js: asset('app', 'js', js),
   css: asset('app', 'css', css),
   logo: asset('logo', 'svg', LOGO_SVG),
-  room: asset('room', 'html', fs.readFileSync(path.join(HERE, 'island/room.html'))),
+  // 三极行楷简体-粗 (三极字库, free for commercial use), subset to the home page's display headings by gen/font.sh.
+  display: asset('display', 'woff2', fs.readFileSync(path.join(HERE, 'src/fonts/display.woff2'))),
 }
 for (const p of Object.values(pages)) if (p.diagram) write(p.diagram.url.replace(/^\/docs\//, ''), fs.readFileSync(p.diagram.file))
 const images = path.join(MANUAL, 'public')
@@ -383,10 +386,13 @@ const devList = flatNav(devNav)
 devList.forEach((p, i) => write(`dev/${p.slug}.html`, docPage(ctx, p, devNav, devList[i - 1], devList[i + 1])))
 write('dev/index.html', redirectPage('/docs/dev/overview'))
 
-const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel }]))
+// The first picture on a page, for the home page's cards.
+const firstImage = (md) => { const m = /!\[([^\]]*)\]\((\/images\/[^)\s]+)\)/.exec(md); return m ? { src: `/docs${m[2]}`, alt: m[1] } : null }
+const pageRefs = Object.fromEntries(Object.values(pages).filter((p) => p.section !== 'dev').map((p) => [p.slug, { url: p.url, title: p.title, sectionLabel: p.sectionLabel, group: p.group, summary: p.summary, image: firstImage(p.source) }]))
+const devRefs = Object.fromEntries(devList.map((p) => [p.slug, { url: p.url, title: p.title, summary: p.summary }]))
 pageRefs.__logo = assets.logo
 const doors = SECTIONS.map(([key, label, icon]) => ({ key, label, icon, items: userNav[key].flatMap(([, items]) => items) }))
-write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs }))
+write('index.html', homePage(ctx, { releases: RELEASES, faq: FAQ, WHO, doors, pages: pageRefs, dev: devRefs, full: pages, nav: userNav }))
 write('changelog.html', changelogPage(ctx, RELEASES))
 write('changelog.xml', changelogFeed(RELEASES))
 write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest' }))
@@ -397,7 +403,6 @@ for (const [from, to] of Object.entries(REDIRECTS)) {
   write(`${from}.html`, redirectPage(`/docs/${to}`))
 }
 // The home page's interactive parts need a small map of page links and the role data.
-write('home.json', JSON.stringify({ pages: pageRefs, who: WHO }))
 
 // ---------- search indexes: public and developer, kept apart ----------
 const searchIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.map((c) => ({

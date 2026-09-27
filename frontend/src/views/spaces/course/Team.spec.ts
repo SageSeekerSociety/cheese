@@ -43,6 +43,8 @@ vi.mock('vue-i18n', async () => {
 
 import Team from './Team.vue'
 
+import { BusinessError } from '@/network/types/error'
+
 const ALICE = { id: 11, username: 'alice', nickname: 'Alice' }
 
 function emptyTeams() {
@@ -140,6 +142,38 @@ describe('my group in a course', () => {
         avatarId: 1,
       })
     )
+  })
+
+  async function tryToCreate(name: string) {
+    getMyCourseGroup.mockResolvedValue({ data: { projectId: null, team: null } })
+    emptyTeams()
+    const page = await mountPage()
+    await waitFor(() => expect(page.getByText('spaces.course.team.noGroupYet')).toBeTruthy())
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.course.team.create' }))
+    const input = await waitFor(() => {
+      const el = document.querySelector('input[type="text"]')
+      expect(el).toBeTruthy()
+      return el as HTMLInputElement
+    })
+    await fireEvent.update(input, name)
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.course.team.confirmCreate' }))
+    return page
+  }
+
+  it('says so when the group name is already taken, and keeps the dialog for another try', async () => {
+    // 组名全站唯一。撞名以前什么都不显示：按钮按了像没按，只能刷新。
+    createTeam.mockRejectedValueOnce(
+      new BusinessError('taken', 409, { name: 'Conflict', message: 'taken', data: { field: 'name' } })
+    )
+    const page = await tryToCreate('第一组')
+    await waitFor(() => expect(page.getByText('spaces.course.team.nameTaken')).toBeTruthy())
+    expect(page.getByRole('button', { name: 'spaces.course.team.confirmCreate' })).toBeTruthy()
+  })
+
+  it('says the group was not created when creating fails for another reason', async () => {
+    createTeam.mockRejectedValueOnce(new Error('network down'))
+    const page = await tryToCreate('第二组')
+    await waitFor(() => expect(page.getByText('spaces.course.team.createFailed')).toBeTruthy())
   })
 
   it('accepts an invitation someone sent the student', async () => {

@@ -188,8 +188,7 @@ async function setRole(row: Row, next: Role) {
         </span>
       </div>
       <p class="mem__foot">
-        邀请码的改码接口真平台还没有（今天只有建码），这一批先把整页收进头部下拉的事留到后面 ——
-        现在那颗入口指向已有的管理页。
+        可用人数与有效期在头部那块下拉的「邀请码」里随时可调，改完立刻生效；不需要的码在那里撤销。
       </p>
     </PanelCard>
   </div>

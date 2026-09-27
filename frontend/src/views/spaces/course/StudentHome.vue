@@ -49,7 +49,7 @@
         >
           {{ t('spaces.course.myCourse.openQuiz') }}
         </v-btn>
-        <p v-else class="text-medium-emphasis mb-0">
+        <p v-if="!currentUnit.assignmentTaskId && !currentUnit.quizId" class="text-medium-emphasis mb-0">
           {{ t('spaces.course.myCourse.nothingToHandIn') }}
         </p>
       </template>
@@ -94,6 +94,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
+import { courseWorkStatus } from '@/lib/courseNav'
 import { SpacesApi } from '@/network/api/spaces'
 import { useSpaceStore } from '@/stores/space'
 
@@ -127,23 +128,12 @@ const isPending = computed(() => space.value?.reviewStatus === 'PENDING')
 
 // 完成状态是服务端算的（`SpaceMyParticipation.completionStatus`），前端只负责
 // 把它翻成人话 —— 自己不另算一套「做完了没有」。
-const STATUS_LABEL: Record<string, string> = {
-  NOT_SUBMITTED: 'spaces.course.myCourse.status.notSubmitted',
-  PENDING_REVIEW: 'spaces.course.myCourse.status.pendingReview',
-  REJECTED_RESUBMITTABLE: 'spaces.course.myCourse.status.resubmittable',
-  FAILED: 'spaces.course.myCourse.status.failed',
-  SUCCESS: 'spaces.course.myCourse.status.success',
-}
-
 function statusLabel(item: SpaceMyParticipation): string {
-  const key = STATUS_LABEL[item.completionStatus]
-  return key ? t(key) : t('spaces.course.myCourse.status.unknown')
+  return t(courseWorkStatus(item.completionStatus).label)
 }
 
 function statusColor(item: SpaceMyParticipation): string {
-  if (item.completionStatus === 'SUCCESS') return 'success'
-  if (item.completionStatus === 'NOT_SUBMITTED') return 'warning'
-  return 'primary'
+  return courseWorkStatus(item.completionStatus).color
 }
 
 onMounted(async () => {

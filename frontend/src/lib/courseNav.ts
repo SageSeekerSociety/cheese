@@ -152,3 +152,19 @@ export function spaceEntryRoute(space: { id: number; isCourse?: boolean }): {
 export function isCourseTeacher(adminUserIds: readonly number[], userId: number | undefined): boolean {
   return userId !== undefined && adminUserIds.includes(userId)
 }
+
+/**
+ * 一份作业在学生这一侧的状态：服务端算好的 `completionStatus`，翻成人话和颜色。
+ * 「我的课程」和「本周任务」两屏用同一张表，免得同一份作业在两处叫法不同。
+ */
+const WORK_STATUS: Record<string, { label: string; color: string }> = {
+  NOT_SUBMITTED: { label: 'spaces.course.myCourse.status.notSubmitted', color: 'warning' },
+  PENDING_REVIEW: { label: 'spaces.course.myCourse.status.pendingReview', color: 'primary' },
+  REJECTED_RESUBMITTABLE: { label: 'spaces.course.myCourse.status.resubmittable', color: 'primary' },
+  FAILED: { label: 'spaces.course.myCourse.status.failed', color: 'primary' },
+  SUCCESS: { label: 'spaces.course.myCourse.status.success', color: 'success' },
+}
+
+export function courseWorkStatus(status: string): { label: string; color: string } {
+  return WORK_STATUS[status] ?? { label: 'spaces.course.myCourse.status.unknown', color: 'primary' }
+}
