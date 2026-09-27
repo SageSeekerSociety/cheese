@@ -6,6 +6,7 @@ from typing import NamedTuple
 from app.domain.agent import place
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.launch import MachinePlan
+from app.domain.agent.platform_failures import classify_session_start
 from app.domain.device.supply import Supply
 
 # How long a session's scoped credential lives. It is baked into the process at
@@ -39,6 +40,15 @@ class ScreenSetupError(Exception):
         super().__init__(message)
         self.failure_code = failure_code
         self.log = log
+
+
+def startup_refused(
+    log: str, *, harness: str, timed_out: bool = False
+) -> ScreenSetupError:
+    """The refusal for a session that did not start: one sentence for the room,
+    chosen from what the machine recorded, and that record for 现场."""
+    failure = classify_session_start(log, harness=harness, timed_out=timed_out)
+    return ScreenSetupError(failure.content, failure_code=failure.code, log=log)
 
 
 class Placement(NamedTuple):

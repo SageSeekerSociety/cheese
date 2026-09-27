@@ -27,12 +27,11 @@ from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
 from app.domain.agent.harness.channel import (
     SESSION_TOKEN_TTL_S,
     Placement,
-    ScreenSetupError,
+    startup_refused,
 )
 from app.domain.agent.harness.claude_code.runner import LAUNCH, ended
 from app.domain.agent.harness.claude_code.runtime import Handle
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
-from app.domain.agent.platform_failures import classify_session_start
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.library import service as library
 
@@ -52,13 +51,6 @@ logger = logging.getLogger(__name__)
 # stops there.
 STARTUP_WAIT_S = 120.0
 STARTUP_POLL_S = 1.0
-
-
-def _refused(log: str, *, timed_out: bool) -> ScreenSetupError:
-    """The room's one sentence for a session that did not start, carrying what
-    the runner's log said for 现场."""
-    failure = classify_session_start(log, timed_out=timed_out)
-    return ScreenSetupError(failure.content, failure_code=failure.code, log=log)
 
 
 class ClaudeCodeChannel:
@@ -168,10 +160,12 @@ class ClaudeCodeChannel:
                 # does not come back means the session cannot be reached yet.
                 failure = exc
             if record := await self._ended(device_id, state, launch):
-                raise _refused(record, timed_out=False)
+                raise startup_refused(record, harness="Claude Code")
             if time.monotonic() >= deadline:
-                raise _refused(
-                    await self._why(device_id, state, failure), timed_out=True
+                raise startup_refused(
+                    await self._why(device_id, state, failure),
+                    harness="Claude Code",
+                    timed_out=True,
                 )
             await asyncio.sleep(STARTUP_POLL_S)
 

@@ -286,7 +286,9 @@ async def test_a_runner_that_never_bound_reports_its_own_last_words(channel, imp
             SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"),
             Opening(system_prompt="x"),
         )
-    assert "pi 没有握上手" in str(refused.value)
+    # The room gets a sentence; the machine's own words are for 现场.
+    assert str(refused.value) == "pi 启动失败：在等待时限内没有起来，启动记录在现场"
+    assert refused.value.log and "pi 没有握上手" in refused.value.log
 
 
 @pytest.mark.anyio
@@ -305,7 +307,29 @@ async def test_a_machine_that_kept_no_reason_still_reports_the_refusal(
             SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"),
             Opening(system_prompt="x"),
         )
-    assert "no such file or directory" in str(refused.value)
+    assert refused.value.log and "no such file or directory" in refused.value.log
+    assert "no such file" not in str(refused.value)
+
+
+@pytest.mark.anyio
+async def test_a_recognised_cause_is_said_in_one_sentence(channel, impatient):
+    """The same causes stop pi as Claude Code: here the work lease answering
+    504 to the executor client its runner started."""
+    rooms, hub = Rooms(), Hub()
+    hub.dial_error = DIAL
+    hub.runner_log = (
+        "Traceback (most recent call last):\n"
+        '  File "/h/client.py", line 544, in _take_leased_machine\n'
+        "executor_transport.PlatformHTTPError: Platform HTTP 504: {}"
+    )
+
+    with pytest.raises(ScreenSetupError) as refused:
+        await channel(rooms, hub).ensure(
+            SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"),
+            Opening(system_prompt="x"),
+        )
+    assert str(refused.value) == "pi 启动失败：这个房间的工作机器还在准备"
+    assert refused.value.log and "Platform HTTP 504" in refused.value.log
 
 
 @pytest.mark.anyio
