@@ -45,6 +45,8 @@ const emit = defineEmits<{
   (e: 'review'): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
+  /** 总览自动区里的一条决策 / 里程碑：面板不导航，交给 `TopicView`。 */
+  (e: 'open-resource', resource: 'decision' | 'milestone'): void
 }>()
 
 const docRef = ref<{ pulse: () => void; highlightTurn: (turnId: string) => void } | null>(null)
@@ -92,6 +94,7 @@ defineExpose({
           @open-topic="emit('open-topic', $event)"
           @mention-click="emit('mention-click', $event)"
           @open-file="emit('open-file', $event)"
+          @open-resource="emit('open-resource', $event)"
         />
       </div>
     </Transition>

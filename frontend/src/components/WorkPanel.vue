@@ -90,6 +90,8 @@ const emit = defineEmits<{
   /** 卡片面板里的「去验收」——同 `chatEvents.review`，切到「改动」那一格。 */
   (e: 'review'): void
   (e: 'mention-click', handle: string): void
+  /** 总览自动区里的一条决策 / 里程碑：去向是项目里的一页，交给 `TopicView`。 */
+  (e: 'open-resource', resource: 'decision' | 'milestone'): void
   (e: 'update:tab', key: string): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层。
   (e: 'locate', message: string): void
@@ -638,6 +640,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           @review="emit('review')"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
+          @open-resource="emit('open-resource', $event)"
         />
         <PanelSite
           v-if="mounted.has('site')"

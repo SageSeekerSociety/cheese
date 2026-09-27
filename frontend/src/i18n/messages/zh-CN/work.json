@@ -193,6 +193,18 @@
       "title": "进度",
       "tally": "完成 {done}/{total}"
     },
+    "overviewAuto": {
+      "badge": "平台自动生成，不可编辑",
+      "milestone": {
+        "upcoming": "进行中",
+        "done": "已完成",
+        "missed": "已逾期",
+        "due": "截止 {date}",
+        "noDue": "日期待定"
+      },
+      "decisionFrom": "来自「{topic}」",
+      "failed": "无法加载这部分内容"
+    },
     "accept": {
       "change": "改动",
       "artifact": "《{name}》第 {version} 版",
