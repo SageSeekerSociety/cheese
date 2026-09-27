@@ -40,6 +40,11 @@ INDEX_MAX_BYTES = 25 * 1024
 INDEX_LINE_TARGET = 150
 INDEX_LINE_LIMIT = 200
 
+#: 一条记忆的路径上限，等于 `memory_files.path` 那一列的宽度（`String(200)`）。
+#: 没有这一条时，一个超长的文件名不是在写入端被拒，而是在 flush 的时候炸成一个
+#: 500——写它的 agent 拿不到「该改什么」。
+PATH_MAX = 200
+
 #: 一条记忆的文件名（不含扩展名）：kebab-case slug。
 _NAME_RE = re.compile(r"\A[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
@@ -224,9 +229,19 @@ def check_path(path: str) -> str:
     数据库是真相，但会话里铺下来的是真文件，而 agent 手里的 Write 能写任何路径。
     回写时按路径对号入座，所以路径先得过这一关：绝对路径、`..`、反斜杠、子目录
     一律拒绝——拒绝的理由里说得清是哪一条，比事后再去猜一个串了门的文件强。
+
+    长度也在这里挡：`memory_files.path` 是 ``String(200)``，比它长的一句在数据库
+    那一侧是一个 500（值太长放不进去），在这里是一个说得清的 422。数的是**这一层
+    的名字**（`MEMORY.md` 或 `<slug>.md`），和那一列存的是同一个东西；作用域前缀
+    是另一个字段，不在这里。
     """
     if not path or path.startswith("/") or "\\" in path or "\x00" in path:
         raise MemoryFileError(f"记忆文件的路径不能是 {path!r}")
+    if len(path) > PATH_MAX:
+        raise MemoryFileError(
+            f"记忆文件的路径太长（最多 {PATH_MAX} 个字符，这条 {len(path)} 个）："
+            "文件名短一点，长的那部分写进正文"
+        )
     parts = path.split("/")
     if any(part in ("", ".", "..") for part in parts):
         raise MemoryFileError(f"记忆文件的路径不能越出本目录：{path!r}")

@@ -45,14 +45,17 @@ async def _turn_in(
     dm: bool,
     team: str | None = None,
     private: dict[str, str] | None = None,
+    keeps_memory: bool = True,
 ) -> str:
     """开一个项目、铺下索引、跑一轮，交回这一轮的 system prompt。
 
     ``team`` 是项目共看那个索引的内容；``private`` 是 {人: 内容}——这一轮说话的
     人是 ``u``，所以真正该读到的是 ``private["u"]``。``dm`` 说的是这一轮落在私聊
-    里还是普通房间里。
+    里还是普通房间里。``keeps_memory`` 是这一轮跑的骨架会不会把记忆文件对账回平
+    台——不会的时候，记忆那两段一个字都不该进去。
     """
     screen = Screen()
+    screen.runtime.keeps_memory = keeps_memory
     svc = ChatService(
         session_factory=factory,
         compute=ComputePool([screen.runtime], screen.name),
@@ -136,6 +139,26 @@ async def test_a_dm_carries_the_same_two(client, tmp_path):
     )
     assert TEAM_HOOK in prompt
     assert MINE_HOOK in prompt
+
+
+async def test_a_harness_that_keeps_no_memory_is_not_given_the_index(client, tmp_path):
+    """带不回去的骨架（codex、pi）读到的是做不到的说明。
+
+    索引也一样：一条读得到、改不回去的索引，只会让 agent 去改一个它写不回去的地
+    方。这一轮的索引在库里、也在磁盘上，只是不注入。
+    """
+    prompt = client.portal.call(
+        lambda: _turn_in(
+            client.test_request_factory,
+            tmp_path,
+            dm=False,
+            team=TEAM_HOOK,
+            keeps_memory=False,
+        )
+    )
+    assert TEAM_HOOK not in prompt
+    assert "## 记忆（memory）" not in prompt
+    assert "## 你的记忆（索引" not in prompt
 
 
 async def test_another_projects_index_does_not_come_along(client, tmp_path):

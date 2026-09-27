@@ -2653,6 +2653,10 @@ class ChatService:
         带 diff，谁的名都不点：一条记忆是 agent 写下的一份观察，房间里没有人在等
         它。两棵树分开说，因为读它们的人不是一批：把某个人 private 的 diff 说进
         总览，等于把一个人的偏好广播给整个项目。
+
+        被平台盖回去的那几条走另一条路（`memory_changed_notice` 把它写进
+        `agent_notice`）：这条灰字是给人看的，而「你刚才写的那一版被盖了」是说给
+        那个还在会话机上的 agent 的。
         """
         for scope, owner in scopes:
             part = change.scoped(prefix_of_scope(scope, owner))
@@ -2665,7 +2669,7 @@ class ChatService:
                 where="项目共享" if scope is MemoryFileScope.team else "你的私人",
                 summary=part.summary(),
                 diff=part.diff,
-                refused=bool(part.refused),
+                refused=tuple(sorted(part.refused)),
             )
             await announce(session, place_id=room, content=content, meta=meta)
 
@@ -5594,6 +5598,9 @@ class ChatService:
                 ),
             ),
             stage_guide=load_scenario(stage_scenario(topic_stage)),
+            # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
+            # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
+            keeps_memory=runtime.keeps_memory,
         )
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
@@ -5884,11 +5891,14 @@ class ChatService:
             await session.commit()
 
         # --- run 芝士 with the activity-digestion skill + tools ---
+        provider = self._compute.platform_work(compute_id)
+        runtime = runtime_for(provider)
         system_prompt = build_system_prompt(
             self._base_prompt,
             load_skills(ACTIVITY_SKILLS),
             None,
             memory,
+            keeps_memory=runtime.keeps_memory,
         )
         prompt = (
             "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
@@ -5896,8 +5906,6 @@ class ChatService:
             "如果这是个关键节点就用 cheese_milestone 钉成里程碑；"
             "需要分派的待办用 cheese_notify 通知到人。\n\n---\n" + text
         )
-        provider = self._compute.platform_work(compute_id)
-        runtime = runtime_for(provider)
         final_text = ""
         new_session_id = None
         tools_used: list[str] = []
@@ -6006,6 +6014,9 @@ class ChatService:
             load_skills(HEARTBEAT_SKILLS),
             None,
             None,
+            # 记忆那一段也不要：它讲的是「在一个会话里怎么写记忆」，而巡检这一轮
+            # 不落记忆文件，写下来的话也没有下一轮读得到。
+            keeps_memory=False,
         )
         prompt = (
             "现在做一次定期巡检。下面是项目当前状态。请：先在回复里写下你的巡检"
@@ -6114,6 +6125,8 @@ class ChatService:
             None,
             None,  # 一页纸总结也不注入记忆索引：它讲的是项目状态，不是某个人。
             role,
+            # 记忆那一段同理，而且这一轮根本不落记忆文件。
+            keeps_memory=False,
         )
         prompt = (
             "请基于下面的项目状态，写一份『一页纸总结』：3-5 句话，让老师 30 秒读懂"

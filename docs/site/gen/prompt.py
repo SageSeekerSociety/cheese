@@ -331,16 +331,23 @@ TOGGLES = [
         "params": ["doc=…"],
     },
     {
+        "id": "keeps_memory",
+        "kwargs": {"keeps_memory": True},
+        "label": "`keeps_memory=True`：这一轮跑的骨架会把记忆文件对账回平台，"
+        "记忆那一段才在（索引那一段还要 `memory` 非空）",
+        "params": ["keeps_memory=True"],
+    },
+    {
         "id": "memory",
-        "kwargs": {"memory": MEMORY},
+        "kwargs": {"memory": MEMORY, "keeps_memory": True},
         "label": "`memory` 非空：两个作用域的索引都在（项目共享一份、本轮发言人一份）",
-        "params": ["memory=…"],
+        "params": ["memory=…", "keeps_memory=True"],
     },
     {
         "id": "memory_over_cap",
-        "kwargs": {"memory": MEMORY_OVER_CAP},
+        "kwargs": {"memory": MEMORY_OVER_CAP, "keeps_memory": True},
         "label": "`memory` 非空且超了上限：截断按行，那句话跟着索引一起进来",
-        "params": ["memory=…（超上限的那一份）"],
+        "params": ["memory=…（超上限的那一份）", "keeps_memory=True"],
     },
     {
         "id": "session_opening",

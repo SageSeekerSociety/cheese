@@ -78,6 +78,9 @@ def test_compressed_docs_leave_the_memory_block_untouched():
         "## 临时\n" + "长" * 9000,
         _index("- [甲](a.md) — 记忆甲", "- [乙](b.md) — 记忆乙"),
         overview_doc="## 临时\n" + "短" * 9000,
+        # 记忆那两段要有得看，得先说清这一轮跑的骨架会把文件对账回去
+        # （`keeps_memory`，见 `test_the_memory_section_follows_the_harness.py`）。
+        keeps_memory=True,
     )
 
     assert "记忆甲" in prompt and "记忆乙" in prompt

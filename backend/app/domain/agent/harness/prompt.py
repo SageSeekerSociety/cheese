@@ -211,7 +211,18 @@ def build_system_prompt(
     session_opening: list[str] | None = None,
     stage_guide: str | None = None,
     teaching: TeachingContext | None = None,
+    keeps_memory: bool = False,
 ) -> str:
+    """拼这一轮的 system prompt。
+
+    ``keeps_memory`` 说的是**这一轮跑的 harness 会不会把记忆文件对账回平台**
+    （``AgentRuntime.keeps_memory``，调用方按当前 runtime 传入）。默认不注：记忆
+    那一段（说明书 + L1 索引）讲的是「写进 `$HOME/.cheese/memory/`，下一轮平台的
+    那一份里有它」，而 codex、pi 没有这条回路——照说明书写下的文件永远同步不回
+    来，agent 却以为自己在写项目记忆。索引同理：正文铺不下去，注入的也就只是一
+    串指向不存在的文件的指针。巡检和一页纸总结那两轮自己也传 False：它们不是某
+    个人的会话，那两段说的是会话里怎么写记忆，跟它们做的事无关。
+    """
     parts = [base]
     if untitled:
         # First in the prompt on purpose: naming the topic is the FIRST action
@@ -389,16 +400,17 @@ def build_system_prompt(
                 full_read_hint="用 `cheese_doc_get` 读全文",
             )
         )
-    # 记忆这一段是有意整份在场的（照搬 CC）：四类记忆是什么、什么不该写、写前
-    # 查重、用前核对——它是这个机制的说明书，而 agent 只有读了它才知道第一条记
-    # 忆该写成什么样。索引（L1）跟着它走，正文留在会话目录里让它自己读。
-    parts.append(MEMORY_INSTRUCTIONS)
-    if memory is not None and not memory.is_empty():
-        index_text = "\n\n".join(
-            f"### {section.label}（`{section.prefix}/`）\n{section.text}"
-            for section in memory.sections
-        )
-        parts.append(memory_block(index_text, memory.warnings))
+    if keeps_memory:
+        # 记忆这一段是有意整份在场的（照搬 CC）：四类记忆是什么、什么不该写、写前
+        # 查重、用前核对——它是这个机制的说明书，而 agent 只有读了它才知道第一条
+        # 记忆该写成什么样。索引（L1）跟着它走，正文留在会话目录里让它自己读。
+        parts.append(MEMORY_INSTRUCTIONS)
+        if memory is not None and not memory.is_empty():
+            index_text = "\n\n".join(
+                f"### {section.label}（`{section.prefix}/`）\n{section.text}"
+                for section in memory.sections
+            )
+            parts.append(memory_block(index_text, memory.warnings))
     if session_opening:
         # 会话开场，不是本轮：这两条一次写对就一直对（机器多大不会变；上次的清单
         # 是给「不在场的那一轮」看的，会话活着的时候它自己的历史就是答案）。会变的

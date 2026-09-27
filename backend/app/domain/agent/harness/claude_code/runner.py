@@ -39,7 +39,12 @@ from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.driven import runner
 from app.domain.memory.files import MEMORY_ROOT, check_scoped_path
-from app.domain.memory.tree import prefixes_of, sync_tree
+from app.domain.memory.tree import (
+    BULK_DELETE_MIN,
+    BULK_DELETE_RATIO,
+    prefixes_of,
+    sync_tree,
+)
 
 # One stdout line can carry a whole tool result (Claude Code caps those at about
 # 30,000 characters) or an image the session was handed. A line over the limit
@@ -166,10 +171,15 @@ def transcript(config_dir: Path, session_id: str) -> Path | None:
     return None
 
 
-#: 记忆树里上一次对账写下去的那一版，按路径存指纹。它是**中间那一方**：平台说
-#: 「我这一份是什么」，会话说「我这一份是什么」，而「上一次是什么」两边都不是它的
-#: 主人，所以它只能待在 runner 的 state 里，谁都不多存一份。
-MEMORY_BASELINE = "memory"
+#: 上一次对账写下去的那一版（路径 → 指纹），**和那棵树放在同一个目录里**。
+#:
+#: 它是三方合并的中间那一方：没有它，「两边都动了」就没有第三个答案可以问。它跟
+#: 着树走，因为「上次铺下去的是什么」只有和「铺下去的那些文件」在一起才是真的。
+#: 放在别处（journal 里）出过一次真的会丢记忆的事：会话的家被重建（`resource_cleanup`
+#: 会把它整个删掉），树没了而那张表活了下来，于是每一条平台上的记忆都看起来像是
+#: 会话刚刚删掉的，一次对账就把 team 和发言人的 private 整棵删光——删除没有历史
+#: 可以恢复。放在这里，家一没这张表跟着没，下一次对账就是一次全新的铺。
+MEMORY_BASELINE = ".baseline.json"
 
 
 def memory_root() -> Path:
@@ -206,12 +216,15 @@ def memory_scopes(params: dict) -> dict[str, dict[str, str]]:
     return out
 
 
-def _recall_baseline(journal: Journal) -> dict[str, str]:
-    """上一次对账留下的指纹表。读不出来当没写过——一次对账重来一遍，比拿着一张
-    读不懂的表去判「谁改过」安全。"""
+def _recall_baseline(root: Path) -> dict[str, str]:
+    """上一次对账留下的指纹表（就在记忆树根上，见 `MEMORY_BASELINE`）。
+
+    读不出来当没写过——一次对账从头铺一遍，比拿着一张读不懂的表去判「谁改过」安
+    全。读不到也正是「这棵树是新的」：家被重建过，于是每一条都按平台的版本铺。
+    """
     try:
-        baseline = json.loads(journal.recall(MEMORY_BASELINE) or "{}")
-    except ValueError:
+        baseline = json.loads((root / MEMORY_BASELINE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return {}
     if not isinstance(baseline, dict):
         return {}
@@ -671,13 +684,28 @@ class Runner(runner.Runner[Journal]):
 
         一条记忆的两种改法都在这里收口：平台写的（别的会话、界面、dream）由
         `scopes` 进来，会话写的由磁盘进来，谁赢看 `tree.sync_tree` 那一条规矩。
+
+        基线从**记忆树自己的根**上读、也写回那里（`MEMORY_BASELINE`）：它和这棵树
+        同生同死，所以「树没了」不会被读成「会话删光了这棵树」。
         """
         scopes = memory_scopes(params)
-        baseline = _recall_baseline(self.journal)
+        root = memory_root()
+        baseline = _recall_baseline(root)
         managed = prefixes_of(scopes, baseline)
         disk = self.read_memory(managed)
         outcome = sync_tree(scopes=scopes, disk=disk, baseline=baseline)
-        root = memory_root()
+        if outcome.held:
+            # 拦下来的是「这一次没照做」：平台上一条都没少，会话里那几个文件下一轮
+            # 会被重新铺回去。说出来，因为下一次对账看到的还是同一棵树——同一条会
+            # 再响一次，而那正是「这件事一直没过去」。这个进程里没有 logger（它是
+            # 会话机上那个只有标准库的归档），说进 stderr 就是 runner.log。
+            print(
+                f"{ended(self.launch)}: memory sync held {len(outcome.held)} "
+                f"deletions (over {BULK_DELETE_MIN} and above "
+                f"{BULK_DELETE_RATIO:.0%} of their scope): " + ", ".join(outcome.held),
+                file=sys.stderr,
+                flush=True,
+            )
         for path, content in outcome.files.items():
             _write_memory(root, path, content)
         # 两方都没有、只有 baseline 里还有的那一条（平台删了，会话也没写回去），
@@ -687,8 +715,29 @@ class Runner(runner.Runner[Journal]):
                 continue
             with contextlib.suppress(OSError):
                 (root / path).unlink(missing_ok=True)
-        self.journal.remember(MEMORY_BASELINE, json.dumps(outcome.baseline))
+        self._keep_refused(root, outcome.refused)
+        _write_memory(root, MEMORY_BASELINE, json.dumps(outcome.baseline))
         return {"files": outcome.files, "refused": outcome.refused}
+
+    @staticmethod
+    def _keep_refused(root: Path, refused: dict[str, str]) -> None:
+        """被平台盖回去的那几版，就地留一份旁路文件（`<名字>.conflict.md`）。
+
+        房间里那句话只说得出「有改动被盖回来了」，而那句话要落到 agent 手里它才能
+        重读再写——它读到的是什么，取决于它还能不能看到自己刚写的那一版。留在同一
+        个目录里，它下一步就是 Read 那个文件。删除（`REMOVED`，空串）不留：没有正
+        文可以留，那句话本身已经把「你删的那条被平台留下了」说完。
+
+        这一类文件**不是记忆**：名字不是 kebab-case，所以 `read_memory` 不收它、
+        回写时也带不回数据库；索引里当然也不会有它——索引是 agent 写的，平台只
+        认 `.md` 里那些合法名字。
+        """
+        for path, content in refused.items():
+            if not content:
+                continue
+            # `team/a.md` → `team/a.conflict.md`：和 `memory_conflict_notice` 说给
+            # agent 的那条路径一模一样，它照着那句话就能 Read 到。
+            _write_memory(root, f"{path[:-3]}.conflict.md", content)
 
     async def _watch(self) -> None:
         expired_at = 0.0

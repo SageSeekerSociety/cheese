@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
@@ -144,6 +145,17 @@ class MemoryFileStore:
         ``expected_version=None`` 是**新建**：已经有一条同名记忆时它也是冲突，
         因为「先查重，再新建」是写记忆的规矩，而一个新的空文件正好是它最容易被
         绕过的地方。要覆盖已经存在的那一条，得先读到它的版本号。
+
+        新建这一步是**先查后插**，两个同时起手的新建会在 ``get`` 之后、``flush``
+        之前撞上唯一约束——上面那条「已经有一条了」正是这个竞赛的结果，所以输家
+        的 ``IntegrityError`` 不是故障，是答案，接住它重读一次并发同样的冲突。
+
+        接住它要有保存点，而保存点有三件事必须按顺序做对，少一件会话就整条作废
+        （那一次 ``flush`` 失败会把「回滚过了」这个状态一路标到外层事务上，接着
+        这个请求里要发的那条 409 自己就先炸了）：对象在保存点**里面** add
+        （``begin_nested()`` 会先把待写对象 flush 出去，在外面 add 的那一行 INSERT
+        落在保存点外面，回滚不掉）、撞上时**自己动手**回滚这一次保存点（让异常从
+        ``async with`` 里传出去，等于把失败标记传给外层）、回滚之后再读一次。
         """
         check_path(path)
         row = await self.get(project_id, scope, owner_handle, path, for_update=True)
@@ -159,13 +171,29 @@ class MemoryFileStore:
                 version=1,
                 updated_by=updated_by,
             )
-            self._session.add(row)
-        else:
-            if expected_version is None or expected_version != row.version:
-                raise MemoryFileConflict(path, expected_version, row.version)
-            row.content = content
-            row.version = row.version + 1
-            row.updated_by = updated_by
+            savepoint = await self._session.begin_nested()
+            try:
+                self._session.add(row)
+                await self._session.flush()
+            except IntegrityError:
+                await savepoint.rollback()
+                current = await self.get(project_id, scope, owner_handle, path)
+                if current is None:
+                    # 不是这个竞赛——撞的是我们不认识的约束。宁可 500，也不要把
+                    # 一次没写进去的写入说成「写好了」。
+                    raise
+                # `from None`：这次冲突是规矩本身的结果，而那一条 IntegrityError
+                # 是它的实现细节——挂在链上，读日志的人会以为出了事故。
+                raise MemoryFileConflict(
+                    path, expected_version, current.version
+                ) from None
+            await savepoint.commit()
+            return row
+        if expected_version is None or expected_version != row.version:
+            raise MemoryFileConflict(path, expected_version, row.version)
+        row.content = content
+        row.version = row.version + 1
+        row.updated_by = updated_by
         await self._session.flush()
         return row
 

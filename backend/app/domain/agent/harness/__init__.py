@@ -457,6 +457,12 @@ class AgentRuntime(Protocol):
         """Where 「记忆该对账了」 goes: before an input, and after a turn."""
         ...
 
+    # 这个 harness 的会话会不会把记忆存成文件、并答得了对账（``memory()`` 有没有
+    # 真答事）。系统提示词里那一段「记忆」按它注不注入：写下来的文件永远同步不回
+    # 来的骨架，那份说明书只会让 agent 以为自己在写项目记忆。和 ``harness`` 一样
+    # 是事实，不是开关——每一条通道都答得出自己这一侧有没有这条回路。
+    keeps_memory: bool
+
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         """Relay one memory reconciliation to this room's session.
 

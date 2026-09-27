@@ -64,6 +64,8 @@ class _FakeBackend:
 
     embeds_images = True
     provisions_machine = False
+    # 会话不存记忆文件（下面的 `memory()` 答 None），和它答的那条契约一致。
+    keeps_memory = False
 
     def __init__(self, name: str, harness: str = "claude-code"):
         self.name = name

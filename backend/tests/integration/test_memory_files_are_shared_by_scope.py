@@ -2,10 +2,12 @@
 
 team 是项目里所有人共看的一份；private 是「这个人 × 这个项目」——本人和项目管理员
 看得见，别人问起答 403 而不是 404（private 的存在本身不是秘密，里面的内容才是）。
-写入对号入座的那个版本号对不上就是 409 并把当前那一版还回去：冲突是拒绝，不是把两
-段散文悄悄合在一起。
+**读得到不等于写得动**：private 那一侧的写和删只认本人，管理员也不行。写入对号入座
+的那个版本号对不上就是 409 并把当前那一版还回去：冲突是拒绝，不是把两段散文悄悄合
+在一起。
 """
 
+from app.domain.memory.files_store import MemoryFileStore
 from tests.integration.conftest import (
     join_project_team,
     post_project,
@@ -19,6 +21,15 @@ type: feedback
 ---
 
 有结论就先说结论，理由跟在后面。
+"""
+
+_PRIVATE_FILE = """---
+name: prefers-tabs
+description: 用 tab 缩进
+type: user
+---
+
+她习惯 tab。
 """
 
 
@@ -55,6 +66,26 @@ def _put(
     if version is not None:
         body["version"] = version
     return client.put("/memory/files", json=body, headers=session_auth_headers(handle))
+
+
+def _delete(
+    client,
+    project_id: str,
+    handle: str,
+    *,
+    scope: str = "team",
+    owner: str | None = None,
+    path: str,
+    version: int | None = None,
+):
+    body: dict = {"project_id": project_id, "scope": scope, "path": path}
+    if owner is not None:
+        body["owner_handle"] = owner
+    if version is not None:
+        body["version"] = version
+    return client.post(
+        "/memory/files/delete", json=body, headers=session_auth_headers(handle)
+    )
 
 
 def _get(client, project_id: str, handle: str, *, scope: str = "team", owner=None):
@@ -105,10 +136,7 @@ def test_a_members_private_memory_is_not_everyones(client):
         scope="private",
         owner="alice",
         path="prefers-tabs.md",
-        content=(
-            "---\nname: prefers-tabs\ndescription: 用 tab 缩进\ntype: user\n---\n\n"
-            "她习惯 tab。\n"
-        ),
+        content=_PRIVATE_FILE,
     )
     assert mine.status_code == 200, mine.text
 
@@ -129,6 +157,18 @@ def test_a_members_private_memory_is_not_everyones(client):
         ).status_code
         == 403
     )
+    # 删别人的也是同一道门。
+    assert (
+        _delete(
+            client,
+            project_id,
+            "bob",
+            scope="private",
+            owner="alice",
+            path="prefers-tabs.md",
+        ).status_code
+        == 403
+    )
     # 而 team 那一份里没有它。
     listed = _get(client, project_id, "bob")
     assert [row["path"] for row in listed.json()["data"]["data"]] == []
@@ -144,10 +184,7 @@ def test_a_project_admin_may_read_a_members_private_memory(client):
         scope="private",
         owner="alice",
         path="prefers-tabs.md",
-        content=(
-            "---\nname: prefers-tabs\ndescription: 用 tab\ntype: user\n---\n\n"
-            "她习惯 tab。\n"
-        ),
+        content=_PRIVATE_FILE,
     )
     join_project_team(client, project_id, "carol", admin=True)
 
@@ -155,6 +192,119 @@ def test_a_project_admin_may_read_a_members_private_memory(client):
         _get(client, project_id, "carol", scope="private", owner="alice").status_code
         == 200
     )
+
+
+def test_a_project_admin_may_not_write_a_members_private_memory(client):
+    """那道门是**看**，不是**改**。
+
+    给他一支笔，这一条记忆就同时有了两个主人，而「这是谁的判断」正是 private 这
+    一层唯一要保住的东西。查得到就够了。
+    """
+    project_id = _project(client)
+    _put(
+        client,
+        project_id,
+        "alice",
+        scope="private",
+        owner="alice",
+        path="prefers-tabs.md",
+        content=_PRIVATE_FILE,
+    )
+    join_project_team(client, project_id, "carol", admin=True)
+
+    # 覆盖：版本号读对了也不行。
+    overwrite = _put(
+        client,
+        project_id,
+        "carol",
+        scope="private",
+        owner="alice",
+        path="prefers-tabs.md",
+        content=_PRIVATE_FILE,
+        version=1,
+    )
+    assert overwrite.status_code == 403, overwrite.text
+    # 新建一条挂在她名下：同一个道理，那不是他的判断。
+    added = _put(
+        client,
+        project_id,
+        "carol",
+        scope="private",
+        owner="alice",
+        path="answered-late.md",
+        content=_PRIVATE_FILE,
+    )
+    assert added.status_code == 403, added.text
+    deleted = _delete(
+        client,
+        project_id,
+        "carol",
+        scope="private",
+        owner="alice",
+        path="prefers-tabs.md",
+        version=1,
+    )
+    assert deleted.status_code == 403, deleted.text
+
+    # 被拒的那三次一个字都没落下来：本人读到的还是原来那一版。
+    theirs = _get(client, project_id, "alice", scope="private", owner="alice")
+    rows = {row["path"]: row for row in theirs.json()["data"]["data"]}
+    assert set(rows) == {"prefers-tabs.md"}
+    assert rows["prefers-tabs.md"]["version"] == 1
+    assert rows["prefers-tabs.md"]["content"] == _PRIVATE_FILE
+
+
+def test_a_path_longer_than_the_column_is_a_422_not_a_500(client):
+    """`memory_files.path` 是 ``String(200)``。
+
+    比它长的一句在数据库那一侧是「服务器内部错误」，而写它的 agent 要的是「哪一条
+    不对、怎么改」——照着拒绝它改得动，照着 500 它改不动。
+    """
+    project_id = _project(client)
+    at_the_limit = "a" * 197 + ".md"
+    assert len(at_the_limit) == 200
+
+    written = _put(client, project_id, "alice", path=at_the_limit, content=_TEAM_FILE)
+    assert written.status_code == 200, written.text
+
+    over = _put(client, project_id, "alice", path="a" * 198 + ".md", content=_TEAM_FILE)
+    assert over.status_code == 422, over.text
+    assert "200" in over.json()["error"]["message"]
+
+
+def test_two_writers_of_the_same_new_path_end_in_a_409_not_a_500(client, monkeypatch):
+    """「先查重，再新建」之间有一道缝：两个写入方同时起手，后到的那一个会在 flush
+    的时候撞上唯一约束。
+
+    那不是故障，是这条规矩本身的结果——接住它，把当前那一版还回去，让写的人重读一
+    次。这里让下一个写入方那一次「查」看不到刚写下的那一行，就是那道缝。
+    """
+    project_id = _project(client)
+    first = _put(
+        client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE
+    )
+    assert first.status_code == 200, first.text
+
+    real_get = MemoryFileStore.get
+    looked: list[str] = []
+
+    async def blind_once(*args, **kwargs):
+        if not looked:
+            looked.append("第一次查没看到那一条")
+            return None
+        return await real_get(*args, **kwargs)
+
+    monkeypatch.setattr(MemoryFileStore, "get", blind_once)
+
+    raced = _put(
+        client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE
+    )
+    assert raced.status_code == 409, raced.text
+    assert raced.json()["error"]["data"] == {
+        "path": "answer-first.md",
+        "expected": None,
+        "current": 1,
+    }
 
 
 def test_a_stale_version_is_refused_with_the_current_one(client):

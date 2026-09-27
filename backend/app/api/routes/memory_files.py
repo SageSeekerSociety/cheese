@@ -5,8 +5,10 @@
 
 - **team 是项目里所有人共读共写共删的。** 项目集体的一份状态，谁都得能修；每次
   改动在总览房间留一条带 diff 的记录（回写那条路发），所以「谁删的」追得回来。
-- **private 是「本人 + 项目管理员」。** 一个人的偏好是他自己的；管理员看得见是
-  为了在出事时能查（比如说有人把密钥写进去了），而不是为了替谁改。
+- **private 是「本人 + 项目管理员」，而且只有本人写得动。** 一个人的偏好是他自己
+  的；管理员看得见是为了在出事时能查（比如说有人把密钥写进去了），但**改不了**
+  ——给他一支笔，这一条记忆就有了两个主人，而「这是谁的判断」正是 private 这一
+  层唯一要保住的东西。越权写一律 403，两种角色同一个码。
 
 冲突这一路（版本对不上）在 `MemoryFileStore` 里是 409，带着当前版本号回来；这里
 不吞它、也不重试——写入方就在现场，重读一次比自动合并两段散文安全。
@@ -73,6 +75,9 @@ async def _readable(
     team：项目里读得到它的人就读得到。private：本人，或者这个项目的管理员。
     别人问起一个 private 作用域时答 403 而不是 404——private 的存在本身不是
     秘密，里面的内容才是，而 404 会让本人也以为自己的记忆不见了。
+
+    **读得到的范围不等于写得动的范围**：写和删另有一道 ``_writable``，private
+    那一侧只认本人。
     """
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -80,6 +85,28 @@ async def _readable(
         if not await MemberService(db).manages(project_id, actor.handle):
             raise ForbiddenError("私人记忆只有本人和项目管理员看得见")
     return actor.handle
+
+
+async def _writable(
+    db: AsyncSession,
+    resolver: ActorResolverDep,
+    project_id: uuid.UUID,
+    owner: str | None,
+) -> str:
+    """谁在写/删，写不写得动，一起答完；返回动手的人自己的 handle。
+
+    private 只认本人，**管理员也不例外**：管理员看得见是为了出事时能查（比如说
+    有人把密钥写进去了），不是为了替谁改。给他一支笔，那一条记忆就同时有了两个
+    主人，而「这是谁的判断」正是 private 这一层唯一要保住的东西——查得到就够了。
+    越权答 403，和读的那一道同一个码：读得到而写不动，不是「这里没有这条记忆」。
+
+    team 没有这一道：项目集体的一份状态，读得到的人就写得动，改动在总览房间留
+    一条带 diff 的记录（回写那条路发），所以「谁删的」追得回来。
+    """
+    actor = await _readable(db, resolver, project_id, owner)
+    if owner is not None and owner != actor:
+        raise ForbiddenError("私人记忆只有本人改得动——管理员看得见，但改不了")
+    return actor
 
 
 def _checked_path(raw: str) -> str:
@@ -134,6 +161,8 @@ async def write_memory_file(
     格式不对**不拒绝**，只回一条警告：CC 的写入端从来不是闸（超了上限也照样写
     进去，靠后台整理兜底），而这里要是把格式变成闸，第一条记忆就得同时写对
     frontmatter、索引行和路径——三样里错一样就一个字都存不下。
+
+    谁写得动由 `_writable` 答：team 读得到就写得动，private 只认本人。
     """
     try:
         project_id = uuid.UUID(str(body.get("project_id") or ""))
@@ -141,7 +170,7 @@ async def write_memory_file(
         raise ValidationError("project_id 无效") from exc
     which = _scope_of(str(body.get("scope") or "team"))
     owner = _owner_of(which, (body.get("owner_handle") or "").strip() or None)
-    actor = await _readable(db, resolver, project_id, owner)
+    actor = await _writable(db, resolver, project_id, owner)
     path = _checked_path(str(body.get("path") or ""))
     content = body.get("content")
     if not isinstance(content, str):
@@ -202,6 +231,8 @@ async def delete_memory_file(
 
     路径是索引时必须一起点出被它指着的那一条也删了没有 —— 平台不替写入方推：
     索引里留着一条指向不存在文件的指针，读起来像「这条记忆在」，而它不在。
+
+    删除和写入同一道闸：team 读得到就删得动，private 只认本人（`_writable`）。
     """
     try:
         project_id = uuid.UUID(str(body.get("project_id") or ""))
@@ -209,7 +240,7 @@ async def delete_memory_file(
         raise ValidationError("project_id 无效") from exc
     which = _scope_of(str(body.get("scope") or "team"))
     owner = _owner_of(which, (body.get("owner_handle") or "").strip() or None)
-    actor = await _readable(db, resolver, project_id, owner)
+    actor = await _writable(db, resolver, project_id, owner)
     raw_path = str(body.get("path") or "").strip()
     if not raw_path:
         raise ValidationError("path 不能为空")

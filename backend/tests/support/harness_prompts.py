@@ -17,6 +17,8 @@ from app.domain.memory.files_store import IndexSection, MemoryIndex
 
 
 def system_prompt() -> str:
+    # 全参数在场的一份 prompt，所以记忆那两段也要在（`keeps_memory`）——它们由
+    # 调用方按 runtime 的能力传，而这个夹具要的是「每一段都有一份」。
     return build_system_prompt(
         "PLATFORM_FIXTURE",
         "SKILL_FIXTURE",
@@ -32,6 +34,7 @@ def system_prompt() -> str:
             warnings=[],
         ),
         role="ROLE_FIXTURE",
+        keeps_memory=True,
     )
 
 

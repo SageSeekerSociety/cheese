@@ -123,3 +123,65 @@ def test_the_baseline_comes_back_so_the_next_sync_can_tell_who_moved():
     )
     assert second.files == {"team/a.md": _LATER}
     assert second.refused == {}
+
+
+# --- 保险：一次删掉半棵树，先当它没删（`BULK_DELETE_RATIO`/`BULK_DELETE_MIN`）--
+
+
+def _paths(count: int, *, prefix: str = "team", stem: str = "m") -> list[str]:
+    """一棵树里的 `count` 条路径。"""
+    return [f"{prefix}/{stem}{i}.md" for i in range(count)]
+
+
+def _names(paths: list[str]) -> dict[str, str]:
+    """同一棵树在 `scopes` 里的样子：前缀在字典的键上，名字在这一层。"""
+    return {path.rsplit("/", 1)[1]: _A for path in paths}
+
+
+def test_a_tree_that_came_back_empty_is_not_a_tree_the_session_deleted():
+    """空磁盘加上满基线，读出来的是「会话把整棵树删了」——而绝大多数时候那是会话
+    的家被重建过。平台上的记忆跟着整批消失，且删除没有历史可以恢复，所以这一支由
+    保险拦下：平台这一版重新铺下去，一条都不少。
+    """
+    paths = _paths(5)
+    result = _sync(
+        scopes={"team": _names(paths)},
+        disk={},
+        baseline={path: _A_HASH for path in paths},
+    )
+    assert result.files == {path: _A for path in paths}
+    assert result.held == tuple(paths)
+    assert result.refused == {}
+    assert result.baseline == {path: _A_HASH for path in paths}
+
+
+def test_a_minority_of_deletions_is_still_a_deletion():
+    """保险拦的是「半棵树一起没了」：一个作用域里十条删掉四条，那是 agent 想明白
+    了——它该删得掉，否则「一次删掉半棵树」就成了「谁都别删」。
+    """
+    paths = _paths(10)
+    kept = paths[4:]
+    result = _sync(
+        scopes={"team": _names(paths)},
+        disk={path: _A for path in kept},
+        baseline={path: _A_HASH for path in paths},
+    )
+    assert result.files == {path: _A for path in kept}
+    assert result.held == ()
+
+
+def test_the_valve_counts_each_tree_on_its_own():
+    """按作用域分开数：一个人清空了自己那棵 private，就是「整棵树没了」，哪怕项目
+    那一棵好端端地在旁边替它分摊了比例——合起来数的话，这里恰好落在阈值下面，被删
+    的那棵树就一点保护都没有了。
+    """
+    team = _paths(5, stem="t")
+    alice = _paths(4, prefix="private/alice", stem="p")
+    result = _sync(
+        scopes={"team": _names(team), "private/alice": _names(alice)},
+        # alice 那棵树整个没了，项目那一棵一条没动。
+        disk={path: _A for path in team},
+        baseline={path: _A_HASH for path in team + alice},
+    )
+    assert result.held == tuple(alice)
+    assert result.files == {path: _A for path in team + alice}

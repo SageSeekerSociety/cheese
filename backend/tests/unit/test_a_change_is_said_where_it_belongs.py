@@ -5,6 +5,8 @@
 他的偏好广播给整个项目。空改动一个字都不说。
 """
 
+from app.domain.agent.platform_notices import memory_changed_notice
+from app.domain.block.models import AGENT_NOTICE_META_KEY
 from app.domain.memory.session import DIFF_MAX_LINES, MemoryChange
 
 
@@ -70,3 +72,35 @@ def test_a_huge_diff_is_clamped_to_the_room_event_budget():
     lines = many.diff.splitlines()
     assert len(lines) == DIFF_MAX_LINES + 1
     assert lines[-1].startswith("…")
+
+
+# --- 被平台盖回去的那一版，也要说给 agent 听 ------------------------------
+
+
+def _notice(refused: tuple[str, ...]):
+    return memory_changed_notice(
+        where="项目共享",
+        summary="新增 1 条、1 条被别人抢先改了",
+        diff="--- team/a.md\n+++ team/a.md\n-旧\n+新\n",
+        refused=refused,
+    )
+
+
+def test_a_refused_version_is_said_to_the_agent_and_not_only_to_the_room():
+    """那条灰字是给人看的，而写记忆的 agent 在会话机上——它下一轮带进 prompt 的
+    只有 `agent_notice`。不说，它会以为写成功了，下一轮再写一遍同一版。"""
+    _, meta = _notice(("team/a.md",))
+
+    told = meta[AGENT_NOTICE_META_KEY]
+    assert "team/a.md" in told
+    # 它写的那一版还在旁边：说出路径，下一步才是 Read 它、把内容取回来。
+    assert "team/a.conflict.md" in told
+    assert "重读" in told
+
+
+def test_an_ordinary_change_carries_nothing_for_the_agent():
+    """别的改动不需要它做任何事：一条 agent_notice 会跟着下一轮的 prompt 进去，
+    白说的那句是每一轮都要付的。"""
+    _, meta = _notice(())
+
+    assert AGENT_NOTICE_META_KEY not in meta

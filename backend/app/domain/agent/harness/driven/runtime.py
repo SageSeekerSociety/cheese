@@ -140,6 +140,11 @@ class SessionChannel[H: Handle](Protocol):
 class DrivenRuntime[H: Handle]:
     harness: str
     embeds_images = True
+    #: Whether this harness's sessions keep memory as files and can reconcile
+    #: them (``memory()`` below). False by default, and that default is the
+    #: safe one: the system prompt's memory section says 「写进这里，平台下一轮
+    #: 就有一份」, which is a lie for a harness with no way back.
+    keeps_memory = False
     #: How messages a person may read name the harness.
     label: str
     #: How the poller's log lines name what it reads.

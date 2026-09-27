@@ -33,6 +33,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from app.domain.block.models import AGENT_NOTICE_META_KEY
+
 # --- severity ---------------------------------------------------------------
 SEVERITY_INFO: Final = "info"
 SEVERITY_WARN: Final = "warn"
@@ -274,25 +276,51 @@ def delivery_fallback_notice() -> tuple[str, dict]:
 
 
 def memory_changed_notice(
-    *, where: str, summary: str, diff: str, refused: bool
+    *, where: str, summary: str, diff: str, refused: tuple[str, ...]
 ) -> tuple[str, dict]:
     """记忆树的一次改动：一行说改了哪一棵、改了几条，diff 收进 `detail`。
 
-    `where` 是那棵树的名字（「项目共享」/「你的私人」）。`refused=True` 是说
-    会话里写的那一版被平台这一份盖回来了 —— 它得重读再写，否则下一轮写的还是
-    它刚才那一版。这句话只说进那棵树自己的房间：同一句带 diff 的话说进总览，
-    就是把一个人的偏好广播给了整个项目。
+    `where` 是那棵树的名字（「项目共享」/「你的私人」）。`refused` 非空是说会话里
+    写的那几版被平台这一份盖回来了 —— 它得重读再写，否则下一轮写的还是它刚才那
+    一版。这句话只说进那棵树自己的房间：同一句带 diff 的话说进总览，就是把一个人
+    的偏好广播给了整个项目。
+
+    **被盖回去这件事必须进 `agent_notice`**（`AGENT_NOTICE_META_KEY`）。那条灰字
+    事件是给人看的，agent 一个字的 prompt 都读不到它：写记忆的 agent 在会话机上，
+    它看到的世界就是那棵树，而它刚才写的那一版已经不在了。不说，它会以为写成功
+    了、下一轮再写一遍同一版，而每一轮都会被盖回去。
     """
     parts = [f"{where}记忆：{summary}"]
     if refused:
         parts.append("有改动被平台这一份盖回来了，重读再写")
+    meta = notice(
+        EVENT_MEMORY_CHANGED,
+        severity=SEVERITY_INFO,
+        who=WHO_PLATFORM,
+        detail=diff or None,
+        detail_label="改动",
+    )
+    if refused:
+        meta[AGENT_NOTICE_META_KEY] = memory_conflict_notice(where=where, paths=refused)
+    return "　".join(parts), meta
+
+
+def memory_conflict_notice(*, where: str, paths: tuple[str, ...]) -> str:
+    """说给 agent 的那句：哪几条被平台版盖了、去哪儿找它刚写的那一版。
+
+    点名到条是为了让它下一步就能动手：一句「有改动被盖了」它得先猜是哪一条，而
+    猜错的那一次是把别的记忆又覆盖一遍。旁路文件名是 `runner.sync_memory` 写下来
+    的那个（`<文件名>.conflict.md`，同一个目录），两处说的是同一件事，所以这里把
+    完整路径写出来。
+    """
+    lines = "\n".join(
+        f"- `{path}`（你写的那一版在 `{path[:-3]}.conflict.md`）" for path in paths
+    )
     return (
-        "　".join(parts),
-        notice(
-            EVENT_MEMORY_CHANGED,
-            severity=SEVERITY_INFO,
-            who=WHO_PLATFORM,
-            detail=diff or None,
-            detail_label="改动",
-        ),
+        f"{where}记忆里有几条被平台的版本盖回去了——平台这一份也动过它们，"
+        "按规矩平台赢。下面每一条都是你刚才写的、现在不在树里了：\n"
+        f"{lines}\n"
+        "**重读它们，把你要写的东西重新写进去**（你写的那一版留在旁边那个 "
+        "`.conflict.md` 里，从那里取回你要写的内容，别整个文件照抄回去）。"
+        "这几条你手里的副本已经旧了，照旧的写只会再被盖一次。"
     )
