@@ -140,6 +140,22 @@ def test_a_personal_project_follows_the_person_it_is_given_to(client):
     assert data["team_id"] == carol_team
     assert data["team_id"] != p["team_id"]
 
+    # And the move is a move, not a swapped field: `Project.team_id`'s readers
+    # (the team's 项目 page goes through `ProjectService.list_for_team`) now see
+    # the project on the recipient's side and no longer on the giver's.
+    mine = client.get(
+        f"/projects?team_id={carol_team}", headers=session_auth_headers("carol")
+    )
+    assert mine.status_code == 200, mine.text
+    assert [row["id"] for row in mine.json()["data"]["data"]] == [p["id"]]
+    alices_team = _personal_team_id(client, "alice")
+    assert alices_team is not None
+    gone = client.get(
+        f"/projects?team_id={alices_team}", headers=session_auth_headers("alice")
+    )
+    assert gone.status_code == 200, gone.text
+    assert [row["id"] for row in gone.json()["data"]["data"]] == []
+
 
 def test_the_transferor_is_out_for_good(client):
     """A transfer that leaves the giver reading the project is a loan, not a
