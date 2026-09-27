@@ -104,6 +104,10 @@ class _Asgi:
         self.body = b""
 
     def post(self, path: str, body: dict, *, token: str | None = None) -> None:
+        # 每一次请求都从零开始记：上一个请求的收尾提交（``get_db`` 退出码里那一次）
+        # 会落在下一个请求的响应之前，留着它就会替这一次请求把断言顶过去 —— 发题
+        # 那条路由一行不改也照样绿（实测过：不清空时去掉 tasks 的提交，2 passed）。
+        self.events.clear()
         headers = [(b"content-type", b"application/json")]
         if token is not None:
             headers.append((b"authorization", f"Bearer {token}".encode()))
@@ -185,16 +189,24 @@ def author(db_session: AsyncSession, _portal) -> tuple[int, str]:
 
 
 def _assert_committed_before_responding(asgi: _Asgi) -> None:
-    """The whole claim: the commit landed before the response was handed on."""
-    assert _COMMIT in asgi.events, (
-        f"the request never committed; frames were {asgi.events}"
-    )
-    assert _RESPONSE in asgi.events, (
-        f"the request never sent a response; frames were {asgi.events}"
-    )
-    assert asgi.events.index(_COMMIT) < asgi.events.index(_RESPONSE), (
-        f"the response was sent before the transaction was committed: {asgi.events}"
-    )
+    """The whole claim: every response was handed on after its own commit.
+
+    一条用例里可能发了不止一个请求（发题的用例先要建一块板），而 ``events`` 记的
+    是这条用例全程。所以**每一个** ``response.start`` 都得有自己那一份提交排在它
+    前面 —— 只比「第一次提交 vs 第一次响应」的话，建板那一次的提交会替后面那个
+    请求把断言顶过去，发题那条路由一字不改也照样绿（实测过）。
+    """
+    commits = 0
+    responses = 0
+    for frame in asgi.events:
+        if frame == _COMMIT:
+            commits += 1
+            continue
+        responses += 1
+        assert commits >= responses, (
+            f"a response was sent before its transaction was committed: {asgi.events}"
+        )
+    assert responses > 0, f"nothing was recorded; frames were {asgi.events}"
 
 
 def _space_body(name: str) -> dict:
