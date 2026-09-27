@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import errno
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 STORAGE_EXHAUSTED_CODE = "storage_exhausted"
 RUNTIME_IMAGE_MISSING_CODE = "runtime_image_missing"
@@ -219,6 +219,212 @@ TURN_TIMEOUT = PlatformFailure(
 )
 
 
+# --- Claude Code 没有启动 ------------------------------------------------------
+#
+# A session that dies on its way up leaves its reason in its runner's log: the
+# exit status and the tail of what that start printed (``claude_code/runner.py``),
+# usually a Python traceback from the executor client's ``bootstrap``. That text
+# is the process's, not the room's. The room is told one sentence, chosen here
+# from the text; the text itself goes to 现场 (``meta.error`` on the notice).
+#
+# Every one of these is an event about this start, none about the machine's
+# health: ``host_scoped`` stays False, as it was while they had no code at all.
+_START = "Claude Code 启动失败："
+
+
+def _start_failure(code: str, content: str, *, retryable: bool) -> PlatformFailure:
+    return PlatformFailure(
+        code=code,
+        title="会话没有启动",
+        content=_START + content,
+        retryable=retryable,
+    )
+
+
+SESSION_START_UNKNOWN = _start_failure(
+    "session_start_unknown", "原因没能识别，启动记录在现场", retryable=True
+)
+SESSION_START_TIMEOUT = _start_failure(
+    "session_start_timeout", "在等待时限内没有起来，启动记录在现场", retryable=True
+)
+SESSION_START_RUNNER_BUSY = _start_failure(
+    "session_start_runner_busy", "这个房间上一个会话进程还没有退出", retryable=True
+)
+SESSION_START_WORK_MACHINE_PREPARING = _start_failure(
+    "session_start_work_machine_preparing",
+    "这个房间的工作机器还在准备",
+    retryable=True,
+)
+SESSION_START_WORK_MACHINE_OFFLINE = _start_failure(
+    "session_start_work_machine_offline",
+    "这个房间的工作机器没有连接",
+    retryable=True,
+)
+SESSION_START_WORK_MACHINE_REFUSED = _start_failure(
+    "session_start_work_machine_refused",
+    "没能取得这个房间的工作机器",
+    retryable=True,
+)
+SESSION_START_EXECUTOR_IMAGE_MISSING = _start_failure(
+    "session_start_executor_image_missing",
+    "机器上缺少执行容器的镜像",
+    retryable=False,
+)
+SESSION_START_EXECUTOR_FAILED = _start_failure(
+    "session_start_executor_failed",
+    "执行容器没能创建，常见原因是机器上缺少执行镜像",
+    retryable=False,
+)
+SESSION_START_MODEL_LOGIN = _start_failure(
+    "session_start_model_login",
+    "模型服务的登录已失效，需要管理员重新登录",
+    retryable=False,
+)
+SESSION_START_PLATFORM_CREDENTIAL = _start_failure(
+    "session_start_platform_credential",
+    "平台没有接受这个会话的凭证",
+    retryable=True,
+)
+SESSION_START_PLATFORM_ERROR = _start_failure(
+    "session_start_platform_error", "启动时平台返回了错误", retryable=True
+)
+SESSION_START_PROGRAM_BROKEN = _start_failure(
+    "session_start_program_broken",
+    "机器上有一个程序无法运行，可能已损坏或平台不符",
+    retryable=False,
+)
+SESSION_START_PROGRAM_MISSING = _start_failure(
+    "session_start_program_missing", "机器上缺少一个需要的程序", retryable=False
+)
+
+_SESSION_START_FAILURES = (
+    SESSION_START_UNKNOWN,
+    SESSION_START_TIMEOUT,
+    SESSION_START_RUNNER_BUSY,
+    SESSION_START_WORK_MACHINE_PREPARING,
+    SESSION_START_WORK_MACHINE_OFFLINE,
+    SESSION_START_WORK_MACHINE_REFUSED,
+    SESSION_START_EXECUTOR_IMAGE_MISSING,
+    SESSION_START_EXECUTOR_FAILED,
+    SESSION_START_MODEL_LOGIN,
+    SESSION_START_PLATFORM_CREDENTIAL,
+    SESSION_START_PLATFORM_ERROR,
+    SESSION_START_PROGRAM_BROKEN,
+    SESSION_START_PROGRAM_MISSING,
+)
+#: A start failure's sentence can name what it found (「机器上缺少 docker」), so
+#: the room line is the sentence the failure was raised with, not the class's
+#: fixed copy. Both come from ``classify_session_start``.
+SESSION_START_CODES = frozenset(f.code for f in _SESSION_START_FAILURES)
+
+# A program as a shell or Python names it when it cannot run it: a path.
+_PROGRAM = r"([^\s'\":]{1,200})"
+_PROGRAM_NAME = re.compile(r"[A-Za-z0-9._+-]{1,40}")
+# How a shell names the program it could not run — dash:
+# `sh: 1: exec: /x/claude: not found`; bash: `sh: line 1: claude: command not
+# found`, `/x/wrapper: line 6: exec: /x/claude: cannot execute: No such file or
+# directory`.
+_SH = r"^\S+: (?:(?:line )?\d+: )?(?:exec: )?" + _PROGRAM + ": "
+_PROGRAM_MISSING = (
+    re.compile(_SH + "(?:command )?not found", re.M),
+    re.compile(_SH + "(?:cannot execute: )?No such file or directory", re.M),
+)
+_PROGRAM_BROKEN = (
+    re.compile(_SH + "(?:Permission denied|cannot execute|Exec format error)", re.M),
+    # Python's os.exec* / subprocess: `[Errno 8] Exec format error: '/x/claude'`.
+    re.compile(r"Exec format error(?:: '" + _PROGRAM + "')?"),
+)
+# Python spawning a program that is not there: subprocess or os.exec*.
+_SPAWN_MISSING = re.compile(
+    r"FileNotFoundError: \[Errno 2\] No such file or directory: '" + _PROGRAM + r"'"
+)
+_PLATFORM_HTTP = re.compile(r"Platform HTTP (\d{3})\b")
+
+
+def _program_name(path: str | None) -> str | None:
+    """What to call a program in the room: its file name, or Claude Code for
+    the pinned binary (``<...>/claude/versions/<v>``). Never a whole path, and
+    nothing that is not a plain name."""
+    parts = [part for part in (path or "").split("/") if part]
+    if not parts:
+        return None
+    if parts[-1] in ("claude", "claude.exe") or parts[-3:-1] == ["claude", "versions"]:
+        return "Claude Code"
+    return parts[-1] if _PROGRAM_NAME.fullmatch(parts[-1]) else None
+
+
+def _named(
+    failure: PlatformFailure, path: str | None, sentence: str
+) -> PlatformFailure:
+    name = _program_name(path)
+    if not name:
+        return failure
+    return replace(failure, content=_START + sentence.format(name=name))
+
+
+def classify_session_start(log: str, *, timed_out: bool = False) -> PlatformFailure:
+    """Which sentence the room gets for a Claude Code session that did not start.
+
+    ``log`` is what its runner's log said: this launch's record, or with
+    ``timed_out`` the log's tail when no record came in the whole wait. The
+    patterns are the shapes the failing programs print (dev's session host,
+    2026-09); anything else gets a sentence that says the cause was not
+    recognised, never the text itself."""
+    text = log or ""
+    lowered = text.lower()
+    if "BlockingIOError" in text and ("runner.lock" in text or "flock" in text):
+        return SESSION_START_RUNNER_BUSY
+    # The lease is taken in the bootstrap's `_take_leased_machine`, through the
+    # executor transport's `acquire`: their frames name it in the traceback.
+    if "_take_leased_machine" in text or ", in acquire" in text:
+        http = _PLATFORM_HTTP.search(text)
+        if (http and http.group(1) == "504") or "准备" in text:
+            return SESSION_START_WORK_MACHINE_PREPARING
+        # The lease route's own reason, as the session printed it.
+        if "未连接" in text:
+            return SESSION_START_WORK_MACHINE_OFFLINE
+        return SESSION_START_WORK_MACHINE_REFUSED
+    if "docker" in lowered:
+        # `docker run` of the executor container. Its stderr is captured by
+        # the caller and not printed, so exit status 125 (the daemon refused
+        # the run) is often all there is.
+        if any(failure in lowered for failure in _RUNTIME_IMAGE_FAILURES):
+            return SESSION_START_EXECUTOR_IMAGE_MISSING
+        if "calledprocesserror" in lowered:
+            return SESSION_START_EXECUTOR_FAILED
+    if (
+        "run /login" in text
+        or "invalid api key" in lowered
+        or "oauth token" in lowered
+        or "authentication_error" in lowered
+    ):
+        return SESSION_START_MODEL_LOGIN
+    http = _PLATFORM_HTTP.search(text)
+    if http:
+        if http.group(1) in ("401", "403"):
+            return SESSION_START_PLATFORM_CREDENTIAL
+        return SESSION_START_PLATFORM_ERROR
+    missing = list(_PROGRAM_MISSING)
+    if "_execute_child" in text or "os.exec" in text:
+        # Only a spawn's FileNotFoundError names a program; any other names a
+        # file some code expected.
+        missing.append(_SPAWN_MISSING)
+    for pattern in missing:
+        if match := pattern.search(text):
+            return _named(
+                SESSION_START_PROGRAM_MISSING, match.group(1), "机器上缺少 {name}"
+            )
+    # After the missing ones: bash says `cannot execute` for both.
+    for pattern in _PROGRAM_BROKEN:
+        if match := pattern.search(text):
+            return _named(
+                SESSION_START_PROGRAM_BROKEN,
+                match.group(1),
+                "机器上的 {name} 无法运行，可能已损坏或平台不符",
+            )
+    return SESSION_START_TIMEOUT if timed_out else SESSION_START_UNKNOWN
+
+
 # Every classification this module can return. Keep new failures in this tuple —
 # ``HOST_SCOPED_CODES`` is derived from it, so a failure left out silently opts
 # itself out of the machine-health accounting.
@@ -229,6 +435,7 @@ ALL_FAILURES = (
     WORKSPACE_VCS_PERMS,
     PROMPT_UNDELIVERED,
     TURN_TIMEOUT,
+    *_SESSION_START_FAILURES,
 )
 
 # Failure codes that indict the MACHINE rather than the turn. The turn layer reads

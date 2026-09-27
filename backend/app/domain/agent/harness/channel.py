@@ -23,11 +23,22 @@ class ScreenSetupError(Exception):
     is (`platform_failures`). Left None for the setup failures it has no
     classification for, which then land as an unnamed turn error — the same
     place they landed before, but by omission rather than by a sentence not
-    matching."""
+    matching.
 
-    def __init__(self, message: str, *, failure_code: str | None = None) -> None:
+    ``log`` is what the failing process itself printed, when there is such a
+    text. It is shown in 现场 beside the notice and never becomes the room's
+    line: the message is what the room is told."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_code: str | None = None,
+        log: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.failure_code = failure_code
+        self.log = log
 
 
 class Placement(NamedTuple):

@@ -471,6 +471,36 @@ describe('平台提示：事故卡的正文压成一行', () => {
   })
 })
 
+describe('平台提示：会话没起来', () => {
+  const LOG = [
+    'cheese-runner 0f0f ended: Claude Code exited with status 1 before it started:',
+    'Traceback (most recent call last):',
+    'executor_transport.PlatformHTTPError: Platform HTTP 504',
+  ].join('\n')
+
+  it('房间里只有那一句话，它启动时打印的原文展开了也不在房间里', async () => {
+    const { container } = mountRoom([
+      event('', 'Claude Code 启动失败：这个房间的工作机器还在准备', {
+        event_type: 'platform_error',
+        code: 'session_start_work_machine_preparing',
+        severity: 'error',
+        title: '会话没有启动',
+        retryable: true,
+        failed: true,
+        error: LOG,
+      }),
+    ])
+    await flush()
+
+    const card = container.querySelector('[data-testid="platform-error-card"]')!
+    expect(visibleText(card)).toContain('Claude Code 启动失败：这个房间的工作机器还在准备')
+    for (const details of Array.from(container.querySelectorAll('details'))) expand(details)
+    await flush()
+    const everything = visibleText(container)
+    for (const line of LOG.split('\n')) expect(everything).not.toContain(line)
+  })
+})
+
 describe('向后兼容：库里存量的老事件一个都不能变样', () => {
   it('shows the document edit diff even beside another action in the same AI turn', async () => {
     const doc = event('', '芝士 编辑了文档', {

@@ -32,6 +32,7 @@ from app.domain.agent.harness.channel import (
 from app.domain.agent.harness.claude_code.runner import LAUNCH, ended
 from app.domain.agent.harness.claude_code.runtime import Handle
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.platform_failures import classify_session_start
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.library import service as library
 
@@ -51,6 +52,13 @@ logger = logging.getLogger(__name__)
 # stops there.
 STARTUP_WAIT_S = 120.0
 STARTUP_POLL_S = 1.0
+
+
+def _refused(log: str, *, timed_out: bool) -> ScreenSetupError:
+    """The room's one sentence for a session that did not start, carrying what
+    the runner's log said for 现场."""
+    failure = classify_session_start(log, timed_out=timed_out)
+    return ScreenSetupError(failure.content, failure_code=failure.code, log=log)
 
 
 class ClaudeCodeChannel:
@@ -140,7 +148,8 @@ class ClaudeCodeChannel:
         and reported as soon as its log says this launch has ended: the socket
         went with it, and nothing will answer however long the room waits.
         Past the window with no such record, the session is not coming either,
-        and whatever the log last said travels back with the refusal.
+        and whatever the log last said travels back with the refusal: as the
+        text 现场 shows, with a sentence for the room chosen from it.
         """
         deadline = time.monotonic() + STARTUP_WAIT_S
         while True:
@@ -158,11 +167,12 @@ class ClaudeCodeChannel:
                 # arrive as HTTP errors; whatever shape it takes, a ping that
                 # does not come back means the session cannot be reached yet.
                 failure = exc
-            reason = await self._ended(device_id, state, launch)
-            if not reason and time.monotonic() >= deadline:
-                reason = await self._why(device_id, state, failure)
-            if reason:
-                raise ScreenSetupError("Claude Code 会话进程没有起来：" + reason)
+            if record := await self._ended(device_id, state, launch):
+                raise _refused(record, timed_out=False)
+            if time.monotonic() >= deadline:
+                raise _refused(
+                    await self._why(device_id, state, failure), timed_out=True
+                )
             await asyncio.sleep(STARTUP_POLL_S)
 
     async def _ended(self, device_id: str, state: str, launch: str) -> str:
