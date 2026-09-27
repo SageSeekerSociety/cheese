@@ -257,15 +257,21 @@ class FeishuClient:
         return found[:limit]
 
     async def url(self, document_id: str) -> str | None:
-        data = await self._call(
-            "POST",
-            "/open-apis/drive/v1/metas/batch_query",
-            "取文档链接",
-            json={
-                "request_docs": [{"doc_token": document_id, "doc_type": "docx"}],
-                "with_url": True,
-            },
-        )
+        """The document's link, or None. The link is a courtesy: it needs a drive
+        metadata scope the document scopes do not grant, and an app without it
+        still reads and writes the document itself (seen on dev, 2026-09-27)."""
+        try:
+            data = await self._call(
+                "POST",
+                "/open-apis/drive/v1/metas/batch_query",
+                "取文档链接",
+                json={
+                    "request_docs": [{"doc_token": document_id, "doc_type": "docx"}],
+                    "with_url": True,
+                },
+            )
+        except IntegrationError:
+            return None
         metas = data.get("metas") or []
         return metas[0].get("url") if metas else None
 
