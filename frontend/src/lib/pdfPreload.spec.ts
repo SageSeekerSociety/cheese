@@ -10,7 +10,7 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
 vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({ default: '/assets/pdf.worker.mjs' }))
 
 describe('进房间后预取 pdf.js', () => {
-  const fetchMock = vi.fn(async () => new Response('worker'))
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response('worker'))
 
   beforeEach(() => {
     vi.useFakeTimers()
