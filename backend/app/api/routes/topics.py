@@ -1561,21 +1561,24 @@ async def get_topic_compute_profile(
     device_online = await project_device_online(db, topic.project_id)
     device_service = sql_device_service(db)
     devices = await device_service.list_devices_for_project(topic.project_id)
-    # #282 §四 / #358 · whether THIS topic's agent can see the whole machine. The
-    # effective answer is the visibility on the topic↔machine binding (device
-    # affinity freezes a topic to one machine on its first turn); a topic
-    # on platform compute or not yet pinned has none. Surfaced so the room can show
-    # a visible safety badge for a Hosted Machine turn instead of the platform
-    # granting whole-machine access silently (原则八).
     binding = await device_service.topic_binding(topic_id)
     if current == COMPUTE_DEVICE and binding is not None:
         choice.device_id = binding.device_id
         if topic.compute_config is None:
             named = next((d for d in devices if d.device_id == binding.device_id), None)
             choice.name = named.name if named else "自有设备"
-    effective_visibility: str | None = None
-    if binding is not None:
-        effective_visibility = binding.visibility.value
+    # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
+    # machine. Read from the sessions' own machines, not the room's pin: a
+    # session that picked a device automatically, or moved to one later, has
+    # the same access and no pin. Surfaced so the room shows a visible safety
+    # badge instead of the platform granting whole-machine access silently
+    # (原则八).
+    from app.domain.machine.session_work import room_machine_visibility
+
+    visibility = await room_machine_visibility(
+        db, topic, project.settings if project else None
+    )
+    effective_visibility = visibility.value if visibility is not None else None
     return ok(
         {
             "current": current,
@@ -1603,14 +1606,14 @@ async def get_topic_compute_profile(
                 await AgentSessionService(db).has_run(topic_id)
                 or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
             ),
-            "inherited": topic.compute_profile is None,
+            "inherited": topic.compute_config is None,
             "profiles": [
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
             ],
             "visibility": {
                 "options": [asdict(v) for v in visibility_listings()],
-                # "host" | "isolated" | null (platform compute / not yet pinned).
+                # "host" | "isolated" | null (no agent here on an enrolled machine).
                 "effective": effective_visibility,
                 # The one boolean the room's badge keys on: this turn can see and
                 # operate the whole machine.
@@ -1868,12 +1871,12 @@ async def set_topic_compute_profile(
         if started and isinstance(verdict, gate.Allowed):
             verdict = gate.because_the_room_is_running(call, actor.handle)
     if isinstance(verdict, gate.Proposal):
-        # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
+        # 这次调用没有发生：绑定不写，`topic.compute_config` 不动。房间里多的
         # 是一条提议，下一步在 approver 手上。
         await propose(db, verdict, place_id=topic_id)
         await db.flush()
         # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
-        # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
+        # `room_choice` 算出来，不是 `topic` 上那一列还没被写过的值。第一轮之前
         # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
         # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
         # 法，先信谁？
@@ -1884,7 +1887,7 @@ async def set_topic_compute_profile(
                 "choice": current.model_dump(),
                 "device_id": current.device_id,
                 "locked": started,
-                "inherited": topic.compute_profile is None,
+                "inherited": topic.compute_config is None,
                 "proposal": {
                     "approver": verdict.approver,
                     "tier": verdict.call.tier,
@@ -1923,7 +1926,6 @@ async def set_topic_compute_profile(
             visibility=await device_service.binding_visibility(device_id),
         )
 
-    topic.compute_profile = name
     topic.compute_config = choice.model_dump()
     await db.flush()
     return ok(

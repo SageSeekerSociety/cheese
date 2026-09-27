@@ -73,7 +73,7 @@ class Channel:
     channel places the session and performs the launch it is handed.
     """
 
-    # WHICH machine pool this is: what a topic's ``compute_profile`` stores and
+    # WHICH machine pool this is: what a compute choice's ``profile`` names and
     # what the market board lists. Deliberately not the runtime's ``harness`` —
     # this says which machine, that says what runs on it.
     name: str = "channel"

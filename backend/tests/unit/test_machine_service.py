@@ -18,6 +18,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.domain.agent.compute_configs import standard_choice
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 from app.domain.machine.microcloud import MicroCloudError
@@ -356,8 +357,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         id=uuid.uuid4(),
         project_id=uuid.uuid4(),
         created_by="owner",
-        compute_profile="cloud",
-        compute_config=None,
+        compute_config=standard_choice("cloud").model_dump(),
         status=TopicStatus.active,
     )
 
@@ -478,8 +478,7 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
             id=topic_id,
             project_id=project_id,
             status=TopicStatus.active,
-            compute_profile="cloud",
-            compute_config=None,
+            compute_config=standard_choice("cloud").model_dump(),
         )
         for topic_id in (uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
     }

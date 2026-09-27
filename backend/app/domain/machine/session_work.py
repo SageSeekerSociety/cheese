@@ -32,7 +32,12 @@ from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.market import COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.supply import Supply, has_runnable_transport
+from app.domain.device.supply import (
+    Supply,
+    Visibility,
+    binding_visibility,
+    has_runnable_transport,
+)
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine.models import (
@@ -62,6 +67,51 @@ def presentation(row):
         if row.work_lease
         else None,
     }
+
+
+async def room_machine_visibility(db, topic, project_settings) -> Visibility | None:
+    """How much of a self-hosted machine the agents in this room can see.
+
+    #282 / #358 原则八: whole-machine access is never granted silently, so the
+    room shows it whenever it holds. Each agent session works on its own machine
+    (结论 60) — the one its lease names, or, before it holds one, the one its
+    choice will lease — so that is what is read here, one session at a time. A
+    room where no session has asked for a machine yet answers for the choice
+    its first session will be given.
+
+    Only machines a person enrolled count. A Cloud box is the room's own and
+    seeing all of it grants nothing more (``device.supply.binding_visibility``).
+    """
+    devices = sql_device_service(db)
+    rows = list(
+        await db.scalars(select(AgentSession).where(AgentSession.topic_id == topic.id))
+    )
+    requested = [row for row in rows if row.work_lease or row.execution_request]
+    choices = [
+        ComputeChoice.model_validate(row.execution_request["choice"])
+        for row in requested
+        if not row.work_lease and (row.execution_request or {}).get("choice")
+    ]
+    if not requested:
+        choices.append(room_choice(topic, project_settings))
+    # A device choice without a machine named takes whichever enrolled machine
+    # is free when it leases: that is still an enrolled machine.
+    machines: list[str | None] = [
+        row.work_lease.get("device_id") for row in requested if row.work_lease
+    ] + [choice.device_id for choice in choices if choice.profile == "device"]
+    seen: set[Visibility] = set()
+    for device_id in machines:
+        supply = Supply.self_hosted
+        if device_id is not None:
+            device = await devices.get_device(device_id)
+            if device is None:
+                continue
+            supply = device.supply
+        if supply is Supply.self_hosted:
+            seen.add(binding_visibility(supply))
+    if Visibility.host in seen:
+        return Visibility.host
+    return next(iter(seen), None)
 
 
 async def request_choice(db, *, topic_id, session_id, actor, choice):
