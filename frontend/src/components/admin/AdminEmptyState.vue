@@ -16,7 +16,7 @@ withDefaults(
     /** 紧凑版：放进卡片或表格里时用，顶距小一档。 */
     compact?: boolean
   }>(),
-  { desc: undefined, icon: 'mdi-tray-remove', action: undefined, tone: 'neutral', compact: false },
+  { desc: undefined, icon: 'mdi-tray-remove', action: undefined, tone: 'neutral', compact: false }
 )
 
 const emit = defineEmits<{ action: [] }>()
