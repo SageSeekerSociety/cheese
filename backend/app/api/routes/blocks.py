@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker
 from app.api.response import ok
 from app.core.db import get_db
@@ -24,11 +25,23 @@ async def toggle_reaction(
     block_id: uuid.UUID,
     body: ReactionToggleIn,
     db: DbSession,
+    resolver: ActorResolverDep,
     broker: Annotated[InProcessBroker, Depends(get_broker)],
 ) -> dict:
     """Slack-style toggle: add the (emoji, author) reaction, or remove it when
     the same author reacts with the same emoji again. Broadcasts the block's
-    fresh aggregate to the topic channel so every open client updates live."""
+    fresh aggregate to the topic channel so every open client updates live.
+
+    A reaction is a write somebody does in somebody else's room, and it used to
+    take none of the credentials such a write takes — a block id was the whole
+    ticket, so an anonymous caller could react as any handle at all.
+    ``require_verified_caller`` is the gate the other write surfaces use for
+    exactly this: a session token, an agent's scoped token, or the global
+    sandbox token (the trusted dev credential, which stays gate-only). Which
+    handle the reaction lands under is still the body's — that is the 冒名
+    question, a different product call, and the sandbox fixture runs one client
+    as alice/bob/carol on purpose (``tests/integration/test_reactions.py``)."""
+    await resolver.require_verified_caller()
     repo = BlockRepository(db)
     block = await repo.get(block_id)
     if block is None:

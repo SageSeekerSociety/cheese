@@ -78,14 +78,6 @@ onBeforeUnmount(() => window.removeEventListener('project-compute-updated', load
 watch(menuOpen, (open) => {
   if (open) void load()
 })
-watch(
-  () => props.topicId,
-  () => {
-    menuOpen.value = false
-    more.value = false
-    void load()
-  }
-)
 </script>
 
 <template>

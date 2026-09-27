@@ -464,10 +464,12 @@ test_deploy_delivers_private_executor() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/private-executor.XXXXXX")"
   docker_log="$run_dir/docker.log"
+  mkdir -p "$run_dir/images"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_IMAGE_STORE="$run_dir/images" \
     DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
     HOME="$run_dir" \
@@ -476,16 +478,11 @@ test_deploy_delivers_private_executor() {
 
   grep -Fqx 'pull ghcr.io/sageseekersociety/cheese/private-executor:testsha' \
     "$docker_log" || fail "deploy did not pull this commit's private executor"
-  grep -Fqx \
-    'tag ghcr.io/sageseekersociety/cheese/private-executor:testsha cheese-private-executor:9.9.9' \
-    "$docker_log" || fail "deploy did not give the executor the name its label declares"
-  promote_line="$(grep -nF \
-    'rename cheese-private-executor-image-retainer-next cheese-private-executor-image-retainer' \
-    "$docker_log" | cut -d: -f1)"
-  prune_line="$(grep -nF 'image prune -af' "$docker_log" | tail -n 1 | cut -d: -f1)"
-  [ -n "$promote_line" ] && [ -n "$prune_line" ] && \
-    [ "$promote_line" -lt "$prune_line" ] || \
-    fail "private executor was not retained before image pruning"
+  # The backend starts a private chat with `docker run <local name>`, so that
+  # name, not the registry one, has to be there once the deploy has pruned.
+  PATH="$FAKE_BIN:$PATH" APP_TIER_IMAGE_STORE="$run_dir/images" \
+    docker image inspect cheese-private-executor:9.9.9 || \
+    fail "the executor's local name did not survive the deploy's image prune"
 
   rm -rf "$run_dir"
   echo "PASS: deploy delivers the private executor under its local name"

@@ -106,10 +106,25 @@ class SpaceMemberPublishingService:
             category_id=category_id,
             approved_value=approved_value,
         )
+        # The badge must answer the same question the board does — "is this
+        # task within my visibleTaskLimit in this space?" — and that answer is
+        # a property of the space, not of the filters this page happens to
+        # carry. So rank over every task I published here (the list above is
+        # already that, unless a filter narrowed it) and badge the surviving
+        # rows from that ranking.
+        unfiltered_tasks = tasks
+        if any(
+            value is not None for value in (from_ts, to_ts, category_id, approved_value)
+        ):
+            unfiltered_tasks = await self._list_my_publishing_tasks(
+                space_id=space_id,
+                user_id=user_id,
+            )
         items = await self._build_my_published_task_items(
             tasks=tasks,
             space_id=space_id,
             visible_task_limit=getattr(space, "visible_task_limit", None),
+            unfiltered_tasks=unfiltered_tasks,
         )
 
         if has_pending_participant_approval is not None:
@@ -181,7 +196,16 @@ class SpaceMemberPublishingService:
         tasks: list[Task],
         space_id: int,
         visible_task_limit: int | None,
+        unfiltered_tasks: list[Task] | None = None,
     ) -> list[dict]:
+        """Rows for ``tasks``, each badged against the space's visibility limit.
+
+        ``unfiltered_tasks`` is the same creator's tasks in this space *without*
+        the request's category/approved/from/to filters, and it is what the
+        limit is ranked over — a filter that hides a row from this page must
+        not lift it over the limit. Defaults to ``tasks`` for callers whose
+        list is already unfiltered.
+        """
         if not tasks:
             return []
 
@@ -207,7 +231,7 @@ class SpaceMemberPublishingService:
             ]
         )
         visible_task_ids = self._compute_visible_approved_task_ids(
-            tasks=tasks,
+            tasks=tasks if unfiltered_tasks is None else unfiltered_tasks,
             visible_task_limit=visible_task_limit,
         )
 

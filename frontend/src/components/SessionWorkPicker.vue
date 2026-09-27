@@ -115,14 +115,6 @@ watch(selectedId, () => {
   notice.value = ''
   error.value = ''
 })
-watch(
-  () => props.topicId,
-  () => {
-    open.value = false
-    sessions.value = []
-    selectedId.value = ''
-  }
-)
 </script>
 
 <template>

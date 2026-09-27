@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote
@@ -37,6 +38,7 @@ from app.domain.task.models import (
     Task,
     TaskAttachment,
     TaskMembership,
+    TaskSubmissionSchemaEntry,
     TaskTagRelation,
 )
 from app.domain.task.repositories import (
@@ -208,6 +210,9 @@ class CreateTaskRequest(BaseModel):
     team_locking_policy: str = Field(default="NO_LOCK", alias="teamLockingPolicy")
     video_url: str | None = Field(default=None, alias="videoUrl")
     topics: list[int] = Field(default_factory=list)
+    submission_schema: list[dict] = Field(
+        default_factory=list, alias="submissionSchema"
+    )
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
@@ -346,6 +351,22 @@ class PatchSubmissionReviewRequest(BaseModel):
     comment: str | None = None
 
 
+_SUBMISSION_SCHEMA_TYPES = {0: "TEXT", 1: "FILE"}
+
+
+def _submission_schema_to_api(
+    entries: Sequence[TaskSubmissionSchemaEntry],
+) -> list[dict]:
+    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。"""
+    return [
+        {
+            "prompt": entry.description,
+            "type": _SUBMISSION_SCHEMA_TYPES.get(entry.type, "TEXT"),
+        }
+        for entry in entries
+    ]
+
+
 def _task_to_api_model(task: Task) -> dict:
     created_at_ms = (
         int(task.created_at.timestamp() * 1000) if task.created_at is not None else 0
@@ -401,6 +422,33 @@ def _task_to_api_model(task: Task) -> dict:
         "publishedAt": published_at_ms,
         "endedAt": ended_at_ms,
     }
+
+
+async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
+    """把这一页每道题的提交表单填进列表响应（就地改）。
+
+    列表默认不带这张表单（``_task_to_api_model`` 报空数组），因为它的调用方
+    很多、多数不关心；审核页那种要显示「提交要求」的读法点名要它。
+    整页一次查询，不按题各发一条。
+    """
+    task_ids = [
+        task_model["id"]
+        for task_model in task_models
+        if isinstance(task_model.get("id"), int)
+    ]
+    if not task_ids:
+        return
+
+    grouped = await TaskSubmissionSchemaRepository(session=db).list_by_task_ids(
+        task_ids
+    )
+    for task_model in task_models:
+        model_id = task_model.get("id")
+        if not isinstance(model_id, int):
+            continue
+        task_model["submissionSchema"] = _submission_schema_to_api(
+            grouped.get(model_id, [])
+        )
 
 
 async def _enrich_task_models(
@@ -911,6 +959,7 @@ async def _create_task_entity(
         topics = payload.topics
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
+        submission_schema = payload.submission_schema or []
     else:
         # Dict path — used by PDF-based creation flow
         required_fields = [
@@ -993,6 +1042,13 @@ async def _create_task_entity(
                     topics.append(int(topic))
                 except (TypeError, ValueError):
                     continue
+
+        schema_raw = payload.get("submissionSchema") or []
+        submission_schema = (
+            [e for e in schema_raw if isinstance(e, dict)]
+            if isinstance(schema_raw, list)
+            else []
+        )
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
@@ -1100,6 +1156,14 @@ async def _create_task_entity(
             db.add(relation)
         await db.flush()
 
+    # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
+    # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
+    if submission_schema:
+        await TaskSubmissionSchemaRepository(session=db).replace_schema(
+            task.id, submission_schema
+        )
+        await db.flush()
+
     return task
 
 
@@ -1115,10 +1179,12 @@ async def create_task(
     """Create a new task (simplified port of Kotlin TaskService.createTask).
 
     NOTE:
-    - 权限：调用者必须是 ``space`` 的管理员/创建者，否则 403 ——
-      从前这条 route 只要求提供 space 并验证 category 归属，任何登录用户都能发题，
-      现在收权了（见 ``_create_task_entity`` 里的 ``may_publish_in_space``）；
-    - submissionSchema / topics 仅做占位处理，暂不影响提交与评分。
+    - 权限：调用者必须是 ``space`` 的成员（在成员名册里，或所有者在管理员关系里），
+      否则 403 —— 从前这条 route 只要求提供 space 并验证 category 归属，任何登录
+      用户都能往别人的板里发题；中间一度收成「只有管理员能发」，重设计后放开为
+      「板里的人都能发、所有者与管理员审」（见 ``_create_task_entity`` 里的
+      ``may_publish_in_space``）；
+    - submissionSchema 与 PATCH 一样写入提交表单；topics 只插关系行，不做校验。
     """
     task = await _create_task_entity(
         payload=payload,
@@ -1913,12 +1979,7 @@ async def get_task(
     # Fetch submissionSchema
     schema_repo = TaskSubmissionSchemaRepository(session=db)
     schema_entries = await schema_repo.list_by_task_id(task_id)
-    type_map = {0: "TEXT", 1: "FILE"}
-    submission_schema = [
-        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")}
-        for e in schema_entries
-    ]
-    task_dict["submissionSchema"] = submission_schema
+    task_dict["submissionSchema"] = _submission_schema_to_api(schema_entries)
 
     # Fetch topics if queryTopics is true
     if queryTopics:
@@ -2176,13 +2237,8 @@ async def patch_task(
     # Fetch submissionSchema for response
     schema_repo = TaskSubmissionSchemaRepository(session=db)
     schema_entries = await schema_repo.list_by_task_id(task.id)
-    type_map = {0: "TEXT", 1: "FILE"}
-    submission_schema = [
-        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")}
-        for e in schema_entries
-    ]
     task_response = _task_to_api_model(task)
-    task_response["submissionSchema"] = submission_schema
+    task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
     task_response = (
         await _enrich_task_models(db, [task_response], space_id=task.space_id)
     )[0]
@@ -2220,6 +2276,7 @@ async def get_tasks(
     queryJoined: bool = Query(default=False),
     queryUserDeadline: bool = Query(default=False),
     queryTopics: bool = Query(default=False),
+    querySubmissionSchema: bool = Query(default=False),
     keywords: str | None = Query(default=None),
     db=Depends(get_db),
     service: TaskService = Depends(get_task_service),
@@ -2303,6 +2360,10 @@ async def get_tasks(
     )
     items = [_task_to_api_model(t) for t in tasks]
     items = await _enrich_task_models(db, items, space_id=space)
+
+    # 提交表单只在被点名时才带（审核页要显示「提交要求」，见函数注释）。
+    if querySubmissionSchema:
+        await _enrich_task_submission_schema(db, items)
 
     # Topic enrichment when requested. The frontend's Task.topics is accessed
     # as `task.topics.length` so populate even when not asked (empty array)

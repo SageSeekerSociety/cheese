@@ -102,31 +102,86 @@ def _mint_code(
     token: str,
     space_id: int,
     *,
-    max_uses: int = 10,
+    max_uses: int | None = 10,
     expires_at: int | None = None,
 ) -> str:
-    body: dict = {"maxUses": max_uses}
+    return _mint_code_row(
+        api_client, token, space_id, max_uses=max_uses, expires_at=expires_at
+    )["code"]
+
+
+def _mint_code_row(
+    api_client: TestClient,
+    token: str,
+    space_id: int,
+    *,
+    max_uses: int | None = 10,
+    expires_at: int | None = None,
+) -> dict:
+    """Mint a code and hand back the whole row — editing needs its id."""
+    body: dict = {}
+    if max_uses is not None:
+        body["maxUses"] = max_uses
     if expires_at is not None:
         body["expiresAt"] = expires_at
     resp = api_client.post(
         f"/spaces/{space_id}/invite-codes", json=body, headers=_auth(token)
     )
     assert resp.status_code == 201, resp.text
-    return resp.json()["data"]["inviteCode"]["code"]
+    return resp.json()["data"]["inviteCode"]
+
+
+def _listed_codes(api_client: TestClient, token: str, space_id: int) -> list[dict]:
+    resp = api_client.get(f"/spaces/{space_id}/invite-codes", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["inviteCodes"]
+
+
+def _code_row(api_client: TestClient, token: str, space_id: int, code_id: int) -> dict:
+    """One row of the space's list, by id.
+
+    Every space is created holding a code of its own, so the list is never
+    just the codes the test minted — index 0 would answer for the wrong one.
+    """
+    for row in _listed_codes(api_client, token, space_id):
+        if row["id"] == code_id:
+            return row
+    raise AssertionError(f"code id {code_id} is not in the space's list")
 
 
 def _use_count(api_client: TestClient, token: str, space_id: int, code: str) -> int:
-    resp = api_client.get(f"/spaces/{space_id}/invite-codes", headers=_auth(token))
-    assert resp.status_code == 200, resp.text
-    for row in resp.json()["data"]["inviteCodes"]:
+    for row in _listed_codes(api_client, token, space_id):
         if row["code"] == code:
             return int(row["useCount"])
     raise AssertionError(f"code {code} is not in the space's list")
 
 
+def _patch_code(
+    api_client: TestClient, token: str, space_id: int, code_id: int, body: dict
+):
+    return api_client.patch(
+        f"/spaces/{space_id}/invite-codes/{code_id}", json=body, headers=_auth(token)
+    )
+
+
+def _revoke_code(api_client: TestClient, token: str, space_id: int, code_id: int):
+    return api_client.delete(
+        f"/spaces/{space_id}/invite-codes/{code_id}", headers=_auth(token)
+    )
+
+
+def _try_join(api_client: TestClient, token: str, code: str):
+    return api_client.post("/spaces/join", json={"code": code}, headers=_auth(token))
+
+
 def _join(api_client: TestClient, token: str, code: str) -> None:
-    resp = api_client.post("/spaces/join", json={"code": code}, headers=_auth(token))
+    resp = _try_join(api_client, token, code)
     assert resp.status_code == 200, resp.text
+
+
+def _newcomer(user_client: UserCreator, api_client: TestClient) -> str:
+    """A logged-in user who is not in any board yet."""
+    return _login(user_client, api_client, user_client.create_user())
 
 
 @pytest.fixture
@@ -295,6 +350,190 @@ class TestInviteCodes:
             "/spaces/join", json={"code": stale_code}, headers=_auth(third_token)
         )
         assert expired.status_code == 400, expired.text
+
+
+class TestEditingAHandedOutCode:
+    """A code already in people's hands can be re-aimed, or taken back.
+
+    Every case below ends by redeeming the code and reading the answer, because
+    "the budget was raised" and "one more person got in" are different claims
+    and only the second one is the point. The same goes for the refusals: what
+    is pinned is that the change reached the person at the door.
+
+    No attempt is retried by the person who was just refused. In production the
+    whole request rolls back, but the test harness replaces ``get_db`` with a
+    bare ``yield db_session`` (tests/integration/conftest.py), so a membership
+    row written before the refusal stays visible for the rest of the test and
+    the retry would come back 200 through the "already in" path — measuring the
+    harness rather than the code. Each attempt below walks up as someone new.
+    """
+
+    def test_raising_the_budget_lets_the_next_person_in(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        row = _mint_code_row(api_client, owner_token, space_id, max_uses=1)
+
+        _join(api_client, _newcomer(user_client, api_client), row["code"])
+        refused = _try_join(api_client, _newcomer(user_client, api_client), row["code"])
+        assert refused.status_code == 400, refused.text
+
+        updated = _patch_code(
+            api_client, owner_token, space_id, row["id"], {"maxUses": 2}
+        )
+        assert updated.status_code == 200, updated.text
+        body = updated.json()["data"]["inviteCode"]
+        assert body["maxUses"] == 2
+        # Raising the budget is not the same as spending it.
+        assert body["useCount"] == 1
+
+        later = _try_join(api_client, _newcomer(user_client, api_client), row["code"])
+        assert later.status_code == 200, later.text
+        assert _code_row(api_client, owner_token, space_id, row["id"])["useCount"] == 2
+
+    def test_an_expiry_can_be_moved_and_cleared_but_survives_being_ignored(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        future = int(time.time() * 1000) + 3_600_000
+        row = _mint_code_row(
+            api_client, owner_token, space_id, max_uses=5, expires_at=future
+        )
+        admitted = _try_join(
+            api_client, _newcomer(user_client, api_client), row["code"]
+        )
+        assert admitted.status_code == 200, admitted.text
+
+        # An edit that says nothing about the date leaves it where it was.
+        ignored = _patch_code(
+            api_client, owner_token, space_id, row["id"], {"maxUses": 6}
+        )
+        assert ignored.status_code == 200, ignored.text
+        assert (
+            _code_row(api_client, owner_token, space_id, row["id"])["expiresAt"]
+            == future
+        )
+
+        moved = _patch_code(
+            api_client,
+            owner_token,
+            space_id,
+            row["id"],
+            {"expiresAt": int(time.time() * 1000) - 1000},
+        )
+        assert moved.status_code == 200, moved.text
+        refused = _try_join(api_client, _newcomer(user_client, api_client), row["code"])
+        assert refused.status_code == 400, refused.text
+
+        # An explicit null is a different sentence from an absent field: the
+        # code stops expiring rather than keeping the date that just lapsed.
+        cleared = _patch_code(
+            api_client, owner_token, space_id, row["id"], {"expiresAt": None}
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["data"]["inviteCode"]["expiresAt"] is None
+        admitted = _try_join(
+            api_client, _newcomer(user_client, api_client), row["code"]
+        )
+        assert admitted.status_code == 200, admitted.text
+
+    def test_a_budget_below_what_is_already_used_is_refused_and_changes_nothing(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
+        _join(api_client, _newcomer(user_client, api_client), row["code"])
+        _join(api_client, _newcomer(user_client, api_client), row["code"])
+
+        lowered = _patch_code(
+            api_client, owner_token, space_id, row["id"], {"maxUses": 1}
+        )
+        assert lowered.status_code == 400, lowered.text
+        assert _error_name(lowered) == "BadRequestError", lowered.text
+
+        # A refusal that quietly wrote the value anyway would read as a code
+        # nobody can use, so the row is checked, not just the status code.
+        assert _code_row(api_client, owner_token, space_id, row["id"])["maxUses"] == 5
+        admitted = _try_join(
+            api_client, _newcomer(user_client, api_client), row["code"]
+        )
+        assert admitted.status_code == 200, admitted.text
+
+    def test_a_revoked_code_admits_nobody_and_leaves_the_list(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
+
+        revoked = _revoke_code(api_client, owner_token, space_id, row["id"])
+        assert revoked.status_code == 204, revoked.text
+        listed = [
+            item["id"] for item in _listed_codes(api_client, owner_token, space_id)
+        ]
+        assert row["id"] not in listed
+
+        # To someone holding the code, a revoked one is indistinguishable from
+        # one that never existed — which is the shape a withdrawal should have.
+        refused = _try_join(api_client, _newcomer(user_client, api_client), row["code"])
+        assert refused.status_code == 404, refused.text
+
+    def test_a_revoked_code_cannot_be_edited_back_into_circulation(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
+
+        revoked = _revoke_code(api_client, owner_token, space_id, row["id"])
+        assert revoked.status_code == 204, revoked.text
+
+        edited = _patch_code(
+            api_client, owner_token, space_id, row["id"], {"maxUses": 99}
+        )
+        assert edited.status_code == 404, edited.text
+        again = _revoke_code(api_client, owner_token, space_id, row["id"])
+        assert again.status_code == 404, again.text
+
+    def test_only_the_boards_admins_may_edit_or_revoke(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
+
+        member_token = _newcomer(user_client, api_client)
+        _join(api_client, member_token, row["code"])
+
+        edited = _patch_code(
+            api_client, member_token, space_id, row["id"], {"maxUses": 99}
+        )
+        assert edited.status_code == 403, edited.text
+        revoked = _revoke_code(api_client, member_token, space_id, row["id"])
+        assert revoked.status_code == 403, revoked.text
+        assert _code_row(api_client, owner_token, space_id, row["id"])["maxUses"] == 5
+
+    def test_a_code_of_another_board_is_not_reachable_by_its_id(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        mine_token = _newcomer(user_client, api_client)
+        my_space_id = _create_space(api_client, mine_token)["space"]["id"]
+
+        theirs_token = _newcomer(user_client, api_client)
+        their_space_id = _create_space(api_client, theirs_token)["space"]["id"]
+        their_row = _mint_code_row(api_client, theirs_token, their_space_id, max_uses=5)
+
+        edited = _patch_code(
+            api_client, mine_token, my_space_id, their_row["id"], {"maxUses": 99}
+        )
+        assert edited.status_code == 404, edited.text
+        revoked = _revoke_code(api_client, mine_token, my_space_id, their_row["id"])
+        assert revoked.status_code == 404, revoked.text
+        kept = _code_row(api_client, theirs_token, their_space_id, their_row["id"])
+        assert kept["maxUses"] == 5
 
 
 class TestLeavingAndBeingRemoved:

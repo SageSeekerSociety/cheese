@@ -791,6 +791,41 @@ class SpaceInviteCodeRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
+    async def get_for_space(
+        self, *, space_id: int, code_id: int
+    ) -> SpaceInviteCode | None:
+        """One live code of this space, by id.
+
+        Scoped by space on purpose: knowing an id must not reach another
+        board's code. Revoked ones are absent too — a code that is out of
+        circulation is not something to edit back into it.
+        """
+        stmt: Select[tuple[SpaceInviteCode]] = select(SpaceInviteCode).where(
+            SpaceInviteCode.id == code_id,
+            SpaceInviteCode.space_id == space_id,
+            SpaceInviteCode.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def save(self, invite: SpaceInviteCode) -> SpaceInviteCode:
+        invite.updated_at = datetime.now(UTC)
+        await self._session.flush()
+        return invite
+
+    async def revoke(self, invite: SpaceInviteCode) -> None:
+        """Take a code out of circulation by soft delete.
+
+        Soft rather than a DELETE because ``consume_use`` already refuses a
+        row whose ``deleted_at`` is set — so this one write is the whole of
+        the revocation, with no second place to keep in step. The row stays
+        as the record of what was handed out.
+        """
+        now = datetime.now(UTC)
+        invite.deleted_at = now
+        invite.updated_at = now
+        await self._session.flush()
+
     async def consume_use(self, code_id: int) -> bool:
         """Spend one use, only if there is one left and the code has not expired.
 

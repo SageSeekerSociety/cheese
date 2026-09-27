@@ -15,9 +15,10 @@ import argparse
 import asyncio
 import os
 import signal
+import sys
 from pathlib import Path
 
-from app.domain.agent.harness.claude_code.runner import Runner
+from app.domain.agent.harness.claude_code.runner import LAUNCH, Runner, ended
 
 COMMAND = "CHEESE_CLAUDE_COMMAND"
 
@@ -25,7 +26,7 @@ COMMAND = "CHEESE_CLAUDE_COMMAND"
 async def serve(state: Path) -> None:
     env = dict(os.environ)
     command = env.pop(COMMAND)
-    runner = Runner(state)
+    runner = Runner(state, launch=env.pop(LAUNCH, ""))
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -56,7 +57,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", type=Path, required=True)
     args = parser.parse_args()
-    asyncio.run(serve(args.state))
+    try:
+        asyncio.run(serve(args.state))
+    except Exception:
+        # Before the traceback Python prints next, so the backend waiting on
+        # this launch reads both.
+        print(
+            f"{ended(os.environ.get(LAUNCH, ''))}: the runner failed",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise
 
 
 if __name__ == "__main__":

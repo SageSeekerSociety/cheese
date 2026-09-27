@@ -7,7 +7,11 @@
     <p class="t-body c-muted">{{ t('work.teamProfile.notFound') }}</p>
   </v-container>
   <template v-else-if="teamData">
-    <DetailSidebar :team-data="teamData" :team-members-count="teamMembersCount" />
+    <DetailSidebar
+      :team-data="teamData"
+      :team-members-count="teamMembersCount"
+      @updated="(team: Team) => (teamData = team)"
+    />
     <v-container fluid class="pa-0 layout-container">
       <v-row no-gutters class="fill-height">
         <!-- 右侧内容区 -->
