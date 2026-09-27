@@ -97,6 +97,8 @@ class AskRequest(BaseModel):
     # The public page the reader is on, by slug; developer pages are not answered from.
     page: str | None = None
     history: list[Turn] = Field(default_factory=list, max_length=6)
+    # Text the reader selected on the page and asked about (划词问芝士).
+    quote: str | None = Field(default=None, max_length=600)
 
     @field_validator("question")
     @classmethod
@@ -137,10 +139,10 @@ async def ask(
     if index is None:
         await limits.release(auth.user_id)
         return _refuse(503, "问芝士暂时读不到文档，稍后再试。", 30)
+    # A quoted passage says what the question is about; search with both.
+    query = f"{body.quote}\n{body.question}" if body.quote else body.question
     hits = retrieval.relevant(
-        index.search(
-            body.question, page_url=f"/docs/{body.page}" if body.page else None
-        )
+        index.search(query, page_url=f"/docs/{body.page}" if body.page else None)
     )
     result = assistant.Outcome(sources=[h.section.url for h in hits])
 
@@ -160,7 +162,10 @@ async def ask(
                 yield assistant.sse("delta", {"text": assistant.NO_MATCH})
             else:
                 messages = assistant.build_messages(
-                    body.question, hits, [t.model_dump() for t in body.history]
+                    body.question,
+                    hits,
+                    [t.model_dump() for t in body.history],
+                    quote=body.quote,
                 )
                 async for chunk in assistant.stream_answer(key, messages, result):
                     yield chunk

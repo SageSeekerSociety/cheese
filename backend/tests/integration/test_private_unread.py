@@ -12,11 +12,27 @@ import uuid
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client) -> str:
     return post_project(client, json={"name": "Demo"}).json()["data"]["id"]
+
+
+def _on_the_roster(client, project_id: str, *handles: str) -> None:
+    """把这些人放进项目名册。
+
+    The badge map is a *project* read and asks the project door (``topics.py``),
+    so the two seats a DM is about have to be members of it. They always were
+    participants by intent — they simply did not have to be listed while the
+    route only asked whose mailbox was being read.
+    """
+    for handle in handles:
+        join_project_team(client, project_id, handle)
 
 
 def _dm(client, project_id: str, user: str, peer: str | None = None) -> str:
@@ -76,6 +92,7 @@ def test_one_person_cannot_read_anothers_dm_badges(client):
 
 def test_peer_dm_unread_is_keyed_by_the_other_party(client):
     project_id = _project(client)
+    _on_the_roster(client, project_id, "user-1", "mentor-1")
     dm = _dm(client, project_id, "user-1", "mentor-1")
 
     # Nothing said yet.
@@ -96,6 +113,7 @@ def test_peer_dm_unread_is_keyed_by_the_other_party(client):
 
 def test_opening_the_dm_clears_it_and_new_messages_light_it_again(client):
     project_id = _project(client)
+    _on_the_roster(client, project_id, "user-1", "mentor-1")
     dm = _dm(client, project_id, "user-1", "mentor-1")
     _seed_message(client, project_id, dm, "mentor-1")
     assert _private_unread(client, project_id, "user-1") == {"mentor-1": 1}
@@ -122,6 +140,7 @@ def test_a_teammate_dm_is_keyed_by_that_teammate(client):
     handle: teammate names are chosen per project and can collide with a
     person's (see test_private_chat_per_agent)."""
     project_id = _project(client)
+    _on_the_roster(client, project_id, "user-1")
     dm = _dm(client, project_id, "user-1")  # no peer → the default teammate
     _seed_message(client, project_id, dm, "cheese")
     assert _private_unread(client, project_id, "user-1") == {"agent:cheese": 1}
@@ -129,6 +148,7 @@ def test_a_teammate_dm_is_keyed_by_that_teammate(client):
 
 def test_other_peoples_dms_are_invisible(client):
     project_id = _project(client)
+    _on_the_roster(client, project_id, "user-1", "mentor-1", "mentor-2")
     theirs = _dm(client, project_id, "mentor-1", "mentor-2")
     _seed_message(client, project_id, theirs, "mentor-1")
     assert _private_unread(client, project_id, "user-1") == {}
@@ -136,6 +156,7 @@ def test_other_peoples_dms_are_invisible(client):
 
 def test_group_topics_never_appear_in_the_private_map(client):
     project_id = _project(client)
+    _on_the_roster(client, project_id, "user-1", "mentor-1")
     tr = client.post("/topics", json={"project_id": project_id, "title": "房间"})
     topic_id = tr.json()["data"]["id"]
     _seed_message(client, project_id, topic_id, "mentor-1")

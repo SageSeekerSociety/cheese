@@ -9,6 +9,7 @@ covers:
   - backend/app/domain/agent/harness/
   - backend/app/domain/agent/host_failure.py
   - backend/app/domain/agent/dispatch_log.py
+  - backend/app/domain/topic/naming.py
 ---
 
 # 一条消息怎么变成芝士的一轮 {#turn}
@@ -35,7 +36,7 @@ covers:
 `ComputePool`（`compute.py`）回答「这一轮在哪跑」，有几种供给：
 
 - **本机沙盒容器**：主 API 通过 docker.sock 起的兄弟容器。
-- **中心会话 + 远端执行**（`central_provider.py`）：会话进程在中心主机上，文件和命令经执行器落到租用的机器上。开跑前最多花 15 秒（`MACHINE_PROBE_TIMEOUT_S`）问一下租用的机器还在不在。
+- **中心会话 + 远端执行**（`central_provider.py`）：会话进程在中心主机上，文件和命令经执行器落到租用的机器上。需要把会话重新落到那台机器上时（没有会话在跑，或该重启了），开跑前最多花 15 秒（`MACHINE_PROBE_TIMEOUT_S`）问一下租用的机器还在不在。
 - **设备**（`device_provider.py`）：用户接入的电脑，会话直接开在那台机器的「屏幕」里。
 - **云机器**（`cloud_provider.py`）：每个话题一台 MicroCloud 机器。
 
@@ -43,9 +44,9 @@ covers:
 
 ## 4. 启动或续跑骨架 {#harness}
 
-骨架有三种：Claude Code、Codex、Pi（`backend/app/domain/agent/harness/`）。每种骨架把自己的协议翻译成统一的事件（`service.py`）。会话 id 存在话题上，下一轮续跑同一个会话。
+骨架有三种：Claude Code、Codex、Pi（`backend/app/domain/agent/harness/`）。每种骨架在自己的目录下把协议翻译成统一的事件，由 `backend/app/domain/agent/service.py` 接住。会话 id 存在话题上，下一轮续跑同一个会话。
 
-注入给芝士的操作说明按话题当前所处的阶段决定（`stages.py`）：拆活、执行任务、等人采纳、PR 迭代、冲突……每段只注入那一段该知道的。
+注入给芝士的操作说明按话题当前所处的阶段决定（`stages.py` 的 `TopicStage`）：任务执行、闸门、等采纳、合并冲突、已归档，五个阶段各注入各的那一段。「拆活」和「干活」是同一段：分开注入会让房间在派活时读不到该怎么交付。
 
 ## 5. 芝士怎么说话 {#publish}
 
@@ -59,3 +60,20 @@ covers:
 - **结果未知的副作用**：带幂等 id 的执行器调用会先在平台侧记一行（`dispatch_log.py`），机器突然没了之后，重派时能分清「确定没做」和「可能做过」。
 - **额度用完**：准入拒绝，房间里出现平台提示。
 - **发版**：旧的主 API 进程把正在跑的轮交给新进程；新进程用 `recover_sessions` 重新监听这些会话，并补上没人监听那段时间里它们说过的话。
+
+## 7. 话题命名 {#naming}
+
+给话题起名不在一轮里做，由平台在后台单独调用一次小模型（`backend/app/domain/topic/naming.py`，网关上的 `topic_naming_model`，用自己的虚拟 key 和预算）。触发点和判断：
+
+| 时机 | 触发 | 做什么 |
+|---|---|---|
+| 起名 | 还叫「新话题」的话题收到第一条有内容的人话（`post_user_message`），或第一轮结束 | 起一个名字，不在房间里发提示 |
+| 校准 | 第一轮结束，或人发满 3 条消息；只做一次 | 结合对话、实况文档目标段和任务清单，判断要不要换 |
+| 跟进 | 实况文档改动、拆出任务、递验收卡这类信号，或上次判断后又多了 30 条消息 | 先判断要不要改；同一话题 30 分钟最多一次、每天最多 3 次 |
+
+- 每次都把当前标题交给模型，默认保留；只改了措辞和标点按不改处理。
+- 标题由谁定记在 `topics.title_source`：`placeholder`、`auto`、`human`。人在侧栏改名、让芝士用 `cheese_title` 改名、确认「智能重命名」的建议、撤销一次自动改名，都记为 `human`，平台之后不再自动改。
+- 自动改名按 `title_version` 比较后写入：生成期间有人改了名，这次结果作废。
+- 每次改名记进 `topic_titles`；非首次改名会在房间里发一条带撤销按钮的事件，并推送 `state: topics` 让侧栏刷新。
+- 项目设置 `topic_naming = manual` 时平台不起名，主 agent 也不会被要求起名。
+- 平台起不了名（没配网关）时，退回旧办法：系统提示词要求主 agent 在第一轮先用 `cheese_title` 起名。

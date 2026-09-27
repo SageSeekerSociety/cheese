@@ -229,6 +229,12 @@ test.describe("空间新界面（真路由）", () => {
     await page.goto(`/spaces/${spaceId}/board/analytics`);
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board$`));
     await expect(page.getByRole("heading", { name: "总览" })).toHaveCount(0);
+
+    // 但「出题目」是有的：这块板任何人都能出题，成员发出来的题进待审队列，
+    // 由所有者或管理员审。少一颗按钮就等于这条要求没落地。
+    await expect(page.getByRole("link", { name: "出题目" })).toBeVisible();
+    await page.getByRole("link", { name: "出题目" }).click();
+    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/publish$`));
   });
 
   test("点一道题在新外壳里打开详情，导航还在；老地址也还开着", async ({ page }) => {

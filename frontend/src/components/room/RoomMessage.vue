@@ -423,30 +423,9 @@ async function onAgentTextClick(e: MouseEvent) {
   background: var(--surface);
   border-color: var(--faint);
 }
-/* @mention: neutral inset, ink text — not amber. */
-.im-text :deep(.mention) {
-  color: var(--accent-ink);
-  background: var(--fill);
-  border-radius: var(--radius-sm);
-  padding: 0 3px;
-  font-weight: 500;
-  cursor: pointer;
-}
-/* @person handle reads as a link: persistent accent underline. File/topic
-   refs (file icon / #) keep their chip look and only underline on hover. */
-.im-text :deep(.mention:not(.file-ref):not(.topic-ref)) {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.im-text :deep(.mention:hover) {
-  text-decoration: underline;
-}
-/* 文件 chip 前的 mdi 图标。不挂在 .im-text 下：同样的 chip 也出现在动作卡
-   (.action-verb) 和系统事件行里，那两处不在 .im-text 里面。 */
-:deep(.file-ref__icon) {
-  margin-right: 3px;
-  font-size: 0.92em;
-}
+/* 引用 chip（@人 / 文件 / 话题）的样式在 style.css 里，一份定义给所有渲染这份
+   markup 的地方用——动作卡和系统事件行里的同款 chip 不在 .im-text 里面，写在组件
+   的 scoped 块里就只有对话栏看得见；现场那一栏也渲染同一份 chip。 */
 
 /* 选项问题 buttons (cheese_ask): quiet outlined buttons. 悬停只加深一档，不上琥珀：
    一排选项里没有哪一个是「主操作」。 */

@@ -226,7 +226,10 @@ def test_unconfigured_host_never_offers_publication(client, monkeypatch):
 def test_team_member_can_read_and_team_admin_can_publish(client):
     from tests.integration.test_team_member_enters_team_project import _team
 
-    team_id = _team(client, owner="admin", members=("bob",))
+    # alice is on the team because a project can only be planted in a team its
+    # creator belongs to; the roles under test stay the same (admin owns the
+    # team, bob is a plain member).
+    team_id = _team(client, owner="admin", members=("bob", "alice"))
     pid = _project(client, owner="alice", team_id=team_id)
     revision = _accepted(pid, {"web/index.html": "team site"})
     assert _get(client, pid, "bob").status_code == 200

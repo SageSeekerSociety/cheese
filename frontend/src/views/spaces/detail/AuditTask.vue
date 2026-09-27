@@ -150,7 +150,7 @@
 <script setup lang="ts">
 import type { Task } from '@/types'
 
-import { defineAsyncComponent, onMounted, ref } from 'vue'
+import { defineAsyncComponent, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
@@ -199,6 +199,9 @@ const {
     approved: 'NONE',
     queryTopics: true,
     querySpace: true,
+    // 这一屏要显示「提交要求」，而列表默认不带那张表单 —— 不点名要，
+    // 底下那块永远走「无提交要求」那一支。
+    querySubmissionSchema: true,
   })
   return { data: data.tasks as AuditTask[], page: data.page }
 })
@@ -286,9 +289,16 @@ const parseDescription = (description: string) => {
   }
 }
 
-onMounted(async () => {
-  await refresh()
-})
+// The space is known only once the space layout has loaded it; opened cold
+// (the address typed in, a reload) this page mounts first. Load when it is
+// known, and again if it changes.
+watch(
+  currentSpaceId,
+  (id) => {
+    if (id) refresh()
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped lang="scss">

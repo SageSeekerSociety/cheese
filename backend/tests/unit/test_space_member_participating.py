@@ -3,6 +3,7 @@
 Tests static helpers and row construction logic without DB access.
 """
 
+import re
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -102,6 +103,41 @@ def _mock_scalar(val):
     m = MagicMock()
     m.scalar_one_or_none.return_value = val
     return m
+
+
+class _StubResult:
+    """The slice of a SQLAlchemy Result the service's loaders actually use."""
+
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._rows)
+
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
+
+class _StubSession:
+    """Answers a statement by the table it reads.
+
+    Keying off the table — not off the order in which ``_load_context`` happens
+    to issue its queries — keeps the test about the endpoint's output instead of
+    about the loader's call sequence.
+    """
+
+    def __init__(self, **tables):
+        self._tables = tables
+
+    async def execute(self, statement):
+        sql = str(statement).replace('"', "")
+        for table, rows in self._tables.items():
+            if re.search(rf"\bFROM {table}\b", sql):
+                return _StubResult(rows)
+        return _StubResult([])
 
 
 # ---------------------------------------------------------------------------
@@ -452,3 +488,47 @@ class TestGetParticipations:
 
         result = await svc.get_participations(space_id=1, user_id=100)
         assert result == []
+
+
+class TestGetParticipationsOrdering:
+    """GET /spaces/{spaceId}/me/participations ordering, seen from the service."""
+
+    def _service(self, memberships):
+        session = _StubSession(
+            space=[SimpleNamespace(id=1, name="Space", deleted_at=None)],
+            team_user_relation=[],
+            task_membership=memberships,
+            task=[_task(id=m.task_id) for m in memberships],
+            space_categories=[],
+            task_submission=[],
+            user=[],
+        )
+        return SpaceMemberParticipatingService(session)
+
+    @pytest.mark.anyio
+    async def test_rows_without_a_deadline_stay_last_in_both_orders(self):
+        """desc — the page default — must not float the deadline-less rows up.
+
+        A row with ``deadline: null`` has no value to sort on, so it belongs at
+        the tail whichever direction the rest is sorted in. Ties inside one
+        deadline keep their existing tie-break.
+        """
+        memberships = [
+            _membership(id=1, task_id=10, deadline=None),
+            _membership(id=2, task_id=11, deadline=datetime(2025, 6, 2, 12, 0, 0)),
+            _membership(id=3, task_id=12, deadline=datetime(2025, 6, 2, 12, 0, 0)),
+            _membership(id=4, task_id=13, deadline=datetime(2025, 6, 3, 12, 0, 0)),
+        ]
+        svc = self._service(memberships)
+
+        desc = await svc.get_participations(
+            space_id=1, user_id=100, sort_by="deadline", sort_order="desc"
+        )
+        # 13 is the latest, 11 and 12 share a deadline (higher id first), and
+        # 10, which has no deadline at all, is last.
+        assert [row["taskId"] for row in desc] == [13, 12, 11, 10]
+
+        asc = await svc.get_participations(
+            space_id=1, user_id=100, sort_by="deadline", sort_order="asc"
+        )
+        assert [row["taskId"] for row in asc] == [11, 12, 13, 10]

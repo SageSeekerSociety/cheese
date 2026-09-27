@@ -249,6 +249,20 @@ class CreateSpaceInviteCodeRequest(BaseModel):
     expires_at: int | None = Field(default=None, alias="expiresAt")
 
 
+class PatchSpaceInviteCodeRequest(BaseModel):
+    """What may still be changed on a live code.
+
+    Both fields are nullable and both are optional, and the two mean different
+    things: an absent ``expiresAt`` leaves the date alone, an explicit null
+    clears it. The route reads ``model_fields_set`` to tell them apart.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    max_uses: int | None = Field(default=None, alias="maxUses")
+    expires_at: int | None = Field(default=None, alias="expiresAt")
+
+
 class AddSpaceManagerRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1376,6 +1390,55 @@ async def create_space_invite_code(
     }
 
 
+@router.patch(
+    "/{spaceId}/invite-codes/{codeId}",
+    summary="Update Space Invite Code",
+)
+async def patch_space_invite_code(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    code_id: Annotated[int, Path(ge=1, alias="codeId")],
+    payload: PatchSpaceInviteCodeRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> dict:
+    expires_at = None
+    if payload.expires_at is not None:
+        expires_at = datetime.fromtimestamp(payload.expires_at / 1000.0, tz=UTC)
+    invite = await service.update_invite_code(
+        space_id=space_id,
+        actor_user_id=auth_user.user_id,
+        code_id=code_id,
+        max_uses=payload.max_uses,
+        max_uses_set="max_uses" in payload.model_fields_set,
+        expires_at=expires_at,
+        expires_at_set="expires_at" in payload.model_fields_set,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"inviteCode": _invite_code_to_api_model(invite)},
+    }
+
+
+@router.delete(
+    "/{spaceId}/invite-codes/{codeId}",
+    summary="Revoke Space Invite Code",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def revoke_space_invite_code(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    code_id: Annotated[int, Path(ge=1, alias="codeId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> Response:
+    await service.revoke_invite_code(
+        space_id=space_id,
+        actor_user_id=auth_user.user_id,
+        code_id=code_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get(
     "/{spaceId}/categories",
     summary="List categories in a space",
@@ -1409,7 +1472,12 @@ async def get_space_task_analytics(
     taskApproved: str | None = Query(default=None),
     hasPendingReview: bool | None = Query(default=None),
     hasPendingApproval: bool | None = Query(default=None),
-    sortBy: str = Query(default="publishedAt"),
+    # ``createdAt``, not ``publishedAt``: this route sorts inside
+    # ``SpaceAnalyticsViewService`` against ``TASK_SORT_FIELDS``, which has no
+    # ``publishedAt`` key (``/tasks`` maps that name onto ``createdAt`` first —
+    # this layer never did). A default outside the set 400s every caller that
+    # takes the documented default, which is exactly what it used to do.
+    sortBy: str = Query(default="createdAt"),
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),

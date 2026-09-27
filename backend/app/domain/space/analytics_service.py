@@ -1,6 +1,8 @@
 from collections import Counter
 from dataclasses import dataclass
 
+from app.core.csv_export import csv_row
+from app.domain.space.analytics_view_service import SUCCESS_STATUS
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -108,7 +110,9 @@ class SpaceAnalyticsService:
             participants_by_task.setdefault(membership.task_id, []).append(
                 membership.member_id
             )
-            if getattr(membership, "completion_status", "NOT_SUBMITTED") == "COMPLETED":
+            # SUCCESS_STATUS, not a private copy of the literal: a status value
+            # nothing in the domain ever writes counts zero for every row.
+            if getattr(membership, "completion_status", None) == SUCCESS_STATUS:
                 completed_users[membership.task_id] = (
                     completed_users.get(membership.task_id, 0) + 1
                 )
@@ -166,20 +170,18 @@ class SpaceAnalyticsService:
         rows = ["taskId,taskName,participantId,status"]
         for task in tasks:
             members = membership_map.get(task.id, [])
-            name = self._csv_escape(task.name)
             if not members:
-                rows.append(f"{task.id},{name},,0")
+                rows.append(csv_row(task.id, task.name, "", 0))
             for member in members:
                 rows.append(
-                    f"{task.id},{name},{member.member_id},{self._participant_label(member.approved)}"
+                    csv_row(
+                        task.id,
+                        task.name,
+                        member.member_id,
+                        self._participant_label(member.approved),
+                    )
                 )
         return "\n".join(rows)
-
-    @staticmethod
-    def _csv_escape(value: str) -> str:
-        if any(c in value for c in (",", '"', "\n", "\r")):
-            return '"' + value.replace('"', '""') + '"'
-        return value
 
     _APPROVED_MAP: dict[str, int] = {
         "APPROVED": 0,

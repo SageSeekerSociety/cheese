@@ -1,6 +1,12 @@
 /** TransferProjectDialog：选一个接手的人、调接口、刷新，被拒时把理由留在弹窗里。
  *
- * 接得住项目的只有名册上真有一行的人：自己、所有者那一行补出来的、AI 队友都不列。
+ * 接得住项目的只有这个项目所属**团队**的成员（名册上 `source === 'team'`）——后端
+ * `PUT /projects/{id}/owner` 就是这么要求的。所有者那一行、外部成员、AI 队友都不列，
+ * 自己也不列。
+ *
+ * mock 的行必须和 `GET /projects/{id}/members` 真实返回的形状一样（每一行都带
+ * `source`）：以前这里的假数据是没有 `source` 的旧形状，于是「候选人」怎么筛都轮不到
+ * 真实数据，测试一直绿而界面一直是空的。
  */
 import type { Component } from 'vue'
 
@@ -68,12 +74,13 @@ beforeEach(() => {
   refreshProjects.mockReset().mockResolvedValue(undefined)
   listProjectMembers.mockReset().mockResolvedValue({
     data: [
-      { user_handle: 'ligan', role: 'member', name: '李干' },
-      { user_handle: 'alice', role: 'lead', name: '爱丽丝' },
-      { user_handle: 'owner-row', role: 'lead', name: '补出来的', source: 'owner' },
-      { user_handle: 'cheese-x', role: 'member', name: '芝士', agent: true },
+      { user_handle: 'ligan', name: '李干', source: 'team', team_handle: 'zhishi', agent: false },
+      { user_handle: 'alice', name: '爱丽丝', source: 'team', team_handle: 'zhishi', agent: false },
+      { user_handle: 'owner-row', name: '补出来的', source: 'owner', agent: false },
+      { user_handle: 'outsider', name: '外部的人', source: 'external', agent: false },
+      { user_handle: 'cheese-x', name: '芝士', source: 'agent', agent: true },
     ],
-    total: 4,
+    total: 5,
   })
 })
 
@@ -93,12 +100,25 @@ async function mount() {
 }
 
 describe('TransferProjectDialog', () => {
-  it('只列名册上真有一行的别人', async () => {
+  it('只列团队里的别人，不列自己、所有者、外部成员和 AI 队友', async () => {
     await mount()
     expect(await screen.findByText('李干')).toBeTruthy()
     expect(screen.queryByText('爱丽丝')).toBeNull()
     expect(screen.queryByText('补出来的')).toBeNull()
+    expect(screen.queryByText('外部的人')).toBeNull()
     expect(screen.queryByText('芝士')).toBeNull()
+  })
+
+  it('团队里没有别人时说清楚没人接得住，而不是列一张空表', async () => {
+    listProjectMembers.mockResolvedValue({
+      data: [
+        { user_handle: 'alice', name: '爱丽丝', source: 'team', team_handle: 'zhishi', agent: false },
+        { user_handle: 'owner-row', name: '补出来的', source: 'owner', agent: false },
+      ],
+      total: 2,
+    })
+    await mount()
+    expect(await screen.findByText('暂无可以接手的成员')).toBeTruthy()
   })
 
   it('选好人确认之后交给他，并刷新项目行和名册', async () => {

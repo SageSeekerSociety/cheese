@@ -6,6 +6,12 @@
 //
 // 和 LeaveProjectDialog 同一套语义：确认、调接口、被拒不关窗——那句理由（不在名册
 // 上、得先加进来）就是用户要的下一步，原样留在弹窗里；重开时错误清掉。
+//
+// 接得住的人只有一种：**这个项目所属团队的成员**（名册上 `source === 'team'`）。
+// 这是后端 `PUT /projects/{id}/owner` 自己写的条件（`set_project_owner`：新所有者
+// 必须是团队成员，否则他 owning 一个自己看不见的项目），不是界面的偏好——外面的人
+// 接过去，项目就落到一个打不开它的人手里。所有者那一行、外部成员、AI 队友都不行，
+// 自己也不列：转让是把手交出去，不是左手倒右手。
 import type { ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -27,10 +33,12 @@ const error = ref<string | null>(null)
 const rows = ref<ProjectMemberRow[]>([])
 const target = ref<string | null>(null)
 
-// 只有「名册上真有他一行」的人接得住：后端要求新所有者已经是成员，而小队带进来
-// 的人、所有者那一行补出来的行背后都没有成员表记录，AI 队友也不是能把项目扛走的
-// 人。自己也不列——转让是把手交出去，不是左手倒右手。
-const candidates = computed(() => rows.value.filter((m) => !m.source && !m.agent && m.user_handle !== myHandle()))
+// 名册上的每一行都带 `source`（owner / team / external，队友是 agent），所以这里
+// 挑的是**某一种**，不是「没有标记的那种」——以前的 `!m.source` 在 #1639 给每行补上
+// `source` 之后恒为假，候选人永远是空，「暂无可以接手的成员」于是成了这块界面的常态。
+const candidates = computed(() =>
+  rows.value.filter((m) => m.source === 'team' && !m.agent && m.user_handle !== myHandle())
+)
 
 watch(open, (v) => {
   if (!v) return

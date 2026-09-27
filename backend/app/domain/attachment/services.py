@@ -1,6 +1,8 @@
 import mimetypes
 from typing import Any, BinaryIO
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import ForbiddenError, InternalServerError, NotFoundError
 from app.core.storage import StorageBackend, compute_file_hash, generate_storage_key
 from app.domain.attachment.models import Attachment, AttachmentType
@@ -26,6 +28,18 @@ class AttachmentService:
     ) -> None:
         self._repo = repo
         self._storage = storage
+
+    @classmethod
+    def from_session(
+        cls, *, session: AsyncSession, storage: StorageBackend
+    ) -> "AttachmentService":
+        """拿 session 直接造一个 —— 给**别的领域**用。
+
+        别的领域要的是「附件这个 service」，不该知道它底下那个 repository 叫什么、
+        怎么造：那一步是跨领域摸 repository，``tests/unit/test_domain_import_guard.py``
+        拦的就是它。
+        """
+        return cls(repo=AttachmentRepository(session=session), storage=storage)
 
     async def upload(
         self,
@@ -81,6 +95,14 @@ class AttachmentService:
     async def get_many(self, ids: list[int]) -> list[Attachment]:
         return await self._repo.get_by_ids(ids)
 
+    def is_uploader(self, attachment: Attachment, user_id: int) -> bool:
+        """这一行是不是这个人传的。
+
+        ``uploaderId`` 住在 ``meta`` 里（这张表没有独立的归属列），读它的地方收在这
+        一个函数里 —— 「谁传的」只有这一个答案，谁都不该自己去 meta 里翻。
+        """
+        return attachment.meta.get("uploaderId") == user_id
+
     async def download(self, attachment_id: int) -> tuple[bytes, str, str]:
         """Download attachment and return (content, filename, content_type)."""
         attachment = await self.get(attachment_id)
@@ -101,8 +123,7 @@ class AttachmentService:
         if attachment is None:
             raise NotFoundError.for_resource("attachment", attachment_id)
 
-        uploader_id = attachment.meta.get("uploaderId")
-        if uploader_id != user_id:
+        if not self.is_uploader(attachment, user_id):
             raise ForbiddenError("Only the uploader can delete the attachment")
 
         storage_key = attachment.meta.get("storageKey")

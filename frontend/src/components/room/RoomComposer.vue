@@ -275,8 +275,14 @@ function expandMentions(text: string): string {
 // 认的是上面那一位的 handle，不是「名单里哪个带 AI 标记的 handle」：后者在名册
 // 没到时认的是项目那位，于是正文里那个 @ 指不到房间里会动的人，而按钮和消息都写
 // 着「叫了它」——两份说法，正是这个功能一开始要消灭的东西。
+//
+// 名册到了之后，@ 名单上别的 AI 队友也算叫：一个话题可以 @ 好几位，@ 到的那位
+// 就是开这一轮的那位（不在房间里的会被请进来）。只认座位那一位时，@ 第二位队友
+// 发出去，界面上既不说「正在交给」，那颗按钮也不亮，看起来就像只有芝士叫得动。
 function mentionsAgent(expanded: string): boolean {
-  return mentionsHandle(expanded, props.agentSeat?.handle)
+  if (mentionsHandle(expanded, props.agentSeat?.handle)) return true
+  if (props.agentSeat === null) return false
+  return props.mentionPool.some((m) => m.agent && mentionsHandle(expanded, m.handle))
 }
 
 // 这条草稿现在叫不叫它。**读的是正文**，不是一个单独存着的开关值：真相只有一条，

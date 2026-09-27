@@ -338,6 +338,8 @@
     summary: List question invitations
     operationId: listQuestionInvitations
     tags: [Questions]
+    security:
+      - BearerAuth: []
     parameters:
       - $ref: '../../common/parameters.yaml#/QuestionId'
       - $ref: '../../common/parameters.yaml#/PageStart'
@@ -373,6 +375,8 @@
     summary: Get invitation recommendations
     operationId: getInvitationRecommendations
     tags: [Questions]
+    security:
+      - BearerAuth: []
     parameters:
       - $ref: '../../common/parameters.yaml#/QuestionId'
       - name: limit
@@ -391,6 +395,8 @@
     summary: Get invitation detail
     operationId: getInvitationDetail
     tags: [Questions]
+    security:
+      - BearerAuth: []
     parameters:
       - $ref: '../../common/parameters.yaml#/QuestionId'
       - name: invitationId
@@ -402,6 +408,8 @@
     responses:
       '200':
         description: Invitation detail
+      '404':
+        description: No such invitation on this question
   delete:
     summary: Delete invitation
     operationId: deleteInvitation

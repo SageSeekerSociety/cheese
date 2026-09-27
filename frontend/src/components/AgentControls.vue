@@ -58,7 +58,7 @@ watch(
 )
 
 watch(
-  () => [props.topicId, props.active],
+  () => props.active,
   () => {
     generation += 1
     clearTimeout(timer)

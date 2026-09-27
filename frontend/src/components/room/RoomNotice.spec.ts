@@ -85,3 +85,37 @@ describe('本轮改动的文件', () => {
     expect(container.textContent).toContain('另 8 个文件')
   })
 })
+
+describe('平台自动改了标题', () => {
+  const renamed = {
+    id: 'rename-1',
+    topic_id: 't',
+    kind: 'event',
+    author_type: 'platform',
+    author: 'system',
+    content: '标题自动更新为「Valkey 连接池耗尽」（原为「dev 外网访问慢」）',
+    turn_id: null,
+    created_at: '2026-09-26T08:00:00Z',
+    meta: { action: 'title', who: 'platform', from: 'dev 外网访问慢', to: 'Valkey 连接池耗尽' },
+  } as unknown as Block
+
+  it('行尾是撤销，按下去带着这一行自己的 id', async () => {
+    const [row] = collapseNotices([renamed])
+    const view = render(RoomNotice as Component, {
+      props: {
+        block: row.block,
+        notice: row.notice!,
+        run: row.run,
+        name: '芝士',
+        time: '16:05',
+        agentName: '芝士',
+        refs: { mentionNames: {}, topicTitles: {} },
+      },
+      global: { plugins: [vuetify] },
+    })
+    expect(view.container.textContent).toContain('标题自动更新为「Valkey 连接池耗尽」')
+    await fireEvent.click(view.getByRole('button', { name: '撤销' }))
+    expect(view.emitted('undo-title')).toEqual([['rename-1']])
+    expect(view.emitted('open-resource')).toBeUndefined()
+  })
+})

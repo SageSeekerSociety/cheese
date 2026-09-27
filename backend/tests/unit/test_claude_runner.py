@@ -551,3 +551,65 @@ async def test_a_question_the_build_would_ask_never_reaches_the_driver(
     assert "No such tool available" in json.dumps(errors[0])
     # The runner wrote the message and nothing else: no refusal was needed.
     assert [message["type"] for message in written] == ["user"]
+
+
+# --- a session that dies on its way up says why --------------------------------
+
+
+def _start_dying(tmp_path: Path, stderr: str) -> str:
+    """Run the runner archive over a launch that fails before Claude Code starts.
+
+    The launch's command is the executor client's ``bootstrap`` in front of the
+    binary; this stands in for a bootstrap that prints its reason and exits, the
+    way a work lease the platform refused did. Returns the runner's own log,
+    which is what the backend reads once the socket has gone with the runner.
+    """
+    state = tmp_path / "state"
+    config = tmp_path / "home/.claude"
+    config.mkdir(parents=True, exist_ok=True)
+    artifact = tmp_path / "runner.pyz"
+    artifact.write_bytes(build())
+    log = tmp_path / "runner.log"
+    with log.open("ab") as errors:
+        finished = subprocess.run(
+            [sys.executable, "-I", "-S", str(artifact), "--state", str(state)],
+            env={
+                "PATH": os.environ["PATH"],
+                "HOME": str(tmp_path / "home"),
+                "CLAUDE_CONFIG_DIR": str(config),
+                "CHEESE_CLAUDE_COMMAND": shlex.join(
+                    ["sh", "-c", f"printf '%s\\n' {shlex.quote(stderr)} >&2; exit 1"]
+                ),
+                "CHEESE_AUTHOR": AGENT,
+            },
+            stdout=subprocess.DEVNULL,
+            stderr=errors,
+            timeout=60,
+        )
+    assert finished.returncode == 0
+    assert not Path(socket_path(state)).exists()
+    return log.read_text()
+
+
+def test_a_session_that_dies_on_its_way_up_leaves_its_reason_in_the_runner_log(
+    tmp_path,
+):
+    reason = (
+        "executor_transport.PlatformHTTPError: Platform HTTP 504: "
+        "工作机器仍在准备，对话和平台工具仍可用"
+    )
+    log = _start_dying(tmp_path, f"Traceback (most recent call last):\n{reason}")
+
+    assert "exited with status 1" in log
+    # The backend reads the last 1200 bytes; the reason has to be in them.
+    assert reason in log.encode()[-1200:].decode("utf-8", "replace")
+
+
+def test_an_earlier_start_does_not_speak_for_this_one(tmp_path):
+    (tmp_path / "state").mkdir(mode=0o700)
+    (tmp_path / "state/claude.log").write_text("RuntimeError: yesterday's failure\n")
+
+    log = _start_dying(tmp_path, "OSError: today's failure")
+
+    assert "today's failure" in log
+    assert "yesterday's failure" not in log
