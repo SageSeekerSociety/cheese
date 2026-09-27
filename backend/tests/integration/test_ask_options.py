@@ -1,7 +1,12 @@
 """cheese ask: option questions in the chat, one-click structured answers."""
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import chat_ws_url, post_project, room_agent_seat
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 
 def _topic(client) -> str:
@@ -122,6 +127,58 @@ def test_answer_records_choice_and_posts_reply(client):
     assert any(
         b["author"] == "user-1" and b["content"] == f"<@{seat}> cursor" for b in blocks
     ), f"choice message never landed: {debug}"
+
+
+def test_answer_goes_back_to_the_teammate_that_asked(client):
+    """房间里坐着不止一位 AI 队友时，点选项接着答的是问这道题的那一位。
+
+    之前点的是房间的默认席位：芝士Opus 问的题，一点选项就换成默认芝士来接，
+    而默认芝士手上没有那道题的来龙去脉。
+    """
+    p = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()["data"]
+    tid = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "T", "created_by": "alice"},
+    ).json()["data"]["id"]
+    default = room_agent_seat(client, tid)
+    made = client.post(f"/projects/{p['id']}/agents", json={"handle": "opus"})
+    assert made.status_code == 200, made.text
+    teammate = made.json()["data"]["seat_handle"]
+    joined = client.post(
+        f"/topics/{tid}/members",
+        json={"handle": teammate, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert joined.status_code == 200, joined.text
+    assert teammate != default
+
+    asked = client.post(
+        f"/topics/{tid}/ask",
+        json={"question": "分页方案选哪个？", "options": ["cursor", "pageStart"]},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=p["id"], topic_id=tid, agent_handle=teammate
+            )
+        },
+    )
+    assert asked.status_code == 200, asked.text
+    blk = asked.json()["data"]
+    assert blk["author"] == teammate
+
+    r = client.post(
+        f"/topics/blocks/{blk['id']}/answer",
+        json={"option": "cursor", "author": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    replies = [
+        b["content"]
+        for b in blocks
+        if b["author"] == "alice" and "cursor" in b["content"]
+    ]
+    assert replies == [f"<@{teammate}> cursor"], replies
 
 
 def test_answer_validates_option_and_single_shot(client):

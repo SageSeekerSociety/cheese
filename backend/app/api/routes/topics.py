@@ -2116,7 +2116,7 @@ async def answer_options(
 ) -> dict:
     """One-click answer to an option question: validates the choice against the
     ask block's own options, records it on the block (meta.answered), and posts
-    the choice as the answerer's message, addressed to the 芝士 that asked."""
+    the choice as the answerer's message, addressed to the teammate that asked."""
     option = (body.get("option") or "").strip()
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
@@ -2158,7 +2158,16 @@ async def answer_options(
     # 回来的，塞一个不在名册上的 handle 进去，落在时间线上就是一个谁也对不上的
     # chip，而这一下点选项什么也不会发生。名册上没有 agent 时就谁也不点，选择照
     # 样记在卡上。
-    seat = await TopicMemberService(db).addressable_agent_handle(blk.topic_id)
+    #
+    # 「问问题的那个席位」就是这张卡的署名：一个房间可以坐好几位 AI 队友，点房间
+    # 的默认席位的话，别的队友问出的题一点选项就换成默认芝士来接，而它手上没有那
+    # 道题的来龙去脉。署名者已不在名册上（被请出房间、或者题是人问的）才退回默认
+    # 席位。
+    members = TopicMemberService(db)
+    if blk.author in await members.agent_handles(blk.topic_id):
+        seat: str | None = blk.author
+    else:
+        seat = await members.addressable_agent_handle(blk.topic_id)
     await get_broker().receive_message(
         chat,
         blk.topic_id,
