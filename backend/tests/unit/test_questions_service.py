@@ -1442,19 +1442,28 @@ class TestDeleteInvitation:
             await svc.delete_invitation(question_id=10, invitation_id=3, user_id=50)
 
     @pytest.mark.anyio
-    async def test_a_wrong_parent_question_is_not_found(self):
-        """拿另一道题的路径撤不掉这张邀请 —— 也回 404，而且什么也没删。
+    async def test_a_wrong_parent_question_is_answered_like_a_missing_one(self):
+        """拿另一道题的路径撤不掉这张邀请，而且答得和「它根本不存在」一字不差。
 
         以前这里是**真的删掉了**：只按 `invitation_id` 取行，再看那行自己的题的
         主人是不是调用者，URL 里写的是哪道题完全不参与。所以走错题的路径一样能
         撤回，只要那张邀请挂在调用者自己的某道题上。
+
+        绑上父级还不够：DELETE 缺行本来就回 400，若错配回 404，两个答案的差别
+        本身就是「这张邀请存在（在别的地方）」的探针 —— 而绑父级要关掉的正是
+        这件事。所以这里连响应体都比。
         """
         svc, repo, q_repo, _p_repo, _a_repo = _make_invitation_service()
-        inv = _invitation(id=3, question_id=10)
-        repo.get_by_id.return_value = inv
+        repo.get_by_id.return_value = _invitation(id=3, question_id=10)
 
-        with pytest.raises(NotFoundError, match="Invitation not found"):
+        with pytest.raises(BadRequestError) as wrong:
             await svc.delete_invitation(question_id=7, invitation_id=3, user_id=50)
+
+        repo.get_by_id.return_value = None
+        with pytest.raises(BadRequestError) as nowhere:
+            await svc.delete_invitation(question_id=7, invitation_id=3, user_id=50)
+
+        assert wrong.value.to_response_body() == nowhere.value.to_response_body()
 
         repo.hard_delete.assert_not_awaited()
         q_repo.get_by_id.assert_not_awaited()

@@ -607,20 +607,20 @@ class QuestionInvitationService:
         调用方都只能从这里拿邀请 —— 「同一个缺陷在另一条路由上又出现一次」在这
         个形状里没有地方可写。
 
-        不一致回 **404**（`NotFoundError`）而不是 403：错配的 id 不指向任何东西，
-        403 会承认「这张邀请存在，只是不给你看」，把存在性漏给调用者。
+        「这张邀请不在」与「它在别的题下」对调用者是同一件事：**这个地址不指向任何
+        东西**。所以两条路由各自把这两件事答成同一个码 —— GET 两处都 404，DELETE
+        两处都 400（它自己的形状，见下）。都不是 403：403 会承认「这张邀请存在，
+        只是不给你看」，把存在性漏给调用者。
 
-        `missing_is_bad_request` 是给 DELETE 留的那半：**那张邀请根本不存在**时它
-        一直回 400（`test_cancel_invitation_not_found` 钉着这个形状），这次不动
-        它 —— 两条路由对「没有这张邀请」本来就答得不一样（GET 404 / DELETE 400），
-        这个差别是旧的，不是这里引入的。
+        `missing_is_bad_request` 就是 DELETE 那一侧的形状：它一直回 400
+        （`test_cancel_invitation_not_found` 钉着），这次不动那个口径，只让它对
+        「缺行」与「错配」答得**一字不差** —— 否则这两个答案的差别本身就是一个
+        「这张邀请存在（在别处）」的探针，正好是绑父级要关掉的那件事。
         """
         invitation = await self._repo.get_by_id(invitation_id)
-        if invitation is None:
+        if invitation is None or invitation.question_id != question_id:
             if missing_is_bad_request:
                 raise BadRequestError("Invitation not found")
-            raise NotFoundError("Invitation not found", data={"id": invitation_id})
-        if invitation.question_id != question_id:
             raise NotFoundError("Invitation not found", data={"id": invitation_id})
         return invitation
 

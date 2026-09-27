@@ -194,13 +194,16 @@ def test_a_wrong_parent_id_deletes_nothing(
     author: tuple[CreatedUser, dict[str, str]],
     invitee: CreatedUser,
 ):
-    """`DELETE` 那条也认父级 id：走错题的路径撤不掉邀请，也回 404。
+    """`DELETE` 那条也认父级 id：走错题的路径撤不掉邀请。
 
     这条紧挨着读侧一起修，因为它是同一个缺陷的另一半（`_ = question_id`）。
     以前它是**真的撤掉了**：服务只按 `invitation_id` 取行，再看那行自己的题的
     主人是不是调用者 —— URL 里写的是哪道题完全不参与，所以拿任一自己的题做前缀
-    就能撤回别人题上的邀请（只要那张邀请挂在你的某道题上……准确地说：**只要那行
-    邀请属于的题是你的**，前缀写什么都行）。
+    就能撤回别人题上的邀请（只要那行邀请属于的题是你的，前缀写什么都行）。
+
+    答的码是 **400**，和「这张邀请根本不存在」那个答案**一字不差**：错配的 id 不
+    指向任何东西，两个答案要是能分开，那个差别本身就是一个「这张邀请存在（在
+    别处）」的探针 —— 而绑父级要关掉的正是这件事。（读侧两条路都是 404，同理。）
     """
     _, headers = author
     question_a = _create_question(api_client, headers)
@@ -210,7 +213,11 @@ def test_a_wrong_parent_id_deletes_nothing(
     wrong = api_client.delete(
         f"/questions/{question_b}/invitations/{invitation_id}", headers=headers
     )
-    assert wrong.status_code == 404, wrong.text
+    nowhere = api_client.delete(
+        f"/questions/{question_b}/invitations/99999999", headers=headers
+    )
+    assert wrong.status_code == nowhere.status_code, (wrong.text, nowhere.text)
+    assert wrong.json() == nowhere.json()
 
     # 邀请还在：拿原本的路径读得到，说明上一步没删掉它。
     still_there = api_client.get(
