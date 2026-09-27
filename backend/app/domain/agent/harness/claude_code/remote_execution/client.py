@@ -209,6 +209,11 @@ def prepare(
         central_workspace=str(workspace),
         central_config=str(config),
         central_tmp=str(temporary),
+        # The session's memory tree, in its own home on this host: the runner
+        # lays the platform's copy down and collects the agent's edits there
+        # (`runner.memory_root`, `memory.files.MEMORY_ROOT`), so its file tools
+        # reach it here and not on the executor (`proxy.js` `memoryPath`).
+        central_memory=str(home / ".cheese/memory"),
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -1730,6 +1735,18 @@ def own_output(config, call):
     )
 
 
+def own_memory(config, call):
+    """A file tool on the session's memory tree, which lives on this host
+    (`prepare`'s `central_memory`). The plugin has already spelled the path
+    out; anything that resolves outside the tree is not admitted."""
+    if call.get("tool_name") not in NATIVE_TOOLS or not config.get("central_memory"):
+        return False
+    tool_input = call.get("tool_input") or {}
+    path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+    memory = os.path.realpath(config["central_memory"]) + os.sep
+    return os.path.realpath(str(path)).startswith(memory)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1793,7 +1810,7 @@ def main():
             raise RuntimeError(result["error"])
     elif args.mode == "guard":
         call = json.load(sys.stdin)
-        if own_output(config, call):
+        if own_output(config, call) or own_memory(config, call):
             return
         print(
             json.dumps(

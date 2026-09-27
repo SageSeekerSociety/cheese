@@ -22,6 +22,20 @@ function ownOutput(path) {
     || (path.startsWith(execution.central_config + "/projects/") && path.includes("/tool-results/"));
 }
 
+// The memory tree is the session's own, in its home on this host, where the
+// runner reconciles it with the platform (`client.py` `prepare`,
+// `central_memory`). A file tool on it runs here, however the agent spelled
+// the path: `~/.cheese/memory/...` as the prompt names it, or under the home
+// its shell reports, which is the executor's and holds no memory tree.
+const MEMORY_TAIL = /(?:^|\/)\.cheese\/memory\/(.+)$/;
+
+function memoryPath(path) {
+  if (!execution.central_memory || typeof path !== "string") return null;
+  const match = MEMORY_TAIL.exec(path);
+  if (!match || match[1].split("/").includes("..")) return null;
+  return execution.central_memory + "/" + match[1];
+}
+
 const SEND_USER_FILE_MAX_BYTES = 10 * 1024 * 1024;
 
 async function sendUserFile($, tool_use_id, args) {
@@ -109,6 +123,10 @@ export function register(on) {
     }
     if (tool === "Read" && ownOutput(args.file_path)) return next(e);
     if (native.has(tool)) {
+      for (const field of ["file_path", "notebook_path"]) {
+        const local = memoryPath(args[field]);
+        if (local) return next({ ...e, [field]: local });
+      }
       for (const field of ["file_path", "path", "notebook_path"]) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field]);
       }

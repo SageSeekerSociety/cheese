@@ -1000,7 +1000,7 @@ async def add_memory(
     「写错了」而是「不该往这里写」，答一个「你没权限」只会把人引去要权限。
     """
     raise ValidationError(
-        "记忆改为直接写 `$HOME/.cheese/memory/` 下的文件：一条记忆一个 markdown "
+        "记忆改为直接写 `~/.cheese/memory/` 下的文件：一条记忆一个 markdown "
         "文件（带 name/description/type 的 frontmatter），再在 `MEMORY.md` 里加一行"
         "指针。见系统提示里的「记忆」一节。`cheese_remember` 已停用——它写的是旧的"
         "条目池，那一份已经不再注入任何地方，写进去的事实以后读不到。"
