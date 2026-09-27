@@ -4,8 +4,9 @@
 而它偏偏又是「大家都该知道的事」唯一的落点——于是项目的共识住在一个只有模型读
 得到的地方。文档三样都有，所以那一路的去向是项目总览那个房间的实况文档。
 
-这一组守两头：写进去的那一条，人在总览文档里读得到；别的房间跑一轮时，总览文档
-整份在它的提示词里——共享池能做到的第二件事，文档也做到了。
+`cheese_remember everyone` 往这份文档里追加的那一路已经停用（话题「记忆机制照搬
+CC」）：它把总览写成了只增不减的观察清单。这一组守的是还成立的那几头：停用要明说；
+别的房间跑一轮时，总览文档在它的提示词里；迁移把旧项目池落进这份文档。
 """
 
 import importlib.util
@@ -54,20 +55,6 @@ def _doc_text(client, topic_id: str) -> str:
     return (doc or {}).get("content", "")
 
 
-def _write_for_everyone(client, project_id: str, topic_id: str, fact: str) -> None:
-    r = client.post(
-        f"/projects/{project_id}/memory",
-        json={"content": fact, "topic": topic_id, "scope": "everyone"},
-    )
-    assert r.status_code == 200, r.text
-
-
-def _project_agent(client, project_id: str) -> str:
-    return client.get(f"/projects/{project_id}/agents").json()["data"]["data"][0][
-        "handle"
-    ]
-
-
 def _checkout_holding(monkeypatch, *lines: dict) -> None:
     async def search(terms: list[str]) -> list[dict]:
         return [
@@ -83,75 +70,33 @@ def _checkout_holding(monkeypatch, *lines: dict) -> None:
     )
 
 
-def test_a_fact_for_everyone_is_readable_in_the_project_overview_document(client):
-    """芝士 写下一条「所有人都该知道」的事实，人打开总览文档就看得到。"""
+def test_writing_for_everyone_is_retired_and_says_so(client):
+    """`scope="everyone"` 不再往总览文档里追加，而且明说停用了，不是静默吞掉。
+
+    那一路把总览文档写成了一份只增不减的观察清单（话题「记忆机制照搬CC」）。
+    所有人都该知道的项目事实，改由项目自己的记忆承载；总览文档只写「项目是什么」。
+    """
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
 
-    _write_for_everyone(client, project_id, topic_id, FACT)
-
-    assert FACT in _doc_text(client, overview)
-
-
-def test_a_request_that_names_no_place_writes_nothing_into_that_document(client):
-    """不说自己在哪儿的那一路，一个字也写不进大家共看的文档。
-
-    这个端点的授权全在「你在哪个话题」那一句上；不带 `topic`，谁都没被解析、
-    没被授权过。落在记忆上时那只是自己池子里的一行，落在文档上就是往所有人共看
-    的那一份里添字，还在总览房间留一条「编辑了文档」。
-    """
-    project_id, _ = _project_and_room(client)
-    overview = _overview_room(client, project_id)
-
-    refused = client.post(
-        f"/projects/{project_id}/memory",
-        json={"content": FACT, "scope": "everyone"},
-    )
-
-    assert refused.status_code == 403, refused.text
+    for body in (
+        {"content": FACT, "topic": topic_id, "scope": "everyone"},
+        {"content": FACT, "scope": "everyone"},
+    ):
+        refused = client.post(f"/projects/{project_id}/memory", json=body)
+        assert refused.status_code == 422, refused.text
+        assert "停用" in refused.text
     assert FACT not in _doc_text(client, overview)
 
 
-def test_it_is_a_document_and_not_a_memory(client):
-    """同一条事实不会同时又是一条记忆。
-
-    两份的那一刻起，改文档的人和整理记忆的芝士各改各的，而谁也不知道另一份还在。
-    """
-    project_id, topic_id = _project_and_room(client)
-    _write_for_everyone(client, project_id, topic_id, FACT)
-
-    hits = client.post(
-        f"/projects/{project_id}/memory/search",
-        json={"query": "中期答辩 demo", "topic": topic_id},
-    ).json()["data"]["hits"]
-    assert hits == []
-    assert client.get(f"/memory?project_id={project_id}").json()["data"]["data"] == []
-
-
-def test_the_overview_document_keeps_what_was_already_written_in_it(client):
-    """追加，不改写：人写在总览文档里的字，芝士添一条观察时一个字都不动。"""
+def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_hooks):
+    """别的房间跑一轮，总览那一份在提示词里——而它自己的文档是另一份。"""
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
     client.put(
         f"/topics/{overview}/doc",
-        json={
-            "content": "## 目标\n做课程推荐系统",
-            "author": "user-1",
-            "expected_version": 0,
-        },
+        json={"content": FACT, "author": "user-1", "expected_version": 0},
     )
-
-    _write_for_everyone(client, project_id, topic_id, FACT)
-
-    text = _doc_text(client, overview)
-    assert "做课程推荐系统" in text
-    assert FACT in text
-
-
-def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_hooks):
-    """别的房间跑一轮，总览那一份整份在提示词里——而它自己的文档是另一份。"""
-    project_id, topic_id = _project_and_room(client)
-    _write_for_everyone(client, project_id, topic_id, FACT)
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         ws.send_json({"type": "message", "content": "@芝士 现在什么状态"})
@@ -164,50 +109,9 @@ def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_
     assert FACT in prompt
 
 
-def test_every_fact_lands_in_one_section_and_carries_who_wrote_it(client):
-    """文档里看得见是谁说的，而且这几条聚在自己那一节里。
-
-    裸追加到末尾的一条，落在文档最后一个标题底下——总览文档最后一节叫「数据」，
-    读的人就把它当成数据那一节的内容；而正文里不署名，谁说的就只剩「最近一次编辑
-    这份文档的人」，下一个人一改就没了。
-    """
+def test_a_memory_the_repo_already_carries_is_refused(client, monkeypatch):
+    """「只记 repo 里查不到的」（结论 61）：记忆是一份会过期的副本，repo 里写着就拒。"""
     project_id, topic_id = _project_and_room(client)
-    overview = _overview_room(client, project_id)
-    agent = _project_agent(client, project_id)
-    client.put(
-        f"/topics/{overview}/doc",
-        json={
-            "content": "## 目标\n做课程推荐系统\n\n## 数据\n教务处脱敏导出",
-            "author": "user-1",
-            "expected_version": 0,
-        },
-    )
-
-    _write_for_everyone(client, project_id, topic_id, FACT)
-    _write_for_everyone(client, project_id, topic_id, "前端交给张衡，后端交给李四")
-
-    text = _doc_text(client, overview)
-    for fact in (FACT, "前端交给张衡，后端交给李四"):
-        assert f"{fact} —— @{agent}" in text
-    # 两条在同一节里往下排，不是一条一个标题——被观察切碎的文档没人再往里写字。
-    section = [line for line in text.split("\n") if line.startswith("## ")]
-    assert len(section) == len(set(section)) == 3
-    # 人自己写的那一节到此为止，芝士 的观察不挂在它底下。
-    assert text.index("教务处脱敏导出") < text.index(FACT)
-
-
-def test_a_fact_the_repo_already_carries_still_goes_into_the_document(
-    client, monkeypatch
-):
-    """repo 里写着，不是不让所有人知道的理由。
-
-    「只记 repo 里查不到的」是记忆那一侧的判据（结论 61）——记忆是一份会过期的副
-    本。文档不是副本，它是人和所有芝士共看的那一份状态，而项目定了什么、谁负责什
-    么写在哪个文件里，正是它该说的话。两条一起测：同一条事实，记忆那一路拒，文档
-    这一路收。
-    """
-    project_id, topic_id = _project_and_room(client)
-    overview = _overview_room(client, project_id)
     fact = "前端构建用 pnpm，不要用 npm"
     _checkout_holding(
         monkeypatch,
@@ -223,9 +127,7 @@ def test_a_fact_the_repo_already_carries_still_goes_into_the_document(
         json={"content": fact, "topic": topic_id},
     )
     assert refused.status_code == 422
-
-    _write_for_everyone(client, project_id, topic_id, fact)
-    assert fact in _doc_text(client, overview)
+    assert "docs/frontend.md:12" in refused.text
 
 
 def _move_statements() -> tuple[str, ...]:

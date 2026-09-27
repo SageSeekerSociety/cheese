@@ -115,6 +115,7 @@ from app.domain.room_task.services import (
     TaskService,
 )
 from app.domain.textfile import content_version
+from app.domain.topic import naming
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import (
@@ -1409,6 +1410,9 @@ async def edit_topic_doc(
             },
         )
     await announce_stale(place.room_id, "doc")
+    if topic_id == place.room_id:
+        # A rewritten goal is the clearest sign a room changed direction.
+        naming.nudge(place.room_id, "signal")
     if notice is not None and (line := agent_notice(notice)):
         # The notice tells 芝士 to go re-read the doc, so the doc has to BE the
         # new one by the time it does — same ordering as the comment route.
@@ -2319,8 +2323,10 @@ async def record_weekly(
 async def set_title(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """给这个地方起/改标题 — used by both `cheese_title` (AI-generated, naming an
-    untitled place) and the frontend sidebar rename UI (dual-use, like doc/split).
+    """给这个地方起/改标题 — used by both `cheese_title` (a person asked 芝士
+    for this name) and the frontend sidebar rename UI (dual-use, like doc/split).
+    Either way a person chose it, so the platform's naming leaves it alone from
+    now on (`topic/naming.py`).
 
     Names the THREAD when the id is a thread's. Resolving only rooms did not
     fail here, which is what made it dangerous: a 分身 naming the piece of work
@@ -2338,9 +2344,83 @@ async def set_title(
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError("title 不能为空")
-    place.room.title = title[:80]
+    await naming.rename_by_person(
+        db,
+        place.room,
+        title[:80],
+        by=actor.handle,
+        reason="suggest" if body.get("suggested") else "rename",
+    )
     await db.flush()
-    return ok(TopicOut.model_validate(place.room).model_dump(mode="json"))
+    out = TopicOut.model_validate(place.room).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(place.room_id, "topics")
+    return ok(out)
+
+
+async def _title_actor(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> tuple[Topic, str]:
+    """The room and the signed-in person acting on its title."""
+    room = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=room.id, project_id=room.project_id
+    )
+    await resolver.authorize_topic(actor, project_id=room.project_id, topic_id=room.id)
+    if not actor.authenticated:
+        raise ForbiddenError("改标题需要登录")
+    return room, actor.handle
+
+
+@router.post("/{topic_id}/title/suggest")
+async def suggest_title(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """智能重命名: a name for this room from what it is about now, for a person
+    to confirm or edit. Nothing is written; the confirmed name is set through
+    ``POST /title`` like any other a person chose."""
+    room, _ = await _title_actor(topic_id, db, resolver)
+    if not naming.available():
+        raise SystemBusyError("智能命名暂不可用")
+    title = await naming.suggest(db, room)
+    if title is None:
+        raise SystemBusyError("这次没能生成标题，稍后再试")
+    return ok({"title": title})
+
+
+@router.post("/{topic_id}/title/undo")
+async def undo_title(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """撤销一次自动改名 (the button on the line that announced it). The old
+    title comes back and, being a person's choice now, stays."""
+    room, handle = await _title_actor(topic_id, db, resolver)
+    try:
+        event_id = uuid.UUID(str(body.get("event_id")))
+    except ValueError as exc:
+        raise ValidationError("event_id 不是有效的 id") from exc
+    await naming.undo(db, room, event_id, by=handle)
+    await db.flush()
+    out = TopicOut.model_validate(room).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(room.id, "topics")
+    return ok(out)
+
+
+@router.post("/{topic_id}/title/auto")
+async def restore_auto_title(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """恢复自动命名: hand a title a person chose back to the platform, which
+    judges it again at the room's next message or turn."""
+    room, handle = await _title_actor(topic_id, db, resolver)
+    await naming.restore_auto(db, room, by=handle)
+    await db.flush()
+    out = TopicOut.model_validate(room).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(room.id, "topics")
+    naming.nudge(room.id, "signal")
+    return ok(out)
 
 
 @router.post("/{topic_id}/read")
@@ -2520,6 +2600,8 @@ async def split_topic(
     # them.
     await db.commit()
     await announce_stale(parent_place.room_id, "topics")
+    # Work split out of a room is a sign of where the room is going.
+    naming.nudge(parent_place.room_id, "signal")
     return ok(out)
 
 

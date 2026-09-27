@@ -373,7 +373,9 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_title",
-            "给本话题起或改标题，≤12 字；话题还叫「新话题」时这是开工第一步。"
+            "有人明确要你给本话题改名时才用，≤12 字；平台会自己给话题起名、"
+            "方向变了再改，这样改出的名字按人定的处理，之后不再自动改。"
+            "话题的提示里要你先起名时（平台暂时不能起名）也用它。"
             "带 task 给房间里的一条活起名。",
             {"text": _text("标题"), "task": _text("给这条活而不是本话题起名")},
             ["text"],
@@ -396,12 +398,6 @@ PLATFORM_TOOLS = ToolTable(
                     "type": "boolean",
                     "description": "核心记忆，每轮全量注入；只给永远成立的身份、"
                     "规则和目标，预算很小",
-                },
-                "everyone": {
-                    "type": "boolean",
-                    "description": "所有人都该知道：写进项目总览实况文档并署名，"
-                    "人和所有芝士都读得到；决策仍用 cheese_decision，节点仍用 "
-                    "cheese_milestone",
                 },
             },
             ["fact"],
@@ -730,11 +726,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         if remember and args.get("core"):
             body["layer"] = "core"
         owner = env.get("CHEESE_OWNER", "")
-        if remember and args.get("everyone"):
-            # 写给所有人看的不是记忆，是项目总览的实况文档。这一路盖过私聊那一路：
-            # 说了「所有人」，就不是只记给这一位看的。
-            body["scope"] = "everyone"
-        elif env.get("CHEESE_MEMORY_SCOPE", "project") == "personal" and owner:
+        if env.get("CHEESE_MEMORY_SCOPE", "project") == "personal" and owner:
             # 私聊里记的是这个芝士对它主人的看法——池子按
             # `<project>:<agent handle>:<person>` 分，属于这个项目里的这个实例。
             body.update(scope="user", owner=owner)
@@ -1170,8 +1162,6 @@ def _say_notify(args, data, env) -> str:
 
 
 def _say_remember(args, data, env) -> str:
-    if args.get("everyone"):
-        return "已写进项目总览的实况文档（所有人和所有芝士看的是同一份）。"
     kind = "核心记忆（每轮都在场）" if args.get("core") else "记忆"
     personal = env.get("CHEESE_MEMORY_SCOPE") == "personal" and env.get("CHEESE_OWNER")
     return f"已记入{'个人' if personal else '项目'}{kind}。"
