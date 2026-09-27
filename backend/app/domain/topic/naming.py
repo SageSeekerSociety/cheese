@@ -86,6 +86,14 @@ _CALIBRATE_AFTER_PEOPLE = 3
 # title never written — the room stayed 「新话题」. The cap sits above the
 # largest answer seen; the call's own timeout bounds the rest.
 _ANSWER_TOKENS = 1024
+# A title needs no reasoning, and the thinking is what ran long: in a room with
+# a goal, tasks and a dozen long messages, 智能重命名 failed every time after the
+# cap above was raised, while fresh rooms with one short line named fine. So the
+# call asks the model not to think (DeepSeek's OpenAI-format switch). A gateway
+# that refuses the field is asked again without it rather than losing naming.
+_NO_THINKING = {"thinking": {"type": "disabled"}}
+# 智能重命名 has a person waiting on it; one unusable answer is not the verdict.
+_SUGGEST_ATTEMPTS = 2
 
 SYSTEM_PROMPT = "\n".join(
     [
@@ -349,33 +357,47 @@ class Answer:
 async def _ask(
     key: str, material: str, transport: httpx.AsyncBaseTransport | None
 ) -> Answer:
+    body = {
+        "model": settings.topic_naming_model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": material},
+        ],
+        "max_tokens": _ANSWER_TOKENS,
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+    }
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(settings.topic_naming_timeout_seconds),
             transport=transport,
         ) as client:
-            r = await client.post(
-                f"{gateway_base()}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {key}"},
-                json={
-                    "model": settings.topic_naming_model,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": material},
-                    ],
-                    "max_tokens": _ANSWER_TOKENS,
-                    "temperature": 0.2,
-                    "response_format": {"type": "json_object"},
-                },
-            )
+            url = f"{gateway_base()}/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {key}"}
+            r = await client.post(url, headers=headers, json=body | _NO_THINKING)
+            if r.status_code in (400, 422):
+                logger.warning(
+                    "topic naming: thinking switch refused (%s), asking without it",
+                    r.status_code,
+                )
+                r = await client.post(url, headers=headers, json=body)
             r.raise_for_status()
             choice = r.json()["choices"][0]
             content = choice["message"]["content"] or ""
-            truncated = choice.get("finish_reason") == "length"
-    except Exception:  # noqa: BLE001 — see the module docstring
-        logger.info("topic naming call failed", exc_info=True)
+            finish = choice.get("finish_reason")
+    except Exception as exc:  # noqa: BLE001 — see the module docstring
+        logger.warning("topic naming call failed: %r", exc)
         return Answer(verdict=None)
-    return Answer(verdict=parse_verdict(content), truncated=truncated)
+    verdict = parse_verdict(content)
+    if verdict is None:
+        # Say which way it went wrong: cut off, or answered in a shape that is
+        # not the JSON asked for. Without this the only trace is 「没能生成标题」.
+        logger.warning(
+            "topic naming: no usable answer (finish_reason=%s, %d chars)",
+            finish,
+            len(content),
+        )
+    return Answer(verdict=verdict, truncated=finish == "length")
 
 
 # ---------- deciding when ----------
@@ -757,5 +779,8 @@ async def suggest(
     key = await service_key(session, _key_spec(), transport)
     if key is None:
         return None
-    answer = await _ask(key, material, transport)
-    return answer.verdict.title if answer.verdict is not None else None
+    for _ in range(_SUGGEST_ATTEMPTS):
+        answer = await _ask(key, material, transport)
+        if answer.verdict is not None and answer.verdict.title is not None:
+            return answer.verdict.title
+    return None

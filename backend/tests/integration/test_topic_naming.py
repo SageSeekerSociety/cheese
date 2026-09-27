@@ -272,6 +272,28 @@ def test_the_naming_call_leaves_the_model_room_to_think_first(client, alice, gat
     assert gateway["bodies"][-1]["max_tokens"] >= 700
 
 
+def test_the_naming_call_asks_the_model_not_to_think(client, alice, gateway):
+    """A title needs no reasoning, and in a room with a goal, tasks and long
+    messages the thinking ran past the cap or the timeout every time."""
+    _named(client, alice, gateway)
+    assert gateway["bodies"][-1]["thinking"] == {"type": "disabled"}
+
+
+def test_a_gateway_that_refuses_the_thinking_switch_is_asked_without_it(
+    client, alice, gateway
+):
+    pid = _project(client, alice)
+    rid = _room(client, alice, pid)
+    _say(client, rid, "帮我排查一下 dev 机器从外网访问很慢的问题")
+
+    gateway["answers"].append(httpx.Response(400, json={"error": "unknown field"}))
+    gateway["answers"].append({"keep": False, "title": "dev 外网访问慢排查"})
+    assert _run(client, rid, "message") is not None
+    assert _row(client, rid).title == "dev 外网访问慢排查"
+    first, second = gateway["bodies"]
+    assert "thinking" in first and "thinking" not in second
+
+
 def test_the_first_turn_checks_the_name_once(client, alice, gateway):
     rid = _named(client, alice, gateway)
     assert _row(client, rid).title_calibrated is False
@@ -427,6 +449,15 @@ def test_a_suggestion_is_only_a_suggestion(client, alice, gateway):
     )
     assert confirmed.json()["data"]["title_source"] == "human"
     assert _history(client, rid)[-1] == ("建议的名字", "human", "suggest")
+
+
+def test_a_suggestion_asks_again_after_an_unusable_answer(client, alice, gateway):
+    """A person is waiting on 智能重命名; one cut-off answer is not the verdict."""
+    rid = _named(client, alice, gateway)
+    gateway["answers"].append(_cut_off())
+    gateway["answers"].append({"keep": False, "title": "建议的名字"})
+    r = client.post(f"/topics/{rid}/title/suggest", headers=alice)
+    assert r.status_code == 200 and r.json()["data"]["title"] == "建议的名字"
 
 
 def test_a_project_on_manual_naming_is_left_alone(client, alice, gateway):
