@@ -1,4 +1,13 @@
 {
+  "adminSettings": {
+    "title": "Admin settings",
+    "menuOwnerSubtitle": "Who can manage this space",
+    "menuLockedSubtitle": "Only the owner can change this",
+    "help": "Only the owner can change this. The people below manage this board — anyone not on this list is a regular member.",
+    "roleOwner": "Owner",
+    "roleAdmin": "Admin",
+    "close": "Close"
+  },
   "course": {
     "nav": {
       "overview": "Course overview",

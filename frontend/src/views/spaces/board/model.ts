@@ -98,6 +98,17 @@ export interface SpaceInfo {
   isCourse: boolean
 }
 
+/** 管理员名单上的一项。真接口 `Space.admins` 的每一项就是「人 + 角色」这一对
+ *  （`backend/app/api/routes/spaces.py` 的 `_build_admins_payload`）。
+ *
+ *  **所有者也在这一份名单里** —— 后端的 `list_admins` 把 `role=OWNER` 那一条一起
+ *  返回（`SpaceAdminRelation` 一张表装两种角色）。所以这份名单就是完整的「谁能管」，
+ *  不要再把 `SpaceInfo.owner` 拼进来，那会把所有者列两遍。 */
+export interface Manager {
+  person: Person
+  role: 'OWNER' | 'ADMIN'
+}
+
 export const ROLE_LABEL: Record<Role, string> = {
   OWNER: '所有者',
   ADMIN: '管理员',
