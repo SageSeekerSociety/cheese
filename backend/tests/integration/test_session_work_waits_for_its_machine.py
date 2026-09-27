@@ -255,9 +255,8 @@ def test_a_machine_that_cannot_be_prepared_is_reported_at_once(
     assert time.monotonic() - started < 5, "A failure is not waited out"
     data = answer.json()["data"]
     assert "preparing" not in data
-    assert data["unavailable"].startswith(
-        "Cloud 机器创建失败" if failure == "provider-error" else "Cloud 机器接入失败"
-    )
+    expected = "创建失败" if failure == "provider-error" else "接入失败"
+    assert data["unavailable"].startswith(f"云端工作电脑{expected}")
     case.hub.exec.assert_not_awaited()
 
 

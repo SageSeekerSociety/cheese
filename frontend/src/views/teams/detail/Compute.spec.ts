@@ -76,8 +76,8 @@ it('switching projects cannot bypass a full team quota', async () => {
       provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
     },
   })
-  await fireEvent.click(await view.findByRole('button', { name: '开通云算力' }))
-  expect(await view.findByText('团队云虚拟机已使用 50 / 50 台')).toBeTruthy()
+  await fireEvent.click(await view.findByRole('button', { name: '开通云端机器' }))
+  expect(await view.findByText('团队云端机器已使用 50 / 50 台')).toBeTruthy()
   expect(view.getByText('剩余 70 额度')).toBeTruthy()
   const confirm = view.getByRole('button', { name: '确认开通' }) as HTMLButtonElement
   expect(confirm.disabled).toBe(true)
@@ -86,7 +86,7 @@ it('switching projects cannot bypass a full team quota', async () => {
   await fireEvent.click(await view.findByRole('option', { name: 'Available' }))
   await waitFor(() => expect(view.getByText('本项目占用 1 台；团队内所有项目共享名额')).toBeTruthy())
   expect(confirm.disabled).toBe(true)
-  expect(view.getByText('团队云虚拟机已使用 50 / 50 台')).toBeTruthy()
+  expect(view.getByText('团队云端机器已使用 50 / 50 台')).toBeTruthy()
 })
 
 it('shows the resulting team usage before spending a free slot', async () => {
@@ -102,7 +102,7 @@ it('shows the resulting team usage before spending a free slot', async () => {
       provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
     },
   })
-  await fireEvent.click(await view.findByRole('button', { name: '开通云算力' }))
+  await fireEvent.click(await view.findByRole('button', { name: '开通云端机器' }))
   expect(await view.findByText('本次创建后，团队占用 31 / 50 台')).toBeTruthy()
   expect((view.getByRole('button', { name: '确认开通' }) as HTMLButtonElement).disabled).toBe(false)
 })

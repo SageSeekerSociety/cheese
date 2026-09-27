@@ -130,11 +130,11 @@ describe('挂了的一步', () => {
         }),
         author_type: 'platform',
         author: 'system',
-        content: 'Claude Code 启动失败：这个房间的工作机器还在准备',
+        content: 'Claude Code 启动失败：这个房间的工作电脑还在准备',
       } as Block,
     ])
 
-    expect(container.textContent).toContain('Claude Code 启动失败：这个房间的工作机器还在准备')
+    expect(container.textContent).toContain('Claude Code 启动失败：这个房间的工作电脑还在准备')
     const error = container.querySelector<HTMLElement>('[data-testid="site-act-error"]')!
     expect(error.classList.contains('site-act__error--full')).toBe(false)
 

@@ -28,7 +28,7 @@ export interface SiteStatus {
 
 /** 这一轮以失败收场的提示：房间停下来不是因为做完了。 */
 const STOPPED = new Set(['turn_failed', 'turn_timeout'])
-/** 还没开工、在等运行环境起来的那几种提示。 */
+/** 还没开工、在等工作电脑起来的那几种提示。 */
 const PROVISIONING = new Set(['cloud_provisioning', 'cloud_startup', 'machine_provisioning'])
 
 function eventType(b: Block): string {
@@ -70,7 +70,7 @@ export function siteStatus(blocks: Block[], working: boolean, turns: Record<stri
   const base = { startedAt, lastAt: last ? touchedAt(last) : startedAt }
 
   if (!last) {
-    // 还没有这一轮的任何一行。运行环境还在起来的话，它在等的是机器，不是在想。
+    // 还没有这一轮的任何一行。工作电脑还在起来的话，它在等的是机器，不是在想。
     const before = latest(blocks)
     const provisioning =
       before !== undefined &&

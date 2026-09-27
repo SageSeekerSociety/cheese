@@ -113,9 +113,8 @@ defineExpose({
         <AgentFeedbackCard :topic-id="topic.id" />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
-         （AI 队友）和在哪跑（算力）都是话题级的设置，发第一条消息之后就不再变，
-         摆在输入区上纯是占位置：队友进了成员名册（它本来就是这个房间的成员），
-         算力在话题头的 ⋯ 里。 -->
+         （AI 队友）和在哪跑（工作电脑）都不是某条消息的动作，摆在输入区上纯是占
+         位置：队友进了成员名册（它本来就是这个房间的成员），工作电脑在话题头的 ⋯ 里。 -->
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">
           <span class="status-dot status-dot--muted" />已归档

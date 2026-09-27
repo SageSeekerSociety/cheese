@@ -126,7 +126,7 @@ async def request_choice(db, *, topic_id, session_id, actor, choice):
             topic.project_id, device_hub.is_online
         )
         if selected is None:
-            raise ConflictError("请选择一台工作机器")
+            raise ConflictError("选择一台工作电脑")
         choice.device_id = selected.device_id
     call = await machine_policy_call(db, project=project, topic=topic, choice=choice)
     verdict = gate.check(call, gate.policy_of(project.settings), actor.handle)
@@ -287,7 +287,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         if datetime.fromisoformat(lease["claim_until"]) > now:
             await db.commit()
             return _Preparing(
-                "工作机器正在准备；对话和平台工具仍可用。",
+                "工作电脑正在准备；对话和平台工具仍可用。",
                 partial(_claim_moved, db, session_id, lease.get("claim")),
             )
     choice = ComputeChoice.model_validate(request["choice"])
@@ -302,7 +302,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         )
         if selected is None or not hub.is_online(selected.device_id):
             await db.commit()
-            return {"unavailable": "工作机器未连接；对话和平台工具仍可用。"}
+            return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
         if selected.supply != Supply.self_hosted:
             raise ForbiddenError(
                 "Choose self-hosted equipment or request a Cloud lease"
@@ -347,7 +347,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         if not machine.device_id or not hub.is_online(machine.device_id):
             await db.commit()
             return _Preparing(
-                "Cloud 机器正在准备；对话和平台工具仍可用。",
+                "云端工作电脑正在准备；对话和平台工具仍可用。",
                 partial(_cloud_progress, db, hub, machine.id),
             )
         device_id = machine.device_id
@@ -532,14 +532,14 @@ async def _cloud_progress(db, hub, machine_id) -> str | bool:
         # The allocation changed under us; the next attempt says how.
         return True
     if machine.status == MachineStatus.error:
-        return "Cloud 机器创建失败：供应方报告错误。对话和平台工具仍可用。"
+        return "云端工作电脑创建失败：供应方报告错误。对话和平台工具仍可用。"
     if machine.status in GONE:
         # Gone upstream: the next attempt forgets it and asks for another.
         return True
     if machine.device_id is None:
         if (machine.enroll_attempts or 0) >= MAX_ENROLL_ATTEMPTS:
             return (
-                f"Cloud 机器接入失败：已尝试 {MAX_ENROLL_ATTEMPTS} 次。"
+                f"云端工作电脑接入失败：已尝试 {MAX_ENROLL_ATTEMPTS} 次。"
                 "对话和平台工具仍可用。"
             )
         return False

@@ -100,7 +100,7 @@ async function loadCloud() {
         const result = await listProjectMachines(project.id)
         return result.data.map((machine) => ({ ...machine, projectName: project.name }))
       } catch (cause) {
-        const message = errorMessage(cause, '加载云算力失败')
+        const message = errorMessage(cause, '加载云端机器失败')
         if (message.includes('not configured')) {
           configured = false
           return []
@@ -131,7 +131,7 @@ async function load() {
     selectedProject.value = selectedProject.value ?? projects.value[0]?.id ?? null
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '加载团队算力失败')
+    error.value = errorMessage(cause, '加载团队工作电脑失败')
   } finally {
     loading.value = false
     schedulePoll()
@@ -142,7 +142,7 @@ async function refreshCloud() {
   try {
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '刷新云算力状态失败')
+    error.value = errorMessage(cause, '刷新云端机器状态失败')
   } finally {
     schedulePoll()
   }
@@ -168,7 +168,7 @@ async function addMachine(device: MyDevice) {
 }
 
 async function removeMachine(device: MyDevice) {
-  if (!window.confirm(`确定把「${device.name}」移出这个团队的算力池吗？`)) return
+  if (!window.confirm(`确定把「${device.name}」移出这个团队吗？`)) return
   busy.value = device.device_id
   error.value = null
   try {
@@ -194,7 +194,7 @@ async function provisionCloud() {
     createDialog.value = false
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '开通云算力失败')
+    error.value = errorMessage(cause, '开通云端机器失败')
   } finally {
     creating.value = false
     schedulePoll()
@@ -202,14 +202,14 @@ async function provisionCloud() {
 }
 
 async function destroyCloud(machine: CloudMachine) {
-  if (!window.confirm(`确定释放云机器「${machine.hostname}」吗？释放后数据不可恢复。`)) return
+  if (!window.confirm(`确定释放云端机器「${machine.hostname}」吗？释放后数据不可恢复。`)) return
   busy.value = machine.id
   error.value = null
   try {
     await deleteProjectMachine(machine.project_id, machine.id)
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '释放云算力失败')
+    error.value = errorMessage(cause, '释放云端机器失败')
   } finally {
     busy.value = null
     schedulePoll()
@@ -247,9 +247,9 @@ onBeforeUnmount(() => {
   <v-container class="px-6 py-5" fluid>
     <div class="mb-5 d-flex align-start flex-wrap ga-3">
       <div>
-        <h2 class="text-h6 font-weight-medium mb-1">算力</h2>
+        <h2 class="text-h6 font-weight-medium mb-1">工作电脑</h2>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          团队统一管理云额度和自有设备。项目设置默认与常用配置，房间可直接使用。
+          团队的云端额度和自有设备。项目给新 AI 队友设默认工作电脑，房间里可以给每个 AI 队友更换。
         </p>
       </div>
       <v-spacer />
@@ -261,7 +261,7 @@ onBeforeUnmount(() => {
         :disabled="!cloudConfigured || !projects.length"
         @click="createDialog = true"
       >
-        开通云算力
+        开通云端机器
       </v-btn>
     </div>
 
@@ -279,7 +279,7 @@ onBeforeUnmount(() => {
         <v-row>
           <v-col cols="12" md="6">
             <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
-              <div class="text-body-2 mb-2">团队云虚拟机</div>
+              <div class="text-body-2 mb-2">团队云端机器</div>
               <div class="text-h6">{{ quotas.machines.used }} / {{ quotas.machines.limit }} 台</div>
               <v-progress-linear
                 class="my-3"
@@ -311,7 +311,7 @@ onBeforeUnmount(() => {
           <thead>
             <tr>
               <th>项目</th>
-              <th>占用云机器</th>
+              <th>占用云端机器</th>
               <th>累计 tokens</th>
               <th>定向额度剩余</th>
             </tr>
@@ -330,24 +330,21 @@ onBeforeUnmount(() => {
       <section class="compute-section mb-7">
         <div class="section-heading mb-3">
           <div>
-            <h3 class="text-subtitle-1 font-weight-medium">云算力</h3>
-            <p class="text-caption text-medium-emphasis mb-0">由平台创建并自动接入团队算力池，费用归属所选项目。</p>
+            <h3 class="text-subtitle-1 font-weight-medium">云端机器</h3>
+            <p class="text-caption text-medium-emphasis mb-0">由平台创建、长期运行的云端机器，费用归属所选项目</p>
           </div>
         </div>
 
         <v-alert v-if="!cloudConfigured" type="info" variant="tonal" density="comfortable">
-          当前部署尚未接入云算力供应方；自有设备仍可正常使用。
+          当前部署尚未接入云端；自有设备仍可正常使用
         </v-alert>
         <v-alert v-else-if="!projects.length" type="info" variant="tonal" density="comfortable">
-          先在团队里创建一个项目，云机器会以该项目作为费用与审计归属。
+          先在团队里创建一个项目，云端机器以该项目作为费用与审计归属
         </v-alert>
         <div v-else-if="!cloudMachines.length" class="empty-panel">
           <v-icon size="38" class="empty-panel-icon">mdi-cloud-outline</v-icon>
           <div>
-            <div class="text-body-2 font-weight-medium">还没有云机器</div>
-            <div class="text-caption text-medium-emphasis">
-              管理员可按需开通，创建完成后会自动出现在话题算力选择器里。
-            </div>
+            <div class="text-body-2 font-weight-medium">暂无云端机器</div>
           </div>
         </div>
         <v-row v-else>
@@ -386,7 +383,7 @@ onBeforeUnmount(() => {
               <div class="text-caption mt-1" :class="machine.device_id ? 'text-success' : 'text-medium-emphasis'">
                 {{
                   machine.device_id
-                    ? '已接入团队算力池'
+                    ? '已接入'
                     : machine.enroll_error
                       ? `接入失败（${machine.enroll_attempts}/${machine.enroll_max_attempts}）`
                       : '等待自动接入'
@@ -510,7 +507,7 @@ onBeforeUnmount(() => {
 
     <v-dialog v-model="createDialog" max-width="520">
       <v-card rounded="lg">
-        <v-card-title class="pt-5 px-5">开通云算力</v-card-title>
+        <v-card-title class="pt-5 px-5">开通云端机器</v-card-title>
         <v-card-text class="px-5">
           <v-alert type="info" variant="tonal" density="compact" class="mb-4">
             创建后会持续占用云资源；释放机器会删除其本地数据。
@@ -530,7 +527,7 @@ onBeforeUnmount(() => {
             density="compact"
             class="mb-3"
           >
-            团队云虚拟机已使用 {{ selectedQuota.used }} / {{ selectedQuota.limit }} 台
+            团队云端机器已使用 {{ selectedQuota.used }} / {{ selectedQuota.limit }} 台
             <div>本项目占用 {{ selectedProjectUsage }} 台；团队内所有项目共享名额</div>
             <div v-if="!quotaFull">
               本次创建后，团队占用 {{ selectedQuota.used + 1 }} / {{ selectedQuota.limit }} 台

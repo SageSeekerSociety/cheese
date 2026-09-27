@@ -31,15 +31,15 @@ function groupOf(title: string): string {
 
 describe('项目设置', () => {
   it('分成四组，顺序从「最常改的」到「接一次就不动的」', () => {
-    expect(groups()).toEqual(['队友', '运行环境', '交付', '仓库'])
+    expect(groups()).toEqual(['队友', '工作电脑', '交付', '仓库'])
   })
 
   it('队友在第一组——它是没绑仓库的项目唯一要改的东西', () => {
     expect(groupOf('<AgentTeamSettings')).toBe('队友')
   })
 
-  it('额度跟着运行环境走：它答的是「还能跑多久」', () => {
-    expect(groupOf('<CreditsPanel')).toBe('运行环境')
+  it('额度跟着工作电脑走：它答的是「还能跑多久」', () => {
+    expect(groupOf('<CreditsPanel')).toBe('工作电脑')
   })
 
   it('分支保护是交付规则，不是仓库连接', () => {

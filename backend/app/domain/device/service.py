@@ -75,8 +75,7 @@ class DeviceService:
         can still (re)name the node on the approval page or later."""
         code = AuthCode(
             code=uuid.uuid4().hex,
-            device_name=(device_name or "").strip()
-            or f"算力节点-{uuid.uuid4().hex[:6]}",
+            device_name=(device_name or "").strip() or f"设备-{uuid.uuid4().hex[:6]}",
             status=DeviceStatus.PENDING,
             created_at=self._now(),
         )

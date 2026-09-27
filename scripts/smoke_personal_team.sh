@@ -4,7 +4,7 @@
 # Proves the whole loop against the running demo backend (:8799):
 #   1. GET /teams/my-teams auto-provisions the personal team, sorts it first,
 #      and flags it personal:true.
-#   2. Registering a machine to the personal team (加机器 on its 算力 page) is
+#   2. Registering a machine to the personal team (加机器 on its 工作电脑 page) is
 #      the same connector call as for a shared team.
 #   3. A NEW personal project (no team) sees that machine in its compute
 #      profiles — routed through the owner's personal team, zero manual setup.

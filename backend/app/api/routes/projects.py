@@ -1381,7 +1381,7 @@ async def set_compute_profile(
     device_online = await project_device_online(db, project_id)
     allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
     if name not in allowed:
-        raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
+        raise ValidationError(f"这类工作电脑尚未接入，暂不可选：{name!r}")
     from app.domain.agent.compute_configs import standard_choice
 
     configs = project_configs(project.settings)

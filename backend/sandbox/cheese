@@ -170,7 +170,7 @@ FEEDBACK_DESCRIPTION = (
 MACHINE_PROFILES = ("cloud", "device")
 MACHINE_PROFILE_DESCRIPTION = (
     "只有两个值：cloud 是为这个会话开一台平台的云端机器；"
-    "device 是项目已授权的自托管设备，配合 device_id 指定哪一台，"
+    "device 是项目已授权的自有设备，配合 device_id 指定哪一台，"
     "不填 device_id 就自动选一台在线的。"
 )
 
@@ -521,7 +521,7 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_machine",
-            "更换你自己的工作机器，后续文件和命令操作使用新机器。"
+            "更换你自己的工作电脑，后续文件和命令操作使用新电脑。"
             "只能选择项目授权的资源；旧机器保留，文件不会自动迁移。",
             {
                 "profile": {
@@ -529,7 +529,7 @@ PLATFORM_TOOLS = ToolTable(
                     "enum": list(MACHINE_PROFILES),
                     "description": MACHINE_PROFILE_DESCRIPTION,
                 },
-                "device_id": _text("自托管设备的 id，只有 device 能指定"),
+                "device_id": _text("自有设备的 id，只有 device 能指定"),
             },
             ["profile"],
         ),
@@ -1191,12 +1191,12 @@ def _say_machine(args, data, env) -> str:
     if data.get("session"):
         choice = data["session"]["choice"]
         return (
-            f"工作机器已设为 {choice['name']}，下次执行操作时使用。"
+            f"工作电脑已设为 {choice['name']}，下次执行操作时使用。"
             "旧机器保留，文件不会自动迁移。"
         )
     if data.get("proposal"):
         return f"已提请 {data['proposal']['approver']} 点头，等他拍板。"
-    return f"这个房间的算力现在是 {data.get('current')}。"
+    return f"这个房间的工作电脑现在是 {data.get('current')}。"
 
 
 def _say_members(args, data, env) -> str:
