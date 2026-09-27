@@ -96,6 +96,12 @@
       </v-card-actions>
     </v-card>
 
+    <task-attachment-picker
+      class="ma-4 mb-4"
+      @update:attachment-ids="attachmentIds = $event"
+      @update:uploading="attachmentUploading = $event"
+    />
+
     <task-form
       v-if="loadedTemplate"
       class="ma-4 pb-4"
@@ -127,6 +133,7 @@ import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
 
 const TaskForm = defineAsyncComponent(() => import('@/components/tasks/TaskForm.vue'))
+const TaskAttachmentPicker = defineAsyncComponent(() => import('@/components/tasks/TaskAttachmentPicker.vue'))
 
 const router = useRouter()
 const route = useRoute()
@@ -139,6 +146,10 @@ const pdfPreviewLoading = ref(false)
 const pdfConfirmLoading = ref(false)
 const pdfDrafts = ref<PdfTaskDraftData[]>([])
 const pdfTokenUsed = ref<number | null>(null)
+
+// 随题一起发出的材料：附件卡片上传完拿到 id，发题那条请求带着它一起走。
+const attachmentIds = ref<number[]>([])
+const attachmentUploading = ref(false)
 
 /** 当前选中的 PDF 文件（兼容 v-file-input 的单文件或数组返回值） */
 const selectedPdf = computed<File | null>(() => {
@@ -207,6 +218,13 @@ const submitTask = async (taskData: TaskFormSubmitData) => {
     return (await confirmPublishFromPdf(taskData, spaceId)) ?? false
   }
 
+  // 材料还在上传就先别发：附件 id 是发题那条请求的一部分，这时候发出去就会静默地
+  // 少一份用户明明已经选好的文件。
+  if (attachmentUploading.value) {
+    toast.error('附件还在上传，请稍候再发布')
+    return false
+  }
+
   const result = await errorHandler.withErrorHandling(
     async () => {
       const {
@@ -221,6 +239,7 @@ const submitTask = async (taskData: TaskFormSubmitData) => {
         categoryId: taskData.categoryId,
         accessControlEnabled: taskData.accessControlEnabled || false,
         accessDomainGroupIds: taskData.accessControlEnabled ? taskData.accessDomainGroupIds : undefined,
+        attachmentIds: attachmentIds.value.length > 0 ? attachmentIds.value : undefined,
       })
 
       if (!approved) {
