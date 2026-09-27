@@ -63,6 +63,15 @@ def card(status: AcceptStatus, **kw) -> CardFacts:
 TASK_CASES = [
     # (名字, 事实, 列, 短语)
     ("还没人做", task(), Column.building, Building.not_started),
+    # 主 agent 自己在任务目录里动手做的活没有分身，所以「有人在做」那一格永远轮不到
+    # 它；它有的只是留下的东西 —— 草稿 PR。做了一半停在原地，和「还没人碰过」是两
+    # 件事：前者的下一步多半是接着做，后者是决定要不要开。
+    (
+        "动过手，停在原地",
+        task(has_progress=True),
+        Column.building,
+        Building.started,
+    ),
     # 一条活由房间会话里的一个分身做，所以「它还在不在」有两个答案，先问屏幕。
     (
         "分身在做，刚说过话",
@@ -125,6 +134,21 @@ TASK_CASES = [
         Column.building,
         Building.returned,
     ),
+    # 「已交回」压过「已动工」：东西已经交回来了，比「做了一半」说得更准。
+    (
+        "交了结论，分支上也已经有痕迹",
+        task(has_conclusion=True, has_progress=True),
+        Column.building,
+        Building.returned,
+    ),
+    # 「运行中」压过「已动工」：一个刚开出草稿 PR、又刚被叫起来接着做的活，此刻
+    # 在跑，不是在原地停着。
+    (
+        "分身在做，上面也已经有痕迹",
+        task(has_worker=True, last_signal_at=JUST_NOW, has_progress=True),
+        Column.building,
+        Building.running,
+    ),
     # 交回来的那一版被驳回了：东西不算数，下一步是再动手。
     (
         "交了结论，卡被驳回",
@@ -136,6 +160,14 @@ TASK_CASES = [
         ),
         Column.building,
         Building.not_started,
+    ),
+    # 驳回说的是那一版不算数，不是「没人碰过它」：分支上的痕迹还在，所以这一格是
+    # 「做了一半停着」，不是「待开工」。
+    (
+        "卡被驳回，分支上已经有痕迹",
+        task(has_progress=True, card=card(AcceptStatus.rejected)),
+        Column.building,
+        Building.started,
     ),
     # 同样安静得理直气壮的另一种：卡已经递出去了，在等人。分身干完活不会把
     # `subagent_id` 抹掉，所以「失联」要是抢在卡前面说，每一条等验收的活都会
@@ -279,6 +311,31 @@ def test_a_thread_lands_in_one_column_with_one_phrase(facts, column, phrase):
     shown = task_presentation(facts, now=NOW)
     assert shown.column == column
     assert shown.display_status == phrase
+
+
+# —— 事实是从行上读出来的 ————————————————————————————————————————
+
+
+def test_progress_is_read_off_the_row():
+    """「动过手」的两个来源都认，而且只有这两个。
+
+    判据必须从库里那两列读出来 —— 上面那张表测的是「给定事实算出哪一格」，它不会
+    发现这一位压根没接上，那样一来每条活都会是「待开工」，正是要修的那个 bug。
+    """
+    from app.domain.room_task.models import Task
+    from app.domain.room_task.presentation import facts_for_task
+
+    # 平台为它开出了草稿 PR —— 那要等它的分支上真有提交才开得出来。
+    assert facts_for_task(Task(pr_number=1789)).has_progress is True
+    # 有人开过它的工作树。
+    opened = Task(author_handle="cheese-c82aeb40555a")
+    assert facts_for_task(opened).has_progress is True
+    # 一个刚建出来、什么都没做过的活。
+    assert facts_for_task(Task()).has_progress is False
+    # 接过活但还没留下任何东西的活：有分身，但没有痕迹。
+    fresh = facts_for_task(Task(subagent_id="agent-1"))
+    assert fresh.has_worker is True
+    assert fresh.has_progress is False
 
 
 # —— 一个房间的每一格 ————————————————————————————————————————————
