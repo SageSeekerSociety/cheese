@@ -33,6 +33,7 @@
   "piFind": "查找文件",
   "piGrep": "搜索内容",
   "chatSend": "发布消息",
+  "chatEdit": "修改消息",
   "cheeseChatList": "读取聊天记录",
   "cheeseChatSearch": "搜索聊天记录",
   "cheeseChatGet": "读取一条消息",

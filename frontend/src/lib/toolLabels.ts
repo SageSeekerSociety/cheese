@@ -54,6 +54,7 @@ export const TOOL_LABELS: Record<string, string> = {
   // 的那一类动作。少了哪条由 backend/tests/unit/test_tool_labels.py 对着工具表
   // 和 CLI 的命令树说出来。
   chat_send: 'toolLabels.chatSend',
+  chat_edit: 'toolLabels.chatEdit',
   todo_write: 'toolLabels.todoWrite',
   cheese_chat_list: 'toolLabels.cheeseChatList',
   cheese_chat_search: 'toolLabels.cheeseChatSearch',

@@ -64,7 +64,14 @@ from app.domain.agent.runtime import (
 )
 from app.domain.agent.step_output import without_output
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
+from app.domain.block.editing import edit_message
+from app.domain.block.models import (
+    CHECKLIST_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+    agent_notice,
+)
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.addressing import Event as Addressee
@@ -1319,6 +1326,25 @@ class ProgressIn(BaseModel):
     # the room's credentials, so the call cannot tell it apart from the room's
     # own agent: it says so, the way `cheese_lock` names its task.
     task: uuid.UUID | None = None
+    # Post a new checklist message instead of editing the current one. Which
+    # request a list belongs to is the agent's call: it sets this when someone
+    # brings it a new one.
+    new: bool = False
+
+
+_CHECKLIST_MARK = {"completed": "[x]", "in_progress": "[ ]", "pending": "[ ]"}
+
+
+def _checklist_text(items: list[dict]) -> str:
+    """The checklist as the message the room reads: a markdown task list, with
+    the step in progress in bold (a task list has only two states)."""
+    lines = []
+    for item in items:
+        subject = item["subject"]
+        if item["status"] == "in_progress":
+            subject = f"**{subject}**"
+        lines.append(f"- {_CHECKLIST_MARK[item['status']]} {subject}")
+    return "\n".join(lines)
 
 
 @router.put("/{topic_id}/progress")
@@ -1327,18 +1353,25 @@ async def write_topic_progress(
     body: ProgressIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """`todo_write`: the agent's whole checklist for the running turn (进度层).
+    """`todo_write`: the agent's whole checklist (进度层), and its message.
+
+    Whole-list replace, so what is stored is exactly what the agent last said,
+    never a merge of two plans. The stored list is what 总览 shows and what the
+    room's next turn is handed back.
+
+    In the room the list is an ordinary message by the agent. The first call
+    posts it; later calls edit the agent's current checklist message through
+    the same edit every author has (`domain/block/editing`); ``new`` posts a
+    fresh one.
 
     With ``task`` it is that card's 分身 writing, and the list is the card's:
     stored under the card and pushed on the card's channel, the same channel its
-    attributed events go to (`chat.py`), leaving the room's own list alone.
+    attributed events go to (`chat.py`), leaving the room's own list and
+    conversation alone.
 
-    Whole-list replace, so what the room shows is exactly what the agent last
-    said, never a merge of two plans. Stored first, then pushed as the `todo`
-    frame the room's working message renders in place. A platform tool, so it
-    reaches here the same way from every harness — the checklist is not
-    captured from any harness's own tool events.
+    A platform tool, so it reaches here the same way from every harness.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
@@ -1359,17 +1392,47 @@ async def write_topic_progress(
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)
     ]
-    work = get_work_runner().live_work_for_topic(place.room_id)
+    runner = get_work_runner()
+    work = runner.live_work_for_topic(place.room_id)
+    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
     await TopicProgressRepository(db).save(
-        place.room_id,
-        items,
-        task_id=body.task,
-        turn_id=uuid.UUID(work["turn_id"]) if work is not None else None,
+        place.room_id, items, task_id=body.task, turn_id=turn_id
     )
     await db.commit()
-    channel = str(body.task) if body.task is not None else str(topic_id)
-    await get_broker().publish(channel, {"type": "todo", "items": items})
-    return ok({"items": items})
+    if body.task is not None:
+        await get_broker().publish(str(body.task), {"type": "todo", "items": items})
+        return ok({"items": items})
+    text = _checklist_text(items)
+    current = (
+        None
+        if body.new
+        else await BlockRepository(db).current_checklist(place.room_id, actor.handle)
+    )
+    if current is not None:
+        message = await edit_message(
+            db, get_broker(), current.id, editor=actor.handle, content=text
+        )
+        return ok({"items": items, "message_id": message["id"], "posted": False})
+    message = await chat._persist_assistant_message(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        text=text,
+        turn_id=turn_id,
+        reply_to=None,
+        roster=None,
+        topic_refs=[],
+        publish=True,
+        author=actor.handle,
+        own_output=True,
+        extra_meta={CHECKLIST_META_KEY: True},
+    )
+    assert message is not None  # a publication with no eid never deduplicates
+    await get_broker().publish(
+        str(place.room_id), {"type": "assistant_block", "block": message}
+    )
+    if turn_id is not None:
+        runner.note_session_output(turn_id, tool=False)
+    return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
 @router.get("/{topic_id}/doc")

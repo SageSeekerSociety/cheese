@@ -118,6 +118,7 @@ _TOOL_ARG = {
     # `cheese_status`、`cheese_members`、`cheese_doc_get` 这种只有动词就够了，硬找
     # 一个参数填进去反而不如留空。
     "chat_send": "content",
+    "chat_edit": "content",
     # 搜记录时说的是在找什么。翻最近一页、按 id 读一条或它的回复，参数不是没有
     # 就是一个 UUID，跟在动词后面等于什么都没说 —— 只留动词。
     "cheese_chat_search": "query",

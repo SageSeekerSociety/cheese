@@ -6,7 +6,6 @@ import type {
   ProjectMemberRow,
   ReactionAgg,
   RoomTask,
-  TodoItem,
   Topic,
   WsServerFrame,
 } from '../cx_types'
@@ -20,8 +19,8 @@ import {
   ApiError,
   attachmentRawUrl,
   downloadFile,
+  editMessage,
   ensureFreshToken,
-  getProgress,
   isRetryableGetFailure,
   listBlocks,
   listRoomTasks,
@@ -36,7 +35,7 @@ import { replySnippet } from '../lib/blockDisplay'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
-import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
+import { coalesceSplitFencedCodeBlocks, editableText } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { topicShortId, topicStateBadge } from '../lib/topicState'
 import { myHandle } from '../me'
@@ -51,7 +50,6 @@ import RoomComposer from './room/RoomComposer.vue'
 import RoomHoverBar from './room/RoomHoverBar.vue'
 import RoomMessage from './room/RoomMessage.vue'
 import RoomNotice from './room/RoomNotice.vue'
-import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
 
@@ -208,22 +206,6 @@ const awaitingReply = ref(false)
 const activeTurnIds = ref<Set<string>>(new Set())
 watch(awaitingReply, (v) => emit('working', v))
 
-// 这一轮是哪位队友在干活。房间里可以坐好几位 AI，步骤清单那一行署的得是被叫到、
-// 正在干的那一位——拿名册上排第一的那位顶替，另一位干活时界面就写着别人的名字。
-// 认的依次是：这一轮里它署名的记录、它落下的 👀 回执、发出去那句话点的名；一样都
-// 还没有时退回房间的座位。
-const workingHandle = ref<string | null>(null)
-function noteWorker(handle: string | null | undefined) {
-  if (handle && seatByHandle.value.get(handle)?.agent) workingHandle.value = handle
-}
-function noteTurnBlock(b: Block) {
-  if (b.turn_id && activeTurnIds.value.has(b.turn_id)) noteWorker(b.author)
-}
-const workingName = computed(() => (workingHandle.value ? agentDisplayName(workingHandle.value) : agentName.value))
-watch(awaitingReply, (v) => {
-  if (!v) workingHandle.value = null
-})
-
 // 每个在跑的轮次从什么时候开始。中途连进来的，后端在 turn_active 上带着开始时间；
 // 没带的（老后端）只能从连上的这一刻算。
 const turnStarts = ref<Record<string, number>>({})
@@ -240,26 +222,6 @@ function turnEnded(id: string) {
 // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
 function toSite(b: Block) {
   if (b.kind === 'event' && !b.task_id) emit('site-block', b)
-}
-
-// Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
-// Working-log todo (the agent's `todo_write`). Live during a turn (§3.1.1); between
-// turns it holds the topic's stored 进度层 (#187) instead of being wiped, so
-// "做到哪了" is visible in the room without summoning anyone.
-const todoItems = ref<TodoItem[]>([])
-// The list on screen is a previous turn's leftovers, not this turn's live
-// progress — labelled differently so nobody reads a stale half-circle as
-// "running now".
-const todoRestored = ref(false)
-// 对话里只画正在跑的这一轮的清单；上一轮留下的在总览里（PanelProgress）。
-const liveTodo = computed(() => todoItems.value.length > 0 && !todoRestored.value)
-// 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
-// 在 13px 上 ◐ 和 ○ 几乎分不开。三个 mdi 图标按「填充程度」递进，一眼可分——
-// 空心圈 = 还没做，半填充 = 正在做，实心圈里带勾 = 做完了。
-function todoIcon(status: string): string {
-  if (status === 'completed') return 'mdi-check-circle'
-  if (status === 'in_progress') return 'mdi-circle-slice-4'
-  return 'mdi-circle-outline'
 }
 
 // ---- 选项问题 (cheese_ask): buttons under the message; one click answers
@@ -346,7 +308,7 @@ const {
 
 // ---- 悬停条：整列一个，跟着指针在消息之间滑（见 room/RoomHoverBar）。 ----
 // 指针落在一条消息上就移过去；落在行与行之间的空隙里就留在原地（从一行滑到下一行
-// 的路上不该让它一闪一闪）；落在别的行上（事件、标记、步骤清单）或移出整列
+// 的路上不该让它一闪一闪）；落在别的行上（事件、标记）或移出整列
 // 就收起。表情选择条开着的时候钉在那一行上，不跟指针走。
 const bar = reactive({ id: null as string | null, shown: false, top: 0, jump: false })
 const barBlock = computed(() => (bar.id ? messages.value.find((m) => m.id === bar.id) ?? null : null))
@@ -610,27 +572,9 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'reaction':
-      // 芝士的 👀 是平台落的回执：会话已经把这条消息拿进去了（后端
-      // chat.confirm_prompt_receipt）。认「作者不是我自己」而不是去比对队友的
-      // handle，因为名册可能还没到，那时比对不上会把指示永远卡在「正在送给」。
-      // 代价是房间里有人手点 👀 会让它提早翻一下，下一轮就自己纠正。
-      for (const r of frame.reactions ?? []) {
-        if (r.emoji !== '👀') continue
-        const by = r.authors.find((a) => a !== AUTHOR)
-        if (by === undefined) continue
-        if (awaitingReply.value) noteWorker(by)
-      }
       // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
       // row in place (the frame carries the block's full fresh aggregate).
       applyReactions(frame.block_id, frame.reactions)
-      break
-    case 'todo':
-      // Working-log checklist, updated in place. `restored` marks the replay of
-      // a previous turn's list at turn start (进度层) — the first live frame of
-      // this turn clears the flag.
-      todoItems.value = frame.items
-      todoRestored.value = frame.restored === true
-      autoScroll()
       break
     case 'state':
       // A platform resource changed → parent refreshes that panel live.
@@ -640,7 +584,6 @@ function handleFrame(frame: WsServerFrame) {
     case 'event_block':
       // A persisted, clickable action card (decision/doc/...) for this turn.
       pushBlock(frame.block)
-      noteTurnBlock(frame.block)
       toSite(frame.block)
       autoScroll()
       break
@@ -655,7 +598,6 @@ function handleFrame(frame: WsServerFrame) {
     case 'assistant_block':
       // One complete 芝士 message (Slack-style) — a turn may land several.
       pushBlock(frame.block)
-      noteTurnBlock(frame.block)
       // Compatibility with an older backend that has no lifecycle markers.
       if (activeTurnIds.value.size === 0) awaitingReply.value = false
       autoScroll()
@@ -681,16 +623,12 @@ function handleFrame(frame: WsServerFrame) {
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
       if (activeTurnIds.value.size === 0) awaitingReply.value = false
-      // A failed turn is exactly when the checklist matters most — it is what
-      // whoever picks this up next (person or new machine) works from. Keep it.
-      todoRestored.value = true
       break
     case 'done':
       // Mid-session messages fold into the existing Claude run and emit no
       // separate completion frame. Lifecycle markers own the running indicator.
       if (activeTurnIds.value.size === 0) {
         awaitingReply.value = false
-        todoRestored.value = true
         emit('turn-done')
       }
       autoScroll()
@@ -709,8 +647,6 @@ function handleFrame(frame: WsServerFrame) {
         turnBegan(id, typeof since === 'number' ? since * 1000 : Date.now())
       }
       awaitingReply.value = true
-      // 中途连进来的：这一轮里已经落下的记录说得出是谁在干。
-      for (const m of messages.value) noteTurnBlock(m)
       break
     case 'turn_started': {
       const next = new Set(activeTurnIds.value)
@@ -726,7 +662,6 @@ function handleFrame(frame: WsServerFrame) {
       activeTurnIds.value = next
       turnEnded(frame.turn_id)
       awaitingReply.value = next.size > 0
-      todoRestored.value = true
       emit('turn-done')
       autoScroll()
       break
@@ -761,24 +696,6 @@ async function loadTopic(topic: Topic, entering = false) {
   awaitingReply.value = false
   activeTurnIds.value = new Set()
   turnStarts.value = {}
-  todoItems.value = []
-  todoRestored.value = false
-  // 进度层 (#187): the checklist the last turn left behind. Fire-and-forget and
-  // guarded on the topic still being active — it is context, never a reason to
-  // hold up (or fail) opening the conversation.
-  void getProgress(topic.id)
-    .then((p) => {
-      if (props.topic?.id !== topic.id || todoItems.value.length) return
-      // `?? []` 不是防御性洁癖：这个 ref 只要被写成 undefined，模板里的
-      // `todoItems.length` 就抛，整个 ChatPanel 渲染失败——房间变成白板。而下面
-      // 那句 `.catch(() => {})` 只吞掉报错，撤不回已经写进去的 undefined，所以
-      // 屏幕上不会有任何东西说明发生了什么。今天的后端始终带 items，够不到这里；
-      // 前后端版本错开一次就够得到，代价是整个房间。
-      const items = p.items ?? []
-      todoItems.value = items
-      todoRestored.value = items.length > 0
-    })
-    .catch(() => {})
   reactionPickerFor.value = null
   // 悬停条是绝对定位的：收起只是透明，它仍停在上一个话题那一行的 translateY 上，
   // 仍算进这一栏的可滚动高度。从一个翻到很深的长话题切到短话题，它把滚动区撑高，
@@ -795,6 +712,7 @@ async function loadTopic(topic: Topic, entering = false) {
   sentNow.clear()
   delivered.clear()
   editing.clear()
+  editingId.value = null
   unseen.value = []
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
@@ -902,6 +820,36 @@ function setReply(m: Block) {
 function clearReply() {
   replyTarget.value = null
 }
+
+// ---- 改自己发过的消息：正文原地换成输入框，保存之后房间里每个人看到新的正文。 ----
+// 只有自己在房间里说的话：卡上的对话、别人的、芝士的都不在此列。
+const editingId = ref<string | null>(null)
+const editSaving = ref(false)
+function canEdit(m: Block): boolean {
+  return isMine(m) && m.kind === 'message' && !m.task_id
+}
+function startEdit(m: Block) {
+  editingId.value = m.id
+}
+async function saveEdit(m: Block, text: string) {
+  const content = text.trim()
+  if (editSaving.value || !content) return
+  if (content === editableText(m.content, refMaps).trim()) {
+    editingId.value = null
+    return
+  }
+  editSaving.value = true
+  try {
+    const updated = await editMessage(m.id, content)
+    const at = messages.value.findIndex((x) => x.id === updated.id)
+    if (at >= 0) messages.value.splice(at, 1, updated)
+    if (editingId.value === m.id) editingId.value = null
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.message.saveFailed')
+  } finally {
+    editSaving.value = false
+  }
+}
 // 输入框里那枚回复标签上写的：回复的是谁、那条说了什么。
 const replyLabel = computed(() =>
   replyTarget.value
@@ -965,20 +913,7 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   replyTarget.value = null
   // Only a summon starts awaiting a reply — an instant local ack, before
   // anything has been delivered anywhere yet.
-  if (summon) {
-    awaitingReply.value = true
-    // 点了哪位就是交给哪位；没点名的交给房间的座位。
-    workingHandle.value = null
-    for (const [, handle] of trimmed.matchAll(/<@([^>\s]+)>/g)) {
-      if (seatByHandle.value.get(handle)?.agent) {
-        workingHandle.value = handle
-        break
-      }
-    }
-  }
-  // The stored checklist stays on screen until this turn's first live frame
-  // replaces it — blanking it here would hide 进度 during the cold start, which
-  // is precisely when someone is wondering where the work got to.
+  if (summon) awaitingReply.value = true
   scrollToBottom()
   return true
 }
@@ -1510,10 +1445,12 @@ onBeforeUnmount(() => {
             :jump="bar.jump"
             :is-agent="!!barBlock && isAgentBlock(barBlock)"
             :picker-open="!!barBlock && reactionPickerFor === barBlock.id"
+            :editable="!!barBlock && canEdit(barBlock)"
             @react="onReact"
             @toggle-picker="reactionPickerFor = reactionPickerFor === $event ? null : $event"
             @reply="setReply"
             @upgrade="emit('upgrade-message', $event)"
+            @edit="startEdit"
           />
           <!-- 骨架和真的那几行同形同高：到货时骨架淡出，不推动下面的东西。 -->
           <Transition name="tl-skel">
@@ -1612,6 +1549,9 @@ onBeforeUnmount(() => {
               :viewer="AUTHOR"
               :active="bar.shown && bar.id === m.id"
               :ask-busy="askBusy === m.id"
+              :editing="editingId === m.id"
+              :edit-text="editingId === m.id ? editableText(m.content, refMaps) : undefined"
+              :saving="editSaving"
               @animationend="settleArrival($event, m.id)"
               @open-file="(path, taskId) => emit('open-file', path, taskId)"
               @open-topic="emit('open-topic', $event)"
@@ -1621,6 +1561,8 @@ onBeforeUnmount(() => {
               @download="downloadAttachment"
               @jump="scrollToMessage"
               @avatar-error="onAvatarError"
+              @save-edit="saveEdit(m, $event)"
+              @cancel-edit="editingId = null"
             />
           </template>
 
@@ -1664,41 +1606,6 @@ onBeforeUnmount(() => {
               @avatar-error="onAvatarError"
             />
           </TransitionGroup>
-
-          <!-- 这一轮的步骤清单（`todo_write`），只在一轮进行中显示。进场上浮淡入；这一轮
-             结束时淡出，回复就在它原来的位置上接着往下读。 -->
-          <Transition name="tl-working" @leave="collapseLeave">
-            <div v-if="liveTodo" class="im-row">
-              <div class="im-gutter">
-                <CheeseAvatar :size="28" :name="workingName" />
-              </div>
-              <div class="im-main">
-                <div class="im-meta">
-                  <span class="im-name">{{ workingName }}</span>
-                </div>
-
-                <!-- Working-log checklist (`todo_write`, §3.1.1), only while a turn is
-                   live. Between turns the stored 进度层 (#187) lives in the panel's
-                   总览: parked at the end of the conversation it sat under every new
-                   message, pushing the talk up. 新的一项依次浮上来；状态变了图标原地
-                   换、删除线淡进来。 -->
-                <TransitionGroup tag="ul" name="todo" class="todo-list">
-                  <li
-                    v-for="(item, ti) in todoItems"
-                    :key="item.id"
-                    class="todo-item"
-                    :class="'todo-' + item.status"
-                    :style="{ '--i': ti }"
-                  >
-                    <Transition name="todo-mark" mode="out-in">
-                      <v-icon :key="item.status" class="todo-mark" size="14">{{ todoIcon(item.status) }}</v-icon>
-                    </Transition>
-                    <span class="todo-text">{{ item.subject }}</span>
-                  </li>
-                </TransitionGroup>
-              </div>
-            </div>
-          </Transition>
 
           <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
           <div class="px-4">
@@ -1804,82 +1711,6 @@ onBeforeUnmount(() => {
 .toast-leave-to {
   opacity: 0;
 }
-/* Working-log checklist (§3.1.1) — process, sits above the streaming text.
-   Between turns the same list shows the stored 进度层 (#187) under a label. */
-/* 任务清单块：一块中性底色把它和正文分开，不靠左竖条（左条纹只留给引用块和结构
-   线），也不上琥珀（它是进度，不是要人去按的东西）。 */
-.todo-list {
-  list-style: none;
-  margin: 4px 0 6px;
-  padding: 6px 10px;
-  background: var(--fill);
-  border-radius: var(--radius-sm);
-}
-.todo-item {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-/* 图标盒子没有文字基线，所以整行改成顶对齐，再把图标压到第一行文字的中线上
-   ((13.6px × 1.5 − 14px) / 2 ≈ 3px)——否则多行标题会把图标顶到最后一行。 */
-.todo-mark {
-  flex: none;
-  margin-top: 3px;
-}
-.todo-pending {
-  color: var(--faint);
-}
-.todo-in_progress {
-  color: var(--ink);
-  font-weight: 600;
-}
-.todo-completed {
-  color: var(--faint);
-}
-/* 删除线一直在，只是透明的：做完的那一刻它淡进来，不是突然出现。 */
-.todo-text {
-  text-decoration-line: line-through;
-  text-decoration-color: transparent;
-  transition:
-    text-decoration-color var(--dur-base) var(--ease-standard),
-    opacity var(--dur-base) var(--ease-standard);
-}
-.todo-item {
-  transition: color var(--dur-base) var(--ease-standard);
-}
-.todo-completed .todo-text {
-  text-decoration-color: currentcolor;
-  opacity: 0.7;
-}
-/* 新的一项依次浮上来，一项晚 30ms。 */
-.todo-enter-active {
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
-  /* 一组不超过 300ms（§9.7）：第十项之后不再往后排。 */
-  transition-delay: calc(min(var(--i, 0), 9) * 30ms);
-}
-.todo-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
-}
-.todo-mark-enter-active {
-  transition:
-    opacity var(--dur-quick) var(--ease-out),
-    transform var(--dur-quick) var(--ease-out);
-}
-.todo-mark-leave-active {
-  transition:
-    opacity var(--dur-press) var(--ease-in),
-    transform var(--dur-press) var(--ease-in);
-}
-.todo-mark-enter-from,
-.todo-mark-leave-to {
-  opacity: 0;
-  transform: scale(0.6);
-}
 .messages {
   background: var(--surface);
   /* A flex child's implicit min-height is its content — without this, a long
@@ -1941,26 +1772,6 @@ onBeforeUnmount(() => {
   transition: opacity var(--dur-quick) var(--ease-in);
 }
 .tl-skel-leave-to {
-  opacity: 0;
-}
-/* 步骤清单那一行：进来上浮淡入，这一轮结束时淡出。 */
-.tl-working-enter-active {
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
-}
-.tl-working-leave-active {
-  transition:
-    height var(--dur-quick) var(--ease-in),
-    margin-top var(--dur-quick) var(--ease-in),
-    padding var(--dur-quick) var(--ease-in),
-    opacity var(--dur-quick) var(--ease-in);
-}
-.tl-working-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
-}
-.tl-working-leave-to {
   opacity: 0;
 }
 /* 新消息提示：浮在时间线底部正中，从下面升上来。 */

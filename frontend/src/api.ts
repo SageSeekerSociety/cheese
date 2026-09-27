@@ -1234,6 +1234,15 @@ export function toggleReaction(
   )
 }
 
+// Edit a message you sent. Everyone in the room, you included, also gets the
+// edited block as a `block_updated` frame.
+export function editMessage(blockId: string, content: string): Promise<Block> {
+  return request<Block>(`/blocks/${encodeURIComponent(blockId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ content }),
+  })
+}
+
 // ---- 资料库 ----
 
 // 用户给这个项目的文件，按原名。项目一级，所以一个房间引用得到另一个房间上传的

@@ -2,8 +2,9 @@
 
 The agent writes it with the platform tool `todo_write`, which lands on
 ``PUT /topics/{id}/progress``. These tests pin what makes the layer real: the
-room sees each write live, the write survives the turn, and the next turn is
-actually told about it.
+write survives the turn and the next turn is actually told about it — and, in
+the room, the list is the agent's own message: posted by the first write, then
+edited by the next ones, until the agent starts a new one.
 """
 
 import pytest
@@ -14,6 +15,7 @@ from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
     post_project,
+    room_agent_seat,
     session_auth_headers,
 )
 
@@ -78,21 +80,72 @@ def test_topic_without_a_checklist_has_empty_progress(client):
     assert body["data"] == {"items": [], "updated_at": None}
 
 
-def test_a_write_reaches_the_room_live_and_is_stored(client):
+def _frame(ws, kind: str) -> dict:
+    frame = ws.receive_json()
+    while frame["type"] != kind:
+        frame = ws.receive_json()
+    return frame["block"]
+
+
+def _checklists(client, topic_id: str) -> list[dict]:
+    """The agent's messages in the room — in these tests, only its checklists."""
+    agent = room_agent_seat(client, topic_id)
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    return [b for b in blocks if b["kind"] == "message" and b["author"] == agent]
+
+
+CHECKLIST = "- [x] 核实 issue 论断\n- [ ] **写实现**\n- [ ] 补测试"
+
+
+def test_the_first_write_posts_the_checklist_as_the_agents_message(client):
     topic, headers = _room(client)
     with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
         response = _write(client, topic, headers, PLAN)
         assert response.status_code == 200, response.text
-        frame = ws.receive_json()
-        while frame["type"] != "todo":
-            frame = ws.receive_json()
-    shown = [(i["subject"], i["status"]) for i in frame["items"]]
-    assert shown == [(t["content"], t["status"]) for t in PLAN]
-    assert not frame.get("restored"), "a write is this turn's list, not a leftover"
-    assert _progress(client, topic) == shown
+        message = _frame(ws, "assistant_block")
+    assert message["author"] == room_agent_seat(client, topic)
+    assert message["kind"] == "message"
+    assert message["content"] == CHECKLIST
+    assert response.json()["data"]["message_id"] == message["id"]
+    # 总览 reads the stored list, as before.
+    assert _progress(client, topic) == [(t["content"], t["status"]) for t in PLAN]
     data = client.get(f"/topics/{topic}/progress").json()["data"]
     # Stamped, so a reader can tell fresh progress from something ancient.
     assert data["updated_at"] is not None
+
+
+def test_later_writes_edit_that_same_message(client):
+    topic, headers = _room(client)
+    first = _write(client, topic, headers, PLAN).json()["data"]["message_id"]
+    done = [{**t, "status": "completed"} for t in PLAN]
+    with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
+        response = _write(client, topic, headers, done)
+        assert response.status_code == 200, response.text
+        edited = _frame(ws, "block_updated")
+    assert edited["id"] == first
+    assert edited["content"] == "- [x] 核实 issue 论断\n- [x] 写实现\n- [x] 补测试"
+    assert edited["meta"]["edited_at"], "an update is an edit, and shows as one"
+    assert [m["id"] for m in _checklists(client, topic)] == [first]
+
+
+def test_the_agent_starts_a_new_checklist_when_it_says_so(client):
+    topic, headers = _room(client)
+    first = _write(client, topic, headers, PLAN).json()["data"]["message_id"]
+    second = _write(
+        client,
+        topic,
+        headers,
+        [{"content": "新请求第一步", "status": "in_progress"}],
+        new=True,
+    ).json()["data"]["message_id"]
+    assert second != first
+    third = _write(
+        client, topic, headers, [{"content": "新请求第一步", "status": "completed"}]
+    ).json()["data"]["message_id"]
+    assert third == second, "without `new`, the newest checklist is the one edited"
+    shown = {m["id"]: m["content"] for m in _checklists(client, topic)}
+    assert shown[first] == CHECKLIST, "the earlier checklist stays as it was"
+    assert set(shown) == {first, second}
 
 
 def test_each_write_replaces_the_whole_list(client):
@@ -108,7 +161,7 @@ def test_next_turn_is_told_where_the_work_got_to(client, stub_hooks):
     assert "上次的任务清单" not in (stub_hooks.last_system_prompt or "")
 
     _write(client, topic, headers, PLAN)
-    frames = _chat(client, topic)
+    _chat(client, topic)
 
     prompt = stub_hooks.last_system_prompt or ""
     # Status is carried as a mark, not just the text: "已完成" vs "在做" is the
@@ -116,16 +169,6 @@ def test_next_turn_is_told_where_the_work_got_to(client, stub_hooks):
     assert "- [x] 核实 issue 论断" in prompt
     assert "- [~] 写实现" in prompt
     assert "- [ ] 补测试" in prompt
-
-    # The room sees it too, before the turn produces anything of its own, and
-    # marked as the last turn's rather than this one's.
-    restored = [f for f in frames if f["type"] == "todo" and f.get("restored")]
-    assert restored, "turn start must replay the stored checklist to the room"
-    assert [i["subject"] for i in restored[0]["items"]] == [
-        "核实 issue 论断",
-        "写实现",
-        "补测试",
-    ]
 
 
 def test_a_workers_checklist_stays_on_its_card(client, stub_hooks, monkeypatch):
@@ -150,16 +193,16 @@ def test_a_workers_checklist_stays_on_its_card(client, stub_hooks, monkeypatch):
 
     assert _progress(client, topic, task=card) == [("改卡片上的接口", "in_progress")]
     assert _progress(client, topic) == [(t["content"], t["status"]) for t in PLAN]
-    todo_frames = [(c, f) for c, f in published if f["type"] == "todo"]
-    assert [c for c, _ in todo_frames] == [card], "the card's list goes to the card"
+    assert [(c, f["type"]) for c, f in published] == [(card, "todo")], (
+        "the card's list goes to the card, and posts nothing in the room"
+    )
+    assert len(_checklists(client, topic)) == 1, "only the room's own checklist"
 
     monkeypatch.setattr(broker, "publish", publish)
-    frames = _chat(client, topic)
+    _chat(client, topic)
     prompt = stub_hooks.last_system_prompt or ""
     assert "- [~] 写实现" in prompt
     assert "改卡片上的接口" not in prompt
-    restored = [f for f in frames if f["type"] == "todo" and f.get("restored")]
-    assert [i["subject"] for i in restored[0]["items"]] == [t["content"] for t in PLAN]
 
 
 def test_a_card_from_another_room_is_refused(client):

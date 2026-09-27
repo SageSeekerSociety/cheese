@@ -3,7 +3,7 @@ import type { Block, Topic, WsServerFrame } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
@@ -17,12 +17,13 @@ vi.mock('@/api', async () => {
     listTopicMembers: (...args: unknown[]) => listTopicMembers(...args),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
-    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     chatWsUrl: () => 'ws://test/chat',
   }
 })
 
 import ChatPanel from './ChatPanel.vue'
+
+import { setLocale } from '@/i18n'
 
 const topic: Topic = {
   id: 'session-activity-topic',
@@ -68,22 +69,20 @@ const assistantBlock: Block = {
   created_at: '2026-08-17T00:00:01Z',
 } as Block
 
-// 这一轮的步骤清单那一行：房间里唯一署着「谁在干」的地方。
-function checklistName(container: Element): string | null {
-  const list = container.querySelector('.todo-list')
-  return list?.closest('.im-row')?.querySelector('.im-name')?.textContent?.trim() ?? null
-}
-
-const todoFrame: WsServerFrame = {
-  type: 'todo',
-  items: [{ id: 't1', subject: 'Read the brief', status: 'in_progress' }],
-} as WsServerFrame
+// 队友的步骤清单是它发在房间里的一条消息（`todo_write`），和它别的话一样。
+const checklist: Block = {
+  ...assistantBlock,
+  id: 'checklist-1',
+  content: '- [x] Read the brief\n- [ ] **Write the fix**',
+  turn_id: 'one',
+} as Block
 
 async function flush() {
   for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 beforeEach(() => {
+  setLocale('zh-CN')
   vi.clearAllMocks()
   FakeWebSocket.instances = []
   listBlocks.mockResolvedValue({ data: [], has_more: false })
@@ -117,8 +116,9 @@ describe('session activity', () => {
     expect(view.emitted('working')?.at(-1)).toEqual([false])
   })
 
-  // 队友在房间里和别人一样：干活时对话里不另起一行「正在处理」，只有它写下的步骤清单。
-  it('a running turn adds no working line to the chat, only the step checklist', async () => {
+  // 队友在房间里和别人一样：干活时对话里不另起一行「正在处理」，也没有一行跟着
+  // 这一轮来去的清单。它的清单是它发的一条消息，这一轮结束了还在原处。
+  it('a running turn adds no working line and no checklist row to the chat', async () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic] },
@@ -128,19 +128,28 @@ describe('session activity', () => {
 
     const socket = FakeWebSocket.instances.at(-1)!
     socket.emit({ type: 'turn_started', turn_id: 'one' })
+    socket.emit({ type: 'todo', items: [{ id: '1', subject: 'Transient step', status: 'in_progress' }] })
     await flush()
     expect(view.container.textContent).not.toMatch(/正在处理|正在交给/)
     expect(view.queryByRole('button', { name: /停止/ })).toBeNull()
-    expect(view.container.querySelector('.todo-list')).toBeNull()
+    expect(view.queryByText('Transient step')).toBeNull()
 
-    socket.emit(todoFrame)
+    socket.emit({ type: 'assistant_block', block: checklist })
     await flush()
-    expect(view.getByText('Read the brief')).toBeTruthy()
-    expect(view.container.textContent).not.toMatch(/正在处理|正在交给/)
+    expect(view.getByText('Write the fix')).toBeTruthy()
 
+    socket.emit({
+      type: 'block_updated',
+      block: {
+        ...checklist,
+        content: '- [x] Read the brief\n- [x] Write the fix',
+        meta: { edited_at: '2026-08-17T00:00:05Z' },
+      } as Block,
+    })
     socket.emit({ type: 'turn_finished', turn_id: 'one' })
     await flush()
-    expect(view.queryByText('Read the brief')).toBeNull()
+    expect(view.getAllByText('Write the fix')).toHaveLength(1)
+    expect(view.getByText('已编辑')).toBeTruthy()
   })
 
   // 「现场」那一格靠这个事件在开工那一刻出现。以前它等的是第一个工具调用——而一个
@@ -182,97 +191,5 @@ describe('session activity', () => {
     await view.rerender({ topic: { ...topic, id: 'another-topic' } as Topic, topicList: [topic] })
     await flush()
     expect(view.emitted('working')?.at(-1)).toEqual([false])
-  })
-
-  // 一个房间坐着两位 AI：名册上先入座的是「芝士」，后 @ 进来的是「芝士Opus」。
-  // 干活的是哪位，步骤清单那一行就署哪位——不是名册上排第一的那位。
-  describe('房间里坐着几位队友', () => {
-    const seat = (handle: string, name: string) => ({
-      id: handle,
-      topic_id: topic.id,
-      member_handle: handle,
-      role: 'member',
-      agent: true,
-      name,
-      created_at: '2026-08-17T00:00:00Z',
-    })
-    beforeEach(() => {
-      listTopicMembers.mockResolvedValue({
-        data: [seat('cheese-first', '芝士'), seat('cheese-opus', '芝士Opus')],
-        total: 2,
-      })
-    })
-
-    async function mount() {
-      const vuetify = createVuetify({ components, directives })
-      const view = render(ChatPanel, {
-        props: { topic, topicList: [topic], showComposer: true },
-        global: { plugins: [vuetify] },
-      })
-      await flush()
-      return { view, socket: FakeWebSocket.instances.at(-1)! }
-    }
-
-    it('这一轮里署名的是哪位，就写哪位', async () => {
-      const { view, socket } = await mount()
-      socket.emit({ type: 'turn_started', turn_id: 'one' })
-      socket.emit({
-        type: 'event_block',
-        block: { ...assistantBlock, id: 'step-1', kind: 'event', author: 'cheese-opus', turn_id: 'one' } as Block,
-      })
-      socket.emit(todoFrame)
-      await flush()
-      expect(checklistName(view.container)).toBe('芝士Opus')
-    })
-
-    it('发出去点了哪位，还没别的动静时清单就署哪位', async () => {
-      const { view, socket } = await mount()
-      const box = view.container.querySelector('textarea')!
-      box.focus()
-      await fireEvent.update(box, '<@cheese-opus> 看看这个')
-      await fireEvent.keyDown(box, { key: 'Enter' })
-      socket.emit(todoFrame)
-      await flush()
-      expect(checklistName(view.container)).toBe('芝士Opus')
-    })
-
-    it('👀 回执是谁落的，就是谁接了这一轮', async () => {
-      const { view, socket } = await mount()
-      socket.emit({ type: 'turn_started', turn_id: 'one' })
-      socket.emit({
-        type: 'reaction',
-        block_id: 'm1',
-        reactions: [{ emoji: '👀', count: 1, authors: ['cheese-opus'] }],
-      } as WsServerFrame)
-      socket.emit(todoFrame)
-      await flush()
-      expect(checklistName(view.container)).toBe('芝士Opus')
-    })
-
-    it('一位干完、另一位接着干，名字跟着换', async () => {
-      const { view, socket } = await mount()
-      socket.emit({ type: 'turn_started', turn_id: 'one' })
-      socket.emit({
-        type: 'event_block',
-        block: { ...assistantBlock, id: 'step-1', kind: 'event', author: 'cheese-opus', turn_id: 'one' } as Block,
-      })
-      socket.emit({ type: 'turn_finished', turn_id: 'one' })
-      socket.emit({ type: 'turn_started', turn_id: 'two' })
-      socket.emit({
-        type: 'event_block',
-        block: { ...assistantBlock, id: 'step-2', kind: 'event', author: 'cheese-first', turn_id: 'two' } as Block,
-      })
-      socket.emit(todoFrame)
-      await flush()
-      expect(checklistName(view.container)).toBe('芝士')
-    })
-
-    it('这一轮还说不出是谁时，退回房间的座位', async () => {
-      const { view, socket } = await mount()
-      socket.emit({ type: 'turn_started', turn_id: 'one' })
-      socket.emit(todoFrame)
-      await flush()
-      expect(checklistName(view.container)).toBe('芝士')
-    })
   })
 })
