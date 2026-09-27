@@ -9,14 +9,13 @@
 import type { Block, RoomTask } from '../../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
-import DOMPurify from 'dompurify'
 
 import { getRoomTask, sayOnRoomTask } from '../../api'
-import { isAgentBlock } from '../../lib/authorship'
+import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
-import { markdown } from '../../lib/markdown'
 import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
 import { relTime } from '../../lib/relTime'
+import { type RefMaps, renderMarkdown as renderWithRefs, renderPlain } from '../../lib/renderMessage'
 import { eventArg, eventFailed, eventVerb, isNarration } from '../../lib/siteLog'
 import { myHandle } from '../../me'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -33,8 +32,12 @@ const props = withDefaults(
     active?: boolean
     /** 每有一轮动静就加一 —— 分身干活的每一步都记在这张卡上。 */
     refreshTick?: number
+    /** handle → 名字。简报里的 `<@handle>` 和对话里谁说的，都照它换成名字。 */
+    memberNames?: Record<string, string>
+    /** 名册上查不到的 AI 座位叫什么（做这条活的分身不一定坐在名册上）。 */
+    agentName?: string
   }>(),
-  { active: false, refreshTick: 0 }
+  { active: false, refreshTick: 0, memberNames: () => ({}), agentName: '芝士' }
 )
 
 const emit = defineEmits<{
@@ -135,8 +138,16 @@ function toggleSteps(key: string) {
   openSteps.value = next
 }
 
+// 简报和结论是人（或芝士）写给人读的 markdown，和对话栏走同一条路：点名换成名字
+// 的 chip，而不是把 `<@caisongyang>` 原样摊在标题里。
+const refs = computed<RefMaps>(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(markdown.parse(text, { async: false, breaks: true }))
+  return renderWithRefs(text, refs.value)
+}
+
+// 谁说的：名册上的名字；查不到的 AI 座位叫它的角色名，别露 `cheese-c82aeb40555a`。
+function whoSaid(b: Block): string {
+  return props.memberNames[b.author] || (isAgentHandle(b.author) ? props.agentName : b.author)
 }
 
 async function send() {
@@ -213,13 +224,13 @@ async function send() {
         <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">暂无消息</div>
         <template v-for="e in entries" :key="e.kind === 'steps' ? e.key : e.block.id">
           <div v-if="e.kind === 'say'" class="card-msg">
-            <span class="card-msg__who t-meta">{{ e.block.author }}</span>
+            <span class="card-msg__who t-meta">{{ whoSaid(e.block) }}</span>
             <div
               v-if="isAgentBlock(e.block)"
               class="card-msg__text card-markdown t-body"
               v-html="renderMarkdown(e.block.content)"
             />
-            <span v-else class="card-msg__text t-body">{{ e.block.content }}</span>
+            <span v-else class="card-msg__text t-body" v-html="renderPlain(e.block.content, refs)" />
           </div>
           <RoomNotice
             v-else-if="e.kind === 'notice'"
@@ -229,7 +240,7 @@ async function send() {
             :name="null"
             :time="relTime(e.block.created_at)"
             agent-name="分身"
-            :refs="{ mentionNames: {}, topicTitles: {} }"
+            :refs="refs"
           />
           <div v-else class="card-steps">
             <button
@@ -414,21 +425,70 @@ async function send() {
 .card-step--failed .card-step__verb {
   color: var(--danger-ink);
 }
+/* 简报/结论/芝士的话里的 markdown。它们住在一张卡的窄栏里、正文 14px，所以标题
+   不按文档那套放大：浏览器默认的 h1 是 2em，一段「## 背景」会比卡的标题大一倍，
+   上下又没留白，看上去就是几块黑字砸在正文里。这里标题只比正文重、不比正文大，
+   靠上方留白分段——同对话栏 RoomMessage 的 .md-content。 */
 .card-markdown {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.card-markdown :deep(> :first-child) {
+  margin-top: 0;
+}
+.card-markdown :deep(> :last-child) {
+  margin-bottom: 0;
+}
 .card-markdown :deep(p) {
   margin: 0 0 8px;
+}
+.card-markdown :deep(h1),
+.card-markdown :deep(h2),
+.card-markdown :deep(h3),
+.card-markdown :deep(h4),
+.card-markdown :deep(h5),
+.card-markdown :deep(h6) {
+  margin: 14px 0 4px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  font-weight: 600;
+  color: var(--ink);
+}
+.card-markdown :deep(h1),
+.card-markdown :deep(h2) {
+  font-size: 15px;
+  line-height: var(--lh-15);
+}
+.card-markdown :deep(strong) {
+  font-weight: 600;
+  color: var(--ink);
 }
 .card-markdown :deep(ul),
 .card-markdown :deep(ol) {
   padding-left: 20px;
-  margin: 4px 0;
+  margin: 4px 0 8px;
+}
+.card-markdown :deep(li) {
+  margin: 2px 0;
+}
+.card-markdown :deep(li::marker) {
+  color: var(--faint);
 }
 .card-markdown :deep(a) {
-  color: var(--ink);
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+.card-markdown :deep(a:hover) {
   text-decoration: underline;
+}
+/* 行内代码：等宽字、缩一号、压一层浅底，和正文分得开又不跳出来。 */
+.card-markdown :deep(code) {
+  padding: 0.5px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
 }
 .card-markdown :deep(pre),
 .card-markdown :deep(table) {
@@ -438,6 +498,7 @@ async function send() {
 .card-markdown :deep(table) {
   display: block;
   border-collapse: collapse;
+  margin: 4px 0 8px;
 }
 .card-markdown :deep(th),
 .card-markdown :deep(td) {
@@ -445,9 +506,28 @@ async function send() {
   border: 1px solid var(--line);
 }
 .card-markdown :deep(pre) {
-  padding: 8px;
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
   background: var(--fill);
   white-space: pre;
+}
+.card-markdown :deep(pre code) {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.card-markdown :deep(blockquote) {
+  margin: 6px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--line-2);
+  color: var(--muted);
+}
+.card-markdown :deep(hr) {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 .card-markdown :deep(img) {
   max-width: 100%;

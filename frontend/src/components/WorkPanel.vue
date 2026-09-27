@@ -632,6 +632,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           :active="active === 'overview'"
           :refresh-tick="refreshTick"
           :open-card-id="openCardId"
+          :member-names="memberNames"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
           @review="emit('review')"

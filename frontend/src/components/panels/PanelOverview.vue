@@ -32,8 +32,10 @@ const props = withDefaults(
     openCardId?: string | null
     /** 项目 AI 队友的名字，传给文档那一格。 */
     agentName?: string
+    /** handle → 名字，给钻进去的那张卡换点名和说话人。 */
+    memberNames?: Record<string, string>
   }>(),
-  { topicList: () => [], active: false, refreshTick: 0, openCardId: null, agentName: '芝士' }
+  { topicList: () => [], active: false, refreshTick: 0, openCardId: null, agentName: '芝士', memberNames: () => ({}) }
 )
 
 const emit = defineEmits<{
@@ -67,6 +69,8 @@ defineExpose({
         :card-id="props.openCardId"
         :active="props.active"
         :refresh-tick="props.refreshTick"
+        :member-names="props.memberNames"
+        :agent-name="props.agentName"
         @back="emit('open-card', null)"
         @review="emit('review')"
       />
