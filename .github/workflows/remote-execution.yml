@@ -147,13 +147,10 @@ jobs:
       # Every run loads a fresh build under the same tag, which leaves the
       # previous one untagged, and nothing else removes it: on 2026-09-27 sixty
       # of them held about 4 GB on one box and kept it under the disk guard's
-      # floor. Only untagged images with this label go: a job reaches its image
-      # by tag, so an untagged one is out of every job's reach, and prune skips
-      # any a container still holds. The next run loads from the slot's builder
-      # cache, not from these images.
+      # floor. The next run loads from the slot's builder cache, not from these.
       - name: Remove superseded private images
         if: ${{ always() }}
-        run: docker image prune --force --filter label=cheese.ci.private-executor=true
+        run: deploy/ci-runner/prune-private-images.sh
       - name: Produce private-chat CLEAN evidence
         id: private_evidence
         if: ${{ !cancelled() }}
