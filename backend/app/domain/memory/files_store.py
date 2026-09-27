@@ -143,9 +143,7 @@ class MemoryFileStore:
         绕过的地方。要覆盖已经存在的那一条，得先读到它的版本号。
         """
         check_path(path)
-        row = await self.get(
-            project_id, scope, owner_handle, path, for_update=True
-        )
+        row = await self.get(project_id, scope, owner_handle, path, for_update=True)
         if row is None:
             if expected_version is not None:
                 raise MemoryFileConflict(path, expected_version, None)
@@ -179,9 +177,7 @@ class MemoryFileStore:
     ) -> None:
         """删掉一条记忆；索引那一行由调用方一并删（它才看得见两份）。"""
         check_path(path)
-        row = await self.get(
-            project_id, scope, owner_handle, path, for_update=True
-        )
+        row = await self.get(project_id, scope, owner_handle, path, for_update=True)
         if row is None:
             raise MemoryFileMissing(f"{path} 不在了")
         if expected_version is not None and expected_version != row.version:

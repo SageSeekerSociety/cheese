@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.backlog import (
     ClaudeCodeBacklog,
@@ -94,6 +95,9 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
         async def announce() -> None:
             await self.announce(handle.session.topic_id)
 
+        async def memory() -> None:
+            await self.reconcile_memory(handle.session.topic_id)
+
         return Subscription(
             handle.session,
             handle.mirror,
@@ -104,7 +108,24 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             announce=announce,
             receipts=receipt,
             pulse=self.pulse,
+            memory=memory,
         )
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """One memory reconciliation, over the runner that owns this session.
+
+        A session that is not there (or a device that dropped) answers ``None``:
+        the platform's copy is still the truth and nothing is lost — the agent's
+        edits stay on that machine's disk and come back the next time it is
+        reached, the same shape as every other call on this path.
+        """
+        handle = self.live.get(topic_id)
+        if handle is None:
+            return None
+        try:
+            return await self.channel.call(handle, "memory", request)
+        except (DeviceCallError, DeviceOffline):
+            return None
 
     def backlog(self, session: SessionRef) -> ClaudeCodeBacklog:
         handle = self.live.get(session.topic_id)

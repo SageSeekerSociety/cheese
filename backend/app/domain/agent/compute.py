@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from app.domain.agent.harness import (
         ActivityConsumer,
         EventConsumer,
+        MemoryConsumer,
         ReachabilityConsumer,
         ReceiptConsumer,
         SessionControls,
@@ -239,6 +240,35 @@ class ComputePool:
         """Give every runtime the owner of 「这一轮在等它的设备」."""
         for runtime in self._runtimes():
             runtime.bind_reachability(consumer)
+
+    def bind_memory(self, consumer: "MemoryConsumer") -> None:
+        """Give every runtime the owner of 「记忆该对账了」.
+
+        Every runtime, not only the ones that keep memory files: a runtime that
+        does not answers `memory` with None, and the callback is asked on a
+        moment (an input going in, a turn ending) that every harness has.
+        """
+        for runtime in self._runtimes():
+            runtime.bind_memory(consumer)
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """Relay a memory reconciliation to whichever runtime owns this room.
+
+        ``None`` means «这个房间现在没有能对账的会话» — no live session, or a
+        harness whose sessions keep no memory files. Both are ordinary answers,
+        not failures.
+        """
+        owner = self._owners.get(topic_id)
+        candidates = (
+            [owner]
+            if owner
+            else [runtime for runtime in self._runtimes() if runtime.holds(topic_id)]
+        )
+        for runtime in candidates:
+            answer = await runtime.memory(topic_id, request)
+            if answer is not None:
+                return answer
+        return None
 
     def session_controls(self, topic_id: uuid.UUID) -> "SessionControls | None":
         """The runtime whose live session in this room takes controls, if any."""

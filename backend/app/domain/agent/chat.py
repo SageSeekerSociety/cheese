@@ -73,6 +73,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     WHO_PLATFORM,
     delivery_fallback_notice,
+    memory_changed_notice,
     notice,
 )
 from app.domain.agent.profiles import ProfileRegistry
@@ -131,8 +132,15 @@ from app.domain.identity.handles import (
     names_a_person,
 )
 from app.domain.membership.roster import roster_rows
+from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryIndex, memory_index
 from app.domain.memory.models import MemoryScope
+from app.domain.memory.session import (
+    MemoryChange,
+    apply_tree,
+    prefix_of_scope,
+    read_tree,
+)
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotificationLevel, NotificationType
@@ -600,6 +608,10 @@ def _change_summary_meta(changeset: _Changeset) -> dict:
 #: one backend drives at once, so in practice nothing is ever evicted; it is a
 #: ceiling on a dict nothing else prunes, not a policy.
 _SESSION_ROUTES_KEPT = 512
+
+#: How many rooms' memory scopes to remember (same ceiling, same reason: it is a
+#: ceiling on a dict nothing else prunes).
+MEMORY_TURNS_KEPT = 512
 
 
 # A platform tool → the action card 芝士 files for it when it calls it
@@ -1228,6 +1240,13 @@ class ChatService:
         self._compute.bind_receipts(self.confirm_prompt_receipt)
         self._compute.bind_unread_probe(self.oldest_unread_at)
         self._compute.bind_reachability(self._note_reachability)
+        # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
+        # 由 harness 在两个时刻问它：输入之前、这一轮结束之后。
+        self._compute.bind_memory(self._sync_memory)
+        # 每一间房这一轮的记忆账：署谁的名、算谁的 private（组装那一轮时记下，
+        # 见 `_remember_memory_turn`）。两个对账时刻手上只有一个 topic id，所以
+        # 这份点名只能从别的时刻留下来。没记过的房间按「只有 team」对。
+        self._memory_turns: dict[uuid.UUID, tuple[str, tuple[str, ...]]] = {}
         # Mid-turn messages whose write the transport accepted but whose
         # UserPromptSubmit receipt has not arrived yet (#539 decision A):
         # topic → [(injected text, block ids, consuming turn)]. The receipt
@@ -2519,6 +2538,128 @@ class ChatService:
                 await session.commit()
         except Exception:  # noqa: BLE001 — bookkeeping must not stop a turn
             logger.exception("could not record the context of turn %s", turn_id)
+
+    def _remember_memory_turn(
+        self, topic_id: uuid.UUID, *, acting: str, speakers: tuple[str, ...]
+    ) -> None:
+        """记下这一轮的记忆账：署谁的名、算谁的 private。
+
+        组装一轮的时候才知道这两件事（`_assemble_turn`），而对账的两个时刻（输入
+        之前、这一轮结束之后）手上只有一个 topic id。记的是刚才 `memory_index`
+        读过的那几个人，所以「注入里看得见的」和「铺到会话目录里的」是同一批。
+        """
+        self._memory_turns.pop(topic_id, None)
+        self._memory_turns[topic_id] = (acting, speakers)
+        while len(self._memory_turns) > MEMORY_TURNS_KEPT:
+            del self._memory_turns[next(iter(self._memory_turns))]
+
+    def _memory_scopes(
+        self, topic_id: uuid.UUID
+    ) -> list[tuple[MemoryFileScope, str | None]]:
+        """这一次对账要点名的那几棵树：team 一份，本轮发言人一人一份 private。
+
+        点过名的作用域才是这一次对账的范围（`memory.session` 的开头那一段）：
+        没点到的 private 既不铺也不收，别人的偏好不会被这一间房的一次对账碰掉。
+        """
+        _, speakers = self._memory_turns.get(topic_id, ("", ()))
+        return [
+            (MemoryFileScope.team, None),
+            *((MemoryFileScope.private, handle) for handle in speakers),
+        ]
+
+    async def _sync_memory(self, topic_id: uuid.UUID) -> None:
+        """对一遍这一间房的记忆账：平台这一份铺下去，会话改过的收回来。
+
+        两个时刻问它：输入之前（让 agent 一睁眼读到的就是平台现在这一份，别人刚
+        改的也在里面）和这一轮结束之后（它是在这一轮里写的，写的时候这一轮还没
+        结束）。两个时刻做的是同一件事，因为对账是幂等的 —— 「上一次对过什么」在
+        会话那边的基线里，不在这里的记忆里。
+
+        一次对账是跨机的一次往返，所以中间不持有事务：先把数据库这一份读出来、
+        放开，再问会话，最后在一个短事务里写回、把改动说进房间。
+        """
+        scopes = self._memory_scopes(topic_id)
+        updated_by = self._memory_turns.get(topic_id, ("system", ()))[0] or "system"
+        async with self._sessions() as session:
+            topic = await TopicRepository(session).get(topic_id)
+            if topic is None:
+                return
+            project_id = topic.project_id
+            stored = await read_tree(session, project_id, scopes)
+        answer = await self._compute.memory(topic_id, {"scopes": stored.scopes})
+        if answer is None:
+            # 这间房现在没有能对账的会话：没有活着的会话，或者这个 harness 的会话
+            # 不落记忆文件。两种都只是「这里没有这件事」，不是失败。
+            return
+        async with self._sessions() as session:
+            change = await apply_tree(
+                session,
+                project_id,
+                stored,
+                answer,
+                scopes=scopes,
+                updated_by=updated_by,
+            )
+            if change.is_empty() and not change.refused:
+                # 一次对账大部分时候答的是这个。什么都没变就什么都不说：这条事
+                # 件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
+                return
+            await self._say_memory_change(session, project_id, change, scopes)
+            await session.commit()
+
+    async def _say_memory_change(
+        self,
+        session: AsyncSession,
+        project_id: uuid.UUID,
+        change: MemoryChange,
+        scopes: list[tuple[MemoryFileScope, str | None]],
+    ) -> None:
+        """改动的折叠事件：team 的说进项目总览，private 的说进那个人的私聊。
+
+        带 diff，谁的名都不点：一条记忆是 agent 写下的一份观察，房间里没有人在等
+        它。两棵树分开说，因为读它们的人不是一批：把某个人 private 的 diff 说进
+        总览，等于把一个人的偏好广播给整个项目。
+        """
+        for scope, owner in scopes:
+            part = change.scoped(prefix_of_scope(scope, owner))
+            if part.is_empty() and not part.refused:
+                continue
+            room = await self._memory_room(session, project_id, scope, owner)
+            if room is None:
+                continue
+            content, meta = memory_changed_notice(
+                where="项目共享" if scope is MemoryFileScope.team else "你的私人",
+                summary=part.summary(),
+                diff=part.diff,
+                refused=bool(part.refused),
+            )
+            await announce(session, place_id=room, content=content, meta=meta)
+
+    async def _memory_room(
+        self,
+        session: AsyncSession,
+        project_id: uuid.UUID,
+        scope: MemoryFileScope,
+        owner: str | None,
+    ) -> uuid.UUID | None:
+        """这一棵树改动了，说进哪间房。
+
+        team 说进项目总览 —— 全项目共看的那一间。private 说进这个人和芝士的私聊
+        （`get_or_create_private` 先找后建，同一个人打开的是同一间）。私聊不在话题
+        树里，所以这条事件也不会在总览上多出一个角标：它是一条 kind=event 的灰
+        字，不是一条消息。
+        """
+        if scope is MemoryFileScope.team:
+            project = await ProjectRepository(session).get(project_id)
+            return project.root_topic_id if project is not None else None
+        if not owner:
+            return None
+        from app.domain.topic.services import TopicService
+
+        topic = await TopicService(session).get_or_create_private(
+            project_id=project_id, user_handle=owner
+        )
+        return topic.id
 
     async def _consume_hook_event(
         self,
@@ -4723,14 +4864,24 @@ class ChatService:
             phases_ms["identity"] = (time.monotonic() - started) * 1000
             # 只加载「本轮发言人」的那一份 private 索引（team 那一份每间房都
             # 有）：一个项目里的人可以很多，而注入是每一轮都要付的。
-            memory = await memory_index(
-                session,
-                topic.project_id,
-                speaker_handles=[
-                    *(b.author for b in pending),
-                    *((private_owner,) if private_owner else ()),
-                ],
+            #
+            # 只算**人**：private 是「人 × 项目」的那一份，队友手里的句柄在这
+            # 里不是一个作用域，问了也只会问到一棵不存在的树。本轮说话的这几位
+            # 同时也是这一轮对账要点名的那几个（`_remember_memory_turn`）。
+            speakers = tuple(
+                dict.fromkeys(
+                    handle
+                    for handle in (
+                        *(b.author for b in pending),
+                        *((private_owner,) if private_owner else ()),
+                    )
+                    if names_a_person(handle)
+                )
             )
+            memory = await memory_index(
+                session, topic.project_id, speaker_handles=list(speakers)
+            )
+            self._remember_memory_turn(topic.id, acting=acting_agent, speakers=speakers)
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)

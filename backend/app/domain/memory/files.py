@@ -16,12 +16,21 @@ CC 2.1.283 的记忆是一组文件，不是一张表：一条记忆一个 `.md`
 和「索引该整理了」两件事混成一件事，而后者才是真的。
 """
 
+import hashlib
 import re
 from dataclasses import dataclass
 from enum import StrEnum
 
 #: 索引文件名。和 CC 一样，两个作用域各有一份同名的索引。
 INDEX_NAME = "MEMORY.md"
+
+#: 会话里这棵树的根，相对会话自己的 `$HOME`。会话与平台之间来回搬的路径都从这
+#: 里往下数，所以「写哪儿」在两端只有这一个答案。
+MEMORY_ROOT = ".cheese/memory"
+
+#: 作用域前缀：team 没有主人，private 的主人在路径里。
+TEAM_PREFIX = "team"
+PRIVATE_PREFIX = "private"
 
 #: 注入预算：超过就截断，并明说截断了。
 INDEX_MAX_LINES = 200
@@ -228,3 +237,41 @@ def check_path(path: str) -> str:
     if path != INDEX_NAME and not valid_name(path[: -len(".md")]):
         raise MemoryFileError(f"记忆文件名必须是 kebab-case：{path!r}")
     return path
+
+
+def digest(text: str) -> str:
+    """一份内容的指纹。回写靠它判「这一版是谁改的」——mtime 不行，两端是不同的
+    钟；版本号也不行，它是数据库那一侧的计数，文件在会话里可以被改回原样。"""
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def scoped_prefix(scope: MemoryFileScope, owner_handle: str | None) -> str:
+    """一个作用域在会话目录里的前缀。空 handle 的 private 是拼不出路径的，所以
+    它在这里就被拒——`private/` 后面什么都没有，读起来像一个作用域，其实是一层
+    空目录，谁都对不上。"""
+    if scope is MemoryFileScope.team:
+        return TEAM_PREFIX
+    if not owner_handle:
+        raise MemoryFileError("private 记忆必须带 owner_handle")
+    return f"{PRIVATE_PREFIX}/{owner_handle}"
+
+
+def check_scoped_path(path: str) -> tuple[str, str]:
+    """一棵树上的一条路径 → `(作用域前缀, 文件名)`。
+
+    作用域前缀自己也要过关：`private/alice` 是可以的，`private/alice/bob` 不是
+    ——两层主人意味着这条路径对不上任何一个作用域。
+    """
+    parts = path.split("/")
+    if parts and parts[0] == TEAM_PREFIX:
+        prefix, rest = TEAM_PREFIX, parts[1:]
+    elif len(parts) >= 2 and parts[0] == PRIVATE_PREFIX:
+        prefix, rest = f"{PRIVATE_PREFIX}/{parts[1]}", parts[2:]
+    else:
+        raise MemoryFileError(
+            f"记忆文件的路径必须以 team/ 或 private/<handle>/ 开头：{path!r}"
+        )
+    if len(rest) != 1:
+        raise MemoryFileError(f"一条记忆就一个文件，路径不对：{path!r}")
+    check_path(rest[0])
+    return prefix, rest[0]

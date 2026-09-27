@@ -175,9 +175,7 @@ async def write_memory_file(
     )
     warning = None
     if memory.description and len(memory.description) > 150:
-        warning = (
-            "description 超过 150 字符：它只用来判相关性，长的那部分放正文里。"
-        )
+        warning = "description 超过 150 字符：它只用来判相关性，长的那部分放正文里。"
     return ok({"file": _file_out(row), "warning": warning})
 
 

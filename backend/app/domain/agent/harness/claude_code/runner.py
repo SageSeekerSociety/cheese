@@ -29,6 +29,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -37,6 +38,8 @@ from pathlib import Path
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.driven import runner
+from app.domain.memory.files import MEMORY_ROOT, check_scoped_path
+from app.domain.memory.tree import prefixes_of, sync_tree
 
 # One stdout line can carry a whole tool result (Claude Code caps those at about
 # 30,000 characters) or an image the session was handed. A line over the limit
@@ -161,6 +164,83 @@ def transcript(config_dir: Path, session_id: str) -> Path | None:
         if path.is_file() and path.stat().st_size:
             return path
     return None
+
+
+#: 记忆树里上一次对账写下去的那一版，按路径存指纹。它是**中间那一方**：平台说
+#: 「我这一份是什么」，会话说「我这一份是什么」，而「上一次是什么」两边都不是它的
+#: 主人，所以它只能待在 runner 的 state 里，谁都不多存一份。
+MEMORY_BASELINE = "memory"
+
+
+def memory_root() -> Path:
+    """会话里那棵记忆树的根。
+
+    用的是会话自己的 `$HOME`（`machine_launcher` 把它换成了这一间房的会话家），
+    不是机器主人的家：一个会话一个家，记忆的副本也就一间房一份。
+    """
+    home = os.environ.get("HOME") or ""
+    if not home:
+        raise RuntimeError("The session has no home directory to keep memory in")
+    return Path(home) / MEMORY_ROOT
+
+
+def memory_scopes(params: dict) -> dict[str, dict[str, str]]:
+    """请求里的那一份树，逐条验过再收下。
+
+    这是信任边界：请求说的路径会被拿去当文件路径写，所以「写哪儿」由这里说了
+    算，不由请求说了算。作用域前缀、文件名、正文各有各的规矩，一条不合就整次拒
+    掉——半个树铺下去比一次都没铺更糟，agent 会照着半个树做事。
+    """
+    scopes = params.get("scopes")
+    if not isinstance(scopes, dict):
+        raise ValueError("Memory sync needs a scopes object")
+    out: dict[str, dict[str, str]] = {}
+    for prefix, files in scopes.items():
+        if not isinstance(prefix, str) or not isinstance(files, dict):
+            raise ValueError("Memory scopes are prefix → files")
+        for name, content in files.items():
+            if not isinstance(name, str) or not isinstance(content, str):
+                raise ValueError("A memory file is a name and its text")
+            check_scoped_path(f"{prefix}/{name}")
+        out[prefix] = files
+    return out
+
+
+def _recall_baseline(journal: Journal) -> dict[str, str]:
+    """上一次对账留下的指纹表。读不出来当没写过——一次对账重来一遍，比拿着一张
+    读不懂的表去判「谁改过」安全。"""
+    try:
+        baseline = json.loads(journal.recall(MEMORY_BASELINE) or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(baseline, dict):
+        return {}
+    return {
+        str(path): str(fingerprint)
+        for path, fingerprint in baseline.items()
+        if isinstance(path, str) and isinstance(fingerprint, str)
+    }
+
+
+def _write_memory(root: Path, path: str, content: str) -> None:
+    """原子写入：先写同目录的临时文件，再改名。
+
+    claude 和这个 runner 是并发的，它可能正在读这个文件；读到一个写了一半的记忆
+    比读到一个旧版本糟得多——旧版本至少是一条真写过的记忆。
+    """
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=target.parent, delete=False
+    )
+    try:
+        with handle:
+            handle.write(content)
+        os.replace(handle.name, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(handle.name)
+        raise
 
 
 def _trim(content: object) -> object:
@@ -514,7 +594,7 @@ class Runner(runner.Runner[Journal]):
             if status in FINISHED:
                 self.tasks.pop(task, None)
 
-    # --- the two things only the disk knows ----------------------------------
+    # --- the three things only the disk knows --------------------------------
 
     def _files(self) -> list[tuple[str, Path]]:
         assert self.config_dir is not None
@@ -557,6 +637,58 @@ class Runner(runner.Runner[Journal]):
                             from_file=True,
                         )
                 self.journal.remember(key, str(offset + len(complete)))
+
+    # --- memory: the tree the agent and the platform both write --------------
+
+    def read_memory(self, managed: set[str]) -> dict[str, str]:
+        """受管作用域里现在有哪些文件、正文各是什么。
+
+        只读一层、只收 `.md`、名字还得过 `check_scoped_path`：这棵树的形状是定死
+        的（一个作用域一层，一条记忆一个文件），子目录里冒出来的东西、随手写下的
+        临时文件都不是这条规矩的一部分，给它们一个身份等于替 agent 认了一条它没
+        写过的记忆。
+        """
+        root = memory_root()
+        found: dict[str, str] = {}
+        for prefix in sorted(managed):
+            try:
+                entries = sorted((root / prefix).iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                path = f"{prefix}/{entry.name}"
+                try:
+                    check_scoped_path(path)
+                    if not entry.is_file():
+                        continue
+                    found[path] = entry.read_text(encoding="utf-8")
+                except (OSError, ValueError, UnicodeDecodeError):
+                    continue
+        return found
+
+    def sync_memory(self, params: dict) -> dict:
+        """对一次账：平台这一份铺下来，会话改过的带回去。
+
+        一条记忆的两种改法都在这里收口：平台写的（别的会话、界面、dream）由
+        `scopes` 进来，会话写的由磁盘进来，谁赢看 `tree.sync_tree` 那一条规矩。
+        """
+        scopes = memory_scopes(params)
+        baseline = _recall_baseline(self.journal)
+        managed = prefixes_of(scopes, baseline)
+        disk = self.read_memory(managed)
+        outcome = sync_tree(scopes=scopes, disk=disk, baseline=baseline)
+        root = memory_root()
+        for path, content in outcome.files.items():
+            _write_memory(root, path, content)
+        # 两方都没有、只有 baseline 里还有的那一条（平台删了，会话也没写回去），
+        # 到这里才从磁盘上消失：先算完再删，删的不是「还没看过的东西」。
+        for path in set(disk) | set(baseline):
+            if path in outcome.files:
+                continue
+            with contextlib.suppress(OSError):
+                (root / path).unlink(missing_ok=True)
+        self.journal.remember(MEMORY_BASELINE, json.dumps(outcome.baseline))
+        return {"files": outcome.files, "refused": outcome.refused}
 
     async def _watch(self) -> None:
         expired_at = 0.0
@@ -705,6 +837,10 @@ class Runner(runner.Runner[Journal]):
             return await self.control(params["request"])
         if method == "command":
             return await self.command(params["text"])
+        if method == "memory":
+            # 不是 accept 那种一次性输入：对账是幂等的（同样的三方合出同样的结
+            # 果），重来一次不会多出一条记忆，所以不需要按 id 去重。
+            return self.sync_memory(params)
         if method == "ping":
             return {
                 "pid": os.getpid(),

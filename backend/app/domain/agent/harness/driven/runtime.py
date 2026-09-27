@@ -33,6 +33,7 @@ from app.domain.agent.harness import (
     ActivityConsumer,
     Backlog,
     EventConsumer,
+    MemoryConsumer,
     Opening,
     ReachabilityConsumer,
     ReceiptConsumer,
@@ -184,6 +185,7 @@ class DrivenRuntime[H: Handle]:
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
         self.reachability: ReachabilityConsumer | None = None
+        self.memory: MemoryConsumer | None = None
 
     # --- what the harness supplies -------------------------------------------
 
@@ -244,6 +246,32 @@ class DrivenRuntime[H: Handle]:
 
     def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
         self.reachability = consumer
+
+    def bind_memory(self, consumer: MemoryConsumer) -> None:
+        self.memory = consumer
+
+    async def reconcile_memory(self, topic: uuid.UUID) -> None:
+        """Ask the room to reconcile its memory tree, and never fail the turn on it.
+
+        A memory tree that could not be reconciled is a memory that is a turn
+        behind — the next moment asks again, with the same three sides. Letting
+        the exception through would end a turn that was otherwise fine, over the
+        room's notes.
+        """
+        if self.memory is None:
+            return
+        try:
+            await self.memory(topic)
+        except Exception:
+            self.logger.exception("memory reconciliation failed topic=%s", topic)
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """A harness whose sessions keep memory files answers this; others cannot.
+
+        The default is ``None`` — «这里没有记忆文件», which the caller reads as
+        「这一轮不用对账」 and not as a failure.
+        """
+        return None
 
     def pulse(self, topic: uuid.UUID, marks: frozenset[str]) -> None:
         """What the subscription just read about the open turn."""
@@ -613,6 +641,9 @@ class DrivenRuntime[H: Handle]:
         )
         self.work[session.topic_id] = work_id
         self._wake(session.topic_id)
+        # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
+        # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
+        await self.reconcile_memory(session.topic_id)
         try:
             await self.channel.call(
                 handle,
