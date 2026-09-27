@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Bring up the services the backend test suite needs — Postgres and Redis —
-# WITHOUT docker, so `pytest` actually runs inside an agent sandbox.
+# Bring up what the backend test suite needs from outside the repo — Postgres,
+# Redis, Meilisearch, and the pinned Claude Code / Codex builds — WITHOUT docker,
+# so `pytest` actually runs inside an agent sandbox. CI gets the same four from
+# service containers and its "Install pinned harness binaries" step.
 #
-#   eval "$(bash .claude/scripts/dev-db.sh start)"   # start + export TEST_PG_BASE/REDIS_URL
+#   eval "$(bash .claude/scripts/dev-db.sh start)"   # start + export the variables below
 #   cd backend && uv run pytest                      # the suite is now live
 #   bash .claude/scripts/dev-db.sh stop --purge       # stop and leave no residue
 #
@@ -13,11 +15,17 @@
 # pinned Python 3.12: `postgresql-binaries` (relocatable PostgreSQL 16 with the
 # contrib extensions) and `redislite` (bundled redis-server 6.2). They are
 # deliberately NOT backend dependencies — see the note at resolve_bins() below.
+# Meilisearch is a release binary and the harness builds are npm packages; both
+# land in $TOOL_CACHE, outside $DATA_DIR, so `stop --purge` does not throw away
+# a ~350MB download.
 set -euo pipefail
 
 DATA_DIR="${CHEESEX_DEV_DB_DIR:-${TMPDIR:-/tmp}/cheesex-dev-db}"
 PG_PORT="${CHEESEX_DEV_PG_PORT:-5433}"
 REDIS_PORT="${CHEESEX_DEV_REDIS_PORT:-6379}"
+MEILI_PORT="${CHEESEX_DEV_MEILI_PORT:-7700}"
+TOOL_CACHE="${CHEESEX_DEV_TOOL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cheesex-dev-db}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # This server's own superuser — it exists only inside this throwaway cluster and
 # is handed to the suite through the exported TEST_PG_BASE, which is why `eval`
@@ -27,6 +35,8 @@ REDIS_PORT="${CHEESEX_DEV_REDIS_PORT:-6379}"
 # with Docker actually has. Nothing here depends on the two agreeing.
 PG_USER=cheesex
 PG_PASSWORD=cheesex
+# Same standing as the Postgres password: a key for a throwaway local server.
+MEILI_KEY=cheesex-dev-search-key
 
 PGDATA="$DATA_DIR/pg"
 REDIS_DIR="$DATA_DIR/redis"
@@ -34,6 +44,9 @@ PG_LOG="$DATA_DIR/pg.log"
 REDIS_LOG="$DATA_DIR/redis.log"
 REDIS_PID="$DATA_DIR/redis.pid"
 BIN_CACHE="$DATA_DIR/bins.env"
+MEILI_DIR="$DATA_DIR/meili"
+MEILI_LOG="$DATA_DIR/meili.log"
+MEILI_PID="$DATA_DIR/meili.pid"
 
 log() { printf '%s\n' "$*" >&2; }
 die() { printf 'dev-db: %s\n' "$*" >&2; exit 1; }
@@ -190,16 +203,157 @@ start_redis() {
         die "port $REDIS_PORT answers, but not from the server we just started — it lost the bind to another Redis."; }
 }
 
+# --- Meilisearch -------------------------------------------------------------
+# The version CI's service container runs (test.yml). Meilisearch publishes one
+# static binary per platform with a sha256 digest on the GitHub release; the
+# digests below are those, so a changed or truncated download is refused.
+MEILI_VERSION=v1.54.0
+resolve_meili() {
+    local asset sum
+    case "$(uname -s)/$(uname -m)" in
+        Darwin/arm64)   asset=meilisearch-macos-apple-silicon sum=69756fa543a02c560c870f704fe7b0e6a3ce62747afb1cc6906c1387b7b42637 ;;
+        Darwin/x86_64)  asset=meilisearch-macos-amd64         sum=89cbe6398fbca37e9026422cd9deb2a7deecb56bf5a18b8d8fd8e78e699743c7 ;;
+        Linux/x86_64)   asset=meilisearch-linux-amd64         sum=4c039396c19436c248d3429935559c990f6606d4ada781e7079325f32bbb7a3c ;;
+        Linux/aarch64|Linux/arm64)
+                        asset=meilisearch-linux-aarch64       sum=b7817c408620383b56e5b516df5bcf55ed1267dc755cadb79e6f97038fcded7c ;;
+        *) die "no pinned Meilisearch build for $(uname -s)/$(uname -m)" ;;
+    esac
+    MEILI_BIN="$TOOL_CACHE/meilisearch-$MEILI_VERSION-$asset"
+    [ -x "$MEILI_BIN" ] && return
+    mkdir -p "$TOOL_CACHE"
+    log "downloading Meilisearch $MEILI_VERSION ($asset, ~350MB, then cached in $TOOL_CACHE)"
+    local part="$MEILI_BIN.part"
+    curl -fsSL --retry 3 -o "$part" \
+        "https://github.com/meilisearch/meilisearch/releases/download/$MEILI_VERSION/$asset" \
+        || die "could not download Meilisearch $MEILI_VERSION"
+    local got
+    if command -v sha256sum >/dev/null 2>&1; then got="$(sha256sum "$part")"; else got="$(shasum -a 256 "$part")"; fi
+    got="${got%% *}"
+    [ "$got" = "$sum" ] || { rm -f "$part"; die "Meilisearch download has sha256 $got, expected $sum"; }
+    chmod +x "$part"
+    mv "$part" "$MEILI_BIN"
+}
+
+meili_healthy() { curl -fsS -m 2 "http://127.0.0.1:$MEILI_PORT/health" >/dev/null 2>&1; }
+# Ours = the pid we recorded is alive and was started on our own db path. The
+# port answering proves nothing, for the same reason as for Postgres and Redis.
+meili_is_ours() {
+    [ -s "$MEILI_PID" ] || return 1
+    local args
+    args="$(ps -p "$(cat "$MEILI_PID")" -o args= 2>/dev/null)" || return 1
+    case "$args" in *"$MEILI_DIR/data.ms"*) return 0 ;; *) return 1 ;; esac
+}
+
+# pg_ctl and redis-server both setsid() themselves; a plain `&` child would stay
+# in the caller's process group, and a sandbox shell or a launchd job reaps that
+# group when it exits. macOS has no setsid(1), so perl's POSIX::setsid stands in.
+# Only ever run as a background job: it execs, so the job's pid ($!) ends up
+# being the server's pid rather than a forked shell's.
+exec_detached() {
+    if command -v setsid >/dev/null 2>&1; then
+        exec setsid "$@"
+    else
+        exec perl -e 'use POSIX (); POSIX::setsid(); exec @ARGV or die "exec: $!"' -- "$@"
+    fi
+}
+
+start_meili() {
+    if meili_is_ours; then
+        meili_healthy || die "our Meilisearch (pid $(cat "$MEILI_PID")) is alive but not healthy on port $MEILI_PORT — see $MEILI_LOG"
+        log "meilisearch already running on port $MEILI_PORT ($MEILI_DIR)"
+        return
+    fi
+    if port_in_use "$MEILI_PORT"; then
+        die "port $MEILI_PORT is already taken by a server this script did not start.
+       Re-run with CHEESEX_DEV_MEILI_PORT=<free port>, or stop that server."
+    fi
+    mkdir -p "$MEILI_DIR"
+    log "starting meilisearch on 127.0.0.1:$MEILI_PORT"
+    (
+        cd "$MEILI_DIR" || exit 1
+        exec_detached "$MEILI_BIN" \
+            --db-path "$MEILI_DIR/data.ms" --http-addr "127.0.0.1:$MEILI_PORT" \
+            --master-key "$MEILI_KEY" --env development --no-analytics \
+            </dev/null >>"$MEILI_LOG" 2>&1 &
+        echo $! >"$MEILI_PID"
+    )
+    local i
+    for i in $(seq 1 60); do
+        meili_healthy && break
+        sleep 0.5
+        [ "$i" = 60 ] && { log "--- meilisearch log ---"; tail -20 "$MEILI_LOG" >&2; die "meilisearch never became healthy"; }
+    done
+    meili_is_ours || { log "--- meilisearch log ---"; tail -20 "$MEILI_LOG" >&2
+        die "port $MEILI_PORT answers, but not from the server we just started."; }
+}
+
+stop_meili() {
+    if meili_is_ours; then
+        log "stopping meilisearch"
+        local pid i
+        pid="$(cat "$MEILI_PID")"
+        kill "$pid" 2>/dev/null || true
+        for i in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+        rm -f "$MEILI_PID"
+    elif meili_healthy; then
+        log "meilisearch on port $MEILI_PORT is not ours — leaving it alone"
+    else
+        log "meilisearch not running"
+    fi
+}
+
+# --- pinned harness builds -------------------------------------------------
+# tests/pinned_claude.py takes CHEESE_TEST_CLAUDE, else whatever `claude` is on
+# PATH — and on a developer machine that is often a wrapper or another version,
+# which fails the remote-execution and runner tests for reasons unrelated to the
+# code. Install exactly what CI installs: the versions come from the checked-in
+# declarations, so this cannot drift from the code under test.
+resolve_harness() {
+    local pins claude_v codex_v
+    pins="$(cd "$REPO_ROOT/backend" && uv run --quiet python -c '
+from app.domain.agent.capability.matrix import written
+from app.domain.agent.harness import CLAUDE_CODE, CODEX
+pins = {name: d.pinned_version for name, d in written().items()}
+print(pins[CLAUDE_CODE], pins[CODEX])
+')" || die "could not read the pinned harness versions from backend/"
+    read -r claude_v codex_v <<<"$pins"
+    local dir="$TOOL_CACHE/harness/claude-code-$claude_v-codex-$codex_v"
+    HARNESS_BIN="$dir/node_modules/.bin"
+    local have
+    have="$("$HARNESS_BIN/claude" --version 2>/dev/null)" || have=""
+    if [ "${have%% *}" = "$claude_v" ] && [ -x "$HARNESS_BIN/codex" ]; then
+        return
+    fi
+    command -v npm >/dev/null 2>&1 || die "npm is required to install the pinned Claude Code $claude_v"
+    log "installing Claude Code $claude_v and Codex $codex_v into $dir"
+    mkdir -p "$dir"
+    npm install --prefix "$dir" --no-audit --no-fund --silent \
+        "@anthropic-ai/claude-code@$claude_v" "@openai/codex@$codex_v" >&2 \
+        || die "npm install of the pinned harness builds failed"
+    have="$("$HARNESS_BIN/claude" --version 2>&1)" || die "installed claude does not run: $have"
+    [ "${have%% *}" = "$claude_v" ] || die "installed claude reports '$have', expected $claude_v"
+}
+
 print_env() {
     echo "export TEST_PG_BASE=postgresql+asyncpg://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_PORT"
     echo "export REDIS_URL=redis://127.0.0.1:$REDIS_PORT/0"
+    echo "export CHEESEX_TEST_MEILISEARCH_URL=http://127.0.0.1:$MEILI_PORT"
+    echo "export CHEESEX_TEST_MEILISEARCH_API_KEY=$MEILI_KEY"
+    printf 'export CHEESE_TEST_CLAUDE=%q\n' "$HARNESS_BIN/claude"
+    # Same as CI's GITHUB_PATH: code that looks `claude`/`codex` up on PATH, not
+    # through CHEESE_TEST_CLAUDE, must find the pinned builds too.
+    # shellcheck disable=SC2016 # $PATH is for the eval-ing shell to expand
+    printf 'export PATH=%q:"$PATH"\n' "$HARNESS_BIN"
 }
 
 cmd_start() {
     resolve_bins
+    resolve_meili
+    resolve_harness
     mkdir -p "$DATA_DIR"
     start_pg
     start_redis
+    start_meili
     log ""
     log "ready. Run the suite with:"
     log "    eval \"\$(bash .claude/scripts/dev-db.sh start)\" && cd backend && uv run pytest"
@@ -229,6 +383,7 @@ cmd_stop() {
     else
         log "redis not running"
     fi
+    stop_meili
     if [ "$purge" = 1 ]; then
         log "purging $DATA_DIR"
         rm -rf "$DATA_DIR"
@@ -260,24 +415,35 @@ cmd_status() {
     else
         log "redis:    stopped"
     fi
+    if meili_is_ours; then
+        log "meili:    RUNNING on 127.0.0.1:$MEILI_PORT ($MEILI_DIR)"
+    elif port_in_use "$MEILI_PORT"; then
+        log "meili:    port $MEILI_PORT is occupied, but NOT by ours"
+    else
+        log "meili:    stopped"
+    fi
 }
 
 case "${1:-start}" in
     start)  cmd_start ;;
     stop)   cmd_stop "${2:-}" ;;
     status) cmd_status ;;
-    env)    print_env ;;
+    env)    resolve_harness; print_env ;;
     *)
         cat >&2 <<EOF
 usage: bash .claude/scripts/dev-db.sh <start|stop [--purge]|status|env>
 
-  start           start postgres + redis, print export lines on stdout
-  stop            stop both; --purge also deletes $DATA_DIR
-  status          report whether each is running
+  start           start postgres + redis + meilisearch, install the pinned
+                  harness builds, print export lines on stdout
+  stop            stop the servers; --purge also deletes $DATA_DIR
+                  (downloads in $TOOL_CACHE are kept)
+  status          report whether each server is running
   env             print the export lines without starting anything
 
 env overrides: CHEESEX_DEV_DB_DIR (default \${TMPDIR:-/tmp}/cheesex-dev-db),
-               CHEESEX_DEV_PG_PORT (5433), CHEESEX_DEV_REDIS_PORT (6379)
+               CHEESEX_DEV_PG_PORT (5433), CHEESEX_DEV_REDIS_PORT (6379),
+               CHEESEX_DEV_MEILI_PORT (7700),
+               CHEESEX_DEV_TOOL_CACHE (default \${XDG_CACHE_HOME:-~/.cache}/cheesex-dev-db)
 EOF
         exit 2 ;;
 esac
