@@ -113,14 +113,10 @@ TOPIC_DOC_CHAR_BUDGET = 6000
 _DOC_HEADING_RE = re.compile(r"(?m)^#{1,6} .*$")
 _TEMP_SECTION_RE = re.compile(r"临时|TODO|待办|草稿|暂定|scratch|todo", re.IGNORECASE)
 _PROGRESS_SECTION_RE = re.compile(r"进展|进度|状态|日志|记录|下一步|本周|历史")
-#: 机器写进总览的两段共享事实：丢它们等于静默删掉全项目共同状态，钉死最后才动。
-_KEEP_LAST_SECTIONS = ("大家都该知道的", "项目记忆（由记忆整理迁入）")
 
 
 def _doc_drop_class(label: str) -> int:
     """0 = 先丢（临时/待办），1 = 次之（进展/记录），2 = 最后才动。"""
-    if any(name in label for name in _KEEP_LAST_SECTIONS):
-        return 2
     if _TEMP_SECTION_RE.search(label):
         return 0
     if _PROGRESS_SECTION_RE.search(label):
@@ -353,9 +349,9 @@ def build_system_prompt(
             "## 项目总览（全项目共看的那一份，不是本话题的）\n"
             "项目所有人和所有芝士共同看的就是它：项目是什么、现在在做什么、定了"
             "什么、谁在负责。它分五块，**只有第一块是写的**：\n"
-            "- **① 项目是什么** —— 你和人写，正文只有这一块（`cheese_doc_set` "
-            "覆盖根话题的实况文档）：目标、范围（做 / 不做）、对外口径，"
-            "≤1500 字。它很少变，变了才改。\n"
+            "- **① 项目是什么** —— 你和人写，正文只有这一块（到总览房间用 "
+            "`cheese_doc_set` 整份更新根话题的实况文档）：目标、范围（做 / 不做）、"
+            "对外口径，≤1500 字。它很少变，变了才改。\n"
             "- **② 现在在做什么 / ③ 最近决策 / ④ 里程碑 / ⑤ 已结束的话题** —— "
             "**平台从结构化数据现拼，不在文档正文里**。要改就改源头：话题本身、"
             "`cheese_decision`、`cheese_milestone`、结掉的那张卡。往正文里抄一份，"

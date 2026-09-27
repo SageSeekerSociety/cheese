@@ -12,7 +12,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdf
 
 import { nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
-type PdfLib = typeof import('pdfjs-dist')
+type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
 const props = defineProps<{
   /** 文档的原始字节。换一份文档就换一个 ArrayBuffer。 */
@@ -50,8 +50,8 @@ let renderGeneration = 0
 async function library() {
   if (lib) return lib
   const [pdfjs, workerUrl] = await Promise.all([
-    import('pdfjs-dist'),
-    import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+    import('pdfjs-dist/legacy/build/pdf.mjs'),
+    import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
   ])
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl.default
   lib = pdfjs
