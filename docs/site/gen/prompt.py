@@ -937,6 +937,10 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001 — any failure here means "parse instead"
         result = run_ast(f"{type(exc).__name__}: {exc}")
         result["unknown_params"] = []
+    if result["mode"] != "exec":
+        # Say it on stderr too: on the page it is a note, in a build log it is
+        # the answer to "why is this page suddenly full of 动态生成".
+        print(f"prompt.py: 静态解析（{result['note']}）", file=sys.stderr)
 
     result["source"] = "backend/app/domain/agent/harness/prompt.py"
     result["stages_source"] = "backend/app/domain/agent/stages.py"
