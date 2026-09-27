@@ -1183,64 +1183,6 @@ async def add_memory(
     return ok({"remembered": True, "layer": layer.value})
 
 
-@router.post("/{project_id}/memory/search")
-async def search_memory(
-    project_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """记忆检索 — used by the `cheese_recall` tool. Defaults to the pools this
-    turn already reads; with scope="user"+owner it searches this agent's view
-    of that one person. This is keyword matching ranked by query coverage, not
-    semantic search — related, but not the same thing, which is why the CLI
-    never promises 语义搜索."""
-    from app.domain.memory.models import user_scope_id
-    from app.domain.memory.pools import pools_for_turn
-    from app.domain.memory.store import memory_store
-
-    project = await ProjectService(db).get_or_404(project_id)
-    caller = await authorized_place(
-        db, resolver, project_id, (body.get("topic") or "").strip()
-    )
-    place = caller[0] if caller else None
-    query = (body.get("query") or "").strip()
-    if not query:
-        raise ValidationError("query 不能为空")
-    store = memory_store(db)
-    agent = await _calling_agent(db, project_id, caller)
-    if (body.get("scope") or "project") == "user":
-        owner = (body.get("owner") or "").strip()
-        if not owner:
-            raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        await _authorize_personal_memory_owner(db, place, owner)
-        viewer = await _agent_speaking(db, project, agent)
-        hits = await store.search(
-            MemoryScope.user, user_scope_id(project_id, viewer.handle, owner), query
-        )
-        return ok({"hits": [h.as_dict() for h in hits]})
-    # `cheese_recall` 查的就是这一轮注入时读的那几个池（`pools_for_turn`），一条
-    # 不多一条不少。两边同一份清单，否则会出现「注入里提过池子还有 N 条，recall
-    # 却查不到」——而注入那句话的全部作用就是让人来 recall。项目共看的那份状态
-    # 不在这里：它是总览的实况文档（结论 7），每一轮本来就整份进提示词。
-    #
-    # 按分数合并，不按池子首尾相接：一条事实恰好落在哪个池里，说明不了它答这个
-    # 问题答得多好，而调用方是从上往下读的。
-    speaker = await _agent_speaking(db, project, agent)
-    pools = pools_for_turn(
-        project_id,
-        speaker.handle,
-        await TopicMemberService(db).people_handles(place.room_id)
-        if place is not None
-        else [],
-    )
-    hits: list = []
-    for scope, scope_id in pools:
-        hits.extend(await store.search(scope, scope_id, query))
-    hits.sort(key=lambda h: -h.score)
-    return ok({"hits": [h.as_dict() for h in hits]})
-
-
 @router.get("/{project_id}/private-chat")
 async def get_private_chat(
     project_id: uuid.UUID,

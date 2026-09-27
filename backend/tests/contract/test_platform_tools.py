@@ -84,11 +84,6 @@ CALLS = {
         "POST",
         "/projects/fixture-project/memory",
     ),
-    "cheese_recall": (
-        {"query": "技术栈"},
-        "POST",
-        "/projects/fixture-project/memory/search",
-    ),
     "cheese_notify": (
         {"title": "看一眼"},
         "POST",

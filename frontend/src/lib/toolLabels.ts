@@ -66,7 +66,6 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_decision: '记录决策',
   cheese_title: '设置标题',
   cheese_remember: '记入项目记忆',
-  cheese_recall: '检索项目记忆',
   cheese_notify: '发送通知',
   cheese_ask: '向用户提问',
   cheese_accept_request: '提交审阅',

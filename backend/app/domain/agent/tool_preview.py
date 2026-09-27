@@ -132,7 +132,6 @@ _TOOL_ARG = {
     "cheese_decision": "text",
     "cheese_title": "text",
     "cheese_remember": "fact",
-    "cheese_recall": "query",
     "cheese_notify": "title",
     "cheese_ask": "question",
     "cheese_accept_request": "subject",

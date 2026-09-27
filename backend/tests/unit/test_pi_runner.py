@@ -261,7 +261,7 @@ async def test_the_room_is_given_the_tools_the_installed_cli_actually_has(
         published = {tool["name"] for tool in spec["tools"]}
         # The platform's table, under the names every harness uses, and the
         # commands that have to run here as a process.
-        assert {"chat_send", "cheese_doc_get", "cheese_recall"} <= published
+        assert {"chat_send", "cheese_doc_get", "cheese_notify"} <= published
         assert {"cheese_worktree", "cheese_sync"} <= published
         assert "cheese_chat_send" not in published
         worktree = next(t for t in spec["tools"] if t["name"] == "cheese_worktree")

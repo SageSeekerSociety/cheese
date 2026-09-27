@@ -507,10 +507,6 @@ def test_everyone_outranks_the_private_chats_personal_memory():
     }
 
 
-def test_an_empty_recall_says_it_is_not_proof_of_absence():
-    assert "换个说法" in run("cheese_recall", {"query": "技术栈"}, Host())
-
-
 def test_members_reads_the_current_topic_roster():
     host = Host(
         {

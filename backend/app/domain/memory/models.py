@@ -55,10 +55,10 @@ class MemoryLayer(enum.StrEnum):
     - ``core`` — who this agent is, its standing rules and goals. Small,
       hand-curated, injected in full every single turn, never filtered by
       relevance. If it is only true sometimes, it is not core.
-    - ``fact`` — everything else it learned. Retrieved against the turn's own
-      context, so a pool can keep growing without any one turn paying for all
-      of it. What a turn does not retrieve is still reachable through
-      ``cheese_recall``.
+    - ``fact`` — everything else it learned. Retrieval used to be a query away
+      (`cheese_recall`, since withdrawn): the pool is not injected, so no one
+      turn pays for all of it. 记忆现在住会话目录里那棵树，这两档跟着这张表
+      一起等迁移（见 `store.py`）。
     """
 
     core = "core"
