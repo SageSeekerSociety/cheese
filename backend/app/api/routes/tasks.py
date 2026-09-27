@@ -208,6 +208,9 @@ class CreateTaskRequest(BaseModel):
     team_locking_policy: str = Field(default="NO_LOCK", alias="teamLockingPolicy")
     video_url: str | None = Field(default=None, alias="videoUrl")
     topics: list[int] = Field(default_factory=list)
+    submission_schema: list[dict] = Field(
+        default_factory=list, alias="submissionSchema"
+    )
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
@@ -863,7 +866,7 @@ async def _ensure_task_visible_for_ordinary_user(
     task: Task,
     auth_user: AuthUserInfo,
 ) -> None:
-    # 教师（出题者或本版管理员）不受 visibleTaskLimit 限制 —— 这道闸是给学生看的。
+    # 出题者与本版管理员不受 visibleTaskLimit 限制 —— 这道闸是给领取者看的。
     if await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         return
     space_repo = SpaceRepository(session=db)
@@ -911,6 +914,7 @@ async def _create_task_entity(
         topics = payload.topics
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
+        submission_schema = payload.submission_schema or []
     else:
         # Dict path — used by PDF-based creation flow
         required_fields = [
@@ -994,6 +998,13 @@ async def _create_task_entity(
                 except (TypeError, ValueError):
                     continue
 
+        schema_raw = payload.get("submissionSchema") or []
+        submission_schema = (
+            [e for e in schema_raw if isinstance(e, dict)]
+            if isinstance(schema_raw, list)
+            else []
+        )
+
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
 
@@ -1026,11 +1037,12 @@ async def _create_task_entity(
     if space is None or space.review_status != "APPROVED":
         raise BadRequestError("Space must be approved before creating tasks")
 
-    # 发布题目收权：只有这个题目板的管理员/创建者（= 教师）能发题。判据在
-    # ``app.auth.space_access``，和评审、导出参与者同一处 —— 「只有空间管理员和
-    # 空间创建者具有教师版面，也只有他们能发布题目」。放在这里而不是两个路由各写
-    # 一遍，是因为 ``POST /tasks`` 与 PDF 批量发布（``publish/from-pdf/confirm``）
-    # 都从这里走，漏掉任一条就等于没收权。
+    # 发题的门：**这个板里的任何人都能发**（判据在 ``app.auth.space_access``，
+    # 和评审、导出参与者问的是同一处）。发出来的题一律 approved=2（待审，仓库里
+    # 写死），上板要过 ``PATCH /tasks/{id}`` 那道只对所有者与管理员开的门 ——
+    # 权限不在「谁能发」上收，而在「谁能批」上。放在这里而不是两个路由各写一遍，
+    # 是因为 ``POST /tasks`` 与 PDF 批量发布（``publish/from-pdf/confirm``）都从
+    # 这里走，漏掉任一条就等于少了一道门。
     if not await may_publish_in_space(
         session=db, space_id=space_id, user_id=creator_user_id
     ):
@@ -1099,6 +1111,14 @@ async def _create_task_entity(
             db.add(relation)
         await db.flush()
 
+    # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
+    # 题目的提交页就一个输入项都没有，学生无处上传 —— 和 PATCH 写的是同一张表。
+    if submission_schema:
+        await TaskSubmissionSchemaRepository(session=db).replace_schema(
+            task.id, submission_schema
+        )
+        await db.flush()
+
     return task
 
 
@@ -1114,10 +1134,12 @@ async def create_task(
     """Create a new task (simplified port of Kotlin TaskService.createTask).
 
     NOTE:
-    - 权限：调用者必须是 ``space`` 的管理员/创建者（= 教师），否则 403 ——
-      从前这条 route 只要求提供 space 并验证 category 归属，任何登录用户都能发题，
-      现在收权了（见 ``_create_task_entity`` 里的 ``may_publish_in_space``）；
-    - submissionSchema / topics 仅做占位处理，暂不影响提交与评分。
+    - 权限：调用者必须是 ``space`` 的成员（在成员名册里，或所有者在管理员关系里），
+      否则 403 —— 从前这条 route 只要求提供 space 并验证 category 归属，任何登录
+      用户都能往别人的板里发题；中间一度收成「只有管理员能发」，重设计后放开为
+      「板里的人都能发、所有者与管理员审」（见 ``_create_task_entity`` 里的
+      ``may_publish_in_space``）；
+    - submissionSchema 与 PATCH 一样写入提交表单；topics 只插关系行，不做校验。
     """
     task = await _create_task_entity(
         payload=payload,
@@ -1476,8 +1498,8 @@ async def create_task_participant(
     if task is None:
         raise NotFoundError("Task not found")
 
-    # 教师（出题者或本版管理员）可以替学生报名，也可以把没审过的题先加进课程，
-    # 不必等它 approved —— 这两条都是「老师对这道题能做的事」，和评审同一个判据。
+    # 出题者与本版管理员可以替别人报名，也可以把没审过的题先加进课程，不必等它
+    # approved —— 这两条都是「出题人或管理员对这道题能做的事」，和评审同一个判据。
     is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
     if member != auth_user.user_id and not is_teacher:
         raise ForbiddenError("Only task owner can add other participants")
@@ -1759,8 +1781,8 @@ async def get_task(
             "Resource task not found", data={"type": "task", "id": task_id}
         )
 
-    # 权限检查：未审批的题只有教师（出题者或本版管理员）能看 —— 一道还没过审的
-    # 题在老师手上是「草稿」，在学生手上不该存在。
+    # 权限检查：未审批的题只有出题者与本版管理员能看 —— 一道还没过审的题在他们手上
+    # 是「草稿」，对其他人来说还不该存在。
     if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
         if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
             raise ForbiddenError(
@@ -1978,8 +2000,8 @@ async def patch_task(
 
     from app.domain.space.repositories import SpaceAdminRelationRepository
 
-    # is_space_admin 仍单独保留：下面「审批/驳回」只认管理员，出题者不可自审 ——
-    # 那是一个比「教师」更窄的问题，不能拿 may_teach_task 顶。
+    # is_space_admin 仍单独保留：下面「审批/驳回」只认管理员与所有者，不是「出题者
+    # 或管理员」那个更宽的问题，不能拿 may_teach_task 顶。
     admin_repo = SpaceAdminRelationRepository(session=db)
     is_space_admin = (
         await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
@@ -2425,7 +2447,7 @@ async def delete_task_participant(
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
 
-    # 教师（出题者或本版管理员）能撤任何报名；学生只能撤自己的。
+    # 出题者与本版管理员能撤任何报名；领取者只能撤自己的。
     is_self = not membership.is_team and membership.member_id == auth_user.user_id
     if not is_self and not await may_teach_task(
         session=db, task=task, user_id=auth_user.user_id
@@ -2556,7 +2578,7 @@ async def resubmit_task(
     if task is None:
         raise NotFoundError("Task not found")
 
-    # 重提审核是发布侧的动作：教师（出题者或本版管理员）都能做。
+    # 重提审核是发布侧的动作：出题者与本版管理员都能做。
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError(
             "Only the task creator or a board manager can resubmit "
@@ -2778,8 +2800,8 @@ async def get_task_submissions(
     if membership is None or membership.task_id != task_id:
         raise NotFoundError.for_resource("participant", participant_id)
 
-    # 教师（出题者或本版管理员）看得到这道题下任何人的提交；学生只看自己（或自己
-    # 所在小队）的那一份。
+    # 出题者与本版管理员看得到这道题下任何人的提交；领取者只看自己（或自己所在
+    # 小队）的那一份。
     is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
     is_own_participant = (
         membership.member_id == auth_user.user_id and not membership.is_team

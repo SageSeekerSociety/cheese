@@ -14,7 +14,7 @@
 // 只有一样东西时这一块照样出现：上面那块预览只是在看它，而这个动作只在这里有。
 import type { RoomOutput } from '@/api'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
 import { listRoomOutputs, saveRoomOutputToLibrary } from '@/api'
 import { relTime } from '@/lib/relTime'
@@ -38,11 +38,10 @@ async function load() {
   if (!topicId) return
   try {
     const listed = await listRoomOutputs(topicId)
-    if (props.topicId !== topicId) return
     outputs.value = listed.data
   } catch {
     // 读不到这一块就不显示它：这一格的主体是上面那块预览。
-    if (props.topicId === topicId) outputs.value = []
+    outputs.value = []
   }
 }
 
@@ -66,16 +65,7 @@ function name(path: string): string {
   return path.split('/').pop() || path
 }
 
-watch(
-  () => props.topicId,
-  () => {
-    outputs.value = []
-    saved.value = {}
-    error.value = ''
-    void load()
-  },
-  { immediate: true }
-)
+void load()
 
 defineExpose({ reload: load })
 </script>

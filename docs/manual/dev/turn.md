@@ -35,7 +35,7 @@ covers:
 `ComputePool`（`compute.py`）回答「这一轮在哪跑」，有几种供给：
 
 - **本机沙盒容器**：主 API 通过 docker.sock 起的兄弟容器。
-- **中心会话 + 远端执行**（`central_provider.py`）：会话进程在中心主机上，文件和命令经执行器落到租用的机器上。开跑前最多花 15 秒（`MACHINE_PROBE_TIMEOUT_S`）问一下租用的机器还在不在。
+- **中心会话 + 远端执行**（`central_provider.py`）：会话进程在中心主机上，文件和命令经执行器落到租用的机器上。需要把会话重新落到那台机器上时（没有会话在跑，或该重启了），开跑前最多花 15 秒（`MACHINE_PROBE_TIMEOUT_S`）问一下租用的机器还在不在。
 - **设备**（`device_provider.py`）：用户接入的电脑，会话直接开在那台机器的「屏幕」里。
 - **云机器**（`cloud_provider.py`）：每个话题一台 MicroCloud 机器。
 
@@ -43,9 +43,9 @@ covers:
 
 ## 4. 启动或续跑骨架 {#harness}
 
-骨架有三种：Claude Code、Codex、Pi（`backend/app/domain/agent/harness/`）。每种骨架把自己的协议翻译成统一的事件（`service.py`）。会话 id 存在话题上，下一轮续跑同一个会话。
+骨架有三种：Claude Code、Codex、Pi（`backend/app/domain/agent/harness/`）。每种骨架在自己的目录下把协议翻译成统一的事件，由 `backend/app/domain/agent/service.py` 接住。会话 id 存在话题上，下一轮续跑同一个会话。
 
-注入给芝士的操作说明按话题当前所处的阶段决定（`stages.py`）：拆活、执行任务、等人采纳、PR 迭代、冲突……每段只注入那一段该知道的。
+注入给芝士的操作说明按话题当前所处的阶段决定（`stages.py` 的 `TopicStage`）：任务执行、闸门、等采纳、合并冲突、已归档，五个阶段各注入各的那一段。「拆活」和「干活」是同一段：分开注入会让房间在派活时读不到该怎么交付。
 
 ## 5. 芝士怎么说话 {#publish}
 

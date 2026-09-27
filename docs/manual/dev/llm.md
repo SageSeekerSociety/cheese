@@ -47,7 +47,7 @@ covers:
 
 ## 两条路 {#routes}
 
-- **订阅路**：计量代理把请求原样转给模型厂商，只把会话里的占位凭证换成平台的订阅凭证，其余字节不改（订阅要求客户端就是 Claude Code 本身）。
+- **订阅路**：计量代理把请求转给模型厂商，把会话里的占位凭证换成平台的订阅凭证，并按准入结果把模型名写进请求体，正文其余部分不改（订阅要求客户端就是 Claude Code 本身）。
 - **网关路**：计量代理把请求改写到 LiteLLM 网关，换上这个项目的虚拟 key。网关按 key 记账，超过 `max_budget` 就拒绝。
 
 ## Codex、Pi 和远端机器 {#others}
@@ -58,9 +58,9 @@ Codex 和 Pi 不能用 `HTTPS_PROXY` 引流，它们被指向 `{平台地址}/ll
 
 ## 分身用哪个模型 {#subagent}
 
-分身请求到达准入接口时，计量代理会带上它从请求体里读到的模型名（`_bind_requested_subagent_model`）：
+计量代理从分身的请求体里读出模型名，放在请求头上交给准入接口；主 API 的 `_bind_requested_subagent_model`（`backend/app/api/routes/llm_proxy.py`）把它翻译成目录 id 并校验：
 
-- 主 agent 明确给分身指定的模型放在 `x-cheese-child-model` 头上，按指定处理，即使和父会话相同。
+- `x-cheese-child-model` 带着**不同于**父会话的模型名时，才是主 agent 的显式指定，按指定处理。Claude Code 给每个分身都打这个头；值只是回显父会话模型时，计量代理把它认作继承、删掉这个头。
 - 只有 `x-cheese-requested-model`、且名字就是父会话自己的模型时，说明分身只是继承，按「没有指定」处理，走项目的默认分身模型（`default_subagent_model`）。
 - 指定的模型在项目模型目录里、且在允许范围内：就用它。
 - 目录里没有，或不在允许范围内：拒绝，并在理由里列出可以指定的模型，不会悄悄换成默认模型。

@@ -1,7 +1,7 @@
 """A file can belong to a 题目.
 
 Revision ID: a4f2c81d6e03
-Revises: 5c1d8e7f2b90
+Revises: b803df6cc480
 Create Date: 2026-09-26
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "a4f2c81d6e03"
-down_revision = "5c1d8e7f2b90"
+down_revision = "b803df6cc480"
 branch_labels = None
 depends_on = None
 
