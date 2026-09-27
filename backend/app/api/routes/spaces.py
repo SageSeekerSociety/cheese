@@ -893,6 +893,12 @@ async def create_space(
         )
     space.review_status = "PENDING"
     await db.flush()
+    # 写到这里就完了，下面全是读：先提交，再构造响应。``get_db`` 的提交在
+    # ``yield`` 的退出码里，而那段跑在响应发出**之后**（FastAPI 0.137 的
+    # ``request_stack`` 在 ``await response(...)`` 之后才关），不在这里提交的话，
+    # 客户端拿到 201 时这一行还没落地 —— 紧接着的 POST /admin/spaces/{id}/review
+    # 就会 404「Space not found」（合并队列 run 36296605673 实测）。
+    await db.commit()
     space_data = await _build_full_space_payload(space, service=service, db=db)
     # Every 题目版 is created holding a code (see SpaceService.create_space),
     # so hand it back here rather than making the creator come and ask.
