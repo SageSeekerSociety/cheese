@@ -160,14 +160,14 @@ def _remember(
     assert r.status_code == 200, r.text
 
 
-def _recall(
-    client, project_id: str, topic_id: str, query: str, *, seat: str | None = None
-) -> list[dict]:
-    return client.post(
-        f"/projects/{project_id}/memory/search",
-        json={"query": query, "topic": topic_id},
-        headers=_acting(project_id, topic_id, seat),
-    ).json()["data"]["hits"]
+def _pool(client, project_id: str, handle: str) -> list[str]:
+    """这位 agent 的池里现在有什么，按 handle 点名读。
+
+    关键词检索那条读路径（`/projects/{id}/memory/search`）连同条目池的读侧一
+    起撤了，所以这里读记忆列表本身。归属这件事它答得一样清楚：池是按 agent 分
+    的，写入分给谁，就是谁的池里有它。
+    """
+    return [e["content"] for e in _list_memory(client, project_id, agent_handle=handle)]
 
 
 def _seat_a_new_agent(client, project_id: str, topic_id: str, handle: str) -> str:
@@ -192,8 +192,9 @@ def _seat_a_new_agent(client, project_id: str, topic_id: str, handle: str) -> st
 def test_a_memory_written_without_a_place_is_the_projects_own_cheese(client):
     """没有共享池（结论 7）：不带话题的那一次写入也归一位芝士，就是项目自己那位。
 
-    所以项目默认那位在自己房间里查得到，而另一位队友在它的房间里查不到——写入
-    分给谁，决定的是谁读得到，不存在一个谁都能写、谁都能读的中间地带。
+    所以它落在项目默认那位的池里，而另一位队友的池里没有——写入分给谁，决定的
+    就是谁的池里有它，不存在一个谁都能写、谁都能读的中间地带。座位在哪间房不作
+    数：池是按 agent 分的，点名读的也是 agent。
     """
     project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
 
@@ -203,21 +204,15 @@ def test_a_memory_written_without_a_place_is_the_projects_own_cheese(client):
             json={"project_id": project_id, "title": title, "created_by": "alice"},
         ).json()["data"]["id"]
 
-    cheese_room, ops_room = _topic("A"), _topic("B")
-    ops = _seat_a_new_agent(client, project_id, ops_room, "ops")
+    # 另一位队友坐进一间房，好让它是一位真的队友；项目默认那位由项目自己坐。
+    _seat_a_new_agent(client, project_id, _topic("A"), "ops")
 
     client.post(
         f"/projects/{project_id}/memory", json={"content": "本项目用 uv 管依赖"}
     )
 
-    assert any(
-        "uv" in h["abstract"] for h in _recall(client, project_id, cheese_room, "依赖")
-    )
-    assert not [
-        h
-        for h in _recall(client, project_id, ops_room, "依赖", seat=ops)
-        if "uv" in h["abstract"]
-    ]
+    assert "本项目用 uv 管依赖" in _pool(client, project_id, "cheese")
+    assert "本项目用 uv 管依赖" not in _pool(client, project_id, "ops")
 
 
 def _post_without_summon(client, topic_id: str, content: str, author: str) -> None:

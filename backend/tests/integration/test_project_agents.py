@@ -9,7 +9,7 @@ belongs to is decided by who was acting when it was written.
 """
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
 from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
 
 
@@ -50,16 +50,17 @@ def _remember(
     assert r.status_code == 200, r.text
 
 
-def _recall(
-    client, project_id: str, topic_id: str, query: str, *, agent: dict | None = None
-) -> list[dict]:
-    r = client.post(
-        f"/projects/{project_id}/memory/search",
-        json={"query": query, "topic": topic_id},
-        headers={"X-Cheese-Token": _token(client, project_id, topic_id, agent)},
-    )
+def _pool(client, project_id: str, *, agent: dict | None = None) -> list[str]:
+    """这个池里存着的事实，读记忆列表本身。
+
+    按关键词检索的那条读路径（`/projects/{id}/memory/search`）连同条目池的读
+    侧一起撤了。归属这件事列表答得一样清楚，而这几条用例守的正是归属：池是按
+    AGENT 分的，写入分给谁，就是谁的池里有它。没有点名就是项目默认那位。
+    """
+    handle = agent["handle"] if agent is not None else CHEESE_HANDLE
+    r = client.get(f"/memory?project_id={project_id}&agent_handle={handle}")
     assert r.status_code == 200, r.text
-    return r.json()["data"]["hits"]
+    return [e["content"] for e in r.json()["data"]["data"]]
 
 
 def _seat(client, topic_id: str, agent: dict, by: str = "u") -> str:
@@ -94,15 +95,18 @@ def _add_agent(client, project_id: str, **body) -> dict:
 # --- memory follows the agent ------------------------------------------------
 
 
-def test_what_one_room_learns_the_next_room_knows(client):
-    """The point of the whole change: one 芝士 per project, one memory."""
+def test_what_one_room_learns_the_whole_project_knows(client):
+    """The point of the whole change: one 芝士 per project, one memory.
+
+    池是按 agent 分的，问它的时候一间房都不用提——学在哪间、从哪间读，都是
+    同一个池。
+    """
     pid = _project(client)
-    kitchen, garden = _topic(client, pid, "kitchen"), _topic(client, pid, "garden")
+    kitchen = _topic(client, pid, "kitchen")
 
     _remember(client, pid, kitchen, "部署脚本在 deploy.sh")
 
-    hits = _recall(client, pid, garden, "deploy.sh")
-    assert [h["abstract"] for h in hits] == ["部署脚本在 deploy.sh"]
+    assert _pool(client, pid) == ["部署脚本在 deploy.sh"]
 
 
 def test_two_agents_in_one_room_do_not_share_a_memory(client):
@@ -117,12 +121,8 @@ def test_two_agents_in_one_room_do_not_share_a_memory(client):
     _remember(client, pid, room, "默认芝士记的事")
     _remember(client, pid, room, "评审记的事", agent=reviewer)
 
-    assert [h["abstract"] for h in _recall(client, pid, room, "记的事")] == [
-        "默认芝士记的事"
-    ]
-    assert [
-        h["abstract"] for h in _recall(client, pid, room, "记的事", agent=reviewer)
-    ] == ["评审记的事"]
+    assert _pool(client, pid) == ["默认芝士记的事"]
+    assert _pool(client, pid, agent=reviewer) == ["评审记的事"]
 
 
 # --- which agent works where -------------------------------------------------
@@ -204,9 +204,7 @@ def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
     assert r.status_code == 200, r.text
     # 一张卡不是地点：拆出来的活在房间那一个会话里做，记忆也从房间记。
     _remember(client, pid, room, "分身查出来的事", agent=reviewer)
-    assert [
-        h["abstract"] for h in _recall(client, pid, room, "查出来", agent=reviewer)
-    ] == ["分身查出来的事"]
+    assert _pool(client, pid, agent=reviewer) == ["分身查出来的事"]
 
 
 def test_a_room_cannot_seat_another_projects_agent(client):
@@ -246,9 +244,8 @@ def test_renaming_an_agent_keeps_the_memory_it_had(client):
     assert r.json()["data"]["display_name"] == "严格评审"
     assert r.json()["data"]["handle"] == "reviewer"
 
-    assert [
-        h["abstract"] for h in _recall(client, pid, room, "记的事", agent=reviewer)
-    ] == ["评审记的事"]
+    # 池是按 handle 认的，改名不动它。
+    assert _pool(client, pid, agent=reviewer) == ["评审记的事"]
 
 
 def test_an_agents_role_can_be_edited_directly(client):
@@ -317,9 +314,7 @@ def test_retiring_an_agent_keeps_it_and_its_memory(client):
 
     # And the room it already sits in carries on, memory and all.
     assert _agent_rows(client, room)[seat]["name"] == "评审"
-    assert [
-        h["abstract"] for h in _recall(client, pid, room, "记的事", agent=reviewer)
-    ] == ["评审记的事"]
+    assert _pool(client, pid, agent=reviewer) == ["评审记的事"]
 
 
 def test_a_retired_agent_is_not_offered_for_new_work(client):

@@ -120,11 +120,6 @@ def test_it_is_a_document_and_not_a_memory(client):
     project_id, topic_id = _project_and_room(client)
     _write_for_everyone(client, project_id, topic_id, FACT)
 
-    hits = client.post(
-        f"/projects/{project_id}/memory/search",
-        json={"query": "中期答辩 demo", "topic": topic_id},
-    ).json()["data"]["hits"]
-    assert hits == []
     assert client.get(f"/memory?project_id={project_id}").json()["data"]["data"] == []
 
 
