@@ -27,6 +27,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core import storage as storage_module
+from app.core.config import settings
 from tests.integration.conftest import CreatedUser, UserCreator
 from tests.integration.test_task_attachments import (
     _approve_task,
@@ -36,12 +38,30 @@ from tests.integration.test_task_attachments import (
     _login,
     _new_board,
     _upload_to_task,
-    upload_root,
 )
 
 
 @pytest.fixture
-def stranger(user_client: UserCreator, api_client: TestClient) -> tuple[CreatedUser, str]:
+def upload_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """把本地存储落到 tmp_path。
+
+    与 ``test_task_attachments.py`` 里那个同名的 fixture 是同一件事，就地重写成
+    一个本文件的 fixture 而不是 import 过来的：那个名字既要当 fixture 又要当测试
+    参数，跨模块 import 会让 ruff 把它读成「参数重定义」。``get_storage_backend()``
+    是模块级单例，第一次调用就把 base_path 定死 —— 所以光改 settings 不够，还得先
+    把已经建好的那个丢掉；收尾也丢掉一次，免得下一个测试拿到指向已删 tmp_path 的
+    backend。
+    """
+    monkeypatch.setattr(settings, "storage_local_path", str(tmp_path))
+    storage_module._storage_backend = None
+    yield tmp_path
+    storage_module._storage_backend = None
+
+
+@pytest.fixture
+def stranger(
+    user_client: UserCreator, api_client: TestClient
+) -> tuple[CreatedUser, str]:
     """一个登录了、但不在这块板上的真人。
 
     ``require_auth_user`` 要的是数字 user id，所以「陌生人」在这里必须是个真注册

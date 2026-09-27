@@ -930,6 +930,42 @@ async def _ensure_task_visible_for_ordinary_user(
         )
 
 
+async def _ensure_task_readable(
+    *,
+    db,
+    task: Task,
+    auth_user: AuthUserInfo,
+) -> None:
+    """「这道题在这个读者眼里存不存在」—— 题目详情与它的附属读路由共用的那一个判断。
+
+    三道闸，按顺序各答一句话：
+
+    1. **还没过审**（``approved == 2``，且未结项）：对出题者与本版管理员是草稿，
+       对其他人还不该存在 —— 403；
+    2. **看不见**（``TaskVisibilityService.can_view_task``）：题目自己设了可见范围
+       而这个人不在里面 —— 404，与「这道题不存在」同一句话；
+    3. **超出本板上限**（``visibleTaskLimit``）：对普通用户来说它就是看不见了 ——
+       404。
+
+    为什么要抽出来：材料清单（``/attachments``）是拿着 task id 取数的另一条读
+    路由，它只走了第 2 道 —— 而第 2 道在 ``access_control_enabled`` 为假（题目
+    默认值）时对任何登录用户都放行，于是 403 / 404 的题照旧把材料清单交出去。
+    「题看不见，清单也看不见」是同一件事，只该有一处判断。
+    """
+    if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
+        if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+            raise ForbiddenError(
+                "Only space admins or task creator can view unapproved tasks"
+            )
+    if not await TaskVisibilityService(session=db).can_view_task(
+        task=task, user_id=auth_user.user_id
+    ):
+        raise NotFoundError(
+            "Resource task not found", data={"type": "task", "id": task.id}
+        )
+    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
+
+
 async def _create_task_entity(
     *,
     payload: dict | CreateTaskRequest,
@@ -1259,8 +1295,15 @@ async def list_task_attachments(
     判据放在服务里，两件事一起算：看得见才给清单（否则 403），能不能下载按
     「出题人 / 板管理员 / 已领取者」。前端只据此决定那行显示「下载」还是
     「领取这道题之后才能下载」，不自己猜。
+
+    「看得见这道题」用的是题目详情那三道闸（``_ensure_task_readable``），不是
+    服务里那条更宽的 ``can_view_task``：后者在题目没开可见范围时对任何登录用户
+    都放行，于是未审批（403）与超出板上限（404）的题会在这里把材料清单交出去。
+    清单不比题更公开 —— 文件名常常就是答案，而「有没有清单」本身就是那道题的
+    探针。
     """
     task = await _require_task(db, task_id)
+    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
     files, links, can_download = await _task_attachment_service(db).list_for_task(
         task=task, user_id=auth_user.user_id
     )
@@ -1320,8 +1363,16 @@ async def download_task_attachment(
     db=Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> Response:
+    """下载一道题的材料。
+
+    先过题目详情那三道闸（``_ensure_task_readable``），再看「你来不来得到」：
+    一道 403 / 404 的题，它的材料连「拿不到（403）」这个回答都不该给 —— 对读者
+    来说这道题不存在，回答里不该有它的 id 之外的任何东西。
+    """
+    task = await _require_task(db, task_id)
+    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
     content, filename, content_type = await _task_attachment_service(db).download(
-        task=await _require_task(db, task_id),
+        task=task,
         user_id=auth_user.user_id,
         attachment_id=attachment_id,
     )
@@ -1827,23 +1878,9 @@ async def get_task(
         )
 
     # 权限检查：未审批的题只有出题者与本版管理员能看 —— 一道还没过审的题在他们手上
-    # 是「草稿」，对其他人来说还不该存在。
-    if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
-        if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-            raise ForbiddenError(
-                "Only space admins or task creator can view unapproved tasks"
-            )
-
-    visibility_service = TaskVisibilityService(session=db)
-    can_view = await visibility_service.can_view_task(
-        task=task,
-        user_id=auth_user.user_id,
-    )
-    if not can_view:
-        raise NotFoundError(
-            "Resource task not found", data={"type": "task", "id": task_id}
-        )
-    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
+    # 是「草稿」，对其他人来说还不该存在。三道闸都在 `_ensure_task_readable` 里，
+    # 题目的附属读路由（材料清单）走同一个判断。
+    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
 
     # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。  # noqa: E501
     participation: dict
