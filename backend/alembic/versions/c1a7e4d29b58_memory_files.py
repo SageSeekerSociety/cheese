@@ -1,7 +1,7 @@
 """一条记忆 = 一个 markdown 文件
 
 Revision ID: c1a7e4d29b58
-Revises: a4f2c81d6e03
+Revises: 7c2e91a4d3f6
 Create Date: 2026-09-26
 """
 
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c1a7e4d29b58"
-down_revision: str | Sequence[str] | None = "a4f2c81d6e03"
+down_revision: str | Sequence[str] | None = "7c2e91a4d3f6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
