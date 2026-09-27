@@ -1614,6 +1614,7 @@ onBeforeUnmount(() => {
               :refs="refMaps"
               :can-retry="canRetryAt(i)"
               :retrying="retryBusy"
+              :project-id="topic?.project_id ?? null"
               @animationend="settleArrival($event, m.id)"
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
               @undo-title="undoTitle"
