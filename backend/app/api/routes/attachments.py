@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 from fastapi.responses import Response
 
@@ -90,11 +92,16 @@ async def download_attachment(
     service: AttachmentService = Depends(get_attachment_service),
 ) -> Response:
     content, filename, content_type = await service.download(attachmentId)
+    # ``filename*=UTF-8''…`` 而不是裸引号：中文文件名直接写进 header 会让
+    # Starlette 按 latin-1 编码时报错（下载一个中文名的材料变成 500），名字
+    # 里的引号还会把引号那段提前闭合、把文件名变成 header 语法。
     return Response(
         content=content,
         media_type=content_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": (
+                "attachment; filename*=UTF-8''" + quote(filename, safe="")
+            )
         },
     )
 
