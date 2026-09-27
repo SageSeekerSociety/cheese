@@ -279,6 +279,12 @@ class ContractHarness:
     def bind_reachability(self, consumer: Any) -> None:
         return None
 
+    def bind_memory(self, consumer: Any) -> None:
+        return None
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        return None
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         return topic_id in self._held
 

@@ -108,6 +108,13 @@ class _FakeBackend:
     def bind_reachability(self, consumer) -> None:
         return None
 
+    def bind_memory(self, consumer) -> None:
+        return None
+
+    async def memory(self, topic_id, request):
+        # 这个 double 的会话不存记忆文件：「这里没有」而不是「失败了」。
+        return None
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         return False
 

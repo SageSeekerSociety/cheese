@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.domain.agent.harness.prompt import build_system_prompt, teaching_section
+from app.domain.memory.files_store import IndexSection, MemoryIndex
 from app.domain.task.protocol import Protocol, Teaching, resolve
 from app.domain.task.teaching import TeachingContext
 
@@ -29,6 +30,14 @@ WEEK_THREE = {
     "material_ids": [7],
     "knowledge_ids": [11],
 }
+
+
+def _index(*lines: str) -> MemoryIndex:
+    """A turn's L1 index, built by hand — the prompt only ever sees this shape."""
+    return MemoryIndex(
+        sections=[IndexSection(label="项目", prefix="team", text="\n".join(lines))],
+        warnings=[],
+    )
 
 
 def _category(**kw) -> SimpleNamespace:
@@ -54,7 +63,7 @@ def _prompt(**kw) -> str:
         "BASE",
         "SKILLS",
         "DOC",
-        ["MEMORY"],
+        _index("- [记忆](memory.md) — MEMORY"),
         role="ROLE",
         **kw,
     )

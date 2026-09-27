@@ -13,6 +13,7 @@ from app.domain.agent.harness.prompt import (
     thread_relay_prompt,
 )
 from app.domain.block.models import BlockKind
+from app.domain.memory.files_store import IndexSection, MemoryIndex
 
 
 def system_prompt() -> str:
@@ -20,7 +21,16 @@ def system_prompt() -> str:
         "PLATFORM_FIXTURE",
         "SKILL_FIXTURE",
         "DOCUMENT_FIXTURE",
-        ["MEMORY_FIXTURE"],
+        MemoryIndex(
+            sections=[
+                IndexSection(
+                    label="项目",
+                    prefix="team",
+                    text="- [fixture](fixture.md) — MEMORY_FIXTURE",
+                )
+            ],
+            warnings=[],
+        ),
         role="ROLE_FIXTURE",
     )
 

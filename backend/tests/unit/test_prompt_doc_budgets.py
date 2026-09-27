@@ -10,8 +10,17 @@ from app.domain.agent.harness.prompt import (
     build_system_prompt,
     fit_doc_to_budget,
 )
+from app.domain.memory.files_store import IndexSection, MemoryIndex
 
 HINT = "用 `cheese_doc_get` 读全文"
+
+
+def _index(*lines: str) -> MemoryIndex:
+    """A turn's L1 index, built by hand — the prompt only ever sees this shape."""
+    return MemoryIndex(
+        sections=[IndexSection(label="项目", prefix="team", text="\n".join(lines))],
+        warnings=[],
+    )
 
 
 def _fit(text: str, budget: int) -> str:
@@ -74,7 +83,7 @@ def test_an_unsectioned_doc_is_truncated_from_the_tail_with_a_note():
 
 
 def test_the_topic_doc_note_names_the_full_read_command():
-    prompt = build_system_prompt("底稿", "", "## 临时\n" + "长" * 9000, [])
+    prompt = build_system_prompt("底稿", "", "## 临时\n" + "长" * 9000, None)
 
     assert "cheese_doc_get" in prompt
 
@@ -84,9 +93,9 @@ def test_compressed_docs_leave_the_memory_block_untouched():
         "底稿",
         "",
         "## 临时\n" + "长" * 9000,
-        ["记忆甲", "记忆乙"],
+        _index("- [甲](a.md) — 记忆甲", "- [乙](b.md) — 记忆乙"),
         overview_doc="## 临时\n" + "短" * 9000,
     )
 
     assert "记忆甲" in prompt and "记忆乙" in prompt
-    assert "### 核心记忆（每轮都在场" in prompt
+    assert "## 你的记忆（索引" in prompt
