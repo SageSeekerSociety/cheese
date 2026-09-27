@@ -18,12 +18,14 @@
 是运营动作，走脚本（`scripts/memory_migration.py`）比走 HTTP 更合适；接口留着是为了
 复核与落笔能在一个页面上点，而不是为了让人拿它当高频调用。
 
+读数那半边：`GET /admin/memory/reads`。见 `domain/memory/reads.py` 上面那一段。
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
@@ -33,6 +35,7 @@ from app.core.db import get_db
 from app.domain.llm.llm_client import LLMClient
 from app.domain.memory.migration_service import MemoryMigrationService
 from app.domain.memory.models import MemoryMigrationPlan
+from app.domain.memory.reads import body_reads
 
 router = APIRouter(prefix="/admin/memory", tags=["admin"])
 
@@ -134,3 +137,28 @@ async def apply_migration(
     row = await MemoryMigrationService(db).apply(plan_id, by=admin)
     await db.commit()
     return ok(_plan_out(row), "搬完了")
+
+
+@router.get("/reads")
+async def memory_body_reads(
+    admin: PlatformAdminDep,
+    db: DbSession,
+    days: Annotated[int, Query(ge=1, le=90)] = 7,
+    project_id: uuid.UUID | None = None,
+):
+    """每个项目每天有多少次**正文**读取（`Read` 打到记忆目录里的文件）。
+
+    索引每轮注入，正文要自己去读——这个数就是「正文到底有没有人读」。试点要回答的
+    是「一周下来是不是接近 0」，所以默认看七天，按天给。
+    """
+    until = datetime.now(UTC)
+    since = until - timedelta(days=days)
+    rows = await body_reads(db, since=since, until=until, project_id=project_id)
+    return ok(
+        {
+            "days": days,
+            "since": since.isoformat(),
+            "until": until.isoformat(),
+            "projects": [row.as_dict() for row in rows],
+        }
+    )
