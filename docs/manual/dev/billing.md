@@ -69,10 +69,6 @@ rules:
     when: 'left <= 0'
     text: 准入拒绝，房间里出现平台提示；项目虚拟 key 的 max_budget 也已经在网关上把调用挡住了。
     tone: bad
-  - label: 快用完了
-    when: 'left <= total * 0.1'
-    text: 准入还放行，但剩下的额度撑不了多久，下一个请求就可能被拦。
-    tone: warn
   - label: 放行
     text: 准入放行，网关那边也还没到 max_budget。两道刹车读的是同一份额度，一个按额度数、一个按美元。
     tone: ok
