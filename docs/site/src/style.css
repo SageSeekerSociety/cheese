@@ -186,6 +186,16 @@ h1{font-family:var(--serif);font-weight:700;font-size:40px;line-height:1.2;color
 .prose table{width:100%;border-collapse:collapse;font-size:14px;margin:0 0 20px}
 .prose th{text-align:left;font-weight:600;color:var(--ink);border-bottom:1px solid var(--line-2);padding:8px 10px}
 .prose td{border-bottom:1px solid var(--line);padding:8px 10px;vertical-align:top}
+/* Folded originals on the generated reference pages: a block of prompt text is
+   long enough that the page is unreadable with every one of them open. */
+.prose details.fold{border:1px solid var(--line);border-radius:12px;background:var(--surface);margin:0 0 14px;padding:0 14px}
+.prose details.fold>summary{cursor:pointer;padding:12px 0;font-size:14px;color:var(--accent-ink);list-style:none;display:flex;gap:8px;align-items:baseline}
+.prose details.fold>summary::-webkit-details-marker{display:none}
+.prose details.fold>summary::before{content:"\25B8";color:var(--muted);font-size:11px;transition:transform .2s var(--out)}
+.prose details.fold[open]>summary::before{transform:rotate(90deg)}
+.prose details.fold[open]>summary{border-bottom:1px solid var(--line);margin-bottom:14px}
+.prose details.fold summary code{font-size:13px}
+.prose details.fold .code{margin:0 0 14px}
 .callout{position:relative;display:flex;gap:12px;padding:15px 18px;border-radius:14px;margin:0 0 20px;font-size:14.5px;overflow:hidden}
 .callout::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px}
 .callout .ico{margin-top:4px}
