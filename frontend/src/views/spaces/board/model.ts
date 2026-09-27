@@ -72,6 +72,24 @@ export interface BoardTask {
   claimCount: number
 }
 
+/** 「最近处理过」上的一行 —— 一次审核动作，不是一道题的当前状态。
+ *
+ *  和 `BoardTask` 分开是有理由的：这道题**现在**是什么状态、说的是**那一次**
+ *  是谁点的，两件事；一次驳回之后作者改完再过，这一行说的是「刚刚那次通过」。 */
+export interface ReviewedTask {
+  /** 真库主键（那道题）。 */
+  id: string
+  title: string
+  /** 那一次的结果。真接口按它分两次查（`approved=APPROVED` / `DISAPPROVED`）。 */
+  result: 'APPROVED' | 'DISAPPROVED'
+  /** 审核人。真接口只给 `user.id`，名字由 `store.ts` 从这块板的管理员名册里对
+   *  —— 审题这条路只有管理员走得通，所以名册里对不到就只剩下「不知道是谁」（人
+   *  被移出名册了），那时这里是 `null`。 */
+  reviewer: Person | null
+  /** ISO。审核那一刻，不是 `updatedAt`。 */
+  reviewedAt: string
+}
+
 export interface InviteCode {
   /** 真库主键。改码与撤销都按它认人，所以它必须一路带到这里。 */
   id: number

@@ -17,7 +17,7 @@
  *   因为那些数（谁在等我审、多少人在我这卡住）全板列表里根本没有。
  */
 import type { Space, SpaceInviteCode, Task, User } from '@/types'
-import type { BoardTask, InviteCode, Person, Role, SpaceInfo, TaskState } from './model'
+import type { BoardTask, InviteCode, Person, ReviewedTask, Role, SpaceInfo, TaskState } from './model'
 
 import { computed, ref } from 'vue'
 
@@ -126,6 +126,70 @@ export async function loadPending(): Promise<BoardTask[]> {
     queryJoined: false,
   })
   return res.data.tasks.map(toBoardTask)
+}
+
+/** 最近处理过的那几道题 —— 审核页底部那张卡。
+ *
+ *  「处理过」这件事不在题目状态里（`approved` 说不了是谁、什么时候点的），所以
+ *  这里按审核痕迹自己查：通过的一批、驳回的一批，各自按 `reviewedAt` 倒序取
+ *  `limit` 条，合起来再倒序取 `limit` 条 —— 两次查询各取 `limit` 足够，因为两边
+ *  合起来的前 `limit` 名一定各自落在自己那批的前 `limit` 名里。
+ *
+ *  这一列是后加的：更早审过的题 `reviewedAt` 是 null，那些行跳过（「最近处理过」
+ *  要的是时间，不是「处理过」本身）。 */
+export async function loadRecentReviews(limit = 4): Promise<ReviewedTask[]> {
+  if (spaceId.value === null) return []
+  const [approved, disapproved] = await Promise.all([
+    TasksApi.list({
+      space: spaceId.value,
+      approved: 'APPROVED',
+      pageSize: limit,
+      sort_by: 'reviewedAt',
+      sort_order: 'desc',
+      querySpace: false,
+      queryJoined: false,
+    }),
+    TasksApi.list({
+      space: spaceId.value,
+      approved: 'DISAPPROVED',
+      pageSize: limit,
+      sort_by: 'reviewedAt',
+      sort_order: 'desc',
+      querySpace: false,
+      queryJoined: false,
+    }),
+  ])
+  const rows: { at: number; row: ReviewedTask }[] = []
+  const collected = [
+    ...approved.data.tasks.map((task) => ({ task, result: 'APPROVED' as const })),
+    ...disapproved.data.tasks.map((task) => ({
+      task,
+      result: 'DISAPPROVED' as const,
+    })),
+  ]
+  for (const { task, result } of collected) {
+    if (task.reviewedAt == null) continue
+    rows.push({
+      at: task.reviewedAt,
+      row: {
+        id: String(task.id),
+        title: task.name,
+        result,
+        reviewer: reviewerOf(task.reviewedBy),
+        reviewedAt: iso(task.reviewedAt),
+      },
+    })
+  }
+  rows.sort((a, b) => b.at - a.at)
+  return rows.slice(0, limit).map(({ row }) => row)
+}
+
+/** 审核人 id → 名册里的那个人。审题只有本板管理员走得通，所以名册就是答案；
+ *  对不到（这个人已经被移出名册）时给 `null`，界面照实说不知道是谁。 */
+function reviewerOf(userId: number | null | undefined): Person | null {
+  if (typeof userId !== 'number') return null
+  const user = spaceRaw.value?.admins.find((a) => a.user.id === userId)?.user
+  return user ? toPerson(user) : null
 }
 
 /** 邀请码。**只有列和建** —— 改码的接口真平台还没有（那是另一批）。 */
