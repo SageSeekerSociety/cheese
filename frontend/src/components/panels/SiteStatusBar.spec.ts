@@ -124,3 +124,58 @@ describe('现场状态条', () => {
     expect(bar([], false)).toBe('')
   })
 })
+
+// 闲着的时候秒表是停的。「最近活动 N 前」若还挂着，就是一个停在某一刻的数：真实的
+// 时间过去三分钟，它还写着同一个「前」。
+describe('闲着的时候不说多久没动静', () => {
+  it('上一轮结束了几分钟：只说空闲，没有「最近活动」', () => {
+    const done = row('1', '2026-09-25T10:00:00Z', { tool: 'Bash', arg: 'ls' })
+    const { container } = render(SiteStatusBar, { props: { blocks: [done], working: false, turns: {} } })
+    const text = () => container.querySelector('[data-testid="site-status"]')?.textContent ?? ''
+    expect(text()).toContain('空闲')
+    expect(text()).not.toContain('最近活动')
+    vi.advanceTimersByTime(3 * 60_000)
+    expect(text()).not.toContain('最近活动')
+  })
+
+  it('一轮在跑时照旧说，且跟着时间走', async () => {
+    const step = row('1', '2026-09-25T10:04:00Z', { tool: 'Bash', arg: 'ls', output_bytes: 3 })
+    const { container } = render(SiteStatusBar, { props: { blocks: [step], working: true, turns: RUNNING } })
+    const text = () => container.querySelector('[data-testid="site-status"]')?.textContent ?? ''
+    expect(text()).toContain('最近活动 1 分 00 秒前')
+    vi.advanceTimersByTime(30_000)
+    await Promise.resolve()
+    expect(text()).toContain('最近活动 1 分 30 秒前')
+  })
+})
+
+// 英文界面里，状态词和它夹着的动词、时长是同一种语言。
+describe('英文界面的状态条', () => {
+  const CJK = /[一-鿿]/
+
+  beforeEach(() => setLocale('en'))
+
+  it('正在做一步：动词和用时都是英文', () => {
+    const text = bar([row('1', '2026-09-25T10:04:58Z', { tool: 'Bash', arg: 'make test' })], true, RUNNING)
+    expect(text).toContain('Run command')
+    expect(text).toContain('2m 00s so far')
+    expect(text).not.toMatch(CJK)
+  })
+
+  it('在想、多久没动静：没有一个中文字', () => {
+    const text = bar(
+      [row('1', '2026-09-25T10:04:00Z', { tool: 'Bash', arg: 'make test', failed: true, error: 'x' })],
+      true,
+      RUNNING
+    )
+    expect(text).toContain('Thinking')
+    expect(text).toContain('last activity 1m 00s ago')
+    expect(text).not.toMatch(CJK)
+  })
+
+  it('平台工具的那一步也是英文', () => {
+    const text = bar([row('1', '2026-09-25T10:04:58Z', { tool: 'mcp__native__cheese_task' })], true, RUNNING)
+    expect(text).toContain('Create a task')
+    expect(text).not.toMatch(CJK)
+  })
+})
