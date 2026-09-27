@@ -8,11 +8,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_broker
+from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import NotFoundError
-from app.domain.agent.runtime import InProcessBroker
+from app.domain.agent.chat import ChatService
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.block.editing import edit_message
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import ReactionToggleIn
@@ -34,10 +35,13 @@ async def edit_block(
     db: DbSession,
     resolver: ActorResolverDep,
     broker: Annotated[InProcessBroker, Depends(get_broker)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """Edit a message you sent: a person with their session, an agent with its
-    room credential — one route and one rule for both (`domain/block/editing`).
-    Everyone in the room gets the edited message as a `block_updated` frame."""
+    """Edit a message you sent, in a room or on a card: a person with their
+    session, an agent with its room credential — one route and one rule for
+    both (`domain/block/editing`). Whoever is watching gets the edited message
+    as a `block_updated` frame."""
     block = await BlockRepository(db).get(block_id)
     if block is None:
         raise NotFoundError("Message not found")
@@ -48,7 +52,13 @@ async def edit_block(
         actor, project_id=block.project_id, topic_id=block.topic_id, enforce=True
     )
     payload = await edit_message(
-        db, broker, block_id, editor=actor.handle, content=body.content
+        db,
+        broker,
+        block_id,
+        editor=actor.handle,
+        content=body.content,
+        chat=chat,
+        runner=runner,
     )
     return ok(payload)
 

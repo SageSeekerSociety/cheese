@@ -9,7 +9,7 @@
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block } from '../../cx_types'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { artifactKind, artifactName, askAnswered, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
@@ -20,6 +20,7 @@ import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
+import MessageEditor from './MessageEditor.vue'
 import RollingNumber from './RollingNumber.vue'
 
 import { t } from '@/i18n'
@@ -89,36 +90,6 @@ const checklist = computed(() => {
   const value = props.block.meta?.checklist
   return value && typeof value === 'object' ? value : null
 })
-
-// 改消息的输入框。打开时放进原文、光标落在末尾；Enter 保存、Shift+Enter 换行、
-// Esc 放弃，和发消息的输入框同一套手势。输入法组字时的 Enter 是选字，不算。
-const editDraft = ref('')
-const editRef = ref<HTMLTextAreaElement | null>(null)
-const EDIT_MAX_ROWS = 12
-const editRows = computed(() => Math.min(EDIT_MAX_ROWS, editDraft.value.split('\n').length))
-watch(
-  () => props.editing,
-  async (on) => {
-    if (!on) return
-    editDraft.value = props.editText ?? props.block.content
-    await nextTick()
-    const input = editRef.value
-    if (!input) return
-    input.focus()
-    input.setSelectionRange(input.value.length, input.value.length)
-  },
-  { immediate: true }
-)
-function onEditKey(e: KeyboardEvent) {
-  if (e.isComposing) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    emit('cancel-edit')
-  } else if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
-    emit('save-edit', editDraft.value)
-  }
-}
 
 function renderMarkdown(text: string): string {
   return renderMarkdownWith(text, props.refs)
@@ -257,30 +228,13 @@ async function onAgentTextClick(e: MouseEvent) {
         </span>
         <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
       </button>
-      <div v-else-if="editing" class="im-edit">
-        <textarea
-          ref="editRef"
-          v-model="editDraft"
-          class="im-edit__input"
-          autocomplete="off"
-          :rows="editRows"
-          :aria-label="t('work.room.message.edit')"
-          @keydown="onEditKey"
-        />
-        <div class="im-edit__actions">
-          <button type="button" class="outbox-btn" @click="emit('cancel-edit')">
-            {{ t('work.room.message.cancel') }}
-          </button>
-          <button
-            type="button"
-            class="outbox-btn"
-            :disabled="saving || !editDraft.trim()"
-            @click="emit('save-edit', editDraft)"
-          >
-            {{ t('work.room.message.save') }}
-          </button>
-        </div>
-      </div>
+      <MessageEditor
+        v-else-if="editing"
+        :text="editText ?? block.content"
+        :saving="!!saving"
+        @save="emit('save-edit', $event)"
+        @cancel="emit('cancel-edit')"
+      />
       <ChecklistMessage
         v-else-if="checklist"
         :checklist="checklist"
@@ -448,40 +402,6 @@ async function onAgentTextClick(e: MouseEvent) {
 }
 .im-text--verbatim .im-edited {
   margin-left: 6px;
-}
-/* 改消息：正文原地换成输入框，下面两颗和发送失败那一行同一种中性小按钮。 */
-.im-edit {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 2px;
-}
-.im-edit__input {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  font: inherit;
-  font-size: 14px;
-  line-height: var(--lh-14-loose);
-  color: var(--text);
-  resize: none;
-  transition: border-color var(--dur-quick) var(--ease-standard);
-}
-/* 聚焦只把边提一档，和发消息的输入框一样：边本身就是焦点的指示。 */
-.im-edit__input:focus {
-  outline: none;
-  border-color: var(--faint);
-}
-.im-edit__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-.outbox-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 /* 芝士摆出来的一份东西。正文平铺之后，这一栏里描边的块只剩它——所以那道边就是
    「这不是一句话，是一个可以打开的东西」。 */

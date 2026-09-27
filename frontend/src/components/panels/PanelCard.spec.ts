@@ -19,11 +19,15 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ project: null, members: [] }) }))
+// 看这张卡的人是 alice：卡上那条默认的话就是她说的。
+vi.mock('@/me', () => ({ myHandle: () => 'alice', myId: () => '' }))
+vi.mock('../../me', () => ({ myHandle: () => 'alice', myId: () => '' }))
 
 const getRoomTask = vi.fn()
 const sayOnRoomTask = vi.fn()
 const getAcceptCards = vi.fn()
 const getProgress = vi.fn()
+const editMessage = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -34,6 +38,7 @@ vi.mock('@/api', async () => {
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
     getRoomTask: (...a: unknown[]) => getRoomTask(...a),
     sayOnRoomTask: (...a: unknown[]) => sayOnRoomTask(...a),
+    editMessage: (...a: unknown[]) => editMessage(...a),
   }
 })
 
@@ -497,5 +502,42 @@ describe('卡上的步骤清单', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(block.textContent).toContain('新的一步')
     expect(block.textContent).not.toContain('读分页的旧实现')
+  })
+})
+
+describe('改自己在卡上说过的话', () => {
+  it('自己的话有「编辑」，别人的没有', async () => {
+    getRoomTask.mockResolvedValue(card({ blocks: [block(), block({ id: 'b2', author: 'bob', content: '好的' })] }))
+    const view = mount()
+    await waitFor(() => view.getByText('好的'))
+    expect(view.getAllByRole('button', { name: '编辑' })).toHaveLength(1)
+  })
+
+  it('原地改，保存后换成新的正文并标「已编辑」', async () => {
+    editMessage.mockImplementation(async (id: string, content: string) =>
+      block({ id, content, meta: { edited_at: '2026-09-06T01:05:00Z' } })
+    )
+    const view = mount()
+    await waitFor(() => view.getByText('这条先别动 routes'))
+    await fireEvent.click(view.getByRole('button', { name: '编辑' }))
+    const box = view.getByRole('textbox', { name: '编辑' }) as HTMLTextAreaElement
+    expect(box.value).toBe('这条先别动 routes')
+    await fireEvent.update(box, 'routes 可以动了')
+    await fireEvent.click(view.getByRole('button', { name: '保存' }))
+    await waitFor(() => view.getByText('routes 可以动了'))
+    expect(editMessage).toHaveBeenCalledWith('b1', 'routes 可以动了')
+    expect(view.getByText('已编辑')).toBeTruthy()
+  })
+
+  it('别人改了卡上的话，卡的频道上一到就换掉', async () => {
+    const view = mount()
+    await waitFor(() => view.getByText('这条先别动 routes'))
+    const socket = FakeWebSocket.instances.find((s) => s.url.includes('task-1'))!
+    socket.emit({
+      type: 'block_updated',
+      block: block({ content: '改好了', meta: { edited_at: '2026-09-06T01:05:00Z' } }),
+    })
+    await waitFor(() => view.getByText('改好了'))
+    expect(view.queryByText('这条先别动 routes')).toBeNull()
   })
 })

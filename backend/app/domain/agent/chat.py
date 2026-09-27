@@ -1087,7 +1087,7 @@ def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[st
     成员」 accusation against a real teammate.
 
     ``@all``/``@here`` are unaffected by any of that: they are expanded from the
-    TOPIC's roster by :meth:`_notify_mentions` (a DB read), never from this list,
+    TOPIC's roster by `announce_mentions` (a DB read), never from this list,
     so an empty list must not silence a broadcast."""
     resolved: list[str] = []
     unresolved: list[str] = []
@@ -1096,7 +1096,7 @@ def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[st
     handles = {m["handle"] for m in roster}
     for h in dict.fromkeys(_MENTION_RE.findall(text)):
         # @all/@here are reserved broadcast tokens — always "resolved" (expanded
-        # to the roster by _notify_mentions), never flagged as a bad handle.
+        # to the roster by announce_mentions), never flagged as a bad handle.
         if h in _SPECIAL_MENTIONS or h in handles:
             resolved.append(h)
         elif roster:
@@ -1243,7 +1243,7 @@ def _is_dm(topic: Topic) -> bool:
     - **这间房没有名册。**私聊不暴露成员列表，`@` 解析不到项目里的第三个人：解
       析表给 `[]`，`@某某` 原样留在正文里，显示成一条「项目中没有这个成员」
       。这一条管的是正文去了哪里，不只是渲染：名册还要往下走进
-      `_notify_mentions`，解析到的每个 handle 都会收到一条带正文前 200 字的强提醒。
+      `announce_mentions`，解析到的每个 handle 都会收到一条带正文前 200 字的强提醒。
     - **这一轮不租地点**（`needs_place`，结论 19、不变量 I2）：不碰仓库文件、不
       跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出来。它桌上只有
       对话、记忆和平台工具，加上会话自己那块 64 MiB 草稿区（不是一个地点，随会
@@ -3292,12 +3292,7 @@ class ChatService:
                     attribution_id = user_block.id
                     user_block.turn_id = attribution_id
                 # Resolve <@handle> mentions in the human message → strong notify.
-                resolved, _unresolved = await self._notify_mentions(
-                    session, topic, author, content, roster
-                )
-                refs = [f"user:{h}" for h in resolved] + _topic_refs(content)
-                if refs:
-                    user_block.refs = refs
+                await announce_mentions(session, topic, user_block, author, roster)
                 anchor_id = user_block.id
                 created_blocks.append(user_block)
             # 图片输入: each image = an attachment block. content = the worktree
@@ -3683,27 +3678,9 @@ class ChatService:
             # the single source of truth: what's shown = who's notified).
             # Hallucinated handles get flagged in 现场, never silently no-op.
             if topic is not None and not as_progress:
-                resolved, unresolved = await self._notify_mentions(
-                    session, topic, author, text, roster
+                await announce_mentions(
+                    session, topic, block, author, roster, flag_unresolved=True
                 )
-                refs = [f"user:{h}" for h in resolved] + _topic_refs(text)
-                if refs:
-                    block.refs = refs
-                for bad in unresolved:
-                    warn = f"未能通知 <@{bad}>：项目中没有这个成员"
-                    # Beside the message it is about, not in the room the
-                    # message did not go to — same landing as the message.
-                    await blocks.add(
-                        project_id=landed.project_id,
-                        topic_id=landed.topic_id,
-                        task_id=landed.task_id,
-                        author=author,
-                        author_type=AuthorType.participant,
-                        content=warn,
-                        kind=BlockKind.event,
-                        turn_id=turn_id,
-                        meta={"in_room": False},
-                    )
             payload = _block_payload(BlockOut.model_validate(block))
             if publication_key is not None:
                 await idem.record_result(
@@ -4696,49 +4673,6 @@ class ChatService:
             logger.exception("gateway usage drain failed for %s", project_id)
             return None
 
-    async def _notify_mentions(
-        self, session, topic, author: str, text: str, roster: list[dict]
-    ) -> tuple[list[str], list[str]]:
-        """@<name> in a message → a strong notification to each matched teammate
-        (spec §7: @人 = strong). `<@all>`/`<@here>` expand to the topic's roster
-        (群播, fusion-design §3). Returns (resolved_handles, unresolved_names) so
-        the caller can set refs and flag the wrong ones."""
-        resolved, unresolved = _resolve_mentions(text, roster)
-        concrete = [h for h in resolved if h not in _SPECIAL_MENTIONS]
-        if any(h in _SPECIAL_MENTIONS for h in resolved):
-            # Expand @all/@here to the topic's members. @here should be the
-            # ACTIVE members, but there's no presence signal yet, so it equals
-            # @all for now (TODO: intersect with presence once it lands).
-            #
-            # A broadcast reaches the room's humans only: every 芝士 in the room
-            # already reads the timeline, so notifying them adds nothing. An
-            # explicit <@handle> is different and is NOT filtered here — that is
-            # how one agent addresses another, which a room hosting several 芝士
-            # depends on.
-            member_service = TopicMemberService(session)
-            members, _ = await member_service.list_for_topic(topic.id)
-            agents = set(await member_service.agent_handles(topic.id))
-            concrete += [
-                m.member_handle for m in members if m.member_handle not in agents
-            ]
-        # Nobody needs a notification for their own message.
-        targets = [h for h in dict.fromkeys(concrete) if h != author]
-        if targets:
-            notifs = ProjectNotificationService(session)
-            preview = markdown_preview(text, 200)
-            who = "芝士" if looks_like_agent_handle(author) else author
-            for h in targets:
-                await notifs.create(
-                    project_id=topic.project_id,
-                    level=NotificationLevel.strong,
-                    kind=NotificationType.MENTION,
-                    title=f"{who} 在「{topic.title}」@了你",
-                    body=preview,
-                    target_handle=h,
-                    topic_id=topic.id,
-                )
-        return resolved, unresolved
-
     async def _bail_notice(
         self,
         *,
@@ -5076,7 +5010,7 @@ class ChatService:
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
             # 回事」在下游是两种情况（见 `_HookWorkState.roster`）。问的是这间房
-            # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `_notify_mentions`。
+            # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `announce_mentions`。
             roster = (
                 [] if _is_dm(topic) else await roster_rows(session, topic.project_id)
             )
@@ -6251,39 +6185,136 @@ async def _room_roster(
     )
 
 
-async def publication_text(
+async def project_refs_text(
     session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, content: str
 ) -> str:
-    """The first half of the rewrite an agent's published message gets
-    (`chat_send`, `todo_write`): names and topic titles against the whole
-    project. `_persist_assistant_message` does the second half."""
+    """Friendly names and topic titles resolved against the whole project: the
+    rewrite a message gets when an agent publishes it (`chat_send`,
+    `todo_write`, before `_persist_assistant_message` does the rest) and when
+    anyone speaks on a card (`say_on_task`)."""
     return await canonicalize_refs(
         session, project_id, content, exclude_topic_id=room_id
     )
 
 
-async def text_as_sent(
-    session: AsyncSession, room_id: uuid.UUID, author: str, content: str
-) -> str:
-    """What sending ``content`` as ``author`` in this room would have stored.
+@dataclass(frozen=True, slots=True)
+class SentText:
+    """A message's text as sending it would have stored it, and how it was sent."""
 
-    An edit stores exactly that. The author is an agent when it holds one of
-    the room's agent seats — the same question the publication routes ask —
-    and its text goes through both halves of the publication rewrite, called
-    with the arguments a publication passes (no roster, no topic list). A
-    person's goes through `person_mentions`, as `post_user_message` does."""
-    topic = await TopicRepository(session).get(room_id)
+    room: Topic
+    text: str
+    # The names its mentions were read against; None where that way of sending
+    # announces no mentions at all (a card's conversation).
+    roster: list[dict] | None
+    by_agent: bool
+
+
+async def text_as_sent(
+    session: AsyncSession, block: Block, author: str, content: str
+) -> SentText:
+    """What sending ``content`` as ``author`` where ``block`` is would have
+    stored. An edit stores exactly that, by calling the same code.
+
+    On a card it is `say_on_task`'s rewrite, for anyone. In the room the author
+    is an agent when it holds one of the room's agent seats, the question the
+    publication routes ask; its text goes through both halves of the
+    publication rewrite, with the arguments a publication passes (no roster, no
+    topic list). A person's goes through `person_mentions`, as
+    `post_user_message` does."""
+    topic = await TopicRepository(session).get(block.topic_id)
     if topic is None:
         raise NotFoundError("Topic not found")
-    if await TopicMemberService(session).holds_an_agent_seat(topic, author):
-        text = await publication_text(session, topic.project_id, room_id, content)
+    by_agent = await TopicMemberService(session).holds_an_agent_seat(topic, author)
+    if block.task_id is not None:
+        text = await project_refs_text(session, topic.project_id, topic.id, content)
+        return SentText(topic, text, None, by_agent)
+    if by_agent:
+        text = await project_refs_text(session, topic.project_id, topic.id, content)
         roster = await _room_roster(session, topic.project_id, topic)
-        return _expand_mention_names(text, roster, [])
+        return SentText(topic, _expand_mention_names(text, roster, []), roster, True)
     project = await ProjectRepository(session).get(topic.project_id)
     if project is None:
         raise NotFoundError("Project not found")
     agent = await AgentInstanceService(session).for_topic(topic, project)
-    return (await person_mentions(session, topic, content, agent)).content
+    mentions = await person_mentions(session, topic, content, agent)
+    return SentText(topic, mentions.content, mentions.roster, False)
+
+
+async def announce_mentions(
+    session: AsyncSession,
+    topic: Topic,
+    block: Block,
+    author: str,
+    roster: list[dict],
+    *,
+    before: str = "",
+    flag_unresolved: bool = False,
+) -> None:
+    """What a message's mentions do once its text is written: notify each
+    teammate it @s (spec §7: @人 = strong), record them in ``block.refs``, and,
+    for an agent's message, leave a line beside it for each handle that names
+    nobody. `<@all>`/`<@here>` expand to the topic's roster (群播,
+    fusion-design §3).
+
+    Sending and editing both come through here. ``before`` is the text the
+    message had until an edit: whoever it already @-ed was told then, so only
+    what the edit adds is announced."""
+    text = block.content
+    resolved, unresolved = _resolve_mentions(text, roster)
+    told, flagged = _resolve_mentions(before, roster) if before else ([], [])
+    fresh = [h for h in resolved if h not in told]
+    concrete = [h for h in fresh if h not in _SPECIAL_MENTIONS]
+    if any(h in _SPECIAL_MENTIONS for h in fresh):
+        # Expand @all/@here to the topic's members. @here should be the
+        # ACTIVE members, but there's no presence signal yet, so it equals
+        # @all for now (TODO: intersect with presence once it lands).
+        #
+        # A broadcast reaches the room's humans only: every 芝士 in the room
+        # already reads the timeline, so notifying them adds nothing. An
+        # explicit <@handle> is different and is NOT filtered here — that is
+        # how one agent addresses another, which a room hosting several 芝士
+        # depends on.
+        member_service = TopicMemberService(session)
+        members, _ = await member_service.list_for_topic(topic.id)
+        agents = set(await member_service.agent_handles(topic.id))
+        concrete += [m.member_handle for m in members if m.member_handle not in agents]
+    # Nobody needs a notification for their own message.
+    targets = [h for h in dict.fromkeys(concrete) if h != author]
+    if targets:
+        notifs = ProjectNotificationService(session)
+        preview = markdown_preview(text, 200)
+        who = "芝士" if looks_like_agent_handle(author) else author
+        for h in targets:
+            await notifs.create(
+                project_id=topic.project_id,
+                level=NotificationLevel.strong,
+                kind=NotificationType.MENTION,
+                title=f"{who} 在「{topic.title}」@了你",
+                body=preview,
+                target_handle=h,
+                topic_id=topic.id,
+            )
+    refs = [f"user:{h}" for h in resolved] + _topic_refs(text)
+    if refs or before:
+        block.refs = refs
+    if not flag_unresolved:
+        return
+    for bad in unresolved:
+        if bad in flagged:
+            continue
+        # Beside the message it is about, not in the room the message did not
+        # go to — same landing as the message.
+        await BlockRepository(session).add(
+            project_id=block.project_id,
+            topic_id=block.topic_id,
+            task_id=block.task_id,
+            author=author,
+            author_type=AuthorType.participant,
+            content=f"未能通知 <@{bad}>：项目中没有这个成员",
+            kind=BlockKind.event,
+            turn_id=block.turn_id,
+            meta={"in_room": False},
+        )
 
 
 async def cloud_waiting_topics(
