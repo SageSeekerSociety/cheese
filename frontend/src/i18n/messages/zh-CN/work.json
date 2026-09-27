@@ -216,7 +216,8 @@
     "notice": {
       "platform": "平台",
       "changedFiles": "改动的文件",
-      "moreFiles": "另 {n} 个文件"
+      "moreFiles": "另 {n} 个文件",
+      "goConfirm": "去确认"
     },
     "message": {
       "copy": "复制",
