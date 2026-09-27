@@ -69,7 +69,7 @@ SCENARIO_KEYS = {
     "extension",
     "xfail",
 }
-EXTENSION_KEYS = {"why", "tool", "status", "is_error", "resets_silence"}
+EXTENSION_KEYS = {"why", "tool", "status", "is_error"}
 READERS = {"python", "extension"}
 
 

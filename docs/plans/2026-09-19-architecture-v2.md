@@ -949,8 +949,8 @@ Claude Code serves them through its MCP transport, pi registers them as extensio
   那一套在启动时关掉，写在各自的行为声明里。
 - 「每轮结束自动同步」**不合格**：只有 Claude Code 有
   （`harness/claude_code/device_launch.py:303` 的 `exec cheese sync --all` 脚本 + `:767` 的 `sync_on_stop`）。
-- 「太久没说话要提醒」**不合格**：同一件产品功能有两个产生方——
-  平台侧 `chat.py:1533 remind_silent_turns`，机器侧 `harness/pi/platform.ts:624 QUIET_LIMIT`。见 9.4。
+- 「太久没说话要提醒」**不合格**：它只有平台一个产生方，`chat.py:1744 remind_silent_turns`
+  把同一条提醒送进任何骨架正在跑的那一轮，不看骨架。
 
 #### 消费判据：每个洞必须至少有一个上游读者，且所有读者读同一个判定函数（I7）
 
@@ -966,8 +966,8 @@ docstring 逐字说明了为什么（「`cheese ask` is the platform's equivalen
 so the native tool is denied outright rather than left as a trap」）。
 
 而「关掉」这个动作**在接口上今天不存在**：在 Claude Code 上是 `--disallowedTools`（cc 独有的命令行开关），
-在 pi 上没有对应物——pi 一共只注册了五个钩子（`platform.ts` 的 `:186 before_agent_start`、
-`:586 session_start`、`:602 session_shutdown`、`:628 turn_end`、`:640 context`），没有任何 todo / 提醒入口可翻。
+在 pi 上没有对应物——pi 一共只注册了三个钩子（`platform.ts` 的 `:241 before_agent_start`、
+`:641 session_start`、`:657 session_shutdown`），没有任何 todo / 提醒入口可翻。
 **它该长成什么样**：一个骨架**声明**它自带哪些产品概念（`provides_natively`），
 平台在启动时对每一项要么要求一个关闭动作、要么把那一格记成 4.3 的 `暂缺`；
 关闭动作本身是**适配层的实现**，接口只负责断言「已关」。
@@ -1378,13 +1378,13 @@ Cloud 是一条持久的等待事件 + 连接器上来就自动重投，自托�
 
 骨架接口已经建好了（#1032 MERGED），缺的是**上游读它**，以及 4.2 那两条判据（准入 + 消费）。
 
-**四件要统一的事**，进度清单已经是平台工具，另外三件今天都不在骨架接口上：
+**四件要统一的事**，进度清单和静默提醒已经归平台，另外两件今天都不在骨架接口上：
 
 | 要统一的 | 今天住在哪 | 谁有、谁没有 |
 |---|---|---|
 | 进度清单 | 平台工具 `todo_write`（`sandbox/cheese` 的 `PLATFORM_TOOLS`）→ `PUT /topics/{id}/progress` | 三个骨架同一个工具；cc 的 TodoWrite/Task*、codex 的 `update_plan` 在启动时关掉，pi 不自带 |
 | 子 agent 归属 | `room_task/models.py` 的 `subagent_id`（平台侧） | 只有 cc / codex 产生；pi 读到「起完分身立刻 `cheese_bind`」而它没有分身可起。按结论 43，「事件带可归到卡的线程标识」是契约的硬性要求，平台侧不再猜归属 |
-| 静默提醒 | `chat.py:1533`（平台，英文）**加** `pi/platform.ts:624 QUIET_LIMIT = 10`（机器上的 TypeScript，中文） | 两套并行，见 9.4 |
+| 静默提醒 | `chat.py:1744 remind_silent_turns`（平台）经 `notify_running_turn` 送进正在跑的那一轮 | 三个骨架同一条；pi 本身不自带提醒 |
 | 每轮自动同步 | `device_launch.py:303` 的 `cheese sync --all` 脚本 + `:767 sync_on_stop` | 只有 cc；同一条活交给 pi，代码 commit 了但没 push |
 
 **契约上写死了三句**（会话身份在平台而 transcript 留在会话机上、pi 走和 cc 同一条路径、契约测试盖到 TypeScript 侧），
@@ -1655,7 +1655,6 @@ so check there and not in the menu, the contract or the doc**」。
 |---|---|---|
 | **会话住在哪** | `agent_session/models.py` 的表 vs `device/models.py:153 DeviceTopicRow` 的 docstring | 上游按错的那一份写；换机就报错 |
 | 可见性默认值 | 一处读 `default_visibility()`（`device_provider.py:172`）vs 四处绑定时写死 host（`topics.py:1414`、`compute_configs.py:90`、`device_provider.py:740`、`cloud_provider.py:131`），另有两处入册时写死（`warm.py:474`、`machine/services.py:740`） | 沙箱上线那天，走选择器挑机器的人拿到的仍是整机读写 |
-| 静默提醒 | `chat.py:1533` vs `pi/platform.ts:624` | pi 房间一轮两条都收 |
 | 平台在机器上的根 | `.cheese` 和 `.claude`：二元组两遍（`environment_runner.py:84`、`resource_cleanup.py:25`）+ 三个单根常量（`machine_launcher.py:57`、`bootstrap.py:22/23`） | 卸载删不干净 |
 | 通知 | `alert/` vs `notification/` | 一个人被 @ 了而人不在页面上，什么都收不到 |
 | 「下一步在谁手上」 | `room_task/presentation.py`、`agent/platform_notices.py`、`ChatPanel.vue` 三处互不引用 | 看板显示「待处理」而没人被通知到 |
