@@ -110,6 +110,27 @@ def _room_roster(client, topic_id: str, *, actor: str) -> list[dict]:
     return r.json()["data"]["data"]
 
 
+def _seat(client, topic_id: str, handle: str, *, role: str, actor: str) -> None:
+    """Put ``handle`` in the room at ``role`` — invited if new, promoted if not."""
+    seated = any(
+        row["member_handle"] == handle
+        for row in _room_roster(client, topic_id, actor=actor)
+    )
+    if seated:
+        r = client.put(
+            f"/topics/{topic_id}/members/{handle}",
+            json={"role": role},
+            headers=session_auth_headers(actor),
+        )
+    else:
+        r = client.post(
+            f"/topics/{topic_id}/members",
+            json={"handle": handle, "role": role},
+            headers=session_auth_headers(actor),
+        )
+    assert r.status_code == 200, r.text
+
+
 def _add_member(client, project_id: str, handle: str, *, admin: bool = False) -> None:
     """``handle`` joins the project's team; ``admin`` makes them a team admin."""
     join_project_team(client, project_id, handle, admin=admin)
@@ -289,6 +310,58 @@ def test_a_team_member_keeps_the_projects_rooms(client):
     rows = _room_roster(client, root["id"], actor="alice")
     alice = next(row for row in rows if row["member_handle"] == "alice")
     assert alice["role"] == "owner"
+
+
+def test_the_recipient_may_already_be_seated_in_the_room(client):
+    """The natural way a personal project changes hands.
+
+    Invite someone into the project (they are seated `member` in 项目总览 by the
+    ordinary invite path) and then hand the project to them. Succession has to
+    move them UP into the chair the giver held: mirroring the roster as-is would
+    leave them a plain member, the giver still the room's last owner, and the
+    transfer refused with 「你是话题…唯一的 owner，先把话题交给别人」 — advice
+    that is nonsense here, since handing the room over is exactly what is being
+    done. So this asserts the transfer SUCCEEDS, that the recipient ends up the
+    room's owner, and that the giver holds no seat there.
+    """
+    p = _project(client, owner="alice")
+    root = _root_topic(client, p["id"])
+    add_external_member(client, p["id"], "dana", by="alice")
+    _seat(client, root["id"], "dana", role="member", actor="alice")
+
+    r = _set_owner(client, p["id"], "dana", actor="alice")
+
+    assert r.status_code == 200, r.text
+    rows = _room_roster(client, root["id"], actor="dana")
+    dana = next(row for row in rows if row["member_handle"] == "dana")
+    assert dana["role"] == "owner"
+    assert all(row["member_handle"] != "alice" for row in rows)
+    gone = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert gone.status_code in (403, 404), gone.text
+
+
+def test_succession_never_demotes_a_higher_seat(client):
+    """Succession only ever moves a seat UP.
+
+    Here the giver is a plain member of the room and the recipient already owns
+    it, which is the arrangement the handover must leave alone: what changes
+    hands is the chair, not the roster. An implementation that "just sets the
+    recipient to the giver's role" fails this.
+    """
+    p = _project(client, owner="alice")
+    root = _root_topic(client, p["id"])
+    add_external_member(client, p["id"], "dana", by="alice")
+    _seat(client, root["id"], "dana", role="owner", actor="alice")
+    _seat(client, root["id"], "alice", role="member", actor="alice")
+
+    assert _set_owner(client, p["id"], "dana", actor="alice").status_code == 200
+
+    rows = _room_roster(client, root["id"], actor="dana")
+    dana = next(row for row in rows if row["member_handle"] == "dana")
+    assert dana["role"] == "owner"
+    assert all(row["member_handle"] != "alice" for row in rows)
+    gone = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert gone.status_code in (403, 404), gone.text
 
 
 def test_an_unknown_recipient_is_refused_by_name(client):

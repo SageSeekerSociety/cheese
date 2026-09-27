@@ -84,11 +84,36 @@ class TopicRole(enum.StrEnum):
 
     A topic is a group room; its membership governs who can manage the roster
     and who @all/@here reaches.
+
+    The three are RANKED — see :attr:`rank`. Which seat outranks which is a fact
+    about this enum rather than something each caller re-derives: owner outranks
+    admin outranks member, and code that means 「至少这么高」 asks ``rank``.
     """
 
     owner = "owner"  # 话题创建者, 不可被移除到只剩空 owner
     admin = "admin"
     member = "member"
+
+    @property
+    def rank(self) -> int:
+        """How senior this seat is — owner > admin > member.
+
+        A lookup rather than comparisons between the members, because these are
+        ``str``s and their built-in comparison is the *alphabetical* one:
+        ``TopicRole.member >= TopicRole.admin`` is True ("m" > "a"), which is
+        backwards, and nothing about the obvious spelling warns you. Roster
+        succession (「接手人不能比他接的那把椅子低」) asks this instead.
+        """
+        return _ROLE_RANKS[self]
+
+
+# owner (2) > admin (1) > member (0). Written after the class it ranks, because
+# its keys are the members.
+_ROLE_RANKS: dict[TopicRole, int] = {
+    TopicRole.owner: 2,
+    TopicRole.admin: 1,
+    TopicRole.member: 0,
+}
 
 
 class Topic(UuidPk, Timestamps, Base):

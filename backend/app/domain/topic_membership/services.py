@@ -209,6 +209,25 @@ class TopicMemberService:
         if await self._repo.get(topic_id=topic_id, member_handle=handle) is None:
             await self._repo.add(topic_id=topic_id, member_handle=handle, role=role)
 
+    async def _ensure_member_at_least(
+        self, topic_id: uuid.UUID, handle: str, *, role: TopicRole
+    ) -> None:
+        """Seat ``handle`` in this room at ``role`` or higher — never lower.
+
+        Sibling of :meth:`_ensure_member` for succession: same idempotence, plus
+        the raise. Only ever moves a member UP (``TopicRole.rank``), because the
+        caller is handing over a chair: someone already sitting higher than the
+        chair being passed keeps their seat. Roles are not silently rewritten
+        elsewhere (``add`` refuses a duplicate, ``update_role`` asks a manager),
+        so this is deliberately its own method rather than a flag on either.
+        """
+        existing = await self._repo.get(topic_id=topic_id, member_handle=handle)
+        if existing is None:
+            await self._repo.add(topic_id=topic_id, member_handle=handle, role=role)
+            return
+        if existing.role.rank < role.rank:
+            await self._repo.update_role(existing, role=role)
+
     async def list_for_topic(
         self, topic_id: uuid.UUID
     ) -> tuple[list[TopicMembership], int]:
@@ -530,17 +549,23 @@ class TopicMemberService:
 
         先坐后撤，次序就是这一步的全部要点。``revoke_project_seats`` 在「他是这间房
         最后一个 owner」时会拒绝——无主房间在产品里是死路——而转让人在根话题上正是
-        最后一个 owner。先把继任者按**他原来的角色**坐进去，那条例外就不再适用：不是
-        把例外放宽，是让它不再成立。反过来说，不在这里放行、不留 ``force=True``、不
-        静默跳过：继任之后还有哪间房撤不掉，那是 bug，该炸就炸（``revoke_project_seats``
+        最后一个 owner。先把继任者坐进那把椅子，那条例外就不再适用：不是把例外放宽，
+        是让它不再成立。反过来说，不在这里放行、不留 ``force=True``、不静默跳过：
+        继任之后还有哪间房撤不掉，那是另一处坏了，该炸就炸（``revoke_project_seats``
         的 ``ValidationError`` 会把整笔转让一起回滚）。
 
-        角色照抄（owner 还是 owner，member 还是 member）：接手人接手的是同一把椅子，
-        不是被塞进来当个普通成员。他本来就在那间房时 ``_ensure_member`` 是空操作——
-        不动他现有的角色。这一点有个后果值得知道：接手人在根话题上已经是普通成员的
-        话，坐进去不会把他升成 owner，于是转让人仍是最后一个 owner，转让被拒并点名
-        是哪间房。要一个更聪明的结果就得替他改角色，而「按名册原样接手」不是那样的
-        一句话。
+        「坐进那把椅子」是字面意思：继任者在这间房的角色**不低于他接的那个人的**
+        （``TopicRole.rank``）。没有席位就坐上，坐得比那把椅子低就升上去，本来就不低
+        （或更高）就不动他——这一步只往上，从不把人降级。
+
+        为什么升这一下不能省：接手人常常已经坐在这间房里了。把外部成员请进项目、
+        在「项目总览」里给他一个 member 席位，再把项目转给他——这是个人项目交给合作
+        者最自然的路——只按名册原样接手的话，他还是 member，转让人仍是最后一个
+        owner，于是转让被拒，还告诉转让人「先把话题交给别人」：可交出去正是他正在做
+        的事。升降这一步就是让那句自相矛盾的拒绝不再出现。
+
+        值得明说的另一半：接手人本来就比那把椅子高（比如他是 admin、转让人是
+        member）时保持原样，不降级。交出去的是椅子，不是名册。
 
         私聊不碰：同 ``revoke_project_seats``，私聊不是项目发的通行证
         （``TopicRepository.list_for_project`` 本来就不含它）。
@@ -552,7 +577,7 @@ class TopicMemberService:
         if not roles:
             return []
         for topic_id, role in roles.items():
-            await self._ensure_member(topic_id, to_handle, role=role)
+            await self._ensure_member_at_least(topic_id, to_handle, role=role)
         return await self.revoke_project_seats(
             project_id=project_id, member_handle=from_handle
         )
