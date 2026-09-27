@@ -221,11 +221,25 @@ jobs:
           enable-cache: false
       - name: Install session test dependencies
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh redis-tools ripgrep fuse libfuse2
-          redis_key="$(apt-cache show --no-all-versions redis-server redis-tools | sha256sum | cut -d' ' -f1)"
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh redis-tools ripgrep fuse libfuse2t64
+          # redis-server is unpacked, not installed: installed, it would start a
+          # host Redis on the port the job's service container binds. Its .debs
+          # are resolved from package lists this host's jobs own, not from
+          # /var/lib/apt/lists: the host's apt-daily locks that directory on its
+          # own clock and the disk guard empties it, and neither is this step's
+          # business. Non-root, so it cannot take or wait on a system apt lock.
+          apt_state="$HOME/.cache/cheese-ci/apt-state"
+          own_lists=(-o Dir::State::lists="$apt_state/lists" -o Dir::Cache="$apt_state/cache"
+            -o Acquire::GzipIndexes=true -o Acquire::Languages=none)
+          mkdir -p "$apt_state/lists/partial" "$apt_state/cache/archives/partial" tmp/remote-execution/deps
+          exec 9>"$apt_state/.lock"
+          flock 9
+          apt-get "${own_lists[@]}" update -qq
+          redis_key="$(apt-cache "${own_lists[@]}" show --no-all-versions redis-server redis-tools | sha256sum | cut -d' ' -f1)"
           redis_cache="$HOME/.cache/cheese-ci/redis-debs/$redis_key"
-          mkdir -p "$redis_cache" tmp/remote-execution/deps
-          (cd "$redis_cache" && flock .download.lock apt-get download redis-server redis-tools)
+          mkdir -p "$redis_cache"
+          (cd "$redis_cache" && apt-get "${own_lists[@]}" download redis-server redis-tools)
+          flock -u 9
           for package in "$redis_cache"/*.deb; do
             dpkg-deb -x "$package" tmp/remote-execution/deps
           done
