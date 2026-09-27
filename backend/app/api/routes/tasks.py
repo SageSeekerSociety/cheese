@@ -1389,6 +1389,22 @@ async def preview_task_from_pdf(
     if space is None:
         raise NotFoundError("Space not found")
 
+    # 发题的门，与 ``_create_task_entity`` 是同一句、同一处口径
+    # （``may_publish_in_space``：「这个板里的人都能发」）。预览是发题的前半截 ——
+    # `confirm` 那条路逐条落进 `_create_task_entity` 时已经过这道门，只有预览这一
+    # 条漏着：从前只 `require_auth_user`，于是板外的登录用户拿别人的 `spaceId`
+    # （小整数、可枚举）就能让模型为这块板花掉 token，并把 `task_templates` 原样
+    # 读回去（返回体的 `templateUsed`）—— 而同一份模板在 `GET /spaces/{spaceId}`
+    # 上要先 ``_ensure_space_visible`` 才看得到。
+    #
+    # 门放在读 PDF 之前：挡的是「谁可以让这块板干活」，不是「响应里少写几个字段」。
+    # 措辞照抄发题那道门（它自己那句「board manager」与判据的注释在
+    # `space_access.may_publish_in_space` 里已有交代）——两处一句话，不另立说法。
+    if not await may_publish_in_space(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    ):
+        raise ForbiddenError("Only a board manager can publish tasks here")
+
     resolved_category_id = category_id
     if resolved_category_id is None:
         category_repo = SpaceCategoryRepository(session=db)

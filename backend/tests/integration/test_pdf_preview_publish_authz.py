@@ -132,7 +132,9 @@ def fake_llm(api_client: TestClient) -> _FakeLLM:
         api_client.app.dependency_overrides.pop(get_task_pdf_draft_service, None)
 
 
-def _outsider(user_client: UserCreator, api_client: TestClient) -> tuple[CreatedUser, str]:
+def _outsider(
+    user_client: UserCreator, api_client: TestClient
+) -> tuple[CreatedUser, str]:
     """从没进过这块板的人 —— 登录了，别的什么都没有。"""
     user = user_client.create_user()
     return user, _login(user_client, api_client, user)
@@ -154,7 +156,11 @@ def _member_of(
 
 
 def _preview(
-    api_client: TestClient, space_id: int, token: str | None, *, text: str = "赛题说明。"
+    api_client: TestClient,
+    space_id: int,
+    token: str | None,
+    *,
+    text: str = "赛题说明。",
 ):
     return api_client.post(
         "/tasks/publish/from-pdf/preview",
