@@ -105,6 +105,14 @@ class _Asgi:
         self.body = b""
 
     def post(self, path: str, body: dict, *, token: str | None = None) -> None:
+        self._call("POST", path, body, token=token)
+
+    def patch(self, path: str, body: dict, *, token: str | None = None) -> None:
+        self._call("PATCH", path, body, token=token)
+
+    def _call(
+        self, method: str, path: str, body: dict, *, token: str | None = None
+    ) -> None:
         # 每一次请求都从零开始记：上一个请求的收尾提交（``get_db`` 退出码里那一次）
         # 会落在下一个请求的响应之前，留着它就会替这一次请求把断言顶过去 —— 发题
         # 那条路由一行不改也照样绿（实测过：不清空时去掉 tasks 的提交，2 passed）。
@@ -117,7 +125,7 @@ class _Asgi:
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.3"},
             "http_version": "1.1",
-            "method": "POST",
+            "method": method,
             "scheme": "http",
             "path": path,
             "raw_path": path.encode(),
@@ -232,11 +240,9 @@ def test_a_space_is_committed_before_its_201_is_sent(asgi: _Asgi, author) -> Non
     _assert_committed_before_responding(asgi)
 
 
-def test_a_task_is_committed_before_its_response_is_sent(
-    asgi: _Asgi, db_session: AsyncSession, _portal, author
-) -> None:
-    _, token = author
-
+def _publish_a_task(asgi: _Asgi, db_session: AsyncSession, _portal, token: str) -> None:
+    """Create a board, approve it, and publish one task into it; the last
+    request made is the ``POST /tasks``."""
     asgi.post(
         "/spaces",
         _space_body(f"Committed task board ({uuid.uuid4().hex[:8]})"),
@@ -270,7 +276,36 @@ def test_a_task_is_committed_before_its_response_is_sent(
         token=token,
     )
 
+
+def test_a_task_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, db_session: AsyncSession, _portal, author
+) -> None:
+    _, token = author
+
+    _publish_a_task(asgi, db_session, _portal, token)
+
     assert asgi.status == 200, asgi.body
+    _assert_committed_before_responding(asgi)
+
+
+def test_a_task_approval_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, db_session: AsyncSession, _portal, author
+) -> None:
+    """Found behind the space-review fix (#1882), with a delay injected before
+    the teardown commit in ``get_db``::
+
+        PATCH /tasks/<id> {"approved": "APPROVED"}   200
+        GET /tasks?space=<id>                        <- the task is not listed
+    """
+    _, token = author
+    _publish_a_task(asgi, db_session, _portal, token)
+    assert asgi.status == 200, asgi.body
+    task_id = json.loads(asgi.body)["data"]["task"]["id"]
+
+    asgi.patch(f"/tasks/{task_id}", {"approved": "APPROVED"}, token=token)
+
+    assert asgi.status == 200, asgi.body
+    assert json.loads(asgi.body)["data"]["task"]["approved"] == "APPROVED"
     _assert_committed_before_responding(asgi)
 
 
