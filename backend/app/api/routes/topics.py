@@ -1407,9 +1407,10 @@ async def get_topic_overview(
     授权和读文档那一份完全一样：先认出「谁在这儿」，再看他在不在这个房间的
     名册上。只有根话题有总览，别处 404（见 `TopicService.overview_auto`）。
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    topics = TopicService(db)
+    place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    blocks = await TopicService(db).overview_auto(topic_id)
+    blocks = await topics.overview_auto(topic_id)
     return ok({"root_topic_id": str(place.room_id), "blocks": blocks})
 
 
