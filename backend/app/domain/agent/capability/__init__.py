@@ -50,6 +50,20 @@ class Difference(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class Missing:
+    """「暂缺(issue, 到期日)」：骨架自带这一项，钉住的 build 却给不出关掉它的办法。
+
+    它不是一条差异码。差异码说的是平台修不掉的世界状态；这里是平台该补、今天补
+    不上的一个缺口，所以它带着 issue 和到期日（4.3 的第三种值）。骨架这一格的
+    到期日是一个 pin：钉住的版本一离开 ``until_pin``，``matrix()`` 就红，逼人按
+    issue 对着新 build 重核一遍。
+    """
+
+    issue: int
+    until_pin: str
+
+
+@dataclass(frozen=True, slots=True)
 class Declaration:
     """一个骨架的行为声明，表上版本（结论 48）。
 
@@ -62,7 +76,7 @@ class Declaration:
     pinned_version: str
     #: 这个骨架已经查实自带的那些产品概念。
     built_ins: frozenset[BuiltIn]
-    #: 每个概念一格：填一句「怎么关的」（那就是「有」），或者一条差异码。
-    #: 一格都不能漏，漏了 ``matrix.matrix()`` 会红。
-    how_disabled: Mapping[BuiltIn, str | Difference]
+    #: 每个概念一格：填一句「怎么关的」（那就是「有」）、一条差异码，或者一个
+    #: 带 issue 的暂缺。一格都不能漏，漏了 ``matrix.matrix()`` 会红。
+    how_disabled: Mapping[BuiltIn, str | Difference | Missing]
     verified_against: str
