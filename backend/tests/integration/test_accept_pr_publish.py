@@ -11,7 +11,11 @@ import httpx
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def test_unreadable_binding_keeps_cards_visible_and_refuses_accept(client, monkeypatch):
@@ -40,7 +44,12 @@ def test_unreadable_binding_keeps_cards_visible_and_refuses_accept(client, monke
 def _make_project(client) -> str:
     r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # alice is the reviewer of every card here and the one who accepts it. A
+    # card decision requires room membership since 2026-09-26 (`_card_actor`),
+    # so she is a participant of the project.
+    join_project_team(client, pid, "alice")
+    return pid
 
 
 def _make_topic(client, project_id: str) -> str:

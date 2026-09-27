@@ -167,6 +167,9 @@ class Settings(BaseSettings):
     #: may be spoken to without TLS. Only for a local test mail server: on a
     #: deployment it would let anyone make the backend dial its own network.
     integration_allow_private_hosts: bool = False
+    # Where a mail host's real address is looked up when the local resolver
+    # only hands out a proxy's fake-ip placeholder (198.18.0.0/15).
+    integration_doh_url: str = "https://dns.alidns.com/resolve"
     # Dedicated content domain, outside the platform's registrable domain.
     # Empty until its wildcard DNS/TLS and host-preserving gateway are ready.
     sites_domain: str = ""

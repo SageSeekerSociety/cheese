@@ -58,11 +58,14 @@ class TopicOut(BaseModel):
     #
     # `i_participate`: I'm in the topic's roster, OR I created it, OR a card
     # here is routed to me, OR I've been @'d in it.
-    # `awaits_me`: it is waiting on ME right now — a card routed to me is still
-    # pending, an @ at me is unread, or 芝士 is stopped on a question only I can
-    # answer (I started the turn). This is the "永远不折叠" signal, and it
-    # implies `i_participate` (every way of being awaited is also a way of
-    # participating), so the folding rule only ever reads one of the two.
+    # `awaits_me`: it is waiting on ME to decide right now — a card routed to
+    # me is still pending, a decision request to me is unanswered, or 芝士 is
+    # stopped on a question only I can answer (I started the turn). An unread @
+    # is deliberately NOT here: it only makes me a participant — counting it
+    # lit almost every row, and unread already has its own badge. This is the
+    # "永远不折叠" signal, and it implies `i_participate` (every way of being
+    # awaited is also a way of participating), so the folding rule only ever
+    # reads one of the two.
     #
     # Derived per caller, so — like `last_activity_at` and `running` — only the
     # endpoints that ask for them fill them in (list_topics/get_topic);

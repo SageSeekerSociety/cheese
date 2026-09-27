@@ -232,6 +232,41 @@ async def _live_room_cards(
     return {c.topic_id: c for c in cards if c.task_id is None}
 
 
+async def _rooms_with_running_work(
+    db: AsyncSession, chat: ChatService, room_ids: list[uuid.UUID], now: datetime
+) -> set[uuid.UUID]:
+    """名下有一条活正在「运行中」的房间 —— 一次查完。
+
+    房间自己那一轮结束了，它派出去的分身可能还在干：只看 `running_topic_ids()`
+    的话，侧栏的绿点在主 agent 收尾那一刻就灭了，人以为没人在做事。判据和看板
+    同一个函数（`presentation.task_is_running`），所以两边不会说出两种话。
+
+    卡不喂进去：「运行中」排在卡前面判，卡对这个答案没有影响。
+    """
+    tasks = await TaskRepository(db).list_worked_open_for_rooms(room_ids)
+    if not tasks:
+        return set()
+    task_ids = [t.id for t in tasks]
+    beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
+    asked = await BlockRepository(db).tasks_awaiting_an_answer(task_ids)
+    live_rooms = {t.room_id: chat.has_live_screen(t.room_id) for t in tasks}
+    return {
+        t.room_id
+        for t in tasks
+        if presentation.task_is_running(
+            presentation.facts_for_task(
+                t,
+                None,
+                beats.get(t.id),
+                room_screen_live=live_rooms[t.room_id],
+                worker_live=chat.worker_live(t.room_id, t.subagent_id),
+                awaiting_answer=t.id in asked,
+            ),
+            now=now,
+        )
+    }
+
+
 def _topic_out(
     topic: Topic,
     running_ids: set[uuid.UUID],
@@ -242,6 +277,7 @@ def _topic_out(
     managed_ids: set[uuid.UUID] | None = None,
     asked: Mapping[uuid.UUID, str | None] | None = None,
     asks_me: set[uuid.UUID] | None = None,
+    working_ids: set[uuid.UUID] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: the in-memory
     turn-running flag (separate from `status`/归档 — see TopicOut.running: a
@@ -268,7 +304,9 @@ def _topic_out(
     out.i_participate = mine.i_participate or asking_me
     out.awaits_me = mine.awaits_me or asking_me
     data = out.model_dump(mode="json")
-    data["running"] = topic.id in running_ids
+    # 侧栏的绿点：房间自己那一轮在跑，或它名下有一条活在跑。看板那一格
+    # （下面的 facts_for_room）仍只看房间自己——活在看板上有自己的一格。
+    data["running"] = topic.id in running_ids or topic.id in (working_ids or set())
     facts = presentation.facts_for_room(
         topic,
         running_ids,
@@ -286,6 +324,7 @@ async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
@@ -322,6 +361,7 @@ async def list_topics(
     asks_me = _asks_me(asked, _viewer(actor))
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
     now = datetime.now(UTC)
+    working = await _rooms_with_running_work(db, chat, [t.id for t in topics], now)
     items = [
         _topic_out(
             t,
@@ -333,6 +373,7 @@ async def list_topics(
             managed,
             asked,
             asks_me,
+            working,
         )
         for t in topics
     ]
@@ -377,6 +418,7 @@ async def get_topic(
         else set()
     )
     asked = await BlockRepository(db).rooms_awaiting_an_answer([topic.id])
+    working = await _rooms_with_running_work(db, chat, [topic.id], datetime.now(UTC))
     return ok(
         _topic_out(
             topic,
@@ -387,6 +429,7 @@ async def get_topic(
             managed_ids=managed,
             asked=asked,
             asks_me=_asks_me(asked, _viewer(actor)),
+            working_ids=working,
         )
     )
 
@@ -2116,7 +2159,7 @@ async def answer_options(
 ) -> dict:
     """One-click answer to an option question: validates the choice against the
     ask block's own options, records it on the block (meta.answered), and posts
-    the choice as the answerer's message, addressed to the 芝士 that asked."""
+    the choice as the answerer's message, addressed to the teammate that asked."""
     option = (body.get("option") or "").strip()
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
@@ -2158,7 +2201,16 @@ async def answer_options(
     # 回来的，塞一个不在名册上的 handle 进去，落在时间线上就是一个谁也对不上的
     # chip，而这一下点选项什么也不会发生。名册上没有 agent 时就谁也不点，选择照
     # 样记在卡上。
-    seat = await TopicMemberService(db).addressable_agent_handle(blk.topic_id)
+    #
+    # 「问问题的那个席位」就是这张卡的署名：一个房间可以坐好几位 AI 队友，点房间
+    # 的默认席位的话，别的队友问出的题一点选项就换成默认芝士来接，而它手上没有那
+    # 道题的来龙去脉。署名者已不在名册上（被请出房间、或者题是人问的）才退回默认
+    # 席位。
+    members = TopicMemberService(db)
+    if blk.author in await members.agent_handles(blk.topic_id):
+        seat: str | None = blk.author
+    else:
+        seat = await members.addressable_agent_handle(blk.topic_id)
     await get_broker().receive_message(
         chat,
         blk.topic_id,

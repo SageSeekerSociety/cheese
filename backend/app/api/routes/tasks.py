@@ -1248,6 +1248,13 @@ async def create_task(
             attachment_ids=payload.attachment_ids,
         )
 
+    # 写到这里就完了 —— 题目、话题关系行、提交表单、材料都已落库，下面全是读。
+    # 先提交再构造响应：``get_db`` 的提交在 ``yield`` 的退出码里，而那段跑在响应
+    # 发出**之后**（FastAPI 0.137 的 ``request_stack`` 在 ``await response(...)``
+    # 之后才关），不在这里提交，客户端拿到响应时这道题还没落地，紧接着来读它的
+    # 请求就找不到（同 ``spaces.create_space``，合并队列 run 36296605673 实测）。
+    await db.commit()
+
     task_model = _task_to_api_model(task)
     task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[
         0

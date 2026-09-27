@@ -20,6 +20,7 @@ import {
 } from '../api'
 
 import { t } from '@/i18n'
+import { focusRow } from '@/lib/focusRow'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 const props = defineProps<{ projectId: string }>()
@@ -81,7 +82,11 @@ async function load() {
     routines.value = listed.data
     rooms.value = topics.data.filter((tp) => tp.status !== 'archived')
     const focus = typeof route.query.routine === 'string' ? route.query.routine : null
-    if (focus && routines.value.some((r) => r.id === focus)) void toggle(focus, true)
+    if (focus && routines.value.some((r) => r.id === focus)) {
+      loading.value = false
+      void toggle(focus, true)
+      void focusRow(`[data-routine="${CSS.escape(focus)}"]`)
+    }
   } catch (e) {
     if (props.projectId !== projectId) return
     loadError.value = e instanceof Error ? e.message : '未能读取定时与触发规则'
@@ -510,6 +515,10 @@ watch(
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
+}
+.routine-row.row--focus {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
 }
 .routine-row--draft {
   border-color: rgb(var(--v-theme-warning));

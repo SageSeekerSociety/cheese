@@ -4947,7 +4947,11 @@ class ChatService:
             needs_place = not _is_dm(topic)
             acting_agent = await self._acting_handle(session, topic.id, agent)
             doc_root = await blocks.doc_root(place.room_id)
+            # 工作话题的文档还空着时是 `""`，不是 None：提示词据此告诉坐进来的
+            # 队友「建第一版」（`build_system_prompt`）。私聊没有这份文档要维护。
             doc_text = doc_root.content if doc_root else None
+            if needs_place and not (doc_text or "").strip():
+                doc_text = ""
             phases_ms["identity"] = (time.monotonic() - started) * 1000
             memories = await self._recall_agent_memories(
                 memory, session, topic=topic, agent=agent

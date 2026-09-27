@@ -1528,7 +1528,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
               <!-- 正文还在路上时画它的节奏，别把编辑器摆出来：一个空的编辑器会亮出
-                   「芝士会在这里维护文档」那句占位话，而那句话的意思是「这篇文档是
+                   「AI 队友会在这里维护文档」那句占位话，而那句话的意思是「这篇文档是
                    空的」——文档有内容、只是还没到，说的就是假话。编辑器本身不卸载
                    （v-show），卸了它每换一个话题都要重建一次。 -->
               <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
@@ -1762,7 +1762,7 @@ onBeforeUnmount(() => {
    its left edge instead of cutting through a misaligned overlay. PM renders
    an empty doc as <p><br class="ProseMirror-trailingBreak"></p>. */
 .doc-editor :deep(.doc-prose > p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child))::before {
-  content: '芝士会在这里维护文档，你也可以直接编辑';
+  content: 'AI 队友会在这里维护文档，你也可以直接编辑';
   color: rgba(var(--v-theme-on-surface), 0.38);
   pointer-events: none;
   float: left;
