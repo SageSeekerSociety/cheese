@@ -366,6 +366,7 @@ void openPlace()
           @open-card="onOpenCard"
           @review="onReview"
           @mention-click="handleMentionClick"
+          @open-resource="handleOpenResource"
           @update:tab="onPanelTab"
           @locate="onLocate"
         >

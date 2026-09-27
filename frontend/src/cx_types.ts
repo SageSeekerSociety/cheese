@@ -867,6 +867,62 @@ export interface MilestoneFull {
   created_at: string
 }
 
+// ---- 项目总览的自动区 (GET /topics/{root_topic_id}/overview, #1889) ----
+
+// 总览是五块：①「项目是什么」写在文档正文里，②~⑤ 由平台现拼。这一份是 ②~⑤
+// 的结构化形态，给总览房间文档正文下面那一栏 —— 每条带着自己去的地方，人点得动。
+// 注入 AI 队友提示词的那一份 markdown 读的是同一次取数（backend
+// `domain/topic/overview.py`），所以两边不会各说各的。
+//
+// 空块整块不出现（没有「暂无」占位）：`blocks` 里少一块就是那一块现在没内容。
+export interface OverviewTopicItem {
+  kind: 'topic'
+  /** 去处：这个话题的房间。 */
+  topic_id: string
+  title: string
+  /** 最新那张任务卡的负责人，`@名字`。 */
+  owner: string | null
+  /** 它现在在做什么（「还没开活」/「在做」/「已收工」）。 */
+  status: string | null
+  /** 一句话结论，没有就是没写。 */
+  conclusion: string | null
+}
+
+export interface OverviewDecisionItem {
+  kind: 'decision'
+  /** 去处：这条决策卡所在的房间。 */
+  block_id: string | null
+  text: string
+  /** 全文在哪个话题里（点它跳过去）。 */
+  topic_id: string | null
+  topic_title: string | null
+}
+
+export interface OverviewMilestoneItem {
+  kind: 'milestone'
+  /** 去处：日历上的这一条。 */
+  milestone_id: string | null
+  title: string
+  /** `YYYY-MM-DD`，没定就是没有。 */
+  due: string | null
+  /** 原值 `upcoming` / `done` / `missed`，怎么说是界面的事。 */
+  status: string | null
+}
+
+export type OverviewAutoItem = OverviewTopicItem | OverviewDecisionItem | OverviewMilestoneItem
+
+export interface OverviewAutoBlock {
+  /** `active_topics` / `decisions` / `milestones` / `closed_topics`。 */
+  key: string
+  title: string
+  items: OverviewAutoItem[]
+}
+
+export interface OverviewAuto {
+  root_topic_id: string
+  blocks: OverviewAutoBlock[]
+}
+
 // ---- 资源池市场 (design v3: AI 池 + 算力池) ----
 
 // A pool listing in the 市场 catalog / a project's settings selector.

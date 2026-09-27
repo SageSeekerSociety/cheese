@@ -42,6 +42,7 @@ import type {
   MemberSummary,
   MilestoneFull,
   OAuthConnectionInfo,
+  OverviewAuto,
   PrChecks,
   PreviewInfo,
   ProfileTopic,
@@ -1823,6 +1824,14 @@ export async function downloadFile(rawUrl: string, filename: string): Promise<vo
 // GET returns the doc Block, or null when the topic has no doc yet.
 export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
+}
+
+// 项目总览的自动区 (#1889): the overview room's ②~⑤, structured so the doc
+// panel can render them below the body and make each line clickable. Only the
+// project's root topic has one — any other room answers 404 — and the caller
+// must be able to read the room, same as the doc itself.
+export function getOverviewAuto(topicId: string): Promise<OverviewAuto> {
+  return request<OverviewAuto>(`/topics/${encodeURIComponent(topicId)}/overview`)
 }
 
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
