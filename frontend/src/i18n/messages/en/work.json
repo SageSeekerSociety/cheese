@@ -181,6 +181,39 @@
         "seconds": "{s}s",
         "minutes": "{m}m {s}s",
         "hours": "{h}h {m}m"
+      },
+      "session": {
+        "label": "Session details",
+        "connected": "Session connected",
+        "none": "No session running",
+        "expand": "Show details",
+        "collapse": "Hide details",
+        "view": "View",
+        "what": "What to view",
+        "loadFailed": "Could not load the session state",
+        "askFailed": "Could not read it",
+        "task": {
+          "running": "Running",
+          "queued": "Queued",
+          "pending": "Waiting",
+          "completed": "Done",
+          "failed": "Failed",
+          "stopped": "Stopped",
+          "unknown": "Status pending"
+        },
+        "reads": {
+          "initialize": "Session state",
+          "file_suggestions": "Find a file",
+          "read_file": "Read a file",
+          "get_workspace_diff": "Workspace changes",
+          "get_context_usage": "Context usage",
+          "get_usage": "Account usage",
+          "mcp_status": "External tool connections"
+        },
+        "fields": {
+          "query": "File name",
+          "path": "File path"
+        }
       }
     },
     "menu": {

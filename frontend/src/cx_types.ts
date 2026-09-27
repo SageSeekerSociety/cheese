@@ -344,7 +344,6 @@ export type WsServerFrame =
 
 export interface AgentControlState {
   id: string | null
-  agent_handle?: string | null
   connected: boolean
   controls?: string[]
   tasks?: Record<

@@ -432,7 +432,9 @@ def session_dir(session):
 
 
 def controls(binary, root):
-    """Every control the room uses, sent between turns."""
+    """Every control the platform sends, between turns: the room's reads, the
+    runner's interrupt, and the MCP status and reconnect a session's native
+    server is brought up with."""
     session = Session(binary, root, "controls", DRIVER)
     try:
         answer = session.control({"subtype": "initialize"})
@@ -446,28 +448,6 @@ def controls(binary, root):
         target = session.workspace / "target.txt"
         expected = {
             "interrupt": ({"subtype": "interrupt"}, None),
-            "background_tasks": ({"subtype": "background_tasks"}, None),
-            "stop_task": ({"subtype": "stop_task", "task_id": "no-such-task"}, None),
-            "set_model": ({"subtype": "set_model", "model": "opus"}, None),
-            "set_permission_mode": (
-                {"subtype": "set_permission_mode", "mode": "acceptEdits"},
-                lambda body: body.get("mode") == "acceptEdits",
-            ),
-            "set_max_thinking_tokens": (
-                {"subtype": "set_max_thinking_tokens", "max_thinking_tokens": 2048},
-                None,
-            ),
-            "apply_flag_settings": (
-                {
-                    "subtype": "apply_flag_settings",
-                    "settings": {"alwaysThinkingEnabled": False},
-                },
-                None,
-            ),
-            "rename_session": (
-                {"subtype": "rename_session", "title": "Contract"},
-                None,
-            ),
             "file_suggestions": (
                 {"subtype": "file_suggestions", "query": ""},
                 lambda body: {"path": "target.txt"} in body.get("suggestions", []),
@@ -505,44 +485,22 @@ def controls(binary, root):
                 except (KeyError, TypeError):
                     holds = False
             yield (f"control {subtype} succeeds", holds, json.dumps(answer)[:200])
-        answer = session.control(
-            {"subtype": "set_permission_mode", "mode": "bypassPermissions"}
-        )
-        yield (
-            "set_permission_mode can return to bypassPermissions",
-            (answer.get("response") or {}).get("mode") == "bypassPermissions",
-            json.dumps(answer)[:160],
-        )
-        answer = session.control({"subtype": "set_color", "color": "blue"})
-        yield (
-            "set_color is still unsupported (we gave it up; drop this check if it returns)",
-            answer.get("subtype") == "error"
-            and "Unsupported control request subtype" in answer.get("error", ""),
-            json.dumps(answer)[:160],
-        )
-        mark = session.user("after set_model")
-        session.wait(is_("result"), 60, mark)
-        models = [request.get("model") for request in session.requests()]
-        yield (
-            "set_model changes the model the next turn asks for",
-            len(models) >= 2 and models[0] == MODEL and "opus" in (models[-1] or ""),
-            json.dumps(models),
-        )
     finally:
         session.stop()
 
 
 def background(binary, root, kind):
-    """Moving a running foreground tool to the background, as the room's button does."""
+    """A task the model starts in the background: the turn ends while it runs,
+    and its ending is announced and starts a follow-up turn."""
     session = Session(binary, root, f"background-{kind}", DRIVER)
     try:
         if kind == "agent":
-            session.user(
+            mark = session.user(
                 do(
                     "Agent",
                     description="sleeper",
                     subagent_type="general-purpose",
-                    run_in_background=False,
+                    run_in_background=True,
                     prompt=do(
                         "Bash",
                         command="sleep 12; echo SUB_DONE",
@@ -553,63 +511,26 @@ def background(binary, root, kind):
             )
             task_type = "local_agent"
         else:
-            session.user(
+            mark = session.user(
                 do(
                     "Bash",
                     command="sleep 12; echo SLEEP_DONE",
                     description="long sleep",
-                    timeout=120000,
+                    run_in_background=True,
                 )
             )
             task_type = "local_bash"
         _, started = session.wait(
-            is_("system", "task_started", task_type=task_type), 60
+            is_("system", "task_started", task_type=task_type), 60, mark
         )
         if not started:
-            yield (f"a foreground {kind} starts as a task", False, "no task_started")
+            yield (f"a background {kind} starts as a task", False, "no task_started")
             return
-        yield (
-            f"a foreground {kind} starts as a task that is not backgrounded",
-            started.get("is_backgrounded") is False,
-            json.dumps(started)[:200],
-        )
         task, tool = started["task_id"], started["tool_use_id"]
-        time.sleep(2)
-        by_id = kind != "bash-all"
-        if by_id:
-            wrong = session.control(
-                {"subtype": "background_tasks", "tool_use_id": "toolu_wrong"}
-            )
-            yield (
-                "background_tasks for an unknown tool_use_id backgrounds nothing",
-                (wrong.get("response") or {}).get("backgrounded") is False,
-                json.dumps(wrong)[:160],
-            )
-        mark = len(session.events)
-        request = {
-            "subtype": "background_tasks",
-            **({"tool_use_id": tool} if by_id else {}),
-        }
-        answer = session.control(request)
-        yield (
-            f"background_tasks {'by tool_use_id' if by_id else 'without an id'} is accepted",
-            answer.get("subtype") == "success"
-            and (
-                not by_id or (answer.get("response") or {}).get("backgrounded") is True
-            ),
-            json.dumps(answer)[:160],
-        )
-        moved, _ = session.wait(task_patched(task, "is_backgrounded", True), 10, mark)
-        changed, _ = session.wait(is_("system", "background_tasks_changed"), 10, mark)
-        yield (
-            "the task is reported moved: task_updated is_backgrounded and background_tasks_changed",
-            moved is not None and changed is not None,
-            f"task_updated at {moved}, background_tasks_changed at {changed}",
-        )
-        ended, result = session.wait(is_("result"), 10, mark)
+        ended, _ = session.wait(is_("result"), 30, mark)
         finished, _ = session.wait(task_patched(task, "status", "completed"), 30, mark)
         yield (
-            "the turn ends (result) while the backgrounded task is still running",
+            "the turn ends (result) while the background task is still running",
             ended is not None and finished is not None and ended < finished,
             f"result at {ended}, task completed at {finished}",
         )
@@ -782,37 +703,10 @@ def steering(binary, root):
 
 
 def stopping(binary, root):
-    """Stopping a running tool, interrupting a turn, stopping a background task."""
+    """Interrupting a turn, as the runner does when the platform ends one."""
     session = Session(binary, root, "stopping", DRIVER)
     try:
         session.control({"subtype": "initialize"})
-        mark = session.user(
-            do("Bash", command="sleep 30; echo NOT_STOPPED", description="to stop")
-        )
-        _, started = session.wait(is_("system", "task_started"), 60, mark)
-        time.sleep(1)
-        answer = session.control(
-            {"subtype": "stop_task", "task_id": started["task_id"]}
-        )
-        _, result = session.wait(is_("result"), 20, mark)
-        killed = [
-            block
-            for event in session.events[mark:]
-            if event.get("type") == "user"
-            for block in blocks(event)
-            if block.get("type") == "tool_result"
-        ]
-        yield (
-            "stop_task on a foreground tool fails that tool and the turn goes on",
-            answer.get("subtype") == "success"
-            and bool(killed)
-            and killed[-1].get("is_error") is True
-            and bool(result)
-            and result.get("is_error") is False,
-            json.dumps(
-                {"tool_result": killed[-1:], "result": result and result.get("subtype")}
-            )[:240],
-        )
         mark = session.user(
             do(
                 "Bash",
@@ -833,29 +727,6 @@ def stopping(binary, root):
             json.dumps(
                 result and {key: result.get(key) for key in ("subtype", "is_error")}
             ),
-        )
-        mark = session.user(
-            do(
-                "Bash",
-                command="sleep 30; echo NOT_STOPPED",
-                description="background",
-                run_in_background=True,
-            )
-        )
-        _, started = session.wait(is_("system", "task_started"), 60, mark)
-        session.wait(is_("result"), 20, mark)
-        answer = session.control(
-            {"subtype": "stop_task", "task_id": started["task_id"]}
-        )
-        _, notification = session.wait(
-            is_("system", "task_notification", task_id=started["task_id"]), 10, mark
-        )
-        yield (
-            "stop_task on a background task reports it stopped",
-            answer.get("subtype") == "success"
-            and bool(notification)
-            and notification.get("status") == "stopped",
-            json.dumps(notification)[:200],
         )
     finally:
         session.stop()
@@ -1810,8 +1681,8 @@ def remotebackground(binary, root):
     """A Bash the build sends through the shell prefix to the executor.
 
     The build runs that Bash itself — the prefix only carries it to the
-    executor — so it is the build's own task: reported, moved to the
-    background by the room's button on stdin, and announced when it ends.
+    executor — so it is the build's own task: reported, run in the background
+    on the executor while the turn ends, and announced when it ends.
     """
     session = remote(binary, root, "remotebackground", DRIVER)
     try:
@@ -1820,7 +1691,7 @@ def remotebackground(binary, root):
                 "Bash",
                 command="sleep 12; echo REMOTE_SLEPT",
                 description="remote sleep",
-                timeout=120000,
+                run_in_background=True,
             )
         )
         _, started = session.wait(
@@ -1828,39 +1699,22 @@ def remotebackground(binary, root):
         )
         yield (
             "a Bash the prefix sends to the executor is a harness task: task_started local_bash",
-            started is not None and started.get("is_backgrounded") is False,
+            started is not None,
             json.dumps(started)[:200],
         )
         if not started:
             return
-        time.sleep(2)
-        moved_at = len(session.events)
-        answer = session.control(
-            {"subtype": "background_tasks", "tool_use_id": started["tool_use_id"]}
-        )
-        ended, _ = session.wait(is_("result"), 10, moved_at)
+        ended, _ = session.wait(is_("result"), 30, mark)
         running = alive("sleep 12")
-        out = [text_of(r) for r in results_since(session, mark)]
         yield (
-            "stdin background_tasks moves it: backgrounded, the turn ends, the command keeps running on the executor",
-            (answer.get("response") or {}).get("backgrounded") is True
-            and ended is not None
-            and running
-            and len(out) == 1
-            and f"backgrounded by user with ID: {started['task_id']}" in out[0],
-            json.dumps(
-                {
-                    "answer": answer.get("response"),
-                    "result": ended,
-                    "running": running,
-                    "tool_result": out[0][:120] if out else None,
-                }
-            ),
+            "the turn ends while the command keeps running on the executor",
+            ended is not None and running,
+            json.dumps({"result": ended, "running": running}),
         )
         noted, notification = session.wait(
             is_("system", "task_notification", task_id=started["task_id"]),
             30,
-            moved_at,
+            mark,
         )
         follow, _ = session.wait(is_("result"), 30, (noted or 0) + 1)
         output = (
@@ -1890,7 +1744,6 @@ def remotebackground(binary, root):
 SCENARIOS = {
     "controls": controls,
     "background-bash": lambda binary, root: background(binary, root, "bash"),
-    "background-bash-all": lambda binary, root: background(binary, root, "bash-all"),
     "background-agent": lambda binary, root: background(binary, root, "agent"),
     "subagents": subagents,
     "steering": steering,
