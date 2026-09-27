@@ -137,6 +137,32 @@ describe('一张卡按卡渲染', () => {
     await waitFor(() => getByText('这条先别动 routes'))
   })
 
+  it('简报里的点名换成名字，说话人显示名字而不是 handle', async () => {
+    getRoomTask.mockResolvedValue({
+      ...card({ brief: '## 决定（<@caisongyang> 拍板）' }),
+      blocks: [
+        block({ id: 'ai', author: 'cheese-c82aeb40555a', content: '开始改后端' }),
+        block({ id: 'human', author: 'caisongyang', content: '先别动 <@caisongyang> 的测试' }),
+      ],
+    })
+    const { container, getByText } = render(Panel, {
+      props: {
+        roomId: 'room-1',
+        cardId: 'task-1',
+        active: true,
+        memberNames: { caisongyang: '蔡松洋' },
+        agentName: '芝士',
+      },
+      global: { plugins: [vuetify] },
+    })
+    await waitFor(() => getByText('开始改后端'))
+    expect(container.textContent).not.toContain('<@caisongyang>')
+    expect(container.querySelector('.card-markdown h2 .mention')?.textContent).toBe('@蔡松洋')
+    const who = Array.from(container.querySelectorAll('.card-msg__who')).map((n) => n.textContent)
+    expect(who).toEqual(['芝士', '蔡松洋'])
+    expect(container.textContent).not.toContain('cheese-c82aeb40555a')
+  })
+
   it('renders AI deliverables as safe Markdown and keeps human messages literal', async () => {
     getRoomTask.mockResolvedValue({
       ...card({ brief: '**Goal**', conclusion: '[Read the report](https://example.com/report)' }),
