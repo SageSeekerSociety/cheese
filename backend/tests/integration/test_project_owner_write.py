@@ -7,17 +7,30 @@ broke loudly — every reader falls back to someone else — so the project's
 owner-level authority silently collapsed, and nobody noticed until someone went
 looking.
 
-These tests pin the way out and the two rails on it: only someone who manages
-the project (its owner, or a team owner/admin) may move ownership, and it may
-only move to someone on the project's team.
+These tests pin the way out and the rails on it: only someone who manages the
+project (its owner, or a team owner/admin) may move ownership; a project that
+belongs to a SHARED team may only go to a member of that team; and a project
+that is the transferor's own — it sits in their personal team — moves into the
+recipient's personal team instead, so the transferor really is out (2026-09-27,
+caisongyang's decision: 选中谁就立刻换 owner，项目跟着人走).
+
+That last case is why the recipient no longer has to be on the project's team:
+a personal project has no other stakeholder to stay with, so the project moves.
+Handing a SHARED team's project to an outsider is still refused — the project
+would stay in that team, where its former owner keeps reading it and could take
+the owner back.
 """
 
+import asyncio
 import uuid
 
+from app.domain.team.repositories import TeamRepository
 from tests.integration.conftest import (
+    a_team,
     add_external_member,
     join_project_team,
     post_project,
+    registered,
     session_auth_headers,
 )
 
@@ -29,6 +42,53 @@ def _project(client, owner: str | None = None) -> dict:
     r = post_project(client, json=body, headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
     return r.json()["data"]
+
+
+def _register(client, handle: str) -> int:
+    """Make ``handle`` a real account (and no personal team yet — the transfer
+    is what provisions it)."""
+
+    async def _seed() -> int:
+        async with client.test_factory() as session:
+            user_id = await registered(session, handle)
+            await session.commit()
+            return user_id
+
+    return asyncio.run(_seed())
+
+
+def _personal_team_id(client, handle: str) -> int | None:
+    """The id of ``handle``'s personal team, or None when they have none yet."""
+    from app.domain.user.repositories import UserRepository
+
+    async def _read() -> int | None:
+        async with client.test_factory() as session:
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None, handle
+            team = await TeamRepository(session).get_personal_team(user.id)
+            return team.id if team is not None else None
+
+    return asyncio.run(_read())
+
+
+def _shared_team_project(client, *, owner: str = "alice", name: str = "P") -> dict:
+    """A project that belongs to a SHARED team — one with other people in it,
+    which is the case where the project cannot follow its owner."""
+
+    async def _make() -> int:
+        async with client.test_factory() as session:
+            team_id = await a_team(session, owner_handle=owner)
+            await session.commit()
+            return team_id
+
+    team_id = asyncio.run(_make())
+    resp = post_project(
+        client,
+        {"name": name, "owner_handle": owner, "team_id": team_id},
+        headers=session_auth_headers(owner),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]
 
 
 def _add_member(client, project_id: str, handle: str, *, admin: bool = False) -> None:
@@ -57,6 +117,60 @@ def test_the_owner_can_hand_the_project_to_another_member(client):
     assert r.status_code == 200, r.text
     assert r.json()["data"]["owner_handle"] == "bob"
     assert _owner_of(client, p["id"]) == "bob"
+    # A teammate receiving it changes the owner and NOTHING else: the project
+    # is still the team's, byte for byte.
+    assert r.json()["data"]["team_id"] == p["team_id"]
+
+
+def test_a_personal_project_follows_the_person_it_is_given_to(client):
+    """The project is the transferor's own — it sits in their personal team — so
+    handing it to someone outside that team moves it into the recipient's
+    personal team. 项目跟着人走."""
+    p = _project(client, owner="alice")
+    _register(client, "carol")
+    assert _personal_team_id(client, "carol") is None  # provisioned by the move
+
+    r = _set_owner(client, p["id"], "carol", actor="alice")
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["owner_handle"] == "carol"
+    carol_team = _personal_team_id(client, "carol")
+    assert carol_team is not None
+    assert data["team_id"] == carol_team
+    assert data["team_id"] != p["team_id"]
+
+
+def test_the_transferor_is_out_for_good(client):
+    """A transfer that leaves the giver reading the project is a loan, not a
+    transfer: it would still be in their team and they still its team's owner."""
+    p = _project(client, owner="alice")
+    _register(client, "carol")
+    assert _set_owner(client, p["id"], "carol", actor="alice").status_code == 200
+
+    read = client.get(f"/projects/{p['id']}", headers=session_auth_headers("alice"))
+    assert read.status_code in (403, 404), read.text
+    # And the same route that gave it away cannot take it back.
+    take_back = _set_owner(client, p["id"], "alice", actor="alice")
+    assert take_back.status_code == 404, take_back.text
+    assert _owner_of(client, p["id"]) == "carol"
+    # Nor through any other door: the project's records are closed to them too.
+    listed = client.get(
+        f"/topics?project_id={p['id']}", headers=session_auth_headers("alice")
+    )
+    assert listed.status_code in (403, 404), listed.text
+
+
+def test_an_unknown_recipient_is_refused_by_name(client):
+    """A handle nobody answers to is a 422 that says so — not a 500, and not a
+    silent "not a member" about a person who does not exist."""
+    p = _project(client, owner="alice")
+
+    r = _set_owner(client, p["id"], "nobody-at-all", actor="alice")
+
+    assert r.status_code == 422, r.text
+    assert "账号" in r.json()["message"]
+    assert _owner_of(client, p["id"]) == "alice"
 
 
 def test_a_team_admin_can_take_the_project(client):
@@ -97,27 +211,29 @@ def test_an_anonymous_caller_cannot_take_the_project(client):
     assert _owner_of(client, p["id"]) == "alice"
 
 
-def test_ownership_cannot_be_handed_to_someone_off_the_team(client):
-    """An owner from outside the project's team is worse than no owner: they
-    would own a project they cannot open."""
-    p = _project(client, owner="alice")
+def test_a_shared_team_project_cannot_be_handed_to_someone_off_the_team(client):
+    """The project belongs to a team with other people in it, so it stays that
+    team's: an outside owner would hold a project still sitting in the giver's
+    team, where the giver keeps reading it and could take it back."""
+    p = _shared_team_project(client)
+    _register(client, "stranger")
 
     r = _set_owner(client, p["id"], "stranger", actor="alice")
 
-    assert r.status_code == 422
-    assert "成员" in r.json()["message"]
+    assert r.status_code == 422, r.text
+    assert "团队" in r.json()["message"]
     assert _owner_of(client, p["id"]) == "alice"
 
 
-def test_ownership_cannot_go_to_an_external_member(client):
+def test_a_shared_team_project_cannot_go_to_an_external_member(client):
     """An external member sees this one project and nothing else of the team;
     the project is the team's, so its owner is someone from the team."""
-    p = _project(client, owner="alice")
+    p = _shared_team_project(client)
     add_external_member(client, p["id"], "guest", by="alice")
 
     r = _set_owner(client, p["id"], "guest", actor="alice")
 
-    assert r.status_code == 422
+    assert r.status_code == 422, r.text
     assert _owner_of(client, p["id"]) == "alice"
 
 

@@ -1621,9 +1621,26 @@ async def set_project_owner(
     every one of those readers quietly fell back to someone else, collapsing
     every owner-level decision onto them and reporting no error anywhere.
 
-    The new owner must be on the project's team. Not ceremony — someone outside
-    it would own a project they cannot open, which is a worse state than the
-    NULL this route exists to escape.
+    Where the new owner lands, as of 2026-09-27:
+
+    * **On the project's team** — the owner changes and the team does not: the
+      project stays the team's. (Unchanged: this was the only case allowed
+      before.)
+    * **Off it, when the project is the transferor's own** — a project whose
+      team is the transferor's *personal* team is nobody else's; there is no
+      third party to hand it to and no team it has to stay in, so the project
+      MOVES into the recipient's personal team and the transferor is gone from
+      it for good. Without the move it would not be a transfer at all: the
+      project would sit in the transferor's team, where ``may_read_project``
+      still reads it for them and ``MemberService.manages`` — team owner — is
+      still true, so the same route could take the owner right back.
+    * **Off it, otherwise** — refused: the project is some team's, and the only
+      people who may own it are that team's.
+
+    (This docstring used to say an outside owner "would own a project they
+    cannot open". That was false: ``may_read_project`` grants the project's own
+    ``owner_handle`` regardless of team, and ``MemberService.manages``
+    short-circuits on the owner too. The real reason is the paragraph above.)
     """
     handle = str(body.get("owner_handle") or "").strip()
     if not handle:
@@ -1631,16 +1648,22 @@ async def set_project_owner(
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    team_changed_from: int | None = None
     if handle != project.owner_handle:
-        # The project is its team's; its owner is someone from that team, not an
-        # external member who sees this one project and nothing else of it.
         user = await user_by_handle(db, handle)
-        if user is None or not await team_service(db).is_team_member(
-            project.team_id, user.id
-        ):
-            raise ValidationError(
-                f"{handle} 不是这个项目所属团队的成员——请先把 TA 加进团队，再转交"
-            )
+        if user is None:
+            raise ValidationError(f"没有 {handle} 这个账号")
+        if not await team_service(db).is_team_member(project.team_id, user.id):
+            # Not on the project's team. Only a personal project of the
+            # transferor's can leave it — see the docstring.
+            if not await _project_is_personal_to_its_owner(db, project):
+                raise ValidationError(
+                    f"{handle} 不是这个项目所属团队的成员——项目归团队所有，"
+                    "只能转给团队里的人"
+                )
+            team = await team_service(db).ensure_personal_team(user.id)
+            team_changed_from = project.team_id
+            project.team_id = team.id
     previous = project.owner_handle
     project.owner_handle = handle
     await db.flush()
@@ -1653,7 +1676,32 @@ async def set_project_owner(
         handle,
         steward,
     )
+    if team_changed_from is not None:
+        logger.info(
+            "project team moved project=%s from=%s to=%s by=%s",
+            project_id,
+            team_changed_from,
+            project.team_id,
+            steward,
+        )
     return ok(await _project_payload(db, project))
+
+
+async def _project_is_personal_to_its_owner(db: AsyncSession, project: Project) -> bool:
+    """Whether the project sits in its own owner's personal team.
+
+    Then its team is a one-person team that exists only to hold this person's
+    things, so the project has no other stakeholder to stay with — which is
+    what lets a transfer move it. A shared team's project, or an ownerless
+    project (no user behind ``owner_handle``), is not.
+    """
+    if project.owner_handle is None or project.team_id is None:
+        return False
+    team = await team_service(db).get_team(project.team_id)
+    if team is None or team.personal_owner_user_id is None:
+        return False
+    owner = await user_by_handle(db, project.owner_handle)
+    return owner is not None and owner.id == team.personal_owner_user_id
 
 
 # --- Branch protection (issue #718): 平台侧的分支保护规则 ---------------------
