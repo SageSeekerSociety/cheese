@@ -1,6 +1,7 @@
 from collections import Counter
 from dataclasses import dataclass
 
+from app.core.csv_export import csv_row
 from app.domain.space.analytics_view_service import SUCCESS_STATUS
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
@@ -169,20 +170,18 @@ class SpaceAnalyticsService:
         rows = ["taskId,taskName,participantId,status"]
         for task in tasks:
             members = membership_map.get(task.id, [])
-            name = self._csv_escape(task.name)
             if not members:
-                rows.append(f"{task.id},{name},,0")
+                rows.append(csv_row(task.id, task.name, "", 0))
             for member in members:
                 rows.append(
-                    f"{task.id},{name},{member.member_id},{self._participant_label(member.approved)}"
+                    csv_row(
+                        task.id,
+                        task.name,
+                        member.member_id,
+                        self._participant_label(member.approved),
+                    )
                 )
         return "\n".join(rows)
-
-    @staticmethod
-    def _csv_escape(value: str) -> str:
-        if any(c in value for c in (",", '"', "\n", "\r")):
-            return '"' + value.replace('"', '""') + '"'
-        return value
 
     _APPROVED_MAP: dict[str, int] = {
         "APPROVED": 0,
