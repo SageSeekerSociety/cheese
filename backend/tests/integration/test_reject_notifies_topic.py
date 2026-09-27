@@ -5,11 +5,20 @@ import uuid
 
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client) -> str:
-    return post_project(client, json={"name": "P"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    # The rejection in every case here comes from alice, the routed reviewer.
+    # Since 2026-09-26 a card decision requires room membership (`_card_actor`),
+    # so she is a participant of the project these cards live in.
+    join_project_team(client, pid, "alice")
+    return pid
 
 
 def _topic(client, project_id: str) -> str:
