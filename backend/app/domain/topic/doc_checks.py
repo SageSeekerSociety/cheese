@@ -128,17 +128,3 @@ def living_doc_warnings(content: str) -> list[str]:
             )
 
     return warnings
-
-
-def living_doc_warning_text(content: str) -> str | None:
-    """警告拼成一段给人看的文字；干净时是 None。
-
-    写在检查这一侧而不是调用方：同一份正文，人和 `cheese_doc_set` 应该读到
-    同一句话。
-    """
-    warnings = living_doc_warnings(content)
-    if not warnings:
-        return None
-    return "⚠️ 文档已写入，但这几处要当场改（格式问题不拦住写入）：\n" + "\n".join(
-        f"- {w}" for w in warnings
-    )

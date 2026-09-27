@@ -6,11 +6,7 @@
 下次它照写不误，检查就白做了。
 """
 
-from app.domain.topic.doc_checks import (
-    LIVING_DOC_CHAR_LIMIT,
-    living_doc_warning_text,
-    living_doc_warnings,
-)
+from app.domain.topic.doc_checks import LIVING_DOC_CHAR_LIMIT, living_doc_warnings
 
 CLEAN = """# 目标
 
@@ -58,7 +54,9 @@ def test_a_run_of_date_headed_lines_is_a_log_but_two_are_not():
 
 
 def test_appending_a_correction_instead_of_rewriting_is_flagged():
-    warnings = living_doc_warnings("## 当前结论\n\n- 用 offset。\n\n更正：改用 cursor。\n")
+    doc = "## 当前结论\n\n- 用 offset。\n\n更正：改用 cursor。\n"
+
+    warnings = living_doc_warnings(doc)
 
     assert any("更正" in w for w in warnings)
 
@@ -78,24 +76,24 @@ def test_pasted_chat_transcript_is_flagged():
 
 
 def test_a_long_code_block_is_flagged_but_a_short_snippet_is_not():
-    long_block = "## 方案\n\n```sql\n" + "\n".join("select 1;" for _ in range(60)) + "\n```\n"
+    long_block = (
+        "## 方案\n\n```sql\n" + "\n".join("select 1;" for _ in range(60)) + "\n```\n"
+    )
     assert any("代码块" in w for w in living_doc_warnings(long_block))
 
     short = "## 方案\n\n```sql\nselect 1;\nselect 2;\n```\n"
     assert living_doc_warnings(short) == []
 
 
-def test_every_warning_carries_the_fix_and_the_write_still_landed():
+def test_every_warning_carries_the_fix_not_just_the_fault():
     doc = "## 进展日志\n\n" + "\n".join(f"$ run {n}" for n in range(4))
 
-    text = living_doc_warning_text(doc)
+    warnings = living_doc_warnings(doc)
 
-    assert text is not None
-    assert "文档已写入" in text
-    # 每条警告都说清怎么改，不只是「有问题」。
-    for warning in living_doc_warnings(doc):
-        assert any(word in warning for word in ("改掉", "删掉", "只留", "留在", "不要")), warning
-
-
-def test_a_clean_document_has_nothing_to_say():
-    assert living_doc_warning_text(CLEAN) is None
+    assert len(warnings) == 2
+    # 每条警告都说清怎么改，不只是「有问题」——只说有问题的警告，读者除了忽略
+    # 它没有别的选择。
+    for warning in warnings:
+        assert any(
+            word in warning for word in ("改掉", "删掉", "只留", "留在", "不要")
+        ), warning
