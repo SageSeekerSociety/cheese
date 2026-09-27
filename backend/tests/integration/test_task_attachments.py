@@ -8,6 +8,11 @@
 3. **拿得到文件**：出题人 / 板管理员 / **已经领取的人**。领取者拿不到材料就没法
    做题，所以这条比「看得见」窄一格、又比「管得了」宽一格。
 
+第 2 条里的「看得见这道题」是**题目详情那三道闸**（``_ensure_task_readable``：
+未审批 403、不在可见范围 404、超出板上限 404），不是服务里那条更宽的
+``can_view_task`` —— 后者在题目没开可见范围（默认值）时对任何登录用户都放行，
+于是材料清单会比题目本身多泄露一处（文件名、大小、上传者 id，题目 id 还可遍历）。
+
 还有两条是「猜 id」这件事的后果，因为它们不是权限规则而是漏洞的形状：附件 id 是
 可猜的连续整数，所以 (a) 别人的文件挂不到我的题上，(b) 别道题上的文件不能靠换个
 ``taskId`` 就取走。
@@ -219,7 +224,7 @@ def _download(api_client: TestClient, task_id: int, attachment_id: int, token: s
 def test_the_publisher_attaches_a_file_and_the_list_says_who_may_take_it(
     api_client: TestClient, user_client: UserCreator, upload_root: Path
 ):
-    """出题人传上去之后：他拿得到，板上的其他人看得见清单但拿不到文件。"""
+    """出题人传上去之后：他拿得到；题过审之后，板上的其他人看得见清单但拿不到文件。"""
     board = _new_board(user_client, api_client)
     task_id = _create_task(api_client, board, name="带材料的题")
     _, member_token = _member_of(user_client, api_client, board)
@@ -237,6 +242,16 @@ def test_the_publisher_attaches_a_file_and_the_list_says_who_may_take_it(
     assert [a["id"] for a in body["data"]["attachments"]] == [attached["id"]]
     assert body["data"]["canDownload"] is True
 
+    # 这道题还没过审：对普通成员它就是一道还不该存在的草稿（题目详情的 403，
+    # 原文口径是「一道还没过审的题在他们手上是草稿，对其他人来说还不该存在」），
+    # 所以清单也是 403 —— 清单不比题更公开。出题人与板管理员照旧看得见（见
+    # test_a_board_manager_may_download_without_claiming_anything）。
+    status, _ = _list(api_client, task_id, member_token)
+    assert status == 403
+
+    # 过审之后，那个「看得见清单、拿不到文件」的分工才成立 —— 这条路由本来的
+    # 意思就在这里：清单给看得见题的人，能不能下载单独一个标志。
+    _approve_task(api_client, board, task_id)
     status, body = _list(api_client, task_id, member_token)
     assert status == 200
     assert [a["id"] for a in body["data"]["attachments"]] == [attached["id"]]
