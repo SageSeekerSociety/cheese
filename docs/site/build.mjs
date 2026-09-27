@@ -15,6 +15,7 @@ import * as esbuild from 'esbuild'
 import { marked } from 'marked'
 import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS, WHO } from './src/structure.mjs'
 import { esc, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
+import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset } from './src/demos.mjs'
 import { homePage } from './src/home.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -67,6 +68,7 @@ const INFO = ic('info')
 function renderMarkdown(md, { file }) {
   const toc = []
   let auto = 0
+  let collecting = true
   const renderer = new marked.Renderer()
   renderer.heading = function ({ tokens, depth }) {
     let t = this.parser.parseInline(tokens), id = ''
@@ -74,7 +76,7 @@ function renderMarkdown(md, { file }) {
     // The page title is rendered by the template; keep its anchor so /page#page links still land.
     if (depth === 1) return id ? `<span id="${id}" class="page-anchor"></span>` : ''
     id ||= `s${auto++}`
-    if (depth <= 3) toc.push({ level: depth, id, text: plain(t) })
+    if (depth <= 3 && collecting) toc.push({ level: depth, id, text: plain(t) })
     return depth === 2
       ? `<h2 id="${id}">${t}<a class="anchor" href="#${id}" aria-label="本节链接">#</a></h2>`
       : `<h${depth} id="${id}">${t}</h${depth}>`
@@ -92,19 +94,36 @@ function renderMarkdown(md, { file }) {
     return `<figure><div class="shot"><img src="${esc(src)}" alt="${esc(text)}" loading="lazy"></div>${text ? `<figcaption>${esc(text)}</figcaption>` : ''}</figure>`
   }
   renderer.blockquote = function ({ tokens }) { return `<div class="callout note">${INFO}<div>${this.parser.parse(tokens)}</div></div>` }
-  renderer.code = ({ text, lang }) => `<div class="code"><div class="code-bar"><span class="code-tab on">${esc(lang || 'text')}</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><code>${esc(text)}</code></pre></div>`
+  let demos = 0
+  renderer.code = ({ text, lang }) => {
+    // A demo fence is expanded here and nowhere else: the prerendered component
+    // is what a browser gets, and the prose below is what a model gets.
+    if (DEMO_FENCES.includes(lang)) return renderDemo(lang, text, `${file}: demo ${++demos}`)
+    return `<div class="code"><div class="code-bar"><span class="code-tab on">${esc(lang || 'text')}</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><code>${esc(text)}</code></pre></div>`
+  }
   renderer.table = function (token) { return `<div class="table-wrap">${marked.Renderer.prototype.table.call(this, token)}</div>` }
   let html
   try { html = marked.parse(md, { renderer }) } catch (e) { fail(`${file}: ${e.message}`) }
+  const fences = countFences(md)
+  if (fences !== demos) fail(`${file}: ${fences} demo fences in the source but ${demos} expanded — the renderer only sees a fence at the top level`)
   let lede = ''
   // The first paragraph is the lede (after the title's anchor, which stays in place).
   html = html.replace(/^(\s*(?:<span [^>]*class="page-anchor"><\/span>)?\s*)<p>([\s\S]*?)<\/p>/, (_, anchor, p) => { lede = p; return anchor })
+
+  // The same page again, with each demo cut down to a short piece of prose: this
+  // is what the search and 问芝士 indexes are built from, so a model never pays
+  // for the component's markup. The headings are the same, with the same ids.
+  const text = replaceFences(md, (lang, body) => `\n${demoText(lang, body, { where: `${file}: demo` })}\n`)
+  collecting = false
+  auto = 0
+  let textHtml
+  try { textHtml = marked.parse(text, { renderer }) } catch (e) { fail(`${file}: ${e.message}`) }
   // one search chunk per h2 section
-  const chunks = html.split(/(?=<h2 id=")/).map((part) => {
+  const chunks = textHtml.split(/(?=<h2 id=")/).map((part) => {
     const h = /^<h2 id="([\w-]+)">([\s\S]*?)<a class="anchor"/.exec(part)
     return { id: h ? h[1] : '', heading: h ? plain(h[2]) : '', text: plain(part.replace(/^<h2[\s\S]*?<\/h2>/, '')).replace(/\s+/g, ' ').trim() }
   })
-  return { html, lede, toc, chunks }
+  return { html, lede, toc, chunks, text }
 }
 
 const lastChanged = (file) => git('log', '-1', '--date=format-local:%Y-%m-%d', '--format=%ad', '--', rel(file)).trim()
@@ -112,7 +131,7 @@ const lastChanged = (file) => git('log', '-1', '--date=format-local:%Y-%m-%d', '
 // ---------- pages ----------
 const pages = {} // slug (user) or dev/slug → page
 const userNav = {} // section key → [[group, [page]]]
-const KINDS = { 流程: 'flow', 参考: 'reference', 决策: 'decision', 操作: 'howto' }
+const KINDS = { 流程: 'flow', 概念: 'concept', 参考: 'reference', 决策: 'decision', 操作: 'howto' }
 
 for (const [key, label, , groups] of SECTIONS) {
   userNav[key] = groups.map(([group, slugs]) => [group, slugs.map((slug) => {
@@ -122,7 +141,7 @@ for (const [key, label, , groups] of SECTIONS) {
     const { data, body } = frontmatter(raw)
     if (!data.title) fail(`docs/manual/${slug}.md has no title`)
     const r = renderMarkdown(body, { file: rel(file) })
-    const page = { slug, section: key, sectionLabel: label, group, title: data.title, url: `/docs/${slug}`, mdUrl: `/docs/${slug}.md`, src: rel(file), updated: lastChanged(file), source: body, ...r, summary: data.summary || plain(r.lede) }
+    const page = { slug, section: key, sectionLabel: label, group, title: data.title, url: `/docs/${slug}`, mdUrl: `/docs/${slug}.md`, src: rel(file), updated: lastChanged(file), ...r, source: r.text, summary: data.summary || plain(r.lede) }
     pages[slug] = page
     return page
   })])
@@ -141,7 +160,7 @@ for (const f of fs.readdirSync(path.join(MANUAL, 'dev'))) {
   for (const k of ['title', 'kind', 'summary']) if (!data[k]) fail(`${where}: frontmatter needs "${k}"`)
   if (!KINDS[data.kind]) fail(`${where}: kind must be one of ${Object.keys(KINDS).join(' / ')}`)
   const covers = Array.isArray(data.covers) ? data.covers : []
-  if ((data.kind === '流程' || data.kind === '参考') && !covers.length) fail(`${where}: a ${data.kind} page must list the code it covers`)
+  if (data.kind !== '决策' && data.kind !== '操作' && !covers.length) fail(`${where}: a ${data.kind} page must list the code it covers`)
   for (const c of covers) if (!fs.existsSync(path.join(REPO, c))) fail(`${where}: covers ${c}, which does not exist — update the page or the path`)
   devFiles[f.slice(0, -3)] = { data: { ...data, covers }, body, file }
 }
@@ -264,7 +283,12 @@ ${p.constants.map((c) => {
 }
 
 // developer pages, generated from the code they describe
-const gen = (script) => JSON.parse(execFileSync('python3', [path.join(HERE, 'gen', script)], { encoding: 'utf8', maxBuffer: 16 << 20 }))
+const genCache = {}
+const gen = (script) => (genCache[script] ??= JSON.parse(execFileSync('python3', [path.join(HERE, 'gen', script)], { encoding: 'utf8', maxBuffer: 16 << 20 })))
+// The blocks of the system prompt, in the order build_system_prompt adds them.
+// The context page's timeline is bound to this: the numbers it shows are the
+// character counts of the text that function really produced.
+registerDataset('prompt-blocks', gen('prompt.py').blocks.map((b) => ({ title: b.title, chars: b.chars })))
 const mdCell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n+/g, ' ')
 function referencePages() {
   const out = {}
@@ -374,10 +398,10 @@ ${Object.keys(byPath).sort().map((d) => `| \`${d}\` | ${byPath[d].map(([s, p]) =
     },
     'by-kind': {
       title: '按类型查文档', kind: '参考', covers: [],
-      summary: '开发文档分四类：流程讲一件事怎么走完，参考供查阅，决策讲为什么这样，操作是照着做的步骤。',
+      summary: '开发文档分五类：流程讲一件事怎么走完，概念讲背后的道理，参考供查阅，决策讲为什么这样，操作是照着做的步骤。',
       body: `# 按类型查文档 {#by-kind}
 
-开发文档分四类：流程讲一件事怎么走完，参考供查阅，决策讲为什么这样，操作是照着做的步骤。每页开头必须声明类型和一句话摘要，流程和参考还要列出涉及的代码；缺了构建不通过。
+开发文档分五类：流程讲一件事怎么走完，概念讲背后的道理，参考供查阅，决策讲为什么这样，操作是照着做的步骤。每页开头必须声明类型和一句话摘要，流程、概念和参考还要列出涉及的代码；缺了构建不通过。
 
 ${Object.keys(KINDS).filter((k) => byKind[k]).map((k) => `## ${k} {#${KINDS[k]}}\n\n${byKind[k].map(([s, p]) => `- [${p.title}](/dev/${s})：${p.summary}`).join('\n')}`).join('\n\n')}
 `,
@@ -397,7 +421,7 @@ const devNav = DEV.map(([group, slugs]) => [group, slugs.map((slug) => {
   const page = {
     slug, section: 'dev', sectionLabel: '开发文档', group, title: d.title, url: `/docs/dev/${slug}`, mdUrl: `/docs/dev/${slug}.md`,
     src: d.file ? rel(d.file) : '', updated: d.file ? lastChanged(d.file) : '', generated: !!d.generated,
-    kind: d.kind, kindKey: KINDS[d.kind], covers: d.covers, summary: d.summary, source: d.body, ...r,
+    kind: d.kind, kindKey: KINDS[d.kind], covers: d.covers, summary: d.summary, source: r.text, ...r,
   }
   pages[`dev/${slug}`] = page
   return page

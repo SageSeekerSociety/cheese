@@ -20,7 +20,7 @@ export function shell(ctx, { title, description, section, bodyClass = '', main, 
 <link rel="alternate" type="application/rss+xml" title="知是更新日志" href="/docs/changelog.xml">
 <link rel="stylesheet" href="${assets.css}">
 <style>@font-face{font-family:"Display Kai";src:url(${assets.display}) format("woff2");font-display:swap}</style>
-<script>try{if(localStorage.getItem('docs-dark')==='1'||(localStorage.getItem('docs-dark')===null&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark')}catch(e){}</script>
+<script>document.documentElement.classList.add('js');try{if(localStorage.getItem('docs-dark')==='1'||(localStorage.getItem('docs-dark')===null&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark')}catch(e){}</script>
 </head>
 <body class="${bodyClass}" data-sec="${esc(section)}">
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>${ctx.grads}</defs></svg>
