@@ -406,7 +406,7 @@ class TestCsvRow:
         "payload",
         [
             "=cmd|'/C calc'!A1",
-            "=HYPERLINK(\"http://evil.example\",\"click\")",
+            '=HYPERLINK("http://evil.example","click")',
             "+1+1",
             "-1+1",
             "@SUM(1+1)",
