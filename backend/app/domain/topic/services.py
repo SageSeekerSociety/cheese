@@ -475,8 +475,9 @@ class TopicService:
     ) -> dict[uuid.UUID, TopicRelevance]:
         """{topic_id: 与我的相关性} for a batch of topics (C2).
 
-        THREE queries, whatever the batch size — one per way of being involved
-        that lives in another table (roster, accept cards, @-notifications).
+        FOUR queries, whatever the batch size — one per way of being involved
+        that lives in another table (roster, accept cards, @-notifications,
+        decision requests).
         Creation is the fourth way and costs nothing: ``created_by`` is already
         on the rows the caller handed in. The list endpoint returns a whole
         project at once, so a per-topic probe here would be a hundred round
@@ -495,14 +496,21 @@ class TopicService:
         roster = await self._members.topic_ids_for_member(topic_ids, viewer_handle)
         cards = await self._cards.reviewer_topic_ids(topic_ids, viewer_handle)
         mentions = await self._notifications.mention_topic_ids(topic_ids, viewer_handle)
+        decisions = await self._notifications.decision_topic_ids(
+            topic_ids, viewer_handle
+        )
         relevance: dict[uuid.UUID, TopicRelevance] = {}
         for topic in topics:
-            awaits = cards.get(topic.id, False) or mentions.get(topic.id, False)
+            # 「在等我」只数要我**动手拍板**的：一张点名我还没结的验收卡，或一条
+            # 还没答的决策请求。未读的 @ 不算——芝士汇报、递卡都会 @人，把它算进
+            # 来侧栏几乎每一行都亮橙灯，灯就没有意义了；未读有右边的数字管。
+            awaits = cards.get(topic.id, False) or decisions.get(topic.id, False)
             participates = (
                 topic.id in roster
                 or topic.created_by == viewer_handle
                 or topic.id in cards
                 or topic.id in mentions
+                or topic.id in decisions
             )
             relevance[topic.id] = TopicRelevance(
                 # Being awaited is a way of being involved, so it implies
