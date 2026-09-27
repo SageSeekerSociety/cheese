@@ -159,8 +159,16 @@ start_pg() {
     log "starting postgres on 127.0.0.1:$PG_PORT"
     # -k keeps the unix socket inside PGDATA so concurrent clusters never collide
     # in /tmp, and so --purge really removes everything.
+    #
+    # fsync, full_page_writes and synchronous_commit are off because this cluster
+    # holds throwaway test data, so crash safety buys nothing, and with them on the
+    # suite fails here: it creates thousands of databases, DROP DATABASE waits for
+    # a checkpoint, and a checkpoint that must fsync all of them took 200-300s on
+    # a Mac. That passes pytest-timeout's 300s, which then ends the xdist worker
+    # mid-teardown ("worker crashed" on migration tests that drop their own DB).
     "$PG_BIN/pg_ctl" -D "$PGDATA" -l "$PG_LOG" -w -t 60 \
-        -o "-p $PG_PORT -h 127.0.0.1 -k $PGDATA" start >/dev/null 2>&1 \
+        -o "-p $PG_PORT -h 127.0.0.1 -k $PGDATA -c fsync=off -c full_page_writes=off -c synchronous_commit=off" \
+        start >/dev/null 2>&1 \
         || { log "--- postgres log ---"; tail -30 "$PG_LOG" >&2; die "postgres failed to start"; }
     "$PG_BIN/pg_isready" -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -t 30 >/dev/null 2>&1 \
         || die "postgres started but never became ready"
