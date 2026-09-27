@@ -73,7 +73,7 @@
             <v-btn
               color="primary"
               rounded="pill"
-              :to="{ name: 'TasksSubmit', params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
+              :to="{ name: routeNames.submit, params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
               class="px-8"
             >
               前往提交
@@ -92,10 +92,13 @@ import type { Task } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 
+import { useTaskRouteNames } from '@/lib/shellRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import AccountService from '@/services/account'
 
 const TaskSubmissionHistory = defineAsyncComponent(() => import('@/components/tasks/TaskSubmissionHistory.vue'))
+
+const routeNames = useTaskRouteNames()
 
 const props = defineProps<{
   taskData: Task | null

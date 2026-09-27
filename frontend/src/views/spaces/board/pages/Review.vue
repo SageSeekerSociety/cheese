@@ -88,7 +88,7 @@ async function doReject() {
 const nowHandling = computed(() => pending.value.find((t) => t.id === rejectFor.value))
 
 function detailTo(id: string) {
-  return { name: 'SpacesDetailTasksDetail', params: { spaceId: spaceId.value, taskId: id } }
+  return { name: 'SpaceBoardTaskDetail', params: { spaceId: spaceId.value, taskId: id } }
 }
 </script>
 
