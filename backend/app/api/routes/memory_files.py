@@ -27,6 +27,7 @@ from app.domain.memory.files import (
     INDEX_NAME,
     MemoryFileError,
     MemoryFileScope,
+    check_path,
     fit_index,
     parse_memory_file,
 )
@@ -81,6 +82,20 @@ async def _readable(
     return actor.handle
 
 
+def _checked_path(raw: str) -> str:
+    """路径先在这一层过一关，把它变成一个说得清的拒绝。
+
+    `MemoryFileStore` 也查一次（它是最后一道），但那一次抛的是 `MemoryFileError`
+    ——一个 `ValueError`，没有对应的处理器，于是「路径写成了 `../x.md`」会读成服务器
+    内部错误。写路径的是 agent 自己，它会照着那句拒绝改。
+    """
+    path = str(raw or "").strip()
+    try:
+        return check_path(path)
+    except MemoryFileError as exc:
+        raise ValidationError(str(exc)) from exc
+
+
 def _owner_of(scope: MemoryFileScope, owner: str | None) -> str | None:
     """private 必须点名是谁的；team 没有 owner（传了也不看）。"""
     if scope is MemoryFileScope.team:
@@ -127,7 +142,7 @@ async def write_memory_file(
     which = _scope_of(str(body.get("scope") or "team"))
     owner = _owner_of(which, (body.get("owner_handle") or "").strip() or None)
     actor = await _readable(db, resolver, project_id, owner)
-    path = str(body.get("path") or "").strip()
+    path = _checked_path(body.get("path"))
     content = body.get("content")
     if not isinstance(content, str):
         raise ValidationError("content 必须是字符串")
@@ -195,9 +210,10 @@ async def delete_memory_file(
     which = _scope_of(str(body.get("scope") or "team"))
     owner = _owner_of(which, (body.get("owner_handle") or "").strip() or None)
     actor = await _readable(db, resolver, project_id, owner)
-    path = str(body.get("path") or "").strip()
-    if not path:
+    raw_path = str(body.get("path") or "").strip()
+    if not raw_path:
         raise ValidationError("path 不能为空")
+    path = _checked_path(raw_path)
     if path == INDEX_NAME:
         raise ValidationError(
             "索引本身不删——它不是一个作用域里的第一条记忆；要清空就把它写成空文件"

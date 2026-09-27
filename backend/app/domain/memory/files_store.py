@@ -45,7 +45,10 @@ class MemoryFileConflict(ConflictError):
         else:
             detail = f"读到的是第 {expected} 版，现在是第 {current} 版"
         super().__init__(
-            f"{path} 的这一版已经改不动了：{detail}。重读一次，把改动并进去，再写。"
+            f"{path} 的这一版已经改不动了：{detail}。重读一次，把改动并进去，再写。",
+            # 两个版本号也进 `data`：那句话是给人读的，而重读这件事要动手，动手
+            # 的人（界面上的那次重试）需要知道自己在重读第几版。
+            data={"path": path, "expected": expected, "current": current},
         )
 
 
