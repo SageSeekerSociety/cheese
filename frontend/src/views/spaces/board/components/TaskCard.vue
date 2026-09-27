@@ -10,10 +10,10 @@ import { alreadyClaimed } from '../store'
 const props = defineProps<{ task: BoardTask; showPublisher?: boolean }>()
 
 const route = useRoute()
-/** 详情暂时指向真平台已有那一页（`/spaces/:id/tasks/:taskId`）—— 见 `board/routes.ts`
- *  顶部那段说明。命名跳转要连空间 id 一起给。 */
+/** 详情在新外壳自己那棵树上（`/spaces/:id/board/tasks/:taskId`）。命名跳转要连
+ *  空间 id 一起给。 */
 const detailTo = computed(() => ({
-  name: 'SpacesDetailTasksDetail',
+  name: 'SpaceBoardTaskDetail',
   params: { spaceId: route.params.spaceId as string, taskId: props.task.id },
 }))
 

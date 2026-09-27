@@ -43,7 +43,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: scripts/remote_execution/package-lock.json
-      - run: npm ci --prefix scripts/remote_execution --no-audit --no-fund
+      - run: .github/scripts/ensure-claude-cli.sh
       # The script and what it imports are standard library only, so this job
       # skips `uv sync` and its several minutes.
       - name: Let a session have its own namespace, and install zsh
@@ -109,7 +109,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: scripts/remote_execution/package-lock.json
-      - run: npm ci --prefix scripts/remote_execution --no-audit --no-fund
+      - run: .github/scripts/ensure-claude-cli.sh
       - name: Let a session have its own namespace
         run: .github/scripts/allow-user-namespaces.sh
       - name: Install FUSE for the forwarded project view, and zsh

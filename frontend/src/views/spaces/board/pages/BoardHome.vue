@@ -140,7 +140,7 @@ function noticeWhen(ms: number): string {
           color="primary"
           variant="flat"
           prepend-icon="mdi-plus"
-          :to="{ name: 'SpacesDetailPublishTask', params: { spaceId } }"
+          :to="{ name: 'SpaceBoardTaskPublish', params: { spaceId } }"
         >
           出题目
         </v-btn>

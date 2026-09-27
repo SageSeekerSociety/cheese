@@ -44,8 +44,10 @@ import { toast } from 'vuetify-sonner'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 import { formatCount } from './helpers'
 
+import { useAnalyticsRouteNames } from '@/lib/shellRouteNames'
 import { SpacesApi } from '@/network/api/spaces'
 
+const analyticsNames = useAnalyticsRouteNames()
 const { pushToSection, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
@@ -77,19 +79,19 @@ const alertCards = computed(() => [
     label: '待审核题目',
     value: formatCount(alerts.value?.pendingTaskApprovalCount),
     hint: '跳转后自动切到题目页并筛选待审核题目',
-    action: () => pushToSection('SpacesDetailAnalyticsTasks', { taskApproved: 'NONE' }),
+    action: () => pushToSection(analyticsNames.tasks, { taskApproved: 'NONE' }),
   },
   {
     label: '待审核报名',
     value: formatCount(alerts.value?.pendingParticipantApprovalCount),
     hint: '跳转后自动筛选待审核报名',
-    action: () => pushToSection('SpacesDetailAnalyticsTasks', { hasPendingApproval: true }),
+    action: () => pushToSection(analyticsNames.tasks, { hasPendingApproval: true }),
   },
   {
     label: '待评审提交',
     value: formatCount(alerts.value?.pendingSubmissionReviewCount),
     hint: '跳转后自动筛选待评审提交',
-    action: () => pushToSection('SpacesDetailAnalyticsTasks', { hasPendingReview: true }),
+    action: () => pushToSection(analyticsNames.tasks, { hasPendingReview: true }),
   },
   {
     label: '停滞题目',

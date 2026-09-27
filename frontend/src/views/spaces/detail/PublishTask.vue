@@ -128,6 +128,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { usePublishDoneRoute } from '@/lib/shellRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
@@ -138,6 +139,10 @@ const TaskAttachmentPicker = defineAsyncComponent(() => import('@/components/tas
 const router = useRouter()
 const route = useRoute()
 const { t } = useI18n()
+
+/** 发完题落到哪一页由挂着这一页的那棵树说（老树「我发布的」/ 新外壳「我的」），
+ *  见 `shellRouteNames.ts` 顶部。 */
+const publishDoneRoute = usePublishDoneRoute()
 
 const spaceStore = useSpaceStore()
 const { currentSpaceId, templates, classificationTopics, categories, domainGroups } = storeToRefs(spaceStore)
@@ -248,7 +253,7 @@ const submitTask = async (taskData: TaskFormSubmitData) => {
         toast.success(t('spaces.detail.publishTask.createSuccess'))
       }
 
-      router.replace({ name: 'SpacesDetailMyPublishing', params: { spaceId } })
+      router.replace({ name: publishDoneRoute, params: { spaceId } })
       return approved
     },
     {
@@ -331,7 +336,7 @@ const confirmPublishFromPdf = async (taskData: TaskFormSubmitData, spaceId: numb
     toast.success(`已发布 ${data.count || data.tasks.length} 个题目`)
     pdfDrafts.value = []
     pdfTokenUsed.value = null
-    router.replace({ name: 'SpacesDetailMyPublishing', params: { spaceId } })
+    router.replace({ name: publishDoneRoute, params: { spaceId } })
     return true
   } catch (error) {
     console.error('PDF 批量发布失败:', error)

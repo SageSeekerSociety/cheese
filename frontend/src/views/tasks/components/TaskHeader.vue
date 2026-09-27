@@ -60,7 +60,7 @@
                   variant="flat"
                   rounded="lg"
                   :to="{
-                    name: 'TasksSubmit',
+                    name: routeNames.submit,
                     params: { spaceId: taskData.space?.id, taskId: taskData.id },
                     query: $route.query,
                   }"
@@ -85,6 +85,10 @@ import { computed } from 'vue'
 import dayjs from 'dayjs'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import { useTaskRouteNames } from '@/lib/shellRouteNames'
+
+const routeNames = useTaskRouteNames()
 
 const props = defineProps<{
   taskData: Task

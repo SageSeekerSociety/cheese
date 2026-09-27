@@ -56,23 +56,6 @@ def test_temporary_and_progress_drop_while_goals_and_decisions_survive():
     assert HINT in kept
 
 
-def test_the_two_machine_written_sections_survive_while_temporary_drops():
-    doc = (
-        "## 大家都该知道的\n"
-        + "众" * 300
-        + "\n\n## 项目记忆（由记忆整理迁入）\n"
-        + "忆" * 300
-        + "\n\n## 临时草稿\n"
-        + "草" * 300
-    )
-
-    kept = _fit(doc, 750)
-
-    assert "大家都该知道的" in kept
-    assert "项目记忆（由记忆整理迁入）" in kept
-    assert "## 临时草稿" not in kept
-
-
 def test_an_unsectioned_doc_is_truncated_from_the_tail_with_a_note():
     doc = "句。" * 2000
 

@@ -17,7 +17,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import { previewDocumentPdf, previewFileBytes } from '../api'
 import { fileIcon, NEEDS_CONVERSION, suffixOf } from '../lib/fileKind'
 
-type PdfLib = typeof import('pdfjs-dist')
+type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
 const props = defineProps<{
   topicId: string | null
@@ -50,8 +50,8 @@ function pdfBytes(topicId: string, path: string): Promise<ArrayBuffer> {
 async function library(): Promise<PdfLib> {
   if (lib) return lib
   const [pdfjs, workerUrl] = await Promise.all([
-    import('pdfjs-dist'),
-    import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+    import('pdfjs-dist/legacy/build/pdf.mjs'),
+    import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
   ])
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl.default
   lib = pdfjs

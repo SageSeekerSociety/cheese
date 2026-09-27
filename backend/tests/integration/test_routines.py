@@ -9,6 +9,7 @@ from sqlalchemy import select, update
 from app.domain.agent.models import AgentTurn
 from app.domain.delivery.models import Delivery
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.routine import service as routine_service
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import REPORT_GRACE, sweep
 from tests.integration.conftest import post_project, session_auth_headers
@@ -41,10 +42,12 @@ def _room(client, project_id: str, title: str = "周报") -> str:
     return r.json()["data"]["id"]
 
 
-def _sweep(client, runner=None):
+def _sweep(client, runner=None, busy=lambda _topic: False):
     runner = runner or Runner()
     result = client.portal.call(
-        lambda: sweep(client.test_request_factory, chat=object(), runner=runner)
+        lambda: sweep(
+            client.test_request_factory, chat=object(), runner=runner, busy=busy
+        )
     )
     return result, runner
 
@@ -205,6 +208,96 @@ def test_a_turn_that_ends_without_a_report_is_a_failure(client):
     run = _runs(client, routine["id"])[0]
     assert run["status"] == "failed"
     assert run["error"], "a failed run gave no reason"
+
+
+def _run_folded_into_live_work(client, room, routine_id):
+    """A run delivered while the teammate is mid-turn: its own turn row is
+    delivered and stopped within milliseconds, long before the work ends."""
+    _make_due(client, routine_id)
+    _sweep(client)
+    run = _runs(client, routine_id)[0]
+
+    async def folded(session):
+        run_row = await session.get(RoutineRun, uuid.UUID(run["id"]))
+        delivery = await session.scalar(
+            select(Delivery).where(Delivery.event_id == run_row.delivery_event_id)
+        )
+        stopped = datetime.now(UTC) - REPORT_GRACE - timedelta(minutes=1)
+        attempt = delivery.attempt_id or uuid.uuid4()
+        delivery.attempt_id = attempt
+        delivery.state = "uncertain"
+        session.add(
+            AgentTurn(
+                id=attempt,
+                topic_id=uuid.UUID(room),
+                continuation_id=attempt,
+                author="system",
+                content="",
+                started_at=stopped,
+                delivered_at=stopped,
+                stopped_at=stopped + timedelta(milliseconds=12),
+            )
+        )
+
+    _db(client, folded)
+    return run
+
+
+def test_a_run_is_not_failed_while_the_room_is_still_working_on_it(client):
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    run = _run_folded_into_live_work(client, room, routine["id"])
+
+    _sweep(client, busy=lambda topic: str(topic) == room)
+    assert _runs(client, routine["id"])[0]["status"] == "running"
+
+    # Just went quiet: the grace starts now, not at the turn row's stop.
+    _sweep(client)
+    assert _runs(client, routine["id"])[0]["status"] == "running"
+
+    done = client.post(
+        f"/routine-runs/{run['id']}/report",
+        json={"status": "succeeded", "summary": "摘要写好了", "outputs": ["a.md"]},
+    )
+    assert done.status_code == 200, done.text
+    assert _runs(client, routine["id"])[0]["status"] == "succeeded"
+
+
+def test_a_quiet_room_past_the_grace_fails_the_run_and_a_late_report_still_lands(
+    client,
+):
+    project = _project(client)
+    room = _room(client, project)
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    run = _run_folded_into_live_work(client, room, routine["id"])
+
+    _sweep(client, busy=lambda topic: True)
+    routine_service._last_busy[uuid.UUID(run["id"])] = (
+        datetime.now(UTC) - REPORT_GRACE - timedelta(seconds=1)
+    )
+    _sweep(client)
+    failed = _runs(client, routine["id"])[0]
+    assert failed["status"] == "failed"
+    assert failed["error"] == routine_service.NO_REPORT
+
+    late = client.post(
+        f"/routine-runs/{run['id']}/report",
+        json={"status": "succeeded", "summary": "晚了一点", "outputs": ["b.md"]},
+    )
+    assert late.status_code == 200, late.text
+    _sweep(client)
+    assert _runs(client, routine["id"])[0]["status"] == "succeeded"
+    inbox = client.get(f"/projects/{project}/alerts", headers=PERSON).json()["data"][
+        "data"
+    ]
+    said = [n["body"] for n in inbox if "每周进展" in n["title"]]
+    assert any("b.md" in body for body in said), said
+
+    again = client.post(
+        f"/routine-runs/{run['id']}/report",
+        json={"status": "failed", "summary": "重复"},
+    )
+    assert again.status_code >= 400, "a settled run took a second report"
 
 
 def test_paused_rules_do_not_fire_and_resume_does_not_replay_the_missed_moment(client):

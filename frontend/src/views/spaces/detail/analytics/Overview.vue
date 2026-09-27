@@ -102,8 +102,10 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatPercent, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import { useAnalyticsRouteNames } from '@/lib/shellRouteNames'
 import { SpacesApi } from '@/network/api/spaces'
 
+const analyticsNames = useAnalyticsRouteNames()
 const { filters, pushToSection, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
@@ -240,19 +242,19 @@ const pulseItems = computed(() => [
     label: '待审核题目',
     value: formatCount(alerts.value?.pendingTaskApprovalCount),
     hint: '跳转到题目页',
-    action: () => pushToSection('SpacesDetailAnalyticsTasks', { taskApproved: 'NONE' }),
+    action: () => pushToSection(analyticsNames.tasks, { taskApproved: 'NONE' }),
   },
   {
     label: '待审核报名',
     value: formatCount(alerts.value?.pendingParticipantApprovalCount),
     hint: '带入待审核筛选',
-    action: () => pushToSection('SpacesDetailAnalyticsTasks', { hasPendingApproval: true }),
+    action: () => pushToSection(analyticsNames.tasks, { hasPendingApproval: true }),
   },
   {
     label: '待评审提交',
     value: formatCount(alerts.value?.pendingSubmissionReviewCount),
     hint: '带入待评审筛选',
-    action: () => pushToSection('SpacesDetailAnalyticsTasks', { hasPendingReview: true }),
+    action: () => pushToSection(analyticsNames.tasks, { hasPendingReview: true }),
   },
   {
     label: '停滞题目',
