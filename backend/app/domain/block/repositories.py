@@ -208,6 +208,29 @@ class BlockRepository:
         )
         return await self._session.scalar(stmt) is not None
 
+    async def last_said_in_turn(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> str | None:
+        """The words the agent last kept in 现场 during this turn, if any.
+
+        Read from the rows, not from the turn's in-memory bookkeeping: a turn
+        closed by a backend that took it over mid-way (a deploy's handover)
+        has none, and the room is what actually knows what was said."""
+        stmt = (
+            select(Block.content, Block.meta)
+            .where(
+                Block.topic_id == topic_id,
+                Block.turn_id == turn_id,
+                Block.kind == BlockKind.event,
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(50)
+        )
+        for content, meta in (await self._session.execute(stmt)).all():
+            if isinstance(meta, dict) and meta.get("progress"):
+                return content
+        return None
+
     async def has_action(
         self, topic_id: uuid.UUID, turn_id: uuid.UUID, action: str
     ) -> bool:
