@@ -48,7 +48,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
   gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
-  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, var(--ink) calc(100% - 24px), transparent);
 }
 
 .atabs__track::-webkit-scrollbar {
@@ -93,7 +93,6 @@ const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
   bottom: 0;
   left: 10px;
   height: 2px;
-  border-radius: 1px;
   background: var(--accent);
 }
 
