@@ -5,6 +5,10 @@ its room credential, through the same route and under the same rule — and
 nobody else may. Everyone in the room sees the new text live, marked as edited.
 """
 
+import uuid
+
+import pytest
+
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import (
     chat_ws_url,
@@ -154,3 +158,64 @@ def test_only_messages_are_edited(client):
     )
     said = _say(client, room, "alice", "周五交初稿")
     assert _edit(client, said, "   ", session_auth_headers("alice")).status_code == 422
+
+
+# An edit stores what sending the same text in that room stores: a person's
+# message and an agent's, in a shared room and in a private one.
+SAID = "@bob 和 @芝士 看一下，@alice 也看"
+
+
+def _private_room(client) -> tuple[str, str, str]:
+    """A private chat between a member and the project's agent."""
+    project = post_project(client, json={"name": "P", "owner_handle": "user-1"}).json()[
+        "data"
+    ]
+    room = client.get(
+        f"/projects/{project['id']}/private-chat", params={"user_handle": "user-1"}
+    ).json()["data"]
+    return room["id"], project["id"], "user-1"
+
+
+def _shared_room(client) -> tuple[str, str, str]:
+    room, project = _room(client)
+    return room, project, "alice"
+
+
+ROOMS = pytest.mark.parametrize(
+    "make_room", [_shared_room, _private_room], ids=["shared", "private"]
+)
+
+
+def _stored(client, room: str, block_id: str) -> str:
+    return _shown(client, room, block_id)["content"]
+
+
+@ROOMS
+def test_a_persons_edit_stores_what_sending_it_stores(client, make_room):
+    room, _, person = make_room(client)
+    sent = _say(client, room, person, SAID)
+    edited = _say(client, room, person, "先占个位")
+    response = _edit(client, edited, SAID, session_auth_headers(person))
+    assert response.status_code == 200, response.text
+    assert _stored(client, room, edited) == _stored(client, room, sent)
+
+
+@ROOMS
+def test_an_agents_edit_stores_what_publishing_it_stores(client, make_room):
+    room, project, _ = make_room(client)
+    headers = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)}
+
+    def publish(content: str) -> str:
+        response = client.post(
+            f"/topics/{room}/messages",
+            json={"content": content, "request_id": str(uuid.uuid4())},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["data"]["id"]
+
+    sent = publish(SAID)
+    edited = publish("先占个位")
+    response = _edit(client, edited, SAID, headers)
+    assert response.status_code == 200, response.text
+    assert _stored(client, room, edited) == _stored(client, room, sent)

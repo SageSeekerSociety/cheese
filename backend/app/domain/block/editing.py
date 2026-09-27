@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.agent.chat import text_as_sent
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.mentions import canonicalize_refs
 
 if TYPE_CHECKING:
     from app.domain.agent.runtime import InProcessBroker
@@ -45,9 +45,8 @@ async def edit_message(
     text = content.strip()
     if not text:
         raise ValidationError("content must not be blank")
-    text = await canonicalize_refs(
-        session, block.project_id, text, exclude_topic_id=block.topic_id
-    )
+    # Stored as sending this text would have stored it, by the same code.
+    text = await text_as_sent(session, block.topic_id, editor, text)
     await blocks.replace_content(block, text)
     payload = BlockOut.model_validate(block).model_dump(mode="json")
     # The frame replaces the line whole, so it carries what else is on it.

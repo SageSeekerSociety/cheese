@@ -142,7 +142,7 @@ from app.domain.memory.session import (
     prefix_of_scope,
     read_tree,
 )
-from app.domain.mentions import expand_mention_names
+from app.domain.mentions import canonicalize_refs, expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
@@ -3153,7 +3153,6 @@ class ChatService:
         retried a delivery whose durable result is being echoed again.
         """
         async with self._sessions() as session:
-            topics = TopicRepository(session)
             blocks = BlockRepository(session)
             place = await PlaceResolver(session).resolve(topic_id)
             if place is None:
@@ -3211,24 +3210,8 @@ class ChatService:
             if project is None:
                 raise NotFoundError("Project not found")
             agent = await AgentInstanceService(session).for_topic(topic, project)
-            agent_handles = (
-                await TopicMemberService(session).agent_handles(topic.id)
-                if "@" in content
-                else []
-            )
-            # Which agent each seat belongs to — 名册上 @ 到的是席位，而这一轮要跑
-            # 起来的是它背后那个实例（记忆池的 key、署名用的 handle 都在实例上）。
-            # 房间可以坐好几位，所以这张表按席位建，不按房间（#1192）。
-            by_seat = (
-                {
-                    agent_instance_handle(instance.id): instance
-                    for instance in await AgentInstanceService(
-                        session
-                    ).list_for_project(topic.project_id)
-                }
-                if agent_handles
-                else {}
-            )
+            mentions = await person_mentions(session, topic, content, agent)
+            agent_handles, by_seat = mentions.agent_handles, mentions.by_seat
             # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这
             # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
             # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
@@ -3269,52 +3252,7 @@ class ChatService:
                     )
                     reply_uuid = None
             if content:
-                # Same backstop the doc/chat-reply paths already had, but the
-                # human chat-send path used to skip it: a friendly "@Alice /
-                # @handle / @话题名" is canonicalized into the structured token
-                # (<@alice> / <#id>) BEFORE the block is stored, so it renders
-                # as a clickable chip instead of leaking raw "@Alice" text.
-                # 私聊没有名册可以解析（也不暴露成员列表），原样存下来。
-                # 队友已经在这张名册上（``membership/roster.py``），每一位带着自己
-                # 的名字，所以名字不再另拼一份——拼出来的那份就是第二份声明。
-                roster = (
-                    []
-                    if "@" not in content or _is_dm(topic)
-                    else await roster_rows(session, topic.project_id)
-                )
-                # 这间房真正坐着的 AI 席位先答这个名字：排到名册最前，名册上没有它
-                # 的补一行。一间还挂着共用 `cheese` 席位的老房间（那一步是惰性的，
-                # 等这间房的 agent 下次动手才迁，见 `migrate_shared_agent_seat`）在
-                # 项目名册上没有对应的行——名册上叫「芝士」的是项目的默认实例，
-                # 「@芝士」展开成它就等于 @ 了一个没坐在这间房里的队友：这一轮起不
-                # 来，通知还发给了它。反过来也成立：成员表里历史上落过的一行
-                # `cheese` 会以人的身份排在名册最前，在**正常**房间里把「@芝士」抢
-                # 成 <@cheese>。谁坐在这间房里，谁先答。
-                # 这是同一次读的一个渲染顺序，不是第二份名册——和 `roster_rows()`
-                # 的定位一致。
-                if roster and agent_handles:
-                    row_of = {row["handle"]: row for row in roster}
-                    seated = set(agent_handles)
-                    roster = [
-                        row_of[handle]
-                        if handle in row_of
-                        else {
-                            "handle": handle,
-                            "name": (
-                                by_seat[handle].display_name
-                                if handle in by_seat
-                                else agent.display_name
-                            ),
-                        }
-                        for handle in agent_handles
-                    ] + [row for row in roster if row["handle"] not in seated]
-                if roster:
-                    topic_refs = [
-                        {"id": str(t.id), "title": t.title}
-                        for t in await topics.list_for_project(topic.project_id)
-                        if t.kind != TopicKind.root and t.id != topic.id
-                    ]
-                    content = expand_mention_names(content, roster, topic_refs)
+                content, roster = mentions.content, mentions.roster
                 # WHICH agent was addressed, not merely whether one was. The
                 # flag alone left `handle`/`instance_id` naming whoever the room
                 # pointed at, so @-ing the second teammate ran the first one's
@@ -3716,11 +3654,7 @@ class ChatService:
                 # instead of passing []: [] means 私聊 (no member list at all),
                 # and conflating the two flagged every @ in a recovered message
                 # as a non-member while silently dropping its notification.
-                roster = (
-                    []
-                    if topic is None or _is_dm(topic)
-                    else await roster_rows(session, project_id)
-                )
+                roster = await _room_roster(session, project_id, topic)
             text = _expand_mention_names(text, roster, topic_refs)
             author = author or await self._agent_handle(session, topic_id)
             # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
@@ -6203,6 +6137,143 @@ class ChatService:
             await session.commit()
 
         return {"summary": final_text}
+
+
+@dataclass(frozen=True, slots=True)
+class PersonMentions:
+    """A person's message as the room stores it, and what it was read against."""
+
+    content: str
+    roster: list[dict]
+    agent_handles: list[str]
+    by_seat: dict
+
+
+async def person_mentions(
+    session: AsyncSession, topic: Topic, content: str, agent
+) -> PersonMentions:
+    """The mention rewrite a person's message gets in ``topic``: friendly
+    ``@名字`` / ``@话题名`` become ``<@handle>`` / ``<#id>`` tokens, except in a
+    private room, whose text is stored as written. ``agent`` is the room's
+    agent (`AgentInstanceService.for_topic`), the name a seat not on the
+    project roster answers to.
+
+    Sending (`post_user_message`) and editing (`text_as_sent`) both read a
+    person's words through here, so an edit stores what sending stores."""
+    agent_handles = (
+        await TopicMemberService(session).agent_handles(topic.id)
+        if "@" in content
+        else []
+    )
+    # Which agent each seat belongs to — 名册上 @ 到的是席位，而这一轮要跑
+    # 起来的是它背后那个实例（记忆池的 key、署名用的 handle 都在实例上）。
+    # 房间可以坐好几位，所以这张表按席位建，不按房间（#1192）。
+    by_seat = (
+        {
+            agent_instance_handle(instance.id): instance
+            for instance in await AgentInstanceService(session).list_for_project(
+                topic.project_id
+            )
+        }
+        if agent_handles
+        else {}
+    )
+    roster: list[dict] = []
+    if content:
+        # Same backstop the doc/chat-reply paths already had, but the
+        # human chat-send path used to skip it: a friendly "@Alice /
+        # @handle / @话题名" is canonicalized into the structured token
+        # (<@alice> / <#id>) BEFORE the block is stored, so it renders
+        # as a clickable chip instead of leaking raw "@Alice" text.
+        # 私聊没有名册可以解析（也不暴露成员列表），原样存下来。
+        # 队友已经在这张名册上（``membership/roster.py``），每一位带着自己
+        # 的名字，所以名字不再另拼一份——拼出来的那份就是第二份声明。
+        roster = (
+            []
+            if "@" not in content or _is_dm(topic)
+            else await roster_rows(session, topic.project_id)
+        )
+        # 这间房真正坐着的 AI 席位先答这个名字：排到名册最前，名册上没有它
+        # 的补一行。一间还挂着共用 `cheese` 席位的老房间（那一步是惰性的，
+        # 等这间房的 agent 下次动手才迁，见 `migrate_shared_agent_seat`）在
+        # 项目名册上没有对应的行——名册上叫「芝士」的是项目的默认实例，
+        # 「@芝士」展开成它就等于 @ 了一个没坐在这间房里的队友：这一轮起不
+        # 来，通知还发给了它。反过来也成立：成员表里历史上落过的一行
+        # `cheese` 会以人的身份排在名册最前，在**正常**房间里把「@芝士」抢
+        # 成 <@cheese>。谁坐在这间房里，谁先答。
+        # 这是同一次读的一个渲染顺序，不是第二份名册——和 `roster_rows()`
+        # 的定位一致。
+        if roster and agent_handles:
+            row_of = {row["handle"]: row for row in roster}
+            seated = set(agent_handles)
+            roster = [
+                row_of[handle]
+                if handle in row_of
+                else {
+                    "handle": handle,
+                    "name": (
+                        by_seat[handle].display_name
+                        if handle in by_seat
+                        else agent.display_name
+                    ),
+                }
+                for handle in agent_handles
+            ] + [row for row in roster if row["handle"] not in seated]
+        if roster:
+            topic_refs = [
+                {"id": str(t.id), "title": t.title}
+                for t in await TopicRepository(session).list_for_project(
+                    topic.project_id
+                )
+                if t.kind != TopicKind.root and t.id != topic.id
+            ]
+            content = expand_mention_names(content, roster, topic_refs)
+    return PersonMentions(content, roster, agent_handles, by_seat)
+
+
+async def _room_roster(
+    session: AsyncSession, project_id: uuid.UUID, topic: Topic | None
+) -> list[dict]:
+    """The names an agent's message is read against: the project roster, or
+    none at all in a private room."""
+    return (
+        [] if topic is None or _is_dm(topic) else await roster_rows(session, project_id)
+    )
+
+
+async def publication_text(
+    session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, content: str
+) -> str:
+    """The first half of the rewrite an agent's published message gets
+    (`chat_send`, `todo_write`): names and topic titles against the whole
+    project. `_persist_assistant_message` does the second half."""
+    return await canonicalize_refs(
+        session, project_id, content, exclude_topic_id=room_id
+    )
+
+
+async def text_as_sent(
+    session: AsyncSession, room_id: uuid.UUID, author: str, content: str
+) -> str:
+    """What sending ``content`` as ``author`` in this room would have stored.
+
+    An edit stores exactly that. The author is an agent when it holds one of
+    the room's agent seats — the same question the publication routes ask —
+    and its text goes through both halves of the publication rewrite, called
+    with the arguments a publication passes (no roster, no topic list). A
+    person's goes through `person_mentions`, as `post_user_message` does."""
+    topic = await TopicRepository(session).get(room_id)
+    if topic is None:
+        raise NotFoundError("Topic not found")
+    if await TopicMemberService(session).holds_an_agent_seat(topic, author):
+        text = await publication_text(session, topic.project_id, room_id, content)
+        roster = await _room_roster(session, topic.project_id, topic)
+        return _expand_mention_names(text, roster, [])
+    project = await ProjectRepository(session).get(topic.project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    agent = await AgentInstanceService(session).for_topic(topic, project)
+    return (await person_mentions(session, topic, content, agent)).content
 
 
 async def cloud_waiting_topics(
