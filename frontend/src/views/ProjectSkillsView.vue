@@ -5,6 +5,7 @@ import type { ProjectSkill, ProjectSkillContent, ProjectSkillRevision } from '..
 import type { Topic } from '../cx_types'
 
 import { computed, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import {
   confirmProjectSkill,
@@ -18,9 +19,11 @@ import {
 } from '../api'
 
 import { t } from '@/i18n'
+import { focusRow } from '@/lib/focusRow'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 const props = defineProps<{ projectId: string }>()
+const route = useRoute()
 
 const skills = ref<ProjectSkill[]>([])
 const rooms = ref<Topic[]>([])
@@ -48,6 +51,9 @@ async function load() {
     if (props.projectId !== projectId) return
     skills.value = listed.data
     rooms.value = topics.data.filter((tp) => tp.status !== 'archived')
+    loading.value = false
+    const focus = typeof route.query.skill === 'string' ? route.query.skill : null
+    if (focus) void focusRow(`[data-skill="${CSS.escape(focus)}"]`)
   } catch (e) {
     if (props.projectId !== projectId) return
     loadError.value = e instanceof Error ? e.message : '未能读取工作方法'
@@ -453,6 +459,10 @@ watch(
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
+}
+.skill-row.row--focus {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
 }
 .skill-row--draft {
   border-color: rgb(var(--v-theme-warning));
