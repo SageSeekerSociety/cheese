@@ -47,6 +47,17 @@ export default {
       component: () => import('@/views/home/Landing.vue'),
     },
     {
+      // 写给把知是引进来的一方：学校、企业、科研团队。首页写给做项目的人。
+      path: 'solutions',
+      name: 'Solutions',
+      meta: {
+        title: '方案',
+        titleKey: 'publicSite.solutionsPage.title',
+        publicLanding: true,
+      },
+      component: () => import('@/views/home/Solutions.vue'),
+    },
+    {
       // 我的工作：登录后的首页（`/` 把已登录的人送到这儿）。不进任何项目就能看见
       // 我手上的每一个项目、它们的壳、以及每个项目最近在发生什么，点一张卡直接
       // 进去。手机上是这一层的第一格分段。
