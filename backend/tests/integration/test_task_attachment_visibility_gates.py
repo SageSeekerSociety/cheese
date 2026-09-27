@@ -107,6 +107,20 @@ def test_an_unapproved_task_does_not_hand_out_its_list_to_a_board_member(
     assert status == 200
     assert [a["id"] for a in body["data"]["attachments"]] == [attached["id"]]
 
+    # 板管理员也一样：他是替出题人管这块板的人，草稿题归他管。
+    manager = user_client.create_user()
+    manager_token = _login(user_client, api_client, manager)
+    granted = api_client.post(
+        f"/spaces/{board['space_id']}/managers",
+        json={"userId": manager.user_id, "role": "ADMIN"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert granted.status_code == 201, granted.text
+    assert _detail(api_client, task_id, manager_token).status_code == 200
+    status, body = _list(api_client, task_id, manager_token)
+    assert status == 200
+    assert [a["id"] for a in body["data"]["attachments"]] == [attached["id"]]
+
 
 def test_a_stranger_gets_nothing_from_an_unapproved_task(
     api_client: TestClient,
