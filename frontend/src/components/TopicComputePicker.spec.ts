@@ -1,4 +1,4 @@
-import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
+import type { ComputeChoice, SessionWorkLease, TopicComputeProfile } from '../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -8,10 +8,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const getTopicComputeProfile = vi.fn()
 const setTopicComputeChoice = vi.fn()
+const getSessionWorkLeases = vi.fn()
+const setSessionWorkChoice = vi.fn()
 
 vi.mock('../api', () => ({
   getTopicComputeProfile: (...args: unknown[]) => getTopicComputeProfile(...args),
   setTopicComputeChoice: (...args: unknown[]) => setTopicComputeChoice(...args),
+  getSessionWorkLeases: (...args: unknown[]) => getSessionWorkLeases(...args),
+  setSessionWorkChoice: (...args: unknown[]) => setSessionWorkChoice(...args),
 }))
 
 import { setLocale } from '../i18n'
@@ -123,6 +127,8 @@ beforeEach(() => {
   setLocale('zh-CN')
   getTopicComputeProfile.mockReset()
   setTopicComputeChoice.mockReset()
+  getSessionWorkLeases.mockReset()
+  setSessionWorkChoice.mockReset()
 })
 
 afterEach(() => cleanup())
@@ -167,5 +173,31 @@ describe('room compute choices', () => {
     expect(await screen.findByText('实验室工作站')).toBeTruthy()
     expect(screen.getByText('可访问整台设备')).toBeTruthy()
     expect(screen.getByRole('button', { name: '更换工作电脑' })).toBeTruthy()
+  })
+  it('shows the whole-machine notice once a teammate moves onto a team device', async () => {
+    const office: ComputeChoice = { ...cloud, name: '办公室 Mac mini', profile: 'device', device_id: 'office' }
+    const analyst: SessionWorkLease = {
+      id: 'session-a',
+      agent_handle: 'analyst',
+      harness: 'test-harness',
+      choice: cloud,
+      lease: null,
+    }
+    getTopicComputeProfile.mockResolvedValueOnce(profile({ locked: true })).mockResolvedValue(
+      profile({
+        locked: true,
+        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到可访问整台设备' },
+      })
+    )
+    getSessionWorkLeases.mockResolvedValue({ sessions: [analyst] })
+    setSessionWorkChoice.mockResolvedValue({ session: { ...analyst, choice: office } })
+    mountPicker()
+    await fireEvent.click(await screen.findByRole('button', { name: '更换工作电脑' }))
+    await screen.findByText(/当前电脑/)
+    expect(screen.queryByText('可访问整台设备')).toBeNull()
+    await fireEvent.mouseDown(screen.getByLabelText('工作电脑'))
+    await fireEvent.click(await screen.findByRole('option', { name: '办公室 Mac mini' }))
+    await fireEvent.click(screen.getByRole('button', { name: '确认更换' }))
+    expect(await screen.findByText('可访问整台设备')).toBeTruthy()
   })
 })

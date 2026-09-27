@@ -977,9 +977,9 @@ export interface ProjectMachineCreate {
   diskGb: number
 }
 
-// #282 §四 / #358 · whether a topic's turn can see the whole machine it runs on.
-// `effective` is the visibility of the device the topic is pinned to ('host' |
-// 'isolated' | null when on platform compute / not yet pinned); `machine_access`
+// #282 §四 / #358 · whether an agent in this room can see a whole enrolled machine.
+// `effective` is the widest visibility any agent session here has on the enrolled
+// machine it works on ('host' | 'isolated' | null when none is on one); `machine_access`
 // is the one flag the room's Hosted Machine badge keys on; `notice` is the honest
 // #282 UI line, used as the badge's tooltip. `options` carries the two 档 with
 // their capability copy (isolated = boxed default, host = whole-machine, 申请制).

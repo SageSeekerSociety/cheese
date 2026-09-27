@@ -1498,21 +1498,24 @@ async def get_topic_compute_profile(
     device_online = await project_device_online(db, topic.project_id)
     device_service = sql_device_service(db)
     devices = await device_service.list_devices_for_project(topic.project_id)
-    # #282 §四 / #358 · whether THIS topic's agent can see the whole machine. The
-    # effective answer is the visibility on the topic↔machine binding (device
-    # affinity freezes a topic to one machine on its first turn); a topic
-    # on platform compute or not yet pinned has none. Surfaced so the room can show
-    # a visible safety badge for a Hosted Machine turn instead of the platform
-    # granting whole-machine access silently (原则八).
     binding = await device_service.topic_binding(topic_id)
     if current == COMPUTE_DEVICE and binding is not None:
         choice.device_id = binding.device_id
         if topic.compute_config is None:
             named = next((d for d in devices if d.device_id == binding.device_id), None)
             choice.name = named.name if named else "自有设备"
-    effective_visibility: str | None = None
-    if binding is not None:
-        effective_visibility = binding.visibility.value
+    # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
+    # machine. Read from the sessions' own machines, not the room's pin: a
+    # session that picked a device automatically, or moved to one later, has
+    # the same access and no pin. Surfaced so the room shows a visible safety
+    # badge instead of the platform granting whole-machine access silently
+    # (原则八).
+    from app.domain.machine.session_work import room_machine_visibility
+
+    visibility = await room_machine_visibility(
+        db, topic, project.settings if project else None
+    )
+    effective_visibility = visibility.value if visibility is not None else None
     return ok(
         {
             "current": current,
@@ -1547,7 +1550,7 @@ async def get_topic_compute_profile(
             ],
             "visibility": {
                 "options": [asdict(v) for v in visibility_listings()],
-                # "host" | "isolated" | null (platform compute / not yet pinned).
+                # "host" | "isolated" | null (no agent here on an enrolled machine).
                 "effective": effective_visibility,
                 # The one boolean the room's badge keys on: this turn can see and
                 # operate the whole machine.

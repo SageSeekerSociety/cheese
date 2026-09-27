@@ -8,6 +8,9 @@ import { t } from '../i18n'
 import { choiceKey, compactChoices } from '../lib/computeConfig'
 
 const props = defineProps<{ topicId: string; profile: TopicComputeProfile }>()
+// A session's machine is part of what the room reports about itself (the
+// whole-machine badge), so the room re-reads it after a change.
+const emit = defineEmits<{ changed: [] }>()
 const open = ref(false)
 const sessions = ref<SessionWorkLease[]>([])
 const selectedId = ref('')
@@ -100,6 +103,7 @@ async function confirm() {
     sessions.value = sessions.value.map((item) => (item.id === session.id ? result.session : item))
     target.value = choiceKey(result.session.choice)
     notice.value = t('work.sessionMachine.saved')
+    emit('changed')
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('global.updateFailed')
   } finally {

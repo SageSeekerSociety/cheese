@@ -13,15 +13,22 @@ import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
+from app.domain.agent.compute_configs import (
+    ComputeChoice,
+    ProjectComputeConfigs,
+    standard_choice,
+)
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.agent_session.repositories import AgentSessionRepository
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.machine.services import MachineService
+from app.domain.project.models import Project
 from tests.integration.conftest import post_project
 
 
@@ -391,10 +398,11 @@ def test_visibility_block_is_present_and_carries_the_notice(client):
     The default is whichever 档 has a transport, and today that is whole-machine:
     boxed `isolated` is honestly undeployed until #358 step 2, so naming it the
     default here — as this test used to — told a room its topic was boxed while
-    the resolver bound it to the whole machine. A topic with no pinned device is
-    not a Hosted Machine turn at all, so `machine_access` is False."""
+    the resolver bound it to the whole machine. A room on Cloud has no agent on
+    an enrolled machine, so `machine_access` is False."""
     pid = _project(client)
     tid = _topic(client, pid)
+    _project_default(client, pid, standard_choice("cloud"))
     vis = client.get(f"/topics/{tid}/compute-profile").json()["data"]["visibility"]
 
     opts = {o["id"]: o for o in vis["options"]}
@@ -407,50 +415,135 @@ def test_visibility_block_is_present_and_carries_the_notice(client):
     defaults = [o for o in vis["options"] if o["default"]]
     assert len(defaults) == 1 and defaults[0]["available"] is True
 
-    assert vis["effective"] is None  # not pinned to any device
+    assert vis["effective"] is None
     assert vis["machine_access"] is False
     assert "整台机器" in vis["notice"]  # badge / tooltip copy is present
 
 
-def test_two_topics_on_one_machine_report_their_own_visibility(client):
-    """Visibility belongs to each topic↔machine binding, not to the device."""
-    pid = _project(client)
-    host_tid = _topic(client, pid)
-    isolated_tid = _topic(client, pid)
-
-    async def _pin_both_topics() -> None:
-        from app.domain.device.service import DeviceService
-        from app.domain.device.sql_repository import SqlDeviceRepository
-        from app.domain.device.supply import Supply, Visibility
-
+def _project_default(client, pid: str, choice: ComputeChoice) -> None:
+    async def _write() -> None:
         async with client.test_factory() as session:
-            svc = DeviceService(SqlDeviceRepository(session))
-            code = await svc.start("dev-box")
-            device = await svc.approve(
-                code,
-                owner_user_id=1,
-                supply=Supply.self_hosted,
-                visibility=Visibility.isolated,
-            )
-            await svc.bind_topic_device(
-                uuid.UUID(host_tid), device.device_id, Visibility.host
-            )
-            await svc.bind_topic_device(
-                uuid.UUID(isolated_tid), device.device_id, Visibility.isolated
-            )
+            project = await session.get(Project, uuid.UUID(pid))
+            project.settings = {
+                **(project.settings or {}),
+                "compute_configs": ProjectComputeConfigs(default=choice).model_dump(),
+            }
             await session.commit()
 
-    asyncio.run(_pin_both_topics())
-    host_visibility = client.get(f"/topics/{host_tid}/compute-profile").json()["data"][
-        "visibility"
-    ]
-    isolated_visibility = client.get(f"/topics/{isolated_tid}/compute-profile").json()[
-        "data"
-    ]["visibility"]
-    assert host_visibility["effective"] == "host"
-    assert host_visibility["machine_access"] is True
-    assert isolated_visibility["effective"] == "isolated"
-    assert isolated_visibility["machine_access"] is False
+    asyncio.run(_write())
+
+
+def _session(client, tid: str, handle: str, *, choice=None, lease=None) -> str:
+    """An agent session in the room, holding a choice and possibly a lease."""
+
+    async def _write() -> str:
+        async with client.test_factory() as session:
+            row = await AgentSessionService(session).ensure(
+                uuid.UUID(tid), handle, harness="claude-code"
+            )
+            if choice is not None:
+                row.execution_request = {
+                    "generation": str(uuid.uuid4()),
+                    "choice": choice.model_dump(),
+                    "authorized_by": None,
+                }
+            row.work_lease = lease
+            await session.commit()
+            return str(row.id)
+
+    return asyncio.run(_write())
+
+
+def _visibility(client, tid: str) -> dict:
+    return client.get(f"/topics/{tid}/compute-profile").json()["data"]["visibility"]
+
+
+def test_a_session_on_a_machine_it_picked_itself_shows_the_badge(client):
+    """A session that let the system pick an enrolled machine has the whole
+    machine as surely as one whose room named it — and no room pin says so."""
+    pid = _project(client)
+    tid = _topic(client, pid)
+    (lab,) = _project_devices(client, pid, "lab")
+    _project_default(client, pid, standard_choice("cloud"))
+    _session(
+        client,
+        tid,
+        "analyst",
+        choice=standard_choice("device"),
+        lease={"kind": "device", "device_id": lab, "status": "ready"},
+    )
+
+    vis = _visibility(client, tid)
+    assert _topic_binding(client, tid) is None
+    assert vis["effective"] == "host"
+    assert vis["machine_access"] is True
+
+
+def test_a_session_moved_to_an_enrolled_machine_later_shows_the_badge(client):
+    pid = _project(client)
+    tid = _topic(client, pid)
+    (lab,) = _project_devices(client, pid, "lab")
+    _project_default(client, pid, standard_choice("cloud"))
+    _session(client, tid, "writer", choice=standard_choice("cloud"))
+    moving = _session(client, tid, "analyst", choice=standard_choice("cloud"))
+    assert _visibility(client, tid)["machine_access"] is False
+
+    from tests.integration.conftest import session_auth_headers
+
+    moved = client.put(
+        f"/topics/{tid}/sessions/{moving}/work-choice",
+        headers=session_auth_headers("andyl"),
+        json={"choice": {"name": "Lab", "profile": "device", "device_id": lab}},
+    )
+    assert moved.status_code == 200, moved.text
+
+    vis = _visibility(client, tid)
+    assert _topic_binding(client, tid) is None
+    assert vis["effective"] == "host"
+    assert vis["machine_access"] is True
+
+
+def test_a_room_whose_next_session_starts_on_an_enrolled_machine_says_so(client):
+    """Before anyone has run, the badge answers for where the first agent goes."""
+    pid = _project(client)
+    tid = _topic(client, pid)
+    (lab,) = _project_devices(client, pid, "lab")
+    _project_default(
+        client, pid, ComputeChoice(name="Lab", profile="device", device_id=lab)
+    )
+
+    assert _visibility(client, tid)["machine_access"] is True
+
+
+def test_sessions_on_cloud_machines_show_no_badge(client):
+    """A Cloud box is the room's own: seeing all of it grants nothing more,
+    even when it reaches the room through the device transport."""
+    pid = _project(client)
+    tid = _topic(client, pid)
+
+    async def _cloud_box() -> str:
+        async with client.test_factory() as session:
+            service = sql_device_service(session)
+            code = await service.start("cloud-box")
+            device = await service.approve(
+                code, owner_user_id=1, supply=Supply.cloud, visibility=Visibility.host
+            )
+            await session.commit()
+            return device.device_id
+
+    box = asyncio.run(_cloud_box())
+    _project_default(client, pid, standard_choice("cloud"))
+    _session(
+        client,
+        tid,
+        "analyst",
+        choice=standard_choice("cloud"),
+        lease={"kind": "device", "device_id": box, "status": "ready"},
+    )
+
+    vis = _visibility(client, tid)
+    assert vis["effective"] is None
+    assert vis["machine_access"] is False
 
 
 def test_locked_once_topic_has_run(client):
