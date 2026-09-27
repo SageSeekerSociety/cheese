@@ -328,16 +328,17 @@ function onKeydown(e: KeyboardEvent) {
   height: 24px;
 }
 
-/* 空态。形状和总表的空态一样（宽 320px 居中、主副两行、间距 8px），两处说的是同一件
-   事 —— 「还没有人提交反馈」在两个视图里长得不一样的话，人就得分别去认。顶部留 96px
-   是总表的数字（§9.2），这里跟着走，队列自己没有第二个数。 */
+/* 空态。形状和总表的空态一样（宽 320px 居中、主副两行），两处说的是同一件事 ——
+   「还没有人提交反馈」在两个视图里长得不一样的话，人就得分别去认。
+   顶距 32 + `AdminEmptyState` 自己的 64 = 96，和换组件之前一样（§9.2 那个数）。 */
 .qlist__none {
   flex: 0 0 auto;
-  padding-top: 96px;
+  padding-top: 32px;
 }
 
+/* 宽不再钉死 320：块自己带着 `max-width` 和左右内边距，这里只要一个上界即可。 */
 .qlist__none-box {
-  width: 320px;
+  max-width: 320px;
   margin: 0 auto;
 }
 
@@ -354,5 +355,52 @@ function onKeydown(e: KeyboardEvent) {
   color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);
+}
+
+/* 窄屏（≤700，和 `AdminQueueRow` 那条同一条线）：列头撤掉、骨架改成同一张卡片的
+   形状。列头说的是「哪一列是什么」，可卡片里没有列了 —— 留着它只会让人对着四个
+   名字找一个不存在的表格。骨架必须跟着真行一起变，否则数据到货那一刻整条队列
+   重排一次，而骨架的全部意义就是那个不重排。 */
+@media (max-width: 700px) {
+  .qlist__head {
+    display: none;
+  }
+
+  .qskel {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 61px;
+    padding: 12px 16px;
+    row-gap: 6px;
+    column-gap: 12px;
+  }
+
+  .qskel__main {
+    flex: 1 1 240px;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .qskel__assignee {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .qskel__updated {
+    flex: 0 0 auto;
+    margin-left: 0;
+  }
+
+  .qskel__action {
+    margin-left: 0;
+  }
+
+  /* 390 - 32（页面内边距）- 2（卡片描边）= 356，比 320 宽一点；再窄的屏（320）上
+     这一格按屏宽收，不撑出横向滚动。 */
+  .qlist__none-box {
+    width: auto;
+    max-width: 320px;
+    padding: 0 16px;
+  }
 }
 </style>

@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 
-import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
+import FeedbackErrorBanner from '@/components/feedback/FeedbackErrorBanner.vue'
+import FeedbackList from '@/components/feedback/FeedbackList.vue'
+import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import { t } from '@/i18n'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -17,12 +21,17 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 这里不按来源分栏：那需要每条带一个「为什么它在我的清单里」，服务端还没有这个字段，
 // 而按 handle 在前端猜一遍等于把可见性规则抄第二份。
 //
-// 卡片直接用反馈中心那一张（`FeedbackCard`）：同一条反馈在哪一页都应该长一样，两套
+// 版面走和反馈中心同一副骨架（`FeedbackPageShell` + `FeedbackList` + `AdminEmptyState`）：
+// 两页的滚动、页边距、内容宽度、列表的分隔行、空态的形状因此只有一份实现 —— 以前
+// 这几条规则在两页各写一遍，漂开的方式是「两页的间距差 8px」，而没有人会同时看着两页。
+//
+// 行直接用反馈中心那一行（`FeedbackCard`）：同一条反馈在哪一页都应该长一样，两套
 // 卡片迟早会在状态、标签、私密标记上分叉。支持按钮也照用 —— store 里三份列表都会
 // 被 `_find` / `_patch` 找到，所以在这一页点支持跟中心页是同一个动作。
 defineOptions({ name: 'FeedbackMinePage' })
 
 const store = useFeedbackStore()
+const router = useRouter()
 
 onMounted(async () => {
   await store.loadMine()
@@ -40,191 +49,109 @@ onMounted(async () => {
 /** 空列表有两种，说的话不一样：「还没有」和「没拉到」。写成同一句「暂无反馈」的话，
  *  拉挂的那一次看起来就像「平台把你的反馈弄丢了」。
  *  失败那一句走 i18n（和反馈中心共用同一条文案 —— 同一个失败，说不出两种话）；「还没
- *  提过」那一句留在这页自己的词表里：它说的是这一页特有的边界（我提的 / 我替谁提的 /
- *  指派给我的），中心页那句「你提交的反馈会出现在这里」在这里是错的。 */
+ *  提过」那一句说的是这一页特有的边界（我提的 / 我替谁提的 / 指派给我的），中心页那句
+ *  「你提交的反馈会出现在这里」在这里是错的。 */
 const emptyState = computed(() =>
   store.error
     ? {
         icon: 'mdi-alert-circle-outline',
+        tone: 'error' as const,
         title: t('feedback.center.error.title'),
         desc: t('feedback.center.error.desc'),
+        action: t('feedback.center.error.retry'),
       }
-    : { icon: 'mdi-inbox-outline', title: '你还没有提过反馈，也没有指派给你的', desc: '' }
+    : {
+        icon: 'mdi-inbox-outline',
+        tone: 'neutral' as const,
+        title: t('feedback.mine.empty.title'),
+        desc: '',
+        action: t('feedback.mine.empty.action'),
+      }
 )
+
+/** 空态那一颗按钮。失败时重拉，「还没提过」时去提交页 —— 两件事都在这颗按钮上。 */
+function onEmptyAction() {
+  if (store.error) void store.loadMine()
+  else void router.push({ name: 'FeedbackSubmit' })
+}
 </script>
 
 <template>
-  <!-- `fill-height overflow-y-auto` 的理由和反馈中心那一页一样（common.scss 把
-       html/body/#app 定成固定高度 + overflow: hidden，滚动由每一页自己领）。 -->
-  <div class="fb-page fill-height overflow-y-auto">
-    <div class="fb-page__inner page-container">
-      <header class="fb-head">
-        <h1 class="t-page-title">我的反馈</h1>
-        <v-spacer />
-        <v-btn variant="text" color="secondary" size="small" to="/feedback">回反馈中心</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">提交反馈</v-btn>
-      </header>
+  <FeedbackPageShell :title="t('feedback.mine.title')">
+    <template #actions>
+      <v-btn variant="text" color="secondary" size="small" to="/feedback">
+        {{ t('feedback.mine.back') }}
+      </v-btn>
+      <v-btn color="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">
+        {{ t('feedback.mine.submit') }}
+      </v-btn>
+    </template>
 
+    <!-- 这一页的说明。**总数只在拉到之后才说**：加载中写「共 0 条」是在报一个还不知道
+         的数。 -->
+    <template #sub>
       <p class="t-meta fb-lede">
-        这里是我提的、我替 AI 队友提的，以及指派给我的。
-        <!-- 总数只在拉到之后才说：加载中写「共 0 条」是在报一个还不知道的数。 -->
-        <span v-if="!store.mineLoading && !store.error">共 {{ store.mineTotal }} 条。</span>
-        别人的反馈不在这里，去反馈中心搜。
+        {{ t('feedback.mine.lede') }}
+        <span v-if="!store.mineLoading && !store.error">
+          {{ t('feedback.mine.total', { n: store.mineTotal }) }}
+        </span>
+        {{ t('feedback.mine.ledeRest') }}
       </p>
+    </template>
 
-      <!-- 列表非空时的失败也要画出来，理由同反馈中心：不画的话，一次失败（比如
-           在一条办完的反馈上点支持，服务端回 412）会让页面看着像什么都没发生。 -->
-      <v-alert
-        v-if="store.error && store.mineItems.length"
-        type="warning"
-        variant="tonal"
-        density="compact"
-        closable
-        class="mb-3"
-        @click:close="store.clearError()"
-      >
-        {{ store.error }}
-      </v-alert>
+    <!-- 列表非空时的失败也要画出来，理由同反馈中心：不画的话，一次失败（比如在一条
+         办完的反馈上点支持，服务端回 412）会让页面看着像什么都没发生。 -->
+    <FeedbackErrorBanner
+      v-if="store.error && store.mineItems.length"
+      :message="store.error"
+      @dismiss="store.clearError()"
+    />
 
-      <!-- 骨架 3 张，和反馈中心同一档（§9.4）：两页的卡片一样高，一页画 4 张一页画 3 张
-           会让「列表有多长」看起来是两个数。 -->
-      <LoadingSkeleton v-if="store.mineLoading" variant="feedback" :rows="3" />
+    <!-- 骨架 3 行，和反馈中心同一档（§9.4）：两页的行一样高，一页画 4 行一页画 3 行
+         会让「列表有多长」看起来是两个数。 -->
+    <FeedbackList
+      :loading="store.mineLoading"
+      :count="store.mineItems.length"
+      :has-more="store.mineHasMore"
+      :loading-more="store.mineLoadingMore"
+      :shown="store.mineItems.length"
+      :total="store.mineTotal"
+      @more="store.loadMoreMine()"
+    >
+      <!-- 打开详情那条链接在行自己身上（`router-link`），这里不再接一个 `@open`
+           去 push —— 那就又回到「只有鼠标够得着」了，见 FeedbackCard.vue。 -->
+      <FeedbackCard v-for="item in store.mineItems" :key="item.id" :item="item" />
 
-      <div v-else class="fb-list">
-        <!-- 打开详情那条链接在卡片自己身上（`router-link`），这里不再接一个
-             `@open` 去 push —— 那就又回到「只有鼠标够得着」了，见 FeedbackCard.vue。 -->
-        <FeedbackCard v-for="item in store.mineItems" :key="item.id" :item="item" />
-        <!-- 空列表有两种，说的话不一样：「还没有」和「没拉到」。写成同一句
-             「暂无反馈」的话，拉挂的那一次看起来就像「平台把你的反馈弄丢了」。 -->
-        <div v-if="!store.mineItems.length" class="fb-empty">
-          <v-icon size="28" class="fb-empty__icon">{{ emptyState.icon }}</v-icon>
-          <div class="fb-empty__title">{{ emptyState.title }}</div>
-          <p v-if="emptyState.desc" class="fb-empty__desc">{{ emptyState.desc }}</p>
+      <template #empty>
+        <AdminEmptyState
+          :title="emptyState.title"
+          :desc="emptyState.desc || undefined"
+          :icon="emptyState.icon"
+          :tone="emptyState.tone"
+          :action="emptyState.action"
+          @action="onEmptyAction"
+        >
           <!-- 服务端那句话照直画出来：上面那句说的是「这类事现在是什么样」，这一句说的
                是「这一次为什么没成」。 -->
           <p v-if="store.error" class="fb-empty__raw t-meta-read">{{ store.error }}</p>
-          <v-btn
-            v-if="store.error"
-            variant="text"
-            color="secondary"
-            size="small"
-            class="fb-empty__action"
-            @click="store.loadMine()"
-          >
-            重试
-          </v-btn>
-          <v-btn
-            v-else
-            variant="text"
-            color="secondary"
-            size="small"
-            class="fb-empty__action"
-            :to="{ name: 'FeedbackSubmit' }"
-          >
-            提交一条
-          </v-btn>
-        </div>
+        </AdminEmptyState>
+      </template>
 
-        <!-- 翻页那一行只在**真的还有下一页**时出现。到底了不画「已到底」：那一行字只是
-             在告诉读者「这个按钮你按不了了」，而没按过的人看到它只会以为自己漏看了什么。
-             计数是「你手上几条 / 一共几条」——两个数不一样重，左边的是这一页拿到的，
-             右边的是服务端数出来的，读者拿它们比才知道还剩多少。 -->
-        <div v-if="store.mineHasMore" class="fb-more">
-          <v-btn
-            variant="outlined"
-            color="secondary"
-            size="small"
-            :loading="store.mineLoadingMore"
-            @click="store.loadMoreMine()"
-          >
-            加载更多
-          </v-btn>
-          <span class="t-meta"> 已显示 {{ store.mineItems.length }} / 共 {{ store.mineTotal }} 条 </span>
-        </div>
-      </div>
-
-      <p v-if="!store.mineLoading" class="t-meta fb-foot">
-        办完的反馈（已修复、已上线）留在列表里，但不再接受支持；私密的那几种只有你、平台管理员、以及提出它时在那个房间里的人看得到
-      </p>
-    </div>
-  </div>
+      <template #foot>{{ t('feedback.mine.foot') }}</template>
+    </FeedbackList>
+  </FeedbackPageShell>
 </template>
 
 <style scoped>
-/* 这里这一组类和反馈中心那一页同名同值，但样式是 scoped 的，各自留一份。
-   抽成公共样式的话这两页就不再是「各自完整的一页」了，而它们要长得一样的地方
-   本来就只有这几行。 */
-.fb-page {
-  padding: 24px 16px 48px;
-}
-.fb-page__inner {
-  margin: 0 auto;
-}
-.fb-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 12px;
-}
+/* 这一页的说明。行距用 token 而不是 1.7：这一档的领值只有 --lh-* 这一份来源，手写的
+   倍数在两个主题、两种语言里都不会跟着别处一起调。 */
 .fb-lede {
   margin: 0 0 16px;
-  /* 用 token 而不是 1.7：这一档的领值只有 --lh-* 这一份来源，手写的倍数在两个
-     主题、两种语言里都不会跟着别处一起调。 */
   line-height: var(--lh-14-loose);
 }
-.fb-list {
-  display: flex;
-  flex-direction: column;
-  /* 卡片之间 16px，和反馈中心同一档（§4.3）。 */
-  gap: 16px;
-}
-/* 空态那一块：宽 320、水平居中，主文案 15/--lh-15/600/--ink，副文案 13/--lh-13/
-   --muted，主副之间 8px（§9.2）。和反馈中心那一块同形，两页的空态才是同一个东西。 */
-.fb-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  max-width: 320px;
-  margin: 0 auto;
-  padding: 48px 0;
-  gap: 8px;
-}
-.fb-empty__icon {
-  color: var(--muted);
-}
-.fb-empty__title {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
-  color: var(--ink);
-  text-align: center;
-}
-.fb-empty__desc {
-  margin: 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  text-align: center;
-}
+/* 空态里那句服务端的原话。空态那副骨架（`AdminEmptyState`）把动作放在这一句上面，
+   所以这里只补一点上边距。 */
 .fb-empty__raw {
-  margin: 0;
-  text-align: center;
-  word-break: break-word;
-}
-.fb-empty__action {
-  margin-top: 4px;
-}
-/* 翻页那一行：按钮和计数在同一条中线上，两者之间 12px。 */
-.fb-more {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding-top: 4px;
-}
-.fb-foot {
-  margin: 24px 0 0;
-  line-height: var(--lh-14-loose);
+  margin: 8px 0 0;
 }
 </style>

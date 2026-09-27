@@ -1,8 +1,7 @@
 {
   "header": {
     "title": "成员管理",
-    "subtitle": "这些人能看所有私密反馈和安全问题，也能在这里加别人 —— 能改这份名单就等于能给自己开门。",
-    "subtitleTitle": "这些人能看所有私密反馈和安全问题，也能在这里加别人 —— 能改这份名单就等于能给自己开门。「部署配置」那一组来自部署配置（PLATFORM_ADMIN_HANDLES），页面上删不掉：能在这里被清空的名单没有回头的路，改它要有服务器权限。"
+    "subtitle": "这些人能看所有私密反馈和安全问题，也能在这里加别人 —— 能改这份名单就等于能给自己开门。"
   },
   "toolbar": {
     "count": "共 {count} 人",
@@ -59,7 +58,8 @@
     "alreadyAbsent": "{handle} 本来就不在名单里",
     "refusedEntry": "{handle}：{reason}",
     "listJoin": "、",
-    "refusedJoin": "；"
+    "refusedJoin": "；",
+    "dismiss": "关闭这条提示"
   },
   "error": {
     "loadFailed": "管理员名单加载失败",

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { FeedbackKind } from '@/cx_types'
 
-import { computed, onMounted } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { computed, onMounted, ref } from 'vue'
 
-import { KIND_LABEL } from '@/lib/feedbackMeta'
-import { cleanTags, EXPECTATION_KINDS, REPRO_KINDS, useFeedbackStore } from '@/stores/feedback'
+import { kindLabel } from './feedbackLabels'
+
+import { t } from '@/i18n'
+import { cleanTags, EXPECTATION_KINDS, MAX_TAGS, REPRO_KINDS, useFeedbackStore } from '@/stores/feedback'
 
 // 提交反馈的**那一份表单**。它有两个壳，字段只有这一份：
 //
@@ -31,17 +32,25 @@ import { cleanTags, EXPECTATION_KINDS, REPRO_KINDS, useFeedbackStore } from '@/s
 // 门槛也从「只在标题上」搬到了 store 里（`submit()` 同样查两栏）：按钮 disabled 不是
 // 替代品 —— 提交这个动作还有别的调用点。
 //
+// ## 控件不走 Vuetify 的输入框
+//
+// 这一页是**平台自己的表单**，不是嵌进平台的一个 Vuetify 表单：outlined 的
+// `v-text-field` 会把 label 骑在边框上、把 helper 挤到边框底下，和反馈中心列表、
+// 详情页那一套「标签在上、输入框在下、提示在再下面」的读法对不上。所以输入框、类型、
+// 标签、可见范围都改成令牌画的：`--line` 一圈、`--radius-md` 收角、`--focus-ring`
+// 做焦点环（和 `AdminQueuePage` 的搜索框同一套）。**行为一点没动**：值还绑在
+// `store.draft` 上、改一下就 `touchDraft()` 落盘、门槛还在 store 里算。
+//
 // ## 类型的名字不走词表
 //
-// 三档类型的**名字**（Bug / 建议 / 其他）来自 `lib/feedbackMeta.KIND_LABEL`，卡片、
-// 详情页、管理台读的都是它。这一份新界面再从词表里写一遍同样的三个词，就是同一个事实
-// 的第二份拷贝，而那种漂开的表现是「列表里叫建议、表单里叫功能请求」。新加的**句子**
-// （每类一句后果说明、必填/选填的分界说明）才进词表。
+// 三档类型的**名字**（Bug / 建议 / 其他）来自 `feedbackLabels.kindLabel()`（i18n 的
+// `feedback.kind.*`，卡片、详情页、管理台读的也是它）。这一份新界面再从词表里写一遍
+// 同样的三个词，就是同一个事实的第二份拷贝，而那种漂开的表现是「列表里叫建议、表单里
+// 叫功能请求」。新加的**句子**（每类一句后果说明、必填/选填的分界说明）才进词表。
 const props = defineProps<{ shell: 'page' | 'dialog' }>()
 const emit = defineEmits<{ (e: 'submitted', id: string): void; (e: 'cancel'): void }>()
 
 const store = useFeedbackStore()
-const { t } = useI18n()
 
 /** 词表来自服务端；meta 还没到时用这三个 —— 它们是 `FeedbackKind` 的全部取值。 */
 const kinds = computed<FeedbackKind[]>(() => store.meta?.kinds ?? ['bug', 'suggestion', 'other'])
@@ -99,6 +108,13 @@ const KIND_HINT: Record<FeedbackKind, () => string> = {
 }
 const kindHint = computed(() => KIND_HINT[store.draft.kind]())
 
+/** 类型那一排按钮就地改草稿。分成一个函数是因为它同时要落盘 —— 不落盘的话，选完类型
+ *  刷新回来又变回 Bug，而这一页的其余部分（正文那一栏的问法）是跟着类型变的。 */
+function setKind(kind: FeedbackKind) {
+  store.draft.kind = kind
+  store.touchDraft()
+}
+
 /** 标签候选：**从已经加载到的那两份列表里**出现的标签汇总。数据现成，不引新依赖、
  *  也不为它加一个后端接口 —— 候选只是省打字，拿不到候选时这个输入框照样能用。
  *  已经填在表单里的那些要排掉，否则选完一次它还会再提一次同一个词。 */
@@ -111,12 +127,60 @@ const tagSuggestions = computed(() => {
   return [...seen].sort()
 })
 
-/** v-combobox 交给我们的是一串用户输入（含空白、重复、超上限的）。规范化在 store 里
- *  （`cleanTags`），因为它同时也是 `toCreateBody` 用的那一个 —— 输入框先收一遍只是为了
- *  当场去掉重复的 chip，存进草稿的必须和发出去的是同一个形状。 */
+/** 正在输入的那一个标签。它**不进草稿**：半截的词不是标签，写进草稿的话刷新回来会
+ *  多出一个「登」。 */
+const tagDraft = ref('')
+
+/** 输入框有焦点（画焦点环用）。`:focus-within` 在带 chip 的容器上不好使 —— 焦点在
+ *  里面那个 input 上，容器要的是「自己看起来被聚焦了」。 */
+const tagFocused = ref(false)
+
+/** 规范化在 store 里（`cleanTags`，同时也是 `toCreateBody` 用的那一个），这里先收一遍
+ *  只是为了当场去掉重复的 chip：存进草稿的必须和发出去的是同一个形状。 */
 function setTags(value: string[]) {
   store.draft.tags = cleanTags(value)
   store.touchDraft()
+}
+
+function commitTag() {
+  const raw = tagDraft.value
+  if (!raw.trim()) {
+    tagDraft.value = ''
+    return
+  }
+  tagDraft.value = ''
+  addTag(raw)
+}
+
+/** 加一个标签。到顶（`MAX_TAGS`）之后静默丢掉 —— 上限是后端的，先在这里截住，
+ *  比写完几百字正文再被 422 退回来便宜得多。 */
+function addTag(tag: string) {
+  if (store.draft.tags.length >= MAX_TAGS) return
+  setTags([...store.draft.tags, tag])
+}
+
+function removeTag(tag: string) {
+  setTags(store.draft.tags.filter((it) => it !== tag))
+}
+
+/** 输入框已经空着的时候按退格，删掉最后一个芯片 —— 芯片输入框的老规矩，没有它，
+ *  想删掉刚打错的那个词只能用鼠标去点那个 16px 的叉。 */
+function onTagBackspace() {
+  if (tagDraft.value || !store.draft.tags.length) return
+  removeTag(store.draft.tags[store.draft.tags.length - 1])
+}
+
+/** 回车和逗号都是「这一个标签写完了」。逗号不能写成 `@keydown.comma` —— Vue 的按键
+ *  修饰符里没有 `comma` 这个别名（自带的只有 enter/tab/delete/esc/space 和方向键），
+ *  写出来是一条不生效的规则，eslint 也会当场报出来。所以按 `event.key` 自己判。
+ *  两个键都要 `preventDefault`：不然回车会提交表单、逗号会跟着一起进输入框。 */
+function onTagKeydown(event: KeyboardEvent) {
+  if (event.key === 'Enter' || event.key === ',') {
+    event.preventDefault()
+    commitTag()
+    return
+  }
+  if (event.key === 'Backspace') onTagBackspace()
 }
 
 /** 「丢弃草稿」——盘上两份槽位一起抹掉，见 store 里那个同名 action。 */
@@ -126,7 +190,7 @@ function discardDraft() {
 
 async function submit() {
   const id = await store.submit()
-  // 失败时**什么都不关**：`store.error` 是服务端的原话，它就在上面那块 alert 里，
+  // 失败时**什么都不关**：`store.error` 是服务端的原话，它就在上面那块提示里，
   // 而人写的那几百字还在表单上 —— 按一下就能重试。
   if (id) emit('submitted', id)
 }
@@ -167,16 +231,13 @@ onMounted(() => {
           <dd>{{ [origin.sessionId, origin.environment].filter(Boolean).join(' · ') }}</dd>
         </template>
       </dl>
-      <v-checkbox
-        v-model="store.draft.attachContext"
-        density="compact"
-        hide-details
-        :label="t('feedback.submit.agent.attach')"
-        @update:model-value="store.touchDraft()"
-      />
-      <v-alert v-if="store.draft.attachContext" type="warning" density="compact" variant="tonal" class="mt-2">
+      <label class="sb-check">
+        <input v-model="store.draft.attachContext" type="checkbox" class="sb-check__box" @change="store.touchDraft()" />
+        <span>{{ t('feedback.submit.agent.attach') }}</span>
+      </label>
+      <p v-if="store.draft.attachContext" class="sb-note sb-note--warn">
         {{ t('feedback.submit.agent.attachHint') }}
-      </v-alert>
+      </p>
     </section>
 
     <!-- 恢复提示：草稿被捞回来这件事**说出来**，而不是静默发生 —— 否则打开表单看到
@@ -190,19 +251,25 @@ onMounted(() => {
     </div>
 
     <!-- 类型放最前面：它决定后面问哪几栏。它自己不挡提交（有默认值），所以不进必填那
-         一档，但必须排在它门控的字段前面。 -->
+         一档，但必须排在它门控的字段前面。分段控件（而不是 `v-btn-toggle`）：32px 的
+         一条 `--fill` 底槽 + 选中那颗抬到 `--surface`，和 `AdminQueuePage` 的「栏位」
+         是同一个控件，两个地方不该长得不一样。 -->
     <div class="sb-field">
-      <div class="t-eyebrow mb-2">{{ t('feedback.submit.kind.label') }}</div>
-      <v-btn-toggle
-        v-model="store.draft.kind"
-        mandatory
-        density="comfortable"
-        variant="outlined"
-        divided
-        @update:model-value="store.touchDraft()"
-      >
-        <v-btn v-for="kind in kinds" :key="kind" :value="kind" size="small">{{ KIND_LABEL[kind] }}</v-btn>
-      </v-btn-toggle>
+      <div id="sb-kind-label" class="sb-label">{{ t('feedback.submit.kind.label') }}</div>
+      <div class="sb-seg" role="radiogroup" aria-labelledby="sb-kind-label">
+        <button
+          v-for="kind in kinds"
+          :key="kind"
+          type="button"
+          class="sb-seg__item"
+          :class="{ 'sb-seg__item--on': store.draft.kind === kind }"
+          role="radio"
+          :aria-checked="store.draft.kind === kind"
+          @click="setKind(kind)"
+        >
+          {{ kindLabel(kind) }}
+        </button>
+      </div>
       <p class="sb-hint t-meta">{{ kindHint }}</p>
     </div>
 
@@ -211,26 +278,38 @@ onMounted(() => {
     <p class="sb-legend t-meta">{{ t('feedback.submit.requiredLegend') }}</p>
 
     <div class="sb-field">
-      <v-text-field
+      <label class="sb-label" for="sb-title">
+        {{ t('feedback.submit.field.title.label') }}
+        <span class="sb-req" aria-hidden="true">*</span>
+      </label>
+      <input
+        id="sb-title"
         v-model="store.draft.title"
+        class="sb-input"
+        type="text"
         autocomplete="off"
-        :label="`${t('feedback.submit.field.title.label')} *`"
-        :placeholder="t('feedback.submit.field.title.placeholder')"
+        spellcheck="false"
         maxlength="300"
-        hide-details
-        @update:model-value="store.touchDraft()"
+        aria-required="true"
+        :placeholder="t('feedback.submit.field.title.placeholder')"
+        @input="store.touchDraft()"
       />
     </div>
 
     <div class="sb-field">
-      <v-textarea
+      <label class="sb-label" for="sb-body">
+        {{ bodyLabel }}
+        <span class="sb-req" aria-hidden="true">*</span>
+      </label>
+      <textarea
+        id="sb-body"
         v-model="store.draft.body"
-        autocomplete="off"
-        :label="`${bodyLabel} *`"
-        :placeholder="bodyPlaceholder"
+        class="sb-textarea"
         rows="6"
-        hide-details
-        @update:model-value="store.touchDraft()"
+        autocomplete="off"
+        aria-required="true"
+        :placeholder="bodyPlaceholder"
+        @input="store.touchDraft()"
       />
     </div>
 
@@ -243,93 +322,126 @@ onMounted(() => {
          换类型时已经填过的值**不清掉**（`toCreateBody` 按类型决定带不带），所以选错了
          改回来，刚才写的还在。 -->
     <div v-if="askExpectation" class="sb-field">
-      <v-textarea
+      <label class="sb-label" for="sb-expectation">
+        {{ t('feedback.submit.field.expectation.label') }}
+      </label>
+      <textarea
+        id="sb-expectation"
         v-model="store.draft.expectation"
-        autocomplete="off"
-        :label="t('feedback.submit.field.expectation.label')"
-        :placeholder="t('feedback.submit.field.expectation.placeholder')"
+        class="sb-textarea"
         rows="3"
-        hide-details
-        @update:model-value="store.touchDraft()"
+        autocomplete="off"
+        :placeholder="t('feedback.submit.field.expectation.placeholder')"
+        @input="store.touchDraft()"
       />
     </div>
 
     <div v-if="askRepro" class="sb-field">
-      <v-textarea
+      <label class="sb-label" for="sb-repro">{{ t('feedback.submit.field.repro.label') }}</label>
+      <textarea
+        id="sb-repro"
         v-model="store.draft.repro"
-        autocomplete="off"
-        :label="t('feedback.submit.field.repro.label')"
-        :placeholder="t('feedback.submit.field.repro.placeholder')"
+        class="sb-textarea"
         rows="3"
-        hide-details
-        @update:model-value="store.touchDraft()"
+        autocomplete="off"
+        :placeholder="t('feedback.submit.field.repro.placeholder')"
+        @input="store.touchDraft()"
       />
     </div>
 
     <!-- 标签。后端一直收（`FeedbackCreate.tags`），卡片也一直在渲染 `item.tags`，
-         只是表单以前没做。上限跟着后端（20 条），先在这里截住：写完几百字正文才被
-         服务端 422 退回来，是最贵的那种失败。 -->
+         只是表单以前没做。芯片是**手画的**：`v-combobox` 的芯片和下拉用的是 Vuetify
+         自己的尺寸和颜色，和这一页别处不一样；这里的输入框和上面的输入框同高同框，
+         候选就排在框底下（点一下加一个，不弹层）。上限跟着后端（20 条），先在这里
+         截住：写完几百字正文才被服务端 422 退回来，是最贵的那种失败。 -->
     <div class="sb-field">
-      <v-combobox
-        :model-value="store.draft.tags"
-        :items="tagSuggestions"
-        :label="t('feedback.submit.field.tags.label')"
-        :placeholder="t('feedback.submit.field.tags.placeholder')"
-        :hint="t('feedback.submit.field.tags.helper')"
-        multiple
-        chips
-        closable-chips
-        autocomplete="off"
-        persistent-hint
-        @update:model-value="setTags($event as string[])"
-      />
+      <label class="sb-label" for="sb-tag-input">{{ t('feedback.submit.field.tags.label') }}</label>
+      <div class="sb-tags" :class="{ 'sb-tags--focus': tagFocused }">
+        <span v-for="tag in store.draft.tags" :key="tag" class="sb-tag">
+          {{ tag }}
+          <button
+            type="button"
+            class="sb-tag__x"
+            :aria-label="t('feedback.submit.field.tags.remove', { tag })"
+            @click="removeTag(tag)"
+          >
+            <v-icon size="12" aria-hidden="true">mdi-close</v-icon>
+          </button>
+        </span>
+        <input
+          id="sb-tag-input"
+          v-model="tagDraft"
+          class="sb-tags__input"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          :placeholder="t('feedback.submit.field.tags.placeholder')"
+          @focus="tagFocused = true"
+          @blur="tagFocused = false"
+          @keydown="onTagKeydown"
+        />
+      </div>
+      <div v-if="tagSuggestions.length" class="sb-suggest">
+        <span class="sb-suggest__label t-meta">{{ t('feedback.submit.field.tags.suggestions') }}</span>
+        <button v-for="tag in tagSuggestions" :key="tag" type="button" class="sb-suggest__item" @click="addTag(tag)">
+          {{ tag }}
+        </button>
+      </div>
+      <p class="sb-hint t-meta">{{ t('feedback.submit.field.tags.helper') }}</p>
     </div>
 
     <!-- 可见范围是一次**决定**，不是一栏「选填」：它有默认值（公开），而且提完之后
-         谁也改不了。所以它摆在页脚上方，不进上面那段选填区。 -->
+         谁也改不了。所以它摆在页脚上方，不进上面那段选填区。两张整块的选项卡而不是
+         两个 radio 点：两边的后果不一样长，读的人要在**选之前**读完，所以每一档自己
+         占一块、选中那一块抬起来（--surface + 一圈 --line-2），和列表里选中的行同一套。 -->
     <div class="sb-field">
-      <div class="t-eyebrow mb-2">{{ t('feedback.submit.visibility.label') }}</div>
-      <v-radio-group
-        v-model="store.draft.visibility"
-        hide-details
-        class="mb-1"
-        @update:model-value="store.touchDraft()"
-      >
-        <v-radio value="public">
-          <template #label>
-            <div>
-              <div class="sb-radio__title">{{ t('feedback.submit.visibility.public.title') }}</div>
-              <div class="sb-radio__hint">{{ t('feedback.submit.visibility.public.hint') }}</div>
-            </div>
-          </template>
-        </v-radio>
-        <v-radio value="private">
-          <template #label>
-            <div>
-              <div class="sb-radio__title">{{ t('feedback.submit.visibility.private.title') }}</div>
-              <!-- 两种写法，分的是这一条有没有房间来源。`draft.proposal` 有值才走 accept
-                   那条路，服务端才解得出 `topic_id`；从反馈中心自己提的一条没有房间，
-                   房间那一档对它永远关着。读这句话的人正在决定要不要把敏感内容写进去，
-                   说宽了他会白删掉细节。 -->
-              <div class="sb-radio__hint">
-                {{
-                  fromProposal
-                    ? t('feedback.submit.visibility.private.hintWithRoom')
-                    : t('feedback.submit.visibility.private.hintNoRoom')
-                }}
-              </div>
-            </div>
-          </template>
-        </v-radio>
-      </v-radio-group>
-      <p class="t-meta">{{ t('feedback.submit.visibility.once') }}</p>
+      <div class="sb-label">{{ t('feedback.submit.visibility.label') }}</div>
+      <div class="sb-opts">
+        <label class="sb-opt" :class="{ 'sb-opt--on': store.draft.visibility === 'public' }">
+          <input
+            v-model="store.draft.visibility"
+            class="sb-opt__radio"
+            type="radio"
+            name="sb-visibility"
+            value="public"
+            @change="store.touchDraft()"
+          />
+          <span class="sb-opt__body">
+            <span class="sb-opt__title">{{ t('feedback.submit.visibility.public.title') }}</span>
+            <span class="sb-opt__hint">{{ t('feedback.submit.visibility.public.hint') }}</span>
+          </span>
+        </label>
+        <label class="sb-opt" :class="{ 'sb-opt--on': store.draft.visibility === 'private' }">
+          <input
+            v-model="store.draft.visibility"
+            class="sb-opt__radio"
+            type="radio"
+            name="sb-visibility"
+            value="private"
+            @change="store.touchDraft()"
+          />
+          <span class="sb-opt__body">
+            <span class="sb-opt__title">{{ t('feedback.submit.visibility.private.title') }}</span>
+            <!-- 两种写法，分的是这一条有没有房间来源。`draft.proposal` 有值才走 accept
+                 那条路，服务端才解得出 `topic_id`；从反馈中心自己提的一条没有房间，
+                 房间那一档对它永远关着。读这句话的人正在决定要不要把敏感内容写进去，
+                 说宽了他会白删掉细节。 -->
+            <span class="sb-opt__hint">
+              {{
+                fromProposal
+                  ? t('feedback.submit.visibility.private.hintWithRoom')
+                  : t('feedback.submit.visibility.private.hintNoRoom')
+              }}
+            </span>
+          </span>
+        </label>
+      </div>
+      <p class="sb-hint t-meta">{{ t('feedback.submit.visibility.once') }}</p>
     </div>
 
     <!-- 服务端的原话（412 的「已经办完了」之类也走这里）：把服务端说过的话照抄一遍，
          比在客户端另编一句「操作失败」有用得多。 -->
-    <v-alert v-if="store.error" type="error" density="compact" variant="tonal" class="mt-4">
-      {{ store.error }}
-    </v-alert>
+    <p v-if="store.error" class="sb-note sb-note--error">{{ store.error }}</p>
 
     <div class="sb-actions">
       <v-btn variant="text" color="secondary" :disabled="store.submitting" @click="emit('cancel')">
@@ -351,10 +463,25 @@ onMounted(() => {
   max-width: 720px;
   margin: 0 auto;
 }
-/* 每一栏之间留的是**标题之外**的那点距离：outlined 的 label 骑在边框上（`translateY(-50%)`
-   往上溢出约 8px），所以间距不能只按输入框的高度算，否则两栏的 label 会贴在一起。 */
+/* 每一栏之间留的是**标题之外**的那点距离：标签在上、输入框在下，两栏之间要能一眼
+   看出是两个问题，所以间距比输入框自己的高度小、比行距大。 */
 .sb-field {
   margin-top: 20px;
+}
+/* 标签：13px 600 --ink。它和 `.t-eyebrow`（12px 大写间距）不是一档 —— 这是要人读着
+   填的东西，不是分区标题。 */
+.sb-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--lh-13);
+  color: var(--ink);
+}
+/* 必填的星号。**不进无障碍树**：必填这件事真正的说明是下面那行「带 * 的是必填」，
+   而且它同时挂在 `aria-required` 上，读屏报一次就够了。 */
+.sb-req {
+  color: var(--danger-ink);
 }
 .sb-hint {
   margin: 8px 0 0;
@@ -398,7 +525,7 @@ onMounted(() => {
 }
 /* 现场那三段用 dl：它们是「字段名 + 值」，不是正文。 */
 .sb-origin__facts {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   font-size: 12px;
 }
 .sb-origin__facts dt {
@@ -409,17 +536,250 @@ onMounted(() => {
   margin: 0;
   color: var(--ink);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
-.sb-radio__title {
+/* 「把这段现场一起提交」。原生 checkbox 自己画：`v-checkbox` 的触控区有 40px 高，
+   在这一块 12px 的事实下面会把底边撑出一截空白。 */
+.sb-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--ink);
+  cursor: pointer;
+}
+.sb-check__box {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+/* 整块的说明（现场里可能有什么、服务端的原话）。两种语气同一副骨架：warn 的底是
+   `--warn-wash`，error 的是 `--danger-wash`，都配对应的文字色 —— 深色主题下也读得清。 */
+.sb-note {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: var(--lh-12);
+}
+.sb-note--warn {
+  background: var(--warn-wash);
+  color: var(--warn-ink);
+}
+.sb-note--error {
+  margin-top: 20px;
+  background: var(--danger-wash);
+  color: var(--danger-ink);
+}
+/* ---- 输入框：一条线、一个圆角、一圈焦点环 ---- */
+.sb-input,
+.sb-textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.sb-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+.sb-input::placeholder,
+.sb-textarea::placeholder {
+  color: var(--faint);
+}
+/* 焦点环跟着全局那一套走（`--focus-ring`）：只换边框色，不再套一层 outline ——
+   输入框的框本身就是焦点指示的载体，32px 高的格子里多一圈会顶到邻居。 */
+.sb-input:focus,
+.sb-textarea:focus {
+  border-color: var(--focus-ring);
+  outline: none;
+}
+/* ---- 类型：分段控件 ---- */
+.sb-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 4px;
+  background: var(--fill);
+  border-radius: var(--radius-md);
+}
+.sb-seg__item {
+  height: 24px;
+  padding: 0 12px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+.sb-seg__item:hover {
+  color: var(--text);
+}
+/* 选中的那颗抬到底色之上（`--surface` + 一圈描边）。中性色 —— 类型是一个位置，
+   不是一条告警，琥珀只留给这一页的主操作「提交反馈」。 */
+.sb-seg__item--on {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line);
+}
+/* ---- 标签：芯片 + 输入 ---- */
+.sb-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 38px;
+  padding: 5px 6px;
+  box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.sb-tags--focus {
+  border-color: var(--focus-ring);
+}
+.sb-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 22px;
+  padding: 0 4px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+}
+.sb-tag__x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: var(--faint);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sb-tag__x:hover {
+  color: var(--ink);
+  background: var(--fill-2);
+}
+/* 输入框在芯片后面接着长：它自己不画框（框在外面那层 `.sb-tags` 上），所以光标停
+   在最后一个芯片右边，看着就是「接着打」。 */
+.sb-tags__input {
+  flex: 1 1 120px;
+  min-width: 120px;
+  height: 26px;
+  padding: 0 4px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.sb-tags__input::placeholder {
+  color: var(--faint);
+}
+/* 候选排在输入框底下，点一下加一个 —— 不弹层。候选只是省打字，弹层会挡住上面刚
+   写好的正文，而候选值不值得看，人是当场知道的。 */
+.sb-suggest {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.sb-suggest__label {
+  margin-right: 2px;
+}
+.sb-suggest__item {
+  height: 22px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sb-suggest__item:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+/* ---- 可见范围：两张整块的选项卡 ---- */
+.sb-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sb-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.sb-opt--on {
+  border-color: var(--line-2);
+  background: var(--fill);
+}
+.sb-opt__radio {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.sb-opt__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.sb-opt__title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--lh-13);
   color: var(--ink);
 }
 /* 提示文字用 --muted 而不是 --faint：--faint 在它最好的底色上也只有 4.08:1，够不着
    14px 正文要的 4.5。 */
-.sb-radio__hint {
+.sb-opt__hint {
   font-size: 12px;
   line-height: var(--lh-12);
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 .sb-actions {
   display: flex;

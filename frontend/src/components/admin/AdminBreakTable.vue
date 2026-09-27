@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+
 // 看板上的「按 X 拆」小表（用量那两块：按模型、按通路）。
 //
 // 它和 `AdminBarChart` 的分工是**一行要不要带第二三个数**：柱状图那一版刻意只画一根
@@ -47,10 +49,12 @@ function widthOf(value: number): string {
       <v-skeleton-loader type="image" class="abt__skel abt__skel--plot" />
     </div>
 
-    <p v-else-if="empty" class="abt__none">
-      <span class="abt__none-title">{{ t('feedback.dashboard.empty.title') }}</span>
-      <span class="abt__none-desc">{{ t('feedback.dashboard.empty.desc') }}</span>
-    </p>
+    <AdminEmptyState
+      v-else-if="empty"
+      compact
+      :title="t('feedback.dashboard.empty.title')"
+      :desc="t('feedback.dashboard.empty.desc')"
+    />
 
     <template v-else>
       <ol class="abt__rows">
@@ -142,25 +146,6 @@ function widthOf(value: number): string {
   line-height: var(--lh-12);
 }
 
-.abt__none {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-}
-
-.abt__none-title {
-  color: var(--ink);
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
-}
-
-.abt__none-desc {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
 
 .abt__skeleton {
   display: flex;

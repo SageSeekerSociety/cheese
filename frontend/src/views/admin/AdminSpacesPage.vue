@@ -1,46 +1,92 @@
 <script setup lang="ts">
 import type { SpaceApplication } from '@/network/api/spaces/types'
 
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import AdminTabs from '@/components/admin/AdminTabs.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
+import { relTime } from '@/lib/relTime'
 import { SpacesApi } from '@/network/api/spaces'
+
+// 管理后台的「空间申请」（`/admin/spaces`）：待平台管理员过目的开版申请。
+//
+// 这一屏只有一件事：**一条申请一眼看完，然后按通过或驳回**。所以每一行给的是
+// 「谁、申请了什么版、什么时候、说了什么」，动作就在那一行右边 —— 三个状态页签
+// 分开了「还没看 / 看过了」，行内不再需要状态徽章之外的说明。
+//
+// 这一版换的是**壳**（做法不变）：
+//
+//   1. 页头与状态筛选改用后台共用的 `AdminPageHeader` + `AdminTabs`（原来是一个
+//      `v-select` 撑满整行 —— 三个选项的筛选器占 1070px，是「控件在替内容占地方」）。
+//   2. 从 `v-card` 一卡一条改成**紧凑列表**：一页十几条时，卡与卡之间的空隙比正文还高。
+//   3. `intro` 与 `description` 一起画时常常是同一句话（建版时同一次填的），所以
+//      `blurb()` 只画一遍，两句不一样时才两句都画。
+//   4. 空 / 读失败改用 `AdminEmptyState`（原来是一句裸文字），读失败还带重试。
+//   5. 分页的「还有没有下一页」改成**多要一条**：后台这条路由既不给总数也不给
+//      `has_more`（`{"items": [...]}` 就是全部），所以每次要 51 条，回来超过 50 条
+//      就说明后面还有。原来那句 `items.length < 50` 在「正好五十条」时会把下一页
+//      灰掉 —— 而那一页可能恰好还有一条。
+defineOptions({ name: 'AdminSpacesPage' })
+
+/** 一页五十条。多要的那一条只用来判断「后面还有」，不画出来。 */
+const PAGE = 50
 
 const { t } = useI18n()
 const status = ref('PENDING')
 const items = ref<SpaceApplication[]>([])
 const loading = ref(false)
-const error = ref('')
+/** 读这一页失败。它说的是「这一页没读到」，所以画在列表自己的位置上（不是页顶横幅）。 */
+const loadError = ref('')
+/** 通过 / 驳回失败。和读失败分开：重试的不是同一件事。 */
+const writeError = ref('')
 const offset = ref(0)
+const hasMore = ref(false)
 const selected = ref<SpaceApplication | null>(null)
 const reason = ref('')
 const saving = ref(false)
 
+const statusOptions = computed(() => [
+  { value: 'PENDING', label: t('spaces.review.PENDING') },
+  { value: 'APPROVED', label: t('spaces.review.APPROVED') },
+  { value: 'REJECTED', label: t('spaces.review.REJECTED') },
+])
+
 async function load() {
   loading.value = true
-  error.value = ''
+  loadError.value = ''
   try {
-    items.value = (await SpacesApi.reviews(status.value, offset.value)).data.items
+    // 多要一条：见文件开头第 5 条。多的那一条只决定下一页按钮亮不亮。
+    const { items: rows } = (await SpacesApi.reviews(status.value, offset.value, PAGE + 1)).data
+    hasMore.value = rows.length > PAGE
+    items.value = hasMore.value ? rows.slice(0, PAGE) : rows
   } catch {
-    error.value = t('spaces.review.loadFailed')
+    loadError.value = t('spaces.review.loadFailed')
+    items.value = []
+    hasMore.value = false
   } finally {
     loading.value = false
   }
 }
 
-function changeStatus() {
+function changeStatus(next: string) {
+  if (status.value === next) return
+  status.value = next
   offset.value = 0
   void load()
 }
 
 function page(delta: number) {
-  offset.value += delta
+  offset.value = Math.max(0, offset.value + delta)
   void load()
 }
 
 function reject(item: SpaceApplication) {
+  writeError.value = ''
   selected.value = item
   reason.value = ''
 }
@@ -48,91 +94,168 @@ function reject(item: SpaceApplication) {
 async function decide(item: SpaceApplication, approved: boolean) {
   if (saving.value || (!approved && !reason.value.trim())) return
   saving.value = true
-  error.value = ''
+  writeError.value = ''
   try {
     await SpacesApi.review(item.id, approved, reason.value.trim())
     selected.value = null
     reason.value = ''
     await load()
   } catch {
-    error.value = t('spaces.review.actionFailed')
+    // 框里的错误留在框里（驳回时）：关掉框等于把刚写的理由和「为什么退回」一起丢掉。
+    writeError.value = t('spaces.review.actionFailed')
   } finally {
     saving.value = false
   }
+}
+
+/** 申请上那句话。`intro` 与 `description` 常常一模一样（建版时同一次填的），
+ *  两句都画就是同一句话在一个人身上说两遍。以 `description` 为主，`intro` 只在
+ *  确实不一样时跟在下面；`description` 为空时退回 `intro`。 */
+function blurb(item: SpaceApplication): { main: string; extra: string } {
+  const main = item.description || item.intro || ''
+  const extra = item.intro && item.intro !== main ? item.intro : ''
+  return { main, extra }
+}
+
+/** 头像 URL：`avatarId` 缺失时给空串，`UserAvatar` 自己画彩色首字母。 */
+function avatarUrl(avatarId: number | null | undefined): string {
+  return avatarId == null ? '' : getAvatarUrl(avatarId)
 }
 
 onMounted(load)
 </script>
 
 <template>
-  <v-container fluid>
-    <h1 class="text-h5 mb-4">{{ t('spaces.review.title') }}</h1>
-    <p class="text-body-2 mb-4">{{ t('spaces.review.adminHelp') }}</p>
-    <div class="d-flex align-center mb-4">
-      <v-select
-        v-model="status"
-        autocomplete="off"
-        :items="[
-          { value: 'PENDING', title: t('spaces.review.PENDING') },
-          { value: 'APPROVED', title: t('spaces.review.APPROVED') },
-          { value: 'REJECTED', title: t('spaces.review.REJECTED') },
-        ]"
-        :label="t('spaces.review.status')"
-        :disabled="loading || saving"
-        hide-details
-        @update:model-value="changeStatus"
-      />
-      <v-btn class="ml-2" variant="text" :loading="loading" :disabled="saving" @click="load">{{
-        t('spaces.review.refresh')
-      }}</v-btn>
+  <div class="asp">
+    <div class="asp__inner">
+      <AdminPageHeader :title="t('spaces.review.title')" :sub="t('spaces.review.adminHelp')">
+        <template #tools>
+          <v-btn
+            icon="mdi-refresh"
+            variant="text"
+            size="small"
+            :aria-label="t('spaces.review.refresh')"
+            :loading="loading"
+            :disabled="saving"
+            @click="load"
+          />
+        </template>
+        <!-- 状态筛选是这一页唯一的筛选器，摆在页头：三个值就是三次「我要看哪一堆」。 -->
+        <AdminTabs
+          :label="t('spaces.review.status')"
+          :model-value="status"
+          :options="statusOptions"
+          @update:model-value="changeStatus($event)"
+        />
+      </AdminPageHeader>
+
+      <div class="asp__body">
+        <!-- 通过 / 驳回失败：一条 token 画的横条。驳回框开着时这一句在框里说
+             （见下面的对话框），读的人不会去页面上找。 -->
+        <div v-if="writeError && !selected" class="asp__flash asp__flash--bad" role="alert">
+          <v-icon icon="mdi-alert-circle-outline" size="16" class="asp__flashIcon" />
+          <span class="asp__flashText">{{ writeError }}</span>
+          <button
+            type="button"
+            class="asp__flashClose"
+            :aria-label="t('spaces.review.dismiss')"
+            @click="writeError = ''"
+          >
+            <v-icon icon="mdi-close" size="14" />
+          </button>
+        </div>
+
+        <div class="asp__panel">
+          <!-- 读失败：一句话说清、重试就在旁边；**不**画成「暂无申请」。 -->
+          <AdminEmptyState
+            v-if="loadError"
+            compact
+            tone="error"
+            :title="loadError"
+            :action="t('spaces.review.retry')"
+            @action="load"
+          />
+          <!-- 首屏（手上一条都没有）画骨架：列表矮、刷新快，一行一行的骨头够了。 -->
+          <ul v-else-if="loading && !items.length" class="asp__list" aria-hidden="true">
+            <li v-for="i in 5" :key="i" class="asp__row">
+              <span class="asp__bone" />
+            </li>
+          </ul>
+          <AdminEmptyState v-else-if="!items.length" compact :title="t('spaces.review.empty')" />
+          <ul v-else class="asp__list">
+            <li v-for="item in items" :key="item.id" class="asp__row">
+              <div class="asp__main">
+                <div class="asp__head">
+                  <!-- **装饰**：名字就在旁边，头像只是让眼睛在一列里更快找到人。 -->
+                  <span class="asp__pfp" aria-hidden="true">
+                    <UserAvatar :name="item.owner ?? item.name" :avatar="avatarUrl(item.avatarId)" :size="22" />
+                  </span>
+                  <span class="asp__name" :title="item.name">{{ item.name }}</span>
+                  <span v-if="item.reviewStatus !== 'PENDING'" class="asp__chip">
+                    {{ item.reviewStatus === 'APPROVED' ? t('spaces.review.APPROVED') : t('spaces.review.REJECTED') }}
+                  </span>
+                  <span class="asp__meta">{{ t('spaces.review.applicant') }}：{{ item.owner ?? '—' }}</span>
+                  <span class="asp__meta" :title="item.createdAt">{{ relTime(item.createdAt) }}</span>
+                </div>
+                <p v-if="blurb(item).main" class="asp__desc">{{ blurb(item).main }}</p>
+                <p v-if="blurb(item).extra" class="asp__desc asp__desc--sub">{{ blurb(item).extra }}</p>
+                <p v-if="item.reviewReason" class="asp__meta asp__meta--wrap">
+                  {{ t('spaces.review.reason') }}：{{ item.reviewReason }}
+                </p>
+                <p v-if="item.reviewedBy" class="asp__meta asp__meta--wrap">
+                  {{ item.reviewedBy }} · {{ item.reviewedAt }}
+                </p>
+              </div>
+              <div v-if="item.reviewStatus === 'PENDING'" class="asp__actions">
+                <v-btn color="primary" size="small" variant="flat" :disabled="saving" @click="decide(item, true)">
+                  {{ t('spaces.review.approve') }}
+                </v-btn>
+                <v-btn size="small" variant="text" :disabled="saving" @click="reject(item)">
+                  {{ t('spaces.review.reject') }}
+                </v-btn>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 只有一页时不留一排灰按钮：分页控件是「还有别的东西」的意思。 -->
+        <div v-if="offset > 0 || hasMore" class="asp__pager">
+          <v-btn variant="text" size="small" :disabled="!offset || loading || saving" @click="page(-PAGE)">
+            {{ t('spaces.review.previous') }}
+          </v-btn>
+          <v-btn variant="text" size="small" :disabled="!hasMore || loading || saving" @click="page(PAGE)">
+            {{ t('spaces.review.next') }}
+          </v-btn>
+        </div>
+      </div>
     </div>
-    <v-alert v-if="error" type="error" variant="tonal" class="mb-4" role="alert">{{ error }}</v-alert>
-    <v-progress-linear v-if="loading" indeterminate />
-    <p v-else-if="!items.length && !error" class="text-body-2">{{ t('spaces.review.empty') }}</p>
-    <v-card v-for="item in items" :key="item.id" variant="outlined" class="mb-3">
-      <v-card-title>
-        <v-avatar v-if="item.avatarId" size="40" :image="getAvatarUrl(item.avatarId)" class="mr-2" />
-        {{ item.name }}
-      </v-card-title>
-      <v-card-text>
-        <p class="text-body-2 mb-2">{{ t('spaces.review.applicant') }}：{{ item.owner }}</p>
-        <p class="text-body-2">{{ item.intro }}</p>
-        <p v-if="item.description" class="text-body-2 mt-2">{{ item.description }}</p>
-        <p v-if="item.reviewReason" class="text-body-2 mt-2">
-          {{ t('spaces.review.reason') }}：{{ item.reviewReason }}
-        </p>
-        <p v-if="item.reviewedBy" class="text-body-2 text-medium-emphasis mt-2">
-          {{ item.reviewedBy }} · {{ item.reviewedAt }}
-        </p>
-      </v-card-text>
-      <v-card-actions v-if="item.reviewStatus === 'PENDING'">
-        <v-btn color="primary" variant="flat" :disabled="saving" @click="decide(item, true)">{{
-          t('spaces.review.approve')
-        }}</v-btn>
-        <v-btn variant="text" :disabled="saving" @click="reject(item)">{{ t('spaces.review.reject') }}</v-btn>
-      </v-card-actions>
-    </v-card>
-    <div class="d-flex justify-end">
-      <v-btn variant="text" :disabled="!offset || loading || saving" @click="page(-50)">{{
-        t('spaces.review.previous')
-      }}</v-btn>
-      <v-btn variant="text" :disabled="items.length < 50 || loading || saving" @click="page(50)">{{
-        t('spaces.review.next')
-      }}</v-btn>
-    </div>
+
+    <!-- 驳回：要一句理由 —— 申请的人看不到这句话之外的任何解释。 -->
     <v-dialog
       :model-value="!!selected"
       max-width="520"
       :persistent="saving"
       @update:model-value="!$event && (selected = null)"
     >
-      <v-card :title="t('spaces.review.reject')">
-        <v-card-text>
-          <p class="text-body-2 mb-3">{{ selected?.name }}</p>
-          <v-textarea v-model="reason" autocomplete="off" :label="t('spaces.review.reason')" :disabled="saving" />
-          <v-alert v-if="error" type="error" variant="tonal">{{ error }}</v-alert>
+      <v-card rounded="lg">
+        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('spaces.review.reject') }}</v-card-title>
+        <v-card-text class="px-4">
+          <p class="asp__who t-body">{{ selected?.name }}</p>
+          <div v-if="writeError" class="asp__flash asp__flash--bad" role="alert">
+            <v-icon icon="mdi-alert-circle-outline" size="16" class="asp__flashIcon" />
+            <span class="asp__flashText">{{ writeError }}</span>
+          </div>
+          <v-textarea
+            v-model="reason"
+            autocomplete="off"
+            :label="t('spaces.review.reason')"
+            :disabled="saving"
+            rows="3"
+            variant="outlined"
+            hide-details
+          />
         </v-card-text>
-        <v-card-actions>
+        <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" :disabled="saving" @click="selected = null">{{ t('spaces.create.cancel') }}</v-btn>
           <v-btn
@@ -141,10 +264,246 @@ onMounted(load)
             :loading="saving"
             :disabled="!reason.trim() || saving"
             @click="selected && decide(selected, false)"
-            >{{ t('spaces.review.reject') }}</v-btn
           >
+            {{ t('spaces.review.reject') }}
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-container>
+  </div>
 </template>
+
+<style scoped>
+/* 三段式和队列页同一套：页头（`AdminPageHeader`）自带内边距与底下那条发丝线，
+   内容区接着往下排；宽度锁 `--page-w-admin` 并居中（左边距不给具体的值，是靠
+   `margin: 0 auto` 均分 —— 靠左会让不同视口下列宽差出一截）。 */
+.asp {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--canvas);
+}
+
+.asp__inner {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--page-w-admin);
+  margin: 0 auto;
+}
+
+.asp__body {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 24px 24px;
+}
+
+/* 一条横条（写失败）。**不是 `v-alert`**：那套默认样（大圆角、实色底、整块染色）
+   在这一页旁边像另一个产品。这里只留一条：左侧一道 3px 的色标说这是哪一类。 */
+.asp__flash {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+}
+
+.asp__flash--bad {
+  border-left-color: var(--danger);
+}
+
+.asp__flash--bad .asp__flashIcon {
+  color: var(--danger);
+}
+
+.asp__flashText {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.asp__flashClose {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.asp__flashClose:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+
+/* 列表是一张卡：外描边 + 圆角，行与行之间是发丝线。`overflow: hidden` 让首末两行
+   自己不去画圆角（这里没有 sticky 表头，不存在 `AdminGrid` 那条坑）。 */
+.asp__panel {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+}
+
+.asp__list {
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  list-style: none;
+  overflow: hidden;
+}
+
+.asp__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+
+.asp__row:last-child {
+  border-bottom: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .asp__row:hover {
+    background: var(--fill);
+  }
+}
+
+/* 骨架行：和真行同一个高度与内边距，数据到货时不跳。 */
+.asp__bone {
+  display: block;
+  width: 60%;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
+}
+
+.asp__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.asp__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asp__pfp {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.asp__name {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 状态徽章：只在看「已通过 / 已驳回」这两堆时出现 —— 待审核那一堆每一条都是待审核，
+   每条都盖一个章等于没说。 */
+.asp__chip {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+}
+
+.asp__meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 驳回原因和审核人那两行是**句子**，不是一格元信息：折行比省略号合适。 */
+.asp__meta--wrap {
+  white-space: normal;
+}
+
+/* 申请里那句话：最多两行。一屏十几条时，谁写了一段话把别人挤到屏外就是它的错。 */
+.asp__desc {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.asp__desc--sub {
+  color: var(--muted);
+}
+
+.asp__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.asp__pager {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.asp__who {
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* 手机：一行里的两个按钮会把正文挤到一百多像素。动作挪到正文下面，仍然是这一行的
+   动作（不与别的行混）。 */
+@media (max-width: 700px) {
+  .asp__body {
+    padding: 12px 16px 16px;
+  }
+
+  .asp__row {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .asp__actions {
+    align-self: flex-end;
+  }
+}
+</style>

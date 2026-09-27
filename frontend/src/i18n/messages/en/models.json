@@ -6,6 +6,7 @@
     "retry": "Retry",
     "add": "Add a model",
     "days": "Last {n} days",
+    "window": "Time window",
     "loadFailed": "Could not load. Try again.",
     "saveFailed": "Could not save. Try again.",
     "deleteFailed": "Could not delete. Try again.",
@@ -30,7 +31,8 @@
     "failed": "Failed requests"
   },
   "health": {
-    "label": "Gateway"
+    "label": "Gateway",
+    "down": "Gateway unreadable"
   },
   "table": {
     "label": "Models",
@@ -199,7 +201,8 @@
     "deleted": "Deleted “{name}”",
     "blocked": "Blocked “{name}”",
     "unblocked": "Unblocked “{name}”",
-    "budgetSet": "Updated the limit for “{name}”"
+    "budgetSet": "Updated the limit for “{name}”",
+    "dismiss": "Dismiss this notice"
   },
   "confirm": {
     "delete": {

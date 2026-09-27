@@ -3,6 +3,9 @@ import type { FeedbackStatus, FeedbackTimelineEntry } from '@/cx_types'
 
 import { computed } from 'vue'
 
+import { statusLabel } from './feedbackLabels'
+
+import { t } from '@/i18n'
 import { statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 
@@ -43,7 +46,7 @@ const steps = computed<Step[]>(() => {
     const entry = props.timeline.find((e) => e.status === status)
     return {
       status,
-      label: statusMeta(status).label,
+      label: statusLabel(status),
       at: entry?.at ?? null,
       by: entry?.by_handle ?? null,
       done: index < currentIndex,
@@ -70,7 +73,7 @@ const steps = computed<Step[]>(() => {
         <div v-if="step.at" class="t-meta">
           {{ relTime(step.at) }}<template v-if="step.by"> · {{ step.by }}</template>
         </div>
-        <div v-else class="t-meta">未开始</div>
+        <div v-else class="t-meta">{{ t('feedback.timeline.notStarted') }}</div>
       </div>
     </li>
   </ol>

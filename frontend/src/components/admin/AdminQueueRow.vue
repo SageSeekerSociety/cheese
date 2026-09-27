@@ -125,6 +125,10 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
     </span>
 
     <span class="qrow__assignee" role="gridcell">
+      <!-- 窄屏下这一格不再是「列头底下的一列」，它单独占一行，前面得有这句话才读得出
+           「carol」是干什么的。宽屏那一列有列头（`qrow__updated` 同理靠右对齐的列位
+           说明自己），所以标签只在窄屏画出来。 -->
+      <span class="qrow__alabel">{{ t('feedback.queue.col.assignee') }}</span>
       <template v-if="item.assignee_handle">{{ item.assignee_handle }}</template>
       <span v-else class="qrow__dim">—</span>
     </span>
@@ -258,6 +262,12 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
   color: var(--muted);
 }
 
+/* 指派那一格的行内标签。宽屏没有它（列头写着「指派」），窄屏才有 —— 规则在下面那条
+   媒体查询里。 */
+.qrow__alabel {
+  display: none;
+}
+
 /* 更新列不写 `--font-mono`，即使 §5.1 的那一列标着 mono：这个值是 `relTime` 算出来的
    相对时间（「刚刚」「昨天」「3天前」），而 mono 栈是 JetBrains Mono，**没有 CJK 字形**
    —— 汉字会回落到系统字体、数字留在等宽里，同一格里两种字体。等宽数字由 `.t-num`
@@ -308,6 +318,63 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
 @media (hover: hover) and (pointer: fine) {
   .qrow__btn:hover {
     background: var(--fill);
+  }
+}
+
+/* 窄屏（≤700，和 `AdminPageHeader` / 后台壳同一条线）：**一行翻成一张小卡片**，
+   不再横着滚。原来那条「整行 1100px、容器横着滚」在 390 下等于把「指派」整列和
+   「下一步」按钮推到屏幕外 —— 而这两样正是这一页要回答的问题（归谁、我该做什么），
+   看不见就等于这条队列只剩标题可读。61px 的行高在这一档放开：卡片按内容长。 */
+@media (max-width: 700px) {
+  .qrow {
+    flex-wrap: wrap;
+    align-items: center;
+    height: auto;
+    min-height: 61px;
+    padding: 12px 16px;
+    row-gap: 6px;
+    column-gap: 12px;
+  }
+
+  /* 换行是按 `flex-basis`（base size）判的，不是按 grow 之后的结果：给标题那格一个
+     够大的下限，右边三格才会整组掉到第二行。`min-width: 0` 保住长标题的截断。 */
+  .qrow__main {
+    flex: 1 1 240px;
+    min-width: 0;
+    margin: 0;
+  }
+
+  /* 卡片里高度是自由的，标题折两行比一句省略号有用。 */
+  .fbrow__link {
+    white-space: normal;
+  }
+
+  .qrow__meta {
+    flex-wrap: wrap;
+    row-gap: 2px;
+    white-space: normal;
+  }
+
+  /* 第二行：指派靠左，更新与按钮靠右（grow 给指派，它吃中间那段空）。 */
+  .qrow__assignee {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .qrow__alabel {
+    display: inline;
+    margin-right: 6px;
+    color: var(--muted);
+  }
+
+  .qrow__updated {
+    flex: 0 0 auto;
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .qrow__action {
+    margin-left: 0;
   }
 }
 </style>

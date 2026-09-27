@@ -99,11 +99,11 @@ function moreLabel(action: MoreAction | null): string {
   if (!action) return ''
   switch (action.kind) {
     case 'expand':
-      return `展开更多 ${action.hidden} 条回复`
+      return t('feedback.thread.expand', { n: action.hidden })
     case 'load':
-      return `加载更多回复（还有 ${action.remaining} 条）`
+      return t('feedback.thread.loadReplies', { n: action.remaining })
     case 'collapse':
-      return '收起'
+      return t('feedback.thread.collapse')
   }
 }
 
@@ -212,14 +212,14 @@ function onRemove(commentId: string) {
         <v-icon :size="14">{{
           moreActions[top.id]?.kind === 'collapse' ? 'mdi-chevron-up' : 'mdi-chevron-down'
         }}</v-icon>
-        {{ loadingReplies[top.id] ? '正在加载…' : moreLabel(moreActions[top.id]) }}
+        {{ loadingReplies[top.id] ? t('feedback.thread.loading') : moreLabel(moreActions[top.id]) }}
       </button>
     </li>
 
     <li v-if="hasMore">
       <button type="button" class="fb-thread__more" :disabled="loadingMore" @click="emit('load-more')">
         <v-icon size="14">mdi-chevron-down</v-icon>
-        {{ loadingMore ? '正在加载…' : '加载更多评论' }}
+        {{ loadingMore ? t('feedback.thread.loading') : t('feedback.thread.loadMore') }}
       </button>
     </li>
   </ul>

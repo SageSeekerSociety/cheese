@@ -297,7 +297,8 @@
     "approve": "Approve",
     "reject": "Reject",
     "reason": "Rejection reason",
-    "actionFailed": "Review could not be completed. Refresh to check the application status before retrying."
+    "actionFailed": "Review could not be completed. Refresh to check the application status before retrying.",
+    "dismiss": "Dismiss this notice"
   },
   "detail": {
     "editInfo": "Edit info",

@@ -482,14 +482,15 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
   border-bottom-left-radius: var(--radius-sm);
 }
 
-/* 空态 / 错误态占满整个表体：顶部对齐、距表头下沿 96px、宽 320px 居中（§5.1）。 */
+/* 空态 / 错误态占满整个表体：顶部对齐、距表头下沿 96px（= 这里 32 + 那块自己的 64）、
+   宽 320px 上界居中（§5.1）。 */
 .aft__none-cell {
-  padding: 96px 12px 0;
+  padding: 32px 12px 0;
   vertical-align: top;
 }
 
 .aft__none {
-  width: 320px;
+  max-width: 320px;
   margin: 0 auto;
 }
 
