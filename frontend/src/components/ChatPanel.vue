@@ -212,6 +212,22 @@ const reachedAgent = ref(false)
 const activeTurnIds = ref<Set<string>>(new Set())
 watch(awaitingReply, (v) => emit('working', v))
 
+// 这一轮是哪位队友在干活。房间里可以坐好几位 AI，「正在处理」说的得是被叫到、
+// 正在干的那一位——拿名册上排第一的那位顶替，另一位干活时界面就写着别人的名字。
+// 认的依次是：这一轮里它署名的记录、它落下的 👀 回执、发出去那句话点的名；一样都
+// 还没有时退回房间的座位。
+const workingHandle = ref<string | null>(null)
+function noteWorker(handle: string | null | undefined) {
+  if (handle && seatByHandle.value.get(handle)?.agent) workingHandle.value = handle
+}
+function noteTurnBlock(b: Block) {
+  if (b.turn_id && activeTurnIds.value.has(b.turn_id)) noteWorker(b.author)
+}
+const workingName = computed(() => (workingHandle.value ? agentDisplayName(workingHandle.value) : agentName.value))
+watch(awaitingReply, (v) => {
+  if (!v) workingHandle.value = null
+})
+
 // 停止就放在「正在处理…」旁边：人想叫停的时候眼睛就在这里。卡住的会话恰好是那个
 // 听不见话的——在对话里说「停」只会排到它后面去——所以这里走会话控制，平台直接
 // 把这次运行结束掉，不等会话答应。结束以后「正在处理…」跟着 turn_finished 消失。
@@ -625,8 +641,13 @@ function handleFrame(frame: WsServerFrame) {
       // chat.confirm_prompt_receipt）。认「作者不是我自己」而不是去比对队友的
       // handle，因为名册可能还没到，那时比对不上会把指示永远卡在「正在送给」。
       // 代价是房间里有人手点 👀 会让它提早翻一下，下一轮就自己纠正。
-      if (frame.reactions?.some((r) => r.emoji === '👀' && r.authors.some((a) => a !== AUTHOR)))
+      for (const r of frame.reactions ?? []) {
+        if (r.emoji !== '👀') continue
+        const by = r.authors.find((a) => a !== AUTHOR)
+        if (by === undefined) continue
         reachedAgent.value = true
+        if (awaitingReply.value) noteWorker(by)
+      }
       // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
       // row in place (the frame carries the block's full fresh aggregate).
       applyReactions(frame.block_id, frame.reactions)
@@ -647,6 +668,7 @@ function handleFrame(frame: WsServerFrame) {
     case 'event_block':
       // A persisted, clickable action card (decision/doc/...) for this turn.
       pushBlock(frame.block)
+      noteTurnBlock(frame.block)
       toSite(frame.block)
       autoScroll()
       break
@@ -661,6 +683,7 @@ function handleFrame(frame: WsServerFrame) {
     case 'assistant_block':
       // One complete 芝士 message (Slack-style) — a turn may land several.
       pushBlock(frame.block)
+      noteTurnBlock(frame.block)
       // Compatibility with an older backend that has no lifecycle markers.
       if (activeTurnIds.value.size === 0) awaitingReply.value = false
       autoScroll()
@@ -714,6 +737,8 @@ function handleFrame(frame: WsServerFrame) {
         turnBegan(id, typeof since === 'number' ? since * 1000 : Date.now())
       }
       awaitingReply.value = true
+      // 中途连进来的：这一轮里已经落下的记录说得出是谁在干。
+      for (const m of messages.value) noteTurnBlock(m)
       // 这个话题上有活在跑，就说明消息早到它手上了。回执是精确的那一路，这是
       // 兜底的一路：重连进来、或者会话自己开的一轮，本来就不该说「正在送给」。
       reachedAgent.value = true
@@ -963,6 +988,14 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   if (summon) {
     awaitingReply.value = true
     reachedAgent.value = false
+    // 点了哪位就是交给哪位；没点名的交给房间的座位。
+    workingHandle.value = null
+    for (const [, handle] of trimmed.matchAll(/<@([^>\s]+)>/g)) {
+      if (seatByHandle.value.get(handle)?.agent) {
+        workingHandle.value = handle
+        break
+      }
+    }
   }
   // The stored checklist stays on screen until this turn's first live frame
   // replaces it — blanking it here would hide 进度 during the cold start, which
@@ -1659,11 +1692,11 @@ onBeforeUnmount(() => {
           <Transition name="tl-working" @leave="collapseLeave">
             <div v-if="awaitingReply || liveTodo" class="im-row">
               <div class="im-gutter">
-                <CheeseAvatar :size="28" :name="agentName" />
+                <CheeseAvatar :size="28" :name="workingName" />
               </div>
               <div class="im-main">
                 <div class="im-meta">
-                  <span class="im-name">{{ agentName }}</span>
+                  <span class="im-name">{{ workingName }}</span>
                 </div>
 
                 <!-- Working-log checklist (`todo_write`, §3.1.1), only while a turn is
@@ -1691,7 +1724,7 @@ onBeforeUnmount(() => {
                 <div v-if="awaitingReply" class="im-text">
                   <Transition name="tl-swap" mode="out-in">
                     <span :key="reachedAgent ? 'working' : 'handing'" class="text-medium-emphasis">{{
-                      reachedAgent ? `${agentName}正在处理…` : `正在交给${agentName}…`
+                      reachedAgent ? `${workingName}正在处理…` : `正在交给${workingName}…`
                     }}</span>
                   </Transition>
                   <span class="caret" />
@@ -1700,7 +1733,7 @@ onBeforeUnmount(() => {
                     variant="text"
                     class="im-stop"
                     prepend-icon="mdi-stop"
-                    :title="t('work.room.stop.title', { name: agentName })"
+                    :title="t('work.room.stop.title', { name: workingName })"
                     :loading="stopping"
                     @click="stopRun"
                     >{{ t('work.room.stop.action') }}</v-btn

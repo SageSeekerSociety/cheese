@@ -3,10 +3,11 @@ import type { Block, Topic, WsServerFrame } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
+const listTopicMembers = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -14,7 +15,7 @@ vi.mock('@/api', async () => {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
     listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listTopicMembers: (...args: unknown[]) => listTopicMembers(...args),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
@@ -76,6 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   FakeWebSocket.instances = []
   listBlocks.mockResolvedValue({ data: [], has_more: false })
+  listTopicMembers.mockResolvedValue({ data: [], total: 0 })
   vi.stubGlobal('WebSocket', FakeWebSocket)
 })
 
@@ -144,5 +146,94 @@ describe('session activity', () => {
     await view.rerender({ topic: { ...topic, id: 'another-topic' } as Topic, topicList: [topic] })
     await flush()
     expect(view.emitted('working')?.at(-1)).toEqual([false])
+  })
+
+  // 一个房间坐着两位 AI：名册上先入座的是「芝士」，后 @ 进来的是「芝士Opus」。
+  // 干活的是哪位，「正在处理」就写哪位——不是名册上排第一的那位。
+  describe('房间里坐着几位队友', () => {
+    const seat = (handle: string, name: string) => ({
+      id: handle,
+      topic_id: topic.id,
+      member_handle: handle,
+      role: 'member',
+      agent: true,
+      name,
+      created_at: '2026-08-17T00:00:00Z',
+    })
+    beforeEach(() => {
+      listTopicMembers.mockResolvedValue({
+        data: [seat('cheese-first', '芝士'), seat('cheese-opus', '芝士Opus')],
+        total: 2,
+      })
+    })
+
+    async function mount() {
+      const vuetify = createVuetify({ components, directives })
+      const view = render(ChatPanel, {
+        props: { topic, topicList: [topic], showComposer: true },
+        global: { plugins: [vuetify] },
+      })
+      await flush()
+      return { view, socket: FakeWebSocket.instances.at(-1)! }
+    }
+
+    it('这一轮里署名的是哪位，就写哪位', async () => {
+      const { view, socket } = await mount()
+      socket.emit({ type: 'turn_started', turn_id: 'one' })
+      socket.emit({
+        type: 'event_block',
+        block: { ...assistantBlock, id: 'step-1', kind: 'event', author: 'cheese-opus', turn_id: 'one' } as Block,
+      })
+      await flush()
+      expect(view.getByText('芝士Opus正在处理…')).toBeTruthy()
+      expect(view.queryByText('芝士正在处理…')).toBeNull()
+    })
+
+    it('发出去点了哪位，还没动静时就说交给哪位', async () => {
+      const { view } = await mount()
+      const box = view.container.querySelector('textarea')!
+      box.focus()
+      await fireEvent.update(box, '<@cheese-opus> 看看这个')
+      await fireEvent.keyDown(box, { key: 'Enter' })
+      await flush()
+      expect(view.getByText('正在交给芝士Opus…')).toBeTruthy()
+    })
+
+    it('👀 回执是谁落的，就是谁接了这一轮', async () => {
+      const { view, socket } = await mount()
+      socket.emit({ type: 'turn_started', turn_id: 'one' })
+      socket.emit({
+        type: 'reaction',
+        block_id: 'm1',
+        reactions: [{ emoji: '👀', count: 1, authors: ['cheese-opus'] }],
+      } as WsServerFrame)
+      await flush()
+      expect(view.getByText('芝士Opus正在处理…')).toBeTruthy()
+    })
+
+    it('一位干完、另一位接着干，名字跟着换', async () => {
+      const { view, socket } = await mount()
+      socket.emit({ type: 'turn_started', turn_id: 'one' })
+      socket.emit({
+        type: 'event_block',
+        block: { ...assistantBlock, id: 'step-1', kind: 'event', author: 'cheese-opus', turn_id: 'one' } as Block,
+      })
+      socket.emit({ type: 'turn_finished', turn_id: 'one' })
+      socket.emit({ type: 'turn_started', turn_id: 'two' })
+      socket.emit({
+        type: 'event_block',
+        block: { ...assistantBlock, id: 'step-2', kind: 'event', author: 'cheese-first', turn_id: 'two' } as Block,
+      })
+      await flush()
+      expect(view.getByText('芝士正在处理…')).toBeTruthy()
+      expect(view.queryByText('芝士Opus正在处理…')).toBeNull()
+    })
+
+    it('这一轮还说不出是谁时，退回房间的座位', async () => {
+      const { view, socket } = await mount()
+      socket.emit({ type: 'turn_started', turn_id: 'one' })
+      await flush()
+      expect(view.getByText('芝士正在处理…')).toBeTruthy()
+    })
   })
 })
