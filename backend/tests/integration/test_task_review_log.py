@@ -166,6 +166,9 @@ def test_editing_the_title_does_not_move_the_review_time(
     _review(api_client, task["id"], board["owner_token"], approved="APPROVED")
 
     approved_once = _from_list(api_client, board, task["id"], board["owner_token"])
+    # 先确认这一次审核**真的留了痕**，下面那句「没动」才不是 null == null。
+    assert approved_once["reviewedBy"] == board["owner"].user_id
+    assert approved_once["reviewedAt"] is not None
 
     # 隔开一点再改，两个毫秒时间戳才分得开。
     time.sleep(0.02)
@@ -239,11 +242,13 @@ def test_sorting_by_review_time_takes_the_parameter_and_puts_unreviewed_last(
     不知道谁审过的旧题。审核页就靠这一条口径。
     """
     board = _new_board(user_client, api_client)
-    # 先发的那道被审了，后发的那道还在等审 —— 两道题同一位出题人时，先审后面那道
-    # 会被「他还有更早的题没审」挡下来（400），所以这里按发起顺序审。
     reviewed = _publish(api_client, board, name="刚审过的题")
-    unreviewed = _publish(api_client, board, name="还在等审的题")
     _review(api_client, reviewed["id"], board["owner_token"], approved="APPROVED")
+    # 这道题在**那次审核之后**才发出来，发完不再碰它：它的 `updatedAt` 比那次审核
+    # 更晚，所以「按 updatedAt 倒序排」会把它排到前面 —— 而这个顺序是错的，它的
+    # `reviewedAt` 是 null，按审核时间排必须落到后面。
+    time.sleep(0.02)
+    unreviewed = _publish(api_client, board, name="还在等审的题")
 
     resp = api_client.get(
         "/tasks",
