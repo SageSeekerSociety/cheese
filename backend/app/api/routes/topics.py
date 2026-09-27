@@ -3598,7 +3598,15 @@ async def project_topic_unread(
 
     Read-state is per-person, so the recipient comes from the verified
     credential (``handle`` is only checked against it) — a caller without one
-    used to read anybody's badge map by naming them here."""
+    used to read anybody's badge map by naming them here.
+
+    The project door comes first, the way it does on every other route that
+    takes a ``project_id``: without it this map is a room directory. A
+    non-member has no read cursor, so every count equals that topic's message
+    total — the shape of the answer is "which rooms exist, and how busy each
+    one is", even though the topics themselves answer 403 to the same caller."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     recipient = await resolver.resolve_recipient(
         requested=handle, project_id=project_id, allow_anonymous=False
     )
@@ -3624,7 +3632,13 @@ async def project_private_unread(
     Same rule as ``topic-unread``: the recipient comes from the verified
     credential, never from the query string. It matters more here — this map
     names who a person is talking to privately, so honouring a caller-supplied
-    handle would leak the shape of everyone's DMs."""
+    handle would leak the shape of everyone's DMs.
+
+    Same project door as ``topic-unread`` too, and for the same reason: the
+    recipient question ("whose inbox") is not the resource question ("may you
+    see this project"), and this route only used to ask the first."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     recipient = await resolver.resolve_recipient(
         requested=handle, project_id=project_id, allow_anonymous=False
     )
