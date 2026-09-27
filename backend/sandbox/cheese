@@ -1082,7 +1082,13 @@ def _doc_set(args: dict, host) -> str:
         ) from exc
     version = (result.get("data") or {}).get("doc_version", 0)
     host.doc_versions[topic] = version
-    return f"已更新实况文档（第 {version} 版）。"
+    lines = [f"已更新实况文档（第 {version} 版）。"]
+    # 格式警告（#1889 第 3 条）：写入照样成功，但「哪里不像状态」要当场改。
+    # 它跟着这次写入回来，不另发一条通知——改的机会就是现在，而此刻在写字的人
+    # 只看得见这次工具返回。
+    for warning in result.get("warnings") or []:
+        lines.append(f"⚠️ {warning}")
+    return "\n".join(lines)
 
 
 def _task_relative(path: str, task: str) -> str:
