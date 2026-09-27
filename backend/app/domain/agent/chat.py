@@ -668,14 +668,13 @@ _ACTION_LABEL = {
 _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 
 
-def _resolve_compute_id(
-    project_settings: dict | None,
-    topic_compute_profile: str | None = None,
-) -> str | None:
+def _resolve_compute_id(project_settings: dict | None, topic=None) -> str | None:
     """A room keeps its choice; otherwise use the explicit project default."""
-    from app.domain.agent.compute_configs import project_configs
+    from app.domain.agent.compute_configs import project_configs, room_choice
 
-    return topic_compute_profile or project_configs(project_settings).default.profile
+    if topic is not None:
+        return room_choice(topic, project_settings).profile
+    return project_configs(project_settings).default.profile
 
 
 def _model_policy_call(project, agent=None) -> gate.Call:
@@ -5237,8 +5236,7 @@ class ChatService:
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
             compute_id = _resolve_compute_id(
-                project.settings if project else None,
-                topic.compute_profile,
+                project.settings if project else None, topic
             )
             # 先问这套部署有没有这个骨架，再过档位策略：策略那一步要解析模型，而一个
             # 没注册的骨架一个模型都指不到（结论 43），先问它就会以「没有默认模型」
@@ -5359,8 +5357,12 @@ class ChatService:
                     topic_id=topic_id,
                     actor=provision_actor,
                 )
-                if topic.compute_profile is None:
-                    topic.compute_profile = provider.name
+                if topic.compute_config is None:
+                    from app.domain.agent.compute_configs import room_choice
+
+                    topic.compute_config = room_choice(
+                        topic, project.settings if project else None
+                    ).model_dump()
                 if not ready:
                     cloud_events = [
                         block
@@ -5468,7 +5470,7 @@ class ChatService:
             # that sees a failed attempt at all.
             replay_n = await blocks.bump_prompt_attempts(pending_ids, turn_id)
             # Committed HERE and not left to ride the conditional commit further
-            # down: that one only fires on a topic's FIRST turn (compute_profile
+            # down: that one only fires on a topic's FIRST turn (compute_config
             # still None), so on every later turn this session closes without a
             # commit and the counter silently rolls back — which is the exact
             # failure mode this counter exists to expose.
@@ -5483,11 +5485,19 @@ class ChatService:
             # still kills at 900s.
             # 不租手的一轮身上不钉机器。钉了就是给一段永远不会用到机器的对话记上
             # 一台机器，而这一行本来是给「以后别换机器」用的。
-            if needs_place and provider is not None and topic.compute_profile is None:
+            if needs_place and provider is not None and topic.compute_config is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later project-default change must
                 # never move an existing work tree or resumable Claude session.
-                topic.compute_profile = provider.name
+                # The WHOLE choice, not its pool: every later session in this
+                # room starts from it (结论 60), and a pool name alone would
+                # hand the next agent 标准配置 or whichever device is free
+                # instead of the spec or the machine the first one was given.
+                from app.domain.agent.compute_configs import room_choice
+
+                topic.compute_config = room_choice(
+                    topic, project.settings if project else None
+                ).model_dump()
                 await session.commit()
             phases_ms["committed"] = (time.monotonic() - started) * 1000
         logger.info(

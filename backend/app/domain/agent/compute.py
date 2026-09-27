@@ -113,9 +113,9 @@ class ComputeProvider(Protocol):
 class ComputePool:
     """Which backend a turn lands on — a machine AND a harness.
 
-    Two axes, because they are two questions. WHICH MACHINE is the topic's
-    ``compute_profile``: someone's enrolled laptop, a leased Cloud box. WHAT
-    RUNS THERE is the agent type's ``harness``. They were
+    Two axes, because they are two questions. WHICH MACHINE is the room's
+    compute choice (``topic.compute_config``): someone's enrolled laptop, a
+    leased Cloud box. WHAT RUNS THERE is the agent type's ``harness``. They were
     one key for as long as one harness existed, and a registry keyed by machine
     alone cannot hold a second one — two runtimes over the same transport would
     collide on the same name.
@@ -341,7 +341,7 @@ class ComputePool:
         """Pick the backend for this turn (execution-architecture v4 会话级选择).
 
         ``provider_id`` is the machine a topic/project chose (resolved upstream
-        from ``topic.compute_profile`` → project sticky); a machine this
+        from ``topic.compute_config`` → project default); a machine this
         deployment does not have falls back to the default one, so a stored
         selection that was retired never breaks a turn.
 

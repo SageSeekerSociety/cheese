@@ -1540,7 +1540,7 @@ async def get_topic_compute_profile(
                 await AgentSessionService(db).has_run(topic_id)
                 or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
             ),
-            "inherited": topic.compute_profile is None,
+            "inherited": topic.compute_config is None,
             "profiles": [
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
@@ -1805,12 +1805,12 @@ async def set_topic_compute_profile(
         if started and isinstance(verdict, gate.Allowed):
             verdict = gate.because_the_room_is_running(call, actor.handle)
     if isinstance(verdict, gate.Proposal):
-        # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
+        # 这次调用没有发生：绑定不写，`topic.compute_config` 不动。房间里多的
         # 是一条提议，下一步在 approver 手上。
         await propose(db, verdict, place_id=topic_id)
         await db.flush()
         # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
-        # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
+        # `room_choice` 算出来，不是 `topic` 上那一列还没被写过的值。第一轮之前
         # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
         # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
         # 法，先信谁？
@@ -1821,7 +1821,7 @@ async def set_topic_compute_profile(
                 "choice": current.model_dump(),
                 "device_id": current.device_id,
                 "locked": started,
-                "inherited": topic.compute_profile is None,
+                "inherited": topic.compute_config is None,
                 "proposal": {
                     "approver": verdict.approver,
                     "tier": verdict.call.tier,
@@ -1860,7 +1860,6 @@ async def set_topic_compute_profile(
             visibility=await device_service.binding_visibility(device_id),
         )
 
-    topic.compute_profile = name
     topic.compute_config = choice.model_dump()
     await db.flush()
     return ok(

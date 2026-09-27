@@ -212,5 +212,5 @@ cheesehost link connect https://<你的站点>/connector    # 先登录：打印
 # 同一条命令拿到 token 后装用户级 service 上线——全程不需要 sudo
 
 # 平台侧：在小队「算力」页把设备绑给团队（或「我的设备」绑项目）
-# 话题选 device 算力（不配 Cloud 时就是默认，也可以用 compute_profile/provider_id 显式选）
+# 话题选 device 算力（不配 Cloud 时就是默认，也可以在房间的算力选择里显式选）
 ```
