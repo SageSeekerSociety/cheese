@@ -327,3 +327,68 @@ class MemoryDreamRun(UuidPk, Timestamps, Base):
     summary: Mapped[str] = mapped_column(Text, default="")
     #: 这一轮动过的文件（`team/x.md`、`private/alice/y.md`），给人一眼扫。
     files_changed: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class MemoryMigrationStatus(enum.StrEnum):
+    """一次旧表搬迁跑到哪了。"""
+
+    #: 报告出来了，等复核。**这个状态下一个字都没写。**
+    draft = "draft"
+    #: 复核过（`approved_by`），可以落笔。
+    approved = "approved"
+    applied = "applied"
+    #: 落笔时撞上了冲突（有人在复核期间改了那棵树）。整次都没写。
+    failed = "failed"
+
+
+class MemoryMigrationPlan(UuidPk, Timestamps, Base):
+    """一次旧记忆迁移的计划、报告和它的结局。
+
+    计划要**存下来**，不能等到 apply 的时候再问一次模型：人复核的是**这一份**报告，
+    再问一次得到的是另一份——两次之间模型可以给出不同的去处，而人点头的是第一条。
+    所以 dry-run 把「模型的原始决定」和「它算出来的计划」一起存进来，apply 只重放，
+    不再问模型。
+
+    `sources` 存的是旧记忆**当时的原样**（只读的那张表，和复制过来的正文）：apply
+    前拿它算一次指纹，和 `sources_digest` 对不上就说明这份报告描述的不是现在这张
+    表了，重跑 dry-run。
+
+    这张表也是「哪些旧条目已经搬过」的账本（`source_ids`）：第二次 dry-run 不能再
+    把已经搬过的那几条再搬一遍，否则新树里会长出一份重名的东西。
+    """
+
+    __tablename__ = "memory_migration_plans"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default=MemoryMigrationStatus.draft.value
+    )
+    #: 旧记忆那一份的指纹（`migration.sources_digest`）。
+    sources_digest: Mapped[str] = mapped_column(String(32), default="")
+    #: 报告正文（`migration.render_report` 的输出）。**人复核的就是它**。
+    report: Mapped[str] = mapped_column(Text, default="")
+    #: 旧记忆的原样：`[{source_id, origin, where, content}]`。
+    sources: Mapped[list] = mapped_column(JSON, default=list)
+    #: 已经搬过的那些 source_id（这份计划里的）。
+    source_ids: Mapped[list] = mapped_column(JSON, default=list)
+    #: 模型的原始决定，原样存着（重放计划要用）。
+    decisions: Mapped[list] = mapped_column(JSON, default=list)
+    #: 要写的文件：`[{scope, owner, path, content, version, sources, is_new}]`。
+    files: Mapped[list] = mapped_column(JSON, default=list)
+    #: 要写的索引：`[{scope, owner, content, version, added_lines}]`。
+    indexes: Mapped[list] = mapped_column(JSON, default=list)
+    #: 只建议、不自动改的那些。
+    suggestions: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    #: 复核人。**落笔前必须是它**，见 `settings.memory_migration_reviewer`。
+    approved_by: Mapped[str] = mapped_column(String(64), default="")
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 结局：写进去几个文件，或者为什么停下。
+    summary: Mapped[str] = mapped_column(Text, default="")
