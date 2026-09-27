@@ -257,7 +257,7 @@ def test_a_checklist_reaches_the_room_the_same_way(client, room, harness):
     with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
         said = harness("todo_write", {"todos": PLAN})
         message = _next(ws, "assistant_block")
-    assert message["content"] == "- [x] 读现有实现\n- [ ] **改接口**\n- [ ] 补测试"
+    assert message["content"] == "✓ 读现有实现\n✱ 改接口\n○ 补测试"
     expected = [(todo["content"], todo["status"]) for todo in PLAN]
     stored = client.get(f"/topics/{topic}/progress").json()["data"]["items"]
     assert [(i["subject"], i["status"]) for i in stored] == expected

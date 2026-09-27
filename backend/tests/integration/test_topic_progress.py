@@ -94,7 +94,7 @@ def _checklists(client, topic_id: str) -> list[dict]:
     return [b for b in blocks if b["kind"] == "message" and b["author"] == agent]
 
 
-CHECKLIST = "- [x] 核实 issue 论断\n- [ ] **写实现**\n- [ ] 补测试"
+CHECKLIST = "✓ 核实 issue 论断\n✱ 写实现\n○ 补测试"
 
 
 def test_the_first_write_posts_the_checklist_as_the_agents_message(client):
@@ -106,6 +106,12 @@ def test_the_first_write_posts_the_checklist_as_the_agents_message(client):
     assert message["author"] == room_agent_seat(client, topic)
     assert message["kind"] == "message"
     assert message["content"] == CHECKLIST
+    # The room draws the list from its structure, not from the text.
+    checklist = message["meta"]["checklist"]
+    assert [(i["subject"], i["status"]) for i in checklist["items"]] == [
+        (t["content"], t["status"]) for t in PLAN
+    ]
+    assert checklist["result"] is None
     assert response.json()["data"]["message_id"] == message["id"]
     # 总览 reads the stored list, as before.
     assert _progress(client, topic) == [(t["content"], t["status"]) for t in PLAN]
@@ -123,7 +129,7 @@ def test_later_writes_edit_that_same_message(client):
         assert response.status_code == 200, response.text
         edited = _frame(ws, "block_updated")
     assert edited["id"] == first
-    assert edited["content"] == "- [x] 核实 issue 论断\n- [x] 写实现\n- [x] 补测试"
+    assert edited["content"] == "✓ 核实 issue 论断\n✓ 写实现\n✓ 补测试"
     assert edited["meta"]["edited_at"], "an update is an edit, and shows as one"
     assert [m["id"] for m in _checklists(client, topic)] == [first]
 
@@ -146,6 +152,33 @@ def test_the_agent_starts_a_new_checklist_when_it_says_so(client):
     shown = {m["id"]: m["content"] for m in _checklists(client, topic)}
     assert shown[first] == CHECKLIST, "the earlier checklist stays as it was"
     assert set(shown) == {first, second}
+
+
+def test_the_last_write_puts_the_result_under_the_list(client):
+    topic, headers = _room(client)
+    first = _write(client, topic, headers, PLAN).json()["data"]["message_id"]
+    done = [{**t, "status": "completed"} for t in PLAN]
+    with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
+        _write(client, topic, headers, done, result="接口改好了，测试全过")
+        edited = _frame(ws, "block_updated")
+    assert edited["id"] == first
+    assert edited["content"].endswith("✓ 补测试\n\n✅ 接口改好了，测试全过")
+    assert edited["meta"]["checklist"]["result"] == "接口改好了，测试全过"
+
+
+def test_text_written_over_a_checklist_is_no_longer_one(client):
+    """The agent can still edit its checklist message by hand (`chat_edit`).
+    What it writes is its own words, shown as written, and the next
+    `todo_write` starts a fresh list rather than overwrite them."""
+    topic, headers = _room(client)
+    first = _write(client, topic, headers, PLAN).json()["data"]["message_id"]
+    response = client.patch(
+        f"/blocks/{first}", json={"content": "计划改了，稍后重列"}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert "checklist" not in response.json()["data"]["meta"]
+    again = _write(client, topic, headers, PLAN).json()["data"]
+    assert again["posted"] is True and again["message_id"] != first
 
 
 def test_each_write_replaces_the_whole_list(client):

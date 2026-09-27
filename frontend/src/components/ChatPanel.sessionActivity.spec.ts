@@ -73,8 +73,17 @@ const assistantBlock: Block = {
 const checklist: Block = {
   ...assistantBlock,
   id: 'checklist-1',
-  content: '- [x] Read the brief\n- [ ] **Write the fix**',
+  content: '✓ Read the brief\n✱ Write the fix',
   turn_id: 'one',
+  meta: {
+    checklist: {
+      items: [
+        { id: '1', subject: 'Read the brief', status: 'completed' },
+        { id: '2', subject: 'Write the fix', status: 'in_progress' },
+      ],
+      result: null,
+    },
+  },
 } as Block
 
 async function flush() {
@@ -142,8 +151,17 @@ describe('session activity', () => {
       type: 'block_updated',
       block: {
         ...checklist,
-        content: '- [x] Read the brief\n- [x] Write the fix',
-        meta: { edited_at: '2026-08-17T00:00:05Z' },
+        content: '✓ Read the brief\n✓ Write the fix',
+        meta: {
+          edited_at: '2026-08-17T00:00:05Z',
+          checklist: {
+            items: [
+              { id: '1', subject: 'Read the brief', status: 'completed' },
+              { id: '2', subject: 'Write the fix', status: 'completed' },
+            ],
+            result: null,
+          },
+        },
       } as Block,
     })
     socket.emit({ type: 'turn_finished', turn_id: 'one' })

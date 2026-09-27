@@ -138,6 +138,15 @@ export interface BlockMeta {
   until?: string
   // 作者改过这条消息（ISO 时间）。有它，消息就标「已编辑」。
   edited_at?: string
+  // 这条是队友的步骤清单（`todo_write`）：房间照它画清单，正文是给别的读者的同一份话。
+  // 更早的清单消息这里只有一个 `true`，照普通消息画。
+  checklist?: ChecklistMeta | boolean
+}
+
+export interface ChecklistMeta {
+  items: TodoItem[]
+  /** 做完时队友写的一句结果。 */
+  result: string | null
 }
 
 export interface Block {

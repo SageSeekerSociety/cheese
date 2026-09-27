@@ -288,6 +288,9 @@
       "title": "“{title}”",
       "done": "Done",
       "running": "In progress"
+    },
+    "checklist": {
+      "updatedAt": "Checklist updated {time}"
     }
   },
   "members": {

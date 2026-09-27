@@ -128,9 +128,11 @@ AGENT_NOTICE_META_KEY = "agent_notice"
 # room reads as 「已编辑」; see `app.domain.block.editing`.
 EDITED_AT_META_KEY = "edited_at"
 
-# This message is an agent's step checklist, the one `todo_write` keeps editing.
-# The message itself is ordinary; the key only lets the next `todo_write` find
-# which of its author's messages to edit.
+# This message is an agent's step checklist, the one `todo_write` keeps editing:
+# ``{"items": [{"id", "subject", "status"}], "result": str | None}``. The room
+# draws the list from it; the text says the same thing for every other reader.
+# Its presence is also how the next `todo_write` finds which of its author's
+# messages to edit.
 CHECKLIST_META_KEY = "checklist"
 
 
