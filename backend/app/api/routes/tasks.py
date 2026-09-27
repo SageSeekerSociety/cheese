@@ -3006,6 +3006,42 @@ async def patch_task_submission(
     }
 
 
+async def _bind_review_path(
+    *,
+    db,
+    task_id: int,
+    participant_id: int,
+    submission_id: int,
+) -> tuple[Task, TaskMembership]:
+    """Resolve what a review route addresses, binding every path id to one row.
+
+    评审五条路由都挂在
+    ``/{taskId}/participants/{participantId}/submissions/{submissionId}/review``
+    之下，所以 ``submissionId`` 从来不是一个单独的主键：它只能沿着「谁提交的」
+    （membership）和「提交到哪道题」（task）走到。以前把它当全局自由主键，于是
+    任何一个在别的题上通过 ``may_teach_task`` 的人都能给这道题的任意提交打分、改分、
+    删分 —— 拿到一个 id 就够。这里一次判完三段：membership 必须属于 path 的 task、
+    submission 必须属于 path 的 participant，判据只写这一处（五条路由共用，第六个
+    方法照抄这行就不会漏）。
+
+    任何一段不成立都答 404 而不是 403：错配的 id 说明这条路径没指向任何东西，
+    403 会替调用者确认「这个 submissionId 存在」。
+    """
+    task = await TaskRepository(session=db).get_by_id(task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+
+    membership = await TaskMembershipRepository(session=db).get_by_id(participant_id)
+    if membership is None or membership.task_id != task_id:
+        raise NotFoundError.for_resource("participant", participant_id)
+
+    submission = await TaskSubmissionRepository(session=db).get_by_id(submission_id)
+    if submission is None or submission.membership_id != participant_id:
+        raise NotFoundError.for_resource("submission", submission_id)
+
+    return task, membership
+
+
 @router.post(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Create Submission Review",
@@ -3018,15 +3054,15 @@ async def post_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
-    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    _ = participant_id
-
-    task = await task_service.get_task(task_id=task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
+    task, _ = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only the author or a board manager can create review")
 
@@ -3058,9 +3094,34 @@ async def get_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
+    team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
-    _ = (task_id, participant_id, auth_user)
+    """一条评审的读者，就是这条提交的读者。
+
+    以前这里整个函数没有鉴权（只把三个参数 ``_ = (...)`` 丢掉），登录的人知道一个
+    submissionId 就能读到它的成绩与评语。判据照抄同一路径上的提交列表
+    ``GET .../submissions``：出题者与管理员、提交者本人、以及小队提交时的小队成员。
+    """
+    task, membership = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
+
+    is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
+    is_own_participant = (
+        membership.member_id == auth_user.user_id and not membership.is_team
+    )
+    is_team_member = False
+    if membership.is_team:
+        is_team_member = await team_service.is_team_member(
+            membership.member_id, auth_user.user_id
+        )
+    if not is_teacher and not is_own_participant and not is_team_member:
+        raise ForbiddenError("You are not authorized to view this review")
 
     review_dto = await review_service.get_review_dto(submission_id)
 
@@ -3086,15 +3147,15 @@ async def patch_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
-    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    _ = participant_id
-
-    task = await task_service.get_task(task_id=task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
+    task, _ = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only the author or a board manager can update review")
 
@@ -3123,15 +3184,15 @@ async def put_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
-    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    _ = participant_id
-
-    task = await task_service.get_task(task_id=task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
+    task, _ = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only the author or a board manager can update review")
 
@@ -3159,15 +3220,15 @@ async def delete_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
-    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    _ = participant_id
-
-    task = await task_service.get_task(task_id=task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
+    task, _ = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only the author or a board manager can delete review")
 
