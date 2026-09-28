@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import jwt
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocket, WebSocketState
@@ -197,6 +197,13 @@ class PreviewHostMiddleware:
             response = await self.respond(request, topic_id)
         except (AppError, BaseError):
             response = Response("Preview unavailable", status_code=404)
+        except ClientDisconnect:
+            # The browser dropped the request before we read it: a dev server's
+            # page reloading cancels its in-flight module fetches. Nobody is
+            # left to answer, and nothing here failed. This middleware sits
+            # outside the platform's exception handlers, so without this the
+            # hang-up reaches the catch-all and pages as a server error.
+            return
         await _private(response)(scope, receive, send)
 
     def sessions(self):

@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 import jwt
 from fastapi import FastAPI
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -151,6 +151,12 @@ class SiteHostMiddleware:
             response = await self.respond(request, project_id)
         except (AppError, BaseError):
             response = Response("Site unavailable", status_code=404)
+        except ClientDisconnect:
+            # The browser dropped the request before we read it. Nobody is left
+            # to answer, and nothing here failed; this middleware sits outside
+            # the platform's exception handlers, so without this the hang-up
+            # reaches the catch-all and pages as a server error.
+            return
         await _private(response)(scope, receive, send)
 
     async def respond(self, request: Request, project_id: uuid.UUID) -> Response:

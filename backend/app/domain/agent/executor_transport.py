@@ -571,6 +571,50 @@ class RemoteClient:
             raise RuntimeError(answer["error"])
         return answer["result"]
 
+    def remote_call_with_hooks(self, call_id, server, tool, args):
+        """A remote server's tool call with the project's PreToolUse and
+        PostToolUse hooks around it, for a harness that does not fire them
+        itself (Codex; pi). Claude Code fires them itself, so its bridge calls
+        `call("invoke", …)` without this. The hooks run on the room's machine,
+        which is taken for it; a PreToolUse deny, or a machine out of reach,
+        means the call is not made. Returns what `call("invoke", …)` does."""
+        name = f"mcp__{server}__{tool}"
+        before = self.control(
+            {
+                "subtype": "tool_hooks",
+                "event": "PreToolUse",
+                "tool": name,
+                "args": args,
+                "request_id": call_id,
+            }
+        )
+        if "denied" in before:
+            return {"error": before["denied"]}
+        args = before["args"]
+        receipt = self.remote_mcp(
+            "invoke", {"id": call_id, "server": server, "tool": tool, "args": args}
+        )
+        after = self.control(
+            {
+                "subtype": "tool_hooks",
+                "event": "PostToolUse",
+                "tool": name,
+                "args": args,
+                "request_id": call_id,
+                "result": receipt.get("value", receipt.get("error")),
+            }
+        )
+        if "denied" in after and "value" in receipt:
+            # The call has happened; a PostToolUse block is feedback on its
+            # result, which the model reads beside it, as in Claude Code.
+            value = dict(receipt["value"])
+            value["content"] = [
+                *value.get("content", []),
+                {"type": "text", "text": f"PostToolUse hook: {after['denied']}"},
+            ]
+            return {"value": value}
+        return receipt
+
     def remote_servers(self):
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
 
@@ -604,6 +648,8 @@ class RemoteClient:
                 and (params or {}).get("subtype") == "shell"
                 and (params or {}).get("operation") == "start"
             )
+            # A project's hooks run on the machine that holds the project.
+            or (method == "control" and (params or {}).get("subtype") == "tool_hooks")
         ):
             # Only a requested execution operation acquires hands. Bootstrap,
             # context discovery and a platform-only tool never enter this path.
