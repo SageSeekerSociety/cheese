@@ -109,16 +109,27 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="demo-page" :class="{ 'demo-page--embed': embedded }">
+  <div class="demo-page" :class="{ 'demo-page-embed': embedded }">
     <template v-if="scene && frame">
       <header v-if="!embedded" class="demo-head">
         <h1 class="demo-title">{{ scene.title }}</h1>
         <div class="demo-ctl">
           <v-btn icon="mdi-chevron-left" size="small" variant="text" aria-label="上一步" @click="go(step - 1, false)" />
-          <v-btn size="small" variant="tonal" :prepend-icon="playing ? 'mdi-pause' : 'mdi-play'" @click="playing ? pause() : play()">
+          <v-btn
+            size="small"
+            variant="tonal"
+            :prepend-icon="playing ? 'mdi-pause' : 'mdi-play'"
+            @click="playing ? pause() : play()"
+          >
             {{ playing ? '暂停' : '播放' }}
           </v-btn>
-          <v-btn icon="mdi-chevron-right" size="small" variant="text" aria-label="下一步" @click="go(step + 1, false)" />
+          <v-btn
+            icon="mdi-chevron-right"
+            size="small"
+            variant="text"
+            aria-label="下一步"
+            @click="go(step + 1, false)"
+          />
         </div>
       </header>
       <ol v-if="!embedded" class="demo-steps">
@@ -126,11 +137,13 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="demo-step"
-            :class="{ 'demo-step--on': i === step, 'demo-step--done': i < step }"
+            :class="{ 'demo-step-on': i === step, 'demo-step-done': i < step }"
             @click="go(i, true)"
           >
-            <span class="demo-step__bar"><i :style="{ width: i < step ? '100%' : i === step ? `${(elapsed / duration) * 100}%` : '0%' }" /></span>
-            <span class="demo-step__label">{{ i + 1 }}. {{ s.label }}</span>
+            <span class="demo-step-bar"
+              ><i :style="{ width: i < step ? '100%' : i === step ? `${(elapsed / duration) * 100}%` : '0%' }"
+            /></span>
+            <span class="demo-step-label">{{ i + 1 }}. {{ s.label }}</span>
           </button>
         </li>
       </ol>
@@ -149,10 +162,10 @@ onBeforeUnmount(() => {
   gap: 12px;
   height: 100vh;
   padding: 16px 24px 24px;
-  background: var(--canvas, var(--fill));
+  background: var(--canvas);
 }
 
-.demo-page--embed {
+.demo-page-embed {
   padding: 0;
   background: transparent;
 }
@@ -204,21 +217,21 @@ onBeforeUnmount(() => {
   border: 0;
 }
 
-.demo-step__bar {
+.demo-step-bar {
   display: block;
   height: 3px;
   overflow: hidden;
   background: var(--line-2);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 
-.demo-step__bar i {
+.demo-step-bar i {
   display: block;
   height: 100%;
-  background: var(--primary);
+  background: var(--accent);
 }
 
-.demo-step__label {
+.demo-step-label {
   overflow: hidden;
   font-size: 12px;
   line-height: var(--lh-12);
@@ -227,11 +240,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.demo-step--on .demo-step__label {
+.demo-step-on .demo-step-label {
   color: var(--ink);
 }
 
-.demo-step--done .demo-step__label {
+.demo-step-done .demo-step-label {
   color: var(--muted);
 }
 

@@ -3,8 +3,8 @@
 // 喂的是剧本算出来的数据（demoScene.frameAt）。首页 LandingRoom 是同一个做法。
 // 外框（顶栏、机器、座位卡、页签）是演示自己画的：真页面上的这些要连后端才画得出来，
 // 而演示要讲的恰恰是它们背后的机制，所以把机制写成看得见的几张卡。
-import type { Frame, Scene } from './demoScene'
 import type { Block, Topic } from '@/cx_types'
+import type { Frame, Scene } from './demoScene'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
@@ -83,11 +83,11 @@ const TABS = ['总览', '现场', '改动', '预览']
 <template>
   <div class="demo-room" :data-focus="frame.focus ?? ''" inert>
     <header class="demo-bar">
-      <span class="demo-bar__project">{{ scene.project }}</span>
+      <span class="demo-bar-project">{{ scene.project }}</span>
       <Transition name="demo-swap" mode="out-in">
-        <span :key="frame.topic" class="demo-bar__topic" data-region="title"># {{ frame.topic }}</span>
+        <span :key="frame.topic" class="demo-bar-topic" data-region="title"># {{ frame.topic }}</span>
       </Transition>
-      <span class="demo-bar__machine" data-region="machine">
+      <span class="demo-bar-machine" data-region="machine">
         <v-icon icon="mdi-server" size="14" />
         <Transition name="demo-swap" mode="out-in">
           <span :key="frame.machine">{{ frame.machine }}</span>
@@ -96,21 +96,26 @@ const TABS = ['总览', '现场', '改动', '预览']
     </header>
 
     <div v-if="frame.seats.length" class="demo-seats" data-region="seats">
-      <div v-for="s in frame.seats" :key="s.who" class="demo-seat" :class="{ 'demo-seat--busy': frame.runningWho.includes(s.who) }">
+      <div
+        v-for="s in frame.seats"
+        :key="s.who"
+        class="demo-seat"
+        :class="{ 'demo-seat-busy': frame.runningWho.includes(s.who) }"
+      >
         <CheeseAvatar :size="22" :name="names[s.who] ?? s.who" />
-        <div class="demo-seat__body">
-          <div class="demo-seat__name">
+        <div class="demo-seat-body">
+          <div class="demo-seat-name">
             {{ names[s.who] ?? s.who }}
-            <span v-if="s.who === defaultAgent && frame.seats.length > 1" class="demo-seat__tag">默认</span>
-            <span v-if="frame.lock === s.who" class="demo-seat__lock">
+            <span v-if="s.who === defaultAgent && frame.seats.length > 1" class="demo-seat-tag">默认</span>
+            <span v-if="frame.lock === s.who" class="demo-seat-lock">
               <v-icon icon="mdi-lock-outline" size="12" />
               重资源锁
             </span>
           </div>
-          <div class="demo-seat__meta">
+          <div class="demo-seat-meta">
             <span v-if="s.dir">{{ s.dir }}</span>
             <span v-if="s.session">{{ s.session }}</span>
-            <span v-if="s.state" class="demo-seat__state">{{ s.state }}</span>
+            <span v-if="s.state" class="demo-seat-state">{{ s.state }}</span>
           </div>
         </div>
       </div>
@@ -144,11 +149,11 @@ const TABS = ['总览', '现场', '改动', '预览']
 
       <aside class="demo-panel">
         <nav class="demo-tabs" data-region="tabs">
-          <span v-for="tab in TABS" :key="tab" class="demo-tab" :class="{ 'demo-tab--on': tab === '现场' }">
+          <span v-for="tab in TABS" :key="tab" class="demo-tab" :class="{ 'demo-tab-on': tab === '现场' }">
             {{ tab }}
             <template v-if="tab === '现场' && working">
-              <i class="demo-tab__pulse" />
-              <small class="demo-tab__who">{{ workingNames }}正在工作</small>
+              <i class="demo-tab-pulse" />
+              <small class="demo-tab-who">{{ workingNames }}正在工作</small>
             </template>
           </span>
         </nav>
@@ -174,14 +179,14 @@ const TABS = ['总览', '现场', '改动', '预览']
 
 <style scoped>
 .demo-room {
-  position: relative;
   display: flex;
-  flex-direction: column;
+  position: relative;
   height: 100%;
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
+  flex-direction: column;
 }
 
 .demo-bar {
@@ -196,18 +201,18 @@ const TABS = ['总览', '现场', '改动', '预览']
   border-bottom: 1px solid var(--line);
 }
 
-.demo-bar__project {
+.demo-bar-project {
   font-weight: 600;
   color: var(--ink);
 }
 
-.demo-bar__topic {
+.demo-bar-topic {
   padding: 2px 6px;
   color: var(--muted);
   border-radius: var(--radius-sm);
 }
 
-.demo-bar__machine {
+.demo-bar-machine {
   display: inline-flex;
   gap: 6px;
   align-items: center;
@@ -243,15 +248,15 @@ const TABS = ['总览', '现场', '改动', '预览']
   transition: border-color var(--dur-base) var(--ease-standard);
 }
 
-.demo-seat--busy {
-  border-color: var(--primary);
+.demo-seat-busy {
+  border-color: var(--accent);
 }
 
-.demo-seat__body {
+.demo-seat-body {
   min-width: 0;
 }
 
-.demo-seat__name {
+.demo-seat-name {
   display: flex;
   gap: 6px;
   align-items: center;
@@ -261,8 +266,8 @@ const TABS = ['总览', '现场', '改动', '预览']
   color: var(--ink);
 }
 
-.demo-seat__tag,
-.demo-seat__lock {
+.demo-seat-tag,
+.demo-seat-lock {
   display: inline-flex;
   gap: 2px;
   align-items: center;
@@ -274,11 +279,11 @@ const TABS = ['总览', '现场', '改动', '预览']
   border-radius: var(--radius-sm);
 }
 
-.demo-seat__lock {
+.demo-seat-lock {
   color: var(--ink);
 }
 
-.demo-seat__meta {
+.demo-seat-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 0 10px;
@@ -288,7 +293,7 @@ const TABS = ['总览', '现场', '改动', '预览']
   color: var(--faint);
 }
 
-.demo-seat__state {
+.demo-seat-state {
   font-family: inherit;
   color: var(--muted);
 }
@@ -357,20 +362,20 @@ const TABS = ['总览', '现场', '改动', '预览']
   border-radius: var(--radius-sm);
 }
 
-.demo-tab--on {
+.demo-tab-on {
   color: var(--ink);
   background: var(--fill);
 }
 
-.demo-tab__pulse {
+.demo-tab-pulse {
   width: 6px;
   height: 6px;
-  background: var(--primary);
+  background: var(--accent);
   border-radius: 50%;
   animation: demo-pulse 1.2s ease-in-out infinite;
 }
 
-.demo-tab__who {
+.demo-tab-who {
   font-size: 11px;
   color: var(--muted);
 }
@@ -401,7 +406,7 @@ const TABS = ['总览', '现场', '改动', '预览']
 .demo-room[data-focus='site'] [data-region='site'],
 .demo-room[data-focus='tabs'] [data-region='tabs'],
 .demo-room[data-focus='title'] [data-region='title'] {
-  box-shadow: inset 0 0 0 2px var(--primary);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .demo-callout {
@@ -413,10 +418,10 @@ const TABS = ['总览', '现场', '改动', '预览']
   margin: 0;
   font-size: 13px;
   line-height: var(--lh-13);
-  color: var(--on-primary, #fff);
-  background: var(--primary);
+  color: var(--surface);
+  background: var(--ink);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-2, 0 4px 16px rgb(0 0 0 / 15%));
+  box-shadow: var(--shadow-2);
 }
 
 .demo-line-enter-active,
@@ -453,7 +458,7 @@ const TABS = ['总览', '现场', '改动', '预览']
     transition: none;
   }
 
-  .demo-tab__pulse {
+  .demo-tab-pulse {
     animation: none;
   }
 }

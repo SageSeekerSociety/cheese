@@ -120,9 +120,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
   let topic = scene.topic
   let machine = scene.machine
   let lock: string | null = null
-  const seats = new Map<string, Seat>(
-    (scene.seats ?? []).map((who) => [who, { who, dir: '', session: '', state: '' }])
-  )
+  const seats = new Map<string, Seat>((scene.seats ?? []).map((who) => [who, { who, dir: '', session: '', state: '' }]))
   const chat: ChatLine[] = []
   const site: Block[] = []
   const running = new Map<string, { at: number; who: string }>()
@@ -232,7 +230,8 @@ export function checkScene(scene: Scene): string[] {
       prev = e.at
       if ('who' in e && e.who !== null && !(e.who in scene.people)) problems.push(`${where}: nobody called «${e.who}»`)
       if (e.do === 'turn') open.add(e.turn)
-      if ((e.do === 'act' || e.do === 'note') && !open.has(e.turn)) problems.push(`${where}: «${e.turn}» is not running`)
+      if ((e.do === 'act' || e.do === 'note') && !open.has(e.turn))
+        problems.push(`${where}: «${e.turn}» is not running`)
       if (e.do === 'end') {
         if (!open.has(e.turn)) problems.push(`${where}: ends «${e.turn}», which is not running`)
         open.delete(e.turn)
