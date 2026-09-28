@@ -10,6 +10,7 @@
 // 要微调就切到编辑（保存冲突的两条出路原样保留）。分段开关没了。
 import type { FileSource, GitCommit, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { FileDiff } from '../../lib/diff'
+import type { MenuAction } from '../common/menuAction'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -31,6 +32,7 @@ import { parseDiffLines, splitDiffByFile } from '../../lib/diff'
 import { useDocumentBytes } from '../../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../../lib/fileKind'
 import CodeEditor from '../CodeEditor.vue'
+import MobileActionSheet from '../common/MobileActionSheet.vue'
 
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
@@ -136,6 +138,43 @@ async function loadTasks() {
 }
 
 const { mdAndUp } = useDisplay()
+// 手机上 ⋯ 是底部面板（同一组选项，桌面上仍是那个分了组的下拉菜单）。范围、版本
+// 各是二选一，选中的那一项画成实心的圆。
+const moreOpen = ref(false)
+const moreActions = computed<MenuAction[]>(() => {
+  const pick = (on: boolean) => (on ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank')
+  const list: MenuAction[] = [
+    { key: 'scope-changed', label: '改动', icon: pick(!showAll.value), onSelect: () => (showAll.value = false) },
+    { key: 'scope-all', label: '全部文件', icon: pick(showAll.value), onSelect: () => (showAll.value = true) },
+  ]
+  if (selectedTask.value && currentTask.value?.status === 'open') {
+    list.push(
+      {
+        key: 'source-live',
+        label: '机器实时文件',
+        icon: pick(fileSource.value === 'live'),
+        onSelect: () => selectVersion('live'),
+      },
+      {
+        key: 'source-committed',
+        label: '已提交版本',
+        icon: pick(fileSource.value === 'committed'),
+        onSelect: () => selectVersion('committed'),
+      }
+    )
+  }
+  if (fileToolReady.value && openPath.value) {
+    list.push({ key: 'download', label: '下载', icon: 'mdi-download-outline', onSelect: () => void downloadOpenFile() })
+  }
+  list.push({
+    key: 'refresh',
+    label: '刷新',
+    icon: 'mdi-refresh',
+    loading: refreshing.value,
+    onSelect: () => void loadAll({ silent: true }),
+  })
+  return list
+})
 
 // 树的范围: 默认只看这个话题改过的文件——验收要看的就是这些。展开成全部文件是
 // 为了「看一眼旁边那个文件原来长什么样」，那是次要动作。
@@ -212,7 +251,13 @@ const openPath = ref<string | null>(null)
 const fileDraft = ref<string>('')
 const fileSaved = ref<string>('') // last loaded/saved content, for the dirty flag
 const fileSaving = ref(false)
-const fileListOpen = ref(true) // the ☰ toggle hides the list for a wider editor
+// the ☰ toggle hides the list for a wider editor. 手机上一屏只放得下一样东西：列表默认
+// 收着，打开时盖满这一格，点一份文件就收起来露出它。
+const fileListOpen = ref(mdAndUp.value)
+function pickFile(path: string) {
+  if (!mdAndUp.value) fileListOpen.value = false
+  void selectFile(path)
+}
 // 横条上关于「这一份文件」的那半（路径、差异/编辑、保存）只在文件区真的摆出来时才有。
 const fileToolReady = computed(() => !sourceUnavailable.value && !noRepo.value && !loading.value && !errorMsg.value)
 const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
@@ -819,13 +864,14 @@ defineExpose({ openFile })
     <!-- 看某一个来源时，这一条就是这一格全部的横条：左边是你在看什么（来源 → 文件），
          右边是对这份文件做的事。偶尔才换的（范围、版本、下载、刷新）在 ⋯ 里。
          总览不要这一条：页签已经写着「改动」，再写一遍「房间改动」只是重复。 -->
-    <div v-if="!overview" class="changes-bar">
+    <div v-if="!overview" class="changes-bar" :class="{ 'changes-bar--phone': !mdAndUp }">
       <div class="source-heading">
         <v-btn
           icon="mdi-arrow-left"
           size="small"
           variant="text"
           color="medium-emphasis"
+          :class="{ 'tap-target': !mdAndUp }"
           title="房间改动"
           aria-label="房间改动"
           @click="openOverview"
@@ -861,27 +907,27 @@ defineExpose({ openFile })
             />
           </v-list>
         </v-menu>
-        <span class="source-status">{{ sourceStatus }}</span>
+        <span v-if="mdAndUp" class="source-status">{{ sourceStatus }}</span>
       </div>
       <template v-if="fileToolReady">
-        <span class="changes-bar__sep" aria-hidden="true" />
+        <span v-if="mdAndUp" class="changes-bar__sep" aria-hidden="true" />
         <v-btn
           icon
           size="x-small"
           variant="text"
           class="file-icon-btn"
-          :class="{ 'file-icon-btn--on': fileListOpen }"
+          :class="{ 'file-icon-btn--on': fileListOpen, 'tap-target': !mdAndUp }"
           title="文件列表"
           @click="fileListOpen = !fileListOpen"
         >
           <v-icon size="18">mdi-format-list-bulleted</v-icon>
         </v-btn>
         <span class="changes-bar__path" :title="openPath || ''">
-          {{ openPath || '未打开文件' }}
+          {{ (mdAndUp ? openPath : openPath?.split('/').pop()) || '未打开文件' }}
         </span>
         <span v-if="fileDirty" class="changes-bar__dot" title="未保存" />
       </template>
-      <v-spacer />
+      <v-spacer v-if="mdAndUp || !fileToolReady" />
       <template v-if="fileToolReady">
         <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。文档没有
              这两面：它的差异是一句「二进制文件不同」，而按文本编辑会损坏它。 -->
@@ -900,14 +946,15 @@ defineExpose({ openFile })
             :class="{ 'seg__btn--on': effectiveView === 'edit' }"
             @click="fileView = 'edit'"
           >
-            {{ fileReadOnly ? '全文' : '编辑' }}
+            {{ fileReadOnly || !mdAndUp ? '全文' : '编辑' }}
           </button>
         </div>
         <!-- Read-only files (binary / oversized / images) get no 保存 button at
-           all: saving one is what corrupted them. -->
-        <span v-if="fileReadOnly && openPath" class="changes-bar__ro">只读</span>
+           all: saving one is what corrupted them. 手机上文件只读（见 CodeEditor
+           那一处），也就没有保存；每份都是只读，不必每份再说一次。 -->
+        <span v-if="mdAndUp && fileReadOnly && openPath" class="changes-bar__ro">只读</span>
         <v-btn
-          v-else-if="effectiveView === 'edit'"
+          v-else-if="mdAndUp && !fileReadOnly && effectiveView === 'edit'"
           size="x-small"
           variant="flat"
           color="primary"
@@ -918,7 +965,21 @@ defineExpose({ openFile })
           保存
         </v-btn>
       </template>
-      <v-menu location="bottom end">
+      <template v-if="!mdAndUp">
+        <v-btn
+          icon="mdi-dots-horizontal"
+          size="small"
+          variant="text"
+          color="medium-emphasis"
+          class="tap-target"
+          title="更多"
+          aria-label="更多"
+          :loading="refreshing"
+          @click="moreOpen = true"
+        />
+        <MobileActionSheet v-model="moreOpen" :actions="moreActions" />
+      </template>
+      <v-menu v-else location="bottom end">
         <template #activator="{ props: menuProps }">
           <v-btn
             v-bind="menuProps"
@@ -1060,8 +1121,8 @@ defineExpose({ openFile })
             仍要保存
           </v-btn>
         </div>
-        <div class="file-body">
-          <div v-if="fileListOpen" ref="fileListEl" class="file-list">
+        <div class="file-body" :class="{ 'file-body--phone': !mdAndUp }">
+          <div v-if="fileListOpen" ref="fileListEl" class="file-list" :class="{ 'file-list--cover': !mdAndUp }">
             <div v-if="fileRows.length === 0" class="text-center c-faint py-6 t-body">
               {{ showAll ? '暂无文件' : '暂无改动' }}
             </div>
@@ -1091,7 +1152,7 @@ defineExpose({ openFile })
                 :class="{ 'file-item--active': openPath === row.path }"
                 :style="{ paddingLeft: `${8 + row.depth * 14 + 13}px` }"
                 :title="`${row.path} · ${fmtBytes(row.bytes)}`"
-                @click="selectFile(row.path)"
+                @click="pickFile(row.path)"
               >
                 <v-icon size="13" class="me-1 c-muted">mdi-file-outline</v-icon>
                 <span class="file-item__name">{{ row.name }}</span>
@@ -1526,6 +1587,39 @@ defineExpose({ openFile })
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+}
+/* 手机上文件列表盖满这一格：一份文件和一列文件名并排，两样都只剩半屏宽。 */
+.file-body--phone {
+  position: relative;
+}
+.file-list--cover {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-right: 0;
+}
+.file-list--cover .file-item {
+  min-height: 44px;
+}
+/* 手机上 360px 宽也要放下：← 来源 ☰ 路径 差异|全文 ⋯。让位的只有路径，其余不缩。 */
+.changes-bar--phone {
+  gap: 4px;
+}
+.changes-bar--phone .source-heading {
+  flex: none;
+}
+.changes-bar--phone .source-pick {
+  max-width: 26vw;
+}
+.changes-bar--phone .changes-bar__path {
+  flex: 1 1 0;
+}
+.changes-bar--phone .seg {
+  flex: none;
+}
+.changes-bar--phone .seg__btn {
+  padding: 2px 8px;
+  white-space: nowrap;
 }
 .file-list {
   flex: 0 0 150px;
