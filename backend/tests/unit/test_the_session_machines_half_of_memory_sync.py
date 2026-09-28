@@ -160,3 +160,36 @@ def test_a_deletion_the_platform_overwrote_leaves_no_sidecar(tmp_path, monkeypat
     assert outcome["refused"] == {"team/a.md": ""}
     assert (root / "team" / "a.md").read_text(encoding="utf-8") == _LATER
     assert not (root / "team" / "a.conflict.md").exists()
+
+
+# --- 拦下来的那一批：跟着结果一起回去 -------------------------------------
+
+
+def test_a_bulk_delete_from_the_session_comes_back_as_held(tmp_path, monkeypatch):
+    """一个作用域一次少掉大半，会话机上只是拦下来（下一轮再铺回去），平台那一侧从
+    `files` 里看不见这件事——所以它得跟着结果一起上去。整理那一轮正是拿它做判断：
+    「这次删得太多」是它必须说出口的一句话，不是在会话机的 stderr 里响一声就完了。"""
+    root = _home(tmp_path, monkeypatch)
+    session = _session()
+    scopes = _scopes(*_NAMES)
+    session.sync_memory({"scopes": scopes})
+    for name in _NAMES[:4]:
+        (root / "team" / f"{name}.md").unlink()
+
+    outcome = session.sync_memory({"scopes": scopes})
+
+    assert outcome["held"] == [f"team/{name}.md" for name in _NAMES[:4]]
+    assert outcome["files"] == {f"team/{name}.md": f"# {name}\n" for name in _NAMES}
+
+
+def test_a_handful_of_deletions_is_not_held_and_goes_through(tmp_path, monkeypatch):
+    """删一条是 agent 想明白了：不拦，也不回平台报。"""
+    root = _home(tmp_path, monkeypatch)
+    session = _session()
+    session.sync_memory({"scopes": _scopes(*_NAMES)})
+    (root / "team" / "a.md").unlink()
+
+    outcome = session.sync_memory({"scopes": _scopes(*_NAMES)})
+
+    assert outcome["held"] == []
+    assert sorted(outcome["files"]) == [f"team/{name}.md" for name in _NAMES[1:]]
