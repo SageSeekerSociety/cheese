@@ -23,7 +23,7 @@ const online = useOnline()
   <Transition name="update-slide">
     <div v-if="updateReady && online" class="update-banner" role="status" aria-live="polite">
       <v-icon size="16" class="update-banner__icon">mdi-download</v-icon>
-      <span>芝士有新版本，更新后自动刷新</span>
+      <span class="update-banner__text">芝士有新版本，更新后自动刷新</span>
       <button type="button" class="update-banner__action update-banner__action--primary" @click="applyUpdate">
         立即更新
       </button>
@@ -84,12 +84,35 @@ const online = useOnline()
 .update-slide-enter-active,
 .update-slide-leave-active {
   transition:
-    transform 0.22s ease,
-    opacity 0.22s ease;
+    transform var(--dur-base) var(--ease-standard),
+    opacity var(--dur-base) var(--ease-standard);
 }
 .update-slide-enter-from,
 .update-slide-leave-to {
   opacity: 0;
   transform: translate(-50%, -100%);
+}
+/* 手机上挪到顶栏下面，理由同 OfflineBanner：贴顶会盖住 ← 和头像。放不下时换行的
+   是那句话，两颗按钮留在右边。 */
+@media (width < 960px) {
+  .update-banner {
+    top: 64px;
+    right: 16px;
+    left: 16px;
+    white-space: normal;
+    border-radius: var(--radius-md);
+    transform: none;
+  }
+  .update-banner__text {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .update-banner__action {
+    flex: none;
+  }
+  .update-slide-enter-from,
+  .update-slide-leave-to {
+    transform: translateY(-8px);
+  }
 }
 </style>
