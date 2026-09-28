@@ -30,6 +30,7 @@ import {
 import ProjectComputeSettings from '../components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '../components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings.vue'
+import ProjectMcpSettings from '../components/ProjectMcpSettings.vue'
 import ProjectTopicNamingSettings from '../components/ProjectTopicNamingSettings.vue'
 import AgentTeamSettings from '../components/settings/AgentTeamSettings.vue'
 import CreditsPanel from '../components/settings/CreditsPanel.vue'
@@ -869,6 +870,8 @@ watch(
           </p>
         </div>
       </section>
+
+      <ProjectMcpSettings :project-id="projectId" />
       <div v-if="!revealed" class="reveal-gate__wait">
         <v-progress-circular indeterminate color="primary" />
       </div>

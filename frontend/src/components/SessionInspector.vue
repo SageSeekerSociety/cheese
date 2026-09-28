@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import type { AgentControlState } from '../api'
+import type { AgentControlState, RoomMcpServer } from '../api'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { getAgentControl, sendAgentControl } from '../api'
+import { getAgentControl, getRoomMcpServers, sendAgentControl } from '../api'
 
 import { t } from '@/i18n'
+import { relTime } from '@/lib/relTime'
 
 // 现场 only watches: everything here reads the session's state, and nothing
 // changes the session, the room or the machine.
@@ -72,6 +73,31 @@ onBeforeUnmount(() => {
   generation += 1
   clearTimeout(timer)
 })
+
+// 这间房的会话用的是项目的连接：用谁的账号授权的，房间里的人都看得到（#1909）。
+// 只读；连接和断开在项目设置里。
+const mcpServers = ref<RoomMcpServer[]>([])
+watch(expanded, async (open) => {
+  if (!open) return
+  try {
+    mcpServers.value = (await getRoomMcpServers(props.topicId)).servers
+  } catch {
+    mcpServers.value = []
+  }
+})
+function mcpState(server: RoomMcpServer) {
+  if (server.status === 'connected' && server.authorized_by) {
+    return t('work.mcp.status.connectedBy', { name: server.authorized_by, when: relTime(server.authorized_at) })
+  }
+  const keys: Record<RoomMcpServer['status'], string> = {
+    connected: 'work.mcp.status.connected',
+    ready: 'work.mcp.status.ready',
+    needs_reconnect: 'work.mcp.status.needsReconnect',
+    missing_values: 'work.mcp.room.setUp',
+    disconnected: 'work.mcp.room.setUp',
+  }
+  return t(keys[server.status])
+}
 
 const tasks = computed(() => Object.values(state.value?.tasks ?? {}))
 const taskKeys: Record<string, string> = {
@@ -162,6 +188,15 @@ const formattedOutput = computed(() => {
           {{ task.description ?? task.task_id }} · {{ taskLabel(task) }}
         </li>
       </ul>
+      <div v-if="mcpServers.length" class="inspector-mcp" data-testid="room-mcp-servers">
+        <div class="t-eyebrow">{{ t('work.mcp.room.heading') }}</div>
+        <ul>
+          <li v-for="server in mcpServers" :key="server.name">
+            <span class="c-ink">{{ server.name }}</span>
+            <span class="c-muted"> · {{ mcpState(server) }}</span>
+          </li>
+        </ul>
+      </div>
       <form class="inspector-form" @submit.prevent="look">
         <v-select
           v-model="reading"
@@ -216,6 +251,16 @@ const formattedOutput = computed(() => {
 .inspector-tasks {
   margin: 0;
   padding: 0 8px 8px;
+  list-style: none;
+}
+
+.inspector-mcp {
+  padding: 0 8px 8px;
+}
+
+.inspector-mcp ul {
+  margin: 4px 0 0;
+  padding: 0;
   list-style: none;
 }
 
