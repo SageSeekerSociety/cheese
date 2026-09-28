@@ -587,6 +587,14 @@ class SpaceService:
             if await self._admin_repo.get_relation(space.id, user_id) is not None:
                 return space
 
+        # Review gates every way in, the code included. `/spaces/join` names no
+        # ``spaceId``, so the router-level gate never saw it; this is where the
+        # code's board is actually known. After the early returns above, so
+        # people already in stay a no-op; raised as NotFound, not Forbidden, so
+        # the answer cannot confirm that an unreviewed board exists.
+        if space.review_status != "APPROVED":
+            raise NotFoundError("Space not found")
+
         # Membership first, use second, and the order is the point: the
         # membership write is idempotent and atomic (uq_space_member_active,
         # see `SpaceMemberRepository.add_member`), so its answer to "did I get
