@@ -22,7 +22,9 @@ export function findGithubAccountConnection(connections: OAuthConnectionInfo[]):
 // Sources: `github_account_link.py` (account) and `github_install.py` (repo).
 const ACCOUNT_LINK_REASONS: Record<string, string> = {
   already_linked: '这个 GitHub 账号已经绑在另一个平台账号上了。换一个 GitHub 账号，或者让对方先断开。',
-  oauth_failed: 'GitHub 授权没走完（换 token 失败）。多半是授权页没点完或网络中断，重试一次。',
+  oauth_failed: 'GitHub 没有接受这次授权，授权码可能已过期或已被用过。请回到本页重新点「连接 GitHub 账号」。',
+  github_unreachable:
+    '芝士服务器这次没连上 GitHub，是网络问题，不是你的操作问题。请稍后回到本页再点一次「连接 GitHub 账号」。',
   invalid_state: '授权链接已失效或被用过了。请回到本页重新点「连接 GitHub 账号」，不要复用旧链接。',
 }
 

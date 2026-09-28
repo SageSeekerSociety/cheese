@@ -61,7 +61,7 @@ describe('explainAccountLinkFailure', () => {
   it('turns every code the account callback can emit into a sentence', () => {
     // The full set, read off github_account_link.py — a code missing here is a
     // user staring at an English identifier (the #222 incident).
-    for (const code of ['already_linked', 'oauth_failed', 'invalid_state']) {
+    for (const code of ['already_linked', 'oauth_failed', 'github_unreachable', 'invalid_state']) {
       const text = explainAccountLinkFailure(code)
       expect(text).not.toContain(code)
       expect(text.length).toBeGreaterThan('连接 GitHub 账号失败：'.length + 8)
@@ -71,6 +71,12 @@ describe('explainAccountLinkFailure', () => {
   it('says what to do, not just what broke', () => {
     expect(explainAccountLinkFailure('already_linked')).toContain('断开')
     expect(explainAccountLinkFailure('invalid_state')).toContain('重新点')
+  })
+
+  it('does not blame the person when our server could not reach GitHub', () => {
+    const text = explainAccountLinkFailure('github_unreachable')
+    expect(text).toContain('网络')
+    expect(text).not.toContain('没点完')
   })
 
   it('still names an unrecognised code rather than hiding it', () => {

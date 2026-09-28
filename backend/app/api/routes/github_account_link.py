@@ -18,6 +18,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
+import httpx
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -128,6 +129,18 @@ async def github_account_link_callback(
         if not access_token:
             raise ValueError("provider response missing access_token")
         user_info = await provider.get_user_info(access_token)
+    except httpx.TransportError:
+        # The person finished GitHub's page — the code is here — and it is
+        # our server that could not reach GitHub. Telling them they did not
+        # finish authorizing sends them looking for a mistake they never made.
+        logger.exception(
+            "github account link: GitHub unreachable uid=%s", claims.user_id
+        )
+        return _link_redirect(
+            claims.return_project_id,
+            github_account="error",
+            reason="github_unreachable",
+        )
     except Exception:
         logger.exception(
             "github account link: token exchange failed uid=%s", claims.user_id
