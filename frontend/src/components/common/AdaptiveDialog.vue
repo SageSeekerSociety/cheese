@@ -12,6 +12,9 @@
 // 升上来（--dur-base），减弱动效时直接出现。
 //
 // 桌面上是标题、正文、底部一行「取消 + 主操作」。主操作按钮是这一组里唯一的琥珀。
+//
+// 多出来的次要操作（分步表单的「上一步」）放进 #actions：桌面上排在取消和主操作
+// 之间，手机上排在正文最后。
 import { useDisplay } from 'vuetify'
 
 import { t } from '@/i18n'
@@ -27,21 +30,27 @@ const props = withDefaults(
     primaryIcon?: string
     primaryLoading?: boolean
     primaryDisabled?: boolean
+    /** 主操作不可撤销（「确认转让」）：按钮用 error 色，不用琥珀。 */
+    primaryDanger?: boolean
     /** 桌面上关闭按钮的字，默认「取消」。 */
     cancelLabel?: string
     /** 桌面宽度。 */
     maxWidth?: number | string
     /** 点遮罩、按 Esc 不关（表单填到一半时）。 */
     persistent?: boolean
+    /** 正在提交、关不得：取消和 ✕ 点不动，遮罩和 Esc 也不关。 */
+    closeDisabled?: boolean
   }>(),
   {
     primaryLabel: undefined,
     primaryIcon: undefined,
     primaryLoading: false,
     primaryDisabled: false,
+    primaryDanger: false,
     cancelLabel: undefined,
     maxWidth: 480,
     persistent: false,
+    closeDisabled: false,
   }
 )
 
@@ -49,11 +58,13 @@ const emit = defineEmits<{ primary: [] }>()
 
 defineSlots<{
   default?: () => unknown
+  actions?: () => unknown
 }>()
 
 const { mdAndUp } = useDisplay()
 
 function close() {
+  if (props.closeDisabled) return
   open.value = false
 }
 
@@ -64,16 +75,25 @@ function primary() {
 </script>
 
 <template>
-  <v-dialog v-if="mdAndUp" v-model="open" :max-width="props.maxWidth" :persistent="props.persistent" scrollable>
+  <v-dialog
+    v-if="mdAndUp"
+    v-model="open"
+    :max-width="props.maxWidth"
+    :persistent="props.persistent || props.closeDisabled"
+    scrollable
+  >
     <v-card rounded="lg">
       <v-card-title class="t-dialog-title">{{ props.title }}</v-card-title>
       <v-card-text class="adaptive-dialog__desktop-body"><slot /></v-card-text>
       <v-card-actions class="px-4 pb-3">
         <v-spacer />
-        <v-btn variant="text" @click="close">{{ props.cancelLabel ?? t('global.cancel') }}</v-btn>
+        <v-btn variant="text" :disabled="props.closeDisabled" @click="close">{{
+          props.cancelLabel ?? t('global.cancel')
+        }}</v-btn>
+        <slot name="actions" />
         <v-btn
           v-if="props.primaryLabel"
-          color="primary"
+          :color="props.primaryDanger ? 'error' : 'primary'"
           variant="flat"
           :loading="props.primaryLoading"
           :disabled="props.primaryDisabled"
@@ -89,7 +109,7 @@ function primary() {
     v-else
     v-model="open"
     fullscreen
-    :persistent="props.persistent"
+    :persistent="props.persistent || props.closeDisabled"
     transition="adaptive-dialog-page"
     content-class="adaptive-dialog__page-content"
   >
@@ -102,6 +122,7 @@ function primary() {
           size="44"
           :aria-label="t('navigation.shell.close')"
           :title="t('navigation.shell.close')"
+          :disabled="props.closeDisabled"
           @click="close"
         >
           <v-icon size="22">mdi-close</v-icon>
@@ -112,7 +133,7 @@ function primary() {
             v-if="props.primaryIcon"
             icon
             variant="text"
-            color="primary"
+            :color="props.primaryDanger ? 'error' : 'primary'"
             size="44"
             :loading="props.primaryLoading"
             :disabled="props.primaryDisabled"
@@ -125,7 +146,7 @@ function primary() {
           <v-btn
             v-else
             variant="text"
-            color="primary"
+            :color="props.primaryDanger ? 'error' : 'primary'"
             class="adaptive-dialog__primary"
             :loading="props.primaryLoading"
             :disabled="props.primaryDisabled"
@@ -135,7 +156,10 @@ function primary() {
           </v-btn>
         </template>
       </header>
-      <div class="adaptive-dialog__body"><slot /></div>
+      <div class="adaptive-dialog__body">
+        <slot />
+        <div v-if="$slots.actions" class="adaptive-dialog__more"><slot name="actions" /></div>
+      </div>
     </div>
   </v-dialog>
 </template>
@@ -175,6 +199,12 @@ function primary() {
   min-height: 44px;
   font-size: 15px;
   font-weight: 600;
+}
+.adaptive-dialog__more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
 }
 .adaptive-dialog__body {
   flex: 1 1 auto;

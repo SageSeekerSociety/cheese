@@ -19,6 +19,7 @@ import {
   updateRoutine,
 } from '../api'
 
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import PageAction from '@/components/common/PageAction.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
@@ -143,6 +144,11 @@ async function remove(r: Routine) {
 
 // ── 新建 / 编辑 ────────────────────────────────────────────────────────────
 const editing = ref<Routine | 'new' | null>(null)
+// 关上的那一下 editing 已经是 null，标题还要照着刚才那一条画完收起的动画。
+const editingTitle = ref('')
+watch(editing, (value) => {
+  if (value) editingTitle.value = value === 'new' ? '新建规则' : `修改「${value.title}」`
+})
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({
@@ -390,103 +396,102 @@ watch(
       </template>
     </div>
 
-    <v-dialog :model-value="!!editing" max-width="560" @update:model-value="editing = null">
-      <v-card v-if="editing">
-        <v-card-title class="t-dialog-title">{{
-          editing === 'new' ? '新建规则' : `修改「${editing.title}」`
-        }}</v-card-title>
-        <v-card-text>
-          <v-select
-            v-if="editing === 'new'"
-            v-model="form.room"
-            autocomplete="off"
-            :items="rooms"
-            item-title="title"
-            item-value="id"
-            label="在哪个房间执行"
-            hint="执行者是这个房间里的 AI 队友，结果也放在这个房间"
-            persistent-hint
-            class="mb-3"
-          />
-          <v-text-field v-model="form.title" autocomplete="off" label="名称" placeholder="例如：每周项目进展" />
-          <v-textarea
-            v-model="form.instructions"
-            autocomplete="off"
-            label="要做的工作"
-            rows="3"
-            auto-grow
-            placeholder="例如：汇总本周各房间完成的任务、进行中的事和阻碍，写成一页周报"
-          />
-          <v-text-field
-            v-model="form.context_scope"
-            autocomplete="off"
-            label="使用哪些资料"
-            placeholder="例如：本项目所有房间的任务和决策；只用资料库里的文件"
-          />
-          <v-text-field
-            v-model="form.output_dir"
-            autocomplete="off"
-            label="结果放在房间的哪个目录"
-            placeholder="例如：周报"
-          />
-          <v-select v-model="form.trigger" autocomplete="off" :items="TRIGGERS" label="什么时候开工" />
-          <template v-if="form.trigger === 'schedule'">
-            <div class="routine-form__row">
-              <v-select v-model="form.freq" autocomplete="off" :items="FREQS" label="频率" />
-              <v-text-field
-                v-if="form.freq !== 'hourly'"
-                v-model="form.time"
-                autocomplete="off"
-                type="time"
-                label="时间"
-              />
-              <v-text-field
-                v-else
-                v-model.number="form.minute"
-                autocomplete="off"
-                type="number"
-                min="0"
-                max="59"
-                label="第几分钟"
-              />
-              <v-text-field
-                v-if="form.freq === 'monthly'"
-                v-model.number="form.day"
-                autocomplete="off"
-                type="number"
-                min="1"
-                max="31"
-                label="几号"
-              />
-            </div>
-            <v-chip-group v-if="form.freq === 'weekly'" v-model="form.weekdays" multiple column class="mb-2">
-              <v-chip v-for="(d, i) in WEEKDAYS" :key="d" :value="i" filter size="small">{{ d }}</v-chip>
-            </v-chip-group>
-            <v-text-field v-model="form.timezone" autocomplete="off" label="时区" />
-          </template>
-          <v-select
-            v-else-if="form.trigger !== 'library_file_added'"
-            v-model="form.scope"
-            autocomplete="off"
-            :items="[
-              { value: 'room', title: '只看这个房间' },
-              { value: 'project', title: '整个项目' },
-            ]"
-            label="范围"
-          />
-          <p class="t-meta c-faint">
-            AI 队友的工作电脑在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，
-            两小时内没开始会记为失败并通知你
-          </p>
-          <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="editing = null">取消</v-btn>
-          <v-btn variant="text" color="primary" :loading="saving" @click="save">保存</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
+    <AdaptiveDialog
+      :model-value="!!editing"
+      :title="editingTitle"
+      primary-label="保存"
+      :primary-loading="saving"
+      :max-width="560"
+      @update:model-value="editing = null"
+      @primary="save"
+    >
+      <template v-if="editing">
+        <v-select
+          v-if="editing === 'new'"
+          v-model="form.room"
+          autocomplete="off"
+          :items="rooms"
+          item-title="title"
+          item-value="id"
+          label="在哪个房间执行"
+          hint="执行者是这个房间里的 AI 队友，结果也放在这个房间"
+          persistent-hint
+          class="mb-3"
+        />
+        <v-text-field v-model="form.title" autocomplete="off" label="名称" placeholder="例如：每周项目进展" />
+        <v-textarea
+          v-model="form.instructions"
+          autocomplete="off"
+          label="要做的工作"
+          rows="3"
+          auto-grow
+          placeholder="例如：汇总本周各房间完成的任务、进行中的事和阻碍，写成一页周报"
+        />
+        <v-text-field
+          v-model="form.context_scope"
+          autocomplete="off"
+          label="使用哪些资料"
+          placeholder="例如：本项目所有房间的任务和决策；只用资料库里的文件"
+        />
+        <v-text-field
+          v-model="form.output_dir"
+          autocomplete="off"
+          label="结果放在房间的哪个目录"
+          placeholder="例如：周报"
+        />
+        <v-select v-model="form.trigger" autocomplete="off" :items="TRIGGERS" label="什么时候开工" />
+        <template v-if="form.trigger === 'schedule'">
+          <div class="routine-form__row">
+            <v-select v-model="form.freq" autocomplete="off" :items="FREQS" label="频率" />
+            <v-text-field
+              v-if="form.freq !== 'hourly'"
+              v-model="form.time"
+              autocomplete="off"
+              type="time"
+              label="时间"
+            />
+            <v-text-field
+              v-else
+              v-model.number="form.minute"
+              autocomplete="off"
+              type="number"
+              min="0"
+              max="59"
+              label="第几分钟"
+            />
+            <v-text-field
+              v-if="form.freq === 'monthly'"
+              v-model.number="form.day"
+              autocomplete="off"
+              type="number"
+              min="1"
+              max="31"
+              label="几号"
+            />
+          </div>
+          <v-chip-group v-if="form.freq === 'weekly'" v-model="form.weekdays" multiple column class="mb-2">
+            <v-chip v-for="(d, i) in WEEKDAYS" :key="d" :value="i" filter size="small">{{ d }}</v-chip>
+          </v-chip-group>
+          <v-text-field v-model="form.timezone" autocomplete="off" label="时区" />
+        </template>
+        <v-select
+          v-else-if="form.trigger !== 'library_file_added'"
+          v-model="form.scope"
+          autocomplete="off"
+          :items="[
+            { value: 'room', title: '只看这个房间' },
+            { value: 'project', title: '整个项目' },
+          ]"
+          label="范围"
+        />
+        <p class="t-meta c-faint">
+          AI 队友的工作电脑在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，
+          两小时内没开始会记为失败并通知你
+        </p>
+        <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
+      </template>
+    </AdaptiveDialog>
 
     <v-dialog :model-value="!!confirmingDelete" max-width="420" @update:model-value="confirmingDelete = null">
       <v-card v-if="confirmingDelete">

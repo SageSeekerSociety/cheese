@@ -40,6 +40,7 @@ import {
   revokeInvitation,
 } from '@/api'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import PageAction from '@/components/common/PageAction.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -483,54 +484,47 @@ async function submitInvite() {
       </div>
     </div>
 
-    <v-dialog v-model="inviteOpen" max-width="440" @update:model-value="(v) => !v && resetInvite()">
-      <v-card>
-        <v-card-title class="t-dialog-title pt-4">{{ t('work.members.inviteTitle') }}</v-card-title>
-        <v-card-text>
-          <p class="t-body c-muted mb-5">{{ t('work.members.inviteHint') }}</p>
-          <v-text-field
-            v-model="inviteQuery"
-            autocomplete="off"
-            :label="t('work.members.inviteLabel')"
-            :placeholder="t('work.members.invitePlaceholder')"
-            density="comfortable"
-            variant="outlined"
-            autofocus
-            :loading="lookingUp"
-            :error-messages="lookupError ? [lookupError] : []"
-            class="mb-2"
-            @keyup.enter="submitInvite"
-          />
-          <div v-if="found" class="found-user mb-2" data-testid="found-user">
-            <UserAvatar
-              :name="found.name || found.handle"
-              :avatar="found.avatar_id == null ? '' : getAvatarUrl(found.avatar_id)"
-              :size="32"
-              class="mr-3"
-            />
-            <div class="min-w-0">
-              <div class="t-body found-user__name">{{ found.name || found.handle }}</div>
-              <div class="t-meta c-muted">@{{ found.handle }}</div>
-            </div>
-            <v-spacer />
-            <span v-if="alreadyIn" class="t-meta c-muted">{{ t('work.members.alreadyIn') }}</span>
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="resetInvite">{{ t('work.members.cancel') }}</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="inviting"
-            :disabled="!found || alreadyIn"
-            @click="submitInvite"
-          >
-            {{ t('work.members.send') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 邀请要打字：手机上是整页，发送在页头右边，键盘弹起来也够得着。 -->
+    <AdaptiveDialog
+      v-model="inviteOpen"
+      :title="t('work.members.inviteTitle')"
+      :primary-label="t('work.members.send')"
+      :primary-loading="inviting"
+      :primary-disabled="!found || alreadyIn"
+      :cancel-label="t('work.members.cancel')"
+      :max-width="440"
+      @update:model-value="(v: boolean) => !v && resetInvite()"
+      @primary="submitInvite"
+    >
+      <p class="t-body c-muted mb-5">{{ t('work.members.inviteHint') }}</p>
+      <v-text-field
+        v-model="inviteQuery"
+        autocomplete="off"
+        :label="t('work.members.inviteLabel')"
+        :placeholder="t('work.members.invitePlaceholder')"
+        density="comfortable"
+        variant="outlined"
+        autofocus
+        :loading="lookingUp"
+        :error-messages="lookupError ? [lookupError] : []"
+        class="mb-2"
+        @keyup.enter="submitInvite"
+      />
+      <div v-if="found" class="found-user mb-2" data-testid="found-user">
+        <UserAvatar
+          :name="found.name || found.handle"
+          :avatar="found.avatar_id == null ? '' : getAvatarUrl(found.avatar_id)"
+          :size="32"
+          class="mr-3"
+        />
+        <div class="min-w-0">
+          <div class="t-body found-user__name">{{ found.name || found.handle }}</div>
+          <div class="t-meta c-muted">@{{ found.handle }}</div>
+        </div>
+        <v-spacer />
+        <span v-if="alreadyIn" class="t-meta c-muted">{{ t('work.members.alreadyIn') }}</span>
+      </div>
+    </AdaptiveDialog>
 
     <LeaveProjectDialog v-model="leaveOpen" :project-id="props.projectId" />
     <TransferProjectDialog v-model="transferOpen" :project-id="props.projectId" />
