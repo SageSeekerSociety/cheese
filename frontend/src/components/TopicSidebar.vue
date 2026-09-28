@@ -25,6 +25,7 @@ import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+import LeaveProjectDialog from './LeaveProjectDialog.vue'
 import TransferProjectDialog from './TransferProjectDialog.vue'
 
 import { t } from '@/i18n'
@@ -188,16 +189,21 @@ function openProject(projectId: string) {
 // 自己就说得出：所有者，或者管得了这个项目的团队管理员（`can_manage_members`）——
 // 和成员页那颗按钮同一个判据，后端动手时按同一条规则再判一次。
 //
-// 「退出项目」仍然只在成员页：那要看名册才知道我是所有者、因团队而在这里的人、还是
-// 外部成员，这几种人能不能退各不相同，而项目行上读不出来——按它判会把退出递给退不掉
-// 的人。
+// 「退出项目」这里也有一条（成员页那颗按钮保留，别删）——所有者换「转让项目」，其余
+// 的人换「退出项目」，两句是同一件事的两半。
+//
+// 判据只有「我不是所有者」这一条，项目行上读得出来。为什么够：退项目退的是项目成员
+// 身份，而因团队而在这里的人现在也能退（退的是这个项目，不是小队），剩下能拦的只有
+// owner 那一条，而 owner 看到的是「转让项目」。
 const transferOpen = ref(false)
+const leaveOpen = ref(false)
 const currentProject = computed(() => props.projects.find((p) => p.id === props.selectedProjectId) ?? null)
 const canTransfer = computed(
   () =>
     !!currentProject.value &&
     (currentProject.value.owner_handle === myHandle() || currentProject.value.can_manage_members === true)
 )
+const canLeave = computed(() => !!currentProject.value && currentProject.value.owner_handle !== myHandle())
 
 // New topic: don't ask the human for a title — create an untitled one and open
 // it; the title is derived from the first message (and 芝士 can refine it).
@@ -654,12 +660,22 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 :disabled="!selectedProjectId"
                 @click="transferOpen = true"
               />
+              <!-- 另一半：我不是所有者时换「退出项目」。所有者看到的上一条就是它的替代
+                   ——所有者退不掉，只能先把项目交出去。 -->
+              <v-list-item
+                v-if="canLeave"
+                prepend-icon="mdi-exit-to-app"
+                :title="t('work.members.leave')"
+                :disabled="!selectedProjectId"
+                @click="leaveOpen = true"
+              />
             </v-list>
           </v-menu>
         </div>
       </Teleport>
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
+      <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
       <div class="rail-scroll flex-grow-1 overflow-y-auto">

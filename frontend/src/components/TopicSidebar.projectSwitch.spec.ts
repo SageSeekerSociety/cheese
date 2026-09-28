@@ -203,3 +203,30 @@ describe('项目菜单里的「转让项目」', () => {
     expect(rows.some((r) => r.includes(label))).toBe(true)
   })
 })
+
+// 另一半：「退出项目」也在这个菜单里（成员页那颗按钮保留）。判据只有「我不是所有
+// 者」——所有者看到的上一条就是它的替代，他退不掉，只能先把项目交出去；其余的人
+// 都能退，退的是这个项目的成员身份，不是小队。
+describe('项目菜单里的「退出项目」', () => {
+  const current = (extra: Record<string, unknown>) => [{ ...projects[0], ...extra }, ...projects.slice(1)]
+  const leave = t('work.members.leave').replace(/\s+/g, '')
+  const transfer = t('work.members.transfer').replace(/\s+/g, '')
+
+  beforeEach(() => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
+  })
+
+  it('不是我自己的项目：看得到', async () => {
+    const { container, baseElement } = mount({ page: false, projects: current({ owner_handle: 'alice' }) })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(leave))).toBe(true)
+    expect(rows.some((r) => r.includes(transfer))).toBe(false)
+  })
+
+  it('我自己的项目：看不到——换给我是「转让项目」，不是「退出项目」', async () => {
+    const { container, baseElement } = mount({ page: false, projects: current({ owner_handle: 'me' }) })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(leave))).toBe(false)
+    expect(rows.some((r) => r.includes(transfer))).toBe(true)
+  })
+})
