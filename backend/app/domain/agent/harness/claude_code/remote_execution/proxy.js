@@ -8,13 +8,37 @@ const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 
 // The session sees the project at the executor's own path (`client.py`
 // `enter`), so paths need no respelling. Its skills are the exception: the
-// build reads them from this host's config directory, and they are the
-// project's, on the executor.
+// build reads them all from this host's config directory. A project's are the
+// project's, on the executor; one the platform shipped is in the executor's
+// own config directory (`client.py` `skill_paths`, the same mapping).
 const skills = execution.central_config + "/skills/";
 const projectSkills = execution.session_workspace + "/.claude/skills/";
+const shipped = new Set(execution.shipped_skills || []);
+
+function skillPaths(text) {
+  let out = "";
+  let at = 0;
+  for (;;) {
+    const found = text.indexOf(skills, at);
+    if (found < 0) return out + text.slice(at);
+    const rest = text.slice(found + skills.length);
+    const name = /^[^/\s'"`]+/.exec(rest);
+    out += text.slice(at, found);
+    if (!name) {
+      out += skills;
+    } else if (shipped.has(name[0])) {
+      out += execution.executor_config
+        ? execution.executor_config + "/skills/" + name[0]
+        : skills + name[0];
+    } else {
+      out += projectSkills + name[0];
+    }
+    at = found + skills.length + (name ? name[0].length : 0);
+  }
+}
 
 function remotePath(path) {
-  return path.startsWith(skills) ? projectSkills + path.slice(skills.length) : path;
+  return path.startsWith(skills) ? skillPaths(path) : path;
 }
 
 // A Bash command's output is on this host, where the build wrote it: a
@@ -215,6 +239,6 @@ export function register(on) {
 
   on("skill.prompt", async ($, e, next) => {
     const result = await next(e);
-    return { text: result.text.split(skills).join(projectSkills) };
+    return { text: skillPaths(result.text) };
   });
 }
