@@ -115,8 +115,11 @@ class CentralChannel(DeviceChannel):
         factory = self._session_factory or async_session_factory
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
-        # One screen per (room, machine): the session list is per seat now, and
-        # a room that seats two agents on one machine appears twice.
+        # One scope per (room, machine): the session list is per seat, so a room
+        # that seats two agents on one machine appears twice — and that is one
+        # recovery of one machine's inventory, not one screen. The seats are
+        # told apart by the adoption itself: `restore_screens` adopts every
+        # screen the machine still runs for the room, each under its own seat.
         scopes = list(
             dict.fromkeys(
                 (project_id, room_id, place.machine)
