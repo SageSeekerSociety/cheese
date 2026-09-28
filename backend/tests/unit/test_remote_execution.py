@@ -1044,6 +1044,37 @@ def test_stop_with_no_state_remains_a_no_op(tmp_path):
     assert not state.exists()
 
 
+def test_start_waits_for_a_service_that_is_slow_to_come_up(tmp_path):
+    """A loaded machine can take several seconds just to start Python."""
+    slow = tmp_path / "slow"
+    slow.mkdir()
+    # The service process, and only it, takes seven seconds before running.
+    (slow / "sitecustomize.py").write_text(
+        "import sys, time\nif 'serve' in sys.argv:\n    time.sleep(7)\n"
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state = tmp_path / "state"
+    path = os.pathsep.join(filter(None, [str(slow), os.environ.get("PYTHONPATH")]))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(RUNTIME), "start", "--state", str(state)],
+            input=json.dumps({"workspace": str(workspace), "env": {}}),
+            env={**os.environ, "PYTHONPATH": path},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert runtime.request(state, "ping")["pid"] == json.loads(result.stdout)["pid"]
+    finally:
+        subprocess.run(
+            [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+            capture_output=True,
+            timeout=30,
+        )
+
+
 @pytest.mark.parametrize("update_kind", ["runtime", "binary", "helper"])
 def test_executor_release_waits_for_commands_and_preserves_results(
     tmp_path, monkeypatch, capsys, update_kind
