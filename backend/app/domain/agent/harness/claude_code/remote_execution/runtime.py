@@ -2103,7 +2103,11 @@ def main():
                     if sys.platform == "win32"
                     else subprocess.Popen(argv, start_new_session=True, **options)
                 )
-            for _ in range(100):
+            # Started is the service answering a ping; failed is the process
+            # exiting. Nothing in between says which one is coming, so how long
+            # to wait is the caller's call: a fixed count here gave a loaded
+            # machine about five seconds and failed services that were only slow.
+            while True:
                 if process.poll() is not None:
                     raise RuntimeError("Executor startup failed; inspect service.log")
                 try:
@@ -2111,7 +2115,6 @@ def main():
                     return
                 except (OSError, RuntimeError):
                     time.sleep(0.05)
-            raise RuntimeError("Executor readiness timed out")
 
 
 if __name__ == "__main__":
