@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// Team compute is the ownership surface from execution-architecture v4:
-// platform cloud machines and self-hosted nodes live in one team pool; projects
-// only provide billing/audit attribution, while a topic chooses the actual target.
+// The team's work computers: its Cloud quota and usage, the Cloud machines its
+// projects already have, and its self-hosted devices. Cloud machines are opened
+// by an agent in a room that needs one; nothing here opens one.
 import type { TeamResourceQuotas } from '@/api'
 import type { MyDevice, Project, ProjectMachine } from '@/cx_types'
 
@@ -9,7 +9,6 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import {
   changeProjectMachinePower,
-  createProjectMachine,
   deleteProjectMachine,
   getTeamResourceQuotas,
   listMyDevices,
@@ -32,22 +31,11 @@ const myDevices = ref<MyDevice[]>([])
 const projects = ref<Project[]>([])
 const cloudMachines = ref<CloudMachine[]>([])
 const quotas = ref<TeamResourceQuotas | null>(null)
-const selectedQuota = computed(() => quotas.value?.machines)
-const selectedProjectUsage = computed(
-  () => quotas.value?.projects.find((project) => project.id === selectedProject.value)?.machines_used ?? 0
-)
-const quotaFull = computed(() => Boolean(selectedQuota.value && selectedQuota.value.used >= selectedQuota.value.limit))
+const quotaFull = computed(() => Boolean(quotas.value && quotas.value.machines.used >= quotas.value.machines.limit))
 const loading = ref(false)
 const error = ref<string | null>(null)
 const busy = ref<string | null>(null)
 const cloudConfigured = ref(true)
-
-const createDialog = ref(false)
-const creating = ref(false)
-const selectedProject = ref<string | null>(null)
-const cores = ref(4)
-const memoryMb = ref(8192)
-const diskGb = ref(64)
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -58,7 +46,6 @@ const cloudDeviceIds = computed(
 )
 const selfHostedDevices = computed(() => devices.value.filter((device) => !cloudDeviceIds.value.has(device.device_id)))
 const onlineCount = computed(() => selfHostedDevices.value.filter((device) => device.online).length)
-const projectOptions = computed(() => projects.value.map((project) => ({ title: project.name, value: project.id })))
 const cloudMoving = computed(() =>
   cloudMachines.value.some(
     (machine) =>
@@ -118,7 +105,6 @@ async function load() {
   loading.value = true
   error.value = null
   quotas.value = null
-  selectedProject.value = null
   try {
     const [teamDevices, mine, projectList] = await Promise.all([
       listTeamDevices(teamId.value),
@@ -128,7 +114,6 @@ async function load() {
     devices.value = teamDevices.devices
     myDevices.value = mine.devices
     projects.value = projectList.data
-    selectedProject.value = selectedProject.value ?? projects.value[0]?.id ?? null
     await loadCloud()
   } catch (cause) {
     error.value = errorMessage(cause, '加载团队工作电脑失败')
@@ -178,26 +163,6 @@ async function removeMachine(device: MyDevice) {
     error.value = errorMessage(cause, '移出机器失败')
   } finally {
     busy.value = null
-  }
-}
-
-async function provisionCloud() {
-  if (!selectedProject.value || creating.value || !selectedQuota.value || quotaFull.value) return
-  creating.value = true
-  error.value = null
-  try {
-    await createProjectMachine(selectedProject.value, {
-      cores: Number(cores.value),
-      memoryMb: Number(memoryMb.value),
-      diskGb: Number(diskGb.value),
-    })
-    createDialog.value = false
-    await loadCloud()
-  } catch (cause) {
-    error.value = errorMessage(cause, '开通云端机器失败')
-  } finally {
-    creating.value = false
-    schedulePoll()
   }
 }
 
@@ -252,17 +217,6 @@ onBeforeUnmount(() => {
           团队的云端额度和自有设备。项目给新 AI 队友设默认工作电脑，房间里可以给每个 AI 队友更换。
         </p>
       </div>
-      <v-spacer />
-      <v-btn
-        v-if="canManage"
-        color="primary"
-        variant="flat"
-        prepend-icon="mdi-cloud-plus-outline"
-        :disabled="!cloudConfigured || !projects.length"
-        @click="createDialog = true"
-      >
-        开通云端机器
-      </v-btn>
     </div>
 
     <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
@@ -331,15 +285,12 @@ onBeforeUnmount(() => {
         <div class="section-heading mb-3">
           <div>
             <h3 class="text-subtitle-1 font-weight-medium">云端机器</h3>
-            <p class="text-caption text-medium-emphasis mb-0">由平台创建、长期运行的云端机器，费用归属所选项目</p>
+            <p class="text-caption text-medium-emphasis mb-0">团队各项目的云端机器，费用记在所属项目</p>
           </div>
         </div>
 
         <v-alert v-if="!cloudConfigured" type="info" variant="tonal" density="comfortable">
           当前部署尚未接入云端；自有设备仍可正常使用
-        </v-alert>
-        <v-alert v-else-if="!projects.length" type="info" variant="tonal" density="comfortable">
-          先在团队里创建一个项目，云端机器以该项目作为费用与审计归属
         </v-alert>
         <div v-else-if="!cloudMachines.length" class="empty-panel">
           <v-icon size="38" class="empty-panel-icon">mdi-cloud-outline</v-icon>
@@ -504,70 +455,6 @@ onBeforeUnmount(() => {
         </template>
       </section>
     </template>
-
-    <v-dialog v-model="createDialog" max-width="520">
-      <v-card rounded="lg">
-        <v-card-title class="pt-5 px-5">开通云端机器</v-card-title>
-        <v-card-text class="px-5">
-          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-            创建后会持续占用云资源；释放机器会删除其本地数据。
-          </v-alert>
-          <v-select
-            v-model="selectedProject"
-            autocomplete="off"
-            :items="projectOptions"
-            label="费用与审计归属项目"
-            variant="outlined"
-            density="comfortable"
-          />
-          <v-alert
-            v-if="selectedQuota"
-            :type="quotaFull ? 'warning' : 'info'"
-            variant="tonal"
-            density="compact"
-            class="mb-3"
-          >
-            团队云端机器已使用 {{ selectedQuota.used }} / {{ selectedQuota.limit }} 台
-            <div>本项目占用 {{ selectedProjectUsage }} 台；团队内所有项目共享名额</div>
-            <div v-if="!quotaFull">
-              本次创建后，团队占用 {{ selectedQuota.used + 1 }} / {{ selectedQuota.limit }} 台
-            </div>
-            <div>停止机器不会腾出名额，释放后归还</div>
-            <div v-if="quotaFull">已达到上限，请先释放不再使用的机器</div>
-          </v-alert>
-          <div v-else class="text-body-2 text-medium-emphasis mb-3">暂未获取团队资源用量，请刷新后重试</div>
-          <v-row dense>
-            <v-col cols="4"
-              ><v-text-field v-model.number="cores" type="number" min="1" label="CPU 核" variant="outlined"
-            /></v-col>
-            <v-col cols="4"
-              ><v-text-field
-                v-model.number="memoryMb"
-                type="number"
-                min="512"
-                step="512"
-                label="内存 MB"
-                variant="outlined"
-            /></v-col>
-            <v-col cols="4"
-              ><v-text-field v-model.number="diskGb" type="number" min="10" label="磁盘 GB" variant="outlined"
-            /></v-col>
-          </v-row>
-        </v-card-text>
-        <v-card-actions class="px-5 pb-5">
-          <v-spacer />
-          <v-btn variant="text" :disabled="creating" @click="createDialog = false">取消</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="creating"
-            :disabled="!selectedProject || !selectedQuota || quotaFull"
-            @click="provisionCloud"
-            >确认开通</v-btn
-          >
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </v-container>
 </template>
 

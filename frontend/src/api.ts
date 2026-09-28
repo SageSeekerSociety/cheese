@@ -881,16 +881,6 @@ export function listProjectMachines(
   return request(`/projects/${encodeURIComponent(projectId)}/machines`)
 }
 
-export function createProjectMachine(
-  projectId: string,
-  spec: import('./cx_types').ProjectMachineCreate
-): Promise<import('./cx_types').ProjectMachine> {
-  return request(`/projects/${encodeURIComponent(projectId)}/machines`, {
-    method: 'POST',
-    body: JSON.stringify(spec),
-  })
-}
-
 export function deleteProjectMachine(
   projectId: string,
   machineId: string

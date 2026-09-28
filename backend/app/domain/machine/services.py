@@ -199,12 +199,10 @@ class MachineService:
         self,
         *,
         project_id: uuid.UUID,
-        topic_id: uuid.UUID | None = None,
+        topic_id: uuid.UUID,
         session_id: uuid.UUID | None = None,
         requested_by: str | None,
-        ssh_pubkey: str | None = None,
         owner_user_id: int | None = None,
-        login_user: str | None = None,
         cores: int | None = None,
         memory_mb: int | None = None,
         disk_gb: int | None = None,
@@ -245,7 +243,7 @@ class MachineService:
         }
 
         customer_id, account_id = await self._ensure_account(project_id)
-        user = login_user or settings.microcloud_login_user
+        user = settings.microcloud_login_user
 
         await self._repo.lock_team_quota(team_id)
         existing = await self.quota_machines(team_id)
@@ -270,7 +268,7 @@ class MachineService:
             "aiMode": "none",
             **spec,
         }
-        if topic_id is not None and owner_user_id is not None and not ssh_pubkey:
+        if owner_user_id is not None:
             warm = await self._warm_pool.reserve(
                 body=body,
                 project_id=project_id,
@@ -282,14 +280,12 @@ class MachineService:
             if warm is not None:
                 await startup_progress(topic_id, "已选中预热机器，正在分配给本话题")
                 return warm
-        # The platform needs its own way in to enroll the machine later, and the
-        # human must not lose theirs by us taking the single key slot: both are
-        # authorised, one per line, which is what authorized_keys is.
+        # The platform needs its own way in to enroll the machine later. The
+        # operator's key too: the bootstrap key is erased at enrollment, and a
+        # machine nobody can log into cannot be diagnosed (see the setting).
         bootstrap_private, bootstrap_public = await enrollment.generate_keypair()
-        # The operator's key too: the bootstrap key is erased at enrollment, and
-        # a machine nobody can log into cannot be diagnosed (see the setting).
         authorized = enrollment.combine_authorized_keys(
-            bootstrap_public, ssh_pubkey, settings.microcloud_operator_ssh_pubkey
+            bootstrap_public, settings.microcloud_operator_ssh_pubkey
         )
         if authorized:
             body["sshPubkey"] = authorized
@@ -321,12 +317,7 @@ class MachineService:
             owner_user_id=owner_user_id,
             bootstrap_key=bootstrap_private,
         )
-        creating = (
-            _create_locks.setdefault(session_id or topic_id, asyncio.Lock())
-            if topic_id is not None
-            else asyncio.Lock()
-        )
-        async with creating:
+        async with _create_locks.setdefault(session_id or topic_id, asyncio.Lock()):
             await self._session.commit()
             await startup_progress(topic_id, "正在请求创建机器")
             try:
