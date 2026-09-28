@@ -20,6 +20,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
 
@@ -285,6 +286,16 @@ class CentralChannel(DeviceChannel):
                 else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
+            # The project's remote MCP servers need no machine: the platform
+            # holds their credentials and calls them (`remote_mcp`), so they are
+            # the session's from its start. Only the usable ones: a server
+            # someone still has to connect is a capability line in the prompt
+            # instead. Part of the target, so connecting one relaunches an idle
+            # session with it (`_launch_identity`).
+            async with factory() as db:
+                remote = await remote_mcp.session_target(db, project_id, topic_id)
+            if remote is not None:
+                target["remote_mcp"] = remote
         else:
             target = private_chat.scratch_target(project_id, resource, device_id=center)
         location = {
