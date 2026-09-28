@@ -24,6 +24,5 @@
     "required": "This field is required"
   },
   "close": "Close",
-  "loadFailed": "Couldn't load",
   "updateFailed": "Couldn't update"
 }

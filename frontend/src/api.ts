@@ -922,13 +922,9 @@ export function changeProjectMachinePower(
   })
 }
 
-// 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
+// 房间的工作电脑：房间这一项（还没开工的 AI 队友开工时用哪台），和每个会话在哪台上。
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
-}
-
-export function getSessionWorkLeases(topicId: string): Promise<{ sessions: import('./cx_types').SessionWorkLease[] }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/sessions/work-leases`)
 }
 
 export function setSessionWorkChoice(topicId: string, sessionId: string, choice: import('./cx_types').ComputeChoice) {
@@ -970,22 +966,6 @@ export function setTopicComputeChoice(
     body: JSON.stringify({ choice }),
   })
 }
-export function setTopicComputeProfile(
-  topicId: string,
-  profile: string,
-  deviceId: string | null = null
-): Promise<{
-  current: string
-  device_id: string | null
-  locked: boolean
-  inherited: boolean
-}> {
-  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
-    method: 'PUT',
-    body: JSON.stringify(profile === 'device' ? { profile, device_id: deviceId } : { profile }),
-  })
-}
-
 // ---- AI 队友 (agent 类型与实例) ----
 //
 // 「不能停用最后一个」and the like are the backend's to enforce; these are plain

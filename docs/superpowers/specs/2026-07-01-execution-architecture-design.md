@@ -245,12 +245,12 @@ Teams own permissions and quotas. Projects store explicit defaults and favorites
 | Project | Explicit default and optional favorites | `Project.settings.compute_configs`, first in project settings |
 | Room | Inherits project default; a temporary choice affects only this room | `Topic.compute_config` and the pinned device binding |
 
-New projects use standard cloud when provisioning is available. A project may instead default to a shared device. The room picker lists the actual default first with a badge, followed by favorites; other resources stay collapsed. Starting execution or creating a cloud lease freezes the room environment.
+New projects use standard cloud when provisioning is available. A project may instead default to a shared device. The room picker lists the actual default first with a badge, followed by favorites; other resources stay collapsed. An agent session that has started keeps its machine until someone changes that agent's work computer.
 
 ## §affinity：实例化冻结（数据正确性红线，独立可落地）
 
-- **分界线 = 这个话题有没有 `agent_sessions` 行**（首轮捕获）。没有 = 未实例化，算力可切；有 = 已落地，锁定。
-- 首轮把选择**物化**成具体 compute target 写回 `Topic.compute`，此后只读。
+- **分界线 = 这个话题有没有 `agent_sessions` 行**（首轮捕获）。没有 = 未实例化，工作电脑可切；有 = 已落地，这条会话的机器不再跟着房间或项目的选择变，只能按会话单独更换。
+- 首轮把选择**物化**成具体 compute target 写回 `Topic.compute`，此后它是之后开工的会话的默认。
 - **自托管设备离线 → 该会话排队 / 报"算力离线"，绝不漂到别处**：工作树 + `~/.claude` session 都在那台机器，漂移 = 静默丢历史 + resume 损坏。这条是原始 bug（"话题实例化后会漂到别的在线设备"）的定稿修复，**不依赖归属/IA 重构，可先落地**。
 - 平台/虚拟节点无漂移问题（provider 内部保证逻辑节点稳定，虚拟化 reuse 对上层透明）。
 

@@ -1046,7 +1046,7 @@ export interface ProjectMachineCreate {
 // #282 §四 / #358 · whether an agent in this room can see a whole enrolled machine.
 // `effective` is the widest visibility any agent session here has on the enrolled
 // machine it works on ('host' | 'isolated' | null when none is on one); `machine_access`
-// is the one flag the room's Hosted Machine badge keys on; `notice` is the honest
+// is the one flag the room's 「能访问整台机器」 notice keys on; `notice` is the honest
 // #282 UI line, used as the badge's tooltip. `options` carries the two 档 with
 // their capability copy (isolated = boxed default, host = whole-machine, 申请制).
 export interface TopicComputeVisibility {
@@ -1062,11 +1062,11 @@ export interface TopicComputeDevice {
   online: boolean
 }
 
-// GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
-// `current` is effective (room choice → project default → deployment default);
-// `locked` freezes the picker once the topic has run (session started);
-// `inherited` = still following the project default (no own choice yet);
-// `device_id` is the self-hosted machine pinned to this topic, or null while
+// GET /topics/{id}/compute-profile — the room's work computers (结论 60).
+// `choice` is what an agent that has not started yet will be given (room choice
+// → project default → deployment default); `sessions` is each agent session and
+// the machine it works on, `choice: null` for one that has not started working;
+// `device_id` is the self-hosted machine pinned to this room, or null while
 // 「系统挑一台」still waits for the first turn to choose one.
 export interface TopicComputeProfile {
   choice: ComputeChoice
@@ -1075,10 +1075,14 @@ export interface TopicComputeProfile {
   current: string
   device_id: string | null
   devices: TopicComputeDevice[]
-  locked: boolean
-  inherited: boolean
+  sessions: RoomSessionMachine[]
   profiles: PoolListing[]
   visibility: TopicComputeVisibility
+}
+
+// One agent session in the room and whether its agent can see a whole machine.
+export interface RoomSessionMachine extends SessionWorkLease {
+  machine_access: boolean
 }
 
 export interface EnvironmentConfig {
@@ -1118,7 +1122,7 @@ export interface SessionWorkLease {
   id: string
   agent_handle: string
   harness: string
-  choice: ComputeChoice
+  choice: ComputeChoice | null
   lease: { device_id: string; generation: number; status: string; online: boolean } | null
 }
 

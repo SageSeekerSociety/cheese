@@ -1,7 +1,8 @@
 """Topic compute-profile API (execution-architecture v4 会话级选择).
 
-A topic picks its compute pool before its first turn; the choice sticks as the
-project default and freezes once the topic has run (a session exists).
+A room's choice is what an agent gets when it starts working there: before the
+first turn it is also the room's pin, and afterwards it is the default for the
+agents that start later. Each session that has started keeps its own machine.
 """
 
 import asyncio
@@ -12,7 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.compute_configs import (
     ComputeChoice,
     ProjectComputeConfigs,
@@ -83,25 +84,6 @@ def _project_devices(client, pid: str, *names: str) -> list[str]:
     return asyncio.run(_seed())
 
 
-def _project_credential(client, pid: str) -> str:
-    """这个项目自己的那张 agent 凭据 —— 到项目里哪个房间都认得。
-
-    签发本身不给角色，所以先把那位芝士加进项目成员，凭据才够得着房间：这条用例要
-    证的是「够得着也动不了」，不是「够不着」。
-    """
-    from tests.integration.conftest import session_auth_headers
-
-    rows = client.get(f"/projects/{pid}/agents").json()["data"]["data"]
-    (default,) = [row for row in rows if row["is_default"]]
-    joined = client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": default["seat_handle"]},
-        headers=session_auth_headers("andyl"),
-    )
-    assert joined.status_code == 200, joined.text
-    return mint_project_agent_credential(project_id=pid, epoch=0)
-
-
 def _agent_seat(client, tid: str) -> str:
     rows = client.get(f"/topics/{tid}/members").json()["data"]["data"]
     seats = [m["member_handle"] for m in rows if m["agent"]]
@@ -135,7 +117,7 @@ def _resolve_topic_device(
     return asyncio.run(_resolve())
 
 
-def test_new_topic_inherits_default_and_is_unlocked(client):
+def test_new_topic_inherits_default_and_has_no_sessions(client):
     pid = _project(client)
     tid = _topic(client, pid)
     from app.core.config import settings
@@ -145,8 +127,7 @@ def test_new_topic_inherits_default_and_is_unlocked(client):
     # Nothing selected anywhere, so the deployment's own fallback applies — never
     # the retired local pool (#358). Last selection would win if there were one.
     assert body["current"] == compute_default_name(settings) == "device"
-    assert body["locked"] is False
-    assert body["inherited"] is True
+    assert body["sessions"] == []
     # ...and the retired pool is no longer offered as a choice.
     assert "local-docker" not in {p["id"] for p in body["profiles"]}
 
@@ -176,11 +157,10 @@ def test_select_persists_only_to_topic(client, monkeypatch):
     r = client.put(f"/topics/{tid}/compute-profile", json={"profile": "device"})
     assert r.status_code == 200
     assert r.json()["data"]["current"] == "device"
-    assert r.json()["data"]["inherited"] is False
 
-    # Persisted on the topic (no longer inheriting)...
+    # Persisted on the topic...
     tbody = client.get(f"/topics/{tid}/compute-profile").json()["data"]
-    assert tbody["inherited"] is False
+    assert tbody["choice"]["profile"] == "device"
     # The deployment's existing device default is unchanged.
     pbody = client.get(f"/projects/{pid}/compute-profiles").json()["data"]
     assert pbody["current"] == "device"
@@ -271,108 +251,67 @@ def test_get_lists_only_project_devices_with_live_online_state(client, monkeypat
     assert outside not in {device["device_id"] for device in body["devices"]}
 
 
-def test_unlocked_topic_can_change_machine_but_locked_topic_cannot(client):
+def test_a_started_room_takes_a_new_default_without_moving_its_pin(client):
+    """开工之后，房间这一项只是之后邀请的 AI 队友的默认：改得动，钉不搬。"""
     pid = _project(client)
     tid = _topic(client, pid)
     first, second = _project_devices(client, pid, "first", "second")
 
-    first_response = client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": first},
-    )
-    assert first_response.status_code == 200
-    second_response = client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": second},
-    )
-    assert second_response.status_code == 200
-    assert _topic_binding(client, tid).device_id == second
-
-    _mark_started(client, tid)
-    locked_response = client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": first},
-    )
-    assert locked_response.status_code == 422
-    assert _topic_binding(client, tid).device_id == second
-
-
-def test_the_turn_running_in_the_room_asks_and_does_not_switch(client):
-    """`cheese_machine` 打的是这条真路由，而它换不动机器（结论 23、40）。
-
-    这个工具只会被**正在这个房间里跑的那一轮**调用，而那一刻房间必然已经开跑过。
-    所以「开跑即锁定」不能把它一起锁死：锁住它，表上就摆了一样在生产里一次也调不通
-    的工具，它拿到的回话还是「新建话题可另选算力」——而它连新建话题都做不到。
-
-    放它说得出口，不等于放它当场换：换过去丢掉的是这台机器上的工作区和还没提交的
-    改动，所以产物是一条给机主的提议，钉一动不动。
-
-    契约那一组对着一台假 HTTP 断言这次调用落在哪个地址上，答不出这里的问题：地址
-    是对的，答话是拒绝。
-    """
-    pid = _project(client)
-    tid = _topic(client, pid)
-    here, there = _project_devices(client, pid, "here", "there")
     assert (
         client.put(
             f"/topics/{tid}/compute-profile",
-            json={"profile": "device", "device_id": here},
+            json={"profile": "device", "device_id": first},
         ).status_code
         == 200
     )
+    assert (
+        client.put(
+            f"/topics/{tid}/compute-profile",
+            json={"profile": "device", "device_id": second},
+        ).status_code
+        == 200
+    )
+    assert _topic_binding(client, tid).device_id == second
+
     _mark_started(client, tid)
-    seat = _agent_seat(client, tid)
-
-    # 界面上那个人：房间开跑了，这一档就定住了，连提议都没有。
-    by_a_person = client.put(
+    changed = client.put(
         f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": there},
-    )
-    assert by_a_person.status_code == 422
-    assert _topic_binding(client, tid).device_id == here
-
-    # 房间里跑着的那一轮自己要另一台：说得出口，换不成，产物是一条给机主的提议。
-    by_the_turn = client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": there},
-        headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=pid, topic_id=tid, agent_handle=seat
-            )
-        },
+        json={"profile": "device", "device_id": first},
     )
 
-    assert by_the_turn.status_code == 200, by_the_turn.text
-    body = by_the_turn.json()["data"]
-    assert body["proposal"] is not None, body
-    assert "there" in body["proposal"]["content"], body["proposal"]
-    assert _topic_binding(client, tid).device_id == here, "钉被搬走了"
-    assert body["device_id"] == here
+    assert changed.status_code == 200, changed.text
+    body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
+    assert body["choice"]["device_id"] == first
+    assert _topic_binding(client, tid).device_id == second
 
 
-def test_a_project_credential_cannot_move_a_room_that_is_already_running(client):
-    """项目级 agent 凭据不是「这个房间这一轮」（结论 23）。
-
-    它够得着这个项目里的每一个房间，所以拿「说话的是个 agent」当判据，等于任何一张
-    项目凭据都能动别人正跑着的房间 —— 连一条提议都不该从它这里长出来。
-    """
+def test_a_new_default_does_not_move_an_agent_already_working(client, monkeypatch):
+    """换的是之后邀请的 AI 队友用哪台；已经在干活的那位还在自己那台上。"""
+    monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
     pid = _project(client)
     tid = _topic(client, pid)
     here, there = _project_devices(client, pid, "here", "there")
-    client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": here},
+    working = _session(
+        client,
+        tid,
+        "analyst",
+        choice=ComputeChoice(name="here", profile="device", device_id=here),
+        lease={"kind": "device", "device_id": here, "status": "ready"},
     )
-    _mark_started(client, tid)
 
-    refused = client.put(
+    changed = client.put(
         f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": there},
-        headers={"X-Cheese-Token": _project_credential(client, pid)},
     )
 
-    assert refused.status_code == 422, refused.text
-    assert _topic_binding(client, tid).device_id == here
+    assert changed.status_code == 200, changed.text
+    body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
+    assert body["choice"]["device_id"] == there
+    (session,) = body["sessions"]
+    assert session["id"] == working
+    assert session["agent_handle"] == "analyst"
+    assert session["choice"]["device_id"] == here
+    assert session["lease"]["device_id"] == here
 
 
 def test_selecting_cloud_without_machine_create_authority_is_refused(
@@ -544,59 +483,6 @@ def test_sessions_on_cloud_machines_show_no_badge(client):
     vis = _visibility(client, tid)
     assert vis["effective"] is None
     assert vis["machine_access"] is False
-
-
-def test_locked_once_topic_has_run(client):
-    pid = _project(client)
-    tid = _topic(client, pid)
-    _mark_started(client, tid)
-
-    body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
-    assert body["locked"] is True
-
-    # Switching after the first turn is rejected — the pin is frozen.
-    r = client.put(f"/topics/{tid}/compute-profile", json={"profile": "local-docker"})
-    assert r.status_code == 422
-
-
-def test_the_turn_can_ask_for_cloud_and_gets_a_proposal_not_a_401(client, monkeypatch):
-    """`cheese_machine(profile="cloud")` 说得出口 —— 收件人是项目的主人（结论 23）。
-
-    Cloud 花的是项目的钱，所以「谁有权花」这一问要的是一个登录用户；而房间里跑着
-    的那一轮拿的每一张凭据都不是登录用户的（`api/auth.py` 给它们的 `via` 是
-    `cheese`）。这一问要是排在闸门前面，这条路上的 Cloud 一档百分之百是 401，那条
-    「等项目主人点头」的提议一次也长不出来 —— 而它正是这一档该有的产物。
-
-    变成提议的那一次没有花任何人的钱：该点头的人就是项目的主人本人，他点头才是这
-    笔钱的授权。所以那一问排在闸门之后 —— 这次调用真的要发生时才问。
-    """
-    pid = _project(client)
-    tid = _topic(client, pid)
-    monkeypatch.setattr(settings, "microcloud_base_url", "https://cloud.example")
-    monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
-    provision = AsyncMock()
-    monkeypatch.setattr(MachineService, "provision", provision)
-    _mark_started(client, tid)
-    seat = _agent_seat(client, tid)
-
-    asked = client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "cloud"},
-        headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=pid, topic_id=tid, agent_handle=seat
-            )
-        },
-    )
-
-    assert asked.status_code == 200, asked.text
-    body = asked.json()["data"]
-    assert body["proposal"] is not None, body
-    assert body["proposal"]["approver"] == "andyl", body["proposal"]
-    # 这次调用没有发生：没有开机器，房间自己那一列也没被写过 —— 报回来的算力仍
-    # 然是它从项目默认继承的那一份（`inherited`），不是这次要的那一档。
-    provision.assert_not_awaited()
-    assert body["inherited"] is True, body
 
 
 def test_a_denied_tier_is_refused_out_loud_even_when_the_room_is_running(client):
