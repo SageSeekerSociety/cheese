@@ -19,7 +19,7 @@ def test_an_empty_room_doc_asks_for_the_first_version():
     assert "`cheese_doc_set` 建第一版" in prompt
     assert "不论你是哪个队友" in prompt
     # 五块模板和有文档时是同一份。
-    assert "- **当前结论**" in prompt
+    assert "- **现状**" in prompt
 
 
 def test_an_existing_doc_keeps_the_maintain_section_and_the_same_form():
@@ -27,7 +27,7 @@ def test_an_existing_doc_keeps_the_maintain_section_and_the_same_form():
 
     assert "请按它继续工作，并在状态变化时用 `cheese_doc_set` 更新它" in prompt
     assert "（还没有）" not in prompt
-    assert "- **当前结论**" in prompt
+    assert "- **现状**" in prompt
     assert "做一件事。" in prompt
 
 
