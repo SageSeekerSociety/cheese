@@ -38,44 +38,13 @@ async def authorize_topic_access(
     separately at the request boundary."""
     if not actor.authenticated:
         return False
-    return await topic_admits_handle(
-        actor.handle,
-        project_id=project_id,
-        topic_id=topic_id,
-        topic_role=topic_role,
-        is_project_member=is_project_member,
-        is_private=is_private,
-    )
-
-
-async def topic_admits_handle(
-    handle: str,
-    *,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    topic_role: TopicRoleReader,
-    is_project_member: ProjectMemberCheck,
-    is_private: bool = False,
-) -> bool:
-    """The same rule as ``authorize_topic_access``, asked about a handle.
-
-    The caller is not always the person the request is about. A card is filed
-    to a reviewer named in the body, and the door that will later let that
-    reviewer accept it is ``authorize_topic_access`` — so "would this room admit
-    them?" has to be answerable about somebody who is not the one asking, or the
-    two ends drift and a card gets routed to someone the room refuses.
-
-    What is taken as given here is the credential half only: a handle in a body
-    is not presenting anything, and this asks whether the room would admit them
-    if it did. Everything else is the same rule — a seat in this room, or
-    membership in its project, and for a private room the seat alone."""
-    role = await topic_role(topic_id, handle)
+    role = await topic_role(topic_id, actor.handle)
     if is_private:
         # Project membership never grants access to someone else's private room.
-        return role is not None
+        return actor.authenticated and role is not None
     if role is not None:
         return True
-    if await is_project_member(project_id, handle):
+    if await is_project_member(project_id, actor.handle):
         return True
     return False
 
