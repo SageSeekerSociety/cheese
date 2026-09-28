@@ -19,12 +19,14 @@ const shipped = new Set(execution.shipped_skills || []);
 // the executor holds each and what Claude Code adds to its description. They
 // change while the session runs (`release.touch_skills`), so they are read
 // each time (`client.py` `skill_places` reads the same file).
-const placesFile = execution.target_file.replace(/[^/]*$/, "skill-places.json");
+const sessionDir = (execution.target_file || "").replace(/[^/]*$/, "");
+const placesFile = sessionDir && sessionDir + "skill-places.json";
 // The one native Read this plugin lets through the session's PreToolUse guard
 // (`client.py` `probed`): its look at a file before the executor reads it.
-const probeFile = execution.target_file.replace(/[^/]*$/, "read-probe.json");
+const probeFile = sessionDir && sessionDir + "read-probe.json";
 
 async function skillPlaces($) {
+  if (!placesFile) return { places: {}, scoped: false };
   try {
     return JSON.parse(await $.fs.read(placesFile, { as: "text" }));
   } catch {
