@@ -14,6 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.routes.teams import get_team_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -22,6 +23,7 @@ from app.domain.team.models import RecruitmentStatus, TeamRecruitmentPost
 from app.domain.team.recruitment_repositories import RecruitmentRepository
 from app.domain.team.recruitment_services import RecruitmentService
 from app.domain.team.repositories import TeamRepository
+from app.domain.team.services import TeamService
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -285,8 +287,15 @@ async def create_recruitment_post(
 async def list_team_recruitment_posts(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: RecruitmentService = Depends(_get_recruitment_service),
+    team_service: TeamService = Depends(get_team_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
+    # 团队作用域的招募列表不比它挂着的那支队伍更公开（帖子可以带联系方式），
+    # 所以先过这里的那道门，和 ``GET /teams/{teamId}`` 逐字同一句话：成员看得见
+    # 自己的队，公开共享队谁都看得见，隐身 / 个人队对外人答 404 —— 不确认它存在。
+    # 复用 ``TeamService.visible_team``，不在这里另写一套可见性判据。
+    await team_service.visible_team(team_id, auth_user.user_id)
     posts = await service.list_by_team(team_id)
     teams_map, users_map, profiles_map = await _load_maps_for_posts(db, posts)
     items = [
