@@ -32,6 +32,8 @@ from app.domain.tag.models import Tag
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.domain.knowledge.services import KnowledgeService
+    from app.domain.materials.services import MaterialService
     from app.domain.task.repositories import TaskRepository
 
 
@@ -68,6 +70,12 @@ def _normalized_note(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _error_data_id(exc: NotFoundError) -> object | None:
+    """The id a not-found error named, so a form-field error can carry it on."""
+    data = exc.data
+    return data.get("id") if isinstance(data, dict) else None
 
 
 @dataclass(frozen=True)
@@ -110,6 +118,8 @@ class SpaceService:
         domain_group_domain_repo: SpaceDomainGroupDomainRepository | None = None,
         member_repo: SpaceMemberRepository | None = None,
         invite_code_repo: SpaceInviteCodeRepository | None = None,
+        knowledge_service: "KnowledgeService | None" = None,
+        material_service: "MaterialService | None" = None,
     ) -> None:
         self._repo = repo
         self._category_repo = category_repo
@@ -121,6 +131,8 @@ class SpaceService:
         self._domain_group_domain_repo = domain_group_domain_repo
         self._member_repo = member_repo
         self._invite_code_repo = invite_code_repo
+        self._knowledge_service = knowledge_service
+        self._material_service = material_service
 
     # ------------------------------------------------------------------
     # What a 题目板 is
@@ -383,6 +395,13 @@ class SpaceService:
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
 
+        if teaching is not None:
+            # Refused here, before a single field of the row is touched: a
+            # rejected PATCH must leave the stored 教学安排 exactly as it was.
+            await self._ensure_teaching_references(
+                teaching=teaching, actor_user_id=actor_user_id
+            )
+
         if name is not None:
             if not name.strip():
                 raise BadRequestError("Category name cannot be empty")
@@ -408,6 +427,47 @@ class SpaceService:
 
         category.updated_at = datetime.now(UTC)
         return await self._category_repo.save(category)
+
+    async def _ensure_teaching_references(
+        self, *, teaching: dict, actor_user_id: int | None
+    ) -> None:
+        """Every id a 教学安排 names must exist — and, for 知识, be readable.
+
+        The read side (`Teaching.from_json`, `KnowledgeService.get_many`) drops
+        what it cannot resolve, because a typo there would take down every 赛题
+        under the 项目集. Here a person is looking at the form and can be told
+        which field is wrong, so a bad reference is refused with the field's
+        name instead of being dropped.
+
+        `KnowledgeService.ensure_readable` is the very criterion
+        `GET /knowledge/{id}` uses — a teacher may point at 知识 they could
+        already open, nobody else's. A 课件 has no owning team to check (any
+        signed-in reader may fetch any material), so only existence is required
+        of `material_ids`.
+        """
+        knowledge_ids = teaching.get("knowledge_ids") or []
+        if knowledge_ids and self._knowledge_service is not None:
+            if actor_user_id is None:
+                raise ForbiddenError("Authentication required")
+            try:
+                await self._knowledge_service.ensure_readable(
+                    knowledge_ids=knowledge_ids, user_id=actor_user_id
+                )
+            except NotFoundError as exc:
+                raise BadRequestError(
+                    "teaching.knowledgeIds names a knowledge that does not exist",
+                    data={"field": "knowledgeIds", "id": _error_data_id(exc)},
+                ) from exc
+
+        material_ids = teaching.get("material_ids") or []
+        if material_ids and self._material_service is not None:
+            try:
+                await self._material_service.ensure_exist(material_ids=material_ids)
+            except NotFoundError as exc:
+                raise BadRequestError(
+                    "teaching.materialIds names a material that does not exist",
+                    data={"field": "materialIds", "id": _error_data_id(exc)},
+                ) from exc
 
     async def delete_category(
         self,
