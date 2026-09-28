@@ -13,13 +13,13 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
-from app.core.sandbox_auth import bind_resource_token
+from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
     room_choice,
 )
-from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
+from app.domain.agent.device_hub import DeviceCallError, device_hub
 from app.domain.agent.device_provider import (
     _preview_ws_url,
     device_api_base,
@@ -271,21 +271,41 @@ async def room_machine_visibility(db, topic, project_settings) -> Visibility | N
     return await _visibility_of(sql_device_service(db), device_id)
 
 
-async def _agent_name(db, project, topic, handle: str) -> str:
-    """The name a room shows for the agent whose session is keyed ``handle``:
-    its saved teammate's, else the one the room falls back to.
+async def _session_teammate(db, project, handle: str):
+    """The saved teammate whose session is keyed ``handle``, or None.
 
     A session is keyed by its teammate's own handle, not by the seat it acts
     under, so this asks the same lookup that turns a session back into its
-    author when it runs (``for_handle``). A handle that names no teammate (a
-    room-derived one) is the room's agent."""
+    author when it runs (``for_handle``). None for a handle that names no
+    teammate (a room-derived one)."""
     from app.domain.agent_instance.services import AgentInstanceService
 
-    agents = AgentInstanceService(db)
     try:
-        return agents.resolved(await agents.for_handle(project, handle)).display_name
+        return await AgentInstanceService(db).for_handle(project, handle)
     except NotFoundError:
+        return None
+
+
+async def _agent_name(db, project, topic, handle: str) -> str:
+    """The name a room shows for the agent whose session is keyed ``handle``:
+    its saved teammate's, else the one the room falls back to."""
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    teammate = await _session_teammate(db, project, handle)
+    if teammate is None:
         return (await TopicService(db).resolve_agent(topic)).display_name
+    return AgentInstanceService.resolved(teammate).display_name
+
+
+async def _session_author(db, project, handle: str) -> str:
+    """The seat the session keyed ``handle`` acts under: its teammate's, or the
+    room-derived handle itself, which is its own seat."""
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    teammate = await _session_teammate(db, project, handle)
+    if teammate is None:
+        return handle
+    return await AgentInstanceService(db).ensure_identity(teammate)
 
 
 async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
@@ -408,7 +428,7 @@ async def _room_is_working(db, topic_id) -> bool:
     return running is not None
 
 
-async def push_before_switch(lease: dict) -> None:
+async def push_before_switch(lease: dict, start: Callable[[], Awaitable[dict]]) -> None:
     """Push the session's work to its branches on the machine it is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
@@ -416,11 +436,20 @@ async def push_before_switch(lease: dict) -> None:
     committed is backed up as a snapshot ``cheese recover`` restores. Raises
     ``WorkComputerUnreachable`` when the command could not run at all, and a
     ``ConflictError`` with the machine's own words when it ran and failed.
+
+    The session's executor runs only while the session is in use, so on a
+    machine that is online an idle session usually has none. ``start`` brings
+    it up the way a tool call would before the push, and only a machine that
+    is away, or that cannot start it, is unreachable.
     """
     # A lease that never finished installing has no executor to run the push.
     if not lease.get("state") or not device_hub.is_online(lease["device_id"]):
         raise WorkComputerUnreachable(PUSH_UNREACHABLE)
     try:
+        try:
+            await execution.call(lease, "ping", {}, hub=device_hub)
+        except DeviceCallError:
+            lease = {**lease, "state": (await start())["state"]}
         result = await execution.call(
             lease,
             "control",
@@ -428,7 +457,8 @@ async def push_before_switch(lease: dict) -> None:
             hub=device_hub,
             timeout=PUSH_WAIT_S,
         )
-    except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+    # DeviceOffline and DeviceCallError are RuntimeErrors, as is a failed start.
+    except (RuntimeError, TimeoutError) as exc:
         raise WorkComputerUnreachable(f"{PUSH_UNREACHABLE}：{exc}") from exc
     if "error" in result:
         raise ConflictError(f"推送失败，没有更换：{result['error']}")
@@ -439,6 +469,105 @@ async def push_before_switch(lease: dict) -> None:
     if said.startswith("Exit code "):
         detail = said.partition("\n")[2].strip()[-600:] or said
         raise ConflictError(f"推送失败，没有更换：{detail}")
+
+
+def _executor_env(env, *, api, token, project_id, topic_id, author, work_resource):
+    """What a session's executor runs with: the caller's ``CHEESE_*``/``GIT_*``
+    values, then the platform's own for this session."""
+    return {
+        **{
+            key: value
+            for key, value in env.items()
+            if key.startswith(("CHEESE_", "GIT_"))
+        },
+        "CHEESE_API": api,
+        "CHEESE_TOKEN": token,
+        "CHEESE_PROJECT": str(project_id),
+        "CHEESE_TOPIC": str(topic_id),
+        "CHEESE_AUTHOR": author,
+        "CHEESE_PREVIEW_URL": _preview_ws_url(api),
+        "CHEESE_RESOURCE_ID": work_resource,
+        "GIT_AUTHOR_NAME": author,
+        "GIT_AUTHOR_EMAIL": f"{author}@agent.cheese.local",
+    }
+
+
+async def _start_executor(hub, lease, *, device_id, project_id, work_resource, setup):
+    """Bring a session's executor up on ``device_id`` and answer what it
+    reports: a running one on this release is prepared in place, anything else
+    (none running, another release) is installed, which starts it."""
+    if lease and lease.get("state"):
+        try:
+            running = await execution.call(lease, "ping", {}, hub=hub)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 500:
+                raise
+            running = {}
+        except RuntimeError:
+            # Installation resumes the same resource, never a tool call.
+            running = {}
+        if launch.can_prepare(running):
+            return await execution.call(
+                lease,
+                "prepare",
+                launch.payload_for(
+                    project_id,
+                    uuid.UUID(work_resource),
+                    setup,
+                    running.get("files"),
+                ),
+                hub=hub,
+            )
+    installed = await hub.exec(
+        device_id,
+        ["python3", "-"],
+        stdin=launch.script(project_id, uuid.UUID(work_resource), setup),
+        timeout=660,
+    )
+    if installed.get("exit") != 0 or installed.get("truncated"):
+        raise RuntimeError(installed.get("stderr") or "Executor setup failed")
+    return json.loads(installed["stdout"])
+
+
+async def _restart_executor(db, row, lease):
+    """How to start again the executor of the session ``row`` on the machine
+    its ``lease`` is on, as a tool call there would: with a credential minted
+    for the session now, since the one it last ran with may have expired."""
+    topic = await TopicService(db).get_or_404(row.topic_id)
+    project = await ProjectService(db).get_or_404(topic.project_id)
+    author = await _session_author(db, project, row.agent_handle)
+    resource = lease.get("room_resource_id") or str(topic.resource_id or topic.id)
+    token = bind_resource_token(
+        mint_scoped_token(
+            project_id=str(project.id), topic_id=str(topic.id), agent_handle=author
+        ),
+        resource,
+        session_id=str(row.id),
+        lease_generation=lease.get("generation"),
+    )
+    # A lease recorded before it carried its own resource is the generation's,
+    # as `_attempt` reads it.
+    work_resource = lease.get("resource_id") or (row.execution_request or {}).get(
+        "generation"
+    )
+    api = await device_api_base(db, lease["device_id"], settings.connector_public_base)
+    return partial(
+        _start_executor,
+        device_hub,
+        lease,
+        device_id=lease["device_id"],
+        project_id=project.id,
+        work_resource=work_resource,
+        setup=_executor_env(
+            {},
+            api=api,
+            token=token,
+            project_id=project.id,
+            topic_id=topic.id,
+            author=author,
+            work_resource=work_resource,
+        ),
+    )
 
 
 async def request_choice(
@@ -546,9 +675,10 @@ async def _move_session(
     pushed = False
     if old:
         generation = request.get("generation")
+        start = await _restart_executor(db, row, old)
         await db.commit()
         try:
-            await push_before_switch(old)
+            await push_before_switch(old, start)
             pushed = True
         except WorkComputerUnreachable:
             if not (abandon_unpushed and actor.via == "token"):
@@ -860,56 +990,24 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     execution_token = bind_resource_token(
         token, resource, session_id=str(session_id), lease_generation=generation
     )
-    setup = {
-        **{
-            key: value
-            for key, value in env.items()
-            if key.startswith(("CHEESE_", "GIT_"))
-        },
-        "CHEESE_API": api,
-        "CHEESE_TOKEN": execution_token,
-        "CHEESE_PROJECT": str(project_id),
-        "CHEESE_TOPIC": str(topic_id),
-        "CHEESE_AUTHOR": actor_handle,
-        "CHEESE_PREVIEW_URL": _preview_ws_url(api),
-        "CHEESE_RESOURCE_ID": work_resource,
-        "GIT_AUTHOR_NAME": actor_handle,
-        "GIT_AUTHOR_EMAIL": f"{actor_handle}@agent.cheese.local",
-    }
+    setup = _executor_env(
+        env,
+        api=api,
+        token=execution_token,
+        project_id=project_id,
+        topic_id=topic_id,
+        author=actor_handle,
+        work_resource=work_resource,
+    )
     try:
-        info = None
-        if lease and lease.get("state"):
-            try:
-                running = await execution.call(lease, "ping", {}, hub=hub)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code != 500:
-                    raise
-                running = {}
-            except RuntimeError:
-                # Installation resumes the same resource, never a tool call.
-                running = {}
-            if launch.can_prepare(running):
-                info = await execution.call(
-                    lease,
-                    "prepare",
-                    launch.payload_for(
-                        project_id,
-                        uuid.UUID(work_resource),
-                        setup,
-                        running.get("files"),
-                    ),
-                    hub=hub,
-                )
-        if info is None:
-            installed = await hub.exec(
-                device_id,
-                ["python3", "-"],
-                stdin=launch.script(project_id, uuid.UUID(work_resource), setup),
-                timeout=660,
-            )
-            if installed.get("exit") != 0 or installed.get("truncated"):
-                raise RuntimeError(installed.get("stderr") or "Executor setup failed")
-            info = json.loads(installed["stdout"])
+        info = await _start_executor(
+            hub,
+            lease,
+            device_id=device_id,
+            project_id=project_id,
+            work_resource=work_resource,
+            setup=setup,
+        )
         target = {
             **reservation,
             "status": "ready",
