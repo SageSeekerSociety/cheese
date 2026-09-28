@@ -28,6 +28,7 @@ import {
   toggleReaction as apiToggleReaction,
   undoTopicTitle,
 } from '../api'
+import { useLongPress } from '../composables/useLongPress'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
@@ -49,6 +50,7 @@ import RollingNumber from './room/RollingNumber.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomHoverBar from './room/RoomHoverBar.vue'
 import RoomMessage from './room/RoomMessage.vue'
+import RoomMessageSheet from './room/RoomMessageSheet.vue'
 import RoomNotice from './room/RoomNotice.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
@@ -310,6 +312,7 @@ function onMessagesClick(e: MouseEvent) {
   if (reactionPickerFor.value && !target?.closest('.rx-picker, .rx-toggle')) {
     reactionPickerFor.value = null
   }
+  if (touchOnly.value && target) toggleTime(target)
   const el = target?.closest('.mention') as HTMLElement | null
   if (!el) return
   if (el.dataset.handle) emit('mention-click', el.dataset.handle)
@@ -337,6 +340,32 @@ const {
   rememberScroll,
   restoreScroll,
 } = useChatScroll()
+
+// ---- 触屏：长按一条消息打开它的操作面板（见 room/RoomMessageSheet）。 ----
+// 按输入方式判断，不按视口宽度：带触摸屏的笔记本两样都对，有鼠标就有悬停条。
+const touchQuery = typeof window !== 'undefined' ? window.matchMedia?.('(hover: none)') : undefined
+const touchOnly = ref(!!touchQuery?.matches)
+useEventListener(touchQuery, 'change', (e: MediaQueryListEvent) => (touchOnly.value = e.matches))
+
+const sheet = reactive({ id: null as string | null, open: false })
+const sheetBlock = computed(() => (sheet.id ? messages.value.find((m) => m.id === sheet.id) ?? null : null))
+// 长按是在整列上听的，按在哪一条上由落点算：一条一条挂监听，几百条消息就是几百组。
+// 只认带操作的那几行（还没送出去的那条自己带着重试和编辑），正在改的那条不算。
+useLongPress(scrollRef, (e) => {
+  const row = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-mid][data-actions]')
+  const id = row?.dataset.mid
+  if (!id || id === editingId.value) return
+  sheet.id = id
+  sheet.open = true
+})
+
+// 续话的时间平时藏着，桌面上悬停才出现；触屏上点一下这一条把它亮出来，再点收起。
+const timeShownId = ref<string | null>(null)
+function toggleTime(target: HTMLElement) {
+  if (target.closest('a, button, input, textarea, img, .mention, .md-pre')) return
+  const id = target.closest<HTMLElement>('.im-row--cont[data-mid]')?.dataset.mid ?? null
+  timeShownId.value = id && id !== timeShownId.value ? id : null
+}
 
 // ---- 悬停条：整列一个，跟着指针在消息之间滑（见 room/RoomHoverBar）。 ----
 // 指针落在一条消息上就移过去；落在行与行之间的空隙里就留在原地（从一行滑到下一行
@@ -371,6 +400,9 @@ function hideBar() {
 }
 
 function onTimelinePointer(e: MouseEvent) {
+  // 触屏上没有悬停：浏览器照样补发 mouseover，悬停条出来了就再也收不回去。这些操作
+  // 在触屏上是长按一条消息打开的面板（见下面 touchOnly）。
+  if (touchOnly.value) return
   const target = e.target as HTMLElement | null
   if (!target || target.closest('.hover-bar')) return
   const row = target.closest<HTMLElement>('[data-mid], .notice-row, .room-happening, .dispatched, .tl-mark, .im-row')
@@ -1568,6 +1600,7 @@ onBeforeUnmount(() => {
                 'tl-older': older.has(m.id),
                 'tl-flash': flashId === m.id,
                 'tl-delivered': delivered.has(m.id),
+                'im-row--time': timeShownId === m.id,
               }"
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
@@ -1649,6 +1682,17 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+
+      <RoomMessageSheet
+        v-model="sheet.open"
+        :block="sheetBlock"
+        :is-agent="!!sheetBlock && isAgentBlock(sheetBlock)"
+        :editable="!!sheetBlock && canEdit(sheetBlock)"
+        @react="onReact"
+        @reply="setReply"
+        @upgrade="emit('upgrade-message', $event)"
+        @edit="startEdit"
+      />
 
       <!-- 往上翻着的时候来了新消息。 -->
       <div class="new-pill-anchor">

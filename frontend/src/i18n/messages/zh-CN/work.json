@@ -315,7 +315,10 @@
       "edited": "已编辑",
       "save": "保存",
       "cancel": "取消",
-      "saveFailed": "保存失败"
+      "saveFailed": "保存失败",
+      "reply": "回复",
+      "react": "添加表情",
+      "upgrade": "转为话题"
     },
     "outbox": {
       "failed": "发送失败：{reason}",
