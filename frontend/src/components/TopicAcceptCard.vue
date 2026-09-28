@@ -785,7 +785,7 @@ defineExpose({ reload: loadAcceptCard })
                           <v-icon size="14">mdi-check</v-icon>你已批准
                         </span>
                       </div>
-                      <div class="d-flex align-center ga-2">
+                      <div class="d-flex align-center flex-wrap ga-2">
                         <!-- 决策在聊天，审查在面板。贴底的时候这一颗在横条上，这里不再放一颗。 -->
                         <v-btn
                           v-if="!docked"
