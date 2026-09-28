@@ -20,8 +20,8 @@
 **「是不是工作房间」不由这里回答。** 提醒要跟提示词说同一句话：`agent/chat.py`
 给不给「本话题还没有实况文档」那一段，问的是 `_assemble_turn` 的 `needs_place`，
 而那是 `_is_dm`（`is_private` 全仓唯一的读点）推出来的两个答案之一。本模块再问一遍
-那个布尔，就是同一件事多一份会漂移的声明（结论 19、ARCH §9.1 判据②），所以调用方
-把它带进来（`is_a_work_room`）。
+那个布尔，就是同一件事多一份会漂移的声明（结论 19、ARCH §9.1 判据②），所以答案
+经 ``chat_service`` 带进来（`ChatService.room_is_a_work_room`，`nudge` 经它取）。
 
 和 :mod:`app.domain.topic.naming` 一样全程安静失败：它是锦上添花，不能让结束的那
 一轮因为它出错。
@@ -207,28 +207,29 @@ def runner_submit(chat_service) -> Submit:
 _tasks: set[asyncio.Task] = set()
 
 
-def nudge(
-    room_id: uuid.UUID,
-    chat_service,
-    *,
-    is_a_work_room: WorkRoom,
-    settle_s: float = SETTLE_S,
-) -> None:
-    """一轮在 ``room_id`` 结束了。Fire and forget，调用方不等、也不会因它出错。"""
+def nudge(room_id: uuid.UUID, chat_service, *, settle_s: float = SETTLE_S) -> None:
+    """一轮在 ``room_id`` 结束了。Fire and forget，调用方不等、也不会因它出错。
+
+    「是不是工作房间」问的是 ``chat_service.room_is_a_work_room``（`agent/chat.py`
+    上那个静态方法，见模块开头），**在下面那个任务里取，不在调用点上取**：轮末的
+    收尾点紧接着要摘这轮的存活标记（`runtime.py` 的 ``self._live.pop``），那儿多抛
+    一句出去，这一轮就永远是「在跑」。
+    """
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    task = loop.create_task(
-        _run_quietly(room_id, chat_service, is_a_work_room, settle_s)
-    )
+    task = loop.create_task(_run_quietly(room_id, chat_service, settle_s))
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
 
 
-async def _run_quietly(
-    room_id: uuid.UUID, chat_service, is_a_work_room: WorkRoom, settle_s: float
-) -> None:
+async def _run_quietly(room_id: uuid.UUID, chat_service, settle_s: float) -> None:
+    # `session_factory` 也是这么取的：手上这个 `chat_service` 是鸭子类型的对象
+    # （`runtime.py` 不 import `chat.py`，测试里还有替身），字段不在就是没有这回事。
+    is_a_work_room: WorkRoom | None = getattr(chat_service, "room_is_a_work_room", None)
+    if is_a_work_room is None:
+        return
     try:
         await asyncio.sleep(settle_s)
         await check(

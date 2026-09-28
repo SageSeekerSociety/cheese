@@ -226,11 +226,14 @@ def test_the_turn_end_path_carries_that_answer(client, alice, monkeypatch):
         session_factory=client.test_factory,
         room_is_a_work_room=ChatService.room_is_a_work_room,
     )
+    # 手里那个对象没有这个方法 —— 轮末收尾是紧接着摘存活标记的一句话，这里抛不出去。
+    bare = SimpleNamespace(session_factory=client.test_factory)
 
     async def go():
         await asyncio.gather(
-            doc_nudge._run_quietly(work, chat, chat.room_is_a_work_room, 0),
-            doc_nudge._run_quietly(private, chat, chat.room_is_a_work_room, 0),
+            doc_nudge._run_quietly(work, chat, 0),
+            doc_nudge._run_quietly(private, chat, 0),
+            doc_nudge._run_quietly(work, bare, 0),
         )
 
     asyncio.run(go())

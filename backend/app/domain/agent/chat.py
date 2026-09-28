@@ -2473,7 +2473,7 @@ class ChatService:
             naming.nudge(topic_id, "turn")
             # 同一个时刻也看一眼文档：干过活的房间文档还空着，就请这个队友补上
             # （topic/doc_nudge.py）。
-            doc_nudge.nudge(topic_id, self, is_a_work_room=self.room_is_a_work_room)
+            doc_nudge.nudge(topic_id, self)
 
     @staticmethod
     def room_is_a_work_room(topic: Topic) -> bool:
@@ -2485,8 +2485,9 @@ class ChatService:
         提醒，所以那边不提 ``is_private``，问的是这里——两处必须是同一份声明，否则
         一个模型会被提示词要求建文档、却收不到平台的提醒，或者反过来。
 
-        `runtime.py` 那一处轮末收尾拿不到这个模块，经它已经握着的 `chat_service`
-        取同一个答案（`chat_service.room_is_a_work_room`）。
+        `doc_nudge` 经它手上的 ``chat_service`` 取这个方法（`runtime.py` 那一处收尾
+        不 import 本模块，手里只有同一个对象）。**取不到就什么都不做**：轮末那两行
+        之间没有 try，多抛一句出去，这一轮就永远是「在跑」（`_live` 摘不掉）。
         """
         return not _is_dm(topic)
 

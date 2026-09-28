@@ -2130,13 +2130,10 @@ class AgentWorkRunner:
                 )
                 # 会话没接手收尾的那种轮次，结束就在这里：和会话自报结束那一处
                 # （`ChatService._set_hook_activity`）一样看一眼文档。「是不是工作
-                # 房间」问的是同一个答案，只是这里不 import `chat.py`，经手上的
-                # `chat_service` 取。
-                doc_nudge.nudge(
-                    topic_id,
-                    chat_service,
-                    is_a_work_room=chat_service.room_is_a_work_room,
-                )
+                # 房间」问的是同一个答案，那边由 `chat_service` 上带（`doc_nudge`
+                # 经它取，不 import `chat.py`）。这里一句都不能多：下一行就是把这
+                # 一轮的存活标记摘掉，中间抛出去，这轮就永远是「在跑」。
+                doc_nudge.nudge(topic_id, chat_service)
             # Drop the liveness mark here, not in `_execute`: a turn killed by
             # task cancellation (CancelledError is a BaseException — it misses
             # every `except` inside `_execute`, including the registry cleanup)
