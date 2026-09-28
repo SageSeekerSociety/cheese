@@ -327,13 +327,23 @@ def _check_failed(client, pid, rid, tid, *, ago):
 def test_a_failed_check_on_a_thread_waits_for_an_agent(client):
     pid, rid = _room(client)
     tid = _task(client, pid, rid)
-    _card(client, pid, rid, tid, note_code="checks_failed", merge_state=_RED_CI)
+    _card(
+        client,
+        pid,
+        rid,
+        tid,
+        note_code="checks_failed",
+        merge_state=_RED_CI,
+        pr_number=1950,
+    )
     at = _check_failed(client, pid, rid, tid, ago=timedelta(minutes=7))
 
     since = _since(client, pid, rid)
     assert since is not None
     assert abs(since - at) < timedelta(seconds=1)
     assert _reason(client, pid, rid) == "check"
+    # 悬停要写出是哪个 PR。
+    assert _field(client, pid, rid, "reply_wait_pr") == 1950
 
 
 def test_an_agent_just_talking_does_not_clear_a_red_check(client):
@@ -401,6 +411,7 @@ def test_a_rejected_card_nobody_picks_up_waits_for_an_agent(client):
     since = _since(client, pid, rid)
     assert since is not None
     assert abs(since - at) < timedelta(seconds=1)
+    assert _reason(client, pid, rid) == "rejected"
 
 
 def test_refiling_after_a_rejection_ends_the_wait(client):
@@ -516,6 +527,13 @@ def test_a_notice_that_is_not_for_the_agent_does_not_wait(client):
 
 
 # ---- 为什么还没人回：机器 / 环境那一侧 -----------------------------------
+
+
+def _field(client, project_id: str, room_id: str, name: str):
+    rows = client.get(f"/topics?project_id={project_id}").json()["data"]["data"]
+    listed = next(t for t in rows if t["id"] == room_id)[name]
+    assert client.get(f"/topics/{room_id}").json()["data"][name] == listed
+    return listed
 
 
 def _reason(client, project_id: str, room_id: str) -> str | None:
