@@ -23,7 +23,6 @@ from app.core.errors import (
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.attachment.models import Attachment
-from app.domain.attachment.repositories import AttachmentRepository
 from app.domain.attachment.services import AttachmentService
 from app.domain.llm.repositories import AIUserQuotaRepository
 from app.domain.llm.services import AiAdviceService
@@ -1289,10 +1288,12 @@ def _task_attachment_service(db) -> TaskAttachmentService:
 
 
 def _attachment_service(db) -> AttachmentService:
-    """还没挂到题上的文件那一层（``POST /attachments`` 用的同一个服务）。"""
-    return AttachmentService(
-        repo=AttachmentRepository(session=db), storage=get_storage_backend()
-    )
+    """还没挂到题上的文件那一层（``POST /attachments`` 用的同一个服务）。
+
+    ``from_session`` 而不是自己造它的 repository：这里在题目这一域的地盘上，
+    摸附件那一域的 repository 正是 ``test_domain_import_guard.py`` 拦的那一条。
+    """
+    return AttachmentService.from_session(session=db, storage=get_storage_backend())
 
 
 def _uploaded_attachment_to_api(attachment: Attachment) -> dict:
