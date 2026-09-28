@@ -8,6 +8,8 @@ import type { Frame, Scene } from './demoScene'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
+import DemoBackstage from './DemoBackstage.vue'
+
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
@@ -168,6 +170,7 @@ const TABS = ['总览', '现场', '改动', '预览']
             :running-turns="frame.running"
           />
         </div>
+        <DemoBackstage v-if="scene.backstage" :scene="scene" :frame="frame" class="demo-backstage" />
       </aside>
     </div>
 
@@ -380,6 +383,10 @@ const TABS = ['总览', '现场', '改动', '预览']
   color: var(--muted);
 }
 
+.demo-backstage {
+  flex: 1.2;
+}
+
 .demo-site {
   flex: 1;
   min-height: 0;
@@ -405,7 +412,8 @@ const TABS = ['总览', '现场', '改动', '预览']
 .demo-room[data-focus='chat'] [data-region='chat'],
 .demo-room[data-focus='site'] [data-region='site'],
 .demo-room[data-focus='tabs'] [data-region='tabs'],
-.demo-room[data-focus='title'] [data-region='title'] {
+.demo-room[data-focus='title'] [data-region='title'],
+.demo-room[data-focus='backstage'] [data-region='backstage'] {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
