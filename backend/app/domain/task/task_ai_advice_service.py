@@ -139,7 +139,7 @@ class TaskAIAdviceService:
         )
 
         payload = await self.get_conversation(
-            task_id=task_id, conversation_id=conversation_id
+            task_id=task_id, conversation_id=conversation_id, user_id=user_id
         )
         return payload, quota
 
@@ -250,8 +250,12 @@ class TaskAIAdviceService:
 
         return messages
 
-    async def list_conversations_grouped(self, *, task_id: int) -> list[dict[str, Any]]:
-        conversations = await self._conversation_repo.list_for_task(task_id)
+    async def list_conversations_grouped(
+        self, *, task_id: int, user_id: int
+    ) -> list[dict[str, Any]]:
+        conversations = await self._conversation_repo.list_for_task(
+            task_id, owner_id=user_id
+        )
         groups: list[dict[str, Any]] = []
         for convo in conversations:
             groups.append(
@@ -263,17 +267,26 @@ class TaskAIAdviceService:
             )
         return groups
 
-    async def get_conversation(self, *, task_id: int, conversation_id: str) -> dict:
-        """一对（任务, 对话 id）才是一个地址。
+    async def get_conversation(
+        self, *, task_id: int, conversation_id: str, user_id: int
+    ) -> dict:
+        """一对（任务, 对话 id）才是一个地址 —— 而对话是有主人的。
 
         A conversation id alone was the whole credential here, exactly as it was
         on the route above: a caller who could see *some* task could read *any*
         task's conversation by putting its id in the path. The id is a secret,
         but a secret is not a permission. The ask/stream paths below have always
-        demanded ``convo.context_id == task_id``; reading is the same address.
+        demanded ``convo.context_id == task_id`` **and** ``convo.owner_id ==
+        user_id``; reading is the same address, so it takes both halves. The
+        owner half is the one that gives the other meaning — without it, any
+        signed-in caller who can see the task reads the question and the answer
+        of every other person who asked about it.
+
+        Not-found rather than forbidden, and the same message as a missing id:
+        this address does not confirm that "it exists, but it is not yours".
         """
         convo = await self._conversation_repo.get_by_conversation_id(conversation_id)
-        if convo is None or convo.context_id != task_id:
+        if convo is None or convo.context_id != task_id or convo.owner_id != user_id:
             raise ValueError("Conversation not found")
         messages = await self._message_repo.list_for_conversation(convo.id)
         return {
@@ -294,11 +307,17 @@ class TaskAIAdviceService:
             }
         }
 
-    async def delete_conversation(self, *, task_id: int, conversation_id: str) -> None:
-        """删的也是某一道题的对话 —— 同样按（任务, id）寻址，不是按 id。"""
+    async def delete_conversation(
+        self, *, task_id: int, conversation_id: str, user_id: int
+    ) -> None:
+        """删的也是某一个人的某一道题的对话 —— 同一个地址，同样的两半。
+
+        判据与 ``get_conversation`` 一字不差，报的也是同一句话：删不掉的那条
+        与不存在的那条，从这个地址上看不出区别。
+        """
         convo = await self._conversation_repo.get_by_conversation_id(conversation_id)
-        if convo is None or convo.context_id != task_id:
-            return
+        if convo is None or convo.context_id != task_id or convo.owner_id != user_id:
+            raise ValueError("Conversation not found")
         await self._conversation_repo.soft_delete(convo)
 
     async def _generate_advice(self, task_id: int) -> TaskAIAdvice:

@@ -1177,11 +1177,21 @@ class AIConversationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_for_task(self, task_id: int) -> list[AIConversation]:
+    async def list_for_task(
+        self, task_id: int, *, owner_id: int
+    ) -> list[AIConversation]:
+        """``owner_id`` 是查询的一部分，不是取回来之后再筛掉的东西。
+
+        会话属于提问的那个人（``create`` 一直写着 ``owner_id``），所以「这道题
+        有谁问过」不是一个该被回答的问题 —— 能回答的是「我在这道题上问过什么」。
+        过滤写在 WHERE 里：应用层筛完再丢，那些本不该看见的行仍然先被读了出来
+        （id 与 title 都经过了应用）。
+        """
         stmt = (
             select(AIConversation)
             .where(
                 AIConversation.context_id == task_id,
+                AIConversation.owner_id == owner_id,
                 AIConversation.module_type == "task_ai_advice",
                 AIConversation.deleted_at.is_(None),
             )
