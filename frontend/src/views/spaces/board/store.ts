@@ -20,7 +20,7 @@
  *   见 `Kpis.participants`），不另开一次请求。
  */
 import type { Space, SpaceInviteCode, Task, User } from '@/types'
-import type { BoardTask, InviteCode, Person, Role, SpaceInfo, TaskState } from './model'
+import type { BoardTask, InviteCode, Manager, Person, Role, SpaceInfo, TaskState } from './model'
 
 import { computed, ref } from 'vue'
 
@@ -156,6 +156,23 @@ export async function loadCodes() {
 }
 
 // --- 派生 --------------------------------------------------------------------
+
+/** 「谁能管这块板」的完整名单，**角色一起带出来**：`SpaceInfo` 那两格（`owner` /
+ *  `admins`）是给别处算角色用的，各自都没带角色；管理员设置那块弹窗要显示的是
+ *  「这个人是什么角色」，所以另起一份，直接映射真接口的 `Space.admins`。
+ *
+ *  所有者排最前，其余按接口给的顺序（后端 `list_admins` 按 `created_at` 升序，见
+ *  `backend/app/domain/space/repositories.py`）。**不拼 `space.owner`** —— 名单里
+ *  本来就有它。 */
+const ROLE_RANK: Record<'OWNER' | 'ADMIN', number> = { OWNER: 0, ADMIN: 1 }
+
+export const managers = computed<Manager[]>(() => {
+  const s = spaceRaw.value
+  if (!s) return []
+  return s.admins
+    .map((a) => ({ person: toPerson(a.user), role: a.role }))
+    .sort((a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role])
+})
 
 export const space = computed<SpaceInfo | null>(() => {
   const s = spaceRaw.value

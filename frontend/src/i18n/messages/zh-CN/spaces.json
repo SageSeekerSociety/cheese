@@ -1,4 +1,13 @@
 {
+  "adminSettings": {
+    "title": "管理员设置",
+    "menuOwnerSubtitle": "谁可以管理这个空间",
+    "menuLockedSubtitle": "只有所有者能改",
+    "help": "只有所有者能改这里。下面这些人是这块板的管理员——名单里的人能管理这块板，不在名单里的就是普通成员。",
+    "roleOwner": "所有者",
+    "roleAdmin": "管理员",
+    "close": "关闭"
+  },
   "course": {
     "nav": {
       "overview": "课程总览",
