@@ -298,7 +298,7 @@ function openTask(task: RoomTask) {
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
          登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
     <template v-if="mineHandle" #actions>
-      <button type="button" class="board__mine t-meta" :aria-pressed="mine" @click="toggleMine">
+      <button type="button" class="board__mine t-meta tap-target" :aria-pressed="mine" @click="toggleMine">
         <span class="board__sw" aria-hidden="true" />
         只看我的
       </button>
@@ -471,7 +471,9 @@ function openTask(task: RoomTask) {
 }
 /* 「只看我的」。开着的时候整个开关加深、拨柄变实——板上的每个计数都因此换了含义，
    这个状态不能是要找才看得见的。过渡只写具体属性，不写 all。 */
+/* 相对定位给 .tap-target：这颗开关只有 28px 高，触屏上能点的范围撑到 44。 */
 .board__mine {
+  position: relative;
   flex: none;
   margin-left: auto;
   display: flex;
