@@ -3,9 +3,11 @@
 import asyncio
 import json
 import os
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Protocol
 
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex.app_server import AppServer
@@ -13,13 +15,57 @@ from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.session import Session
 from app.domain.agent.harness.driven import runner
 
+# How long a new turn waits to see the project's skills as they are now before
+# it starts on what the session already has.
+CATCH_UP_TIMEOUT_S = 30.0
+
+
+class Skills(Protocol):
+    """Where the project's skills are mirrored for Codex, and keeping them so."""
+
+    def skill_roots(self) -> list[str]: ...
+
+    def sync_skills(self) -> bool: ...
+
 
 class Runner(runner.Runner[Journal]):
-    def __init__(self, state: Path, on_tool: Callable[[str, dict], Awaitable[dict]]):
+    def __init__(
+        self,
+        state: Path,
+        on_tool: Callable[[str, dict], Awaitable[dict]],
+        skills: Skills | None = None,
+    ):
         super().__init__(state, Journal, "events.sqlite")
         self.on_tool = on_tool
+        self.skills = skills
+        self.syncing: asyncio.Future[bool] | None = None
+        self.cwd = ""
         self.session: Session | None = None
         self.submit_lock = asyncio.Lock()
+
+    async def _catch_up(self) -> bool:
+        """The project's skills as they are on the machine now; whether they
+        changed. A failure costs the turn nothing: it starts on what the
+        session has. Nor does a machine slow to answer: the turn waits
+        `CATCH_UP_TIMEOUT_S` and no more, and the synchronization it leaves
+        running is the one the next turn waits for."""
+        if self.skills is None:
+            return False
+        if self.syncing is None or self.syncing.done():
+            self.syncing = asyncio.ensure_future(
+                asyncio.to_thread(self.skills.sync_skills)
+            )
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(self.syncing), CATCH_UP_TIMEOUT_S
+            )
+        except Exception as error:  # noqa: BLE001 — the turn goes on regardless
+            print(
+                f"project skills not synchronized: {error!r}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
 
     async def record(self, event: dict) -> None:
         params = event.get("params", {})
@@ -85,6 +131,15 @@ class Runner(runner.Runner[Journal]):
         self.session = Session(client)
         self.listener = asyncio.create_task(client.listen())
         await client.initialize()
+        self.cwd = cwd
+        if self.skills is not None:
+            # Plain Codex finds a repository's skills in the project, through
+            # its environment; a room's has none, so it is pointed at the
+            # mirror, which it lists and watches as it would the project's.
+            await self._catch_up()
+            await client.request(
+                "skills/extraRoots/set", {"extraRoots": self.skills.skill_roots()}
+            )
         thread = await self.session.open(
             opening, cwd=cwd, tools=tools, base_instructions=base_instructions
         )
@@ -117,6 +172,16 @@ class Runner(runner.Runner[Journal]):
     ) -> dict:
         assert self.session is not None
         async with self.submit_lock:
+            if (
+                self.skills is not None
+                and self.session.turn_id is None
+                and await self._catch_up()
+            ):
+                # Plain Codex notices a changed skill through its watcher, a
+                # turn or so later; this makes the next turn see it.
+                await self.session.client.request(
+                    "skills/list", {"cwds": [self.cwd], "forceReload": True}
+                )
             if work_id is not None:
                 thread_id = self.session.thread_id
                 previous = self.journal.recall(f"work:{thread_id}")

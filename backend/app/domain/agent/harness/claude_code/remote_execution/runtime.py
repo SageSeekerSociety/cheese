@@ -1677,6 +1677,10 @@ class Executor:
             selected.add(root / ".claude")
         include(root / ".claude/skills")
         include(root / ".claude/workflows")
+        # Where Codex finds a repository's skills: a Codex room mirrors them
+        # from here (`codex/tools.py` `RemoteTools.sync_skills`).
+        include(root / ".agents/skills")
+        include(root / ".codex/skills")
 
         entries = {}
         for path in selected:
