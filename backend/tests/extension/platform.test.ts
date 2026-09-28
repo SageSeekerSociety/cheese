@@ -361,7 +361,12 @@ describe("有人发来消息的时候", () => {
     const file = process.env.CHEESE_REPLY_OWED as string;
     fs.writeFileSync(
       file,
-      JSON.stringify({ id, answers: ["chat_send", "cheese_ask"], reason: "REPLY_FIRST" }),
+      JSON.stringify({
+        id,
+        answers: ["chat_send", "cheese_ask"],
+        reason: "REPLY_FIRST",
+        answered: `${file}.answered`,
+      }),
     );
   }
 
@@ -378,6 +383,9 @@ describe("有人发来消息的时候", () => {
     assert.deepEqual(refused, { block: true, reason: "REPLY_FIRST" });
     assert.equal(await pi.emit("tool_call", { toolName: "chat_send", input: {} }), undefined);
     assert.equal(await pi.emit("tool_call", { toolName: "bash", input: {} }), undefined);
+    // Written down where the runner reads it, so the turn may end.
+    const answered = `${process.env.CHEESE_REPLY_OWED}.answered`;
+    assert.equal(fs.readFileSync(answered, "utf8"), "m1");
   });
 
   it("正在跑的命令转到后台，模型马上拿回控制，命令照样跑完", async () => {

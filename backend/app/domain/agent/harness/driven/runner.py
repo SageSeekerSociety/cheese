@@ -54,6 +54,16 @@ def socket_path(state: Path) -> str:
 # proxy.js`), Codex's dynamic-tool handler (`codex/tools.py`) and pi's extension
 # (`pi/platform.ts`). A subagent is never held to it: it reports to the agent
 # that started it, not to the room.
+#
+# Nor may the turn simply end with the person unanswered — a model that calls no
+# tool at all is refused nothing. The tool path that lets the reply through
+# writes down that it did (the file named in the debt, `answered`), and when the
+# turn is about to end the runner asks `insist`: still owed, and the session is
+# held to it once more (`REPLY_INSIST`). How a turn is kept going is each
+# harness's own — Claude Code's Stop hook, a new turn inside the same work for
+# Codex, a turn of the session's own for pi — and the rule is here. Once is the
+# limit: a session that still does not answer is let go, and the runner's log
+# says so.
 
 #: The variable that names the file to the agent process and whatever it spawns.
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
@@ -68,8 +78,20 @@ REPLY_OWED = (
 )
 
 
+REPLY_INSIST = (
+    "You are about to stop, but the person who wrote to you in this room has "
+    "had no reply there. Reply to them now with chat_send (or ask them with "
+    "cheese_ask) before you finish; anything you only write here, they never "
+    "see."
+)
+
+
 def reply_owed_path(state: Path) -> Path:
     return state / "reply-owed.json"
+
+
+def reply_answered_path(state: Path) -> Path:
+    return state / "reply-answered"
 
 
 def reply_owed(path: str | Path | None) -> dict | None:
@@ -102,6 +124,8 @@ class Runner(Generic[J]):  # noqa: UP046
         self.lock = None
         # The input a person is waiting on an answer to, while one is.
         self.owed: str | None = None
+        # Debts the session has already been held to once at a turn's end.
+        self.insisted: set[str] = set()
 
     def claim(self) -> None:
         """Take the state directory, or fail if another runner holds it."""
@@ -112,6 +136,7 @@ class Runner(Generic[J]):  # noqa: UP046
         # Nor may a debt outlive the runner that recorded it: the next one
         # starts a session that has not been told about it.
         reply_owed_path(self.state).unlink(missing_ok=True)
+        reply_answered_path(self.state).unlink(missing_ok=True)
 
     # --- a person waiting for an answer --------------------------------------
 
@@ -125,7 +150,14 @@ class Runner(Generic[J]):  # noqa: UP046
         written = path.with_name(path.name + ".next")
         written.write_text(
             json.dumps(
-                {"id": identifier, "answers": list(REPLY_TOOLS), "reason": REPLY_OWED}
+                {
+                    "id": identifier,
+                    "answers": list(REPLY_TOOLS),
+                    "reason": REPLY_OWED,
+                    # Where the tool path writes the id down once it lets a
+                    # reply through (`insist`).
+                    "answered": str(reply_answered_path(self.state)),
+                }
             )
         )
         written.replace(path)
@@ -135,6 +167,30 @@ class Runner(Generic[J]):  # noqa: UP046
         """The turn is over: whatever it owed, it no longer holds a tool back."""
         self.owed = None
         reply_owed_path(self.state).unlink(missing_ok=True)
+        reply_answered_path(self.state).unlink(missing_ok=True)
+
+    def insist(self) -> str | None:
+        """Asked as a turn is about to end: what to hold the session to, if
+        anything — `REPLY_INSIST` while a person is still unanswered, once per
+        message. A session that ends a second time without answering is let
+        go, and said so here, rather than kept going round."""
+        if self.owed is None:
+            return None
+        try:
+            answered = reply_answered_path(self.state).read_text().strip()
+        except OSError:
+            answered = ""
+        if answered == self.owed:
+            return None
+        if self.owed in self.insisted:
+            print(
+                f"turn ended without a reply to {self.owed} after being held to it",
+                file=sys.stderr,
+                flush=True,
+            )
+            return None
+        self.insisted.add(self.owed)
+        return REPLY_INSIST
 
     async def yield_foreground(self) -> None:
         """Give the model its turn back: what it is waiting on moves to the
