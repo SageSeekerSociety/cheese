@@ -191,8 +191,8 @@ const kpis = computed<Kpi[]>(() => {
       label: '领取主体',
       value: m.participantCount,
       icon: 'mdi-hand-extended-outline',
-      // 本周与前一周比的是**新增**（走势按天的桶相加），不是这个累计值本身 —— 卡片上的
-      // 数是累计，副行说的是最近两周的增量，两个口径都如实写出来。
+      // 比的是**新增**（走势按天的桶相加），不是这个累计值本身 —— 卡片上的数是累计，
+      // 副行说的是最近两周各新增多少。文案写「近 7 天 / 前 7 天」，不假装是自然周。
       tone: twoWeeks.value ? (twoWeeks.value.last >= twoWeeks.value.prev ? 'ok' : 'warn') : undefined,
       hint: twoWeeks.value
         ? `近 7 天新增 ${twoWeeks.value.last} · 前 7 天 ${twoWeeks.value.prev}`
