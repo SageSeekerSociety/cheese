@@ -323,3 +323,232 @@ class TestDiscussionBoardBelongsToItsParent:
     ):
         resp = api_client.get("/discussions/999999999", headers=_bearer(board["alice"]))
         assert resp.status_code == 404, f"{resp.status_code} {resp.text}"
+
+
+class TestTheOtherModelTypesAskTheirOwnDomain:
+    """``model_type`` 不止 SPACE —— 每一种都走它自己域已有的那条判据。
+
+    这里钉住的是「哪一句话」，而不是重抄一遍那些门的实现：改错的判据会在这里露出来。
+    """
+
+    @staticmethod
+    def _user(user_client: UserCreator, api_client: TestClient):
+        user = user_client.create_user()
+        user.token = user_client.login(api_client, user.username, user.password)
+        return user
+
+    def test_project_is_never_addressable(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """项目主键是 UUID，``Discussion.model_id`` 是整数 —— 没有哪个整数指得到项目，
+        父对象加载不出来，所以一律 404（fail closed），对谁都是。"""
+        someone = self._user(user_client, api_client)
+        resp = api_client.get(
+            "/discussions",
+            params={"modelType": "PROJECT", "modelId": 1},
+            headers=_bearer(someone),
+        )
+        assert resp.status_code == 404, f"{resp.status_code} {resp.text}"
+
+    def test_task_boards_follow_the_task_visibility(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """不存在的题 → 404；题存在时，能不能看这块板由 ``can_view_task`` 说话。"""
+        someone = self._user(user_client, api_client)
+        missing = api_client.get(
+            "/discussions",
+            params={"modelType": "TASK", "modelId": 999999999},
+            headers=_bearer(someone),
+        )
+        assert missing.status_code == 404, f"{missing.status_code} {missing.text}"
+
+        created = api_client.post(
+            "/discussions",
+            json={"modelType": "TASK", "modelId": 999999999, "content": "x"},
+            headers=_bearer(someone),
+        )
+        assert created.status_code == 404, f"{created.status_code} {created.text}"
+
+    def test_team_boards_follow_team_visibility(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner = self._user(user_client, api_client)
+        stranger = self._user(user_client, api_client)
+
+        team_resp = api_client.post(
+            "/teams",
+            json={
+                "name": f"Authz Team ({unique_int(10000000, 99999999)})",
+                "intro": "Test",
+                "description": "A lengthy text. " * 100,
+                "avatarId": 1,
+            },
+            headers=_bearer(owner),
+        )
+        assert team_resp.status_code == 201, team_resp.text
+        team_id = team_resp.json()["data"]["team"]["id"]
+
+        posted = api_client.post(
+            "/discussions",
+            json={"modelType": "TEAM", "modelId": team_id, "content": "队内帖子"},
+            headers=_bearer(owner),
+        )
+        assert posted.status_code == 201, posted.text
+
+        member_read = api_client.get(
+            "/discussions",
+            params={"modelType": "TEAM", "modelId": team_id},
+            headers=_bearer(owner),
+        )
+        assert member_read.status_code == 200, member_read.text
+        assert "队内帖子" in member_read.text
+
+        # 与 GET /teams/{teamId} 同一句话，公开团队两处都 200。
+        public_team = api_client.get(f"/teams/{team_id}", headers=_bearer(stranger))
+        public_read = api_client.get(
+            "/discussions",
+            params={"modelType": "TEAM", "modelId": team_id},
+            headers=_bearer(stranger),
+        )
+        assert public_read.status_code == public_team.status_code == 200, (
+            f"team={public_team.status_code} board={public_read.status_code}"
+        )
+
+        # 收成隐身团队之后，两处一起答 404。
+        patched = api_client.patch(
+            f"/teams/{team_id}",
+            json={"visibility": "stealth"},
+            headers=_bearer(owner),
+        )
+        assert patched.status_code == 200, patched.text
+
+        hidden_team = api_client.get(f"/teams/{team_id}", headers=_bearer(stranger))
+        assert hidden_team.status_code == 404, hidden_team.text
+
+        stranger_read = api_client.get(
+            "/discussions",
+            params={"modelType": "TEAM", "modelId": team_id},
+            headers=_bearer(stranger),
+        )
+        assert stranger_read.status_code == 404, (
+            f"{stranger_read.status_code} {stranger_read.text}"
+        )
+        assert "队内帖子" not in stranger_read.text
+
+        # 成员照旧看得见。
+        still_visible = api_client.get(
+            f"/discussions/{posted.json()['data']['discussion']['id']}",
+            headers=_bearer(owner),
+        )
+        assert still_visible.status_code == 200, still_visible.text
+
+    def test_knowledge_boards_follow_the_knowledge_team_gate(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner = self._user(user_client, api_client)
+        stranger = self._user(user_client, api_client)
+
+        team_resp = api_client.post(
+            "/teams",
+            json={
+                "name": f"Knowledge Authz Team ({unique_int(10000000, 99999999)})",
+                "intro": "Test",
+                "description": "A lengthy text. " * 100,
+                "avatarId": 1,
+            },
+            headers=_bearer(owner),
+        )
+        assert team_resp.status_code == 201, team_resp.text
+        team_id = team_resp.json()["data"]["team"]["id"]
+
+        knowledge_resp = api_client.post(
+            "/knowledge",
+            json={
+                "name": f"Authz Knowledge {unique_int(100000, 999999)}",
+                "description": "Test",
+                "type": "TEXT",
+                "content": {"text": "Test content"},
+                "teamId": team_id,
+                "labels": [],
+            },
+            headers=_bearer(owner),
+        )
+        assert knowledge_resp.status_code == 201, knowledge_resp.text
+        knowledge_id = knowledge_resp.json()["data"]["knowledge"]["id"]
+
+        posted = api_client.post(
+            "/discussions",
+            json={
+                "modelType": "KNOWLEDGE",
+                "modelId": knowledge_id,
+                "content": "条目下的讨论",
+            },
+            headers=_bearer(owner),
+        )
+        assert posted.status_code == 201, posted.text
+
+        member_read = api_client.get(
+            "/discussions",
+            params={"modelType": "KNOWLEDGE", "modelId": knowledge_id},
+            headers=_bearer(owner),
+        )
+        assert member_read.status_code == 200, member_read.text
+
+        # 知识域自己的门是「团队成员」，不是成员答 403（与 /knowledge/{id} 一致）。
+        stranger_read = api_client.get(
+            "/discussions",
+            params={"modelType": "KNOWLEDGE", "modelId": knowledge_id},
+            headers=_bearer(stranger),
+        )
+        assert stranger_read.status_code == 403, (
+            f"{stranger_read.status_code} {stranger_read.text}"
+        )
+
+    def test_question_boards_are_as_public_as_the_question(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """学习问答对每个登录用户公开（``GET /questions/{id}`` 本来就不逐人判断），
+        所以它下面的讨论也一样；不存在的题则 404。"""
+        author = self._user(user_client, api_client)
+        reader = self._user(user_client, api_client)
+
+        question_resp = api_client.post(
+            "/questions",
+            json={
+                "title": f"Authz Question {unique_int(100000, 999999)}",
+                "content": "body",
+                "type": 0,
+                "topics": [],
+                "groupId": None,
+                "bounty": 0,
+            },
+            headers=_bearer(author),
+        )
+        assert question_resp.status_code == 201, question_resp.text
+        question_id = question_resp.json()["data"]["id"]
+
+        posted = api_client.post(
+            "/discussions",
+            json={
+                "modelType": "QUESTION",
+                "modelId": question_id,
+                "content": "问题下的讨论",
+            },
+            headers=_bearer(author),
+        )
+        assert posted.status_code == 201, posted.text
+
+        readable = api_client.get(
+            "/discussions",
+            params={"modelType": "QUESTION", "modelId": question_id},
+            headers=_bearer(reader),
+        )
+        assert readable.status_code == 200, readable.text
+        assert "问题下的讨论" in readable.text
+
+        missing = api_client.get(
+            "/discussions",
+            params={"modelType": "QUESTION", "modelId": 999999999},
+            headers=_bearer(reader),
+        )
+        assert missing.status_code == 404, f"{missing.status_code} {missing.text}"
