@@ -131,7 +131,7 @@ export function mountContextWindow(fig) {
     const segs = segments()
     const sum = segs.reduce((a, s) => a + s.v, 0)
     const pct = (sum / MAX) * 100
-    const tone = pct > 75 ? '--danger' : pct > 50 ? '--warn' : '--ok'
+    const tone = pct > 75 ? '--accent-3' : pct > 50 ? '--warn' : '--ok'
     const active = pinned ?? hovered
     bar.innerHTML = segs.map((s) => {
       const on = s.i === active || (hotCat && rows[s.i].cat === hotCat)

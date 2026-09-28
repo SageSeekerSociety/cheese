@@ -106,6 +106,12 @@ def _read_a_failure_nobody_awaited(future: asyncio.Future[Any]) -> None:
 
 PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
+# How often a connector says it is there (`pingPeriod` in
+# cli/internal/link/link.go), and how long its link may go unheard before it is
+# taken as lost: three missed beats (`DeviceHub.silence_allowed`).
+HEARTBEAT_S = 15.0
+LINK_SILENCE_S = 3 * HEARTBEAT_S
+
 
 class DeviceTransport(Protocol):
     """A live device control channel. Satisfied by a ``fastapi.WebSocket`` adapter
@@ -173,10 +179,15 @@ class HubDevice:
     # every attach, so a machine whose self-update failed is told again the next
     # time it dials in rather than once and never again.
     update_pushed: bool = False
-    # Last time the device sent any frame (hello/heartbeat/…). A liveness signal for
-    # ops/UX: `is_online` already tracks the socket; this dates the last contact so a
-    # future reaper can distinguish a wedged-but-connected device from a healthy one.
+    # Last time the device sent any frame (hello/heartbeat/…).
     last_seen: float = 0.0
+    # Whether the connector on THIS connection sends heartbeats. One that does
+    # and then falls silent for ``LINK_SILENCE_S`` has lost its link, whatever
+    # the socket says (`silence_allowed`). Reset on every attach.
+    heartbeats: bool = False
+    # The frame being written to the link right now, if any (`send`): dropping
+    # the link ends its wait.
+    writing: asyncio.Timeout | None = None
     screens: dict[str, HubScreen] = field(default_factory=dict)
     exec_seq: int = 0
     # 本机目录授权: one counter for both directions of the localfs channel (a grant
@@ -201,8 +212,24 @@ class HubDevice:
             transport = self.transport
             if transport is None:
                 return
+            # A write to a peer that stopped reading does not fail: the server
+            # waits for its buffer to drain, which on a machine that went to
+            # sleep behind the proxy is until the socket finally closes —
+            # minutes. It holds this lock all the while, so every later frame to
+            # the machine, a reconnect's welcome included, queues behind it. The
+            # link being dropped is what ends that wait.
+            stall = asyncio.timeout(None)
             try:
-                await transport.send_json(msg)
+                async with stall:
+                    self.writing = stall
+                    try:
+                        await transport.send_json(msg)
+                    finally:
+                        self.writing = None
+            except TimeoutError:
+                if stall.expired():
+                    raise DeviceOffline(self.device_id) from None
+                raise
             except ConnectionError as exc:
                 # The receive loop only learns of a dead link when the peer says
                 # so; a peer that vanished never does, and then the socket stays
@@ -213,14 +240,25 @@ class HubDevice:
                 raise DeviceOffline(self.device_id) from exc
 
     def drop_transport(self, transport: DeviceTransport) -> bool:
-        """Forget ``transport`` if it is still the live one; fail what waited on it."""
+        """Forget ``transport`` if it is still the live one; fail what waited on it.
+
+        Everything that waits on an answer from the machine fails here, at once:
+        an answer can only come back over this link, so a call left waiting
+        would wait out its own timeout — eleven minutes for an executor install
+        — for nothing."""
         if self.transport is not transport:
             return False
         self.transport = None
-        for future, _ in self.executor_pending.values():
-            if not future.done():
-                future.set_exception(DeviceOffline(self.device_id))
-        for future in self.session_pending.values():
+        if self.writing is not None:
+            # Expire it now: the write is abandoned and ``send`` says offline.
+            self.writing.reschedule(0)
+        waiting = [
+            *(future for future, _ in self.executor_pending.values()),
+            *self.session_pending.values(),
+            *self.exec_pending.values(),
+            *self.local_fs_pending.values(),
+        ]
+        for future in waiting:
             if not future.done():
                 future.set_exception(DeviceOffline(self.device_id))
         return True
@@ -242,13 +280,9 @@ class DeviceHub:
     ) -> None:
         device = self._device(device_id)
         if device.transport is not None and device.transport is not transport:
-            for future, _ in device.executor_pending.values():
-                if not future.done():
-                    future.set_exception(DeviceOffline(device_id))
-            for future in device.session_pending.values():
-                if not future.done():
-                    future.set_exception(DeviceOffline(device_id))
+            device.drop_transport(device.transport)
         device.transport = transport
+        device.heartbeats = False
         device.connection_generation += 1
         device.executor = False
         if name:
@@ -264,6 +298,26 @@ class DeviceHub:
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
         return device is not None and device.transport is not None
+
+    def silence_allowed(self, device_id: str) -> float | None:
+        """How long the link may go without a frame from the machine before it
+        is taken as lost; None when silence says nothing about it.
+
+        The socket cannot answer this. A machine that sleeps, or loses its
+        network, behind the proxy leaves the proxy holding the connection open;
+        the server's keepalive notices, but closing a socket whose buffer will
+        not drain waits until the proxy gives up, which is when the machine
+        wakes. Until then the machine read as online, every call to it waited
+        for an answer that could not come, and the room's tools hung for as
+        long as the machine slept. A connector that heartbeats is heard from
+        every ``HEARTBEAT_S``; one that is not heard from for three beats is
+        gone. A connector that has sent none on this connection is one built
+        before heartbeats, and it is told to update when it says hello.
+        """
+        device = self._devices.get(device_id)
+        if device is None or not device.heartbeats:
+            return None
+        return LINK_SILENCE_S
 
     def online_device_ids(self) -> list[str]:
         return [d.device_id for d in self._devices.values() if d.transport is not None]
@@ -522,6 +576,7 @@ class DeviceHub:
             return await asyncio.wait_for(future, timeout=timeout)
         finally:
             device.local_fs_pending.pop(grants_id, None)
+            _read_a_failure_nobody_awaited(future)
 
     async def local_fs_op(
         self,
@@ -548,6 +603,7 @@ class DeviceHub:
             return await asyncio.wait_for(future, timeout=timeout)
         finally:
             device.local_fs_pending.pop(op_id, None)
+            _read_a_failure_nobody_awaited(future)
 
     # -- exec (server -> device, awaited) ----------------------------------
 
@@ -589,6 +645,7 @@ class DeviceHub:
             raise
         finally:
             device.exec_pending.pop(eid, None)
+            _read_a_failure_nobody_awaited(fut)
 
     async def call_executor(
         self,
@@ -718,7 +775,10 @@ class DeviceHub:
                 msg.error,
             )
             return
-        if msg.t in ("heartbeat", "session.ready"):
+        if msg.t == "heartbeat":
+            device.heartbeats = True
+            return
+        if msg.t == "session.ready":
             return
         if msg.t == "exec.result":
             fut = device.exec_pending.get(msg.id)

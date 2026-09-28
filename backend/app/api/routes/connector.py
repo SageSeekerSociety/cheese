@@ -312,10 +312,22 @@ async def agent_socket(
             # A failed outbound send can disconnect an already accepted socket.
             if websocket.application_state is WebSocketState.DISCONNECTED:
                 raise WebSocketDisconnect(code=1006)
-            message = await websocket.receive_json()
+            message = await asyncio.wait_for(
+                websocket.receive_json(),
+                device_hub.silence_allowed(device.device_id),
+            )
             await device_hub.on_device_message(device.device_id, message)
     except WebSocketDisconnect as disconnect:
         close_code = disconnect.code
+    except TimeoutError:
+        # The machine stopped being heard from (`silence_allowed`). Leaving
+        # here detaches it below, which is what fails its waiting calls and
+        # takes it offline; the socket itself closes when the proxy lets go.
+        logger.warning(
+            "device link silent device=%s for %.0fs; taking it offline",
+            device.device_id,
+            device_hub.silence_allowed(device.device_id) or 0,
+        )
     finally:
         if recovery is not None:
             recovery.cancel()
