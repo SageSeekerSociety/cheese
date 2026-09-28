@@ -2283,7 +2283,17 @@ async def summon_agent(
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
     # 待读窗口刚好被别人清空的缝隙里当兜底。
-    seat = await TopicMemberService(db).addressable_agent_handle(place.room_id)
+    #
+    # 交给谁：**这批消息点名交给谁，就交给谁**。房间里坐着不止一位 AI 队友时，
+    # 「房间的默认席位」是另一个答案 —— 取它的话，另一位队友的轮次失败之后一点
+    # 重试就换成默认芝士来接，而默认芝士那一轮的待读窗口里根本没有点名给那位队友
+    # 的消息（`_addressed_to` 按收件人过滤），于是它接了一轮却读不到真正找它的那
+    # 句话。没人被点名（没 @ 不等于没说），或者被点名的那位已经不在名册上（被请出
+    # 房间），才回落到默认席位 —— 和 `answer_options` 同一条规矩。
+    members = TopicMemberService(db)
+    seat = await chat.pending_seat(place.room_id)
+    if seat is None or seat not in await members.agent_handles(place.room_id):
+        seat = await members.addressable_agent_handle(place.room_id)
     runner.submit(
         chat,
         place.room_id,

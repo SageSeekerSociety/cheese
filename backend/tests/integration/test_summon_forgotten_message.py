@@ -7,7 +7,12 @@
 
 import time
 
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 
 def _project_and_topic(client, owner: str = "user-1") -> str:
@@ -102,3 +107,94 @@ def test_summon_after_someone_else_already_asked_starts_nothing(client, stub_hoo
     assert r.json()["data"] == {"started": False, "reason": "nothing_pending"}
     time.sleep(0.3)
     assert client.get(f"/topics/{topic_id}/blocks").json()["data"]["total"] == before
+
+
+def _a_room_with_two_teammates(client) -> tuple[str, str]:
+    """A room with the project's default 芝士 and one more AI teammate in it.
+
+    Returns the room and the second teammate's seat. The default seat is read
+    BEFORE the second one joins: `room_agent_seat` answers only for a room that
+    hosts exactly one agent, which is the point of asking it here.
+    """
+    p = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()["data"]
+    topic_id = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "T", "created_by": "alice"},
+    ).json()["data"]["id"]
+    default = room_agent_seat(client, topic_id)
+    made = client.post(f"/projects/{p['id']}/agents", json={"handle": "opus"})
+    assert made.status_code == 200, made.text
+    teammate = made.json()["data"]["seat_handle"]
+    joined = client.post(
+        f"/topics/{topic_id}/members",
+        json={"handle": teammate, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert joined.status_code == 200, joined.text
+    assert teammate != default
+    return topic_id, teammate
+
+
+def _say(client, topic_id: str, text: str, author: str = "alice") -> None:
+    """Say one thing in the room and wait for whatever it started to be over."""
+    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+        ws.send_json({"type": "message", "content": text})
+        while ws.receive_json()["type"] not in ("done", "error"):
+            pass
+
+
+def _its_turns_die(channel, monkeypatch) -> None:
+    """让这个房间里的轮次死在收尾之前：起得来、读得到话，然后没有下文。
+
+    这正是「重试」按钮出现的那个状态（`test_replay_visibility` 里那份
+    `SilentScreen` 同源）。轮次没干净收尾，它读进去的那批消息就不会被盖上读过的
+    戳，于是还留在待读窗口里 —— 待读窗口里有消息，才是那一下点击的前提。
+    """
+    channel.alive = False
+    monkeypatch.setattr(channel, "emit_turn", lambda *a, **k: None)
+
+
+def _handed_over(client, topic_id: str) -> list[str]:
+    return [
+        b["content"]
+        for b in client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+        if "把之前的消息交给了" in b["content"] or "交出了之前的消息" in b["content"]
+    ]
+
+
+def _wait_for_handover(client, topic_id: str) -> list[str]:
+    """那一行是那一轮开跑时写下来的，所以要点几下才看得到。"""
+    for _ in range(500):
+        lines = _handed_over(client, topic_id)
+        if lines:
+            return lines
+        time.sleep(0.02)
+    return []
+
+
+def test_summon_hands_the_room_to_the_teammate_the_messages_named(
+    client, stub_hooks, monkeypatch
+):
+    """房间里坐着两位 AI 队友时，交给的是**消息点名的那位**。
+
+    失败提示上的「重试」按钮走的就是这个接口，而它以前取的是房间的默认席位：
+    另一位队友的轮次失败之后一点重试，就换成默认芝士来接 —— 而默认芝士那一轮的
+    待读窗口里根本没有点名给那位队友的消息（`_addressed_to` 按收件人过滤），于是
+    它接了一轮却读不到真正找它的那句话。
+    """
+    topic_id, teammate = _a_room_with_two_teammates(client)
+    _its_turns_die(stub_hooks, monkeypatch)
+    _say(client, topic_id, f"<@{teammate}> 这个分页方案你看下")
+    # 那一轮死在收尾之前，所以这条消息还等着有人读；下面那一下就是「重试」。
+
+    r = client.post(
+        f"/topics/{topic_id}/summon",
+        json={"author": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["started"] is True, r.text
+
+    assert _wait_for_handover(client, topic_id) == [
+        f"<@alice> 把之前的消息交给了 <@{teammate}>"
+    ]
