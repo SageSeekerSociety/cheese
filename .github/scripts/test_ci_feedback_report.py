@@ -207,6 +207,36 @@ class FeedbackReportTest(unittest.TestCase):
                     "clean",
                 )
 
+    def test_every_e2e_shard_needs_its_own_receipt(self):
+        item = report.analyse_attempt(
+            run(),
+            1,
+            [job("e2e / e2e (1/2)"), job("e2e / e2e (2/2)")],
+            "required-ci.yml",
+            "merge_group",
+        )
+        self.assertEqual(report.evidence_suites(item), ["e2e-1-of-2", "e2e-2-of-2"])
+        self.assertEqual(
+            self.inspect_receipts(item, [self.receipt("e2e-1-of-2")])["status"],
+            "unknown",
+        )
+        self.assertEqual(
+            self.inspect_receipts(
+                item,
+                [
+                    self.receipt("e2e-1-of-2"),
+                    self.receipt("e2e-2-of-2", clean=False, retries=1),
+                ],
+            )["status"],
+            "not_clean",
+        )
+        self.assertEqual(
+            self.inspect_receipts(
+                item, [self.receipt("e2e-1-of-2"), self.receipt("e2e-2-of-2")]
+            )["status"],
+            "clean",
+        )
+
     def test_required_e2e_receipt_cannot_hide_missing_remote_receipts(self):
         item = self.evidence_record()
         item["executed_job_names"] += ["remote / acceptance", "remote / private-chat"]

@@ -25,11 +25,26 @@ jobs:
   # Every matching main commit runs E2E. A PR result belongs to the PR head
   # and may have excluded this workflow, so it cannot prove the merged commit
   # ran it.
+  #
+  # Playwright runs one test at a time inside a job (see playwright.config.ts),
+  # so the suite is split across jobs instead: each shard starts its own
+  # backend, frontend and database on its own runner and runs whole spec files.
+  # `CI required` sees this workflow's result, which is success only when every
+  # shard succeeded. `fail-fast` is off so a failing shard does not cancel the
+  # others and each keeps its own report.
   e2e:
+    name: e2e (${{ matrix.shard }}/${{ strategy.job-total }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     env:
       JWT_SECRET: test-secret
       ENVIRONMENT: test
       DOCKER_CONTEXT: default
+      E2E_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+      # Names this shard's evidence and artifacts, e.g. e2e-1-of-2.
+      E2E_SUITE: e2e-${{ matrix.shard }}-of-${{ strategy.job-total }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -49,9 +64,9 @@ jobs:
         options: >-
           --health-cmd "valkey-cli ping" --health-interval 10s
           --health-timeout 5s --health-retries 5
-    # Same reasoning as test.yml's: a successful `e2e` runs 5m41s to 10m26s
-    # (median 7m33s) over the last 40 runs, and 15 minutes has already
-    # cancelled a run at 20m01s that was slow rather than stuck.
+    # Same reasoning as test.yml's: a slow run must not be cancelled as stuck.
+    # 25 minutes was set when one job ran the whole suite (up to 10m26s); a
+    # shard runs about half of it.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -150,7 +165,7 @@ jobs:
           JWT_SECRET: test-secret
           ENVIRONMENT: test
           CI: true
-        run: bash ./run-isolated.sh
+        run: bash ./run-isolated.sh --shard="$E2E_SHARD"
 
       - name: Produce E2E CLEAN evidence
         id: clean_evidence
@@ -160,9 +175,9 @@ jobs:
           EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: >-
           python3 .github/scripts/ci-test-evidence.py
-          --suite e2e
+          --suite "$E2E_SUITE"
           --source e2e/test-results/playwright-results.json
-          --output "$RUNNER_TEMP/ci-test-evidence/e2e/evidence.json"
+          --output "$RUNNER_TEMP/ci-test-evidence/$E2E_SUITE/evidence.json"
           --run-id "$GITHUB_RUN_ID"
           --run-attempt "$GITHUB_RUN_ATTEMPT"
           --head-sha "$EVIDENCE_HEAD_SHA"
@@ -176,12 +191,12 @@ jobs:
         # this puts it on the run a PR author looks at.
         if: ${{ !cancelled() && steps.clean_evidence.outcome == 'success' }}
         run: |
-          python3 - "$RUNNER_TEMP/ci-test-evidence/e2e/evidence.json" <<'PY'
+          python3 - "$RUNNER_TEMP/ci-test-evidence/$E2E_SUITE/evidence.json" <<'PY'
           import json, os, sys
           evidence = json.load(open(sys.argv[1]))
           if not evidence["clean"]:
               message = (
-                  f"E2E evidence is not clean ({evidence['retries']} retries,"
+                  f"{evidence['suite']} evidence is not clean ({evidence['retries']} retries,"
                   f" {evidence['skipped']} skipped): {evidence['reason']}"
               )
               print(f"::warning title=E2E is not clean::{message}")
@@ -194,8 +209,8 @@ jobs:
         timeout-minutes: 3
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ci-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}-e2e
-          path: ${{ runner.temp }}/ci-test-evidence/e2e/evidence.json
+          name: ci-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.E2E_SUITE }}
+          path: ${{ runner.temp }}/ci-test-evidence/${{ env.E2E_SUITE }}/evidence.json
           if-no-files-found: error
           retention-days: 90
 
@@ -207,7 +222,7 @@ jobs:
         timeout-minutes: 3
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: e2e-playwright-results-${{ github.run_id }}-${{ github.run_attempt }}
+          name: e2e-playwright-results-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.E2E_SUITE }}
           path: e2e/test-results/playwright-results.json
           if-no-files-found: error
           retention-days: 3
@@ -227,7 +242,7 @@ jobs:
         # Clean green runs previously accounted for 454 MB across 78 uploads in one week.
         if: ${{ !cancelled() && (failure() || hashFiles('e2e/test-results/**/trace.zip') != '') }}
         with:
-          name: playwright-report
+          name: playwright-report-${{ env.E2E_SUITE }}
           path: |
             e2e/playwright-report/
             e2e/test-results/
