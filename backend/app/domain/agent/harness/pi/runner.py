@@ -64,6 +64,15 @@ class Runner(runner.Runner[Journal]):
         self.holding = False
         # A failed call is being retried and nothing has concluded it yet.
         self.failing = False
+        # The error of a failed call pi said it will not retry. pi decides
+        # whether to compact and ask it again only after it has reported the
+        # run over (a context overflow), so the turn ends on it once pi has
+        # settled, and not before.
+        self.unretried: str | None = None
+        # Failed calls pi asked again after compacting: they wait for no verdict.
+        self.asked_again: set[object] = set()
+        # The work a compaction under way started under (``owner``).
+        self.compacting_for: dict = {}
         # The platform asked pi to stop: a retry cut short by it is not a
         # failure of anything.
         self.aborting = False
@@ -102,7 +111,13 @@ class Runner(runner.Runner[Journal]):
                 # A retry cut short while it waited: no agent_end follows.
                 self._give_up(event.get("finalError"))
         elif kind == "compaction_start":
-            self._verdict(COMPACTING, after=None, done=False)
+            # pi also compacts after a turn has answered, so the room may send
+            # the next input before this ends. Both ends belong to the work it
+            # started under, or the room's line for it never closes.
+            self.compacting_for = json.loads(self.journal.recall("owner") or "{}")
+            self._verdict(
+                COMPACTING, after=None, done=False, cheese=self.compacting_for
+            )
         elif kind == "compaction_end":
             self._verdict(
                 COMPACTING,
@@ -110,7 +125,15 @@ class Runner(runner.Runner[Journal]):
                 done=True,
                 aborted=bool(event.get("aborted")),
                 errorMessage=str(event.get("errorMessage") or ""),
+                cheese=self.compacting_for
+                or json.loads(self.journal.recall("owner") or "{}"),
             )
+            self.compacting_for = {}
+            if event.get("willRetry") and self.unretried is not None:
+                # The call that overflowed is asked again on the compacted
+                # context: it is not how the turn ends.
+                self.unretried = None
+                self.asked_again.add(self.last_failure)
         elif kind == "agent_end":
             # The call that ended this run, if it failed. When pi is not trying
             # again — a request it cannot retry, or the retries ran out — that
@@ -126,7 +149,9 @@ class Runner(runner.Runner[Journal]):
             if last is not None and last.get("stopReason") == "error":
                 self.last_failure = last.get("timestamp")
                 if not event.get("willRetry"):
-                    self._give_up(last.get("errorMessage"))
+                    self.unretried = str(last.get("errorMessage") or "")
+        if kind == "agent_settled" and self.unretried is not None:
+            self._give_up(self.unretried)
         if kind in SETTLES:
             self.doorbell.set()
 
@@ -136,6 +161,7 @@ class Runner(runner.Runner[Journal]):
 
     def _give_up(self, error: object) -> None:
         self.failing = False
+        self.unretried = None
         self._verdict(
             GAVE_UP,
             after=self.last_failure,
@@ -178,7 +204,9 @@ class Runner(runner.Runner[Journal]):
             verdicts = [v for v in verdicts if v["type"] != COMPACTING]
 
             def stamped(record: dict) -> dict:
-                return {**record, "cheese": owner} if owner else record
+                # A compaction's records carry the work it started under.
+                mark = record.get("cheese") or owner
+                return {**record, "cheese": mark} if mark else record
 
             held = False
             while not held:
@@ -199,6 +227,7 @@ class Runner(runner.Runner[Journal]):
                         self.holding
                         and message.get("stopReason") == "error"
                         and not behind
+                        and at not in self.asked_again
                     ):
                         held = True
                         break
