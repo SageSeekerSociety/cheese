@@ -1167,6 +1167,8 @@ class SpaceAnalyticsViewService:
             "approved": APPROVED_REVERSE_MAP.get(task.approved, "NONE"),
             "createdAt": self._to_timestamp_ms(task.created_at) or 0,
             "participantCount": participant_count,
+            # 没设上限的题这里是 None —— 前端据此不画「/ 上限」那一截。
+            "participantLimit": task.participant_limit,
             "pendingParticipantApprovalCount": pending_approval,
             "approvedParticipantCount": approved,
             "rejectedParticipantCount": rejected,

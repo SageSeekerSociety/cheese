@@ -252,6 +252,8 @@ export type SpaceAnalyticsTask = {
   createdAt: number
   deadline?: number
   participantCount: number
+  // 没设上限的题是 null；这里不画「/ 上限」那一截，别当成 0。
+  participantLimit: number | null
   pendingParticipantApprovalCount: number
   approvedParticipantCount: number
   rejectedParticipantCount: number
@@ -266,6 +268,33 @@ export type SpaceAnalyticsTask = {
 
 export type SpaceTaskAnalytics = {
   tasks: SpaceAnalyticsTask[]
+}
+
+// 逐人那一格：「谁领了几道、走到哪一步」，以及**谁**在哪道题上领了两周没动。
+// 一条领取的状态由提交与评审算出来（passed / submitted / inProgress），不看
+// completion_status。团队领取按队一行，isTeam 标出来。
+export type SpaceAnalyticsPerson = {
+  userId: number
+  name: string
+  isTeam: boolean
+  claims: number
+  passed: number
+  submitted: number
+  inProgress: number
+}
+
+export type SpaceAnalyticsStalledClaim = {
+  taskId: number
+  taskTitle: string
+  userId: number
+  name: string
+  isTeam: boolean
+  claimedAt: number
+}
+
+export type SpaceAnalyticsPeople = {
+  people: SpaceAnalyticsPerson[]
+  stalled: SpaceAnalyticsStalledClaim[]
 }
 
 export type SpaceAnalyticsParticipants = {
