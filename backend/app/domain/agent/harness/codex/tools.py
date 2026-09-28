@@ -126,16 +126,31 @@ class RemoteTools:
             return await asyncio.to_thread(
                 self._platform_call, tool, params["callId"], params["arguments"]
             )
-        receipt = await asyncio.to_thread(
-            self.client.call,
-            "invoke",
-            {
-                "id": params["callId"],
-                "server": server,
-                "tool": tool,
-                "args": params["arguments"],
-            },
-        )
+        receipt: dict
+        if server in self.client.remote_servers():
+            # Codex fires no project hooks, and a remote server's call never
+            # reaches the machine that would run them around it.
+            try:
+                receipt = await asyncio.to_thread(
+                    self.client.remote_call_with_hooks,
+                    params["callId"],
+                    server,
+                    tool,
+                    params["arguments"],
+                )
+            except MachineOutOfReach:
+                receipt = {"error": MACHINE_OUT_OF_REACH}
+        else:
+            receipt = await asyncio.to_thread(
+                self.client.call,
+                "invoke",
+                {
+                    "id": params["callId"],
+                    "server": server,
+                    "tool": tool,
+                    "args": params["arguments"],
+                },
+            )
         if "error" in receipt:
             return {
                 "success": False,
