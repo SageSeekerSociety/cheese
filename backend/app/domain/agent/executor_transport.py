@@ -231,6 +231,19 @@ class PlatformHost:
         )
 
 
+def _replace_file(path, text):
+    """Replace a session file whole, readable only by its owner. Every command
+    start of a leased session rewrites the token and the target (`acquire`),
+    and the commands that start beside it (a background Bash and the hook
+    after it, parallel Bash calls) read them at any moment: a file truncated
+    and then written shows them an empty token in between."""
+    temporary = f"{path}.{uuid.uuid4().hex}"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w") as stream:
+        stream.write(text)
+    os.replace(temporary, path)
+
+
 class RemoteClient:
     def __init__(self, config, *, shared_connection=False):
         import threading
@@ -518,31 +531,70 @@ class RemoteClient:
         self.config.update(target)
         token_file = self.config.get("token_file")
         if token_file:
-            from pathlib import Path
-
-            Path(token_file).write_text(result["token"])
-            Path(token_file).chmod(0o600)
+            _replace_file(token_file, result["token"])
         else:
             self.config["execution_token"] = result["token"]
         target_file = self.config.get("target_file")
         if target_file:
-            from pathlib import Path
-
-            path = Path(target_file)
-            temporary = path.with_name(path.name + "." + uuid.uuid4().hex)
-            temporary.write_text(json.dumps(self.config))
-            temporary.chmod(0o600)
-            temporary.replace(path)
+            _replace_file(target_file, json.dumps(self.config))
         previous = getattr(self.transport, "connection", None)
         if previous is not None:
             previous.close()
             self.transport.connection = None
         return changed_lease
 
+    def remote_mcp(self, method, params):
+        """A call to one of the project's remote MCP servers. The platform holds
+        its credential and makes the call (`POST /topics/{id}/mcp/{name}`), so
+        it goes there and not to the room's machine, and no machine is taken
+        for it. The answer has the shape the executor's would."""
+        remote = self.config["remote_mcp"]
+        server = params["server"]
+        if method == "invoke":
+            request = {
+                "method": "tools/call",
+                "params": {"name": params["tool"], "arguments": params.get("args", {})},
+            }
+        else:
+            request = {"method": params["method"], "params": params.get("params") or {}}
+        response = self.platform_request(
+            {"method": "POST", "path": f"{remote['path']}/{server}", "body": request}
+        )
+        answer = json.loads(response["value"]["stdout"])["data"]
+        if method == "invoke":
+            return (
+                {"error": answer["error"]}
+                if "error" in answer
+                else {"value": answer["result"]}
+            )
+        if "error" in answer:
+            raise RuntimeError(answer["error"])
+        return answer["result"]
+
+    def remote_servers(self):
+        return list((self.config.get("remote_mcp") or {}).get("servers", []))
+
     def call(self, method, params=None, *, abandoned=None):
         """``abandoned`` says the caller has given the operation up (a cancelled
         tool call). Acquiring hands can wait for a machine being prepared; an
         operation given up during that wait is never started."""
+        asked = params or {}
+        if asked.get("server") in self.remote_servers():
+            if method in {"invoke", "mcp"}:
+                return self.remote_mcp(method, asked)
+            if method == "project_tools":
+                if asked.get("name"):
+                    return self.remote_mcp(
+                        "invoke",
+                        {
+                            "server": asked["server"],
+                            "tool": asked["name"],
+                            "args": asked.get("arguments", {}),
+                        },
+                    )
+                return self.remote_mcp(
+                    "mcp", {"server": asked["server"], "method": "tools/list"}
+                )
         operation_deadline = time.monotonic() + 660
         if self.config.get("lease_path") and (
             method in {"invoke", "mcp", "project_tools"}
@@ -589,10 +641,9 @@ class RemoteClient:
                     raise RuntimeError(
                         "Project context leaves the forwarded project boundary"
                     )
-                tree_path = Path(target_file).with_name("context-tree.json")
-                temporary = tree_path.with_name(tree_path.name + "." + uuid.uuid4().hex)
-                temporary.write_text(json.dumps(tree))
-                temporary.replace(tree_path)
+                _replace_file(
+                    Path(target_file).with_name("context-tree.json"), json.dumps(tree)
+                )
                 context = self.call("context", {"known_files": {}})
                 if context.get("instructions"):
                     # No project operation has run yet. Let the caller read its
@@ -615,7 +666,12 @@ class RemoteClient:
             params = params or {}
             server = params.get("server")
             if not server:
-                return {"servers": self.config.get("mcp_servers", [])}
+                return {
+                    "servers": [
+                        *self.config.get("mcp_servers", []),
+                        *self.remote_servers(),
+                    ]
+                }
             if server not in self.config.get("mcp_servers", []):
                 raise ValueError("Unknown project MCP server")
             tool = params.get("name")

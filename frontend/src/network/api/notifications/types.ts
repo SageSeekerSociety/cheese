@@ -16,6 +16,7 @@ export type NotificationType =
   | 'TEAM_REQUEST_CANCELED'
   | 'ROOM_NOTICE'
   | 'CHEESE_QUESTION'
+  | 'DEVICE_IN_USE'
 
 export interface EntityInfo {
   id: string

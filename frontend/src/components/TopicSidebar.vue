@@ -507,7 +507,10 @@ function cancelRename() {
 }
 
 function saveRename(t: Topic) {
-  if (suggestingTopicId.value === t.id) return // the suggestion is still coming
+  // Nothing typed while the suggestion is still coming: wait for it. A name the
+  // person typed meanwhile is theirs, and the suggestion is dropped for it.
+  if (suggestingTopicId.value === t.id && !draftTitle.value.trim()) return
+  suggestingTopicId.value = null
   const title = normalizeTopicTitle(draftTitle.value, t.title)
   const suggested = suggestion.value !== null && title === suggestion.value
   renamingTopicId.value = null
@@ -523,12 +526,15 @@ const suggestion = ref<string | null>(null)
 
 async function startSuggest(t: Topic) {
   startRename(t)
+  // Empty until the suggestion lands, so the field says 正在生成标题… instead of
+  // showing the current title as if it were the suggestion.
+  draftTitle.value = ''
   suggestingTopicId.value = t.id
   suggestion.value = null
   const title = await store.suggestTitle(t.id)
   if (suggestingTopicId.value !== t.id) return
   suggestingTopicId.value = null
-  if (title && renamingTopicId.value === t.id) {
+  if (title && renamingTopicId.value === t.id && !draftTitle.value.trim()) {
     suggestion.value = title
     draftTitle.value = title
   }
@@ -860,8 +866,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                           {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
                         </v-icon>
                       </button>
-                      <!-- 等你处理：有点名给你的验收卡、@你 的未读，或芝士停在一道只有
-                         你能回答的问题上。排在"在跑"前面——芝士在忙是它的事，等你做
+                      <!-- 等你处理：有点名给你的验收卡、没答的决策请求，或芝士停在一道只有
+                         你能回答的问题上。未读的 @ 不点这颗灯——芝士汇报、递卡都 @人，
+                         算进来几乎每行都亮，灯就没意义了；未读有右边的数字。排在"在跑"前面——芝士在忙是它的事，等你做
                          事才是你的事。行首只有这一颗点：看板每一列的状态点不再画进
                          标题里，那一颗对每一行都有，于是哪一行都不显眼。 -->
                       <span v-else-if="row.topic.awaits_me" class="row-slot">

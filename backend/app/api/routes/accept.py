@@ -53,13 +53,27 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 async def _card_actor(
     card_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> Actor:
-    """Bind credential scope to the card's room before review authorization."""
+    """Bind credential scope to the card's room before review authorization.
+
+    Membership, not just authentication: every route below decides a card that
+    belongs to someone else's room, and the card id is the only thing the caller
+    names. Authentication alone let any logged-in stranger re-route a pending
+    card to themselves (``/reassign`` trusts the body's ``reviewer_handle``) and
+    then accept it as the reviewer they had just appointed — the accept gate is
+    ``decided_by == card.reviewer_handle``, so the two steps together handed a
+    stranger the room's merge. Fixed 2026-09-26; ``_task_actor`` drew this line
+    from the start, this is the same line, spelled once.
+    """
     service = AcceptService(db)
     card = await service._card_or_404(card_id)
     topic = await service._topic_or_404(card.topic_id)
-    return await resolver.resolve(
+    actor = await resolver.resolve(
         fallback_handle=None, project_id=topic.project_id, topic_id=topic.id
     )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic.id
+    )
+    return actor
 
 
 async def _task_actor(

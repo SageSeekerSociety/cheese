@@ -56,7 +56,7 @@ class CloudChannel(DeviceChannel):
     provisions_machine = True
     # 要手要不到的那一句。要不要手、要不到就停，那条分支在基类上只有一份 —— 这
     # 条通道改的只有供给和这一句话。
-    no_machine_message = "Cloud 机器尚未完成连接"
+    no_machine_message = "云端工作电脑尚未完成连接"
 
     def __init__(
         self,
@@ -100,14 +100,14 @@ class CloudChannel(DeviceChannel):
         )
         if ready:
             return True, ""
-        return False, "Cloud 机器正在准备并接入"
+        return False, "云端工作电脑正在准备并接入"
 
     async def _resolve_device_agent(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> tuple[str, int, str] | None:
         lease = await self._read_topic_cloud(topic_id)
         if lease is None or lease.project_id != project_id:
-            raise ScreenSetupError("本话题没有自己的 Cloud 机器")
+            raise ScreenSetupError("这个房间没有自己的云端工作电脑")
         if (
             not lease.machine_ready
             or not lease.ai_ready
@@ -119,11 +119,11 @@ class CloudChannel(DeviceChannel):
             devices = sql_device_service(session)
             endpoint = await devices.get_device(lease.device_id)
             if endpoint is None or endpoint.supply is not Supply.cloud:
-                raise ScreenSetupError("本话题的 Cloud 机器没有有效的云端连接器")
+                raise ScreenSetupError("这个房间的云端工作电脑没有有效的连接")
             binding = await devices.topic_binding(topic_id)
             if binding is not None and binding.device_id != lease.device_id:
                 raise ScreenSetupError(
-                    "Cloud 话题已绑定到别的端点；拒绝借用另一话题的机器"
+                    "这个房间已绑定到别的云端工作电脑；不借用另一个房间的机器"
                 )
             if binding is None:
                 await devices.bind_topic_device(

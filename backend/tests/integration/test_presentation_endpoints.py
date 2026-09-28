@@ -19,7 +19,8 @@ from tests.integration.conftest import a_team
 
 
 def _seeded(client, stub_hooks=None) -> dict[str, str]:
-    """一个房间，四条活：分身在做的、等人验收的、有分身但早就没动静的、还在说话的。
+    """一个房间，五条活：分身在做的、等人验收的、有分身但早就没动静的、还在说话的、
+    主 agent 自己动手做了一半的。
 
     传了 `stub_hooks` 就顺带把这个房间的屏幕点亮 —— 分身住在房间的会话里，房间的
     屏幕没了它一定也没了，所以「有分身在做」这一格只有屏幕活着时才成立。
@@ -64,7 +65,15 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
                 subagent_id="agent-talking",
                 last_turn_at=datetime.now(UTC) - LOST_SIGNAL_AFTER - timedelta(hours=1),
             )
-            s.add_all([running, waiting, lost, talking])
+            # 主 agent 自己在任务目录里动手做的活：没有分身，所以「运行中」永远轮不到
+            # 它；它留下的是草稿 PR。这一格从前一路落到「待开工」，而它其实做了一半。
+            worked = Task(
+                project_id=project.id,
+                room_id=room.id,
+                title="做了一半的活",
+                pr_number=1789,
+            )
+            s.add_all([running, waiting, lost, talking, worked])
             await s.flush()
 
             s.add(
@@ -97,6 +106,7 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
                 waiting=str(waiting.id),
                 lost=str(lost.id),
                 talking=str(talking.id),
+                worked=str(worked.id),
             )
             await s.commit()
 
@@ -131,6 +141,12 @@ def test_the_project_task_list_carries_the_board_cell(client, stub_hooks):
         "column": "building",
         "display_status": Building.running,
     }
+    # 没有分身、也没递卡，但它有草稿 PR —— 「做了一半停着」和「还没人碰过」不是
+    # 一回事，而这两者在库里只差一列：
+    assert by_id[ids["worked"]]["presentation"] == {
+        "column": "building",
+        "display_status": Building.started,
+    }
 
 
 def test_a_room_and_its_threads_agree_with_the_project_list(client, stub_hooks):
@@ -154,6 +170,7 @@ def test_a_room_and_its_threads_agree_with_the_project_list(client, stub_hooks):
             ids["waiting"],
             ids["lost"],
             ids["talking"],
+            ids["worked"],
         )
     }
 
@@ -174,6 +191,40 @@ def test_a_room_carries_its_own_board_cell(client):
     listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
     rooms = {t["id"]: t["presentation"] for t in listed}
     assert rooms[ids["room"]] == header["presentation"]
+
+
+def test_a_room_is_running_while_a_thread_under_it_runs(client, stub_hooks):
+    """侧栏的绿点：房间自己那一轮早结束了，但它派出去的一条活还在跑 —— 那这个
+    房间就是有人在干活。只看房间自己那一轮的话，主 agent 一收尾绿点就灭了。
+
+    房间在看板上那一格不跟着变：活在看板上有自己的一格。"""
+    ids = _seeded(client, stub_hooks)
+
+    listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
+    row = next(t for t in listed if t["id"] == ids["room"])
+    assert row["running"] is True
+    assert client.get(f"/topics/{ids['room']}").json()["data"]["running"] is True
+    assert row["presentation"]["display_status"] == Building.idle
+
+
+def test_a_room_is_not_running_once_its_threads_have_stopped(client, stub_hooks):
+    """同一个房间，在跑的那两条活交回了结论 —— 剩下的是失联的、等验收的、做了
+    一半的，没有一条在跑，绿点就该灭。"""
+    ids = _seeded(client, stub_hooks)
+
+    async def _conclude() -> None:
+        async with client.test_factory() as s:
+            for key in ("running", "talking"):
+                task = await s.get(Task, uuid.UUID(ids[key]))
+                assert task is not None
+                task.conclusion = "做完了"
+            await s.commit()
+
+    asyncio.run(_conclude())
+    listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
+    row = next(t for t in listed if t["id"] == ids["room"])
+    assert row["running"] is False
+    assert client.get(f"/topics/{ids['room']}").json()["data"]["running"] is False
 
 
 def test_a_rooms_own_card_reaches_the_room(client):

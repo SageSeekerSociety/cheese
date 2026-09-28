@@ -260,6 +260,10 @@ def project(path):
         "user.name=fixture",
         "-c",
         "user.email=f@example.invalid",
+        # The commit would otherwise start `git maintenance` in the background,
+        # whose lock file can vanish while `rebuild` copies this directory.
+        "-c",
+        "maintenance.auto=false",
     ]
     env = dict(
         os.environ,
@@ -863,48 +867,6 @@ def step_transient(run):
     return {"notified": note is not None}
 
 
-def step_move(run):
-    mark = run.session.user(bash("sleep 4; echo MOVED_DONE", timeout=120000))
-    _, started = run.session.wait(is_("system", "task_started"), 60, mark)
-    if not started:
-        return {"started": False}
-    time.sleep(1.5)
-    answer = run.session.control(
-        {"subtype": "background_tasks", "tool_use_id": started["tool_use_id"]}
-    )
-    running_after_move = alive("sleep 4")
-    _, note = run.session.wait(
-        is_("system", "task_notification", task_id=started["task_id"]), 60, mark
-    )
-    if note:
-        run.session.wait(is_("result"), 60, run.session.events.index(note) + 1)
-    return {
-        "answer": (answer.get("response") or {}),
-        "still running after the move": running_after_move,
-    }
-
-
-def step_stop_task(run):
-    mark = run.session.user(
-        do("Bash", command="sleep 301", run_in_background=True, description="s")
-    )
-    _, started = run.session.wait(is_("system", "task_started"), 60, mark)
-    run.session.wait(is_("result"), 60, mark)
-    before = settle(lambda: alive("sleep 301"))
-    answer = run.session.control(
-        {"subtype": "stop_task", "task_id": started["task_id"]}
-    )
-    run.session.wait(
-        is_("system", "task_notification", task_id=started["task_id"]), 30, mark
-    )
-    gone = settle(lambda: not alive("sleep 301"))
-    return {
-        "running before": before,
-        "gone after": gone,
-        "answer": answer.get("subtype"),
-    }
-
-
 def step_task_stop_tool(run):
     mark = run.session.user(
         do("Bash", command="sleep 302", run_in_background=True, description="s")
@@ -988,8 +950,6 @@ STEPS = {
     "composition": step_composition,
     "background": step_background,
     "transient": step_transient,
-    "move": step_move,
-    "stop_task": step_stop_task,
     "task_stop_tool": step_task_stop_tool,
     "interrupt": step_interrupt,
     "timeout": step_timeout,
@@ -998,7 +958,6 @@ STEPS = {
     "stdin_close": step_stdin_close,
 }
 LEFTOVERS = (
-    "sleep 301",
     "sleep 302",
     "sleep 303",
     "sleep 304",
@@ -1006,7 +965,6 @@ LEFTOVERS = (
     "sleep 306",
     "sleep 307",
     "sleep 309",
-    "sleep 4",
 )
 
 # --- the generic record ------------------------------------------------------

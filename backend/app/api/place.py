@@ -26,8 +26,8 @@ async def authorized_place(
     """Resolve and authorize the caller-named place, when present, and say
     who is calling — the pool a memory goes to is that caller's.
 
-    A place, not a room: `cheese_remember` is run by whoever is doing the work,
-    and that is usually a thread.
+    A place, not a room: the caller is whoever is doing the work, and that is
+    usually a thread.
     """
     if not topic_raw:
         return None

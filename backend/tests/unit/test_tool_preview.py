@@ -352,8 +352,8 @@ def test_an_enormous_argument_is_capped_and_says_so():
 def test_a_platform_command_shows_the_argument_that_says_which_one():
     accepted = tool_preview("cheese_accept_request", {"task": "t", "subject": "fix: x"})
     assert accepted.text == "fix: x"
-    remembered = tool_preview("cheese_remember", {"fact": "构建走 pnpm"})
-    assert remembered.text == "构建走 pnpm"
+    told = tool_preview("cheese_tell", {"target": "数据清洗", "message": "口径改了"})
+    assert told.text == "口径改了"
 
 
 def test_a_platform_command_writing_a_file_is_cut_to_the_workspace():

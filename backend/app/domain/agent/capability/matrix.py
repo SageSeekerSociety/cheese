@@ -6,10 +6,10 @@
 一个留着代码而不注册的骨架（结论 43）在这张表上不占一列，它的声明仍然写着，见
 ``written()``。
 
-一格只有两种可能：一句「怎么关的」（那就是「有」），或者 ``Difference`` 里的一
-条码；那份名单是封闭的，所以「这一格我说不清」这句话本身也得选一个已经存在的说
-法，而不是随手写一行散文。这是结论 48 的第三条判据，也是这张表跟一张 README 里
-的表格唯一的区别。
+一格只有三种可能：一句「怎么关的」（那就是「有」）、``Difference`` 里的一条
+码，或者一个带 issue、到期即红的 ``Missing``；码的名单是封闭的，所以「这一格我
+说不清」这句话本身也得选一个已经存在的说法，而不是随手写一行散文。这是结论 48
+的第三条判据，也是这张表跟一张 README 里的表格唯一的区别。
 
 **钉住的版本号只写一处。** 每个骨架的适配层各一个常量，声明引用它；
 ``backend/scripts/test_harness_contracts.py`` 装二进制的时候问的也是这里，而不
@@ -18,7 +18,7 @@
 **这张表只覆盖骨架。** 地点与托管方的两张随 P22、P30 各自交付，形状照抄这里。
 """
 
-from app.domain.agent.capability import BuiltIn, Declaration, Difference
+from app.domain.agent.capability import BuiltIn, Declaration, Difference, Missing
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, PI
 from app.domain.agent.harness.claude_code import declaration as claude_code_declaration
 from app.domain.agent.harness.codex import declaration as codex_declaration
@@ -61,17 +61,31 @@ def declarations() -> dict[str, Declaration]:
     return {name: every[name] for name in HARNESSES}
 
 
-def matrix() -> dict[str, dict[BuiltIn, str | Difference]]:
+def matrix() -> dict[str, dict[BuiltIn, str | Difference | Missing]]:
     """功能矩阵：骨架 × 产品概念，每一格是「怎么关的」或者一条差异码。
 
     校验就在生成里，不在生成之后：一张能画出来、只是有几格是空的表，会被当成一
     张已经填过的表读。
     """
-    table: dict[str, dict[BuiltIn, str | Difference]] = {}
+    table: dict[str, dict[BuiltIn, str | Difference | Missing]] = {}
     for name, declared in declarations().items():
-        row: dict[BuiltIn, str | Difference] = {}
+        row: dict[BuiltIn, str | Difference | Missing] = {}
         for concept in BuiltIn:
             cell = declared.how_disabled.get(concept)
+            if isinstance(cell, Missing):
+                if concept not in declared.built_ins:
+                    raise MatrixIncomplete(
+                        f"{name} 说它不自带「{concept}」，这一格却记了一个暂缺。"
+                    )
+                if declared.pinned_version != cell.until_pin:
+                    raise MatrixIncomplete(
+                        f"{name} 的「{concept}」暂缺（#{cell.issue}）记到 "
+                        f"{cell.until_pin} 为止，pin 已经是 "
+                        f"{declared.pinned_version}。按那个 issue 对着新 build "
+                        "重核：关得掉就写关闭动作，关不掉就把到期日续到新 pin。"
+                    )
+                row[concept] = cell
+                continue
             if isinstance(cell, Difference):
                 if cell is Difference.NOT_BUILT_IN and concept in declared.built_ins:
                     raise MatrixIncomplete(

@@ -3,6 +3,7 @@
 import { build, stageFor, BUBBLE } from 'virtual:motion'
 import { ic } from './content.js'
 import { freshToken, signInUrl } from './session.js'
+import { mountDemos } from './demo-dom.mjs'
 
 const $ = (s, r = document) => r.querySelector(s)
 const $$ = (s, r = document) => [...r.querySelectorAll(s)]
@@ -542,6 +543,7 @@ addEventListener('resize', () => { moveTabs(); moveFilter(); moveSidePill() })
 // ---------- start ----------
 splitChars()
 setupReveal(); setupSpot(); setupMagnetic(); setupToc()
+mountDemos()
 moveTabs(); moveSidePill(); moveFilter(); onScroll()
 document.fonts?.ready.then(() => { moveTabs(); moveSidePill() })
 loadDiagrams()

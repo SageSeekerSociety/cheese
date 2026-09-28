@@ -1018,6 +1018,32 @@ def test_the_guard_admits_only_reads_of_the_builds_own_output(tmp_path, machine)
         assert _guard(session.target, call) == "deny", tool
 
 
+def test_the_guard_admits_file_tools_on_the_sessions_memory_and_nothing_past_it(
+    tmp_path, machine
+):
+    """The memory tree is the session's own, on this host; the plugin hands
+    the build its path spelled out, and the guard lets exactly that through."""
+    session = Session(tmp_path / "guarded", machine)
+    memory = session.root / "home/.cheese/memory"
+    (memory / "team").mkdir(parents=True)
+    (memory / "team/link").symlink_to(tmp_path)
+    target = json.loads(session.target.read_text())
+    session.target.write_text(json.dumps({**target, "central_memory": str(memory)}))
+    for tool in ("Read", "Write", "Edit"):
+        call = {"tool_name": tool, "tool_input": {"file_path": f"{memory}/team/a.md"}}
+        assert _guard(session.target, call) == "allow", tool
+    for path in (
+        f"{memory}/../execution.json",
+        f"{memory}/team/link/elsewhere",
+        session.central / "a.txt",
+    ):
+        call = {"tool_name": "Write", "tool_input": {"file_path": str(path)}}
+        assert _guard(session.target, call) == "deny", path
+    for tool in ("Glob", "Grep"):
+        call = {"tool_name": tool, "tool_input": {"path": f"{memory}/team"}}
+        assert _guard(session.target, call) == "deny", tool
+
+
 def test_a_new_command_id_is_new(machine):
     ids = {f"shell-{uuid.uuid4().hex}" for _ in range(3)}
     for command_id in ids:

@@ -140,8 +140,9 @@ class ProjectMachine(UuidPk, Timestamps, Base):
     # Keep the durable lease owner even if its session is deleted: an external
     # VM must not disappear from the resource ledger through a cascading FK.
     session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    # A migrated session no longer uses this VM, but its files and quota remain
-    # until explicit cleanup. released_at would prematurely free the quota.
+    # A session switched away from this VM. Its files and quota remain until
+    # it is deleted: at once when the switch pushed the session's work first
+    # (``release_left_machine``), otherwise by the room's cleanup.
     superseded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

@@ -1,7 +1,12 @@
 // 现场按轮分组：一轮里的步骤收成一组，组头写得出几步、多久。
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { formatSpan, groupByTurn, isNarration } from './siteLog'
+
+import { setLocale } from '@/i18n'
+
+// 这些词是中文界面上的那一套；测试环境起步是英文。
+beforeEach(() => setLocale('zh-CN'))
 
 function block(id: string, turn: string | null, at: string, meta?: Record<string, unknown>) {
   return { id, turn_id: turn, created_at: at, meta: meta ?? { tool: 'bash', arg: 'ls' } }
@@ -74,5 +79,14 @@ describe('formatSpan', () => {
     expect(formatSpan(38)).toBe('38 秒')
     expect(formatSpan(64)).toBe('1 分 04 秒')
     expect(formatSpan(3900)).toBe('1 小时 05 分')
+  })
+})
+
+describe('formatSpan in English', () => {
+  it('uses the English units, not the Chinese ones', () => {
+    setLocale('en')
+    expect(formatSpan(42)).toBe('42s')
+    expect(formatSpan(247)).toBe('4m 07s')
+    expect(formatSpan(3 * 3600 + 5 * 60)).toBe('3h 05m')
   })
 })

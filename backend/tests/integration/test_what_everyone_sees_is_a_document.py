@@ -4,9 +4,11 @@
 而它偏偏又是「大家都该知道的事」唯一的落点——于是项目的共识住在一个只有模型读
 得到的地方。文档三样都有，所以那一路的去向是项目总览那个房间的实况文档。
 
-`cheese_remember everyone` 往这份文档里追加的那一路已经停用（话题「记忆机制照搬
-CC」）：它把总览写成了只增不减的观察清单。这一组守的是还成立的那几头：停用要明说；
-别的房间跑一轮时，总览文档在它的提示词里；迁移把旧项目池落进这份文档。
+写记忆的那个旧入口已经整个停用（话题「记忆机制照搬CC」）：先是 `cheese_remember
+everyone` 往这份文档里追加的那一路——它把总览写成了只增不减的观察清单——接着是
+`cheese_remember` 本身，它写的条目池已经不再注入任何地方。这一组守的是还成立的那
+几头：停用要明说、并且说清该去哪写；别的房间跑一轮时，总览文档在它的提示词里；
+迁移把旧项目池落进这份文档。
 
 文档本身现在分五块，只有「项目是什么」是写的（#1889 第 1 条）：总览房间的一轮拿
 得到 ②~⑤（从话题、决策卡、里程碑现拼），别的房间只拿到 ①。手抄进正文的副本谁都
@@ -21,10 +23,14 @@ from typing import TYPE_CHECKING
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.memory import redundant
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import chat_ws_url, post_project, registered
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_project,
+    registered,
+    session_auth_headers,
+)
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -68,26 +74,14 @@ def _doc_text(client, topic_id: str) -> str:
     return (doc or {}).get("content", "")
 
 
-def _checkout_holding(monkeypatch, *lines: dict) -> None:
-    async def search(terms: list[str]) -> list[dict]:
-        return [
-            line
-            for line in lines
-            if any(term.lower() in str(line["text"]).lower() for term in terms)
-        ]
+def test_writing_memory_through_this_endpoint_is_retired_and_says_where(client):
+    """写记忆的旧入口整个停用了，而且明说停在哪、该去哪写，不是静默吞掉。
 
-    monkeypatch.setattr(
-        redundant,
-        "agent_checkout_search",
-        lambda db, room, agent_handle, harness: search,
-    )
-
-
-def test_writing_for_everyone_is_retired_and_says_so(client):
-    """`scope="everyone"` 不再往总览文档里追加，而且明说停用了，不是静默吞掉。
-
-    那一路把总览文档写成了一份只增不减的观察清单（话题「记忆机制照搬CC」）。
-    所有人都该知道的项目事实，改由项目自己的记忆承载；总览文档只写「项目是什么」。
+    `scope="everyone"` 那一路先停：它把总览文档写成了一份只增不减的观察清单
+    （话题「记忆机制照搬CC」）。剩下的写入面随后一起收掉——`cheese_remember` 写
+    的是条目池，而条目池已经不再注入任何地方，所以「已记入」是一句谎话。旧会话
+    里的调用方读到的这句要说清记忆现在是什么形状：`~/.cheese/memory/` 下的
+    文件。总览文档只写「项目是什么」。
     """
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
@@ -95,10 +89,13 @@ def test_writing_for_everyone_is_retired_and_says_so(client):
     for body in (
         {"content": FACT, "topic": topic_id, "scope": "everyone"},
         {"content": FACT, "scope": "everyone"},
+        {"content": FACT, "topic": topic_id},
+        {"content": FACT},
     ):
         refused = client.post(f"/projects/{project_id}/memory", json=body)
         assert refused.status_code == 422, refused.text
         assert "停用" in refused.text
+        assert "~/.cheese/memory/" in refused.text
     assert FACT not in _doc_text(client, overview)
 
 
@@ -116,27 +113,6 @@ def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_
     prompt = stub_hooks.last_system_prompt
     assert prompt is not None
     assert FACT in prompt
-
-
-def test_a_memory_the_repo_already_carries_is_refused(client, monkeypatch):
-    """「只记 repo 里查不到的」（结论 61）：记忆是一份会过期的副本，repo 里写着就拒。"""
-    project_id, topic_id = _project_and_room(client)
-    fact = "前端构建用 pnpm，不要用 npm"
-    _checkout_holding(
-        monkeypatch,
-        {
-            "path": "docs/frontend.md",
-            "line": 12,
-            "text": "前端构建用 pnpm，不要用 npm。",
-        },
-    )
-
-    refused = client.post(
-        f"/projects/{project_id}/memory",
-        json={"content": fact, "topic": topic_id},
-    )
-    assert refused.status_code == 422
-    assert "docs/frontend.md:12" in refused.text
 
 
 def _move_statements() -> tuple[str, ...]:
@@ -341,3 +317,93 @@ def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
     assert "给高中生做算法课" in prompt
     assert "## 最近决策" not in prompt
     assert DECISION not in prompt
+
+
+def test_the_panel_gets_the_same_four_blocks_as_structured_data(client):
+    """前端那一栏读的是同一份 ②~⑤，只是给的是点得动的条目。
+
+    提示词那一份 markdown 是给模型读的；这一份每条要带上自己的去处（话题 id /
+    决策卡 id / 里程碑 id）和一句话结论。人看总览时读到的东西，和芝士那一轮读到
+    的是同一次取数（`TopicService.overview_auto_data`）——两个读者，一份来源。
+    """
+    project_id, topic_id = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    client.post(f"/topics/{topic_id}/decision", json={"decision": DECISION})
+    client.post(f"/projects/{project_id}/milestones", json={"title": "中期答辩"})
+    ended = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "做完的房间", "created_by": "user-1"},
+    ).json()["data"]["id"]
+    archived = client.post(
+        f"/topics/{ended}/archive",
+        json={"by": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
+    assert archived.status_code == 200, archived.text
+
+    body = client.get(f"/topics/{overview}/overview").json()["data"]
+    assert body["root_topic_id"] == overview
+    # 块按 ②③④⑤ 排，空块整块不出现（同提示词那一份）。
+    assert [b["key"] for b in body["blocks"]] == [
+        "active_topics",
+        "decisions",
+        "milestones",
+        "closed_topics",
+    ]
+    blocks = {b["key"]: b for b in body["blocks"]}
+    assert [b["title"] for b in body["blocks"]] == [
+        "现在在做什么",
+        "最近决策",
+        "里程碑",
+        "已结束的话题",
+    ]
+
+    # ② 活跃话题：去处是那个房间，状态是它最新的那张卡（还没开活）。
+    (active,) = blocks["active_topics"]["items"]
+    assert active["kind"] == "topic"
+    assert active["topic_id"] == topic_id
+    assert active["title"] == "干活的房间"
+    assert active["status"] == "还没开活"
+    assert active["owner"] is None
+
+    # ③ 最近决策：一条决策卡，去哪儿看全文是它所在的话题。
+    (decision,) = blocks["decisions"]["items"]
+    assert decision["kind"] == "decision"
+    assert decision["text"] == DECISION
+    assert decision["topic_id"] == topic_id
+    assert decision["topic_title"] == "干活的房间"
+    assert decision["block_id"]
+
+    # ④ 里程碑：状态给原值（界面按它上点），日期没定就是没有。
+    (milestone,) = blocks["milestones"]["items"]
+    assert milestone["kind"] == "milestone"
+    assert milestone["title"] == "中期答辩"
+    assert milestone["status"] == "upcoming"
+    assert milestone["due"] is None
+
+    # ⑤ 已结束的话题：归档的那一间落在这里，不在 ②。
+    (closed,) = blocks["closed_topics"]["items"]
+    assert closed["kind"] == "topic"
+    assert closed["topic_id"] == ended
+    assert closed["title"] == "做完的房间"
+
+
+def test_only_the_overview_room_has_an_overview(client):
+    """别的房间名下没有这么一件东西，是 404 而不是一个空壳。
+
+    总览是项目级的：一个干活的房间读它自己的实况文档，没有人从那里看项目全局。
+    给它拼一份出来，等于凭空多出一个「这个房间的总览」。
+    """
+    project_id, topic_id = _project_and_room(client)
+    resp = client.get(f"/topics/{topic_id}/overview")
+    assert resp.status_code == 404, resp.text
+
+
+def test_a_stranger_cannot_read_the_overview(client):
+    """权限和读总览文档一样：认得出来是谁，还得在名册上。"""
+    project_id, _ = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    resp = client.get(
+        f"/topics/{overview}/overview", headers=session_auth_headers("stranger")
+    )
+    assert resp.status_code == 403, resp.text

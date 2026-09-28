@@ -93,7 +93,7 @@ def test_only_overview_can_inspect_and_repair_once(client, monkeypatch):
         ).status_code
         == 422
     )
-    chat._active_turn_ids[uuid.UUID(t)] = uuid.uuid4()
+    chat._active_turn_ids[uuid.UUID(t)] = {uuid.uuid4()}
     try:
         assert client.post(path, headers=headers, json=body).status_code == 422
     finally:
