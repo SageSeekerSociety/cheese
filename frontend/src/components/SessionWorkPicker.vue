@@ -39,11 +39,7 @@ const choices = computed(() => {
     profile: 'device',
     device_id: device.device_id,
   }))
-  return compactChoices(
-    props.profile.project_default,
-    [...props.profile.favorites, standard, ...devices],
-    current.value
-  ).map((choice) => {
+  return compactChoices(props.profile.project_default, standard, ...devices, current.value).map((choice) => {
     const available =
       choice.profile === 'cloud'
         ? props.profile.profiles.some((profile) => profile.id === 'cloud' && profile.available)

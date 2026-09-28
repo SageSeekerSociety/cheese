@@ -76,6 +76,19 @@
     "saveFailed": "选择工作电脑失败",
     "retry": "重试"
   },
+  "projectMachine": {
+    "defaultLabel": "新 agent 默认用",
+    "change": "更换",
+    "collapse": "收起",
+    "hint": "只影响还没开工的 agent；已经在干活的 agent 继续用自己那台",
+    "distribution": "现在的分布",
+    "onCloud": "云端 · {count} 个 agent",
+    "onDevice": "{name} · {count} 个 agent",
+    "noneStarted": "暂无开工的 agent",
+    "managedBy": "项目负责人可以更换默认",
+    "loadFailed": "加载工作电脑设置失败",
+    "saveFailed": "保存工作电脑设置失败"
+  },
   "teamLink": {
     "title": "团队链接",
     "description": "拿到链接的人登录后就能找到这个团队并加入。链接一直有效，直到你重置它",

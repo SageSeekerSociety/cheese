@@ -110,7 +110,6 @@ function roomMachines(overrides: Partial<TopicComputeProfile> = {}): TopicComput
   return {
     choice: CLOUD,
     project_default: CLOUD,
-    favorites: [],
     current: 'cloud',
     device_id: null,
     devices: [{ device_id: 'lab', name: '实验室工作站', online: true }],

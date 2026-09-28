@@ -27,7 +27,6 @@ const device: ComputeChoice = { ...cloud, name: '测试工作站', profile: 'dev
 const profile: TopicComputeProfile = {
   choice: cloud,
   project_default: cloud,
-  favorites: [device],
   current: 'cloud',
   device_id: null,
   devices: [{ device_id: 'workstation', name: '测试工作站', online: true }],

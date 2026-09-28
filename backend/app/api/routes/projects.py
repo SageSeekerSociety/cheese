@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import uuid
-from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote
@@ -16,7 +15,6 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import (
     get_chat_service,
     get_profile_registry,
-    project_device_online,
 )
 from app.api.place import project_reader
 from app.api.response import ok, page
@@ -42,7 +40,6 @@ from app.domain.agent.github_app import (
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_TIERS,
-    compute_default_name,
     compute_selectable,
 )
 from app.domain.agent.profiles import ProfileRegistry
@@ -1205,10 +1202,15 @@ async def get_compute_configs(
     except ForbiddenError:
         can_manage = False
     devices = await sql_device_service(db).list_devices_for_project(project_id)
+    from app.domain.machine.session_work import project_distribution
+
     return ok(
         {
             **project_configs(project.settings).model_dump(),
             "can_manage": can_manage,
+            # Where the project's agents are working now; the default only
+            # decides for agents that have not started.
+            "distribution": await project_distribution(db, project_id),
             "devices": [
                 {
                     "device_id": d.device_id,
@@ -1237,10 +1239,9 @@ async def save_compute_configs(
     if project is None:
         raise NotFoundError("Project not found")
     await MemberService(db).require_manager(project_id, actor)
-    for choice in [body.default, *body.favorites]:
-        await validate_choice(db, project_id, choice)
-        if choice.profile == COMPUTE_CLOUD:
-            await MachineService(db).require_use_authority(project_id, actor)
+    await validate_choice(db, project_id, body.default)
+    if body.default.profile == COMPUTE_CLOUD:
+        await MachineService(db).require_use_authority(project_id, actor)
     values = dict(project.settings or {})
     values.pop("compute_profile", None)
     values["compute_configs"] = body.model_dump()
@@ -1352,42 +1353,6 @@ async def set_topic_naming(
     project.settings = {**(project.settings or {}), naming.SETTINGS_KEY: mode}
     await db.flush()
     return await get_topic_naming(project_id, db, resolver)
-
-
-@router.get("/{project_id}/compute-profiles")
-async def list_compute_profiles(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Available compute sources and the explicit project default."""
-    configs = await get_compute_configs(project_id, db, resolver)
-    current = configs["data"]["default"]["profile"]
-    device_online = await project_device_online(db, project_id)
-    profiles = [
-        asdict(v) for v in compute_selectable(settings, device_online=device_online)
-    ]
-    return ok({"current": current, "profiles": profiles})
-
-
-@router.put("/{project_id}/compute-profile")
-async def set_compute_profile(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Set the project's compute pool. Only a deployed (available) pool is
-    accepted, so a project never selects compute that isn't actually there."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    name = (body.get("profile") or "").strip() or compute_default_name()
-    device_online = await project_device_online(db, project_id)
-    allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
-    if name not in allowed:
-        raise ValidationError(f"这类工作电脑尚未接入，暂不可选：{name!r}")
-    from app.domain.agent.compute_configs import standard_choice
-
-    configs = project_configs(project.settings)
-    configs.default = standard_choice(name)
-    await save_compute_configs(project_id, configs, db, resolver)
-    return ok({"current": name})
 
 
 # --- Project stewardship: who answers for a project ---------------------------

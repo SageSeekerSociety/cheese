@@ -4,13 +4,11 @@ export function choiceKey(c: ComputeChoice): string {
   return JSON.stringify([c.profile, c.device_id ?? null, c.cores ?? null, c.memory_mb ?? null, c.disk_gb ?? null])
 }
 
-export function compactChoices(
-  defaultChoice: ComputeChoice,
-  favorites: ComputeChoice[],
-  current?: ComputeChoice
-): ComputeChoice[] {
+// The choices in order, each configuration once.
+export function compactChoices(...choices: (ComputeChoice | null | undefined)[]): ComputeChoice[] {
   const seen = new Set<string>()
-  return [defaultChoice, ...favorites, ...(current ? [current] : [])].filter((c) => {
+  return choices.filter((c): c is ComputeChoice => {
+    if (!c) return false
     const key = choiceKey(c)
     if (seen.has(key)) return false
     seen.add(key)

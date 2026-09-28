@@ -1,4 +1,4 @@
-"""Project favorites and room-local resource choices."""
+"""The project default and room-local resource choices."""
 
 from typing import Literal
 
@@ -45,7 +45,6 @@ class ComputeChoice(BaseModel):
 class ProjectComputeConfigs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     default: ComputeChoice
-    favorites: list[ComputeChoice] = Field(default_factory=list, max_length=12)
 
 
 def standard_choice(profile: str | None = None) -> ComputeChoice:

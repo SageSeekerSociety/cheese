@@ -1625,7 +1625,6 @@ async def get_topic_compute_profile(
             "current": current,
             "choice": choice.model_dump(),
             "project_default": configs.default.model_dump(),
-            "favorites": [v.model_dump() for v in configs.favorites],
             # A machine id only has selection meaning under the self-hosted pool.
             # Cloud also records its connector in device_topic, but that endpoint is
             # an implementation detail of the freshly provisioned topic machine, not

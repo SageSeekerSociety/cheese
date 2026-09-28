@@ -21,9 +21,7 @@ const error = ref('')
 const proposal = ref('')
 const menuOpen = ref(false)
 const more = ref(false)
-const choices = computed(() =>
-  compactChoices(props.profile.project_default, props.profile.favorites, props.profile.choice)
-)
+const choices = computed(() => compactChoices(props.profile.project_default, props.profile.choice))
 const cloudAvailable = computed(() => props.profile.profiles.some((p) => p.id === 'cloud' && p.available))
 function online(choice: ComputeChoice): string {
   if (!choice.device_id) return ''

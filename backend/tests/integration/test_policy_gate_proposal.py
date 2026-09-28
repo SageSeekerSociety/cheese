@@ -333,10 +333,7 @@ def test_the_owner_of_the_machine_the_platform_would_pick_is_the_one_asked(
     # 项目默认是「自有设备 · 自动选择」：没点名任何一台，平台第一轮自己挑。
     saved = client.put(
         f"/projects/{pid}/compute-configs",
-        json={
-            "default": {"name": "自有设备 · 自动选择", "profile": "device"},
-            "favorites": [],
-        },
+        json={"default": {"name": "自有设备 · 自动选择", "profile": "device"}},
         headers=session_auth_headers("andyl"),
     )
     assert saved.status_code == 200, saved.text
@@ -379,10 +376,7 @@ def test_the_picker_and_the_turn_ask_for_the_same_machine_once(
     device_id = _device_owned_by(client, pid, machine_owner_id, "小王的工作站")
     saved = client.put(
         f"/projects/{pid}/compute-configs",
-        json={
-            "default": {"name": "自有设备 · 自动选择", "profile": "device"},
-            "favorites": [],
-        },
+        json={"default": {"name": "自有设备 · 自动选择", "profile": "device"}},
         headers=session_auth_headers("andyl"),
     )
     assert saved.status_code == 200, saved.text

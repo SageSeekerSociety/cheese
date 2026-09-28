@@ -991,12 +991,6 @@ export interface ProjectCredits {
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
-// GET /projects/{id}/compute-profiles
-export interface ComputeProfiles {
-  current: string
-  profiles: PoolListing[]
-}
-
 export type ProjectMachineStatus =
   | 'provisioning'
   | 'starting'
@@ -1071,7 +1065,6 @@ export interface TopicComputeDevice {
 export interface TopicComputeProfile {
   choice: ComputeChoice
   project_default: ComputeChoice
-  favorites: ComputeChoice[]
   current: string
   device_id: string | null
   devices: TopicComputeDevice[]
@@ -1126,12 +1119,19 @@ export interface SessionWorkLease {
   lease: { device_id: string; generation: number; status: string; online: boolean } | null
 }
 
+// GET /projects/{id}/compute-configs — the machine new agents start on, and where
+// the project's agents that have started are working now.
 export interface ProjectComputeConfigs {
   default: ComputeChoice
-  favorites: ComputeChoice[]
   can_manage: boolean
   devices: TopicComputeDevice[]
   cloud_available: boolean
+  distribution: ComputeDistribution
+}
+
+export interface ComputeDistribution {
+  cloud: number
+  devices: { device_id: string | null; name: string; agents: number; machine_access: boolean }[]
 }
 
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)

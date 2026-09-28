@@ -11,7 +11,6 @@ import type {
   BranchProtectionPatch,
   BranchProtectionRules,
   ChatAttachment,
-  ComputeProfiles,
   DocumentRevision,
   EnvironmentConfig,
   EnvironmentStatus,
@@ -835,17 +834,6 @@ export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
 
-// 算力池: the project's current compute pool + the deployed ones it may select.
-export function getComputeProfiles(projectId: string): Promise<ComputeProfiles> {
-  return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/compute-profiles`)
-}
-export function setComputeProfile(projectId: string, profile: string): Promise<{ current: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/compute-profile`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  })
-}
-
 // MicroCloud machines are billed/audited through one project but enroll into that
 // project's team compute pool. The browser never receives provider credentials.
 export interface ResourceLimits {
@@ -940,8 +928,8 @@ export function getProjectComputeConfigs(projectId: string): Promise<import('./c
 
 export function saveProjectComputeConfigs(
   projectId: string,
-  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>
-): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>> {
+  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default'>
+): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default'>> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`, {
     method: 'PUT',
     body: JSON.stringify(configs),
