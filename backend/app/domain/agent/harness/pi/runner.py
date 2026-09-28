@@ -35,6 +35,7 @@ from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.pi import catalog
 from app.domain.agent.harness.pi.journal import COMPACTING, GAVE_UP, RETRYING, Journal
 from app.domain.agent.harness.pi.mcp import ProjectServers
+from app.domain.agent.harness.pi.project_skills import project_skills
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 
 # A live event that can only mean an entry was written. Anything else is
@@ -357,10 +358,17 @@ class Runner(runner.Runner[Journal]):
             ["--append-system-prompt", str(prompt)] if opening.system_prompt else []
         )
         # pi starts with `--no-skills` because it would otherwise read whatever
-        # the machine's owner keeps in ~/.agents and cwd. Explicit `--skill`
-        # paths are additive even then, so the platform's own skills are written
-        # here and named — for the same reason the system prompt is: they are
-        # assembled by the platform, and the machine has no copy to point at.
+        # the machine's owner keeps in their own ~/.agents. That drops the
+        # project's own skills as well, so they are named here, found the way
+        # pi finds them in a project it trusts. They come first: pi keeps the
+        # first skill of a name, and in a project opened with plain pi, the
+        # project's skill wins over one of the same name from anywhere else.
+        for path in project_skills(cwd):
+            appended += ["--skill", path]
+        # Explicit `--skill` paths are additive even under `--no-skills`, so the
+        # platform's own skills are written here and named — for the same
+        # reason the system prompt is: they are assembled by the platform, and
+        # the machine has no copy to point at.
         #
         # A skill is a directory and everything under it travels, so the files
         # go wherever their relative paths say — but only the directories that
