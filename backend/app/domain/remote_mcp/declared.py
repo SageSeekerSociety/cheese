@@ -147,7 +147,10 @@ async def read(
         declared = Declared(problem="missing")
     except Exception:  # noqa: BLE001 — a forge outage must not fail a session
         logger.warning("remote_mcp: .mcp.json unreadable project=%s", project_id)
-        return Declared(problem="unreadable")
+        # The last answer stands while the forge is down. A session's servers
+        # are part of what it was started with, so answering "none" for the
+        # length of an outage would relaunch every idle session twice.
+        return cached[1] if cached else Declared(problem="unreadable")
     else:
         content = read.get("content")
         declared = (
