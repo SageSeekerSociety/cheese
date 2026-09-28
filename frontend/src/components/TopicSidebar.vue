@@ -596,7 +596,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
           <button
             type="button"
             class="rail-header__home"
-            :class="{ 'rail-header__home--active': onHome }"
+            :class="{ 'rail-header__home--active': onHome, 'tap-target': page }"
             :title="currentProjectName"
             :aria-current="onHome ? 'page' : undefined"
             :disabled="!selectedProjectId"
@@ -614,7 +614,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 v-bind="menuProps"
                 type="button"
                 class="rail-header__more"
-                :class="{ 'rail-header__more--active': isActive }"
+                :class="{ 'rail-header__more--active': isActive, 'tap-target': page }"
                 title="项目菜单"
                 aria-label="项目菜单"
               >
@@ -1133,6 +1133,15 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   height: 100%;
   border-block-end: 0;
   padding-inline: 0;
+}
+/* 顶栏里左边紧挨着 ←：往左探的那 4px 会压到 ← 能点的那一块上。两颗按钮都比手指
+   小，能点的范围由 .tap-target 撑到 44（相对定位给它用）。 */
+.rail-header--bar .rail-header__home {
+  position: relative;
+  margin-inline-start: 0;
+}
+.rail-header--bar .rail-header__more {
+  position: relative;
 }
 /* 这一条里现在有两个按钮，所以描边长在按钮上，不长在整条上。 */
 .rail-header__home,

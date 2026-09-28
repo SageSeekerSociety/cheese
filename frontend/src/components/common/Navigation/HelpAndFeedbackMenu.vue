@@ -72,7 +72,7 @@ watch(loggedIn, refresh, { immediate: true })
       <v-btn
         v-bind="activator"
         class="help-entry"
-        :class="{ 'help-entry--compact': props.compact }"
+        :class="{ 'help-entry--compact tap-target': props.compact }"
         variant="text"
         color="on-surface-variant"
         :aria-label="hasUnread ? t('navigation.feedback.unread') : t('navigation.feedback.label')"

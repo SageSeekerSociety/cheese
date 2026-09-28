@@ -980,6 +980,20 @@ button:not(.v-btn) {
   outline-offset: -2px;
 }
 
+/* 手指点得中：触屏上一个控件能点的范围至少 44×44（docs/design-system.md 的手机
+   一节）。画出来的样子不变，只把能点的那块往四周撑开——加在一个本身有定位的小
+   控件上（v-btn 自带 position: relative）。用 ::before，因为 v-btn 的 ::after 是它
+   的键盘焦点环。 */
+.tap-target::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+}
+
 /* Crisp keyboard focus (a11y floor) — soft amber ring. */
 :focus-visible {
   outline: 2px solid var(--focus-ring);

@@ -188,7 +188,7 @@ async function onSetRole(handle: string, role: string) {
       <button
         v-bind="act"
         type="button"
-        class="members-mini"
+        class="members-mini tap-target"
         :class="{ 'members-mini--open': open }"
         :title="`话题成员 · ${countLabel}`"
       >
@@ -333,7 +333,9 @@ async function onSetRole(handle: string, role: string) {
 <style scoped>
 /* Compact roster indicator: an avatar stack + count, no full-width bar.
    Sits at the top-right of the topic/chat header row (fusion-design §3). */
+/* 相对定位给 .tap-target：这一颗只有 28px 高，手机顶栏里手指要点得中。 */
 .members-mini {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
