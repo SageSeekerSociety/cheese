@@ -1,8 +1,11 @@
 """Expose the room executor's tool schemas and receipts to app-server."""
 
 import asyncio
+import base64
 import importlib.resources
 import json
+import posixpath
+import shutil
 import types
 from pathlib import Path
 
@@ -11,6 +14,7 @@ from app.domain.agent.executor_transport import (
     MachineOutOfReach,
     PlatformHost,
     RemoteClient,
+    session_path,
 )
 
 # The executor implements these tools. The platform's own tools are not the
@@ -31,6 +35,17 @@ NATIVE_TOOLS = {
 #: The route a platform tool takes: not a server on the executor, the backend.
 PLATFORM = "platform"
 
+#: Where Codex finds a repository's skills, relative to the project root: the
+#: `.agents/skills` directory and the `skills` folder of the project's `.codex`
+#: config layer (`codex-rs/ext/skills/src/host_roots.rs` at rust-v0.154.0).
+SKILL_ROOTS = (".agents/skills", ".codex/skills")
+
+#: The arguments of an executor tool that name a path or run a command.
+PATH_ARGUMENTS = ("file_path", "path", "notebook_path", "command")
+
+#: How much of one skill file a single context read asks the machine for.
+SKILL_READ_BYTES = 1024 * 1024
+
 
 def platform_tools():
     """The platform's tool table and its runner (结论 63): the one file every
@@ -48,11 +63,110 @@ def platform_tools():
 
 
 class RemoteTools:
-    def __init__(self, target: dict):
+    def __init__(self, target: dict, mirror: Path | None = None):
         self.client = RemoteClient(target)
         self.routes: dict[str, tuple[str, str]] = {}
         self.platform = platform_tools()
         self.doc_versions: dict[str, int] = {}
+        # The project's skills, where the session's Codex can read them. It
+        # has no environment of its own (`session.py`), so it finds none in
+        # the project; it finds these as extra roots (`skill_roots`).
+        self.mirror = mirror
+        # What the mirror holds: its path -> the (size, mtime) it was read at.
+        self.mirrored: dict[str, tuple[int, int]] | None = None
+
+    def skill_roots(self) -> list[str]:
+        assert self.mirror is not None
+        return [str(self.mirror / root) for root in SKILL_ROOTS]
+
+    def sync_skills(self) -> bool:
+        """The mirror holds the project's skills as the machine has them now.
+
+        Plain Codex scans the project's skill roots itself and watches them.
+        A room's Codex reads them from the mirror, which this brings up to
+        date from the executor's context tree before every turn. Whether
+        anything changed.
+        """
+        assert self.mirror is not None
+        if self.mirrored is None:
+            # A mirror left by an earlier process may hold what the project
+            # has since dropped.
+            shutil.rmtree(self.mirror, ignore_errors=True)
+            self.mirrored = {}
+        entries = self.client.call("context_fs", {"operation": "tree"}).get(
+            "entries", {}
+        )
+        wanted: dict[str, str] = {}
+
+        def collect(held: str, source: str, depth: int = 0) -> None:
+            # `held` is where the project shows `source`; a link to a
+            # directory elsewhere in the project shows that directory's files
+            # at the link's own path, as reading through it on the machine does.
+            for name, entry in entries.items():
+                if name != source and not name.startswith(source + "/"):
+                    continue
+                place = held + name[len(source) :]
+                if entry["kind"] == "file":
+                    wanted[place] = name
+                elif entry["kind"] == "symlink" and depth < 8:
+                    target = posixpath.normpath(
+                        posixpath.join(posixpath.dirname(name), entry["target"])
+                    )
+                    if target not in (".", "") and not target.startswith(("..", "/")):
+                        collect(place, target, depth + 1)
+
+        for root in SKILL_ROOTS:
+            collect(root, root)
+        changed = False
+        for place in [place for place in self.mirrored if place not in wanted]:
+            (self.mirror / place).unlink(missing_ok=True)
+            del self.mirrored[place]
+            changed = True
+        for place, name in wanted.items():
+            entry = entries[name]
+            stamp = (entry["size"], entry["mtime_ns"])
+            if self.mirrored.get(place) == stamp:
+                continue
+            data = b""
+            while len(data) < entry["size"]:
+                piece = base64.b64decode(
+                    self.client.call(
+                        "context_fs",
+                        {
+                            "operation": "read",
+                            "path": name,
+                            "offset": len(data),
+                            "size": min(SKILL_READ_BYTES, entry["size"] - len(data)),
+                        },
+                    )["data"]
+                )
+                if not piece:
+                    break
+                data += piece
+            path = self.mirror / place
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            self.mirrored[place] = stamp
+            changed = True
+        for directory in sorted(self.mirror.rglob("*"), reverse=True):
+            if directory.is_dir() and not any(directory.iterdir()):
+                directory.rmdir()
+        return changed
+
+    def on_the_machine(self, arguments: dict) -> dict:
+        """`arguments` with each path in the mirror named where the machine
+        holds it: the model reads a skill's files, and runs its scripts, at
+        the paths the skill list gave it, which are the mirror's."""
+        workspace = self.client.config.get("workspace")
+        if self.mirror is None or not workspace:
+            return arguments
+        mirror, project = str(self.mirror), session_path(workspace)
+        return {
+            key: value.replace(mirror, project)
+            if key in PATH_ARGUMENTS and isinstance(value, str)
+            else value
+            for key, value in arguments.items()
+        }
 
     async def discover(self, servers: list[str]) -> list[dict]:
         tools = []
@@ -127,6 +241,8 @@ class RemoteTools:
                 self._platform_call, tool, params["callId"], params["arguments"]
             )
         receipt: dict
+        if server == "native":
+            params = {**params, "arguments": self.on_the_machine(params["arguments"])}
         if server in self.client.remote_servers():
             # Codex fires no project hooks, and a remote server's call never
             # reaches the machine that would run them around it.

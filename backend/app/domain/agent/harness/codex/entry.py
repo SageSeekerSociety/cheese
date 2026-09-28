@@ -13,8 +13,8 @@ from app.domain.agent.harness.codex.tools import RemoteTools
 
 
 async def serve(state: Path, config: dict) -> None:
-    tools = RemoteTools(config["execution_target"])
-    runner = Runner(state, tools)
+    tools = RemoteTools(config["execution_target"], mirror=state / "project-skills")
+    runner = Runner(state, tools, skills=tools)
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
