@@ -123,10 +123,22 @@ describe('现场按队友看', () => {
     expect(view.container.textContent).toContain('本轮失败')
   })
 
+  it('「全部」下每一组的组头写是哪个队友的轮次；只看一个队友时不写', async () => {
+    const view = await openSite(TWO.slice(0, 3))
+
+    const who = () =>
+      Array.from(view.container.querySelectorAll('[data-testid="turn-who"]')).map((e) => e.textContent?.trim())
+    expect(who()).toEqual(['芝士', '小苔', '芝士'])
+
+    await fireEvent.click(view.getByRole('tab', { name: '小苔' }))
+    expect(who()).toEqual([])
+  })
+
   it('只有一个队友：没有这一排', async () => {
     const view = await openSite([TWO[0], TWO[2]])
 
     expect(view.queryAllByRole('tab')).toHaveLength(0)
+    expect(view.container.querySelector('[data-testid="turn-who"]')).toBeNull()
   })
 
   it('状态条：「全部」下说此刻在动的那个队友，选中别的队友时说它闲着', async () => {
