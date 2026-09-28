@@ -3,6 +3,8 @@
 import hashlib
 import hmac
 import logging
+import math
+import time
 import uuid
 from typing import Any, cast
 from urllib.parse import quote
@@ -137,11 +139,45 @@ async def repository_data(
         raise GatewayUnavailableError("暂时无法连接代码仓库，请稍后重试") from exc
     if response.status_code == 404:
         return None
+    if _rate_limited(response):
+        raise ForgeRateLimitedError(_rate_limit_message(response))
     if response.is_error:
         raise GatewayUnavailableError(
             f"读取代码仓库失败（HTTP {response.status_code}）"
         )
     return response.text if diff else response.json()
+
+
+class ForgeRateLimitedError(GatewayUnavailableError):
+    """The forge's API quota for this installation is used up for now.
+
+    Every call the platform makes for a repo — the pollers and each person's
+    delivery alike — draws on the one hourly quota of the App installation,
+    so this is a state that clears by itself at the reset, not a refusal.
+    """
+
+    retryable = True
+
+
+def _rate_limited(response: httpx.Response) -> bool:
+    # GitHub answers an exhausted quota with 403 (or 429) and says so in the
+    # headers; a 403 without them is a real permission refusal.
+    return response.status_code in (403, 429) and (
+        response.headers.get("x-ratelimit-remaining") == "0"
+        or "retry-after" in response.headers
+    )
+
+
+def _rate_limit_message(response: httpx.Response) -> str:
+    wait_s: float | None = None
+    if retry_after := response.headers.get("retry-after"):
+        wait_s = float(retry_after) if retry_after.isdigit() else None
+    elif reset := response.headers.get("x-ratelimit-reset"):
+        wait_s = float(reset) - time.time() if reset.isdigit() else None
+    if wait_s is None:
+        return "代码仓库的 API 额度暂时用完了，稍后自动恢复，届时重试即可"
+    minutes = max(1, math.ceil(wait_s / 60))
+    return f"代码仓库的 API 额度暂时用完了，约 {minutes} 分钟后恢复，届时重试即可"
 
 
 async def branch_head(

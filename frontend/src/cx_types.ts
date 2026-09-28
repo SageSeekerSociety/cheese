@@ -95,6 +95,8 @@ export interface Topic {
   // 上面那段等待多半为什么还没人回：mention / check，或机器/环境事件类型
   // （machine_provisioning / device_waiting / sandbox_rebuilt / environment_repaired）。
   reply_wait_reason?: string | null
+  // 卡停在检查没过 / 冲突 / 被退回 / 闸门红上时，那张卡的 PR 号。
+  reply_wait_pr?: number | null
   // 最近一轮以报错收场（「本轮未完成：…」、502/404）而之后 AI 还没开过口：那次
   // 报错的时间，没有就 null。侧栏见到它立刻亮红灯。只有 list/get 话题时才带。
   turn_failed_at?: string | null
@@ -458,6 +460,9 @@ export interface ProjectMemberRow {
   // 第一个带 `agent` 的不是这个答案（那是建得最早的那一位），所以要问「这个房间
   // 归谁」的地方只能读这一位。
   project_default?: boolean
+  // 队友自己的 handle（`cheese-kimi` 这种）：它的会话、轮次按这个记，消息的收件人也
+  // 写这个。只知道这个 handle 的地方靠它找到这一行。人没有这一项。
+  instance_handle?: string
   [key: string]: unknown
 }
 

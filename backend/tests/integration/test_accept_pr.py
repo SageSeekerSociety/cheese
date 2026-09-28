@@ -2689,6 +2689,30 @@ def test_a_batch_with_nothing_on_its_branch_gets_no_pr(client, sweeping):
     assert sweeping["opened"] == []
 
 
+def test_a_batch_left_open_in_an_archived_room_gets_no_pr(client, sweeping):
+    """Rooms archived before archiving closed their work still hold open tasks.
+
+    Nobody works there any more, so the sweep must not spend a GitHub request
+    per tick on each of them, let alone open a PR for one.
+    """
+    from app.domain.topic.models import Topic, TopicStatus
+
+    _pid, tid = _room_with_work(client)
+
+    async def archive_without_closing() -> None:
+        async with client.test_factory() as session:
+            topic = await session.get(Topic, _uuid.UUID(tid))
+            topic.status = TopicStatus.archived
+            await session.commit()
+
+    asyncio.run(archive_without_closing())
+
+    counts = _sweep(client)
+
+    assert counts == {"opened": 0, "skipped": 0, "failed": 0}
+    assert sweeping["opened"] == []
+
+
 def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):
     from app.domain.room_task.models import Task, TaskStatus
 

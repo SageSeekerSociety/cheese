@@ -65,12 +65,16 @@ class Member:
     # The handle of that team, which the row's 「来自团队」 link goes to.
     team_handle: str | None = None
     created_at: str | None = None
+    # A teammate's own handle, the one its sessions and turns are keyed by and a
+    # message's recipient names (``AgentInstance.handle``). The row is found by
+    # it wherever only that handle is known.
+    instance_handle: str | None = None
 
     def as_dict(self) -> dict:
         """读名册的调用方拿到的那一行。
 
         键与字段同名，缺省的几个（``source``/``team_id``/``team_handle``/
-        ``created_at``）为空时不出现。
+        ``created_at``/``instance_handle``）为空时不出现。
         """
         row: dict = {
             "handle": self.handle,
@@ -88,6 +92,8 @@ class Member:
             row["team_handle"] = self.team_handle
         if self.created_at is not None:
             row["created_at"] = self.created_at
+        if self.instance_handle is not None:
+            row["instance_handle"] = self.instance_handle
         return row
 
 
@@ -158,6 +164,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
                     active=instance.is_active,
                     project_default=instance.id == default_instance_id,
                     source="agent",
+                    instance_handle=instance.handle,
                 )
             )
             at[seat] = len(rows) - 1
@@ -176,6 +183,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             team_id=held.team_id,
             team_handle=held.team_handle,
             created_at=held.created_at,
+            instance_handle=instance.handle,
         )
     return tuple(rows)
 

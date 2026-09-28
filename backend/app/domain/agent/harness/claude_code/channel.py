@@ -29,7 +29,7 @@ from app.domain.agent.harness.channel import (
     Placement,
     startup_refused,
 )
-from app.domain.agent.harness.claude_code.runner import LAUNCH, ended
+from app.domain.agent.harness.claude_code.runner import ended
 from app.domain.agent.harness.claude_code.runtime import Handle
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
@@ -111,7 +111,7 @@ class ClaudeCodeChannel:
         screen = await self.channel.ensure_ready(
             session=session,
             token=token,
-            env={**(opening.env or {}), LAUNCH: launch},
+            env=opening.env,
             memory_scope=opening.memory_scope,
             owner=opening.owner,
             turn_id=None,
@@ -119,6 +119,7 @@ class ClaudeCodeChannel:
                 system_prompt=opening.system_prompt,
                 model=opening.model,
                 resume_session_id=opening.resume_token,
+                launch_name=launch,
             ),
             precheck=precheck,
             runtime_factory=runtime,

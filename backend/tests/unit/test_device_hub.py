@@ -666,3 +666,157 @@ async def test_the_machines_own_failure_arrives_as_a_device_call_error():
     await hub.on_device_message("dev1", wire.execution_result(identifier))
     with pytest.raises(DeviceCallError, match="Request ID"):
         await task
+
+
+class StalledTransport:
+    """A link whose peer stopped reading: a write waits for a buffer that never
+    drains, as the server's does for a machine asleep behind the proxy."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+        self.stalled = False
+
+    async def send_json(self, msg: dict) -> None:
+        if self.stalled:
+            await asyncio.Event().wait()
+        self.sent.append(msg)
+
+
+async def test_a_call_whose_frame_cannot_leave_fails_when_the_link_is_dropped():
+    hub = DeviceHub()
+    transport = StalledTransport()
+    await hub.attach_device("dev", transport)
+    transport.stalled = True
+    stuck = asyncio.create_task(hub.exec("dev", ["true"], timeout=600))
+    queued = asyncio.create_task(hub.exec("dev", ["false"], timeout=600))
+    await asyncio.sleep(0.05)
+    assert not stuck.done() and not queued.done()
+
+    await hub.detach_device("dev", transport)
+
+    for call in (stuck, queued):
+        with pytest.raises(DeviceOffline):
+            await asyncio.wait_for(call, 1)
+    # The machine dialing back in is not held behind the frame that never left.
+    fresh = FakeDeviceTransport()
+    await asyncio.wait_for(hub.attach_device("dev", fresh), 1)
+    assert fresh.sent == [{"t": "welcome", "v": 1}]
+
+
+async def test_a_reconnect_frees_what_waited_on_the_stalled_link():
+    hub = DeviceHub()
+    transport = StalledTransport()
+    await hub.attach_device("dev", transport)
+    transport.stalled = True
+    stuck = asyncio.create_task(hub.exec("dev", ["true"], timeout=600))
+    await asyncio.sleep(0.05)
+
+    fresh = FakeDeviceTransport()
+    await asyncio.wait_for(hub.attach_device("dev", fresh), 1)
+
+    with pytest.raises(DeviceOffline):
+        await asyncio.wait_for(stuck, 1)
+    assert fresh.sent == [{"t": "welcome", "v": 1}]
+
+
+async def test_an_exec_waiting_for_its_answer_fails_when_the_link_drops():
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev", transport)
+    waiting = asyncio.create_task(hub.exec("dev", ["python3", "-"], timeout=660))
+    await asyncio.sleep(0)
+    assert transport.sent[-1]["t"] == "exec"
+
+    await hub.detach_device("dev", transport)
+
+    with pytest.raises(DeviceOffline):
+        await asyncio.wait_for(waiting, 1)
+
+
+def _socket_app(monkeypatch, hub):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import FastAPI
+
+    from app.api.routes import connector
+    from app.core.db import get_db
+
+    monkeypatch.setattr(connector, "device_hub", hub)
+    monkeypatch.setattr(connector.settings, "device_connection_owner", True)
+    app = FastAPI()
+    app.include_router(connector.router)
+    app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
+    monkeypatch.setattr(
+        connector.owner_reads,
+        "device_for_token",
+        AsyncMock(return_value=SimpleNamespace(device_id="dev", name="fixture")),
+    )
+    return app
+
+
+def _online_after(hub, seconds: float) -> bool:
+    import time
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and hub.is_online("dev"):
+        time.sleep(0.02)
+    return hub.is_online("dev")
+
+
+def test_a_connector_that_falls_silent_is_taken_offline(monkeypatch):
+    """A machine that sleeps behind the proxy leaves its socket open for as
+    long as it sleeps. It stops heartbeating, and that is what takes it
+    offline, not the socket closing minutes later."""
+    from fastapi.testclient import TestClient
+
+    from app.domain.agent import device_hub as hub_module
+
+    monkeypatch.setattr(hub_module, "LINK_SILENCE_S", 0.3)
+    hub = DeviceHub()
+    with (
+        TestClient(_socket_app(monkeypatch, hub)) as client,
+        client.websocket_connect("/connector/agent?token=fixture") as ws,
+    ):
+        assert ws.receive_json()["t"] == "welcome"
+        ws.send_json({"t": "heartbeat"})
+        assert _online_after(hub, 0.2), "a beat just now: still there"
+        assert not _online_after(hub, 2), "three beats missed: gone"
+
+
+def test_a_connector_that_keeps_beating_stays_online(monkeypatch):
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from app.domain.agent import device_hub as hub_module
+
+    monkeypatch.setattr(hub_module, "LINK_SILENCE_S", 0.3)
+    hub = DeviceHub()
+    with (
+        TestClient(_socket_app(monkeypatch, hub)) as client,
+        client.websocket_connect("/connector/agent?token=fixture") as ws,
+    ):
+        assert ws.receive_json()["t"] == "welcome"
+        for _ in range(10):
+            ws.send_json({"t": "heartbeat"})
+            time.sleep(0.1)
+        assert hub.is_online("dev")
+
+
+def test_a_connector_that_never_heartbeats_is_not_judged_by_silence(monkeypatch):
+    """One built before heartbeats says nothing between calls; its silence is
+    not evidence, and it stays online until its socket closes."""
+    from fastapi.testclient import TestClient
+
+    from app.domain.agent import device_hub as hub_module
+
+    monkeypatch.setattr(hub_module, "LINK_SILENCE_S", 0.3)
+    hub = DeviceHub()
+    with (
+        TestClient(_socket_app(monkeypatch, hub)) as client,
+        client.websocket_connect("/connector/agent?token=fixture") as ws,
+    ):
+        assert ws.receive_json()["t"] == "welcome"
+        ws.send_json({"t": "hello", "v": 1})
+        assert _online_after(hub, 1)

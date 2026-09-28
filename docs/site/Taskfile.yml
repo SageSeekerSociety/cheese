@@ -14,6 +14,11 @@ tasks:
     cmds:
       - npm run build
 
+  test:
+    desc: Drive the interactive demos in a DOM (builds first; happy-dom comes from frontend/node_modules)
+    cmds:
+      - npm test
+
   diagrams:
     desc: Regenerate the archify diagrams under diagrams/ (needs a local archify checkout)
     cmds:

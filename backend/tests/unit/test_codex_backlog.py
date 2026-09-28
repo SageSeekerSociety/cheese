@@ -44,13 +44,14 @@ async def test_failed_receive_resumes_after_committed_page_without_consuming(
     resumed.assert_awaited_once_with("events", {"after": 256})
     backlog = CodexBacklog(path)
     assert isinstance(backlog, Backlog)
-    assert len(backlog.unread()) == 257
-    assert [(event.key, event.record) for event in backlog.unread()] == [
+    first, second = backlog.unread(), backlog.unread()
+    assert [len(first), len(second), len(backlog.unread())] == [256, 1, 0]
+    assert [(event.key, event.record) for event in first] == [
         (event.key, event.record) for event in CodexBacklog(path).unread()
     ]
-    backlog.landed(through=backlog.unread()[255].key)
-    backlog.landed(through=backlog.unread()[0].key)
-    assert len(CodexBacklog(path).unread()) == 1
+    backlog.landed(through=first[255].key)
+    backlog.landed(through=first[0].key)
+    assert [event.key for event in CodexBacklog(path).unread()] == [second[0].key]
 
 
 @pytest.mark.anyio
@@ -80,9 +81,10 @@ async def test_reconnect_completes_partial_child_after_start_record_is_pruned(
     )
     await receive(path, AsyncMock(return_value={"events": [start, partial]}), on_disk)
     first = CodexBacklog(path)
-    first.assemble(first.unread()[0])
-    first.landed(through=first.unread()[0].key)
-    assert first.assemble(first.unread()[1]) == []
+    page = first.unread()
+    first.assemble(page[0])
+    first.landed(through=page[0].key)
+    assert first.assemble(page[1]) == []
     assert first.unfinished() == {"codex:child:item"}
     first.forget(older_than_s=0)
     journal = Journal(path)
