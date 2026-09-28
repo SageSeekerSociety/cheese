@@ -217,7 +217,7 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
     finally:
         await runtime._detach(runtime._seat_of(session))
         if replacement:
-            await replacement._detach(session.topic_id)
+            await replacement._detach(replacement._seat_of(session))
         journal.close()
 
 

@@ -193,7 +193,9 @@ def retire_topic(client: TestClient, topic_id) -> None:
     async def retire() -> None:
         for channel in list(_CHANNELS):
             channel.sessions.pop(topic, None)
-            await channel.runtime._detach(topic)
+            for seat in list(channel.runtime.subscriptions):
+                if seat[0] == topic:
+                    await channel.runtime._detach(seat)
 
     client.portal.call(retire)
 

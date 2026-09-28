@@ -100,7 +100,9 @@ class Room:
         assert await self.runtime.deliver(self.topic, text)
 
     async def close(self) -> None:
-        await self.runtime._detach(self.topic)
+        for seat in list(self.runtime.subscriptions):
+            if seat[0] == self.topic:
+                await self.runtime._detach(seat)
 
 
 async def _until(check, timeout: float = 8.0) -> None:
