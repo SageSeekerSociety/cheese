@@ -60,13 +60,10 @@
     "abandon": "不推送，直接更换"
   },
   "roomMachine": {
-    "current": "工作电脑：{name}",
-    "notStarted": "还没开工 · 将用：{name}",
-    "future": "之后邀请的 AI 队友用：{name}",
     "change": "更换",
     "edit": "改",
-    "heading": "AI 队友开工时用",
-    "hint": "只影响还没开工的 AI 队友；已经开工的继续用自己那台",
+    "heading": "这个话题的工作电脑",
+    "hint": "房间里所有 AI 队友共用这一台。更换时每个队友先把改动推送到分支，全部推上去才换；推不上去就整个不换，并说明原因。",
     "more": "其他配置与设备",
     "projectDefault": "项目默认",
     "wholeMachine": "能访问整台机器",
@@ -75,7 +72,9 @@
     "removed": "已移出团队",
     "loadFailed": "工作电脑加载失败",
     "saveFailed": "选择工作电脑失败",
-    "retry": "重试"
+    "retry": "重试",
+    "here": "本话题运行在：{name}",
+    "abandon": "原来那台连不上：不推送，直接更换"
   },
   "deviceInUse": {
     "line": "正在用：{project} · {room} · {agent}",
