@@ -122,6 +122,13 @@ export function useLongPress(
     if (pressing.value || fired) event.preventDefault()
   }
 
+  // 长按打开的东西（面板、菜单）常常正好升到手指底下；松手时浏览器合成的那一下
+  // click 落在它上面（多半是遮罩），刚打开就又关上。上面那条 onClick 只拦得住落回
+  // 目标本身的 click，所以在 touchend 这一步就把合成 click 取消掉。
+  function onTouchEnd(event: TouchEvent) {
+    if (fired && event.cancelable) event.preventDefault()
+  }
+
   let detach: (() => void) | null = null
   function attach(el: HTMLElement) {
     el.addEventListener('pointerdown', onPointerDown)
@@ -131,6 +138,7 @@ export function useLongPress(
     el.addEventListener('pointerleave', onPointerEnd)
     el.addEventListener('click', onClick, { capture: true })
     el.addEventListener('contextmenu', onContextMenu)
+    el.addEventListener('touchend', onTouchEnd, { passive: false })
     detach = () => {
       el.removeEventListener('pointerdown', onPointerDown)
       el.removeEventListener('pointermove', onPointerMove)
@@ -139,6 +147,7 @@ export function useLongPress(
       el.removeEventListener('pointerleave', onPointerEnd)
       el.removeEventListener('click', onClick, { capture: true })
       el.removeEventListener('contextmenu', onContextMenu)
+      el.removeEventListener('touchend', onTouchEnd)
       detach = null
     }
   }
