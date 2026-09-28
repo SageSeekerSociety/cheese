@@ -35,6 +35,18 @@ class BlockPage:
     has_more: bool
 
 
+@dataclass(frozen=True)
+class ReplyWait:
+    """一个房间在等 AI：从什么时候开始等，以及为什么多半还没回。
+
+    `reason`：`mention`（有人点了 AI 的名）、`check`（PR 反馈 / 检查没过没人
+    接），或者等待期间最近一条机器/环境事件的类型（`MACHINE_EVENTS`）。
+    """
+
+    since: datetime
+    reason: str
+
+
 class BlockRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -565,15 +577,29 @@ class BlockRepository:
     #: 不是这件事了；而不设界的话，这条查询要扫整个项目全部历史消息。
     REPLY_LOOKBACK = timedelta(days=7)
 
+    #: 机器 / 环境这一侧的平台事件。AI 没回话时，如果等待期间最近一条是它们，
+    #: 那 AI 多半不是卡住，而是脚下的机器还没好——侧栏据此换阈值和说法。
+    MACHINE_EVENTS = (
+        "machine_provisioning",
+        "device_waiting",
+        "sandbox_rebuilt",
+        "environment_repaired",
+    )
+
     async def rooms_awaiting_a_reply(
-        self, topic_ids: list[uuid.UUID], *, now: datetime
-    ) -> dict[uuid.UUID, datetime]:
+        self,
+        topic_ids: list[uuid.UUID],
+        *,
+        now: datetime,
+        stuck_rooms: Collection[uuid.UUID] = (),
+    ) -> dict[uuid.UUID, ReplyWait]:
         """{房间: 从什么时候开始有人在等 AI 回话} —— 一次查完，只看房间自己那条线。
 
         「在等」有两种：一个人发了一条**点了 AI 名**的消息（`agent_recipient.
         mentioned`，也就是会叫起一轮的那种），而这之后房间里还没有任何 AI 说过话；
-        或者平台报了一件要 AI 接手的事（PR 评审意见、检查没过，见
-        `_checks_awaiting_an_agent`），而这之后还没有 AI 出来处理。人和人之间
+        或者房间（连同名下的活）有一张卡停在「检查红了 / 冲突了，要 AI 去修」上
+        （`stuck_rooms`，调用方按看板判据算好传进来），从最近一次检查报错算起，见
+        `_checks_awaiting_an_agent`。人和人之间
         聊天叫不起 AI，也就谈不上等它。值是这批没人接的消息里**最早**那一条的时间：
         等得最久的那个人决定灯什么时候亮。
 
@@ -602,17 +628,64 @@ class BlockRepository:
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
                 Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+                # 读进过一轮、而那一轮跑完了，就算接到了 —— 哪怕 AI 选择不说话
+                # （「不用管，我只是想知道原因」本来就不期待回复）。这一位只由
+                # 跑完的轮次盖上，死掉的轮次不盖，所以它不会把卡住的情况吞掉。
+                Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
                 or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
             )
             .group_by(Block.topic_id)
         )
         waiting = {
-            topic_id: at for topic_id, at in (await self._session.execute(stmt)).all()
+            topic_id: ReplyWait(since=at, reason="mention")
+            for topic_id, at in (await self._session.execute(stmt)).all()
         }
-        for topic_id, at in await self._checks_awaiting_an_agent(topic_ids, since):
-            if topic_id not in waiting or at < waiting[topic_id]:
-                waiting[topic_id] = at
+        stuck = [t for t in topic_ids if t in set(stuck_rooms)]
+        for topic_id, at in await self._checks_awaiting_an_agent(stuck, since):
+            if topic_id not in waiting or at < waiting[topic_id].since:
+                waiting[topic_id] = ReplyWait(since=at, reason="check")
+        if waiting:
+            machine = await self._machine_events_since_last_reply(list(waiting), since)
+            for topic_id, (event, at) in machine.items():
+                wait = waiting[topic_id]
+                # 只认等待开始之后的：等之前机器早就好了，那这次没回话跟它无关。
+                if at >= wait.since:
+                    waiting[topic_id] = ReplyWait(since=wait.since, reason=event)
         return waiting
+
+    async def _machine_events_since_last_reply(
+        self, topic_ids: list[uuid.UUID], since: datetime
+    ) -> dict[uuid.UUID, tuple[str, datetime]]:
+        """{房间: (最近一条机器/环境事件, 时间)} —— 只算最后一次 AI 说话之后的。"""
+        under_room = (Block.topic_id.in_(topic_ids), Block.created_at >= since)
+        last_reply = (
+            select(Block.topic_id, func.max(Block.created_at).label("at"))
+            .where(
+                *under_room,
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+            )
+            .group_by(Block.topic_id)
+            .subquery()
+        )
+        event = Block.meta["event_type"].as_string()
+        stmt = (
+            select(Block.topic_id, event, Block.created_at)
+            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            .where(
+                *under_room,
+                ~participant_blocks(),
+                event.in_(self.MACHINE_EVENTS),
+                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
+            )
+            .order_by(Block.topic_id, Block.created_at.desc())
+            .distinct(Block.topic_id)
+        )
+        return {
+            topic_id: (kind, at)
+            for topic_id, kind, at in (await self._session.execute(stmt)).all()
+        }
 
     #: 要 AI 去接手的平台事件：PR 上有评审意见、检查没过、合不进去。这些落地时就
     #: 已经轮到芝士了（`platform_notices` 里各自写着「芝士要去改」）。
@@ -627,40 +700,29 @@ class BlockRepository:
         "accept_conflict",
         "upstream_conflict",
         "migration_collision",
+        # 验收人把改动退回了：下一步是 AI 改完重递。
+        "card_rejected",
     )
 
     async def _checks_awaiting_an_agent(
         self, topic_ids: list[uuid.UUID], since: datetime
     ) -> list[tuple[uuid.UUID, datetime]]:
-        """[(房间, 最早一条没人接的检查事件的时间)]。
+        """[(房间, 最近一次要 AI 接手的检查事件的时间)] —— 只问卡还停着的房间。
 
-        和人点名不同，这类事件多半落在某一条活的卡上，而接手的可能是那条活的
-        分身，也可能是主 agent 在房间里——所以「有人接了」看的是这个房间**连同它
-        名下的活**里，事件之后有没有任何 AI 说过话。
+        「有没有人接」不看 AI 说没说过话（回一句不相干的话也会被当成接了），而看
+        卡本身：调用方只把卡还停在检查红 / 冲突上的房间传进来。取**最近**一条事件：
+        AI 推了修复、检查又红了，时钟从这次重新算。事件多半落在某条活的卡上，所以
+        连同名下的活一起看。
         """
-        under_room = (
-            Block.topic_id.in_(topic_ids),
-            Block.created_at >= since,
-        )
-        last_reply = (
-            select(Block.topic_id, func.max(Block.created_at).label("at"))
-            .where(
-                *under_room,
-                Block.kind == BlockKind.message,
-                participant_blocks(),
-                agent_handle_column(Block.author),
-            )
-            .group_by(Block.topic_id)
-            .subquery()
-        )
+        if not topic_ids:
+            return []
         stmt = (
-            select(Block.topic_id, func.min(Block.created_at))
-            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            select(Block.topic_id, func.max(Block.created_at))
             .where(
-                *under_room,
+                Block.topic_id.in_(topic_ids),
+                Block.created_at >= since,
                 ~participant_blocks(),
                 Block.meta["event_type"].as_string().in_(self.CHECKS_FOR_THE_AGENT),
-                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
             )
             .group_by(Block.topic_id)
         )
