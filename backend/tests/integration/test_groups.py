@@ -845,21 +845,16 @@ class TestGroupsMembersIntegration:
         assert response.status_code == 404
 
     def test_get_group_members_negative_page_size(self):
+        """A page size below one is a page the server cannot serve, so it is
+        refused at the request instead of being turned into an empty page."""
         response = self.client.get(
             f"/groups/{self.group_ids[1]}/members",
             headers=self.headers,
             params={"page_size": -1},
         )
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
-        assert data["code"] == 200
-        assert len(data["data"]["members"]) == 0
-        assert data["data"]["page"]["pageStart"] == 0
-        assert data["data"]["page"]["pageSize"] == 0
-        assert data["data"]["page"]["hasPrev"] is False
-        assert data["data"]["page"]["prevStart"] == 0
-        assert data["data"]["page"]["hasMore"] is False
-        assert data["data"]["page"]["nextStart"] == 0
+        assert data["error"]["name"] == "BadRequestError"
 
 
 class TestGroupTargetsIntegration:

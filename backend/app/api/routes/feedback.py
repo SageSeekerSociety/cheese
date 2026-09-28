@@ -216,7 +216,7 @@ async def list_my_feedback(
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
     page_start: int = Query(default=0, ge=0),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
 ) -> dict:
     """「我的反馈」：我提的 + 我替谁提的 + 指派给我的。
 
@@ -249,7 +249,7 @@ async def list_feedback(
     kind: str | None = Query(default=None, max_length=32),
     since: datetime | None = Query(default=None),
     page_start: int = Query(default=0, ge=0),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
 ) -> dict:
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None

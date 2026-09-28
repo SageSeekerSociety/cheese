@@ -63,8 +63,8 @@ async def list_ai_models(
 
 @router.get("/conversations", summary="List AI Conversations")
 async def list_conversations(
-    pageStart: int | None = Query(default=None),
-    pageSize: int = Query(default=20, ge=1, le=100),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int = Query(default=20, ge=1, le=200),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AIChatService = Depends(get_chat_service),
 ) -> dict:
