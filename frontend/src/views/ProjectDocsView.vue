@@ -174,7 +174,8 @@ function topicTo(topicId: string | null | undefined) {
 
 <template>
   <ProjectPage class="docs-page" :title="t('navigation.project.docs')">
-    <template v-if="kind === 'charter'" #meta>
+    <!-- 没有状态时不给这一格：手机上页头只为状态画（ProjectPage），空着也画会留一条白带。 -->
+    <template v-if="kind === 'charter' && (saving || savedAt || charterDirty)" #meta>
       <span v-if="saving">保存中…</span>
       <span v-else-if="savedAt" class="d-inline-flex align-center ga-1">
         <span class="status-dot status-dot--ok" />已保存
@@ -369,8 +370,8 @@ function topicTo(topicId: string | null | undefined) {
   border-bottom: 1px solid var(--line);
 }
 
-/* 章程: 页面本身就是那张纸。左右不再补内边距 —— DocEditor 自带 56px 的左侧
-   拖拽手柄槽，再叠一层会把正文推得离页头更远。 */
+/* 章程: 页面本身就是那张纸。左右不再补内边距 —— DocEditor 在桌面上自带 56px 的
+   左侧拖拽手柄槽，再叠一层会把正文推得离页头更远。 */
 .charter-body {
   padding: 4px 0 40px;
 }
@@ -405,5 +406,11 @@ function topicTo(topicId: string | null | undefined) {
 }
 .memory-card:hover .memory-card__del {
   opacity: 1;
+}
+/* 触屏没有悬停：删除按钮常驻，不然手机上删不了记忆。 */
+@media (hover: none) {
+  .memory-card__del {
+    opacity: 1;
+  }
 }
 </style>
