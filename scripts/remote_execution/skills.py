@@ -209,6 +209,7 @@ class Room:
         for source, destination in (
             (acceptance.SOURCE / "runtime.py", "runtime.py"),
             (acceptance.SOURCE / "portable.py", "portable.py"),
+            (acceptance.AGENT / "project_hooks.py", "project_hooks.py"),
             (acceptance.AGENT / "cli_worker.py", "remote-execution/cli_worker.py"),
             (acceptance.ROOT / "backend/sandbox/cheese", "cheese"),
         ):

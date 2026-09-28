@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import cli_worker
+from app.domain.agent import cli_worker, project_hooks
 from app.domain.agent.harness.claude_code.remote_execution import runtime
 from app.domain.agent.harness.codex.bundle import build
 from app.domain.agent.harness.codex.host import configure
@@ -138,6 +138,7 @@ def machine(tmp_path):
     helper.parent.mkdir(parents=True)
     shutil.copyfile(runtime.__file__, helper)
     shutil.copyfile(cli_worker.__file__, helper.parent / "cli_worker.py")
+    shutil.copyfile(project_hooks.__file__, helper.parent / "project_hooks.py")
     shutil.copyfile(
         Path(__file__).resolve().parents[2] / "sandbox/cheese", home / ".cheese/cheese"
     )

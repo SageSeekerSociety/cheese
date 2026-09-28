@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import cli_worker
+from app.domain.agent import cli_worker, project_hooks
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.claude_code.bundle import build as claude_archive
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
@@ -376,6 +376,7 @@ async def codex(tmp_path: Path, steps: list):
     helpers.mkdir(parents=True)
     shutil.copyfile(runtime.__file__, helpers / "runtime.py")
     shutil.copyfile(cli_worker.__file__, helpers / "cli_worker.py")
+    shutil.copyfile(project_hooks.__file__, helpers / "project_hooks.py")
     shutil.copyfile(CHEESE, home / ".cheese/cheese")
     executor_state = home / ".cheese/executor"
     machine = tmp_path / "project"
