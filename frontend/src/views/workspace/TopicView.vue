@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, Topic } from '@/cx_types'
+import type { AgentControlState, Block, Topic, TopicMemberRow } from '@/cx_types'
 import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
@@ -13,6 +13,7 @@ import { listTopicMembers } from '@/api'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
+import { agentNames } from '@/lib/agentNames'
 import { topicPhase, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -278,12 +279,16 @@ const unreadOnOpen = store.unreadMap[props.topicId] ?? 0
 
 // 这个房间名册上每个 handle 叫什么。「现场」那一格给每一行署名用它，人和 AI 队
 // 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
-// 那一格自己不拉名册，所以在这里拉一次传下去。
-const memberNames = ref<Record<string, string>>({})
+// 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
+// （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
+const roomMembers = ref<TopicMemberRow[]>([])
+const memberNames = computed<Record<string, string>>(() => ({
+  ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, m.name || m.member_handle])),
+  ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
+}))
 async function loadMemberNames() {
   try {
-    const payload = await listTopicMembers(props.topicId)
-    memberNames.value = Object.fromEntries(payload.data.map((m) => [m.member_handle, m.name || m.member_handle]))
+    roomMembers.value = (await listTopicMembers(props.topicId)).data
   } catch {
     // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。
   }
