@@ -5,11 +5,23 @@ its room credential, through the same route and under the same rule — and
 nobody else may. Everyone in the room sees the new text live, marked as edited.
 """
 
+import asyncio
 import uuid
 
 import pytest
+from sqlalchemy import select
 
+from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.chat import (
+    ChatService,
+    _pending_platform_notices,
+    _platform_preamble,
+)
+from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.models import Delivery
+from app.main import app
+from tests.conftest import stub_compute, wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
     join_project_team,
@@ -219,3 +231,186 @@ def test_an_agents_edit_stores_what_publishing_it_stores(client, make_room):
     response = _edit(client, edited, SAID, headers)
     assert response.status_code == 200, response.text
     assert _stored(client, room, edited) == _stored(client, room, sent)
+
+
+# ---- What an edit does beyond the text ----
+
+
+def _mentions(client, project: str, handle: str) -> list[dict]:
+    """The @ alerts ``handle`` has in this project."""
+    response = client.get(
+        f"/projects/{project}/alerts", headers=session_auth_headers(handle)
+    )
+    assert response.status_code == 200, response.text
+    return [a for a in response.json()["data"]["data"] if a["kind"] == "MENTION"]
+
+
+def test_an_edit_notifies_only_whom_it_newly_mentions(client):
+    room, project = _room(client)
+    join_project_team(client, project, "carol")
+    said = _say(client, room, "alice", "@bob 看一下")
+    assert len(_mentions(client, project, "bob")) == 1
+    assert _mentions(client, project, "carol") == []
+
+    _edit(client, said, "@bob @carol 看一下", session_auth_headers("alice"))
+    assert len(_mentions(client, project, "carol")) == 1, "carol is newly mentioned"
+    assert len(_mentions(client, project, "bob")) == 1, "bob was told when it was sent"
+
+    _edit(client, said, "@bob @carol 再看一下", session_auth_headers("alice"))
+    assert len(_mentions(client, project, "carol")) == 1
+    assert len(_mentions(client, project, "bob")) == 1
+
+
+def _read_by_a_turn(client, block_id: str) -> None:
+    """Stamp a message as read, the way a turn's clean stop does."""
+
+    async def stamp() -> None:
+        async with client.test_factory() as session:
+            await BlockRepository(session).mark_consumed(
+                [uuid.UUID(block_id)], uuid.uuid4()
+            )
+            await session.commit()
+
+    asyncio.run(stamp())
+
+
+async def _waiting_notices(client, room: str) -> list:
+    async with client.test_factory() as session:
+        history = await BlockRepository(session).turn_history(uuid.UUID(room))
+    return _pending_platform_notices(history)
+
+
+class _Screen:
+    """The session a running turn is on: records what the platform pushes."""
+
+    def __init__(self) -> None:
+        self.pushed: list[str] = []
+
+    async def deliver(self, topic_id, text, images=None, *, expected_work_id=None):
+        self.pushed.append(text)
+        return True
+
+
+@pytest.fixture
+def running_turn(client):
+    """A turn running in the room ``room``, and the screen it reads from."""
+
+    def start(room: str) -> _Screen:
+        screen = _Screen()
+        service = ChatService(
+            session_factory=client.test_request_factory,
+            base_system_prompt="你是芝士。",
+            workspace_root="/tmp/message-edit-ws",
+            compute=stub_compute(),
+        )
+        service._active_turn_ids[uuid.UUID(room)] = uuid.uuid4()
+        service._compute.deliver = screen.deliver  # type: ignore[method-assign]
+        app.dependency_overrides[get_chat_service] = lambda: service
+        return screen
+
+    yield start
+    app.dependency_overrides.pop(get_chat_service, None)
+
+
+def test_a_running_turn_is_told_a_message_it_read_was_edited(client, running_turn):
+    room, _ = _room(client)
+    said = _say(client, room, "alice", "周五交初稿")
+    _read_by_a_turn(client, said)
+    screen = running_turn(room)
+
+    _edit(client, said, "周六交初稿", session_auth_headers("alice"))
+
+    assert len(screen.pushed) == 1
+    assert "改了之前发的一条消息" in screen.pushed[0]
+    assert "周六交初稿" in screen.pushed[0]
+
+
+def test_the_next_turn_reads_the_edit_when_no_turn_is_running(client):
+    room, _ = _room(client)
+    said = _say(client, room, "alice", "周五交初稿")
+    _read_by_a_turn(client, said)
+
+    _edit(client, said, "周六交初稿", session_auth_headers("alice"))
+
+    [notice] = asyncio.run(_waiting_notices(client, room))
+    assert "周六交初稿" in _platform_preamble([notice])
+    # The room already shows the edit on the message; the notice is the agent's.
+    assert notice.id not in {m["id"] for m in _visible(client, room)}
+
+
+def test_an_edit_to_an_unread_message_needs_no_notice(client, running_turn):
+    room, _ = _room(client)
+    said = _say(client, room, "alice", "周五交初稿")
+    screen = running_turn(room)
+
+    _edit(client, said, "周六交初稿", session_auth_headers("alice"))
+
+    # The next turn reads the message itself, as it now reads.
+    assert screen.pushed == []
+    assert asyncio.run(_waiting_notices(client, room)) == []
+
+
+def _visible(client, room: str) -> list[dict]:
+    blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
+    return [b for b in blocks if (b.get("meta") or {}).get("in_room") is not False]
+
+
+# ---- On a card ----
+
+
+def _card(client, room: str) -> str:
+    task = client.post(
+        f"/topics/{room}/split", json={"title": "子活", "reviewer_handle": "alice"}
+    ).json()["data"]
+    wait_work_idle()
+    return task["id"]
+
+
+def _say_on_card(client, room: str, card: str, author: str, content: str) -> str:
+    response = client.post(
+        f"/topics/{room}/tasks/{card}/messages",
+        json={"content": content},
+        headers=session_auth_headers(author),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["id"]
+
+
+def _relays(client, card: str) -> list[str]:
+    async def read() -> list[str]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(Delivery).where(Delivery.task_id == uuid.UUID(card))
+            )
+            return [row.payload["content"] for row in rows]
+
+    return asyncio.run(read())
+
+
+def test_a_card_message_is_edited_by_its_author_under_the_same_rules(client):
+    room, _ = _room(client)
+    card = _card(client, room)
+    said = _say_on_card(client, room, card, "alice", "接口先别动")
+    assert _edit(client, said, "改掉", session_auth_headers("bob")).status_code == 403
+    with client.websocket_connect(chat_ws_url(card, "bob")) as bob:
+        response = _edit(client, said, "接口可以动了", session_auth_headers("alice"))
+        assert response.status_code == 200, response.text
+        seen = _next_update(bob)
+    assert seen["id"] == said
+    assert seen["content"] == "接口可以动了"
+    assert seen["meta"]["edited_at"]
+    card_blocks = client.get(f"/topics/{room}/tasks/{card}").json()["data"]["blocks"]
+    assert [b["content"] for b in card_blocks if b["id"] == said] == ["接口可以动了"]
+
+
+def test_a_card_edit_reaches_the_agent_the_way_the_message_did(client):
+    room, _ = _room(client)
+    card = _card(client, room)
+    said = _say_on_card(client, room, card, "alice", "接口先别动")
+    assert len(_relays(client, card)) == 1
+
+    _edit(client, said, "接口可以动了", session_auth_headers("alice"))
+
+    relays = _relays(client, card)
+    assert len(relays) == 2
+    assert "改了之前说的一句" in relays[1] and "接口可以动了" in relays[1]

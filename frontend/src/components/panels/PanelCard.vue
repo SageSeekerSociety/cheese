@@ -10,16 +10,17 @@ import type { Block, RoomTask, TodoItem } from '../../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { getProgress, getRoomTask, sayOnRoomTask } from '../../api'
+import { editMessage, getProgress, getRoomTask, sayOnRoomTask } from '../../api'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
 import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
 import { relTime } from '../../lib/relTime'
-import { type RefMaps, renderMarkdown as renderWithRefs, renderPlain } from '../../lib/renderMessage'
+import { editableText, type RefMaps, renderMarkdown as renderWithRefs, renderPlain } from '../../lib/renderMessage'
 import { eventArg, eventFailed, eventVerb, isNarration } from '../../lib/siteLog'
 import { myHandle } from '../../me'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import { useRoomSocket } from '../room/composables/useRoomSocket'
+import MessageEditor from '../room/MessageEditor.vue'
 import RoomNotice from '../room/RoomNotice.vue'
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
@@ -131,6 +132,8 @@ const cardSocket = useRoomSocket({
     if (frame.type === 'todo') {
       liveSeq += 1
       checklist.value = frame.items
+    } else if (frame.type === 'block_updated') {
+      replaceBlock(frame.block)
     } else if (frame.type === 'error' && cardSocket.isConnectRefusal(frame.code)) {
       cardSocket.connectRefused.value = true
     }
@@ -211,6 +214,37 @@ function renderMarkdown(text: string): string {
 // 谁说的：名册上的名字；查不到的 AI 座位叫它的角色名，别露 `cheese-c82aeb40555a`。
 function whoSaid(b: Block): string {
   return props.memberNames[b.author] || (isAgentHandle(b.author) ? props.agentName : b.author)
+}
+
+// 改自己在这张卡上说过的话：和房间里一样，正文原地换成输入框。
+const editingId = ref<string | null>(null)
+const editSaving = ref(false)
+const editError = ref<string | null>(null)
+function canEdit(b: Block): boolean {
+  return b.kind === 'message' && b.author === myHandle() && !isAgentBlock(b)
+}
+function replaceBlock(updated: Block) {
+  const blocks = card.value?.blocks
+  const at = blocks?.findIndex((b) => b.id === updated.id) ?? -1
+  if (blocks && at >= 0) blocks.splice(at, 1, updated)
+}
+async function saveEdit(b: Block, text: string) {
+  const content = text.trim()
+  if (editSaving.value || !content) return
+  if (content === editableText(b.content, refs.value).trim()) {
+    editingId.value = null
+    return
+  }
+  editSaving.value = true
+  editError.value = null
+  try {
+    replaceBlock(await editMessage(b.id, content))
+    if (editingId.value === b.id) editingId.value = null
+  } catch {
+    editError.value = t('work.room.message.saveFailed')
+  } finally {
+    editSaving.value = false
+  }
 }
 
 async function send() {
@@ -298,13 +332,36 @@ async function send() {
         <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">暂无消息</div>
         <template v-for="e in entries" :key="e.kind === 'steps' ? e.key : e.block.id">
           <div v-if="e.kind === 'say'" class="card-msg">
-            <span class="card-msg__who t-meta">{{ whoSaid(e.block) }}</span>
+            <div class="card-msg__head">
+              <span class="card-msg__who t-meta">{{ whoSaid(e.block) }}</span>
+              <button
+                v-if="canEdit(e.block) && editingId !== e.block.id"
+                type="button"
+                class="card-msg__edit t-meta"
+                @click="editingId = e.block.id"
+              >
+                {{ t('work.room.message.edit') }}
+              </button>
+            </div>
+            <MessageEditor
+              v-if="editingId === e.block.id"
+              :text="editableText(e.block.content, refs)"
+              :saving="editSaving"
+              @save="saveEdit(e.block, $event)"
+              @cancel="editingId = null"
+            />
             <div
-              v-if="isAgentBlock(e.block)"
+              v-else-if="isAgentBlock(e.block)"
               class="card-msg__text card-markdown t-body"
               v-html="renderMarkdown(e.block.content)"
             />
             <span v-else class="card-msg__text t-body" v-html="renderPlain(e.block.content, refs)" />
+            <span v-if="e.block.meta?.edited_at && editingId !== e.block.id" class="card-msg__edited">{{
+              t('work.room.message.edited')
+            }}</span>
+            <span v-if="editingId === e.block.id && editError" class="card-msg__error" role="alert">{{
+              editError
+            }}</span>
           </div>
           <RoomNotice
             v-else-if="e.kind === 'notice'"
@@ -450,8 +507,47 @@ async function send() {
   gap: 1px;
   padding: 4px 0;
 }
+.card-msg__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
 .card-msg__who {
   color: var(--faint);
+}
+/* 自己说的话后面一颗「编辑」：指到这一句才露出来，没有悬停的设备上一直在。 */
+.card-msg__edit {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+.card-msg:hover .card-msg__edit,
+.card-msg__edit:focus-visible {
+  opacity: 1;
+}
+.card-msg__edit:hover {
+  color: var(--ink);
+}
+@media (hover: none) {
+  .card-msg__edit {
+    opacity: 1;
+  }
+}
+.card-msg__edited {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--faint);
+}
+.card-msg__error {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--danger-ink);
 }
 .card-msg__text {
   color: var(--ink);

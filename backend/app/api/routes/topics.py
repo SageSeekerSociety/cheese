@@ -36,7 +36,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.announce import announce, notify_question
-from app.domain.agent.chat import ChatService, publication_text
+from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.agent.market import (
@@ -817,9 +817,7 @@ async def say_on_task(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    content = await canonicalize_refs(
-        db, place.project_id, content, exclude_topic_id=place.room_id
-    )
+    content = await project_refs_text(db, place.project_id, place.room_id, content)
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=place.room_id,
@@ -1424,13 +1422,15 @@ async def write_topic_progress(
             current.id,
             editor=actor.handle,
             content=text,
+            chat=chat,
+            runner=runner,
             checklist=checklist,
         )
         return ok({"items": items, "message_id": message["id"], "posted": False})
     message = await chat._persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
-        text=await publication_text(db, place.project_id, place.room_id, text),
+        text=await project_refs_text(db, place.project_id, place.room_id, text),
         turn_id=turn_id,
         reply_to=None,
         roster=None,
@@ -2018,7 +2018,7 @@ async def publish_chat_message(
             or parent.task_id is not None
         ):
             raise ValidationError("reply_to must belong to this conversation")
-    content = await publication_text(db, place.project_id, place.room_id, content)
+    content = await project_refs_text(db, place.project_id, place.room_id, content)
     # The input request can finish while its terminal session is still working.
     runner = get_work_runner()
     work = runner.live_work_for_topic(place.room_id)
