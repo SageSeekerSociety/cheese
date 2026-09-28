@@ -154,7 +154,7 @@ describe('room work computer choice', () => {
           {
             id: 's1',
             agent_handle: 'analyst',
-            harness: 'claude-code',
+            harness: 'test-harness',
             choice: working,
             lease: null,
             machine_access: true,

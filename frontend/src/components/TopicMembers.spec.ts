@@ -238,7 +238,7 @@ describe('名册上 AI 队友的工作电脑', () => {
           {
             id: 's1',
             agent_handle: 'cheese-t1',
-            harness: 'claude-code',
+            harness: 'test-harness',
             choice: LAB,
             lease: { device_id: 'lab', generation: 1, status: 'ready', online: true },
             machine_access: true,
@@ -265,7 +265,7 @@ describe('名册上 AI 队友的工作电脑', () => {
           {
             id: 's1',
             agent_handle: 'cheese-t1',
-            harness: 'claude-code',
+            harness: 'test-harness',
             choice: CLOUD,
             lease: null,
             machine_access: false,
@@ -305,7 +305,7 @@ describe('名册上 AI 队友的工作电脑', () => {
           {
             id: 's1',
             agent_handle: 'cheese-t1',
-            harness: 'claude-code',
+            harness: 'test-harness',
             choice: CLOUD,
             lease: null,
             machine_access: false,
