@@ -31,6 +31,7 @@ from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
+    SpaceDomainGroupRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
@@ -945,6 +946,28 @@ async def _validate_and_get_category_id(
     return await _load_and_validate_category(default_cid)
 
 
+async def _ensure_domain_groups_belong_to_space(
+    *,
+    db,
+    space_id: int,
+    group_ids: Sequence[int],
+) -> None:
+    """``accessDomainGroupIds`` 点名的每一个域组都得是**这块板**的。
+
+    这些组解析出来的域会并进可见性判据（``TaskVisibilityService`` 把
+    ``TaskAccessDomain.domain`` 直接并进读权限的 or 列表），所以拿别的板的组 id 发题，
+    等于把那位管理员圈定的名单原样搬到自己这道题上。同一个请求体里的 ``categoryId``
+    早就是这么收的（``_validate_and_get_category_id`` 问 ``get_by_id_and_space``，
+    不属于这块板就 404）；这里补上同一条，话也照抄那一句。
+    """
+    known = {
+        group.id
+        for group in await SpaceDomainGroupRepository(session=db).list_groups(space_id)
+    }
+    if any(group_id not in known for group_id in group_ids):
+        raise NotFoundError("Domain group not found or does not belong to space.")
+
+
 def _map_approve_type_to_int(value: str | None) -> int | None:
     if value is None:
         return None
@@ -1230,6 +1253,9 @@ async def _create_task_entity(
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
     if access_control_enabled and access_domain_group_ids:
+        await _ensure_domain_groups_belong_to_space(
+            db=db, space_id=space_id, group_ids=access_domain_group_ids
+        )
         domain_repo = SpaceDomainGroupDomainRepository(session=db)
         groups_domains = await domain_repo.list_domains_for_groups(
             access_domain_group_ids
@@ -1825,6 +1851,15 @@ async def create_task_participant(
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
     is_team = task.submitter_type == 1
+    if is_team and not await TeamRepository(session=db).is_team_member(
+        member, auth_user.user_id
+    ):
+        # 这条路由的 ``member`` 在 TEAM 题上是**队伍 id**，而没带它时默认成了调用者
+        # 自己的 **user id** —— 两张表各自自增，撞上就等于把别人的队伍报了上去。
+        # 与 ``join_task_as_team`` 同一句话：要把一支队伍报上去，你先得是那支队的人。
+        raise ForbiddenError(
+            "You must be a member of this team to register it for a task"
+        )
     # 新建报名默认审批状态：与 Kotlin 一致使用 ApproveType.NONE
     approved = 2
 
@@ -2401,6 +2436,11 @@ async def patch_task(
         access_domain_repo = TaskAccessDomainRepository(session=db)
 
         if task.access_control_enabled and payload.access_domain_group_ids:
+            await _ensure_domain_groups_belong_to_space(
+                db=db,
+                space_id=task.space_id,
+                group_ids=payload.access_domain_group_ids,
+            )
             groups_domains = await domain_repo.list_domains_for_groups(
                 payload.access_domain_group_ids
             )
@@ -3611,7 +3651,11 @@ async def list_ai_advice_conversations_grouped(
     # Frontend `TasksApi.getGroupedConversations` types the response as
     # { conversations: ConversationGroupSummary[] }; "groups" was a Python-
     # side name that left data.conversations undefined and nothing rendered.
-    groups = await service.list_conversations_grouped(task_id=task_id)
+    # The sidebar it feeds is 「我的对话」 (新建/搜索/删除对话都在自己那一列上，
+    # 标题是提问的前 60 字)，so the list is the caller's own — see the service/repo.
+    groups = await service.list_conversations_grouped(
+        task_id=task_id, user_id=auth_user.user_id
+    )
     return {
         "code": 200,
         "message": "OK",
@@ -3641,7 +3685,7 @@ async def get_ai_advice_conversation(
     await _ensure_task_visible_for_advice(db=db, task_id=task_id, auth_user=auth_user)
     try:
         payload = await service.get_conversation(
-            task_id=task_id, conversation_id=conversation_id
+            task_id=task_id, conversation_id=conversation_id, user_id=auth_user.user_id
         )
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
@@ -3733,11 +3777,14 @@ async def delete_ai_advice_conversation(
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
     await _ensure_task_visible_for_advice(db=db, task_id=task_id, auth_user=auth_user)
+    # 删的就是读的那一个地址（题 + id + 主人），所以没有第二次判据：delete 自己
+    # 会用同一句话拒绝「不是你的」和「不存在」。
     try:
-        await service.get_conversation(task_id=task_id, conversation_id=conversation_id)
+        await service.delete_conversation(
+            task_id=task_id, conversation_id=conversation_id, user_id=auth_user.user_id
+        )
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
-    await service.delete_conversation(task_id=task_id, conversation_id=conversation_id)
     return {"code": 200, "message": "OK", "data": None}
 
 

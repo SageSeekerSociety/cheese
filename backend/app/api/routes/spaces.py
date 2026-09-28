@@ -21,6 +21,8 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.knowledge.services import KnowledgeService
+from app.domain.materials.services import MaterialService
 from app.domain.shell.catalog import is_course_shell
 from app.domain.space import course_modules
 from app.domain.space.analytics_service import SpaceAnalyticsService
@@ -372,6 +374,10 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
         domain_group_domain_repo=domain_group_domain_repo,
         member_repo=member_repo,
         invite_code_repo=invite_code_repo,
+        # The write side of `teaching`'s references: a 项目集 may only name
+        # 知识 its teacher could already read and 课件 that exist.
+        knowledge_service=KnowledgeService.for_lookup(db),
+        material_service=MaterialService.for_lookup(db),
     )
 
 

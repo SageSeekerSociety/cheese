@@ -68,6 +68,24 @@ class MaterialService:
         """
         return await self._repo.list_by_ids(material_ids)
 
+    async def ensure_exist(self, *, material_ids: list[int]) -> None:
+        """Raise unless every one of these ids names a material that exists.
+
+        No membership check, because there is none to make: `Material` carries
+        only an uploader, no owning team, and `GET /materials/{id}` is open to
+        any signed-in reader — so a 项目集 pointing at someone else's 课件 leaks
+        nothing that reader could not already open. A misspelled id is still
+        refused rather than dropped, because the write side is a form that can
+        be told which field is wrong.
+        """
+        found = {m.id for m in await self._repo.list_by_ids(material_ids)}
+        missing = [mid for mid in material_ids if mid not in found]
+        if missing:
+            raise NotFoundError(
+                f"Material {missing[0]} not found",
+                data={"id": missing[0], "missingIds": missing},
+            )
+
     async def get_material(self, material_id: int) -> dict:
         material = await self._repo.get_by_id(material_id)
         if material is None:

@@ -144,6 +144,7 @@ export const AGENT_STATUS_EVENTS = new Set([
   'migration_collision',
   'api_retry',
   'device_waiting',
+  'doc_missing',
 ])
 
 /** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
