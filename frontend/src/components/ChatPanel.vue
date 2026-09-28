@@ -161,6 +161,7 @@ const {
   mentionPool,
   memberByHandle,
   seatByHandle,
+  agentNameOf,
   agentDisplayName,
   displayName,
   isExternal,
@@ -238,14 +239,36 @@ function turnAgentForgot(id: string) {
   turnAgents.value = next
 }
 
-// 正在干活的队友们的名字，按房间名册翻；座位翻不到名字的（老房间的默认座位
-// 不在名册上）退回这个房间 AI 的名字。同名去重：同一个队友并行两轮只报一次。
+// 每一轮是哪个队友的。在跑的轮次，帧上说了（turnAgents）；落下来的轮次，块上也说：
+// 那一轮里队友自己写的块署的就是它，人发的那条记着交给了谁、开的是哪一轮
+// （`agent_recipient` 与 `consumed_turn` / `prompted_turn`）。平台替一轮写的通知
+// （失败、重试、排队）署名是 system，靠这张表认回是哪位的那一轮。
+const turnOwners = computed(() => {
+  const owners: Record<string, string> = {}
+  for (const m of messages.value) {
+    const recipient = (m.meta?.agent_recipient as { handle?: unknown } | undefined)?.handle
+    if (typeof recipient !== 'string') continue
+    for (const turn of [m.meta?.consumed_turn, m.meta?.prompted_turn]) {
+      if (typeof turn === 'string') owners[turn] = recipient
+    }
+  }
+  for (const m of messages.value) {
+    if (m.turn_id && isAgentHandle(m.author)) owners[m.turn_id] = m.author
+  }
+  return { ...owners, ...turnAgents.value }
+})
+// 这一轮那位队友的名字；认不出是谁的轮次，才退回这个房间 AI 的名字。
+function turnAgentName(turnId: string | null | undefined): string {
+  const owner = turnId ? turnOwners.value[turnId] : undefined
+  return (owner && agentNameOf(owner)) || agentName.value
+}
+
+// 正在干活的队友们的名字。同名去重：同一个队友并行两轮只报一次。
 const workingAgentNames = computed(() => {
   const names: string[] = []
   for (const id of activeTurnIds.value) {
-    const handle = turnAgents.value[id]
-    if (!handle) continue
-    const name = seatByHandle.value.get(handle)?.name ?? agentName.value
+    if (!turnAgents.value[id]) continue
+    const name = turnAgentName(id)
     if (!names.includes(name)) names.push(name)
   }
   return names
@@ -1092,12 +1115,12 @@ function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
     return agentDisplayName(block.author)
   }
   if (seatByHandle.value.has(block.author) || memberByHandle.value.has(block.author)) return null
-  if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return agentName.value
+  if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return turnAgentName(block.turn_id)
   if (block.author === 'system' && (notice.mode === 'action' || notice.mode === 'turn-summary')) {
-    return agentName.value
+    return turnAgentName(block.turn_id)
   }
   if (block.turn_id && (block.author === 'system' || notice.mode === 'action' || notice.mode === 'turn-summary')) {
-    return agentName.value
+    return turnAgentName(block.turn_id)
   }
   return null
 }

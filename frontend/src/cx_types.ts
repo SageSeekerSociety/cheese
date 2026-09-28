@@ -458,6 +458,9 @@ export interface ProjectMemberRow {
   // 第一个带 `agent` 的不是这个答案（那是建得最早的那一位），所以要问「这个房间
   // 归谁」的地方只能读这一位。
   project_default?: boolean
+  // 队友自己的 handle（`cheese-kimi` 这种）：它的会话、轮次按这个记，消息的收件人也
+  // 写这个。只知道这个 handle 的地方靠它找到这一行。人没有这一项。
+  instance_handle?: string
   [key: string]: unknown
 }
 
