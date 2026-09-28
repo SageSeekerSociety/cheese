@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 
 from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project, room_agent_seat
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_agent_seat,
+)
 
 
 class _FakeTokens:
@@ -269,6 +273,11 @@ def test_a_room_with_no_human_owner_still_opens_its_pr(client, monkeypatch):
 
     p = post_project(client, json={"name": "P"}).json()["data"]
     pid, root = p["id"], p["root_topic_id"]
+    # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
+    # (`_require_reviewer_in_room`)。这张卡递给 alice，就让她像真实参与者一样进项目
+    # —— 要检验的是「房间没有人类主人时 PR 照样开」，不是名册。她进的是项目名册，
+    # `requester_handle` 看的是话题名册与任务归属，所以这里仍然没有人类可认领。
+    join_project_team(client, pid, "alice")
     agent = f"cheese-{uuid.uuid4().hex[:12]}"
     _split(client, root, by=agent)
     _publish(client, pid, root, _card(client, root))
