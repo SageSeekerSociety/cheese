@@ -583,7 +583,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
     </div>
 
     <template v-else>
-      <div ref="tabbarRef" class="tabbar" role="tablist">
+      <div ref="tabbarRef" class="tabbar" :class="{ 'tabbar--phone': withChat }" role="tablist">
         <button
           v-for="t in tabs"
           :key="t.key"
@@ -789,6 +789,11 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
 }
 .tabbar__tab:hover {
   color: var(--ink);
+}
+/* 手机上一格页签至少 44px 高，手指点得中。栏会横向滚动，撑开的伪元素会被裁掉，
+   所以是真的长高。 */
+.tabbar--phone .tabbar__tab {
+  min-height: 44px;
 }
 /* 这一格此刻没东西：字退到 --faint，但照样能点，点进去是它自己的「暂无」。 */
 .tabbar__tab--empty:not(.tabbar__tab--on) {

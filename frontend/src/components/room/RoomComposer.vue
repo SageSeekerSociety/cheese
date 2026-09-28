@@ -590,7 +590,7 @@ defineExpose({
       />
       <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
              唯一的实心按钮，其余一律是安静的图标。 -->
-      <div class="composer-actions d-flex align-center ga-1">
+      <div class="composer-actions d-flex align-center" :class="enterSends ? 'ga-1' : 'ga-4'">
         <!-- 这两个 input 是藏起来的，但**不能**用 display:none / visibility:hidden：
                  iOS Safari 拒绝用脚本打开一个被隐藏掉的文件选择框，按钮点下去
                  毫无反应。所以按 .visually-hidden 的老办法藏——留在布局里、只是
@@ -790,6 +790,36 @@ defineExpose({
   }
   .summon-btn-short {
     display: inline;
+  }
+}
+
+/* 触屏上手指点得中（设计系统 §10.1）：几颗按钮画出来的样子不变，能点的范围撑到
+   44×44（同 style.css 的 .tap-target）。撑开的范围不能互相盖住，所以按钮之间拉开到
+   16px（模板里按输入方式换 ga-4）；这一行也长到 44px，不让它伸进上面的输入框。 */
+@media (pointer: coarse) {
+  .composer-actions {
+    min-height: 44px;
+  }
+  .summon-btn {
+    position: relative;
+  }
+  .composer-icon::before,
+  .composer-send::before,
+  .summon-btn::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+  .mention-menu-item {
+    min-height: 44px;
+  }
+  /* 回复、附件那一行横着滚，滚动的盒子会裁掉 ✕ 撑出去的范围：上下各留 8px。 */
+  .composer .chip-list {
+    padding-block: 8px;
   }
 }
 

@@ -1878,6 +1878,18 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
   cursor: pointer;
 }
+/* 触屏上手指点得中：药丸画出来还是 28px 高，能点的范围撑到 44px（已有定位）。 */
+@media (pointer: coarse) {
+  .new-pill::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
 .new-pill-enter-active {
   transition:
     opacity var(--dur-base) var(--ease-out),

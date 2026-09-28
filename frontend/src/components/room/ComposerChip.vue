@@ -87,4 +87,19 @@ const emit = defineEmits<{ (e: 'remove'): void }>()
   background: var(--line-2);
   color: var(--ink);
 }
+/* 触屏上手指点得中：✕ 画出来还是 22px，能点的范围撑到 44×44。 */
+@media (pointer: coarse) {
+  .chip__x {
+    position: relative;
+  }
+  .chip__x::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
 </style>
