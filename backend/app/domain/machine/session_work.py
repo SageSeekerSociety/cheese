@@ -184,6 +184,107 @@ async def room_machine_visibility(
     return next(iter(seen), None)
 
 
+async def _agent_name(db, project, topic, handle: str) -> str:
+    """The name a room shows for the agent on ``handle``: its saved teammate's,
+    else the one the room falls back to (``topic_members``)."""
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    seated = await AgentInstanceService(db).for_seat_handle(project, handle)
+    if seated is None:
+        seated = await TopicService(db).resolve_agent(topic)
+    return seated.display_name
+
+
+async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
+    """Who works on each of these devices now: every agent session whose lease
+    is there, in a room that is not archived, with its project, room and agent.
+    """
+    from app.domain.project.models import Project
+    from app.domain.topic.models import Topic, TopicStatus
+
+    out: dict[str, list[dict]] = {device_id: [] for device_id in device_ids}
+    if not device_ids:
+        return out
+    on_device = AgentSession.work_lease["device_id"].as_string()
+    rows = await db.execute(
+        select(AgentSession, Topic, Project, on_device)
+        .join(Topic, Topic.id == AgentSession.topic_id)
+        .join(Project, Project.id == Topic.project_id)
+        .where(on_device.in_(device_ids), Topic.status != TopicStatus.archived)
+        .order_by(Project.name, Topic.title, AgentSession.agent_handle)
+    )
+    for session, topic, project, device_id in rows:
+        out[device_id].append(
+            {
+                "project_id": str(project.id),
+                "project_name": project.name,
+                "topic_id": str(topic.id),
+                "topic_title": topic.title,
+                "agent_handle": session.agent_handle,
+                "agent_name": await _agent_name(
+                    db, project, topic, session.agent_handle
+                ),
+            }
+        )
+    return out
+
+
+async def tell_device_owner(db, *, topic, row, device, lease) -> None:
+    """Tell a device's owner that an agent session started working on it.
+
+    Notice only, no approval (#1900 step 5). One per session start: the event
+    is the lease's work resource, so a later tool on the same lease, or the
+    same lease prepared again, is the same event and reaches nobody twice. An
+    owner who is a person in that room sees it on the room's roster already
+    and is not told.
+    """
+    from app.domain.delivery.addressing import Event, Hand, address
+    from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+    from app.domain.notification.models import NotificationType
+    from app.domain.team.models import Team
+    from app.domain.topic_membership.services import TopicMemberService
+    from app.domain.user.models import User
+
+    owner = await db.get(User, device.owner_user_id)
+    if owner is None:
+        return
+    if owner.username in await TopicMemberService(db).people_handles(topic.id):
+        return
+    project = await ProjectService(db).get_or_404(topic.project_id)
+    team = await db.get(Team, project.team_id)
+    agent = await _agent_name(db, project, topic, row.agent_handle)
+    visibility = await _visibility_of(sql_device_service(db), device.device_id)
+    access = visibility is Visibility.host
+    await deliver(
+        db,
+        DeliveryEvent(
+            id=event_id_for(
+                NotificationType.DEVICE_IN_USE, f"{row.id}:{lease['resource_id']}"
+            ),
+            type=NotificationType.DEVICE_IN_USE,
+            payload={
+                "projectId": str(project.id),
+                "projectName": project.name,
+                # The team page lists who is on each of the owner's machines.
+                "teamHandle": team.handle if team is not None else None,
+                "topicId": str(topic.id),
+                "topicTitle": topic.title,
+                "agentHandle": row.agent_handle,
+                "agentName": agent,
+                "deviceId": device.device_id,
+                "deviceName": device.name,
+                "machineAccess": access,
+                # The sentence an email carries (`notification.maintenance`).
+                "content": f"{agent} 开始在「{device.name}」上工作："
+                f"{project.name} · {topic.title}"
+                + ("，能访问整台机器" if access else ""),
+            },
+            occurred_at=datetime.now(UTC),
+        ),
+        address(Event(machine_owner=owner.username), Hand.participant),
+    )
+
+
 class WorkComputerUnreachable(ConflictError):
     """The machine a session is leaving could not run the push before a switch.
 
@@ -637,6 +738,10 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     ):
         raise ConflictError("Execution allocation changed while preparing")
     row.work_lease = target
+    if selected is not None:
+        await tell_device_owner(
+            db, topic=current, row=row, device=selected, lease=target
+        )
     await db.commit()
     if target["status"] != "ready":
         message = "项目环境尚未就绪；对话和平台工具仍可用。"

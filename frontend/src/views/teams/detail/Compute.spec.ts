@@ -1,4 +1,4 @@
-import type { ProjectMachine } from '@/cx_types'
+import type { MyDevice, ProjectMachine } from '@/cx_types'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -9,7 +9,8 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 
 import Compute from './Compute.vue'
 
-import { changeProjectMachinePower, listProjectMachines } from '@/api'
+import { changeProjectMachinePower, listProjectMachines, listTeamDevices } from '@/api'
+import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { handle: 'crew' } }) }))
@@ -48,6 +49,7 @@ vi.mock('@/network/api/teams', () => ({
 }))
 
 beforeAll(() => {
+  setLocale('zh-CN')
   vi.stubGlobal('devicePixelRatio', 1)
   vi.stubGlobal('visualViewport', {
     width: 1024,
@@ -97,6 +99,45 @@ it('lists the machines projects already have and offers no way to open one', asy
   expect(view.getByText('50 / 50 台')).toBeTruthy()
   expect(view.queryByRole('button', { name: /开通/ })).toBeNull()
   expect(view.queryByText(/开通云端机器/)).toBeNull()
+})
+
+it('shows the owner who is on each of their machines, and nobody else', async () => {
+  vi.mocked(listProjectMachines).mockImplementation(
+    async () => ({ data: [] as ProjectMachine[] }) as Awaited<ReturnType<typeof listProjectMachines>>
+  )
+  const device = (id: string, inUse: MyDevice['in_use']): MyDevice => ({
+    device_id: id,
+    name: id,
+    online: true,
+    project_ids: [],
+    team_ids: [1],
+    screens: [],
+    in_use: inUse,
+  })
+  vi.mocked(listTeamDevices).mockResolvedValueOnce({
+    devices: [
+      device('mine', [
+        {
+          project_id: 'p1',
+          project_name: 'Orchard',
+          topic_id: 't1',
+          topic_title: 'Pricing',
+          agent_handle: 'cedar',
+          agent_name: 'Cedar',
+        },
+      ]),
+      device('theirs', null),
+    ],
+  })
+  const view = render(Compute, {
+    global: {
+      plugins: [createVuetify({ components, directives })],
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'MEMBER' }) },
+    },
+  })
+
+  expect(await view.findByText('正在用：Orchard · Pricing · Cedar')).toBeTruthy()
+  expect(view.getAllByText(/正在用/)).toHaveLength(1)
 })
 
 it('suspends and resumes the same machine through its project', async () => {

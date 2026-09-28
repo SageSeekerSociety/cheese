@@ -18,6 +18,7 @@ import {
   registerDeviceForTeam,
   unregisterDeviceFromTeam,
 } from '@/api'
+import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
 type CloudMachine = ProjectMachine & { projectName: string }
@@ -438,6 +439,19 @@ onBeforeUnmount(() => {
                     运行中 · @{{ screen.agent_handle }}
                   </v-chip>
                 </div>
+                <div
+                  v-for="use in device.in_use ?? []"
+                  :key="`${use.topic_id}:${use.agent_handle}`"
+                  class="mt-2 device-user"
+                >
+                  {{
+                    t('work.deviceInUse.line', {
+                      project: use.project_name,
+                      room: use.topic_title,
+                      agent: use.agent_name,
+                    })
+                  }}
+                </div>
                 <div v-if="myDeviceIds.has(device.device_id)" class="mt-2 d-flex justify-end">
                   <v-btn
                     size="small"
@@ -532,6 +546,11 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   background: rgba(var(--v-theme-on-surface), 0.05);
   font-size: 0.72rem;
+}
+.device-user {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
 }
 .machine-id {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

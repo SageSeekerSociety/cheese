@@ -77,6 +77,9 @@
     "saveFailed": "Could not choose the work computer",
     "retry": "Retry"
   },
+  "deviceInUse": {
+    "line": "In use: {project} · {room} · {agent}"
+  },
   "projectMachine": {
     "defaultLabel": "New agents use",
     "change": "Change",
