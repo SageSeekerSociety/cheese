@@ -360,8 +360,12 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     // 框，不取 `body` —— 空范围会让 `fieldDefects` 当场炸「这个范围里一个字段都没
     // 有」，而那正是它该做的。
     //
-    // 页头那颗「新增模型」在网关读不到时照常可点：错误态只换掉那份列表，不换掉主
-    // 操作。这一档因此不需要网关真的有数据 —— 它量的本来也只是几何。
+    // 这一档要网关可达。「新增模型」在网关不可达 / 没配管理密钥时是 `disabled` 的
+    // （`gatewayDown`，main 上也是），点不下去就到不了对话框 —— 症状是 Playwright
+    // 报 `element is not enabled` 等满超时，看着像布局挂了，其实是按钮压根没启用。
+    // playwright.config.ts 给后端接了桩网关，走的是「网关答话」这条路；拿一个没接
+    // 网关的后端跑就必挂（曾经把这档误判成开发服务器冷启动，就是因为这里写着「不
+    // 需要网关真的有数据」—— 那句是错的）。
     await page.getByRole('button', { name: '新增模型' }).first().click();
     // 按标题筛，不能取 `.v-overlay__content` 的第一个：那一个是导航条的 tooltip 浮
     // 层，不是对话框（「添加管理员」那一档就是在这里踩到的）。
@@ -377,6 +381,9 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 
     // 导入对话框在 start 态只有「备注名」一个字段（授权码那一段是点完「开始授权」
     // 才画出来的）。量的就是这颗字段的浮动 label 几何 —— 它是这一档存在的理由。
+    //
+    // 「导入订阅」同样 `disabled="gatewayDown"`，所以这一档也要求网关可达，理由见
+    // 上一档。
     await page.getByRole('button', { name: '导入订阅' }).first().click();
     const dialog = page.locator('.v-overlay__content').filter({ hasText: '导入 ChatGPT 订阅' });
     await dialog.waitFor();
