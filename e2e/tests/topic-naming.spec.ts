@@ -4,7 +4,7 @@ import { api, apiLogin, openFirstProject } from './helpers';
 // 话题命名 (backend topic/naming.py), watched from the sidebar: an unnamed room
 // gets a name from its first message, the name is re-checked once the room has
 // said more, an automatic rename can be undone from the line that announces
-// it, a suggestion only lands on enter, and a project on manual naming is left
+// it, a name a person typed is final, and a project on manual naming is left
 // alone. The model is stub-gateway.mjs, whose titles start with "E2E " — these
 // specs check the flow, never the wording.
 
@@ -69,25 +69,45 @@ test.describe('Topic naming', () => {
 
     await page.getByTestId('chat-scroll').getByRole('button', { name: '撤销' }).click();
     await expect(activeTitle(page)).toHaveText(first);
-    // Undone means a person chose it: the room can be handed back.
-    await openRowMenu(page);
-    await expect(menuItem(page, '恢复自动命名')).toBeVisible();
   });
 
-  test('a suggested name lands only when confirmed', async ({ page }) => {
+  test('a row menu offers rename and archive, nothing else', async ({ page }) => {
     await openFirstProject(page);
     await newRoom(page);
     await say(page, '整理这周三份会议纪要');
     await expect(activeTitle(page)).toHaveText(/^E2E /, { timeout: 20_000 });
 
     await openRowMenu(page);
-    await menuItem(page, '智能重命名').click();
+    await expect(menuItem(page, '重命名')).toBeVisible();
+    await expect(menuItem(page, '归档')).toBeVisible();
+    // Naming is the platform's job and a person's rename is final: there is no
+    // asking for a name, and no handing the room back.
+    await expect(
+      page.locator('.v-overlay .v-list-item').filter({ hasText: /智能重命名|恢复自动命名/ })
+    ).toHaveCount(0);
+  });
+
+  test('a name a person typed is kept and the platform leaves it alone', async ({ page }) => {
+    await openFirstProject(page);
+    await newRoom(page);
+    await say(page, '整理这周三份会议纪要');
+    await expect(activeTitle(page)).toHaveText(/^E2E /, { timeout: 20_000 });
+
+    await openRowMenu(page);
+    await menuItem(page, '重命名').click();
     const field = page.locator('.topic-row.is-active .rename-field input');
-    await expect(field).toHaveValue(/^E2E /, { timeout: 20_000 });
     await field.fill('会议纪要周报');
     await field.press('Enter');
     await expect(activeTitle(page)).toHaveText('会议纪要周报');
     await expect(activeTitle(page)).not.toHaveAttribute('title', /自动命名/);
+
+    // More of the same room, said after the rename: what would trigger a
+    // follow-up rename for a platform-named room.
+    await say(page, '先看一下 nginx 的日志');
+    await say(page, '其实问题在 Valkey 连接池');
+    await say(page, '把结论写进实况文档');
+    await page.waitForTimeout(5_000);
+    await expect(activeTitle(page)).toHaveText('会议纪要周报');
   });
 
   test('a project on manual naming is left alone', async ({ page }) => {

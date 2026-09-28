@@ -156,6 +156,30 @@ class AnswersService:
             raise NotFoundError("Answer not found", data={"id": answer_id})
         return answer
 
+    async def ensure_answer_in_question(
+        self, *, answer_id: int, question_id: int
+    ) -> Answer:
+        """父级绑定：这个回答必须挂在 URL 里那一道题上，否则 404。
+
+        ``/questions/{question_id}/answers/{answer_id}/...`` 这一族以前只在
+        `GET` / `PUT` / `DELETE /questions/{q}/answers/{a}` 三条上做了这件事，
+        投票、评论、收藏、态度那几条把 URL 里的 ``question_id`` 读进来就丢掉
+        （``_ = question_id``），于是同一个 answer id 挂在任意一道 —— 甚至不
+        存在的 —— 题下面都答 200。绑定写在这里（和 `QuestionInvitationService`
+        同一个理由）：它是领域规则，不是一处路由的装饰，路由只负责把 URL 里那
+        个 id 交进来。
+
+        404 而不是 403：错配的 id 不指向任何东西，403 会承认「这个回答存在，
+        只是不在这道题上」。message 与读路由那句逐字相同，两条路不能答得不一样
+        —— 差别本身就是一个探针。
+
+        父级 id 不是权限闸门：投票看投票人身份、删评论看评论作者，这里不碰授权。
+        """
+        answer = await self._ensure_answer_exists(answer_id)
+        if answer.question_id != question_id:
+            raise NotFoundError("Answer not found for this question")
+        return answer
+
     async def vote_answer(
         self, *, answer_id: int, user_id: int, vote_type: str
     ) -> dict:

@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
@@ -560,6 +560,157 @@ class BlockRepository:
         return await self._awaiting_an_answer(
             Block.topic_id, topic_ids, Block.task_id.is_(None)
         )
+
+    #: 只往回看这么久。红灯报的是「现在有人在干等」，一条一周前没人接的消息已经
+    #: 不是这件事了；而不设界的话，这条查询要扫整个项目全部历史消息。
+    REPLY_LOOKBACK = timedelta(days=7)
+
+    async def rooms_awaiting_a_reply(
+        self, topic_ids: list[uuid.UUID], *, now: datetime
+    ) -> dict[uuid.UUID, datetime]:
+        """{房间: 从什么时候开始有人在等 AI 回话} —— 一次查完，只看房间自己那条线。
+
+        「在等」有两种：一个人发了一条**点了 AI 名**的消息（`agent_recipient.
+        mentioned`，也就是会叫起一轮的那种），而这之后房间里还没有任何 AI 说过话；
+        或者平台报了一件要 AI 接手的事（PR 评审意见、检查没过，见
+        `_checks_awaiting_an_agent`），而这之后还没有 AI 出来处理。人和人之间
+        聊天叫不起 AI，也就谈不上等它。值是这批没人接的消息里**最早**那一条的时间：
+        等得最久的那个人决定灯什么时候亮。
+
+        平台自己写的事件（排队提示、额度提醒）不算回话 —— 它们不是 AI 在回应人。
+        """
+        if not topic_ids:
+            return {}
+        since = now - self.REPLY_LOOKBACK
+        room_line = (
+            Block.topic_id.in_(topic_ids),
+            Block.task_id.is_(None),
+            Block.kind == BlockKind.message,
+            Block.created_at >= since,
+        )
+        last_reply = (
+            select(Block.topic_id, func.max(Block.created_at).label("at"))
+            .where(*room_line, participant_blocks(), agent_handle_column(Block.author))
+            .group_by(Block.topic_id)
+            .subquery()
+        )
+        stmt = (
+            select(Block.topic_id, func.min(Block.created_at))
+            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            .where(
+                *room_line,
+                participant_blocks(),
+                ~agent_handle_column(Block.author),
+                Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
+            )
+            .group_by(Block.topic_id)
+        )
+        waiting = {
+            topic_id: at for topic_id, at in (await self._session.execute(stmt)).all()
+        }
+        for topic_id, at in await self._checks_awaiting_an_agent(topic_ids, since):
+            if topic_id not in waiting or at < waiting[topic_id]:
+                waiting[topic_id] = at
+        return waiting
+
+    #: 要 AI 去接手的平台事件：PR 上有评审意见、检查没过、合不进去。这些落地时就
+    #: 已经轮到芝士了（`platform_notices` 里各自写着「芝士要去改」）。
+    CHECKS_FOR_THE_AGENT = (
+        "pr_review",
+        "pr_conflict",
+        "ci_failed",
+        "gate_failed",
+        "gate_blocked",
+        "gate_abandoned",
+        "merge_refused",
+        "accept_conflict",
+        "upstream_conflict",
+        "migration_collision",
+    )
+
+    async def _checks_awaiting_an_agent(
+        self, topic_ids: list[uuid.UUID], since: datetime
+    ) -> list[tuple[uuid.UUID, datetime]]:
+        """[(房间, 最早一条没人接的检查事件的时间)]。
+
+        和人点名不同，这类事件多半落在某一条活的卡上，而接手的可能是那条活的
+        分身，也可能是主 agent 在房间里——所以「有人接了」看的是这个房间**连同它
+        名下的活**里，事件之后有没有任何 AI 说过话。
+        """
+        under_room = (
+            Block.topic_id.in_(topic_ids),
+            Block.created_at >= since,
+        )
+        last_reply = (
+            select(Block.topic_id, func.max(Block.created_at).label("at"))
+            .where(
+                *under_room,
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+            )
+            .group_by(Block.topic_id)
+            .subquery()
+        )
+        stmt = (
+            select(Block.topic_id, func.min(Block.created_at))
+            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            .where(
+                *under_room,
+                ~participant_blocks(),
+                Block.meta["event_type"].as_string().in_(self.CHECKS_FOR_THE_AGENT),
+                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
+            )
+            .group_by(Block.topic_id)
+        )
+        return [(t, at) for t, at in (await self._session.execute(stmt)).all()]
+
+    #: 「这一轮坏了」的那几种平台提示：没分类的失败（HTTP 502/404、异常原话）和
+    #: 分类过的平台故障。超时、部署打断这些是 warn —— 平台会自己接着跑，不算坏。
+    FAILED_TURN_EVENTS = ("turn_failed", "platform_error")
+
+    async def rooms_with_a_failed_turn(
+        self, topic_ids: list[uuid.UUID], *, now: datetime
+    ) -> dict[uuid.UUID, datetime]:
+        """{房间: 最近一次轮次报错的时间} —— 只算报错之后还没有 AI 说过话的。
+
+        一轮以「本轮未完成：…」收场，这个房间就是坏着的，不用等五分钟；之后 AI
+        开口说话了（重试成功、或下一轮正常回话），就不再算。只看房间自己那条线。
+        """
+        if not topic_ids:
+            return {}
+        since = now - self.REPLY_LOOKBACK
+        room_line = (
+            Block.topic_id.in_(topic_ids),
+            Block.task_id.is_(None),
+            Block.created_at >= since,
+        )
+        last_reply = (
+            select(Block.topic_id, func.max(Block.created_at).label("at"))
+            .where(
+                *room_line,
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+            )
+            .group_by(Block.topic_id)
+            .subquery()
+        )
+        stmt = (
+            select(Block.topic_id, func.max(Block.created_at))
+            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            .where(
+                *room_line,
+                ~participant_blocks(),
+                Block.meta["event_type"].as_string().in_(self.FAILED_TURN_EVENTS),
+                Block.meta["severity"].as_string() == "error",
+                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
+            )
+            .group_by(Block.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: at for topic_id, at in rows}
 
     async def _awaiting_an_answer(
         self, place_column, place_ids: list[uuid.UUID], *extra

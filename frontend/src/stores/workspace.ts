@@ -13,9 +13,7 @@ import {
   listProjects,
   listTopics,
   markTopicRead,
-  restoreTopicAutoTitle,
   setTopicTitle,
-  suggestTopicTitle,
   unarchiveTopic,
   undoTopicTitle,
   upgradeBlock,
@@ -385,21 +383,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   // 人起的名字：平台之后不会再自动改它（见后端 topic/naming.py）。
-  async function renameTopic(topicId: string, title: string, suggested = false) {
+  async function renameTopic(topicId: string, title: string) {
     try {
-      applyTopic(await setTopicTitle(topicId, title, suggested))
+      applyTopic(await setTopicTitle(topicId, title))
     } catch (e) {
       reportError(e, '重命名失败')
-    }
-  }
-
-  /** 智能重命名：只拿一个建议，不改任何东西；人确认后才走 renameTopic。 */
-  async function suggestTitle(topicId: string): Promise<string | null> {
-    try {
-      return (await suggestTopicTitle(topicId)).title
-    } catch (e) {
-      reportError(e, '没能生成标题，稍后再试')
-      return null
     }
   }
 
@@ -409,15 +397,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       applyTopic(await undoTopicTitle(topicId, eventId))
     } catch (e) {
       reportError(e, '撤销失败')
-    }
-  }
-
-  /** 恢复自动命名：把人定的名字交还给平台，方向变了它会再改。 */
-  async function restoreAutoTitle(topicId: string) {
-    try {
-      applyTopic(await restoreTopicAutoTitle(topicId))
-    } catch (e) {
-      reportError(e, '恢复自动命名失败')
     }
   }
 
@@ -522,9 +501,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     markRead,
     markDmRead,
     renameTopic,
-    suggestTitle,
     undoAutoTitle,
-    restoreAutoTitle,
     archive,
     unarchive,
     create,

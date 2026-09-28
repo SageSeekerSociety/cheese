@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
-from app.core.errors import BadRequestError, ForbiddenError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.discussion.models import DiscussableModelType
@@ -384,10 +384,18 @@ async def delete_question_comment(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
-    _ = question_id
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
     discussion = await discussion_service.get_discussion(comment_id, auth_user.user_id)
+    # 父级绑定：URL 里的 question_id 得和这条评论挂的题对上，不然拿别的题（哪怕
+    # 不存在的题）做前缀照样能把一条题目评论删掉（`_ = question_id` 的同一形状，
+    # 口径同上面邀请那一族和 `delete_answer_comment`）。404 而不是 403：错配的
+    # id 不指向任何东西，403 会承认「这条评论存在，只是不在这道题上」。
+    if (
+        discussion["modelType"] != DiscussableModelType.QUESTION.value
+        or discussion["modelId"] != question_id
+    ):
+        raise NotFoundError("Comment not found for this question")
     if discussion["sender"]["id"] != auth_user.user_id:
         raise ForbiddenError("Only the author can delete this comment")
     await discussion_service.delete_discussion(comment_id)

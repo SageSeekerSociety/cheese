@@ -449,39 +449,6 @@ def test_an_automatic_rename_can_be_undone_once(client, alice, gateway):
     assert again.status_code == 422
 
 
-def test_a_room_can_be_handed_back_to_automatic_naming(client, alice, gateway):
-    rid = _named(client, alice, gateway)
-    client.post(f"/topics/{rid}/title", json={"title": "我的名字"}, headers=alice)
-    r = client.post(f"/topics/{rid}/title/auto", headers=alice)
-    assert r.status_code == 200 and r.json()["data"]["title_source"] == "auto"
-    # Judged again straight away, as a follow-up.
-    gateway["answers"].append({"keep": False, "title": "新的方向"})
-    renamed = _run(client, rid, "signal")
-    assert renamed is not None and _row(client, rid).title == "新的方向"
-    assert [h[2] for h in _history(client, rid)] == [
-        "name",
-        "rename",
-        "restore",
-        "follow",
-    ]
-
-
-def test_a_suggestion_is_only_a_suggestion(client, alice, gateway):
-    rid = _named(client, alice, gateway)
-    gateway["answers"].append({"keep": False, "title": "建议的名字"})
-    r = client.post(f"/topics/{rid}/title/suggest", headers=alice)
-    assert r.status_code == 200 and r.json()["data"]["title"] == "建议的名字"
-    assert _row(client, rid).title == "dev 外网访问慢排查"
-
-    confirmed = client.post(
-        f"/topics/{rid}/title",
-        json={"title": "建议的名字", "suggested": True},
-        headers=alice,
-    )
-    assert confirmed.json()["data"]["title_source"] == "human"
-    assert _history(client, rid)[-1] == ("建议的名字", "human", "suggest")
-
-
 def test_a_project_on_manual_naming_is_left_alone(client, alice, gateway):
     pid = _project(client, alice)
     assert (

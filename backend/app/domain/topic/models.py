@@ -70,8 +70,8 @@ class TitleSource(enum.StrEnum):
     still change it (app/domain/topic/naming.py).
 
     ``human`` is final: a person typed it (the sidebar), asked 芝士 for it
-    (`cheese_title`), confirmed a suggestion, or undid a rename. Nothing
-    automatic writes over it until a person hands the room back.
+    (`cheese_title`), or undid a rename. Nothing writes over it after that —
+    not even a person, who can only give the room another human name.
     """
 
     placeholder = "placeholder"  # still 「新话题」
@@ -211,7 +211,7 @@ class TopicTitle(UuidPk, Base):
     source: Mapped[TitleSource] = mapped_column(
         Enum(TitleSource, native_enum=False, length=16)
     )
-    # name | calibrate | follow | rename | suggest | undo | restore
+    # name | calibrate | follow | rename | undo
     reason: Mapped[str] = mapped_column(String(16))
     by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
