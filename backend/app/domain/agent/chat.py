@@ -3994,8 +3994,22 @@ class ChatService:
                     {"input": publication_input, "block": payload},
                 )
             await session.commit()
-        if publish and task_id is None and turn_id is not None:
-            state = self._hook_work.get((topic_id, turn_id))
+        if publish and task_id is None:
+            # The caller attributes the publication to a turn when it can; an
+            # agent running off this process (a remote executor) publishes over
+            # HTTP, where the runner knows no live work and hands in None. Its
+            # turn still exists here — the silence sweep judges it by
+            # `_active_turn_ids` — so fall back to the same map: a room-visible
+            # publication from the room's agent IS the turn speaking, whatever
+            # machine it ran on. Without this, every remote publication missed
+            # `last_chat_at` and the sweep kept "reminding" a turn that had
+            # just spoken, counting the silence from turn start.
+            work_id = turn_id or self._active_turn_ids.get(topic_id)
+            state = (
+                self._hook_work.get((topic_id, work_id))
+                if work_id is not None
+                else None
+            )
             if state is not None:
                 state.last_chat_at = datetime.now(UTC)
                 state.last_progress_reminder_at = None

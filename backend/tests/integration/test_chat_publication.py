@@ -353,3 +353,65 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         clock += timedelta(seconds=threshold)
         assert client.portal.call(chat.remind_silent_turns) == 0
         assert len(notices) == 3
+
+
+def test_publication_from_a_remote_executor_still_counts_as_speaking(
+    client, stub_hooks, monkeypatch
+):
+    """The publish endpoint attributes a publication through the runner's live
+    work, which only knows turns THIS process executes. A remote executor's
+    turn publishes over HTTP with turn_id=None — yet its turn is exactly the
+    one the silence sweep is tracking (`_active_turn_ids`). The publication
+    must still refresh `last_chat_at`, or the sweep keeps "reminding" a turn
+    that just spoke, counting the silence from turn start."""
+    from app.api.deps import get_work_runner
+    from app.domain.agent import chat as chat_module
+
+    topic, headers = room(client)
+    chat = client.app.dependency_overrides[get_chat_service]()
+    clock = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock
+
+    monkeypatch.setattr(chat_module, "datetime", Clock)
+    threshold = 90
+    monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
+
+    def begin(topic_id, prompt, reply):
+        stub_hooks.starts(topic_id)
+        stub_hooks.acknowledges(topic_id, prompt)
+        stub_hooks.says(topic_id, "Internal output")
+
+    monkeypatch.setattr(stub_hooks, "emit_turn", begin)
+    notices = []
+
+    async def record_notice(topic_id, notice):
+        notices.append(notice)
+        return True
+
+    monkeypatch.setattr(chat, "notify_running_turn", record_notice)
+    # The executor is remote: this process runs no work for the topic, so the
+    # endpoint's runner lookup attributes nothing.
+    monkeypatch.setattr(get_work_runner(), "live_work_for_topic", lambda _t: None)
+    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
+        while True:
+            frame = ws.receive_json()
+            if (
+                frame["type"] == "event_block"
+                and frame["block"]["content"] == "Internal output"
+            ):
+                break
+        clock += timedelta(seconds=threshold)
+        sent = publish(client, topic, headers).json()["data"]
+        assert next_block(ws)["id"] == sent["id"]
+        assert sent["turn_id"] is None  # the endpoint could not attribute it
+        # The publication still counts as the turn speaking: no reminder right
+        # after it, and none inside a fresh interval either.
+        assert client.portal.call(chat.remind_silent_turns) == 0
+        clock += timedelta(seconds=threshold - 1)
+        assert client.portal.call(chat.remind_silent_turns) == 0
+        assert notices == []
