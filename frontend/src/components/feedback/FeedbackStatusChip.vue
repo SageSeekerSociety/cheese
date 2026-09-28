@@ -3,6 +3,8 @@ import type { FeedbackPriority, FeedbackStatus } from '@/cx_types'
 
 import { computed } from 'vue'
 
+import { statusLabel } from './feedbackLabels'
+
 import { priorityMeta, statusMeta } from '@/lib/feedbackMeta'
 
 // 状态/优先级的那个小药丸。它在卡片、详情页、管理员列表里都出现，所以颜色只能有
@@ -24,12 +26,18 @@ const props = defineProps<{
 const meta = computed(() =>
   props.priority ? priorityMeta(props.priority) : props.status ? statusMeta(props.status) : null
 )
+
+/** 名字和颜色**来源不同**：颜色是视觉决定（`lib/feedbackMeta`，服务端不该知道 token
+ *  名），名字是文案、必须跟着语言走（`feedbackLabels`）。所以这里取 meta 的色、取
+ *  i18n 的字 —— 一个药丸，两个来源各出各的那一半。
+ *  优先级的名字还没进词表（它只在管理端出现），仍用 meta.label。 */
+const label = computed(() => (props.priority ? meta.value?.label ?? '' : props.status ? statusLabel(props.status) : ''))
 </script>
 
 <template>
   <span v-if="meta" class="fb-chip" :style="{ background: meta.wash, color: meta.ink }">
     <span class="status-dot" :style="{ background: meta.dot }" aria-hidden="true" />
-    {{ meta.label }}
+    {{ label }}
   </span>
 </template>
 

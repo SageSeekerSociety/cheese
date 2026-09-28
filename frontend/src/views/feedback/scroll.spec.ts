@@ -55,14 +55,21 @@ function cssRule(rel: string, selector: string): string {
 const PAGE_SCROLLERS = ['FeedbackCenterPage', 'FeedbackDetailPage', 'FeedbackMinePage']
 
 describe('反馈页面的滚动归自己领', () => {
+  // 用户侧这三页现在共用一个壳（`FeedbackPageShell`），滚动那一层从页面自己搬到了
+  // 壳里。所以这条不变量拆成两半来钉：**页面要用那个壳**（不然它又会自己写一份、
+  // 两份迟早分家），**壳的根节点要滚**（不然三页一起变得滚不动）。
   for (const page of PAGE_SCROLLERS) {
-    it(`${page} 的根节点自己滚`, () => {
-      const tag = rootTag(page)
-      expect(tag.startsWith('<div')).toBe(true)
-      expect(tag).toContain('fill-height')
-      expect(tag).toContain('overflow-y-auto')
+    it(`${page} 用共用的壳`, () => {
+      expect(rootTag(page).startsWith('<FeedbackPageShell')).toBe(true)
     })
   }
+
+  it('壳的根节点自己滚', () => {
+    const tag = rootTag('../../components/feedback/FeedbackPageShell')
+    expect(tag.startsWith('<div')).toBe(true)
+    expect(tag).toContain('fill-height')
+    expect(tag).toContain('overflow-y-auto')
+  })
 
   it('管理端不再让整页一起滚，但满高这件事换了个地方继续成立', () => {
     // 根节点不再带 `overflow-y-auto`，所以上面那条不适用 —— 但「满高」这件事不能丢：

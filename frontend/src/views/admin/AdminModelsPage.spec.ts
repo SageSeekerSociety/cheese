@@ -24,7 +24,7 @@ import type { Component } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getGatewayModels = vi.fn()
@@ -258,6 +258,89 @@ describe('模型管理 · 四态', () => {
     expect(await page.findByText(/connection refused/)).toBeTruthy()
     // 空态和错误是两件事：拿不到数据时绝不能同时出现「暂无模型」。
     expect(page.queryByText('models.table.empty')).toBeNull()
+  })
+})
+
+describe('模型管理 · 读不到网关', () => {
+  it('读失败只在一处说：那一条画在模型表的表体里，重试就在旁边', async () => {
+    getGatewayModels.mockRejectedValue(new Error('网关不可达：connection refused'))
+    const page = mountPage()
+
+    const message = await page.findByText(/connection refused/)
+    // 位置说明「这张表没读出来」，而不是页顶一条谁也不挨着谁的横幅。
+    expect(message.closest('tbody')).not.toBeNull()
+    // **一处**：同一个原因页面上说两遍，人会以为是两次失败。
+    expect(page.queryAllByText(/connection refused/)).toHaveLength(1)
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.page.retry' }))
+    await waitFor(() => expect(getGatewayModels).toHaveBeenCalledTimes(2))
+  })
+
+  it('网关在但没配管理密钥：那一格说的就是这句，不画成「暂无模型」', async () => {
+    getGatewayModels.mockResolvedValue({
+      ...modelsPayload([]),
+      gateway: {
+        reachable: true,
+        readiness: null,
+        admin_configured: false,
+        detail: null,
+        fetched_at: '2026-09-23T02:40:00+00:00',
+      },
+    })
+    const page = mountPage()
+
+    expect(await page.findByText('models.page.gateway.unconfigured')).toBeTruthy()
+    // 这句话**只说一遍**：页头那盏灯留的是短句，全文挂在它的 title 上。
+    expect(page.queryAllByText('models.page.gateway.unconfigured')).toHaveLength(1)
+    expect(page.getByRole('status', { name: 'models.health.label' }).textContent).toContain('models.health.down')
+    // 表里列的每一行都来自网关：网关不答话不等于「没有模型」。
+    expect(page.queryByText('models.table.empty')).toBeNull()
+  })
+
+  it('额度段读失败也画在它自己的位置上，并给重试', async () => {
+    getGatewayProjects.mockRejectedValue(new Error('502 bad gateway'))
+    const page = mountPage()
+    await page.findByText('GLM 4.7')
+
+    const message = await page.findByText(/502 bad gateway/)
+    expect(message.closest('tbody')).not.toBeNull()
+    await fireEvent.click(page.getByRole('button', { name: 'models.page.retry' }))
+    await waitFor(() => expect(getGatewayProjects).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('模型管理 · 页头与窄屏', () => {
+  it('窗口是三段共用的页签：三个档位，点了就换成那一段的窗口', async () => {
+    const page = mountPage()
+    await page.findByText('GLM 4.7')
+
+    const tabs = page.getByRole('tablist', { name: 'models.page.window' })
+    const buttons = within(tabs).getAllByRole('tab')
+    expect(buttons).toHaveLength(3)
+    // 值是数字（发给接口的那个），标签是「过去 N 天」；t 在这份 spec 里透传，
+    // 三个标签因此是同一个键名，靠个数和选中断言形状。
+    expect(buttons[0].getAttribute('aria-selected')).toBe('true')
+    await fireEvent.click(buttons[2])
+    await waitFor(() => expect(getGatewayModels).toHaveBeenLastCalledWith(30))
+  })
+
+  it('窄屏卡片：主列标出来，没有信息的那一格整格收起', async () => {
+    getGatewayModels.mockResolvedValue(
+      modelsPayload([
+        runtimeModel({ name: 'm-quiet', label: 'Quiet', usage: usage({ requests: 0, failed_requests: 0 }) }),
+        runtimeModel({ name: 'm-busy', label: 'Busy', usage: usage({ requests: 10 }) }),
+      ])
+    )
+    const page = mountPage()
+
+    const quiet = (await page.findByText('Quiet')).closest('tr')!
+    expect(quiet.querySelector('[data-card="primary"]')).not.toBeNull()
+    // 这一行没有订阅、窗口里也没有请求 ⇒ 状态那一格画的是一句「—」，卡片里收起来。
+    const quietStatus = quiet.querySelector('[data-label="models.table.column.status"]')!
+    expect(quietStatus.getAttribute('data-card')).toBe('hide')
+
+    const busy = page.getByText('Busy').closest('tr')!
+    expect(busy.querySelector('[data-label="models.table.column.status"]')!.getAttribute('data-card')).toBeNull()
   })
 })
 

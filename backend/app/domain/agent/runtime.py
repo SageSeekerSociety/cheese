@@ -53,7 +53,8 @@ from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
-from app.domain.identity.handles import agent_instance_handle, names_a_person
+from app.domain.identity.handles import names_a_person, recipient_seat
+from app.domain.topic import doc_nudge
 from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.runtime")
@@ -69,13 +70,6 @@ def _a_turn_was_addressed(addressed: Addressed) -> bool:
     的物理形态。平台因此发不起一轮：它可以点谁的名，点到人就是一条站内信。
     """
     return any(how_it_arrives(r.handle) is Arrival.turn for r in addressed.recipients)
-
-
-def _seat(recipient: dict | None) -> str | None:
-    """The seat a message's `agent_recipient` names, as `how_it_arrives` reads it."""
-    if recipient and recipient.get("instance_id"):
-        return agent_instance_handle(uuid.UUID(str(recipient["instance_id"])))
-    return (recipient or {}).get("handle")
 
 
 def addressed_to_agent(handle: str | None) -> Addressed:
@@ -253,7 +247,7 @@ class InProcessBroker:
         #
         # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
         # 问的是「哪个实例在跑」，那边认的就是实例名。
-        addressed = addressed_to_agent(_seat(recipient) if mentioned else None)
+        addressed = addressed_to_agent(recipient_seat(recipient) if mentioned else None)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self.publish(channel, {"type": "user_block", "block": payload})
@@ -1247,7 +1241,7 @@ class AgentWorkRunner:
                 chat_service,
                 topic_id,
                 block.id,
-                addressed=addressed_to_agent(_seat(recipient)),
+                addressed=addressed_to_agent(recipient_seat(recipient)),
                 continuation_id=block.id,
                 author=block.author,
                 content=block.content,
@@ -2124,6 +2118,12 @@ class AgentWorkRunner:
                 await self._broker.publish(
                     channel, {"type": "turn_finished", "turn_id": str(turn_id)}
                 )
+                # 会话没接手收尾的那种轮次，结束就在这里：和会话自报结束那一处
+                # （`ChatService._set_hook_activity`）一样看一眼文档。「是不是工作
+                # 房间」问的是同一个答案，那边由 `chat_service` 上带（`doc_nudge`
+                # 经它取，不 import `chat.py`）。这里一句都不能多：下一行就是把这
+                # 一轮的存活标记摘掉，中间抛出去，这轮就永远是「在跑」。
+                doc_nudge.nudge(topic_id, chat_service)
             # Drop the liveness mark here, not in `_execute`: a turn killed by
             # task cancellation (CancelledError is a BaseException — it misses
             # every `except` inside `_execute`, including the registry cleanup)

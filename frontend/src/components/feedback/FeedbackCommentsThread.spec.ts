@@ -20,9 +20,13 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import FeedbackCommentsThread from './FeedbackCommentsThread.vue'
+
+// 楼下那个按钮的三个状态现在都走 `feedback.thread.*`，而这一份用例钉的是中文文案
+// 本身 —— 测试环境的默认语言是英文，所以显式站到 zh-CN 上。
+import { setLocale } from '@/i18n'
 
 const vuetify = createVuetify({ components, directives })
 
@@ -69,6 +73,10 @@ function mountThread(comments: FeedbackComment[], props: Record<string, unknown>
   })
   return { ...result, onLoadReplies, onLoadMore }
 }
+
+beforeEach(() => {
+  setLocale('zh-CN')
+})
 
 /** 楼内那个按钮（顶层列表末尾的「加载更多评论」是另一个，两者同类名）。 */
 function moreButton(container: Element): HTMLButtonElement {

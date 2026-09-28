@@ -25,6 +25,11 @@
 还在」：会话的家被重建过一次，磁盘是空的，而表里记着满满一树，于是每一次对账都把
 空磁盘读成「会话把整棵树删了」，平台上的记忆跟着整批消失，而删除没有历史可恢复。
 
+**超了单条上限的，这一版不收。** 会话写的那一版超了 `files.limit_breach` 的上限，
+就当它没写：平台那一版留着（新建的就没有这一条），会话那一版和原因放进
+`rejected`。这件事必须在这里判，不能只在数据库那一侧拒：这里一旦收下，基线就记成
+了会话那一版，下一次对账会把平台的旧版静默地铺回磁盘，agent 写的东西不留痕迹。
+
 **一次删掉半棵树，先当它没删。** 一条一条删记忆是 agent 想明白了；一个作用域同时
 少掉一大半，更像是那棵树本身出了事（家被重建、磁盘没挂上）。这是上一条的兜底：
 上一条堵的是根因，这一条保证根因万一再出现也删不掉东西（`BULK_DELETE_*`）。
@@ -32,7 +37,7 @@
 
 from dataclasses import dataclass, field
 
-from app.domain.memory.files import digest
+from app.domain.memory.files import digest, limit_breach
 
 #: `refused` 里那一条的正文为空串时，被拒的不是一次修改而是一次**删除**：会话把
 #: 这个文件删了，而平台这一份在那之后也变了。空串不是「没有正文」的正文，两者在
@@ -58,6 +63,9 @@ class TreeSync:
     refused: dict[str, str] = field(default_factory=dict)
     #: 新的 baseline（路径 → 指纹），存起来给下一次用。
     baseline: dict[str, str] = field(default_factory=dict)
+    #: 会话写的、超了单条上限没收的（路径 → 原因）。会话那一版还在磁盘上，调用方
+    #: 在它被清掉之前把它留到旁边。
+    rejected: dict[str, str] = field(default_factory=dict)
     #: 这一次对账里被保险拦下的删除（路径），按路径序。平台上它们一条都没少，会话
     #: 里下一轮会被重新铺回去。调用方拿它记一条日志：拦下来是「这一次没照做」，不是
     #: 「这件事没发生过」。
@@ -115,6 +123,7 @@ def sync_tree(
     }
     settled: dict[str, str] = {}
     refused: dict[str, str] = {}
+    rejected: dict[str, str] = {}
     baseline_after: dict[str, str] = {}
     #: 平台有、会话里没有、而平台自上次以来没动过的那几条：会话这一版不见了，接
     #: 下来就是把平台那一版删掉。这一支分不出「agent 删了」和「那棵树没了」，所以
@@ -138,6 +147,18 @@ def sync_tree(
         # baseline 是「上次写过什么」，不是「这里应该有什么」。
         if content is None and path not in requested and path not in disk:
             continue
+        if content is not None and content == disk.get(path):
+            previous = requested.get(path)
+            breach = (
+                None
+                if content == previous
+                else limit_breach(_split(path)[1], content, previous)
+            )
+            if breach:
+                rejected[path] = breach
+                content = previous
+                if content is None:
+                    continue
         if content is None and path in requested:
             dropped.append(path)
         if content is not None:
@@ -155,6 +176,7 @@ def sync_tree(
         files=settled,
         refused=refused,
         baseline=baseline_after,
+        rejected=rejected,
         held=tuple(sorted(held)),
     )
 

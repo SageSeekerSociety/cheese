@@ -179,7 +179,11 @@ class TestTeamRecruitment:
             headers={"Authorization": f"Bearer {owner.token}"},
         )
 
-        resp = api_client.get(f"/teams/{team_id}/recruitment")
+        # 团队作用域的读取要登录、并过团队可见性门 —— 队内成员照旧看得见。
+        resp = api_client.get(
+            f"/teams/{team_id}/recruitment",
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
         assert resp.status_code == 200
         posts = resp.json()["data"]["posts"]
         assert len(posts) >= 2

@@ -29,13 +29,14 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from app.domain.memory.files import (
-    INDEX_LINE_LIMIT,
+    INDEX_LINE_MAX,
     INDEX_NAME,
     MemoryFile,
     MemoryFileError,
     MemoryFileScope,
     MemoryType,
     check_path,
+    limit_breach,
     parse_index,
     prefix_of,
     valid_name,
@@ -177,7 +178,8 @@ class Decision:
         个方法自己站得住。
         """
         hook = " ".join(self.description.split()) or " ".join(self.body.split())
-        return f"- [{self.path}]({self.path}.md) — {hook[:INDEX_LINE_LIMIT]}"
+        head = f"- [{self.path}]({self.path}.md) — "
+        return head + hook[: max(INDEX_LINE_MAX - len(head), 0)]
 
 
 @dataclass(frozen=True)
@@ -642,6 +644,9 @@ def _lay_out(
             # merge 的目标在 `_decisions` 里已经确认存在，这里一定读得到它的版本。
             scope, owner, name, version = versions[path]
             content = _append_to(existing.get(path, ""), group)
+        if breach := limit_breach(name, content, existing.get(path)):
+            sources = "、".join(decision.source_id for decision in group)
+            raise MigrationError(f"{path}（来自 {sources}）写不进去：{breach}")
         planned[path] = PlannedFile(
             scope=scope,
             owner=owner,

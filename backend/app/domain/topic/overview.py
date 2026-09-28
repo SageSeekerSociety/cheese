@@ -43,8 +43,11 @@ _HEADING_RE = re.compile(r"(?m)^[ \t]*(#{1,6})[ \t]*(.+?)[ \t]*$")
 _BRIEF_TITLES = ("项目是什么", "项目简介", "项目概览")
 _ORDINAL_RE = re.compile(r"^[\s①②③④⑤⑥⑦⑧⑨⑩0-9一二三四五六七八九十.、,)]+")
 
-#: 话题文档模板里「当前结论」那一块（`doc_form.md` 与提示词同源）。
-CONCLUSION_TITLES = ("当前结论", "结论")
+#: 话题文档模板里「现状」那一块（`doc_form.md` 与提示词同源）。
+STATUS_TITLES = ("现状",)
+#: 旧模板里对应的那一块。按旧模板写的文档在芝士下次更新之前没有「现状」，总览退回
+#: 取它的第一句，不显示成「没写」。
+FORMER_STATUS_TITLES = ("当前结论", "结论")
 _SENTENCE_END_RE = re.compile(r"[。！？!?；;]|\.\s")
 
 
@@ -91,15 +94,17 @@ def project_brief(content: str) -> str:
     return content.strip()
 
 
-def topic_conclusion(content: str) -> str | None:
-    """一份话题文档的「当前结论」第一句，没有就是 None。
+def topic_status(content: str) -> str | None:
+    """一份话题文档的「现状」第一句，没有就是 None。
 
     注入到总览 ② / ⑤ 的那一句。取不到就报 None——编一个「进行中」出来，比
-    留空更容易被当成事实。
+    留空更容易被当成事实。没有「现状」时退回旧模板的「当前结论」。
     """
-    for _level, title, body in _sections(content):
-        if _is_titled(title, CONCLUSION_TITLES):
-            return first_sentence(body)
+    sections = _sections(content)
+    for names in (STATUS_TITLES, FORMER_STATUS_TITLES):
+        for _level, title, body in sections:
+            if _is_titled(title, names):
+                return first_sentence(body)
     return None
 
 
@@ -222,9 +227,7 @@ def _active_row(item: dict) -> str:
             f"<#{item['topic_id']}> {item['title']}",
             f"负责人：{item['owner']}" if item["owner"] else None,
             item["status"],
-            f"当前结论：{item['conclusion']}"
-            if item["conclusion"]
-            else "当前结论：（没写）",
+            f"现状：{item['conclusion']}" if item["conclusion"] else "现状：（没写）",
         ]
     )
 

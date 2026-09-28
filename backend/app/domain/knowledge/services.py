@@ -37,10 +37,33 @@ class KnowledgeService:
 
         No membership check: the caller is a 课程 resolving the ids its teacher
         configured, and a teacher can only point at entries they could already
-        see. `content` comes back with the row — trimming it is the caller's
-        call, because only the caller knows how big its own prompt may grow.
+        see. That premise is what `ensure_readable` makes true on the write
+        side, so it is checked once, when the config is saved, not per turn.
+        `content` comes back with the row — trimming it is the caller's call,
+        because only the caller knows how big its own prompt may grow.
         """
         return await self._repo.get_by_ids(knowledge_ids)
+
+    async def ensure_readable(
+        self, *, knowledge_ids: Sequence[int], user_id: int
+    ) -> None:
+        """Raise unless every one of these ids exists and this user may read it.
+
+        The write side's half of the contract `get_many` states but does not
+        check: a 项目集's teaching config may only name 知识 its teacher could
+        already read. The criterion is `get`'s — membership of the entry's
+        team — so anybody who can open `GET /knowledge/{id}` can point at it
+        and nobody else can. A missing id (404) is told apart from a foreign
+        one (403) because the caller is a form that can name the bad field.
+        """
+        for knowledge_id in knowledge_ids:
+            entity = await self._repo.get_by_id(knowledge_id)
+            if entity is None:
+                raise NotFoundError(
+                    "Resource knowledge not found",
+                    data={"type": "knowledge", "id": knowledge_id},
+                )
+            await self._ensure_team_member(entity.team_id, user_id)
 
     async def create(
         self,

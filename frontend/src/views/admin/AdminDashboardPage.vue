@@ -16,6 +16,7 @@ import AdminLiveSpine from '@/components/admin/AdminLiveSpine.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
+import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminShareBar from '@/components/admin/AdminShareBar.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
 import { relTime } from '@/lib/relTime'
@@ -1352,51 +1353,50 @@ onBeforeUnmount(() => {
 <template>
   <div class="ad">
     <div class="ad__inner page-container--admin">
-      <header class="ad__head">
-        <div class="ad__head-row">
-          <h1 class="t-console-title">{{ t('feedback.dashboard.title') }}</h1>
-          <div class="ad__head-side">
-            <!-- 统计窗口 7/30/90。只有窗口类（`WINDOWED_KINDS`）给这个切换器：
-                 性能读进程内存、集成是存量，它们没有「过去 N 天」—— 摆着是个假开关。
-                 切窗口由 `setStatsDays` 把已加载的窗口类全部重拉（缓存键=窗口）。
-                 下划线小页签，和下面的分类页签同一种语言：整页没有框状切换钮。 -->
-            <div
-              v-if="WINDOWED_KINDS.includes(store.statsKind)"
-              class="ad__wintabs"
-              role="group"
-              :aria-label="t('feedback.dashboard.window.switchAria')"
+      <AdminPageHeader :title="t('feedback.dashboard.title')" :sub="t('feedback.dashboard.sub')">
+        <template #tools>
+          <!-- 统计窗口 7/30/90。只有窗口类（`WINDOWED_KINDS`）给这个切换器：
+               性能读进程内存、集成是存量，它们没有「过去 N 天」—— 摆着是个假开关。
+               切窗口由 `setStatsDays` 把已加载的窗口类全部重拉（缓存键=窗口）。
+               形状按 `AdminTabs` 的 `sm` 档（30px 高、12.5px、琥珀下划线），但**没有**
+               换成那个组件：e2e 是按 `getByRole('button', { name: '30 天' })` 点它的
+               （`AdminTabs` 渲染的是 `role="tab"`），换组件就得连 e2e 一起改。 -->
+          <div
+            v-if="WINDOWED_KINDS.includes(store.statsKind)"
+            class="ad__wintabs"
+            role="group"
+            :aria-label="t('feedback.dashboard.window.switchAria')"
+          >
+            <button
+              type="button"
+              class="ad__wintab"
+              :class="{ 'ad__wintab--on': store.statsDays === 7 }"
+              :aria-pressed="store.statsDays === 7"
+              @click="store.setStatsDays(7)"
             >
-              <button
-                type="button"
-                class="ad__wintab"
-                :class="{ 'ad__wintab--on': store.statsDays === 7 }"
-                :aria-pressed="store.statsDays === 7"
-                @click="store.setStatsDays(7)"
-              >
-                {{ t('feedback.dashboard.window.d7') }}
-              </button>
-              <button
-                type="button"
-                class="ad__wintab"
-                :class="{ 'ad__wintab--on': store.statsDays === 30 }"
-                :aria-pressed="store.statsDays === 30"
-                @click="store.setStatsDays(30)"
-              >
-                {{ t('feedback.dashboard.window.d30') }}
-              </button>
-              <button
-                type="button"
-                class="ad__wintab"
-                :class="{ 'ad__wintab--on': store.statsDays === 90 }"
-                :aria-pressed="store.statsDays === 90"
-                @click="store.setStatsDays(90)"
-              >
-                {{ t('feedback.dashboard.window.d90') }}
-              </button>
-            </div>
-            <span class="ad__stamp t-meta-read">{{ stampText }}</span>
+              {{ t('feedback.dashboard.window.d7') }}
+            </button>
+            <button
+              type="button"
+              class="ad__wintab"
+              :class="{ 'ad__wintab--on': store.statsDays === 30 }"
+              :aria-pressed="store.statsDays === 30"
+              @click="store.setStatsDays(30)"
+            >
+              {{ t('feedback.dashboard.window.d30') }}
+            </button>
+            <button
+              type="button"
+              class="ad__wintab"
+              :class="{ 'ad__wintab--on': store.statsDays === 90 }"
+              :aria-pressed="store.statsDays === 90"
+              @click="store.setStatsDays(90)"
+            >
+              {{ t('feedback.dashboard.window.d90') }}
+            </button>
           </div>
-        </div>
+          <span class="ad__stamp t-meta-read">{{ stampText }}</span>
+        </template>
 
         <!-- 分类控件是这一页的**第一个控件**，也是**唯一**一条目的地导轨：读的人先决定
              看哪一类，再看数字。下划线页签（不是迷你卡）：七张卡片把「页面里又嵌了一个
@@ -1431,7 +1431,7 @@ onBeforeUnmount(() => {
             }}</span>
           </button>
         </div>
-      </header>
+      </AdminPageHeader>
 
       <!-- 错误是**整块**的（§9.3）：页头留着 —— 它是这一页的名字，不是数据。错误
            正文是**服务端原话**（不改写），重试是唯一主操作（琥珀份额归它），而且
@@ -2066,8 +2066,15 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   height: 100%;
   min-height: 0;
-  padding: 16px 24px 24px;
+  padding: 0 24px 24px;
   overflow-y: auto;
+}
+
+/* 页头（`AdminPageHeader`）自带 24px 内边距和底下那条发丝线，而这一页的滚动区外面
+   还有一圈 24px 的左右内边距（正文要用）。页头那一圈用负 margin 抵掉：它的左右
+   边界要和队列、模型两页的页头对齐（都是同一个内容列的两端），不能再往里缩 24px。 */
+.ad :deep(.aph) {
+  margin: 0 -24px;
 }
 
 /* 1440 那一列的水平居中（宽度走 `page-container--admin`，这里只管位置）。
@@ -2079,28 +2086,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
   margin: 0 auto;
   container-type: inline-size;
-}
-
-/* 页首块：第一行「标题 + 窗口切换 + 时间戳」，第二行分类页签。 */
-.ad__head {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  padding-top: 4px;
-}
-
-.ad__head-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.ad__head-side {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: baseline;
-  gap: 16px;
 }
 
 /* 页头三件套（标题 / 窗口切换 / 时间戳）里最不重要的一个：窄屏让位（截断），
@@ -2120,15 +2105,19 @@ onBeforeUnmount(() => {
 .ad__wintabs {
   display: inline-flex;
   flex: 0 0 auto;
-  gap: 16px;
+  gap: 4px;
 }
 
+/* 尺子抄 `AdminTabs` 的 `sm` 档：30px 高、12.5px、左右 8px 内边距、选中的那条
+   2px 下划线压在容器下沿。整页的切换控件因此只有一种尺寸语言。 */
 .ad__wintab {
   position: relative;
-  padding: 2px 1px 4px;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 8px;
   background: none;
   border: 0;
-  color: var(--faint);
+  color: var(--muted);
   font-size: 12.5px;
   font-weight: 600;
   line-height: var(--lh-12);
@@ -2137,9 +2126,9 @@ onBeforeUnmount(() => {
 
 .ad__wintab::after {
   position: absolute;
-  right: 0;
-  bottom: -2px;
-  left: 0;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
   height: 2px;
   background: var(--ink);
   opacity: 0;
@@ -2148,6 +2137,7 @@ onBeforeUnmount(() => {
 
 .ad__wintab--on {
   color: var(--ink);
+  font-weight: 600;
 }
 
 .ad__wintab--on::after {
@@ -2165,15 +2155,24 @@ onBeforeUnmount(() => {
   outline-offset: 2px;
 }
 
-/* 分类页签：贴着标题（14px），下沿用 `--line` 分隔内容与导航。窄了横向滚动
-   （不换行 —— 换行会把页签堆成一面墙）。 */
+/* 分类页签：页头里那把工具槽的下一行（`AdminPageHeader` 的默认插槽给 12px 间距），
+   下沿用 `--line` 分隔内容与导航。窄了横向滚动（不换行 —— 换行会把页签堆成一面墙），
+   右缘一道渐隐提示「后面还有」。 */
 .ad__kinds {
   display: flex;
   flex: 0 0 auto;
   gap: 28px;
-  margin: 14px 0 0;
   overflow-x: auto;
   border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
+  /* 遮罩只看 alpha，颜色本身不显示 —— 但**不能写字面量**（`color-no-hex` 拦的正是
+     「一个在深色主题下不成立的颜色」），所以借 `--ink`（两种主题下都不透明）当
+     「不透明」用。 */
+  mask-image: linear-gradient(to right, var(--ink) calc(100% - 32px), transparent);
+}
+
+.ad__kinds::-webkit-scrollbar {
+  display: none;
 }
 
 /* 一颗页签：状态点 + 标签 + 短值一行。它是**按钮**（切分类），可访问名字保持
@@ -2617,10 +2616,10 @@ onBeforeUnmount(() => {
 /* KPI 网格：N 张卡合成**一条整面板**（一个外框 + 内部分隔线，卡片自己的边框
    与写死高度在 `.ad__inner` 作用域内关掉，见 AdminKpiCard 的对应块）。边框数量
    从 N 个变 1 个，行高对齐是天生的 —— 不再需要 92/108px 那档妥协。
-   面板向左、向下各多伸 1px：第一列格子的左边线与末行格子的下边线（5 卡 tab
-   的第二行）被推出外边框、由 overflow 裁掉，留下的就全是「缝」。
-   窄 2 列 → ≥560 4 列 → ≥1320 auto-fit（4–6 列，卡数不一也不留空轨）。
-   断点是**容器查询**（挂 `.ad__inner`），理由见 `.ad__inner`。 */
+   面板向左、向下各多伸 1px：第一列格子的左边线与末行格子的下边线被推出外边框、
+   由 overflow 裁掉，留下的就全是「缝」。
+   窄 2 列 → ≥560 交 `auto-fit`，断点是**容器查询**（挂 `.ad__inner`），理由见
+   `.ad__inner`。 */
 .ad__kpis {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2635,17 +2634,24 @@ onBeforeUnmount(() => {
   border-bottom-left-radius: var(--radius-lg);
 }
 
+/* 列数交给 `auto-fit`，**不写死 4 列**：各类卡数不一样（交付 / 平台 5 张，其余
+   4 张），写死 4 列时 5 张卡排成 4 + 1 —— 第二行那一张右边空着三格，面板底色里
+   就是一个洞（1440 视口下正好落在这一档）。`auto-fit` 按容器宽度自己定列数，
+   4 张卡 4 等分、5 张卡铺满，都不留空轨。 */
 @container (min-width: 560px) {
   .ad__kpis {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
 }
 
-/* ≥1320 用 auto-fit 不写死 6 列：各类卡数不同（交付/平台 5、其余 4），auto-fit 让
-   4 卡的类自动 4 等分、5–6 卡的类铺满，不留空轨。 */
-@container (min-width: 1320px) {
-  .ad__kpis {
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+/* **只有两列这一档**（窄屏）才把落单的末位铺满整行：2 列 5 张 = 2 + 2 + 1，最后一行
+   半格空白看着像出了错；铺满以后是「2 + 2 + 一整行」，读起来是有意的。
+   这里**不能**用「张数是奇数就跨列」这种更宽的判据：它只在列数是偶数时对 —— 5 张卡在
+   5 列里本来就铺满一整行（1440 视口下 auto-fit 正好是 5 列），跨列反而把它拆成
+   「4 + 1」，那正是这一版要修掉的那个洞。 */
+@container (max-width: 559px) {
+  .ad__kpis > :deep(*:last-child:nth-child(odd)) {
+    grid-column: 1 / -1;
   }
 }
 

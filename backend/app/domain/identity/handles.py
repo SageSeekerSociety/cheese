@@ -8,6 +8,7 @@ is still ``IdentityService.is_agent`` (the ``AgentBinding``).
 
 import re
 import uuid
+from collections.abc import Mapping
 
 from sqlalchemy import ColumnElement, SQLColumnExpression, or_
 
@@ -56,6 +57,27 @@ def agent_instance_handle(instance_id: uuid.UUID | str) -> str:
         else str(instance_id).replace("-", "")
     )
     return f"{AGENT_HANDLE_PREFIX}{hexed[:_AGENT_HANDLE_HEX]}"
+
+
+def recipient_seat(recipient: Mapping[str, object] | None) -> str | None:
+    """The seat a block's ``meta.agent_recipient`` names, as ``how_it_arrives``
+    reads it. Pure.
+
+    Written down once because two callers ask it of the same stored shape: the
+    delivery path decides from it whether a turn is what this message arrives
+    by, and the room asks it which teammate unread messages were handed to. A
+    named instance answers the seat — the instance is the thing a seat grants —
+    while a recipient that names none already carries the seat itself (an agent
+    still under the room-derived handle, or a block written before instances
+    existed).
+    """
+    if recipient is None:
+        return None
+    instance_id = recipient.get("instance_id")
+    if instance_id:
+        return agent_instance_handle(uuid.UUID(str(instance_id)))
+    handle = recipient.get("handle")
+    return handle if isinstance(handle, str) and handle else None
 
 
 # How a 私聊 with an AI teammate is addressed — in the URL the browser shows and

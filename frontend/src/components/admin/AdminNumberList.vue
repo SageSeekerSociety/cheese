@@ -5,6 +5,7 @@ import type { FeedbackStatus } from '@/cx_types'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import { statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 
@@ -69,10 +70,12 @@ const shown = computed(() =>
       </div>
     </template>
 
-    <p v-else-if="shown.length === 0" class="anl__none">
-      <span class="anl__none-title">{{ t('feedback.dashboard.empty.title') }}</span>
-      <span class="anl__none-desc">{{ t('feedback.dashboard.empty.desc') }}</span>
-    </p>
+    <AdminEmptyState
+      v-else-if="shown.length === 0"
+      compact
+      :title="t('feedback.dashboard.empty.title')"
+      :desc="t('feedback.dashboard.empty.desc')"
+    />
 
     <template v-else>
       <router-link v-for="row in shown" :key="row.id" class="anl__row" :to="row.to">
@@ -191,27 +194,6 @@ const shown = computed(() =>
 }
 
 .anl__arrow {
-  color: var(--muted);
-}
-
-.anl__none {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 16px 12px;
-}
-
-.anl__none-title {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
-  color: var(--ink);
-}
-
-.anl__none-desc {
-  font-size: 13px;
-  line-height: var(--lh-13);
   color: var(--muted);
 }
 

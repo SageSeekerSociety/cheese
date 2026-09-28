@@ -131,7 +131,8 @@ describe('队列页', () => {
 
     // 状态页签也是本地筛（服务端没有 status 这个参数），同样不该发请求。按 role 点而不是
     // 按字点：「已收录」这四个字在行上的状态芯片里也有一份。
-    await fireEvent.click(getByRole('radio', { name: '已收录' }))
+    // 页签用的是共用的 `AdminTabs`，所以 role 是 `tab`（从前是自写的裸药丸，`radio`）。
+    await fireEvent.click(getByRole('tab', { name: '已收录' }))
     expect(listCalls).toBe(before)
   })
 
@@ -249,12 +250,12 @@ describe('日期窗口 chips 与页签口径', () => {
 
     const before = listCalls
     // 按 role 点而不是按字点：「已收录」在行上的状态芯片里也有一份。
-    await fireEvent.click(getByRole('radio', { name: '已收录' }))
+    await fireEvent.click(getByRole('tab', { name: '已收录' }))
     expect(await findByText('只筛这一页')).toBeTruthy()
     // 页签是本地筛（服务端没有 status 这个参数）—— 和 C-10 同一条断言。
     expect(listCalls).toBe(before)
 
-    await fireEvent.click(getByRole('radio', { name: '全部' }))
+    await fireEvent.click(getByRole('tab', { name: '全部' }))
     await waitFor(() => expect(queryByText('只筛这一页')).toBeNull())
   })
 

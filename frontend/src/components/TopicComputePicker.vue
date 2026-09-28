@@ -1,12 +1,12 @@
 <script setup lang="ts">
-// 房间这一项：还没开工的 AI 队友开工时用哪台工作电脑。已经在干活的队友各有各的
-// 机器，改它不会把谁搬走（结论 60），所以它开工前后都能改。挂在成员名册里「还没
-// 开工」那一行和「之后邀请的 AI 队友用」那一行上。
+// 房间这一项：这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻结论
+// 60）：改它就是整个房间一起搬，房间里的每个 AI 队友都换过去。挂在成员名册里房间
+// 那一行上。
 import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 
 import { computed, ref } from 'vue'
 
-import { setTopicComputeChoice } from '../api'
+import { ApiError, setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
 import { choiceDetail, choiceKey, compactChoices } from '../lib/computeConfig'
 
@@ -19,6 +19,9 @@ const error = ref('')
 // 选择变成了一条提议：这次点击没有改掉任何东西，等人点头。不是错误，所以不走
 // `error` 那一行红字。
 const proposal = ref('')
+// 原来那台够不着、推不上去：人唯一可以不推就换的情况，这时把「仍然更换」给他，
+// 并记住他刚选的是哪一台。
+const unreachable = ref<ComputeChoice | null>(null)
 const menuOpen = ref(false)
 const more = ref(false)
 const choices = computed(() => compactChoices(props.profile.project_default, props.profile.choice))
@@ -29,12 +32,13 @@ function online(choice: ComputeChoice): string {
   if (!device) return t('work.roomMachine.removed')
   return device.online ? t('work.roomMachine.online') : t('work.roomMachine.offline')
 }
-async function pick(choice: ComputeChoice) {
+async function pick(choice: ComputeChoice, abandonUnpushed = false) {
   saving.value = true
   error.value = ''
   proposal.value = ''
+  unreachable.value = null
   try {
-    const saved = await setTopicComputeChoice(props.topicId, choice)
+    const saved = await setTopicComputeChoice(props.topicId, choice, abandonUnpushed ? { abandonUnpushed } : {})
     // 变提议时房间这一项没有变 —— 不说话就等于这次点击石沉大海。菜单留着不收，
     // 那句话就在他刚按下的那个控件上。
     if (saved.proposal) {
@@ -46,6 +50,7 @@ async function pick(choice: ComputeChoice) {
     emit('changed')
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('work.roomMachine.saveFailed')
+    if (e instanceof ApiError && e.code === 'WorkComputerUnreachable') unreachable.value = choice
   } finally {
     saving.value = false
   }
@@ -96,6 +101,16 @@ async function pick(choice: ComputeChoice) {
       />
       <p v-if="proposal" role="status" class="cp-proposal">{{ proposal }}</p>
       <p v-if="error" role="alert" class="cp-error">{{ error }}</p>
+      <button
+        v-if="unreachable"
+        type="button"
+        class="cp-row cp-abandon"
+        data-testid="room-machine-abandon"
+        :disabled="saving"
+        @click="pick(unreachable, true)"
+      >
+        {{ t('work.roomMachine.abandon') }}
+      </button>
     </v-card>
   </v-menu>
 </template>
@@ -179,6 +194,9 @@ async function pick(choice: ComputeChoice) {
   padding: 8px;
   color: var(--danger-ink);
   font-size: 13px;
+}
+.cp-abandon {
+  color: var(--danger-ink);
 }
 .cp-proposal {
   padding: 8px;
