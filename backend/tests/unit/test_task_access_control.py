@@ -266,6 +266,10 @@ class TestCreateTaskEntityDomainResolution:
         async def _list_domains_for_groups(group_ids):
             return {1: ["cs.edu.cn", "ai.edu.cn"], 2: ["math.edu.cn"]}
 
+        async def _list_groups(space_id):
+            # 这两个 id 是这块板的，收口那一步放行；测的是解析。
+            return [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+
         with (
             patch(
                 "app.api.routes.tasks.SpaceRepository",
@@ -284,6 +288,10 @@ class TestCreateTaskEntityDomainResolution:
             patch(
                 "app.api.routes.tasks.may_publish_in_space",
                 new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceDomainGroupRepository",
+                return_value=SimpleNamespace(list_groups=_list_groups),
             ),
             patch(
                 "app.api.routes.tasks.SpaceDomainGroupDomainRepository",
