@@ -382,3 +382,76 @@ def test_a_space_review_is_committed_before_its_response_is_sent(
 
     assert asgi.status == 200, asgi.body
     _assert_committed_before_responding(asgi)
+
+
+def _a_person(db_session: AsyncSession, _portal) -> tuple[str, str]:
+    handle = f"commit-order-{uuid.uuid4().hex[:10]}"
+    user_id = _portal.call(registered, db_session, handle)
+    return handle, create_access_token(user_id, handle=handle)
+
+
+def _an_alert(asgi: _Asgi, handle: str, token: str, kind: str) -> tuple[str, int]:
+    """A project owned by ``handle`` and one alert addressed to them; the last
+    request made is the ``POST /projects/{id}/alerts``."""
+    asgi.post(
+        "/projects",
+        {"name": f"Inbox {uuid.uuid4().hex[:8]}", "owner_handle": handle},
+        token=token,
+    )
+    assert asgi.status == 200, asgi.body
+    project_id = json.loads(asgi.body)["data"]["id"]
+    asgi.post(
+        f"/projects/{project_id}/alerts",
+        {
+            "level": "light",
+            "kind": kind,
+            "title": "A reminder",
+            "body": "Read once, then gone.",
+            "target_handle": handle,
+        },
+        token=token,
+    )
+    assert asgi.status == 200, asgi.body
+    return project_id, json.loads(asgi.body)["data"]["data"][0]["id"]
+
+
+def test_an_alert_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, db_session: AsyncSession, _portal, stub_project_forge
+) -> None:
+    handle, token = _a_person(db_session, _portal)
+
+    _an_alert(asgi, handle, token, "change_alert")
+
+    _assert_committed_before_responding(asgi)
+
+
+@pytest.mark.parametrize(
+    ("kind", "path", "body"),
+    [
+        ("change_alert", "/alerts/{alert}/read", {}),
+        ("change_alert", "/alerts/{alert}/feedback", {"feedback": "up"}),
+        ("change_alert", "/projects/{project}/alerts/read-all", {}),
+        ("decision_request", "/alerts/{alert}/resolve", {"chosen": "yes"}),
+    ],
+)
+def test_answering_an_alert_is_committed_before_the_response_is_sent(
+    asgi: _Asgi,
+    db_session: AsyncSession,
+    _portal,
+    stub_project_forge,
+    kind: str,
+    path: str,
+    body: dict,
+) -> None:
+    """The e2e flake this pins (merge queue, run 36411087478)::
+
+    POST /alerts/<id>/read               200   <- "read": true
+    GET /projects/<id>/inbox                   <- the alert, still unread
+    """
+    handle, token = _a_person(db_session, _portal)
+    project_id, alert_id = _an_alert(asgi, handle, token, kind)
+
+    asgi.post(path.format(alert=alert_id, project=project_id), body, token=token)
+
+    assert asgi.status == 200, asgi.body
+    _assert_committed_before_responding(asgi)
