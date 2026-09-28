@@ -42,6 +42,7 @@ const status = computed(() => siteStatus(props.blocks, props.working, props.turn
 // 键名写全，不拼：拼出来的键谁也搜不到，目录那道闸门会把它们当成没人用的。
 const PLAIN: Record<Exclude<SiteState, 'acting' | 'retrying'>, string> = {
   thinking: 'work.room.site.status.thinking',
+  compacting: 'work.room.site.status.compacting',
   waiting: 'work.room.site.status.waiting',
   stopped: 'work.room.site.status.stopped',
   idle: 'work.room.site.status.idle',
@@ -65,6 +66,7 @@ const TONE: Record<SiteState, string> = {
   thinking: 'ok',
   acting: 'ok',
   retrying: 'warn',
+  compacting: 'ok',
   waiting: 'warn',
   stopped: 'danger',
   idle: 'muted',
