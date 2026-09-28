@@ -21,9 +21,13 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, within } from '@testing-library/vue'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import FeedbackCommentItem from './FeedbackCommentItem.vue'
+
+// 组件里的话现在都走 `feedback.comment.*`（英文目录里是英文），而这几条用例钉的是
+// 中文文案本身 —— 测试环境的默认语言是英文，所以这里显式站到 zh-CN 上。
+import { setLocale } from '@/i18n'
 
 const vuetify = createVuetify({ components, directives })
 
@@ -57,6 +61,10 @@ function mountComment(extra: Partial<FeedbackComment> = {}, props: Record<string
   // HTMLElement —— 它拿到的本来就一定是元素，转一下比在每处查询外面套 as 干净。
   return { ...result, ui: within(result.container as HTMLElement) }
 }
+
+beforeEach(() => {
+  setLocale('zh-CN')
+})
 
 describe('楼内回复指代', () => {
   it('存了回复对象就把「回复 X」画出来', () => {

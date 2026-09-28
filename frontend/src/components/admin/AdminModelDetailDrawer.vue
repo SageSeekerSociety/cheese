@@ -605,7 +605,9 @@ function close() {
       @update:model-value="revokeOpen = $event"
     >
       <v-card rounded="lg">
-        <v-card-title class="px-4 pt-4 pb-2">{{ t('models.detail.subscription.revokeTitle') }}</v-card-title>
+        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{
+          t('models.detail.subscription.revokeTitle')
+        }}</v-card-title>
         <v-card-text class="px-4">
           {{ t('models.detail.subscription.revokeBody', { name: model?.name ?? '' }) }}
           <v-alert v-if="revokeError" type="error" density="compact" variant="tonal" class="mt-3" role="alert">

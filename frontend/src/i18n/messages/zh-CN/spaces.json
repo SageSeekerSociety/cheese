@@ -306,7 +306,8 @@
     "approve": "通过",
     "reject": "驳回",
     "reason": "驳回原因",
-    "actionFailed": "审核未完成，请刷新确认申请状态后重试。"
+    "actionFailed": "审核未完成，请刷新确认申请状态后重试。",
+    "dismiss": "关闭这条提示"
   },
   "detail": {
     "editInfo": "编辑信息",

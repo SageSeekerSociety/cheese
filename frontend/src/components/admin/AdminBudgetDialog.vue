@@ -85,7 +85,7 @@ function submit() {
 <template>
   <v-dialog :model-value="modelValue" max-width="480" :persistent="saving" @update:model-value="!$event && close()">
     <v-card rounded="lg">
-      <v-card-title class="px-4 pt-4 pb-2">{{ t('models.budget.dialog.title') }}</v-card-title>
+      <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('models.budget.dialog.title') }}</v-card-title>
 
       <v-card-text class="px-4">
         <p class="amb__who t-body">{{ project?.name }}</p>

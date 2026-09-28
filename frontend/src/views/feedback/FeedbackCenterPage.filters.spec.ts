@@ -83,9 +83,9 @@ describe('反馈中心的筛选', () => {
 
     await findByText('导出报表偶发 502')
 
-    // 「作者」按 aria-label 取 —— 两个 v-select 也各自渲染一个 `input[type="text"]`
-    // （Vuetify 的可搜索输入框），按标签才是稳的。
-    const field = baseElement.querySelector('.fb-filters input[aria-label="作者"]')
+    // 「作者」按 id 取：筛选条现在是一排手写的药丸加输入框（不再是四个 v-select 加一个
+    // v-text-field），这一条钉的是「那颗输入框和 store 接上了」。
+    const field = baseElement.querySelector('#fb-author')
     expect(field, '筛选行里应当有一个作者输入框').toBeTruthy()
 
     vi.useFakeTimers()
@@ -96,9 +96,10 @@ describe('反馈中心的筛选', () => {
     vi.useRealTimers()
     await waitFor(() => expect(useFeedbackStore().filterAuthor).toBe('alice'))
 
-    // Vuetify 的清除按钮走的是 `model.value = null`，不是 `''` —— 这一下正是以前炸的地方。
-    // 它不是一颗 `<button>`，而是 `.v-field__clearable` 里那颗带 `role="button"` 的图标。
-    const clear = baseElement.querySelector('.fb-filters .v-field__clearable [role="button"]') as HTMLElement | null
+    // 清掉那一下正是以前炸的地方：清除按钮以前走 `model.value = null`（不是 `''`），
+    // 而 watch 里那句 `value.trim()` 就在那一刻抛。现在这颗叉是手写的，判据是「空串」——
+    // 这一条继续钉住「清空之后不炸，并且真的回到不限作者」。
+    const clear = baseElement.querySelector('.fb-author__x') as HTMLElement | null
     expect(clear, '作者框是 clearable 的，应当有一颗清除按钮').toBeTruthy()
 
     vi.useFakeTimers()
@@ -128,11 +129,9 @@ describe('反馈中心的筛选', () => {
     })
     useFeedbackStore().setFilter({ kind: 'other' })
 
-    await waitFor(() => expect(baseElement.querySelector('.fb-empty__title')?.textContent).toBe('No feedback matches'))
+    await waitFor(() => expect(baseElement.querySelector('.aes__title')?.textContent).toBe('No feedback matches'))
     // 空块里那颗按钮说的也是筛选 —— 否则「清除筛选」只挂在工具栏上。
-    await waitFor(() =>
-      expect(baseElement.querySelector('.fb-empty__action')?.textContent?.trim()).toBe('Clear filters')
-    )
+    await waitFor(() => expect(baseElement.querySelector('.aes__btn')?.textContent?.trim()).toBe('Clear filters'))
   })
 
   it('什么筛都没加、列表真的空时，仍然说「暂无反馈」', async () => {
@@ -146,6 +145,6 @@ describe('反馈中心的筛选', () => {
     // 挂载时用的 i18n 是**测试环境默认那一档**（英文），所以这里比的是英文文案 ——
     // 两个语言里这一对都得是**两句不同的话**，而这条与上一条合起来钉的正是「选对了
     // 哪一句」。
-    await waitFor(() => expect(baseElement.querySelector('.fb-empty__title')?.textContent).toBe('No feedback yet'))
+    await waitFor(() => expect(baseElement.querySelector('.aes__title')?.textContent).toBe('No feedback yet'))
   })
 })

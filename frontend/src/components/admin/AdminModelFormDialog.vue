@@ -206,7 +206,7 @@ function submit() {
 <template>
   <v-dialog :model-value="modelValue" max-width="560" :persistent="saving" @update:model-value="!$event && close()">
     <v-card rounded="lg">
-      <v-card-title class="px-4 pt-4 pb-2">
+      <v-card-title class="t-dialog-title px-4 pt-4 pb-2">
         {{ mode === 'add' ? t('models.dialog.add.title') : t('models.dialog.edit.title') }}
       </v-card-title>
 

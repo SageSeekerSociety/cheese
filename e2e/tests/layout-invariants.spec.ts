@@ -14,6 +14,9 @@ import { api, apiLogin, openFirstProject } from './helpers';
 // 因此首尾相接是正常的，屏幕上并没有任何东西挨上。拿 `.v-input` 去比会把每一对
 // 竖排字段都报成缺陷。
 //
+// 「字段」和「标签」的盒子按页面的画法而定（`FieldDrawing`）：Vuetify 的 outlined 是
+// 一套，平台自己用令牌画的表单（反馈提交页）是另一套。**判据是同一个**，见下。
+//
 // 这一份只断言「屏幕上有没有压上/被裁」，不认任何具体的间距数值：改密度、换变体、
 // 把 hide-details 设成别的都不该让它变红，只有真叠上了才该。
 
@@ -99,21 +102,42 @@ async function textOverlaps(scope: Locator): Promise<string[]> {
 
 type Defect = { kind: string; what: string };
 
-async function fieldDefects(scope: Locator): Promise<Defect[]> {
-  return scope.evaluate((root: Element) => {
+/** 一页表单把字段画成了哪一套 —— 量的人得先知道，因为「字段」和「标签」的盒子在两套
+ *  里不是同一个选择器，而**判据**是同一个。
+ *
+ *  平台上只有两套：
+ *
+ *    * `VUETIFY_FIELDS` —— Vuetify 的 outlined 控件。真正画出来的 label 住在描边的
+ *      缺口里（`.v-field__outline .v-field-label`），而字段是 `.v-field` 那个盒子。
+ *    * `TOKEN_FIELDS` —— 平台自己用令牌画的表单（反馈提交页，见
+ *      `components/feedback/SubmitFeedbackForm.vue` 的文件头：它**故意**不用 Vuetify
+ *      的输入框）。那里一对「标签 + 控件」是 `.sb-field`，标签在控件上方一行，是普通
+ *      的 `.sb-label`，没有骑在边框上的那一半。
+ *
+ *  两套要守的是同一件事：**标签不压到别的字段上、也不被滚动容器裁掉**。2026-09 换成
+ *  令牌之后这条用例红过一次，红在「`.sb-form` 里一个 `.v-field` 都没有」——量不到字段
+ *  时这个函数会当场炸（空范围永远返回「没有缺陷」），而那不是缺陷、是**画法变了**。
+ *  把画法变成参数，判据一个字不用改。 */
+type FieldDrawing = { field: string; label: string };
+const VUETIFY_FIELDS: FieldDrawing = { field: '.v-field', label: '.v-field__outline .v-field-label' };
+const TOKEN_FIELDS: FieldDrawing = { field: '.sb-field', label: '.sb-label' };
+
+async function fieldDefects(scope: Locator, drawing: FieldDrawing = VUETIFY_FIELDS): Promise<Defect[]> {
+  return scope.evaluate((root: Element, { field, label: labelSelector }: FieldDrawing) => {
     const out: { kind: string; what: string }[] = [];
     const drawn = (el: Element) => {
       const r = el.getBoundingClientRect();
       return r.width > 0 && r.height > 0;
     };
 
-    const boxes = [...root.querySelectorAll('.v-field')].filter(drawn);
+    const boxes = [...root.querySelectorAll(field)].filter(drawn);
     // 量不到字段就是范围选错了。空范围永远返回「没有缺陷」，是一条只会绿的断言，
     // 所以这里炸掉而不是放过：`.v-overlay__content` 的第一个是 tooltip 的浮层而
     // 不是对话框，这一条就是这么发现的。
     if (!boxes.length) throw new Error('这个范围里一个字段都没有，这条断言等于没做');
 
-    const nameOf = (el: Element) => (el.querySelector('.v-field-label')?.textContent || '').trim() || '(无标签字段)';
+    const nameOf = (el: Element) =>
+      (el.querySelector('.v-field-label, .sb-label')?.textContent || '').trim() || '(无标签字段)';
     const scrollerOf = (el: Element) => {
       for (let p = el.parentElement; p; p = p.parentElement) {
         const overflow = getComputedStyle(p).overflowY;
@@ -123,13 +147,14 @@ async function fieldDefects(scope: Locator): Promise<Defect[]> {
     };
 
     // outlined 变体真正画出来的那个 label 住在描边的缺口里；字段内部还有一个同名
-    // 副本，是 visibility:hidden 的占位，量它只会得到错的坐标。
-    const labels = [...root.querySelectorAll('.v-field__outline .v-field-label')].filter(
+    // 副本，是 visibility:hidden 的占位，量它只会得到错的坐标。（令牌画的那一套里
+    // 标签本来就是元素的文字，没有这种副本，这个过滤对它无害。）
+    const labels = [...root.querySelectorAll(labelSelector)].filter(
       (el) => getComputedStyle(el).visibility !== 'hidden' && drawn(el)
     );
 
     for (const label of labels) {
-      const own = label.closest('.v-field');
+      const own = label.closest(field);
       const text = (label.textContent || '').trim();
       const lr = label.getBoundingClientRect();
 
@@ -153,7 +178,7 @@ async function fieldDefects(scope: Locator): Promise<Defect[]> {
       }
     }
     return out;
-  });
+  }, drawing);
 }
 
 test.describe('表单字段不会互相压住，也不会被裁掉', () => {
@@ -250,10 +275,14 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     // 范围取表单本身（`.sb-form`），不取 `body`：这一页的页头和底下那条说明都不是
     // 字段，喂给 `fieldDefects` 会把不相干的东西放在一起比。等的是表单真的画出来，
     // 不是地址变了 —— 地址先变、字段在后几帧里。
+    //
+    // 画法是 `TOKEN_FIELDS`：这一页是平台自己用令牌画的（`SubmitFeedbackForm.vue`
+    // 的文件头写了为什么不用 Vuetify 的输入框），`.sb-form` 里一个 `.v-field` 都没
+    // 有。量到的仍然是老一套：标签不压到别的字段上、也不被滚动容器裁掉。
     const form = page.locator('.sb-form');
     await form.waitFor();
     await expect(form.getByLabel(/^标题/)).toBeVisible();
-    expect(await fieldDefects(form)).toEqual([]);
+    expect(await fieldDefects(form, TOKEN_FIELDS)).toEqual([]);
   });
 
   test('管理后台 · 反馈队列里打开一条', async ({ page }) => {
@@ -331,8 +360,12 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     // 框，不取 `body` —— 空范围会让 `fieldDefects` 当场炸「这个范围里一个字段都没
     // 有」，而那正是它该做的。
     //
-    // 页头那颗「新增模型」在网关读不到时照常可点：错误态只换掉那份列表，不换掉主
-    // 操作。这一档因此不需要网关真的有数据 —— 它量的本来也只是几何。
+    // 这一档要网关可达。「新增模型」在网关不可达 / 没配管理密钥时是 `disabled` 的
+    // （`gatewayDown`，main 上也是），点不下去就到不了对话框 —— 症状是 Playwright
+    // 报 `element is not enabled` 等满超时，看着像布局挂了，其实是按钮压根没启用。
+    // playwright.config.ts 给后端接了桩网关，走的是「网关答话」这条路；拿一个没接
+    // 网关的后端跑就必挂（曾经把这档误判成开发服务器冷启动，就是因为这里写着「不
+    // 需要网关真的有数据」—— 那句是错的）。
     await page.getByRole('button', { name: '新增模型' }).first().click();
     // 按标题筛，不能取 `.v-overlay__content` 的第一个：那一个是导航条的 tooltip 浮
     // 层，不是对话框（「添加管理员」那一档就是在这里踩到的）。
@@ -348,6 +381,9 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 
     // 导入对话框在 start 态只有「备注名」一个字段（授权码那一段是点完「开始授权」
     // 才画出来的）。量的就是这颗字段的浮动 label 几何 —— 它是这一档存在的理由。
+    //
+    // 「导入订阅」同样 `disabled="gatewayDown"`，所以这一档也要求网关可达，理由见
+    // 上一档。
     await page.getByRole('button', { name: '导入订阅' }).first().click();
     const dialog = page.locator('.v-overlay__content').filter({ hasText: '导入 ChatGPT 订阅' });
     await dialog.waitFor();

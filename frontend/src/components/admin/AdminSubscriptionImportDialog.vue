@@ -247,7 +247,7 @@ function close() {
 <template>
   <v-dialog :model-value="modelValue" max-width="440" @update:model-value="!$event && close()">
     <v-card rounded="lg">
-      <v-card-title class="px-4 pt-4 pb-2 asid__title">{{ t('models.subscription.dialogTitle') }}</v-card-title>
+      <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('models.subscription.dialogTitle') }}</v-card-title>
 
       <!-- start：说明 + 备注名 + 开始授权。定向重授权时换「重新授权」那句。 -->
       <template v-if="phase === 'start'">
@@ -362,11 +362,6 @@ function close() {
 </template>
 
 <style scoped>
-.asid__title {
-  font-size: 15px;
-  line-height: var(--lh-15);
-}
-
 .asid__intro {
   margin: 0 0 12px;
   color: var(--text);

@@ -1,6 +1,7 @@
 {
   "queue": {
     "label": "Feedback queue",
+    "sub": "A triage queue pushed one item at a time — who owns it and what happens next are on this page.",
     "tab": {
       "all": "All",
       "scope": "This page only",
@@ -138,6 +139,7 @@
   },
   "dashboard": {
     "title": "Dashboard",
+    "sub": "How the platform is doing and where it is stuck — delivery, usage, integrations, performance.",
     "kindsAria": "Sections",
     "window": {
       "switchAria": "Stats window",
@@ -459,13 +461,46 @@
     "viewAll": "View all"
   },
   "center": {
+    "title": "Feedback center",
+    "mine": "My feedback",
+    "admin": "Admin console",
+    "submit": "Submit feedback",
+    "tab": {
+      "label": "Feedback tabs",
+      "all": "All",
+      "hot": "Hot",
+      "active": "In progress",
+      "resolved": "Completed"
+    },
+    "filter": {
+      "kind": "Type",
+      "status": "Status",
+      "author": "Author",
+      "days": "Time",
+      "any": "Any",
+      "authorPlaceholder": "Author",
+      "clear": "Clear filters",
+      "days24": "24 hours",
+      "days7": "7 days",
+      "days30": "30 days"
+    },
+    "hot": {
+      "note": "Scored by support, but newer counts for more: 2 supports today weigh the same as 4 supports {halfLife} days ago. Items worth {threshold} points that aren't finished land in this tab; when fewer than {minItems} clear the bar the rest are filled in by score, so the tab is never empty."
+    },
+    "more": {
+      "load": "Load more",
+      "showing": "Showing {shown} of {total}"
+    },
+    "foot": "Public feedback is visible to everyone; if you file it as private, only you and platform admins can see it — nobody else can search it out or get a link to it.",
     "empty": {
       "title": "No feedback yet",
       "desc": "Feedback you submit shows up here."
     },
     "error": {
       "title": "Couldn't load feedback",
-      "desc": "Check your connection and try again."
+      "desc": "Check your connection and try again.",
+      "retry": "Try again",
+      "dismiss": "Dismiss this notice"
     },
     "filtered": {
       "title": "No feedback matches",
@@ -473,11 +508,121 @@
       "clear": "Clear filters"
     },
     "search": {
+      "placeholder": "Search feedback",
       "title": "No matching feedback",
       "desc": "Try another keyword. Search covers titles, summaries, bodies and submitters."
     }
   },
+  "mine": {
+    "title": "My feedback",
+    "back": "Back to feedback center",
+    "submit": "Submit feedback",
+    "lede": "Feedback I filed, feedback I filed on behalf of an AI teammate, and feedback assigned to me.",
+    "total": "{n} in total.",
+    "ledeRest": "Other people's feedback isn't here — search for it in the feedback center.",
+    "empty": {
+      "title": "You haven't filed any feedback, and none is assigned to you",
+      "action": "File one"
+    },
+    "foot": "Finished feedback (fixed, shipped) stays in the list but no longer accepts support; private items are visible only to you, platform admins, and the people who were in the room where it was filed."
+  },
+  "status": {
+    "received": "Received",
+    "in_progress": "In progress",
+    "resolved": "Resolved",
+    "deployed": "Deployed",
+    "unknown": "Unknown"
+  },
+  "timeline": {
+    "notStarted": "Not started"
+  },
+  "kind": {
+    "bug": "Bug",
+    "suggestion": "Suggestion",
+    "other": "Other"
+  },
+  "source": {
+    "user": "From a user",
+    "agent": "Found by an agent"
+  },
+  "private": "Private",
+  "privateHint": "Private feedback: only you, platform admins, and the people who were in the room where it was filed can see it.",
+  "security": "Security",
+  "closedHint": "Already closed — no need to support it",
+  "sessionLine": "Session {id}",
+  "card": {
+    "support": "Support",
+    "unsupport": "Remove support",
+    "supportAria": "Support this feedback, {n} supporters so far",
+    "unsupportAria": "Remove your support, {n} supporters so far"
+  },
+  "comment": {
+    "like": "Like",
+    "liked": "Liked",
+    "likeAria": "Like this comment",
+    "unlikeAria": "Remove your like",
+    "reply": "Reply",
+    "collapse": "Collapse",
+    "replyTo": "Replying to {handle}",
+    "replyPlaceholder": "Reply to {handle}",
+    "delete": "Delete",
+    "confirm": "Delete it",
+    "cancel": "Cancel",
+    "agent": "AI teammate",
+    "deleteAsk": "Delete this comment?",
+    "deleteAskWithReplies": "Delete this comment and its {n} replies?"
+  },
+  "thread": {
+    "expand": "Show {n} more replies",
+    "loadReplies": "Load more replies ({n} left)",
+    "collapse": "Collapse",
+    "loading": "Loading…",
+    "loadMore": "Load more comments"
+  },
+  "proposal": {
+    "submitted": "Submitted",
+    "progress": "You can follow its progress in the feedback center.",
+    "view": "View this feedback",
+    "confirm": "I've confirmed this looks like a platform problem, not the way you're using it",
+    "userSaid": "What you said at the time",
+    "why": "Why (and why this isn't the way you're using it)",
+    "logs": "Logs",
+    "logsAttached": "Attached ({n} characters); submitted along with the feedback",
+    "expand": "Show details",
+    "collapse": "Hide details",
+    "dismiss": "Not now",
+    "submit": "Submit feedback"
+  },
   "detail": {
+    "back": "Feedback",
+    "missingBack": "Back to feedback center",
+    "submittedBy": "Submitted by {handle}",
+    "problem": "Problem",
+    "why": "Why it matters",
+    "expectation": "What was expected",
+    "context": "Context",
+    "whatHappened": "What happened",
+    "repro": "Repro steps",
+    "evidence": "Evidence",
+    "commentsLabel": "Comments {n}",
+    "composer": {
+      "open": "Write a comment…",
+      "placeholder": "Add what you ran into, or why this change matters to you",
+      "submit": "Post comment"
+    },
+    "aside": {
+      "progress": "Progress",
+      "supports": "Supporters",
+      "comments": "Comments",
+      "source": "Source",
+      "topic": "Found in a conversation in a topic"
+    },
+    "action": {
+      "support": "Support this feedback",
+      "supported": "Supported",
+      "share": "Share"
+    },
+    "copied": "Link copied",
     "delete": {
       "label": "Delete",
       "confirm": "Delete it",
@@ -549,7 +694,9 @@
       "tags": {
         "label": "Tags",
         "placeholder": "Press Enter to add",
-        "helper": "For grouping — e.g. login, mobile"
+        "helper": "For grouping — e.g. login, mobile",
+        "suggestions": "Common tags",
+        "remove": "Remove tag {tag}"
       }
     },
     "visibility": {

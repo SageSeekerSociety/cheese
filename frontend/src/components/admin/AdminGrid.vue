@@ -22,7 +22,27 @@
  * `table-layout: fixed` 下没有宽度的列会平分剩余空间，所以**只给一列传 `null`**，
  * 否则剩下的那一份会被平摊成几列，密度就散了（反馈表里那一列是标题，成员表里是
  * 添加信息）。
+ *
+ * 表体里画的**不一定是数据行**：`state` 说这一栏此刻是「有数据 / 一条都没有 / 读
+ * 不到」中的哪一种，后两种各有一个槽（`#empty` / `#error`），槽里放的是页面画的
+ * `AdminEmptyState`（壳只提供那一行，话和动作都由页面给 —— 文案在 i18n 里，壳拿
+ * 不到）。三者互斥由壳保证：读失败时同时画出「暂无数据」是最糟的那种说不清。
+ *
+ * **窄屏卡片模式**（`cards`）：一页的表格列多、又都有定宽，390px 上只能横着滚，
+ * 而横着滚的表在手机上等于读不到右边的列。传了 `cards` 之后，容器宽度 ≤700px 时
+ * 整张表改画成**竖着叠的卡片**：表头收起来，一行一张卡，主列当标题，其余列各是
+ * 一行「标签：值」。页面用两个数据属性标出哪一列是什么：
+ *
+ *   - `data-card="primary"` —— 卡片标题那一列，不画标签；
+ *   - `data-card="hide"` —— 这一列不进卡片（窄屏下没有价值的重复信息）；
+ *   - 其余列写 `data-label="账号状态"`，窄屏下它就画成这一行的小标签。
+ *
+ * 之所以是属性而不是 `cols` 里多几个字段：列宽是**表格**的属性，卡片不是表格画的
+ * —— 卡片这一侧要的是那一列的**名字**，而名字已经在表头里了，再写一份在 `cols`
+ * 里就有两处可以飘开。页面把表头抄成属性、壳把它画成标签，抄错只影响窄屏一处。
  */
+
+import { computed } from 'vue'
 
 const props = withDefaults(
   defineProps<{
@@ -36,14 +56,31 @@ const props = withDefaults(
      *  会闪一下，那是比「旧内容多停半秒」更糟的手感（那种情况传 `busy`）。 */
     loading?: boolean
     /** 加载完了、这一栏一条都没有时显示的话（§8.1：一律「暂无 X」，不带句号）。
-     *  `null` = 有内容。 */
+     *  `null` = 有内容。给了非空串就等于 `state="empty"`，`#empty` 槽没给时用它。 */
     empty?: string | null
     skeletonRows?: number
     /** 正在取下一页，但手上还留着上一页。不换骨架，只把表体压暗一档。 */
     busy?: boolean
+    /** 表体里画什么。`rows` = 真行；`empty` / `error` = 那一条说明（槽优先，否则用
+     *  `empty` 那句话）。**三态互斥**，壳来保证。 */
+    state?: 'rows' | 'empty' | 'error'
+    /** 窄屏卡片模式的显式选入。见文件开头最后一段。 */
+    cards?: boolean
   }>(),
-  { loading: false, empty: null, skeletonRows: 10, busy: false, boneWidths: undefined }
+  {
+    loading: false,
+    empty: null,
+    skeletonRows: 10,
+    busy: false,
+    boneWidths: undefined,
+    state: 'rows',
+    cards: false,
+  }
 )
+
+/** 表体此刻画哪一种。`empty` 那个串是个老快捷键（给了非空串就是要画空态），
+ *  所以这里把它折进 `state` 里一次算清 —— 模板里三个分支各判各的早晚会飘开。 */
+const mode = computed<'rows' | 'empty' | 'error'>(() => (props.state === 'rows' && props.empty ? 'empty' : props.state))
 
 /** 通用的骨头形状：长 - 中 - 短 - 小 循环。每一种宽度的骨头一样长的话，骨架看着
  *  像一条条对齐的横线，反而比空白更晃眼。 */
@@ -53,7 +90,7 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
 </script>
 
 <template>
-  <div class="agrid" :class="{ 'agrid--busy': busy }">
+  <div class="agrid" :class="{ 'agrid--busy': busy, 'agrid--cards': cards }">
     <div class="agrid__scroll">
       <table class="agrid__table" :aria-label="label" :aria-busy="loading || busy">
         <colgroup>
@@ -70,8 +107,18 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
               </td>
             </tr>
           </template>
-          <tr v-else-if="empty" class="agrid__row">
-            <td :colspan="cols.length" class="agrid__none">{{ empty }}</td>
+          <!-- 读失败与「一条都没有」共用一行平铺的格子（`data-card="flat"`）：卡片模式下
+               它不是一张卡，是卡片之间的一条说明。槽优先 —— 页面想画 `AdminEmptyState`
+               （带图标、原因、动作）时就用它，否则退回 `empty` 那一句话。 -->
+          <tr v-else-if="mode === 'error'" data-card="flat" class="agrid__row">
+            <td :colspan="cols.length" :class="$slots.error ? 'agrid__state' : 'agrid__none'">
+              <slot name="error">{{ empty }}</slot>
+            </td>
+          </tr>
+          <tr v-else-if="mode === 'empty'" data-card="flat" class="agrid__row">
+            <td :colspan="cols.length" :class="$slots.empty ? 'agrid__state' : 'agrid__none'">
+              <slot name="empty">{{ empty }}</slot>
+            </td>
           </tr>
           <slot v-else />
         </tbody>
@@ -195,6 +242,13 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
   text-align: center;
 }
 
+/* 槽版的状态格（`#empty` / `#error`）：里面那块自己带内边距（`AdminEmptyState` 的
+   紧凑版是 32px），这里再给一层表壳的 8/12 就叠成了 40 —— 同样要压过上面那条，
+   写法同上。 */
+.agrid__body td.agrid__state {
+  padding: 0;
+}
+
 /* 取下一页时把上一页压暗。用透明度而不是换骨架：内容还在，只是不新鲜了。 */
 .agrid--busy .agrid__body {
   opacity: 0.55;
@@ -217,5 +271,112 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
   min-height: 40px;
   padding: 0 12px;
   border-top: 1px solid var(--line);
+}
+
+/* ---- 窄屏卡片模式（`cards`，见文件开头最后一段） ----
+
+   触发条件是**容器**宽度而不是视口宽度：后台侧栏能手动折叠，省出的 144px 视口查询
+   看不见（同 `--page-w-admin` 那条注），而这里要量的正是「表格真正拿到多宽」。名字
+   取上是为了不和别处（未来）的容器撞上 —— 匿名查询会匹配最近的那个，谁在上游挂一个
+   容器就把这一层带歪了。
+
+   700px 是量出来的：这一页在工作台上是「侧栏 200 + 内容列」，700 以下时定宽列那
+   772px 已经在横着滚，滚动条吃掉的高度比卡片多出来的行更贵。 */
+.agrid--cards {
+  container: agrid / inline-size;
+}
+
+@container agrid (max-width: 700px) {
+  /* 表头收起来：列名改由每一格自己的 `::before` 画（下面的 `data-label`）。 */
+  .agrid--cards .agrid__head {
+    display: none;
+  }
+
+  /* 表格那套几何整个让位：`table-layout: fixed` 的 1080px 下限、行高、格内边距
+     都只在「列并排」时成立。 */
+  .agrid--cards .agrid__table {
+    display: block;
+    min-width: 0;
+  }
+
+  .agrid--cards .agrid__body {
+    display: block;
+  }
+
+  /* 一行一张卡。高度交回内容（行高钉死是为了骨架不跳，而卡片模式下骨架也是卡片
+     形态，两边一样是内容撑的），间距走 `gap`：被 `data-card="hide"` 摘掉的格子
+     不会留下一个空档。 */
+  .agrid--cards .agrid__body :deep(tr) {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    height: auto;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* 卡片自己画两头的圆角（表头不在上面画了，首行的圆角得由行来画）。 */
+  .agrid--cards .agrid__body :deep(tr:first-child) {
+    border-top-left-radius: var(--radius-lg);
+    border-top-right-radius: var(--radius-lg);
+  }
+
+  /* 最后一张卡不画下边线（下面就是卡片自己的描边），圆角由它收。 */
+  .agrid--cards .agrid__body :deep(tr:last-child) {
+    border-bottom: 0;
+    border-bottom-left-radius: var(--radius-lg);
+    border-bottom-right-radius: var(--radius-lg);
+  }
+
+  .agrid--cards .agrid__body :deep(td) {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    padding: 0;
+    border-bottom: 0;
+    /* 定宽表格那套 ellipsis 在卡片里会把话切掉：这里没有「一列有多宽」可依，
+       长内容要能折行。 */
+    white-space: normal;
+  }
+
+  .agrid--cards .agrid__body :deep(td[data-card='hide']) {
+    display: none;
+  }
+
+  /* 标签就是这一列的列名，由页面写在 `data-label` 上（表头里那几个字，抄一份）。
+     定宽 76px 让一列里所有标签的左边缘对齐 —— 标签本来就短（三四个汉字）。 */
+  .agrid--cards .agrid__body :deep(td[data-label]:not([data-card='primary']))::before {
+    content: attr(data-label);
+    flex: 0 0 76px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: var(--lh-12);
+  }
+
+  /* 主列是这一张卡的标题：不画标签，字号上浮一档。 */
+  .agrid--cards .agrid__body :deep(td[data-card='primary']) {
+    color: var(--ink);
+    font-size: 14px;
+    line-height: var(--lh-14);
+  }
+
+  /* 平铺行（空态、读失败、组头这些不是数据行的行）不当卡片画：内边距落回一格
+     （和表格模式下的 8/12 一致），标签不画 —— 它们的内容自己安排版面。 */
+  .agrid--cards .agrid__body :deep(tr[data-card='flat']) {
+    gap: 0;
+    padding: 8px 12px;
+  }
+
+  /* 只清内边距、**不动 `display`**：平铺行里那一格可能是页面自己排的 flex（成员表的
+     组头就是 `display: flex` + `gap`），把它写成 block 会把页面那份版式压掉。td 默认
+     的 `table-cell` 在 flex 行里会被自动块化，本来就不需要这里再写一次。 */
+  .agrid--cards .agrid__body :deep(tr[data-card='flat'] > td) {
+    padding: 0;
+  }
+
+  .agrid--cards .agrid__body :deep(tr[data-card='flat'] > td::before) {
+    content: none;
+  }
 }
 </style>
