@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -13,6 +13,7 @@ from app.domain.project.models import (
     ProjectForge,
     ProjectGitInstallation,
     ProjectMember,
+    excluded_project_ids,
 )
 from app.domain.team.models import Team, TeamUserRelation
 from app.domain.user.models import User, UserProfile
@@ -326,6 +327,13 @@ class ProjectRepository:
 
         A claim is one of three things — you own it, you are on its roster, or it
         belongs to a team you are in. Anything else is not yours to see here.
+
+        The team claim carries one subtraction, and only that one: 退出项目 is a
+        project-level act (``ProjectMemberExclusion``), so a teammate who left
+        THIS project stops being listed here while their other projects of the
+        same team are untouched. The other two claims are not affected — owning
+        it outranks the exclusion, and a roster row is the explicit grant that
+        lifts it (``MemberRepository.add``).
         """
         from app.domain.team.models import TeamUserRelation
 
@@ -340,15 +348,19 @@ class ProjectRepository:
                 )
             )
         if user_id:
-            claims.append(
-                Project.team_id.in_(
-                    select(TeamUserRelation.team_id).where(
-                        TeamUserRelation.user_id == user_id,
-                        # Someone who left the team has left its projects.
-                        TeamUserRelation.deleted_at.is_(None),
-                    )
+            on_its_team = Project.team_id.in_(
+                select(TeamUserRelation.team_id).where(
+                    TeamUserRelation.user_id == user_id,
+                    # Someone who left the team has left its projects.
+                    TeamUserRelation.deleted_at.is_(None),
                 )
             )
+            if handle:
+                # 列出他进不去的那一行，点开就是 403 —— 列表和门必须答同一句话。
+                on_its_team = and_(
+                    on_its_team, Project.id.not_in(excluded_project_ids(handle))
+                )
+            claims.append(on_its_team)
         if not claims:
             # Nobody in particular is asking; that is not the same as everybody.
             return []

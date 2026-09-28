@@ -1,19 +1,22 @@
 """The platform names rooms and renames them only when their direction changes
 (app/domain/topic/naming.py), over the real HTTP stack, database and Valkey.
 
-What is pinned: an unnamed room is named from its first real message; the name
-is checked once against the first turn; later changes wait for a signal and a
-throttle; a name a person chose is never overwritten, including by a rename
-computed while the person was renaming; an automatic rename can be undone and a
-room handed back; a project on manual naming is left alone; an answer cut off
-before the model wrote anything leaves the room as it was without counting as a
-failed call, while one that never arrives at all still backs the room off. The
-gateway is a MockTransport that answers from a script and records what it was
-asked.
+What is pinned: an unnamed room is named from its first real message, and an
+`@` inside a sentence does not hide what the person said; the name is checked
+once against the first turn; later changes wait for a signal and a throttle; a
+name a person chose is never overwritten, including by a rename computed while
+the person was renaming; an automatic rename can be undone and a room handed
+back; a project on manual naming is left alone; the model is asked not to think
+before it answers, which is what used to eat the answer; a trigger that asks
+nothing says which room and why; an answer cut off before the model wrote
+anything leaves the room as it was without counting as a failed call, while one
+that never arrives at all still backs the room off. The gateway is a
+MockTransport that answers from a script and records what it was asked.
 """
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -234,6 +237,47 @@ def test_an_unnamed_room_waits_for_something_worth_naming_it_by(client, alice, g
     assert _history(client, rid) == [("dev 外网访问慢排查", "auto", "name")]
 
 
+def test_an_at_sign_in_the_middle_of_a_sentence_is_not_a_mention(
+    client, alice, gateway
+):
+    """The room's one person message has to be read as what it says. Written
+    before the fix, this opener left four characters behind, counted as an
+    empty opener, and the room was never named (room b031c720, 2026-09-27)."""
+    pid = _project(client, alice)
+    rid = _room(client, alice, pid)
+    _say(
+        client,
+        rid,
+        "<@芝士> 当我打开@的时候，我不能通过键盘上的上下键进行AI队友的切换，"
+        "得通过鼠标移动，我希望加上这个功能",
+    )
+    gateway["answers"].append({"keep": False, "title": "「提及候选列表键盘导航」"})
+    renamed = _run(client, rid, "message")
+    assert renamed is not None and renamed.title == "提及候选列表键盘导航"
+    assert (client.get(f"/topics/{rid}").json()["data"]["title_source"]) == "auto"
+
+
+def test_a_trigger_that_asks_nothing_says_so(client, alice, gateway, caplog):
+    """A room that keeps its title is quiet, not traceless: the trigger says
+    which room it was and why it asked nothing, or 「为什么这个房间没改名」
+    has no answer anywhere (room b031c720, 2026-09-27)."""
+    pid = _project(client, alice)
+    rid = _room(client, alice, pid)
+    _say(client, rid, "@芝士 在吗")
+    with caplog.at_level(logging.INFO, logger="app.domain.topic.naming"):
+        assert _run(client, rid, "message") is None
+    [line] = [r.getMessage() for r in caplog.records if str(rid) in r.getMessage()]
+    assert "opener_says_too_little" in line
+
+    # A call that is made says nothing of the sort — the room was named.
+    caplog.clear()
+    _say(client, rid, "帮我排查一下 dev 机器从外网访问很慢的问题")
+    gateway["answers"].append({"keep": False, "title": "「dev 外网访问慢排查」"})
+    with caplog.at_level(logging.INFO, logger="app.domain.topic.naming"):
+        assert _run(client, rid, "message") is not None
+    assert [r for r in caplog.records if str(rid) in r.getMessage()] == []
+
+
 def test_a_title_cut_off_before_it_was_written_is_not_a_failure(client, alice, gateway):
     pid = _project(client, alice)
     rid = _room(client, alice, pid)
@@ -263,11 +307,20 @@ def test_a_gateway_that_does_not_answer_backs_the_room_off(client, alice, gatewa
     assert len(gateway["asked"]) == 1
 
 
-def test_the_naming_call_leaves_the_model_room_to_think_first(client, alice, gateway):
-    """It thinks before it writes, and the gateway counts that thinking against
-    this cap beside a title of a few tokens. Thirty calls on one prompt spent
-    62–688 of them (2026-09-27, deepseek-flash); the calls that ran out came
-    back empty and left the room nameless."""
+def test_the_naming_call_asks_the_model_not_to_think(client, alice, gateway):
+    """Whatever it thinks comes out of the same budget as the title, and left
+    to itself the model thinks the whole budget away: over two real rooms'
+    material (2026-09-27, deepseek-flash) six of eight calls at 1024 tokens
+    came back empty, and at 4096 five of twenty still did, those taking longer
+    than the call's own timeout. With thinking off the same material answered
+    twelve times out of twelve, 15–20 tokens an answer."""
+    _named(client, alice, gateway)
+    assert gateway["bodies"][-1]["thinking"] == {"type": "disabled"}
+
+
+def test_the_naming_call_still_carries_a_ceiling(client, alice, gateway):
+    """An answer costs about twenty tokens now; the ceiling is what keeps a
+    runaway answer from becoming a runaway call."""
     _named(client, alice, gateway)
     assert gateway["bodies"][-1]["max_tokens"] >= 700
 
