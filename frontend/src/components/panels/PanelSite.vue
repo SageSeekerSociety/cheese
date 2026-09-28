@@ -263,11 +263,11 @@ const viewingWorking = computed(() => {
   const rows = transcript.value.filter((b) => b.turn_id && b.turn_id in running)
   return rows.length === 0 || rows.some((b) => b.author === viewing.value)
 })
-const statusAgent = computed(() => {
-  if (agents.value.length < 2) return ''
-  const who = viewing.value ?? activeAgent.value
-  return who ? agentLabel(who) : ''
+const statusAgentHandle = computed(() => {
+  if (agents.value.length < 2) return null
+  return viewing.value ?? activeAgent.value ?? null
 })
+const statusAgent = computed(() => (statusAgentHandle.value ? agentLabel(statusAgentHandle.value) : ''))
 
 // 一轮刚结束：开着的这一栏安静地重读一遍。
 watch(
@@ -378,7 +378,13 @@ function isLive(index: number): boolean {
           {{ agentLabel(a) }}
         </button>
       </div>
-      <SiteStatusBar :blocks="visible" :working="viewingWorking" :turns="runningTurns ?? {}" :agent="statusAgent" />
+      <SiteStatusBar
+        :blocks="visible"
+        :working="viewingWorking"
+        :turns="runningTurns ?? {}"
+        :agent="statusAgent"
+        :agent-handle="statusAgentHandle"
+      />
       <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">暂无现场记录</div>
       <div v-else class="site-log pa-3">
         <div v-if="hasOlder" class="site-older">

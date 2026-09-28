@@ -13,6 +13,8 @@ class ResolvedEntityInfoDTO:
     url: str | None = None
     avatarUrl: str | None = None
     status: str | None = None
+    # A user entity's handle: the frontend links the name to that person's page.
+    handle: str | None = None
 
 
 @dataclass

@@ -14,6 +14,7 @@ import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { topicPhase, topicTitle } from '@/lib/topicState'
+import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
@@ -257,7 +258,7 @@ async function handleOpenResource(resource: string, turnId?: string) {
 
 // A clicked <@handle> mention chip → open that teammate's member page.
 function handleMentionClick(handle: string) {
-  void router.push({ name: 'member', params: { projectId: props.projectId, handle } })
+  void router.push(userRefRoute(handle, props.projectId))
 }
 
 // ⤴ 升级 from a message bubble (eval A1). 房间里的消息变成这个房间的一张卡，
