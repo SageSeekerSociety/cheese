@@ -210,7 +210,8 @@ onMounted(load)
 <template>
   <div class="connections">
     <header class="connections__head">
-      <h1 class="t-page-title">我的连接</h1>
+      <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
+      <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title">我的连接</h1>
       <v-btn variant="text" :loading="loading" @click="load">刷新</v-btn>
     </header>
     <p class="t-body c-muted mb-6">

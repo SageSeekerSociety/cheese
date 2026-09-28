@@ -55,9 +55,11 @@ const owningTeam = computed(() => {
 })
 
 /** 框内那些真的层级关系（话题 → 话题列表、私聊 → 名册）——那些本来就是对的。 */
-const declaredParent = computed(() =>
-  typeof route.meta.backTo === 'string' ? { name: route.meta.backTo, params: {}, label: '' } : null
-)
+const declaredParent = computed(() => {
+  if (typeof route.meta.backTo !== 'string') return null
+  if (route.meta.backOnPhoneOnly && mdAndUp.value) return null
+  return { name: route.meta.backTo, params: {}, label: '' }
+})
 
 // 根这一层**不吃** `meta.backTo`：看板在桌面上声明的父级就是它自己会被弹回来的那
 // 个地址，落到它身上等于留一颗按了没反应的按钮。没有来路也没有小队，诚实的答案

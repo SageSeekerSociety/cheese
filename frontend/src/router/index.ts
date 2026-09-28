@@ -24,6 +24,11 @@ import { reloadForNewBuild } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
 import { SpaceBoardRoutes } from '@/views/spaces/board/routes'
 
+// 个人的几页（设备、连接、批准设备、打开预览/网站）不是底栏上的一级目的地，是从头像
+// 菜单或一条链接推进来的一层：手机上收起底栏、顶栏给 ← 回首页。桌面上左边有 rail，
+// 这几页照旧不画 ←。
+const PERSONAL_PAGE = { hideTabs: true, backTo: 'HomeWork', backOnPhoneOnly: true } as const
+
 const routes: RouteRecordRaw[] = [
   {
     name: 'team-join',
@@ -66,25 +71,25 @@ const routes: RouteRecordRaw[] = [
     name: 'preview-open',
     path: '/previews/:topicId',
     component: () => import('@/views/PreviewOpenView.vue'),
-    meta: { title: '打开预览', isFullPage: true },
+    meta: { title: '打开预览', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     name: 'site-open',
     path: '/sites/:projectId',
     component: () => import('@/views/SiteOpenView.vue'),
-    meta: { title: '打开网站', isFullPage: true },
+    meta: { title: '打开网站', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     name: 'my-connections',
     path: '/my/connections',
     component: () => import('@/views/MyConnectionsView.vue'),
-    meta: { title: '我的连接', isFullPage: true },
+    meta: { title: '我的连接', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     name: 'my-devices',
     path: '/my/devices',
     component: () => import('@/views/MyDevicesView.vue'),
-    meta: { title: '我的设备', isFullPage: true },
+    meta: { title: '我的设备', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     // Device-flow approval landing page: `cheesehost auth login` prints a
@@ -94,7 +99,7 @@ const routes: RouteRecordRaw[] = [
     name: 'connect',
     path: '/connect',
     component: () => import('@/views/ConnectView.vue'),
-    meta: { title: '连接设备', isFullPage: true },
+    meta: { title: '连接设备', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     // 「待办」: 手机底栏三格之一，桌面是 rail 上紧贴首页的那一格。

@@ -187,7 +187,8 @@ onMounted(load)
   <div class="devices-page fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 900px">
       <div class="mb-6 d-flex align-center">
-        <div>
+        <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
+        <div v-if="$vuetify.display.mdAndUp">
           <div class="t-eyebrow mb-1">设备</div>
           <h1 class="t-page-title">我的设备</h1>
         </div>
