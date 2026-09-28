@@ -110,8 +110,13 @@ class _Asgi:
     def patch(self, path: str, body: dict, *, token: str | None = None) -> None:
         self._call("PATCH", path, body, token=token)
 
+    def request(
+        self, method: str, path: str, body: dict | None, *, token: str | None = None
+    ) -> None:
+        self._call(method, path, body, token=token)
+
     def _call(
-        self, method: str, path: str, body: dict, *, token: str | None = None
+        self, method: str, path: str, body: dict | None, *, token: str | None = None
     ) -> None:
         # 每一次请求都从零开始记：上一个请求的收尾提交（``get_db`` 退出码里那一次）
         # 会落在下一个请求的响应之前，留着它就会替这一次请求把断言顶过去 —— 发题
@@ -120,7 +125,7 @@ class _Asgi:
         headers = [(b"content-type", b"application/json")]
         if token is not None:
             headers.append((b"authorization", f"Bearer {token}".encode()))
-        payload = json.dumps(body).encode()
+        payload = b"" if body is None else json.dumps(body).encode()
         scope = {
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -352,6 +357,83 @@ def test_pdf_drafts_are_committed_before_their_response_is_sent(
 
     assert asgi.status == 200, asgi.body
     assert json.loads(asgi.body)["data"]["count"] == 1
+    _assert_committed_before_responding(asgi)
+
+
+def _a_feedback(asgi: _Asgi, token: str) -> str:
+    """A public feedback item; the last request made is its ``POST /feedback``."""
+    asgi.post(
+        "/feedback",
+        {
+            "kind": "bug",
+            "title": f"Committed feedback ({uuid.uuid4().hex[:8]})",
+            "summary": "Read right after it is written.",
+            "problem": "Read right after it is written.",
+            "visibility": "public",
+        },
+        token=token,
+    )
+    assert asgi.status == 200, asgi.body
+    return json.loads(asgi.body)["data"]["id"]
+
+
+def test_a_feedback_item_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, author
+) -> None:
+    _, token = author
+
+    _a_feedback(asgi, token)
+
+    _assert_committed_before_responding(asgi)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/feedback/{item}/supports", {}),
+        ("DELETE", "/feedback/{item}/supports", None),
+        ("POST", "/feedback/{item}/comments", {"body": "A comment."}),
+        ("POST", "/feedback/read", {}),
+        ("DELETE", "/feedback/{item}", None),
+    ],
+)
+def test_a_feedback_write_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, author, method: str, path: str, body: dict | None
+) -> None:
+    """The e2e flake this pins (merge queue, run 36415331698)::
+
+    POST /feedback/<id>/supports   200   <- {"count": 1}
+    GET /feedback/<id>                   <- "supports": 0, drawn over the 1
+    """
+    _, token = author
+    item = _a_feedback(asgi, token)
+
+    asgi.request(method, path.format(item=item), body, token=token)
+
+    assert asgi.status == 200, asgi.body
+    _assert_committed_before_responding(asgi)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/feedback/{item}/comments/{comment}/likes"),
+        ("DELETE", "/feedback/{item}/comments/{comment}/likes"),
+        ("DELETE", "/feedback/{item}/comments/{comment}"),
+    ],
+)
+def test_a_feedback_comment_write_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, author, method: str, path: str
+) -> None:
+    _, token = author
+    item = _a_feedback(asgi, token)
+    asgi.post(f"/feedback/{item}/comments", {"body": "A comment."}, token=token)
+    assert asgi.status == 200, asgi.body
+    comment = json.loads(asgi.body)["data"]["id"]
+
+    asgi.request(method, path.format(item=item, comment=comment), None, token=token)
+
+    assert asgi.status == 200, asgi.body
     _assert_committed_before_responding(asgi)
 
 
