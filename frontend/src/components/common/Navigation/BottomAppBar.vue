@@ -54,6 +54,13 @@ const route = useRoute()
   color: var(--accent-ink);
 }
 
+/* 底色铺满，那几格不铺：平板上三格平分九百多像素，格与格之间隔着半个屏幕，拇指
+   从一格挪到下一格要横穿过去。收到 480 居中，手机上（窄于它）不受影响。 */
+.bottom-tabs :deep(.v-bottom-navigation__content) {
+  max-width: 480px;
+  margin-inline: auto;
+}
+
 .bottom-tabs__icon {
   position: relative;
   display: inline-flex;

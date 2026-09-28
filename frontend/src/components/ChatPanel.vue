@@ -1870,6 +1870,17 @@ onBeforeUnmount(() => {
 .tl-content {
   position: relative;
 }
+/* 手机外壳里对话不铺满整屏：平板竖屏上一行会排到六十多个字。时间线和输入框收成同
+   一栏居中（贴在输入框上的那一条由放它进来的那一栏收，见 TopicChatColumn）；滚动的
+   还是整块，手指在两边空白处照样滚得动。 */
+@media (max-width: 959.98px) {
+  .tl-content,
+  .composer {
+    width: 100%;
+    max-width: var(--page-w);
+    margin-inline: auto;
+  }
+}
 .tl-skel-leave-active {
   position: absolute;
   inset: 0 0 auto;
