@@ -17,6 +17,7 @@ const getAnalyticsOverview = vi.fn()
 const getAnalyticsAlerts = vi.fn()
 const getAnalyticsTasks = vi.fn()
 const getAnalyticsPublishers = vi.fn()
+const getAnalyticsParticipants = vi.fn()
 
 vi.mock('@/network/api/spaces', () => ({
   SpacesApi: {
@@ -24,6 +25,7 @@ vi.mock('@/network/api/spaces', () => ({
     getAnalyticsAlerts: (...a: unknown[]) => getAnalyticsAlerts(...a),
     getAnalyticsTasks: (...a: unknown[]) => getAnalyticsTasks(...a),
     getAnalyticsPublishers: (...a: unknown[]) => getAnalyticsPublishers(...a),
+    getAnalyticsParticipants: (...a: unknown[]) => getAnalyticsParticipants(...a),
   },
 }))
 
@@ -158,11 +160,12 @@ const publishersResponse = () => ({
         taskCount: 3,
         participantCount: 3,
         approvedParticipantCount: 3,
-        submittedParticipantCount: 0,
-        successfulParticipantCount: 0,
-        avgParticipantsPerTask: 1,
-        submissionConversionRate: 0,
-        successRate: 0,
+        submittedParticipantCount: 2,
+        successfulParticipantCount: 1,
+        // 接口给的是四位小数的比，页面读一位 —— 这一支钉住「读一位」这件事。
+        avgParticipantsPerTask: 1.3333,
+        submissionConversionRate: 0.67,
+        successRate: 0.5,
         lastTaskCreatedAt: utcToday() - 30 * DAY,
       },
       {
@@ -179,6 +182,24 @@ const publishersResponse = () => ({
         lastTaskCreatedAt: utcToday() - 20 * DAY,
       },
     ],
+  },
+})
+
+/** 参与者那一份**只有聚合**：没有成员名单，逐人的行无从谈起。 */
+const participantsResponse = () => ({
+  data: {
+    summary: { spaceId: SPACE_ID, from: utcToday() - 180 * DAY, to: utcToday() },
+    entityMetrics: {
+      participantCount: 5,
+      approvedParticipantCount: 4,
+      pendingParticipantCount: 1,
+      disapprovedParticipantCount: 0,
+      submittedParticipantCount: 3,
+      successfulParticipantCount: 2,
+    },
+    studentMetrics: { studentCount: 0, studentsWithRealNameCount: 0 },
+    distributions: {},
+    trends: { participantsJoined: [], submissionsCreated: [], successesAchieved: [] },
   },
 })
 
@@ -254,12 +275,40 @@ function oldAnalyticsLink(): HTMLAnchorElement | null {
   return foot?.querySelector('a') ?? null
 }
 
+/** 切到某个 tab。标签在 `[role="tab"]` 上按文字找 —— 页面里的 tab 不止一个时也能点名。 */
+async function openTab(label: string) {
+  const el = Array.from(document.querySelectorAll('[role="tab"]')).find((t) => t.textContent?.includes(label)) as
+    | HTMLElement
+    | undefined
+  if (!el) throw new Error(`找不到 tab：${label}`)
+  await fireEvent.click(el)
+  await waitFor(() => expect(el.getAttribute('aria-selected')).toBe('true'))
+}
+
+/** 一张表：表头那一行 + 逐个单元格压平后的正文。 */
+function table(title: string) {
+  const root = panel(title)
+  return {
+    head: Array.from(root?.querySelectorAll('thead th') ?? []).map((th) => th.textContent?.trim() ?? ''),
+    rows: Array.from(root?.querySelectorAll('tbody tr') ?? []).map((tr) =>
+      Array.from(tr.querySelectorAll('td')).map((td) => squash(td.textContent))
+    ),
+  }
+}
+
+/** 日期列写的是 UTC 那一天 —— 与页面那把尺（后端分桶的尺）同一把。 */
+function utcDay(ms: number) {
+  const d = new Date(ms)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
 describe('整板看板', () => {
   beforeEach(() => {
     getAnalyticsOverview.mockImplementation(async () => overviewResponse())
     getAnalyticsAlerts.mockImplementation(async () => alertsResponse())
     getAnalyticsTasks.mockImplementation(async () => ({ data: { tasks: taskRows() } }))
     getAnalyticsPublishers.mockImplementation(async () => publishersResponse())
+    getAnalyticsParticipants.mockImplementation(async () => participantsResponse())
   })
 
   afterEach(() => {
@@ -361,6 +410,118 @@ describe('整板看板', () => {
     await mount()
     expect(oldAnalyticsLink()?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/analytics`)
     expect(squash(oldAnalyticsLink()?.textContent)).toBe('打开老版九页分析')
+  })
+
+  // --- 三个新 tab 与「领了但没动的」那一格 ---------------------------------------
+
+  it('「领了但没动的」那一格：数是 alerts 的题数，口径写两周，逐人名单如实说不返回', async () => {
+    await mount()
+
+    const p = panel('领了但没动的')
+    expect(p).toBeTruthy()
+    expect(squash(p?.querySelector('.panel__sub')?.textContent)).toBe('1道题上有已通过的领取者、两周没提交')
+    // 数就是 alerts 的 stalledTaskCount，不是另算的。
+    expect(squash(p?.querySelector('.stalled')?.textContent)).toBe('1道题')
+
+    const text = squash(p?.textContent)
+    expect(text).toContain('两周')
+    expect(text).toContain('14天以前')
+    expect(text).toContain('逐人的名单接口不返回')
+
+    // 原型那一格列的是「某人在某道题上没动」—— 接口不给这一层，就不列名字、不画行。
+    expect(p?.querySelectorAll('.mini li')).toHaveLength(0)
+    expect(p?.querySelectorAll('tbody tr')).toHaveLength(0)
+  })
+
+  it('「题目」那一格：逐题一行，领取 / 提交 / 通过率 / 状态都来自接口那一份', async () => {
+    // 头一题改成「有人交、过了一半」：默认那一份全是 0，读没读那两列看不出来。
+    const rows = taskRows()
+    rows[0] = { ...rows[0], submittedParticipantCount: 2, successfulParticipantCount: 1, successRate: 0.5 }
+    getAnalyticsTasks.mockImplementation(async () => ({ data: { tasks: rows } }))
+
+    await mount()
+    await openTab('题目')
+
+    expect(squash(panel('全部题目')?.querySelector('.panel__sub')?.textContent)).toBe('4道·按领取人数排')
+
+    const t = table('全部题目')
+    expect(t.head).toEqual(['题目', '出题人', '领取', '提交', '通过率', '状态', '截止'])
+    expect(t.rows).toEqual([
+      ['最热的一道题基础题', '蔡松洋', '3', '2', '50%', '已上板', utcDay(Date.now() + 2 * DAY)],
+      ['没人领的一道题基础题', '蔡松洋', '0', '0', '0%', '已上板', '不限'],
+      ['也没人领的一道题基础题', '蔡松洋', '0', '0', '0%', '已上板', '不限'],
+      ['还在等审的一道题基础题', '蔡松洋', '0', '0', '0%', '待审核', '不限'],
+    ])
+
+    // 题目名链到新外壳的题目详情，不是老树那条地址。
+    expect(panel('全部题目')?.querySelector('tbody a')?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/board/tasks/1`)
+  })
+
+  it('题一多就走板里那根页码条：一页 20 条，翻页只切一刀', async () => {
+    const base = taskRows()[1]
+    const many = Array.from({ length: 25 }, (_, i) => ({
+      ...base,
+      taskId: 100 + i,
+      taskName: `第 ${i + 1} 道题`,
+    }))
+    getAnalyticsTasks.mockImplementation(async () => ({ data: { tasks: many } }))
+
+    await mount()
+    await openTab('题目')
+
+    expect(squash(panel('全部题目')?.querySelector('.pb__count')?.textContent)).toBe('共25道·第1/2页')
+    expect(panel('全部题目')?.querySelectorAll('tbody tr')).toHaveLength(20)
+    expect(table('全部题目').rows[0][0]).toBe('第1道题基础题')
+
+    const next = Array.from(panel('全部题目')?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('下一页')
+    )
+    await fireEvent.click(next!)
+
+    await waitFor(() => expect(panel('全部题目')?.querySelectorAll('tbody tr')).toHaveLength(5))
+    expect(table('全部题目').rows[0][0]).toBe('第21道题基础题')
+  })
+
+  it('「参与者」那一格只画接口真有的聚合；逐人的那几列如实说不返回', async () => {
+    await mount()
+    await openTab('参与者')
+
+    const p = panel('参与者')
+    expect(squash(p?.querySelector('.panel__sub')?.textContent)).toBe('5个主体领过题·逐人的那一层接口不返回，排不了名')
+
+    // 这六个数来自 /analytics/participants 的 entityMetrics —— overview 那三张卡
+    // 说的是「领取 / 提交 / 通过」，报名本身待审多少、被驳回多少它不说。
+    expect(kpis()).toEqual({
+      报名主体: '5',
+      报名已通过: '4',
+      报名待审: '1',
+      报名已驳回: '0',
+      提交主体: '3',
+      成功主体: '2',
+    })
+    expect(getAnalyticsParticipants).toHaveBeenCalledWith(SPACE_ID)
+
+    // 原型那张「每人一行 + 活跃 chip」的表**没有**：接口不返回名单，就不画那一层。
+    expect(p?.querySelectorAll('tbody tr')).toHaveLength(0)
+    const text = squash(p?.textContent)
+    expect(text).toContain('不返回成员名单')
+    expect(text).toContain('活跃')
+  })
+
+  it('「出题人」那一格：题目数 / 累计被领取 / 平均每道被领 / 出题通过率都来自接口', async () => {
+    await mount()
+    await openTab('出题人')
+
+    const p = panel('出题人')
+    expect(squash(p?.querySelector('.panel__sub')?.textContent)).toBe('开放发题之后，这一格是看「谁在认真出题」的地方')
+
+    const t = table('出题人')
+    expect(t.head).toEqual(['出题人', '题目数', '累计被领取', '平均每道被领', '出题通过率'])
+    // 平均每道被领是接口给的四位小数比读一位（1.3333 → 1.3）；出题通过率 = successRate。
+    expect(t.rows).toEqual([
+      ['蔡松洋', '3', '3', '1.3', '50%'],
+      ['林小满', '1', '0', '0.0', '0%'],
+    ])
   })
 
   it('接口答不上来时说的是「读不到」，不是一屏看着像空板的零', async () => {
