@@ -1,0 +1,543 @@
+{
+  "why": "Recorded from pi 0.85.1 against a scripted provider: after the second turn pi starts compacting (threshold) and the summary request is refused, so the compaction ends with an error.",
+  "stream": [
+    {
+      "entry": {
+        "type": "model_change",
+        "id": "b9959cad",
+        "parentId": null,
+        "timestamp": "2026-09-28T17:31:24.829Z",
+        "provider": "cheese",
+        "modelId": "fake"
+      }
+    },
+    {
+      "entry": {
+        "type": "thinking_level_change",
+        "id": "9cfe9df4",
+        "parentId": "b9959cad",
+        "timestamp": "2026-09-28T17:31:24.829Z",
+        "thinkingLevel": "off"
+      }
+    },
+    {
+      "event": {
+        "type": "agent_start"
+      }
+    },
+    {
+      "event": {
+        "type": "turn_start"
+      }
+    },
+    {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "first question"
+            }
+          ],
+          "timestamp": 1790616685745
+        }
+      }
+    },
+    {
+      "entry": {
+        "type": "message",
+        "id": "42d251ed",
+        "parentId": "9cfe9df4",
+        "timestamp": "2026-09-28T17:31:25.745Z",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "first question"
+            }
+          ],
+          "timestamp": 1790616685745
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "first question"
+            }
+          ],
+          "timestamp": 1790616685745
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant",
+          "content": [],
+          "api": "openai-completions",
+          "provider": "cheese",
+          "model": "fake",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "pending",
+          "timestamp": 1790616685751
+        }
+      }
+    },
+    {
+      "entry": {
+        "type": "message",
+        "id": "ab596b9c",
+        "parentId": "42d251ed",
+        "timestamp": "2026-09-28T17:31:25.766Z",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "first answer"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "cheese",
+          "model": "fake",
+          "usage": {
+            "input": 100,
+            "output": 5,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 105,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1790616685751,
+          "responseId": "c",
+          "rawStopReason": "stop"
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "first answer"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "cheese",
+          "model": "fake",
+          "usage": {
+            "input": 100,
+            "output": 5,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 105,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1790616685751,
+          "responseId": "c",
+          "rawStopReason": "stop"
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "first answer"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "cheese",
+          "model": "fake",
+          "usage": {
+            "input": 100,
+            "output": 5,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 105,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1790616685751,
+          "responseId": "c",
+          "rawStopReason": "stop"
+        },
+        "toolResults": []
+      }
+    },
+    {
+      "event": {
+        "type": "agent_end",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "first question"
+              }
+            ],
+            "timestamp": 1790616685745
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "first answer"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "cheese",
+            "model": "fake",
+            "usage": {
+              "input": 100,
+              "output": 5,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 0,
+              "totalTokens": 105,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1790616685751,
+            "responseId": "c",
+            "rawStopReason": "stop"
+          }
+        ],
+        "willRetry": false
+      }
+    },
+    {
+      "event": {
+        "type": "agent_settled"
+      }
+    },
+    {
+      "event": {
+        "type": "agent_start"
+      }
+    },
+    {
+      "event": {
+        "type": "turn_start"
+      }
+    },
+    {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "second question"
+            }
+          ],
+          "timestamp": 1790616686276
+        }
+      }
+    },
+    {
+      "entry": {
+        "type": "message",
+        "id": "c9a1f831",
+        "parentId": "ab596b9c",
+        "timestamp": "2026-09-28T17:31:26.276Z",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "second question"
+            }
+          ],
+          "timestamp": 1790616686276
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "second question"
+            }
+          ],
+          "timestamp": 1790616686276
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant",
+          "content": [],
+          "api": "openai-completions",
+          "provider": "cheese",
+          "model": "fake",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "pending",
+          "timestamp": 1790616686277
+        }
+      }
+    },
+    {
+      "entry": {
+        "type": "message",
+        "id": "f5291194",
+        "parentId": "c9a1f831",
+        "timestamp": "2026-09-28T17:31:26.279Z",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "second answer"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "cheese",
+          "model": "fake",
+          "usage": {
+            "input": 7000,
+            "output": 5,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 7005,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1790616686277,
+          "responseId": "c",
+          "rawStopReason": "stop"
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "second answer"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "cheese",
+          "model": "fake",
+          "usage": {
+            "input": 7000,
+            "output": 5,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 7005,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1790616686277,
+          "responseId": "c",
+          "rawStopReason": "stop"
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "second answer"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "cheese",
+          "model": "fake",
+          "usage": {
+            "input": 7000,
+            "output": 5,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 7005,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1790616686277,
+          "responseId": "c",
+          "rawStopReason": "stop"
+        },
+        "toolResults": []
+      }
+    },
+    {
+      "event": {
+        "type": "agent_end",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "second question"
+              }
+            ],
+            "timestamp": 1790616686276
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "second answer"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "cheese",
+            "model": "fake",
+            "usage": {
+              "input": 7000,
+              "output": 5,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 0,
+              "totalTokens": 7005,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1790616686277,
+            "responseId": "c",
+            "rawStopReason": "stop"
+          }
+        ],
+        "willRetry": false
+      }
+    },
+    {
+      "event": {
+        "type": "compaction_start",
+        "reason": "threshold"
+      }
+    },
+    {
+      "event": {
+        "type": "compaction_end",
+        "reason": "threshold",
+        "aborted": false,
+        "willRetry": false,
+        "errorMessage": "Auto-compaction failed: Summarization failed: 400: {\"message\":\"summary request refused\",\"type\":\"invalid_request_error\"}"
+      }
+    },
+    {
+      "event": {
+        "type": "agent_settled"
+      }
+    }
+  ]
+}

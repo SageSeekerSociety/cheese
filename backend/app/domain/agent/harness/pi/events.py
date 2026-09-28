@@ -24,14 +24,18 @@ pi writes it as an assistant entry that stopped on ``error`` and only then
 decides, on its live stream, whether to try again. So that entry ends nothing
 here: the runner writes what pi decided into the same log right behind it
 (``journal.RETRYING`` / ``journal.GAVE_UP``), and the turn ends on the second.
+
+Compacting the context is said only on the live stream too, so the runner writes
+it into the log as well (``journal.COMPACTING``).
 """
 
 import re
 from datetime import UTC, datetime
 
-from app.domain.agent.harness.pi.journal import GAVE_UP, RETRYING
+from app.domain.agent.harness.pi.journal import COMPACTING, GAVE_UP, RETRYING
 from app.domain.agent.service import (
     STEP_ERROR_MAX,
+    AgentCompacting,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -126,6 +130,13 @@ class Assembler:
             ]
         if entry.get("type") == GAVE_UP:
             return [self._gave_up(entry)]
+        if entry.get("type") == COMPACTING:
+            return [
+                AgentCompacting(
+                    done=bool(entry.get("done")),
+                    error=str(entry.get("errorMessage") or ""),
+                )
+            ]
         if entry.get("type") != "message":
             return []
         message = entry.get("message") or {}

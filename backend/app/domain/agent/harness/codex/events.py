@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from app.domain.agent.service import (
     STEP_ERROR_MAX,
+    AgentCompacting,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -113,6 +114,16 @@ class Assembler:
                 message.eids = (eid,)
                 self.last_text[params["threadId"]] = message.text
                 return [message]
+            if item["type"] == "contextCompaction":
+                # Codex compacts inside a turn, before the request that would
+                # not fit. One that fails never completes: its turn ends failed,
+                # which is what closes the room's line for it.
+                return [
+                    AgentCompacting(
+                        done=method == "item/completed",
+                        **self.attribution(params["threadId"]),
+                    )
+                ]
             if item["type"] == "dynamicToolCall" and method == "item/started":
                 return [
                     AgentToolUse(

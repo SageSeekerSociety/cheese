@@ -2,6 +2,7 @@
 
 from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.service import (
+    AgentCompacting,
     AgentMessage,
     AgentResult,
     AgentRetrying,
@@ -239,3 +240,40 @@ def test_a_tool_call_that_worked_is_not_marked_failed():
     events = Assembler().accept(_tool_completed(status="completed", success=True))
 
     assert [type(e) for e in events] == [AgentStepOutput]
+
+
+def test_a_compaction_that_fails_is_ended_by_its_turn():
+    """Recorded from Codex 0.154.0 with the summary request refused: the
+    compaction item starts and never completes, and the turn fails. The room's
+    compaction line is closed by that turn ending, with the turn's error."""
+    refused = '{"error": {"message": "summary request refused"}}'
+    turn = {"threadId": "thread", "turnId": "turn"}
+    records = [
+        {
+            "method": "item/started",
+            "params": {**turn, "item": {"type": "contextCompaction", "id": "c"}},
+        },
+        {
+            "method": "error",
+            "params": {**turn, "willRetry": False, "error": {"message": refused}},
+        },
+        {
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread",
+                "turn": {
+                    "id": "turn",
+                    "items": [],
+                    "status": "failed",
+                    "error": {"message": refused},
+                },
+            },
+        },
+    ]
+    assembler = Assembler()
+    events = [event for record in records for event in assembler.accept(record)]
+
+    assert [type(event) for event in events] == [AgentCompacting, AgentResult]
+    assert events[0].done is False
+    assert events[1].is_error is True
+    assert "summary request refused" in events[1].text

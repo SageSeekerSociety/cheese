@@ -1,6 +1,6 @@
 {
   "verb": "backlog",
-  "why": "Compacting a long conversation is a stretch of a turn in which nothing reaches the room and new messages go unanswered, for minutes. The room has to be able to say it is compacting rather than leave a silence that reads as a hung session, and to say when it is over. Claude Code reports both ends as system/status records; a status record about anything else (a permission mode) says nothing to the room.",
+  "why": "Compacting a long conversation is a stretch of a turn in which nothing reaches the room and new messages go unanswered, for minutes. The room has to be able to say it is compacting rather than leave a silence that reads as a hung session, and to say when it is over. Claude Code reports both ends as system/status records; a status record about anything else (a permission mode) says nothing to the room. Codex reports a contextCompaction item that starts and completes. pi says it only on its live event stream (compaction_start / compaction_end); its cell is the records its runner writes into the log for them.",
   "readers": [
     "python"
   ],
@@ -29,6 +29,62 @@
           "compact_result": "success",
           "uuid": "rec_3",
           "session_id": "session-1"
+        }
+      ]
+    },
+    "codex": {
+      "records": [
+        {
+          "method": "item/started",
+          "params": {
+            "item": {
+              "type": "contextCompaction",
+              "id": "item-1"
+            },
+            "threadId": "session-1",
+            "turnId": "turn-1",
+            "startedAtMs": 1790616515377
+          },
+          "emittedAtMs": 1790616515377
+        },
+        {
+          "method": "item/completed",
+          "params": {
+            "item": {
+              "type": "contextCompaction",
+              "id": "item-1"
+            },
+            "threadId": "session-1",
+            "turnId": "turn-1",
+            "completedAtMs": 1790616515384
+          },
+          "emittedAtMs": 1790616515384
+        }
+      ]
+    },
+    "pi": {
+      "records": [
+        {
+          "type": "cheese_compacting",
+          "id": "cheese:1",
+          "after": null,
+          "done": false
+        },
+        {
+          "type": "compaction",
+          "id": "e1",
+          "parentId": "e0",
+          "timestamp": "2026-09-28T17:27:35.857Z",
+          "summary": "## Goal\nsummary of the earlier conversation",
+          "firstKeptEntryId": "e0",
+          "tokensBefore": 7005
+        },
+        {
+          "type": "cheese_compacting",
+          "id": "cheese:2",
+          "after": null,
+          "done": true,
+          "errorMessage": ""
         }
       ]
     }

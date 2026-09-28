@@ -5,9 +5,10 @@ the request id, bare events with none, and `get_entries` answering from a
 cursor. What it replays is the recorded entries of a real GLM-5.2 turn, so a
 test drives the runner over the same shapes a machine would produce.
 
-A fixture with a ``stream`` instead replays a recorded turn event by event: its
-entries become readable in the order pi wrote them, among the live events pi
-printed around them (a request failing, being retried, giving up).
+A fixture with a ``stream`` instead replays a recorded session event by event:
+its entries become readable in the order pi wrote them, among the live events pi
+printed around them (a request failing, being retried, giving up, the context
+being compacted). Each prompt plays it up to the next time pi settled.
 
 Deliberately not a mock inside the test process: the runner owns a subprocess,
 its pipes and its framing, and none of that is exercised by a fake object.
@@ -86,11 +87,20 @@ def main() -> None:
             prompts.append(command.get("message", ""))
             reply(request, kind)
             if stream is not None:
-                for step in stream:
+                # One prompt plays the recording up to the point pi settled, so
+                # a recording of several turns is played a prompt at a time.
+                while stream:
+                    step = stream.pop(0)
+                    if step.get("pause"):
+                        # Wait here for the next prompt, as pi would be when a
+                        # person spoke while this was going on.
+                        break
                     if "entry" in step:
                         produced.append(step["entry"])
-                    else:
-                        emit(step["event"])
+                        continue
+                    emit(step["event"])
+                    if step["event"].get("type") == "agent_settled":
+                        break
                 continue
             emit({"type": "agent_start"})
             produced.extend(entries)

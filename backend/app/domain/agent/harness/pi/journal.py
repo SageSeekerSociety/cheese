@@ -26,6 +26,12 @@ from app.domain.agent.harness.driven import journal
 RETRYING = "cheese_retrying"
 #: pi is not trying again: the failed request is how the turn ends.
 GAVE_UP = "cheese_gave_up"
+#: pi is compacting the session's context (``compaction_start``), or has
+#: finished (``compaction_end``, ``done``). pi writes a ``compaction`` entry
+#: only when it succeeds, and nothing at all when it starts.
+COMPACTING = "cheese_compacting"
+#: Every record the runner writes rather than pi.
+RUNNER_RECORDS = (RETRYING, GAVE_UP, COMPACTING)
 
 
 class Journal(journal.Journal):
@@ -60,8 +66,8 @@ class Journal(journal.Journal):
                     ),
                 )
             # The cursor pi is asked from names pi's own entries only: the
-            # runner's records (``RETRYING``, ``GAVE_UP``) are ids pi never saw.
-            ours = [e for e in entries if e.get("type") not in (RETRYING, GAVE_UP)]
+            # runner's records (``RUNNER_RECORDS``) are ids pi never saw.
+            ours = [e for e in entries if e.get("type") not in RUNNER_RECORDS]
             if ours:
                 self.remember("received", ours[-1]["id"])
 

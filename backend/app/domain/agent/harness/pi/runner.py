@@ -33,7 +33,12 @@ from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.pi import catalog
-from app.domain.agent.harness.pi.journal import GAVE_UP, RETRYING, Journal
+from app.domain.agent.harness.pi.journal import (
+    COMPACTING,
+    GAVE_UP,
+    RETRYING,
+    Journal,
+)
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 
 # A live event that can only mean an entry was written. Anything else is
@@ -62,6 +67,15 @@ class Runner(runner.Runner[Journal]):
         self.holding = False
         # A failed call is being retried and nothing has concluded it yet.
         self.failing = False
+        # The error of a failed call pi said it will not retry. The turn ends on
+        # it once pi has settled, unless a compaction retries the call first:
+        # pi decides that after it reports the run over (a context overflow).
+        self.unretried: str | None = None
+        # The failed calls already in the log, by timestamp: a verdict about
+        # one of them has nothing left to wait behind.
+        self.written_failures: set[object] = set()
+        # The work a compaction under way started under (``owner``).
+        self.compacting_for: dict = {}
         # The platform asked pi to stop: a retry cut short by it is not a
         # failure of anything.
         self.aborting = False
@@ -111,7 +125,34 @@ class Runner(runner.Runner[Journal]):
             if last is not None and last.get("stopReason") == "error":
                 self.last_failure = last.get("timestamp")
                 if not event.get("willRetry"):
-                    self._give_up(last.get("errorMessage"))
+                    self.unretried = str(last.get("errorMessage") or "")
+        elif kind == "compaction_start":
+            # pi compacts once a turn has answered too, so the room may send
+            # the next input before this ends. Both ends belong to the work
+            # this one started under, or the room's line for it never closes.
+            self.compacting_for = json.loads(self.journal.recall("owner") or "{}")
+            self._verdict(
+                COMPACTING,
+                after=self._about(),
+                done=False,
+                cheese=self.compacting_for,
+            )
+        elif kind == "compaction_end":
+            aborted = "aborted" if event.get("aborted") else ""
+            self._verdict(
+                COMPACTING,
+                after=self._about(),
+                done=True,
+                errorMessage=event.get("errorMessage") or aborted,
+                cheese=self.compacting_for
+                or json.loads(self.journal.recall("owner") or "{}"),
+            )
+            self.compacting_for = {}
+            if event.get("willRetry"):
+                # The overflowing call is asked again on the compacted context.
+                self.unretried = None
+        if kind == "agent_settled" and self.unretried is not None:
+            self._give_up(self.unretried)
         if kind in SETTLES:
             self.doorbell.set()
 
@@ -119,8 +160,13 @@ class Runner(runner.Runner[Journal]):
         self.verdicts.append({"type": kind, "id": f"cheese:{uuid.uuid4()}", **fields})
         self.doorbell.set()
 
+    def _about(self) -> object:
+        """The failed call a compaction is about, if one is waiting on it."""
+        return self.last_failure if self.unretried is not None else None
+
     def _give_up(self, error: object) -> None:
         self.failing = False
+        self.unretried = None
         self._verdict(
             GAVE_UP,
             after=self.last_failure,
@@ -159,7 +205,9 @@ class Runner(runner.Runner[Journal]):
             owner = json.loads(self.journal.recall("owner") or "{}")
 
             def stamped(record: dict) -> dict:
-                return {**record, "cheese": owner} if owner else record
+                # A compaction's records carry the work it started under.
+                mark = record.get("cheese") or owner
+                return {**record, "cheese": mark} if mark else record
 
             held = False
             while not held:
@@ -186,10 +234,24 @@ class Runner(runner.Runner[Journal]):
                     rows.append(stamped(entry))
                     rows += [stamped(v) for v in behind]
                     verdicts = [v for v in verdicts if v not in behind]
+                    if message.get("stopReason") == "error":
+                        self.written_failures.add(at)
                 if rows:
                     self.journal.import_entries(rows)
                 if len(page) < PAGE:
                     break
+            if not held:
+                # What names no entry still to come (a compaction after a turn
+                # that went well, or the end of one about a failure already
+                # written) goes after everything pi has written so far.
+                loose = [
+                    v
+                    for v in verdicts
+                    if v["after"] is None or v["after"] in self.written_failures
+                ]
+                if loose:
+                    self.journal.import_entries([stamped(v) for v in loose])
+                    verdicts = [v for v in verdicts if v not in loose]
             # Not placed yet: the entry each names is still to be pulled.
             self.verdicts = verdicts + self.verdicts
 
