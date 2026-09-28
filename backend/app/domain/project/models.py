@@ -18,9 +18,11 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Select,
     String,
     Text,
     UniqueConstraint,
+    select,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -117,6 +119,56 @@ class ProjectMember(UuidPk, Timestamps, Base):
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
+
+
+class ProjectMemberExclusion(UuidPk, Timestamps, Base):
+    """「他人在小队里，但不属于这个项目」——一条记得下来的项目级事实。
+
+    在这张表之前，「谁在这个项目里」只有两种来路写得下来：所有者
+    （``projects.owner_handle``）与外部成员（``project_members`` 一行）。团队成员
+    不写行，读的时候从 ``team_user_relation`` 继承——于是「在小队里」和「在这个项目
+    里」成了同一句话，`退出项目` 对一个队友无从谈起，``MemberService.leave`` 只能
+    409 把他推回小队（那时 ``Member.source`` 那句注释写着只有外部成员能移出）。
+
+    「退出项目」按产品决定退的是**这个项目**：按下它就在 ``(project_id,
+    user_handle)`` 上写下这一行，人还在 ``team_user_relation`` 里（那是另一个事实，
+    本表一个字不动），但读「谁在这个项目里」的每一个地方都答不出他——名册、
+    ``may_read_project``、``list_visible_to``。显式把他加回来（放进名册行、接受邀请）
+    就是删掉这一行，所以退出不是一次性的。
+
+    键带 ``project_id`` 而不是只有 handle：同一个人退出 A 项目，在 B 项目照常。这也
+    正是它不能塞进 ``projects.settings`` 那种 JSON blob 的原因——它要能按人查。
+
+    不出现在这里的两种人：所有者（他退不掉，``MemberService.leave`` 先拒他），以及
+    没有小队、只靠外部成员行进来的人（删掉那一行就已经离开，没有别的主张要挡）。
+    """
+
+    __tablename__ = "project_member_exclusions"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "user_handle", name="uq_project_member_exclusion"
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    user_handle: Mapped[str] = mapped_column(String(64), index=True)
+
+
+def excluded_project_ids(handle: str) -> Select[tuple[uuid.UUID]]:
+    """``handle`` 已经退出的那些项目 —— 这条事实唯一的一处 SQL 写法。
+
+    小队那条来路是**读时**继承的（``TeamUserRelation``），所以凡是从小队读出「我在
+    哪些项目里」的地方，都要减掉这一句。``ProjectRepository.list_visible_to`` 就是
+    拿它做的这件事；再写一遍（第二句 ``select``，或把名单查出来在 Python 里比）就是
+    同一件事的第二份声明（I4a）。
+
+    空子查询对 ``NOT IN`` 是安全的：``project_id`` 非空，名单里不会有 NULL。
+    """
+    return select(ProjectMemberExclusion.project_id).where(
+        ProjectMemberExclusion.user_handle == handle
+    )
 
 
 class InvitationStatus(enum.StrEnum):
