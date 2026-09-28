@@ -79,7 +79,7 @@ export interface InviteCode {
   /** 可用人数上限；`null` = 不限（真库用 0 表示不限）。 */
   maxUses: number | null
   useCount: number
-  /** 有效期终点；`null` = 永不过期。**毫秒时间戳**，与真接口同形 —— `isUsable`
+  /** 有效期终点；`null` = 永不过期。**毫秒时间戳**，与真接口同形 —— `inviteCodeStatus`
    *  那一组判据直接吃的就是这个形状，转成 ISO 反而不通用（板里没人按串读它）。 */
   expiresAt: number | null
   createdAt: string
@@ -106,7 +106,7 @@ export interface InviteCodeStatus {
  */
 export function inviteCodeStatus(
   code: { maxUses: number | null; useCount: number; expiresAt: number | null },
-  now: number = Date.now(),
+  now: number = Date.now()
 ): InviteCodeStatus {
   if (code.expiresAt !== null && code.expiresAt <= now) {
     return { key: 'expired', label: '已过期', color: 'warning' }
@@ -118,11 +118,14 @@ export function inviteCodeStatus(
 }
 
 /** 还能用的第一张；没有就是 `null`（不拿一张废码顶上）。列表按建码时间排，所以
- *  这是**最早那张还开着的** —— 板子自己那张码通常在它发出去的码前面。 */
+ *  这是**最早那张还开着的** —— 板子自己那张码通常在它发出去的码前面。
+ *
+ *  `now` 与 `inviteCodeStatus` 同一个意思，只为测试能钉住「过期的被跳过」这件事。 */
 export function currentInviteCode<T extends { maxUses: number | null; useCount: number; expiresAt: number | null }>(
   codes: readonly T[],
+  now: number = Date.now()
 ): T | null {
-  return codes.find((c) => inviteCodeStatus(c).key === 'usable') ?? null
+  return codes.find((c) => inviteCodeStatus(c, now).key === 'usable') ?? null
 }
 
 export interface SpaceInfo {

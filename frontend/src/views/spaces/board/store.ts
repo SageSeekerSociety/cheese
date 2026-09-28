@@ -17,9 +17,18 @@
  *   因为那些数（谁在等我审、多少人在我这卡住）全板列表里根本没有。
  */
 import type { Space, SpaceInviteCode, Task, User } from '@/types'
-import type { BoardTask, InviteCode, Person, Role, SpaceInfo, TaskState } from './model'
 
 import { computed, ref } from 'vue'
+
+import {
+  type BoardTask,
+  currentInviteCode,
+  type InviteCode,
+  type Person,
+  type Role,
+  type SpaceInfo,
+  type TaskState,
+} from './model'
 
 import { myHandle } from '@/me'
 import { SpacesApi } from '@/network/api/spaces'
@@ -128,7 +137,8 @@ export async function loadPending(): Promise<BoardTask[]> {
   return res.data.tasks.map(toBoardTask)
 }
 
-/** 邀请码。**只有列和建** —— 改码的接口真平台还没有（那是另一批）。 */
+/** 邀请码。列表在这里读；改与撤在弹窗里直接走 `SpacesApi.updateInviteCode` /
+ *  `revokeInviteCode`（改完那一屏自己重拉，不需要把整块板跟着刷一遍）。 */
 export async function loadCodes() {
   if (spaceId.value === null) return
   const res = await SpacesApi.listInviteCodes(spaceId.value)

@@ -16,7 +16,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import InviteCodesDialog from './components/InviteCodesDialog.vue'
 import { ROLE_LABEL } from './model'
-import { codes, failed, isManager, isOwner, loadBoard, loadCodes, me, role, space } from './store'
+import { currentCode, failed, isManager, isOwner, loadBoard, loadCodes, me, role, space } from './store'
 
 const props = defineProps<{ spaceId: number }>()
 
@@ -28,11 +28,16 @@ const inviteOpen = ref(false)
 
 const spaceName = computed(() => space.value?.name ?? '空间')
 
-/** 下拉上那一行摘要：现在用的是哪个码、用了多少。 */
+/** 下拉上那一行摘要：现在用的是哪个码、用了多少。
+ *
+ *  「还用得上」只有一条判据（`currentInviteCode`，见 `model.ts`），成员页与邀请码
+ *  弹窗念的是同一条 —— 列表里第一张码可能早就用尽了，拿它当「当前码」写着，人照着
+ *  发给下一个人的时候才发现发不出去。
+ */
 const codeSummary = computed(() => {
-  const first = codes.value[0]
-  if (!first) return '还没有码'
-  return `${first.code} · ${first.useCount} / ${first.maxUses ?? '不限'} 人已用`
+  const current = currentCode.value
+  if (!current) return '没有可用的码'
+  return `${current.code} · ${current.useCount} / ${current.maxUses ?? '不限'} 人已用`
 })
 
 const NAV = computed(() =>
