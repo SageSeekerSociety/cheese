@@ -59,6 +59,10 @@ class AgentSessionService:
         row = await self._repo.get(topic_id, agent_handle, harness)
         return row.place() if row is not None else None
 
+    async def ids_in_room(self, room_id: uuid.UUID) -> list[uuid.UUID]:
+        """Every session id in this room, started or not, in a stable order."""
+        return await self._repo.ids_in_room(room_id)
+
     async def remember_place(
         self,
         *,

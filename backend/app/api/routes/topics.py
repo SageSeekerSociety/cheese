@@ -63,7 +63,6 @@ from app.domain.agent.runtime import (
     announce_stale,
 )
 from app.domain.agent.step_output import without_output
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -1659,8 +1658,11 @@ async def get_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The room's work computers: what each agent session works on, and what an
-    agent that has not started yet will be given (the room's choice)."""
+    """The room's work computer: the one choice every session in it works on.
+
+    一个话题一个容器（2026-09-28 决定，推翻结论 60）：`sessions` 报的每一行都是那
+    一台——一个房间里的会话不再各有各的机器。没开工的会话也答那一项，它开工时拿的
+    就是那一台。"""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
@@ -1685,20 +1687,19 @@ async def get_topic_compute_profile(
             named = next((d for d in devices if d.device_id == binding.device_id), None)
             choice.name = named.name if named else "自有设备"
     # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
-    # machine. Read from the sessions' own machines, not the room's pin: a
-    # session that picked a device automatically, or moved to one later, has
-    # the same access and no pin. Surfaced so the room shows a visible safety
-    # badge instead of the platform granting whole-machine access silently
-    # (原则八).
+    # machine. 一个话题一个容器（2026-09-28 决定，推翻结论 60）：房间里的会话看的
+    # 都是同一台机器，而它就是房间那一项算出来的那台，所以读那一项就够了。Surfaced
+    # so the room shows a visible safety badge instead of the platform granting
+    # whole-machine access silently (原则八).
     from app.domain.machine.session_work import (
         room_machine_visibility,
         session_machines,
     )
 
-    sessions = await session_machines(db, topic)
     visibility = await room_machine_visibility(
-        db, topic, project.settings if project else None, sessions
+        db, topic, project.settings if project else None
     )
+    sessions = await session_machines(db, topic)
     effective_visibility = visibility.value if visibility is not None else None
     return ok(
         {
@@ -1722,8 +1723,9 @@ async def get_topic_compute_profile(
                 }
                 for device in devices
             ],
-            # Each agent session and its machine; `choice` is None for one that
-            # has not started working and will be given `choice` above.
+            # Each agent session and its machine — the room's, for every one of
+            # them; `choice` is None for one that has not taken hands yet and
+            # will be given `choice` above.
             "sessions": [
                 {k: v for k, v in row.items() if k != "visibility"} for row in sessions
             ],
@@ -1748,60 +1750,6 @@ async def get_topic_compute_profile(
 class WorkLeaseRequest(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     timeout: float = Field(default=660, gt=0, le=660)
-
-
-@router.put("/{topic_id}/sessions/{session_id}/work-choice")
-async def request_session_work_choice(
-    topic_id: uuid.UUID,
-    session_id: uuid.UUID,
-    body: dict,
-    request: Request,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    from pydantic import ValidationError as SchemaError
-
-    from app.core.sandbox_auth import scoped_token_claims
-    from app.domain.agent.compute_configs import ComputeChoice
-    from app.domain.machine import session_work as work_lease
-
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    if actor.via == "cheese":
-        claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
-        if (
-            claims.get("session") != str(session_id)
-            or claims.get("t") != str(topic_id)
-            or claims.get("r") != str(topic.resource_id or topic.id)
-        ):
-            raise ForbiddenError("Execution credential does not own this session")
-    elif actor.via != "token":
-        raise ForbiddenError("请先登录")
-    try:
-        choice = ComputeChoice.model_validate(body.get("choice"))
-    except SchemaError as exc:
-        raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
-    return ok(
-        {
-            "session": await work_lease.request_choice(
-                db,
-                topic_id=topic_id,
-                session_id=session_id,
-                actor=actor,
-                choice=choice,
-                # Honoured for a person, and only when the old machine could
-                # not be reached to push (`request_choice`).
-                abandon_unpushed=body.get("abandon_unpushed") is True,
-                # The project's bulk switch leaves a session mid-turn alone.
-                if_idle=body.get("if_idle") is True,
-            )
-        }
-    )
 
 
 @router.post("/{topic_id}/sessions/{session_id}/work-lease")
@@ -1852,9 +1800,14 @@ async def set_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The room's choice: what an agent gets when it starts working here.
+    """The room's work computer — the choice for the whole room.
 
-    A signed session names its own machine instead (``request_choice``)."""
+    一个话题一个容器（2026-09-28 决定，推翻结论 60）：改这一项就是改整个房间——房间
+    里坐着的每一条会话都跟着搬到那台机器上（各自先把改动推上去，见
+    ``machine/session_work.request_choice``），不再有「只在以后来的队友身上生效」这
+    一说。一条会话拿着自己的凭据来改，改的也是这一间房：凭据能证明它属于这个房间
+    的这一代，而房间只有一条选择。
+    """
     from pydantic import ValidationError as SchemaError
 
     from app.domain.agent.compute_configs import (
@@ -1874,8 +1827,8 @@ async def set_topic_compute_profile(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     await ProjectMachineRepository(db).lock_topic(topic_id)
-    # A signed session selects only its own work destination. Project-wide
-    # credentials cannot name a running session through this room-default API.
+    # 一张签出来的会话凭据能改这一间房，但只能改它自己那一代的那一间：房间重开换了
+    # 代，旧凭据改不动新房间（它手里那条会话已经不属于它了）。
     from app.core.sandbox_auth import scoped_token_claims
 
     claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
@@ -1885,12 +1838,6 @@ async def set_topic_compute_profile(
         or claims.get("r") != str(topic.resource_id or topic.id)
     ):
         raise ForbiddenError("Execution credential does not own this room generation")
-    # 开工之后，房间这一项只是之后邀请的 AI 队友的默认（结论 60）：已经在干活的
-    # 会话各有各的机器，改它不会把谁搬走。
-    started = bool(
-        await AgentSessionService(db).has_run(topic_id)
-        or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
-    )
     name = (body.get("profile") or "").strip() or compute_default_name()
     try:
         choice = ComputeChoice.model_validate(
@@ -1903,17 +1850,6 @@ async def set_topic_compute_profile(
         )
     except SchemaError as exc:
         raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
-    if scoped_session:
-        from app.domain.machine import session_work as work_lease
-
-        result = await work_lease.request_choice(
-            db,
-            topic_id=topic_id,
-            session_id=uuid.UUID(scoped_session),
-            actor=actor,
-            choice=choice,
-        )
-        return ok({"session": result})
     name = choice.profile
     body = {**body, "device_id": choice.device_id}
     raw_device_id = body.get("device_id")
@@ -1996,30 +1932,43 @@ async def set_topic_compute_profile(
     if name == COMPUTE_CLOUD:
         await MachineService(db).require_use_authority(topic.project_id, actor)
 
-    # Before the first turn the room's pin is the choice itself. Release then
-    # bind preserves bind_topic_device's write-once contract: the bind itself
-    # never overwrites, while an explicit change removes the obsolete pin first.
-    # Selecting Cloud or 「系统挑一台」 leaves no pin; the latter is frozen by
-    # resolve_pinned_device on the first turn. Once the room has started, the pin
-    # belongs to the machine its first turn is using (a Cloud room's connector
-    # included), so a new default for later agents leaves it where it is.
-    if not started:
-        binding = await device_service.topic_binding(topic_id)
-        if binding is not None and (
-            name != COMPUTE_DEVICE or binding.device_id != device_id
-        ):
-            await device_service.release_topic_device(
-                topic_id, reason="compute choice changed before the first turn"
-            )
-            binding = None
-        if name == COMPUTE_DEVICE and device_id is not None and binding is None:
-            await device_service.bind_topic_device(
-                topic_id,
-                device_id,
-                visibility=await device_service.binding_visibility(device_id),
-            )
+    # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
+    # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——
+    # 一条推不上去就是整个房间留在原地（它抛出去，路由把它变成一次可见的失败）。
+    from app.domain.machine import session_work as work_lease
 
-    topic.compute_config = choice.model_dump()
+    await work_lease.request_choice(
+        db,
+        topic_id=topic_id,
+        actor=actor,
+        choice=choice,
+        # 人的那一次可以在原来那台够不着时决定不推送——成员名册和设备页的批量切换
+        # 用的就是这个开关。会话凭据自己来改时它不成立（`_move_session`）。
+        abandon_unpushed=body.get("abandon_unpushed") is True,
+        # 设备页的批量切换跳过正在跑任务的房间，而不是把它手上的机器抽走。
+        if_idle=body.get("if_idle") is True,
+    )
+    # The room's pin is the choice itself, before the first turn and after it:
+    # 一个话题一个容器（2026-09-28，推翻结论 60），换机器是整个房间搬过去，钉子跟
+    # 着搬——在每条会话都搬成之后才动，一条推不上去整个房间连钉子一起留在原地。
+    # Release then bind preserves bind_topic_device's write-once contract:
+    # the bind itself never overwrites, while an explicit change removes the
+    # obsolete pin first. Selecting Cloud or 「系统挑一台」 leaves no pin; the
+    # latter is frozen by resolve_pinned_device on the next turn.
+    binding = await device_service.topic_binding(topic_id)
+    if binding is not None and (
+        name != COMPUTE_DEVICE or binding.device_id != device_id
+    ):
+        await device_service.release_topic_device(
+            topic_id, reason="the room moved to another work computer"
+        )
+        binding = None
+    if name == COMPUTE_DEVICE and device_id is not None and binding is None:
+        await device_service.bind_topic_device(
+            topic_id,
+            device_id,
+            visibility=await device_service.binding_visibility(device_id),
+        )
     await db.flush()
     return ok(
         {

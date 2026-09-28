@@ -223,100 +223,56 @@ function agentRow(): Element {
   return Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('cheese-t1'))!
 }
 
-describe('名册上 AI 队友的工作电脑', () => {
-  it('开工了的队友写它现在那台，自有设备后面跟着「能访问整台机器」', async () => {
+describe('名册上这个话题的工作电脑', () => {
+  // 一个话题一个容器（2026-09-28，推翻结论 60）：房间里的 AI 队友都在同一台上，所以
+  // 名册只在底下写一行房间的，队友那一行不再各写一台。
+  it('房间里坐着几条会话，也只有房间那一行，队友那一行不写工作电脑', async () => {
+    const session = (id: string) => ({
+      id,
+      agent_handle: 'cheese-t1',
+      harness: `harness-${id}`,
+      choice: LAB,
+      lease: { device_id: 'lab', generation: 1, status: 'ready', online: true },
+      machine_access: true,
+    })
     machines.get.mockResolvedValue(
       roomMachines({
+        choice: { ...LAB, name: '实验室工作站', device_id: 'lab' },
+        sessions: [session('s1'), session('s2')],
+      })
+    )
+    await openRoster()
+    expect(document.querySelectorAll('[data-testid="agent-machine"]')).toHaveLength(0)
+    expect(agentRow().textContent).not.toContain('工作电脑')
+    const rooms = document.querySelectorAll('[data-testid="future-machine"]')
+    expect(rooms).toHaveLength(1)
+    expect(rooms[0].textContent).toContain('本话题运行在：实验室工作站')
+    expect(rooms[0].textContent).toContain('改')
+  })
+
+  it('房间那一行跟着项目默认时标出来', async () => {
+    await openRoster()
+    const room = document.querySelector('[data-testid="future-machine"]')!
+    expect(room.textContent).toContain('本话题运行在：云端 · 标准配置')
+    expect(room.textContent).toContain('项目默认')
+  })
+
+  it('房间那台能访问整台机器时，提醒挂在房间那一行上', async () => {
+    machines.get.mockResolvedValue(
+      roomMachines({
+        choice: { ...LAB, name: '实验室工作站', device_id: 'lab' },
         visibility: {
           options: [],
           effective: 'host',
           machine_access: true,
           notice: '能操作这台机器上的服务和其他房间',
         },
-        sessions: [
-          {
-            id: 's1',
-            agent_handle: 'cheese-t1',
-            harness: 'test-harness',
-            choice: LAB,
-            lease: { device_id: 'lab', generation: 1, status: 'ready', online: true },
-            machine_access: true,
-          },
-        ],
       })
     )
     await openRoster()
-    const line = agentRow().querySelector('[data-testid="agent-machine"]')!
-    // 「自动选一台」开工后已经落在某一台上：写那一台的名字。
-    expect(line.textContent).toContain('工作电脑：实验室工作站')
-    expect(line.textContent).toContain('能访问整台机器')
-    expect(line.textContent).toContain('更换')
-    // 已经在干活的那一台不跟着项目走，不挂「项目默认」。
-    expect(line.textContent).not.toContain('项目默认')
-    const humans = Array.from(document.querySelectorAll('.roster__item')).filter((r) => r !== agentRow())
-    expect(humans.every((r) => !r.textContent?.includes('工作电脑'))).toBe(true)
-  })
-
-  it('云端上的队友不挂整台机器的提醒', async () => {
-    machines.get.mockResolvedValue(
-      roomMachines({
-        sessions: [
-          {
-            id: 's1',
-            agent_handle: 'cheese-t1',
-            harness: 'test-harness',
-            choice: CLOUD,
-            lease: null,
-            machine_access: false,
-          },
-        ],
-      })
-    )
-    await openRoster()
-    const line = agentRow().querySelector('[data-testid="agent-machine"]')!
-    expect(line.textContent).toContain('工作电脑：云端 · 标准配置')
-    expect(line.textContent).not.toContain('能访问整台机器')
-    expect(line.textContent).not.toContain('项目默认')
-  })
-
-  it('还没开工的队友写开工时会用哪台，跟着项目默认时标出来', async () => {
-    await openRoster()
-    const line = agentRow().querySelector('[data-testid="agent-machine"]')!
-    expect(line.textContent).toContain('还没开工 · 将用：云端 · 标准配置')
-    expect(line.textContent).toContain('项目默认')
-    expect(line.textContent).toContain('改')
-    expect(line.textContent).not.toContain('更换')
-  })
-
-  it('名册下面写着之后邀请的 AI 队友用哪台', async () => {
-    machines.get.mockResolvedValue(roomMachines({ choice: { ...LAB, name: '实验室工作站', device_id: 'lab' } }))
-    await openRoster()
-    const future = document.querySelector('[data-testid="future-machine"]')!
-    expect(future.textContent).toContain('之后邀请的 AI 队友用：实验室工作站')
-    expect(future.textContent).not.toContain('项目默认')
-    expect(future.textContent).toContain('改')
-  })
-
-  it('更换打开的是给这一位队友换电脑的对话框', async () => {
-    machines.get.mockResolvedValue(
-      roomMachines({
-        sessions: [
-          {
-            id: 's1',
-            agent_handle: 'cheese-t1',
-            harness: 'test-harness',
-            choice: CLOUD,
-            lease: null,
-            machine_access: false,
-          },
-        ],
-      })
-    )
-    await openRoster()
-    const change = Array.from(agentRow().querySelectorAll('button')).find((b) => b.textContent?.trim() === '更换')!
-    await fireEvent.click(change)
-    await settle()
-    expect(document.body.textContent).toContain('给 芝士 换一台工作电脑')
+    const room = document.querySelector('[data-testid="future-machine"]')!
+    expect(room.textContent).toContain('能访问整台机器')
+    expect(room.textContent).not.toContain('项目默认')
   })
 
   it('有队友能访问整台机器时告诉页头，名册合着也看得见', async () => {
