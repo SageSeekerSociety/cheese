@@ -33,6 +33,7 @@ from app.domain.agent.harness import (
     ActivityConsumer,
     Backlog,
     EventConsumer,
+    MemoryConsumer,
     Opening,
     ReachabilityConsumer,
     ReceiptConsumer,
@@ -68,9 +69,6 @@ RUNNER_GONE_S = 120.0
 # tool call or an ending for ``no_progress_s`` is a loop; a session that has
 # gone quiet is judged by whether its process is alive, not by this.
 TALKING_S = 300.0
-# How long a person's stop waits for the session to take the interrupt. The
-# turn is already over by then; this only bounds the request they are waiting on.
-STOP_INTERRUPT_S = 5.0
 
 
 @dataclass
@@ -139,6 +137,11 @@ class SessionChannel[H: Handle](Protocol):
 class DrivenRuntime[H: Handle]:
     harness: str
     embeds_images = True
+    #: Whether this harness's sessions keep memory as files and can reconcile
+    #: them (``memory()`` below). False by default, and that default is the
+    #: safe one: the system prompt's memory section says 「写进这里，平台下一轮
+    #: 就有一份」, which is a lie for a harness with no way back.
+    keeps_memory = False
     #: How messages a person may read name the harness.
     label: str
     #: How the poller's log lines name what it reads.
@@ -184,6 +187,11 @@ class DrivenRuntime[H: Handle]:
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
         self.reachability: ReachabilityConsumer | None = None
+        # 带下划线，因为它不能和下面那个 `memory()`（这一侧往会话里问一次对账）
+        # 同名：`self.memory = None` 会把那个方法盖掉，而 `AgentRuntime` 是
+        # `runtime_checkable` 的 Protocol，`isinstance` 拿不到方法就答否——
+        # 于是每一个 runtime 都「跑不了 harness」。别的消费者没这个问题。
+        self._memory: MemoryConsumer | None = None
 
     # --- what the harness supplies -------------------------------------------
 
@@ -245,6 +253,44 @@ class DrivenRuntime[H: Handle]:
     def bind_reachability(self, consumer: ReachabilityConsumer) -> None:
         self.reachability = consumer
 
+    def bind_memory(self, consumer: MemoryConsumer) -> None:
+        self._memory = consumer
+
+    def _memory_hook(self, topic: uuid.UUID) -> Callable[[], Awaitable[None]]:
+        """`reconcile_memory` 绑到这一间房，给订阅那一侧的一轮结束用（它不带参数）。
+
+        三个 harness 都从这里取，所以「一轮结束时对一次账」是这套骨架的事实，
+        而不是谁恰好写了一句：会话不存记忆文件的那几个问下去也会得到 None。
+        """
+
+        async def hook() -> None:
+            await self.reconcile_memory(topic)
+
+        return hook
+
+    async def reconcile_memory(self, topic: uuid.UUID) -> None:
+        """Ask the room to reconcile its memory tree, and never fail the turn on it.
+
+        A memory tree that could not be reconciled is a memory that is a turn
+        behind — the next moment asks again, with the same three sides. Letting
+        the exception through would end a turn that was otherwise fine, over the
+        room's notes.
+        """
+        if self._memory is None:
+            return
+        try:
+            await self._memory(topic)
+        except Exception:
+            self.logger.exception("memory reconciliation failed topic=%s", topic)
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """A harness whose sessions keep memory files answers this; others cannot.
+
+        The default is ``None`` — «这里没有记忆文件», which the caller reads as
+        「这一轮不用对账」 and not as a failure.
+        """
+        return None
+
     def pulse(self, topic: uuid.UUID, marks: frozenset[str]) -> None:
         """What the subscription just read about the open turn."""
         if clock := self.clocks.get(topic):
@@ -305,42 +351,6 @@ class DrivenRuntime[H: Handle]:
 
     async def _end_by_verdict(self, handle: H, result: AgentResult) -> None:
         """End the turn in the room's books, and take the work away."""
-        await self._end(handle, result, "verdict")
-        try:
-            await self.interrupt(handle.session)
-        except Exception:  # noqa: BLE001 — the turn is already ended here
-            self.logger.exception("%s interrupt after a verdict failed", self.label)
-
-    async def stop(self, topic: uuid.UUID) -> uuid.UUID | None:
-        """A person pressed stop. End the open turn now; returns the work ended.
-
-        Ended in the room's books first, not left to the session's own ending:
-        a person reaches for stop exactly when the session is not answering —
-        a runner out of reach is waited on for ``RUNNER_GONE_S``, and whatever
-        is said meanwhile queues behind it. Nothing broke, so the ending is not
-        an error: what the turn was fed counts as read and is not sent into the
-        next turn again. The interrupt that follows is best effort, and what
-        the session prints for this work afterwards is not a second ending.
-        """
-        handle = self.live.get(topic)
-        if handle is None or topic not in self.work:
-            return None
-        work = self.work[topic]
-        await self._end(handle, AgentResult(text="", session_id=None), "stop")
-        try:
-            async with asyncio.timeout(STOP_INTERRUPT_S):
-                await self.interrupt(handle.session)
-        except Exception as exc:  # noqa: BLE001 — the turn is already ended here
-            self.logger.warning(
-                "%s interrupt after a stop did not land topic=%s: %r",
-                self.label,
-                topic,
-                exc,
-            )
-        return work
-
-    async def _end(self, handle: H, result: AgentResult, why: str) -> None:
-        """End the open turn in the room's books with ``result``."""
         topic = handle.session.topic_id
         work = self.work[topic]
         await self._consume(
@@ -355,12 +365,16 @@ class DrivenRuntime[H: Handle]:
                 agent_handle=handle.agent_handle,
                 harness=self.harness,
             ),
-            f"{self.harness}:{self.conversation(handle)}:{why}:{work}",
+            f"{self.harness}:{self.conversation(handle)}:verdict:{work}",
             False,
             False,
         )
         await self._activity(handle.session.project_id, topic, work, False)
         self.closed.add(work)
+        try:
+            await self.interrupt(handle.session)
+        except Exception:  # noqa: BLE001 — the turn is already ended here
+            self.logger.exception("%s interrupt after a verdict failed", self.label)
 
     async def _consume(self, project, topic, work, event, eid, seen, unsolicited):
         if isinstance(event, AgentResult) and work in self.closed:
@@ -613,6 +627,9 @@ class DrivenRuntime[H: Handle]:
         )
         self.work[session.topic_id] = work_id
         self._wake(session.topic_id)
+        # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
+        # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
+        await self.reconcile_memory(session.topic_id)
         try:
             await self.channel.call(
                 handle,

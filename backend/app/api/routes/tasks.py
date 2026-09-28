@@ -1569,6 +1569,12 @@ async def confirm_publish_task_from_pdf(
             except (TypeError, ValueError):
                 pass
 
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told the drafts are
+    # published could open the review queue on its next request and not find them.
+    # Same reason as the commit in ``create_task``.
+    await db.commit()
+
     task_models = [_task_to_api_model(task) for task in created_tasks]
     if space_id is not None:
         task_models = await _enrich_task_models(db, task_models, space_id=space_id)
@@ -2327,6 +2333,11 @@ async def patch_task(
 
     task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told a task is approved
+    # could open the board on its next request and not find the task there yet.
+    # Same reason as the commit in ``create_task``.
+    await db.commit()
 
     # Fetch submissionSchema for response
     schema_repo = TaskSubmissionSchemaRepository(session=db)

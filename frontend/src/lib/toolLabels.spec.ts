@@ -1,9 +1,14 @@
 // 现场圆点分级 + display-time translation: the platform rule reads the
 // structured fields the backend persisted — never guessed from natural
 // language.
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { isPlatformEvent, toolLabel } from './toolLabels'
+
+import { setLocale } from '@/i18n'
+
+// 这些词是中文界面上的那一套；测试环境起步是英文。
+beforeEach(() => setLocale('zh-CN'))
 
 describe('toolLabel', () => {
   it('translates native tools (incl. the ones that used to leak raw)', () => {

@@ -100,7 +100,19 @@ def channel(client, monkeypatch, executors=("executor",)):
     central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
     central.test_client = client
     monkeypatch.setattr(session_work, "device_hub", hub)
-    monkeypatch.setattr(execution, "call", AsyncMock(return_value={"tasks": []}))
+    # A switch first pushes the session's work on the machine it leaves
+    # (`checkpoint`); every other control call reads background work.
+    monkeypatch.setattr(
+        execution,
+        "call",
+        AsyncMock(
+            side_effect=lambda target, method, params, **_: (
+                {"value": {"stdout": ""}}
+                if params.get("subtype") == "checkpoint"
+                else {"tasks": []}
+            )
+        ),
+    )
     return central
 
 

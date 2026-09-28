@@ -184,6 +184,10 @@ class AgentResult:
     # re-derived: the alternative is reading back the sentence this same code
     # just wrote, which makes the copy unchangeable.
     failure_code: str | None = None
+    # What the failing process printed, when the platform has it (a session
+    # that died on its way up). 现场 shows it on the failure notice; the room's
+    # line is `text`.
+    log: str | None = None
     # Which sub-thread stopped, when the Stop came from one. None for the
     # session's own Stop — the one that ends a turn.
     thread_label: str | None = None

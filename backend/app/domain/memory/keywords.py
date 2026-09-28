@@ -1,17 +1,13 @@
-"""Query keywords for the flat DB memory backend's search.
+"""把一段话切成它的关键词，按权重排。
 
-The DB backend has no embeddings, so `cheese_recall` cannot retrieve by
-meaning. What it can do — and what this module implements — is degrade
-*honestly*: cut a natural-language question into the keywords it is made of,
-match any of them, and rank each memory by how much of the question it covers.
-「CI 失败日志怎么看」 then reaches a fact about reading CI failure logs, which a
-single ``ILIKE '%whole question%'`` never could.
+`cheese_recall` 撤销之后，这里只剩一个调用方：写记忆之前拿几个最重的词去检出目录
+里查一遍（`redundant.py`）——「这件事 repo 里是不是已经写着了」（结论 61）。判据
+要有，是因为提示词里的一句叮嘱只在模型愿意照做的时候成立，而写入端每天要挡的正是
+它没照做的那些次。
 
-Chinese has no spaces, so a CJK run is cut into character bigrams (the length
-of most Chinese words) plus the run itself as a phrase term. This is a
-structural transformation of the query string — no interpretation of what it
-means (规则4). Which is also why nothing here is called semantic: see
-``DbMemoryStore.search``.
+切法是结构性的，不含对意思的解读（规则4）：一段话切成它由之组成的词。中文没有
+空格，所以一段 CJK 串切成字符二元组（多数中文词的长度），外加整串本身作为一个
+短语词——短语整段命中说明的事情比它的二元组多。
 """
 
 import re
@@ -107,8 +103,6 @@ _BIGRAM_WEIGHT = 1.0
 _PHRASE_MAX = 8
 # Bounds the OR-clause a query can turn into.
 _MAX_TERMS = 24
-# Below this a match is a coincidence, not an answer — see `is_relevant`.
-_MIN_COVERAGE = 0.15
 
 
 def _add(terms: dict[str, float], term: str, weight: float) -> None:
@@ -158,18 +152,3 @@ def match_content(terms: list[tuple[str, float]], content: str) -> tuple[float, 
     total = sum(weight for _, weight in terms)
     hit = [weight for term, weight in terms if term in lowered]
     return (sum(hit) / total if total else 0.0), max(hit, default=0.0)
-
-
-def is_relevant(coverage: float, strongest: float) -> bool:
-    """Whether a match is worth returning at all.
-
-    Matching *any* keyword is a low bar: on a real 63-fact pool an unrelated
-    question ("报销流程找谁审批") still shares a stray bigram with something and
-    would come back looking like an answer. Two ways to clear the bar, because
-    each covers what the other misses: cover enough of the question, or match
-    one of its whole words — a long question containing `alembic` must still
-    reach the alembic fact even if the rest of the sentence covers nothing.
-    Thresholds read off this project's real pool: relevant hits scored
-    0.19–0.56 there, coincidences 0.07–0.12.
-    """
-    return coverage >= _MIN_COVERAGE or strongest >= _LATIN_WEIGHT

@@ -3,10 +3,8 @@
 import asyncio
 import uuid
 
-from app.domain.agent_instance.services import AgentInstanceService, memory_pool
-from app.domain.memory.models import MemoryLayer
-from app.domain.memory.store import DbMemoryStore
-from app.domain.project.services import ProjectService
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory.files_store import MemoryFileStore
 from tests.integration.conftest import (
     chat_ws_url,
     join_project_team,
@@ -176,25 +174,56 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
     assert "实况文档已被" not in (stub_hooks.last_prompt or "")
 
 
-def test_core_memory_is_carried_and_an_ordinary_fact_is_only_counted(
-    client, stub_hooks
-):
-    """What a turn opens with, end to end. Core is there because it is what the
-    agent must know to be itself; the rest is not, and the prompt says so — a
-    prompt that looks complete is one nobody searches, and `recall` is the only
-    way those facts reach a turn at all."""
+def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
+    """What a turn opens with, end to end: `MEMORY.md` is there, the files it
+    points at are not. A prompt that looks complete is one nobody reads a file
+    from — which is why the index carries hooks rather than bodies, and why the
+    agent has to open them itself with the tools it already has.
+
+    The private index is the speaker's only: an index is paid for every turn,
+    and a project is wider than the people in this room."""
     project_id, topic_id = _create_project_and_topic(client)
 
     async def _seed() -> None:
         async with client.test_factory() as session:
-            project = await ProjectService(session).get_or_404(uuid.UUID(project_id))
-            agent = await AgentInstanceService(session).for_project(project)
-            pool = memory_pool(project.id, agent)
-            store = DbMemoryStore(session)
-            await store.remember(
-                *pool, "你是芝士，回答先给结论", layer=MemoryLayer.core
+            store = MemoryFileStore(session)
+
+            async def put(scope, owner: str | None, path: str, content: str) -> None:
+                await store.write(
+                    project_id=uuid.UUID(project_id),
+                    scope=scope,
+                    owner_handle=owner,
+                    path=path,
+                    content=content,
+                    updated_by="cheese",
+                    expected_version=None,
+                )
+
+            await put(
+                MemoryFileScope.team,
+                None,
+                INDEX_NAME,
+                "- [回答先给结论](answer-first.md) — 索引里那句钩子\n",
             )
-            await store.remember(*pool, "项目用 FastAPI 写后端")
+            await put(
+                MemoryFileScope.team,
+                None,
+                "answer-first.md",
+                "---\nname: answer-first\ndescription: 回答先给结论\ntype: feedback\n"
+                "---\n\n正文里才有的那句话\n",
+            )
+            await put(
+                MemoryFileScope.private,
+                "user-1",
+                INDEX_NAME,
+                "- [这人懂 Go](knows-go.md) — 说话这个人的索引钩子\n",
+            )
+            await put(
+                MemoryFileScope.private,
+                "bob",
+                INDEX_NAME,
+                "- [别人](elsewhere.md) — 没说话那个人的索引钩子\n",
+            )
             await session.commit()
 
     asyncio.run(_seed())
@@ -205,10 +234,10 @@ def test_core_memory_is_carried_and_an_ordinary_fact_is_only_counted(
 
     prompt = stub_hooks.last_system_prompt
     assert prompt is not None
-    assert "你是芝士，回答先给结论" in prompt
-    assert "项目用 FastAPI 写后端" not in prompt
-    assert "记忆池里另有 **1 条**" in prompt
-    assert "cheese_recall" in prompt
+    assert "索引里那句钩子" in prompt
+    assert "正文里才有的那句话" not in prompt
+    assert "说话这个人的索引钩子" in prompt
+    assert "没说话那个人的索引钩子" not in prompt
 
 
 def test_empty_content_rejected(client):

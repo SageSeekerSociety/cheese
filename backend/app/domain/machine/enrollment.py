@@ -447,9 +447,8 @@ async def run_bootstrap(
 
 def combine_authorized_keys(*keys: str | None) -> str:
     """authorized_keys is one key per line, and MicroCloud writes what it is
-    given verbatim — so the platform's bootstrap key and the human's own key can
-    both be authorised. Enrolling a machine must not cost the human their access
-    to it."""
+    given verbatim — so the platform's bootstrap key and the operator's key can
+    both be authorised, and a key given twice or not at all is dropped."""
     seen: list[str] = []
     for key in keys:
         cleaned = (key or "").strip()

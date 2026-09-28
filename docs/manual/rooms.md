@@ -27,9 +27,9 @@ order: 4
 
 在话题顶部打开「话题成员」，可以查看和调整话题中的 AI 队友。具体步骤见[在话题中更换 AI 队友](/agents#change-agent-in-topic)。
 
-## 选择运行环境 {#topic-runtime}
+## 选择工作电脑 {#topic-runtime}
 
-话题的运行环境可以从顶部「更多 → 运行环境」进入。打开「选择运行环境」后，首次运行前可以改选可用资源。选项含义和项目默认设置见[设备与运行环境](/devices#topic-environment)。
+每个 AI 队友的工作电脑写在成员名册里它那一行：开工了的可以「更换」，还没开工的可以「改」它将用哪台。选项含义和项目默认设置见[设备与工作电脑](/devices#topic-environment)。
 
 ## 话题名称 {#topic-name}
 

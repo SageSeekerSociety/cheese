@@ -55,8 +55,11 @@ class Subscription(subscription.Subscription[PiBacklog]):
         session_id: str | None = None,
         *,
         pulse: subscription.Pulse | None = None,
+        memory: Callable[[], Awaitable[None]] | None = None,
     ):
-        super().__init__(session, path, call, consume, activity, pulse=pulse)
+        super().__init__(
+            session, path, call, consume, activity, pulse=pulse, memory=memory
+        )
         self.session_id = session_id
 
     async def receive(self) -> None:

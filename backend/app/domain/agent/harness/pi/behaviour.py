@@ -31,7 +31,11 @@ def declaration() -> Declaration:
             # PLATFORM_TOOLS，经 harness/pi/catalog.py 进 platform.ts 的
             # registerPlatformTools）。
             BuiltIn.TODO: Difference.NOT_BUILT_IN,
-            BuiltIn.REMINDER: Difference.NOT_CHECKED_AGAINST_THE_PIN,
+            # 0.85.1 没有提醒：内置工具是上面那八个，没有定时或唤醒工具，
+            # coding-agent 和 agent 两个包里也没有按沉默计数去插话的逻辑。房间
+            # 太久没听到消息时的提醒是平台的 ChatService.remind_silent_turns，
+            # 它不看骨架；平台给 pi 的 extension 里也没有第二份。
+            BuiltIn.REMINDER: Difference.NOT_BUILT_IN,
             BuiltIn.AUTO_SYNC: Difference.NOT_CHECKED_AGAINST_THE_PIN,
         },
         verified_against=VERIFIED_AGAINST,
