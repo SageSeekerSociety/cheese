@@ -19,6 +19,7 @@ import {
   updateRoutine,
 } from '../api'
 
+import PageAction from '@/components/common/PageAction.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
@@ -253,8 +254,8 @@ watch(
 <template>
   <ProjectPage :title="t('navigation.project.routines')">
     <template #actions>
-      <v-btn :loading="loading" @click="load">刷新</v-btn>
-      <v-btn color="primary" :disabled="!rooms.length" @click="startNew">新建</v-btn>
+      <PageAction label="刷新" icon="mdi-refresh" :loading="loading" @click="load" />
+      <PageAction label="新建" icon="mdi-plus" primary color="primary" :disabled="!rooms.length" @click="startNew" />
     </template>
     <div>
       <p class="t-body c-muted mb-6">

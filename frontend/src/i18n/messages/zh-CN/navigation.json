@@ -52,6 +52,7 @@
     "connections": "我的连接"
   },
   "shell": {
-    "close": "关闭"
+    "close": "关闭",
+    "more": "更多操作"
   }
 }

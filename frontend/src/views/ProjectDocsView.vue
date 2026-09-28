@@ -12,6 +12,7 @@ import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
+import PageAction from '@/components/common/PageAction.vue'
 import { t } from '@/i18n'
 import { markdown, sanitizeRendered } from '@/lib/markdown'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
@@ -181,8 +182,22 @@ function topicTo(topicId: string | null | undefined) {
       <span v-else-if="charterDirty">未保存</span>
     </template>
     <template v-if="rootTopicId && (kind === 'charter' || (kind === 'weeklies' && weeklies.length > 0))" #actions>
-      <v-btn v-if="kind === 'charter'" :to="topicTo(rootTopicId)" prepend-icon="mdi-history">修改记录</v-btn>
-      <v-btn v-else :to="topicTo(rootTopicId)" append-icon="mdi-arrow-right">去项目房间请它写</v-btn>
+      <PageAction
+        v-if="kind === 'charter'"
+        label="修改记录"
+        icon="mdi-history"
+        primary
+        :to="topicTo(rootTopicId)"
+        prepend-icon="mdi-history"
+      />
+      <PageAction
+        v-else
+        label="去项目房间请它写"
+        icon="mdi-message-arrow-right-outline"
+        primary
+        :to="topicTo(rootTopicId)"
+        append-icon="mdi-arrow-right"
+      />
     </template>
     <div class="mb-6">
       <v-tabs

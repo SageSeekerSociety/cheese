@@ -52,6 +52,7 @@
     "connections": "Connections"
   },
   "shell": {
-    "close": "Close"
+    "close": "Close",
+    "more": "More actions"
   }
 }

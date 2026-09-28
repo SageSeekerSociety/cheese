@@ -7,6 +7,7 @@ import type { DeviceScreen, MyDevice, MyTeam } from '../cx_types'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
+import PageAction from '../components/common/PageAction.vue'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
 import {
   connectThisComputer,
@@ -186,17 +187,33 @@ onMounted(load)
 <template>
   <div class="devices-page fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 900px">
-      <div class="mb-6 d-flex align-center">
-        <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
-        <div v-if="$vuetify.display.mdAndUp">
+      <!-- 手机上页名写在顶栏里，两颗按钮也交给了顶栏（PageAction），这一条整条收起；
+           PageAction 仍要挂着才交得出去，所以是 d-none 不是 v-if。 -->
+      <div :class="$vuetify.display.mdAndUp ? 'd-flex align-center mb-6' : 'd-none'">
+        <div>
           <div class="t-eyebrow mb-1">设备</div>
           <h1 class="t-page-title">我的设备</h1>
         </div>
         <v-spacer />
-        <v-btn variant="text" icon="mdi-refresh" class="mr-1" :loading="loading" @click="load" />
-        <v-btn v-if="isLoggedIn" color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true">
-          添加设备
-        </v-btn>
+        <PageAction
+          label="刷新"
+          icon="mdi-refresh"
+          icon-only
+          variant="text"
+          class="mr-1"
+          :loading="loading"
+          @click="load"
+        />
+        <PageAction
+          v-if="isLoggedIn"
+          label="添加设备"
+          icon="mdi-plus"
+          primary
+          color="primary"
+          variant="flat"
+          prepend-icon="mdi-plus"
+          @click="addDeviceOpen = true"
+        />
       </div>
 
       <v-alert v-if="!isLoggedIn" type="info" density="comfortable" class="mb-4"> 登录后即可管理已接入的设备 </v-alert>
@@ -250,7 +267,8 @@ onMounted(load)
             </div>
           </div>
 
-          <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true"> 添加设备 </v-btn>
+          <!-- 顶上已经有一颗琥珀的「添加设备」，空状态里这一颗是指路的，用中性的。 -->
+          <v-btn variant="tonal" prepend-icon="mdi-plus" @click="addDeviceOpen = true"> 添加设备 </v-btn>
         </div>
 
         <v-card v-for="d in devices" :key="d.device_id" class="mb-3 pa-4" variant="outlined">
