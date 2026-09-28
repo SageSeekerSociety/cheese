@@ -1,0 +1,88 @@
+{
+  "title": "一台机器怎么变成芝士的手",
+  "project": "知是",
+  "topic": "登录页改版",
+  "machine": "本话题运行在：系统挑一台",
+  "people": {
+    "wang": { "name": "王长鑫" },
+    "cheese": { "name": "芝士", "agent": true }
+  },
+  "backstage": "devices",
+  "devices": [
+    { "id": "mbp", "name": "王长鑫的 MacBook", "kind": "自托管设备" },
+    { "id": "cloud", "name": "cm-7f3a", "kind": "云机器" }
+  ],
+  "steps": [
+    {
+      "label": "几种机器",
+      "focus": "backstage",
+      "tag": "本机沙盒、自托管设备、云机器、中心会话加执行机",
+      "events": [
+        { "at": 200, "do": "device", "id": "cloud", "status": "online", "text": "每个话题一台 MicroCloud 机器" },
+        { "at": 700, "do": "device", "id": "mbp", "status": "offline", "text": "还没接入" }
+      ]
+    },
+    {
+      "label": "连接器登录，保持一条长连接",
+      "focus": "backstage",
+      "tag": "机器连接服务单独常驻，主 API 发版不断线",
+      "events": [
+        { "at": 200, "do": "term", "text": "$ cheese connect" },
+        { "at": 600, "do": "device", "id": "mbp", "status": "pairing", "text": "在浏览器里确认登录" },
+        { "at": 900, "do": "term", "text": "在浏览器里确认：王长鑫 · 知是" },
+        { "at": 1800, "do": "term", "text": "已连上机器连接服务（DeviceHub），长连接保持中" },
+        { "at": 1900, "do": "device", "id": "mbp", "status": "online", "text": "长连接 · 心跳正常" }
+      ]
+    },
+    {
+      "label": "房间选这台机器",
+      "focus": "machine",
+      "tag": "机器是房间的：房间里每位队友都在这台上",
+      "events": [
+        { "at": 300, "do": "say", "who": "wang", "text": "这个话题换到我的 MacBook 上跑，要用本地的模拟器" },
+        { "at": 1100, "do": "machine", "text": "本话题运行在：王长鑫的 MacBook" },
+        { "at": 1200, "do": "mark", "text": "王长鑫 把本话题换到了 王长鑫的 MacBook" }
+      ]
+    },
+    {
+      "label": "开跑前探一下，再打开屏幕",
+      "focus": "backstage",
+      "tag": "最多探 15 秒；屏幕里跑骨架的 runner",
+      "events": [
+        { "at": 200, "do": "say", "who": "wang", "text": "<@cheese> 在模拟器上把登录页跑一遍，截图给我" },
+        { "at": 800, "do": "term", "text": "探测：在线（85ms）" },
+        { "at": 1400, "do": "term", "text": "打开屏幕 · 启动 runner（Claude Code）" },
+        { "at": 1500, "do": "device", "id": "mbp", "status": "busy", "text": "屏幕 1 个 · 在跑一轮" },
+        { "at": 1600, "do": "turn", "who": "cheese", "turn": "t1" },
+        { "at": 2100, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "xcrun simctl boot 'iPhone 16'" }
+      ]
+    },
+    {
+      "label": "机器上平台装了什么",
+      "focus": "backstage",
+      "tag": "全在一个目录里，卸载就是删这个目录",
+      "events": [
+        { "at": 200, "do": "term", "text": "~/.cheese-place/  执行器 · CLI · 环境脚本 · 会话目录 · 包缓存" },
+        { "at": 900, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "pnpm dev --port 5173" },
+        { "at": 1600, "do": "term", "text": "模型流量：HTTPS_PROXY → 模型隧道 → 主机上的计量代理" },
+        { "at": 2200, "do": "term", "text": "机器上只有它自己的短期令牌，上游 key 不下发" }
+      ]
+    },
+    {
+      "label": "机器出错时",
+      "focus": "chat",
+      "tag": "失败记在设备上；话题不会被悄悄换走",
+      "events": [
+        { "at": 200, "do": "device", "id": "mbp", "status": "lost", "text": "合上盖子了" },
+        { "at": 400, "do": "term", "text": "长连接断开" },
+        { "at": 700, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "xcrun simctl io booted screenshot login.png", "failed": true, "error": "执行器连接中断" },
+        { "at": 900, "do": "end", "turn": "t1" },
+        { "at": 1500, "do": "mark", "text": "平台提示：王长鑫的 MacBook 连不上，这一轮停在这里。话题没有换机器，要换请在成员名册里改" },
+        { "at": 2600, "do": "say", "who": "wang", "text": "<@cheese> 我开盖了，接着来" },
+        { "at": 3200, "do": "term", "text": "探测：15 秒没有应答" },
+        { "at": 3300, "do": "device", "id": "mbp", "status": "cooling", "text": "连续两次同类失败，隔离一段时间" },
+        { "at": 3900, "do": "mark", "text": "平台提示：这台机器连续两次失败，暂时隔离。换机器还是等它恢复，由人决定" }
+      ]
+    }
+  ]
+}

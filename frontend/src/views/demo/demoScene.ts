@@ -6,7 +6,10 @@
 // 第五步，得到的都是同一帧，不会因为跳的路径不同而长得不一样。
 import type { Block } from '@/cx_types'
 
-export type Focus = 'machine' | 'seats' | 'chat' | 'site' | 'tabs' | 'title'
+export type Focus = 'machine' | 'seats' | 'chat' | 'site' | 'tabs' | 'title' | 'backstage'
+
+// 右下角「幕后」那一格画什么：界面上看不见、但这一段要讲的机制。
+export type Backstage = 'memory' | 'pipeline' | 'devices'
 
 export interface Person {
   name: string
@@ -45,6 +48,36 @@ export type SceneEvent =
   | { at: number; do: 'lock'; who: string | null }
   // 话题标题换了。
   | { at: number; do: 'title'; text: string }
+  // 记忆文件树：建一个文件或者改它。`add` 在末尾加一行，`remove` 删掉等于它的那行，
+  // `lines` 整份换掉；`gone` 把文件删掉。
+  | { at: number; do: 'file'; path: string; add?: string; remove?: string; lines?: string[]; gone?: boolean }
+  // 哪几份文件此刻正被装进上下文（空数组 = 没有）。
+  | { at: number; do: 'inject'; paths: string[] }
+  // 一次请求走到哪一站、那一站怎么说。`clear` 把所有站熄掉，好走下一条路线。
+  | { at: number; do: 'hop'; station: string; state: StationState; note?: string }
+  | { at: number; do: 'clear' }
+  // 幕后那一格里的一个读数（剩余额度、心跳间隔……）。
+  | { at: number; do: 'meter'; label: string; value: string }
+  // 一台设备的状态。
+  | { at: number; do: 'device'; id: string; status: DeviceStatus; text?: string }
+  // 连接器终端里多一行。
+  | { at: number; do: 'term'; text: string }
+
+export type StationState = 'on' | 'ok' | 'deny' | 'off'
+export type DeviceStatus = 'offline' | 'pairing' | 'online' | 'busy' | 'lost' | 'cooling'
+
+export interface Station {
+  id: string
+  label: string
+  // 这一站是什么，一句话。
+  note?: string
+}
+
+export interface DeviceDef {
+  id: string
+  name: string
+  kind: string
+}
 
 export interface SceneStep {
   label: string
@@ -62,7 +95,21 @@ export interface Scene {
   people: Record<string, Person>
   // 座位卡按这个顺序排；不写就不显示座位栏。
   seats?: string[]
+  backstage?: Backstage
+  // backstage = pipeline：从上到下的几站。
+  stations?: Station[]
+  // backstage = devices：有哪几台设备。
+  devices?: DeviceDef[]
+  // backstage = memory：开场时已经在的文件。
+  files?: { path: string; lines: string[] }[]
   steps: SceneStep[]
+}
+
+export interface MemoryFile {
+  path: string
+  lines: string[]
+  // 这一步里刚被改过。
+  fresh: boolean
 }
 
 export interface Seat {
@@ -95,6 +142,14 @@ export interface Frame {
   runningWho: string[]
   focus: Focus | null
   tag: string
+  files: MemoryFile[]
+  injected: string[]
+  stations: Record<string, { state: StationState; note: string }>
+  // 请求此刻停在哪一站（最近一次亮起的那一站）。
+  at: string | null
+  meters: { label: string; value: string }[]
+  devices: Record<string, { status: DeviceStatus; text: string }>
+  term: string[]
 }
 
 // 一步放完之后停多久再算「这一步放完了」：最后一件事出来，读的人要有时间看见它。
@@ -124,11 +179,21 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
   const chat: ChatLine[] = []
   const site: Block[] = []
   const running = new Map<string, { at: number; who: string }>()
+  const files = new Map<string, MemoryFile>(
+    (scene.files ?? []).map((f) => [f.path, { path: f.path, lines: [...f.lines], fresh: false }])
+  )
+  let injected: string[] = []
+  const stations: Frame['stations'] = {}
+  let at: string | null = null
+  const meters = new Map<string, string>()
+  const devices: Frame['devices'] = {}
+  const term: string[] = []
 
   let offset = 0
   for (let i = 0; i <= last; i++) {
     const s = scene.steps[i]
     const until = i < last ? Infinity : elapsed
+    for (const f of files.values()) f.fresh = false
     s.events.forEach((e, n) => {
       if (e.at > until) return
       const clock = CLOCK_BASE + (offset + e.at) * CLOCK_SCALE
@@ -195,6 +260,39 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
         case 'title':
           topic = e.text
           break
+        case 'file': {
+          if (e.gone) {
+            files.delete(e.path)
+            break
+          }
+          const f = files.get(e.path) ?? { path: e.path, lines: [], fresh: false }
+          if (e.lines) f.lines = [...e.lines]
+          if (e.remove !== undefined) f.lines = f.lines.filter((l) => l !== e.remove)
+          if (e.add !== undefined) f.lines = [...f.lines, e.add]
+          f.fresh = true
+          files.set(e.path, f)
+          break
+        }
+        case 'inject':
+          injected = [...e.paths]
+          break
+        case 'hop':
+          stations[e.station] = { state: e.state, note: e.note ?? '' }
+          if (e.state !== 'off') at = e.station
+          break
+        case 'clear':
+          for (const k of Object.keys(stations)) delete stations[k]
+          at = null
+          break
+        case 'meter':
+          meters.set(e.label, e.value)
+          break
+        case 'device':
+          devices[e.id] = { status: e.status, text: e.text ?? '' }
+          break
+        case 'term':
+          term.push(e.text)
+          break
       }
     })
     offset += stepDuration(s)
@@ -215,6 +313,13 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
     runningWho,
     focus: current?.focus ?? null,
     tag: current?.tag ?? '',
+    files: [...files.values()].sort((a, b) => a.path.localeCompare(b.path)),
+    injected,
+    stations,
+    at,
+    meters: [...meters].map(([label, value]) => ({ label, value })),
+    devices,
+    term,
   }
 }
 
@@ -232,6 +337,11 @@ export function checkScene(scene: Scene): string[] {
       if (e.do === 'turn') open.add(e.turn)
       if ((e.do === 'act' || e.do === 'note') && !open.has(e.turn))
         problems.push(`${where}: «${e.turn}» is not running`)
+      if (e.do === 'hop' && !(scene.stations ?? []).some((st) => st.id === e.station)) {
+        problems.push(`${where}: no station «${e.station}»`)
+      }
+      if (e.do === 'device' && !(scene.devices ?? []).some((d) => d.id === e.id))
+        problems.push(`${where}: no device «${e.id}»`)
       if (e.do === 'end') {
         if (!open.has(e.turn)) problems.push(`${where}: ends «${e.turn}», which is not running`)
         open.delete(e.turn)
