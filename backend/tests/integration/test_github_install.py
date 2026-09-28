@@ -189,10 +189,44 @@ def test_callback_reconnect_same_project_updates_in_place(client, monkeypatch):
     assert conn["repo"] == "acme/other"
 
 
-def test_callback_installation_conflict_with_another_project(client, monkeypatch):
-    """The same GitHub-side installation_id can't end up bound to two
-    different platform projects — whichever token got minted for it would be
-    ambiguous about whose git operations it's for."""
+def test_one_installation_serves_two_projects_on_different_repos(client, monkeypatch):
+    """An org installs the App once and that installation covers all its
+    repos, so two projects connecting two repos of the org share it."""
+    pid_a = _project(client, "A")
+    pid_b = _project(client, "B")
+
+    for pid, name in ((pid_a, "widgets"), (pid_b, "gadgets")):
+        _stub_repos(
+            monkeypatch,
+            [
+                {
+                    "full_name": f"acme/{name}",
+                    "owner": {"login": "acme"},
+                    "permissions": {"push": True},
+                }
+            ],
+        )
+        r = client.get(
+            "/github/app/callback",
+            params={
+                "installation_id": 555,
+                "setup_action": "install",
+                "state": _state(client, pid),
+            },
+            follow_redirects=False,
+        )
+        assert "github_install=success" in r.headers["location"]
+
+    for pid, name in ((pid_a, "widgets"), (pid_b, "gadgets")):
+        conn = client.get(
+            f"/projects/{pid}/github/connection", headers=session_auth_headers("alice")
+        ).json()["data"]
+        assert conn == {"connected": True, "repo": f"acme/{name}", "account": "acme"}
+
+
+def test_callback_repo_already_connected_to_another_project(client, monkeypatch):
+    """A repo belongs to one project. The second project is told which project
+    holds it when the person connecting may see that project."""
     _stub_repos(monkeypatch, _ONE_REPO)
     pid_a = _project(client, "A")
     pid_b = _project(client, "B")
@@ -217,8 +251,12 @@ def test_callback_installation_conflict_with_another_project(client, monkeypatch
         },
         follow_redirects=False,
     )
-    assert f"/projects/{pid_b}/settings" in r_b.headers["location"]
-    assert "reason=installation_conflict" in r_b.headers["location"]
+    location = urlparse(r_b.headers["location"])
+    assert f"/projects/{pid_b}/settings" in location.path
+    query = parse_qs(location.query)
+    assert query["reason"] == ["repository_taken"]
+    assert query["repo"] == ["acme/widgets"]
+    assert query["holder"] == ["A"]
 
     # Project A's connection is untouched by B's rejected attempt.
     conn_a = client.get(

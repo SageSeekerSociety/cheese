@@ -1,0 +1,312 @@
+{
+  "title": "一轮里记忆怎么流转",
+  "project": "知是",
+  "topic": "周报整理",
+  "machine": "本话题运行在：云机器 cm-7f3a",
+  "people": {
+    "wang": {
+      "name": "王长鑫"
+    },
+    "li": {
+      "name": "李甘"
+    },
+    "cheese": {
+      "name": "芝士",
+      "agent": true
+    }
+  },
+  "backstage": "memory",
+  "files": [
+    {
+      "path": "team/MEMORY.md",
+      "lines": [
+        "- 集成测试连真库，不 mock",
+        "- 周报按项目分节，结尾列待办"
+      ]
+    },
+    {
+      "path": "team/integration-tests-real-db.md",
+      "lines": [
+        "type: feedback"
+      ]
+    },
+    {
+      "path": "team/weekly-report-shape.md",
+      "lines": [
+        "type: project"
+      ]
+    },
+    {
+      "path": "private/wang/MEMORY.md",
+      "lines": [
+        "- 讲前端时拿后端的东西打比方"
+      ]
+    },
+    {
+      "path": "private/wang/frontend-by-backend-analogy.md",
+      "lines": [
+        "type: user"
+      ]
+    },
+    {
+      "path": "private/li/MEMORY.md",
+      "lines": [
+        "- 李甘要中英双语的摘要"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "label": "输入之前：铺好、注入索引",
+      "focus": "backstage",
+      "tag": "只注入 team 和说话那个人的索引，正文不注入",
+      "events": [
+        {
+          "at": 300,
+          "do": "say",
+          "who": "wang",
+          "text": "<@cheese> 把这周三个会的纪要整理成周报"
+        },
+        {
+          "at": 1000,
+          "do": "inject",
+          "paths": [
+            "team/MEMORY.md",
+            "private/wang/MEMORY.md"
+          ]
+        },
+        {
+          "at": 1100,
+          "do": "turn",
+          "who": "cheese",
+          "turn": "t1"
+        },
+        {
+          "at": 1600,
+          "do": "note",
+          "who": "cheese",
+          "turn": "t1",
+          "text": "索引里有「周报按项目分节」，照这个写。"
+        },
+        {
+          "at": 2400,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Read",
+          "arg": "~/.cheese/memory/team/weekly-report-shape.md"
+        }
+      ]
+    },
+    {
+      "label": "被纠正",
+      "focus": "chat",
+      "tag": "纠正的是做法，不是这一次的结果",
+      "events": [
+        {
+          "at": 200,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Write",
+          "arg": "周报.docx"
+        },
+        {
+          "at": 700,
+          "do": "say",
+          "who": "cheese",
+          "text": "周报写好了，4 个项目、9 条待办。总结一下：我读了三份纪要……"
+        },
+        {
+          "at": 1600,
+          "do": "say",
+          "who": "wang",
+          "text": "<@cheese> 以后回答末尾别再总结你做了什么，文件我自己会看"
+        }
+      ]
+    },
+    {
+      "label": "写之前先查重",
+      "focus": "site",
+      "tag": "同一件事改原文件，不新建副本",
+      "events": [
+        {
+          "at": 200,
+          "do": "note",
+          "who": "cheese",
+          "turn": "t1",
+          "text": "这是王长鑫个人的表达习惯，写进他的 private。"
+        },
+        {
+          "at": 800,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Read",
+          "arg": "~/.cheese/memory/private/wang/MEMORY.md"
+        },
+        {
+          "at": 1400,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Grep",
+          "arg": "总结 ~/.cheese/memory"
+        }
+      ]
+    },
+    {
+      "label": "写一条：一个文件加索引一行",
+      "focus": "backstage",
+      "tag": "索引一行 ≤150 字符，正文 ≤1000 字",
+      "events": [
+        {
+          "at": 200,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Write",
+          "arg": "~/.cheese/memory/private/wang/no-trailing-summary.md"
+        },
+        {
+          "at": 300,
+          "do": "file",
+          "path": "private/wang/no-trailing-summary.md",
+          "lines": [
+            "type: feedback",
+            "回答末尾不总结做了什么",
+            "Why: 他自己会看文件"
+          ]
+        },
+        {
+          "at": 1000,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Edit",
+          "arg": "~/.cheese/memory/private/wang/MEMORY.md"
+        },
+        {
+          "at": 1100,
+          "do": "file",
+          "path": "private/wang/MEMORY.md",
+          "add": "- 回答末尾别总结，他自己看文件"
+        },
+        {
+          "at": 1500,
+          "do": "act",
+          "who": "cheese",
+          "turn": "t1",
+          "tool": "Edit",
+          "arg": "~/.cheese/memory/team/weekly-report-shape.md"
+        },
+        {
+          "at": 1800,
+          "do": "say",
+          "who": "cheese",
+          "text": "记下了，以后回答不带末尾总结。"
+        }
+      ]
+    },
+    {
+      "label": "这一轮结束：收回会话、写回库",
+      "focus": "backstage",
+      "tag": "两边都改了同一条时平台赢，会话那版存成 .conflict.md",
+      "events": [
+        {
+          "at": 200,
+          "do": "end",
+          "turn": "t1"
+        },
+        {
+          "at": 300,
+          "do": "inject",
+          "paths": []
+        },
+        {
+          "at": 900,
+          "do": "file",
+          "path": "team/MEMORY.md",
+          "remove": "- 周报按项目分节，结尾列待办"
+        },
+        {
+          "at": 950,
+          "do": "file",
+          "path": "team/MEMORY.md",
+          "add": "- 周报按项目分节，每条待办写负责人"
+        },
+        {
+          "at": 1600,
+          "do": "file",
+          "path": "team/weekly-report-shape.conflict.md",
+          "lines": [
+            "会话这一版没收：李甘刚改过这一条",
+            "重读平台那一版再写"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "房间里的那条事件",
+      "focus": "chat",
+      "tag": "private 的改动只说进本人的私聊",
+      "events": [
+        {
+          "at": 300,
+          "do": "mark",
+          "text": "记忆有变化 · private/wang 新增 1 条（在王长鑫与芝士的私聊里）"
+        },
+        {
+          "at": 1300,
+          "do": "mark",
+          "text": "总览房间：team 有 1 条被盖回，芝士那一版在 .conflict.md"
+        }
+      ]
+    },
+    {
+      "label": "下一次开场",
+      "focus": "backstage",
+      "tag": "换人说话，注入的 private 跟着换",
+      "events": [
+        {
+          "at": 300,
+          "do": "file",
+          "path": "team/weekly-report-shape.conflict.md",
+          "gone": true
+        },
+        {
+          "at": 600,
+          "do": "say",
+          "who": "li",
+          "text": "<@cheese> 下周周报也按这个来，再加一段英文摘要"
+        },
+        {
+          "at": 1300,
+          "do": "inject",
+          "paths": [
+            "team/MEMORY.md",
+            "private/li/MEMORY.md"
+          ]
+        },
+        {
+          "at": 1400,
+          "do": "turn",
+          "who": "cheese",
+          "turn": "t2"
+        },
+        {
+          "at": 2000,
+          "do": "note",
+          "who": "cheese",
+          "turn": "t2",
+          "text": "这轮是李甘在说话：读到的是 team 和李甘的索引，王长鑫的偏好不在里面。"
+        },
+        {
+          "at": 2900,
+          "do": "end",
+          "turn": "t2"
+        }
+      ]
+    }
+  ]
+}

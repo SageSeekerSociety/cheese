@@ -261,6 +261,10 @@ async def list_accept_cards(
         await _task_actor(topic_id, task, db, resolver)
         cards = [card for card in cards if card.task_id == task]
         total = len(cards)
+    # 卡面上的合并态是一份快照，而采纳按钮按它亮不亮：界面每 15s 来读这条路，
+    # 读到的却可能是轮询器几分钟前写下的旧状态，于是「检查全绿、按钮点不动」。
+    # 这里把过期的那份补上（有地板，见 settings），而不是让读者自己去猜。
+    await svc.refresh_stale_pr_snapshots(cards)
     return ok(page([await svc.describe(c) for c in cards], total))
 
 

@@ -1025,6 +1025,10 @@ class AgentWorkRunner:
             # a moment without it is a row a Stop landing in that moment cannot
             # close, and nothing would ever come back to close it.
             delivered_at=now,
+            # The session goes on with its work while backends are replaced, so
+            # its output can reach a process that never opened this turn after
+            # one that did. That turn has its row already.
+            exists_ok=True,
         )
 
     def close_turn_the_session_started(self, turn_id: uuid.UUID) -> None:

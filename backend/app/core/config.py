@@ -818,6 +818,11 @@ class Settings(BaseSettings):
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
     accept_pr_poll_interval_s: int = 300
+    # 卡面上的合并态是快照，而采纳按钮按它亮不亮。读卡这条路也会重算一次陈旧的
+    # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 来读一
+    # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是
+    # 必须的：读卡是热点，不能每个读者都替全平台去问一次 GitHub。
+    accept_pr_snapshot_floor_s: int = 60
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.

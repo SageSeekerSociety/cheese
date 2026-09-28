@@ -5,7 +5,7 @@ successor; the undelivered one is kept so that a later use of it still shows
 two holders.
 
 Revision ID: 3e8b1c7d9a52
-Revises: 6b979dd23cd9
+Revises: c5e8a1f47b20
 """
 
 from collections.abc import Sequence
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "3e8b1c7d9a52"
-down_revision: str | Sequence[str] | None = "6b979dd23cd9"
+down_revision: str | Sequence[str] | None = "c5e8a1f47b20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
