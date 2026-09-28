@@ -97,6 +97,20 @@ def _members(api_client: TestClient, token: str, space_id: int) -> list[dict]:
     return resp.json()["data"]["members"]
 
 
+def _member_row(
+    api_client: TestClient, token: str, space_id: int, user_id: int
+) -> dict:
+    """One roster row, by the person it is about — never by index.
+
+    A board's creator is a member of the board they made, so the roster is
+    never just the people a test put in it.
+    """
+    for row in _members(api_client, token, space_id):
+        if row["userId"] == user_id:
+            return row
+    raise AssertionError(f"user {user_id} is not on space {space_id}'s roster")
+
+
 def _mint_code(
     api_client: TestClient,
     token: str,
@@ -104,9 +118,15 @@ def _mint_code(
     *,
     max_uses: int | None = 10,
     expires_at: int | None = None,
+    note: str | None = None,
 ) -> str:
     return _mint_code_row(
-        api_client, token, space_id, max_uses=max_uses, expires_at=expires_at
+        api_client,
+        token,
+        space_id,
+        max_uses=max_uses,
+        expires_at=expires_at,
+        note=note,
     )["code"]
 
 
@@ -117,6 +137,7 @@ def _mint_code_row(
     *,
     max_uses: int | None = 10,
     expires_at: int | None = None,
+    note: str | None = None,
 ) -> dict:
     """Mint a code and hand back the whole row — editing needs its id."""
     body: dict = {}
@@ -124,6 +145,8 @@ def _mint_code_row(
         body["maxUses"] = max_uses
     if expires_at is not None:
         body["expiresAt"] = expires_at
+    if note is not None:
+        body["note"] = note
     resp = api_client.post(
         f"/spaces/{space_id}/invite-codes", json=body, headers=_auth(token)
     )
@@ -884,6 +907,31 @@ async def _insert_live_row(db: AsyncSession, space_id: int, user_id: int) -> Non
         await db.flush()
 
 
+async def _insert_row_without_a_code(
+    db: AsyncSession, space_id: int, user_id: int
+) -> None:
+    """A membership row holding no code id — what every pre-migration row is.
+
+    Nothing is contrived here: the column is nullable, no backfill ran, and
+    this is the shape the table holds for anyone who joined before the fact
+    was recorded. Reaching the endpoint through the API cannot produce it,
+    which is why it is written directly.
+    """
+    now = datetime.now(UTC)
+    async with db.begin_nested():
+        db.add(
+            SpaceMember(
+                space_id=space_id,
+                user_id=user_id,
+                invite_code_id=None,
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            )
+        )
+        await db.flush()
+
+
 async def _spend(db: AsyncSession, code: str) -> bool:
     repo = SpaceInviteCodeRepository(session=db)
     row = await repo.get_by_code(code)
@@ -1118,4 +1166,302 @@ class TestMembershipIsOneRow:
         assert five_members == one_member, (
             f"{one_member} selects for 1 member but {five_members} for 5 — the "
             "hydration is per row again"
+        )
+
+
+class TestHowAMemberGotIn:
+    """「加入方式」 on the 成员 page: which code a member came in on.
+
+    Nothing recorded this before, so the fact starts out absent for everyone
+    already in a board. The column is nullable and the read side answers null
+    for two different situations — "nobody recorded it" and "the owner added
+    him directly" — because the row cannot tell those two apart (see
+    ``SpaceMember.invite_code_id``). Both are pinned below, along with the one
+    thing that must not happen to either: a name invented for it.
+    """
+
+    def test_a_member_row_names_the_code_that_let_him_in(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
+
+        joiner = user_client.create_user()
+        _join(api_client, _login(user_client, api_client, joiner), row["code"])
+
+        member = _member_row(api_client, owner_token, space_id, joiner.user_id)
+        assert member["inviteCode"] == {"id": row["id"], "code": row["code"]}
+
+    def test_a_member_the_owner_added_directly_has_no_code_on_record(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """The other way in is not through a code, and the row says so by
+        naming none — not by naming the board's code, which he never used."""
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+
+        added_user = user_client.create_user()
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": added_user.user_id},
+            headers=_auth(owner_token),
+        )
+        assert added.status_code == 201, added.text
+
+        # The response to the add says it, and so does the roster afterwards.
+        assert added.json()["data"]["member"]["inviteCode"] is None
+        assert (
+            _member_row(api_client, owner_token, space_id, added_user.user_id)[
+                "inviteCode"
+            ]
+            is None
+        )
+
+    def test_a_row_written_before_the_column_reads_as_unknown(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal,
+    ):
+        """The historical shape, written the way the table held it.
+
+        Every member who joined before this column existed has no code id, and
+        the migration backfills nothing — so this row is not a simulation of
+        that state, it *is* that state. What the read side must not do is fill
+        the gap in: the board has a code, this member is in the board, and
+        putting those two together would be inventing 「他怎么进来的」.
+        """
+        owner_token = _newcomer(user_client, api_client)
+        created = _create_space(api_client, owner_token)
+        space_id = created["space"]["id"]
+        assert created["inviteCode"]["code"]  # the tempting answer
+
+        old_member = user_client.create_user()
+        _portal.call(
+            _insert_row_without_a_code, db_session, space_id, old_member.user_id
+        )
+
+        member = _member_row(api_client, owner_token, space_id, old_member.user_id)
+        assert member["inviteCode"] is None
+
+    def test_the_code_still_names_the_member_after_it_is_revoked(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """Revoking stops the code working; it does not rewrite how the people
+        who already used it got in. That question is exactly when the column
+        gets read, so the row has to survive the soft delete."""
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
+
+        joiner = user_client.create_user()
+        _join(api_client, _login(user_client, api_client, joiner), row["code"])
+
+        revoked = _revoke_code(api_client, owner_token, space_id, row["id"])
+        assert revoked.status_code == 204, revoked.text
+
+        member = _member_row(api_client, owner_token, space_id, joiner.user_id)
+        assert member["inviteCode"] == {"id": row["id"], "code": row["code"]}
+
+    def test_a_rejoin_reports_the_code_of_the_membership_that_is_live(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """The column describes the membership now, not the first one ever.
+
+        He left, and the owner added him back without a code: the revival
+        writes over the code he originally redeemed, because leaving the old
+        code's name on the row would report the wrong thing from then on.
+        """
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
+
+        joiner = user_client.create_user()
+        joiner_token = _login(user_client, api_client, joiner)
+        _join(api_client, joiner_token, row["code"])
+        assert _member_row(api_client, owner_token, space_id, joiner.user_id)[
+            "inviteCode"
+        ] == {"id": row["id"], "code": row["code"]}
+
+        assert (
+            api_client.post(
+                f"/spaces/{space_id}/leave", headers=_auth(joiner_token)
+            ).status_code
+            == 204
+        )
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": joiner.user_id},
+            headers=_auth(owner_token),
+        )
+        assert added.status_code == 201, added.text
+
+        assert (
+            _member_row(api_client, owner_token, space_id, joiner.user_id)["inviteCode"]
+            is None
+        )
+
+    def test_a_member_of_the_board_still_reads_the_roster(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """The column rides on a route members already had. Adding a field is
+        not licence to add a gate: everyone in the board reads the roster, and
+        they read it exactly as before."""
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        member = user_client.create_user()
+        member_token = _login(user_client, api_client, member)
+        board_code = _listed_codes(api_client, owner_token, space_id)[0]["code"]
+        _join(api_client, member_token, board_code)
+
+        resp = api_client.get(
+            f"/spaces/{space_id}/members", headers=_auth(member_token)
+        )
+        assert resp.status_code == 200, resp.text
+        assert (
+            _member_row(api_client, member_token, space_id, member.user_id)[
+                "inviteCode"
+            ]
+            is not None
+        )
+
+
+class TestWhatACodeSaysAboutItself:
+    """A code's 说明 and its maker.
+
+    Both are read off the 邀请码 screen, which is only ever opened by the
+    board's owner and admins — so the two new fields inherit that door rather
+    than opening one of their own. The last case here is that door.
+    """
+
+    def test_a_code_keeps_the_note_it_was_minted_with(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+
+        made = api_client.post(
+            f"/spaces/{space_id}/invite-codes",
+            json={"maxUses": 20, "note": "十月这批同学"},
+            headers=_auth(owner_token),
+        )
+        assert made.status_code == 201, made.text
+        created = made.json()["data"]["inviteCode"]
+        assert created["note"] == "十月这批同学"
+
+        # And the list agrees with the write — the screen reads that one.
+        assert (
+            _code_row(api_client, owner_token, space_id, created["id"])["note"]
+            == "十月这批同学"
+        )
+
+    def test_a_code_without_a_note_says_nothing_rather_than_an_empty_string(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+
+        blank = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
+        assert blank["note"] is None
+
+        # A note that is only whitespace is the same as no note: storing it
+        # would put a row on the screen that looks like it says something.
+        spaced = api_client.post(
+            f"/spaces/{space_id}/invite-codes",
+            json={"maxUses": 5, "note": "   "},
+            headers=_auth(owner_token),
+        )
+        assert spaced.status_code == 201, spaced.text
+        assert spaced.json()["data"]["inviteCode"]["note"] is None
+
+    def test_a_code_names_the_admin_who_minted_it(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        owner = user_client.create_user()
+        owner_token = _login(user_client, api_client, owner)
+        created = _create_space(api_client, owner_token)
+        space_id = created["space"]["id"]
+
+        # The board's own first code was minted by whoever created the board.
+        first = _code_row(
+            api_client, owner_token, space_id, created["inviteCode"]["id"]
+        )
+        assert first["createdBy"]["id"] == owner.user_id
+        assert first["createdBy"]["username"] == owner.username
+
+        # A code minted later names the same person until somebody else mints.
+        later = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
+        assert (
+            _code_row(api_client, owner_token, space_id, later["id"])["createdBy"]["id"]
+            == owner.user_id
+        )
+
+    def test_a_note_can_be_corrected_and_cleared_but_survives_being_ignored(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """Same absent-vs-null rule the 有效期 already follows.
+
+        Correcting a 说明 must not be the same request as deleting it, or the
+        调整 form can only ever lose it.
+        """
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+        row = _mint_code_row(
+            api_client, owner_token, space_id, max_uses=10, note="十月这批同学"
+        )
+        assert row["note"] == "十月这批同学"
+
+        # Absent: the note is left alone even though maxUses moved.
+        ignored = _patch_code(
+            api_client, owner_token, space_id, row["id"], {"maxUses": 11}
+        )
+        assert ignored.status_code == 200, ignored.text
+        assert ignored.json()["data"]["inviteCode"]["note"] == "十月这批同学"
+
+        # Present: it is replaced.
+        corrected = _patch_code(
+            api_client, owner_token, space_id, row["id"], {"note": "十一月这批"}
+        )
+        assert corrected.status_code == 200, corrected.text
+        assert corrected.json()["data"]["inviteCode"]["note"] == "十一月这批"
+
+        # Explicit null: cleared, and the code itself is untouched.
+        cleared = _patch_code(
+            api_client, owner_token, space_id, row["id"], {"note": None}
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["data"]["inviteCode"]["note"] is None
+        assert _code_row(api_client, owner_token, space_id, row["id"])["maxUses"] == 11
+
+    def test_a_plain_member_reads_neither_the_note_nor_who_minted_it(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """The door on the 邀请码 screen stays where it was.
+
+        Both new fields arrive on routes that already refused members, so this
+        pins that they still do — a field an admin-only screen shows is not a
+        reason for the route under it to open up.
+        """
+        owner_token = _newcomer(user_client, api_client)
+        space_id = _create_space(api_client, owner_token)["space"]["id"]
+
+        member_token = _newcomer(user_client, api_client)
+        _join(api_client, member_token, _mint_code(api_client, owner_token, space_id))
+
+        listed = api_client.get(
+            f"/spaces/{space_id}/invite-codes", headers=_auth(member_token)
+        )
+        assert listed.status_code == 403, listed.text
+
+        minted = api_client.post(
+            f"/spaces/{space_id}/invite-codes",
+            json={"maxUses": 5, "note": "偷偷建的"},
+            headers=_auth(member_token),
+        )
+        assert minted.status_code == 403, minted.text
+        assert all(
+            row["note"] != "偷偷建的"
+            for row in _listed_codes(api_client, owner_token, space_id)
         )

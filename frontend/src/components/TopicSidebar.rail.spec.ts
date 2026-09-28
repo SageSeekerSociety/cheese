@@ -293,6 +293,33 @@ describe('行左边那一个槽', () => {
     expect(parent.querySelector('.await-dot')).toBeNull()
   })
 
+  it('有人等 AI 回话超过五分钟亮红灯，压过等你处理和在跑；还没满五分钟不亮', () => {
+    const longAgo = new Date(Date.now() - 6 * 60_000).toISOString()
+    const justNow = new Date(Date.now() - 60_000).toISOString()
+    const rows = topics.map((t) =>
+      t.id === 'a'
+        ? ({ ...t, awaits_me: true, running: true, awaiting_reply_since: longAgo } as Topic)
+        : t.id === 'b'
+          ? ({ ...t, running: true, awaiting_reply_since: justNow } as Topic)
+          : t
+    )
+    const { container } = mount({ topics: rows })
+    const stalled = slotsOf(topicRowFor(container, 'a'))[0]
+    expect(stalled.querySelector('.stalled-dot')).not.toBeNull()
+    expect(stalled.querySelector('.await-dot')).toBeNull()
+    expect(stalled.querySelector('.running-dot')).toBeNull()
+
+    const fresh = slotsOf(topicRowFor(container, 'b'))[0]
+    expect(fresh.querySelector('.stalled-dot')).toBeNull()
+    expect(fresh.querySelector('.running-dot')).not.toBeNull()
+  })
+
+  it('最近一轮报错了，不等五分钟立刻亮红灯', () => {
+    const rows = topics.map((t) => (t.id === 'a' ? ({ ...t, turn_failed_at: new Date().toISOString() } as Topic) : t))
+    const { container } = mount({ topics: rows })
+    expect(slotsOf(topicRowFor(container, 'a'))[0].querySelector('.stalled-dot')).not.toBeNull()
+  })
+
   it('选中的行和有未读的行给的不是同一个标记', () => {
     const { container } = mount({ selectedTopicId: 'a', unreadMap: { b: 3 } })
     const selected = topicRowFor(container, 'a')

@@ -11,13 +11,14 @@ which had already drifted apart once (see below). An answer that lives in three
 places is three answers.
 
 What the answer is: **the owner, the roster, a member of the team the project
-belongs to, the 出题者 of the 赛题 the project was opened for, or a 管理员 (an
-admin/creator) of the 题目板 that 赛题 sits on.** The first three are exactly
-the claims ``ProjectRepository.list_visible_to`` lists a project under, and
-that is not a coincidence kept for its own sake - a listing and a door have to
-agree. The fourth and fifth are not in that listing (a teacher's sidebar does
-not want forty projects they do not work in); they are here because the
-student dashboard needs to open one that a class produced.
+belongs to (minus anyone who has left THIS project - see
+``ProjectMemberExclusion``), the 出题者 of the 赛题 the project was opened for,
+or a 管理员 (an admin/creator) of the 题目板 that 赛题 sits on.** The first three
+are exactly the claims ``ProjectRepository.list_visible_to`` lists a project
+under, and that is not a coincidence kept for its own sake - a listing and a
+door have to agree. The fourth and fifth are not in that listing (a teacher's
+sidebar does not want forty projects they do not work in); they are here
+because the student dashboard needs to open one that a class produced.
 ``_is_asker_of_the_task`` explains why the fourth stops at the task's creator;
 the fifth is the board's teacher, in ``app.auth.space_access``. Until
 2026-09-04 two of the three copies accepted only the first two, so a teammate
@@ -88,6 +89,20 @@ async def may_read_project(
         session, external_task_id=project.external_task_id, user_id=user.id
     ):
         return True
+    # 小队那条主张要减去「他不在这个项目里」：退出项目记下的那一条事实
+    # （``ProjectMemberExclusion``）。它只减这一条 —— 「在小队里」和「在这个项目里」
+    # 是两件事，而按下的那颗按钮说的是后者。
+    #
+    # 位置是这份名单读出来的顺序：所有者、出题者、题目板管理员三条主张都在它前面，
+    # 因为它们说的本来就不是「他在这个项目里」。一个退出过项目的人后来接手了它（转让）
+    # 照样是所有者；而所有者退不掉，``MemberService.leave`` 先拒他。
+    #
+    # 名册行那一条（函数最上面那个 return）也在它前面，因为两者不可能同时成立：名册行
+    # 是显式加进去的，而加人就清掉这条事实（``MemberRepository.add``）。
+    if await MemberRepository(session).is_excluded(
+        project_id=project_id, user_handle=handle
+    ):
+        return False
     return await TeamRepository(session).is_team_member(project.team_id, user.id)
 
 

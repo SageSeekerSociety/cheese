@@ -92,6 +92,15 @@ class Task(Base):
     ended_at: Mapped[datetime | None] = mapped_column(
         "ended_at", DateTime(timezone=True), nullable=True
     )
+    # 谁在什么时候审的这道题（审核走 PATCH /tasks/{id}，approve 与 reject 都写这里）。
+    # 不能拿 updated_at 顶：改标题、改截止也刷它。可空 —— 这两列是后加的，已经审过
+    # 的老题没有，那时 reviewed_at 是 NULL，不代表没审过（审没审过看 approved）。
+    reviewed_by: Mapped[int | None] = mapped_column(
+        "reviewed_by", Integer, nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        "reviewed_at", DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

@@ -75,6 +75,10 @@ export interface Task {
   updatedAt: number
   publishedAt?: number | null
   endedAt?: number | null
+  /** 审核人（`user.id`）。这一列是后加的，老题与还没审过的题都是 null。 */
+  reviewedBy?: number | null
+  /** 审核那一刻的毫秒时间戳。**不是 `updatedAt`** —— 改标题这类编辑不写它。 */
+  reviewedAt?: number | null
   rank: number
   approved: 'APPROVED' | 'DISAPPROVED' | 'NONE'
   rejectReason?: string

@@ -286,7 +286,9 @@ class _Screen:
     def __init__(self) -> None:
         self.pushed: list[str] = []
 
-    async def deliver(self, topic_id, text, images=None, *, expected_work_id=None):
+    async def deliver(
+        self, topic_id, text, images=None, *, expected_work_id=None, agent_handle=None
+    ):
         self.pushed.append(text)
         return True
 

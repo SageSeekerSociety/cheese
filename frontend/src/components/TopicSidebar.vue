@@ -2,9 +2,10 @@
 import type { Project, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { replyStalled } from '../lib/replyWait'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
 import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
@@ -64,11 +65,9 @@ const emit = defineEmits<{
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
-  // Rename a topic's title from the row's ⋯ actions. `suggested` = the person
-  // kept a 智能重命名 suggestion as it was.
-  (e: 'rename-topic', payload: { id: string; title: string; suggested?: boolean }): void
-  // 恢复自动命名: hand a title a person chose back to the platform.
-  (e: 'restore-auto-title', id: string): void
+  // Rename a topic's title from the row's ⋯ actions. A name a person chose is
+  // final: the platform stops renaming that room from then on.
+  (e: 'rename-topic', payload: { id: string; title: string }): void
   // Open 项目文档 in the main area. The rail always asks for 章程 — the page
   // itself carries the tabs that reach the other three.
   (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
@@ -390,6 +389,28 @@ function runningOf(id: string): boolean {
 function awaitsOf(id: string): boolean {
   return topicById.value.get(id)?.awaits_me === true
 }
+// 红灯要跟着钟亮：列表 30 秒才刷一次，而「等满五分钟」是时间自己走到的，不是
+// 数据变出来的。所以这里自己有一只慢钟，每 10 秒拨一下让判断重算。
+const clock = ref(Date.now())
+let clockTimer: number | undefined
+onMounted(() => {
+  clockTimer = window.setInterval(() => (clock.value = Date.now()), 10_000)
+})
+onUnmounted(() => {
+  if (clockTimer !== undefined) window.clearInterval(clockTimer)
+})
+// 红灯两个来源：最近一轮报错了（立刻亮），或有人 @ 了 AI 等满五分钟没回话。
+function failedOf(id: string): boolean {
+  return Boolean(topicById.value.get(id)?.turn_failed_at)
+}
+function stalledOf(id: string): boolean {
+  return failedOf(id) || replyStalled(topicById.value.get(id)?.awaiting_reply_since, clock.value)
+}
+function stalledTitle(id: string): string {
+  return failedOf(id)
+    ? `${store.agentName}最近一轮报错了`
+    : `有事等${store.agentName}处理超过 5 分钟（@了它没回，或 PR 反馈、检查报错没人接）`
+}
 
 // ---- 分组 (C2): 我参与的平铺，其他话题收进一个默认折叠的组 ----
 // 判定住在 lib/topicTree.ts 里（纯函数 + 单测），这里只管接线、组的开关和落盘。
@@ -406,6 +427,7 @@ function rowsOf(rows: readonly FlatRow<Topic>[]) {
     unreadOf,
     runningOf,
     awaitsOf,
+    stalledOf,
   })
 }
 
@@ -460,6 +482,9 @@ const railSections = computed(() => [
 // 收起来的后代的」并成一个信号。收起来的父话题会把子话题的呼吸点整个藏掉是原
 // 先的一个 bug（只有未读会聚合，"在跑" 不聚合），合槽顺手修掉它。展开一层就能
 // 分清动静是本行的还是子话题的，扫侧栏时要的本来就是"这里面有动静"。
+function rowStalled(row: VisibleRow<Topic>): boolean {
+  return stalledOf(row.topic.id) || row.hiddenStalled
+}
 function rowAwaits(row: VisibleRow<Topic>): boolean {
   return row.topic.awaits_me === true || row.hiddenAwaits
 }
@@ -468,6 +493,7 @@ function rowRunning(row: VisibleRow<Topic>): boolean {
 }
 function toggleTitle(row: VisibleRow<Topic>): string {
   if (!row.collapsed) return '收起'
+  if (row.hiddenStalled) return '展开：里面有话题出了故障'
   if (row.hiddenAwaits) return '展开：里面有待处理的事项'
   if (row.hiddenRunning) return `展开：${store.agentName}正在里面工作`
   return '展开'
@@ -502,42 +528,12 @@ function startRename(t: Topic) {
 
 function cancelRename() {
   renamingTopicId.value = null
-  suggestingTopicId.value = null
-  suggestion.value = null
 }
 
 function saveRename(t: Topic) {
-  // Nothing typed while the suggestion is still coming: wait for it. A name the
-  // person typed meanwhile is theirs, and the suggestion is dropped for it.
-  if (suggestingTopicId.value === t.id && !draftTitle.value.trim()) return
-  suggestingTopicId.value = null
   const title = normalizeTopicTitle(draftTitle.value, t.title)
-  const suggested = suggestion.value !== null && title === suggestion.value
   renamingTopicId.value = null
-  suggestion.value = null
-  if (title) emit('rename-topic', { id: t.id, title, suggested })
-}
-
-// 智能重命名: the same inline field, prefilled with a name generated from what
-// the room is about now. Nothing changes until the person presses enter — the
-// suggestion is theirs to keep, edit or throw away (esc).
-const suggestingTopicId = ref<string | null>(null)
-const suggestion = ref<string | null>(null)
-
-async function startSuggest(t: Topic) {
-  startRename(t)
-  // Empty until the suggestion lands, so the field says 正在生成标题… instead of
-  // showing the current title as if it were the suggestion.
-  draftTitle.value = ''
-  suggestingTopicId.value = t.id
-  suggestion.value = null
-  const title = await store.suggestTitle(t.id)
-  if (suggestingTopicId.value !== t.id) return
-  suggestingTopicId.value = null
-  if (title && renamingTopicId.value === t.id && !draftTitle.value.trim()) {
-    suggestion.value = title
-    draftTitle.value = title
-  }
+  if (title) emit('rename-topic', { id: t.id, title })
 }
 
 // 行操作收进一颗 ⋯ (C5): hover 只浮出一个入口，不再是三颗并排的按钮盖住标题
@@ -855,8 +851,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         type="button"
                         class="row-slot subtree-toggle"
                         :class="{
-                          'subtree-toggle--awaits': rowAwaits(row),
-                          'subtree-toggle--running': !rowAwaits(row) && rowRunning(row),
+                          'subtree-toggle--stalled': rowStalled(row),
+                          'subtree-toggle--awaits': !rowStalled(row) && rowAwaits(row),
+                          'subtree-toggle--running': !rowStalled(row) && !rowAwaits(row) && rowRunning(row),
                         }"
                         :title="toggleTitle(row)"
                         :aria-expanded="!row.collapsed"
@@ -866,6 +863,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                           {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
                         </v-icon>
                       </button>
+                      <!-- 红灯：最近一轮报错了，或有人 @ 了芝士等了 5 分钟还没有一句
+                         回话——多半是卡住、排队太久或掉线了。排在最前面：它说的是
+                         「出故障了」，比等你拍板更该先看见。 -->
+                      <span v-else-if="stalledOf(row.topic.id)" class="row-slot">
+                        <span class="stalled-dot" :title="stalledTitle(row.topic.id)" />
+                      </span>
                       <!-- 等你处理：有点名给你的验收卡、没答的决策请求，或芝士停在一道只有
                          你能回答的问题上。未读的 @ 不点这颗灯——芝士汇报、递卡都 @人，
                          算进来几乎每行都亮，灯就没意义了；未读有右边的数字。排在"在跑"前面——芝士在忙是它的事，等你做
@@ -891,8 +894,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         hide-details
                         autofocus
                         :maxlength="TOPIC_TITLE_MAX_LENGTH"
-                        :loading="suggestingTopicId === row.topic.id"
-                        :placeholder="suggestingTopicId === row.topic.id ? '正在生成标题…' : undefined"
                         class="rename-field"
                         @click.stop
                         @keyup.enter="saveRename(row.topic)"
@@ -956,17 +957,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                               prepend-icon="mdi-pencil-outline"
                               title="重命名"
                               @click="startRename(row.topic)"
-                            />
-                            <v-list-item
-                              prepend-icon="mdi-auto-fix"
-                              title="智能重命名"
-                              @click="startSuggest(row.topic)"
-                            />
-                            <v-list-item
-                              v-if="row.topic.title_source === 'human'"
-                              prepend-icon="mdi-autorenew"
-                              title="恢复自动命名"
-                              @click="emit('restore-auto-title', row.topic.id)"
                             />
                             <v-list-item
                               v-if="row.topic.can_archive"
@@ -1436,24 +1426,36 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 /* !important 是被逼的，不是偷懒：上面 .topic-row.is-active :deep(.v-icon) 为了
    压住 Vuetify 的琥珀 active overlay 用了 !important，选中的那一行会连带把这里
    的状态色刷成 --muted——正好是"这一行收起来了、里面有事等你"最该看见的时候。 */
+.subtree-toggle--stalled :deep(.v-icon),
+.subtree-toggle--stalled:hover :deep(.v-icon) {
+  color: var(--danger) !important;
+}
 .subtree-toggle--awaits :deep(.v-icon),
 .subtree-toggle--awaits:hover :deep(.v-icon) {
-  color: var(--warn) !important;
+  color: var(--signal-yellow) !important;
 }
 .subtree-toggle--running :deep(.v-icon),
 .subtree-toggle--running:hover :deep(.v-icon) {
   color: var(--ok) !important;
 }
 
-/* 等你处理：看板「待处理」那一列的同一颗点（`lib/board.ts` 的 needs_you：--warn
-   实心）——侧栏和看板说的是同一件事，就得是同一个样子。琥珀留给主操作和导航位置。
-   跟绿色呼吸点靠三个通道区分（颜色 / 大小 / 动不动），不是只靠颜色——红绿色觉障碍
-   下也分得开。 */
+/* 侧栏是一组红黄绿灯：红 = 有人等芝士回话太久，黄 = 有事等你拍板，绿呼吸 =
+   芝士在干活。黄不用琥珀/橙：右边的未读数字就是琥珀色，同色会让人把「有新消息」
+   和「等你拍板」读成一回事。红灯 = 最近一轮报错，或有人等芝士回话满五分钟。
+   只靠颜色分不开的，靠形状补：红灯外面多一圈淡红晕，黄灯是实心点，绿灯更小且会
+   呼吸——红绿、红黄色觉障碍下也分得开。 */
+.stalled-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-wash);
+}
 .await-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--warn);
+  background: var(--signal-yellow);
 }
 /* 收起来了收了几个——形态沿用「已归档」那颗计数丸。 */
 .subtree-count {

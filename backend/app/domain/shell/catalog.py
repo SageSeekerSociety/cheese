@@ -44,7 +44,7 @@ class Nav:
     does not show into 「更多」, so 默认收起 stays 收起 and never becomes 禁止.
     """
 
-    #: App rail (desktop): "home" | "projects" | "add".
+    #: App rail (desktop): "home" | "inbox" | "projects" | "add".
     rail: tuple[str, ...]
     #: App bottom bar (mobile): "spaces" | "workspace" | "inbox".
     tabs: tuple[str, ...]
@@ -92,7 +92,7 @@ _DEFAULT = Shell(
     name=DEFAULT_SHELL_NAME,
     home="workspace-running",
     nav=Nav(
-        rail=("home", "projects", "add"),
+        rail=("home", "inbox", "projects", "add"),
         tabs=("spaces", "workspace", "inbox"),
         project=(
             "calendar",
@@ -112,7 +112,7 @@ _WORKBENCH = Shell(
     name="workbench",
     home="workspace-running",
     nav=Nav(
-        rail=("home", "projects", "add"),
+        rail=("home", "inbox", "projects", "add"),
         tabs=("workspace", "spaces", "inbox"),
         project=(
             "calendar",
@@ -136,7 +136,7 @@ _COURSE_STUDENT = Shell(
     name="course-student",
     home="workspace-running",
     nav=Nav(
-        rail=("home", "projects", "add"),
+        rail=("home", "inbox", "projects", "add"),
         tabs=("workspace", "inbox", "spaces"),
         project=(
             "project-library",
@@ -156,7 +156,7 @@ _COURSE_TEACHER = Shell(
     name="course-teacher",
     home="workspace-running",
     nav=Nav(
-        rail=("home", "projects", "add"),
+        rail=("home", "inbox", "projects", "add"),
         tabs=("workspace", "inbox", "spaces"),
         project=(
             "workspace-running",

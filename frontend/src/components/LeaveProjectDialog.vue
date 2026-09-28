@@ -25,9 +25,9 @@ async function confirmLeave() {
   try {
     await leaveProject(props.projectId)
   } catch (e) {
-    // 只有退出本身失败才算是失败。拒绝的理由（需要先转让、访问来自小队、还是某个
-    // 话题唯一的 owner）就是用户要的全部内容，原样留在弹窗里 —— 弹窗不关：人还没
-    // 退成，「取消」仍然有意义，而那句话正是他要的下一步。
+    // 只有退出本身失败才算是失败。拒绝的理由（需要先转让、还是某个话题唯一的 owner）
+    // 就是用户要的全部内容，原样留在弹窗里 —— 弹窗不关：人还没退成，「取消」仍然有
+    // 意义，而那句话正是他要的下一步。
     error.value = e instanceof Error ? e.message : '退出失败'
     leaving.value = false
     return
@@ -50,7 +50,7 @@ async function confirmLeave() {
     <v-card>
       <v-card-title class="t-dialog-title pt-4">退出项目？</v-card-title>
       <v-card-text class="t-body c-muted">
-        你将无法查看这个项目。已有的消息和记录会保留，再次受邀后可以回来
+        你将无法查看这个项目，已有的消息和记录会保留。退出的是这个项目，不是团队——你在团队里的身份不变，团队里别的项目照常。再次受邀后可以回到这个项目。
         <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
           {{ error }}
         </v-alert>

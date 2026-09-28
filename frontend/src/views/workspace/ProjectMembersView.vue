@@ -3,8 +3,9 @@
 //
 // 一个项目的人只有三种来路，这一页就按来路分段：
 //   - 所有者：建这个项目的人；
-//   - 团队成员：项目所属团队里的每一个人，自动就在，去留在团队里定——这一页对他们
-//     不给任何管理动作，只指回团队；
+//   - 团队成员：项目所属团队里的每一个人，自动就在——这一页对他们不给任何**管理**
+//     动作（移出是给不到他们的，后端那边没有一条可删的名册行），但他们自己能退出这
+//     个项目（退的是这个项目，不是小队）；
 //   - 外部成员：团队以外、被点名邀请进这一个项目的人，名字旁边挂「外部」。只有他们
 //     能从这里被移出。
 // 没有项目自己的角色：管理外部成员的是项目所有者和团队的所有者、管理员，由后端在
@@ -14,9 +15,10 @@
 // 一行 = 一个人 = 两件事：找到他（点开是他的主页，右边是私聊），和——如果他是外部成员
 // 而你管得了——把他移出。
 //
-// 右上角是「自己和这个项目的关系怎么结束」：外部成员「退出项目」（后端
-// `DELETE /projects/{id}/membership` 认的恒是当前身份那个人），所有者「转让项目」
-// （他退不掉，得先把手交出去）。团队成员不在这里退：他在项目里是因为在团队里。
+// 右上角是「自己和这个项目的关系怎么结束」：谁都能「退出项目」（后端
+// `DELETE /projects/{id}/membership` 认的恒是当前身份那个人），只有所有者不行——他
+// 换一颗「转让项目」（他一走项目就没人管，得先把手交出去）。团队成员退的也是**这个
+// 项目**：他还在小队里，小队别的项目照常，回来要人再请一次。
 import type { LookedUpUser } from '@/api'
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
@@ -216,15 +218,16 @@ async function takeBack(inv: ProjectInvitation) {
 }
 
 // ---- 退出项目 / 转让项目 ----
-// 「退出」只给外部成员：团队成员在这里是因为在团队里，退出项目对他无从谈起；所有者
-// 退不掉（他一走项目就没人管），他换一颗「转让项目」。名册行还没到时不给「退出」——
-// 不知道他是谁，就别递一颗可能必然失败的按钮。
+// 「退出」给名册上的每一个人，只除所有者：他一走项目就没人管，换一颗「转让项目」。
+// 团队成员也在这颗按钮底下——他退的是**这个项目**，不是小队（后端为它记下一条项目级
+// 事实，小队那一行不动）。名册行还没到时不给「退出」——不知道他是不是在项目里，就别
+// 递一颗可能必然失败的按钮（他刚在这里退过一次也是这种情况：名册上已经没有他了）。
 const leaveOpen = ref(false)
 const transferOpen = ref(false)
 const isOwner = computed(() => !!me.value && !!ownerHandle.value && me.value === ownerHandle.value)
 const canLeave = computed(() => {
   const row = store.members.find((m) => m.user_handle === me.value)
-  return !!row && isExternalMember(row) && !isOwner.value
+  return !!row && !isOwner.value
 })
 const canTransfer = computed(() => project.value !== null && (isOwner.value || canManage.value))
 

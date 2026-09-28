@@ -20,17 +20,23 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { loadBoard } from '../store'
+
 import TaskPublish from './TaskPublish.vue'
 
 const previewFromPdf = vi.fn()
 const confirmFromPdf = vi.fn()
 const spaceDetail = vi.fn()
 const listCategories = vi.fn()
+const listTasks = vi.fn()
 
 vi.mock('@/network/api/tasks', () => ({
   TasksApi: {
     previewFromPdf: (...a: unknown[]) => previewFromPdf(...a),
     confirmFromPdf: (...a: unknown[]) => confirmFromPdf(...a),
+    // 右栏那两张卡要读板子的角色（`isManager`），那要板上那一份 `GET /tasks`
+    // 跟着一起回来（见 `board/store.ts` 的 `loadBoard`）。
+    list: (...a: unknown[]) => listTasks(...a),
   },
 }))
 
@@ -43,11 +49,41 @@ vi.mock('@/network/api/spaces', () => ({
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
+/** 假表单那几件东西：`checks` 是它「现在拦着的规则」，`submit` 是它自己的提交，
+ *  `mute` 摆的是「底下那一页还没挂上/还没开口」那个状态（真应用里空间还在装、
+ *  `PublishTaskView` 的 `v-if="ready"` 还没放行的那一小会儿）。
+ *  `vi.hoisted` 是因为 `vi.mock` 的工厂会先跑，够不着这一层声明的变量。 */
+const probe = vi.hoisted(() => ({
+  checks: [] as { id: string; text: string }[],
+  submit: vi.fn(),
+  mute: false,
+}))
+
 // 底下那一页（老发题页）整个换掉：这一份测的是新外壳那一层，不是它裹着的那页。
 // 「裹得住、接缝接对了」在 `wrappers.spec.ts` 里另有一份。
+//
+// 换上的这一份**按真表单那份契约说话**：照 `PUBLISH_CHECKS_SINK` 把它现在拦着的
+// 规则报上去、把它自己的提交交上来（`components/tasks/TaskForm.vue` 里注入的就是
+// 这两件事）。真表单**什么时候**报、报**哪几条**，由
+// `components/tasks/__tests__/TaskFormPublishChecks.test.ts` 挂真表单钉住；这一份
+// 只管外壳那一半：报上来的画不画、按钮跟不跟着走、点下去打到哪儿。两边合起来才是
+// 「表单真拦的都列出来了，列出来的也真的发不出去」。
 vi.mock('@/views/spaces/detail/PublishTask.vue', async () => {
-  const { defineComponent: dc, h: hh } = await import('vue')
-  return { default: dc({ name: 'WriteProbe', setup: () => () => hh('div', { 'data-testid': 'write-probe' }) }) }
+  const { defineComponent: dc, h: hh, inject } = await import('vue')
+  const { PUBLISH_CHECKS_SINK: SINK } = await import('@/lib/taskPublishChecks')
+  return {
+    default: dc({
+      name: 'WriteProbe',
+      setup() {
+        const sink = inject(SINK, null)
+        if (sink && !probe.mute) {
+          sink.report(probe.checks)
+          sink.handOverSubmit(() => probe.submit())
+        }
+        return () => hh('div', { 'data-testid': 'write-probe' })
+      },
+    }),
+  }
 })
 
 const SPACE_ID = 7
@@ -127,6 +163,24 @@ function previewBody() {
     ],
     templateUsed: { title: '计算机系统基础 · 标准题模板' },
     tokenUsed: 18742,
+    // 预览这一步服务端顺带落好的附件行：原 PDF 一份、抽出的插图一张。id 是后端
+    // 数据库里的号，前端只负责在勾中的时候原样报回去。
+    attachments: {
+      pdf: {
+        id: 911,
+        name: '计算机系统基础-第五次作业.pdf',
+        size: 1024,
+        contentType: 'application/pdf',
+      },
+      images: [
+        {
+          id: 912,
+          name: 'input.pdf-0001-01.png',
+          size: 2048,
+          contentType: 'image/png',
+        },
+      ],
+    },
   }
 }
 
@@ -222,7 +276,7 @@ describe('发题页：手写一道 / 从 PDF 生成', () => {
     // 发出去的草稿：只有勾中的那一条，文字是改过的那份，出处标记加上去了。
     const sent = confirmFromPdf.mock.calls[0][0] as {
       drafts: { name: string; intro: string; description: string; space: number; categoryId?: number }[]
-      taskOptions: { space: number }
+      taskOptions: { space: number; attachmentIds?: number[] }
     }
     expect(sent.drafts).toHaveLength(1)
     expect(sent.drafts[0].name).toBe('用 gdb 定位一次段错误（改过）')
@@ -231,8 +285,8 @@ describe('发题页：手写一道 / 从 PDF 生成', () => {
     expect(sent.drafts[0].categoryId).toBe(3)
     // 出处标记在简介里（题目模型没有来源这一列）—— 队列那一行显示的就是简介。
     expect(sent.drafts[0].intro).toBe('【PDF · 第 1 页】用 gdb 找出崩在哪一行。')
-    // 这一版不带附件：那条路不读 attachmentIds，页面上另有一张卡说明这件事。
-    expect('attachmentIds' in sent.taskOptions).toBe(false)
+    // 两颗勾默认都勾着，所以这条请求里带着两份文件的行号：原 PDF 在前、插图在后。
+    expect(sent.taskOptions.attachmentIds).toEqual([911, 912])
 
     // 不跳走：地址栏还是发题这一页。
     expect(view.router.currentRoute.value.fullPath).toBe(before)
@@ -242,6 +296,68 @@ describe('发题页：手写一道 / 从 PDF 生成', () => {
     const hrefs = Array.from(view.container.querySelectorAll('a')).map((a) => a.getAttribute('href'))
     expect(hrefs).toContain(`/spaces/${SPACE_ID}/board/review`)
     expect(hrefs).toContain(`/spaces/${SPACE_ID}/board/mine`)
+  })
+
+  it('附件：两颗勾默认都勾着，标签写的是哪一份、几张，取消勾的那一份就不跟着走', async () => {
+    const view = await parsed(await mount())
+
+    // 拉起来就是原型那两颗勾，默认都勾着。
+    const pdfBox = view.getByLabelText('原 PDF') as HTMLInputElement
+    const imgBox = view.getByLabelText('抽出的插图（1 张）') as HTMLInputElement
+    expect(pdfBox.checked).toBe(true)
+    expect(imgBox.checked).toBe(true)
+    // 勾的是什么摆出来给人看：文件名字是接口回来的那一份。
+    expect(textOf(view.container, 'pdf-attach-pdf-file')).toBe('原 PDF：计算机系统基础-第五次作业.pdf')
+    expect(textOf(view.container, 'pdf-attach-image-files')).toBe('插图：input.pdf-0001-01.png')
+    expect(textOf(view.container, 'pdf-attach-count')).toBe('这 2 个文件会附在每一道生成出来的题上')
+
+    // 取消勾插图：跟着走的只剩原 PDF 那一份，数字也跟着掉。
+    await toggle(imgBox)
+    await waitFor(() =>
+      expect(textOf(view.container, 'pdf-attach-count')).toBe('这 1 个文件会附在每一道生成出来的题上')
+    )
+
+    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
+    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
+    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: { attachmentIds?: number[] } }
+    // 发出去的就是屏幕上勾着的那一份，行号原样 —— 原 PDF 在前。
+    expect(sent.taskOptions.attachmentIds).toEqual([911])
+  })
+
+  it('附件：一样都不勾的时候，请求里没有 attachmentIds 这一项（与从前一致）', async () => {
+    const view = await parsed(await mount())
+
+    await toggle(view.getByLabelText('原 PDF') as HTMLInputElement)
+    await toggle(view.getByLabelText('抽出的插图（1 张）') as HTMLInputElement)
+    await waitFor(() =>
+      expect(textOf(view.container, 'pdf-attach-count')).toBe('这 0 个文件会附在每一道生成出来的题上')
+    )
+
+    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
+    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
+    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: Record<string, unknown> }
+    expect('attachmentIds' in sent.taskOptions).toBe(false)
+  })
+
+  it('附件：接口没落成文件行的那一样不画勾，页面上说清为什么', async () => {
+    previewFromPdf.mockImplementation(async () => ({
+      data: { ...previewBody(), attachments: { pdf: null, images: [] } },
+    }))
+    const view = await parsed(await mount())
+
+    // 一颗勾都不画 —— 点了也带不走的东西，不画成勾。
+    expect(view.container.querySelector('[data-testid="pdf-attach-pdf"]')).toBeNull()
+    expect(view.container.querySelector('[data-testid="pdf-attach-images"]')).toBeNull()
+    expect(view.queryByLabelText('原 PDF')).toBeNull()
+    // 但要说清是哪一样、为什么。
+    expect(textOf(view.container, 'pdf-attach-pdf-why') ?? '').toContain('没画')
+    expect(textOf(view.container, 'pdf-attach-images-why') ?? '').toContain('没画')
+
+    // 确认发布照样走得通，请求形状与从前一样。
+    await fireEvent.click(view.getByRole('button', { name: '确认发布 2 道' }))
+    await waitFor(() => expect(confirmFromPdf).toHaveBeenCalledTimes(1))
+    const sent = confirmFromPdf.mock.calls[0][0] as { taskOptions: Record<string, unknown> }
+    expect('attachmentIds' in sent.taskOptions).toBe(false)
   })
 
   it('超限与错类型：一个请求都不发出去，屏幕上说清为什么', async () => {
@@ -279,5 +395,138 @@ describe('发题页：手写一道 / 从 PDF 生成', () => {
     expect(view.container.querySelector('[data-testid="pdf-meta"]')).toBeNull()
     expect(view.container.querySelector('[data-testid="pdf-drafts"]')).toBeNull()
     expect(view.queryByRole('button', { name: /确认发布/ })).toBeNull()
+  })
+})
+
+// ============ 手写一道右栏那两张卡 ============
+//
+// 两张卡讲两件事：「这道题发出去之后会经过哪几站」（第二句跟着身份变），和
+// 「现在提交得出去吗」。身份那个信号是板上的 `isManager`（`board/store.ts` 的
+// `role` 从空间的管理员名单里认领当前这台机器上登着的人，见 `me.ts`），所以真应用
+// 里这一页挂在空间外壳里、外壳已经 `loadBoard` 过了；这一份单独挂它，就自己把板子
+// 装上 —— `boardAs` 干的就是这件事（和 `SpaceBoardShell.vue:73` 那次同一个调用）。
+
+const MANAGER = { username: 'alice', nickname: '爱丽丝' }
+const MEMBER = { username: 'bob', nickname: '鲍勃' }
+
+/** 这块板的管理员名单：当前这台机器上登的是谁，`role` 就从这里认。 */
+function spaceBody() {
+  return {
+    data: {
+      space: {
+        id: SPACE_ID,
+        name: '数据结构空间',
+        admins: [
+          { role: 'OWNER', user: { username: 'owner', nickname: '所有者' } },
+          { role: 'ADMIN', user: { username: 'alice', nickname: '爱丽丝' } },
+        ],
+      },
+    },
+  }
+}
+
+/** 以某个人的身份打开这块板：先「登录」，再装板子（`me.ts` 读的就是这个 user）。 */
+async function boardAs(user: { username: string; nickname: string }) {
+  localStorage.setItem('user', JSON.stringify(user))
+  await loadBoard(SPACE_ID, true)
+}
+
+/** 「提交前」那颗按钮。灰不灰看它原生的 `disabled`，不猜 class 也不猜颜色。 */
+function submitButton(view: ReturnType<typeof render>): HTMLButtonElement {
+  return view.getByRole('button', { name: '提交审核' }) as HTMLButtonElement
+}
+
+describe('发题页：手写一道右栏那两张卡', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    spaceDetail.mockImplementation(async () => spaceBody())
+    listCategories.mockImplementation(async () => ({ data: { categories: [{ id: 3, name: '基础题' }] } }))
+    listTasks.mockImplementation(async () => ({ data: { tasks: [], distinctParticipants: 0 } }))
+  })
+
+  afterEach(() => {
+    cleanup()
+    localStorage.clear()
+    probe.checks = []
+    probe.submit.mockReset()
+    probe.mute = false
+    vi.clearAllMocks()
+  })
+
+  it('两张卡都在手写一道里：四站一站一句，表单还没开口之前按钮是灰的', async () => {
+    await boardAs(MEMBER)
+    probe.mute = true
+    const view = await mount()
+
+    // 第一张卡：四站，一站一句 —— 摆的是真流程（审核队列、上板、我的）。
+    const steps = Array.from(view.container.querySelectorAll('[data-testid="publish-lifecycle"] li')).map((li) =>
+      li.textContent?.replace(/\s+/g, ' ').trim()
+    )
+    expect(steps).toEqual([
+      '待审核 —— 题目只有你自己和管理员看得到。',
+      '有人审了 —— 所有者或管理员通过后就上板。',
+      '上板 —— 所有人可见可领，领取进度开始计。',
+      '你能看到 —— 「我的 → 我发布的」里有这道题的领取走势、领取者名单和完成情况。',
+    ])
+    expect(view.getByText(/被驳回会带原因退回，改完可以重新提交，不用重写一遍。/)).toBeTruthy()
+
+    // 第二张卡：底下那一页这会儿是个空壳（这一份里没挂真表单），所以既不能说
+    // 「看起来没问题」，也不能让人点 —— 说清在等什么，按钮灰着。
+    expect(textOf(view.container, 'publish-checks-waiting')).toContain('表单装好之后')
+    expect(textOf(view.container, 'publish-ok')).toBeNull()
+    expect(submitButton(view).disabled).toBe(true)
+
+    // 从 PDF 生成那条路上没有这两张卡（那条路上没有这张表单，卡也不该在）。
+    await switchToPdf(view)
+    expect(view.container.querySelector('[data-testid="publish-lifecycle"]')).toBeNull()
+    expect(view.queryByTestId('publish-checks-waiting')).toBeNull()
+    expect(view.queryByRole('button', { name: '提交审核' })).toBeNull()
+  })
+
+  it('「有人审了」那一句跟着身份变：管理员看到自己审，成员看到等所有者或管理员', async () => {
+    await boardAs(MANAGER)
+    const asManager = await mount()
+    expect(textOf(asManager.container, 'publish-audience')).toContain('你可以直接通过（自己发的题自己审）。')
+    expect(textOf(asManager.container, 'publish-audience')).not.toContain('所有者或管理员通过后就上板。')
+    cleanup()
+
+    await boardAs(MEMBER)
+    const asMember = await mount()
+    expect(textOf(asMember.container, 'publish-audience')).toContain('所有者或管理员通过后就上板。')
+    expect(textOf(asMember.container, 'publish-audience')).not.toContain('你可以直接通过')
+  })
+
+  it('表单拦着的规则逐条列出来（就是报上来的那几句），按钮跟着灰掉', async () => {
+    await boardAs(MEMBER)
+    probe.checks = [
+      { id: 'name', text: '标题：必填，最多 100 个字' },
+      { id: 'categoryId', text: '所属分类：必选一个（这块板的分类）' },
+    ]
+    const view = await mount()
+
+    const listed = Array.from(view.container.querySelectorAll('[data-testid="publish-checks"] li')).map((li) =>
+      li.textContent?.trim()
+    )
+    // 一个字都不改地画出来 —— 卡片这一层不加戏。
+    expect(listed).toEqual(probe.checks.map((check) => check.text))
+    // 拦着的时候不画那句「看起来没问题。」，按钮是灰的。
+    expect(view.queryByTestId('publish-ok')).toBeNull()
+    expect(submitButton(view).disabled).toBe(true)
+  })
+
+  it('表单一条都不拦的时候：「看起来没问题。」+ 按钮能点，点下去走的是表单自己的提交', async () => {
+    await boardAs(MEMBER)
+    probe.checks = []
+    const view = await mount()
+
+    expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。')
+    expect(view.container.querySelector('[data-testid="publish-checks"]')).toBeNull()
+    expect(view.queryByTestId('publish-checks-waiting')).toBeNull()
+
+    const button = submitButton(view)
+    expect(button.disabled).toBe(false)
+    await fireEvent.click(button)
+    // 交出去的是表单交上来的那一个提交，不是这一层另发一次请求。
+    expect(probe.submit).toHaveBeenCalledTimes(1)
   })
 })

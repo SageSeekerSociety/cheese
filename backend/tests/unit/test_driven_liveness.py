@@ -100,7 +100,9 @@ class Room:
         assert await self.runtime.deliver(self.topic, text)
 
     async def close(self) -> None:
-        await self.runtime._detach(self.topic)
+        for seat in list(self.runtime.subscriptions):
+            if seat[0] == self.topic:
+                await self.runtime._detach(seat)
 
 
 async def _until(check, timeout: float = 8.0) -> None:
@@ -145,7 +147,7 @@ async def test_talking_without_working_ends_the_turn_once():
         assert room.work in room.runtime.closed
 
         room.channel.stops(room.topic, "late news")
-        await room.runtime.subscriptions[room.topic].drain()
+        await room.runtime.subscriptions[(room.topic, "cheese")].drain()
         assert room.results() == [ended]
     finally:
         await room.close()
@@ -266,7 +268,7 @@ async def test_an_input_is_read_when_its_echo_comes_back_not_when_it_is_taken():
     try:
         await room.send("fix the login page")
         await _until(lambda: room.channel.sessions[room.topic].working)
-        await room.runtime.subscriptions[room.topic].drain()
+        await room.runtime.subscriptions[(room.topic, "cheese")].drain()
         assert room.receipts == []
 
         room.channel.acknowledges(room.topic, "fix the login page")
@@ -274,7 +276,7 @@ async def test_an_input_is_read_when_its_echo_comes_back_not_when_it_is_taken():
 
         await room.steer("use the new theme")
         await _REAL_SLEEP(0.3)
-        await room.runtime.subscriptions[room.topic].drain()
+        await room.runtime.subscriptions[(room.topic, "cheese")].drain()
         assert room.receipts == ["fix the login page"]
 
         room.channel.acknowledges(room.topic, "use the new theme")

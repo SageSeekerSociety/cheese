@@ -96,5 +96,5 @@ async def test_close_topic_subscriptions_stops_the_reader():
 
     await close_topic_subscriptions(room.service, topic)
 
-    assert topic not in room.runtime.subscriptions
+    assert all(seat[0] != topic for seat in room.runtime.subscriptions)
     assert not room.runtime.holds(topic)

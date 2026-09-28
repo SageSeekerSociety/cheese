@@ -650,7 +650,7 @@ class SpaceMemberRepository:
         return list(result.scalars().all())
 
     async def add_member(
-        self, *, space_id: int, user_id: int
+        self, *, space_id: int, user_id: int, invite_code_id: int | None = None
     ) -> tuple[SpaceMember, bool]:
         """Join, or re-join after having been removed. Returns (row, created).
 
@@ -662,6 +662,14 @@ class SpaceMemberRepository:
         ``created`` answers "was this call the one that let them in". Only
         that one consumes an invite-code use, so a double-tapped「加入」does
         not spend two.
+
+        ``invite_code_id`` is the code this membership came from, and it is
+        written on **both** paths — the insert and the revive — because the
+        column describes the membership that is live now, not the first one
+        this person ever had. Somebody who left and was later added back by
+        the owner has no code behind their current row, and leaving the old
+        code's name on it would report the wrong thing for good. ``None``
+        therefore means what it says on the read side.
 
         Both halves are written so the database, not a preceding read, decides
         that. Two requests for the same person do arrive together — a double
@@ -683,6 +691,7 @@ class SpaceMemberRepository:
             member = SpaceMember(
                 space_id=space_id,
                 user_id=user_id,
+                invite_code_id=invite_code_id,
                 created_at=now,
                 updated_at=now,
                 deleted_at=None,
@@ -706,7 +715,7 @@ class SpaceMemberRepository:
                 SpaceMember.id == member.id,
                 SpaceMember.deleted_at.is_not(None),
             )
-            .values(deleted_at=None, updated_at=now)
+            .values(deleted_at=None, updated_at=now, invite_code_id=invite_code_id)
         )
         result = await self._session.execute(stmt)
         # UPDATE returns a CursorResult, which has rowcount at runtime.
@@ -749,6 +758,7 @@ class SpaceInviteCodeRepository:
         max_uses: int,
         expires_at: datetime | None,
         created_by: int | None,
+        note: str | None = None,
     ) -> SpaceInviteCode:
         now = datetime.now(UTC)
         invite = SpaceInviteCode(
@@ -758,6 +768,7 @@ class SpaceInviteCodeRepository:
             use_count=0,
             expires_at=expires_at,
             created_by=created_by,
+            note=note,
             created_at=now,
             updated_at=now,
             deleted_at=None,
@@ -785,6 +796,28 @@ class SpaceInviteCodeRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_ids(self, code_ids: Sequence[int]) -> dict[int, SpaceInviteCode]:
+        """Several codes at once, by id, **revoked ones included**.
+
+        Not scoped by space, unlike ``get_for_space``: the callers here start
+        from a member row whose ``invite_code_id`` the server itself wrote, so
+        the id is not something a client got to choose.
+
+        ``deleted_at`` is deliberately not filtered. A revoked code is the case
+        the 加入方式 column exists for — the question it answers is "which code
+        let this person in", and revoking a code afterwards does not change the
+        answer. An empty list is answered without a query, because SQLAlchemy
+        warns about ``IN ()`` and this path runs on every roster read.
+        """
+        ids = list(code_ids)
+        if not ids:
+            return {}
+        stmt: Select[tuple[SpaceInviteCode]] = select(SpaceInviteCode).where(
+            SpaceInviteCode.id.in_(ids)
+        )
+        result = await self._session.execute(stmt)
+        return {row.id: row for row in result.scalars().all()}
 
     async def code_exists(self, code: str) -> bool:
         stmt = select(SpaceInviteCode.id).where(SpaceInviteCode.code == code)

@@ -103,17 +103,19 @@ async function approveTask(page: import("@playwright/test").Page, auth: Record<s
   if (!res.ok()) throw new Error(`PATCH /tasks/${taskId} → ${res.status()} ${await res.text()}`);
 }
 
-/** 题目材料：文件先经 `POST /attachments` 传上来拿到 id，建题时一次挂上。 */
+/** 题目材料：文件先经 `POST /attachments` 传上来拿到 id，建题时一次挂上。
+ *  `kind` 那两样只为「PDF 那条路」的用例准备 —— 它要挂的是一份 PDF 和一张 PNG。 */
 async function uploadAttachment(
   page: import("@playwright/test").Page,
   auth: Record<string, string>,
   filename: string,
+  kind: { mimeType: string; content: string } = { mimeType: "text/plain", content: "题目材料（E2E）。" },
 ) {
   const res = await page.request.post("/api/attachments", {
     headers: auth,
     multipart: {
       type: "file",
-      file: { name: filename, mimeType: "text/plain", buffer: Buffer.from("题目材料（E2E）。") },
+      file: { name: filename, mimeType: kind.mimeType, buffer: Buffer.from(kind.content) },
     },
   });
   if (!res.ok()) throw new Error(`POST /attachments → ${res.status()} ${await res.text()}`);
@@ -132,12 +134,7 @@ async function uploadAttachment(
  * 底下点不着（详见 helpers.ts 里 `acceptPendingConsents`）。
  */
 async function switchTo(page: import("@playwright/test").Page, username: string): Promise<string> {
-  const res = await page.request.post("/api/users/auth/login", {
-    data: { username, password: "demo12345" },
-  });
-  if (!res.ok()) throw new Error(`${username} 登录失败 → ${res.status()}`);
-  const session = (await res.json()).data as { accessToken: string; user: unknown };
-  await acceptPendingConsents(page, session.accessToken);
+  const session = await loginSession(page, username);
 
   const asset = await page.goto("/favicon.ico");
   if (!asset?.ok()) throw new Error("拿不到应用的 origin");
@@ -148,6 +145,38 @@ async function switchTo(page: import("@playwright/test").Page, username: string)
     },
     session,
   );
+  return session.accessToken;
+}
+
+/** 登录拿到那个人的 `{accessToken, user}`，**不落进浏览器** —— 想让谁上场由调用方决定。 */
+async function loginSession(page: import("@playwright/test").Page, username: string) {
+  const res = await page.request.post("/api/users/auth/login", {
+    data: { username, password: "demo12345" },
+  });
+  if (!res.ok()) throw new Error(`${username} 登录失败 → ${res.status()}`);
+  const session = (await res.json()).data as { accessToken: string; user: unknown };
+  await acceptPendingConsents(page, session.accessToken);
+  return session;
+}
+
+/**
+ * 已经在应用 origin 上的时候换人：直接写 `localStorage` 再就地重载。
+ *
+ * **不能再 `goto("/favicon.ico")`**。从**题目详情**那一页往外导航会被 Chromium 判成
+ * `net::ERR_ABORTED`（同一份栈上，从题目板首页换人是好的 —— 差别在这一页），
+ * `switchTo` 那条路因此在详情页后面接不上。写 `localStorage` 只要当前文档是这个
+ * origin，而这一页就是，所以不必再导航一次。
+ */
+async function becomeOnThisPage(page: import("@playwright/test").Page, username: string) {
+  const session = await loginSession(page, username);
+  await page.evaluate(
+    (s) => {
+      localStorage.setItem("accessToken", s.accessToken);
+      localStorage.setItem("user", JSON.stringify(s.user));
+    },
+    session,
+  );
+  await page.reload();
   return session.accessToken;
 }
 
@@ -380,6 +409,27 @@ test.describe("空间新界面（真路由）", () => {
     await expect(page.getByText("附件（可选）")).toBeVisible();
     await expect(page.getByLabel("题目名称")).toBeVisible();
 
+    // 右栏两张卡。第一张「发出去之后」讲这道题会经过哪几站：四站一站一句都写在
+    // 页面上，而第二句是**按登录的人算出来的** —— 这块板是 alice 用她的令牌建的
+    // （`createReviewedSpace`），名单里她是所有者，所以她看到的是「自己发的题自己审」。
+    await expect(page.getByRole("heading", { name: "发出去之后" })).toBeVisible();
+    const lifecycle = page.getByTestId("publish-lifecycle");
+    await expect(lifecycle).toContainText("待审核 —— 题目只有你自己和管理员看得到。");
+    await expect(page.getByTestId("publish-audience")).toContainText("你可以直接通过（自己发的题自己审）。");
+    await expect(lifecycle).toContainText("上板 —— 所有人可见可领，领取进度开始计。");
+    await expect(lifecycle).toContainText("「我的 → 我发布的」里有这道题的领取走势、领取者名单和完成情况。");
+    await expect(page.getByText("被驳回会带原因退回，改完可以重新提交，不用重写一遍。")).toBeVisible();
+
+    // 第二张「提交前」：它列的不是另写一份规则，而是底下这张真表单现在拦着什么
+    // （`lib/taskPublishChecks.ts` 那份规则表按表单的 `values` 现算）。刚进来三栏
+    // 必填全是空的，所以那几条在、按钮是灰的 —— 灰不灰看它原生的 `disabled`。
+    await expect(page.getByRole("heading", { name: "提交前" })).toBeVisible();
+    const checklist = page.getByTestId("publish-checks");
+    await expect(checklist).toContainText("标题：必填，最多 100 个字");
+    await expect(checklist).toContainText("参与者类型：必选一个（个人 / 团队）");
+    await expect(checklist).toContainText("题目难度：必选一个（初级 / 中级 / 高级）");
+    await expect(page.getByRole("button", { name: "提交审核" })).toBeDisabled();
+
     const taskName = `从新外壳发出的题 ${Date.now().toString(36)}（E2E）`;
     await page.getByLabel("题目名称").fill(taskName);
     // 表单有三栏必填而初始为空：参与者类型、题目难度、所属分类。不选就点提交，
@@ -396,6 +446,12 @@ test.describe("空间新界面（真路由）", () => {
     await page.getByRole("option").first().click();
     await page.locator(".tiptap-editor").click();
     await page.keyboard.type("正文（E2E）。");
+
+    // 三栏必填都选上之后，清单就空了：一句「看起来没问题。」+ 按钮能点。这一步
+    // 也正好量到「列出来的都是真会拦的」—— 上面那几条现在都不拦了，一条都不留。
+    await expect(page.getByTestId("publish-ok")).toHaveText("看起来没问题。");
+    await expect(page.getByRole("button", { name: "提交审核" })).toBeEnabled();
+
     await page.getByRole("button", { name: "提交", exact: true }).click();
 
     // 发完不跳走，落到新外壳自己的「我的」（老树那一步是「我发布的」页）。
@@ -418,6 +474,23 @@ test.describe("空间新界面（真路由）", () => {
     if (!categories.ok()) throw new Error(`GET categories → ${categories.status()} ${await categories.text()}`);
     const categoryId = ((await categories.json()).data.categories as { id: number }[])[0].id;
 
+    // 附件这一版要在**真栈**上真的挂到题上，所以这两份文件走真的 `POST /attachments`
+    // 传上来（挂在 alice 名下）—— 预览那一步在下面被拦下了，它不会自己落这两行，
+    // 这里替它落。回报去的那两个 id 是**数据库里真有的行号**：确认发布那一步是真接口，
+    // 它按这两行把文件挂到每一道生成的题上。
+    //
+    // 留在 stub 那一侧的是「服务端在预览时替调用者落文件行」这件事本身（即
+    // `register_stored` 把 uploaderId 签成调用者）：没有推理后端就跑不出预览，
+    // 那一段由 `backend/tests/integration/test_pdf_publish_attachments.py` 在真库上量。
+    const pdfAttachmentId = await uploadAttachment(page, auth, "计算机系统基础-第五次作业.pdf", {
+      mimeType: "application/pdf",
+      content: "%PDF-1.4\n% E2E: 原 PDF 这一份是真的。\n",
+    });
+    const imageAttachmentId = await uploadAttachment(page, auth, "input.pdf-0001-01.png", {
+      mimeType: "image/png",
+      content: "PNG-ish（E2E）：抽出的插图这一份也是真的。",
+    });
+
     await page.goto(`/spaces/${spaceId}/board/publish`);
 
     // 默认那一颗是「手写一道」：老发题页原样在底下（它自己那张「PDF 快速发布」卡也
@@ -428,7 +501,9 @@ test.describe("空间新界面（真路由）", () => {
     // 题目板首页绕。默认那 5 秒在这一屏上量的是 dev server 的编译速度，不是这一页
     // 对不对（单跑这一条时实测三次里前两次都栽在这里）。
     await expect(page.getByText("PDF 快速发布")).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByLabel("题目名称")).toBeVisible();
+    // 同一个 60 秒，同样的理由：「PDF 快速发布」可以在这次编译**还没画完**的时候
+    // 先出现，紧接着这一条就只剩默认那 5 秒去等同一份冷编译 —— 单跑实测栽在这里。
+    await expect(page.getByLabel("题目名称")).toBeVisible({ timeout: 60_000 });
 
     await page.getByRole("button", { name: "从 PDF 生成" }).click();
     await expect(page.getByRole("heading", { name: "从 PDF 生成题目" })).toBeVisible();
@@ -472,6 +547,25 @@ test.describe("空间新界面（真路由）", () => {
             ],
             templateUsed: { title: "计算机系统基础 · 标准题模板" },
             tokenUsed: 18742,
+            // 预览这一步真接口会顺带报回来的那两样（`attachments`）：一份原 PDF、一张
+            // 抽出的插图。id 是上面真的传上来的那两行 —— 页面据此画两颗勾，勾中的
+            // 行号跟着确认发布一起发出去。
+            attachments: {
+              pdf: {
+                id: pdfAttachmentId,
+                name: "计算机系统基础-第五次作业.pdf",
+                size: 44,
+                contentType: "application/pdf",
+              },
+              images: [
+                {
+                  id: imageAttachmentId,
+                  name: "input.pdf-0001-01.png",
+                  size: 96,
+                  contentType: "image/png",
+                },
+              ],
+            },
           },
         }),
       });
@@ -501,6 +595,14 @@ test.describe("空间新界面（真路由）", () => {
     expect(gotPreview).toContain("第五次作业.pdf");
     expect(gotPreview).toContain("%PDF-1.4");
 
+    // 附件那两颗勾：默认都勾着，标着是哪一份原 PDF、几张插图 —— 名字与张数来自
+    // 上面那次预览回来的 `attachments`，不是页面上编出来的。
+    await expect(page.getByLabel("原 PDF")).toBeChecked();
+    await expect(page.getByLabel("抽出的插图（1 张）")).toBeChecked();
+    await expect(page.getByTestId("pdf-attach-pdf-file")).toContainText("计算机系统基础-第五次作业.pdf");
+    await expect(page.getByTestId("pdf-attach-image-files")).toContainText("input.pdf-0001-01.png");
+    await expect(page.getByTestId("pdf-attach-count")).toContainText("这 2 个文件会附在每一道生成出来的题上");
+
     // 两条草稿都在，出处页标在每一条上。
     const rows = page.locator(".pdf__row");
     await expect(rows).toHaveCount(2);
@@ -518,11 +620,18 @@ test.describe("空间新界面（真路由）", () => {
     await rows.nth(0).getByLabel("题干").fill("改过的题干：把崩的那一行的寄存器状态交上来。");
 
     // 确认发布走的是**真接口**（这一步没拦），发完**不跳走**。
+    const confirmRequest = page.waitForRequest(
+      (r) => r.url().includes("/tasks/publish/from-pdf/confirm") && r.method() === "POST",
+    );
     const confirmResponse = page.waitForResponse(
       (r) => r.url().includes("/tasks/publish/from-pdf/confirm") && r.request().method() === "POST",
     );
     await page.getByRole("button", { name: "确认发布 1 道" }).click();
-    expect((await confirmResponse).status()).toBe(200);
+    const confirmBody = (await (await confirmResponse).json()) as { data: { tasks: { id: number }[] } };
+    const sentConfirm = (await confirmRequest).postDataJSON() as { taskOptions: { attachmentIds?: number[] } };
+    // 发出去的就是屏幕上勾着的那两份，行号原样 —— 原 PDF 在前、插图在后。
+    expect(sentConfirm.taskOptions.attachmentIds).toEqual([pdfAttachmentId, imageAttachmentId]);
+    const createdTaskId = confirmBody.data.tasks[0].id;
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/publish$`));
 
     // 就地回执：刚发了一道，两个去处都指向新外壳那棵树。
@@ -550,6 +659,35 @@ test.describe("空间新界面（真路由）", () => {
     await expect(queued.locator(".queue__summary")).not.toContainText("【PDF · 第 1 页】");
     // 勾掉的那一条没发出去。
     await expect(page.locator(".queue__row", { hasText: "手写一个最简内存分配器" })).toHaveCount(0);
+
+    // 挂上了题这件事要到题目详情那一页去看：上板之后，「题目附件」里就是勾中的那两份。
+    //
+    // 这一屏要等 60 秒：这条路由在老树与新外壳里是两个组件，新外壳那一棵上面还没
+    // 暖过，vite 要现编。
+    await approveTask(page, auth, createdTaskId);
+    await page.goto(`/spaces/${spaceId}/board/tasks/${createdTaskId}`);
+    await expect(page.locator(".task-header-title", { hasText: edited })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText("题目附件")).toBeVisible();
+    const materials = page.getByTestId("task-attachment");
+    await expect(materials.filter({ hasText: "计算机系统基础-第五次作业.pdf" })).toBeVisible();
+    await expect(materials.filter({ hasText: "input.pdf-0001-01.png" })).toBeVisible();
+    // 下载那道门与第四批同一套（这条路没有另起一份权限）：出题人自己点得动，
+    // 两份各有一颗下载按钮。
+    await expect(page.getByRole("button", { name: "下载" })).toHaveCount(2);
+
+    // 换成没领过的成员看同一道题：清单照旧看得见，下载按钮换成那句话 ——
+    // 「PDF 发出来的题」在下载这道门上与手写题一字不差。
+    const otherToken = await becomeOnThisPage(page, "bobby");
+    const joined = await page.request.post("/api/spaces/join", {
+      headers: { Authorization: `Bearer ${otherToken}` },
+      data: { code: await inviteCodeOf(page, auth, spaceId) },
+    });
+    if (!joined.ok()) throw new Error(`加入空间失败 → ${joined.status()} ${await joined.text()}`);
+    await page.goto(`/spaces/${spaceId}/board/tasks/${createdTaskId}`);
+    await expect(materials.filter({ hasText: "计算机系统基础-第五次作业.pdf" })).toBeVisible();
+    await expect(materials.filter({ hasText: "input.pdf-0001-01.png" })).toBeVisible();
+    await expect(page.getByText("领取这道题之后才能下载")).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "下载" })).toHaveCount(0);
   });
 
   test("管理员从新外壳进整板看板，屏幕上的数就是接口给的那一份", async ({ page }) => {

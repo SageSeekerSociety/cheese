@@ -119,7 +119,7 @@ async def _working(runtime, session) -> None:
     """Until the session says a turn is in flight — the state a notice is for."""
     deadline = time.monotonic() + 8
     while True:
-        handle = runtime.live.get(session.topic_id)
+        handle = runtime.live.get(runtime._seat_of(session))
         status = await runtime.channel.call(handle, "ping", {}) if handle else {}
         if runtime.working(status):
             return
@@ -153,4 +153,4 @@ async def test_a_notice_reaches_the_turn_it_was_meant_for(tmp_path, wire):
             await asyncio.sleep(0.01)
         assert not any("stale" in said for said in heard())
     finally:
-        await runtime._detach(session.topic_id)
+        await runtime._detach(runtime._seat_of(session))

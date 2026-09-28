@@ -20,11 +20,11 @@
  *   见 `Kpis.participants`），不另开一次请求。
  */
 import type { Space, SpaceInviteCode, Task, User } from '@/types'
-import type { BoardTask, InviteCode, Manager, Person, Role, SpaceInfo, TaskState } from './model'
+import type { BoardTask, InviteCode, Manager, Person, ReviewedTask, Role, SpaceInfo, TaskState } from './model'
 
 import { computed, ref } from 'vue'
 
-import { splitOrigin } from './model'
+import { currentInviteCode, splitOrigin } from './model'
 
 import { myHandle } from '@/me'
 import { SpacesApi } from '@/network/api/spaces'
@@ -148,7 +148,72 @@ export async function loadPending(): Promise<BoardTask[]> {
   return res.data.tasks.map(toBoardTask)
 }
 
-/** 邀请码。**只有列和建** —— 改码的接口真平台还没有（那是另一批）。 */
+/** 最近处理过的那几道题 —— 审核页底部那张卡。
+ *
+ *  「处理过」这件事不在题目状态里（`approved` 说不了是谁、什么时候点的），所以
+ *  这里按审核痕迹自己查：通过的一批、驳回的一批，各自按 `reviewedAt` 倒序取
+ *  `limit` 条，合起来再倒序取 `limit` 条 —— 两次查询各取 `limit` 足够，因为两边
+ *  合起来的前 `limit` 名一定各自落在自己那批的前 `limit` 名里。
+ *
+ *  这一列是后加的：更早审过的题 `reviewedAt` 是 null，那些行跳过（「最近处理过」
+ *  要的是时间，不是「处理过」本身）。 */
+export async function loadRecentReviews(limit = 4): Promise<ReviewedTask[]> {
+  if (spaceId.value === null) return []
+  const [approved, disapproved] = await Promise.all([
+    TasksApi.list({
+      space: spaceId.value,
+      approved: 'APPROVED',
+      pageSize: limit,
+      sort_by: 'reviewedAt',
+      sort_order: 'desc',
+      querySpace: false,
+      queryJoined: false,
+    }),
+    TasksApi.list({
+      space: spaceId.value,
+      approved: 'DISAPPROVED',
+      pageSize: limit,
+      sort_by: 'reviewedAt',
+      sort_order: 'desc',
+      querySpace: false,
+      queryJoined: false,
+    }),
+  ])
+  const rows: { at: number; row: ReviewedTask }[] = []
+  const collected = [
+    ...approved.data.tasks.map((task) => ({ task, result: 'APPROVED' as const })),
+    ...disapproved.data.tasks.map((task) => ({
+      task,
+      result: 'DISAPPROVED' as const,
+    })),
+  ]
+  for (const { task, result } of collected) {
+    if (task.reviewedAt == null) continue
+    rows.push({
+      at: task.reviewedAt,
+      row: {
+        id: String(task.id),
+        title: task.name,
+        result,
+        reviewer: reviewerOf(task.reviewedBy),
+        reviewedAt: iso(task.reviewedAt),
+      },
+    })
+  }
+  rows.sort((a, b) => b.at - a.at)
+  return rows.slice(0, limit).map(({ row }) => row)
+}
+
+/** 审核人 id → 名册里的那个人。审题只有本板管理员走得通，所以名册就是答案；
+ *  对不到（这个人已经被移出名册）时给 `null`，界面照实说不知道是谁。 */
+function reviewerOf(userId: number | null | undefined): Person | null {
+  if (typeof userId !== 'number') return null
+  const user = spaceRaw.value?.admins.find((a) => a.user.id === userId)?.user
+  return user ? toPerson(user) : null
+}
+
+/** 邀请码。列表在这里读；改与撤在弹窗里直接走 `SpacesApi.updateInviteCode` /
+ *  `revokeInviteCode`（改完那一屏自己重拉，不需要把整块板跟着刷一遍）。 */
 export async function loadCodes() {
   if (spaceId.value === null) return
   const res = await SpacesApi.listInviteCodes(spaceId.value)
@@ -219,10 +284,21 @@ export const codes = computed<InviteCode[]>(() =>
     code: c.code,
     maxUses: c.maxUses ? c.maxUses : null,
     useCount: c.useCount,
-    expiresAt: c.expiresAt == null ? null : iso(c.expiresAt),
+    // 毫秒原样带过来（不转 ISO）：`currentInviteCode` 判「还能不能用」吃的就是
+    // 这个形状，转一道字符串再转回来只会多一个会写错的地方。
+    expiresAt: c.expiresAt ?? null,
     createdAt: iso(c.createdAt),
+    note: c.note ?? null,
   }))
 )
+
+/**
+ * 「当前使用中的码」—— 头部下拉的摘要、成员页「让人进来」、邀请码弹窗三处念同一
+ * 条（`currentInviteCode`）。**没有就是 `null`**：不拿一张已经用尽或过期的码顶上，
+ * 那会让「当前码」这三个字在界面上变成一句谎话。列表按建码时间排，所以拿到的是
+ * 最早那张还开着的。
+ */
+export const currentCode = computed<InviteCode | null>(() => currentInviteCode(codes.value))
 
 export interface Kpis {
   taskTotal: number

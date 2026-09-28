@@ -5,8 +5,11 @@
 不是「你是不是管理员」，而是几种**走不了**的处境，每一种都得给出下一步：
 
 * 所有者：他在名册上没有成员行，一走这个项目就没人管得了；
-* 团队成员：他的访问来自团队，退得出的是团队；
 * 某个话题最后一个 owner：撤掉他，那间房就没有人管得了（无主房间是死路）。
+
+退的是**这个项目**，不是小队：一个访问来自小队的队友在这里不再被拒（从前是 409
+「去退小队」），他按下这条路写下一条项目级事实（``ProjectMemberExclusion``），小队
+那一行不动 —— ``test_leaving_a_project_is_not_leaving_the_team.py`` 是它那一份。
 
 还有它必须做完的那半步：只删名册那一行的话，人还是每个房间都进得来（项目成员身份是
 进得来全部话题的凭据，``authorize_topic_access`` 认它），所以席位要和成员行一起撤销。
@@ -82,6 +85,34 @@ def _topic_handles(client, tid: str) -> list[str]:
     return [m["member_handle"] for m in rows]
 
 
+def _reads(client, pid: str, handle: str) -> bool:
+    """这个人读得到这个项目吗 —— 名册那条路由就是那道门。"""
+    r = client.get(f"/projects/{pid}/members", headers=session_auth_headers(handle))
+    return r.status_code == 200
+
+
+def _on_team(client, pid: str, handle: str) -> bool:
+    """他还在这个项目所属的小队里吗 —— 直接问 ``team_user_relation`` 那一行。"""
+    from app.domain.project.models import Project
+    from app.domain.team.repositories import TeamRepository
+    from app.domain.user.repositories import UserRepository
+
+    holder: dict[str, bool] = {}
+
+    async def _ask() -> None:
+        async with client.test_request_factory() as session:
+            project = await session.get(Project, uuid.UUID(pid))
+            assert project is not None, pid
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None, handle
+            holder["on"] = await TeamRepository(session).is_team_member(
+                project.team_id, user.id
+            )
+
+    client.portal.call(_ask)
+    return holder["on"]
+
+
 def test_a_member_leaves_and_their_topic_seats_go_with_them(client, bearer):
     """退项目 = 名册上没他 + 本项目各话题里也没他。
 
@@ -148,7 +179,10 @@ def test_removing_the_last_owner_of_a_topic_writes_nothing(client, bearer):
 
 def test_a_teammate_cannot_be_removed_from_the_project(client):
     """团队成员在名册上是从团队读出来的，没有一条可删的成员行 —— 移他是 404，人
-    还在。他离开项目的路是离开团队。"""
+    还在（这条路由仍然只对外部成员和 AI 队友的座位成立）。
+
+    他自己走的路是 ``DELETE /projects/{id}/membership``，那是另一条路：它记的是
+    「他在小队里，但不属于这个项目」，而这里缺的是一条能删的名册行。"""
 
     async def seed() -> str:
         factory = client.test_request_factory
@@ -269,10 +303,19 @@ def test_the_last_owner_of_a_topic_cannot_walk_out(client, bearer):
     assert _leave(client, pid, "alice").status_code == 200
 
 
-def test_a_previous_owner_is_still_in_the_project_through_its_team(client, bearer):
-    """把项目交给队友之后，原所有者仍在这个项目的团队里，所以仍在项目里 —— 他要
-    离开得退团队，退项目这条路会指向团队。"""
+def test_a_previous_owner_leaves_the_project_and_stays_on_its_team(client, bearer):
+    """把项目交给队友之后，原所有者在名册上按小队读出来 —— 他现在退得掉这个项目，
+    而且退的是**这个项目**：小队那一行不动。
+
+    从前这条路的答复是 409「去退团队」，因为「在小队里」就是「在这个项目里」。现在
+    按下它写下 ``ProjectMemberExclusion``：名册上少他一个人，小队那边一个字节没变
+    —— ``test_leaving_a_project_is_not_leaving_the_team.py`` 逐面钉的是它。
+
+    转让项目不带走房间：``PUT /projects/{id}/owner`` 动的是项目那一行，而总览那一间
+    的 owner 还是他，所以在把总览交出去之前，挡在前面的是那条老朋友（某间房最后一个
+    owner），答复点名那间房。这不是这条路的例外，是退出这条路本来就要过的关。"""
     pid = _project(client, owner="alice")
+    root = client.get(f"/projects/{pid}").json()["data"]["root_topic_id"]
     join_project_team(client, pid, "bob")
     handed = client.put(
         f"/projects/{pid}/owner",
@@ -287,8 +330,25 @@ def test_a_previous_owner_is_still_in_the_project_through_its_team(client, beare
     assert sources["alice"] == "team"
 
     refused = _leave(client, pid, "alice")
-    assert refused.status_code == 409, refused.text
-    assert "团队" in refused.json()["error"]["message"]
+    assert refused.status_code == 422, refused.text
+    assert "项目总览" in refused.json()["message"]
+    # 什么也没写：她还在名册上（按小队读出来的那一行）。
+    assert "alice" in _project_handles(client, pid)
+
+    # 把总览那一间交给 bob 之后，她就走得掉了。
+    _seat(client, root, "bob", by="alice")
+    moved = client.put(
+        f"/topics/{root}/members/bob",
+        json={"role": "owner"},
+        headers=session_auth_headers("alice"),
+    )
+    assert moved.status_code == 200, moved.text
+    left = _leave(client, pid, "alice")
+    assert left.status_code == 200, left.text
+    assert "alice" not in _project_handles(client, pid)
+    # 门也关了：名册那条路由拒绝她，而小队那一行还认得她。
+    assert not _reads(client, pid, "alice")
+    assert _on_team(client, pid, "alice")
 
 
 def test_an_unverified_caller_cannot_leave(client, bearer):
@@ -352,14 +412,15 @@ async def _user(factory: Any, username: str) -> int:
         return uid
 
 
-def test_a_teammate_is_told_to_leave_the_team(client):
-    """访问来自小队的人退不了项目：他退得出的是小队。
+def test_a_teammate_leaves_the_project_without_leaving_the_team(client):
+    """访问来自小队的人退得掉这个项目，退的是这个项目：小队那一行不动。
 
-    报错必须指向小队 —— 否则他在项目这边点一次、被拒一次，永远不知道该去哪儿。
-    席位也不该被这位退场顺手撤掉：他的访问本来就不是项目发的（``list_members``
-    读时继承，不留第二份授权），退的是小队。"""
+    从前的答复是 409，报错指向小队 —— 那时「在小队里」和「在这个项目里」是同一句
+    话，他在这边点一次被拒一次，永远不知道该去哪儿。现在按下它写下
+    ``ProjectMemberExclusion``，而小队那边一个字节没变，所以该小队的另一个项目他
+    照常进得去。"""
 
-    async def seed() -> str:
+    async def seed() -> tuple[str, str]:
         factory = client.test_request_factory
         captain = await _user(factory, "captain")
         mate = await _user(factory, "mate")
@@ -373,14 +434,18 @@ def test_a_teammate_is_told_to_leave_the_team(client):
             project = await ProjectService(session).create(
                 name="P", owner_handle="captain", team_id=team.id
             )
+            other = await ProjectService(session).create(
+                name="Q", owner_handle="captain", team_id=team.id
+            )
             await session.commit()
-            return str(project.id)
+            return str(project.id), str(other.id)
 
-    pid = client.portal.call(seed)
-
-    assert "mate" in _project_handles(client, pid)
+    pid, other = client.portal.call(seed)
+    assert _reads(client, pid, "mate")
+    assert _reads(client, other, "mate")
 
     r = _leave(client, pid, "mate")
-    assert r.status_code == 409, r.text
-    assert "团队" in r.json()["error"]["message"]
-    assert "mate" in _project_handles(client, pid)
+    assert r.status_code == 200, r.text
+    assert "mate" not in _project_handles(client, pid)
+    assert not _reads(client, pid, "mate")
+    assert _reads(client, other, "mate"), "小队那一行不该被动过"

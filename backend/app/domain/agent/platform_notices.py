@@ -165,6 +165,9 @@ EVENT_API_RETRY: Final = "api_retry"
 #: 这一轮开着，而跑它的机器够不着（离线、会话进程还没起来、连接在换）。平台在等
 #: 它回来；回来了同一行改成已恢复（`meta.state = "over"`）。
 EVENT_DEVICE_WAITING: Final = "device_waiting"
+#: 一间干过活的工作话题还没有实况文档，平台请刚才在这里干活的队友补第一版
+#: （`domain/topic/doc_nudge.py`）。每间房最多一次。
+EVENT_DOC_MISSING: Final = "doc_missing"
 #: 项目 `.mcp.json` 里的一个远程 MCP 服务器还没连接（或要重新连接、缺一个值），这
 #: 个房间的会话用不了它。每个房间每个服务器只说一次：要做的事在项目设置里，不在
 #: 这一轮里，说第二遍不会让它更快发生。`meta.server` 是服务器名。
@@ -229,6 +232,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ROUTINE_PROPOSED,
         EVENT_API_RETRY,
         EVENT_DEVICE_WAITING,
+        EVENT_DOC_MISSING,
         EVENT_MCP_NOT_CONNECTED,
     }
 )

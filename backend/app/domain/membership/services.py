@@ -124,7 +124,8 @@ class MemberService:
 
         People never come in this way: a person outside the team is an external
         member only through an invitation they accept (:class:`InvitationService`),
-        and a person on the team is already in every project of it.
+        and a person on the team is already in every project of it — except the
+        ones they left, which is what an invitation gets them back into.
         """
         await self._ensure_project(project_id)
         await self.require_manager(project_id, actor)
@@ -151,8 +152,11 @@ class MemberService:
     ) -> None:
         """Take an external member (or an AI teammate's seat) out of the project.
 
-        Team members have no row here: they are in the project because they are
-        in the team, and they leave it by leaving the team.
+        A team member is NOT removable this way and that has not changed: there
+        is no row here to delete, so a manager's request is a 404 and the person
+        stays in the project through the team. Making it work is one line —
+        recording the same ``ProjectMemberExclusion`` :meth:`leave` records — and
+        deliberately not done here.
         """
         await self._ensure_project(project_id)
         await self.require_manager(project_id, actor)
@@ -168,13 +172,18 @@ class MemberService:
         await self._repo.delete(member)
 
     async def leave(self, *, project_id: uuid.UUID, actor: Actor) -> None:
-        """An external member leaves the project on their own.
+        """Anyone in this project leaves it on their own — the project, not the team.
 
-        Refused, each before anything is written: an unverified caller; the
-        owner, who must first hand the project to someone else; a team member,
-        whose access is the team's and ends by leaving the team; and anyone with
-        neither a row nor a seat here. Removing the last owner of a room is
-        refused inside ``revoke_project_seats``, before it deletes anything.
+        「退出项目」退的是这个项目。它以前只对外部成员成立：队友的访问读时从小队
+        继承，「在小队里」和「在这个项目里」是同一句话，于是队友按下去只能拿到
+        409（去退小队）。现在按下它写下 ``(project_id, handle)`` 那条项目级事实
+        （``ProjectMemberExclusion``），人还在小队里、名额和别的小队项目一概不动。
+
+        Refused, each before anything is written: an unverified caller; the owner,
+        who must first hand the project to someone else; and anyone with neither a
+        row, a seat, nor the team. Removing the last owner of a room is refused
+        inside ``revoke_project_seats``, before it deletes anything — and that
+        refusal writes nothing here either, including the exclusion.
         """
         project = await self._ensure_project(project_id)
         if not actor.authenticated:
@@ -182,23 +191,44 @@ class MemberService:
         if project.owner_handle and project.owner_handle == actor.handle:
             raise ForbiddenError("项目所有者不能退出项目，需要先把项目转让给别人")
         member = await self._repo.get(project_id=project_id, user_handle=actor.handle)
-        if member is None and await self._on_team(project, actor):
-            raise ConflictError("你是这个团队的成员，退出团队才会离开它的项目")
-        revoked = await TopicMemberService(self._session).revoke_project_seats(
+        on_team = await self._on_team(project, actor)
+        if member is None and not on_team:
+            # 只在小队/名册之外的人：他在这份名册上只剩房间席位（建房间时给的），
+            # 撤掉就是退出；一个席位也没有，说明他和这个项目本来就没关系。
+            revoked = await TopicMemberService(self._session).revoke_project_seats(
+                project_id=project_id, member_handle=actor.handle
+            )
+            if not revoked:
+                raise ConflictError("Not a member")
+            return
+        # 席位先撤：它是**进得来这个项目的全部话题**的另一张凭据，只删名册那一行
+        # 的话人还是每个房间都进得去。这一步的拒绝（某间房最后一个 owner）落在这里
+        # 之前，所以它一抛，这条事实也好、上面那两处也好，一个字节都还没动。
+        await TopicMemberService(self._session).revoke_project_seats(
             project_id=project_id, member_handle=actor.handle
         )
-        if member is None and not revoked:
-            raise ConflictError("Not a member")
         if member is not None:
             await self._repo.delete(member)
+        if on_team:
+            # 「他在小队里，但不属于这个项目」：小队那条主张读时继承，一行也不删
+            # （那是团队的事），记下的是这个项目这边的那句话。
+            await self._repo.exclude(project_id=project_id, user_handle=actor.handle)
 
     async def _on_team(self, project: Project, actor: Actor) -> bool:
         from app.domain.team.services import team_service
+        from app.domain.user.services import user_by_handle
 
-        if actor.user_id is None:
+        user_id = actor.user_id
+        if user_id is None:
+            # 小队成员按 int id 记，而一条会话 token 不一定带着它（``app.auth
+            # .caller``）—— ``_team_admin`` 走的是同一条解析。判错这一条会把「队友
+            # 退出项目」读成「他和这个项目没关系」。
+            user = await user_by_handle(self._session, actor.handle)
+            user_id = user.id if user is not None else None
+        if user_id is None:
             return False
         return await team_service(self._session).is_team_member(
-            project.team_id, actor.user_id
+            project.team_id, user_id
         )
 
 
@@ -238,6 +268,11 @@ class InvitationService:
         行，读的时候合出来（``membership.roster.roster``）。只查表的话，一个已经通
         过小队在项目里的人会被再邀请一次；而接受之后落下的那一行，会在他退队之后
         继续生效，正是要避免的事。
+
+        反过来说，「退出项目」的队友在这里就是要回答「不在」——他不在名册上，所以
+        邀请得出去，而接受那一步（``respond``）落下的名册行会把
+        ``ProjectMemberExclusion`` 清掉（``MemberRepository.add``），这就是回来的
+        那条路。
         """
         from app.domain.membership.roster import roster
 

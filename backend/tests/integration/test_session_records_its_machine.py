@@ -325,12 +325,14 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(business_db_factory, 
 async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     client, room, monkeypatch
 ):
-    """换过骨架的房间，冷启动只归最后落位的那条会话——别的骨架一概不认领。
+    """换过骨架的房间，冷启动时每个骨架只认领自己那行——别的骨架的一概不认。
 
     会话行按 (房间, agent, 骨架) 各占一行，而换骨架的时候没有任何地方去把旧那行
-    的位置清空，所以这样的房间带着两行非空的 ``runtime_location``。房间的屏只有
-    一块：认错了，就是拿 Claude Code 的拼装器去翻译 pi 说的话，再当成自己的报进
-    房间。
+    的位置清空，所以这样的房间带着两行非空的 ``runtime_location``。收养清单把同
+    一座位的两行都交出来（多 agent 的房间每个座位都要被接回来），防认错靠两层：
+    屏只有一块，``CentralChannel.restore`` 按 (房间, 机器) 去重后只认回一次；
+    会话归谁由各骨架按自己 harness 的行认，旧骨架那行的 runner 早已随换骨架被
+    关掉，ping 不应答（这里的桩不报 alive），认不回来。
 
     认领的判据在 runtime 那一侧，是它自己的骨架——通道答不出这个，一条
     ``CentralChannel`` 同时被几个骨架的 runtime 包着（``build_compute_pool``）。
@@ -356,7 +358,11 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
 
     async with client.test_factory() as db:
         placed = await AgentSessionService(db).placed_sessions()
-    assert [(row[1], row[3]) for row in placed] == [(topic, "pi")]
+    # 收养清单按座位出：同一座位换过骨架的两行都在，新落的在前。
+    assert [(row[1], row[3]) for row in placed] == [
+        (topic, "pi"),
+        (topic, "claude-code"),
+    ]
 
     central = channel(client, monkeypatch)
     central.restore_screens = AsyncMock()
