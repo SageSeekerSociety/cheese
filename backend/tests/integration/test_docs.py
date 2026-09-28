@@ -264,7 +264,7 @@ def test_a_doc_that_reads_like_a_log_is_written_anyway_and_flagged(client):
 
 def test_a_doc_written_as_state_comes_back_with_no_warnings(client):
     tid = _topic(client)
-    state = "## 目标\n\n支持翻页。\n\n## 当前结论\n\n用 cursor，不用 offset。\n"
+    state = "## 目标\n\n支持翻页。\n\n## 现状\n\n用 cursor，不用 offset。\n"
 
     r = client.put(
         f"/topics/{tid}/doc",

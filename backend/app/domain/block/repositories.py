@@ -476,7 +476,7 @@ class BlockRepository:
     async def doc_roots(self, topic_ids: list[uuid.UUID]) -> dict[uuid.UUID, Block]:
         """Several rooms' living docs at once, keyed by room id.
 
-        总览要列每个活跃话题的「当前结论」：一间房一次往返，而这是每一轮都要拼
+        总览要列每个活跃话题的「现状」：一间房一次往返，而这是每一轮都要拼
         的东西，170 间房就是 170 次。只取房间自己那一份（``task_id`` 为空）——
         线程的文档是那张卡的东西，不是房间的状态。
         """
