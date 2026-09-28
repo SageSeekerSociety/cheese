@@ -3,6 +3,9 @@ import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
+
+import { t } from '@/i18n'
 import { loadCachedProjects } from '@/lib/projectCache'
 import { DEFAULT_SHELL, shellFor } from '@/lib/shell'
 import { myHandle } from '@/me'
@@ -19,6 +22,7 @@ defineOptions({ name: 'WorkspaceEntry' })
 
 const props = defineProps<{ projectId: string }>()
 const { mdAndUp } = useDisplay()
+const layout = useWorkspaceLayout()
 const route = useRoute()
 const router = useRouter()
 const store = useWorkspaceStore()
@@ -73,5 +77,21 @@ watch(
 <template>
   <!-- 手机: 这一层就是话题列表。桌面上这个地址什么都不画——它只是去第一屏路上
        的一瞬，画点什么就是闪一下。 -->
-  <ProjectSidebar v-if="!mdAndUp" :project-id="projectId" page />
+  <ProjectSidebar v-if="layout === 'phone'" :project-id="projectId" page />
+  <!-- 两栏（平板）: 话题列表是左边那一栏（ProjectSidebar 常驻的那一份），这里是还
+       没打开房间时的右边。 -->
+  <div v-else-if="layout === 'split'" class="workspace-unselected">
+    <span class="t-body c-muted">{{ t('work.room.unselected') }}</span>
+  </div>
 </template>
+
+<style scoped>
+.workspace-unselected {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: var(--surface);
+}
+</style>

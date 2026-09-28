@@ -235,6 +235,7 @@ import { pendingSudo } from '@/utils/sudo'
 import { useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import ConsentGate from './components/account/ConsentGate.vue'
 import MyApp from './components/common/MyApp.vue'
@@ -310,11 +311,12 @@ router.isReady().then(async () => {
 // 位移加淡入已经说清了方向。动的是装页面的那一层（#app-scrollable），顶栏和底栏不
 // 动：它们是框，不是页。减弱动效时不演（见样式）。
 const display = useDisplay()
+const workspaceLayout = useWorkspaceLayout()
 const contentRef = ref<HTMLElement | null>(null)
 const MOTION_CLASSES = ['page-enter--forward', 'page-enter--back', 'page-enter--fade']
 router.afterEach((to, from, failure) => {
   if (failure || display.mdAndUp.value) return
-  const motion = pageMotion(to, from, router)
+  const motion = pageMotion(to, from, router, workspaceLayout.value === 'split')
   if (!motion) return
   // 等新页画进 DOM（同一个微任务里、浏览器上屏之前）再起步，第一帧就是它的起点。
   void nextTick(() => {

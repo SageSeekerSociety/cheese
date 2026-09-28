@@ -1,4 +1,6 @@
-import type { RouteLocationNormalized, RouteLocationNormalizedLoaded, Router } from 'vue-router'
+import type { RouteLocationNormalized, RouteLocationNormalizedLoaded, Router, RouteRecordNameGeneric } from 'vue-router'
+
+import { showsTopicList } from '@/composables/useWorkspaceLayout'
 
 /**
  * 手机上换页时新页从哪边进来。
@@ -14,7 +16,9 @@ import type { RouteLocationNormalized, RouteLocationNormalizedLoaded, Router } f
  */
 export type PageMotion = 'forward' | 'back' | 'fade' | null
 
-type Location = Pick<RouteLocationNormalized, 'path' | 'meta' | 'params' | 'matched'>
+type Location = Pick<RouteLocationNormalized, 'path' | 'meta' | 'params' | 'matched'> & {
+  name?: RouteRecordNameGeneric | null
+}
 
 /** 顺着 backTo 往上走几步到顶。解析不了（缺参数、名字不存在）就停在那儿。 */
 export function stackDepth(route: Location, router: Router): number {
@@ -35,9 +39,15 @@ export function stackDepth(route: Location, router: Router): number {
   return depth
 }
 
-export function pageMotion(to: Location, from: Location, router: Router): PageMotion {
+/**
+ * `split`：话题列表和房间正并排成两栏（平板，见 useWorkspaceLayout）。那时打开、换、
+ * 关掉一个房间都只是右边那一栏换了内容，左边的列表没动，所以只淡入：整屏往里挪
+ * 24px 说的是「走进了下一层」，而人还站在同一屏上。
+ */
+export function pageMotion(to: Location, from: Location, router: Router, split = false): PageMotion {
   if (!from.matched.length) return null
   if (to.path === from.path) return null
+  if (split && showsTopicList(to.name) && showsTopicList(from.name)) return 'fade'
   const deeper = stackDepth(to, router) - stackDepth(from, router)
   if (deeper > 0) return 'forward'
   if (deeper < 0) return 'back'

@@ -1,5 +1,7 @@
 <template>
-  <v-bottom-navigation class="bottom-tabs" :elevation="0" bg-color="background" grow>
+  <!-- order="-2"：平板上话题列表和房间并排时，左边那一栏（SplitListColumn，-1）是从顶
+       到底的一整条；底栏排在它前面，才仍然铺满整个底边，而不是只垫在右边那栏下面。 -->
+  <v-bottom-navigation class="bottom-tabs" :elevation="0" bg-color="background" grow order="-2">
     <!-- 收到的就是手机那份清单（destinations.ts 的 tabItems），这里不再过滤：
          底栏装什么是清单的事，不是渲染的事。 -->
     <v-btn

@@ -3,9 +3,12 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
+
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 import { useWorkspaceStore } from '@/stores/workspace'
+import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 
 // 项目侧栏, rendered through the app-wide `sidebar` named view so it survives
 // every navigation inside the project (ProjectShell's doc comment says why).
@@ -23,6 +26,14 @@ const { mdAndUp } = useDisplay()
 const route = useRoute()
 const router = useRouter()
 const store = useWorkspaceStore()
+const layout = useWorkspaceLayout()
+
+// 两栏（平板）时，常驻的这一份在列表和房间那两层画成左边一栏：它挂在项目框的
+// sidebar 视图上，换话题时不卸载，只有右边的房间在换。别的层（看板、文档、设置）
+// 仍是一整页，这一栏不画。
+const column = computed(
+  () => !props.page && layout.value === 'split' && showsTopicList(route.name) && !store.accessDenied
+)
 
 // Active state is read off the URL, never off a local flag.
 const activeTopicId = computed(() => (route.name === 'workspace-topic' ? String(route.params.topicId) : null))
@@ -77,27 +88,30 @@ async function onArchiveTopic(topicId: string) {
        一颗「＋新建话题」，按下去只会撞一个 403。说明那一屏已经说了他该干什么，
        旁边不该再摆一排他做不到的事。左边那条项目 rail 不在这个组件里，所以「离开
        这里」的路还在。 -->
-  <TopicSidebar
-    v-if="!store.accessDenied && (page || mdAndUp)"
-    :page="page"
-    :width="store.railWidth"
-    :projects="store.projects"
-    :selected-project-id="store.projectId"
-    :topics="store.topics"
-    :selected-topic-id="activeTopicId"
-    :loading-topics="store.loadingTopics"
-    :creating-topic="creatingTopic"
-    :active-docs="activeDocs"
-    :unread-map="store.unreadMap"
-    :private-unread-map="store.privateUnreadMap"
-    @update:width="store.setRailWidth"
-    @select-topic="openTopic"
-    @hover-topic="onHoverTopic"
-    @leave-topic="cancelPrefetch"
-    @select-docs="openDocs"
-    @archive-topic="onArchiveTopic"
-    @unarchive-topic="store.unarchive"
-    @rename-topic="(p) => store.renameTopic(p.id, p.title)"
-    @create-topic="onCreateTopic"
-  />
+  <SplitListColumn :active="column">
+    <TopicSidebar
+      v-if="!store.accessDenied && (page || column || mdAndUp)"
+      :page="page || column"
+      :column="column"
+      :width="store.railWidth"
+      :projects="store.projects"
+      :selected-project-id="store.projectId"
+      :topics="store.topics"
+      :selected-topic-id="activeTopicId"
+      :loading-topics="store.loadingTopics"
+      :creating-topic="creatingTopic"
+      :active-docs="activeDocs"
+      :unread-map="store.unreadMap"
+      :private-unread-map="store.privateUnreadMap"
+      @update:width="store.setRailWidth"
+      @select-topic="openTopic"
+      @hover-topic="onHoverTopic"
+      @leave-topic="cancelPrefetch"
+      @select-docs="openDocs"
+      @archive-topic="onArchiveTopic"
+      @unarchive-topic="store.unarchive"
+      @rename-topic="(p) => store.renameTopic(p.id, p.title)"
+      @create-topic="onCreateTopic"
+    />
+  </SplitListColumn>
 </template>
