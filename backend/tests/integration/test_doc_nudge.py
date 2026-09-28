@@ -3,15 +3,22 @@
 钉住的：干过活 + 文档空 + 没提醒过 → 点名这间房里最近动过手的 agent 席位、只提醒
 一次；文档有内容、只寒暄了两句、私聊，都不提醒。`submit` 换成记录器，并像真的
 那条路一样在房间里落下那条平台事件——「提醒过没有」读的正是它。
+
+「是不是工作房间」不自答，用的是 `agent/chat.py` 递给它的那个函数——提示词给不给
+「建第一版实况文档」那一段问的是同一个答案，两边必须是同一份声明（结论 19）。
+
+最后一条不走 `check`，走轮末真的那条：`nudge` 起个后台任务、睡一觉再问。
 """
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 
 import pytest
 import redis
 
 from app.core.config import settings
+from app.domain.agent.chat import ChatService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.topic import doc_nudge
 from app.domain.topic.models import Topic
@@ -99,7 +106,12 @@ def _check(client, room_id: uuid.UUID, sent: list) -> bool:
 
     before = len(sent)
     nudged = asyncio.run(
-        doc_nudge.check(room_id, submit=submit, session_factory=client.test_factory)
+        doc_nudge.check(
+            room_id,
+            submit=submit,
+            is_a_work_room=ChatService.room_is_a_work_room,
+            session_factory=client.test_factory,
+        )
     )
     for s in sent[before:]:
         _add(
@@ -172,15 +184,54 @@ def test_small_talk_is_not_work(client, alice):
     assert sent == []
 
 
+def _make_private(client, room: uuid.UUID) -> None:
+    async def go(s):
+        (await s.get(Topic, room)).is_private = True
+
+    _run(client, go)
+
+
 def test_a_private_chat_has_no_doc_to_keep(client, alice):
     room = _room(client, alice)
     agent = _agent(client, room)
     _work(client, room, agent, tools=doc_nudge.MIN_TOOL_EVENTS + 3)
-
-    async def make_private(s):
-        (await s.get(Topic, room)).is_private = True
-
-    _run(client, make_private)
+    _make_private(client, room)
     sent: list = []
     assert _check(client, room, sent) is False
     assert sent == []
+
+
+def test_the_turn_end_path_carries_that_answer(client, alice, monkeypatch):
+    """轮末真的那条路（睡一觉、再 check）也把「是不是工作房间」带到，且带的就是
+    提示词用的那个答案：`is_private` 的房间不提醒。
+
+    轮末到这里中间隔着两层函数，中间把它丢了不会有别的东西报错——`_run_quietly`
+    把异常咽掉，表现是提醒永远不来。
+    """
+    work = _room(client, alice)
+    _work(client, work, _agent(client, work), tools=doc_nudge.MIN_TOOL_EVENTS)
+    private = _room(client, alice)
+    _work(client, private, _agent(client, private), tools=doc_nudge.MIN_TOOL_EVENTS)
+    _make_private(client, private)
+
+    sent: list = []
+
+    def submit(room, seat, prompt, line, meta):
+        sent.append(room)
+
+    monkeypatch.setattr(doc_nudge, "runner_submit", lambda chat: submit)
+    # 真的 `chat_service` 上取的就是这两个：`session_factory` 是属性，
+    # `room_is_a_work_room` 是 `ChatService` 上那个静态方法。
+    chat = SimpleNamespace(
+        session_factory=client.test_factory,
+        room_is_a_work_room=ChatService.room_is_a_work_room,
+    )
+
+    async def go():
+        await asyncio.gather(
+            doc_nudge._run_quietly(work, chat, chat.room_is_a_work_room, 0),
+            doc_nudge._run_quietly(private, chat, chat.room_is_a_work_room, 0),
+        )
+
+    asyncio.run(go())
+    assert sent == [work]

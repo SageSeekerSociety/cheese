@@ -2129,8 +2129,14 @@ class AgentWorkRunner:
                     channel, {"type": "turn_finished", "turn_id": str(turn_id)}
                 )
                 # 会话没接手收尾的那种轮次，结束就在这里：和会话自报结束那一处
-                # （`ChatService._set_hook_activity`）一样看一眼文档。
-                doc_nudge.nudge(topic_id, chat_service)
+                # （`ChatService._set_hook_activity`）一样看一眼文档。「是不是工作
+                # 房间」问的是同一个答案，只是这里不 import `chat.py`，经手上的
+                # `chat_service` 取。
+                doc_nudge.nudge(
+                    topic_id,
+                    chat_service,
+                    is_a_work_room=chat_service.room_is_a_work_room,
+                )
             # Drop the liveness mark here, not in `_execute`: a turn killed by
             # task cancellation (CancelledError is a BaseException — it misses
             # every `except` inside `_execute`, including the registry cleanup)

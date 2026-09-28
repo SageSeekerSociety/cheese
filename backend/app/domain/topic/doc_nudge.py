@@ -5,8 +5,9 @@
 篇都没建过。文档是给没参与讨论的人看的，它有没有不该看模型的脾气，所以一轮结束
 时平台自己看一眼——
 
-* **是一间工作话题**：`topic` 类、进行中、不是私聊（私聊没有这份文档要维护；项目
-  根话题是 `root` 类，总览另有一套）。
+* **是一间工作话题**：`topic` 类、进行中，而且是按房间的规矩来的一间。项目根话题
+  是 `root` 类，总览另有一套；私聊不是这里要补的那间房，因为提示词根本不会给私聊
+  「本话题还没有实况文档」那一段（见下）。
 * **干过活**：房间里 agent 已经调过 :data:`MIN_TOOL_EVENTS` 次以上工具、发过至少一
   条消息。寒暄、一句话就答完的问题到不了这条线。
 * **文档还空着**：房间自己那份文档块不存在，或只有空白。
@@ -15,6 +16,12 @@
 
 四条都成立，就点名刚才在这里干活的那个队友（名册上的 agent 席位里最近一个动过手
 的；找不到就回落到房间的默认席位），用一条平台事件起一轮让它补第一版。
+
+**「是不是工作房间」不由这里回答。** 提醒要跟提示词说同一句话：`agent/chat.py`
+给不给「本话题还没有实况文档」那一段，问的是 `_assemble_turn` 的 `needs_place`，
+而那是 `_is_dm`（`is_private` 全仓唯一的读点）推出来的两个答案之一。本模块再问一遍
+那个布尔，就是同一件事多一份会漂移的声明（结论 19、ARCH §9.1 判据②），所以调用方
+把它带进来（`is_a_work_room`）。
 
 和 :mod:`app.domain.topic.naming` 一样全程安静失败：它是锦上添花，不能让结束的那
 一轮因为它出错。
@@ -39,7 +46,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -48,6 +54,9 @@ logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 #: (room_id, 点名的 agent 席位, 给 agent 的提示词, 房间里那一行, 事件 meta)
 Submit = Callable[[uuid.UUID, str, str, str, dict], Awaitable[None] | None]
+#: 这间房按不按房间的规矩来（实况文档、租地点）。由调用方从 `is_private` 唯一的
+#: 读点（`agent/chat.py` 的 `_is_dm`）推出来带进来，见模块开头。
+WorkRoom = Callable[[Topic], bool]
 
 #: 「干过活」的门槛：agent 在这间房里调过的工具次数。一次寒暄通常是零到两次。
 MIN_TOOL_EVENTS = 5
@@ -85,8 +94,17 @@ async def _reminded(session: AsyncSession, room_id: uuid.UUID) -> bool:
 
 
 async def _doc_is_empty(session: AsyncSession, room_id: uuid.UUID) -> bool:
-    root = await BlockRepository(session).doc_root(room_id)
-    return root is None or not (root.content or "").strip()
+    # 走本领域的 service 读它，不是直接摸 block 的 repository：那条边绕过了
+    # 「哪些行算这间房的、线程的那份不算」这层判断
+    # （tests/unit/test_domain_import_guard.py）。
+    #
+    # 就地 import 而不是写在上头：`topic.services` 往上 import 到
+    # `notification.services`，那一头又 import `agent.runtime`，而 runtime import
+    # 本模块 —— 模块级的这条边会绕回自己，`import app.api.deps` 当场就炸。
+    from app.domain.topic.services import TopicService
+
+    doc = await TopicService(session).doc_of_room(room_id)
+    return doc is None or not (doc.content or "").strip()
 
 
 async def _worked(session: AsyncSession, room_id: uuid.UUID, agents: list[str]) -> bool:
@@ -119,9 +137,14 @@ async def check(
     room_id: uuid.UUID,
     *,
     submit: Submit,
+    is_a_work_room: WorkRoom,
     session_factory: SessionFactory | None = None,
 ) -> bool:
-    """看一眼 ``room_id``；该提醒就提醒，返回是否提醒了。"""
+    """看一眼 ``room_id``；该提醒就提醒，返回是否提醒了。
+
+    ``is_a_work_room`` 由调用方带进来：全仓只有一个地方读 ``is_private``
+    （``agent/chat.py`` 的 ``_is_dm``），这里要的正是它推出来的那个答案。
+    """
     redis = get_redis_client()
     lock = f"doc-nudge:lock:{room_id}"
     if redis is not None:
@@ -138,7 +161,7 @@ async def check(
             room is None
             or room.kind != TopicKind.topic
             or room.status != TopicStatus.active
-            or room.is_private
+            or not is_a_work_room(room)
         ):
             return False
         if not await _doc_is_empty(session, room_id):
@@ -184,23 +207,34 @@ def runner_submit(chat_service) -> Submit:
 _tasks: set[asyncio.Task] = set()
 
 
-def nudge(room_id: uuid.UUID, chat_service, *, settle_s: float = SETTLE_S) -> None:
+def nudge(
+    room_id: uuid.UUID,
+    chat_service,
+    *,
+    is_a_work_room: WorkRoom,
+    settle_s: float = SETTLE_S,
+) -> None:
     """一轮在 ``room_id`` 结束了。Fire and forget，调用方不等、也不会因它出错。"""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    task = loop.create_task(_run_quietly(room_id, chat_service, settle_s))
+    task = loop.create_task(
+        _run_quietly(room_id, chat_service, is_a_work_room, settle_s)
+    )
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
 
 
-async def _run_quietly(room_id: uuid.UUID, chat_service, settle_s: float) -> None:
+async def _run_quietly(
+    room_id: uuid.UUID, chat_service, is_a_work_room: WorkRoom, settle_s: float
+) -> None:
     try:
         await asyncio.sleep(settle_s)
         await check(
             room_id,
             submit=runner_submit(chat_service),
+            is_a_work_room=is_a_work_room,
             session_factory=getattr(chat_service, "session_factory", None),
         )
     except Exception:  # noqa: BLE001 — 提醒失败不打扰任何人
