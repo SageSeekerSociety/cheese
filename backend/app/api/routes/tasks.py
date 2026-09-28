@@ -3611,7 +3611,11 @@ async def list_ai_advice_conversations_grouped(
     # Frontend `TasksApi.getGroupedConversations` types the response as
     # { conversations: ConversationGroupSummary[] }; "groups" was a Python-
     # side name that left data.conversations undefined and nothing rendered.
-    groups = await service.list_conversations_grouped(task_id=task_id)
+    # The sidebar it feeds is 「我的对话」 (新建/搜索/删除对话都在自己那一列上，
+    # 标题是提问的前 60 字)，so the list is the caller's own — see the service/repo.
+    groups = await service.list_conversations_grouped(
+        task_id=task_id, user_id=auth_user.user_id
+    )
     return {
         "code": 200,
         "message": "OK",
@@ -3641,7 +3645,7 @@ async def get_ai_advice_conversation(
     await _ensure_task_visible_for_advice(db=db, task_id=task_id, auth_user=auth_user)
     try:
         payload = await service.get_conversation(
-            task_id=task_id, conversation_id=conversation_id
+            task_id=task_id, conversation_id=conversation_id, user_id=auth_user.user_id
         )
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
@@ -3733,11 +3737,14 @@ async def delete_ai_advice_conversation(
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
     await _ensure_task_visible_for_advice(db=db, task_id=task_id, auth_user=auth_user)
+    # 删的就是读的那一个地址（题 + id + 主人），所以没有第二次判据：delete 自己
+    # 会用同一句话拒绝「不是你的」和「不存在」。
     try:
-        await service.get_conversation(task_id=task_id, conversation_id=conversation_id)
+        await service.delete_conversation(
+            task_id=task_id, conversation_id=conversation_id, user_id=auth_user.user_id
+        )
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
-    await service.delete_conversation(task_id=task_id, conversation_id=conversation_id)
     return {"code": 200, "message": "OK", "data": None}
 
 
