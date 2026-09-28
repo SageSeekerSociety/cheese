@@ -1057,7 +1057,7 @@ export interface TopicComputeDevice {
   online: boolean
 }
 
-// GET /topics/{id}/compute-profile — the room's work computers (结论 60).
+// GET /topics/{id}/compute-profile — the room's one work computer (一个话题一个容器, 2026-09-28).
 // `choice` is what an agent that has not started yet will be given (room choice
 // → project default → deployment default); `sessions` is each agent session and
 // the machine it works on, `choice: null` for one that has not started working;
