@@ -420,7 +420,7 @@ class Runner(runner.Runner[Journal]):
             f"exec {command} {flag}",
             # The session's own helpers reach this runner here, to change the
             # session while it runs (`executor_transport.register_project_hooks`).
-            env={**env, SESSION_SOCKET: runner.socket_path(self.state)},
+            env=self.agent_env({**env, SESSION_SOCKET: runner.socket_path(self.state)}),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=self.errors,
@@ -602,6 +602,10 @@ class Runner(runner.Runner[Journal]):
             self.journal.remember("last_work", self.work)
         self.working, self.work, self.unsolicited = False, None, False
         self.interrupting = False
+        # A person's message the build has not taken yet opens the next turn,
+        # and it is that turn which owes the answer.
+        if self.owed not in self.sent:
+            self.reply_settled()
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -852,6 +856,7 @@ class Runner(runner.Runner[Journal]):
         images: list[dict] | None = None,
         work_id: str | None = None,
         steering: bool = False,
+        owes_reply: bool = False,
     ) -> dict:
         """A user message, or words said to a session that is working.
 
@@ -870,6 +875,7 @@ class Runner(runner.Runner[Journal]):
             identifier,
             {"text": text, "images": images or [], "work_id": work_id, "how": how},
             submit,
+            owes_reply=owes_reply,
         )
 
     async def control(self, request: dict, timeout: float = CONTROL_TIMEOUT_S) -> dict:
@@ -916,6 +922,7 @@ class Runner(runner.Runner[Journal]):
                 images=params.get("images"),
                 work_id=params.get("work_id"),
                 steering=method == "steer",
+                owes_reply=bool(params.get("owes_reply")),
             )
         if method == "interrupt":
             self.interrupting = self.working

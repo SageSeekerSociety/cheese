@@ -84,6 +84,13 @@ class Runner(runner.Runner[Journal]):
         self.journal.append(event)
         if self.session is not None:
             self.session.observe(event)
+            # Codex takes a message said mid-turn into that turn (`turn/steer`
+            # needs one in progress), so a finished turn has read every one.
+            if (
+                event.get("method") == "turn/completed"
+                and thread_id == self.session.thread_id
+            ):
+                self.reply_settled()
 
     async def start(
         self,
@@ -153,6 +160,8 @@ class Runner(runner.Runner[Journal]):
         text: str,
         images: list[str] | None = None,
         work_id: str | None = None,
+        *,
+        owes_reply: bool = False,
     ) -> dict:
         content: dict = {"text": text, "images": images or []}
         if work_id is not None:
@@ -161,6 +170,7 @@ class Runner(runner.Runner[Journal]):
             identifier,
             content,
             lambda: self._submit(identifier, text, images, work_id),
+            owes_reply=owes_reply,
         )
 
     async def _submit(
@@ -211,6 +221,7 @@ class Runner(runner.Runner[Journal]):
                 params["text"],
                 params.get("images"),
                 params.get("work_id"),
+                owes_reply=bool(params.get("owes_reply")),
             )
         if method == "interrupt":
             return {

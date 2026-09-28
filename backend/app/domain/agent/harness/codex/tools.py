@@ -16,6 +16,7 @@ from app.domain.agent.executor_transport import (
     RemoteClient,
     session_path,
 )
+from app.domain.agent.harness.driven.runner import reply_owed
 
 # The executor implements these tools. The platform's own tools are not the
 # executor's to list: they are the constant table (`platform_tools`).
@@ -63,7 +64,12 @@ def platform_tools():
 
 
 class RemoteTools:
-    def __init__(self, target: dict, mirror: Path | None = None):
+    def __init__(
+        self,
+        target: dict,
+        mirror: Path | None = None,
+        reply_file: Path | None = None,
+    ):
         self.client = RemoteClient(target)
         self.routes: dict[str, tuple[str, str]] = {}
         self.platform = platform_tools()
@@ -74,6 +80,14 @@ class RemoteTools:
         self.mirror = mirror
         # What the mirror holds: its path -> the (size, mtime) it was read at.
         self.mirrored: dict[str, tuple[int, int]] | None = None
+        # Where the runner says a person is waiting on an answer
+        # (`driven/runner.py`), the thread that owes it — a subagent's thread
+        # reports to its parent, not to the room — and the debt already
+        # answered: a reply and the next call can come in one step, and the
+        # reply's call arrives here first.
+        self.reply_file = reply_file
+        self.main_thread: str | None = None
+        self.answered: str | None = None
 
     def skill_roots(self) -> list[str]:
         assert self.mirror is not None
@@ -235,6 +249,15 @@ class RemoteTools:
     async def __call__(self, method: str, params: dict) -> dict:
         if method != "item/tool/call":
             raise ValueError(f"Unsupported Codex server request: {method}")
+        if self.main_thread in (None, params.get("threadId")):
+            owed = reply_owed(self.reply_file)
+            if owed is not None and owed["id"] != self.answered:
+                if params["tool"] not in owed["answers"]:
+                    return {
+                        "success": False,
+                        "contentItems": [{"type": "inputText", "text": owed["reason"]}],
+                    }
+                self.answered = owed["id"]
         server, tool = self.routes[params["tool"]]
         if server == PLATFORM:
             return await asyncio.to_thread(

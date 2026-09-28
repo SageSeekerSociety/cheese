@@ -83,10 +83,43 @@ async function sendUserFile($, tool_use_id, args) {
   return JSON.parse(response.content[0].text);
 }
 
+// A person's message the session has not answered yet (`driven/runner.py`,
+// which decides what owes an answer, what answers it and what the refusal
+// says). The runner names the file in CHEESE_REPLY_OWED (spelled out at the
+// call: the loader takes only a literal variable name); its contents are all
+// this side needs, so the rule is not restated here.
+//
+// The debt this session has already answered. Kept here rather than in the
+// file: a reply and the next tool call can be in one assistant message, and
+// this process sees the reply's call before the sibling's — the runner would
+// only hear of it afterwards.
+let answered = null;
+
+async function owedReply($) {
+  const path = await $.env.get("CHEESE_REPLY_OWED");
+  if (!path || !(await $.fs.exists(path))) return null;
+  try {
+    const owed = JSON.parse(await $.fs.read(path, { as: "text" }));
+    return owed && owed.id && owed.id !== answered ? owed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     // agentId identifies the caller; native MCP tools reject it as an argument.
     const { tool, tool_use_id, agentId, ...args } = e;
+    // Only the session itself answers the room. A subagent reports to it and
+    // is never held back; ToolSearch is how a deferred chat_send is reached.
+    if (agentId === undefined && tool !== "ToolSearch") {
+      const owed = await owedReply($);
+      if (owed) {
+        const name = tool.startsWith("mcp__native__") ? tool.slice("mcp__native__".length) : tool;
+        if (!owed.answers.includes(name)) return { deny: owed.reason };
+        answered = owed.id;
+      }
+    }
     // The pinned executor's `mcp serve` does not expose these tools. Never
     // fall through to a search on the conversation host.
     if (tool === "Glob" || tool === "Grep") {

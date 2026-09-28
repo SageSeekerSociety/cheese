@@ -2,8 +2,9 @@
 
 A runner owns one agent process and outlives every backend that reads from it.
 What it does the same way for any harness: hold the state directory's lock,
-answer one JSON line per connection on the socket the connector relays to, and
-accept each input at most once however many times a reconnecting backend asks.
+answer one JSON line per connection on the socket the connector relays to,
+accept each input at most once however many times a reconnecting backend asks,
+and hold a session to answering a person before it does anything else.
 """
 
 import asyncio
@@ -34,6 +35,59 @@ def socket_path(state: Path) -> str:
     return f"/tmp/cheese-execution-{os.getuid()}-{digest}.sock"
 
 
+# --- a person waiting for an answer -------------------------------------------
+#
+# A message a person sends into a room is answered in the room before the session
+# does anything else. Telling the model so was not enough: it would read the
+# message at a tool boundary and go straight on with the tool it had planned,
+# and the person saw nothing until that work was done. So the harness refuses
+# every other tool until the session has published.
+#
+# The rule is decided here, once for every harness: which input owes an answer
+# (the platform says so when it delivers a person's message; a platform notice
+# owes nothing), from when (the moment the harness accepts it), what answers it
+# (`REPLY_TOOLS`), what the refusal says (`REPLY_OWED`), and when it lapses (the
+# turn ends with nothing unread). What differs is only where each harness lets a
+# tool call be refused, so each harness's tool path reads the file below and
+# refuses on its word: Claude Code's function hook (`remote_execution/
+# proxy.js`), Codex's dynamic-tool handler (`codex/tools.py`) and pi's extension
+# (`pi/platform.ts`). A subagent is never held to it: it reports to the agent
+# that started it, not to the room.
+
+#: The variable that names the file to the agent process and whatever it spawns.
+REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
+#: The platform tools that answer a person, by their name in the tool table.
+REPLY_TOOLS = ("chat_send", "cheese_ask")
+REPLY_OWED = (
+    "A person in this room has sent a message you have not answered yet. "
+    "Reply to it in the room with chat_send first (or ask them with "
+    "cheese_ask): answer it if you can; otherwise say what you understood and "
+    "what you will do next — and if they asked you to stop, stop. Every other "
+    "tool is refused until you have replied."
+)
+
+
+def reply_owed_path(state: Path) -> Path:
+    return state / "reply-owed.json"
+
+
+def reply_owed(path: str | Path | None) -> dict | None:
+    """What the file says is owed, or None when nothing is.
+
+    ``{"id": the input that owes it, "answers": REPLY_TOOLS, "reason":
+    REPLY_OWED}`` — everything a tool path needs to refuse, so none of them
+    keeps a copy of the rule. Unreadable is nothing owed: a refusal nobody can
+    explain would stop the session for good.
+    """
+    if not path:
+        return None
+    try:
+        owed = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    return owed if isinstance(owed, dict) and owed.get("id") else None
+
+
 class Runner(Generic[J]):  # noqa: UP046
     def __init__(self, state: Path, journal: type[J], name: str):
         state.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -45,6 +99,8 @@ class Runner(Generic[J]):  # noqa: UP046
         self.inputs: dict[str, asyncio.Task] = {}
         self.errors = None
         self.lock = None
+        # The input a person is waiting on an answer to, while one is.
+        self.owed: str | None = None
 
     def claim(self) -> None:
         """Take the state directory, or fail if another runner holds it."""
@@ -52,6 +108,32 @@ class Runner(Generic[J]):  # noqa: UP046
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Only the lock owner may remove a socket a crashed runner left behind.
         Path(socket_path(self.state)).unlink(missing_ok=True)
+        # Nor may a debt outlive the runner that recorded it: the next one
+        # starts a session that has not been told about it.
+        reply_owed_path(self.state).unlink(missing_ok=True)
+
+    # --- a person waiting for an answer --------------------------------------
+
+    def agent_env(self, env: dict[str, str]) -> dict[str, str]:
+        """The agent's environment, with the file its tool path reads named."""
+        return {**env, REPLY_OWED_ENV: str(reply_owed_path(self.state))}
+
+    def owe_reply(self, identifier: str) -> None:
+        """The session has a person's message in hand: hold it to answering."""
+        path = reply_owed_path(self.state)
+        written = path.with_name(path.name + ".next")
+        written.write_text(
+            json.dumps(
+                {"id": identifier, "answers": list(REPLY_TOOLS), "reason": REPLY_OWED}
+            )
+        )
+        written.replace(path)
+        self.owed = identifier
+
+    def reply_settled(self) -> None:
+        """The turn is over: whatever it owed, it no longer holds a tool back."""
+        self.owed = None
+        reply_owed_path(self.state).unlink(missing_ok=True)
 
     async def listen(self, limit: int) -> None:
         """Open the socket; last, so a backend that reaches it finds a session."""
@@ -65,6 +147,8 @@ class Runner(Generic[J]):  # noqa: UP046
         identifier: str,
         content: dict,
         submit: Callable[[], Awaitable[dict]],
+        *,
+        owes_reply: bool = False,
     ) -> dict:
         """Put one input in, at most once, however many times we are asked.
 
@@ -73,6 +157,12 @@ class Runner(Generic[J]):  # noqa: UP046
         the same outcome rather than a second turn. The same id with different
         content is refused, since answering it with the first input's outcome
         would report something that was never sent.
+
+        ``owes_reply`` is the platform saying a person wrote this. The session
+        owes the answer from the moment the input goes in, not from when the
+        model reads it: a tool it starts in between would otherwise run with
+        the message still unread behind it, and refusing that tool is also what
+        puts the message in front of the model at once.
         """
         payload = json.dumps(content, sort_keys=True)
         previous = self.journal.input(identifier)
@@ -89,7 +179,9 @@ class Runner(Generic[J]):  # noqa: UP046
                 )
         else:
             self.journal.begin_input(identifier, payload)
-            task = asyncio.create_task(self._settle(identifier, submit))
+            task = asyncio.create_task(
+                self._settle(identifier, submit, owes_reply=owes_reply)
+            )
             self.inputs[identifier] = task
 
             def finished(task):
@@ -101,14 +193,28 @@ class Runner(Generic[J]):  # noqa: UP046
         return await asyncio.shield(self.inputs[identifier])
 
     async def _settle(
-        self, identifier: str, submit: Callable[[], Awaitable[dict]]
+        self,
+        identifier: str,
+        submit: Callable[[], Awaitable[dict]],
+        *,
+        owes_reply: bool = False,
     ) -> dict:
+        before = self.owed
+        if owes_reply:
+            self.owe_reply(identifier)
         try:
             result = await submit()
             self.journal.finish_input(identifier, "accepted", result)
             return result
         except Exception as error:
             self.journal.finish_input(identifier, "failed", {"error": str(error)})
+            # The message never reached the session, so nothing is owed on it;
+            # whatever was owed before it still is.
+            if owes_reply and self.owed == identifier:
+                if before is None:
+                    self.reply_settled()
+                else:
+                    self.owe_reply(before)
             raise
 
     async def dispatch(self, method: str, params: dict) -> dict:

@@ -702,9 +702,47 @@ function announceExits(pi: any, spec: Manifest) {
   });
 }
 
+// --- a person waiting for an answer ------------------------------------------
+//
+// The runner writes down when a person's message is waiting on an answer
+// (driven/runner.py, which owns the rule: what owes one, what answers it, what
+// the refusal says, when it lapses) and names the file in this variable. Until
+// the session has answered, every other tool is refused with the runner's
+// words. pi runs no subagents, so every call here is the session's own.
+
+const REPLY_OWED_ENV = "CHEESE_REPLY_OWED";
+
+function holdToAnswering(pi: any) {
+  const file = process.env[REPLY_OWED_ENV] ?? "";
+  // Kept in this process: a reply and the next call can be siblings in one
+  // message, and pi preflights them in order, so the reply's call is seen here
+  // before the runner could hear of it.
+  let answered: string | null = null;
+
+  const owed = (): { id: string; answers: string[]; reason: string } | null => {
+    if (!file) return null;
+    try {
+      const debt = JSON.parse(fs.readFileSync(file, "utf8"));
+      return debt?.id && debt.id !== answered ? debt : null;
+    } catch {
+      return null;
+    }
+  };
+
+  pi.on("tool_call", async (event: any) => {
+    const debt = owed();
+    if (!debt) return;
+    if (!debt.answers.includes(event.toolName)) {
+      return { block: true, reason: debt.reason };
+    }
+    answered = debt.id;
+  });
+}
+
 export default function (pi: any) {
   const spec = manifest();
   carryRepositoryContext(pi);
+  holdToAnswering(pi);
   if (spec.tools.length) registerPlatformTools(pi, spec);
   else if (spec.unavailable) {
     // Said where a launch failure is read, not swallowed: a room whose platform
