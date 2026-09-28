@@ -252,6 +252,25 @@ function show(k: string) {
 }
 watch(active, show)
 
+// ---- 手机上换页签时内容从哪边进来 ----
+// 一屏只有一格，换页签时新的那一格从它页签所在的方向挪进来（右边的页签从右边来），
+// 人看得出自己是往哪边走了。动的只是进来的那一格的外层：各格一直挂着（对话的滚动
+// 位置、键盘弹起时的贴底都在里面），不为了演一下重建。桌面上两栏并排，不演。
+const tabOrder = computed(() => [
+  ...tabs.value.map((t) => t.key as string),
+  ...openFiles.value.map((f) => fileKey(f.path)),
+])
+const entering = ref<{ key: string; from: 'left' | 'right' } | null>(null)
+watch(active, (now, before) => {
+  if (!props.withChat) return
+  const order = tabOrder.value
+  entering.value = { key: now, from: order.indexOf(now) < order.indexOf(before) ? 'left' : 'right' }
+})
+function enterClass(key: string) {
+  const e = entering.value
+  return e?.key === key ? `tabpane-in tabpane-in--${e.from}` : undefined
+}
+
 const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
 
@@ -634,15 +653,16 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
         <span class="tabbar__ink" :class="{ 'tabbar__ink--moves': inkMoves }" :style="inkStyle" aria-hidden="true" />
       </div>
 
-      <div class="tabbody">
+      <div class="tabbody" :class="{ 'tabbody--phone': withChat }">
         <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
              而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
-        <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat">
+        <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
           <slot name="chat" />
         </div>
         <PanelOverview
           v-show="active === 'overview'"
           ref="overviewRef"
+          :class="enterClass('overview')"
           :agent-name="agentName"
           :topic="topic"
           :activity-tick="activityTick"
@@ -662,6 +682,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           v-if="mounted.has('site')"
           v-show="active === 'site'"
           ref="siteRef"
+          :class="enterClass('site')"
           :agent-name="agentName"
           :topic="topic"
           :active="active === 'site'"
@@ -678,6 +699,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           v-if="mounted.has('changes')"
           v-show="active === 'changes'"
           ref="changesRef"
+          :class="enterClass('changes')"
           :topic-id="topicId"
           :task-id="openCardId"
           :read-only="topic?.status === 'archived'"
@@ -688,6 +710,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
         <PanelPreview
           v-if="mounted.has('preview')"
           v-show="active === 'preview'"
+          :class="enterClass('preview')"
           :topic-id="topicId"
           :project-id="projectId"
           :active="active === 'preview'"
@@ -700,6 +723,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           <PanelPreview
             v-if="mounted.has(fileKey(f.path))"
             v-show="active === fileKey(f.path)"
+            :class="enterClass(fileKey(f.path))"
             :topic-id="topicId"
             :project-id="projectId"
             :path="f.path"
@@ -876,11 +900,35 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
 .tabbar__count--new {
   color: var(--accent);
 }
+.tabpane-in {
+  animation: tabpane-in var(--dur-base) var(--ease-standard);
+}
+.tabpane-in--right {
+  --tabpane-from: 20px;
+}
+.tabpane-in--left {
+  --tabpane-from: -20px;
+}
+@keyframes tabpane-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--tabpane-from));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabpane-in {
+    animation: none;
+  }
+}
 .tabbody {
   position: relative;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+}
+/* 挪进来的那 20px 不该撑出一条横向滚动。 */
+.tabbody--phone {
+  overflow: hidden;
 }
 </style>
