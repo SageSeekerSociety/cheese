@@ -44,9 +44,9 @@ def _room_and_project(client) -> tuple[str, str]:
     # rejects one below. A card decision requires room membership since
     # 2026-09-26 (`_card_actor`), so she is a participant of the project.
     join_project_team(client, pid, "alice")
-    room = client.post(
-        "/topics", json={"project_id": pid, "title": "预算复核"}
-    ).json()["data"]["id"]
+    room = client.post("/topics", json={"project_id": pid, "title": "预算复核"}).json()[
+        "data"
+    ]["id"]
     return pid, room
 
 
