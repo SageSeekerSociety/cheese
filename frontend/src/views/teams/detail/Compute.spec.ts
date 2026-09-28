@@ -97,8 +97,6 @@ it('lists the machines projects already have and offers no way to open one', asy
   expect(view.getByText('50 / 50 台')).toBeTruthy()
   expect(view.queryByRole('button', { name: /开通/ })).toBeNull()
   expect(view.queryByText(/开通云端机器/)).toBeNull()
-  vi.mocked(listProjectMachines).mockReset()
-  vi.mocked(listProjectMachines).mockResolvedValue({ data: [] } as Awaited<ReturnType<typeof listProjectMachines>>)
 })
 
 it('suspends and resumes the same machine through its project', async () => {
