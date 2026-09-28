@@ -2482,7 +2482,7 @@ async def set_title(
         place.room,
         title[:80],
         by=actor.handle,
-        reason="suggest" if body.get("suggested") else "rename",
+        reason="rename",
     )
     await db.flush()
     out = TopicOut.model_validate(place.room).model_dump(mode="json")
@@ -2505,22 +2505,6 @@ async def _title_actor(
     return room, actor.handle
 
 
-@router.post("/{topic_id}/title/suggest")
-async def suggest_title(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """智能重命名: a name for this room from what it is about now, for a person
-    to confirm or edit. Nothing is written; the confirmed name is set through
-    ``POST /title`` like any other a person chose."""
-    room, _ = await _title_actor(topic_id, db, resolver)
-    if not naming.available():
-        raise SystemBusyError("智能命名暂不可用")
-    title = await naming.suggest(db, room)
-    if title is None:
-        raise SystemBusyError("这次没能生成标题，稍后再试")
-    return ok({"title": title})
-
-
 @router.post("/{topic_id}/title/undo")
 async def undo_title(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
@@ -2537,22 +2521,6 @@ async def undo_title(
     out = TopicOut.model_validate(room).model_dump(mode="json")
     await db.commit()
     await announce_stale(room.id, "topics")
-    return ok(out)
-
-
-@router.post("/{topic_id}/title/auto")
-async def restore_auto_title(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """恢复自动命名: hand a title a person chose back to the platform, which
-    judges it again at the room's next message or turn."""
-    room, handle = await _title_actor(topic_id, db, resolver)
-    await naming.restore_auto(db, room, by=handle)
-    await db.flush()
-    out = TopicOut.model_validate(room).model_dump(mode="json")
-    await db.commit()
-    await announce_stale(room.id, "topics")
-    naming.nudge(room.id, "signal")
     return ok(out)
 
 

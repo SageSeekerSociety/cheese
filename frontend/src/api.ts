@@ -739,19 +739,11 @@ export function markTopicRead(topicId: string, handle: string): Promise<Record<s
   })
 }
 
-/** A person names the room. `suggested` = they confirmed a 智能重命名 suggestion
- *  (recorded as such). Either way the platform stops renaming it on its own. */
-export function setTopicTitle(topicId: string, title: string, suggested = false): Promise<Topic> {
+/** A person names the room. The platform stops renaming it on its own from then on. */
+export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title`, {
     method: 'POST',
-    body: JSON.stringify(suggested ? { title, suggested: true } : { title }),
-  })
-}
-
-/** 智能重命名: a title for the room as it is now, for a person to confirm. Writes nothing. */
-export function suggestTopicTitle(topicId: string): Promise<{ title: string }> {
-  return request<{ title: string }>(`/topics/${encodeURIComponent(topicId)}/title/suggest`, {
-    method: 'POST',
+    body: JSON.stringify({ title }),
   })
 }
 
@@ -761,11 +753,6 @@ export function undoTopicTitle(topicId: string, eventId: string): Promise<Topic>
     method: 'POST',
     body: JSON.stringify({ event_id: eventId }),
   })
-}
-
-/** 恢复自动命名: hand a title a person chose back to the platform. */
-export function restoreTopicAutoTitle(topicId: string): Promise<Topic> {
-  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title/auto`, { method: 'POST' })
 }
 
 export type TopicNamingMode = 'auto' | 'manual'

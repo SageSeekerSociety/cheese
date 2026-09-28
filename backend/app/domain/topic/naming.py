@@ -18,10 +18,11 @@ gateway, off the agent's turn, at three moments —
   by. Throttled, and the model is asked *whether* to change first: a title is
   how people find a room again, so keeping it is the default.
 
-A title a person chose (``TitleSource.human``) is never overwritten, and an
-automatic rename is written only against the version it was computed from, so
-someone renaming while a name is being generated always wins. A project can
-turn automatic naming off altogether (``settings.topic_naming = "manual"``).
+A title a person chose (``TitleSource.human``) is final: never overwritten, and
+nothing hands the room back to the platform. An automatic rename is written
+only against the version it was computed from, so someone renaming while a name
+is being generated always wins. A project can turn automatic naming off
+altogether (``settings.topic_naming = "manual"``).
 
 Everything here fails quietly: no gateway, no key, a timeout or an unusable
 answer means the room keeps its title until the next trigger. Quiet is not the
@@ -130,7 +131,6 @@ _STAGE_ASK = {
         "（换了系统、换了问题、从一件事转到另一件事）才换（keep=false）。"
         "措辞更好、更完整都不是换的理由。"
     ),
-    "suggest": "给这个话题起一个最能概括它现在内容的名字。keep 填 false。",
 }
 
 
@@ -751,8 +751,8 @@ async def _run_quietly(room_id: uuid.UUID, reason: Reason) -> None:
 async def rename_by_person(
     session: AsyncSession, room: Topic, title: str, *, by: str | None, reason: str
 ) -> None:
-    """A person chose this title (typed it, asked 芝士 for it, confirmed a
-    suggestion). From now on the platform leaves it alone."""
+    """A person chose this title (typed it, or asked 芝士 for it). From now on
+    the platform leaves it alone, and nothing hands it back."""
     room.title = title
     room.title_source = TitleSource.human
     room.title_version = room.title_version + 1
@@ -782,42 +782,3 @@ async def undo(
     if not isinstance(previous, str) or not previous:
         raise ValidationError("这条记录没有原标题")
     await rename_by_person(session, room, previous, by=by, reason="undo")
-
-
-async def restore_auto(session: AsyncSession, room: Topic, *, by: str | None) -> None:
-    """Hand a room a person named back to the platform. It is judged again on
-    the next trigger, as a follow-up."""
-    if room.title_source != TitleSource.human:
-        return
-    unnamed = room.title == PLACEHOLDER_TITLE
-    room.title_source = TitleSource.placeholder if unnamed else TitleSource.auto
-    room.title_calibrated = not unnamed
-    room.title_checked_at = None
-    room.title_version = room.title_version + 1
-    session.add(
-        TopicTitle(
-            topic_id=room.id,
-            title=room.title,
-            source=room.title_source,
-            reason="restore",
-            by=by,
-        )
-    )
-
-
-async def suggest(
-    session: AsyncSession,
-    room: Topic,
-    transport: httpx.AsyncBaseTransport | None = None,
-) -> str | None:
-    """A title for a person to confirm or edit; nothing is written."""
-    if not available():
-        return None
-    material = await _material(session, room, "suggest")
-    if material is None:
-        return None
-    key = await service_key(session, _key_spec(), transport)
-    if key is None:
-        return None
-    answer = await _ask(key, material, transport)
-    return answer.verdict.title if answer.verdict is not None else None
