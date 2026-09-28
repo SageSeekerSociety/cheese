@@ -142,6 +142,21 @@ class Layout:
         shutil.rmtree(self.machine, ignore_errors=True)
         (self.home / ".claude").mkdir(parents=True)
         shutil.copytree(self.template, self.project, symlinks=True)
+        shipped(self.home / ".claude")
+
+
+def shipped(config):
+    """A skill in the config dir rather than the project, with a file beside
+    it: a personal skill to plain Claude Code, and to a room one the platform
+    ships (its own, or a way of working the project saved), which the launch
+    writes into the session's config dir and the executor's alike."""
+    skill(
+        config / "skills/shipped",
+        "shipped",
+        "Shipped with the config. SHIPPED_LISTED.",
+        "SHIPPED_BODY. The details are in reference.md beside this file.",
+    )
+    (config / "skills/shipped/reference.md").write_text("SHIPPED_REFERENCE_BODY\n")
 
 
 def model_server(folder):
@@ -258,6 +273,7 @@ class Room:
             CHEESE_TOKEN="fixture-place-token",
         )
         env.update(runner_fixture.room_home(home, self.target))
+        shipped(Path(env["CLAUDE_CONFIG_DIR"]))
         command = runner_fixture.room_command(
             home, binary, ["--model", contract.MODEL]
         )
@@ -347,6 +363,14 @@ def scenario(run, layout):
     directory = skill_directory(run, mark)
     mark = turn(run, do("Read", file_path=f"{directory}/reference.md"))
     seen["supporting file"] = any("GREET_REFERENCE_BODY" in r for r in results(run, mark))
+
+    mark = turn(run, do("Skill", skill="shipped"))
+    seen["config dir skill body"] = "SHIPPED_BODY" in text_since(run, mark)
+    directory = skill_directory(run, mark)
+    mark = turn(run, do("Read", file_path=f"{directory}/reference.md"))
+    seen["config dir skill supporting file"] = any(
+        "SHIPPED_REFERENCE_BODY" in r for r in results(run, mark)
+    )
 
     mark = turn(run, do("Skill", skill="with-script"))
     loaded = text_since(run, mark)

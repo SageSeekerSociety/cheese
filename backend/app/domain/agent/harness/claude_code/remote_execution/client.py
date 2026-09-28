@@ -218,6 +218,21 @@ def prepare(
         target,
         workspace=info["workspace"],
         session_workspace=seen,
+        # The session reads every skill from its config dir. The project's
+        # are links into the view, and are the project's on the executor; the
+        # rest the platform wrote there itself, and the executor holds its own
+        # copy in its own config dir. A file named beside a skill is sent to
+        # whichever of the two holds it (`skill_path`).
+        executor_config=session_path(info["config_dir"])
+        if info.get("config_dir")
+        else None,
+        shipped_skills=sorted(
+            entry.name
+            for entry in (config / "skills").iterdir()
+            if entry.is_dir() and not entry.is_symlink()
+        )
+        if (config / "skills").is_dir()
+        else [],
         central_workspace=str(workspace),
         central_config=str(config),
         central_tmp=str(temporary),
@@ -751,17 +766,33 @@ def shell(target_path, command):
     return run_on_the_machine(target, command)
 
 
+def skill_paths(target, text):
+    """`text` with each skill file named in the session's config dir named
+    where the executor holds it: a project skill in the project's
+    `.claude/skills`, one the platform shipped in the executor's config dir.
+    `proxy.js` `skillPath` is the same mapping, for the file tools."""
+    skills = target["central_config"] + "/skills/"
+    project = session_path(target["workspace"]) + "/.claude/skills/"
+    shipped = set(target.get("shipped_skills") or [])
+    executor = target.get("executor_config")
+
+    def place(match):
+        name = match.group(1)
+        if name in shipped:
+            return f"{executor}/skills/{name}" if executor else match.group(0)
+        return project + name
+
+    return re.sub(re.escape(skills) + r"([^/\s'\"`]+)", place, text)
+
+
 def run_on_the_machine(target, command):
     # The session sees the project at the executor's own path, so a command and
     # its directory need no respelling. Its skills are the one thing the build
     # reads from this host's config directory (`link_forwarded_user_context`),
     # where the executor has none: a command naming a skill's file names it in
     # the project.
-    skills = target["central_config"] + "/skills/"
-    project_skills = session_path(target["workspace"]) + "/.claude/skills/"
-
     def outward(text):
-        return text.replace(skills, project_skills)
+        return skill_paths(target, text)
 
     cwd = os.getcwd()
     head, tail = _SNAPSHOT.match(command), _CWD_FILE.search(command)
