@@ -90,7 +90,8 @@ async def inspect() -> int:
     _say("== topics (newest) ==")
     topics = await _rows(
         """
-        select t.id, t.title, t.project_id, t.session_id, t.compute_profile,
+        select t.id, t.title, t.project_id, t.session_id,
+               t.compute_config ->> 'profile' as compute_profile,
                t.created_at, p.name as project_name
           from topics t join projects p on p.id = t.project_id
          order by t.created_at desc

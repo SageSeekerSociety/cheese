@@ -324,7 +324,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
     const state = str(meta(latest)?.state)
     return {
       mode: 'agent-status',
-      line: state === 'ready' ? '运行环境已就绪' : state === 'waiting' ? '正在准备运行环境' : latest.content,
+      line: state === 'ready' ? '工作电脑已就绪' : state === 'waiting' ? '正在准备工作电脑' : latest.content,
       updatedAt: latest.created_at,
       occurrences: run.map((item) => ({
         line: item.content,

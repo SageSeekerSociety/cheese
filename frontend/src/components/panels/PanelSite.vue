@@ -20,9 +20,9 @@ import {
   SITE_CLAMP_LINES,
 } from '../../lib/siteLog'
 import { isPlatformEvent } from '../../lib/toolLabels'
-import AgentControls from '../AgentControls.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import SessionInspector from '../SessionInspector.vue'
 
 import SiteStatusBar from './SiteStatusBar.vue'
 import SiteStepOutput from './SiteStepOutput.vue'
@@ -41,7 +41,7 @@ const props = withDefaults(
     // 这个房间现在有没有活在跑。现场自己听不到轮次帧（WS 在对话栏那边），而
     // 「最后一组还没完」和「最后一组是上一轮留下的」看起来一模一样。
     working?: boolean
-    // 房间 socket 上最近一帧会话控制状态（对话栏收到，经 TopicView 转过来）。
+    // 房间 socket 上最近一帧会话状态（对话栏收到，经 TopicView 转过来）。
     agentControl?: AgentControlState | null
     // 在跑的轮次 id → 开始时间（毫秒），对话栏从 socket 上算的。哪一组「进行中」、
     // 状态条上「已用多久」都读它。
@@ -346,7 +346,7 @@ function isLive(index: number): boolean {
 
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
+      <SessionInspector v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
       <div v-if="agents.length > 1" class="site-agents" role="tablist">
         <button
           type="button"
@@ -416,15 +416,19 @@ function isLive(index: number): boolean {
               </button>
               <span v-else class="site-act__argtext"></span>
               <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
-              <!-- 挂了的那一步：错误摘要另起一行，缩进到参数那一列，和上面对齐。 -->
-              <p
+              <!-- 挂了的那一步：错误摘要另起一行，缩进到参数那一列，和上面对齐。
+                   它自己也能点开：一个会话没起来时，这里是它启动时打印的原文，
+                   而那一行没有参数可点。 -->
+              <button
                 v-if="eventFailed(b) && eventError(b)"
+                type="button"
                 class="site-act__error"
                 :class="{ 'site-act__error--full': expandedSite.has(b.id) }"
                 data-testid="site-act-error"
+                @click="toggleSiteEntry(b.id)"
               >
                 {{ eventError(b) }}
-              </p>
+              </button>
               <!-- 摊开的这一步打印了什么：收着，点了才取。 -->
               <SiteStepOutput
                 v-if="topic && expandedSite.has(b.id) && b.meta?.output_bytes"
@@ -629,8 +633,14 @@ function isLive(index: number): boolean {
    + 间隙 —— 写成 calc 而不是量出来的一个数，改了上面这一行不用回来改它。 */
 .site-act__error {
   flex: 0 0 100%;
+  min-width: 0;
   margin: 2px 0 0;
-  padding-left: calc(5px + 8px + 4em + 8px);
+  padding: 0 0 0 calc(5px + 8px + 4em + 8px);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   color: var(--danger-ink);
   /* 13px 而不是 12：这一行是挂了的那一步上唯一有人真去读的字。 */
   font-size: 13px;
@@ -638,6 +648,11 @@ function isLive(index: number): boolean {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.site-act__error:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 .site-act__error--full {
   white-space: pre-wrap;

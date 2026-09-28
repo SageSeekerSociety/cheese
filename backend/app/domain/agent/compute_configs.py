@@ -1,4 +1,4 @@
-"""Project favorites and room-local resource choices."""
+"""The project default and room-local resource choices."""
 
 from typing import Literal
 
@@ -45,7 +45,6 @@ class ComputeChoice(BaseModel):
 class ProjectComputeConfigs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     default: ComputeChoice
-    favorites: list[ComputeChoice] = Field(default_factory=list, max_length=12)
 
 
 def standard_choice(profile: str | None = None) -> ComputeChoice:
@@ -63,10 +62,14 @@ def project_configs(project_settings: dict | None) -> ProjectComputeConfigs:
 
 
 def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
+    """What a new agent session in this room starts on (结论 60).
+
+    The room's own choice once it has one — written the first time the room
+    runs, so every later session gets the same full choice the first one did —
+    and the project default until then.
+    """
     if topic.compute_config:
         return ComputeChoice.model_validate(topic.compute_config)
-    if topic.compute_profile:
-        return standard_choice(topic.compute_profile)
     return project_configs(project_settings).default
 
 

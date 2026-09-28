@@ -31,16 +31,17 @@
 ## 收件人只能从事件**点的名**来，不能从名册推
 
 凭房间名册推一批收件人出来，等于把一条只有一个人该处理的事项摆进一屋子人的清单
-里。所以 `Event` 上的三种关系是封闭的 —— 一条事件点到一个参与者，只可能是这三种
-之一，每一种都是那个参与者和这件事之间一个具体的事实：
+里。所以 `Event` 上的关系是封闭的 —— 一条事件点到一个参与者，只可能是下面几种之
+一，每一种都是那个参与者和这件事之间一个具体的事实：
 
 | 关系 | 凭什么是他 |
 |---|---|
 | 验收人 | 卡是递给他的 |
 | 提需求的人 | 他等的东西有了结果 |
 | 被问的那个人 | 芝士停在一个待确认问题上，只有他能回答 |
+| 设备的主人 | 有 agent 开始在他登记的机器上干活，让不让它继续用只有他能定（#1900） |
 
-这三条就是 #1084 定的收件人。「待我处理」那份清单和投递读的是同一份判据 —— 通知负
+前三条是 #1084 定的收件人。「待我处理」那份清单和投递读的是同一份判据 —— 通知负
 责把人叫回来，清单负责他回来之后不用自己翻。
 
 ## 纯函数
@@ -64,6 +65,7 @@ from app.domain.room_task.presentation import Column
 REASON_REVIEWER = "reviewer"
 REASON_REPORTER = "reporter"
 REASON_ASKED = "asked"
+REASON_MACHINE_OWNER = "machine_owner"
 
 
 class Hand(enum.StrEnum):
@@ -99,14 +101,16 @@ def hand_of(column: Column) -> Hand:
 class Event:
     """一条事件，窄到只剩寻址要读的部分：它点了谁的名。
 
-    `reviewers` 是复数而另外两个不是，因为只有验收这一种关系可能同时点到几个人：
+    `reviewers` 是复数而另外几个不是，因为只有验收这一种关系可能同时点到几个人：
     一张卡有一个验收人，而一条作废了某张批准票的事件还点到投那一票的人 —— 重新投
-    一次这件事只有他能做。提需求的人和被问的那个人各只有一个。
+    一次这件事只有他能做。其余几种各只有一个人。
     """
 
     reviewers: tuple[str, ...] = ()
     reporter: str | None = None
     asked: str | None = None
+    #: 登记了那台机器的人：他的机器上有 agent 开工了。
+    machine_owner: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +172,7 @@ def address(event: Event, next_hand: Hand) -> Addressed:
         (event.asked, REASON_ASKED),
         *((h, REASON_REVIEWER) for h in event.reviewers),
         (event.reporter, REASON_REPORTER),
+        (event.machine_owner, REASON_MACHINE_OWNER),
     ):
         name = (handle or "").strip()
         if not name or name in seen:

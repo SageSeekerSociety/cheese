@@ -93,10 +93,10 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 **两层都实时，但是两种不同的实时**（这是过程/状态分离的关键，混成一种会毁掉「文档=稳定状态」）：
 
-- **消息 = 过程：连续流式实时**。todo/状态/流式答案，讲"怎么做"——越快越好、抖动无所谓，token 级跳动。todo 是平台工具 **`todo_write`**（每次传整份清单，三态 pending/in_progress/completed；三个骨架是同一个工具，各自自带的清单工具在启动时关掉）——写进进度层并推给房间，进行中的那条消息原地渲染成活清单。
+- **消息 = 过程：连续流式实时**。todo/状态/流式答案，讲"怎么做"——越快越好、抖动无所谓，token 级跳动。todo 是平台工具 **`todo_write`**（每次传整份清单，三态 pending/in_progress/completed；三个骨架是同一个工具，各自自带的清单工具在启动时关掉）——写进进度层（总览读它，下一轮开场也读它）；在房间里它是芝士自己的一条清单消息：第一次写时发出，之后每次写都通过消息编辑改这同一条（消息标「已编辑」），有人提了新请求时芝士带 `new` 另起一条。分身带 `task` 写的清单只记在那张卡上，不发到房间。
 - **文档 = 状态：就绪式实时（离散、整段、不打扰）**。结论/产物进实况文档（§3.4，`cheese_doc_set`），讲"结果是什么"。**不是逐字流**：每次 `cheese_doc_set` = 一个自洽的完整版本就刷新一次（架构天然如此——整文件覆盖，一次一个完整版本）；回合中途也可多次更新（先计划后结果），只要每次都自洽。**不打断正在读/编辑文档的人**：用"芝士更新了文档 ⟳"的温和提示，别抢光标/别强行滚动重排。
 - **分工纪律**：todo/状态留在消息、结论进文档，**不重复**；消息收尾只给一句小结 + 指向文档，不堆全文（避开 Claude Code `track_progress` 结束塞大段 final summary 的"吵"问题）。这正是 §2.2「对话是过程、文档是状态」的双实时落地。
-- **现状**：✅ 整条消息（`MessageDisplay` 的多次刷新拼成一条）+ 现场工具事件（socket 推来即追加，顶部状态条说此刻在思考 / 做哪一步 / 重试 / 等机器，以及这一轮已用多久；摊开一步可看它输出的末尾 8 KiB，凭据已抹掉；房间里不止一个队友时可按队友看）+ 实况文档读写/工具事件刷新面板 + 进行中消息里的 todo 清单（`todo_write`，原地更新）；🟡 待做：@ 秒回占位消息、文档回合中途增量刷新。
+- **现状**：✅ 整条消息（`MessageDisplay` 的多次刷新拼成一条）+ 现场工具事件（socket 推来即追加，顶部状态条说此刻在思考 / 做哪一步 / 重试 / 等机器，以及这一轮已用多久；摊开一步可看它输出的末尾 8 KiB，凭据已抹掉；房间里不止一个队友时可按队友看）+ 实况文档读写/工具事件刷新面板 + 芝士发在房间里的清单消息（`todo_write`，改的是同一条）；🟡 待做：@ 秒回占位消息、文档回合中途增量刷新。
 - **参考 / prior art**：①范式——Anthropic **Claude Tag**（2026-06，常驻 Slack 的 AI 队友：@Claude、一频道一共享实例多人接力、拆 stages、ambient 盯/催、自排任务跨小时·天、审计日志），与本平台的 @芝士/话题/巡检/分身/现场高度同构，CheeseX 可定位为「Claude Tag for 学生项目制学习，但以文档为中心、git 原生、采纳=merge」（[anthropic.com](https://www.anthropic.com/news/introducing-claude-tag)）。②活消息机制——Claude Code 交互模式单条 tracking comment + `- [ ]/- [x]` 清单原地更新 + Task 工具（[github-actions](https://code.claude.com/docs/en/github-actions)、[todo-tracking](https://docs.claude.com/en/docs/agent-sdk/todo-tracking)）。
 
 ### 3.2 芝士（Agent）  ✅ 链路 / 🟡 部分能力
@@ -104,8 +104,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件经 Claude Code hooks 回流（`AgentRuntime`，`backend/app/domain/agent/harness/`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
 - **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记决策、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
-- **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。私聊里 `CHEESE_MEMORY_SCOPE=personal` 让 `cheese remember` 写这位芝士**对主人的看法**（池键 `<项目>:<agent handle>:<人>`，属于这个项目里的这个实例，不跨项目）。
-- **记忆注入**：每轮把这位芝士在这个项目里的池 + 它对在场每个人的池 + 实况文档拼进 system prompt（池清单见 `memory/pools.py::pools_for_turn`）。读哪几个池只看这一轮谁在场，不看房间是什么类型——私聊不是特例。🟡 会话收尾**自动提取**记忆未做。
+- **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。
+- **记忆**：会话目录里一棵文件树（会话机上的 `~/.cheese/memory/`），数据库是真相、树是副本，输入前铺下去、一轮结束后收回来。每轮把 L1 索引（`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`）和一段说明书拼进 system prompt，正文让 agent 自己读；只对会把文件对账回平台的 harness 注入（`AgentRuntime.keeps_memory`）。agent 自己用 Write/Edit 改这棵树，`cheese remember` 那个工具已经撤掉。详见 `docs/manual/dev/memory.md`；🟡 整理（dream）与旧表迁移未做。
 - **巡检（本体心跳）**：已退役。`POST /api/projects/{id}/heartbeat` 2026-08-12 摘掉（`app/api/routes/activities.py` 留成一个空 router，原因写在原地；`tests/contract/test_parked_bypass_turns.py` 守着它别被挂回来），定时 tick 那一侧跟着 scheduler 包一起删掉（§3.8）。它回来的时候是一份 skill，不是一个钟。
 
 ### 3.3 话题升级 / 拆分 / 回流  ✅ 主干 / 🟡 活引用回写

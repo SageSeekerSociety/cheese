@@ -13,7 +13,11 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import Placement, ScreenSetupError
+from app.domain.agent.harness.channel import (
+    Placement,
+    ScreenSetupError,
+    startup_refused,
+)
 from app.domain.agent.harness.codex.launch import script
 from app.domain.agent.harness.codex.runtime import Handle
 from app.domain.agent.harness.launch import ExecutorLaunch
@@ -107,7 +111,12 @@ class CodexChannel:
                 "binary": "~/.cheese/tools/codex/node_modules/.bin/codex",
                 "opening": {**asdict(opening), "env": None, "agent_handle": agent},
                 "execution_target": target,
-                "mcp_servers": target["mcp_servers"],
+                # The machine's stdio servers and the project's remote ones;
+                # `RemoteClient.call` sends each to where it is served.
+                "mcp_servers": [
+                    *target["mcp_servers"],
+                    *(target.get("remote_mcp") or {}).get("servers", []),
+                ],
             }
             if target["kind"] == "private":
                 result = await self.channel._hub.exec(
@@ -117,8 +126,9 @@ class CodexChannel:
                     timeout=120,
                 )
                 if result.get("exit") != 0 or result.get("truncated"):
-                    raise ScreenSetupError(
-                        result.get("stderr") or "Private executor startup failed"
+                    raise startup_refused(
+                        result.get("stderr") or "Private executor startup failed",
+                        harness="Codex",
                     )
             codex_config = (
                 'model_provider = "cheese"\n'
@@ -136,7 +146,9 @@ class CodexChannel:
                 timeout=120,
             )
             if result.get("exit") != 0 or result.get("truncated"):
-                raise ScreenSetupError(result.get("stderr") or "Codex startup failed")
+                raise startup_refused(
+                    result.get("stderr") or "Codex startup failed", harness="Codex"
+                )
             status = json.loads(result["stdout"])
             return Handle(
                 session,

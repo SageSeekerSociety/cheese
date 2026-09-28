@@ -30,6 +30,7 @@ _SUBJECT_LINES: Final[dict[str, str]] = {
     "TEAM_INVITATION_DECLINED": "你的团队邀请被谢绝了",
     "TEAM_INVITATION_CANCELED": "一个团队邀请被取消了",
     "TEAM_REQUEST_CANCELED": "一个加入申请被取消了",
+    "DEVICE_IN_USE": "有 AI 队友开始在你的设备上工作",
 }
 
 #: `payload` 的形状按类型各不相同，所以摘要只从这几个常见键里取第一个有字的，

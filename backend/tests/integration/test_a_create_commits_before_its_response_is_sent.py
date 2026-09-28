@@ -43,6 +43,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.common.auth import create_access_token
 from app.core import db as core_db
+from app.core.config import settings
 from app.domain.space.models import Space
 from tests.integration.conftest import registered
 
@@ -104,6 +105,14 @@ class _Asgi:
         self.body = b""
 
     def post(self, path: str, body: dict, *, token: str | None = None) -> None:
+        self._call("POST", path, body, token=token)
+
+    def patch(self, path: str, body: dict, *, token: str | None = None) -> None:
+        self._call("PATCH", path, body, token=token)
+
+    def _call(
+        self, method: str, path: str, body: dict, *, token: str | None = None
+    ) -> None:
         # 每一次请求都从零开始记：上一个请求的收尾提交（``get_db`` 退出码里那一次）
         # 会落在下一个请求的响应之前，留着它就会替这一次请求把断言顶过去 —— 发题
         # 那条路由一行不改也照样绿（实测过：不清空时去掉 tasks 的提交，2 passed）。
@@ -116,7 +125,7 @@ class _Asgi:
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.3"},
             "http_version": "1.1",
-            "method": "POST",
+            "method": method,
             "scheme": "http",
             "path": path,
             "raw_path": path.encode(),
@@ -231,11 +240,10 @@ def test_a_space_is_committed_before_its_201_is_sent(asgi: _Asgi, author) -> Non
     _assert_committed_before_responding(asgi)
 
 
-def test_a_task_is_committed_before_its_response_is_sent(
-    asgi: _Asgi, db_session: AsyncSession, _portal, author
-) -> None:
-    _, token = author
-
+def _an_approved_board(
+    asgi: _Asgi, db_session: AsyncSession, _portal, token: str
+) -> int:
+    """Create a board through the app and approve it; returns its id."""
     asgi.post(
         "/spaces",
         _space_body(f"Committed task board ({uuid.uuid4().hex[:8]})"),
@@ -253,6 +261,13 @@ def test_a_task_is_committed_before_its_response_is_sent(
         await db_session.flush()
 
     _portal.call(_approve)
+    return space_id
+
+
+def _publish_a_task(asgi: _Asgi, db_session: AsyncSession, _portal, token: str) -> None:
+    """Create a board, approve it, and publish one task into it; the last
+    request made is the ``POST /tasks``."""
+    space_id = _an_approved_board(asgi, db_session, _portal, token)
 
     asgi.post(
         "/tasks",
@@ -267,6 +282,102 @@ def test_a_task_is_committed_before_its_response_is_sent(
             "defaultDeadline": 30,
         },
         token=token,
+    )
+
+
+def test_a_task_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, db_session: AsyncSession, _portal, author
+) -> None:
+    _, token = author
+
+    _publish_a_task(asgi, db_session, _portal, token)
+
+    assert asgi.status == 200, asgi.body
+    _assert_committed_before_responding(asgi)
+
+
+def test_a_task_approval_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, db_session: AsyncSession, _portal, author
+) -> None:
+    """Found behind the space-review fix (#1882), with a delay injected before
+    the teardown commit in ``get_db``::
+
+        PATCH /tasks/<id> {"approved": "APPROVED"}   200
+        GET /tasks?space=<id>                        <- the task is not listed
+    """
+    _, token = author
+    _publish_a_task(asgi, db_session, _portal, token)
+    assert asgi.status == 200, asgi.body
+    task_id = json.loads(asgi.body)["data"]["task"]["id"]
+
+    asgi.patch(f"/tasks/{task_id}", {"approved": "APPROVED"}, token=token)
+
+    assert asgi.status == 200, asgi.body
+    assert json.loads(asgi.body)["data"]["task"]["approved"] == "APPROVED"
+    _assert_committed_before_responding(asgi)
+
+
+def test_pdf_drafts_are_committed_before_their_response_is_sent(
+    asgi: _Asgi, db_session: AsyncSession, _portal, author
+) -> None:
+    """Found behind the task-approval fix (#1886), with a delay injected before
+    the teardown commit in ``get_db``::
+
+        POST /tasks/publish/from-pdf/confirm   200
+        (the review queue opened next)         <- the confirmed task is missing
+    """
+    _, token = author
+    space_id = _an_approved_board(asgi, db_session, _portal, token)
+
+    asgi.post(
+        "/tasks/publish/from-pdf/confirm",
+        {
+            "drafts": [
+                {
+                    "name": f"Drafted task ({uuid.uuid4().hex[:8]})",
+                    "intro": "An intro.",
+                    "description": "A description.",
+                }
+            ],
+            "taskOptions": {
+                "space": space_id,
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+            },
+        },
+        token=token,
+    )
+
+    assert asgi.status == 200, asgi.body
+    assert json.loads(asgi.body)["data"]["count"] == 1
+    _assert_committed_before_responding(asgi)
+
+
+def test_a_space_review_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, _portal, db_session: AsyncSession, author, monkeypatch
+) -> None:
+    """The e2e flake this pins (merge queue, run 36341262532)::
+
+    POST /admin/spaces/<id>/review   200   <- the client is told "approved"
+    POST /tasks                      400   <- "Space must be approved ..."
+    """
+    _, token = author
+    reviewer = f"commit-order-reviewer-{uuid.uuid4().hex[:8]}"
+    reviewer_id = _portal.call(registered, db_session, reviewer)
+    monkeypatch.setattr(settings, "platform_admin_handles", [reviewer])
+
+    asgi.post(
+        "/spaces", _space_body(f"Reviewed space ({uuid.uuid4().hex[:8]})"), token=token
+    )
+    assert asgi.status == 201, asgi.body
+    space_id = json.loads(asgi.body)["data"]["space"]["id"]
+
+    asgi.post(
+        f"/admin/spaces/{space_id}/review",
+        {"approved": True, "reason": ""},
+        token=create_access_token(reviewer_id, handle=reviewer),
     )
 
     assert asgi.status == 200, asgi.body

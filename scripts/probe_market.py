@@ -1,5 +1,5 @@
 """Verify: 市场 page — 题目匹配 tab (cards, apply dialog, applications,
-accept flow, keyword search) and the 算力资源 tab.
+accept flow, keyword search) and the 模型与工作电脑 tab.
 
 Assumes at least one published template with applications exists (any stack;
 override the frontend origin with PROBE_BASE). Screenshots go to tmp_review/.
@@ -42,7 +42,7 @@ async def main() -> None:
             await pg.keyboard.press("Escape")
             await pg.wait_for_timeout(400)
 
-        await pg.locator(".v-tab:has-text('算力资源')").click()
+        await pg.locator(".v-tab:has-text('模型与工作电脑')").click()
         await pg.wait_for_timeout(900)
         pools = await pg.locator(".pool-card").count()
         print("pool cards:", pools)

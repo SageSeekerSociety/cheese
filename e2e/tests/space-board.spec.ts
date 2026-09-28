@@ -24,24 +24,37 @@ import { acceptPendingConsents, apiLogin, apiToken } from "./helpers";
 // 链、落到老地址，量的则是「老树那九页一页没删，路没断」。
 
 // 空间名在库里是唯一的，而两个用例可能在同一毫秒里各建一个 —— 带上随机尾巴。
-const unique = () => `E2E 空间 ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const unique = () =>
+  `E2E 空间 ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-async function createReviewedSpace(page: import("@playwright/test").Page, auth: Record<string, string>) {
+async function createReviewedSpace(
+  page: import("@playwright/test").Page,
+  auth: Record<string, string>,
+) {
   const name = unique();
   const created = await page.request.post("/api/spaces", {
     headers: auth,
     data: { name, intro: "用来跑空间新界面的临时空间。" },
   });
-  if (!created.ok()) throw new Error(`POST /spaces → ${created.status()} ${await created.text()}`);
+  if (!created.ok())
+    throw new Error(
+      `POST /spaces → ${created.status()} ${await created.text()}`,
+    );
   const spaceId = ((await created.json()).data.space as { id: number }).id;
 
   // 新建的空间是 PENDING：子资源（题目、成员）在过审之前一律读不到。
   // alice 在 e2e 环境里是平台管理员（PLATFORM_ADMIN_HANDLES），所以这条审得过。
-  const reviewed = await page.request.post(`/api/admin/spaces/${spaceId}/review`, {
-    headers: auth,
-    data: { approved: true, reason: "" },
-  });
-  if (!reviewed.ok()) throw new Error(`POST review → ${reviewed.status()} ${await reviewed.text()}`);
+  const reviewed = await page.request.post(
+    `/api/admin/spaces/${spaceId}/review`,
+    {
+      headers: auth,
+      data: { approved: true, reason: "" },
+    },
+  );
+  if (!reviewed.ok())
+    throw new Error(
+      `POST review → ${reviewed.status()} ${await reviewed.text()}`,
+    );
   // 空间名一并交出去：新外壳的页头把「回题目板」那颗按钮写成空间名，
   // 按名字点它才有意义（写「返回」两个字的话，别处也有一颗，分不清）。
   return { spaceId, name };
@@ -76,10 +89,13 @@ async function createTask(
       defaultDeadline: 30,
       deadline: null,
       ...(options.videoUrl ? { videoUrl: options.videoUrl } : {}),
-      ...(options.attachmentIds ? { attachmentIds: options.attachmentIds } : {}),
+      ...(options.attachmentIds
+        ? { attachmentIds: options.attachmentIds }
+        : {}),
     },
   });
-  if (!res.ok()) throw new Error(`POST /tasks → ${res.status()} ${await res.text()}`);
+  if (!res.ok())
+    throw new Error(`POST /tasks → ${res.status()} ${await res.text()}`);
   const taskId = ((await res.json()).data.task as { id: number }).id;
 
   // 提交表单（要交什么）不走建题那条请求，它有自己的覆盖更新接口。
@@ -89,18 +105,27 @@ async function createTask(
       data: { submissionSchema: options.submissionSchema },
     });
     if (!patched.ok())
-      throw new Error(`PATCH /tasks/${taskId} submissionSchema → ${patched.status()} ${await patched.text()}`);
+      throw new Error(
+        `PATCH /tasks/${taskId} submissionSchema → ${patched.status()} ${await patched.text()}`,
+      );
   }
   return taskId;
 }
 
 /** 上板。新题一律是待审的，没过审的题领不了也提交不了。 */
-async function approveTask(page: import("@playwright/test").Page, auth: Record<string, string>, taskId: number) {
+async function approveTask(
+  page: import("@playwright/test").Page,
+  auth: Record<string, string>,
+  taskId: number,
+) {
   const res = await page.request.patch(`/api/tasks/${taskId}`, {
     headers: auth,
     data: { approved: "APPROVED" },
   });
-  if (!res.ok()) throw new Error(`PATCH /tasks/${taskId} → ${res.status()} ${await res.text()}`);
+  if (!res.ok())
+    throw new Error(
+      `PATCH /tasks/${taskId} → ${res.status()} ${await res.text()}`,
+    );
 }
 
 /** 题目材料：文件先经 `POST /attachments` 传上来拿到 id，建题时一次挂上。 */
@@ -113,10 +138,15 @@ async function uploadAttachment(
     headers: auth,
     multipart: {
       type: "file",
-      file: { name: filename, mimeType: "text/plain", buffer: Buffer.from("题目材料（E2E）。") },
+      file: {
+        name: filename,
+        mimeType: "text/plain",
+        buffer: Buffer.from("题目材料（E2E）。"),
+      },
     },
   });
-  if (!res.ok()) throw new Error(`POST /attachments → ${res.status()} ${await res.text()}`);
+  if (!res.ok())
+    throw new Error(`POST /attachments → ${res.status()} ${await res.text()}`);
   return ((await res.json()).data as { id: number }).id;
 }
 
@@ -131,23 +161,26 @@ async function uploadAttachment(
  * 欠着的协议也在这里同意掉：换成的人一进应用就会被「协议已更新」那张模态盖住，
  * 底下点不着（详见 helpers.ts 里 `acceptPendingConsents`）。
  */
-async function switchTo(page: import("@playwright/test").Page, username: string): Promise<string> {
+async function switchTo(
+  page: import("@playwright/test").Page,
+  username: string,
+): Promise<string> {
   const res = await page.request.post("/api/users/auth/login", {
     data: { username, password: "demo12345" },
   });
   if (!res.ok()) throw new Error(`${username} 登录失败 → ${res.status()}`);
-  const session = (await res.json()).data as { accessToken: string; user: unknown };
+  const session = (await res.json()).data as {
+    accessToken: string;
+    user: unknown;
+  };
   await acceptPendingConsents(page, session.accessToken);
 
   const asset = await page.goto("/favicon.ico");
   if (!asset?.ok()) throw new Error("拿不到应用的 origin");
-  await page.evaluate(
-    (s) => {
-      localStorage.setItem("accessToken", s.accessToken);
-      localStorage.setItem("user", JSON.stringify(s.user));
-    },
-    session,
-  );
+  await page.evaluate((s) => {
+    localStorage.setItem("accessToken", s.accessToken);
+    localStorage.setItem("user", JSON.stringify(s.user));
+  }, session);
   return session.accessToken;
 }
 
@@ -179,11 +212,15 @@ test.describe("空间新界面（真路由）", () => {
     await page.goto(`/spaces/${spaceId}/board`);
 
     // 1. 外壳认得这个空间，也认得出「我是所有者」——导航里于是有管理员那三格。
-    await expect(page.getByRole("heading", { name: /^E2E 空间/ })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /^E2E 空间/ }),
+    ).toBeVisible();
     // `exact` 是必要的：首屏那条「有 N 道题在等你审」的提醒里也有一个「去审核」，
     // 不写 exact 会同时命中它，strict 模式直接判失败。
     for (const label of ["空间", "我的", "公告", "审核", "成员", "数据看板"]) {
-      await expect(page.getByRole("link", { name: label, exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("link", { name: label, exact: true }),
+      ).toBeVisible();
     }
     // 右上角那块角色标：这是首页唯一说明「你是谁」的地方。
     await expect(page.getByText(/·\s*所有者/)).toBeVisible();
@@ -195,13 +232,21 @@ test.describe("空间新界面（真路由）", () => {
 
     // 3. 审核页里才看得到它，而且带「你自己出的」标记（自己出的题自己也能审）。
     await page.locator(".board__tab", { hasText: "审核" }).click();
-    await expect(page.locator(".queue__title", { hasText: pendingName })).toBeVisible();
+    await expect(
+      page.locator(".queue__title", { hasText: pendingName }),
+    ).toBeVisible();
     await expect(page.getByText("你自己出的 · 可直接通过")).toBeVisible();
     // 4. 「我的」是出题人看自己题的地方 —— 两道题都该在（一道已上板、一道待审）。
     await page.locator(".board__tab", { hasText: "我的" }).click();
-    await expect(page.getByRole("tab", { name: "我发布的（2）" })).toBeVisible();
-    await expect(page.locator(".pub-row__title", { hasText: approvedName })).toBeVisible();
-    await expect(page.locator(".pub-row__title", { hasText: pendingName })).toBeVisible();
+    await expect(
+      page.getByRole("tab", { name: "我发布的（2）" }),
+    ).toBeVisible();
+    await expect(
+      page.locator(".pub-row__title", { hasText: approvedName }),
+    ).toBeVisible();
+    await expect(
+      page.locator(".pub-row__title", { hasText: pendingName }),
+    ).toBeVisible();
   });
 
   test("打不开的空间给一句话，不是一张空表", async ({ page }) => {
@@ -221,39 +266,53 @@ test.describe("空间新界面（真路由）", () => {
     const otherToken = await switchTo(page, "bobby");
     const join = await page.request.post("/api/spaces/join", {
       headers: { Authorization: `Bearer ${otherToken}` },
-      data: { code: (await inviteCodeOf(page, auth, spaceId)) },
+      data: { code: await inviteCodeOf(page, auth, spaceId) },
     });
-    if (!join.ok()) throw new Error(`加入空间失败 → ${join.status()} ${await join.text()}`);
+    if (!join.ok())
+      throw new Error(`加入空间失败 → ${join.status()} ${await join.text()}`);
 
     // 手打地址进「审核」：被送回首页，而不是看到一张空表。
     await page.goto(`/spaces/${spaceId}/board/review`);
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board$`));
     // 普通成员连入口都没有。
-    await expect(page.getByRole("link", { name: "审核", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "数据看板", exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "审核", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "数据看板", exact: true }),
+    ).toHaveCount(0);
 
     // 整板看板是同一道门槛 —— 手打地址同样被弹回首页，看不到里面的数。
     await page.goto(`/spaces/${spaceId}/board/analytics`);
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board$`));
-    await expect(page.getByRole("heading", { name: "数据看板" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "数据看板" })).toHaveCount(
+      0,
+    );
     // 那一板上的数一个都不许露出来（「题目总数」是六个 KPI 里第一张卡）。
     await expect(page.getByText("题目总数")).toHaveCount(0);
 
     // 屏幕上挡住之外，接口那一层也挡住：这块看板读的是管理员版面那一组接口，
     // 普通成员连请求都发不出去（403），所以「换个地址栏绕过」这条路本来就不存在。
-    const denied = await page.request.get(`/api/spaces/${spaceId}/analytics/overview`, {
-      headers: { Authorization: `Bearer ${otherToken}` },
-    });
+    const denied = await page.request.get(
+      `/api/spaces/${spaceId}/analytics/overview`,
+      {
+        headers: { Authorization: `Bearer ${otherToken}` },
+      },
+    );
     expect(denied.status()).toBe(403);
 
     // 但「出题目」是有的：这块板任何人都能出题，成员发出来的题进待审队列，
     // 由所有者或管理员审。少一颗按钮就等于这条要求没落地。
     await expect(page.getByRole("link", { name: "出题目" })).toBeVisible();
     await page.getByRole("link", { name: "出题目" }).click();
-    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/publish$`));
+    await expect(page).toHaveURL(
+      new RegExp(`/spaces/${spaceId}/board/publish$`),
+    );
   });
 
-  test("点一道题在新外壳里打开详情，导航还在；老地址也还开着", async ({ page }) => {
+  test("点一道题在新外壳里打开详情，导航还在；老地址也还开着", async ({
+    page,
+  }) => {
     await apiLogin(page);
     const auth = { Authorization: `Bearer ${await apiToken(page)}` };
     const { spaceId, name: spaceName } = await createReviewedSpace(page, auth);
@@ -270,15 +329,21 @@ test.describe("空间新界面（真路由）", () => {
     // 行为，构建产物里没有优化器、真用户不会遇到；所以这里先走一遍把它付掉，再断言
     // 「点卡片进详情」这件事本身。
     await page.goto(`/spaces/${spaceId}/board/tasks/${taskId}`);
-    await expect(page.locator(".task-header-title", { hasText: taskName })).toBeVisible({ timeout: 60_000 });
+    await expect(
+      page.locator(".task-header-title", { hasText: taskName }),
+    ).toBeVisible({ timeout: 60_000 });
 
     await page.goto(`/spaces/${spaceId}/board`);
     await page.locator(".tcard__title", { hasText: taskName }).click();
 
     // 地址栏落在**新外壳那棵路由**上（第四批之前这里会跳到老地址）。
-    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/tasks/${taskId}$`));
+    await expect(page).toHaveURL(
+      new RegExp(`/spaces/${spaceId}/board/tasks/${taskId}$`),
+    );
     // 外壳还在：导航与角色标都没被详情页顶掉。
-    await expect(page.getByRole("link", { name: "空间", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "空间", exact: true }),
+    ).toBeVisible();
     await expect(page.getByText(/·\s*所有者/)).toBeVisible();
     // 页头那颗回题板的按钮，点它回得到题目板首页。
     await page.getByRole("link", { name: spaceName }).click();
@@ -290,11 +355,15 @@ test.describe("空间新界面（真路由）", () => {
     // 编译各的，上面暖过的那一次只暖了新外壳那一棵，老树那一棵第一次进来照样要编译。
     // 编译完没画出来才算这条用例失败。
     await page.goto(`/spaces/${spaceId}/board/tasks/${taskId}`);
-    await expect(page.locator(".task-header-title", { hasText: taskName })).toBeVisible({ timeout: 60_000 });
+    await expect(
+      page.locator(".task-header-title", { hasText: taskName }),
+    ).toBeVisible({ timeout: 60_000 });
 
     // 老地址这一批一个字没动，照常在原处服务同一道题。
     await page.goto(`/spaces/${spaceId}/tasks/${taskId}`);
-    await expect(page.locator(".task-header-title", { hasText: taskName })).toBeVisible({ timeout: 60_000 });
+    await expect(
+      page.locator(".task-header-title", { hasText: taskName }),
+    ).toBeVisible({ timeout: 60_000 });
   });
 
   test("材料、视频、从领取到提交这条链，在新外壳里都还在", async ({ page }) => {
@@ -316,18 +385,23 @@ test.describe("空间新界面（真路由）", () => {
     const otherToken = await switchTo(page, "bobby");
     const join = await page.request.post("/api/spaces/join", {
       headers: { Authorization: `Bearer ${otherToken}` },
-      data: { code: (await inviteCodeOf(page, auth, spaceId)) },
+      data: { code: await inviteCodeOf(page, auth, spaceId) },
     });
-    if (!join.ok()) throw new Error(`加入空间失败 → ${join.status()} ${await join.text()}`);
+    if (!join.ok())
+      throw new Error(`加入空间失败 → ${join.status()} ${await join.text()}`);
 
     await page.goto(`/spaces/${spaceId}/board/tasks/${taskId}`);
 
     // 清单谁都看得见（看不见清单就无从判断要不要领），下载按钮不给 —— 两件事。
     await expect(page.getByText("题目附件")).toBeVisible();
-    await expect(page.getByTestId("task-attachment").filter({ hasText: "题目材料.txt" })).toBeVisible();
+    await expect(
+      page.getByTestId("task-attachment").filter({ hasText: "题目材料.txt" }),
+    ).toBeVisible();
     await expect(page.getByText("领取这道题之后才能下载")).toBeVisible();
     // 讲解视频嵌成了播放器。
-    await expect(page.locator('iframe[src*="player.bilibili.com"]')).toBeVisible();
+    await expect(
+      page.locator('iframe[src*="player.bilibili.com"]'),
+    ).toBeVisible();
 
     // 领取就在屏幕上点：填一个联系方式即可，够得着那颗按钮就说明这条链在新树里是通的。
     //
@@ -355,13 +429,17 @@ test.describe("空间新界面（真路由）", () => {
 
     // 「提交」那一格领取之后才有；点它进的也是新外壳那一棵。
     await page.getByRole("tab", { name: "提交", exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/tasks/${taskId}/submit$`));
+    await expect(page).toHaveURL(
+      new RegExp(`/spaces/${spaceId}/board/tasks/${taskId}/submit$`),
+    );
     await page.getByLabel("作业说明").fill("我的作业正文（E2E）");
     await page.getByRole("button", { name: "提交", exact: true }).click();
 
     // 交完之后那一跳也走新外壳：老页面在自己那棵树里跳「提交记录」，
     // 名字是同一个、树是另一棵 —— 这里正好量到接缝有没有接错。
-    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/tasks/${taskId}/submissions$`));
+    await expect(page).toHaveURL(
+      new RegExp(`/spaces/${spaceId}/board/tasks/${taskId}/submissions$`),
+    );
     await expect(page.getByText("暂无提交记录")).toHaveCount(0);
   });
 
@@ -372,7 +450,9 @@ test.describe("空间新界面（真路由）", () => {
 
     await page.goto(`/spaces/${spaceId}/board`);
     await page.getByRole("link", { name: "出题目" }).click();
-    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/publish$`));
+    await expect(page).toHaveURL(
+      new RegExp(`/spaces/${spaceId}/board/publish$`),
+    );
 
     // 发题页三块都在：PDF 那条路、材料那张卡、以及给发布参数用的表单
     // （PDF 解析出的草稿也要落到下面这张表单里填参数，所以两条路共用它）。
@@ -403,29 +483,229 @@ test.describe("空间新界面（真路由）", () => {
 
     // 新题是待审的：管理员在审核队列里看得到它。
     await page.goto(`/spaces/${spaceId}/board/review`);
-    await expect(page.locator(".queue__title", { hasText: taskName })).toBeVisible();
+    await expect(
+      page.locator(".queue__title", { hasText: taskName }),
+    ).toBeVisible();
   });
 
-  test("管理员从新外壳进整板看板，屏幕上的数就是接口给的那一份", async ({ page }) => {
+  test("从 PDF 生成：草稿能改能勾，确认之后队列那一行带着出处", async ({
+    page,
+  }) => {
+    await apiLogin(page);
+    const auth = { Authorization: `Bearer ${await apiToken(page)}` };
+    const { spaceId } = await createReviewedSpace(page, auth);
+
+    // 一块板自带一个默认分类（`General`）。确认发布真的会把 `categoryId` 传给后端，
+    // 编一个不属于这块板的 id 会被 `_validate_and_get_category_id` 挡回来，所以从这
+    // 块板自己的分类里取一个 —— 顺带也量到「类目是这块板的类目」。
+    const categories = await page.request.get(
+      `/api/spaces/${spaceId}/categories`,
+      { headers: auth },
+    );
+    if (!categories.ok())
+      throw new Error(
+        `GET categories → ${categories.status()} ${await categories.text()}`,
+      );
+    const categoryId = (
+      (await categories.json()).data.categories as { id: number }[]
+    )[0].id;
+
+    await page.goto(`/spaces/${spaceId}/board/publish`);
+
+    // 默认那一颗是「手写一道」：老发题页原样在底下（它自己那张「PDF 快速发布」卡也
+    // 还在 —— 老页一个字不动是本批的约束）。
+    //
+    // 这一屏要等 60 秒：发题页是这套栈里最重的一屏（老页把 tiptap 那一整片拖进来），
+    // vite 冷启动时现编它要几十秒，而**第一次**进它的就是这条用例 —— 别的用例都从
+    // 题目板首页绕。默认那 5 秒在这一屏上量的是 dev server 的编译速度，不是这一页
+    // 对不对（单跑这一条时实测三次里前两次都栽在这里）。
+    await expect(page.getByText("PDF 快速发布")).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByLabel("题目名称")).toBeVisible();
+
+    await page.getByRole("button", { name: "从 PDF 生成" }).click();
+    await expect(
+      page.getByRole("heading", { name: "从 PDF 生成题目" }),
+    ).toBeVisible();
+    // 换过去之后老页让位：屏幕上换成这一条路，老页那三块一块都不在。
+    await expect(page.getByText("PDF 快速发布")).toHaveCount(0);
+    await expect(page.getByLabel("题目名称")).toHaveCount(0);
+    // 三条上限写在页面上，不是只写在代码里。
+    await expect(
+      page.getByText(/只收 PDF，单个文件最大 15MB，一次最多解析 20 道题/),
+    ).toBeVisible();
+
+    // 解析这一步要跑大模型，而这套栈里没有推理后端（stub-gateway 只答 LLM 网关那几条
+    // 管理接口，真发出去只会拿到「LLM is not configured」）。所以**只拦这一步**，答案
+    // 照真接口的形状给（`{code,message,data:{drafts,templateUsed,tokenUsed}}`，草稿那几
+    // 项就是 `PdfTaskDraftData`）；确认发布、审核队列、页面上其余每一样都还是真栈在答。
+    let gotPreview = "";
+    let previewType = "";
+    await page.route("**/api/tasks/publish/from-pdf/preview", async (route) => {
+      previewType = route.request().headers()["content-type"] ?? "";
+      gotPreview = (
+        route.request().postDataBuffer() ?? Buffer.alloc(0)
+      ).toString("utf8");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: 200,
+          message: "Task drafts previewed from PDF successfully.",
+          data: {
+            drafts: [
+              {
+                name: "用 gdb 定位一次段错误",
+                intro: "用 gdb 找出崩在哪一行。",
+                description:
+                  "给定一段会崩的程序。\n\n![第 2 页-图 1](https://storage.test/task-images/a.png)",
+                space: spaceId,
+                categoryId,
+              },
+              {
+                name: "手写一个最简内存分配器",
+                intro: "实现 malloc / free 的最简版本。",
+                description:
+                  "实现 malloc / free 的最简版本，说明碎片是怎么来的。",
+                space: spaceId,
+                categoryId,
+              },
+            ],
+            templateUsed: { title: "计算机系统基础 · 标准题模板" },
+            tokenUsed: 18742,
+          },
+        }),
+      });
+    });
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "计算机系统基础-第五次作业.pdf",
+      mimeType: "application/pdf",
+      // 解析那一步被上面拦下了，所以这份字节不必真能解析 —— 但它是**这份**文件：
+      // 下面从那次请求自己的正文里把它读回来。
+      buffer: Buffer.from(
+        "%PDF-1.4\n% E2E: the parse step is stubbed, the file is not.\n",
+      ),
+    });
+    await page.getByRole("button", { name: "解析成题目草稿" }).click();
+
+    // 结果区摆的是接口回来的那三件事，外加一句「草稿还不是题目」。
+    await expect(page.getByTestId("pdf-template")).toContainText(
+      "计算机系统基础 · 标准题模板",
+    );
+    await expect(page.getByTestId("pdf-images")).toContainText("抽出插图 1 张");
+    await expect(page.getByTestId("pdf-tokens")).toContainText(
+      "消耗 18,742 tokens",
+    );
+    await expect(page.getByTestId("pdf-meta")).toContainText("还没有成为题目");
+
+    // 浏览器真的把这份 PDF 发出去了：字段和文件是从那次请求**自己的** multipart 正文里
+    // 读出来的，不是从屏幕上的字猜的。
+    expect(previewType).toContain("multipart/form-data");
+    expect(formField(gotPreview, "spaceId")).toBe(String(spaceId));
+    expect(formField(gotPreview, "maxTasks")).toBe("20");
+    expect(gotPreview).toContain('name="file"; filename="');
+    expect(gotPreview).toContain("第五次作业.pdf");
+    expect(gotPreview).toContain("%PDF-1.4");
+
+    // 两条草稿都在，出处页标在每一条上。
+    const rows = page.locator(".pdf__row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0).getByTestId("draft-origin")).toHaveText(
+      "PDF · 第 1 页",
+    );
+    await expect(rows.nth(1).getByTestId("draft-origin")).toHaveText(
+      "PDF · 第 2 页",
+    );
+
+    // 勾掉第二条：按钮上的数字跟着走。
+    await expect(
+      page.getByRole("button", { name: "确认发布 2 道" }),
+    ).toBeVisible();
+    await rows.nth(1).getByRole("checkbox").uncheck();
+    await expect(
+      page.getByRole("button", { name: "确认发布 1 道" }),
+    ).toBeVisible();
+
+    // 就地改标题与题干 —— 发出去的就是屏幕上这一份。
+    const edited = "用 gdb 定位一次段错误（E2E 改过）";
+    await rows.nth(0).getByLabel("标题").fill(edited);
+    await rows
+      .nth(0)
+      .getByLabel("题干")
+      .fill("改过的题干：把崩的那一行的寄存器状态交上来。");
+
+    // 确认发布走的是**真接口**（这一步没拦），发完**不跳走**。
+    const confirmResponse = page.waitForResponse(
+      (r) =>
+        r.url().includes("/tasks/publish/from-pdf/confirm") &&
+        r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "确认发布 1 道" }).click();
+    expect((await confirmResponse).status()).toBe(200);
+    await expect(page).toHaveURL(
+      new RegExp(`/spaces/${spaceId}/board/publish$`),
+    );
+
+    // 就地回执：刚发了一道，两个去处都指向新外壳那棵树。
+    const receipt = page.getByTestId("pdf-receipt");
+    await expect(receipt).toContainText("刚发的 1 道题");
+    await expect(receipt.getByRole("link", { name: edited })).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "去审核队列" }),
+    ).toHaveAttribute("href", `/spaces/${spaceId}/board/review`);
+    await expect(
+      page.getByRole("link", { name: "去「我的」看这几道" }),
+    ).toHaveAttribute("href", `/spaces/${spaceId}/board/mine`);
+
+    // 落进审核队列的那一行带着出处 —— 队列那一行显示的就是简介，标记写在简介里。
+    await page.goto(`/spaces/${spaceId}/board/review`);
+    const queued = page.locator(".queue__row", { hasText: edited });
+    await expect(queued).toBeVisible();
+    await expect(queued).toContainText("【PDF · 第 1 页】");
+    // 勾掉的那一条没发出去。
+    await expect(
+      page.locator(".queue__row", { hasText: "手写一个最简内存分配器" }),
+    ).toHaveCount(0);
+  });
+
+  test("管理员从新外壳进整板看板，屏幕上的数就是接口给的那一份", async ({
+    page,
+  }) => {
     await apiLogin(page);
     const auth = { Authorization: `Bearer ${await apiToken(page)}` };
     const { spaceId } = await createReviewedSpace(page, auth);
     const approvedName = "看板上已上板的一道题（E2E）";
     const pendingName = "看板上还在等审的一道题（E2E）";
-    await approveTask(page, auth, await createTask(page, auth, spaceId, approvedName));
+    await approveTask(
+      page,
+      auth,
+      await createTask(page, auth, spaceId, approvedName),
+    );
     await createTask(page, auth, spaceId, pendingName);
 
     // 先把接口那一份拿回来 —— 下面屏幕上量到的每个数都要与它逐个相等，而不是
     // 与测试自己写的常数相等（常数只是防止「两边一起变成 0」这种同归于尽的假绿）。
-    const overview = (await (
-      await page.request.get(`/api/spaces/${spaceId}/analytics/overview`, { headers: auth })
-    ).json()).data as {
+    const overview = (
+      await (
+        await page.request.get(`/api/spaces/${spaceId}/analytics/overview`, {
+          headers: auth,
+        })
+      ).json()
+    ).data as {
       entityMetrics: Record<string, number>;
-      taskDistributions: { byApprovalStatus: { items: { label: string; count: number }[] } };
+      taskDistributions: {
+        byApprovalStatus: { items: { label: string; count: number }[] };
+      };
     };
-    const alerts = (await (
-      await page.request.get(`/api/spaces/${spaceId}/analytics/alerts`, { headers: auth })
-    ).json()).data as { pendingTaskApprovalCount: number };
+    const alerts = (
+      await (
+        await page.request.get(`/api/spaces/${spaceId}/analytics/alerts`, {
+          headers: auth,
+        })
+      ).json()
+    ).data as { pendingTaskApprovalCount: number };
     const m = overview.entityMetrics;
     expect(m.taskCount).toBe(2);
     expect(m.publisherCount).toBe(1);
@@ -434,10 +714,14 @@ test.describe("空间新界面（真路由）", () => {
     await page.goto(`/spaces/${spaceId}/board`);
     await page.getByRole("link", { name: "数据看板", exact: true }).click();
 
-    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/analytics$`));
+    await expect(page).toHaveURL(
+      new RegExp(`/spaces/${spaceId}/board/analytics$`),
+    );
     await expect(page.getByRole("heading", { name: "数据看板" })).toBeVisible();
     // 外壳还在：看板是挂在新题目板里的，不是把老侧栏那套又搬回来。
-    await expect(page.getByRole("link", { name: "数据看板", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "数据看板", exact: true }),
+    ).toBeVisible();
 
     // 六张 KPI 卡上的数 == 接口给的那一份。
     //
@@ -446,46 +730,71 @@ test.describe("空间新界面（真路由）", () => {
     // 这是这条用例真栈上踩到过的一次。
     const kpi = (label: string) =>
       page
-        .locator(".metric", { has: page.locator(".metric__label", { hasText: new RegExp(`^${label}$`) }) })
+        .locator(".metric", {
+          has: page.locator(".metric__label", {
+            hasText: new RegExp(`^${label}$`),
+          }),
+        })
         .locator(".metric__value");
     await expect(kpi("题目总数")).toHaveText(String(m.taskCount));
-    await expect(kpi("待审核")).toHaveText(String(alerts.pendingTaskApprovalCount));
+    await expect(kpi("待审核")).toHaveText(
+      String(alerts.pendingTaskApprovalCount),
+    );
     await expect(kpi("领取主体")).toHaveText(String(m.participantCount));
-    await expect(kpi("提交主体")).toHaveText(String(m.submittedParticipantCount));
-    await expect(kpi("通过主体")).toHaveText(String(m.successfulParticipantCount));
-    await expect(kpi("完成率")).toHaveText(`${Math.round(m.successRate * 100)}%`);
+    await expect(kpi("提交主体")).toHaveText(
+      String(m.submittedParticipantCount),
+    );
+    await expect(kpi("通过主体")).toHaveText(
+      String(m.successfulParticipantCount),
+    );
+    await expect(kpi("完成率")).toHaveText(
+      `${Math.round(m.successRate * 100)}%`,
+    );
 
     // 题目构成那张状态条也照接口的 byApprovalStatus 画：一道已上板、一道待审核。
     const statusOf = (label: string) =>
-      overview.taskDistributions.byApprovalStatus.items.find((i) => i.label === label)?.count ?? 0;
+      overview.taskDistributions.byApprovalStatus.items.find(
+        (i) => i.label === label,
+      )?.count ?? 0;
     expect(statusOf("APPROVED")).toBe(1);
     expect(statusOf("NONE")).toBe(1);
     await expect(
-      page.locator(".split__legend li", { hasText: "已上板" }).locator(".split__num"),
+      page
+        .locator(".split__legend li", { hasText: "已上板" })
+        .locator(".split__num"),
     ).toHaveText(String(statusOf("APPROVED")));
     await expect(
-      page.locator(".split__legend li", { hasText: "待审核" }).locator(".split__num"),
+      page
+        .locator(".split__legend li", { hasText: "待审核" })
+        .locator(".split__num"),
     ).toHaveText(String(statusOf("NONE")));
 
     // 「最热的题」是逐题那一份排出来的，两道题都在里面。
-    await expect(page.locator(".bars__label", { hasText: approvedName })).toBeVisible();
-    await expect(page.locator(".bars__label", { hasText: pendingName })).toBeVisible();
+    await expect(
+      page.locator(".bars__label", { hasText: approvedName }),
+    ).toBeVisible();
+    await expect(
+      page.locator(".bars__label", { hasText: pendingName }),
+    ).toBeVisible();
 
     // 待处理那一格：那张「几道题在等你审」的卡用的是 alerts 的数，进得去审核页。
     await page.getByRole("tab", { name: /^待处理/ }).click();
-    await expect(page.getByText(`${alerts.pendingTaskApprovalCount} 道题在等你审`)).toBeVisible();
+    await expect(
+      page.getByText(`${alerts.pendingTaskApprovalCount} 道题在等你审`),
+    ).toBeVisible();
     await expect(page.getByRole("link", { name: "去审核" })).toHaveAttribute(
       "href",
       `/spaces/${spaceId}/board/review`,
     );
 
     // 老树那九页一页没删：页脚那条链的**落点**是老地址，点过去也真能开出来。
-    await expect(page.getByRole("link", { name: "打开老版九页分析" })).toHaveAttribute(
-      "href",
-      `/spaces/${spaceId}/analytics`,
-    );
+    await expect(
+      page.getByRole("link", { name: "打开老版九页分析" }),
+    ).toHaveAttribute("href", `/spaces/${spaceId}/analytics`);
     await page.goto(`/spaces/${spaceId}/analytics`);
-    await expect(page.getByRole("heading", { name: "总览" })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole("heading", { name: "总览" })).toBeVisible({
+      timeout: 60_000,
+    });
   });
 
   test("从空间列表点进一块板，落的是题目板；课的几屏还在", async ({ page }) => {
@@ -502,7 +811,9 @@ test.describe("空间新界面（真路由）", () => {
     // 落点是题目板 —— 不是 `/spaces/{id}` 那条 redirect 到的老树。
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board$`));
     for (const label of ["空间", "我的", "公告"]) {
-      await expect(page.getByRole("link", { name: label, exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("link", { name: label, exact: true }),
+      ).toBeVisible();
     }
     // 老侧栏那几格一个都不在（「全部分类」是老树独有的一格）。
     await expect(page.getByText("全部分类")).toHaveCount(0);
@@ -523,9 +834,14 @@ async function inviteCodeOf(
   auth: Record<string, string>,
   spaceId: number,
 ) {
-  const res = await page.request.get(`/api/spaces/${spaceId}/invite-codes`, { headers: auth });
-  if (!res.ok()) throw new Error(`GET invite-codes → ${res.status()} ${await res.text()}`);
-  const codes = ((await res.json()).data.inviteCodes ?? []) as { code: string }[];
+  const res = await page.request.get(`/api/spaces/${spaceId}/invite-codes`, {
+    headers: auth,
+  });
+  if (!res.ok())
+    throw new Error(`GET invite-codes → ${res.status()} ${await res.text()}`);
+  const codes = ((await res.json()).data.inviteCodes ?? []) as {
+    code: string;
+  }[];
   if (!codes.length) throw new Error("这个空间没有邀请码");
   return codes[0].code;
 }
@@ -536,8 +852,11 @@ async function approveParticipant(
   auth: Record<string, string>,
   taskId: number,
 ) {
-  const list = await page.request.get(`/api/tasks/${taskId}/participants`, { headers: auth });
-  if (!list.ok()) throw new Error(`GET participants → ${list.status()} ${await list.text()}`);
+  const list = await page.request.get(`/api/tasks/${taskId}/participants`, {
+    headers: auth,
+  });
+  if (!list.ok())
+    throw new Error(`GET participants → ${list.status()} ${await list.text()}`);
   const participants = ((await list.json()).data.participants ?? []) as {
     id: number;
     approved: string;
@@ -545,9 +864,13 @@ async function approveParticipant(
   // 自助领取落库是 `approved=2`（待批），序列化出来是 "NONE"。
   const pending = participants.find((p) => p.approved === "NONE");
   if (!pending) throw new Error("没有待批的领取记录");
-  const res = await page.request.patch(`/api/tasks/${taskId}/participants/${pending.id}`, {
-    headers: auth,
-    data: { approved: "APPROVED" },
-  });
-  if (!res.ok()) throw new Error(`PATCH participant → ${res.status()} ${await res.text()}`);
+  const res = await page.request.patch(
+    `/api/tasks/${taskId}/participants/${pending.id}`,
+    {
+      headers: auth,
+      data: { approved: "APPROVED" },
+    },
+  );
+  if (!res.ok())
+    throw new Error(`PATCH participant → ${res.status()} ${await res.text()}`);
 }

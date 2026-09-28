@@ -24,7 +24,7 @@ export interface TopicNodeLike {
 export interface TopicRelevanceLike extends TopicNodeLike {
   /** 我在名册里 / 我建的 / 我是验收人 / 我被 @ 过，四者取一。 */
   i_participate?: boolean | null
-  /** 现在正等我做事：点名给我的验收卡，或 @我 的未读。为真时 `i_participate` 必然为真。 */
+  /** 现在正等我拍板：点名给我的验收卡、没答的决策请求或提问（未读 @ 不算）。为真时 `i_participate` 必然为真。 */
   awaits_me?: boolean | null
 }
 

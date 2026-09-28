@@ -349,3 +349,30 @@ class NotificationRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return {topic_id: bool(unread) for topic_id, unread in rows if topic_id}
+
+    async def decision_topic_ids(
+        self, topic_ids: list[uuid.UUID], recipient_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{topic_id: 这里向他要的决策还有没有没拍板的} —— 一次查完。
+
+        和验收卡同一个形状：**在不在 key 里**是「这房间找他拍过板」（拍完也还是
+        他的事），**value** 是「现在就等他」。没拍板的判据和收件箱同一条：
+        `resolved_at` 为空，读过不等于答过。
+        """
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(
+                Notification.topic_id,
+                func.bool_or(Notification.resolved_at.is_(None)),
+            )
+            .where(
+                Notification.topic_id.in_(topic_ids),
+                Notification.type == NotificationType.DECISION_REQUEST.value,
+                Notification.recipient_handle == recipient_handle,
+                Notification.deleted_at.is_(None),
+            )
+            .group_by(Notification.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: bool(open_) for topic_id, open_ in rows if topic_id}

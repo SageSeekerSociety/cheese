@@ -46,14 +46,14 @@ SECTIONS = [
         "队长和管理员可以通过 UID 邀请成员。受邀者可以在自己的头像菜单中查看 UID。",
     ),
     Section(
-        "设备与运行环境",
+        "设备与工作电脑",
         "连接设备",
         "/docs/devices#connect",
         "在电脑上安装连接器，运行 cheese auth login 登录，"
         "再运行 cheese link connect 连接。",
     ),
     Section(
-        "额度与算力",
+        "额度",
         "额度用完",
         "/docs/quota#exhausted",
         "tokens 额度用完时，话题里会出现提示，联系团队管理员补充额度。",

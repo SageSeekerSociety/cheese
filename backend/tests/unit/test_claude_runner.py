@@ -596,7 +596,7 @@ def test_a_session_that_dies_on_its_way_up_leaves_its_reason_in_the_runner_log(
 ):
     reason = (
         "executor_transport.PlatformHTTPError: Platform HTTP 504: "
-        "工作机器仍在准备，对话和平台工具仍可用"
+        "工作电脑仍在准备，对话和平台工具仍可用"
     )
     log = _start_dying(tmp_path, f"Traceback (most recent call last):\n{reason}")
 

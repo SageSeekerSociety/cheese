@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import uuid
-from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote
@@ -16,9 +15,8 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import (
     get_chat_service,
     get_profile_registry,
-    project_device_online,
 )
-from app.api.place import authorized_place, project_reader
+from app.api.place import project_reader
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -42,7 +40,6 @@ from app.domain.agent.github_app import (
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_TIERS,
-    compute_default_name,
     compute_selectable,
 )
 from app.domain.agent.profiles import ProfileRegistry
@@ -57,7 +54,6 @@ from app.domain.agent_instance.schemas import (
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
-    memory_pool,
 )
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -69,7 +65,6 @@ from app.domain.library import service as library
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
 from app.domain.membership.services import MemberService
-from app.domain.memory.models import MemoryScope
 from app.domain.policy import gate
 from app.domain.preview.office import (
     OfficeRenderFailed,
@@ -101,7 +96,6 @@ from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
-from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
 from app.domain.shell.catalog import Shell
@@ -111,7 +105,6 @@ from app.domain.team.services import team_service
 from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
-from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheesex.projects")
@@ -983,76 +976,6 @@ async def list_project_tasks(
     return ok(page(items, len(items)))
 
 
-async def _calling_agent(
-    db: DbSession, project_id: uuid.UUID, caller: tuple[Place, Actor] | None
-) -> ResolvedAgent | None:
-    """Whose memory this call writes to and reads from.
-
-    The AGENT, not the room: a room seats any number of teammates, and the one
-    running `cheese_remember` is the one on the token, so its notes go to its
-    own pool wherever it is working — the same 芝士 moving between rooms keeps
-    one pool. A token that names no saved teammate (an older one, a DM's)
-    writes as the place's default: the DM's own teammate, else the project's.
-    Returns ``None`` when no usable place was supplied; the caller then names
-    the project's own 芝士 (`_agent_speaking`), because a memory always belongs
-    to one instance.
-
-    The agent itself rather than a pool key, because two different pools are
-    named from it now: its own (`memory_pool`) and one per person it has
-    formed a view of (`user_scope_id`).
-    """
-    if caller is None:
-        return None
-    place, actor = caller
-    project = await ProjectService(db).get_or_404(project_id)
-    agents = AgentInstanceService(db)
-    # The seat handle answers for itself: `for_seat_handle` matches it against
-    # the project's saved teammates and returns None for a person, the shared
-    # `cheese` seat and a room-derived one. Pre-filtering by "is the caller an
-    # agent" asked a second, coarser question whose only effect was to skip a
-    # lookup that already says no.
-    agent = await agents.for_seat_handle(project, actor.handle)
-    if agent is None:
-        agent = await agents.for_topic(place.room, project)
-    return agent
-
-
-async def _agent_speaking(
-    db: DbSession, project: Project, agent: ResolvedAgent | None
-) -> ResolvedAgent:
-    """Which 芝士 this call is — the caller's, else the project's own.
-
-    Every memory names an instance: a pool about a person (结论 8) and the
-    project pool an instance keeps for itself (结论 7 — there is no pool the
-    project shares). An endpoint called without a place still has to name one,
-    and every project has its own 芝士 (结论 4), so a project-level call is
-    that one speaking.
-
-    Takes the caller's agent rather than resolving it again: every endpoint
-    that asks this already had to resolve it for something else on the same
-    path.
-    """
-    if agent is not None:
-        return agent
-    return await AgentInstanceService(db).for_project(project)
-
-
-async def _authorize_personal_memory_owner(
-    db: DbSession, place: Place | None, owner: str
-) -> None:
-    """个人记忆 lives in a private chat, and a private chat is a room — so this
-    asks the room even when a thread inside it is the caller.
-
-    Who is in that room is the roster's answer: a private chat is a room with
-    two seats (结论 19), and those two are its participants."""
-    if place is None:
-        return
-    room = place.room
-    seats = await TopicMemberService(db).private_seats(room.id)
-    if not room.is_private or seats is None or owner not in seats:
-        raise ForbiddenError("只能在该成员自己的私聊中读写个人记忆")
-
-
 @router.post("/{project_id}/memory")
 async def add_memory(
     project_id: uuid.UUID,
@@ -1060,140 +983,25 @@ async def add_memory(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """记入记忆 — used by the `cheese_remember` tool. With a ``topic`` it writes
-    the acting 芝士's own memory for this project; with scope="user"+owner it
-    writes that agent's view of that person, inside this project (结论 8).
-    Called without a place, it is the project's own 芝士 writing.
+    """写记忆的旧入口 —— 已关闭，而且明说。
 
-    ``scope="everyone"`` is retired: it appended to the project overview's living
-    doc, and that turned the overview into an append-only list of observations
-    nobody pruned (话题「记忆机制照搬CC」). It is refused out loud rather than
-    quietly dropped, so a caller still sending it learns where the fact goes now.
+    这条端点是 `cheese_remember` 的后端。它写的是旧的条目池（`memory_entries`，
+    按 agent 分池）；记忆换成「一条记忆一个 markdown 文件」之后（`MemoryFileStore`），
+    那一份不再注入任何地方——它的索引不进提示词、它的正文没有读点。再往后端写只会
+    得到一句「已记入」，而这条记忆以后谁都读不到：**静默丢失**。
 
-    Before a *memory* is stored, the fact is looked for in the live checkout: a
-    memory is for what the repo cannot tell you (结论 61), and a fact that is
-    already written in a file there is a copy that will go stale on its own.
-    The refusal names the file, because "已经写在 repo 里了" without it leaves
-    the caller nothing to do but rephrase and try again.
+    所以这里一律拒绝，并在这句话里说清该写哪儿。旧会话（上下文里还留着
+    `cheese_remember` 那张工具表）里还在调它的调用方，读到的就是这句。
 
-    ``layer="core"`` buys a seat in every future prompt instead of a place in
-    the pool that gets retrieved on demand — see MemoryLayer."""
-    from app.domain.agent.harness import harness_for
-    from app.domain.memory.models import MemoryLayer, user_scope_id
-    from app.domain.memory.redundant import agent_checkout_search, already_in_repo
-    from app.domain.memory.store import memory_store
-
-    project = await ProjectService(db).get_or_404(project_id)
-    caller = await authorized_place(
-        db, resolver, project_id, (body.get("topic") or "").strip()
+    参数一个都不看：这条路的授权、作用域、layer 现在都没有意义——它不是
+    「写错了」而是「不该往这里写」，答一个「你没权限」只会把人引去要权限。
+    """
+    raise ValidationError(
+        "记忆改为直接写 `~/.cheese/memory/` 下的文件：一条记忆一个 markdown "
+        "文件（带 name/description/type 的 frontmatter），再在 `MEMORY.md` 里加一行"
+        "指针。见系统提示里的「记忆」一节。`cheese_remember` 已停用——它写的是旧的"
+        "条目池，那一份已经不再注入任何地方，写进去的事实以后读不到。"
     )
-    place = caller[0] if caller else None
-    content = (body.get("content") or "").strip()
-    if not content:
-        raise ValidationError("content 不能为空")
-    raw_layer = (body.get("layer") or MemoryLayer.fact.value).strip()
-    if raw_layer not in tuple(MemoryLayer):
-        raise ValidationError("layer 只能是 core 或 fact")
-    layer = MemoryLayer(raw_layer)
-    scope = (body.get("scope") or "project").strip()
-    if scope == "everyone":
-        raise ValidationError(
-            "scope=everyone 已停用：不再往项目总览文档里追加。项目目标、范围这类"
-            "写进总览文档「项目是什么」一节（在总览房间用 cheese_doc_set）；"
-            "决策用 cheese_decision，节点用 cheese_milestone。"
-        )
-    # 谁在调用，这一句就答完了：下面三处都用它——查哪条检出目录（手是这位 agent
-    # 的，不是房间的，结论 60）、这是谁对这个人形成的看法、以及写进谁的池子。
-    agent = await _calling_agent(db, project_id, caller)
-    if place is not None and agent is not None:
-        hit = await already_in_repo(
-            content,
-            agent_checkout_search(
-                db, place.room, agent.handle, harness_for(project.settings)
-            ),
-        )
-        if hit is not None:
-            raise ValidationError(
-                f"这条事实 repo 里已经写着了（{hit.path}:{hit.line}）——"
-                f"「{hit.text}」。记忆只记 repo 里查不到的东西；"
-                "要让别人看见就改那个文件，不要在这里记一份会过期的副本。"
-            )
-    if scope == "user":
-        owner = (body.get("owner") or "").strip()
-        if not owner:
-            raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        await _authorize_personal_memory_owner(db, place, owner)
-        viewer = await _agent_speaking(db, project, agent)
-        await memory_store(db).remember(
-            MemoryScope.user,
-            user_scope_id(project_id, viewer.handle, owner),
-            content,
-            layer=layer,
-        )
-        return ok({"remembered": True, "layer": layer.value})
-    writer = await _agent_speaking(db, project, agent)
-    await memory_store(db).remember(
-        *memory_pool(project_id, writer), content, layer=layer
-    )
-    return ok({"remembered": True, "layer": layer.value})
-
-
-@router.post("/{project_id}/memory/search")
-async def search_memory(
-    project_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """记忆检索 — used by the `cheese_recall` tool. Defaults to the pools this
-    turn already reads; with scope="user"+owner it searches this agent's view
-    of that one person. This is keyword matching ranked by query coverage, not
-    semantic search — related, but not the same thing, which is why the CLI
-    never promises 语义搜索."""
-    from app.domain.memory.models import user_scope_id
-    from app.domain.memory.pools import pools_for_turn
-    from app.domain.memory.store import memory_store
-
-    project = await ProjectService(db).get_or_404(project_id)
-    caller = await authorized_place(
-        db, resolver, project_id, (body.get("topic") or "").strip()
-    )
-    place = caller[0] if caller else None
-    query = (body.get("query") or "").strip()
-    if not query:
-        raise ValidationError("query 不能为空")
-    store = memory_store(db)
-    agent = await _calling_agent(db, project_id, caller)
-    if (body.get("scope") or "project") == "user":
-        owner = (body.get("owner") or "").strip()
-        if not owner:
-            raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        await _authorize_personal_memory_owner(db, place, owner)
-        viewer = await _agent_speaking(db, project, agent)
-        hits = await store.search(
-            MemoryScope.user, user_scope_id(project_id, viewer.handle, owner), query
-        )
-        return ok({"hits": [h.as_dict() for h in hits]})
-    # `cheese_recall` 查的就是这一轮注入时读的那几个池（`pools_for_turn`），一条
-    # 不多一条不少。两边同一份清单，否则会出现「注入里提过池子还有 N 条，recall
-    # 却查不到」——而注入那句话的全部作用就是让人来 recall。项目共看的那份状态
-    # 不在这里：它是总览的实况文档（结论 7），每一轮本来就整份进提示词。
-    #
-    # 按分数合并，不按池子首尾相接：一条事实恰好落在哪个池里，说明不了它答这个
-    # 问题答得多好，而调用方是从上往下读的。
-    speaker = await _agent_speaking(db, project, agent)
-    pools = pools_for_turn(
-        project_id,
-        speaker.handle,
-        await TopicMemberService(db).people_handles(place.room_id)
-        if place is not None
-        else [],
-    )
-    hits: list = []
-    for scope, scope_id in pools:
-        hits.extend(await store.search(scope, scope_id, query))
-    hits.sort(key=lambda h: -h.score)
-    return ok({"hits": [h.as_dict() for h in hits]})
 
 
 @router.get("/{project_id}/private-chat")
@@ -1394,10 +1202,15 @@ async def get_compute_configs(
     except ForbiddenError:
         can_manage = False
     devices = await sql_device_service(db).list_devices_for_project(project_id)
+    from app.domain.machine.session_work import project_distribution
+
     return ok(
         {
             **project_configs(project.settings).model_dump(),
             "can_manage": can_manage,
+            # Where the project's agents are working now; the default only
+            # decides for agents that have not started.
+            "distribution": await project_distribution(db, project_id),
             "devices": [
                 {
                     "device_id": d.device_id,
@@ -1413,6 +1226,38 @@ async def get_compute_configs(
     )
 
 
+@router.get("/{project_id}/devices/{device_id}/sessions")
+async def list_device_sessions(
+    project_id: uuid.UUID,
+    device_id: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """The project's agent sessions on one self-hosted device, for a project
+    manager to switch some of them elsewhere (「现在的分布」 → 查看并更换).
+
+    Each switch then goes through the room's own route, with its checks. A
+    session in a room the caller cannot open is counted in ``hidden`` and not
+    listed, so its room's title stays in that room.
+    """
+    from app.domain.machine.session_work import device_sessions
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    listed, hidden = [], 0
+    for topic, session in await device_sessions(db, project_id, device_id):
+        try:
+            await resolver.authorize_topic(
+                actor, project_id=project_id, topic_id=topic.id
+            )
+        except ForbiddenError:
+            hidden += 1
+            continue
+        listed.append(session)
+    return ok({"sessions": listed, "hidden": hidden})
+
+
 @router.put("/{project_id}/compute-configs")
 async def save_compute_configs(
     project_id: uuid.UUID,
@@ -1426,10 +1271,9 @@ async def save_compute_configs(
     if project is None:
         raise NotFoundError("Project not found")
     await MemberService(db).require_manager(project_id, actor)
-    for choice in [body.default, *body.favorites]:
-        await validate_choice(db, project_id, choice)
-        if choice.profile == COMPUTE_CLOUD:
-            await MachineService(db).require_use_authority(project_id, actor)
+    await validate_choice(db, project_id, body.default)
+    if body.default.profile == COMPUTE_CLOUD:
+        await MachineService(db).require_use_authority(project_id, actor)
     values = dict(project.settings or {})
     values.pop("compute_profile", None)
     values["compute_configs"] = body.model_dump()
@@ -1541,42 +1385,6 @@ async def set_topic_naming(
     project.settings = {**(project.settings or {}), naming.SETTINGS_KEY: mode}
     await db.flush()
     return await get_topic_naming(project_id, db, resolver)
-
-
-@router.get("/{project_id}/compute-profiles")
-async def list_compute_profiles(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Available compute sources and the explicit project default."""
-    configs = await get_compute_configs(project_id, db, resolver)
-    current = configs["data"]["default"]["profile"]
-    device_online = await project_device_online(db, project_id)
-    profiles = [
-        asdict(v) for v in compute_selectable(settings, device_online=device_online)
-    ]
-    return ok({"current": current, "profiles": profiles})
-
-
-@router.put("/{project_id}/compute-profile")
-async def set_compute_profile(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Set the project's compute pool. Only a deployed (available) pool is
-    accepted, so a project never selects compute that isn't actually there."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    name = (body.get("profile") or "").strip() or compute_default_name()
-    device_online = await project_device_online(db, project_id)
-    allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
-    if name not in allowed:
-        raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
-    from app.domain.agent.compute_configs import standard_choice
-
-    configs = project_configs(project.settings)
-    configs.default = standard_choice(name)
-    await save_compute_configs(project_id, configs, db, resolver)
-    return ok({"current": name})
 
 
 # --- Project stewardship: who answers for a project ---------------------------

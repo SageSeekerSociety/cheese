@@ -457,7 +457,7 @@ def test_nondefault_timer_reaches_the_named_agent_through_real_turn_assembly(
     received_by = []
 
     def observe_receiver():
-        work = chat._active_turn_ids[uuid.UUID(room)]
+        work = next(iter(chat._active_turn_ids[uuid.UUID(room)]))
         received_by.append(chat._hook_work[(uuid.UUID(room), work)].acting_agent)
 
     stub_hooks.on_start = observe_receiver

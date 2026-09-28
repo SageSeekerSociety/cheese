@@ -25,7 +25,6 @@ vi.mock('../../api', async () => {
     listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
     answerOptions: vi.fn(),

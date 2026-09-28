@@ -99,7 +99,7 @@ def test_active_room_refuses_application_but_project_can_save_future_config(clie
     topic_id = room(client, project_id)
     base = f"/projects/{project_id}/environment"
     chat = client.app.dependency_overrides[get_chat_service]()
-    chat._active_turn_ids[uuid.UUID(topic_id)] = uuid.uuid4()
+    chat._active_turn_ids[uuid.UUID(topic_id)] = {uuid.uuid4()}
     try:
         saved = client.put(base, headers=headers, json={"startup_script": "echo next"})
         assert saved.status_code == 200
