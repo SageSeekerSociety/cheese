@@ -3998,13 +3998,17 @@ class ChatService:
             # The caller attributes the publication to a turn when it can; an
             # agent running off this process (a remote executor) publishes over
             # HTTP, where the runner knows no live work and hands in None. Its
-            # turn still exists here — the silence sweep judges it by
-            # `_active_turn_ids` — so fall back to the same map: a room-visible
-            # publication from the room's agent IS the turn speaking, whatever
-            # machine it ran on. Without this, every remote publication missed
-            # `last_chat_at` and the sweep kept "reminding" a turn that had
-            # just spoken, counting the silence from turn start.
-            work_id = turn_id or self._active_turn_ids.get(topic_id)
+            # turn still exists here, so fall back — but carefully, because a
+            # room seats several agents and `_active_turn_ids` holds only the
+            # one currently running: crediting agent A's publication to agent
+            # B's turn would silence B's reminder while A's room stays dark.
+            # So: the publisher's own live turn first; an unambiguous single
+            # live turn next (covers tokens that don't name an agent seat);
+            # nothing when two agents' turns are live and neither is the
+            # publisher's. Without a fallback at all, every remote publication
+            # missed `last_chat_at` and the sweep kept "reminding" a turn that
+            # had just spoken, counting the silence from turn start.
+            work_id = turn_id or self._attributed_work_id(topic_id, author)
             state = (
                 self._hook_work.get((topic_id, work_id))
                 if work_id is not None
@@ -4014,6 +4018,19 @@ class ChatService:
                 state.last_chat_at = datetime.now(UTC)
                 state.last_progress_reminder_at = None
         return payload
+
+    def _attributed_work_id(self, topic_id: uuid.UUID, author: str) -> uuid.UUID | None:
+        """Which live hook work a room publication with no turn id belongs to."""
+        live = [s for (t, _), s in self._hook_work.items() if t == topic_id]
+        own = [s for s in live if s.acting_agent == author]
+        if len(own) == 1:
+            return own[0].work_id
+        if len(own) > 1:
+            active = self._active_turn_ids.get(topic_id)
+            return next((s.work_id for s in own if s.work_id == active), None)
+        if len(live) == 1:
+            return live[0].work_id
+        return None
 
     async def _persist_tool_event(
         self,

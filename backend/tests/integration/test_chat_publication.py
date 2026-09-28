@@ -405,13 +405,67 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
                 and frame["block"]["content"] == "Internal output"
             ):
                 break
+        # A second agent's turn is live in the same room, and IT is the one
+        # holding the topic's active slot. Attribution must still land on the
+        # PUBLISHER's own turn — crediting this publication to the other
+        # agent's turn would silence ITS reminder while this room stays dark.
+        import dataclasses
+
         clock += timedelta(seconds=threshold)
+        own = next(s for (t, _), s in chat._hook_work.items() if t == uuid.UUID(topic))
+        rival_id = uuid.uuid4()
+        rival = dataclasses.replace(
+            own, work_id=rival_id, acting_agent="cheese-other", started_at=clock
+        )
+        chat._hook_work[(uuid.UUID(topic), rival_id)] = rival
+        chat._active_turn_ids[uuid.UUID(topic)] = rival_id
+
         sent = publish(client, topic, headers).json()["data"]
         assert next_block(ws)["id"] == sent["id"]
         assert sent["turn_id"] is None  # the endpoint could not attribute it
-        # The publication still counts as the turn speaking: no reminder right
-        # after it, and none inside a fresh interval either.
+        # The publication still counts as the publisher's turn speaking: no
+        # reminder right after it, and none inside a fresh interval either.
+        assert own.last_chat_at == clock
+        assert rival.last_chat_at is None  # never credited across agents
         assert client.portal.call(chat.remind_silent_turns) == 0
         clock += timedelta(seconds=threshold - 1)
         assert client.portal.call(chat.remind_silent_turns) == 0
         assert notices == []
+
+
+def test_publication_attribution_never_guesses_between_agents():
+    """Two live turns, neither the publisher's: attribute nothing.
+
+    The fallback exists so a remote executor's publication refreshes ITS
+    turn. Between two agents whose turns are both live in one room, a
+    publication from a third party matches nobody, and a wrong credit is
+    worse than none: it silences the reminder of a turn that never spoke.
+    """
+    from types import SimpleNamespace
+
+    from app.domain.agent.chat import ChatService
+
+    topic = uuid.uuid4()
+    a, b = uuid.uuid4(), uuid.uuid4()
+    svc = SimpleNamespace(
+        _hook_work={
+            (topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a"),
+            (topic, b): SimpleNamespace(work_id=b, acting_agent="cheese-b"),
+        },
+        _active_turn_ids={topic: a},
+    )
+    attribute = ChatService._attributed_work_id
+    # A third party publishes: two live turns, neither theirs — no guess.
+    assert attribute(svc, topic, "cheese-c") is None
+    # The publisher's own turn wins even when it is not the active one.
+    assert attribute(svc, topic, "cheese-b") == b
+    # Both live turns are the publisher's: the active one breaks the tie.
+    svc._hook_work[(topic, b)] = SimpleNamespace(work_id=b, acting_agent="cheese-a")
+    assert attribute(svc, topic, "cheese-a") == a
+    # One live turn only: unambiguous whoever publishes (a token naming no
+    # agent seat resolves to the room's roster, which may differ).
+    svc._hook_work = {(topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a")}
+    assert attribute(svc, topic, "cheese-c") == a
+    # Nothing live: nothing to attribute.
+    svc._hook_work = {}
+    assert attribute(svc, topic, "cheese-a") is None
