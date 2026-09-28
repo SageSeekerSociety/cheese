@@ -1,0 +1,47 @@
+{
+  "verb": "backlog",
+  "why": "Compacting a long conversation is a stretch of a turn in which nothing reaches the room and new messages go unanswered, for minutes. The room has to be able to say it is compacting rather than leave a silence that reads as a hung session, and to say when it is over. Claude Code reports both ends as system/status records; a status record about anything else (a permission mode) says nothing to the room.",
+  "readers": [
+    "python"
+  ],
+  "harnesses": {
+    "claude-code": {
+      "records": [
+        {
+          "type": "system",
+          "subtype": "status",
+          "status": "compacting",
+          "uuid": "rec_1",
+          "session_id": "session-1"
+        },
+        {
+          "type": "system",
+          "subtype": "status",
+          "status": null,
+          "permissionMode": "default",
+          "uuid": "rec_2",
+          "session_id": "session-1"
+        },
+        {
+          "type": "system",
+          "subtype": "status",
+          "status": null,
+          "compact_result": "success",
+          "uuid": "rec_3",
+          "session_id": "session-1"
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "kind": "compacting",
+      "done": false
+    },
+    {
+      "kind": "compacting",
+      "done": true,
+      "error": ""
+    }
+  ]
+}
