@@ -79,9 +79,50 @@ export interface InviteCode {
   /** 可用人数上限；`null` = 不限（真库用 0 表示不限）。 */
   maxUses: number | null
   useCount: number
-  /** 有效期终点；`null` = 永不过期。 */
-  expiresAt: string | null
+  /** 有效期终点；`null` = 永不过期。**毫秒时间戳**，与真接口同形 —— `isUsable`
+   *  那一组判据直接吃的就是这个形状，转成 ISO 反而不通用（板里没人按串读它）。 */
+  expiresAt: number | null
   createdAt: string
+  /** 这张码给谁 / 干什么用，建码人自己写的一句话。`null` = 没写（老码都没有）。 */
+  note: string | null
+}
+
+/** 一张邀请码现在的状态。库里只有次数与期限，两者都能让一张码失效。 */
+export interface InviteCodeStatus {
+  key: 'usable' | 'expired' | 'exhausted'
+  label: string
+  color: string
+}
+
+/**
+ * 一张码还算不算数 —— **「当前使用中的码」唯一的判据**。
+ *
+ * 弹窗顶部、头部下拉的摘要、成员页「让人进来」三处都念这一条。三处各写一个
+ * 版本的话，同一时刻屏幕上会同时出现三个不同的「当前码」，而这是最容易被当成
+ * bug 报上来的那种不一致。
+ *
+ * 收的是**真接口那一版的形状**（`maxUses` 是数字，0 = 不限），不是 `InviteCode`
+ * 映射过的那一版（`null` = 不限）：弹窗手里拿的就是前者，别为了复用先转一道。
+ */
+export function inviteCodeStatus(
+  code: { maxUses: number | null; useCount: number; expiresAt: number | null },
+  now: number = Date.now(),
+): InviteCodeStatus {
+  if (code.expiresAt !== null && code.expiresAt <= now) {
+    return { key: 'expired', label: '已过期', color: 'warning' }
+  }
+  if (code.maxUses !== null && code.maxUses > 0 && code.useCount >= code.maxUses) {
+    return { key: 'exhausted', label: '已用尽', color: 'error' }
+  }
+  return { key: 'usable', label: '可用', color: 'success' }
+}
+
+/** 还能用的第一张；没有就是 `null`（不拿一张废码顶上）。列表按建码时间排，所以
+ *  这是**最早那张还开着的** —— 板子自己那张码通常在它发出去的码前面。 */
+export function currentInviteCode<T extends { maxUses: number | null; useCount: number; expiresAt: number | null }>(
+  codes: readonly T[],
+): T | null {
+  return codes.find((c) => inviteCodeStatus(c).key === 'usable') ?? null
 }
 
 export interface SpaceInfo {
