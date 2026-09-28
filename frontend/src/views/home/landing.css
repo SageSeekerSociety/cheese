@@ -169,9 +169,10 @@
 
 .hero-actions {
   display: flex;
+  flex-wrap: wrap;
   margin-top: 16px;
   align-items: center;
-  gap: 32px;
+  gap: 12px 32px;
 }
 
 /* ---- Manifesto: clauses light up as they cross the viewport ---- */
