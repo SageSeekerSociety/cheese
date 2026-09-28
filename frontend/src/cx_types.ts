@@ -1224,6 +1224,18 @@ export interface MyDevice {
   // these teams may run on it.
   team_ids: number[]
   screens: DeviceScreen[]
+  // Who works on this machine now, for its owner only (null for anyone else):
+  // each agent session whose work computer it is, in a room that is open.
+  in_use?: DeviceUser[] | null
+}
+
+export interface DeviceUser {
+  project_id: string
+  project_name: string
+  topic_id: string
+  topic_title: string
+  agent_handle: string
+  agent_name: string
 }
 
 // A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what
