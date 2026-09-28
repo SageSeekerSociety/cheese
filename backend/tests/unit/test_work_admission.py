@@ -94,11 +94,6 @@ class FakeChat:
     async def merge_into_running_turn(self, *args, **kwargs):
         return None
 
-    async def wait_for_recipient(self, topic_id, recipient):
-        """这个收件人身上没有正在跑的一轮可以等 —— 除非哪个用例说有。"""
-        del topic_id, recipient
-        return False
-
     async def converse(self, **kwargs):
         self.converse_calls.append(kwargs)
         if not kwargs.get("summon", True):
@@ -179,14 +174,24 @@ async def test_failed_agent_delivery_does_not_stop_next_message():
 
 
 @pytest.mark.anyio
-async def test_waiting_recipient_does_not_block_current_agent_followup():
-    class Recipients(FakeChat):
-        def __init__(self):
-            super().__init__(None)
-            self.selected = "cheese-b"
-            self.waiting = asyncio.Event()
-            self.finish_a = asyncio.Event()
-            self.delivered = []
+async def test_message_to_another_teammate_starts_its_turn_beside_a_live_one(
+    db_factory,
+):
+    """A 的轮次在跑，点到 B 的消息不等它放锁：B 的轮次当场起，两轮并行。
+
+    一轮锁的只是自己那一席（座位锁在真正的 ChatService 里），broker 这层看得见
+    的不变量是：按收件人分钥匙的队列让 B 的消息直接准入，而不是排在 A 的轮次
+    后面。这里用阻塞的 A 轮次捏住「A 还活着」，B 的 converse_prepared 必须
+    照常跑完。
+    """
+
+    class TwoSeats(FakeChat):
+        def __init__(self, session_factory):
+            super().__init__(None, session_factory)
+            self.selected = "cheese-a"
+            self.a_started = asyncio.Event()
+            self.release_a = asyncio.Event()
+            self.finished: list[str | None] = []
 
         async def post_user_message(self, *args, **kwargs):
             payloads, anchor, ids, duplicate = await super().post_user_message(
@@ -201,42 +206,40 @@ async def test_waiting_recipient_does_not_block_current_agent_followup():
                 }
             return payloads, anchor, ids, duplicate
 
-        async def wait_for_recipient(self, topic, recipient):
-            if recipient == "cheese-b":
-                self.waiting.set()
-                await self.finish_a.wait()
-                return True
-            return False
-
         async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):
-            self.delivered.append((kwargs["recipient_handle"], content))
-            return True
+            # A 的轮次活着之后，点到 A 的并得进去；B 没有活轮次，并不进去。
+            return self.a_started.is_set() and kwargs.get("recipient_handle") == (
+                "cheese-a"
+            )
+
+        async def converse_prepared(self, **kwargs):
+            recipient = kwargs.get("recipient_handle")
+            if recipient == "cheese-a":
+                self.a_started.set()
+                await self.release_a.wait()
+            self.finished.append(recipient)
+            yield {"type": "done"}
 
         async def ack_summon(self, *args):
             return None
 
-    chat = Recipients()
+    chat = TwoSeats(db_factory)
     runner, broker = _runner()
-    # Constructing an unrelated work runner must not replace the subscriber.
-    other = AgentWorkRunner(broker)
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     try:
         await broker.receive_message(
-            chat, topic, author="u", content="<@cheese-seat> B's next task"
+            chat, topic, author="u", content="<@cheese-seat> A's task"
         )
-        await chat.waiting.wait()
-        chat.selected = "cheese-a"
+        await chat.a_started.wait()
+        chat.selected = "cheese-b"
         await broker.receive_message(
-            chat, topic, author="u", content="Stop A's current task"
+            chat, topic, author="u", content="<@cheese-seat> B's task"
         )
-        await _until(lambda: bool(chat.delivered))
-        assert chat.delivered == [("cheese-a", "Stop A's current task")]
-        assert other.active_work_count() == 0
-        chat.finish_a.set()
-        await runner.drain()
-        assert chat.delivered[-1] == ("cheese-b", "<@cheese-seat> B's next task")
+        # A's turn is still held — B's must finish without waiting for it.
+        await _until(lambda: "cheese-b" in chat.finished)
+        assert "cheese-a" not in chat.finished
     finally:
-        chat.finish_a.set()
+        chat.release_a.set()
         await runner.drain()
 
 

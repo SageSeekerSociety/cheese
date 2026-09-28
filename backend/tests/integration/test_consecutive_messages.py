@@ -44,7 +44,9 @@ class WorkingScreen(StubChannel):
         self.delivered: list[str] = []
         self._answering: set[asyncio.Task] = set()
 
-    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+    def arrive(
+        self, topic_id: uuid.UUID, message: dict, *, agent: str | None = None
+    ) -> None:
         prompt = _said(message)
         if self._answering:
             self.delivered.append(prompt)

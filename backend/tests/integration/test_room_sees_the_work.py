@@ -34,7 +34,14 @@ class SubagentScreen(StubChannel):
     """Spawns a subagent, then hands its conclusion back — the two halves the
     room needs to pair up."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)

@@ -252,7 +252,7 @@ class InProcessBroker:
         # 轮。席位由实例 id 定，和名册上坐的那个字符串是同一个。
         #
         # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
-        # / `wait_for_recipient` 问的是「哪个实例在跑」，那边认的就是实例名。
+        # 问的是「哪个实例在跑」，那边认的就是实例名。
         addressed = addressed_to_agent(_seat(recipient) if mentioned else None)
         persisted_at = time.monotonic()
         for payload in payloads:
@@ -1953,9 +1953,6 @@ class AgentWorkRunner:
         attachments=None,
         **_message,
     ) -> bool:
-        if recipient_handle is not None:
-            if await chat_service.wait_for_recipient(topic_id, recipient_handle):
-                live_delivery_expected = False
         if landed_user_block_id is not None and (content or attachments):
             delivered = await chat_service.merge_into_running_turn(
                 topic_id,

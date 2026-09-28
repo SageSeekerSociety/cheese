@@ -29,6 +29,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any, cast
 
 from app.domain.agent.harness import (
     Backlog,
@@ -204,6 +205,19 @@ class Subscription[B: Backlog]:
                     if text is not None and self.receipts is not None:
                         await self.receipts(self.session.topic_id, text)
                     for event in events:
+                        # Which seat's session produced this event. Events that
+                        # declare the field keep what the record said (the
+                        # runner's stamp is authoritative); the rest carry this
+                        # subscription's own seat, so a consumer opening the
+                        # books for a self-started turn attributes it to the
+                        # right agent when several seats share one room — the
+                        # room-keyed fallback cannot tell them apart.
+                        fields = getattr(type(event), "__dataclass_fields__", None)
+                        if fields is not None and "agent_handle" not in fields:
+                            # Dynamic by design: the stamp lands on events whose
+                            # dataclass never heard of it, which is exactly what
+                            # the check above proved.
+                            cast(Any, event).agent_handle = self.session.agent_handle
                         await self.consume(
                             self.session.project_id,
                             self.session.topic_id,

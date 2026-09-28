@@ -319,7 +319,7 @@ def test_image_only_message_allowed(client, stub_hooks):
     # The line that tells 芝士 what was posted names the file, and the image
     # itself rides in the same message the session is handed.
     assert att["path"] in (stub_hooks.last_prompt or "")
-    session = stub_hooks.sessions[uuid.UUID(topic_id)]
+    session = stub_hooks._session_for(uuid.UUID(topic_id))
     handed = [m for m in session.written if m.get("type") == "user"][-1]
     assert any(block.get("type") == "image" for block in handed["message"]["content"])
 

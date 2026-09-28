@@ -67,7 +67,14 @@ class _Screen(StubChannel):
             raise RuntimeError("provider exploded mid-write")
         return await super().call(handle, method, params)
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         self.starts(topic_id, session_id=SESSION_ID)
         self.acknowledges(topic_id, prompt)
         if self._mode == "normal":
@@ -191,7 +198,7 @@ _CHILD = textwrap.dedent(
     class A(StubChannel):
         new_session_id = SID
 
-        def emit_turn(self, topic_id, prompt, reply):
+        def emit_turn(self, topic_id, prompt, reply, agent=None):
             self.starts(topic_id, session_id=SID)
 
     async def main():

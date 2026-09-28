@@ -76,7 +76,7 @@ def test_a_step_that_failed_reaches_the_socket_as_that_step_restated(
     """The red mark is a change to a line already on the timeline, so it goes out
     as that line again — same id, now failed — not as a line of its own."""
 
-    def turn(topic, prompt, reply):
+    def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.uses(topic, "Bash", command="pandoc a.md")
@@ -107,7 +107,7 @@ def test_a_streak_of_retries_is_one_line_that_counts_them(client, stub_hooks):
     three lines. Once the request goes through, the next retry is new news and
     gets a line of its own."""
 
-    def turn(topic, prompt, reply):
+    def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         for attempt in (1, 2, 3):
@@ -165,7 +165,7 @@ def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
 
     monkeypatch.setattr(stub_hooks, "call", call)
 
-    def turn(topic, prompt, reply):
+    def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.uses(topic, "Bash", command="make build")
@@ -209,7 +209,7 @@ def test_a_socket_that_joins_mid_turn_learns_when_the_turn_started(client, stub_
     """A browser opened halfway through a turn has to be able to say how long it
     has been going, not how long it has been watching."""
 
-    def turn(topic, prompt, reply):
+    def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.uses(topic, "Bash", command="sleep 60")
@@ -238,7 +238,7 @@ def test_what_a_step_printed_is_kept_on_it_capped_and_redacted(client, stub_hook
         "\n".join(f"line {n}" for n in range(3000)) + "\ntoken ghp_abcdefghijklmnop"
     )
 
-    def turn(topic, prompt, reply):
+    def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.uses(topic, "Bash", command="make test")

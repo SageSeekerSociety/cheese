@@ -145,7 +145,7 @@ def _topics_with_pending_records() -> set[str]:
     """
     pending = set()
     for channel in list(_CHANNELS):
-        for topic_id, session in list(channel.sessions.items()):
+        for (topic_id, _), session in list(channel.sessions.items()):
             if channel.unlanded(topic_id, session):
                 pending.add(str(topic_id))
     return pending
@@ -192,7 +192,8 @@ def retire_topic(client: TestClient, topic_id) -> None:
 
     async def retire() -> None:
         for channel in list(_CHANNELS):
-            channel.sessions.pop(topic, None)
+            for key in [seat for seat in channel.sessions if seat[0] == topic]:
+                channel.sessions.pop(key, None)
             for seat in list(channel.runtime.subscriptions):
                 if seat[0] == topic:
                     await channel.runtime._detach(seat)
@@ -220,6 +221,7 @@ class ScriptedSession(Runner):
         self.thread = threading.get_ident()
         self.channel, self.topic_id = channel, topic_id
         self.session_id = session_id
+        self.actor = agent
         self.journal.remember("session_id", session_id)
         self.journal.remember(
             "owner", json.dumps({"harness": CLAUDE_CODE, "agent_handle": agent})
@@ -257,7 +259,7 @@ class ScriptedSession(Runner):
         # test times out, with the traceback lost in the loop's log. The turn
         # fails instead, naming what broke.
         try:
-            self.channel.arrive(self.topic_id, message)
+            self.channel.arrive(self.topic_id, message, agent=self.actor)
         except Exception as exc:  # noqa: BLE001 — surfaced as the turn's failure
             logging.getLogger(__name__).exception("the scripted session raised")
             if not self.working:
@@ -323,7 +325,10 @@ class StubChannel:
         # does not have to wait the production half hour for it.
         self.runtime = ClaudeCodeRuntime(self, **policy)
         self.root = Path(tempfile.mkdtemp(prefix="stub-sessions-"))
-        self.sessions: dict[uuid.UUID, ScriptedSession] = {}
+        # One runner per SEAT: a room with several agents seated runs their
+        # sessions side by side, each with its own journal and mirror — the
+        # single-agent suite never notices because its rooms have one seat.
+        self.sessions: dict[tuple[uuid.UUID, str], ScriptedSession] = {}
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
         self.last_prompt: str | None = None
@@ -347,10 +352,11 @@ class StubChannel:
         self.last_system_prompt = opening.system_prompt
         self.last_resume_session_id = opening.resume_token
         agent = opening.agent_handle or session.agent_handle or "cheese"
-        runner = self.sessions.get(session.topic_id)
+        key = (session.topic_id, agent)
+        runner = self.sessions.get(key)
         if runner is None:
             runner = ScriptedSession(
-                self.root / str(session.topic_id) / "runner",
+                self.root / str(session.topic_id) / agent / "runner",
                 self,
                 session.topic_id,
                 opening.resume_token or self.new_session_id,
@@ -359,18 +365,44 @@ class StubChannel:
             runner.project_id = session.project_id
             runner.session_agent = session.agent_handle
             runner.actor = agent
-            self.sessions[session.topic_id] = runner
+            self.sessions[key] = runner
         return Handle(
             session,
             "stub-device",
             str(session.topic_id),
             runner.session_id,
             agent,
-            self.root / str(session.topic_id) / "mirror.sqlite",
+            self.root / str(session.topic_id) / agent / "mirror.sqlite",
         )
 
+    def _session_for(
+        self, topic_id: uuid.UUID, agent: str | None = None
+    ) -> "ScriptedSession":
+        """The runner a scripted record belongs to. Single-seat rooms (the
+        whole suite but the parallel-turn tests) leave ``agent`` out and get
+        the only runner there is; a room with several seats must say which."""
+        if agent is not None:
+            return self.sessions[(topic_id, agent)]
+        mine = [
+            session
+            for (topic, _), session in self.sessions.items()
+            if topic == topic_id
+        ]
+        if len(mine) != 1:
+            raise KeyError(
+                f"{len(mine)} stub sessions for topic {topic_id}; name the agent"
+            )
+        return mine[0]
+
+    def drop_session(
+        self, topic_id: uuid.UUID, agent: str | None = None
+    ) -> "ScriptedSession":
+        """Remove a seat's runner (a host that vanished) and hand it back."""
+        session = self._session_for(topic_id, agent)
+        return self.sessions.pop((topic_id, session.actor))
+
     async def call(self, handle: Handle, method: str, params: dict) -> dict:
-        runner = self.sessions.get(handle.session.topic_id)
+        runner = self.sessions.get((handle.session.topic_id, handle.agent_handle))
         if runner is None:
             raise DeviceCallError(f"no session for {handle.session.topic_id}")
         return await runner.dispatch(method, params)
@@ -389,9 +421,9 @@ class StubChannel:
                 str(topic_id),
                 session.session_id,
                 session.actor,
-                self.root / str(topic_id) / "mirror.sqlite",
+                self.root / str(topic_id) / session.actor / "mirror.sqlite",
             )
-            for topic_id, session in self.sessions.items()
+            for (topic_id, _), session in self.sessions.items()
             if self.alive
         ]
 
@@ -417,7 +449,7 @@ class StubChannel:
             journal.close()
         if not written:
             return False
-        mirror = self.root / str(topic_id) / "mirror.sqlite"
+        mirror = self.root / str(topic_id) / session.actor / "mirror.sqlite"
         if not mirror.exists():
             return True
         journal = ClaudeJournal(mirror)
@@ -428,7 +460,9 @@ class StubChannel:
 
     # --- what the session prints ------------------------------------------
 
-    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+    def arrive(
+        self, topic_id: uuid.UUID, message: dict, *, agent: str | None = None
+    ) -> None:
         """The session read an input: it is queued, then the turn runs."""
         content = message["message"]["content"]
         text = content if isinstance(content, str) else content[0]["text"]
@@ -437,13 +471,16 @@ class StubChannel:
             self.on_start()
         self.record(
             topic_id,
+            agent=agent,
             type="command_lifecycle",
             command_uuid=message["uuid"],
             state="queued",
         )
-        self.emit_turn(topic_id, text, self.reply)
+        self.emit_turn(topic_id, text, self.reply, agent=agent)
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self, topic_id: uuid.UUID, prompt: str, reply: str, *, agent: str | None = None
+    ) -> None:
         """The records a session prints for one input it answered.
 
         Override this to script a different turn — a tool call between two
@@ -451,21 +488,23 @@ class StubChannel:
         session takes the input, and ends. ``stops`` in particular is not
         optional: it is what closes the turn and publishes ``done``.
         """
-        self.starts(topic_id)
-        self.acknowledges(topic_id, prompt)
-        self.says(topic_id, reply)
-        self.stops(topic_id, reply)
+        self.starts(topic_id, agent=agent)
+        self.acknowledges(topic_id, prompt, agent=agent)
+        self.says(topic_id, reply, agent=agent)
+        self.stops(topic_id, reply, agent=agent)
 
     # --- the records, one method each --------------------------------------
 
-    def record(self, topic_id: uuid.UUID, **record: object) -> None:
+    def record(
+        self, topic_id: uuid.UUID, *, agent: str | None = None, **record: object
+    ) -> None:
         """One stream-json record, as the session printed it.
 
         Played on the runner's own loop, whichever thread the test scripts it
         from — the runner's journal belongs to that loop's thread, and the
         reader waiting there is woken so it lands without being asked.
         """
-        session = self.sessions[topic_id]
+        session = self._session_for(topic_id, agent)
         record.setdefault("uuid", str(uuid.uuid4()))
         record.setdefault("session_id", session.session_id)
 
@@ -482,17 +521,25 @@ class StubChannel:
 
         asyncio.run_coroutine_threadsafe(played(), session.loop).result(timeout=10)
 
-    def starts(self, topic_id: uuid.UUID, session_id: str | None = None) -> None:
+    def starts(
+        self,
+        topic_id: uuid.UUID,
+        session_id: str | None = None,
+        *,
+        agent: str | None = None,
+    ) -> None:
         extra = {"session_id": session_id} if session_id else {}
-        self.record(topic_id, type="system", subtype="init", **extra)
+        self.record(topic_id, agent=agent, type="system", subtype="init", **extra)
 
-    def acknowledges(self, topic_id: uuid.UUID, prompt: str) -> None:
+    def acknowledges(
+        self, topic_id: uuid.UUID, prompt: str, *, agent: str | None = None
+    ) -> None:
         """The session takes the input: its turn starts and it echoes it back.
 
         The echo is the receipt that stamps an injected message consumed. A
         session that never echoes leaves every mid-turn delivery pending, and
         pending messages are replayed (宁可重复不可丢失)."""
-        session = self.sessions[topic_id]
+        session = self._session_for(topic_id, agent)
         identifier = next(
             (
                 message["uuid"]
@@ -507,12 +554,14 @@ class StubChannel:
             return
         self.record(
             topic_id,
+            agent=agent,
             type="command_lifecycle",
             command_uuid=identifier,
             state="started",
         )
         self.record(
             topic_id,
+            agent=agent,
             type="user",
             uuid=identifier,
             isReplay=True,
@@ -520,9 +569,17 @@ class StubChannel:
             message={"role": "user", "content": prompt},
         )
 
-    def says(self, topic_id: uuid.UUID, text: str, **extra: object) -> None:
+    def says(
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        *,
+        agent: str | None = None,
+        **extra: object,
+    ) -> None:
         self.record(
             topic_id,
+            agent=agent,
             type="assistant",
             parent_tool_use_id=None,
             message={"role": "assistant", "content": [{"type": "text", "text": text}]},
@@ -536,6 +593,7 @@ class StubChannel:
         *,
         eid: str | None = None,
         parent: str | None = None,
+        agent: str | None = None,
         **tool_input: object,
     ) -> str:
         """A tool call; returns its id, which is what a result names."""
@@ -543,6 +601,7 @@ class StubChannel:
         self.calls[name] = call
         self.record(
             topic_id,
+            agent=agent,
             type="assistant",
             parent_tool_use_id=parent,
             message={
@@ -568,11 +627,13 @@ class StubChannel:
         error: bool = False,
         call: str | None = None,
         parent: str | None = None,
+        agent: str | None = None,
     ) -> None:
         """The result of the last call to ``name`` (or of ``call``)."""
         text = response if isinstance(response, str) else json.dumps(response)
         self.record(
             topic_id,
+            agent=agent,
             type="user",
             parent_tool_use_id=parent,
             message={
@@ -596,6 +657,7 @@ class StubChannel:
         thread_label: str,
         agent_id: str = "worker-1",
         call: str = "call-1",
+        agent: str | None = None,
     ) -> None:
         """房间起一个分身去做某张卡：派它的那次 Agent 调用，和它开始的那条记录。
 
@@ -607,12 +669,14 @@ class StubChannel:
             topic_id,
             "Agent",
             eid=call,
+            agent=agent,
             description="去做这条活",
             prompt=f"简报见下。线程标识：{thread_label}",
             subagent_type="general-purpose",
         )
         self.record(
             topic_id,
+            agent=agent,
             type="system",
             subtype="task_started",
             task_id=agent_id,
@@ -626,10 +690,13 @@ class StubChannel:
         topic_id: uuid.UUID,
         text: str,
         session_id: str | None = None,
+        *,
+        agent: str | None = None,
         **extra: object,
     ) -> None:
         self.record(
             topic_id,
+            agent=agent,
             type="result",
             subtype="success",
             is_error=False,

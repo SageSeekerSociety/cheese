@@ -33,7 +33,14 @@ class SilentScreen(StubChannel):
         super().__init__(**policy)
         self.alive = False
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del topic_id, prompt, reply
 
 
@@ -151,7 +158,14 @@ def test_the_notice_throttles_instead_of_burying_the_conversation(client, monkey
 class WorkingScreen(StubChannel):
     """A session that takes the prompt, starts on it, and is still working."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
@@ -259,7 +273,14 @@ def test_a_batch_whose_session_fails_after_a_restart_is_still_replayed(
 class DiesOnceScreen(SilentScreen):
     """The first session dies on its prompt; the machine is healthy after."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         if self.alive:
             StubChannel.emit_turn(self, topic_id, prompt, reply)
 
