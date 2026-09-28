@@ -24,7 +24,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.domain.memory.files import MemoryFileScope, scoped_prefix
-from app.domain.memory.files_store import MemoryFileConflict, MemoryFileStore
+from app.domain.memory.files_store import (
+    MemoryFileConflict,
+    MemoryFileLimit,
+    MemoryFileStore,
+)
 
 #: diff 里一条路径最多留几行。事件是给人扫一眼的，不是补丁文件；一整份被重写的
 #: 索引能有几千行，全塞进去就是把房间里那条事件变成一个没人展开的附件。
@@ -54,6 +58,8 @@ class MemoryChange:
     conflicted: tuple[str, ...] = ()
     #: 会话那一版被平台盖掉的（路径 → 它的正文，删除是空串）。
     refused: dict[str, str] = field(default_factory=dict)
+    #: 会话写的、超了单条上限没收的（路径 → 原因）。
+    rejected: dict[str, str] = field(default_factory=dict)
     #: 路径 → 那一条的统一 diff。按条存而不是拼成一份：说给谁听是按作用域分的
     #: （team 的说进项目总览，某个人的 private 只说进他的私聊），而一件事说给谁
     #: 听决定了哪几行能跟着一起出去。
@@ -79,6 +85,7 @@ class MemoryChange:
             removed=within(self.removed),
             conflicted=within(self.conflicted),
             refused=keyed(self.refused),
+            rejected=keyed(self.rejected),
             diffs=keyed(self.diffs),
         )
 
@@ -155,6 +162,10 @@ async def apply_tree(
         str(path): str(content)
         for path, content in (response.get("refused") or {}).items()
     }
+    rejected = {
+        str(path): str(reason)
+        for path, reason in (response.get("rejected") or {}).items()
+    }
     added: list[str] = []
     updated: list[str] = []
     conflict: list[str] = []
@@ -189,6 +200,12 @@ async def apply_tree(
             # 试，而这一次的内容会被下一次铺下去的那一版盖回来。
             conflict.append(path)
             continue
+        except MemoryFileLimit as exc:
+            # 会话那一侧本该先拦下它（`tree.sync_tree`）；拦不下的是一个比这一
+            # 版旧的会话，这里是最后一道。
+            before.pop(path)
+            rejected[path] = exc.reason
+            continue
         (added if stored_content is None else updated).append(path)
     removed: list[str] = []
     for path in stored.contents:
@@ -220,6 +237,7 @@ async def apply_tree(
         removed=tuple(sorted(removed)),
         conflicted=tuple(sorted(set(conflict))),
         refused=refused,
+        rejected=rejected,
         diffs=_diffs(before, files),
     )
 

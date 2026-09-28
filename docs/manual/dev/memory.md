@@ -76,11 +76,19 @@ covers:
 
 ## 上限与超限 {#limits}
 
-L1 索引：**200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`），超出的部分按行截断，并在注入块里回一句警告（`fit_index` → `MemoryIndex.warnings` → `memory_block`）。
+**单条有上限，超了拒绝**（`files.limit_breach`）：
+
+| 什么 | 上限 | 量法 |
+|---|---|---|
+| 一条记忆的正文（frontmatter 之后） | 1000 字（`BODY_MAX`） | 整条；改一条已经超长的记忆，要改到上限以内 |
+| 索引里的一行 | 150 字符（`INDEX_LINE_MAX`） | 只量这一版新写的行；别人早先留下的一行长的不挡这一次 |
+
+写的人手上就有这一条，当场就改得短，所以这两条在写入时拦。拦在两处：会话那一侧对账时（`tree.sync_tree` → `TreeSync.rejected`），那一版不收、平台那一版留着，会话写的那一版存成旁路文件 `<名字>.rejected.md`（`files.rejected_path`）；数据库那一侧 `MemoryFileStore.write` 再查一次（`MemoryFileLimit`，接口上是 422），挡住比这一版旧的会话和直接调接口的写入。必须在对账里拦，不能只在数据库拦：对账一旦收下，基线就记成了会话那一版，下一次对账会把平台的旧版静默地铺回磁盘。
+
+**总长没有写入闸。** L1 索引 **200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`）是注入预算：超了照样写，注入时按行截断，并在注入块里回一句警告（`fit_index` → `MemoryIndex.warnings` → `memory_block`）。删哪一条要看整个作用域，写的人手上没有这份信息，所以取舍交给整理。
 
 - 截断发生在**读**的时候，所以警告跟着索引一起进上下文：读到一段短的索引却不知道它短了的人，会去改错地方。写入端（`/memory/files`）也会跑一次 `fit_index`，把它当 `warning` 还回去。
-- **超限的写入照样成功**，只是每次注入都带一句「超出部分读不到，请压缩」——写入被拒绝意味着 agent 的心智模型和磁盘上的东西开始分叉，那比一份太长的索引糟。
-- 同样按 `warning` 还回去的还有两个：`MEMORY.md` 里放不下的一条（`name` 不是 kebab-case 等），和 `description` 超过 150 字符。都是提醒，不是拒绝。
+- 格式问题只回 `warning` 不拒绝：`MEMORY.md` 里放不下的一条（`name` 不是 kebab-case 等），和 `description` 超过 150 字符。
 
 ## 权限 {#permissions}
 
@@ -105,7 +113,7 @@ L1 索引：**200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`），超
 
 一条记忆是 agent 写下的一份观察，没有人欠它一个动作，所以它是一条灰字事件，事件本身收进 `meta.detail`（统一 diff，按路径分段、每段上限 200 行）。两棵树分开说，因为读它们的人不是一批：把某个人的 private diff 说进总览，等于把一个人的偏好广播给整个项目。
 
-写记忆的那个 agent 读不到这条灰字事件——它在会话机上，它看到的世界就是那棵树。所以**有被平台盖回去的版本时，那条通知还带一句 `agent_notice`**（`platform_notices.memory_conflict_notice`）：点名哪几条被盖了、它写的那一版在哪个 `.conflict.md` 里、请重读再写。不说，它下一轮写的还是同一版，而每一轮都会被盖回去。
+写记忆的那个 agent 读不到这条灰字事件——它在会话机上，它看到的世界就是那棵树。所以**有被平台盖回去的版本时，那条通知还带一句 `agent_notice`**（`platform_notices.memory_conflict_notice`）：点名哪几条被盖了、它写的那一版在哪个 `.conflict.md` 里、请重读再写。不说，它下一轮写的还是同一版，而每一轮都会被盖回去。超了单条上限没收的那几条同理，`agent_notice` 里点名哪几条、为什么、没收的那一版在哪个 `.rejected.md` 里（`platform_notices.memory_rejected_notice`）。
 
 ## 为什么不是「条目池 + 关键词召回」 {#why}
 

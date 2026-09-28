@@ -2802,7 +2802,7 @@ class ChatService:
                 scopes=scopes,
                 updated_by=updated_by,
             )
-            if change.is_empty() and not change.refused:
+            if change.is_empty() and not change.refused and not change.rejected:
                 # 一次对账大部分时候答的是这个。什么都没变就什么都不说：这条事
                 # 件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
                 return
@@ -2850,7 +2850,7 @@ class ChatService:
         """
         for scope, owner in scopes:
             part = change.scoped(prefix_of_scope(scope, owner))
-            if part.is_empty() and not part.refused:
+            if part.is_empty() and not part.refused and not part.rejected:
                 continue
             room = await self._memory_room(session, project_id, scope, owner)
             if room is None:
@@ -2860,6 +2860,7 @@ class ChatService:
                 summary=part.summary(),
                 diff=part.diff,
                 refused=tuple(sorted(part.refused)),
+                rejected=part.rejected,
             )
             await announce(session, place_id=room, content=content, meta=meta)
 
