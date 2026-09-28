@@ -613,6 +613,11 @@ class Runner(runner.Runner[Journal]):
         subtype = record.get("subtype")
         if subtype == "task_started" and task:
             self.tasks[task] = str(record.get("task_type") or "")
+            # A command that was only starting when a person's message came in
+            # was not the build's to move yet, and the message would wait for
+            # it: move it too, as long as the message is still unread.
+            if self.owed is not None and self.owed in self.sent:
+                self.helpers.append(asyncio.create_task(self._yield_again()))
             if record.get("task_type") == "local_agent":
                 if str(record.get("tool_use_id")) not in self.main_calls:
                     self.tailing.setdefault(task, "agent")
@@ -803,6 +808,18 @@ class Runner(runner.Runner[Journal]):
             ):
                 await self.release()
                 return
+
+    async def yield_foreground(self) -> None:
+        """Ctrl+B, as the build takes it on stdin: every foreground Bash and
+        subagent returns to the model at once and goes on as a background task.
+        """
+        if self.working:
+            await self.control({"subtype": "background_tasks"})
+
+    async def _yield_again(self) -> None:
+        # A control the session did not answer changes nothing it was doing.
+        with contextlib.suppress(Exception):
+            await self.yield_foreground()
 
     async def release(self) -> None:
         """Let the session go the way it is meant to: close its stdin."""

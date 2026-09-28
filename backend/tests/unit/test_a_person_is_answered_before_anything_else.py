@@ -53,6 +53,7 @@ BACKEND = Path(__file__).resolve().parents[2]
 SCRIPTS = BACKEND.parent / "scripts/remote_execution"
 CHEESE = BACKEND / "sandbox/cheese"
 TOPIC = "fixture-topic"
+SUBAGENT_TASK = "SUBAGENT_TASK: run the commands"
 #: A piece of the refusal no prompt the platform writes otherwise carries.
 REFUSED = REPLY_OWED.split(":")[0]
 
@@ -240,15 +241,31 @@ async def claude_code(tmp_path: Path, steps: list):
                 "description": "helper",
                 "subagent_type": "general-purpose",
                 "run_in_background": False,
-                "prompt": "run the command",
+                "prompt": SUBAGENT_TASK,
             },
         },
     }
-    actions = []
+    main, sub = [], []
     for kind, value in steps:
-        actions.append(translated[kind](value))
+        main.append(translated[kind](value))
         if kind == "subagent":
-            actions += [translated["shell"](command) for command in value] + [None]
+            sub += [translated["shell"](command) for command in value]
+
+    def act(body):
+        # A subagent's conversation opens with the task the session gave it;
+        # past its script, either conversation just ends.
+        opening = json.dumps(body["messages"][0], ensure_ascii=False)
+        script = sub if SUBAGENT_TASK in opening else main
+        return script.pop(0) if script else None
+
+    class Script:
+        def __len__(self):
+            return sys.maxsize
+
+        def __getitem__(self, _):
+            return act
+
+    actions = Script()
     model = contract.Server(("127.0.0.1", 0), contract.Handler)
     model.state = {"dir": tmp_path, "actions": actions, "requests": []}
     serving = threading.Thread(target=model.serve_forever, daemon=True)
@@ -560,8 +577,10 @@ async def test_a_turn_nobody_asked_for_owes_nobody_an_answer(tmp_path, harness):
 async def test_a_person_who_writes_mid_turn_is_answered_before_the_next_tool(
     tmp_path, harness
 ):
+    """…and without waiting for the command it was running: that goes on in
+    the background, and finishes there."""
     steps = [
-        shell("touch STARTED; sleep 3; touch SLOW"),
+        shell("touch STARTED; sleep 20; touch SLOW"),
         shell("touch NEXT"),
         publish("stopping"),
         shell("touch AFTER"),
@@ -569,15 +588,18 @@ async def test_a_person_who_writes_mid_turn_is_answered_before_the_next_tool(
     async with harness(tmp_path, steps) as session:
         await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
         await session.ran("STARTED")
+        spoke = time.monotonic()
         await session.steer("[someone]: stop, that device is offline", owes_reply=True)
-        await session.finished(len(steps) + 1)
+        await session.ran("AFTER", timeout=15)
+        answered = time.monotonic() - spoke
 
-        assert (session.machine / "SLOW").exists()
+        assert session.backend.published == ["stopping"]
+        assert answered < 15
+        assert not (session.machine / "SLOW").exists()
         assert not (session.machine / "NEXT").exists()
         assert REFUSED not in session.told(1)
         assert REFUSED in session.told(2)
-        assert session.backend.published == ["stopping"]
-        assert (session.machine / "AFTER").exists()
+        await session.ran("SLOW", timeout=30)
 
 
 @pytest.mark.anyio
@@ -612,7 +634,7 @@ async def test_a_subagent_reports_to_its_session_and_is_never_held_back(tmp_path
         await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
         await session.ran("STARTED")
         await session.steer("[someone]: stop, that device is offline", owes_reply=True)
-        # The subagent's two commands and its ending, and the session's steps.
+        await session.ran("CHILD", timeout=30)
         await session.finished(7)
 
         assert (session.machine / "CHILD").exists()

@@ -72,6 +72,8 @@ steps:
 
 人点名芝士说的话，芝士先在房间里回一句，再做别的：开这一轮的那条消息，和一轮进行中插进来的那条，都一样。从这条消息送进会话起，会话调 `chat_send` 或 `cheese_ask` 之前，别的工具一律被拒，拒绝的原因会告诉它先回话。平台自己的通知、巡检、没有点名芝士的消息不算；分身向启动它的会话汇报，不受这条约束。规则写在所有骨架共用的 runner 里（`harness/driven/runner.py`），每种骨架只负责在自己的工具路径上照它拒绝：Claude Code 的函数钩子（`remote_execution/proxy.js`）、Codex 的动态工具（`codex/tools.py`）、pi 的扩展（`pi/platform.ts`）。
 
+消息只能在两次工具调用之间送到模型面前，所以人说话时如果芝士正卡在一条长命令上，这条命令会被转到后台继续跑，调用立刻返回，芝士马上读到消息（相当于在终端里按 Ctrl+B）：Claude Code 由 runner 发 `background_tasks` 控制请求，前台的 Bash 和分身一起转；Codex 的 Bash 在执行器上跑，由执行器停止等待、把命令交还成后台任务（`runtime.bash`）；pi 的 bash 由平台扩展接管，转成后台任务后用 `bash_read` / `bash_kill` 读和停。文件读写和 MCP 调用转不了，它们本来就短。
+
 ## 6. 失败、超时与发版 {#failure}
 
 - **机器的错**：记在设备上而不是话题上，同一台机器连续两次同类失败会被隔离一段时间（`host_failure.py`）；话题不会被悄悄换到另一台机器，由人决定怎么处理。见[设备与机器接入](/dev/machines#failure)。

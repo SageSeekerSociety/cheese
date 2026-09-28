@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -135,6 +136,20 @@ class Runner(Generic[J]):  # noqa: UP046
         self.owed = None
         reply_owed_path(self.state).unlink(missing_ok=True)
 
+    async def yield_foreground(self) -> None:
+        """Give the model its turn back: what it is waiting on moves to the
+        background and keeps running there.
+
+        A message reaches the model only between tool calls, so a person who
+        writes while a long command runs would otherwise wait for it to end.
+        What can be moved and how is each harness's own (Ctrl+B's control for
+        Claude Code, the executor's for Codex's Bash, pi's shell tool as the
+        platform extension runs it); a file edit or an MCP call cannot be, and
+        is short. A tool the model starts after this is refused until it has
+        answered, so nothing new takes the message's place.
+        """
+        raise NotImplementedError
+
     async def listen(self, limit: int) -> None:
         """Open the socket; last, so a backend that reaches it finds a session."""
         self.server = await asyncio.start_unix_server(
@@ -205,7 +220,6 @@ class Runner(Generic[J]):  # noqa: UP046
         try:
             result = await submit()
             self.journal.finish_input(identifier, "accepted", result)
-            return result
         except Exception as error:
             self.journal.finish_input(identifier, "failed", {"error": str(error)})
             # The message never reached the session, so nothing is owed on it;
@@ -216,6 +230,16 @@ class Runner(Generic[J]):  # noqa: UP046
                 else:
                     self.owe_reply(before)
             raise
+        if owes_reply:
+            try:
+                await self.yield_foreground()
+            except Exception as error:  # noqa: BLE001 — the message is in regardless
+                print(
+                    f"could not move foreground work aside for {identifier}: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        return result
 
     async def dispatch(self, method: str, params: dict) -> dict:
         raise NotImplementedError

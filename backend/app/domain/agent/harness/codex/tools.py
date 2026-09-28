@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import importlib.resources
 import json
 import posixpath
@@ -32,6 +33,9 @@ NATIVE_TOOLS = {
     "TaskStop",
 }
 
+
+#: How often a running Bash looks for a person having written.
+YIELD_POLL_S = 0.2
 
 #: The route a platform tool takes: not a server on the executor, the backend.
 PLATFORM = "platform"
@@ -226,6 +230,33 @@ class RemoteTools:
         self.routes = routes
         return tools
 
+    async def _yield_when_spoken_to(
+        self, call_id: str, invoked: asyncio.Future
+    ) -> None:
+        """While the session's Bash runs, watch for a person writing.
+
+        A message reaches Codex only between tool calls, so one written during
+        a long command waited for it to end. When the runner writes down a new
+        debt (`driven/runner.py`), the executor stops waiting on this call's
+        command and returns it as a background task that goes on running
+        (`runtime.bash`) — Claude Code's Ctrl+B, for a Bash that is the
+        executor's."""
+        while not invoked.done():
+            await asyncio.wait({invoked}, timeout=YIELD_POLL_S)
+            owed = reply_owed(self.reply_file)
+            # Unanswered: no tool starts while one is (`__call__`), so this
+            # command was already running when the person wrote.
+            if not invoked.done() and owed is not None and owed["id"] != self.answered:
+                # An executor that cannot do this leaves the command waiting,
+                # which is what it did before; the call itself must not fail.
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(
+                        self.client.call,
+                        "control",
+                        {"subtype": "background", "id": call_id},
+                    )
+                return
+
     def _platform_call(self, tool: str, call_id: str, arguments: dict) -> dict:
         def invoke(payload, args):
             return self.client.call(
@@ -249,7 +280,8 @@ class RemoteTools:
     async def __call__(self, method: str, params: dict) -> dict:
         if method != "item/tool/call":
             raise ValueError(f"Unsupported Codex server request: {method}")
-        if self.main_thread in (None, params.get("threadId")):
+        session_call = self.main_thread in (None, params.get("threadId"))
+        if session_call:
             owed = reply_owed(self.reply_file)
             if owed is not None and owed["id"] != self.answered:
                 if params["tool"] not in owed["answers"]:
@@ -280,16 +312,21 @@ class RemoteTools:
             except MachineOutOfReach:
                 receipt = {"error": MACHINE_OUT_OF_REACH}
         else:
-            receipt = await asyncio.to_thread(
-                self.client.call,
-                "invoke",
-                {
-                    "id": params["callId"],
-                    "server": server,
-                    "tool": tool,
-                    "args": params["arguments"],
-                },
+            invoked = asyncio.ensure_future(
+                asyncio.to_thread(
+                    self.client.call,
+                    "invoke",
+                    {
+                        "id": params["callId"],
+                        "server": server,
+                        "tool": tool,
+                        "args": params["arguments"],
+                    },
+                )
             )
+            if session_call and server == "native" and tool == "Bash":
+                await self._yield_when_spoken_to(params["callId"], invoked)
+            receipt = await invoked
         if "error" in receipt:
             return {
                 "success": False,

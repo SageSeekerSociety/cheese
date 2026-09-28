@@ -207,6 +207,11 @@ class Runner(runner.Runner[Journal]):
             )
         return {"turn_id": turn, "input_id": identifier}
 
+    async def yield_foreground(self) -> None:
+        """Nothing to send: the session's Bash waits in this process
+        (`tools.RemoteTools`), which watches the file the debt was just written
+        to and has the executor let go of the command as soon as it changes."""
+
     async def dispatch(self, method: str, params: dict) -> dict:
         if method == "configure":
             if self.session is None or self.session.turn_id is not None:

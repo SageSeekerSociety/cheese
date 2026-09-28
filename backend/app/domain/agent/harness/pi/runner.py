@@ -448,6 +448,11 @@ class Runner(runner.Runner[Journal]):
             await self.client.request("prompt", **fields)
         return {"input_id": identifier}
 
+    async def yield_foreground(self) -> None:
+        """Nothing to send: pi's shell runs inside pi, as the platform
+        extension's `bash` (`platform.ts`), which watches the file the debt was
+        just written to and lets go of its command as soon as it changes."""
+
     # --- the socket ----------------------------------------------------------
 
     async def dispatch(self, method: str, params: dict) -> dict:
