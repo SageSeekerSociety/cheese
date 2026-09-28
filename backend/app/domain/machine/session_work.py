@@ -29,7 +29,7 @@ from app.domain.agent.device_provider import (
     environment_status,
 )
 from app.domain.agent.harness.claude_code import executor_launch as launch
-from app.domain.agent.market import COMPUTE_TIERS
+from app.domain.agent.market import COMPUTE_CLOUD, COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import (
@@ -89,9 +89,10 @@ async def _visibility_of(devices, device_id: str | None) -> Visibility | None:
 async def session_machines(db, topic) -> list[dict]:
     """Each agent session in the room, with the machine it works on.
 
-    A session works on the machine its lease names, or, before it holds one,
-    the one its choice will lease (结论 60). A session with neither has not
-    started working, and says so with ``choice: None``.
+    一个话题一个容器（2026-09-28 决定，推翻结论 60）：一个房间里的所有会话都在房间
+    那一项算出来的那台机器上，所以这里每一行答的都是那**一台**——会话手上有租约就
+    是租约那台，还没开工就是房间那一项将租的那台。``choice`` 只有「这条会话还没
+    开工、还没租到手」时才可能是 ``None``。
     """
     devices = sql_device_service(db)
     rows = await db.scalars(
@@ -225,29 +226,47 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
     return out
 
 
-async def room_machine_visibility(
-    db, topic, project_settings, sessions: list[dict]
-) -> Visibility | None:
+async def _roommates_device(db, topic, resource: str) -> str | None:
+    """这一个房间这一代上，已经在用的那台机器——房间里别的会话的手。
+
+    一个话题一个容器（2026-09-28 决定，推翻结论 60）：同一个房间里的会话落在同一台
+    机器上。所以「自动选一台」的房间不是每条会话各挑一台在线的——那正是同一间房里
+    两个队友会站在两台机器上的那条路。房间里已经有手在这台上，这就是这台。
+
+    只认**这一代**：房间重开会换代（``resource_id``），上一代残留的租约不是本次的
+    手，它的机器也不再是房间的机器。
+    """
+    leases = await db.scalars(
+        select(AgentSession.work_lease)
+        .where(
+            AgentSession.topic_id == topic.id,
+            AgentSession.work_lease.is_not(None),
+        )
+        .order_by(AgentSession.placed_at, AgentSession.id)
+    )
+    for lease in leases:
+        if (
+            lease.get("kind") == "device"
+            and lease.get("status", "ready") == "ready"
+            and lease.get("room_resource_id") == resource
+            and lease.get("device_id")
+        ):
+            return lease["device_id"]
+    return None
+
+
+async def room_machine_visibility(db, topic, project_settings) -> Visibility | None:
     """How much of a self-hosted machine the agents in this room can see.
 
     #282 / #358 原则八: whole-machine access is never granted silently, so the
-    room shows it whenever any of its sessions has it (``session_machines``).
-    A room where no session has asked for a machine yet answers for the choice
-    its first session will be given.
+    room shows it whenever its agents have it. 一个话题一个容器（2026-09-28 决定，
+    推翻结论 60）：一间房里所有会话看的是同一台机器，而那台机器由房间那一项算出
+    来——包括还没开工的房间，那正是它开工时会拿到的那一台。
     """
-    started = [s for s in sessions if s["choice"] or s["lease"]]
-    if started:
-        seen = {s["visibility"] for s in started if s["visibility"] is not None}
-    else:
-        choice = room_choice(topic, project_settings)
-        seen = set()
-        if choice.profile == "device":
-            visibility = await _visibility_of(sql_device_service(db), choice.device_id)
-            if visibility is not None:
-                seen.add(visibility)
-    if Visibility.host in seen:
-        return Visibility.host
-    return next(iter(seen), None)
+    choice = room_choice(topic, project_settings)
+    if choice.profile != "device":
+        return None
+    return await _visibility_of(sql_device_service(db), choice.device_id)
 
 
 async def _agent_name(db, project, topic, handle: str) -> str:
@@ -417,27 +436,34 @@ async def request_choice(
     db,
     *,
     topic_id,
-    session_id,
     actor,
     choice,
     abandon_unpushed=False,
     if_idle=False,
 ):
-    """Point one session at another work computer, after its work is pushed.
+    """Point the whole room — and every session in it — at another work computer.
 
-    The push runs on the machine the session leaves, with no transaction open.
-    Only a person may switch without it, and only when that machine could not
-    be reached (``abandon_unpushed``). A Cloud machine left after a push is
-    deleted, so it stops counting against the team's quota. With ``if_idle``
-    a session whose room is mid-turn is left alone (``SessionWorking``).
+    一个话题一个容器（2026-09-28 决定，推翻结论 60）：一间房只有一条算力选择，房间里
+    坐着的每一条会话都工作在那一项算出来的那台机器上，所以「换工作电脑」是房间的动
+    作，不是某一条会话自己的。人打开选择器、或者房间里的某一轮拿着自己的凭据来改
+    （``PUT /topics/{id}/compute-profile``），改的都是这一间房。
+
+    每一条会话各自先在它离开的那台上把改动推上去（``_move_session``，逐条的推送与
+    云机器的归还都还在那里）。**全部搬完才写房间那一项**：一条推不上去就是整个房间
+    不换，而房间那一项没变时，已经搬动过的那几条会在下一轮自己走回来——``_attempt``
+    从房间那一项解析，不是从会话行上那份副本。
+
+    人的那一次换机可以不带推送（``abandon_unpushed``），且只在这一条会话原来那台
+    够不着的时候成立；房间正在跑任务的房间，``if_idle`` 时整个不换
+    （``SessionWorking``）。
     """
     topic = await TopicService(db).lock_for_execution(topic_id)
-    row = await AgentSessionService(db).by_id(session_id, lock=True)
-    if row is None or row.topic_id != topic_id:
-        raise NotFoundError("Session not found")
     project = await ProjectService(db).get_or_404(topic.project_id)
+    # 先在这个房间上问一遍「这个选择成不成立」，再动任何一条会话：档位、设备归属、
+    # 「自动选一台」挑中哪台都只答一次，于是房间里 N 条会话拿到的是**同一个**完整
+    # 选择——而不是各自解析出各自的「系统挑一台」。
     await validate_choice(db, topic.project_id, choice)
-    if choice.profile == "device" and not choice.device_id:
+    if choice.profile == COMPUTE_DEVICE and not choice.device_id:
         selected = await sql_device_service(db).first_healthy_device(
             topic.project_id, device_hub.is_online
         )
@@ -448,8 +474,49 @@ async def request_choice(
     verdict = gate.check(call, gate.policy_of(project.settings), actor.handle)
     if isinstance(verdict, gate.Proposal):
         raise ForbiddenError("所选机器超出项目允许的档位，请选择已授权的资源")
-    if choice.profile == "cloud":
+    if choice.profile == COMPUTE_CLOUD:
         await MachineService(db).require_use_authority(topic.project_id, actor)
+    sessions = await AgentSessionService(db).ids_in_room(topic_id)
+    for session_id in sessions:
+        await _move_session(
+            db,
+            topic_id=topic_id,
+            session_id=session_id,
+            actor=actor,
+            choice=choice,
+            abandon_unpushed=abandon_unpushed,
+            if_idle=if_idle,
+        )
+    topic = await TopicService(db).lock_for_execution(topic_id)
+    topic.compute_config = choice.model_dump()
+    await db.commit()
+    return {"choice": choice.model_dump(), "sessions": len(sessions)}
+
+
+async def _move_session(
+    db,
+    *,
+    topic_id,
+    session_id,
+    actor,
+    choice,
+    abandon_unpushed=False,
+    if_idle=False,
+):
+    """Point one session at the room's work computer, after its work is pushed.
+
+    The push runs on the machine the session leaves, with no transaction open.
+    Only a person may switch without it, and only when that machine could not
+    be reached (``abandon_unpushed``). A Cloud machine left after a push is
+    deleted, so it stops counting against the team's quota. With ``if_idle``
+    a session whose room is mid-turn is left alone (``SessionWorking``).
+    """
+    # 房间那一把锁：这一条会话的租约和房间的算力选择在同一行上改，拿着它读、拿着
+    # 它写，别的请求看到的是「搬之前」或者「搬之后」，没有中间态。
+    await TopicService(db).lock_for_execution(topic_id)
+    row = await AgentSessionService(db).by_id(session_id, lock=True)
+    if row is None or row.topic_id != topic_id:
+        raise NotFoundError("Session not found")
     request = row.execution_request or {}
     old = row.work_lease
     previous = request.get("choice")
@@ -607,9 +674,15 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     project = await ProjectService(db).get_or_404(topic.project_id)
     request = row.execution_request or {
         "generation": str(uuid.uuid4()),
-        "choice": room_choice(topic, project.settings).model_dump(),
         "authorized_by": None,
     }
+    # 房间的选择就是这条会话的选择（2026-09-28 决定，推翻结论 60）。这一行上那份
+    # ``choice`` 是**副本**，不是来源：手落在哪台机器上由房间那一项答，把它写回来是
+    # 为了让读的人（名册、算力分布、清理清单）看到这一行与会话此刻真正在用的东西一
+    # 致，而不是让解析去问它——两处各存一份、解析时听谁的那个问题，就是这条决定要
+    # 消掉的东西。
+    choice = room_choice(topic, project.settings)
+    request = {**request, "choice": choice.model_dump()}
     row.execution_request = request
     generation = request["generation"]
     lease = row.work_lease
@@ -634,11 +707,17 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
                 "工作电脑正在准备；对话和平台工具仍可用。",
                 partial(_claim_moved, db, session_id, lease.get("claim")),
             )
-    choice = ComputeChoice.model_validate(request["choice"])
     devices = sql_device_service(db)
     selected = None
-    if choice.profile == "device":
-        device_id = (lease or {}).get("device_id") or choice.device_id
+    if choice.profile == COMPUTE_DEVICE:
+        # 这条会话手上那台第一（租约是它现在真正在用的那台），房间点名的那台其次，
+        # 再没有就问房间里的队友——同一个房间里的会话落在同一台机器上，所以「系统挑
+        # 一台」不该由谁先来谁挑一台在线的来决定（``_roommates_device``）。
+        device_id = (
+            (lease or {}).get("device_id")
+            or choice.device_id
+            or await _roommates_device(db, topic, resource)
+        )
         selected = (
             await devices.get_device(device_id)
             if device_id

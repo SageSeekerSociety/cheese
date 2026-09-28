@@ -5778,10 +5778,11 @@ class ChatService:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later project-default change must
                 # never move an existing work tree or resumable Claude session.
-                # The WHOLE choice, not its pool: every later session in this
-                # room starts from it (结论 60), and a pool name alone would
-                # hand the next agent 标准配置 or whichever device is free
-                # instead of the spec or the machine the first one was given.
+                # The WHOLE choice, not its pool: 一个话题一个容器（2026-09-28
+                # 决定，推翻结论 60 的后半）——这份选择就是**这一间房**的选择，
+                # 房间里每一条会话（现在的和以后进来的）都工作在它算出来的那台机
+                # 器上，所以写下池名而不写整份，后面的每一条都会拿到 标准配置 或
+                # 「哪台空着」，而不是第一条会话被给到的那一份规格或那台机器。
                 from app.domain.agent.compute_configs import room_choice
 
                 topic.compute_config = room_choice(
