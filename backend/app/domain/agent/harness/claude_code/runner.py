@@ -38,7 +38,12 @@ from pathlib import Path
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.driven import runner
-from app.domain.memory.files import INDEX_NAME, MEMORY_ROOT, check_scoped_path
+from app.domain.memory.files import (
+    INDEX_NAME,
+    MEMORY_ROOT,
+    check_scoped_path,
+    rejected_path,
+)
 from app.domain.memory.tree import (
     BULK_DELETE_MIN,
     BULK_DELETE_RATIO,
@@ -716,6 +721,9 @@ class Runner(runner.Runner[Journal]):
                 file=sys.stderr,
                 flush=True,
             )
+        # 没收的那几版先留到旁边：新建的那一条马上会被下面的清理删掉。
+        for path in outcome.rejected:
+            _write_memory(root, rejected_path(path), disk[path])
         for path, content in outcome.files.items():
             _write_memory(root, path, content)
         # 两方都没有、只有 baseline 里还有的那一条（平台删了，会话也没写回去），
@@ -735,6 +743,7 @@ class Runner(runner.Runner[Journal]):
         return {
             "files": outcome.files,
             "refused": outcome.refused,
+            "rejected": outcome.rejected,
             "held": list(outcome.held),
         }
 

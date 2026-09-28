@@ -34,6 +34,7 @@ from __future__ import annotations
 from typing import Final
 
 from app.domain.block.models import AGENT_NOTICE_META_KEY
+from app.domain.memory.files import rejected_path
 
 # --- severity ---------------------------------------------------------------
 SEVERITY_INFO: Final = "info"
@@ -285,7 +286,12 @@ def delivery_fallback_notice() -> tuple[str, dict]:
 
 
 def memory_changed_notice(
-    *, where: str, summary: str, diff: str, refused: tuple[str, ...]
+    *,
+    where: str,
+    summary: str,
+    diff: str,
+    refused: tuple[str, ...],
+    rejected: dict[str, str] | None = None,
 ) -> tuple[str, dict]:
     """记忆树的一次改动：一行说改了哪一棵、改了几条，diff 收进 `detail`。
 
@@ -299,9 +305,12 @@ def memory_changed_notice(
     它看到的世界就是那棵树，而它刚才写的那一版已经不在了。不说，它会以为写成功
     了、下一轮再写一遍同一版，而每一轮都会被盖回去。
     """
-    parts = [f"{where}记忆：{summary}"]
+    rejected = rejected or {}
+    parts = [f"{where}记忆：{summary}" if summary else f"{where}记忆"]
     if refused:
         parts.append("有改动被平台这一份盖回来了，重读再写")
+    if rejected:
+        parts.append(f"{len(rejected)} 条超出长度上限，没有写入")
     meta = notice(
         EVENT_MEMORY_CHANGED,
         severity=SEVERITY_INFO,
@@ -309,9 +318,27 @@ def memory_changed_notice(
         detail=diff or None,
         detail_label="改动",
     )
+    for_agent = []
     if refused:
-        meta[AGENT_NOTICE_META_KEY] = memory_conflict_notice(where=where, paths=refused)
+        for_agent.append(memory_conflict_notice(where=where, paths=refused))
+    if rejected:
+        for_agent.append(memory_rejected_notice(where=where, reasons=rejected))
+    if for_agent:
+        meta[AGENT_NOTICE_META_KEY] = "\n\n".join(for_agent)
     return "　".join(parts), meta
+
+
+def memory_rejected_notice(*, where: str, reasons: dict[str, str]) -> str:
+    """说给 agent 的那句：哪几条因为太长没存下、为什么、它写的那一版在哪。"""
+    lines = "\n".join(
+        f"- `{path}`（你写的那一版在 `{rejected_path(path)}`）：{reason}"
+        for path, reason in sorted(reasons.items())
+    )
+    return (
+        f"{where}记忆里有几条超出长度上限，没有写入，记忆里还是原来那一版：\n"
+        f"{lines}\n"
+        "改短之后重新写入。"
+    )
 
 
 def memory_conflict_notice(*, where: str, paths: tuple[str, ...]) -> str:
