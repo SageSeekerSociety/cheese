@@ -195,10 +195,16 @@ const bar = computed<{ icon: string; color: string; title: string; sub: string }
     return {
       icon: 'mdi-source-merge',
       color: 'success',
-      // 被审阅的东西按它实际是什么说：一份产物就写它的名字和第几版，否则是一段改动。
-      title: pending.artifact
-        ? t('work.room.accept.artifact', { name: pending.artifact.name, version: pending.artifact.version })
-        : t('work.room.accept.change'),
+      // 被审阅的东西按它实际是什么说。交一次合并时，产物是整个代码仓库，每张卡都是
+      // 「《同一个名字》第 N 版」，一行里说不出这次改了什么 —— 那就用这次改动自己的
+      // 标题；产物和第几版在展开的「这次交付」里。交文件、交地址时，产物的名字和第几版
+      // 就是这次交的东西。
+      title:
+        pending.deliverable?.kind === 'merge' && pending.change_subject
+          ? pending.change_subject
+          : pending.artifact
+            ? t('work.room.accept.artifact', { name: pending.artifact.name, version: pending.artifact.version })
+            : t('work.room.accept.change'),
       sub:
         pending.reviewer_handle === AUTHOR
           ? t('work.room.accept.waitingOnYou')
@@ -1142,14 +1148,21 @@ defineExpose({ reload: loadAcceptCard })
 .accept-bar__toggle:hover {
   background: var(--fill);
 }
+/* 标题可以是一次改动的整句标题（最长 72 字），窄屏上一行放不下，所以它也跟着截断；
+   「等谁」那半句更短，先让标题让位。 */
 .accept-bar__title {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--ink);
   font-size: 14px;
   font-weight: 600;
   line-height: var(--lh-14);
 }
 .accept-bar__sub {
+  flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
