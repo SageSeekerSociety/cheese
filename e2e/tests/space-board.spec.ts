@@ -538,11 +538,16 @@ test.describe("空间新界面（真路由）", () => {
       `/spaces/${spaceId}/board/mine`,
     );
 
-    // 落进审核队列的那一行带着出处 —— 队列那一行显示的就是简介，标记写在简介里。
+    // 落进审核队列的那一行带着出处 —— 但它**不再写在简介里**：`store.ts` 映射时
+    // 把 `【PDF · 第 N 页】` 从正文开头摘出来，成了题上的一枚标（见
+    // `board/model.ts` 的 `splitOrigin`）。队列那一行不是 `TaskCard`，那枚标由
+    // `Review.vue` 自己呈现。
     await page.goto(`/spaces/${spaceId}/board/review`);
     const queued = page.locator(".queue__row", { hasText: edited });
     await expect(queued).toBeVisible();
-    await expect(queued).toContainText("【PDF · 第 1 页】");
+    await expect(queued.getByTestId("queue-origin")).toHaveText("PDF · 第 1 页");
+    // 摘干净了：正文里不再有那串给机器认的字。
+    await expect(queued.locator(".queue__summary")).not.toContainText("【PDF · 第 1 页】");
     // 勾掉的那一条没发出去。
     await expect(page.locator(".queue__row", { hasText: "手写一个最简内存分配器" })).toHaveCount(0);
   });
