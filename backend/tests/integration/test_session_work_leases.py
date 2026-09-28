@@ -210,13 +210,16 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
     assert hub.exec.await_count == 3
     assert upgraded.json()["data"]["target"]["device_id"] == identities[0][1]
     remote.side_effect = executor_answer
-    # Both sessions of the room hold hands on the one machine.
+    # Both sessions of the room hold hands on the one machine, each in a
+    # workspace of its own: one container per topic, one worktree per teammate.
     async with client.test_factory() as db:
-        leased = [
-            (await AgentSessionService(db).by_id(sid)).work_lease["device_id"]
+        leases = [
+            (await AgentSessionService(db).by_id(sid)).work_lease
             for sid, _, _ in identities
         ]
-    assert leased == [room_device, room_device]
+    assert [lease["device_id"] for lease in leases] == [room_device, room_device]
+    assert leases[0]["resource_id"] != leases[1]["resource_id"]
+    assert leases[0]["home"] != leases[1]["home"]
     wrong_session = client.post(
         f"/topics/{topic_id}/sessions/{identities[1][0]}/work-lease",
         headers={"X-Cheese-Token": identities[0][2]},
