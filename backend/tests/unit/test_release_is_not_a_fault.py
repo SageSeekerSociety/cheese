@@ -51,7 +51,7 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
     from app.domain.agent.harness.pi import runtime as pi_runtime
 
     poller = pi_runtime.PiRuntime.__new__(pi_runtime.PiRuntime)
-    topic = __import__("uuid").uuid4()
+    seat = (__import__("uuid").uuid4(), "pi")
     reads = 0
 
     class Subscription:
@@ -65,7 +65,7 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
                 "Server disconnected without sending a response."
             )
 
-    poller.subscriptions = {topic: Subscription()}
+    poller.subscriptions = {seat: Subscription()}
     poller.work = {}
     poller.live = {}
     poller.woken = {}
@@ -85,7 +85,7 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
     monkeypatch.setattr(driven_runtime, "asyncio", _NoSleep())
 
     with caplog.at_level(logging.WARNING, logger=pi_runtime.logger.name):
-        await poller._poll(topic)
+        await poller._poll(seat)
 
     said = [r for r in caplog.records if r.name == pi_runtime.logger.name]
     assert len(said) == 1, said

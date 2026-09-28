@@ -2,7 +2,7 @@
   "name": "default",
   "home": "workspace-running",
   "nav": {
-    "rail": ["home", "projects", "add"],
+    "rail": ["home", "inbox", "projects", "add"],
     "tabs": ["spaces", "workspace", "inbox"],
     "project": ["calendar", "project-library", "project-routines", "project-members", "project-skills"]
   },

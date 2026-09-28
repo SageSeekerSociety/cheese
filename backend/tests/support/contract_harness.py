@@ -192,6 +192,7 @@ class ContractHarness:
         images: list[dict] | None = None,
         *,
         expected_work_id: uuid.UUID | None = None,
+        agent_handle: str | None = None,
     ) -> bool:
         held = self._held.get(topic_id)
         if held is None:
@@ -288,8 +289,18 @@ class ContractHarness:
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         return None
 
-    def holds(self, topic_id: uuid.UUID) -> bool:
-        return topic_id in self._held
+    def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
+        if agent_handle is None:
+            return topic_id in self._held
+        return any(
+            held.ref.topic_id == topic_id and held.ref.agent_handle == agent_handle
+            for held in self._held.values()
+        )
+
+    def work_in_flight(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> uuid.UUID | None:
+        return None
 
     async def recover(self, device_id: str | None = None) -> list[SessionRef]:
         return [held.ref for held in self._held.values()]

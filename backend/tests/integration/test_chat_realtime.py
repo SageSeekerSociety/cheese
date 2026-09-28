@@ -1059,7 +1059,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
     in_flight = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow_deliver(tid, text, images=None):
+    async def slow_deliver(tid, text, images=None, agent_handle=None):
         in_flight.set()
         await release.wait()
         return True
@@ -1114,7 +1114,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     delivered_texts: list[str] = []
 
-    async def fake_deliver(tid, text, images=None):
+    async def fake_deliver(tid, text, images=None, agent_handle=None):
         delivered_texts.append(text)
         return True
 
