@@ -341,7 +341,8 @@
     },
     "checklist": {
       "updatedAt": "清单更新于 {time}"
-    }
+    },
+    "backToChat": "返回对话"
   },
   "members": {
     "leave": "退出项目",

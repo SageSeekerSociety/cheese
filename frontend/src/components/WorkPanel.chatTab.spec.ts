@@ -96,4 +96,10 @@ describe('对话作为工作面板的一格', () => {
     expect((await findByRole('tab', { name: /现场/ })).getAttribute('aria-selected')).toBe('true')
   })
 
+  it('手机上退回到不带页签的地址，回到对话', async () => {
+    const { findByRole, rerender } = mount({ withChat: true, tab: 'changes' })
+    expect((await findByRole('tab', { name: /改动/ })).getAttribute('aria-selected')).toBe('true')
+    await rerender({ tab: undefined })
+    expect((await findByRole('tab', { name: /对话/ })).getAttribute('aria-selected')).toBe('true')
+  })
 })

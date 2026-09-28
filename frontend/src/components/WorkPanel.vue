@@ -231,11 +231,12 @@ function tabForPhase(phase: TopicPhase): TabKey {
   return defaultTab.value
 }
 
-// Back / forward, or someone pasting a link into the open topic.
+// Back / forward, or someone pasting a link into the open topic. 手机上对话那一格
+// 的地址可以不带 `?tab=`（刚进房间时就是这样），退回到它时也得回到对话。
 watch(
   () => props.tab,
   () => {
-    const asked = tabFromUrl()
+    const asked = tabFromUrl() ?? (props.withChat ? defaultTab.value : null)
     ensureFileFromUrl(asked)
     if (asked && asked !== active.value) active.value = asked
   }
@@ -435,13 +436,13 @@ watch(
   [() => props.phase, summaryLoaded],
   ([phase, loaded]) => {
     if (settled.value || !phase) return
-    if ((phase === 'reviewing' || phase === 'delivering') && !loaded) return
     // 手机上房间永远开在对话：输入框就在那一格里，自动跳去现场等于把它藏起来。
     // 现场那一格上的呼吸点照样说着「正在工作」。
     if (props.withChat) {
       settled.value = true
       return
     }
+    if ((phase === 'reviewing' || phase === 'delivering') && !loaded) return
     const want = tabForPhase(phase)
     if (want === active.value) settled.value = true
     else setTab(want)
