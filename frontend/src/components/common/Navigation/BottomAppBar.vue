@@ -84,5 +84,9 @@ const route = useRoute()
 .bottom-tabs {
   height: calc(56px + env(safe-area-inset-bottom)) !important;
   padding-bottom: env(safe-area-inset-bottom);
+  /* 退回有底栏的一层时，它和页面同时就位：它是框，不跟着页面演（换页的那一下在
+     App.vue 的 .page-enter--*）。Vuetify 默认让它从底下滑上来，那 0.2s 里内容区
+     底部是一条空白。 */
+  transition: none;
 }
 </style>

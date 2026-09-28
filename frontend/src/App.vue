@@ -35,7 +35,7 @@
       :class="{ 'app-main--pending': firstRoutePending, 'app-main--phone': !$vuetify.display.mdAndUp }"
     >
       <div class="border-t-sm bg-background h-100 overflow-hidden">
-        <div id="app-scrollable" class="app-content h-100">
+        <div id="app-scrollable" ref="contentRef" class="app-content h-100" @animationend="endPageMotion">
           <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
                「上一个人是谁」一起留在内存里 —— 登录/注册/OAuth 回调/验证码那
                几页要是被留下来，退出后再登录会看到上一个账号的填写状态。所以
@@ -226,6 +226,7 @@ import type { NavSources } from './components/common/Navigation/destinations'
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { useEventListener } from '@vueuse/core'
 
 import { avatarColor } from '@/utils/avatar'
@@ -253,6 +254,7 @@ import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
 import { autoConnectThisComputer } from '@/lib/desktop'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
+import { pageMotion } from '@/lib/pageMotion'
 import { randomTeammateName } from '@/lib/projectAgents'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import {
@@ -298,6 +300,35 @@ router.isReady().then(async () => {
   watch(titleManager.fullTitle, updateDocumentTitle)
   watch(() => store.separator, updateDocumentTitle)
 })
+
+// 手机上换页的那一下（桌面上没有）：新页从右边（往里走一层）或左边（退回一层）
+// 挪进来 24px 并淡入，平级切换（底栏换格）只淡入。方向由 lib/pageMotion 按路由声明的
+// 上一层（backTo）算，不按浏览器历史。
+//
+// 只演「进来」，旧页随这次渲染直接换掉：两页同时在场的整屏滑动要让离开的那页多活
+// 一段，它往顶栏里传送的标题会和新页的叠成两份，保活和滚动位置也要跟着绕。24px 的
+// 位移加淡入已经说清了方向。动的是装页面的那一层（#app-scrollable），顶栏和底栏不
+// 动：它们是框，不是页。减弱动效时不演（见样式）。
+const display = useDisplay()
+const contentRef = ref<HTMLElement | null>(null)
+const MOTION_CLASSES = ['page-enter--forward', 'page-enter--back', 'page-enter--fade']
+router.afterEach((to, from, failure) => {
+  if (failure || display.mdAndUp.value) return
+  const motion = pageMotion(to, from, router)
+  if (!motion) return
+  // 等新页画进 DOM（同一个微任务里、浏览器上屏之前）再起步，第一帧就是它的起点。
+  void nextTick(() => {
+    const el = contentRef.value
+    if (!el) return
+    el.classList.remove(...MOTION_CLASSES)
+    // 连着换两页时从头再演一次：先让浏览器认下「没有动画」，再加回去。
+    void el.offsetWidth
+    el.classList.add(`page-enter--${motion}`)
+  })
+})
+function endPageMotion(event: AnimationEvent) {
+  if (event.target === contentRef.value) contentRef.value?.classList.remove(...MOTION_CLASSES)
+}
 
 // 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
 // useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
@@ -606,6 +637,39 @@ function projectAvatar(name: string): string {
    不在了，内容还在往下挪。这一下跟着换页一起完成，不单独演。 */
 .app-main--phone {
   transition: none;
+}
+.page-enter--forward {
+  animation: page-enter-forward var(--dur-base) var(--ease-standard) backwards;
+}
+.page-enter--back {
+  animation: page-enter-back var(--dur-base) var(--ease-standard) backwards;
+}
+.page-enter--fade {
+  animation: page-enter-fade var(--dur-base) var(--ease-standard) backwards;
+}
+@keyframes page-enter-forward {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+@keyframes page-enter-back {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes page-enter-fade {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-enter--forward,
+  .page-enter--back,
+  .page-enter--fade {
+    animation: none;
+  }
 }
 .app-content {
   min-height: 0;
