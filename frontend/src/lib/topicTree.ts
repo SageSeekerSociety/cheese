@@ -52,6 +52,8 @@ export interface VisibleRow<T extends TopicNodeLike = TopicNodeLike> extends Fla
   hiddenAwaits: boolean
   /** 隐藏后代里有没有 @ 了 AI 却等太久没回的。 */
   hiddenStalled: boolean
+  /** 隐藏后代里有没有已采纳、在等合并的。 */
+  hiddenMerging: boolean
 }
 
 interface Node<T extends TopicNodeLike> {
@@ -174,6 +176,8 @@ export interface VisibleRowsOptions {
   awaitsOf?: (id: string) => boolean
   /** 这个话题里是不是有人 @ 了 AI 却等太久没回；缺省当否。 */
   stalledOf?: (id: string) => boolean
+  /** 这个话题是不是已采纳、在等合并；缺省当否。 */
+  mergingOf?: (id: string) => boolean
 }
 
 /**
@@ -193,6 +197,7 @@ export function visibleRows<T extends TopicNodeLike>(
   const runningOf = options.runningOf ?? (() => false)
   const awaitsOf = options.awaitsOf ?? (() => false)
   const stalledOf = options.stalledOf ?? (() => false)
+  const mergingOf = options.mergingOf ?? (() => false)
 
   const roots = buildNodes(rows)
   const rendered: Node<T>[] = []
@@ -216,18 +221,26 @@ export function visibleRows<T extends TopicNodeLike>(
   // 这样嵌套折叠时同一条未读不会在两层父行上各显示一次。
   const owned = new Map<
     Node<T>,
-    { count: number; unread: number; running: boolean; awaits: boolean; stalled: boolean }
+    { count: number; unread: number; running: boolean; awaits: boolean; stalled: boolean; merging: boolean }
   >()
   for (const node of hidden) {
     let owner: Node<T> | null = node.parent
     while (owner && !(renderedSet.has(owner) && collapsedIds.has(owner.row.topic.id))) owner = owner.parent
     if (!owner) continue
-    const acc = owned.get(owner) ?? { count: 0, unread: 0, running: false, awaits: false, stalled: false }
+    const acc = owned.get(owner) ?? {
+      count: 0,
+      unread: 0,
+      running: false,
+      awaits: false,
+      stalled: false,
+      merging: false,
+    }
     acc.count += 1
     acc.unread += unreadOf(node.row.topic.id)
     acc.running = acc.running || runningOf(node.row.topic.id)
     acc.awaits = acc.awaits || awaitsOf(node.row.topic.id)
     acc.stalled = acc.stalled || stalledOf(node.row.topic.id)
+    acc.merging = acc.merging || mergingOf(node.row.topic.id)
     owned.set(owner, acc)
   }
 
@@ -247,6 +260,7 @@ export function visibleRows<T extends TopicNodeLike>(
       hiddenRunning: acc?.running ?? false,
       hiddenAwaits: acc?.awaits ?? false,
       hiddenStalled: acc?.stalled ?? false,
+      hiddenMerging: acc?.merging ?? false,
     }
   })
 }

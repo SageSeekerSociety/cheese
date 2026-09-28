@@ -11,9 +11,10 @@ CC 2.1.283 的记忆是一组文件，不是一张表：一条记忆一个 `.md`
 **索引不是文档。** `MEMORY.md` 只放指针（`- [标题](file.md) — 一句钩子`），正文
 永远在它指的那个文件里。串味过一次就再也读不出来哪一行是索引、哪一行是内容。
 
-**超上限照样写入。** 200 行 / 25KB 是注入预算，不是写入闸：写的时候给一条警告，
-注入的时候截断，等后台整理（dream）修剪回来。拒绝写入会把「这条记忆没记下来」
-和「索引该整理了」两件事混成一件事，而后者才是真的。
+**单条有上限，总量没有。** 一条记忆的正文和索引里新写的一行各有字数上限，超了
+就拒绝（`limit_breach`）：写的人手上就有这一条，当场就改得短。索引总长的 200 行 /
+25KB 是注入预算，不是写入闸：超了照样写，注入时截断，由整理决定留哪几条——删哪
+一条要看整个作用域，写的人手上没有这份信息。
 """
 
 import hashlib
@@ -36,9 +37,13 @@ PRIVATE_PREFIX = "private"
 INDEX_MAX_LINES = 200
 INDEX_MAX_BYTES = 25 * 1024
 
-#: 一条索引行的长度：约 150 字符是 CC 给的目标，超过 ~200 说明它把正文写进索引了。
-INDEX_LINE_TARGET = 150
-INDEX_LINE_LIMIT = 200
+#: 索引里一行的上限（字符）。正文很少被读，照着做的就是这一行，所以它要短到能一眼
+#: 读完，又要长到能说出一句完整的主张。
+INDEX_LINE_MAX = 150
+
+#: 一条记忆正文（frontmatter 之后）的上限（字符）。写不进这么长，多半是把排查经过
+#: 当成了结论。
+BODY_MAX = 1000
 
 #: 一条记忆的路径上限，等于 `memory_files.path` 那一列的宽度（`String(200)`）。
 #: 没有这一条时，一个超长的文件名不是在写入端被拒，而是在 flush 的时候炸成一个
@@ -214,6 +219,49 @@ def fit_index(text: str) -> tuple[str, str | None]:
         "请把长条目搬进它指的那个文件、或合并重复的一条，把索引压回上限以内。"
     )
     return "\n".join(kept) + ("\n" if kept else ""), warning
+
+
+def limit_breach(name: str, content: str, previous: str | None) -> str | None:
+    """这一版超了单条上限就说为什么；没超是 None。
+
+    ``name`` 是作用域里的文件名，``previous`` 是它现在的那一版（新建时 None）。
+
+    索引只看**这一版新写的行**：别人早先写下的一行长的，不该挡住这次加的另一行。
+    正文看整条：改一条已经超长的记忆，就要把它改到上限以内。读不成记忆文件的正文
+    按整份算，frontmatter 写错不是绕过上限的办法。
+    """
+    if name == INDEX_NAME:
+        old = set((previous or "").splitlines())
+        long_lines = [
+            line
+            for line in content.splitlines()
+            if line not in old and len(line) > INDEX_LINE_MAX
+        ]
+        if not long_lines:
+            return None
+        shown = "\n".join(f"  {line}" for line in long_lines[:5])
+        return (
+            f"索引有 {len(long_lines)} 行超过 {INDEX_LINE_MAX} 字符：\n{shown}\n"
+            "一行写一句能照着做的主张，细节放进它指的那个文件。"
+        )
+    try:
+        body = parse_memory_file(content).body
+    except MemoryFileError:
+        body = content.strip()
+    if len(body) <= BODY_MAX:
+        return None
+    return (
+        f"正文 {len(body)} 字，上限 {BODY_MAX} 字。只写结论和它为什么成立，"
+        "不写排查经过；说的是几件事就拆成几条。"
+    )
+
+
+def rejected_path(path: str) -> str:
+    """没收的那一版留在哪儿：同一个目录，`<名字>.rejected.md`。
+
+    名字里带点，过不了 `check_path`，所以对账从不把它当成一条记忆收回去。
+    """
+    return f"{path[: -len('.md')]}.rejected.md"
 
 
 def prefix_of(scope: MemoryFileScope, owner_handle: str | None) -> str:

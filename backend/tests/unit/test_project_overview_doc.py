@@ -19,7 +19,7 @@ from app.domain.topic.overview import (
     overview_auto_blocks,
     project_brief,
     render_overview_auto,
-    topic_conclusion,
+    topic_status,
 )
 
 DOC = """## 项目是什么
@@ -62,16 +62,26 @@ def test_a_document_without_the_brief_heading_still_arrives():
     assert project_brief("## 目标\n\n做一件事。\n") == "## 目标\n\n做一件事。"
 
 
-def test_the_current_conclusion_block_yields_its_first_sentence():
+def test_the_status_block_yields_its_first_sentence():
     topic_doc = (
-        "## 目标\n\n支持翻页。\n\n## 当前结论\n\n"
+        "## 目标\n\n支持翻页。\n\n## 现状\n\n"
         "分页方案已定：用 cursor（决策见 @分页调研）。\n待办：@张衡 过一遍。\n"
     )
 
-    assert topic_conclusion(topic_doc) == (
-        "分页方案已定：用 cursor（决策见 @分页调研）。"
-    )
-    assert topic_conclusion("## 目标\n\n支持翻页。\n") is None
+    assert topic_status(topic_doc) == ("分页方案已定：用 cursor（决策见 @分页调研）。")
+    assert topic_status("## 目标\n\n支持翻页。\n") is None
+
+
+def test_a_doc_still_on_the_old_template_gives_its_conclusion():
+    old_doc = "## 目标\n\n支持翻页。\n\n## 当前结论\n\n用 cursor。\n"
+
+    assert topic_status(old_doc) == "用 cursor。"
+
+
+def test_the_status_block_wins_over_an_old_conclusion_block():
+    both = "## 当前结论\n\n旧的说法。\n\n## 现状\n\n等张衡审阅。\n"
+
+    assert topic_status(both) == "等张衡审阅。"
 
 
 def test_what_is_happening_now_is_one_linked_line_per_topic():
@@ -83,7 +93,7 @@ def test_what_is_happening_now_is_one_linked_line_per_topic():
     assert "<#t-1> 分页接口" in text
     assert "负责人：@张衡" in text
     assert "进行中" in text
-    assert "当前结论：用 cursor，不用 offset。" in text
+    assert "现状：用 cursor，不用 offset。" in text
 
 
 def test_every_automatic_block_comes_from_structured_data():
@@ -144,7 +154,7 @@ def test_a_topic_that_never_wrote_a_conclusion_says_so():
         closed_topics=[],
     )
 
-    assert "当前结论：（没写）" in text
+    assert "现状：（没写）" in text
 
 
 def test_the_structured_blocks_carry_where_each_line_leads():

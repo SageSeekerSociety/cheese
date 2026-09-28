@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// 「现在的分布」里一台自有设备上的 agent：列出来，选一些换到另一台工作电脑。每一个
-// 走和成员名册同一条更换（先推送，失败就不换并说明原因）；房间正在干活的跳过，不打断。
+// 「现在的分布」里一台自有设备上的 agent：列出来，选一些换到另一台工作电脑。一个话题
+// 一个容器（2026-09-28，推翻结论 60）：换的是它所在的整个房间，走和成员名册同一条
+// 更换（先推送，失败就不换并说明原因），同房间的队友一起搬；房间正在干活的跳过，不打断。
 import type { ComputeChoice, DeviceSession, TopicComputeDevice } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { ApiError, listDeviceSessions, setSessionWorkChoice } from '../api'
+import { ApiError, listDeviceSessions, setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
 import { choiceKey, compactChoices } from '../lib/computeConfig'
 import { relTime } from '../lib/relTime'
@@ -94,16 +95,22 @@ async function load() {
   }
 }
 
+// 换的是房间：答案落在这个房间在这台设备上的每一行上。
+function settle(topicId: string, outcome: Outcome) {
+  const room = sessions.value.filter((s) => s.topic_id === topicId).map((s) => s.id)
+  for (const id of room) outcomes.value[id] = outcome
+  if (outcome.state === 'done') selected.value = selected.value.filter((id) => !room.includes(id))
+}
+
 async function switchOne(session: DeviceSession, choice: ComputeChoice, abandonUnpushed = false) {
   try {
-    await setSessionWorkChoice(session.topic_id, session.id, choice, { ifIdle: true, abandonUnpushed })
-    outcomes.value[session.id] = { state: 'done', message: t('work.bulkSwitch.done') }
-    selected.value = selected.value.filter((id) => id !== session.id)
+    await setTopicComputeChoice(session.topic_id, choice, { ifIdle: true, abandonUnpushed })
+    settle(session.topic_id, { state: 'done', message: t('work.bulkSwitch.done') })
     moved.value = true
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : t('global.updateFailed')
     const unreachable = cause instanceof ApiError && cause.code === 'WorkComputerUnreachable'
-    outcomes.value[session.id] = { state: unreachable ? 'unreachable' : 'failed', message }
+    settle(session.topic_id, { state: unreachable ? 'unreachable' : 'failed', message })
   }
 }
 
@@ -112,7 +119,11 @@ async function run() {
   const choice = picked.value
   if (!choice || !selected.value.length) return
   running.value = true
+  // 一个房间只换一次：同房间的几行选了几行，都是同一次更换。
+  const rooms = new Set<string>()
   for (const session of sessions.value.filter((s) => selected.value.includes(s.id))) {
+    if (rooms.has(session.topic_id)) continue
+    rooms.add(session.topic_id)
     await switchOne(session, choice)
   }
   running.value = false

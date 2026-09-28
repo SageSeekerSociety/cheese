@@ -12,7 +12,7 @@ CLEAN = """# 目标
 
 让列表接口支持翻页。
 
-## 当前结论
+## 现状
 
 分页方案已定：用 cursor，不用 offset。
 
@@ -54,7 +54,7 @@ def test_a_run_of_date_headed_lines_is_a_log_but_two_are_not():
 
 
 def test_appending_a_correction_instead_of_rewriting_is_flagged():
-    doc = "## 当前结论\n\n- 用 offset。\n\n更正：改用 cursor。\n"
+    doc = "## 现状\n\n- 用 offset。\n\n更正：改用 cursor。\n"
 
     warnings = living_doc_warnings(doc)
 
@@ -101,5 +101,5 @@ def test_every_warning_carries_the_fix_not_just_the_fault():
 
 def test_a_run_of_quoted_lines_is_not_a_pasted_terminal():
     """`>` 开头的是 Markdown 引用块，连着几行是正常写法，不是终端粘贴。"""
-    doc = "## 当前结论\n\n> 第一句引用\n> 第二句引用\n> 第三句引用\n> 第四句\n"
+    doc = "## 现状\n\n> 第一句引用\n> 第二句引用\n> 第三句引用\n> 第四句\n"
     assert not any("命令" in w for w in living_doc_warnings(doc))

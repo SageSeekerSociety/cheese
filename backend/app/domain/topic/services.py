@@ -72,7 +72,7 @@ from app.domain.topic.overview import (
     decision_summary,
     first_sentence,
     overview_auto_blocks,
-    topic_conclusion,
+    topic_status,
 )
 from app.domain.topic.repositories import (
     SortOrder,
@@ -1157,9 +1157,19 @@ class TopicService:
             raise NotFoundError("Topic not found")
         return place
 
+    async def doc_of_room(self, room_id: uuid.UUID) -> Block | None:
+        """这间房自己那份实况文档 —— 线程的简报不是它（`doc_root` 把房间那条
+        主线分开）。
+
+        和 `get_doc` 读的是同一处，差别只在手上是什么：路由手上是个可能不存在的
+        place，所以先 404；轮末那种「房间行已经读出来了」的地方手上就是房间 id，
+        不必再绕一圈（`topic/doc_nudge.py`）。
+        """
+        return await self._blocks.doc_root(room_id)
+
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
         place = await self.place_or_404(topic_id)
-        return await self._blocks.doc_root(place.room_id)
+        return await self.doc_of_room(place.room_id)
 
     async def overview_auto(self, topic_id: uuid.UUID) -> list[dict]:
         """总览房间（项目根话题）的 ②~⑤，结构化（#1889）。
@@ -1237,7 +1247,7 @@ class TopicService:
             if prefer_card and card is not None and card.conclusion:
                 return first_sentence(card.conclusion)
             doc = docs.get(topic.id)
-            return topic_conclusion(doc.content) if doc is not None else None
+            return topic_status(doc.content) if doc is not None else None
 
         decisions = (
             await self._blocks.list_by_kind_for_project(project_id, BlockKind.decision)

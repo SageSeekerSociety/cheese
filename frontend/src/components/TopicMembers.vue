@@ -5,15 +5,9 @@
 // members, remove them, or change roles. 芝士 (the AI member) wears an Agent
 // badge, mirroring the @-mention menu.
 //
-// 每个 AI 队友那一行还写着它的工作电脑：它现在在哪台机器上干活，谁都可以给它换；
-// 还没开工的写它开工时会用哪台（房间这一项，结论 60）。
-import type {
-  ComputeChoice,
-  ProjectMemberRow,
-  RoomSessionMachine,
-  TopicComputeProfile,
-  TopicMemberRow,
-} from '../cx_types'
+// 名册底下一行写这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻
+// 结论 60）：房间里的 AI 队友都在这一台上，所以不再每个队友各写一行。
+import type { ProjectMemberRow, TopicComputeProfile, TopicMemberRow } from '../cx_types'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -32,7 +26,6 @@ import { getAvatarUrl } from '../utils/materials'
 
 import ExternalTag from './common/ExternalTag.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
-import SessionWorkPicker from './SessionWorkPicker.vue'
 import TopicComputePicker from './TopicComputePicker.vue'
 
 const props = defineProps<{
@@ -97,24 +90,6 @@ watch(
   { immediate: true }
 )
 
-// 开工了的会话：它有自己的选择。一个队友在同一个房间里通常只有一条会话。
-function startedSessions(handle: string): (RoomSessionMachine & { choice: ComputeChoice })[] {
-  return (machines.value?.sessions ?? []).filter(
-    (s): s is RoomSessionMachine & { choice: ComputeChoice } => s.agent_handle === handle && s.choice !== null
-  )
-}
-// 设备按名字说：「自动选一台」开工后已经落在某一台上，写那一台。
-function machineName(s: RoomSessionMachine & { choice: ComputeChoice }): string {
-  const deviceId = s.choice.profile === 'device' ? s.choice.device_id ?? s.lease?.device_id : null
-  const device = deviceId ? machines.value?.devices.find((d) => d.device_id === deviceId) : undefined
-  return device?.name ?? s.choice.name
-}
-function sessionLabel(handle: string, index: number, s: RoomSessionMachine & { choice: ComputeChoice }): string {
-  const line = t('work.roomMachine.current', { name: machineName(s) })
-  return startedSessions(handle).length > 1
-    ? t('work.sessionMachine.numberedSession', { name: line, number: index + 1 })
-    : line
-}
 // 「项目默认」只挂在还没开工的选择上：只有这时它才真的跟着项目走。
 const roomChoiceIsProjectDefault = computed(
   () => !!machines.value && choiceKey(machines.value.choice) === choiceKey(machines.value.project_default)
@@ -310,51 +285,15 @@ async function onSetRole(handle: string, role: string) {
           </template>
           <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义。 -->
           <span v-else-if="!m.agent" class="roster__role">{{ roleLabel(m.role) }}</span>
-
-          <div v-if="m.agent && machines" class="roster__machine">
-            <template v-if="startedSessions(m.member_handle).length">
-              <div
-                v-for="(s, i) in startedSessions(m.member_handle)"
-                :key="s.id"
-                class="roster__machine-line"
-                data-testid="agent-machine"
-              >
-                <span class="roster__machine-text">{{ sessionLabel(m.member_handle, i, s) }}</span>
-                <span v-if="s.machine_access" class="roster__notice" :title="machines.visibility.notice">
-                  <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
-                </span>
-                <SessionWorkPicker
-                  :topic-id="topicId"
-                  :profile="machines"
-                  :session="s"
-                  :name="m.name || m.member_handle"
-                  @changed="loadMachines"
-                />
-              </div>
-            </template>
-            <div v-else class="roster__machine-line" data-testid="agent-machine">
-              <span class="roster__machine-text">{{
-                t('work.roomMachine.notStarted', { name: machines.choice.name })
-              }}</span>
-              <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{
-                t('work.roomMachine.projectDefault')
-              }}</span>
-              <span
-                v-if="machines.choice.profile === 'device'"
-                class="roster__notice"
-                :title="machines.visibility.notice"
-              >
-                <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
-              </span>
-              <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
-            </div>
-          </div>
         </li>
       </ul>
 
       <div v-if="machines" class="roster__future" data-testid="future-machine">
-        <span class="roster__machine-text">{{ t('work.roomMachine.future', { name: machines.choice.name }) }}</span>
+        <span class="roster__machine-text">{{ t('work.roomMachine.here', { name: machines.choice.name }) }}</span>
         <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{ t('work.roomMachine.projectDefault') }}</span>
+        <span v-if="machines.visibility.machine_access" class="roster__notice" :title="machines.visibility.notice">
+          <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
+        </span>
         <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
       </div>
       <div v-else-if="machinesError" class="roster__hint">
@@ -509,13 +448,7 @@ async function onSetRole(handle: string, role: string) {
   gap: 9px;
   padding: 6px 14px;
 }
-/* 工作电脑那一行对齐名字，不对齐头像：它说的是这位队友，不是另起一行。 */
-.roster__machine {
-  flex: 1 0 100%;
-  padding-left: 35px;
-  margin-top: -4px;
-}
-.roster__machine-line,
+/* 房间那一行：这个话题在哪台工作电脑上跑。 */
 .roster__future {
   display: flex;
   align-items: center;

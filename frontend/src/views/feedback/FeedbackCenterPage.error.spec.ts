@@ -92,7 +92,7 @@ describe('反馈中心的错误', () => {
     // 钉的是页面里**这一条**的位置，不是「树上某处有这句话」：这条用例要验的正是
     //  「失败画在列表这一页上」，而不是被谁吸收了。
     await waitFor(() => {
-      expect(baseElement.querySelector('.fb-page__inner > .v-alert')?.textContent).toContain(ERR)
+      expect(baseElement.querySelector('.fb-page__inner > .fb-banner')?.textContent).toContain(ERR)
     })
   })
 })

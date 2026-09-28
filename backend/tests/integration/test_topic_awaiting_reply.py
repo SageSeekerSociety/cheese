@@ -109,6 +109,40 @@ def test_a_new_summons_after_the_reply_starts_a_new_wait(client):
     assert abs(since - again) < timedelta(seconds=1)
 
 
+def test_a_summons_its_turn_finished_on_is_answered_even_in_silence(client):
+    """「@芝士 不用管，我只是想知道原因」：芝士那一轮跑完了、选择不说话，这不是
+    没人理 —— 那一轮读进了这条消息并正常收尾（`consumed_turn` 盖上了）。"""
+    pid, rid = _room(client)
+    _say(
+        client,
+        pid,
+        rid,
+        "alice",
+        ago=timedelta(minutes=9),
+        meta={
+            "agent_recipient": {"handle": AGENT, "mentioned": True},
+            "consumed_turn": str(uuid.uuid4()),
+        },
+    )
+    assert _since(client, pid, rid) is None
+
+
+def test_a_summons_no_turn_has_finished_on_still_waits(client):
+    pid, rid = _room(client)
+    _say(
+        client,
+        pid,
+        rid,
+        "alice",
+        ago=timedelta(minutes=9),
+        meta={
+            "agent_recipient": {"handle": AGENT, "mentioned": True},
+            "consumed_turn": None,
+        },
+    )
+    assert _since(client, pid, rid) is not None
+
+
 def test_people_talking_to_each_other_are_not_waiting_on_the_agent(client):
     pid, rid = _room(client)
     _say(client, pid, rid, "alice", ago=timedelta(minutes=9))
@@ -238,10 +272,158 @@ def _on_task(client, pid, rid, task_id, author, *, ago, author_type, meta):
     return at
 
 
+def _card(client, pid, rid, task_id, **fields) -> str:
+    from app.domain.review.models import AcceptCard, AcceptStatus
+
+    ids: list[str] = []
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            card = AcceptCard(
+                topic_id=uuid.UUID(rid),
+                task_id=uuid.UUID(task_id),
+                reviewer_handle="alice",
+                status=AcceptStatus.pending,
+                **fields,
+            )
+            s.add(card)
+            await s.commit()
+            ids.append(str(card.id))
+
+    asyncio.run(_add())
+    return ids[0]
+
+
+def _update_card(client, card_id: str, **fields) -> None:
+    from app.domain.review.models import AcceptCard
+
+    async def _run() -> None:
+        async with client.test_factory() as s:
+            card = await s.get(AcceptCard, uuid.UUID(card_id))
+            assert card is not None
+            for key, value in fields.items():
+                setattr(card, key, value)
+            await s.commit()
+
+    asyncio.run(_run())
+
+
+_RED_CI = {"state": "blocked", "who": "agent", "reasons": []}
+
+
+def _check_failed(client, pid, rid, tid, *, ago):
+    return _on_task(
+        client,
+        pid,
+        rid,
+        tid,
+        "cheese",
+        ago=ago,
+        author_type=AuthorType.platform,
+        meta={"event_type": "ci_failed", "severity": "error"},
+    )
+
+
 def test_a_failed_check_on_a_thread_waits_for_an_agent(client):
     pid, rid = _room(client)
     tid = _task(client, pid, rid)
-    at = _on_task(
+    _card(client, pid, rid, tid, note_code="checks_failed", merge_state=_RED_CI)
+    at = _check_failed(client, pid, rid, tid, ago=timedelta(minutes=7))
+
+    since = _since(client, pid, rid)
+    assert since is not None
+    assert abs(since - at) < timedelta(seconds=1)
+    assert _reason(client, pid, rid) == "check"
+
+
+def test_an_agent_just_talking_does_not_clear_a_red_check(client):
+    """AI 回了一句不相干的话，CI 照样是红的 —— 灯不能因此灭。"""
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    _card(client, pid, rid, tid, note_code="checks_failed", merge_state=_RED_CI)
+    _check_failed(client, pid, rid, tid, ago=timedelta(minutes=7))
+    _say(client, pid, rid, AGENT, ago=timedelta(minutes=6))
+
+    assert _since(client, pid, rid) is not None
+
+
+def test_the_check_wait_ends_when_the_card_is_no_longer_red(client):
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid, note_code="checks_failed", merge_state=_RED_CI)
+    _check_failed(client, pid, rid, tid, ago=timedelta(minutes=7))
+    assert _since(client, pid, rid) is not None
+
+    # 修好了：检查重跑绿了，卡回到等人采纳。
+    _update_card(
+        client,
+        card,
+        note_code=None,
+        merge_state={"state": "clean", "who": "human", "reasons": []},
+    )
+    assert _since(client, pid, rid) is None
+
+
+def test_the_check_wait_ends_when_the_card_is_withdrawn(client):
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid, note_code="checks_failed", merge_state=_RED_CI)
+    _check_failed(client, pid, rid, tid, ago=timedelta(minutes=7))
+    _update_card(client, card, status=AcceptStatus.revoked)
+
+    assert _since(client, pid, rid) is None
+
+
+def _rejected(client, pid, rid, tid, *, ago):
+    return _on_task(
+        client,
+        pid,
+        rid,
+        tid,
+        "cheese",
+        ago=ago,
+        author_type=AuthorType.platform,
+        meta={"event_type": "card_rejected", "severity": "warn"},
+    )
+
+
+def test_a_rejected_card_nobody_picks_up_waits_for_an_agent(client):
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid)
+    _update_card(client, card, status=AcceptStatus.rejected, decided_by="alice")
+    at = _rejected(client, pid, rid, tid, ago=timedelta(minutes=7))
+
+    since = _since(client, pid, rid)
+    assert since is not None
+    assert abs(since - at) < timedelta(seconds=1)
+
+
+def test_refiling_after_a_rejection_ends_the_wait(client):
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid)
+    _update_card(client, card, status=AcceptStatus.rejected, decided_by="alice")
+    _rejected(client, pid, rid, tid, ago=timedelta(minutes=7))
+    _card(client, pid, rid, tid)  # 改完重递了一张新卡
+
+    assert _since(client, pid, rid) is None
+
+
+def test_a_card_the_gate_failed_waits_for_an_agent(client):
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid)
+    _update_card(client, card, status=AcceptStatus.gate_failed)
+    _on_task(
         client,
         pid,
         rid,
@@ -251,34 +433,70 @@ def test_a_failed_check_on_a_thread_waits_for_an_agent(client):
         author_type=AuthorType.platform,
         meta={"event_type": "gate_failed", "severity": "error"},
     )
-    since = _since(client, pid, rid)
-    assert since is not None
-    assert abs(since - at) < timedelta(seconds=1)
+    assert _since(client, pid, rid) is not None
 
 
-def test_an_agent_speaking_in_the_thread_takes_the_check_up(client):
+# ---- 绿灯常亮：已采纳、在等合并 -------------------------------------------
+
+
+def _merging(client, pid, rid) -> bool:
+    rows = client.get(f"/topics?project_id={pid}").json()["data"]["data"]
+    listed = next(t for t in rows if t["id"] == rid)["merging"]
+    assert client.get(f"/topics/{rid}").json()["data"]["merging"] == listed
+    return listed
+
+
+def test_an_approved_card_in_the_merge_queue_is_merging(client):
     pid, rid = _room(client)
     tid = _task(client, pid, rid)
-    _on_task(
+    _card(
         client,
         pid,
         rid,
         tid,
-        "cheese",
-        ago=timedelta(minutes=7),
-        author_type=AuthorType.platform,
-        meta={"event_type": "pr_review", "severity": "info"},
+        decided_by="alice",
+        note_code="waiting_merge_queue",
+        merge_state={"state": "blocked", "who": "ci", "reasons": []},
     )
-    _on_task(
+    assert _merging(client, pid, rid) is True
+
+
+def test_checks_running_before_anyone_approved_are_not_merging(client):
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    _card(
         client,
         pid,
         rid,
         tid,
-        AGENT,
-        ago=timedelta(minutes=6),
-        author_type=AuthorType.participant,
-        meta={},
+        merge_state={"state": "blocked", "who": "ci", "reasons": []},
     )
+    assert _merging(client, pid, rid) is False
+
+
+def test_a_merged_card_is_no_longer_merging(client):
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(
+        client,
+        pid,
+        rid,
+        tid,
+        decided_by="alice",
+        merge_state={"state": "blocked", "who": "ci", "reasons": []},
+    )
+    assert _merging(client, pid, rid) is True
+    _update_card(client, card, status=AcceptStatus.accepted)
+    assert _merging(client, pid, rid) is False
+
+
+def test_a_check_event_without_a_red_card_does_not_wait(client):
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    _check_failed(client, pid, rid, tid, ago=timedelta(minutes=7))
+
     assert _since(client, pid, rid) is None
 
 
@@ -295,3 +513,56 @@ def test_a_notice_that_is_not_for_the_agent_does_not_wait(client):
         meta={"event_type": "card_filed", "severity": "info"},
     )
     assert _since(client, pid, rid) is None
+
+
+# ---- 为什么还没人回：机器 / 环境那一侧 -----------------------------------
+
+
+def _reason(client, project_id: str, room_id: str) -> str | None:
+    rows = client.get(f"/topics?project_id={project_id}").json()["data"]["data"]
+    listed = next(t for t in rows if t["id"] == room_id)["reply_wait_reason"]
+    header = client.get(f"/topics/{room_id}").json()["data"]["reply_wait_reason"]
+    assert listed == header
+    return listed
+
+
+def _machine(client, pid, rid, event_type, *, ago):
+    return _say(
+        client,
+        pid,
+        rid,
+        "cheese",
+        ago=ago,
+        author_type=AuthorType.platform,
+        meta={"event_type": event_type, "severity": "info"},
+    )
+
+
+def test_a_plain_summons_waits_for_the_agent(client):
+    pid, rid = _room(client)
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+    assert _reason(client, pid, rid) == "mention"
+
+
+def test_a_machine_event_during_the_wait_explains_it(client):
+    pid, rid = _room(client)
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+    _machine(client, pid, rid, "machine_provisioning", ago=timedelta(minutes=8))
+    assert _reason(client, pid, rid) == "machine_provisioning"
+    # 最近的那一条说了算：机器建好了又在等设备回来。
+    _machine(client, pid, rid, "device_waiting", ago=timedelta(minutes=4))
+    assert _reason(client, pid, rid) == "device_waiting"
+
+
+def test_a_machine_event_before_the_wait_does_not_explain_it(client):
+    """等待开始前机器就已经好了，这次没回话就跟机器无关。"""
+    pid, rid = _room(client)
+    _machine(client, pid, rid, "sandbox_rebuilt", ago=timedelta(minutes=20))
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+    assert _reason(client, pid, rid) == "mention"
+
+
+def test_no_wait_no_reason(client):
+    pid, rid = _room(client)
+    _machine(client, pid, rid, "environment_repaired", ago=timedelta(minutes=9))
+    assert _reason(client, pid, rid) is None

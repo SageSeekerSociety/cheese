@@ -112,6 +112,63 @@ describe('管理台表格壳', () => {
     expect(rule('.agrid')).not.toContain('overflow')
   })
 
+  it('state="error" 画 #error 槽、不画真行也不画空态', () => {
+    const { container, getByText, queryByText } = mount(
+      { state: 'error' },
+      {
+        default: '<tr class="real"><td>真行</td><td>标题</td><td>已收录</td></tr>',
+        error: '<div class="err">网关不可达</div>',
+        empty: '<div class="emp">暂无匹配的反馈</div>',
+      }
+    )
+    expect(getByText('网关不可达')).toBeTruthy()
+    expect(container.querySelector('.agrid__state')).not.toBeNull()
+    expect(container.querySelector('.real')).toBeNull()
+    // 读失败和「一条都没有」是两句话，同时画出来是最说不清的那种。
+    expect(queryByText('暂无匹配的反馈')).toBeNull()
+    expect(container.querySelector('.agrid__none')).toBeNull()
+  })
+
+  it('state="empty" 画 #empty 槽；没给槽时退回 `empty` 那句话', () => {
+    const withSlot = mount({ state: 'empty' }, { empty: '<div class="emp">暂无项目</div>' })
+    expect(withSlot.getByText('暂无项目')).toBeTruthy()
+
+    const text = mount({ state: 'empty', empty: '暂无一笔' })
+    const none = text.container.querySelector('.agrid__none')
+    expect(none!.textContent).toBe('暂无一笔')
+    expect(none!.getAttribute('colspan')).toBe(String(COLS.length))
+  })
+
+  it('状态行是平铺行（`data-card="flat"`）：卡片模式下它不该被画成一张卡', () => {
+    const { container } = mount({ state: 'error' }, { error: '读不到' })
+    const row = container.querySelector('tbody tr')!
+    expect(row.getAttribute('data-card')).toBe('flat')
+  })
+
+  it('cards 是显式选入：不传就还是那张定宽的表', () => {
+    expect(mount().container.querySelector('.agrid')!.className).not.toContain('agrid--cards')
+    const cards = mount({ cards: true })
+    expect(cards.container.querySelector('.agrid')!.className).toContain('agrid--cards')
+    // 卡片模式照旧画真行 —— 换形态的是 CSS（容器查询），不是模板。
+    expect(cards.container.querySelector('table')).not.toBeNull()
+  })
+
+  it('卡片模式的触发条件是容器宽度，不是视口', () => {
+    const src = readFileSync(join(here, 'AdminGrid.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    // 这一段和上面那条「滚动容器是自己」一样，jsdom 里量不到（没有布局引擎、
+    // 也不解析容器查询），只能钉源码。
+    expect(src).toContain('container: agrid / inline-size')
+    expect(src).toContain('@container agrid (max-width: 700px)')
+    // 定宽表格那两条几何必须在卡片模式下让位，否则 390px 上照样横着滚。
+    const block = src.slice(src.indexOf('@container agrid'))
+    expect(block).toContain('.agrid--cards .agrid__table')
+    expect(block).toContain('min-width: 0')
+    expect(block).toContain('display: none')
+    // 列名改由格子自己画：页面写 `data-label`，壳用 `content: attr(...)` 画出来。
+    expect(block).toContain('content: attr(data-label)')
+    expect(block).toContain("td[data-card='hide']")
+  })
+
   it('真行的几何按结构选（`:deep`），不按「页面得记得加的那个类」选', () => {
     const src = readFileSync(join(here, 'AdminGrid.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
     const rule = (selector: string) => {

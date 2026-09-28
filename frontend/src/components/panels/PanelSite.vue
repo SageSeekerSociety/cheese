@@ -234,6 +234,13 @@ const viewing = computed(() =>
 const visible = computed(() =>
   viewing.value === null ? transcript.value : transcript.value.filter((b) => b.author === viewing.value)
 )
+// 「全部」下几个队友的轮次交错着排，组头不写是谁的，交错的两段就分不开。只看一个
+// 队友、或者房间里只有一个时，名字是多余的。
+function turnAuthor(entries: Block[]): string | null {
+  if (viewing.value !== null || agents.value.length < 2) return null
+  const who = entries.find((b) => agents.value.includes(b.author))
+  return who ? who.author : null
+}
 
 function agentLabel(handle: string): string {
   return props.memberNames[handle] || (isAgentHandle(handle) ? props.agentName : handle)
@@ -381,6 +388,9 @@ function isLive(index: number): boolean {
           <!-- 组头：这一轮从什么时候开始、几步、多久。触发这一轮的那句话在对话
                栏，现场读不到它（人写的块不带 turn_id），所以这里不写标题。 -->
           <div class="turn__head">
+            <span v-if="turnAuthor(turn.entries)" class="turn__who" data-testid="turn-who">
+              {{ agentLabel(turnAuthor(turn.entries)!) }}
+            </span>
             <span class="turn__time">{{ fmtTime(turn.startedAt) }}</span>
             <span v-if="isLive(index)" class="turn__live">
               <i class="turn__pulse" />
@@ -477,11 +487,21 @@ function isLive(index: number): boolean {
 
 <style scoped>
 /* 按队友看：一排文字按钮，选中的那个换底色和墨色，不用琥珀——这里不是主操作。 */
+/* 钉在滚动层顶上：现场一长，切队友不该先滚回去。 */
 .site-agents {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 8px 12px 0;
+  padding: 8px 12px 6px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.turn__who {
+  font-weight: 600;
+  color: var(--ink);
 }
 .site-agents__tab {
   padding: 2px 8px;

@@ -26,7 +26,7 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -753,6 +753,16 @@ def _metering_proxy_ca(monkeypatch, tmp_path_factory) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_background_doc_nudge(monkeypatch) -> None:
+    """轮末的文档提醒（`topic/doc_nudge.py`）在后台睡几秒再起一轮：测试里它要么
+    赶上一个已经关掉的事件循环，要么真的替某个测试房间起一轮没人要的 agent 轮次。
+    默认关掉；`test_doc_nudge.py` 直接驱动 `check`。"""
+    from app.domain.topic import doc_nudge
+
+    monkeypatch.setattr(doc_nudge, "nudge", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
 def _redis_client_per_loop() -> Iterator[None]:
     """No test may inherit the redis client another test built.
 
@@ -1179,13 +1189,105 @@ async def _clone_db(db_name: str, template: str) -> None:
         await conn.execute(f'CREATE DATABASE "{db_name}" TEMPLATE "{template}"')
     finally:
         await conn.close()
+    # Recorded only after the copy is actually made: "I have just used this
+    # template" is what keeps another run's cleanup from taking it (see
+    # _templates_to_drop), and a copy that failed did not use it.
+    _touch_template_use(template)
+
+
+_TEMPLATE_PREFIX = "cheesex_tpl_"
+# How long a template nothing has copied from is still somebody's. See
+# _templates_to_drop for why this number.
+_TEMPLATE_GRACE_S = 600.0
+
+
+def _template_marker_path(template: str) -> Path:
+    """Where a run records the last time it took a copy of a template.
+
+    A sibling of the build lock, in the temp dir — the same place that lock
+    already assumes every run on this machine can see. Postgres keeps no
+    "last used" for a database, and it cannot be kept inside the template
+    itself: a template with a session connected to it cannot be copied from.
+    """
+    return Path(tempfile.gettempdir()) / f"{template}.used"
+
+
+def _touch_template_use(template: str) -> None:
+    """Best effort — a template that cannot be stamped is one another run could
+    decide is stale, which is the failure this section exists to end, but not
+    something worth failing a session over."""
+    try:
+        _template_marker_path(template).touch()
+    except OSError:
+        pass
+
+
+def _template_last_used(template: str) -> float | None:
+    """When this run last copied this template, or None if it never saw one."""
+    try:
+        return _template_marker_path(template).stat().st_mtime
+    except OSError:
+        return None
+
+
+def _templates_to_drop(
+    existing: Iterable[str],
+    own: str,
+    last_used: Mapping[str, float | None],
+    now: float,
+    grace_s: float = _TEMPLATE_GRACE_S,
+) -> list[str]:
+    """Which `cheesex_tpl_*` databases a run that just built its own may DROP.
+
+    Pure, and that is the point: this rule *is* the bug it fixes, and while it
+    lived inline in an async function talking to a live server the only way to
+    test it was to race that server. The caller hands over what it saw — the
+    names, and when each was last copied from — and gets back a sorted list to
+    act on.
+
+    Three rules, in order:
+
+    * Never ``own``: this run is about to copy from it.
+    * Never a template copied from within ``grace_s``. The old rule was "every
+      template but mine", which is only correct while one migration history
+      exists. With two — two worktrees, one on a branch with a new migration —
+      neither is "superseded", and each was deleting the other's, so the next
+      session found it missing and rebuilt it, back and forth, and a copy that
+      landed on a template the other run had just dropped died in setup with
+      ``template database "cheesex_tpl_<hash>" does not exist``.
+    * Everything else is stale. A name with no recorded use counts as stale:
+      nothing this version builds goes unstamped, so it was built by an older
+      one and cannot be placed in time. Being wrong here is the recoverable
+      direction — an old-version run that still wanted it rebuilds it (see
+      ``_create_and_migrate``), while keeping a template we cannot date is how
+      a 3 GB tmpfs fills with abandoned copies of a 90-table schema.
+
+    ``grace_s`` is ten minutes, which is not a tuned number but is well clear
+    of what it has to cover: a pytest session copies the template once per
+    worker at session start, all within seconds of each other, and the longest
+    integration round here is minutes — so a template in active use is stamped
+    far more recently than the grace, and only one truly idle outlives it.
+    """
+    doomed = []
+    for name in existing:
+        if name == own or not name.startswith(_TEMPLATE_PREFIX):
+            continue
+        used = last_used.get(name)
+        if used is not None and now - used < grace_s:
+            continue
+        doomed.append(name)
+    return sorted(doomed)
 
 
 async def _drop_superseded_templates() -> None:
-    """Remove every `cheesex_tpl_*` but this migration history's own.
+    """Remove the `cheesex_tpl_*` databases ``_templates_to_drop`` hands back.
 
-    Never raises: a template that cannot be dropped (another run is cloning from
-    it this second) is not this run's problem, and the next build tries again.
+    Which those are is that function's rule; this one is only the I/O around
+    it: read the names the server has, read each one's last use off its marker,
+    drop what the rule names.
+
+    Never raises on a template that will not drop: one another run is copying
+    from this second is not this run's problem, and the next build tries again.
     """
     import asyncpg
 
@@ -1193,13 +1295,19 @@ async def _drop_superseded_templates() -> None:
     conn = await asyncpg.connect(dsn)
     try:
         stale = await conn.fetch(
-            "SELECT datname FROM pg_database"
-            " WHERE datname LIKE 'cheesex_tpl_%' AND datname <> $1",
-            _TEMPLATE_DB,
+            "SELECT datname FROM pg_database WHERE starts_with(datname, $1)",
+            _TEMPLATE_PREFIX,
         )
-        for row in stale:
+        names = [row["datname"] for row in stale]
+        doomed = _templates_to_drop(
+            names,
+            _TEMPLATE_DB,
+            {name: _template_last_used(name) for name in names},
+            time.time(),
+        )
+        for name in doomed:
             try:
-                await conn.execute(f'DROP DATABASE IF EXISTS "{row["datname"]}"')
+                await conn.execute(f'DROP DATABASE IF EXISTS "{name}"')
             except Exception:  # noqa: BLE001, PERF203 — in use is not an error here
                 continue
     finally:
@@ -1235,10 +1343,13 @@ def _ensure_template() -> bool:
     existence means "complete" — a run killed mid-migration leaves the failed
     build behind, not a half-migrated template that later runs would trust.
 
-    Building a new one also drops the templates of migration histories that are
-    no longer current. That used to take care of itself, because the server was a
+    Building a new one also drops templates of migration histories that are no
+    longer current. That used to take care of itself, because the server was a
     container thrown away with the job; on a CI machine's resident Postgres they
-    would accumulate instead, and its data directory is a 3 GB tmpfs.
+    would accumulate instead, and its data directory is a 3 GB tmpfs. What
+    "no longer current" means is ``_templates_to_drop``'s rule — deliberately
+    not "every template but mine", which assumed one history per machine and
+    had two concurrent runs deleting each other's template mid-clone.
     """
     import fcntl
     import tempfile
@@ -1253,6 +1364,7 @@ def _ensure_template() -> bool:
             building = f"{_TEMPLATE_DB}_building"
             _migrate_fresh_db(building, f"{_PG_BASE}/{building}")
             asyncio.run(_rename_db(building, _TEMPLATE_DB))
+            _touch_template_use(_TEMPLATE_DB)
             asyncio.run(_drop_superseded_templates())
             return True
     except Exception:  # noqa: BLE001 — fall back to the slow path, never block
@@ -1291,10 +1403,34 @@ def _migrate_fresh_db(db_name: str, db_url: str) -> None:
 
 def _create_and_migrate(db_name: str, db_url: str) -> None:
     """This worker's database, at head — cloned from the shared template when
-    one could be built, migrated directly otherwise."""
+    one could be built, migrated directly otherwise.
+
+    A template can also go away between the moment a clone's existence check
+    passes and the moment the copy is made: another run on this machine that
+    finished its own build is entitled to drop templates it finds stale, and
+    the drop can land inside ``CREATE DATABASE ... TEMPLATE``. That is the
+    setup error this used to hand to the test — ``template database
+    "cheesex_tpl_<hash>" does not exist`` — so a failed copy rebuilds the
+    template (under its lock) and tries once more. If the second copy fails
+    too, the slow path is still correct, just slow.
+
+    What is deliberately NOT here is ``DROP DATABASE ... WITH (FORCE)`` on the
+    template to settle the race: forcing a copy out from under a run that is
+    mid-clone breaks that run harder than the occasional rebuild does.
+    """
+    global _TEMPLATE_READY
     if _TEMPLATE_READY:
-        asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
-        return
+        try:
+            asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
+            return
+        except Exception:  # noqa: BLE001 — the slow path below is still correct
+            _TEMPLATE_READY = _ensure_template()
+            if _TEMPLATE_READY:
+                try:
+                    asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
+                    return
+                except Exception:  # noqa: BLE001 — same reason
+                    _TEMPLATE_READY = False
     _migrate_fresh_db(db_name, db_url)
 
 

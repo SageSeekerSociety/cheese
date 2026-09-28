@@ -177,7 +177,7 @@ async def test_a_bulk_switch_moves_an_idle_session_and_skips_one_mid_turn(
 
     def switch(title):
         return client.put(
-            f"/topics/{p.rooms[title]}/sessions/{p.sessions[title]}/work-choice",
+            f"/topics/{p.rooms[title]}/compute-profile",
             headers=p.alice,
             json=to_new,
         )
@@ -207,7 +207,7 @@ async def test_without_if_idle_the_roster_switch_is_unchanged(client, monkeypatc
     _pushes(monkeypatch)
 
     switched = client.put(
-        f"/topics/{p.rooms['Busy']}/sessions/{p.sessions['Busy']}/work-choice",
+        f"/topics/{p.rooms['Busy']}/compute-profile",
         headers=p.alice,
         json={"choice": {"name": "New", "profile": "device", "device_id": p.new}},
     )

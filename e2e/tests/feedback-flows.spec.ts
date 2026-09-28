@@ -264,7 +264,7 @@ test('管理员把一条反馈走完四级，指派、优先级、内部备注�
   // 收工回队列（宽屏下是那颗「返回」，不是抽屉的关闭按钮）。指派跟着进了行——队列
   // 这一格读的是服务端那份数据，不是详情里那份本地状态。
   await detail.locator('.qdet__back').click();
-  await expect(row.locator('.qrow__assignee')).toHaveText('alice');
+  await expect(row.locator('.qrow__assignee .qrow__avalue')).toHaveText('alice');
 
   // 用户侧的两栏跟着动：走完梯子的进「已完成」，不在「处理中」里。
   await page.goto('/feedback');

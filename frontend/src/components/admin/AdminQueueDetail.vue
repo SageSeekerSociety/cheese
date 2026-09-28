@@ -435,26 +435,27 @@ function onSecurity(v: unknown) {
   background: var(--canvas);
 }
 
+/* 窄屏这一档**不是** grid，就是一条普通往下滚的流：分诊那一摞在上、正文在下。
+   曾经写成 `grid-template-rows: minmax(0,1fr)` 的单栏 grid，结果正文那一格
+   （隐式的第二行，auto）把第一行挤成了 0 —— 返回 / 标题 / 状态 / 指派 / 优先级 /
+   时间线整块看不见。宽屏那一档在下面那条媒体查询里改成 440 + 1fr 两栏。 */
 .qdet__panes {
-  display: grid;
   flex: 1 1 auto;
-  grid-template-rows: minmax(0, 1fr);
-  /* 一栏。宽屏那一档在下面那条媒体查询里改成 440 + 1fr。 */
-  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
+  overflow-y: auto;
 }
 
 .qdet__side,
 .qdet__main {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  overflow-y: auto;
+  min-width: 0;
   background: var(--surface);
 }
 
+/* 窄屏：左栏是上面那一段，分隔线画在它底下、整条横着。 */
 .qdet__side {
-  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .qdet__side-head {
@@ -889,7 +890,29 @@ function onSecurity(v: unknown) {
    就要改两处。 */
 @media (min-width: 1280px) {
   .qdet__panes {
+    display: grid;
     grid-template-columns: 440px minmax(0, 1fr);
+    /* 两栏各自滚，所以这里把窄屏那层滚动脱掉。 */
+    overflow: visible;
+  }
+
+  .qdet__side,
+  .qdet__main {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  /* 左栏按内容高、不撑满整列：内容短的时候下面留的是页面底（`--canvas`），
+     而不是一大块空着的白盒子。分隔线因此挪到正文那一栏的左边，才还是整列高的
+     一条 —— 左栏自己那点高度上画不出来。 */
+  .qdet__side {
+    align-self: start;
+    max-height: 100%;
+    border-bottom: 0;
+  }
+
+  .qdet__main {
+    border-left: 1px solid var(--line);
   }
 }
 </style>

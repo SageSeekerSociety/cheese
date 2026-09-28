@@ -1123,7 +1123,7 @@ class TestListConversationsGrouped:
         conversation_repo.list_for_task.return_value = convos
 
         svc = _build_service(conversation_repo=conversation_repo)
-        result = await svc.list_conversations_grouped(task_id=1)
+        result = await svc.list_conversations_grouped(task_id=1, user_id=42)
 
         assert len(result) == 2
         assert result[0]["conversationId"] == "c1"
@@ -1132,12 +1132,27 @@ class TestListConversationsGrouped:
         assert result[1]["title"] == "AI 对话"
 
     @pytest.mark.anyio
+    async def test_the_list_is_scoped_to_the_caller_in_the_query(self):
+        """「谁问过这道题」不是这里的问题 —— 问的是「我问过什么」。
+
+        过滤必须下推到 repo：取回来再筛，别人的会话 id 与 title 仍然先被读了
+        出来，而调用者拿到的东西看不出这个区别。
+        """
+        conversation_repo = AsyncMock()
+        conversation_repo.list_for_task.return_value = []
+
+        svc = _build_service(conversation_repo=conversation_repo)
+        await svc.list_conversations_grouped(task_id=1, user_id=42)
+
+        conversation_repo.list_for_task.assert_awaited_once_with(1, owner_id=42)
+
+    @pytest.mark.anyio
     async def test_empty_conversations(self):
         conversation_repo = AsyncMock()
         conversation_repo.list_for_task.return_value = []
 
         svc = _build_service(conversation_repo=conversation_repo)
-        result = await svc.list_conversations_grouped(task_id=1)
+        result = await svc.list_conversations_grouped(task_id=1, user_id=42)
 
         assert result == []
 
@@ -1166,7 +1181,7 @@ class TestGetConversation:
             conversation_repo=conversation_repo,
             message_repo=message_repo,
         )
-        result = await svc.get_conversation(task_id=1, conversation_id="c1")
+        result = await svc.get_conversation(task_id=1, conversation_id="c1", user_id=42)
 
         assert result["conversation"]["conversationId"] == "c1"
         assert result["conversation"]["title"] == "T1"
@@ -1182,7 +1197,9 @@ class TestGetConversation:
         svc = _build_service(conversation_repo=conversation_repo)
 
         with pytest.raises(ValueError, match="Conversation not found"):
-            await svc.get_conversation(task_id=1, conversation_id="nonexistent")
+            await svc.get_conversation(
+                task_id=1, conversation_id="nonexistent", user_id=42
+            )
 
     @pytest.mark.anyio
     async def test_raises_when_the_conversation_belongs_to_another_task(self):
@@ -1195,9 +1212,29 @@ class TestGetConversation:
         svc = _build_service(conversation_repo=conversation_repo)
 
         with pytest.raises(ValueError, match="Conversation not found"):
-            await svc.get_conversation(task_id=1, conversation_id="c1")
+            await svc.get_conversation(task_id=1, conversation_id="c1", user_id=42)
 
         # 找到了那条 id，拦住它的是配对，而不是「没找到」。
+        conversation_repo.get_by_conversation_id.assert_awaited_once_with("c1")
+
+    @pytest.mark.anyio
+    async def test_raises_when_the_conversation_belongs_to_someone_else(self):
+        """题对、id 对、主人不对 —— 同一个地址的另一半，同一句回答。
+
+        报的必须是「Conversation not found」这一句：换成「存在但不是你的」就
+        等于确认了这个 id 指向一条别人的对话。
+        """
+        convo = _make_conversation(conversation_id="c1", context_id=1, owner_id=42)
+
+        conversation_repo = AsyncMock()
+        conversation_repo.get_by_conversation_id.return_value = convo
+
+        svc = _build_service(conversation_repo=conversation_repo)
+
+        with pytest.raises(ValueError, match="^Conversation not found$"):
+            await svc.get_conversation(task_id=1, conversation_id="c1", user_id=99)
+
+        # 找到了，也没把消息读出来。
         conversation_repo.get_by_conversation_id.assert_awaited_once_with("c1")
 
 
@@ -1214,7 +1251,7 @@ class TestDeleteConversation:
         conversation_repo.get_by_conversation_id.return_value = convo
 
         svc = _build_service(conversation_repo=conversation_repo)
-        await svc.delete_conversation(task_id=1, conversation_id="abc123")
+        await svc.delete_conversation(task_id=1, conversation_id="abc123", user_id=42)
 
         conversation_repo.soft_delete.assert_awaited_once_with(convo)
 
@@ -1225,17 +1262,38 @@ class TestDeleteConversation:
         conversation_repo.get_by_conversation_id.return_value = convo
 
         svc = _build_service(conversation_repo=conversation_repo)
-        await svc.delete_conversation(task_id=1, conversation_id="abc123")
+        with pytest.raises(ValueError, match="Conversation not found"):
+            await svc.delete_conversation(
+                task_id=1, conversation_id="abc123", user_id=42
+            )
 
         conversation_repo.soft_delete.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_noop_when_not_found(self):
+    async def test_does_not_delete_someone_elses_conversation(self):
+        """别人删我的会话：判据与读一字不差，报的也是同一句话。"""
+        convo = _make_conversation(conversation_id="abc123", context_id=1, owner_id=42)
+        conversation_repo = AsyncMock()
+        conversation_repo.get_by_conversation_id.return_value = convo
+
+        svc = _build_service(conversation_repo=conversation_repo)
+        with pytest.raises(ValueError, match="^Conversation not found$"):
+            await svc.delete_conversation(
+                task_id=1, conversation_id="abc123", user_id=99
+            )
+
+        conversation_repo.soft_delete.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_raises_when_not_found(self):
         conversation_repo = AsyncMock()
         conversation_repo.get_by_conversation_id.return_value = None
 
         svc = _build_service(conversation_repo=conversation_repo)
-        await svc.delete_conversation(task_id=1, conversation_id="nonexistent")
+        with pytest.raises(ValueError, match="Conversation not found"):
+            await svc.delete_conversation(
+                task_id=1, conversation_id="nonexistent", user_id=42
+            )
 
         conversation_repo.soft_delete.assert_not_awaited()
 

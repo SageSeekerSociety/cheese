@@ -34,6 +34,7 @@ from __future__ import annotations
 from typing import Final
 
 from app.domain.block.models import AGENT_NOTICE_META_KEY
+from app.domain.memory.files import rejected_path
 
 # --- severity ---------------------------------------------------------------
 SEVERITY_INFO: Final = "info"
@@ -165,6 +166,9 @@ EVENT_API_RETRY: Final = "api_retry"
 #: 这一轮开着，而跑它的机器够不着（离线、会话进程还没起来、连接在换）。平台在等
 #: 它回来；回来了同一行改成已恢复（`meta.state = "over"`）。
 EVENT_DEVICE_WAITING: Final = "device_waiting"
+#: 一间干过活的工作话题还没有实况文档，平台请刚才在这里干活的队友补第一版
+#: （`domain/topic/doc_nudge.py`）。每间房最多一次。
+EVENT_DOC_MISSING: Final = "doc_missing"
 #: 项目 `.mcp.json` 里的一个远程 MCP 服务器还没连接（或要重新连接、缺一个值），这
 #: 个房间的会话用不了它。每个房间每个服务器只说一次：要做的事在项目设置里，不在
 #: 这一轮里，说第二遍不会让它更快发生。`meta.server` 是服务器名。
@@ -229,6 +233,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ROUTINE_PROPOSED,
         EVENT_API_RETRY,
         EVENT_DEVICE_WAITING,
+        EVENT_DOC_MISSING,
         EVENT_MCP_NOT_CONNECTED,
     }
 )
@@ -281,7 +286,12 @@ def delivery_fallback_notice() -> tuple[str, dict]:
 
 
 def memory_changed_notice(
-    *, where: str, summary: str, diff: str, refused: tuple[str, ...]
+    *,
+    where: str,
+    summary: str,
+    diff: str,
+    refused: tuple[str, ...],
+    rejected: dict[str, str] | None = None,
 ) -> tuple[str, dict]:
     """记忆树的一次改动：一行说改了哪一棵、改了几条，diff 收进 `detail`。
 
@@ -295,9 +305,12 @@ def memory_changed_notice(
     它看到的世界就是那棵树，而它刚才写的那一版已经不在了。不说，它会以为写成功
     了、下一轮再写一遍同一版，而每一轮都会被盖回去。
     """
-    parts = [f"{where}记忆：{summary}"]
+    rejected = rejected or {}
+    parts = [f"{where}记忆：{summary}" if summary else f"{where}记忆"]
     if refused:
         parts.append("有改动被平台这一份盖回来了，重读再写")
+    if rejected:
+        parts.append(f"{len(rejected)} 条超出长度上限，没有写入")
     meta = notice(
         EVENT_MEMORY_CHANGED,
         severity=SEVERITY_INFO,
@@ -305,9 +318,27 @@ def memory_changed_notice(
         detail=diff or None,
         detail_label="改动",
     )
+    for_agent = []
     if refused:
-        meta[AGENT_NOTICE_META_KEY] = memory_conflict_notice(where=where, paths=refused)
+        for_agent.append(memory_conflict_notice(where=where, paths=refused))
+    if rejected:
+        for_agent.append(memory_rejected_notice(where=where, reasons=rejected))
+    if for_agent:
+        meta[AGENT_NOTICE_META_KEY] = "\n\n".join(for_agent)
     return "　".join(parts), meta
+
+
+def memory_rejected_notice(*, where: str, reasons: dict[str, str]) -> str:
+    """说给 agent 的那句：哪几条因为太长没存下、为什么、它写的那一版在哪。"""
+    lines = "\n".join(
+        f"- `{path}`（你写的那一版在 `{rejected_path(path)}`）：{reason}"
+        for path, reason in sorted(reasons.items())
+    )
+    return (
+        f"{where}记忆里有几条超出长度上限，没有写入，记忆里还是原来那一版：\n"
+        f"{lines}\n"
+        "改短之后重新写入。"
+    )
 
 
 def memory_conflict_notice(*, where: str, paths: tuple[str, ...]) -> str:

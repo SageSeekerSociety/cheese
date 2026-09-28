@@ -156,6 +156,37 @@ class AcceptCardRepository:
                 latest[card.task_id] = card
         return latest
 
+    async def list_recent_for_places(
+        self,
+        place_ids: list[uuid.UUID],
+        *,
+        open_statuses: tuple[AcceptStatus, ...],
+        settled_since: datetime,
+    ) -> list[AcceptCard]:
+        """这些地方（房间或活）上的卡：还没结算的全部，加上 `settled_since` 之后递
+        的已结算的 —— 按 created_at 升序，同一个地方后递的覆盖先递的就是「最新那张」。
+
+        侧栏要问「这个地方最新那张卡停在哪」：只拉没结算的，就分不出「退回了还没重
+        递」和「早就合了」；拉全部历史又太多。结算的只看最近一段就够。
+        """
+        if not place_ids:
+            return []
+        stmt = (
+            select(AcceptCard)
+            .where(
+                or_(
+                    AcceptCard.topic_id.in_(place_ids),
+                    AcceptCard.task_id.in_(place_ids),
+                ),
+                or_(
+                    AcceptCard.status.in_(open_statuses),
+                    AcceptCard.created_at >= settled_since,
+                ),
+            )
+            .order_by(AcceptCard.created_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_live_for_places(
         self, place_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
     ) -> list[AcceptCard]:
@@ -198,19 +229,20 @@ class AcceptCardRepository:
         """
         if not topic_ids:
             return {}
-        stmt = (
-            select(
-                AcceptCard.topic_id,
-                func.bool_or(AcceptCard.status == AcceptStatus.pending),
-            )
-            .where(
-                AcceptCard.topic_id.in_(topic_ids),
-                AcceptCard.reviewer_handle == reviewer_handle,
-            )
-            .group_by(AcceptCard.topic_id)
+        from app.domain.room_task.presentation import card_waits_on_reviewer
+
+        stmt = select(AcceptCard).where(
+            AcceptCard.topic_id.in_(topic_ids),
+            AcceptCard.reviewer_handle == reviewer_handle,
         )
-        rows = (await self._session.execute(stmt)).all()
-        return {topic_id: bool(waiting) for topic_id, waiting in rows}
+        named: dict[uuid.UUID, bool] = {}
+        for card in (await self._session.scalars(stmt)).all():
+            # 「在等他」和看板「待处理」那一格同一个判据：一张 pending 的卡如果
+            # CI 挂了、平台还在换基、状态还没看过，采纳按钮本来就点不了，下一步
+            # 在芝士/平台手上，不算他的事。
+            waiting = card_waits_on_reviewer(card)
+            named[card.topic_id] = named.get(card.topic_id, False) or waiting
+        return named
 
     async def latest_decision_at(self, place_ids: list[uuid.UUID]) -> datetime | None:
         """When a card on these places last changed hands — NULL if there are no

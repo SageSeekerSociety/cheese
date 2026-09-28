@@ -6,10 +6,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFeedbackTable from '@/components/admin/AdminFeedbackTable.vue'
+import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminQueueDetail from '@/components/admin/AdminQueueDetail.vue'
 import AdminQueueFoot from '@/components/admin/AdminQueueFoot.vue'
 import AdminQueueList from '@/components/admin/AdminQueueList.vue'
+import AdminTabs from '@/components/admin/AdminTabs.vue'
 import UndoStrip from '@/components/admin/UndoStrip.vue'
 import AdminFeedbackDetailDrawer from '@/components/feedback/AdminFeedbackDetailDrawer.vue'
 import { statusMeta } from '@/lib/feedbackMeta'
@@ -132,6 +135,13 @@ const isWide = ref(media ? media.matches : true)
 
 const tabs = computed<(FeedbackStatus | 'all')[]>(() => ['all', ...store.statusLadder])
 const items = computed(() => store.adminItems)
+
+/** 状态页签那一排（`AdminTabs`）要的形状：`{ value, label }`。文案口径和原来那颗裸
+ *  药丸逐字一致 —— `all` 走 `feedback.queue.tab.all`，其余走 `statusMeta().label`
+ *  （那一份是呈现词表，不从 i18n 取，见 `lib/feedbackMeta.ts` 文件头）。 */
+const tabOptions = computed(() =>
+  tabs.value.map((tab) => ({ value: tab, label: tab === 'all' ? t('feedback.queue.tab.all') : statusMeta(tab).label }))
+)
 
 /** 状态页签**在手上这一页里筛**（见文件末尾的代价）。`all` 那一档不复制数组：返回的
  *  就是 store 那一份，`v-for` 的 key 也因此不重算。 */
@@ -753,10 +763,8 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <div class="qpage__inner">
-        <header class="qpage__head">
-          <h1 class="t-page-title qpage__title">{{ t('feedback.queue.label') }}</h1>
-
-          <div class="qpage__head-tools">
+        <AdminPageHeader :title="t('feedback.queue.label')" :sub="t('feedback.queue.sub')">
+          <template #tools>
             <!-- 未读数。F-13 修的就是它：这个数以前没有人清零，也没有一处模板读它。 -->
             <span v-if="unread > 0" class="qpage__badge t-num" aria-live="polite">
               {{ t('feedback.queue.unread', { n: unread }) }}
@@ -796,8 +804,8 @@ onBeforeUnmount(() => {
                 {{ option === 'list' ? t('feedback.queue.view.list') : t('feedback.queue.view.table') }}
               </button>
             </div>
-          </div>
-        </header>
+          </template>
+        </AdminPageHeader>
 
         <!-- 工具行 48px：栏位 + 搜索 260px + 状态页签。 -->
         <div class="qpage__tools">
@@ -853,20 +861,10 @@ onBeforeUnmount(() => {
             </span>
           </div>
 
-          <div class="qpage__tabs" role="radiogroup" :aria-label="t('feedback.queue.label')">
-            <button
-              v-for="tab in tabs"
-              :key="tab"
-              type="button"
-              class="qpage__tab"
-              :class="{ 'qpage__tab--on': statusTab === tab }"
-              role="radio"
-              :aria-checked="statusTab === tab"
-              @click="statusTab = tab"
-            >
-              {{ tab === 'all' ? t('feedback.queue.tab.all') : statusMeta(tab).label }}
-            </button>
-          </div>
+          <!-- 状态页签。和看板的分类、看板的窗口、模型页的分档共用 `AdminTabs`
+               （下划线式，放不下时整排横着滚、右缘渐隐）：这三处以前各写一份，
+               切分区时同一件事的手感不一样。 -->
+          <AdminTabs v-model="statusTab" class="qpage__tabs" :options="tabOptions" :label="t('feedback.queue.label')" />
 
           <!-- 状态页签的口径注：只在筛选真的生效时出现。面上留「只筛这一页」五个字
                （口径是正确性问题，不能整句藏进 title），完整句进 title。不进
@@ -889,12 +887,20 @@ onBeforeUnmount(() => {
           @open="openItem"
         >
           <template #empty>
-            <div class="qpage__state" :title="state === 'error' && listError ? listError : undefined">
-              <p class="qpage__state-title">{{ copy.title }}</p>
-              <p class="qpage__state-desc">{{ copy.desc }}</p>
-              <button v-if="copy.action" type="button" class="qpage__state-btn" @click="runAction">
-                {{ copy.action }}
-              </button>
+            <!-- 四态块换成了共用的 `AdminEmptyState`（标题 + 一句为什么 + 至多一个
+                 动作，形状和看板、模型页的空态一致）。错误态多两样东西：
+                 `tone="error"` 换图标颜色；外面那层 `title` 上是服务端那句原话 ——
+                 块里只写「读失败」，具体为什么读失败要能问出来。
+                 （原话不能挂在组件上：`title` 是 `AdminEmptyState` 自己声明的 prop，
+                 传下去会被当成标题，画的就成了服务端那句原文。） -->
+            <div class="qpage__state-raw" :title="state === 'error' && listError ? listError : undefined">
+              <AdminEmptyState
+                :title="copy.title"
+                :desc="copy.desc"
+                :action="copy.action || undefined"
+                :tone="state === 'error' ? 'error' : 'neutral'"
+                @action="runAction"
+              />
             </div>
           </template>
 
@@ -920,12 +926,20 @@ onBeforeUnmount(() => {
           @open="openItem"
         >
           <template #empty>
-            <div class="qpage__state" :title="state === 'error' && listError ? listError : undefined">
-              <p class="qpage__state-title">{{ copy.title }}</p>
-              <p class="qpage__state-desc">{{ copy.desc }}</p>
-              <button v-if="copy.action" type="button" class="qpage__state-btn" @click="runAction">
-                {{ copy.action }}
-              </button>
+            <!-- 四态块换成了共用的 `AdminEmptyState`（标题 + 一句为什么 + 至多一个
+                 动作，形状和看板、模型页的空态一致）。错误态多两样东西：
+                 `tone="error"` 换图标颜色；外面那层 `title` 上是服务端那句原话 ——
+                 块里只写「读失败」，具体为什么读失败要能问出来。
+                 （原话不能挂在组件上：`title` 是 `AdminEmptyState` 自己声明的 prop，
+                 传下去会被当成标题，画的就成了服务端那句原文。） -->
+            <div class="qpage__state-raw" :title="state === 'error' && listError ? listError : undefined">
+              <AdminEmptyState
+                :title="copy.title"
+                :desc="copy.desc"
+                :action="copy.action || undefined"
+                :tone="state === 'error' ? 'error' : 'neutral'"
+                @action="runAction"
+              />
             </div>
           </template>
 
@@ -983,32 +997,6 @@ onBeforeUnmount(() => {
   max-width: var(--page-w-admin);
   min-height: 0;
   margin: 0 auto;
-}
-
-.qpage__head {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 12px;
-  height: 56px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--line-2);
-}
-
-.qpage__title {
-  flex: 1 1 auto;
-  overflow: hidden;
-  min-width: 0;
-  margin: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.qpage__head-tools {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
 }
 
 .qpage__badge {
@@ -1263,42 +1251,12 @@ onBeforeUnmount(() => {
   color: var(--text);
 }
 
+/* 状态页签那一排是 `AdminTabs`（下划线式）。这里只管它在工具行里怎么占位：它排在
+   最后，能缩、能横着滚，不把前面的栏位和搜索框挤出去。 */
 .qpage__tabs {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-}
-
-.qpage__tab {
-  height: 28px;
-  padding: 0 12px;
-  background: transparent;
-  border: 0;
-  border-top-left-radius: var(--radius-md);
-  border-top-right-radius: var(--radius-md);
-  border-bottom-right-radius: var(--radius-md);
-  border-bottom-left-radius: var(--radius-md);
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: var(--lh-13);
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-}
-
-.qpage__tab:hover {
-  background: var(--fill);
-  color: var(--text);
-}
-
-.qpage__tab--on,
-.qpage__tab--on:hover {
-  background: var(--fill-2);
-  color: var(--ink);
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
 }
 
 /* 状态页签的口径注：12px --muted，出现在页签右侧，不推走任何已有控件。 */
@@ -1317,43 +1275,35 @@ onBeforeUnmount(() => {
   transition: background-color 0.2s ease;
 }
 
-/* 四态块。外层那 96px 的顶距和 320px 的宽度由两个列表组件给（`.qlist__none-box` /
-   `.aft__none`），所以这里只管字和按钮。 */
-.qpage__state-title {
-  margin: 0;
-  color: var(--ink);
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
+/* 四态块的位置由两个列表组件给（`.qlist__none-box` / `.aft__none` 那 96px 顶距和
+   320px 宽），字和按钮在 `AdminEmptyState` 里。这一层只剩外面那圈：`title` 上挂着
+   服务端原话，所以它得是一个真的元素。 */
+.qpage__state-raw {
+  display: block;
 }
+/* 窄屏（≤700，和页头 / 后台壳同一条线）：工具行不再挤在一行上。
+   - 栏位那一组整条**横着滑**而不是折行：四颗药丸连标签 300px 出头，390 下差一点点，
+     折行会把「安全」单独甩到第二行、看起来像另一组控件；滑动保持它是一组。
+   - 搜索框独占一行（260px 的定宽在 390 下会把行撑破）。
+   - 状态页签那一排 `AdminTabs` 自己会横着滚，这里只把它从右对齐改回左对齐。 */
+@media (max-width: 700px) {
+  .qpage__tools {
+    gap: 12px;
+    padding: 8px 16px;
+  }
 
-.qpage__state-desc {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
+  .qpage__lanes {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
 
-/* 24px 高（§9.1 的动作列）。 */
-.qpage__state-btn {
-  height: 24px;
-  margin-top: 12px;
-  padding: 0 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: var(--lh-12);
-  cursor: pointer;
-  transition: background-color 0.12s ease;
-}
+  .qpage__search {
+    flex: 1 1 100%;
+  }
 
-.qpage__state-btn:hover {
-  background: var(--fill);
+  .qpage__tabs {
+    margin-left: 0;
+  }
 }
 </style>

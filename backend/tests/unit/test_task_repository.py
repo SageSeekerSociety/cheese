@@ -902,12 +902,25 @@ class TestAIConversationRepository:
     @pytest.mark.anyio
     async def test_list_for_task(self):
         session = _mock_session()
-        convo = SimpleNamespace(id=1, context_id=1)
+        convo = SimpleNamespace(id=1, context_id=1, owner_id=10)
         session.execute.return_value = _mock_scalars([convo])
         repo = AIConversationRepository(session)
 
-        result = await repo.list_for_task(1)
+        result = await repo.list_for_task(1, owner_id=10)
         assert result == [convo]
+
+    @pytest.mark.anyio
+    async def test_list_for_task_binds_the_owner_into_the_query(self):
+        """提问人在 WHERE 里，不是取回来之后再筛掉。"""
+        session = _mock_session()
+        session.execute.return_value = _mock_scalars([])
+        repo = AIConversationRepository(session)
+
+        await repo.list_for_task(7, owner_id=42)
+
+        stmt = session.execute.call_args[0][0]
+        assert "owner_id" in str(stmt)
+        assert {7, 42} <= set(stmt.compile().params.values())
 
     @pytest.mark.anyio
     async def test_get_by_conversation_id(self):

@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { useMediaQuery } from '@vueuse/core'
 
 import AdminShortcutSheet from '@/components/admin/AdminShortcutSheet.vue'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -97,13 +96,11 @@ const SECTIONS: { to: string; name: string; icon: string; label: () => string; b
  *  而下次进来回到展开态是更常见的那种期望（这一条没有实测依据，是取舍）。 */
 const collapsed = ref(false)
 
-/** 窄屏（手机）默认收起。200px 的侧栏在 390px 的屏上吃掉一半宽度，页面里那句页头会
- *  被挤成一个字一行、表格只剩一条缝 —— 实测 /admin/members 与 /admin/models 都是
- *  这样。**不是「用户偏好」而是「这一栏放不下」**，所以它跟着视口走：进窄屏自动收起
- *  （只剩图标，§10.2 那个形态），回到宽屏自动展开。手动那颗开关照旧，用户在这之后
- *  的选择不会被下一次 resize 之前的任何东西覆盖。 */
-const narrow = useMediaQuery('(max-width: 700px)')
-watch(narrow, (isNarrow) => (collapsed.value = isNarrow), { immediate: true })
+/** 窄屏那一条在 CSS 里（见 `<style>` 里 `max-width: 700px` 那段），**不再**由 JS 把
+ *  侧栏折成 56px。原来那版的症状是：390px 上侧栏收成一条只有图标的竖列，五个分区全
+ *  成了没字的图标，「队列」和「看板」谁也认不出来 —— 省下的 144px 宽度买不回认不出
+ *  导航的代价。现在的形态是**一条横排的分区栏**（图标 + 文字都留着，整条横向可滚），
+ *  放在内容上方；桌面那 200px 竖栏一个字没动。 */
 
 /** `?` 那一层（§8）。480px，`Esc` 关闭由 Vuetify 的对话框自己管。 */
 const shortcutOpen = ref(false)
@@ -299,11 +296,6 @@ onBeforeUnmount(() => {
   transition: width 0.2s ease;
 }
 
-.admin-shell--collapsed .admin-shell__nav {
-  flex-basis: 56px;
-  width: 56px;
-}
-
 .admin-shell__brand {
   display: flex;
   flex: 0 0 auto;
@@ -312,12 +304,6 @@ onBeforeUnmount(() => {
   padding: 0 12px;
   color: var(--muted);
   white-space: nowrap;
-}
-
-.admin-shell--collapsed .admin-shell__brand {
-  justify-content: center;
-  padding: 0;
-  font-size: 12px;
 }
 
 .admin-shell__items {
@@ -444,22 +430,118 @@ onBeforeUnmount(() => {
 }
 
 /* 折叠态：只剩图标。标签收起来而不是换个布局 —— 图标在两种状态下都在同一个 x 上，
-   眼睛不用重新找位置。 */
-.admin-shell--collapsed .admin-shell__label,
-.admin-shell--collapsed .admin-shell__badge {
-  display: none;
+   眼睛不用重新找位置。
+   **只在宽屏**：窄屏那一条横排里标签是导航本身（五个图标认不出谁是谁），折叠态在那
+   一档没有意义，所以整段关在 `min-width: 701px` 里 —— 在宽屏收起过再缩到手机宽度，
+   横排不会跟着变成一排光秃秃的图标。 */
+@media (min-width: 701px) {
+  .admin-shell--collapsed .admin-shell__nav {
+    flex-basis: 56px;
+    width: 56px;
+  }
+
+  .admin-shell--collapsed .admin-shell__brand {
+    justify-content: center;
+    padding: 0;
+    font-size: 12px;
+  }
+
+  .admin-shell--collapsed .admin-shell__label,
+  .admin-shell--collapsed .admin-shell__badge {
+    display: none;
+  }
+
+  .admin-shell--collapsed .admin-shell__item,
+  .admin-shell--collapsed .admin-shell__leave,
+  .admin-shell--collapsed .admin-shell__collapse {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .admin-shell--collapsed .admin-shell__item--on::before {
+    top: 4px;
+    bottom: 4px;
+  }
 }
 
-.admin-shell--collapsed .admin-shell__item,
-.admin-shell--collapsed .admin-shell__leave,
-.admin-shell--collapsed .admin-shell__collapse {
-  justify-content: center;
-  padding: 0;
-}
+/* 窄屏（≤700px）：侧栏从竖栏换成**内容上方的一条横排**。原来这一档是「折成 56px、
+   只剩图标」—— 省下的 144px 宽度买不回认不出导航的代价：五个分区全是无字图标，而
+   图标本身不解释自己（`mdi-tray-full` 是队列？是收件箱？）。横排里图标和文字都留着，
+   放不下就横向滚，不折行、不缩字。桌面那 200px 竖栏一个字没动。 */
+@media (max-width: 700px) {
+  .admin-shell {
+    flex-direction: column;
+  }
 
-.admin-shell--collapsed .admin-shell__item--on::before {
-  top: 4px;
-  bottom: 4px;
+  .admin-shell__nav {
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+    width: 100%;
+    height: 48px;
+    min-height: 48px;
+    padding: 0 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    transition: none;
+    scrollbar-width: none;
+  }
+
+  .admin-shell__nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 品牌字和折叠开关在横排里都是占宽度不办事的：品牌不出现在这一档的别处（页头自己
+     写着模块名），折叠开关更是没有可折的东西。 */
+  .admin-shell__brand,
+  .admin-shell__collapse,
+  .admin-shell__spacer {
+    display: none;
+  }
+
+  .admin-shell__items {
+    flex: 0 0 auto;
+    flex-direction: row;
+    gap: 4px;
+  }
+
+  .admin-shell__item {
+    flex: 0 0 auto;
+    gap: 6px;
+    height: 32px;
+    padding: 0 10px;
+    font-size: 13px;
+    line-height: var(--lh-13);
+  }
+
+  /* 选中那道琥珀条跟着换方向：横排里它该压在**下沿**（跟 `AdminTabs` 的下划线同一
+     个读法），而不是贴在左边当一条竖杠。 */
+  .admin-shell__item--on::before {
+    top: auto;
+    right: 10px;
+    bottom: 0;
+    left: 10px;
+    width: auto;
+    height: 2px;
+  }
+
+  .admin-shell__label {
+    flex: 0 0 auto;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  /* 回工作区那条跟在分区后面：中间那根撑开的弹簧在可滚的行里没有意义（内容溢出时它
+     自己就塌成 0），所以直接跟在末尾。 */
+  .admin-shell__leave {
+    height: 32px;
+    padding: 0 10px;
+    margin-left: 4px;
+  }
 }
 
 /* 门口那两态是居中一句话，不是一页内容。 */

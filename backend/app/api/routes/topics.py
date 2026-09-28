@@ -63,7 +63,6 @@ from app.domain.agent.runtime import (
     announce_stale,
 )
 from app.domain.agent.step_output import without_output
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -72,7 +71,7 @@ from app.domain.block.models import (
     BlockKind,
     agent_notice,
 )
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.repositories import BlockRepository, ReplyWait
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.addressing import Event as Addressee
 from app.domain.device.wiring import sql_device_service
@@ -218,25 +217,53 @@ def _asks_me(
     return {tid for tid, who in asked.items() if who == viewer}
 
 
-async def _live_room_cards(
-    db: AsyncSession, room_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, AcceptCard]:
-    """每个房间**自己**那张还没结算的验收卡，一次查完。
+async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[AcceptCard]:
+    """这些房间（连同名下的活）上还没结算的验收卡，一次查完。
 
-    只要没结算的：一张已经决议的卡对看板没有话说（`presentation` 读到它会让位给
-    别的判据），所以拉全量只是白读。哪些状态算「还没结算」不在这里数——那张表是
-    `review/archive.py` 维护的，抄第二份就是让它们走散。
+    房间自己那张（`_own_cards`）和「卡停在检查红上」（`_stuck_on_checks`）都从
+    这一批里读，不各查一遍。只要没结算的：一张已经决议的卡对看板没有话说
+    （`presentation` 读到它会让位给别的判据），所以拉全量只是白读。哪些状态算
+    「还没结算」不在这里数——那张表是 `review/archive.py` 维护的，抄第二份就是
+    让它们走散。
+
+    """
+    if not room_ids:
+        return []
+    # 结算过的也带上最近一周的：「退回了还没重递」要靠它看出来（`_stuck_on_checks`）。
+    return await AcceptCardRepository(db).list_recent_for_places(
+        room_ids,
+        open_statuses=archive.OPEN_CARD_STATUSES,
+        settled_since=datetime.now(UTC) - BlockRepository.REPLY_LOOKBACK,
+    )
+
+
+def _own_cards(cards: list[AcceptCard]) -> dict[uuid.UUID, AcceptCard]:
+    """每个房间**自己**那张还没结算的验收卡。
 
     `task_id is None` 才是房间自己的卡：一条活递的卡把房间记在 `topic_id` 上，不
     过滤的话，一条活在等验收会让它上面那个房间也显示成等验收。
     """
-    if not room_ids:
-        return {}
-    cards = await AcceptCardRepository(db).list_live_for_places(
-        room_ids, statuses=archive.OPEN_CARD_STATUSES
-    )
     # 按 created_at 升序回来，所以同一个房间后写的覆盖先写的 = 留下最新那张。
-    return {c.topic_id: c for c in cards if c.task_id is None}
+    return {
+        c.topic_id: c
+        for c in cards
+        if c.task_id is None and c.status in archive.OPEN_CARD_STATUSES
+    }
+
+
+def _latest_per_place(cards: list[AcceptCard]) -> dict[tuple, AcceptCard]:
+    """同一个地方（房间自己，或某一条活）只留最新那张：旧卡被新卡顶掉后可能还没
+    结算，它说的不代表现在。"""
+    return {(c.topic_id, c.task_id): c for c in cards}
+
+
+def _merging(cards: list[AcceptCard]) -> set[uuid.UUID]:
+    """名下有一张已采纳、在等检查 / 合并队列的卡的房间（`card_is_merging`）。"""
+    return {
+        room
+        for (room, _), card in _latest_per_place(cards).items()
+        if presentation.card_is_merging(card)
+    }
 
 
 async def _rooms_with_running_work(
@@ -274,6 +301,19 @@ async def _rooms_with_running_work(
     }
 
 
+def _stuck_on_checks(cards: list[AcceptCard]) -> set[uuid.UUID]:
+    """房间（连同名下的活）里，最新那张卡停在「检查红 / 冲突，要 AI 修」上的。
+
+    同一个地方（房间自己，或某一条活）只看最新那张：旧卡被新卡顶掉后可能还没结算，
+    它的红不代表现在。判据和看板同一个（`presentation.card_needs_agent_fix`）。
+    """
+    return {
+        room
+        for (room, _), card in _latest_per_place(cards).items()
+        if presentation.card_needs_agent_fix(card)
+    }
+
+
 def _topic_out(
     topic: Topic,
     running_ids: set[uuid.UUID],
@@ -285,7 +325,8 @@ def _topic_out(
     asked: Mapping[uuid.UUID, str | None] | None = None,
     asks_me: set[uuid.UUID] | None = None,
     working_ids: set[uuid.UUID] | None = None,
-    waiting: Mapping[uuid.UUID, datetime] | None = None,
+    merging_ids: set[uuid.UUID] | None = None,
+    waiting: Mapping[uuid.UUID, ReplyWait] | None = None,
     failed: Mapping[uuid.UUID, datetime] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: the in-memory
@@ -306,7 +347,16 @@ def _topic_out(
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
-    out.awaiting_reply_since = (waiting or {}).get(topic.id)
+    wait = (waiting or {}).get(topic.id)
+    # 检查红了但 AI 此刻正在这个房间（或名下的活）里干活：它就是在处理，不算没人管。
+    if (
+        wait is not None
+        and wait.reason == "check"
+        and (topic.id in running_ids or topic.id in (working_ids or set()))
+    ):
+        wait = None
+    out.awaiting_reply_since = wait.since if wait else None
+    out.reply_wait_reason = wait.reason if wait else None
     out.turn_failed_at = (failed or {}).get(topic.id)
     mine = (relevance or {}).get(topic.id, TopicRelevance())
     # 芝士停在一道只有我能回答的问题上，同样是「在等我」——而且比一张卡更急：卡是
@@ -318,6 +368,8 @@ def _topic_out(
     # 侧栏的绿点：房间自己那一轮在跑，或它名下有一条活在跑。看板那一格
     # （下面的 facts_for_room）仍只看房间自己——活在看板上有自己的一格。
     data["running"] = topic.id in running_ids or topic.id in (working_ids or set())
+    # 绿灯常亮：已采纳、在等合并落地。有 AI 在干活时让位给「在跑」（闪）。
+    data["merging"] = not data["running"] and topic.id in (merging_ids or set())
     facts = presentation.facts_for_room(
         topic,
         running_ids,
@@ -359,7 +411,8 @@ async def list_topics(
     )
     running_ids = runner.running_topic_ids()
     relevance = await service.relevance_for_topics(topics, _viewer(actor))
-    cards = await _live_room_cards(db, [t.id for t in topics])
+    live = await _live_cards(db, [t.id for t in topics])
+    cards = _own_cards(live)
     managed = (
         await TopicMemberService(db).managed_topic_ids(
             [t.id for t in topics], actor.handle
@@ -375,7 +428,9 @@ async def list_topics(
     working = await _rooms_with_running_work(db, chat, [t.id for t in topics], now)
     # 侧栏红灯的两个来源，各一次查完：有人点了 AI 的名还没人接；最近一轮报错了。
     waiting = await BlockRepository(db).rooms_awaiting_a_reply(
-        [t.id for t in topics], now=now
+        [t.id for t in topics],
+        now=now,
+        stuck_rooms=_stuck_on_checks(live),
     )
     failed = await BlockRepository(db).rooms_with_a_failed_turn(
         [t.id for t in topics], now=now
@@ -392,8 +447,9 @@ async def list_topics(
             asked,
             asks_me,
             working,
-            waiting,
-            failed,
+            merging_ids=_merging(live),
+            waiting=waiting,
+            failed=failed,
         )
         for t in topics
     ]
@@ -431,7 +487,8 @@ async def get_topic(
     actor = await _actor_in_place(resolver, place)
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics([topic], _viewer(actor))
-    cards = await _live_room_cards(db, [topic.id])
+    live = await _live_cards(db, [topic.id])
+    cards = _own_cards(live)
     managed = (
         await TopicMemberService(db).managed_topic_ids([topic.id], actor.handle)
         if actor.authenticated
@@ -450,8 +507,11 @@ async def get_topic(
             asked=asked,
             asks_me=_asks_me(asked, _viewer(actor)),
             working_ids=working,
+            merging_ids=_merging(live),
             waiting=await BlockRepository(db).rooms_awaiting_a_reply(
-                [topic.id], now=datetime.now(UTC)
+                [topic.id],
+                now=datetime.now(UTC),
+                stuck_rooms=_stuck_on_checks(live),
             ),
             failed=await BlockRepository(db).rooms_with_a_failed_turn(
                 [topic.id], now=datetime.now(UTC)
@@ -1598,8 +1658,11 @@ async def get_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The room's work computers: what each agent session works on, and what an
-    agent that has not started yet will be given (the room's choice)."""
+    """The room's work computer: the one choice every session in it works on.
+
+    一个话题一个容器（2026-09-28 决定，推翻结论 60）：`sessions` 报的每一行都是那
+    一台——一个房间里的会话不再各有各的机器。没开工的会话也答那一项，它开工时拿的
+    就是那一台。"""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
@@ -1624,20 +1687,19 @@ async def get_topic_compute_profile(
             named = next((d for d in devices if d.device_id == binding.device_id), None)
             choice.name = named.name if named else "自有设备"
     # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
-    # machine. Read from the sessions' own machines, not the room's pin: a
-    # session that picked a device automatically, or moved to one later, has
-    # the same access and no pin. Surfaced so the room shows a visible safety
-    # badge instead of the platform granting whole-machine access silently
-    # (原则八).
+    # machine. 一个话题一个容器（2026-09-28 决定，推翻结论 60）：房间里的会话看的
+    # 都是同一台机器，而它就是房间那一项算出来的那台，所以读那一项就够了。Surfaced
+    # so the room shows a visible safety badge instead of the platform granting
+    # whole-machine access silently (原则八).
     from app.domain.machine.session_work import (
         room_machine_visibility,
         session_machines,
     )
 
-    sessions = await session_machines(db, topic)
     visibility = await room_machine_visibility(
-        db, topic, project.settings if project else None, sessions
+        db, topic, project.settings if project else None
     )
+    sessions = await session_machines(db, topic)
     effective_visibility = visibility.value if visibility is not None else None
     return ok(
         {
@@ -1661,8 +1723,9 @@ async def get_topic_compute_profile(
                 }
                 for device in devices
             ],
-            # Each agent session and its machine; `choice` is None for one that
-            # has not started working and will be given `choice` above.
+            # Each agent session and its machine — the room's, for every one of
+            # them; `choice` is None for one that has not taken hands yet and
+            # will be given `choice` above.
             "sessions": [
                 {k: v for k, v in row.items() if k != "visibility"} for row in sessions
             ],
@@ -1687,60 +1750,6 @@ async def get_topic_compute_profile(
 class WorkLeaseRequest(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     timeout: float = Field(default=660, gt=0, le=660)
-
-
-@router.put("/{topic_id}/sessions/{session_id}/work-choice")
-async def request_session_work_choice(
-    topic_id: uuid.UUID,
-    session_id: uuid.UUID,
-    body: dict,
-    request: Request,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    from pydantic import ValidationError as SchemaError
-
-    from app.core.sandbox_auth import scoped_token_claims
-    from app.domain.agent.compute_configs import ComputeChoice
-    from app.domain.machine import session_work as work_lease
-
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    if actor.via == "cheese":
-        claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
-        if (
-            claims.get("session") != str(session_id)
-            or claims.get("t") != str(topic_id)
-            or claims.get("r") != str(topic.resource_id or topic.id)
-        ):
-            raise ForbiddenError("Execution credential does not own this session")
-    elif actor.via != "token":
-        raise ForbiddenError("请先登录")
-    try:
-        choice = ComputeChoice.model_validate(body.get("choice"))
-    except SchemaError as exc:
-        raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
-    return ok(
-        {
-            "session": await work_lease.request_choice(
-                db,
-                topic_id=topic_id,
-                session_id=session_id,
-                actor=actor,
-                choice=choice,
-                # Honoured for a person, and only when the old machine could
-                # not be reached to push (`request_choice`).
-                abandon_unpushed=body.get("abandon_unpushed") is True,
-                # The project's bulk switch leaves a session mid-turn alone.
-                if_idle=body.get("if_idle") is True,
-            )
-        }
-    )
 
 
 @router.post("/{topic_id}/sessions/{session_id}/work-lease")
@@ -1791,9 +1800,14 @@ async def set_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The room's choice: what an agent gets when it starts working here.
+    """The room's work computer — the choice for the whole room.
 
-    A signed session names its own machine instead (``request_choice``)."""
+    一个话题一个容器（2026-09-28 决定，推翻结论 60）：改这一项就是改整个房间——房间
+    里坐着的每一条会话都跟着搬到那台机器上（各自先把改动推上去，见
+    ``machine/session_work.request_choice``），不再有「只在以后来的队友身上生效」这
+    一说。一条会话拿着自己的凭据来改，改的也是这一间房：凭据能证明它属于这个房间
+    的这一代，而房间只有一条选择。
+    """
     from pydantic import ValidationError as SchemaError
 
     from app.domain.agent.compute_configs import (
@@ -1813,8 +1827,8 @@ async def set_topic_compute_profile(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     await ProjectMachineRepository(db).lock_topic(topic_id)
-    # A signed session selects only its own work destination. Project-wide
-    # credentials cannot name a running session through this room-default API.
+    # 一张签出来的会话凭据能改这一间房，但只能改它自己那一代的那一间：房间重开换了
+    # 代，旧凭据改不动新房间（它手里那条会话已经不属于它了）。
     from app.core.sandbox_auth import scoped_token_claims
 
     claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
@@ -1824,12 +1838,6 @@ async def set_topic_compute_profile(
         or claims.get("r") != str(topic.resource_id or topic.id)
     ):
         raise ForbiddenError("Execution credential does not own this room generation")
-    # 开工之后，房间这一项只是之后邀请的 AI 队友的默认（结论 60）：已经在干活的
-    # 会话各有各的机器，改它不会把谁搬走。
-    started = bool(
-        await AgentSessionService(db).has_run(topic_id)
-        or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
-    )
     name = (body.get("profile") or "").strip() or compute_default_name()
     try:
         choice = ComputeChoice.model_validate(
@@ -1842,17 +1850,6 @@ async def set_topic_compute_profile(
         )
     except SchemaError as exc:
         raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
-    if scoped_session:
-        from app.domain.machine import session_work as work_lease
-
-        result = await work_lease.request_choice(
-            db,
-            topic_id=topic_id,
-            session_id=uuid.UUID(scoped_session),
-            actor=actor,
-            choice=choice,
-        )
-        return ok({"session": result})
     name = choice.profile
     body = {**body, "device_id": choice.device_id}
     raw_device_id = body.get("device_id")
@@ -1935,30 +1932,43 @@ async def set_topic_compute_profile(
     if name == COMPUTE_CLOUD:
         await MachineService(db).require_use_authority(topic.project_id, actor)
 
-    # Before the first turn the room's pin is the choice itself. Release then
-    # bind preserves bind_topic_device's write-once contract: the bind itself
-    # never overwrites, while an explicit change removes the obsolete pin first.
-    # Selecting Cloud or 「系统挑一台」 leaves no pin; the latter is frozen by
-    # resolve_pinned_device on the first turn. Once the room has started, the pin
-    # belongs to the machine its first turn is using (a Cloud room's connector
-    # included), so a new default for later agents leaves it where it is.
-    if not started:
-        binding = await device_service.topic_binding(topic_id)
-        if binding is not None and (
-            name != COMPUTE_DEVICE or binding.device_id != device_id
-        ):
-            await device_service.release_topic_device(
-                topic_id, reason="compute choice changed before the first turn"
-            )
-            binding = None
-        if name == COMPUTE_DEVICE and device_id is not None and binding is None:
-            await device_service.bind_topic_device(
-                topic_id,
-                device_id,
-                visibility=await device_service.binding_visibility(device_id),
-            )
+    # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
+    # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——
+    # 一条推不上去就是整个房间留在原地（它抛出去，路由把它变成一次可见的失败）。
+    from app.domain.machine import session_work as work_lease
 
-    topic.compute_config = choice.model_dump()
+    await work_lease.request_choice(
+        db,
+        topic_id=topic_id,
+        actor=actor,
+        choice=choice,
+        # 人的那一次可以在原来那台够不着时决定不推送——成员名册和设备页的批量切换
+        # 用的就是这个开关。会话凭据自己来改时它不成立（`_move_session`）。
+        abandon_unpushed=body.get("abandon_unpushed") is True,
+        # 设备页的批量切换跳过正在跑任务的房间，而不是把它手上的机器抽走。
+        if_idle=body.get("if_idle") is True,
+    )
+    # The room's pin is the choice itself, before the first turn and after it:
+    # 一个话题一个容器（2026-09-28，推翻结论 60），换机器是整个房间搬过去，钉子跟
+    # 着搬——在每条会话都搬成之后才动，一条推不上去整个房间连钉子一起留在原地。
+    # Release then bind preserves bind_topic_device's write-once contract:
+    # the bind itself never overwrites, while an explicit change removes the
+    # obsolete pin first. Selecting Cloud or 「系统挑一台」 leaves no pin; the
+    # latter is frozen by resolve_pinned_device on the next turn.
+    binding = await device_service.topic_binding(topic_id)
+    if binding is not None and (
+        name != COMPUTE_DEVICE or binding.device_id != device_id
+    ):
+        await device_service.release_topic_device(
+            topic_id, reason="the room moved to another work computer"
+        )
+        binding = None
+    if name == COMPUTE_DEVICE and device_id is not None and binding is None:
+        await device_service.bind_topic_device(
+            topic_id,
+            device_id,
+            visibility=await device_service.binding_visibility(device_id),
+        )
     await db.flush()
     return ok(
         {
@@ -2222,7 +2232,17 @@ async def summon_agent(
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
     # 待读窗口刚好被别人清空的缝隙里当兜底。
-    seat = await TopicMemberService(db).addressable_agent_handle(place.room_id)
+    #
+    # 交给谁：**这批消息点名交给谁，就交给谁**。房间里坐着不止一位 AI 队友时，
+    # 「房间的默认席位」是另一个答案 —— 取它的话，另一位队友的轮次失败之后一点
+    # 重试就换成默认芝士来接，而默认芝士那一轮的待读窗口里根本没有点名给那位队友
+    # 的消息（`_addressed_to` 按收件人过滤），于是它接了一轮却读不到真正找它的那
+    # 句话。没人被点名（没 @ 不等于没说），或者被点名的那位已经不在名册上（被请出
+    # 房间），才回落到默认席位 —— 和 `answer_options` 同一条规矩。
+    members = TopicMemberService(db)
+    seat = await chat.pending_seat(place.room_id)
+    if seat is None or seat not in await members.agent_handles(place.room_id):
+        seat = await members.addressable_agent_handle(place.room_id)
     runner.submit(
         chat,
         place.room_id,

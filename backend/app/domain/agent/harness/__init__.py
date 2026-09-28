@@ -196,9 +196,13 @@ class SessionRef:
 
     A room hosts as many conversations as it seats agents, so a topic id does
     not name one — ``(topic, agent_handle, harness)`` does, and it is the same
-    key ``agent_sessions`` is written under. Everything that resolves where a
-    session runs starts from this, which is why the machines are recorded per
-    session and never per room (结论 60).
+    key ``agent_sessions`` is written under. Everything that resolves a
+    conversation starts from this.
+
+    一个话题一个容器（2026-09-28 决定，推翻结论 60 的后半）：这个键仍然只认一条会
+    话，但**它跑在哪台机器上不再由它自己答**——一间房只有一条算力选择，房间里的每
+    一条会话都工作在那一项算出来的那台机器上（``machine/session_work._attempt``
+    从房间那一项解析），机器于是不再是「每条会话各记一份」的东西。
 
     ``agent_handle`` is :attr:`ResolvedAgent.handle`, the agent's key inside its
     project — not the seat it authors under. The two differ, and reading under
@@ -206,9 +210,7 @@ class SessionRef:
 
     It is left unset by the calls that address a PLACE rather than a
     conversation: a room's machine and the screens on it are one per room, so
-    reading them names no agent. Anything that resolves where a
-    session runs must fill it in — that resolution is per session and there is
-    nothing on the room left to fall back to.
+    reading them names no agent.
 
     ``harness`` has none of that leeway: it is keyword-only and has no default.
     跑的是哪个骨架由部署设置加项目设置答（结论 28），所以一个默认值就是第二个答
