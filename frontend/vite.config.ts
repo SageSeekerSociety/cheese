@@ -4,7 +4,7 @@ import { fileURLToPath, URL } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 // Utilities
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import { prismjsPlugin } from 'vite-plugin-prismjs'
 import { VitePWA } from 'vite-plugin-pwa'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
@@ -12,8 +12,23 @@ import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
 
 // https://vitejs.dev/config/
+// /demo/<名字> 是演示页（demo.html），不是应用。线上由 nginx.conf 那条 location 分开，
+// 开发服务器上由这里分开：不然它落到应用的兜底 index.html 上，打开的是整个平台。
+function demoPages(): Plugin {
+  return {
+    name: 'cheese-demo-pages',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url && /^\/demo(\/|\?|$)/.test(req.url)) req.url = '/demo.html'
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
+    demoPages(),
     vue({
       template: { transformAssetUrls },
     }),
@@ -366,6 +381,11 @@ export default defineConfig({
     },
     sourcemap: false,
     rollupOptions: {
+      // 两个页面：应用本体，和文档里嵌的动态演示（demo.html，见 src/demo-main.ts）。
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        demo: fileURLToPath(new URL('./demo.html', import.meta.url)),
+      },
       output: {
         manualChunks(id) {
           // Vite's dynamic-import helper (`\0vite/preload-helper.js`) is a
