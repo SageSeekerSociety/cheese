@@ -553,6 +553,66 @@ async def test_a_question_the_build_would_ask_never_reaches_the_driver(
     assert [message["type"] for message in written] == ["user"]
 
 
+@pytest.mark.anyio
+async def test_the_builds_thinking_estimate_is_not_journaled(monkeypatch, tmp_path):
+    """While the model thinks, the build prints a running estimate of how much,
+    one line per streamed delta. The room shows none of it, so none of it is
+    kept: a long think was otherwise most of a session's journal."""
+    said = [
+        {"type": "system", "subtype": "init", "session_id": "s", "model": "m"},
+        *(
+            {
+                "type": "system",
+                "subtype": "thinking_tokens",
+                "estimated_tokens": n,
+                "estimated_tokens_delta": 1,
+                "session_id": "s",
+                "uuid": f"t{n}",
+            }
+            for n in range(1, 50)
+        ),
+        {
+            "type": "assistant",
+            "uuid": "a",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "done thinking"}],
+            },
+        },
+        {"type": "result", "subtype": "success", "is_error": False, "uuid": "r"},
+    ]
+    build = tmp_path / "build.py"
+    build.write_text(
+        "import json, sys\n"
+        f"for record in {said!r}:\n"
+        "    print(json.dumps(record), flush=True)\n"
+        "sys.stdin.read()\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    runner = Runner(tmp_path / "state")
+    await runner.start(
+        command=shlex.join([sys.executable, str(build)]),
+        env={**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path / "config")},
+        resume=None,
+        agent_handle=AGENT,
+    )
+    try:
+        async with asyncio.timeout(30):
+            while True:
+                records = [e["record"] for e in runner.journal.read(0)]
+                if any(_is("result")(r) for r in records):
+                    break
+                await asyncio.sleep(0.05)
+    finally:
+        await runner.close()
+
+    assert [(r["type"], r.get("subtype")) for r in records] == [
+        ("system", "init"),
+        ("assistant", None),
+        ("result", "success"),
+    ]
+
+
 # --- a session that dies on its way up says why --------------------------------
 
 
