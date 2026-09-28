@@ -150,3 +150,30 @@ describe('useLongPress', () => {
     expect(onLongPress).not.toHaveBeenCalled()
   })
 })
+
+// 长按打开的面板带着遮罩，松手那一下 click 落在遮罩上，而不是目标上。
+describe('useLongPress 松手那一下落在别处', () => {
+  it('长按之后松手的点击落在别的元素上，也被吞掉', async () => {
+    const scrim = document.createElement('div')
+    document.body.appendChild(scrim)
+    // 听在外层：happy-dom 在目标自身上不遵守 stopImmediatePropagation，浏览器遵守。
+    const onScrimClick = vi.fn()
+    const listener = (e: Event) => e.target === scrim && onScrimClick()
+    document.body.addEventListener('click', listener)
+    const onLongPress = setup()
+    await ready()
+    pointer('pointerdown')
+    vi.advanceTimersByTime(600)
+    expect(onLongPress).toHaveBeenCalledTimes(1)
+    pointer('pointerup')
+    scrim.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    expect(onScrimClick).not.toHaveBeenCalled()
+
+    // 之后再点它，照常到达。
+    scrim.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', pointerId: 2 }))
+    scrim.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    expect(onScrimClick).toHaveBeenCalledTimes(1)
+    document.body.removeEventListener('click', listener)
+    scrim.remove()
+  })
+})
