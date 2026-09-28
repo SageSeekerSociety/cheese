@@ -912,15 +912,29 @@ export function setSessionWorkChoice(
   topicId: string,
   sessionId: string,
   choice: import('./cx_types').ComputeChoice,
-  options: { abandonUnpushed?: boolean } = {}
+  // ifIdle: leave a session whose room is mid-turn alone (409 SessionWorking).
+  options: { abandonUnpushed?: boolean; ifIdle?: boolean } = {}
 ) {
   return request<{ session: import('./cx_types').SessionWorkLease }>(
     `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/work-choice`,
     {
       method: 'PUT',
-      body: JSON.stringify(options.abandonUnpushed ? { choice, abandon_unpushed: true } : { choice }),
+      body: JSON.stringify({
+        choice,
+        ...(options.abandonUnpushed ? { abandon_unpushed: true } : {}),
+        ...(options.ifIdle ? { if_idle: true } : {}),
+      }),
     }
   )
+}
+
+// The project's agent sessions on one self-hosted device, for a project manager
+// to switch some elsewhere. Rooms the caller cannot open are only counted.
+export function listDeviceSessions(
+  projectId: string,
+  deviceId: string
+): Promise<{ sessions: import('./cx_types').DeviceSession[]; hidden: number }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/devices/${encodeURIComponent(deviceId)}/sessions`)
 }
 
 export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {

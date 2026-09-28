@@ -1226,6 +1226,38 @@ async def get_compute_configs(
     )
 
 
+@router.get("/{project_id}/devices/{device_id}/sessions")
+async def list_device_sessions(
+    project_id: uuid.UUID,
+    device_id: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """The project's agent sessions on one self-hosted device, for a project
+    manager to switch some of them elsewhere (「现在的分布」 → 查看并更换).
+
+    Each switch then goes through the room's own route, with its checks. A
+    session in a room the caller cannot open is counted in ``hidden`` and not
+    listed, so its room's title stays in that room.
+    """
+    from app.domain.machine.session_work import device_sessions
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    listed, hidden = [], 0
+    for topic, session in await device_sessions(db, project_id, device_id):
+        try:
+            await resolver.authorize_topic(
+                actor, project_id=project_id, topic_id=topic.id
+            )
+        except ForbiddenError:
+            hidden += 1
+            continue
+        listed.append(session)
+    return ok({"sessions": listed, "hidden": hidden})
+
+
 @router.put("/{project_id}/compute-configs")
 async def save_compute_configs(
     project_id: uuid.UUID,
