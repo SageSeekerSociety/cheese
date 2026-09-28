@@ -27,11 +27,12 @@ import pwd
 from pathlib import Path
 
 
-def entries(directory: Path, mode: str, root: Path | None = None) -> list[str]:
+def entries(directory: Path, loose_at_top: bool, root: Path | None = None) -> list[str]:
     """pi's `collectSkillEntries`: a directory holding SKILL.md is one skill;
     otherwise its subdirectories are searched, and loose `.md` files count at
     the top of a `.pi/skills` tree and below the top of an `.agents/skills`
-    one. Directory order is the filesystem's, as `readdirSync` returns it."""
+    one (the two discovery modes, told apart here by `loose_at_top`).
+    Directory order is the filesystem's, as `readdirSync` returns it."""
     root = root or directory
     if not directory.exists():
         return []
@@ -49,11 +50,11 @@ def entries(directory: Path, mode: str, root: Path | None = None) -> list[str]:
         is_dir, is_file = entry.is_dir(), entry.is_file()
         if is_file and entry.name.endswith(".md"):
             at_top = directory == root
-            if (mode == "pi" and at_top) or (mode == "agents" and not at_top):
+            if at_top == loose_at_top:
                 collected.append(entry.path)
             continue
         if is_dir:
-            collected += entries(Path(entry.path), mode, root)
+            collected += entries(Path(entry.path), loose_at_top, root)
     return collected
 
 
@@ -76,7 +77,7 @@ def _settings_paths(cwd: Path) -> list[str]:
         if path.is_file():
             found.append(str(path))
         elif path.is_dir():
-            found += entries(path, "pi")
+            found += entries(path, True)
     return found
 
 
@@ -102,13 +103,13 @@ def _homes() -> set[Path]:
 def project_skills(cwd: str) -> list[str]:
     """Every skill file pi would load from the project at `cwd`, in its order."""
     start = Path(os.path.abspath(cwd))
-    found = _settings_paths(start) + entries(start / ".pi/skills", "pi")
+    found = _settings_paths(start) + entries(start / ".pi/skills", True)
     top = _git_root(start)
     excluded = _homes()
     for directory in (start, *start.parents):
         skills = directory / ".agents/skills"
         if skills not in excluded:
-            found += entries(skills, "agents")
+            found += entries(skills, False)
         if directory == top:
             break
     seen: set[str] = set()
