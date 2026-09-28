@@ -7,6 +7,9 @@
 
 跑的是迁移里那段真实 SQL（从迁移模块 import），不是照抄一份。连跑两遍：dev 先跑迁
 移后换容器，窗口里旧镜像还在按老键写新行，这段要由 P36 的迁移原样再跑一遍。
+
+读的是这张表本身，不是池的读路径：那条路（`recall`）连同条目池一起撤了（`store.py`
+的模块注释），而这条用例要守的是「重键之后那些行落在哪个池里」，跟谁来读它们无关。
 """
 
 import importlib.util
@@ -18,8 +21,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.memory.models import MemoryScope, user_scope_id
-from app.domain.memory.store import memory_store
+from app.domain.memory.models import MemoryEntry, MemoryScope, user_scope_id
+from app.domain.memory.store import live_entries, memory_store
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered
@@ -56,6 +59,23 @@ async def _rekey(session: AsyncSession) -> None:
     await session.flush()
 
 
+async def _pool(session: AsyncSession, scope: MemoryScope, scope_id: str) -> set[str]:
+    """一个池里现在还读得到的正文。
+
+    直接查表，不走读路径：`recall` 已经跟着条目池一起撤了（`store.py` 的模块注
+    释）。`live_entries()` 照旧要带——被整理掉的行不算数，漏了它这里就会绿给一批
+    谁也读不到的旧行看。
+    """
+    rows = await session.execute(
+        sa.select(MemoryEntry.content).where(
+            MemoryEntry.scope == scope,
+            MemoryEntry.scope_id == scope_id,
+            live_entries(),
+        )
+    )
+    return set(rows.scalars())
+
+
 def test_what_was_learned_about_a_person_lands_on_the_agent_that_learned_it(
     db_session: AsyncSession, _portal: "BlockingPortal"
 ) -> None:
@@ -88,10 +108,12 @@ def test_what_was_learned_about_a_person_lands_on_the_agent_that_learned_it(
         for _ in range(2):
             await _rekey(db_session)
 
-            assert await store.recall(MemoryScope.user, landed) == ["他要结论在最前面"]
-            assert await store.recall(MemoryScope.user, not_landed) == []
+            assert await _pool(db_session, MemoryScope.user, landed) == {
+                "他要结论在最前面"
+            }
+            assert await _pool(db_session, MemoryScope.user, not_landed) == set()
             # 老键上一行不剩：新代码不认它，留着就是一条谁也读不到的记忆。
-            assert await store.recall(MemoryScope.user, "andyl") == []
+            assert await _pool(db_session, MemoryScope.user, "andyl") == set()
 
     _portal.call(run)
 
@@ -130,15 +152,18 @@ def test_a_dm_with_a_second_teammate_lands_on_that_teammate(
 
         await _rekey(db_session)
 
-        assert await store.recall(
-            MemoryScope.user, user_scope_id(project.id, reviewer.handle, "andyl")
-        ) == ["他改完代码才看评论"]
+        assert await _pool(
+            db_session,
+            MemoryScope.user,
+            user_scope_id(project.id, reviewer.handle, "andyl"),
+        ) == {"他改完代码才看评论"}
         assert (
-            await store.recall(
+            await _pool(
+                db_session,
                 MemoryScope.user,
                 user_scope_id(project.id, default_agent.handle, "andyl"),
             )
-            == []
+            == set()
         )
 
     _portal.call(run)
@@ -168,9 +193,9 @@ def test_a_person_with_no_private_chat_lands_under_each_projects_cheese(
 
         await _rekey(db_session)
 
-        assert await store.recall(
-            MemoryScope.user, user_scope_id(project.id, agent.handle, "bob")
-        ) == ["他习惯当天回消息"]
+        assert await _pool(
+            db_session, MemoryScope.user, user_scope_id(project.id, agent.handle, "bob")
+        ) == {"他习惯当天回消息"}
 
     _portal.call(run)
 
@@ -188,6 +213,6 @@ def test_a_person_in_nothing_at_all_keeps_his_rows(
 
         await _rekey(db_session)
 
-        assert await store.recall(MemoryScope.user, stranger) == ["谁也不认识他"]
+        assert await _pool(db_session, MemoryScope.user, stranger) == {"谁也不认识他"}
 
     _portal.call(run)

@@ -202,11 +202,12 @@ def test_reads_report_an_unconfigured_deployment(api_client, auth_headers):
     assert "not configured" in response.json()["message"]
 
 
-def test_provisioning_requires_a_real_credential(api_client, auth_headers):
-    # Provisioning spends money and leaves a machine running, so it must be
-    # refused before anything else is considered — including configuration.
+def test_a_project_machine_cannot_be_opened_outside_a_room(api_client, auth_headers):
+    # A machine no room can use only occupies the team's quota: machines are
+    # opened by an agent session that needs one, and by nothing else.
     pid = _project(api_client, auth_headers)
-    assert api_client.post(f"/projects/{pid}/machines", json={}).status_code == 401
+    opened = api_client.post(f"/projects/{pid}/machines", json={}, headers=auth_headers)
+    assert opened.status_code == 405
 
 
 def test_team_compute_is_visible_to_members_but_only_admins_can_spend(
@@ -258,19 +259,10 @@ def test_team_compute_is_visible_to_members_but_only_admins_can_spend(
         api_client.get(f"/projects/{pid}/machines", headers=headers(member)).status_code
         == 422
     )
-    # Provisioning/destroying paid infrastructure is team-admin only.
-    assert (
-        api_client.post(
-            f"/projects/{pid}/machines", json={}, headers=headers(member)
-        ).status_code
-        == 403
-    )
-    assert (
-        api_client.post(
-            f"/projects/{pid}/machines", json={}, headers=headers(admin)
-        ).status_code
-        == 422
-    )
+    # Destroying paid infrastructure is team-admin only.
+    machine = f"/projects/{pid}/machines/{uuid.uuid4()}"
+    assert api_client.delete(machine, headers=headers(member)).status_code == 403
+    assert api_client.delete(machine, headers=headers(admin)).status_code == 422
     # Outsiders learn neither the project nor its private machine inventory.
     assert (
         api_client.get(

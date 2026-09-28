@@ -48,8 +48,8 @@ async function openSettings() {
   const app = createApp(ProjectSettingsView, { projectId: 'project' })
   app.use(createVuetify())
   app.mount(element)
-  // 设置读完之后才画出各组；「运行环境」那一组标题出现，就是这一页可以操作了。
-  await vi.waitFor(() => expect(element.textContent).toContain('运行环境'))
+  // 设置读完之后才画出各组；「工作电脑」那一组标题出现，就是这一页可以操作了。
+  await vi.waitFor(() => expect(element.textContent).toContain('工作电脑'))
   return { element, unmount: () => app.unmount() }
 }
 
@@ -185,7 +185,7 @@ describe('project settings', () => {
 
   it('does not offer project-wide model or role controls', async () => {
     const wrapper = await openSettings()
-    expect(wrapper.element.textContent).toContain('运行环境')
+    expect(wrapper.element.textContent).toContain('工作电脑')
     expect(wrapper.element.textContent).not.toContain('项目默认模型')
     expect(wrapper.element.textContent).not.toContain('AI 模型池')
     expect(wrapper.element.textContent).not.toContain('专家角色')

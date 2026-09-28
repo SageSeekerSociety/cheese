@@ -15,6 +15,7 @@ from app.domain.machine.services import MachineService
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.services import team_service
+from app.domain.topic.models import Topic
 from app.domain.usage.repositories import ComputeGrantRepository
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
@@ -49,11 +50,15 @@ async def test_last_cloud_slot_is_shared_and_serialized_across_projects(db_facto
 
     async def provision(project_id):
         async with db_factory() as session:
+            # A Cloud machine is always a room's.
+            room = Topic(project_id=project_id, title="Room")
+            session.add(room)
+            await session.commit()
             service = MachineService(session)
             service._client = provider
             try:
                 machine = await service.provision(
-                    project_id=project_id, requested_by="owner"
+                    project_id=project_id, topic_id=room.id, requested_by="owner"
                 )
                 await session.commit()
                 return machine

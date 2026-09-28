@@ -15,7 +15,7 @@ These tests pin the rules that replaced that:
 import asyncio
 import uuid
 
-from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.memory.models import MemoryScope, user_scope_id
 from app.domain.memory.store import DbMemoryStore
 from app.domain.project.services import ProjectService
@@ -36,16 +36,27 @@ def _as(handle: str) -> dict[str, str]:
 
 
 def _agent_fact(client, project_id: str, fact: str) -> None:
-    """The project's own 芝士 remembers ``fact`` in its pool."""
-    r = client.post(f"/projects/{project_id}/memory", json={"content": fact})
-    assert r.status_code == 200, r.text
+    """The project's own 芝士 remembers ``fact`` in its pool.
+
+    Written by key: the writing side (``cheese_remember``) is retired — a memory
+    is a file now — and these tests are about who reads and prunes what the pool
+    already holds."""
+
+    async def _seed() -> None:
+        async with client.test_factory() as s:
+            project = await ProjectService(s).get_or_404(uuid.UUID(project_id))
+            agent = await AgentInstanceService(s).for_project(project)
+            await DbMemoryStore(s).remember(*memory_pool(project.id, agent), fact)
+            await s.commit()
+
+    asyncio.run(_seed())
 
 
 def _fact_about(client, project_id: str, person: str, fact: str) -> None:
     """The project's own 芝士 notes ``fact`` about ``person``.
 
-    Written by key: the writing side (a private chat's ``cheese_remember``) has
-    tests of its own, and these are about who reads and prunes the result."""
+    Written by key for the same reason, and these are about who reads and
+    prunes the result."""
 
     async def _seed() -> None:
         async with client.test_factory() as s:

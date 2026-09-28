@@ -82,10 +82,9 @@
     }
   ],
   "extension": {
-    "why": "A platform tool that exited 0 is not an error, and a publish that landed is what resets the quiet counter — that is the whole of what the room can see.",
+    "why": "A platform tool that exited 0 is not an error — a publish that landed is what the room can see.",
     "tool": "chat_send",
     "status": 0,
-    "is_error": false,
-    "resets_silence": true
+    "is_error": false
   }
 }

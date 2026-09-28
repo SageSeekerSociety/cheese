@@ -38,6 +38,7 @@ from app.domain.agent.harness.channel import (
     SESSION_TOKEN_TTL_S,
     Placement,
     ScreenSetupError,
+    startup_refused,
 )
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.harness.pi.runtime import PI, Handle
@@ -116,7 +117,10 @@ class PiChannel:
         # copy that a rebuilt room could disagree with.
         status = await self._greet(device_id, state)
         if not status.get("alive"):
-            raise ScreenSetupError("pi 会话进程没有起来")
+            raise startup_refused(
+                await self._why(device_id, state, RuntimeError("pi exited")),
+                harness=PI,
+            )
         await self._remember(session, device_id, resource_id, state, agent)
         return Handle(
             session,
@@ -161,8 +165,10 @@ class PiChannel:
                 # about why. Whatever shape it arrives in, a ping that does not
                 # come back means the session cannot be reached.
                 if time.monotonic() >= deadline:
-                    raise ScreenSetupError(
-                        f"pi 会话进程没有起来：{await self._why(device_id, state, exc)}"
+                    raise startup_refused(
+                        await self._why(device_id, state, exc),
+                        harness=PI,
+                        timed_out=True,
                     ) from exc
             await asyncio.sleep(STARTUP_POLL_S)
 
@@ -171,7 +177,8 @@ class PiChannel:
 
         The machine is the only place a startup failure is written down, and
         nobody reads a file on somebody else's box — so the reason travels back
-        with the refusal, into the room, where the person who asked is waiting.
+        with the refusal: the room gets a sentence chosen from it, 现场 the
+        text itself.
         Falls back to the transport's own message: a device that cannot even be
         asked has told us something too.
         """

@@ -143,7 +143,7 @@ def compute_listings(
         PoolListing(
             kind="compute",
             id=COMPUTE_DEVICE,
-            label="自托管设备（我的机器）",
+            label="自有设备",
             tier=COMPUTE_TIERS[COMPUTE_DEVICE],
             price="自备",
             description="在你自己连接的机器上跑，工作树与数据留在本地；先到『我的设备』连接一台。",
@@ -153,10 +153,10 @@ def compute_listings(
         PoolListing(
             kind="compute",
             id=COMPUTE_CLOUD,
-            label="Cloud",
+            label="云端",
             tier=COMPUTE_TIERS[COMPUTE_CLOUD],
             price="按量计费",
-            description="为这个话题创建一台独占云端机器；首次启动需要等待几分钟。",
+            description="为房间创建一台云端工作电脑；首次启动需要几分钟。",
             available=cloud_ready,
             default=fallback == COMPUTE_CLOUD,
         ),
@@ -242,7 +242,7 @@ def visibility_listings() -> list[PoolListing]:
         PoolListing(
             kind="visibility",
             id=VISIBILITY_HOST,
-            label="整台机器（Hosted Machine）",
+            label="整台机器",
             tier="byo",
             price="自备",
             description=MACHINE_VISIBILITY_NOTICE,

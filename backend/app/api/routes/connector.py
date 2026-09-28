@@ -588,8 +588,19 @@ async def team_devices(
     user_id = await _require_user(resolver)
     if not await TeamRepository(db).is_team_member(team_id, user_id):
         raise ForbiddenError("你不是该团队成员")
+    from app.domain.machine.session_work import device_users
+
     devices = await service.list_devices_for_team(team_id)
-    return {"devices": [_device_view(d) for d in devices]}
+    # Its owner sees who works on each of their machines, in any project (#1900
+    # step 5). Nobody else does: a room's title is not every team member's.
+    users = await device_users(
+        db, [d.device_id for d in devices if d.owner_user_id == user_id]
+    )
+    return {
+        "devices": [
+            {**_device_view(d), "in_use": users.get(d.device_id)} for d in devices
+        ]
+    }
 
 
 @router.delete("/my/devices/{device_id}/teams/{team_id}")

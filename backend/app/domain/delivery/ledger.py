@@ -79,12 +79,12 @@ def dedup_key(event_id: uuid.UUID, handle: str) -> str:
     return f"{event_id}:{handle}"
 
 
-def event_id_for(type_: NotificationType, record_id: int) -> uuid.UUID:
+def event_id_for(type_: NotificationType, record_id: int | str) -> uuid.UUID:
     """长在一条领域记录上的那种事件的身份：哪条记录，发生了哪件事。
 
-    `record_id` 是引发它的那条记录（申请、邀请、讨论回复），`type_` 是那条记录上
-    发生的这一件事 —— 两样都要：一条邀请从发出到被取消是同一条记录上的两件事，只
-    按记录算，第二件就会撞上第一件的去重键，收件人再也收不到取消那一条。
+    `record_id` 是引发它的那条记录（申请、邀请、讨论回复，或一次会话开工的那份
+    租约），`type_` 是那条记录上发生的这一件事 —— 两样都要：一条邀请从发出到被
+    取消是同一条记录上的两件事，只按记录算，第二件就会撞上第一件的去重键，收件人再也收不到取消那一条。
 
     算出来的 id 只取决于这两样，所以同一件事重算一遍得到同一个 id：重试、补发、同
     一条事件被算两遍，收件人只被打扰一次。当场 `uuid4()` 得到的是**这一次调用**的

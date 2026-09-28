@@ -102,7 +102,7 @@ async def test_cloud_resolution_rejects_another_topics_endpoint(monkeypatch):
         read_topic_cloud=AsyncMock(return_value=lease),
     )
 
-    with pytest.raises(ScreenSetupError, match="拒绝借用"):
+    with pytest.raises(ScreenSetupError, match="不借用另一个房间的机器"):
         await provider._resolve_device_agent(project_id, topic_id)
 
 
@@ -182,7 +182,7 @@ async def test_cloud_resolution_never_accepts_a_hosted_endpoint(monkeypatch):
         ),
     )
 
-    with pytest.raises(ScreenSetupError, match="有效的云端连接器"):
+    with pytest.raises(ScreenSetupError, match="没有有效的连接"):
         await provider._resolve_device_agent(project_id, topic_id)
 
 

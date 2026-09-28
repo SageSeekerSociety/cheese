@@ -62,25 +62,22 @@ def test_market_surfaces_the_whole_machine_visibility_choice_with_its_warning(cl
     assert "其他房间" in vis["host"]["description"]
 
 
-def test_compute_profiles_default_and_reject_undeployed(client):
+def test_project_default_names_a_machine_and_rejects_one_that_is_not_there(client):
     pid = _project(client)
     from app.core.config import settings
     from app.domain.agent.market import compute_default_name
 
-    body = client.get(f"/projects/{pid}/compute-profiles").json()["data"]
+    body = client.get(f"/projects/{pid}/compute-configs").json()["data"]
     # Nothing selected anywhere → the deployment's own fallback. With MicroCloud
     # unconfigured in this test that is the self-hosted pool; what matters is
     # that it names a machine this deployment has, never a retired one (#358).
-    assert body["current"] == compute_default_name(settings) == "device"
-    # With no device online and MicroCloud unconfigured in this test, nothing is
-    # actually deployed, so there is nothing to offer.
-    assert [p["id"] for p in body["profiles"]] == []
+    assert body["default"]["profile"] == compute_default_name(settings) == "device"
 
-    # Selecting a pool that isn't deployed is rejected — no silent fallback. That
-    # is the property this test exists for; the retired pool is a natural sample.
-    r = client.put(f"/projects/{pid}/compute-profile", json={"profile": "local-docker"})
-    assert r.status_code == 422
-
-    # An id that never existed is rejected the same way.
-    r = client.put(f"/projects/{pid}/compute-profile", json={"profile": "gpu"})
-    assert r.status_code == 422
+    # A default that is not a machine this deployment runs is rejected — no
+    # silent fallback. The retired pool and an id that never existed alike.
+    for profile in ("local-docker", "gpu"):
+        r = client.put(
+            f"/projects/{pid}/compute-configs",
+            json={"default": {"name": profile, "profile": profile}},
+        )
+        assert r.status_code == 400, r.text
