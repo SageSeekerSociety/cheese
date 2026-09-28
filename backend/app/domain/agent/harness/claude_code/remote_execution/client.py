@@ -312,8 +312,12 @@ def prepare(
     settings = json.loads(json.dumps(base_settings or {}))
     # The project's own tool hooks, which the build fires and the shell prefix
     # runs on the executor (never here: they are not in `central_hooks`).
-    for event, groups in ((context_tree or {}).get("hooks") or {}).items():
+    # Recorded beside the target, so a machine that attaches later replaces
+    # exactly these (`executor_transport.register_project_hooks`).
+    project_hooks = (context_tree or {}).get("hooks") or {}
+    for event, groups in project_hooks.items():
         settings.setdefault("hooks", {}).setdefault(event, []).extend(groups)
+    (directory / "project-hooks.json").write_text(json.dumps(project_hooks))
     allow_native_tools(settings, platform_tools)
     hooks = settings.setdefault("hooks", {})
     helper = [sys.executable, str(Path(__file__).resolve())]

@@ -81,6 +81,10 @@ LAST_WORDS = 1000
 # up opens with ``ended(launch)``, and a backend waiting on one launch reads
 # only what that launch left.
 LAUNCH = "CHEESE_RUNNER_LAUNCH"
+# Where the session's own helpers reach this runner. The same name as
+# `executor_transport.SESSION_SOCKET`, which reads it: that file ships to the
+# session host on its own and cannot import this one.
+SESSION_SOCKET = "CHEESE_SESSION_SOCKET"
 
 
 def ended(launch: str) -> str:
@@ -414,7 +418,9 @@ class Runner(runner.Runner[Journal]):
             "sh",
             "-c",
             f"exec {command} {flag}",
-            env=env,
+            # The session's own helpers reach this runner here, to change the
+            # session while it runs (`executor_transport.register_project_hooks`).
+            env={**env, SESSION_SOCKET: runner.socket_path(self.state)},
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=self.errors,

@@ -613,3 +613,68 @@ def test_an_earlier_start_does_not_speak_for_this_one(tmp_path):
 
     assert "today's failure" in log
     assert "yesterday's failure" not in log
+
+
+# --- a machine that attaches later brings its project's hooks ---------------
+
+
+def test_the_hooks_a_helper_hands_the_session_hold_for_its_next_tool_call(
+    screen, machine, contract
+):
+    """A session started before its machine had no project hooks to register.
+    When the machine attaches, the helper that attached it (the shell prefix,
+    inside a tool call) hands the session the project's hooks through this
+    runner, and the next tool call fires them."""
+    transport = Path(__file__).resolve().parents[2] / (
+        "app/domain/agent/executor_transport.py"
+    )
+    log = machine.root / "project-hook.jsonl"
+    hooks = {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {"type": "command", "command": f"cat >> {log}; echo >> {log}"}
+                ],
+            }
+        ]
+    }
+    session = machine.root / "session"
+    session.mkdir()
+    attach = shlex.join(
+        [
+            sys.executable,
+            "-c",
+            "import json, runpy, sys; "
+            f"module = runpy.run_path({str(transport)!r}); "
+            "print('registered', module['register_project_hooks']("
+            f"{{'central_config': {str(machine.config)!r}, "
+            f"'target_file': {str(session / 'execution.json')!r}}}, "
+            f"json.loads({json.dumps(hooks)!r})))",
+        ]
+    )
+
+    def bash(command):
+        mark = screen.records()[-1]["sequence"] if screen.records() else 0
+        screen.send(
+            contract.do("Bash", command=command, description="step"),
+            work_id=str(uuid.uuid4()),
+        )
+        screen.wait(_is("result"), after=mark)
+        return [
+            block
+            for entry in screen.records()
+            if entry["sequence"] > mark and _tool_result(entry["record"])
+            for block in _blocks(entry["record"])
+            if block.get("type") == "tool_result"
+        ]
+
+    (attached,) = bash(attach)
+    assert "registered True" in json.dumps(attached), attached
+    assert not log.exists(), "no hooks were registered when that call started"
+
+    bash("echo AFTER_THE_MACHINE")
+    fired = [json.loads(line) for line in log.read_text().splitlines() if line]
+    assert [entry["tool_input"]["command"] for entry in fired] == [
+        "echo AFTER_THE_MACHINE"
+    ]
