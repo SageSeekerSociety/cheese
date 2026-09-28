@@ -692,3 +692,16 @@ async function approveParticipant(
   });
   if (!res.ok()) throw new Error(`PATCH participant → ${res.status()} ${await res.text()}`);
 }
+
+/**
+ * 从 multipart 正文里读一个普通字段的值。
+ *
+ * 光 `toContain('name="spaceId"')` 说明不了字段值对不对，而「值对不对」正是这条用例
+ * 要量的东西（空间 id、上限 20 都是浏览器自己填进表单的）。够用就行：只读普通字段，
+ * 值里不含 CR —— 这份表单里没有会破例的那种值。
+ */
+function formField(body: string, name: string): string | null {
+  const m = body.match(new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)`));
+  return m ? m[1] : null;
+}
+
