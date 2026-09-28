@@ -5,7 +5,7 @@ import type { ComputeChoice, SessionWorkLease, TopicComputeProfile } from '../cx
 
 import { computed, ref, watch } from 'vue'
 
-import { setSessionWorkChoice } from '../api'
+import { ApiError, setSessionWorkChoice } from '../api'
 import { t } from '../i18n'
 import { choiceKey, compactChoices } from '../lib/computeConfig'
 
@@ -24,6 +24,9 @@ const target = ref('')
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
+// The old machine could not be reached to push: the one case a person may
+// change anyway, having been told what stays behind.
+const unreachable = ref(false)
 const choices = computed(() => {
   const standard: ComputeChoice = {
     name: t('work.sessionMachine.cloud'),
@@ -59,20 +62,27 @@ const picked = computed(
 )
 const changed = computed(() => picked.value && choiceKey(current.value) !== choiceKey(picked.value))
 
-async function confirm() {
+async function confirm(abandonUnpushed = false) {
   const choice = picked.value
   if (!choice || !changed.value) return
   busy.value = true
   error.value = ''
   notice.value = ''
+  unreachable.value = false
   try {
-    const result = await setSessionWorkChoice(props.topicId, props.session.id, choice)
+    const result = await setSessionWorkChoice(
+      props.topicId,
+      props.session.id,
+      choice,
+      abandonUnpushed ? { abandonUnpushed } : {}
+    )
     current.value = result.session.choice ?? choice
     target.value = choiceKey(current.value)
     notice.value = t('work.sessionMachine.saved')
     emit('changed')
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('global.updateFailed')
+    unreachable.value = cause instanceof ApiError && cause.code === 'WorkComputerUnreachable'
   } finally {
     busy.value = false
   }
@@ -84,6 +94,10 @@ watch(open, (value) => {
   target.value = choiceKey(current.value)
   notice.value = ''
   error.value = ''
+  unreachable.value = false
+})
+watch(target, () => {
+  unreachable.value = false
 })
 </script>
 
@@ -102,15 +116,18 @@ watch(open, (value) => {
           :label="t('work.sessionMachine.machine')"
           :disabled="busy"
         />
-        <p role="note" class="mb-2">{{ t('work.sessionMachine.switchWarning') }}</p>
-        <p>{{ t('work.sessionMachine.retained') }}</p>
+        <p role="note">{{ t('work.sessionMachine.pushFirst', { name }) }}</p>
         <p v-if="notice" role="status">{{ notice }}</p>
         <p v-if="error" role="alert" class="sw-error">{{ error }}</p>
+        <p v-if="unreachable" class="sw-error">{{ t('work.sessionMachine.abandonWarning') }}</p>
       </v-card-text>
       <v-card-actions>
-        <v-btn variant="text" :disabled="busy" @click="open = false">{{ t('global.close') }}</v-btn>
+        <v-btn variant="text" :disabled="busy" @click="open = false">{{ t('global.cancel') }}</v-btn>
         <v-spacer />
-        <v-btn color="primary" variant="tonal" :disabled="busy || !changed" :loading="busy" @click="confirm">{{
+        <v-btn v-if="unreachable" variant="text" :disabled="busy" @click="confirm(true)">{{
+          t('work.sessionMachine.abandon')
+        }}</v-btn>
+        <v-btn color="primary" variant="tonal" :disabled="busy || !changed" :loading="busy" @click="confirm()">{{
           t('work.sessionMachine.confirm')
         }}</v-btn>
       </v-card-actions>

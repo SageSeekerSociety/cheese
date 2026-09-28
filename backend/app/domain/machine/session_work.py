@@ -21,7 +21,7 @@ from app.domain.agent.compute_configs import (
     room_choice,
     validate_choice,
 )
-from app.domain.agent.device_hub import device_hub
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
     _preview_ws_url,
     device_api_base,
@@ -184,7 +184,61 @@ async def room_machine_visibility(
     return next(iter(seen), None)
 
 
-async def request_choice(db, *, topic_id, session_id, actor, choice):
+class WorkComputerUnreachable(ConflictError):
+    """The machine a session is leaving could not run the push before a switch.
+
+    The one refusal a person may override (``abandon_unpushed``): the work on
+    that machine stays there, and a switch made anyway leaves it behind."""
+
+
+# How long a switch waits for the machine it leaves to push. The executor gives
+# a command 120s and then reports it as still running (``runtime.bash``).
+PUSH_WAIT_S = 150.0
+PUSH_UNREACHABLE = "原来那台工作电脑连不上，无法推送改动，没有更换"
+
+
+async def push_before_switch(lease: dict) -> None:
+    """Push the session's work to its branches on the machine it is leaving.
+
+    The same command a turn's Stop checkpoint runs there (``cheese sync
+    --all``): every task checkout's commits go to its branch, and what is not
+    committed is backed up as a snapshot ``cheese recover`` restores. Raises
+    ``WorkComputerUnreachable`` when the command could not run at all, and a
+    ``ConflictError`` with the machine's own words when it ran and failed.
+    """
+    if not device_hub.is_online(lease["device_id"]):
+        raise WorkComputerUnreachable(PUSH_UNREACHABLE)
+    try:
+        result = await execution.call(
+            lease,
+            "control",
+            {"subtype": "checkpoint", "request_id": f"switch-{uuid.uuid4()}"},
+            hub=device_hub,
+            timeout=PUSH_WAIT_S,
+        )
+    except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+        raise WorkComputerUnreachable(f"{PUSH_UNREACHABLE}：{exc}") from exc
+    if "error" in result:
+        raise ConflictError(f"推送失败，没有更换：{result['error']}")
+    output = result["value"]
+    if output.get("backgroundTaskId"):
+        raise ConflictError("推送两分钟内没有完成，没有更换；稍后重试")
+    said = output.get("stdout") or ""
+    if said.startswith("Exit code "):
+        detail = said.partition("\n")[2].strip()[-600:] or said
+        raise ConflictError(f"推送失败，没有更换：{detail}")
+
+
+async def request_choice(
+    db, *, topic_id, session_id, actor, choice, abandon_unpushed=False
+):
+    """Point one session at another work computer, after its work is pushed.
+
+    The push runs on the machine the session leaves, with no transaction open.
+    Only a person may switch without it, and only when that machine could not
+    be reached (``abandon_unpushed``). A Cloud machine left after a push is
+    deleted, so it stops counting against the team's quota.
+    """
     topic = await TopicService(db).lock_for_execution(topic_id)
     row = await AgentSessionService(db).by_id(session_id, lock=True)
     if row is None or row.topic_id != topic_id:
@@ -216,19 +270,45 @@ async def request_choice(db, *, topic_id, session_id, actor, choice):
         return presentation(row)
     if old and old.get("status", "ready") != "ready":
         raise ConflictError("机器分配仍在进行，请稍后再换机")
+    pushed = False
+    if old:
+        generation = request.get("generation")
+        await db.commit()
+        try:
+            await push_before_switch(old)
+            pushed = True
+        except WorkComputerUnreachable:
+            if not (abandon_unpushed and actor.via == "token"):
+                raise
+        await TopicService(db).lock_for_execution(topic_id)
+        row = await AgentSessionService(db).by_id(session_id, lock=True)
+        if row is None:
+            raise NotFoundError("Session not found")
+        request = row.execution_request or {}
+        old = row.work_lease
+        if request.get("generation") != generation or not old:
+            raise ConflictError("工作电脑刚被更换过，刷新后重试")
+        if old.get("status", "ready") != "ready":
+            raise ConflictError("机器分配仍在进行，请稍后再换机")
+    left = None
     if (request.get("choice") or {}).get("profile") == "cloud":
-        await MachineService(db).supersede_session_machine(session_id, actor=actor)
+        left = await MachineService(db).supersede_session_machine(
+            session_id, actor=actor
+        )
+    # Whatever was on a Cloud machine is on its branches now (or it never held
+    # a lease), so the machine goes. Anything else stays for the room's cleanup.
+    release = left if left is not None and (pushed or not old) else None
+    kept = [] if old is None or release is not None else [old]
     row.execution_request = {
         "generation": str(uuid.uuid4()),
         "choice": choice.model_dump(),
         "authorized_by": asdict(actor),
-        "retained_leases": [
-            *request.get("retained_leases", []),
-            *([old] if old else []),
-        ],
+        "retained_leases": [*request.get("retained_leases", []), *kept],
     }
     row.work_lease = None
     await db.commit()
+    if release is not None:
+        await MachineService(db).release_left_machine(release.id)
     return presentation(row)
 
 

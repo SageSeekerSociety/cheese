@@ -915,10 +915,21 @@ export function getTopicComputeProfile(topicId: string): Promise<TopicComputePro
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
 }
 
-export function setSessionWorkChoice(topicId: string, sessionId: string, choice: import('./cx_types').ComputeChoice) {
+// The platform pushes the session's work on its old machine first and refuses
+// the change when that fails. `abandonUnpushed` switches anyway, and only when
+// the old machine could not be reached (`WorkComputerUnreachable`).
+export function setSessionWorkChoice(
+  topicId: string,
+  sessionId: string,
+  choice: import('./cx_types').ComputeChoice,
+  options: { abandonUnpushed?: boolean } = {}
+) {
   return request<{ session: import('./cx_types').SessionWorkLease }>(
     `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/work-choice`,
-    { method: 'PUT', body: JSON.stringify({ choice }) }
+    {
+      method: 'PUT',
+      body: JSON.stringify(options.abandonUnpushed ? { choice, abandon_unpushed: true } : { choice }),
+    }
   )
 }
 

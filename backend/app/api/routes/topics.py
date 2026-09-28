@@ -1714,6 +1714,9 @@ async def request_session_work_choice(
                 session_id=session_id,
                 actor=actor,
                 choice=choice,
+                # Honoured for a person, and only when the old machine could
+                # not be reached to push (`request_choice`).
+                abandon_unpushed=body.get("abandon_unpushed") is True,
             )
         }
     )

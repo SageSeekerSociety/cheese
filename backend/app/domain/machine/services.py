@@ -533,8 +533,9 @@ class MachineService:
 
     async def supersede_session_machine(
         self, session_id: uuid.UUID, *, actor: Actor
-    ) -> None:
-        """Retain the replaced VM and its quota while releasing the session.
+    ) -> ProjectMachine | None:
+        """Detach the session from its VM, which keeps its files and its quota
+        until ``release_left_machine`` or the room's cleanup deletes it.
 
         Pending allocation stays attached until its provider outcome is known.
         """
@@ -550,12 +551,32 @@ class MachineService:
         await self._repo.lock_topic(topic.id)
         machine = await self._repo.get_active_for_session(session_id)
         if machine is None:
-            return
+            return None
         await self.require_use_authority(topic.project_id, actor)
         if machine.warm_claim_pending or machine.machine_id is None:
             raise ConflictError("cloud allocation is still pending")
         machine.superseded_at = datetime.now(UTC)
         await self._session.flush()
+        return machine
+
+    async def release_left_machine(self, machine_id: uuid.UUID) -> None:
+        """Delete a VM its session left once nothing of the session's work is
+        only there, and stop counting it against the team's quota.
+
+        The provider delete runs with no transaction open. A provider that
+        refuses leaves the VM superseded, where the room's cleanup finds it.
+        """
+        machine = await self._repo.get(machine_id)
+        if machine is None or machine.released_at is not None:
+            return
+        await self._session.commit()
+        try:
+            machine = await self.destroy(machine)
+        except MicroCloudError:
+            logger.warning("deleting left machine %s failed", machine.hostname)
+            return
+        await self._repo.mark_released(machine, when=datetime.now(UTC))
+        await self._session.commit()
 
     async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:
         return await self._repo.list_active_for_topic(topic_id)

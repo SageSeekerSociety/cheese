@@ -593,7 +593,7 @@ def test_machine_reports_its_session_choice():
         }
     )
     out = run("cheese_machine", {"profile": "device", "device_id": "workstation"}, host)
-    assert "Workstation" in out and "文件不会自动迁移" in out and "点头" not in out
+    assert "Workstation" in out and "推送到分支" in out and "点头" not in out
 
 
 def test_a_page_that_could_not_be_read_says_how_each_rung_failed():
