@@ -354,7 +354,7 @@
     "leave": "Leave project",
     "transfer": "Transfer project",
     "invite": "Invite external member",
-    "teamHint": "Team members join and leave in the team",
+    "teamHint": "Team members are in this project automatically; they can leave the project themselves (the project, not the team)",
     "search": "Search by name or handle",
     "me": "Me",
     "sectionOwner": "Owner",
