@@ -1239,6 +1239,13 @@ async def create_task(
             attachment_ids=payload.attachment_ids,
         )
 
+    # 写到这里就完了 —— 题目、话题关系行、提交表单、材料都已落库，下面全是读。
+    # 先提交再构造响应：``get_db`` 的提交在 ``yield`` 的退出码里，而那段跑在响应
+    # 发出**之后**（FastAPI 0.137 的 ``request_stack`` 在 ``await response(...)``
+    # 之后才关），不在这里提交，客户端拿到响应时这道题还没落地，紧接着来读它的
+    # 请求就找不到（同 ``spaces.create_space``，合并队列 run 36296605673 实测）。
+    await db.commit()
+
     task_model = _task_to_api_model(task)
     task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[
         0
@@ -1527,6 +1534,12 @@ async def confirm_publish_task_from_pdf(
                 space_id = int(task_payload["space"])
             except (TypeError, ValueError):
                 pass
+
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told the drafts are
+    # published could open the review queue on its next request and not find them.
+    # Same reason as the commit in ``create_task``.
+    await db.commit()
 
     task_models = [_task_to_api_model(task) for task in created_tasks]
     if space_id is not None:
@@ -2286,6 +2299,11 @@ async def patch_task(
 
     task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told a task is approved
+    # could open the board on its next request and not find the task there yet.
+    # Same reason as the commit in ``create_task``.
+    await db.commit()
 
     # Fetch submissionSchema for response
     schema_repo = TaskSubmissionSchemaRepository(session=db)

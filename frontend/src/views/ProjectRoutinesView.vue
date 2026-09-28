@@ -20,6 +20,7 @@ import {
 } from '../api'
 
 import { t } from '@/i18n'
+import { focusRow } from '@/lib/focusRow'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 const props = defineProps<{ projectId: string }>()
@@ -81,7 +82,11 @@ async function load() {
     routines.value = listed.data
     rooms.value = topics.data.filter((tp) => tp.status !== 'archived')
     const focus = typeof route.query.routine === 'string' ? route.query.routine : null
-    if (focus && routines.value.some((r) => r.id === focus)) void toggle(focus, true)
+    if (focus && routines.value.some((r) => r.id === focus)) {
+      loading.value = false
+      void toggle(focus, true)
+      void focusRow(`[data-routine="${CSS.escape(focus)}"]`)
+    }
   } catch (e) {
     if (props.projectId !== projectId) return
     loadError.value = e instanceof Error ? e.message : '未能读取定时与触发规则'
@@ -469,7 +474,7 @@ watch(
             label="范围"
           />
           <p class="t-meta c-faint">
-            AI 队友需要执行环境在线才能开工：用云端机器的项目随时可以；用你自己设备的项目，设备离线时这次执行会排队，
+            AI 队友的工作电脑在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，
             两小时内没开始会记为失败并通知你
           </p>
           <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
@@ -510,6 +515,10 @@ watch(
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
+}
+.routine-row.row--focus {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
 }
 .routine-row--draft {
   border-color: rgb(var(--v-theme-warning));

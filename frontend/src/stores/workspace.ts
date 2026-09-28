@@ -76,10 +76,30 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   let projectEpoch = 0
   let topicRevision = 0
   const pendingReads = new Map<string, Promise<unknown>>()
-  function readOnce<T>(key: string, read: () => Promise<T>): Promise<T> {
+  const queuedReads = new Map<string, Promise<unknown>>()
+  // One read in flight per key, and at most one queued behind it.
+  //
+  // A caller asking while a read is in flight cannot take that read's answer:
+  // the request left before whatever the caller is reacting to (a room renamed
+  // by the platform, a new unread message) and can answer with things as they
+  // were. So it waits for that read and reads once more; everyone who asks in
+  // the meantime shares that second read.
+  function readLatest<T>(key: string, read: () => Promise<T>): Promise<T> {
     const scopedKey = `${projectEpoch}:${key}`
     const pending = pendingReads.get(scopedKey)
-    if (pending) return pending as Promise<T>
+    if (pending) {
+      let queued = queuedReads.get(scopedKey)
+      if (!queued) {
+        queued = pending
+          .catch(() => undefined)
+          .then(() => {
+            queuedReads.delete(scopedKey)
+            return readLatest(key, read)
+          })
+        queuedReads.set(scopedKey, queued)
+      }
+      return queued as Promise<T>
+    }
     const request = read().finally(() => pendingReads.delete(scopedKey))
     pendingReads.set(scopedKey, request)
     return request
@@ -208,7 +228,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const epoch = projectEpoch
     if (!pid) return
     try {
-      const payload = await readOnce(`members:${pid}`, () => listProjectMembers(pid))
+      const payload = await readLatest(`members:${pid}`, () => listProjectMembers(pid))
       if (epoch === projectEpoch && projectId.value === pid) members.value = payload.data
     } catch {
       // Best-effort; the roster-driven menus just stay empty.
@@ -223,7 +243,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const epoch = projectEpoch
     if (!pid) return
     try {
-      const payload = await readOnce(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
+      const payload = await readLatest(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
       if (epoch === projectEpoch && projectId.value === pid && revision === topicRevision) topics.value = payload.data
     } catch {
       // Best-effort background refresh; ignore.
@@ -260,7 +280,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     void refreshMembers()
     if (projects.value.length === 0) void refreshProjects()
     try {
-      const payload = await readOnce(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
+      const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
       if (epoch !== projectEpoch || projectId.value !== id) return
       if (revision === topicRevision) topics.value = payload.data
     } catch (e) {
@@ -281,7 +301,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (!pid || !me) return
     void refreshPrivateUnread(pid, me)
     try {
-      const map = await readOnce(`unread:${pid}:${me}`, () => getTopicUnread(pid, me))
+      const map = await readLatest(`unread:${pid}:${me}`, () => getTopicUnread(pid, me))
       if (epoch !== projectEpoch || projectId.value !== pid) return
       // The open topic is being read right now — its badge never shows.
       if (activeTopicId.value) delete map[activeTopicId.value]
@@ -306,7 +326,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   async function refreshPrivateUnread(pid: string, me: string) {
     const epoch = projectEpoch
     try {
-      const map = await readOnce(`private-unread:${pid}:${me}`, () => getPrivateUnread(pid, me))
+      const map = await readLatest(`private-unread:${pid}:${me}`, () => getPrivateUnread(pid, me))
       if (epoch !== projectEpoch || projectId.value !== pid) return
       // The DM being read right now never shows a badge on itself.
       if (activeDmPeer.value) delete map[activeDmPeer.value]

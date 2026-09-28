@@ -42,6 +42,7 @@ import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 import DocComments from './doc/DocComments.vue'
 import DocSlashMenu from './doc/DocSlashMenu.vue'
+import OverviewAuto from './doc/OverviewAuto.vue'
 
 // The living doc is the core interface (spec §2.2): an AI-maintained markdown
 // document the user can also edit ("改文档即指令"). Stored as markdown, so the
@@ -69,6 +70,8 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
+  // 总览自动区里的一条决策 / 里程碑：去向不在话题里，交给拿着路由的那一层。
+  (e: 'open-resource', resource: 'decision' | 'milestone'): void
 }>()
 
 // B1 Phase 2 (cross-view link, panel-level): when a chat action that changed the
@@ -1528,7 +1531,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
               <!-- 正文还在路上时画它的节奏，别把编辑器摆出来：一个空的编辑器会亮出
-                   「芝士会在这里维护文档」那句占位话，而那句话的意思是「这篇文档是
+                   「AI 队友会在这里维护文档」那句占位话，而那句话的意思是「这篇文档是
                    空的」——文档有内容、只是还没到，说的就是假话。编辑器本身不卸载
                    （v-show），卸了它每换一个话题都要重建一次。 -->
               <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
@@ -1628,6 +1631,16 @@ onBeforeUnmount(() => {
                 </span>
               </DragHandle>
             </div>
+
+            <!-- 总览房间的其余四块（#1889 ②~⑤）：正文下面、评论区上面。只有根话题
+                 有——别的房间的文档就是它自己那一份，没有人从那里看项目全局。 -->
+            <OverviewAuto
+              v-if="topic?.kind === 'root'"
+              :topic="topic"
+              :activity-tick="props.activityTick"
+              @open-topic="emit('open-topic', $event)"
+              @open-resource="emit('open-resource', $event)"
+            />
 
             <!-- 飞书 docs 风常驻评论区：所有评论都在文档底部，锚在某一段的带引用 chip。
                  写评论的输入框也在里面（规则 5：批注归批注，聊天归聊天）；拉取仍在本组件，
@@ -1762,7 +1775,7 @@ onBeforeUnmount(() => {
    its left edge instead of cutting through a misaligned overlay. PM renders
    an empty doc as <p><br class="ProseMirror-trailingBreak"></p>. */
 .doc-editor :deep(.doc-prose > p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child))::before {
-  content: '芝士会在这里维护文档，你也可以直接编辑';
+  content: 'AI 队友会在这里维护文档，你也可以直接编辑';
   color: rgba(var(--v-theme-on-surface), 0.38);
   pointer-events: none;
   float: left;

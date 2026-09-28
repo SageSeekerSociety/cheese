@@ -91,6 +91,11 @@ class NotificationType(str, Enum):
     #: 40 字的约束，前端也要按「一个问题」渲染，而不是按一条平台提示。
     CHEESE_QUESTION = "CHEESE_QUESTION"
 
+    #: 一个 agent 会话开始在某人登记的自有设备上干活，告诉设备的主人：哪个项目、
+    #: 哪个房间、哪个 agent，能不能访问整台机器（#1900 第 5 步）。只是告知，不等
+    #: 主人批准；一次会话开工一条，不是每轮一条（`machine.session_work`）。
+    DEVICE_IN_USE = "DEVICE_IN_USE"
+
     #: 平台报告自己的那四种（原 `AlertKind`）。值保持小写原样：`cheese_notify
     #: --kind` 和前端的 `NOTIF_KIND` 标签表按它写，存量行里也是这几个字。
     CHANGE_ALERT = "change_alert"  # 变更提醒

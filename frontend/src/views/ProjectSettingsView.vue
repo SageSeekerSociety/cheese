@@ -30,6 +30,7 @@ import {
 import ProjectComputeSettings from '../components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '../components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings.vue'
+import ProjectMcpSettings from '../components/ProjectMcpSettings.vue'
 import ProjectTopicNamingSettings from '../components/ProjectTopicNamingSettings.vue'
 import AgentTeamSettings from '../components/settings/AgentTeamSettings.vue'
 import CreditsPanel from '../components/settings/CreditsPanel.vue'
@@ -47,7 +48,7 @@ import { SudoCancelledError, withSudo } from '../utils/sudo'
 import { t } from '@/i18n'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
-// Project defaults and favorites never change an already running room.
+// The project default never moves an agent that has already started working.
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const route = useRoute()
@@ -414,11 +415,11 @@ watch(
         </div>
       </section>
 
-      <h2 class="t-title settings-group">运行环境</h2>
+      <h2 class="t-title settings-group">工作电脑</h2>
       <section class="page-section">
         <div class="page-section-head">
           <v-icon size="14" class="c-faint">mdi-server-outline</v-icon>
-          <span class="page-section-title">默认与常用算力</span>
+          <span class="page-section-title">默认工作电脑</span>
         </div>
         <div class="page-section-body">
           <ProjectComputeSettings :project-id="projectId" />
@@ -869,6 +870,8 @@ watch(
           </p>
         </div>
       </section>
+
+      <ProjectMcpSettings :project-id="projectId" />
       <div v-if="!revealed" class="reveal-gate__wait">
         <v-progress-circular indeterminate color="primary" />
       </div>
@@ -882,7 +885,7 @@ watch(
   background: var(--surface);
 }
 /* 区块节奏。区块不是卡片：区块标题是 eyebrow，划分靠留白加一条顶部发丝线。
-   标题行、标题、正文三条用 :deep()，因为队友、运行环境、额度那几块是子组件自己画
+   标题行、标题、正文三条用 :deep()，因为队友、工作电脑、额度那几块是子组件自己画
    的区块头，只写 scoped 的话样式到不了它们里面，标题就按浏览器默认的 16px 画，
    比上面那一级组标题还大。 */
 .page-section {

@@ -27,13 +27,21 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 
 _SUBJECT = "chore(test): file an accept card"
 
 
 def _room(client) -> str:
     pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    # alice is the reviewer these cards are routed to, and the person who
+    # rejects one below. A card decision requires room membership since
+    # 2026-09-26 (`_card_actor`), so she is a participant of the project.
+    join_project_team(client, pid, "alice")
     return client.post("/topics", json={"project_id": pid, "title": "预算复核"}).json()[
         "data"
     ]["id"]

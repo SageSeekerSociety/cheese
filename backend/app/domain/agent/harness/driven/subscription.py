@@ -100,10 +100,14 @@ class Subscription[B: Backlog]:
         *,
         receipts: ReceiptConsumer | None = None,
         pulse: Pulse | None = None,
+        memory: Callable[[], Awaitable[None]] | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
         self.receipts, self.pulse = receipts, pulse
+        # 一轮结束时问一次记忆（见 `MemoryConsumer`）：agent 该写的记忆按规矩写
+        # 在回复之前，所以一轮读完就是它写完的时刻。
+        self.memory = memory
         self.lock = asyncio.Lock()
         self.forgotten_at = 0.0
         self.disk = ThreadPoolExecutor(
@@ -207,6 +211,8 @@ class Subscription[B: Backlog]:
                             work_id,
                             False,
                         )
+                        if self.memory is not None:
+                            await self.memory()
                 if not reader.unfinished():
                     await self.on_disk(reader.landed, through=entry.key)
             if time.monotonic() - self.forgotten_at >= RETENTION_EVERY_S:

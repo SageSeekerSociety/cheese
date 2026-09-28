@@ -18,15 +18,12 @@ Run inside the backend container on the box (it mints its own token and uses
 the running server's API, same as `device_online_probe.py`):
 
     docker cp backend/scripts/machine_chain_check.py cheese-backend-1:/tmp/
-    docker exec -e SSH_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" \\
-      cheese-backend-1 python /tmp/machine_chain_check.py
+    docker exec cheese-backend-1 python /tmp/machine_chain_check.py
+
+It reports the project's existing machines; a room's agent opens its own.
 
 Env: PROJECT_ID (explicit, wins) or PROJECT_NAME (default "cheese 自建"),
-USER_HANDLE (default "andy"), BASE (default http://localhost:8081),
-SSH_PUBKEY (authorises the box to probe the machine; without it the machine is
-still provisioned but cannot be inspected over ssh),
-PROVISION (default "1"; set to "0" to only report what already exists),
-SETTLE_TIMEOUT_S (default 900).
+USER_HANDLE (default "andy"), BASE (default http://localhost:8081).
 """
 
 import asyncio
@@ -40,27 +37,15 @@ import uuid
 BASE = os.environ.get("BASE", "http://localhost:8081").rstrip("/")
 USER_HANDLE = os.environ.get("USER_HANDLE", "andy")
 PROJECT_NAME = os.environ.get("PROJECT_NAME", "cheese 自建")
-SSH_PUBKEY = os.environ.get("SSH_PUBKEY", "").strip()
-PROVISION = os.environ.get("PROVISION", "1") != "0"
-FORCE = os.environ.get("FORCE_PROVISION", "0") == "1"
-SETTLE_TIMEOUT_S = int(os.environ.get("SETTLE_TIMEOUT_S", "900"))
-
-# The machine lifecycle and the AI-setup lifecycle settle independently: a
-# machine reports `running` while its Claude Code is still being wired, so
-# waiting on `status` alone declares success before it can do its one job.
-TERMINAL = {"running", "error", "deleted", "unknown"}
-AI_TERMINAL = {"disabled", "ready", "error", None, ""}
 
 
 def log(message: str) -> None:
     print(f"{time.strftime('%H:%M:%S')} {message}", flush=True)
 
 
-def call(method: str, path: str, token: str, body: dict | None = None) -> dict:
-    data = json.dumps(body).encode() if body is not None else None
+def call(method: str, path: str, token: str) -> dict:
     req = urllib.request.Request(
         f"{BASE}{path}",
-        data=data,
         method=method,
         headers={
             "Authorization": f"Bearer {token}",
@@ -116,10 +101,6 @@ def describe(machine: dict) -> str:
     )
 
 
-def settled(machine: dict) -> bool:
-    return machine.get("status") in TERMINAL and machine.get("ai_status") in AI_TERMINAL
-
-
 async def main() -> int:
     token, project_id = await resolve(USER_HANDLE, PROJECT_NAME)
     log(f"project {project_id}")
@@ -134,42 +115,6 @@ async def main() -> int:
         log(f"  {describe(m)}")
 
     alive = [m for m in machines if m.get("status") == "running"]
-    if FORCE:
-        # A row reporting `running` is not evidence the machine exists: a settled
-        # machine is never re-checked against MicroCloud, so a machine deleted
-        # upstream keeps its last-known state here forever. Forcing is how you
-        # get a machine that is real when the books say you already have one.
-        log("FORCE_PROVISION — provisioning regardless of what the rows claim")
-        alive = []
-    if not alive and PROVISION:
-        body: dict[str, object] = {}
-        if SSH_PUBKEY:
-            body["ssh_pubkey"] = SSH_PUBKEY
-        else:
-            log("WARNING: no SSH_PUBKEY — the machine cannot be probed afterwards")
-        log("provisioning a machine ...")
-        created = call("POST", f"/projects/{project_id}/machines", token, body)
-        row = created.get("data", {})
-        log(f"  accepted: {describe(row)}")
-
-        deadline = time.monotonic() + SETTLE_TIMEOUT_S
-        last = None
-        while time.monotonic() < deadline:
-            listed = call("GET", f"/projects/{project_id}/machines", token)
-            machines = listed.get("data", {}).get("data", [])
-            row = next((m for m in machines if m.get("id") == row.get("id")), row)
-            seen = (row.get("status"), row.get("ai_status"))
-            if seen != last:
-                log(f"  {describe(row)}")
-                last = seen
-            if settled(row):
-                break
-            time.sleep(10)
-        else:
-            log(f"TIMEOUT: still {last} after {SETTLE_TIMEOUT_S}s")
-            return 1
-        alive = [row] if row.get("status") == "running" else []
-
     if not alive:
         log("VERDICT: no running machine — the chain cannot be exercised")
         return 1

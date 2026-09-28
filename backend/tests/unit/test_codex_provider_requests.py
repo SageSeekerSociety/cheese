@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -10,20 +11,69 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from app.domain.agent.capability import BuiltIn, Missing
 from app.domain.agent.harness import Opening
+from app.domain.agent.harness.codex import declaration as codex_declaration
 from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.runner import Runner
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 from tests.support.harness_prompts import event_prompts, system_prompt
 
+MODELS = ["gpt-5.3-codex", "gpt-6-astra"]
+
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("model", ["gpt-5.3-codex", "gpt-6-astra"])
+@pytest.mark.parametrize("model", MODELS)
 async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
     tmp_path,
     model,
 ):
+    await _drive(tmp_path, model)
+
+
+def _offered(request: dict) -> set[str]:
+    """Every tool name one recorded request puts in front of the model."""
+    specs = list(request.get("tools", []))
+    for item in request["input"]:
+        if item["type"] == "additional_tools":
+            specs += [tool for group in item["tools"] for tool in group["tools"]]
+    names = {spec.get("name") for spec in specs}
+    # A lite model reaches the dynamic tools through `exec`, whose description
+    # declares each one under a `### name` heading.
+    for spec in specs:
+        if spec.get("name") == "exec":
+            names |= set(re.findall(r"^### `([^`]+)`", spec["description"], re.M))
+    return names
+
+
+#: The two tools Codex asks a person with. Nobody in a room answers them; the
+#: room's question tool is `cheese_ask`.
+QUESTION_TOOLS = {"request_user_input", "request_user_input_async"}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("model", MODELS)
+async def test_the_question_tools_a_model_is_offered_are_the_ones_declared(
+    tmp_path, model
+):
+    """The ASK cell in codex/behaviour.py either says how Codex's question tools
+    are switched off or records the gap it cannot switch off (#1880). Either
+    way it must be true of the pinned binary: a tool offered under a cell that
+    says it is off, or a gap the binary no longer has, both turn this red."""
+    requests = await _drive(tmp_path, model)
+    assert requests
+    offered = set().union(*(_offered(r) for r in requests)) & QUESTION_TOOLS
+    if isinstance(codex_declaration().how_disabled[BuiltIn.ASK], Missing):
+        # The recorded gap: only catalog models that list the async tool get it,
+        # and among the fixtures that is gpt-6-astra.
+        expected = {"request_user_input_async"} if model == "gpt-6-astra" else set()
+        assert offered == expected
+    else:
+        assert not offered
+
+
+async def _drive(tmp_path, model) -> list[dict]:
     requests = []
 
     class Provider(BaseHTTPRequestHandler):
@@ -362,3 +412,4 @@ async def test_real_provider_receives_platform_prompt_and_matching_tool_result(
         if part.get("text") in inputs
     ]
     assert recorded_inputs == inputs
+    return requests

@@ -1,4 +1,9 @@
 const execution = __EXECUTION_CONFIG__;
+// The native server's platform tools: every row of `PLATFORM_TOOLS` in the
+// shipped cheese.py, written in with the config (`release.hook_module`).
+// Membership decides, never a name prefix: `todo_write` carries none, and a
+// call that misses this set reaches the server without its `id`.
+const platformTools = new Set(__PLATFORM_TOOLS__.map((name) => "mcp__native__" + name));
 const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 
 // The session sees the project at the executor's own path (`client.py`
@@ -20,6 +25,20 @@ function ownOutput(path) {
   if (typeof path !== "string" || path.split("/").includes("..")) return false;
   return path.startsWith(execution.central_tmp + "/")
     || (path.startsWith(execution.central_config + "/projects/") && path.includes("/tool-results/"));
+}
+
+// The memory tree is the session's own, in its home on this host, where the
+// runner reconciles it with the platform (`client.py` `prepare`,
+// `central_memory`). A file tool on it runs here, however the agent spelled
+// the path: `~/.cheese/memory/...` as the prompt names it, or under the home
+// its shell reports, which is the executor's and holds no memory tree.
+const MEMORY_TAIL = /(?:^|\/)\.cheese\/memory\/(.+)$/;
+
+function memoryPath(path) {
+  if (!execution.central_memory || typeof path !== "string") return null;
+  const match = MEMORY_TAIL.exec(path);
+  if (!match || match[1].split("/").includes("..")) return null;
+  return execution.central_memory + "/" + match[1];
 }
 
 const SEND_USER_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -81,7 +100,7 @@ export function register(on) {
     if (tool === "Agent" && args.isolation) {
       return { deny: `Agent isolation "${args.isolation}" is unavailable here because the project lives on the work machine; omit isolation, since the subagent's file and shell tools already run there. Only when the work is itself a deliverable to track and review, create it with \`cheese_task\`, prepare its directory with \`cheese worktree <id>\`, and give the subagent that directory.` };
     }
-    if (tool === "mcp__native__chat_send" || tool === "mcp__native__platform_request" || tool.startsWith("mcp__native__cheese_")) {
+    if (tool === "mcp__native__platform_request" || platformTools.has(tool)) {
       try {
         const response = await $.mcp.call("native", tool.slice("mcp__native__".length), {
           ...args, id: tool_use_id, session_id: await $.session.id(),
@@ -109,6 +128,10 @@ export function register(on) {
     }
     if (tool === "Read" && ownOutput(args.file_path)) return next(e);
     if (native.has(tool)) {
+      for (const field of ["file_path", "notebook_path"]) {
+        const local = memoryPath(args[field]);
+        if (local) return next({ ...e, [field]: local });
+      }
       for (const field of ["file_path", "path", "notebook_path"]) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field]);
       }

@@ -1,15 +1,19 @@
 # 没有 docker 的机器上怎么跑测试
 
-一台既没有 Postgres 也没有 docker 的容器**照样能跑全量测试**——DB-backed 的测试要的是一个服务器，不是 docker。`.claude/scripts/dev-db.sh` 用预编译 wheel（`pgserver`、`redislite`，由 `uv` 取）把 Postgres + Redis 起起来：
+一台既没有 Postgres 也没有 docker 的容器**照样能跑全量测试**——DB-backed 的测试要的是一个服务器，不是 docker。`.claude/scripts/dev-db.sh` 用预编译 wheel（`postgresql-binaries`、`redislite`，由 `uv` 取）把 Postgres + Redis 起起来，再起一个钉住版本的 Meilisearch，装好钉住版本的 Claude Code 和 Codex——CI 用服务容器和 “Install pinned harness binaries” 那一步提供的，这里一样不缺：
 
 ```bash
-eval "$(bash .claude/scripts/dev-db.sh start)"   # 导出 TEST_PG_BASE + REDIS_URL
+eval "$(bash .claude/scripts/dev-db.sh start)"   # 导出 TEST_PG_BASE、REDIS_URL、Meilisearch 地址和 key、CHEESE_TEST_CLAUDE、PATH
 cd backend && uv run pytest tests/ -n 4 -q
 bash .claude/scripts/dev-db.sh stop --purge      # 停掉并删数据目录
 ```
 
 - **Redis 是必须的,不是可选**——登录限流、2FA 验证票据和会话状态都在里面,没有它 integration 套件直接报错。
-- 这两个 wheel **故意不是 backend 依赖**:`pgserver` 没有 cp313 wheel,而本项目 `requires-python >=3.13`,声明进去会让依赖解析失败。脚本自己钉住版本,并把它们跑在一个一次性的 3.12 解释器上;测试本身仍跑在 3.13。
+- Postgres 必须带 contrib:迁移里有 `CREATE EXTENSION pg_trgm`,只含核心的构建(比如 `pgserver` wheel)上 `alembic upgrade head` 会失败。`postgresql-binaries` 原样打包 theseus-rs 的发行包,contrib 齐全,主版本和部署用的 paradedb 镜像一样是 16。
+- 这两个 wheel **故意不是 backend 依赖**:它们是测试机上的工具,backend 不 import。`redislite` 的 wheel 只到 cp312,所以脚本自己钉住版本,把它们跑在一个一次性的 3.12 解释器上;测试本身仍跑在 3.13。
+- Meilisearch 用官方发行的单文件二进制,版本跟 CI 的服务容器一致,下载后按脚本里写死的 sha256 校验。`test_meilisearch_integration.py` 没有它会直接报错,不会跳过。
+- Claude Code 和 Codex 的版本从 backend 里的声明读出来,跟 CI 装的一样。不能靠 PATH 上现成的 `claude`:本机那个常常是别的版本,或者是一层包装脚本,远程执行和 runner 相关的测试会因此失败,跟代码无关。
+- 下载的东西放在 `${XDG_CACHE_HOME:-~/.cache}/cheesex-dev-db`,`stop --purge` 不删它,Meilisearch 那个有 350MB 左右。
 - `tests/unit/` 完全不需要服务器（`conftest.py` 只给主动要的测试建 schema）。`tests/unit/` 以外的一律是 DB-backed。
 - `check.sh --no-tests`（质量闸门用的那条）完全跳过 pytest——要真正跑套件就用上面的方子。
 

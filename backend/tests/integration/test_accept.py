@@ -5,9 +5,9 @@ with a simulated remote forge: delivery keeps the room active, agents cannot
 approve their own work, and rejection and revocation preserve task state.
 
 The decision endpoints (accept/reject/revoke/reassign/approve) require a real
-authenticated actor (Authorization: Bearer <session token>) and, for
-accept/reject, that the actor IS the card's routed reviewer — see
-test_accept_authorization.py for the security-focused cases.
+authenticated actor (Authorization: Bearer <session token>) who is a member of
+the card's room, and, for accept/reject, that the actor IS the card's routed
+reviewer — see test_accept_authorization.py for the security-focused cases.
 """
 
 import uuid
@@ -34,13 +34,15 @@ def _make_project(client) -> str:
     r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
     pid = r.json()["data"]["id"]
-    # 2026-09-27: 一张卡只递给这道门放得进来的人
-    # （`AcceptService._require_reviewer_in_room`，与采纳那道门的
-    # `resolver.authorize_topic` 同一份判据）。alice / bob 在这个文件里本来是
-    # "报个 handle 就能收卡"的世界里的裸 handle；让他们像真实参与者一样进项目，
-    # 每个用例要测的才还是它自己那条规则（谁被指派、谁已经表决过……），而不是所有
-    # 用例一起撞在同一个 403 上。成员资格本身的安全回归在
-    # test_accept_reviewer_membership.py。
+    # 2026-09-26: 决定一张验收卡的每条路由现在都要求调用者是话题成员 (`_card_actor`
+    # 里的 `authorize_topic`，与 `_task_actor` 同一条线)。alice / bob 在这个文件里
+    # 本来是"报个 handle 就能表决"的世界里的裸 handle；让他们像真实参与者一样进
+    # 项目，每个用例要测的才还是它自己那条规则（谁被指派、谁已经表决过……），而不是
+    # 所有用例一起撞在同一个 403 上。
+    # 2026-09-27: 递卡与改派在写入之前也过同一道门（`_require_reviewer_in_room`），
+    # 所以这里同样不能让裸 handle 收卡。成员资格本身的安全回归分两处：
+    # test_accept_authorization.py（决策路由）与
+    # test_accept_reviewer_membership.py（递卡与改派）。
     for handle in ("alice", "bob"):
         join_project_team(client, pid, handle)
     return pid
@@ -171,10 +173,11 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
 def test_ai_cannot_accept_own_work_collaborative(client):
     # Default project ai_mode is collaborative. Route the card TO the AI so the
     # reviewer-identity check passes and `_forbid_ai` is what actually fires —
-    # and to the seat that is really in this room's roster, because a card is
-    # filed only to somebody this room admits. The bare ``cheese`` handle holds
-    # no seat anywhere: every room's 分身 acts as its own ``cheese-<topic hex>``
-    # handle (`_forbid_ai` matches the whole namespace, not the bare string).
+    # and to the seat that is really in this room's roster: a card is filed only to
+    # somebody this room admits, and the room-membership gate on the decision routes
+    # has to pass for them too. The bare ``cheese`` handle is on no roster; every
+    # topic's 分身 acts as ``cheese-<topic hex>`` (see `_forbid_ai`, which matches
+    # the whole namespace).
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     ai = room_agent_seat(client, tid)
@@ -353,9 +356,14 @@ def test_no_new_card_after_delivery(client):
 
 
 def test_revoke_requires_authority(client):
-    # Only the accepter (or owner/lead) can revoke — not any handle.
+    # Only the accepter (or owner/lead) can revoke — not any other member. The
+    # stranger is deliberately a full participant of the project: a non-member
+    # is refused one layer earlier (the room-membership gate on `_card_actor`,
+    # see test_accept_authorization.py), and this case is about the authority
+    # rule that still has to hold *inside* the room.
     pid = _make_project(client)
     tid = _make_topic(client, pid)
+    join_project_team(client, pid, "stranger")
     cid = _make_card(client, tid)
     client.post(
         f"/accept-cards/{cid}/accept",

@@ -11,7 +11,6 @@ import type {
   BranchProtectionPatch,
   BranchProtectionRules,
   ChatAttachment,
-  ComputeProfiles,
   DocumentRevision,
   EnvironmentConfig,
   EnvironmentStatus,
@@ -42,6 +41,7 @@ import type {
   MemberSummary,
   MilestoneFull,
   OAuthConnectionInfo,
+  OverviewAuto,
   PrChecks,
   PreviewInfo,
   ProfileTopic,
@@ -834,17 +834,6 @@ export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
 
-// 算力池: the project's current compute pool + the deployed ones it may select.
-export function getComputeProfiles(projectId: string): Promise<ComputeProfiles> {
-  return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/compute-profiles`)
-}
-export function setComputeProfile(projectId: string, profile: string): Promise<{ current: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/compute-profile`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  })
-}
-
 // MicroCloud machines are billed/audited through one project but enroll into that
 // project's team compute pool. The browser never receives provider credentials.
 export interface ResourceLimits {
@@ -892,16 +881,6 @@ export function listProjectMachines(
   return request(`/projects/${encodeURIComponent(projectId)}/machines`)
 }
 
-export function createProjectMachine(
-  projectId: string,
-  spec: import('./cx_types').ProjectMachineCreate
-): Promise<import('./cx_types').ProjectMachine> {
-  return request(`/projects/${encodeURIComponent(projectId)}/machines`, {
-    method: 'POST',
-    body: JSON.stringify(spec),
-  })
-}
-
 export function deleteProjectMachine(
   projectId: string,
   machineId: string
@@ -921,20 +900,41 @@ export function changeProjectMachinePower(
   })
 }
 
-// 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
+// 房间的工作电脑：房间这一项（还没开工的 AI 队友开工时用哪台），和每个会话在哪台上。
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
 }
 
-export function getSessionWorkLeases(topicId: string): Promise<{ sessions: import('./cx_types').SessionWorkLease[] }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/sessions/work-leases`)
-}
-
-export function setSessionWorkChoice(topicId: string, sessionId: string, choice: import('./cx_types').ComputeChoice) {
+// The platform pushes the session's work on its old machine first and refuses
+// the change when that fails. `abandonUnpushed` switches anyway, and only when
+// the old machine could not be reached (`WorkComputerUnreachable`).
+export function setSessionWorkChoice(
+  topicId: string,
+  sessionId: string,
+  choice: import('./cx_types').ComputeChoice,
+  // ifIdle: leave a session whose room is mid-turn alone (409 SessionWorking).
+  options: { abandonUnpushed?: boolean; ifIdle?: boolean } = {}
+) {
   return request<{ session: import('./cx_types').SessionWorkLease }>(
     `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/work-choice`,
-    { method: 'PUT', body: JSON.stringify({ choice }) }
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        choice,
+        ...(options.abandonUnpushed ? { abandon_unpushed: true } : {}),
+        ...(options.ifIdle ? { if_idle: true } : {}),
+      }),
+    }
   )
+}
+
+// The project's agent sessions on one self-hosted device, for a project manager
+// to switch some elsewhere. Rooms the caller cannot open are only counted.
+export function listDeviceSessions(
+  projectId: string,
+  deviceId: string
+): Promise<{ sessions: import('./cx_types').DeviceSession[]; hidden: number }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/devices/${encodeURIComponent(deviceId)}/sessions`)
 }
 
 export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
@@ -943,8 +943,8 @@ export function getProjectComputeConfigs(projectId: string): Promise<import('./c
 
 export function saveProjectComputeConfigs(
   projectId: string,
-  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>
-): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>> {
+  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default'>
+): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default'>> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`, {
     method: 'PUT',
     body: JSON.stringify(configs),
@@ -969,22 +969,6 @@ export function setTopicComputeChoice(
     body: JSON.stringify({ choice }),
   })
 }
-export function setTopicComputeProfile(
-  topicId: string,
-  profile: string,
-  deviceId: string | null = null
-): Promise<{
-  current: string
-  device_id: string | null
-  locked: boolean
-  inherited: boolean
-}> {
-  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
-    method: 'PUT',
-    body: JSON.stringify(profile === 'device' ? { profile, device_id: deviceId } : { profile }),
-  })
-}
-
 // ---- AI 队友 (agent 类型与实例) ----
 //
 // 「不能停用最后一个」and the like are the backend's to enforce; these are plain
@@ -1086,6 +1070,59 @@ export function saveProjectEnvironment(
     method: 'PUT',
     body: JSON.stringify(config),
   })
+}
+// 项目的远程 MCP 服务器：来自默认分支的 .mcp.json；连接属于项目，任何成员都能连接或断开。
+// 后端从不返回令牌和密钥的值，这里的类型里也没有它们。
+export type McpServerStatus = 'connected' | 'disconnected' | 'needs_reconnect' | 'missing_values' | 'ready'
+export interface McpVariable {
+  name: string
+  set: boolean
+  updated_by: string | null
+  updated_at: string | null
+}
+export interface McpServer {
+  name: string
+  transport: 'http' | 'sse'
+  host: string
+  auth: 'oauth' | 'headers'
+  status: McpServerStatus
+  authorized_by: string | null
+  authorized_at: string | null
+  variables: McpVariable[]
+}
+export interface McpServerList {
+  servers: McpServer[]
+  /** 读不出清单时的原因：没有 .mcp.json、格式不对、仓库暂时读不到。 */
+  problem: 'missing' | 'invalid' | 'unreadable' | null
+}
+export type RoomMcpServer = Pick<McpServer, 'name' | 'host' | 'auth' | 'status' | 'authorized_by' | 'authorized_at'>
+
+export function getMcpServers(projectId: string): Promise<McpServerList> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers`)
+}
+export function connectMcpServer(projectId: string, name: string): Promise<{ authorization_url: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(name)}/connect`, {
+    method: 'POST',
+  })
+}
+export function disconnectMcpServer(projectId: string, name: string): Promise<null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(name)}/connection`, {
+    method: 'DELETE',
+  })
+}
+export function setMcpSecret(projectId: string, name: string, value: string): Promise<null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/secrets/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  })
+}
+export function clearMcpSecret(projectId: string, name: string): Promise<null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/secrets/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+}
+export function getRoomMcpServers(topicId: string): Promise<{ servers: RoomMcpServer[] }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/mcp/servers`)
 }
 export function getRoomEnvironment(projectId: string, roomId: string): Promise<EnvironmentStatus> {
   return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}`)
@@ -1232,6 +1269,15 @@ export function toggleReaction(
     `/blocks/${encodeURIComponent(blockId)}/reactions`,
     { method: 'POST', body: JSON.stringify({ emoji, author }) }
   )
+}
+
+// Edit a message you sent. Everyone in the room, you included, also gets the
+// edited block as a `block_updated` frame.
+export function editMessage(blockId: string, content: string): Promise<Block> {
+  return request<Block>(`/blocks/${encodeURIComponent(blockId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ content }),
+  })
 }
 
 // ---- 资料库 ----
@@ -1816,12 +1862,22 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
+// 项目总览的自动区 (#1889): the overview room's ②~⑤, structured so the doc
+// panel can render them below the body and make each line clickable. Only the
+// project's root topic has one — any other room answers 404 — and the caller
+// must be able to read the room, same as the doc itself.
+export function getOverviewAuto(topicId: string): Promise<OverviewAuto> {
+  return request<OverviewAuto>(`/topics/${encodeURIComponent(topicId)}/overview`)
+}
+
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
 // Read on topic open — between turns there is no WS stream to carry it, and
 // "做到哪了" has to be visible without summoning anyone. `items` is [] for a
-// topic that never had a checklist.
-export function getProgress(topicId: string): Promise<TopicProgress> {
-  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
+// topic that never had a checklist. With `taskId`, that card's list — the one
+// its 分身 wrote — instead of the room's.
+export function getProgress(topicId: string, taskId?: string): Promise<TopicProgress> {
+  const q = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
 }
 
 // PUT upserts the living doc and appends a "📝 编辑了文档" event to the

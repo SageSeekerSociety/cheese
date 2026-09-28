@@ -53,11 +53,11 @@ def test_a_machine_that_is_not_ours_states_no_size() -> None:
 
 
 def test_the_section_is_absent_when_there_is_nothing_to_open_with() -> None:
-    with_lines = build_system_prompt("base", "", None, [], session_opening=["- x"])
+    with_lines = build_system_prompt("base", "", None, None, session_opening=["- x"])
     assert "## 这个会话开场时的运行环境" in with_lines
 
     assert "## 这个会话开场时的运行环境" not in build_system_prompt(
-        "base", "", None, []
+        "base", "", None, None
     )
 
 

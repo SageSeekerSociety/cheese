@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import types
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -106,6 +107,31 @@ def sources():
 RESIDENT = frozenset({"proxy.js", "context_service.py", "cheese.py"})
 
 
+def platform_tool_names(cheese_source: str) -> list[str]:
+    """The platform tools the native MCP server serves: the rows of
+    `PLATFORM_TOOLS` in this release's `cheese.py`, the one table every harness
+    reads. A module of its own, so the CLI's `__main__` block does not run."""
+    module = types.ModuleType("cheese_platform_tools")
+    exec(compile(cheese_source, "cheese", "exec"), module.__dict__)  # noqa: S102
+    return list(module.PLATFORM_TOOLS.names())
+
+
+def hook_module(proxy_source: str, target: dict, platform_tools: list[str]) -> str:
+    """`proxy.js` as the plugin loads it, at launch and at every release."""
+    return proxy_source.replace("__EXECUTION_CONFIG__", json.dumps(target)).replace(
+        "__PLATFORM_TOOLS__", json.dumps(platform_tools)
+    )
+
+
+def allow_native_tools(settings: dict, platform_tools: list[str]) -> None:
+    """Allow the native server's tools by name, the table's rows included."""
+    allowed = settings.setdefault("permissions", {}).setdefault("allow", [])
+    for name in ("invoke", "platform_request", "project_tools", *platform_tools):
+        tool = "mcp__native__" + name
+        if tool not in allowed:
+            allowed.append(tool)
+
+
 def launch_only(sources):
     """The helper sources a running session keeps as they were at launch."""
     return {name: text for name, text in sources.items() if name not in RESIDENT}
@@ -194,15 +220,12 @@ def stage(home, sources):
         if Path(name).name != name:
             raise ValueError("A helper source must be a filename")
         replace(helpers / name, sources[name])
+    platform_tools = platform_tool_names(sources["cheese.py"])
     replace(
         directory / "plugin/hooks/proxy.js",
-        sources["proxy.js"].replace("__EXECUTION_CONFIG__", json.dumps(target)),
+        hook_module(sources["proxy.js"], target, platform_tools),
     )
-    allowed = settings.setdefault("permissions", {}).setdefault("allow", [])
-    for name in ("invoke", "chat_send", "platform_request", "cheese_*"):
-        tool = "mcp__native__" + name
-        if tool not in allowed:
-            allowed.append(tool)
+    allow_native_tools(settings, platform_tools)
     if target.get("kind") != "private" and target.get("helper"):
         managed_context_hook = {
             "type": "command",

@@ -176,3 +176,56 @@ def test_releasing_a_private_room_reaches_the_root_it_was_installed_in(
         "release",
         str(directory / "remote-target.json"),
     ]
+
+
+# What docker prints when the executor container cannot be created. Kept so
+# the session's startup record says which of these it was.
+_DOCKER_REFUSALS = {
+    "image": (
+        "Unable to find image 'cheese-private-executor:2.1.282' locally\n"
+        "docker: Error response from daemon: pull access denied for "
+        "cheese-private-executor, repository does not exist.",
+        "Claude Code 启动失败：机器上缺少执行容器的镜像",
+    ),
+    "name": (
+        "docker: Error response from daemon: Conflict. The container name "
+        '"/cheese-private-0f0f" is already in use by container "abc123".',
+        "Claude Code 启动失败：上一个执行容器还没有清理掉",
+    ),
+    "daemon": (
+        "docker: Cannot connect to the Docker daemon at "
+        "unix:///var/run/docker.sock. Is the docker daemon running?",
+        "Claude Code 启动失败：机器上的 Docker 没有运行或无法访问",
+    ),
+    "other": (
+        "docker: Error response from daemon: OCI runtime create failed.",
+        "Claude Code 启动失败：执行容器没能创建",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_DOCKER_REFUSALS))
+def test_a_container_docker_would_not_create_says_why(case, tmp_path, monkeypatch):
+    from app.domain.agent.harness.claude_code.remote_execution.private import ensure
+    from app.domain.agent.platform_failures import classify_session_start
+
+    said, sentence = _DOCKER_REFUSALS[case]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (tmp_path / "said").write_text(said)
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = container ]; then echo "Error: No such container: x" >&2; '
+        "exit 1; fi\n"
+        f'cat "{tmp_path / "said"}" >&2\nexit 125\n'
+    )
+    docker.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    with pytest.raises(RuntimeError) as refused:
+        ensure(target(uuid.uuid4()), tmp_path / "state", {})
+
+    assert said.splitlines()[-1] in str(refused.value)
+    assert "status 125" in str(refused.value)
+    assert classify_session_start(str(refused.value)).content == sentence

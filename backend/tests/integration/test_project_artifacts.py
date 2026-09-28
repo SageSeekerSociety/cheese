@@ -16,7 +16,11 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_accept_pr import (
     _give_card_a_pr,
     _rendered_head,
@@ -32,7 +36,12 @@ def remote_delivery(client, request):
 def _project(client) -> str:
     r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # alice accepts every card below. Accepting is a room decision: since
+    # 2026-09-26 it requires membership (`_card_actor`), so she is a
+    # participant of the project these cards live in.
+    join_project_team(client, pid, "alice")
+    return pid
 
 
 def _room(client, project_id: str, title: str = "做一个东西") -> str:

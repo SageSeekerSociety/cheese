@@ -20,7 +20,11 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.review import services as review_services
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_artifact, delivery_headers, delivery_task
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.integration.test_project_artifacts import remote_delivery as remote_delivery
@@ -42,7 +46,12 @@ def task_machine(client, monkeypatch, tmp_path):
 def _project(client) -> str:
     r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # Every card here is accepted by alice. Accepting is a room decision:
+    # since 2026-09-26 it requires membership (`_card_actor`), so the accepter
+    # is a participant of the project these cards live in.
+    join_project_team(client, pid, "alice")
+    return pid
 
 
 def _room(client, project_id: str, title: str = "做一个东西") -> str:

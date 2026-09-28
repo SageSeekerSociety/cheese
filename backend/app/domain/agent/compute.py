@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from app.domain.agent.harness import (
         ActivityConsumer,
         EventConsumer,
+        MemoryConsumer,
         ReachabilityConsumer,
         ReceiptConsumer,
         SessionControls,
@@ -112,9 +113,9 @@ class ComputeProvider(Protocol):
 class ComputePool:
     """Which backend a turn lands on — a machine AND a harness.
 
-    Two axes, because they are two questions. WHICH MACHINE is the topic's
-    ``compute_profile``: someone's enrolled laptop, a leased Cloud box. WHAT
-    RUNS THERE is the agent type's ``harness``. They were
+    Two axes, because they are two questions. WHICH MACHINE is the room's
+    compute choice (``topic.compute_config``): someone's enrolled laptop, a
+    leased Cloud box. WHAT RUNS THERE is the agent type's ``harness``. They were
     one key for as long as one harness existed, and a registry keyed by machine
     alone cannot hold a second one — two runtimes over the same transport would
     collide on the same name.
@@ -240,6 +241,35 @@ class ComputePool:
         for runtime in self._runtimes():
             runtime.bind_reachability(consumer)
 
+    def bind_memory(self, consumer: "MemoryConsumer") -> None:
+        """Give every runtime the owner of 「记忆该对账了」.
+
+        Every runtime, not only the ones that keep memory files: a runtime that
+        does not answers `memory` with None, and the callback is asked on a
+        moment (an input going in, a turn ending) that every harness has.
+        """
+        for runtime in self._runtimes():
+            runtime.bind_memory(consumer)
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """Relay a memory reconciliation to whichever runtime owns this room.
+
+        ``None`` means «这个房间现在没有能对账的会话» — no live session, or a
+        harness whose sessions keep no memory files. Both are ordinary answers,
+        not failures.
+        """
+        owner = self._owners.get(topic_id)
+        candidates = (
+            [owner]
+            if owner
+            else [runtime for runtime in self._runtimes() if runtime.holds(topic_id)]
+        )
+        for runtime in candidates:
+            answer = await runtime.memory(topic_id, request)
+            if answer is not None:
+                return answer
+        return None
+
     def session_controls(self, topic_id: uuid.UUID) -> "SessionControls | None":
         """The runtime whose live session in this room takes controls, if any."""
         from app.domain.agent.harness import SessionControls
@@ -311,7 +341,7 @@ class ComputePool:
         """Pick the backend for this turn (execution-architecture v4 会话级选择).
 
         ``provider_id`` is the machine a topic/project chose (resolved upstream
-        from ``topic.compute_profile`` → project sticky); a machine this
+        from ``topic.compute_config`` → project default); a machine this
         deployment does not have falls back to the default one, so a stored
         selection that was retired never breaks a turn.
 

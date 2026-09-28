@@ -20,6 +20,8 @@ dropped connection, so it reconnects forever and buries the reason.
 import pytest
 
 from app.core.config import settings
+from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import chat_ws_url, post_project, session_token
 
 
@@ -206,3 +208,54 @@ def test_message_failure_identifies_the_message_and_keeps_socket_usable(
             assert frame["message"] == "房间已关闭"
         ws.send_json({"type": "ping"})
         assert ws.receive_json()["type"] == "pong"
+
+
+def _card(client, room_id: str) -> str:
+    """One of the room's cards. A 分身 works it inside the room's session, and
+    what it does goes out on the card's own channel — the card id."""
+    task = client.post(
+        f"/topics/{room_id}/split", json={"title": "子活", "reviewer_handle": "alice"}
+    ).json()["data"]
+    wait_work_idle()
+    return task["id"]
+
+
+def test_a_cards_channel_refuses_someone_outside_its_room(client):
+    """A card's channel carries its 分身's events and checklist — the room's
+    work. It is not a room, so the room check has to be the card's room's:
+    an outsider holding the card id (it sits in every `?card=` link) is refused
+    exactly as on the room's own channel."""
+    _, room = _project_topic(client, owner="alice")
+    card = _card(client, room)
+
+    with client.websocket_connect(chat_ws_url(card, "mallory")) as ws:
+        frame = ws.receive_json()
+    assert frame["type"] == "error"
+    assert frame["code"] == "forbidden"
+
+
+def test_a_member_watching_a_card_sees_its_workers_checklist(client):
+    """The card view's live checklist: the room's member subscribes to the card's
+    channel and the 分身's `todo_write` arrives there."""
+    project, room = _project_topic(client, owner="alice")
+    card = _card(client, room)
+    agent = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)}
+
+    with client.websocket_connect(chat_ws_url(card, "alice")) as ws:
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+        response = client.put(
+            f"/topics/{room}/progress",
+            json={
+                "todos": [{"content": "改接口", "status": "in_progress"}],
+                "task": card,
+            },
+            headers=agent,
+        )
+        assert response.status_code == 200, response.text
+        frame = ws.receive_json()
+        while frame["type"] != "todo":
+            frame = ws.receive_json()
+    assert [(i["subject"], i["status"]) for i in frame["items"]] == [
+        ("改接口", "in_progress")
+    ]

@@ -41,10 +41,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 AGENT = ROOT / "backend" / "app" / "domain" / "agent"
+MEMORY_PKG = ROOT / "backend" / "app" / "domain" / "memory"
 PROMPT_PY = AGENT / "harness" / "prompt.py"
 STAGES_PY = AGENT / "stages.py"
 SKILLS_PY = AGENT / "skills.py"
 SKILL_DIR = AGENT / "skill_library"
+INSTRUCTIONS_PY = MEMORY_PKG / "instructions.py"
 
 #: ``build_system_prompt``'s first three arguments are positional; the samples
 #: below give the rest by keyword.
@@ -129,9 +131,17 @@ def load_prompt_module():
     finder = _StubFinder()
     sys.meta_path.insert(0, finder)
     try:
-        return load_module(PROMPT_PY, "cheese_prompt_reference")
+        module = load_module(PROMPT_PY, "cheese_prompt_reference")
     finally:
         sys.meta_path.remove(finder)
+    # ``instructions.py`` is stdlib-only like ``skills.py``, so it loads for real
+    # and its two names are put back on ``prompt.py``: that import goes through
+    # the stub, and the memory block is the *text* of this module — left as a
+    # stand-in the whole real run is worthless ("真跑这条路不可信").
+    memory = load_module(INSTRUCTIONS_PY, "cheese_memory_reference")
+    module.MEMORY_INSTRUCTIONS = memory.MEMORY_INSTRUCTIONS
+    module.memory_block = memory.memory_block
+    return module
 
 
 def load_skills_module():
@@ -194,7 +204,50 @@ ARTIFACTS = [
     {"name": "演示网站", "version": 0, "about": "给评审看的可点开的站点", "id": "d4e5f6"},
 ]
 
-MEMORIES = ["构建前端用 `npm ci`，不要用 `npm install`。", "配置在 backend/app/core/db.py 里。"]
+class _Index:
+    """Stand-in for ``MemoryIndex``: two scoped sections and the truncation
+    warnings, which is all ``build_system_prompt`` reads off one (``is_empty``,
+    ``sections``, ``warnings``). The real class sits behind a backend import the
+    docs build machine cannot resolve — same reason ``TEACHING`` is a namespace.
+    """
+
+    def __init__(self, sections, warnings=()):
+        self.sections = [types.SimpleNamespace(**section) for section in sections]
+        self.warnings = list(warnings)
+
+    def is_empty(self) -> bool:
+        return not any(section.text.strip() for section in self.sections)
+
+
+#: The two indexes a turn actually carries: the project's, and one for whoever
+#: is speaking. One line per memory, never the body — that is the whole point of
+#: the index being short.
+INDEX_SECTIONS = [
+    {
+        "label": "项目共享（team）",
+        "prefix": "team",
+        "text": "- [构建用 npm ci](build.md) — 不要用 npm install\n"
+        "- [移动端发版前冻结合并](freeze.md) — 非关键 PR 排到发版之后",
+    },
+    {
+        "label": "关于 zhangheng（private）",
+        "prefix": "private/zhangheng",
+        "text": "- [回答短一点](short.md) — 结尾不要总结刚做了什么",
+    },
+]
+
+MEMORY = _Index(INDEX_SECTIONS)
+
+#: A turn whose index blew the cap: the warning rides along with the index,
+#: because the truncation happens on the *read* side.
+MEMORY_OVER_CAP = _Index(
+    INDEX_SECTIONS,
+    warnings=[
+        "team/MEMORY.md：索引超出上限（200 行 / 25KB）：现在 260 行 / 31KB，"
+        "超出的部分**读不到**，请把长条目搬进它指的那个文件、或合并重复的"
+        "一条，把索引压回上限以内。"
+    ],
+)
 
 SESSION_OPENING = [
     "- 这台机器：内存 4GB、2 核。吃内存的命令（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉。",
@@ -278,22 +331,23 @@ TOGGLES = [
         "params": ["doc=…"],
     },
     {
-        "id": "memories",
-        "kwargs": {"memories": MEMORIES},
-        "label": "`memories` 非空",
-        "params": ["memories=…"],
+        "id": "keeps_memory",
+        "kwargs": {"keeps_memory": True},
+        "label": "`keeps_memory=True`：这一轮跑的骨架会把记忆文件对账回平台，"
+        "记忆那一段才在（索引那一段还要 `memory` 非空）",
+        "params": ["keeps_memory=True"],
     },
     {
-        "id": "memories_omitted",
-        "kwargs": {"memories_omitted": 9},
-        "label": "`memories_omitted` 非零",
-        "params": ["memories_omitted=9"],
+        "id": "memory",
+        "kwargs": {"memory": MEMORY, "keeps_memory": True},
+        "label": "`memory` 非空：两个作用域的索引都在（项目共享一份、本轮发言人一份）",
+        "params": ["memory=…", "keeps_memory=True"],
     },
     {
-        "id": "memories_core_omitted",
-        "kwargs": {"memories": MEMORIES, "memories_core_omitted": 2},
-        "label": "`memories_core_omitted` 非零",
-        "params": ["memories=…", "memories_core_omitted=2"],
+        "id": "memory_over_cap",
+        "kwargs": {"memory": MEMORY_OVER_CAP, "keeps_memory": True},
+        "label": "`memory` 非空且超了上限：截断按行，那句话跟着索引一起进来",
+        "params": ["memory=…（超上限的那一份）", "keeps_memory=True"],
     },
     {
         "id": "session_opening",
@@ -304,18 +358,18 @@ TOGGLES = [
 ]
 
 #: Switches that turn on one block together: the block is there when any of
-#: them is, so the page names the group rather than three near-synonyms.
+#: them is, so the page names the group rather than near-synonyms.
 GROUPS = [
     (
-        ["memories", "memories_omitted", "memories_core_omitted"],
-        "项目记忆相关参数任一非空（`memories` / `memories_omitted` / `memories_core_omitted`）",
+        ["memory", "memory_over_cap"],
+        "`memory` 非空——两个样本开的是同一块，一个超了上限、一个没超",
     ),
 ]
 
 #: Parameters the samples above speak for. Anything else the signature asks for
 #: is filled from its annotation, so a new parameter degrades the page instead
 #: of breaking the build.
-SPOKEN_FOR = {"base", "skills", "doc", "memories"} | {
+SPOKEN_FOR = {"base", "skills", "doc", "memory"} | {
     key for toggle in TOGGLES for key in toggle["kwargs"]
 }
 
@@ -363,15 +417,15 @@ def samples_for(module, stage_guide: str, skills_text: str) -> list[dict]:
     import inspect
 
     extra, unknown = fill_unknown(inspect.signature(module.build_system_prompt))
-    full = {"skills": skills_text, "doc": DOC, "memories": MEMORIES, **extra}
+    full = {"skills": skills_text, "doc": DOC, "memory": MEMORY, **extra}
     for toggle in toggles:
         full.update(toggle["kwargs"])
 
     samples = [
         {
             "name": "最小",
-            "about": "除底稿外的参数一律不传（`skills=\"\"`、`doc=None`、`memories=[]`）",
-            "kwargs": {"skills": "", "doc": None, "memories": []},
+            "about": "除底稿外的参数一律不传（`skills=\"\"`、`doc=None`、`memory=None`）",
+            "kwargs": {"skills": "", "doc": None, "memory": None},
         },
         *[
             {
@@ -381,7 +435,7 @@ def samples_for(module, stage_guide: str, skills_text: str) -> list[dict]:
                 "kwargs": {
                     "skills": "",
                     "doc": None,
-                    "memories": [],
+                    "memory": None,
                     **toggle["kwargs"],
                 },
             }
@@ -394,13 +448,13 @@ def samples_for(module, stage_guide: str, skills_text: str) -> list[dict]:
                 "name": f"参数 {name}",
                 "about": f"`{name}`：生成器还不认识的参数，值是按类型补的",
                 "toggle": f"{UNKNOWN}{name}",
-                "kwargs": {"skills": "", "doc": None, "memories": [], name: extra[name]},
+                "kwargs": {"skills": "", "doc": None, "memory": None, name: extra[name]},
             }
             for name in unknown
         ],
         {"name": "全部打开", "about": "上面每个开关都给值", "kwargs": full},
-        {"name": "总览文档超预算", "about": f"`overview_doc` 给了 {len(OVERSIZE)} 字符，超过 6000 字上限，看压缩后的样子", "kwargs": {"skills": "", "doc": None, "memories": [], "overview_doc": OVERSIZE}},
-        {"name": "产物清单空着", "about": "`artifacts=[]`：清单空着时那一段是短指针", "kwargs": {"skills": "", "doc": None, "memories": [], "artifacts": []}},
+        {"name": "总览文档超预算", "about": f"`overview_doc` 给了 {len(OVERSIZE)} 字符，超过 6000 字上限，看压缩后的样子", "kwargs": {"skills": "", "doc": None, "memory": None, "overview_doc": OVERSIZE}},
+        {"name": "产物清单空着", "about": "`artifacts=[]`：清单空着时那一段是短指针", "kwargs": {"skills": "", "doc": None, "memory": None, "artifacts": []}},
     ]
     return samples, unknown
 
@@ -645,6 +699,8 @@ def sample_params(kwargs: dict) -> list[str]:
             shown = "（当前阶段的说明原文，见「阶段的操作说明」）"
         elif key == "skills":
             shown = "（技能库里 chat 场景的原文，见「技能库」）"
+        elif key == "memory":
+            shown = "（一份 L1 索引：项目共享一段、本轮发言人一段）"
         else:
             shown = "（一段样本文本）"
         out.append(f"{key}={shown}")

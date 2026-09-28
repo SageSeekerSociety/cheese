@@ -25,7 +25,12 @@ from app.domain.review.github_pr import OpenedPR
 from app.domain.review.pr_publish import dispatch as _REAL_DISPATCH
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
-from tests.integration.conftest import post_project, room_text, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_text,
+    session_auth_headers,
+)
 from tests.machine_work import machine_commits
 from tests.support import git_store
 
@@ -35,7 +40,13 @@ REPO = "acme/widgets"
 def _make_project(client) -> str:
     r = post_project(client, json={"name": "P"}, headers=session_auth_headers("alice"))
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # alice owns the project she files cards in, and bob is the second voter the
+    # dismiss-stale / armed-merge cases need. Approving and deciding a card are
+    # room decisions: since 2026-09-26 they require membership (`_card_actor`),
+    # so the second voter is a participant like anyone else.
+    join_project_team(client, pid, "bob")
+    return pid
 
 
 def _make_topic(client, project_id: str) -> str:
@@ -2240,6 +2251,12 @@ def test_merge_anyway_admission_follows_the_override_roster(client, app_world):
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     _protect(client, pid, override_handles=["carol"])
     fake.check_state_by_sha[head_sha] = ("failure", "红")
+    # carol is named by the project's override roster, and she is on the project
+    # too: the roster decides *which* participant may force the merge, and room
+    # membership decides whether the caller is a participant at all
+    # (`_card_actor`, 2026-09-26). Both questions are asked; this case is about
+    # the first one.
+    join_project_team(client, pid, "carol")
 
     # 显式名单顶掉默认：连 owner 都不在名单里就不能放行。
     assert _merge_anyway(client, cid, "alice").status_code == 403
