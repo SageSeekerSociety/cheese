@@ -274,7 +274,7 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         assert dispatch.outcome is None
     hub.is_online = lambda device: old_online or device != first_device
     listing = client.get(
-        f"/topics/{topic_id}/sessions/work-leases", headers=owner_headers
+        f"/topics/{topic_id}/compute-profile", headers=owner_headers
     ).json()["data"]["sessions"]
     assert (
         next(item for item in listing if item["id"] == str(first_id))["lease"]["online"]

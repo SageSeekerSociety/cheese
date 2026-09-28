@@ -19,7 +19,6 @@ import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
-import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import { t } from '@/i18n'
 import { topicPhaseBadge, topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
@@ -84,8 +83,8 @@ watch(usageOpen, (open) => {
   if (open) void loadUsage()
 })
 
-// 这个房间能看到整台机器。工作电脑选择器收进了 ⋯，这件事不能跟着收：它是权限，不是
-// 设置，要一直看得见。选择器在菜单里也照常挂着（eager），由它告诉这里。
+// 有 AI 队友能访问整台机器。工作电脑写在成员名册里，这件事不能跟着收进名册：它是
+// 权限，不是设置，要一直看得见。名册读到了就告诉这里。
 const machineNotice = ref<string | null>(null)
 
 // 一行一个范围：次数 · token · 费用。输入 / 输出的拆分和费用的说明放在 title 里，
@@ -121,7 +120,7 @@ function toggleFocus() {
           <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
           <span v-if="isWorkTopic" class="pr-state" :class="state.cls">{{ state.label }}</span>
           <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
-            <span class="status-dot status-dot--warn" />能访问整台机器
+            <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
           </span>
           <span v-if="!connected" class="topic-header__disconnected" role="status">未连接</span>
         </span>
@@ -129,7 +128,13 @@ function toggleFocus() {
 
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
-      <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
+      <TopicMembers
+        v-if="isWorkTopic"
+        :topic-id="topic.id"
+        :project-members="members"
+        :me="me"
+        @machine-access="machineNotice = $event"
+      />
 
       <!-- 专注模式开着的时候，出口必须摆在外面：对话栏已经让开了，这一颗就是
            「你现在在专注模式里」的那句话。进去的入口在 ⋯ 里。 -->
@@ -145,10 +150,9 @@ function toggleFocus() {
       />
 
       <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
-           改一项设置 / 看一个数」分成三段：专注模式、工作电脑、用量，编号垫在最底下。
-           连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。
-           eager：工作电脑选择器要在菜单合着的时候就挂上，才能说出「整台机器」。 -->
-      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end" eager>
+           看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
+           连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
+      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
         <template #activator="{ props: menuProps }">
           <v-btn
             v-bind="menuProps"
@@ -167,11 +171,6 @@ function toggleFocus() {
             <v-icon size="16">{{ focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand' }}</v-icon>
             <span>{{ focus ? t('work.room.menu.exitFocus') : t('work.room.menu.focus') }}</span>
           </button>
-          <!-- 工作电脑：这个房间的 AI 队友在哪儿干活。它不是某条消息的动作，所以不在输入区。 -->
-          <div v-if="isWorkTopic" class="room-menu__row">
-            <span class="room-menu__label">{{ t('work.room.menu.compute') }}</span>
-            <TopicComputePicker :topic-id="topic.id" @machine-access="machineNotice = $event" />
-          </div>
           <div class="room-menu__usage">
             <div class="room-menu__label">{{ t('work.room.menu.usage') }}</div>
             <div v-if="usageLoading" class="d-flex justify-center py-2">

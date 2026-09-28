@@ -171,7 +171,6 @@ def test_a_proposal_does_not_take_the_machine(client, gated_project):
     assert _topic_binding(client, tid) is None
     after = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert after["current"] == before
-    assert after["inherited"] is True
 
 
 def test_an_unrestricted_project_still_takes_the_machine(client, monkeypatch):

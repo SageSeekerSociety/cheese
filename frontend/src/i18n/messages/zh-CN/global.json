@@ -24,7 +24,6 @@
     "numeric": "此字段必须是数字",
     "required": "此字段为必填项"
   },
-  "loadFailed": "加载失败",
   "loading": "加载中...",
   "no": "否",
   "publish": "发布",

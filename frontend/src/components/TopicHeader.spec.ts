@@ -1,7 +1,7 @@
-// 话题头这一行常驻的只有标题、状态、成员；工作电脑和专注模式收在 ⋯ 里。
+// 话题头这一行常驻的只有标题、状态、成员；专注模式收在 ⋯ 里，工作电脑写在成员名册里。
 //
-// 收进去的东西里有一样不能跟着藏：房间能看到能访问整台机器。那是权限，不是设置——
-// 菜单合着的时候它也得在这一行上。
+// 名册里的东西有一样不能跟着藏：有 AI 队友能访问整台机器。那是权限，不是设置——
+// 名册合着的时候它也得在这一行上。
 import type { Component } from 'vue'
 import type { Topic, TopicComputeProfile } from '@/cx_types'
 
@@ -15,6 +15,7 @@ const getTopicComputeProfile = vi.fn()
 
 vi.mock('@/api', () => ({
   getTopicComputeProfile: (...args: unknown[]) => getTopicComputeProfile(...args),
+  listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })),
   setTopicComputeChoice: vi.fn(),
   getTopicUsage: vi.fn(async () => null),
   getProjectUsage: vi.fn(async () => null),
@@ -55,8 +56,7 @@ function profile(machineAccess: boolean): TopicComputeProfile {
     current: 'cloud',
     device_id: null,
     devices: [],
-    locked: true,
-    inherited: false,
+    sessions: [],
     profiles: [],
     visibility: {
       options: [],
@@ -72,7 +72,6 @@ function mountHeader(focus = false) {
     props: { topic, members: [], me: 'me', connected: true, focus },
     global: {
       plugins: [createVuetify({ components, directives })],
-      stubs: { TopicMembers: true },
     },
   })
 }
@@ -105,7 +104,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('话题头', () => {
-  it('房间能看到能访问整台机器时，菜单合着这一行上也写着', async () => {
+  it('有 AI 队友能访问整台机器时，名册合着这一行上也写着', async () => {
     getTopicComputeProfile.mockResolvedValue(profile(true))
     mountHeader()
 
@@ -122,13 +121,14 @@ describe('话题头', () => {
     expect(bar().textContent).not.toContain('能访问整台机器')
   })
 
-  it('工作电脑不在这一行上，在 ⋯ 里', async () => {
+  it('⋯ 里没有工作电脑，它在成员名册里', async () => {
     getTopicComputeProfile.mockResolvedValue(profile(false))
     mountHeader()
 
-    await waitFor(() => expect(screen.getByText('工作电脑')).toBeTruthy())
+    await fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    await screen.findByRole('button', { name: '专注模式' })
+    expect(document.body.textContent).not.toContain('工作电脑')
     expect(bar().textContent).not.toContain('云端 · 标准配置')
-    expect(bar().contains(screen.getByText('工作电脑'))).toBe(false)
   })
 
   it('专注模式从 ⋯ 里进', async () => {

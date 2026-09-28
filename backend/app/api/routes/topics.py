@@ -1557,7 +1557,8 @@ async def get_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Room choice, project favorites and the matching execution lock."""
+    """The room's work computers: what each agent session works on, and what an
+    agent that has not started yet will be given (the room's choice)."""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
@@ -1567,7 +1568,6 @@ async def get_topic_compute_profile(
     )
     project = await ProjectRepository(db).get(topic.project_id)
     from app.domain.agent.compute_configs import project_configs, room_choice
-    from app.domain.machine.repositories import ProjectMachineRepository
 
     configs = project_configs(project.settings if project else None)
     choice = room_choice(topic, project.settings if project else None)
@@ -1576,7 +1576,8 @@ async def get_topic_compute_profile(
     device_service = sql_device_service(db)
     devices = await device_service.list_devices_for_project(topic.project_id)
     binding = await device_service.topic_binding(topic_id)
-    if current == COMPUTE_DEVICE and binding is not None:
+    if current == COMPUTE_DEVICE and binding is not None and choice.device_id is None:
+        # 「自动选一台」的房间，第一轮钉下的是哪一台。
         choice.device_id = binding.device_id
         if topic.compute_config is None:
             named = next((d for d in devices if d.device_id == binding.device_id), None)
@@ -1587,10 +1588,14 @@ async def get_topic_compute_profile(
     # the same access and no pin. Surfaced so the room shows a visible safety
     # badge instead of the platform granting whole-machine access silently
     # (原则八).
-    from app.domain.machine.session_work import room_machine_visibility
+    from app.domain.machine.session_work import (
+        room_machine_visibility,
+        session_machines,
+    )
 
+    sessions = await session_machines(db, topic)
     visibility = await room_machine_visibility(
-        db, topic, project.settings if project else None
+        db, topic, project.settings if project else None, sessions
     )
     effective_visibility = visibility.value if visibility is not None else None
     return ok(
@@ -1616,11 +1621,11 @@ async def get_topic_compute_profile(
                 }
                 for device in devices
             ],
-            "locked": bool(
-                await AgentSessionService(db).has_run(topic_id)
-                or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
-            ),
-            "inherited": topic.compute_config is None,
+            # Each agent session and its machine; `choice` is None for one that
+            # has not started working and will be given `choice` above.
+            "sessions": [
+                {k: v for k, v in row.items() if k != "visibility"} for row in sessions
+            ],
             "profiles": [
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
@@ -1642,30 +1647,6 @@ async def get_topic_compute_profile(
 class WorkLeaseRequest(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     timeout: float = Field(default=660, gt=0, le=660)
-
-
-@router.get("/{topic_id}/sessions/work-leases")
-async def session_work_leases(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    from sqlalchemy import select
-
-    from app.domain.agent_session.models import AgentSession
-    from app.domain.machine.session_work import presentation
-
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    rows = await db.scalars(
-        select(AgentSession)
-        .where(AgentSession.topic_id == topic_id)
-        .order_by(AgentSession.agent_handle)
-    )
-    return ok({"sessions": [presentation(row) for row in rows]})
 
 
 @router.put("/{topic_id}/sessions/{session_id}/work-choice")
@@ -1765,7 +1746,9 @@ async def set_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Room defaults before startup; signed running sessions request their own hands."""
+    """The room's choice: what an agent gets when it starts working here.
+
+    A signed session names its own machine instead (``request_choice``)."""
     from pydantic import ValidationError as SchemaError
 
     from app.domain.agent.compute_configs import (
@@ -1796,17 +1779,12 @@ async def set_topic_compute_profile(
         or claims.get("r") != str(topic.resource_id or topic.id)
     ):
         raise ForbiddenError("Execution credential does not own this room generation")
-    asked_by_this_rooms_turn = bool(
-        scoped_session
-    ) or resolver.speaks_for_this_rooms_turn(topic_id)
+    # 开工之后，房间这一项只是之后邀请的 AI 队友的默认（结论 60）：已经在干活的
+    # 会话各有各的机器，改它不会把谁搬走。
     started = bool(
         await AgentSessionService(db).has_run(topic_id)
         or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
     )
-    if started and not asked_by_this_rooms_turn:
-        raise ValidationError(
-            "这个房间已开工，房间的配置不能再改；可以给每个 AI 队友单独更换工作电脑"
-        )
     name = (body.get("profile") or "").strip() or compute_default_name()
     try:
         choice = ComputeChoice.model_validate(
@@ -1867,25 +1845,17 @@ async def set_topic_compute_profile(
         raise NotFoundError("Project not found")
     policy = gate.policy_of(project.settings)
     # 不限档的项目——今天的每一个——连这次调用都不必写出来：构造它要再列一遍项目设
-    # 备、再取一次机主，而不限档时判决与那几条查询无关。房间已经开跑的那一次是例
-    # 外：它无论档位都要人点头，所以那次调用照写。
+    # 备、再取一次机主，而不限档时判决与那几条查询无关。
     verdict: gate.Allowed | gate.Proposal | None = None
-    if started or not policy.lets_everything_through:
+    if not policy.lets_everything_through:
         call = await machine_policy_call(
             db, project=project, topic=topic, choice=choice
         )
-        # 先问闸门 —— 房间开没开跑都问。「超档怎么办」全仓只有 `policy/gate.py`
-        # 回答，路由自己答一遍就是第二份答案：项目把这一档的处置写成 `deny` 时，
-        # 这里要的是一次**看得见的**拒绝（`OverTier` 抛出去，不变量 I27），而不是
-        # 一条等人点头的提议 —— 提议读起来像「再等等」，拒绝说的是「这条路不通」。
+        # 「超档怎么办」全仓只有 `policy/gate.py` 回答，路由自己答一遍就是第二份
+        # 答案：项目把这一档的处置写成 `deny` 时，这里要的是一次**看得见的**拒绝
+        # （`OverTier` 抛出去，不变量 I27），而不是一条等人点头的提议 —— 提议读起
+        # 来像「再等等」，拒绝说的是「这条路不通」。
         verdict = gate.check(call, policy, actor.handle)
-        # 档内也不当场换（结论 23）：房间跑起来之后换机器，丢掉的是这台机器上的
-        # 工作区和还没提交的改动，而那是别人的机器、别人的电（自托管的收件人是机
-        # 主本人）或者项目的钱（Cloud 的收件人是项目主人）。所以档内那一档在这里
-        # 换成同一种东西：这次调用没有发生，房间里多的是一条给人的提议。超档那一
-        # 档闸门已经答过，理由更强，不覆盖它。
-        if started and isinstance(verdict, gate.Allowed):
-            verdict = gate.because_the_room_is_running(call, actor.handle)
     if isinstance(verdict, gate.Proposal):
         # 这次调用没有发生：绑定不写，`topic.compute_config` 不动。房间里多的
         # 是一条提议，下一步在 approver 手上。
@@ -1902,8 +1872,6 @@ async def set_topic_compute_profile(
                 "current": current.profile,
                 "choice": current.model_dump(),
                 "device_id": current.device_id,
-                "locked": started,
-                "inherited": topic.compute_config is None,
                 "proposal": {
                     "approver": verdict.approver,
                     "tier": verdict.call.tier,
@@ -1922,25 +1890,28 @@ async def set_topic_compute_profile(
     if name == COMPUTE_CLOUD:
         await MachineService(db).require_use_authority(topic.project_id, actor)
 
-    # A pre-turn choice has no worktree/session state yet, so it remains editable.
-    # Release then bind preserves bind_topic_device's write-once contract: the bind
-    # itself never overwrites, while an explicit user change before the lock removes
-    # the obsolete choice first. Selecting Cloud or 「系统挑一台」 leaves no pin;
-    # the latter is frozen by resolve_pinned_device on the first turn as before.
-    binding = await device_service.topic_binding(topic_id)
-    if binding is not None and (
-        name != COMPUTE_DEVICE or binding.device_id != device_id
-    ):
-        await device_service.release_topic_device(
-            topic_id, reason="compute choice changed before the first turn"
-        )
-        binding = None
-    if name == COMPUTE_DEVICE and device_id is not None and binding is None:
-        await device_service.bind_topic_device(
-            topic_id,
-            device_id,
-            visibility=await device_service.binding_visibility(device_id),
-        )
+    # Before the first turn the room's pin is the choice itself. Release then
+    # bind preserves bind_topic_device's write-once contract: the bind itself
+    # never overwrites, while an explicit change removes the obsolete pin first.
+    # Selecting Cloud or 「系统挑一台」 leaves no pin; the latter is frozen by
+    # resolve_pinned_device on the first turn. Once the room has started, the pin
+    # belongs to the machine its first turn is using (a Cloud room's connector
+    # included), so a new default for later agents leaves it where it is.
+    if not started:
+        binding = await device_service.topic_binding(topic_id)
+        if binding is not None and (
+            name != COMPUTE_DEVICE or binding.device_id != device_id
+        ):
+            await device_service.release_topic_device(
+                topic_id, reason="compute choice changed before the first turn"
+            )
+            binding = None
+        if name == COMPUTE_DEVICE and device_id is not None and binding is None:
+            await device_service.bind_topic_device(
+                topic_id,
+                device_id,
+                visibility=await device_service.binding_visibility(device_id),
+            )
 
     topic.compute_config = choice.model_dump()
     await db.flush()
@@ -1949,8 +1920,6 @@ async def set_topic_compute_profile(
             "current": name,
             "choice": choice.model_dump(),
             "device_id": device_id if name == COMPUTE_DEVICE else None,
-            "locked": False,
-            "inherited": False,
             "proposal": None,
         }
     )

@@ -199,9 +199,23 @@ def test_team_member_uses_cloud_but_cannot_edit_project_defaults(client, monkeyp
     assert progress_loops
     assert all(loop is request_loop for loop in progress_loops)
     assert (machine.cores, machine.memory_mb, machine.disk_gb) == (2, 4096, 32)
-    assert (
-        client.put(
-            f"/topics/{tid}/compute-profile", json={"choice": {**choice, "cores": 4}}
-        ).status_code
-        == 422
+    # The room has started: a new choice is the default for agents that start
+    # later, and the machine the room already has keeps its size.
+    changed = client.put(
+        f"/topics/{tid}/compute-profile", json={"choice": {**choice, "cores": 4}}
     )
+    assert changed.status_code == 200, changed.text
+    assert (
+        client.get(f"/topics/{tid}/compute-profile").json()["data"]["choice"]["cores"]
+        == 4
+    )
+
+    async def machines():
+        from app.domain.machine.repositories import ProjectMachineRepository
+
+        async with client.test_factory() as session:
+            return await ProjectMachineRepository(session).list_active_for_topic(
+                uuid.UUID(tid)
+            )
+
+    assert [m.cores for m in asyncio.run(machines())] == [2]

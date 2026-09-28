@@ -1,39 +1,29 @@
 <script setup lang="ts">
+// 给房间里的一个 AI 队友换工作电脑。挂在成员名册那一行上：换谁已经由那一行说了，
+// 这里只问换到哪一台。
 import type { ComputeChoice, SessionWorkLease, TopicComputeProfile } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { getSessionWorkLeases, setSessionWorkChoice } from '../api'
+import { setSessionWorkChoice } from '../api'
 import { t } from '../i18n'
 import { choiceKey, compactChoices } from '../lib/computeConfig'
 
-const props = defineProps<{ topicId: string; profile: TopicComputeProfile }>()
+const props = defineProps<{
+  topicId: string
+  profile: TopicComputeProfile
+  session: SessionWorkLease & { choice: ComputeChoice }
+  name: string
+}>()
 // A session's machine is part of what the room reports about itself (the
-// whole-machine badge), so the room re-reads it after a change.
+// whole-machine notice), so the room re-reads it after a change.
 const emit = defineEmits<{ changed: [] }>()
 const open = ref(false)
-const sessions = ref<SessionWorkLease[]>([])
-const selectedId = ref('')
+const current = ref<ComputeChoice>(props.session.choice)
 const target = ref('')
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
-const selected = computed(() => sessions.value.find((session) => session.id === selectedId.value))
-const sessionOptions = computed(() =>
-  sessions.value.map((session) => {
-    const siblings = sessions.value.filter((other) => other.agent_handle === session.agent_handle)
-    return {
-      title:
-        siblings.length > 1
-          ? t('work.sessionMachine.numberedSession', {
-              name: session.agent_handle,
-              number: siblings.indexOf(session) + 1,
-            })
-          : session.agent_handle,
-      value: session.id,
-    }
-  })
-)
 const choices = computed(() => {
   const standard: ComputeChoice = {
     name: t('work.sessionMachine.cloud'),
@@ -52,7 +42,7 @@ const choices = computed(() => {
   return compactChoices(
     props.profile.project_default,
     [...props.profile.favorites, standard, ...devices],
-    selected.value?.choice
+    current.value
   ).map((choice) => {
     const available =
       choice.profile === 'cloud'
@@ -71,37 +61,18 @@ const choices = computed(() => {
 const picked = computed(
   () => choices.value.find((choice) => choice.value === target.value && !choice.props.disabled)?.choice
 )
-const changed = computed(
-  () => selected.value && picked.value && choiceKey(selected.value.choice) !== choiceKey(picked.value)
-)
-
-async function load() {
-  busy.value = true
-  error.value = ''
-  notice.value = ''
-  try {
-    sessions.value = (await getSessionWorkLeases(props.topicId)).sessions
-    if (!sessions.value.some((session) => session.id === selectedId.value))
-      selectedId.value = sessions.value[0]?.id ?? ''
-    target.value = selected.value ? choiceKey(selected.value.choice) : ''
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : t('global.loadFailed')
-  } finally {
-    busy.value = false
-  }
-}
+const changed = computed(() => picked.value && choiceKey(current.value) !== choiceKey(picked.value))
 
 async function confirm() {
-  const session = selected.value
   const choice = picked.value
-  if (!session || !choice || !changed.value) return
+  if (!choice || !changed.value) return
   busy.value = true
   error.value = ''
   notice.value = ''
   try {
-    const result = await setSessionWorkChoice(props.topicId, session.id, choice)
-    sessions.value = sessions.value.map((item) => (item.id === session.id ? result.session : item))
-    target.value = choiceKey(result.session.choice)
+    const result = await setSessionWorkChoice(props.topicId, props.session.id, choice)
+    current.value = result.session.choice ?? choice
+    target.value = choiceKey(current.value)
     notice.value = t('work.sessionMachine.saved')
     emit('changed')
   } catch (cause) {
@@ -112,10 +83,9 @@ async function confirm() {
 }
 
 watch(open, (value) => {
-  if (value) void load()
-})
-watch(selectedId, () => {
-  target.value = selected.value ? choiceKey(selected.value.choice) : ''
+  if (!value) return
+  current.value = props.session.choice
+  target.value = choiceKey(current.value)
   notice.value = ''
   error.value = ''
 })
@@ -124,31 +94,20 @@ watch(selectedId, () => {
 <template>
   <v-dialog v-model="open" max-width="480">
     <template #activator="{ props: activator }">
-      <v-btn v-bind="activator" variant="text" size="small">{{ t('work.sessionMachine.title') }}</v-btn>
+      <button v-bind="activator" type="button" class="sw-action">{{ t('work.roomMachine.change') }}</button>
     </template>
-    <v-card :title="t('work.sessionMachine.title')">
+    <v-card :title="t('work.sessionMachine.title', { name })">
       <v-card-text>
+        <p class="mb-4">{{ t('work.sessionMachine.current', { name: current.name }) }}</p>
         <v-select
-          v-if="sessions.length > 1"
-          v-model="selectedId"
+          v-model="target"
           autocomplete="off"
-          :items="sessionOptions"
-          :label="t('work.sessionMachine.teammate')"
+          :items="choices"
+          :label="t('work.sessionMachine.machine')"
           :disabled="busy"
         />
-        <p v-if="!busy && !sessions.length && !error">{{ t('work.sessionMachine.empty') }}</p>
-        <template v-if="selected">
-          <p class="mb-4">{{ t('work.sessionMachine.current', { name: selected.choice.name }) }}</p>
-          <v-select
-            v-model="target"
-            autocomplete="off"
-            :items="choices"
-            :label="t('work.sessionMachine.machine')"
-            :disabled="busy"
-          />
-          <p role="note" class="mb-2">{{ t('work.sessionMachine.switchWarning') }}</p>
-          <p>{{ t('work.sessionMachine.retained') }}</p>
-        </template>
+        <p role="note" class="mb-2">{{ t('work.sessionMachine.switchWarning') }}</p>
+        <p>{{ t('work.sessionMachine.retained') }}</p>
         <p v-if="notice" role="status">{{ notice }}</p>
         <p v-if="error" role="alert" class="sw-error">{{ error }}</p>
       </v-card-text>
@@ -166,5 +125,20 @@ watch(selectedId, () => {
 <style scoped>
 .sw-error {
   color: var(--danger-ink);
+}
+/* 名册里行尾那颗小动作：和「移出话题」同一档，读的是文字不是按钮块。 */
+.sw-action {
+  flex: none;
+  margin-left: auto;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  cursor: pointer;
+}
+.sw-action:hover {
+  color: var(--ink);
 }
 </style>

@@ -1,4 +1,5 @@
-import type { ComputeChoice, SessionWorkLease, TopicComputeProfile } from '../cx_types'
+// 房间这一项：还没开工的 AI 队友开工时用哪台。开工前后都改得动。
+import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -6,16 +7,10 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getTopicComputeProfile = vi.fn()
 const setTopicComputeChoice = vi.fn()
-const getSessionWorkLeases = vi.fn()
-const setSessionWorkChoice = vi.fn()
 
 vi.mock('../api', () => ({
-  getTopicComputeProfile: (...args: unknown[]) => getTopicComputeProfile(...args),
   setTopicComputeChoice: (...args: unknown[]) => setTopicComputeChoice(...args),
-  getSessionWorkLeases: (...args: unknown[]) => getSessionWorkLeases(...args),
-  setSessionWorkChoice: (...args: unknown[]) => setSessionWorkChoice(...args),
 }))
 
 import { setLocale } from '../i18n'
@@ -43,13 +38,12 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
       { device_id: 'office', name: '办公室 Mac mini', online: true },
       { device_id: 'home', name: '家里那台', online: false },
     ],
-    locked: false,
-    inherited: false,
+    sessions: [],
     profiles: [
       {
         kind: 'compute',
         id: 'device',
-        label: '自托管设备（我的机器）',
+        label: '自有设备',
         tier: 'byo',
         price: '自备',
         description: '在你自己连接的机器上跑。',
@@ -59,10 +53,10 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
       {
         kind: 'compute',
         id: 'cloud',
-        label: 'Cloud',
+        label: '云端',
         tier: 'premium',
         price: '按量计费',
-        description: '为这个话题创建一台独占云端机器。',
+        description: '为房间创建一台云端工作电脑。',
         available: true,
         default: true,
       },
@@ -77,9 +71,9 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
   }
 }
 
-function mountPicker() {
+function mountPicker(state: TopicComputeProfile) {
   return render(TopicComputePicker, {
-    props: { topicId: 'topic-1' },
+    props: { topicId: 'topic-1', profile: state },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
@@ -125,19 +119,15 @@ beforeAll(() => {
 
 beforeEach(() => {
   setLocale('zh-CN')
-  getTopicComputeProfile.mockReset()
   setTopicComputeChoice.mockReset()
-  getSessionWorkLeases.mockReset()
-  setSessionWorkChoice.mockReset()
 })
 
 afterEach(() => cleanup())
 
-describe('room compute choices', () => {
+describe('room work computer choice', () => {
   it('keeps the default first without listing every team device', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile({ project_default: lab, choice: cloud, favorites: [lab] }))
-    mountPicker()
-    await fireEvent.click(await screen.findByRole('button', { name: /云端/ }))
+    mountPicker(profile({ project_default: lab, choice: cloud, favorites: [lab] }))
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
     const list = screen.getAllByRole('button').filter((b) => /自有设备|平台标准配置/.test(b.textContent ?? ''))
     expect(list).toHaveLength(2)
     expect(list[0].textContent).toContain('实验室工作站')
@@ -145,59 +135,54 @@ describe('room compute choices', () => {
     expect(screen.queryByText('家里那台')).toBeNull()
     expect(screen.getByRole('button', { name: /其他配置与设备/ })).toBeTruthy()
   })
-  it('selects a project favorite for this room only', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile({ favorites: [lab] }))
-    setTopicComputeChoice.mockResolvedValue({ choice: lab })
-    mountPicker()
-    await fireEvent.click(await screen.findByRole('button', { name: /云端/ }))
+  it('sets what AI teammates that have not started will use', async () => {
+    setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
+    const { emitted } = mountPicker(profile({ favorites: [lab] }))
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    expect(screen.getByText('只影响还没开工的 AI 队友；已经在干活的继续用自己那台')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
+    await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab))
+    expect(emitted().changed).toHaveLength(1)
+  })
+  it('stays changeable after the room has started', async () => {
+    setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
+    const working: ComputeChoice = { ...lab, name: '办公室 Mac mini' }
+    mountPicker(
+      profile({
+        favorites: [lab],
+        sessions: [
+          {
+            id: 's1',
+            agent_handle: 'analyst',
+            harness: 'claude-code',
+            choice: working,
+            lease: null,
+            machine_access: true,
+          },
+        ],
+      })
+    )
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    expect(screen.queryByText('房间初始配置')).toBeNull()
     await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
     await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab))
   })
   it('keeps a named offline default visible without silently substituting cloud', async () => {
     const home = { ...lab, name: '家里那台', device_id: 'home' }
-    getTopicComputeProfile.mockResolvedValue(profile({ choice: home, project_default: home }))
-    mountPicker()
-    await fireEvent.click(await screen.findByRole('button', { name: /家里那台/ }))
-    expect(screen.getByRole('button', { name: /自有设备.*离线/ })).toBeTruthy()
+    mountPicker(profile({ choice: home, project_default: home }))
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    expect(screen.getByRole('button', { name: /家里那台.*自有设备.*离线/ })).toBeTruthy()
     expect(setTopicComputeChoice).not.toHaveBeenCalled()
   })
-  it('keeps a running room locked and preserves its machine access notice', async () => {
-    getTopicComputeProfile.mockResolvedValue(
-      profile({
-        choice: lab,
-        locked: true,
-        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到能访问整台机器' },
-      })
-    )
-    mountPicker()
-    expect(await screen.findByText('实验室工作站')).toBeTruthy()
-    expect(screen.getByText('能访问整台机器')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '更换工作电脑' })).toBeTruthy()
-  })
-  it('shows the whole-machine notice once a teammate moves onto a team device', async () => {
-    const office: ComputeChoice = { ...cloud, name: '办公室 Mac mini', profile: 'device', device_id: 'office' }
-    const analyst: SessionWorkLease = {
-      id: 'session-a',
-      agent_handle: 'analyst',
-      harness: 'test-harness',
+  it('says a choice became a proposal instead of changing silently', async () => {
+    setTopicComputeChoice.mockResolvedValue({
       choice: cloud,
-      lease: null,
-    }
-    getTopicComputeProfile.mockResolvedValueOnce(profile({ locked: true })).mockResolvedValue(
-      profile({
-        locked: true,
-        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到能访问整台机器' },
-      })
-    )
-    getSessionWorkLeases.mockResolvedValue({ sessions: [analyst] })
-    setSessionWorkChoice.mockResolvedValue({ session: { ...analyst, choice: office } })
-    mountPicker()
-    await fireEvent.click(await screen.findByRole('button', { name: '更换工作电脑' }))
-    await screen.findByText(/当前电脑/)
-    expect(screen.queryByText('能访问整台机器')).toBeNull()
-    await fireEvent.mouseDown(screen.getByLabelText('工作电脑'))
-    await fireEvent.click(await screen.findByRole('option', { name: '办公室 Mac mini' }))
-    await fireEvent.click(screen.getByRole('button', { name: '确认更换' }))
-    expect(await screen.findByText('能访问整台机器')).toBeTruthy()
+      proposal: { approver: 'andyl', tier: 'byo', content: '这一步等 @andyl 点头。' },
+    })
+    const { emitted } = mountPicker(profile({ favorites: [lab] }))
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
+    expect((await screen.findByRole('status')).textContent).toContain('这一步等 @andyl 点头。')
+    expect(emitted().changed).toBeUndefined()
   })
 })

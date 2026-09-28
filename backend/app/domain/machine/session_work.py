@@ -69,46 +69,74 @@ def presentation(row):
     }
 
 
-async def room_machine_visibility(db, topic, project_settings) -> Visibility | None:
-    """How much of a self-hosted machine the agents in this room can see.
-
-    #282 / #358 原则八: whole-machine access is never granted silently, so the
-    room shows it whenever it holds. Each agent session works on its own machine
-    (结论 60) — the one its lease names, or, before it holds one, the one its
-    choice will lease — so that is what is read here, one session at a time. A
-    room where no session has asked for a machine yet answers for the choice
-    its first session will be given.
+async def _visibility_of(devices, device_id: str | None) -> Visibility | None:
+    """What an agent on this machine can see of it: a whole self-hosted machine,
+    or nothing worth a notice. ``None`` for a device id stands for an enrolled
+    machine the platform picks when the session leases, which is still one.
 
     Only machines a person enrolled count. A Cloud box is the room's own and
     seeing all of it grants nothing more (``device.supply.binding_visibility``).
     """
+    supply = Supply.self_hosted
+    if device_id is not None:
+        device = await devices.get_device(device_id)
+        if device is None:
+            return None
+        supply = device.supply
+    return binding_visibility(supply) if supply is Supply.self_hosted else None
+
+
+async def session_machines(db, topic) -> list[dict]:
+    """Each agent session in the room, with the machine it works on.
+
+    A session works on the machine its lease names, or, before it holds one,
+    the one its choice will lease (结论 60). A session with neither has not
+    started working, and says so with ``choice: None``.
+    """
     devices = sql_device_service(db)
-    rows = list(
-        await db.scalars(select(AgentSession).where(AgentSession.topic_id == topic.id))
+    rows = await db.scalars(
+        select(AgentSession)
+        .where(AgentSession.topic_id == topic.id)
+        .order_by(AgentSession.agent_handle, AgentSession.created_at)
     )
-    requested = [row for row in rows if row.work_lease or row.execution_request]
-    choices = [
-        ComputeChoice.model_validate(row.execution_request["choice"])
-        for row in requested
-        if not row.work_lease and (row.execution_request or {}).get("choice")
-    ]
-    if not requested:
-        choices.append(room_choice(topic, project_settings))
-    # A device choice without a machine named takes whichever enrolled machine
-    # is free when it leases: that is still an enrolled machine.
-    machines: list[str | None] = [
-        row.work_lease.get("device_id") for row in requested if row.work_lease
-    ] + [choice.device_id for choice in choices if choice.profile == "device"]
-    seen: set[Visibility] = set()
-    for device_id in machines:
-        supply = Supply.self_hosted
-        if device_id is not None:
-            device = await devices.get_device(device_id)
-            if device is None:
-                continue
-            supply = device.supply
-        if supply is Supply.self_hosted:
-            seen.add(binding_visibility(supply))
+    out = []
+    for row in rows:
+        choice = (row.execution_request or {}).get("choice")
+        visibility = None
+        if row.work_lease:
+            visibility = await _visibility_of(devices, row.work_lease.get("device_id"))
+        elif choice and choice.get("profile") == "device":
+            visibility = await _visibility_of(devices, choice.get("device_id"))
+        out.append(
+            {
+                **presentation(row),
+                "machine_access": visibility is Visibility.host,
+                "visibility": visibility,
+            }
+        )
+    return out
+
+
+async def room_machine_visibility(
+    db, topic, project_settings, sessions: list[dict]
+) -> Visibility | None:
+    """How much of a self-hosted machine the agents in this room can see.
+
+    #282 / #358 原则八: whole-machine access is never granted silently, so the
+    room shows it whenever any of its sessions has it (``session_machines``).
+    A room where no session has asked for a machine yet answers for the choice
+    its first session will be given.
+    """
+    started = [s for s in sessions if s["choice"] or s["lease"]]
+    if started:
+        seen = {s["visibility"] for s in started if s["visibility"] is not None}
+    else:
+        choice = room_choice(topic, project_settings)
+        seen = set()
+        if choice.profile == "device":
+            visibility = await _visibility_of(sql_device_service(db), choice.device_id)
+            if visibility is not None:
+                seen.add(visibility)
     if Visibility.host in seen:
         return Visibility.host
     return next(iter(seen), None)
