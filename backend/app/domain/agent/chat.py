@@ -165,7 +165,7 @@ from app.domain.room_task.models import Task
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
-from app.domain.topic import naming
+from app.domain.topic import doc_nudge, naming
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.overview import (
     project_brief,
@@ -2491,6 +2491,25 @@ class ChatService:
             # The agent has said what it understood: the moment to check the
             # name the room got from its opening line (topic/naming.py).
             naming.nudge(topic_id, "turn")
+            # 同一个时刻也看一眼文档：干过活的房间文档还空着，就请这个队友补上
+            # （topic/doc_nudge.py）。
+            doc_nudge.nudge(topic_id, self)
+
+    @staticmethod
+    def room_is_a_work_room(topic: Topic) -> bool:
+        """这间房按不按房间的规矩来 —— ``_is_dm`` 的否定，``is_private`` 在这个
+        文件里唯一的那个读点推出来的两个答案之一（名册两席 / 这一轮不租地点）。
+
+        提示词给不给「本话题还没有实况文档」那一段，问的就是这个：`_assemble_turn`
+        的 `needs_place` 说的是同一句。`topic/doc_nudge.py` 按同一个答案决定要不要
+        提醒，所以那边不提 ``is_private``，问的是这里——两处必须是同一份声明，否则
+        一个模型会被提示词要求建文档、却收不到平台的提醒，或者反过来。
+
+        `doc_nudge` 经它手上的 ``chat_service`` 取这个方法（`runtime.py` 那一处收尾
+        不 import 本模块，手里只有同一个对象）。**取不到就什么都不做**：轮末那两行
+        之间没有 try，多抛一句出去，这一轮就永远是「在跑」（`_live` 摘不掉）。
+        """
+        return not _is_dm(topic)
 
     def _note_room_session(self, topic_id: uuid.UUID, session_id: str) -> None:
         """The room is on a (possibly) different session now.
