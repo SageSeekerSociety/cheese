@@ -587,14 +587,19 @@ class BlockRepository:
     )
 
     async def rooms_awaiting_a_reply(
-        self, topic_ids: list[uuid.UUID], *, now: datetime
+        self,
+        topic_ids: list[uuid.UUID],
+        *,
+        now: datetime,
+        stuck_rooms: Collection[uuid.UUID] = (),
     ) -> dict[uuid.UUID, ReplyWait]:
         """{房间: 从什么时候开始有人在等 AI 回话} —— 一次查完，只看房间自己那条线。
 
         「在等」有两种：一个人发了一条**点了 AI 名**的消息（`agent_recipient.
         mentioned`，也就是会叫起一轮的那种），而这之后房间里还没有任何 AI 说过话；
-        或者平台报了一件要 AI 接手的事（PR 评审意见、检查没过，见
-        `_checks_awaiting_an_agent`），而这之后还没有 AI 出来处理。人和人之间
+        或者房间（连同名下的活）有一张卡停在「检查红了 / 冲突了，要 AI 去修」上
+        （`stuck_rooms`，调用方按看板判据算好传进来），从最近一次检查报错算起，见
+        `_checks_awaiting_an_agent`。人和人之间
         聊天叫不起 AI，也就谈不上等它。值是这批没人接的消息里**最早**那一条的时间：
         等得最久的那个人决定灯什么时候亮。
 
@@ -623,6 +628,10 @@ class BlockRepository:
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
                 Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+                # 读进过一轮、而那一轮跑完了，就算接到了 —— 哪怕 AI 选择不说话
+                # （「不用管，我只是想知道原因」本来就不期待回复）。这一位只由
+                # 跑完的轮次盖上，死掉的轮次不盖，所以它不会把卡住的情况吞掉。
+                Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
                 or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
             )
             .group_by(Block.topic_id)
@@ -631,7 +640,8 @@ class BlockRepository:
             topic_id: ReplyWait(since=at, reason="mention")
             for topic_id, at in (await self._session.execute(stmt)).all()
         }
-        for topic_id, at in await self._checks_awaiting_an_agent(topic_ids, since):
+        stuck = [t for t in topic_ids if t in set(stuck_rooms)]
+        for topic_id, at in await self._checks_awaiting_an_agent(stuck, since):
             if topic_id not in waiting or at < waiting[topic_id].since:
                 waiting[topic_id] = ReplyWait(since=at, reason="check")
         if waiting:
@@ -695,35 +705,22 @@ class BlockRepository:
     async def _checks_awaiting_an_agent(
         self, topic_ids: list[uuid.UUID], since: datetime
     ) -> list[tuple[uuid.UUID, datetime]]:
-        """[(房间, 最早一条没人接的检查事件的时间)]。
+        """[(房间, 最近一次要 AI 接手的检查事件的时间)] —— 只问卡还停着的房间。
 
-        和人点名不同，这类事件多半落在某一条活的卡上，而接手的可能是那条活的
-        分身，也可能是主 agent 在房间里——所以「有人接了」看的是这个房间**连同它
-        名下的活**里，事件之后有没有任何 AI 说过话。
+        「有没有人接」不看 AI 说没说过话（回一句不相干的话也会被当成接了），而看
+        卡本身：调用方只把卡还停在检查红 / 冲突上的房间传进来。取**最近**一条事件：
+        AI 推了修复、检查又红了，时钟从这次重新算。事件多半落在某条活的卡上，所以
+        连同名下的活一起看。
         """
-        under_room = (
-            Block.topic_id.in_(topic_ids),
-            Block.created_at >= since,
-        )
-        last_reply = (
-            select(Block.topic_id, func.max(Block.created_at).label("at"))
-            .where(
-                *under_room,
-                Block.kind == BlockKind.message,
-                participant_blocks(),
-                agent_handle_column(Block.author),
-            )
-            .group_by(Block.topic_id)
-            .subquery()
-        )
+        if not topic_ids:
+            return []
         stmt = (
-            select(Block.topic_id, func.min(Block.created_at))
-            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            select(Block.topic_id, func.max(Block.created_at))
             .where(
-                *under_room,
+                Block.topic_id.in_(topic_ids),
+                Block.created_at >= since,
                 ~participant_blocks(),
                 Block.meta["event_type"].as_string().in_(self.CHECKS_FOR_THE_AGENT),
-                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
             )
             .group_by(Block.topic_id)
         )

@@ -411,6 +411,35 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
     return None
 
 
+def card_waits_on_reviewer(card: "AcceptCard") -> bool:
+    """这张卡此刻是不是真的在等验收人动手 —— 看板「待审阅」那一格。
+
+    只是 `pending` 不够：CI 挂了、合并冲突、平台在换基、合并态还没看过，这些时候
+    采纳按钮点不了，下一步在芝士或平台手上。侧栏的黄灯和「与我的相关性」都问它，
+    这样两边不会一边说「等你」、一边说「芝士在修」。
+    """
+    facts = facts_for_card(card)
+    return facts is not None and _card_presentation(facts) == _show(
+        NeedsYou.awaiting_review
+    )
+
+
+def card_needs_agent_fix(card: "AcceptCard") -> bool:
+    """这张卡是不是停在「检查红了 / 冲突了，要 AI 去修」上。
+
+    侧栏红灯的「检查报错没人处理」问它：卡还停在这里，这件事就还没了；检查重跑
+    绿了、冲突解了、卡被撤了，它自然不再成立 —— 不靠「AI 说没说过话」去猜。
+    """
+    facts = facts_for_card(card)
+    if facts is None:
+        return False
+    return _card_presentation(facts) in (
+        _show(Delivering.fixing_checks),
+        _show(Delivering.resolving_conflict),
+        _show(NeedsYou.checks_failed),
+    )
+
+
 # —— 一条活 ————————————————————————————————————————————————————
 
 

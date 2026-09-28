@@ -198,19 +198,20 @@ class AcceptCardRepository:
         """
         if not topic_ids:
             return {}
-        stmt = (
-            select(
-                AcceptCard.topic_id,
-                func.bool_or(AcceptCard.status == AcceptStatus.pending),
-            )
-            .where(
-                AcceptCard.topic_id.in_(topic_ids),
-                AcceptCard.reviewer_handle == reviewer_handle,
-            )
-            .group_by(AcceptCard.topic_id)
+        from app.domain.room_task.presentation import card_waits_on_reviewer
+
+        stmt = select(AcceptCard).where(
+            AcceptCard.topic_id.in_(topic_ids),
+            AcceptCard.reviewer_handle == reviewer_handle,
         )
-        rows = (await self._session.execute(stmt)).all()
-        return {topic_id: bool(waiting) for topic_id, waiting in rows}
+        named: dict[uuid.UUID, bool] = {}
+        for card in (await self._session.scalars(stmt)).all():
+            # 「在等他」和看板「待处理」那一格同一个判据：一张 pending 的卡如果
+            # CI 挂了、平台还在换基、状态还没看过，采纳按钮本来就点不了，下一步
+            # 在芝士/平台手上，不算他的事。
+            waiting = card_waits_on_reviewer(card)
+            named[card.topic_id] = named.get(card.topic_id, False) or waiting
+        return named
 
     async def latest_decision_at(self, place_ids: list[uuid.UUID]) -> datetime | None:
         """When a card on these places last changed hands — NULL if there are no

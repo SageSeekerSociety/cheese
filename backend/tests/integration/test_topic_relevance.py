@@ -223,6 +223,56 @@ def test_an_unanswered_decision_request_awaits_you_until_you_decide(client):
     assert after["i_participate"] is True
 
 
+def _set_card(client, card_id: str, **fields) -> None:
+    import asyncio
+
+    from app.domain.review.models import AcceptCard
+
+    async def _run() -> None:
+        async with client.test_factory() as s:
+            card = await s.get(AcceptCard, uuid.UUID(card_id))
+            assert card is not None
+            for key, value in fields.items():
+                setattr(card, key, value)
+            await s.commit()
+
+    asyncio.run(_run())
+
+
+def test_a_card_whose_checks_failed_is_not_on_the_reviewers_desk(client):
+    """CI 挂了，采纳按钮点不了：下一步是芝士去修，不是验收人去点。"""
+    pid = _project(client)
+    tid = _topic(client, pid, "T", created_by="alice")
+    card = _card(client, tid, reviewer="carol")
+    _set_card(
+        client,
+        card,
+        note_code="checks_failed",
+        merge_state={"state": "blocked", "who": "agent", "reasons": []},
+    )
+
+    row = _seen_by(client, pid, "carol")["T"]
+    assert row["i_participate"] is True
+    assert row["awaits_me"] is False
+
+
+def test_a_card_already_approved_and_waiting_to_merge_is_off_the_desk(client):
+    """点过采纳、在等合并队列的检查：该点的已经点了，黄灯要灭。"""
+    pid = _project(client)
+    tid = _topic(client, pid, "T", created_by="alice")
+    card = _card(client, tid, reviewer="carol")
+    assert _seen_by(client, pid, "carol")["T"]["awaits_me"] is True
+
+    _set_card(
+        client,
+        card,
+        decided_by="carol",
+        note_code="waiting_merge_queue",
+        merge_state={"state": "blocked", "who": "ci", "reasons": []},
+    )
+    assert _seen_by(client, pid, "carol")["T"]["awaits_me"] is False
+
+
 # ---- the fields are per-caller, and per-topic ----------------------------
 
 
@@ -377,7 +427,7 @@ def test_relevance_costs_constant_queries_whatever_the_project_size(client, sql_
     #     every status, because being named is a lasting relationship
     #     (`reviewer_topic_ids`);
     #   - the board wants "the undecided card on this room" — every reviewer,
-    #     only live statuses (`_live_room_cards`).
+    #     only live statuses (`_live_cards`).
     # Folding them into one scan means dropping both filters and pulling every
     # card on every listed topic back into Python, which is MORE rows, not
     # fewer round trips. Two is still constant — which is the requirement this

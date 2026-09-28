@@ -218,23 +218,29 @@ def _asks_me(
     return {tid for tid, who in asked.items() if who == viewer}
 
 
-async def _live_room_cards(
-    db: AsyncSession, room_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, AcceptCard]:
-    """每个房间**自己**那张还没结算的验收卡，一次查完。
+async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[AcceptCard]:
+    """这些房间（连同名下的活）上还没结算的验收卡，一次查完。
 
-    只要没结算的：一张已经决议的卡对看板没有话说（`presentation` 读到它会让位给
-    别的判据），所以拉全量只是白读。哪些状态算「还没结算」不在这里数——那张表是
-    `review/archive.py` 维护的，抄第二份就是让它们走散。
+    房间自己那张（`_own_cards`）和「卡停在检查红上」（`_stuck_on_checks`）都从
+    这一批里读，不各查一遍。只要没结算的：一张已经决议的卡对看板没有话说
+    （`presentation` 读到它会让位给别的判据），所以拉全量只是白读。哪些状态算
+    「还没结算」不在这里数——那张表是 `review/archive.py` 维护的，抄第二份就是
+    让它们走散。
+
+    """
+    if not room_ids:
+        return []
+    return await AcceptCardRepository(db).list_live_for_places(
+        room_ids, statuses=archive.OPEN_CARD_STATUSES
+    )
+
+
+def _own_cards(cards: list[AcceptCard]) -> dict[uuid.UUID, AcceptCard]:
+    """每个房间**自己**那张还没结算的验收卡。
 
     `task_id is None` 才是房间自己的卡：一条活递的卡把房间记在 `topic_id` 上，不
     过滤的话，一条活在等验收会让它上面那个房间也显示成等验收。
     """
-    if not room_ids:
-        return {}
-    cards = await AcceptCardRepository(db).list_live_for_places(
-        room_ids, statuses=archive.OPEN_CARD_STATUSES
-    )
     # 按 created_at 升序回来，所以同一个房间后写的覆盖先写的 = 留下最新那张。
     return {c.topic_id: c for c in cards if c.task_id is None}
 
@@ -274,6 +280,20 @@ async def _rooms_with_running_work(
     }
 
 
+def _stuck_on_checks(cards: list[AcceptCard]) -> set[uuid.UUID]:
+    """房间（连同名下的活）里，最新那张卡停在「检查红 / 冲突，要 AI 修」上的。
+
+    同一个地方（房间自己，或某一条活）只看最新那张：旧卡被新卡顶掉后可能还没结算，
+    它的红不代表现在。判据和看板同一个（`presentation.card_needs_agent_fix`）。
+    """
+    latest = {(c.topic_id, c.task_id): c for c in cards}
+    return {
+        room
+        for (room, _), card in latest.items()
+        if presentation.card_needs_agent_fix(card)
+    }
+
+
 def _topic_out(
     topic: Topic,
     running_ids: set[uuid.UUID],
@@ -307,6 +327,13 @@ def _topic_out(
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
     wait = (waiting or {}).get(topic.id)
+    # 检查红了但 AI 此刻正在这个房间（或名下的活）里干活：它就是在处理，不算没人管。
+    if (
+        wait is not None
+        and wait.reason == "check"
+        and (topic.id in running_ids or topic.id in (working_ids or set()))
+    ):
+        wait = None
     out.awaiting_reply_since = wait.since if wait else None
     out.reply_wait_reason = wait.reason if wait else None
     out.turn_failed_at = (failed or {}).get(topic.id)
@@ -361,7 +388,8 @@ async def list_topics(
     )
     running_ids = runner.running_topic_ids()
     relevance = await service.relevance_for_topics(topics, _viewer(actor))
-    cards = await _live_room_cards(db, [t.id for t in topics])
+    live = await _live_cards(db, [t.id for t in topics])
+    cards = _own_cards(live)
     managed = (
         await TopicMemberService(db).managed_topic_ids(
             [t.id for t in topics], actor.handle
@@ -377,7 +405,9 @@ async def list_topics(
     working = await _rooms_with_running_work(db, chat, [t.id for t in topics], now)
     # 侧栏红灯的两个来源，各一次查完：有人点了 AI 的名还没人接；最近一轮报错了。
     waiting = await BlockRepository(db).rooms_awaiting_a_reply(
-        [t.id for t in topics], now=now
+        [t.id for t in topics],
+        now=now,
+        stuck_rooms=_stuck_on_checks(live),
     )
     failed = await BlockRepository(db).rooms_with_a_failed_turn(
         [t.id for t in topics], now=now
@@ -433,7 +463,8 @@ async def get_topic(
     actor = await _actor_in_place(resolver, place)
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics([topic], _viewer(actor))
-    cards = await _live_room_cards(db, [topic.id])
+    live = await _live_cards(db, [topic.id])
+    cards = _own_cards(live)
     managed = (
         await TopicMemberService(db).managed_topic_ids([topic.id], actor.handle)
         if actor.authenticated
@@ -453,7 +484,9 @@ async def get_topic(
             asks_me=_asks_me(asked, _viewer(actor)),
             working_ids=working,
             waiting=await BlockRepository(db).rooms_awaiting_a_reply(
-                [topic.id], now=datetime.now(UTC)
+                [topic.id],
+                now=datetime.now(UTC),
+                stuck_rooms=_stuck_on_checks(live),
             ),
             failed=await BlockRepository(db).rooms_with_a_failed_turn(
                 [topic.id], now=datetime.now(UTC)
