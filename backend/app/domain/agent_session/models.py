@@ -29,10 +29,13 @@ Handing a topic to a different agent therefore destroys nothing — the new agen
 looks up a key that has no row and starts fresh, and handing it back finds the
 old row still there.
 
-A row also carries WHERE this conversation is: the machine it rented hands with
-and the machine its process runs on. Both belong here rather than on the room
-(结论 60) — hands are the agent's, and a room seating two teammates seats two
-sessions that can sit on different machines and migrate without each other.
+A row also carries WHERE this conversation's process runs, and a copy of the
+room's work computer. 一个话题一个容器（2026-09-28 决定，推翻结论 60 的后半）：
+**一间房只有一条算力选择**，房间里坐着的每一条会话都工作在它算出来的那台机器上，
+所以那一列（``execution_request`` / ``work_lease``）是房间的决定的副本，必须与房间
+一致，解析的时候也不问它——问的是房间那一项（``machine/session_work._attempt``）。
+进程在哪台会话机上仍然是这条会话自己的事：一块屏归一间房，屏上的几条会话各自落在
+自己那条会话机上（``runtime_location``）。
 """
 
 import uuid
@@ -48,11 +51,16 @@ from app.domain.common import Timestamps, UuidPk
 
 @dataclass(frozen=True, slots=True)
 class SessionPlace:
-    """一条会话解析出来的地点——它自己的，不是房间的。
+    """一条会话解析出来的地点。
 
     两件事，一条会话上各占一列，因为它们各自会变：进程可以从一台会话机搬到另一台，
     而手上那棵工作树不动；工作机器可以换，而进程不动。混成一列的那些年里，"换机器"
     只能整条一起换，同一个房间的第二个 agent 连开都开不起来。
+
+    工作机器那一半是**房间**的（一个话题一个容器，2026-09-28 决定，推翻结论 60）：
+    ``lease`` 是房间那一项选择落到这条会话上的那一份，同一条会话的每一轮拿到同一个
+    句柄，同一个房间里的两条会话拿到同一台机器上的两份。会话机那一半仍然是这条会话
+    自己的。
     """
 
     #: 会话机：这条会话的进程在哪台机器上。
@@ -103,7 +111,9 @@ class AgentSession(UuidPk, Timestamps, Base):
     # bare existence of a row.
     resume_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # 这条会话的工作机器租约：手在哪、这一代的工作区在哪、装到了什么程度。
-    # 房间不租手（结论 60）——同一个房间里的两个队友各租各的，各自迁移互不影响。
+    # **房间**租手（一个话题一个容器，2026-09-28 决定，推翻结论 60）：这一份是房间
+    # 那一项选择落到这条会话上的那一份，房间里每一条会话的租约落在同一台机器上，
+    # 换机器是房间一起换（`machine/session_work.request_choice`），不是谁自己搬。
     #
     # ``none_as_null=True``：没租到手要落成 SQL NULL。默认那一档会把 Python 的
     # ``None`` 序列化成 JSON ``'null'`` 存进去，于是 ``work_lease IS NOT NULL``
@@ -129,11 +139,14 @@ class AgentSession(UuidPk, Timestamps, Base):
     )
 
     def place(self) -> SessionPlace | None:
-        """这条会话在哪——地点解析的唯一入口。
+        """这条会话在哪——它自己那一半地点的唯一入口。
 
-        入口在会话上，不在房间上：同一条会话的每一轮解析出同一个句柄，同一个房间
-        里的两条会话解析出各自的句柄。没有 ``runtime_location`` 就是还没有地点，
-        下一轮重新租，而不是去猜房间上记着什么。
+        入口在会话上，不在房间上：同一条会话的每一轮解析出同一个句柄。没有
+        ``runtime_location`` 就是还没有地点，下一轮重新租，而不是去猜房间上记着
+        什么。
+
+        ``lease``（工作机器）是**房间**那一半，见 :class:`SessionPlace`：它跟着
+        这一行走只是为了读的人当场看得见，解析它的是房间那一项。
         """
         location = self.runtime_location
         if not location:
