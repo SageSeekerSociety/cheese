@@ -76,6 +76,45 @@ describe("平台工具", () => {
   });
 });
 
+describe("项目的 MCP 服务器", () => {
+  const TRACKER = {
+    name: "mcp__tracker__whoami",
+    description: "Say which credential reached the server.",
+    inputSchema: { type: "object", properties: { note: { type: "string" } } },
+  };
+
+  it("runner 列出的每个工具都注册成 pi 的工具，调用送回 runner 的 mcp", async () => {
+    const socket = await runner(() => ({
+      result: { content: [{ type: "text", text: "reached" }], isError: false },
+    }));
+    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+
+    assert.deepEqual(pi.tools.get(TRACKER.name).parameters, TRACKER.inputSchema);
+    const answer = await pi.call(TRACKER.name, { note: "hi" });
+    assert.deepEqual(answer.content, [{ type: "text", text: "reached" }]);
+    assert.deepEqual(socket.asked, [
+      {
+        method: "mcp",
+        params: { id: "call-1", tool: TRACKER.name, arguments: { note: "hi" } },
+      },
+    ]);
+    socket.close();
+  });
+
+  it("服务器说失败的调用抛出去，pi 才会把它标成错误", async () => {
+    // pi 0.85.1 sets a tool result's error flag only when `execute` throws; a
+    // returned `isError` is ignored, and the model would read a failure as an
+    // answer.
+    const socket = await runner(() => ({
+      result: { content: [{ type: "text", text: "no such issue" }], isError: true },
+    }));
+    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+
+    await assert.rejects(pi.call(TRACKER.name, {}), /no such issue/);
+    socket.close();
+  });
+});
+
 describe("仓库自己的说明", () => {
   const withRepo = async (files: Record<string, string>) => {
     const { pi } = await load();

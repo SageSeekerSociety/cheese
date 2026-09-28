@@ -34,6 +34,7 @@ from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.pi import catalog
 from app.domain.agent.harness.pi.journal import GAVE_UP, RETRYING, Journal
+from app.domain.agent.harness.pi.mcp import ProjectServers
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 
 # A live event that can only mean an entry was written. Anything else is
@@ -65,6 +66,9 @@ class Runner(runner.Runner[Journal]):
         # The platform asked pi to stop: a retry cut short by it is not a
         # failure of anything.
         self.aborting = False
+        # The project's MCP servers (`mcp.py`), opened with the session.
+        self.servers: ProjectServers | None = None
+        self.mcp_tools: list[dict] = []
 
     # --- reading -------------------------------------------------------------
 
@@ -233,6 +237,9 @@ class Runner(runner.Runner[Journal]):
                     "jobs": str(self.state / "bg"),
                     "tools": tools,
                     "unavailable": reason,
+                    # The project's MCP servers' tools, listed when the session
+                    # opened (`open_servers`); each call comes back as `mcp`.
+                    "mcp": self.mcp_tools,
                     # The marker every platform instruction in this room already
                     # carries, handed over rather than restated: it is the one
                     # string in a prompt that claims institutional authority,
@@ -244,6 +251,16 @@ class Runner(runner.Runner[Journal]):
             encoding="utf-8",
         )
         return home
+
+    async def open_servers(
+        self, *, workspace: str, env: dict[str, str], remote: dict | None
+    ) -> None:
+        """Start the checkout's stdio MCP servers and list every server's tools,
+        before the extension's manifest is written."""
+        self.servers = ProjectServers(
+            self.state, workspace=workspace, env=env, remote=remote
+        )
+        self.mcp_tools = await self.servers.discover()
 
     async def run_cli(self, tool: str, arguments: dict, cwd: str | None) -> dict:
         """One platform tool call.
@@ -300,6 +317,7 @@ class Runner(runner.Runner[Journal]):
         skills: dict[str, str] | None = None,
         extension: dict[str, str] | None = None,
         notice: str = "",
+        remote_mcp: dict | None = None,
     ) -> str:
         self.claim()
         saved = self.journal.recall("session_id")
@@ -336,6 +354,7 @@ class Runner(runner.Runner[Journal]):
             if file.name == "SKILL.md":
                 appended += ["--skill", str(file.parent)]
         if extension is not None:
+            await self.open_servers(workspace=cwd, env=env, remote=remote_mcp)
             home = self.write_extension(extension, notice)
             appended += ["--extension", str(home / "index.ts")]
             # Named rather than derived: an extension that had to work out
@@ -451,6 +470,15 @@ class Runner(runner.Runner[Journal]):
             return await self.run_cli(
                 params["tool"], params.get("arguments") or {}, params.get("cwd")
             )
+        if method == "mcp":
+            if self.servers is None:
+                raise ValueError("This session has no MCP servers")
+            return await self.servers.call(
+                params["tool"],
+                params.get("arguments") or {},
+                call_id=params.get("id") or str(uuid.uuid4()),
+                cwd=params.get("cwd"),
+            )
         if method == "abort":
             if self.client is None:
                 return {"aborted": False}
@@ -507,4 +535,8 @@ class Runner(runner.Runner[Journal]):
         if self.refresher is not None:
             self.refresher.cancel()
             await asyncio.gather(self.refresher, return_exceptions=True)
-        await super().close()
+        try:
+            await super().close()
+        finally:
+            if self.servers is not None:
+                await self.servers.close()
