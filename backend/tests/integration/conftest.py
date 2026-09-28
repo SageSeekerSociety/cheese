@@ -506,6 +506,31 @@ def _portal() -> Generator["BlockingPortal"]:
         yield portal
 
 
+@pytest.fixture(autouse=True)
+def _app_engine_off_the_portal(request: pytest.FixtureRequest) -> Generator[None]:
+    """Close what a test left in the application pool on the session portal.
+
+    App code a sync test reaches through ``_portal`` (a request the TestClient
+    serves, a script's ``main``) checks out of the application engine on the
+    portal's loop and returns the connection to the pool still bound to that
+    loop. An async test that later reads the same engine is handed that
+    connection and fails with "attached to a different loop". Async tests close
+    their own connections the same way (``_app_engine_on_test_loop``); this is
+    the portal's half. The session-long ``db_connection`` stays checked out, so
+    disposing the pool does not touch it.
+    """
+    portal = (
+        request.getfixturevalue("_portal")
+        if "_portal" in request.fixturenames
+        else None
+    )
+    yield
+    if portal is not None:
+        from app.core.db import engine
+
+        portal.call(engine.dispose)
+
+
 @pytest.fixture(scope="session")
 def db_connection(_pg_schema, _portal: "BlockingPortal") -> Generator[AsyncConnection]:
     """A single PG connection shared by every test in the session.
