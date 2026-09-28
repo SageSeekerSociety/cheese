@@ -18,6 +18,12 @@ That is exactly the line the status axis is supposed to draw ("accepted means
 success"), which is what this guard must not contradict: it reads the reviews
 the same way a writer of ``SUCCESS`` would. What it deliberately does not do is
 advance the axis itself; that is a separate, larger change.
+
+``has_live_submission`` and ``has_passed_submission`` below are the same two
+tables read for a different question — 「这条领取走到哪一步了」, the per-person
+axis on the board's analytics (``analytics_view_service.get_people``). They live
+here rather than next to that reader so the three predicates cannot drift:
+"live" and "accepted" mean one thing.
 """
 
 from sqlalchemy import ColumnElement, SQLColumnExpression, exists, or_, select
@@ -27,6 +33,64 @@ from app.domain.task.models import (
     TaskSubmission,
     TaskSubmissionReview,
 )
+
+
+def _live_submission_exists(
+    membership_id: SQLColumnExpression[int], *conditions: ColumnElement[bool]
+) -> ColumnElement[bool]:
+    """An EXISTS on the membership's live submissions, plus ``conditions``.
+
+    The building block both the "is there work at all" and the "did it pass"
+    questions below share; ``conditions`` are extra predicates on the submission
+    (or on an EXISTS over its reviews).
+    """
+    return exists(
+        select(TaskSubmission.id)
+        .where(
+            TaskSubmission.membership_id == membership_id,
+            TaskSubmission.deleted_at.is_(None),
+            *conditions,
+        )
+        .correlate(TaskMembership)
+    )
+
+
+def _accepted_review_exists() -> ColumnElement[bool]:
+    """The review that says a submission passed, as an EXISTS on ``TaskSubmission``."""  # noqa: E501
+    return exists(
+        select(TaskSubmissionReview.id)
+        .where(
+            TaskSubmissionReview.submission_id == TaskSubmission.id,
+            TaskSubmissionReview.deleted_at.is_(None),
+            TaskSubmissionReview.accepted.is_(True),
+        )
+        .correlate(TaskSubmission)
+    )
+
+
+def has_live_submission(
+    membership_id: SQLColumnExpression[int],
+) -> ColumnElement[bool]:
+    """A correlated SQL predicate: did this membership hand anything in at all?
+
+    False means the person never submitted — nothing to review, no review, no
+    version: 「在做」. True says only that a submission row is there, not how the
+    review went; pair it with ``has_passed_submission`` to tell 「已交」 from
+    「通过」.
+    """
+    return _live_submission_exists(membership_id)
+
+
+def has_passed_submission(
+    membership_id: SQLColumnExpression[int],
+) -> ColumnElement[bool]:
+    """A correlated SQL predicate: did this membership's work pass review?
+
+    One live submission carrying a live accepted review — ``has_work_in_hand``'s
+    reading of the review tables, narrowed to the accepted branch. A hand-back
+    (rejected review) is not a pass, and neither is a review still in the queue.
+    """
+    return _live_submission_exists(membership_id, _accepted_review_exists())
 
 
 def has_work_in_hand(membership_id: SQLColumnExpression[int]) -> ColumnElement[bool]:
@@ -52,22 +116,6 @@ def has_work_in_hand(membership_id: SQLColumnExpression[int]) -> ColumnElement[b
         )
         .correlate(TaskSubmission)
     )
-    # The review that says the work passed.
-    passed = exists(
-        select(TaskSubmissionReview.id)
-        .where(
-            TaskSubmissionReview.submission_id == TaskSubmission.id,
-            TaskSubmissionReview.deleted_at.is_(None),
-            TaskSubmissionReview.accepted.is_(True),
-        )
-        .correlate(TaskSubmission)
-    )
-    return exists(
-        select(TaskSubmission.id)
-        .where(
-            TaskSubmission.membership_id == membership_id,
-            TaskSubmission.deleted_at.is_(None),
-            or_(still_in_the_queue, passed),
-        )
-        .correlate(TaskMembership)
+    return _live_submission_exists(
+        membership_id, or_(still_in_the_queue, _accepted_review_exists())
     )
