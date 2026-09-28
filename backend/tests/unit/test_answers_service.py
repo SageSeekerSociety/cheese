@@ -510,6 +510,54 @@ class TestGetAnswer:
 
 
 # ---------------------------------------------------------------------------
+# ensure_answer_in_question  (URL 里的父级 id 绑定)
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureAnswerInQuestion:
+    @pytest.mark.anyio
+    async def test_matching_question_returns_the_row(self):
+        svc, repo, _q_repo, _p_repo = _make_service()
+        answer = _answer(id=1, question_id=10)
+        repo.get_by_id.return_value = answer
+
+        got = await svc.ensure_answer_in_question(answer_id=1, question_id=10)
+
+        assert got is answer
+
+    @pytest.mark.anyio
+    async def test_another_question_is_not_found(self):
+        """挂在别的题上 → 404，message 与同族读路由逐字相同。"""
+        svc, repo, _q_repo, _p_repo = _make_service()
+        repo.get_by_id.return_value = _answer(id=1, question_id=10)
+
+        with pytest.raises(NotFoundError, match="^Answer not found for this question$"):
+            await svc.ensure_answer_in_question(answer_id=1, question_id=11)
+
+    @pytest.mark.anyio
+    async def test_a_question_that_does_not_exist_is_the_same_404(self):
+        """父对象不存在（question_id 没有对应的题）也是同一个 404。
+
+        绑定只看回答自己记着的 `question_id`，不去额外问那道题在不在：两种答案
+        能分开的话，「题在别处」和「题不存在」就成了一个存在性探针。
+        """
+        svc, repo, q_repo, _p_repo = _make_service()
+        repo.get_by_id.return_value = _answer(id=1, question_id=10)
+        q_repo.get_by_id.return_value = None
+
+        with pytest.raises(NotFoundError, match="^Answer not found for this question$"):
+            await svc.ensure_answer_in_question(answer_id=1, question_id=999999)
+
+    @pytest.mark.anyio
+    async def test_a_missing_answer_is_404_too(self):
+        svc, repo, _q_repo, _p_repo = _make_service()
+        repo.get_by_id.return_value = None
+
+        with pytest.raises(NotFoundError, match="Answer not found"):
+            await svc.ensure_answer_in_question(answer_id=404, question_id=10)
+
+
+# ---------------------------------------------------------------------------
 # update_answer
 # ---------------------------------------------------------------------------
 
