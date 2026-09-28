@@ -14,7 +14,7 @@ covers:
 
 把项目已采纳版本里的一个静态网站目录，复制成一份平台自己的快照，再用一个隔离的内容域把它按项目成员身份服务出去。
 
-> 讲：快照怎么选、怎么校验、内容域上怎么判身份、cookie 与入口是什么形状。不讲：房间预览与网站这两个源的完整流程（见[预览与项目网站](/dev/preview)），人怎么操作（见[发布网站](/sites)）。
+> 讲：快照怎么选、怎么校验、内容域上怎么判身份、cookie 与入口是什么形状。不讲：房间预览与网站这两个源的完整流程（见[话题预览](/dev/preview)），人怎么操作（见[发布网站](/sites)）。
 
 ## 发布的是什么：先选目录，再校验 {#publish}
 
@@ -89,7 +89,7 @@ covers:
 
 ## 与房间预览的关系 {#preview}
 
-两者共用 `content_origin`，预览只是把项目 hex 换成 `preview-<话题 hex>`（`preview_host.preview_origin`，`replace("://", "://preview-", 1)`），cookie 名字换一套（`__Host-cheese-preview` / `cheese-preview-local`），并且**支持 websocket**（预览要能连正在跑的应用），房间文件走 `/_cheese/room/`。cookie 属性的差别也有原因：预览在 https 下要 `SameSite=None` 加 `Partitioned`（Python 3.11 的 cookie API 还没有这个 flag，所以是拼上去的），网站用的是 `SameSite=Lax` 不加 Partitioned。两套源都挂在 `main.py` 上。完整流程见[预览与项目网站](/dev/preview)。
+两者共用 `content_origin`，预览只是把项目 hex 换成 `preview-<话题 hex>`（`preview_host.preview_origin`，`replace("://", "://preview-", 1)`），cookie 名字换一套（`__Host-cheese-preview` / `cheese-preview-local`），并且**支持 websocket**（预览要能连正在跑的应用），房间文件走 `/_cheese/room/`。cookie 属性的差别也有原因：预览在 https 下要 `SameSite=None` 加 `Partitioned`（Python 3.11 的 cookie API 还没有这个 flag，所以是拼上去的），网站用的是 `SameSite=Lax` 不加 Partitioned。两套源都挂在 `main.py` 上。完整流程见[话题预览](/dev/preview)。
 
 ## 边界与坑 {#traps}
 
