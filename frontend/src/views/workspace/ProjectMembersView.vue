@@ -20,6 +20,7 @@
 // 换一颗「转让项目」（他一走项目就没人管，得先把手交出去）。团队成员退的也是**这个
 // 项目**：他还在小队里，小队别的项目照常，回来要人再请一次。
 import type { LookedUpUser } from '@/api'
+import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -41,6 +42,7 @@ import {
 } from '@/api'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import PageAction from '@/components/common/PageAction.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -190,6 +192,17 @@ function messageOf(e: unknown, fallback: string): string {
 
 // ---- 移出外部成员 ----
 const removeTarget = ref<ProjectMemberRow | null>(null)
+function memberActions(m: ProjectMemberRow): MenuAction[] {
+  return [
+    {
+      key: 'remove',
+      label: t('work.members.remove'),
+      icon: 'mdi-account-remove-outline',
+      danger: true,
+      onSelect: () => (removeTarget.value = m),
+    },
+  ]
+}
 async function confirmRemove() {
   const m = removeTarget.value
   if (!m) return
@@ -386,7 +399,8 @@ async function submitInvite() {
                 {{ countLabel(unreadWith(m.user_handle)) }}
               </span>
             </span>
-            <v-menu v-if="removable(m)" location="bottom end">
+            <!-- 桌面是下拉菜单，手机是底部面板（AdaptiveMenu）。 -->
+            <AdaptiveMenu v-if="removable(m)" :actions="memberActions(m)" :title="m.name || m.user_handle">
               <template #activator="{ props: menuProps }">
                 <v-btn
                   v-bind="menuProps"
@@ -394,17 +408,13 @@ async function submitInvite() {
                   color="on-surface-variant"
                   size="small"
                   icon="mdi-dots-horizontal"
+                  class="tap-target"
                   :aria-label="t('work.members.manage')"
                   :loading="busyHandle === m.user_handle"
                   @click.stop
                 />
               </template>
-              <v-list density="compact" nav>
-                <v-list-item @click="removeTarget = m">
-                  <v-list-item-title class="t-body c-danger">{{ t('work.members.remove') }}</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu>
+            </AdaptiveMenu>
           </div>
         </v-card>
       </div>

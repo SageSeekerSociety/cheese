@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // 工作方法：这个项目存下来的做法。确认过的那一版会带进之后每个房间的 AI 队友，所以
 // 芝士整理出来、或者改过的，都要人在这里读一遍、点确认才算数。
+import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectSkill, ProjectSkillContent, ProjectSkillRevision } from '../api'
 import type { Topic } from '../cx_types'
 
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import {
   confirmProjectSkill,
@@ -19,6 +21,7 @@ import {
 } from '../api'
 
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import PageAction from '@/components/common/PageAction.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
@@ -36,6 +39,47 @@ const busy = ref('')
 const history = ref<{ skill: ProjectSkill; revisions: ProjectSkillRevision[] } | null>(null)
 const viewing = ref<ProjectSkillRevision | null>(null)
 const confirmingDelete = ref<ProjectSkill | null>(null)
+
+// 手机上一行的操作收进行首的 ⋯（底部面板）。等你确认的那一条，「确认保存」仍然摆在
+// 行里——那是这一行唯一要紧的事。
+const { mdAndUp } = useDisplay()
+function draftActions(s: ProjectSkill): MenuAction[] {
+  const edit: MenuAction = { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(s) }
+  if (s.shipped_revision)
+    return [
+      edit,
+      {
+        key: 'discard',
+        label: '放弃改动',
+        icon: 'mdi-undo',
+        loading: busy.value === `${s.id}:discard`,
+        onSelect: () => void discard(s),
+      },
+    ]
+  return [
+    edit,
+    {
+      key: 'drop',
+      label: '不要了',
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => (confirmingDelete.value = s),
+    },
+  ]
+}
+function activeActions(s: ProjectSkill): MenuAction[] {
+  return [
+    { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(s) },
+    { key: 'history', label: '历史版本', icon: 'mdi-history', onSelect: () => void openHistory(s) },
+    {
+      key: 'delete',
+      label: '删除',
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => (confirmingDelete.value = s),
+    },
+  ]
+}
 
 const drafts = computed(() => skills.value.filter((s) => s.state === 'draft'))
 const active = computed(() => skills.value.filter((s) => s.state === 'active'))
@@ -258,6 +302,19 @@ watch(
                   </div>
                 </div>
                 <v-chip size="small" color="warning" variant="tonal">待确认</v-chip>
+                <AdaptiveMenu v-if="!mdAndUp" :actions="draftActions(s)" :title="s.title">
+                  <template #activator="{ props: menuProps }">
+                    <v-btn
+                      v-bind="menuProps"
+                      icon="mdi-dots-horizontal"
+                      size="small"
+                      variant="text"
+                      color="on-surface-variant"
+                      class="tap-target"
+                      aria-label="更多操作"
+                    />
+                  </template>
+                </AdaptiveMenu>
               </div>
               <dl class="skill-row__spec t-meta">
                 <dt>用途</dt>
@@ -283,9 +340,9 @@ watch(
                 >
                   确认保存
                 </v-btn>
-                <v-btn size="small" variant="text" @click="startEdit(s)">修改</v-btn>
+                <v-btn v-if="mdAndUp" size="small" variant="text" @click="startEdit(s)">修改</v-btn>
                 <v-btn
-                  v-if="s.shipped_revision"
+                  v-if="mdAndUp && s.shipped_revision"
                   size="small"
                   variant="text"
                   color="on-surface-variant"
@@ -295,7 +352,7 @@ watch(
                   放弃改动
                 </v-btn>
                 <v-btn
-                  v-if="!s.shipped_revision"
+                  v-if="mdAndUp && !s.shipped_revision"
                   size="small"
                   variant="text"
                   color="on-surface-variant"
@@ -318,8 +375,21 @@ watch(
                 </div>
                 <div class="t-meta c-muted mt-1">{{ s.description }}</div>
               </div>
+              <AdaptiveMenu v-if="!mdAndUp" :actions="activeActions(s)" :title="s.title">
+                <template #activator="{ props: menuProps }">
+                  <v-btn
+                    v-bind="menuProps"
+                    icon="mdi-dots-horizontal"
+                    size="small"
+                    variant="text"
+                    color="on-surface-variant"
+                    class="tap-target"
+                    aria-label="更多操作"
+                  />
+                </template>
+              </AdaptiveMenu>
             </div>
-            <div class="skill-row__actions">
+            <div v-if="mdAndUp" class="skill-row__actions">
               <v-btn size="small" variant="text" @click="startEdit(s)">修改</v-btn>
               <v-btn size="small" variant="text" @click="openHistory(s)">历史版本</v-btn>
               <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = s">删除</v-btn>

@@ -3,11 +3,13 @@
 //
 // 芝士起草的规则停在「待确认」，只有人在这里点「确认启用」才会开始跑：无人值守地
 // 动手，得先有人读过它要做什么、用哪些资料、结果放哪。
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Routine, RoutineInput, RoutineRun } from '../api'
 import type { Topic } from '../cx_types'
 
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import {
   createRoutine,
@@ -20,6 +22,7 @@ import {
 } from '../api'
 
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import PageAction from '@/components/common/PageAction.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
@@ -37,6 +40,61 @@ const busy = ref('')
 const open = ref<string | null>(null)
 const runs = ref<Record<string, RoutineRun[]>>({})
 const confirmingDelete = ref<Routine | null>(null)
+
+// 手机上一行的操作收进行首的 ⋯（底部面板）：五颗文字按钮在窄屏上要折成两三行。
+// 等你确认的那一条，「确认启用」仍然摆在行里——那是这一行唯一要紧的事。
+const { mdAndUp } = useDisplay()
+function rowActions(r: Routine): MenuAction[] {
+  if (r.state === 'draft')
+    return [
+      { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(r) },
+      {
+        key: 'drop',
+        label: '不要了',
+        icon: 'mdi-delete-outline',
+        danger: true,
+        onSelect: () => (confirmingDelete.value = r),
+      },
+    ]
+  return [
+    r.state === 'active'
+      ? {
+          key: 'pause',
+          label: '暂停',
+          icon: 'mdi-pause',
+          loading: busy.value === `${r.id}:pause`,
+          onSelect: () => void act(r, 'pause'),
+        }
+      : {
+          key: 'resume',
+          label: '恢复',
+          icon: 'mdi-play',
+          loading: busy.value === `${r.id}:resume`,
+          onSelect: () => void act(r, 'resume'),
+        },
+    {
+      key: 'run',
+      label: '立即执行一次',
+      icon: 'mdi-play-circle-outline',
+      loading: busy.value === `${r.id}:run-now`,
+      onSelect: () => void act(r, 'run-now'),
+    },
+    { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(r) },
+    {
+      key: 'runs',
+      label: open.value === r.id ? '收起记录' : '执行记录',
+      icon: 'mdi-history',
+      onSelect: () => void toggle(r.id),
+    },
+    {
+      key: 'delete',
+      label: '删除',
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => (confirmingDelete.value = r),
+    },
+  ]
+}
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const TRIGGERS = [
@@ -287,6 +345,19 @@ watch(
                   <div class="t-meta c-faint">{{ r.trigger_text }} · {{ roomTitle(r.topic_id) }}</div>
                 </div>
                 <v-chip size="small" color="warning" variant="tonal">{{ STATE_LABEL[r.state] }}</v-chip>
+                <AdaptiveMenu v-if="!mdAndUp" :actions="rowActions(r)" :title="r.title">
+                  <template #activator="{ props: menuProps }">
+                    <v-btn
+                      v-bind="menuProps"
+                      icon="mdi-dots-horizontal"
+                      size="small"
+                      variant="text"
+                      color="on-surface-variant"
+                      class="tap-target"
+                      aria-label="更多操作"
+                    />
+                  </template>
+                </AdaptiveMenu>
               </div>
               <dl class="routine-row__spec t-meta">
                 <dt>工作内容</dt>
@@ -308,10 +379,12 @@ watch(
                 >
                   确认启用
                 </v-btn>
-                <v-btn size="small" variant="text" @click="startEdit(r)">修改</v-btn>
-                <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = r">
-                  不要了
-                </v-btn>
+                <template v-if="mdAndUp">
+                  <v-btn size="small" variant="text" @click="startEdit(r)">修改</v-btn>
+                  <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = r">
+                    不要了
+                  </v-btn>
+                </template>
               </div>
             </li>
           </ul>
@@ -332,8 +405,21 @@ watch(
               <v-chip size="small" :color="r.state === 'active' ? 'success' : undefined" variant="tonal">
                 {{ STATE_LABEL[r.state] }}
               </v-chip>
+              <AdaptiveMenu v-if="!mdAndUp" :actions="rowActions(r)" :title="r.title">
+                <template #activator="{ props: menuProps }">
+                  <v-btn
+                    v-bind="menuProps"
+                    icon="mdi-dots-horizontal"
+                    size="small"
+                    variant="text"
+                    color="on-surface-variant"
+                    class="tap-target"
+                    aria-label="更多操作"
+                  />
+                </template>
+              </AdaptiveMenu>
             </div>
-            <div class="routine-row__actions">
+            <div v-if="mdAndUp" class="routine-row__actions">
               <v-btn
                 v-if="r.state === 'active'"
                 size="small"
