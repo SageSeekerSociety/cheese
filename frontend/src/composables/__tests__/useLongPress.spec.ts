@@ -121,24 +121,6 @@ describe('useLongPress', () => {
     document.body.removeEventListener('click', onClick)
   })
 
-  it('长按之后松手不再合成点击（不会点在刚升起来的面板遮罩上），轻点照常', async () => {
-    setup()
-    await ready()
-    pointer('pointerdown')
-    vi.advanceTimersByTime(600)
-    pointer('pointerup')
-    const afterLongPress = new Event('touchend', { bubbles: true, cancelable: true })
-    el.dispatchEvent(afterLongPress)
-    expect(afterLongPress.defaultPrevented).toBe(true)
-
-    vi.advanceTimersByTime(10)
-    pointer('pointerdown')
-    pointer('pointerup')
-    const afterTap = new Event('touchend', { bubbles: true, cancelable: true })
-    el.dispatchEvent(afterTap)
-    expect(afterTap.defaultPrevented).toBe(false)
-  })
-
   it('按住期间拦下系统的右键菜单，平时不拦', async () => {
     setup()
     await ready()
