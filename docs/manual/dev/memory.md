@@ -126,7 +126,7 @@ L1 索引：**200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`），超
 
 | 条件 | 默认 | 在哪配 |
 |---|---|---|
-| 自上次整理以来累计的 `resource_usage.output_tokens` | 2,000,000 | `project.settings["memory_dream"]["threshold_output_tokens"]` |
+| 自上次整理以来累计的 `resource_usage.output_tokens` | 10,000,000 | `project.settings["memory_dream"]["threshold_output_tokens"]` |
 | 距上次整理至少 | 4 小时 | `project.settings["memory_dream"]["min_interval_hours"]` |
 
 两个数写进项目设置而不是散在代码里，因为它们量的是**这个项目**的节奏：一个一天到晚在跑的代码项目和一个一周动两次的文档项目，同一个数没有意义。
