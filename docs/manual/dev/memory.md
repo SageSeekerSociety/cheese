@@ -31,6 +31,34 @@ covers:
 
 > 讲：分层、两个作用域、写入与对账的时机、上限与权限、整理（dream）、旧表迁移、正文读数。不讲：每个 `type` 该怎么写（那是 `instructions.py` 里那段散文）。
 
+```demo-steps
+title: 一轮里记忆怎么流转
+note: 右下角「幕后」是会话目录里的记忆文件树；上面那格是真的现场
+embed: memory
+steps:
+  - label: 输入之前：铺好、注入索引
+    desc: 平台把库里这一份铺进会话目录，系统提示词里注入 team/MEMORY.md 和本轮说话那个人的 private 索引。正文不注入，芝士要用时自己读。
+    link: /dev/memory#scopes
+  - label: 被纠正
+    desc: 纠正的是做法倾向才值得记；纠正的是某一次的结果，改完就结束。
+    link: /dev/memory#write
+  - label: 写之前先查重
+    desc: 表达习惯进说话人的 private，项目规矩才进 team。同一件事已有文件就改它，不新建副本。
+    link: /dev/memory#write
+  - label: 写一条：一个文件加索引一行
+    desc: 新建一条记忆是新建一个文件、索引里加一行。索引一行不超过 150 字符，正文不超过 1000 字，超了存成 .rejected.md。
+    link: /dev/memory#limits
+  - label: 这一轮结束：收回会话、写回库
+    desc: 会话改过的收回来写进库。两边都改了同一条时平台那一份赢，会话那一版存成旁路的 .conflict.md，并请它重读再写。
+    link: /dev/memory#write
+  - label: 房间里的那条事件
+    desc: 有改动就留一条折叠的灰字事件，不点任何人的名。team 的改动说进总览房间，private 的改动说进那个人的私聊。
+    link: /dev/memory#events
+  - label: 下一次开场
+    desc: 别人刚改的也在铺进来的那一份里。换一个人说话，注入的 private 索引跟着换成他的。
+    link: /dev/memory#scopes
+```
+
 ## 分层 {#layers}
 
 三层，只有第一层进上下文：
@@ -88,7 +116,16 @@ covers:
 **总长没有写入闸。** L1 索引 **200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`）是注入预算：超了照样写，注入时按行截断，并在注入块里回一句警告（`fit_index` → `MemoryIndex.warnings` → `memory_block`）。删哪一条要看整个作用域，写的人手上没有这份信息，所以取舍交给整理。
 
 - 截断发生在**读**的时候，所以警告跟着索引一起进上下文：读到一段短的索引却不知道它短了的人，会去改错地方。写入端（`/memory/files`）也会跑一次 `fit_index`，把它当 `warning` 还回去。
-- 格式问题只回 `warning` 不拒绝：`MEMORY.md` 里放不下的一条（`name` 不是 kebab-case 等），和 `description` 超过 150 字符。
+- 格式问题只回 `warning` 不拒绝：一条记忆文件的 frontmatter 读不出来（`name` 不是 kebab-case、缺 `name` / `description` / `type`、没有正文），和 `description` 超过 150 字符。这两种文件照写，只是把警告带回去（`api/routes/memory_files.py`）。
+
+```demo-memory
+title: 上限与超限：拖出来看
+note: 左边拖，右边立刻说这一版会怎样。数字是构建时从 files.py 读出来的，不是抄在页面上的。
+source: memory-limits
+limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
+```
+
+三种上限量的是三件不同的事：索引整份超了只是**注入时截断**（写入照收），索引里新写的一行超了、正文超了才是**拒收**。上面每一个数都来自 `backend/app/domain/memory/files.py`，页面里那套算术（`src/memory-limits.mjs`）每次构建都和真的 `fit_index` / `limit_breach` 对一遍：对不上，构建失败。
 
 ## 权限 {#permissions}
 

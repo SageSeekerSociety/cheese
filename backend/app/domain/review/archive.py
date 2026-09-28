@@ -15,7 +15,8 @@
 - `pending` / `pending_gate` / `conflict`：**`revoked`**——话题都归档了，
   这张请求自然作废。人要继续就重新递卡。
 - 骑着未合并 PR 的卡额外多一句：**平台不去动那个 PR**（理由见下），note 和
-  房间事件都要说清 PR 还开在 GitHub 上。
+  房间事件都要说清 PR 还开在 GitHub 上。轮询器已经看到它被关掉的卡
+  （`pr_left_open` 为假）不在此列：那个 PR 没有什么要人去关的。
 - `accepted` / `rejected` / `revoked` / `gate_failed` 已是终态，不碰。
 
 ## 为什么开着的 PR 不自动关掉
@@ -57,6 +58,20 @@ OPEN_CARD_STATUSES: tuple[AcceptStatus, ...] = (
 _NOTE_MAX = 2000
 
 
+def pr_left_open(card: AcceptCard) -> bool:
+    """这张卡骑着的 PR 还开在 GitHub 上、没合并——平台放手时要人去决定它的去留。
+
+    轮询器最后一次看到 PR 已关闭且未合并时，卡上的码是 `pr_closed_unmerged`；
+    PR 被重新打开，轮询器会把这条码清掉（`_poll_pr_card`）。所以这个码在，
+    就是平台最后知道的状态：PR 已经关了，没有要人去关的东西。
+    """
+    return (
+        card.pr_number is not None
+        and card.pr_merged_at is None
+        and card.note_code != notes.NoteCode.pr_closed_unmerged
+    )
+
+
 def prefix_note(note: str, added: str) -> str:
     """把归档说明放在最前面（它是这张卡最后、也最该被读到的一句），旧 note 保留在后。"""
     old = (note or "").strip()
@@ -89,7 +104,7 @@ async def close_cards_for_archived_topic(
             continue
         was = card.status
         card.status = AcceptStatus.revoked
-        if card.pr_number is not None and card.pr_merged_at is None:
+        if pr_left_open(card):
             # 骑着未合并的 PR：停止跟进，但不替任何人去关它。
             notes.record(
                 card,

@@ -330,11 +330,12 @@ def test_one_topics_bound_model_is_never_served_to_another():
 
 def test_the_verdict_cache_does_not_grow_for_every_topic_ever_served():
     """One entry per topic ever served would be a slow leak in a proxy that runs
-    for weeks and has already been OOM-killed once. An entry past its window is
-    no longer an answer to anything, so it goes."""
+    for weeks and has already been OOM-killed once. An entry too old to route
+    by is no longer an answer to anything, so it goes."""
     gate = core.AdmissionGate(
         "http://backend/llm/admission",
         cache_s=0.01,
+        stale_s=0.01,
         post=lambda url, bearer, timeout_s: core.Verdict(True, "ok"),
     )
     for i in range(50):
@@ -345,6 +346,48 @@ def test_the_verdict_cache_does_not_grow_for_every_topic_ever_served():
     gate.check("p1", "t-last", "tok")
 
     assert len(gate._cache) == 1, "expired verdicts were kept"
+
+
+def test_an_unreachable_backend_keeps_the_last_answers_route():
+    """Fail-open still allows, but a session the backend already placed keeps
+    the pool, key and model it was given; only a session with no answer on
+    record, or one too old to route by, gets the subscription default."""
+    clock = [1000.0]
+    up = [True]
+
+    def post(url, bearer, timeout_s):
+        if not up[0]:
+            raise OSError("backend down")
+        return core.Verdict(
+            False,
+            "budget spent",
+            pool=core.GATEWAY,
+            key="sk-virt-1",
+            model="deepseek-flash",
+            fail_open=False,
+        )
+
+    gate = core.AdmissionGate(
+        "http://backend/llm/admission", cache_s=30, stale_s=3600, post=post
+    )
+    with mock.patch.object(core.time, "time", lambda: clock[0]):
+        assert gate.check("p1", "t1", "tok").allow is False
+        up[0] = False
+        clock[0] += 60
+        kept = gate.check("p1", "t1", "tok")
+        assert kept.allow is True and "fail-open" in kept.reason
+        assert (kept.pool, kept.key, kept.model) == (
+            core.GATEWAY,
+            "sk-virt-1",
+            "deepseek-flash",
+        )
+
+        unseen = gate.check("p1", "t2", "tok")
+        assert unseen.allow is True and unseen.pool == core.SUBSCRIPTION
+
+        clock[0] += 3600
+        expired = gate.check("p1", "t1", "tok")
+        assert expired.pool == core.SUBSCRIPTION and expired.key is None
 
 
 def test_a_requested_subagent_model_rides_the_admission_call():

@@ -2164,6 +2164,15 @@ export function rejectCard(cardId: string, decidedBy: string, note: string): Pro
   })
 }
 
+// 作废：结束一张未决的卡，不合并也不退回。作废人由后端从会话认定；验收人、
+// 项目所有者、团队管理员能作废（server-side）。
+export function voidCard(cardId: string, note: string): Promise<AcceptCard> {
+  return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/void`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}
+
 // 撤回采纳 (spec §6.3: 采纳可撤销). Revoke an accepted card → un-archives the
 // topic. Only the accepter / owner / lead may revoke (enforced server-side).
 export function revokeCard(cardId: string, decidedBy: string): Promise<AcceptCard> {

@@ -23,5 +23,10 @@
     "maxLength": "Must be at most {max} characters",
     "required": "This field is required"
   },
-  "updateFailed": "Couldn't update"
+  "updateFailed": "Couldn't update",
+  "desktop": {
+    "macAppleSilicon": "Mac (Apple silicon)",
+    "macIntel": "Mac (Intel)",
+    "windows": "Windows"
+  }
 }

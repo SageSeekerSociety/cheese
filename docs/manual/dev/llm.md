@@ -15,7 +15,37 @@ covers:
 
 > 讲：请求经过哪些节点、每个节点做什么决定。不讲：用量怎么折算成额度，见[计费流程](/dev/billing)。
 
+```demo-steps
+title: 一次模型请求经过哪几站
+note: 右下角「幕后」是这次请求走过的几站，顶上是项目额度
+embed: llm
+steps:
+  - label: 一个出口：计量代理
+    desc: 所有会话的模型流量都经过计量代理。沙盒容器走 :443 反向代理，裸进程走 :8444 CONNECT 代理。
+    link: /dev/llm#one-exit
+  - label: 每个请求先问准入
+    desc: 转发之前调主 API 的准入接口，回答能不能跑、走哪条路、用哪个模型名。每个请求现查，改绑模型不用重启会话。
+    link: /dev/llm#admission
+  - label: 走网关路，流式回来
+    desc: 网关路换上项目的虚拟 key，按 key 记账。上游 key 不出平台主机。
+    link: /dev/llm#routes
+  - label: 额度用完：拒绝并说一声
+    desc: 返回 allow false、reason_kind budget，话题里出现一条平台提示，这一轮不执行。
+    link: /dev/llm#admission
+  - label: 绑定的模型解析不出来
+    desc: 返回 allow false、reason_kind binding，不会悄悄换到另一条路。
+    link: /dev/llm#admission
+  - label: 问不到主 API：软放行
+    desc: 准入这一道是软的：计量代理放行，退回订阅路，由订阅路自己的滚动 token 上限兜底。
+    link: /dev/llm#admission
+  - label: 分身指定模型
+    desc: 分身请求头带着和父会话不同的模型名，才算显式指定。在项目模型目录里、在允许范围内就用它，否则拒绝并列出能指定的。
+    link: /dev/llm#subagent
+```
+
 ## 一个出口：计量代理 {#one-exit}
+
+计量代理内部怎么鉴权、计量、拒绝、换凭证，以及它的前身 ccproxy，见[计量代理](/dev/metering-proxy)。
 
 所有会话的模型流量都经过计量代理（mitmproxy，`deploy/metering-proxy/`）。它有两个入口：
 
@@ -26,7 +56,20 @@ covers:
 
 订阅方式只能在传输层引流：设置 `ANTHROPIC_BASE_URL` 会让 Claude Code 切到 API key 模式、不再用订阅登录。
 
+下面这张图把入口摊开：换入口、换场景，都能看到包从哪个口进、停在哪一站，每一站的面板写着它收到什么、又交出什么。额度用完时四个入口都停住，停的位置却不一样——容器、裸进程、云机器停在准入，Codex、Pi 停在网关。
+
+```demo-arch
+title: 换入口：包从哪进、在哪拦
+note: 换入口、换场景，看包停在哪一站；被拦下的那一站在图上标出来
+kind: llm
+entries: sandbox, bare, cloud, codex
+scenes: ok, budget
+blocks: sandbox/budget, bare/budget, cloud/budget, codex/budget
+```
+
 ## 每个请求先问准入 {#admission}
+
+准入怎么判预算、怎么解析供给，见[准入与供给](/dev/admission)。
 
 计量代理转发每个 `/v1/messages` 之前，调用主 API 的 `POST /llm/admission`（`backend/app/api/routes/llm_proxy.py`），用沙盒自己的短期令牌鉴权。这是唯一的控制点，回答三件事：
 
@@ -95,7 +138,20 @@ out:
 
 绑定的模型解析不出来时，返回 `allow: false` 和 `reason_kind: "binding"`，不会悄悄换到另一条路。主 API 不可达时，计量代理放行并退回订阅路，同时靠它自己的滚动 token 上限兜底。
 
+拒绝的形状由 `reason_kind` 决定，不是由「额度」这一件事决定：绑定解析不出去充值是白跑一趟，所以它回的是「重试没用」那个形状。下面这张图把不放行的两种、软放行的一种，和分身指定模型放在一起看（云机器走的是和裸进程同一条路，只多了隧道那两站）。
+
+```demo-arch
+title: 另外三种情形：绑错、问不到、分身指定
+note: 绑定解析不出拦在准入，问不到主 API 退回订阅路，分身指定模型在准入这一站被翻译
+kind: llm
+entries: sandbox, bare
+scenes: binding, failopen, subagent
+blocks: sandbox/binding, bare/binding
+```
+
 ## 两条路 {#routes}
+
+网关那一侧（虚拟 key、预算刹车、补丁）见[模型网关](/dev/gateway)。
 
 - **订阅路**：计量代理把请求转给模型厂商，把会话里的占位凭证换成平台的订阅凭证，并按准入结果把模型名写进请求体，正文其余部分不改（订阅要求客户端就是 Claude Code 本身）。
 - **网关路**：计量代理把请求改写到 LiteLLM 网关，换上这个项目的虚拟 key。网关按 key 记账，超过 `max_budget` 就拒绝。

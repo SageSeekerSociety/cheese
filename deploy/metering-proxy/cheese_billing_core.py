@@ -35,7 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 # The only names the proxy serves. api.anthropic.com carries the metered
@@ -380,9 +380,15 @@ class AdmissionGate:
     for ``cache_s`` so a chatty session asks once, not per request.
 
     The same answer also carries the SUPPLY decision (#243): which pool serves
-    this project. Fail-open therefore has a direction — an unreachable control
-    plane falls back to the subscription, the destination this proxy has always
-    had, rather than to a gateway whose per-project key it would not have.
+    this project and which model goes into the body. Fail-open therefore has a
+    direction. A session the backend has answered for within ``stale_s`` keeps
+    the pool, key and model of that last answer: a session bound to a gateway
+    model carries that model's name in its body, and sending it to the
+    subscription instead gets a 404 model_not_found, which Claude Code does not
+    retry, so every backend restart killed the gateway turns and subagents that
+    were mid-request. A session with no answer on record falls back to the
+    subscription, the destination this proxy has always had, rather than to a
+    gateway whose per-project key it would not have.
 
     Cached per (project, topic), not per project. The budget half of the answer
     is the project's, but the model it binds comes from the topic's card, and a
@@ -397,9 +403,11 @@ class AdmissionGate:
         cache_s: float = 30.0,
         timeout_s: float = 3.0,
         post=_post_admission,
+        stale_s: float = 3600.0,
     ) -> None:
         self._url = url
         self._cache_s = cache_s
+        self._stale_s = stale_s
         self._timeout = timeout_s
         self._post = post  # test seam
         self._lock = threading.Lock()
@@ -453,15 +461,22 @@ class AdmissionGate:
                 else self._post(self._url, bearer, self._timeout)
             )
         except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
+            if hit and now - hit[0] < self._stale_s:
+                # Still fail-open: allowed whatever the last answer said about
+                # the budget, but routed where the backend last routed it.
+                return replace(
+                    hit[1], allow=True, reason="admission unreachable (fail-open)"
+                )
             return Verdict(True, "admission unreachable (fail-open)")
         with self._lock:
-            # Drop what has expired instead of letting it pile up. Keyed by
-            # project alone this was one entry per project and effectively
-            # bounded; keyed by topic it is one per topic ever served, which on a
-            # box carrying hundreds of them is a slow leak — in a process that
-            # has already been OOM-killed once (#654). The sweep is O(entries
-            # still inside the window) and only runs on a miss.
-            cutoff = now - self._cache_s
+            # Drop what is too old to route by instead of letting it pile up.
+            # Keyed by project alone this was one entry per project and
+            # effectively bounded; keyed by topic it is one per topic ever
+            # served, which on a box carrying hundreds of them is a slow leak —
+            # in a process that has already been OOM-killed once (#654). The
+            # sweep is O(entries still inside the horizon) and only runs on a
+            # miss.
+            cutoff = now - self._stale_s
             self._cache = {k: v for k, v in self._cache.items() if v[0] >= cutoff}
             self._cache[key] = (now, verdict)
         return verdict
@@ -618,13 +633,6 @@ class ModelRewrite:
         # the model the card is bound to, and the exits are refuse or wait, not
         # run it on something else (I27). The caller reports the reason.
         self.missed = False
-        # 被替换前体里原样的 model 值（keep_haiku 放过的也算）——主对话这一
-        # 路读它，就能认出分身请求体里 CC 回显的父会话模型：CC 写的是它启动
-        # 时拿到的模型名，准入会把它当成一次显式指定（2026-09-23 的事故）。
-        # ``replaced`` 为 False 时这个值
-        # 是 haiku 放行，不是父会话的工作模型。
-        self.original: str | None = None
-        self.replaced = False
 
     def feed(self, chunk: bytes) -> bytes:
         """One chunk in, the chunk to forward out. ``b""`` ends the stream."""
@@ -643,10 +651,6 @@ class ModelRewrite:
         span = top_level_model_span(self._buf)
         if span is not None:
             start, end = span
-            try:
-                self.original = json.loads(self._buf[start:end])
-            except ValueError:
-                self.original = None
             if self._keep_haiku and _is_haiku(self._buf[start:end]):
                 out = self._buf
             else:
@@ -655,7 +659,6 @@ class ModelRewrite:
                     + json.dumps(self._model).encode()
                     + self._buf[end:]
                 )
-                self.replaced = True
             self._done = True
             self._buf = b""
             return out

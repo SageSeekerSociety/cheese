@@ -123,23 +123,55 @@ def test_a_second_tab_refreshing_at_the_same_moment_is_not_signed_out(
     assert _refresh(api_client, winner.refresh).status_code == 200
 
 
-def test_a_replaced_token_presented_after_the_grace_window_ends_the_sign_in(
+def test_a_browser_that_never_received_its_refresh_answer_stays_signed_in(
     api_client: TestClient, user: CreatedUser, monkeypatch
 ):
+    """The server rotated, the answer was lost on the way (a timeout, a
+    dropped connection, a proxy error), and the browser comes back later
+    still holding the token that was rotated away."""
+    monkeypatch.setattr(settings, "refresh_reuse_grace_seconds", 1)
+    browser = _sign_in(api_client, user)
+    _refresh(api_client, browser.refresh)  # its answer never arrives
+    time.sleep(1.2)
+
+    retry = _rotate(api_client, browser)
+    later = _rotate(api_client, retry)
+
+    me = api_client.get("/users/me", headers=later.headers)
+    assert me.status_code == 200, me.text
+
+
+def test_a_token_used_by_two_holders_ends_the_sign_in(
+    api_client: TestClient, user: CreatedUser, monkeypatch
+):
+    """The owner refreshes, and a copy of the token it replaced is replayed
+    later. The replay cannot be told from a lost answer, but once the owner
+    refreshes with what it did receive, two holders are certain."""
     monkeypatch.setattr(settings, "refresh_reuse_grace_seconds", 1)
     stolen = _sign_in(api_client, user)
     elsewhere = _sign_in(api_client, user)
     owner = _rotate(api_client, stolen)
     time.sleep(1.2)
+    thief = _rotate(api_client, stolen)
 
-    replay = _refresh(api_client, stolen.refresh)
-
-    assert replay.status_code == 401, replay.text
-    # Whoever holds the current token is signed out too: the server cannot
-    # tell which of the two is the owner.
     assert _refresh(api_client, owner.refresh).status_code == 401
+    # The server cannot tell which of the two is the owner: both are out.
+    assert _refresh(api_client, thief.refresh).status_code == 401
     # Another sign-in of the same account is a different session.
     assert _refresh(api_client, elsewhere.refresh).status_code == 200
+
+
+def test_a_copy_used_first_is_caught_when_the_owner_comes_back(
+    api_client: TestClient, user: CreatedUser, monkeypatch
+):
+    monkeypatch.setattr(settings, "refresh_reuse_grace_seconds", 1)
+    stolen = _sign_in(api_client, user)
+    thief = _rotate(api_client, stolen)
+    time.sleep(1.2)
+    owner = _rotate(api_client, stolen)
+
+    assert _refresh(api_client, thief.refresh).status_code == 401
+    assert _refresh(api_client, owner.refresh).status_code == 401
 
 
 def test_a_sign_in_left_unused_past_the_idle_timeout_is_over(

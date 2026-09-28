@@ -44,6 +44,7 @@ from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.harness.pi.runtime import PI, Handle
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.library import service as library
+from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.models import Topic
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,9 @@ class PiChannel:
                 model=opening.model or settings.agent_model,
                 resume_session_id=opening.resume_token,
                 agent_handle=agent,
+                remote_mcp=await self._remote_mcp(session)
+                if opening.needs_place
+                else None,
             ),
             precheck=precheck,
         )
@@ -130,6 +134,19 @@ class PiChannel:
             agent,
             self._mirror(session, str(resource_id) + agent),
         )
+
+    async def _remote_mcp(self, session: SessionRef) -> dict | None:
+        """The project's remote MCP servers this session can call now.
+
+        As a central session gets them (`CentralProvider.prepare_session`): only
+        the usable ones. A server someone still has to connect is a line in the
+        prompt and a notice in the room instead (`ChatService._unconnected_mcp`).
+        """
+        factory = self.channel._session_factory or async_session_factory
+        async with factory() as db:
+            return await remote_mcp.session_target(
+                db, session.project_id, session.topic_id
+            )
 
     async def _greet(self, device_id: str, state: str) -> dict:
         """The first call into a runner that may still be starting.

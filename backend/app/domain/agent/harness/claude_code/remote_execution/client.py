@@ -312,8 +312,12 @@ def prepare(
     settings = json.loads(json.dumps(base_settings or {}))
     # The project's own tool hooks, which the build fires and the shell prefix
     # runs on the executor (never here: they are not in `central_hooks`).
-    for event, groups in ((context_tree or {}).get("hooks") or {}).items():
+    # Recorded beside the target, so a machine that attaches later replaces
+    # exactly these (`executor_transport.register_project_hooks`).
+    project_hooks = (context_tree or {}).get("hooks") or {}
+    for event, groups in project_hooks.items():
         settings.setdefault("hooks", {}).setdefault(event, []).extend(groups)
+    (directory / "project-hooks.json").write_text(json.dumps(project_hooks))
     allow_native_tools(settings, platform_tools)
     hooks = settings.setdefault("hooks", {})
     helper = [sys.executable, str(Path(__file__).resolve())]
@@ -535,12 +539,23 @@ def _carry_transcripts(config, before, after):
     path's. So the conversations begun at `before` move to `after`'s, before a
     session relaunched there resumes one."""
     source = project_dir(config, before)
-    if not source.is_dir():
-        return
-    destination = project_dir(config, after)
+    if source.is_dir():
+        _move_into(source, project_dir(config, after))
+
+
+def _move_into(source, destination):
+    """`source`'s entries into `destination`, merging the directories both
+    have. A conversation that already lived at `after` and was resumed at
+    `before` keeps its transcript where it found it, but writes its subagents'
+    transcripts and saved tool results under `before`'s directory for that
+    conversation, which `after` has too."""
     destination.mkdir(parents=True, exist_ok=True)
     for entry in source.iterdir():
-        entry.replace(destination / entry.name)
+        target = destination / entry.name
+        if entry.is_dir() and not entry.is_symlink() and target.is_dir():
+            _move_into(entry, target)
+        else:
+            entry.replace(target)
     source.rmdir()
 
 

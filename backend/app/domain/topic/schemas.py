@@ -45,6 +45,8 @@ class TopicOut(BaseModel):
     # 环境事件（machine_provisioning / device_waiting / sandbox_rebuilt /
     # environment_repaired）。侧栏据此选阈值和悬停说明。没在等就 None。
     reply_wait_reason: str | None = None
+    # 卡停在要 AI 修的那几种上时，那张卡的 PR 号：悬停时写出是哪个 PR。
+    reply_wait_pr: int | None = None
     # 最近一轮以报错收场（「本轮未完成：…」、502/404）而之后 AI 还没开过口：那
     # 次报错的时间，没有就 None。侧栏见到它立刻亮红灯，不等五分钟。
     turn_failed_at: datetime | None = None

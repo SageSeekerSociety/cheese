@@ -91,6 +91,14 @@ class ActorResolver:
         self._screen_token = screen_token
         self._credentials = ProjectAgentCredentialService(session)
 
+    def credential_agent(self) -> str | None:
+        """The teammate the presented cheese credential itself names (its ``a``
+        claim), or None. Read off the credential rather than off the resolved
+        actor, for a caller that has to match what ANOTHER connection holding
+        the same credential presents — the preview tunnel is keyed by exactly
+        this claim."""
+        return token_agent_handle(self._cheese_token) if self._cheese_token else None
+
     async def resolve(
         self,
         *,

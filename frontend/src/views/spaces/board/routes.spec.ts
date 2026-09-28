@@ -50,12 +50,15 @@ vi.mock('./pages/Analytics.vue', () => ({ default: blank }))
 // 知道的事（名字落在哪一格）跟编不编它们无关。
 //
 // 一条条写而不是循环：`vi.mock` 要能提上去，路径必须是字面量。
-vi.mock('@/views/tasks/detail/Overview.vue', () => ({ default: blank }))
+//
+// 这里原来还有一条 `@/views/tasks/detail/Overview.vue` —— 它是详情那一条的默认子路由，
+// 第八章重画那一页之后不再有人渲染它，替身也跟着删了。
 vi.mock('@/views/tasks/detail/Submissions.vue', () => ({ default: blank }))
 vi.mock('@/views/tasks/detail/Participants.vue', () => ({ default: blank }))
 vi.mock('@/views/tasks/detail/Submit.vue', () => ({ default: blank }))
 vi.mock('@/views/tasks/detail/AIAdvice.vue', () => ({ default: blank }))
 
+import { BOARD_TASK_ROUTE_NAMES } from './routeNames'
 import { SpaceBoardRoutes } from './routes'
 
 function router() {
@@ -90,14 +93,28 @@ describe('空间新界面那一棵路由', () => {
     expect((await open('/spaces/7/board/members')).name).toBe('SpaceBoardMembers')
   })
 
-  it('详情那五格也在这棵树上，名字与外壳自己那一套对得上', async () => {
+  it('详情那几格也在这棵树上，名字与外壳自己那一套对得上', async () => {
     hoisted.manager = true
-    expect((await open('/spaces/7/board/tasks/42')).name).toBe('SpaceBoardTaskOverview')
+    // 题目详情这一条**自己就是那一页**（不经过默认子路由）：重画之后「概览」与「详情」
+    // 是同一页，所以裸地址落到的是详情自己，而不是原来那条默认子路由。
+    expect((await open('/spaces/7/board/tasks/42')).name).toBe('SpaceBoardTaskDetail')
     expect((await open('/spaces/7/board/tasks/42/submissions')).name).toBe('SpaceBoardTaskSubmissions')
     expect((await open('/spaces/7/board/tasks/42/participants')).name).toBe('SpaceBoardTaskParticipants')
     expect((await open('/spaces/7/board/tasks/42/submit')).name).toBe('SpaceBoardTaskSubmit')
     expect((await open('/spaces/7/board/tasks/42/ai-advice')).name).toBe('SpaceBoardTaskAIAdvice')
     expect((await open('/spaces/7/board/publish')).name).toBe('SpaceBoardTaskPublish')
+  })
+
+  it('「概览」那一格指回详情自己 —— 老页面里「返回概览」的落点没变', async () => {
+    const r = router()
+    await r.push('/spaces/7/board')
+    // 名字对名字解析（不是对路径）：老页面里写的都是名字，所以要紧的是它解得开、
+    // 且落在题目详情那一条上。
+    const resolved = r.resolve({
+      name: BOARD_TASK_ROUTE_NAMES.overview,
+      params: { spaceId: '7', taskId: '42' },
+    })
+    expect(resolved.path).toBe('/spaces/7/board/tasks/42')
   })
 
   it('看板是它自己那一页，不再是老树那九页的副本', async () => {

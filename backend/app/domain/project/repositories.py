@@ -370,6 +370,15 @@ class ProjectRepository:
         return list(result.scalars())
 
 
+class RepositoryTakenError(ConflictError):
+    """The GitHub repo is already connected to another project."""
+
+    def __init__(self, repo: str, holder_project_id: uuid.UUID):
+        super().__init__(f"{repo} is already connected to another project")
+        self.repo = repo
+        self.holder_project_id = holder_project_id
+
+
 class ProjectGitInstallationRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -382,11 +391,9 @@ class ProjectGitInstallationRepository:
         )
         return (await self._session.scalars(stmt)).first()
 
-    async def get_by_installation(
-        self, installation_id: int
-    ) -> ProjectGitInstallation | None:
+    async def get_by_repo(self, repo: str) -> ProjectGitInstallation | None:
         stmt = select(ProjectGitInstallation).where(
-            ProjectGitInstallation.installation_id == installation_id
+            func.lower(ProjectGitInstallation.repo) == repo.lower()
         )
         return (await self._session.scalars(stmt)).first()
 
@@ -398,17 +405,17 @@ class ProjectGitInstallationRepository:
         repo: str,
         account: str,
     ) -> ProjectGitInstallation:
-        """Bind `installation_id` to `project_id` (replacing any prior repo the
-        project was connected to). Raises ConflictError if the installation is
-        already bound to a *different* project — a GitHub installation is never
-        shared, or a minted token would be ambiguous about whose git operations
-        it's for."""
-        by_installation = await self.get_by_installation(installation_id)
-        if by_installation is not None and by_installation.project_id != project_id:
-            raise ConflictError(
-                f"installation {installation_id} is already connected to "
-                f"another project"
-            )
+        """Bind `repo` (through `installation_id`) to `project_id`, replacing
+        any prior repo the project was connected to.
+
+        One installation may serve several projects — an org installs the App
+        once and it covers many repos, and every token is minted for the one
+        repo its project is bound to. What cannot be shared is the repo: raises
+        RepositoryTakenError if a *different* project is already connected
+        to it."""
+        holder = await self.get_by_repo(repo)
+        if holder is not None and holder.project_id != project_id:
+            raise RepositoryTakenError(repo, holder.project_id)
 
         existing = await self.get_by_project(project_id)
         forge = await self._session.scalar(

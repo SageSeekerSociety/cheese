@@ -2758,9 +2758,10 @@ class ChatService:
                 # 的房间里，别人的会话自己开的一轮署成默认那位，现场和「正在处
                 # 理」就会把干活的人认错。
                 acting_agent = await self._acting_handle(session, topic_id, agent)
-                row = (
-                    await AgentTurnRepository(session).get(turn_id) if opened else None
-                )
+                # Read whether or not this process opened it: a session keeps
+                # working across a backend restart, and the process that fed or
+                # first saw the turn wrote what it knew on the row.
+                row = await AgentTurnRepository(session).get(turn_id)
             if not opened:
                 await get_work_runner().open_turn_the_session_started(
                     self, topic_id, turn_id, author=acting_agent

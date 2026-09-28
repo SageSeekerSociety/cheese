@@ -116,6 +116,27 @@ def test_the_project_roster_lists_people_and_teammates_together(client):
     assert gone["active"] is False
 
 
+def test_a_teammate_row_is_found_by_its_own_handle(client):
+    """A teammate's sessions, turns and a message's recipient name it by its own
+    handle, not by its seat, so its row carries that handle too; a person's
+    row has none."""
+    project = _project(client)
+    project_id = project["id"]
+    kimi = _teammate(client, project_id, "cheese-kimi", "芝士K")
+    opus = _teammate(client, project_id, "cheesex-opus-cc", "芝士Opus")
+
+    roster = _roster(client, project_id)
+
+    by_own = {
+        row["instance_handle"]: (seat, row["name"])
+        for seat, row in roster.items()
+        if "instance_handle" in row
+    }
+    assert by_own["cheese-kimi"] == (kimi["seat_handle"], "芝士K")
+    assert by_own["cheesex-opus-cc"] == (opus["seat_handle"], "芝士Opus")
+    assert "instance_handle" not in roster[OWNER]
+
+
 def test_an_agent_can_chat_the_teammate_it_could_not_see(client):
     """验收②：队友手上那张名册上有另一位队友，所以 A 对 B 发得出一条 chat。
 

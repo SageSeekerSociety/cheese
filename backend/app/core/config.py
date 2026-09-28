@@ -201,9 +201,9 @@ class Settings(BaseSettings):
     # A sign-in nobody has refreshed for this long is over, however much of
     # its lifetime remains.
     refresh_idle_timeout_seconds: int = 60 * 60 * 24 * 14
-    # How long a refresh token that was just rotated away still answers.
-    # Two tabs refreshing at the same moment both present the old token; the
-    # slower one must not read as a stolen copy and sign the user out.
+    # How long a refresh token that was just rotated away is answered as a
+    # second tab refreshing at the same moment: with an access token and no new
+    # cookie, because the first tab's answer carries the successor.
     refresh_reuse_grace_seconds: int = 30
 
     # --- Agent (Claude Agent SDK) ---
@@ -818,6 +818,11 @@ class Settings(BaseSettings):
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
     accept_pr_poll_interval_s: int = 300
+    # 卡面上的合并态是快照，而采纳按钮按它亮不亮。读卡这条路也会重算一次陈旧的
+    # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 来读一
+    # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是
+    # 必须的：读卡是热点，不能每个读者都替全平台去问一次 GitHub。
+    accept_pr_snapshot_floor_s: int = 60
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.

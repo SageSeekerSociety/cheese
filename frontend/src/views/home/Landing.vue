@@ -6,6 +6,7 @@ import LandingShell from './LandingShell.vue'
 
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import { t } from '@/i18n'
+import { downloadsForThisComputer } from '@/lib/desktop'
 
 // The manifesto lights up clause by clause as it scrolls through the viewport.
 const manifesto = computed(() => [t('publicSite.manifesto1'), t('publicSite.manifesto2'), t('publicSite.manifesto3')])
@@ -22,6 +23,9 @@ const resources = computed(() => [
   { icon: 'mdi-cloud-outline', title: t('publicSite.cloudTitle'), body: t('publicSite.cloudBody') },
   { icon: 'mdi-laptop', title: t('publicSite.deviceTitle'), body: t('publicSite.deviceBody') },
 ])
+
+// The visitor's own system first; the files are served by this site (lib/desktop.ts).
+const downloads = downloadsForThisComputer()
 
 // Which step of the story is in the middle of the screen drives the room.
 const step = ref(0)
@@ -99,6 +103,27 @@ onBeforeUnmount(() => observer?.disconnect())
         <p>{{ item.body }}</p>
       </div>
       <p class="resources-terms">{{ t('publicSite.resourceTerms') }}</p>
+    </section>
+
+    <section id="download" class="solutions">
+      <div class="solutions-head">
+        <h2 class="solutions-title">{{ t('publicSite.downloadTitle') }}</h2>
+        <p class="solutions-lead">{{ t('publicSite.downloadLead') }}</p>
+      </div>
+      <div class="hero-actions">
+        <v-btn
+          v-for="(d, i) in downloads"
+          :key="d.href"
+          :href="d.href"
+          :color="i === 0 ? 'primary' : undefined"
+          :variant="i === 0 ? 'flat' : 'outlined'"
+          size="large"
+          prepend-icon="mdi-download"
+        >
+          {{ t(d.labelKey) }}
+        </v-btn>
+      </div>
+      <p class="resources-terms">{{ t('publicSite.downloadNote') }}</p>
     </section>
 
     <section class="cta">

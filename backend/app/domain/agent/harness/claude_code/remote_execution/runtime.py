@@ -586,6 +586,25 @@ class Executor:
                         args = specific["updatedInput"]
         return args
 
+    def tool_hooks(self, params):
+        """The project's hooks for one event of a call this executor does not
+        run: a remote MCP server's, which the platform calls. A harness that
+        does not fire the project's hooks itself asks here before the call and
+        after it, as `invoke` does around the calls it runs. A deny is an
+        answer, not a failure: the caller must be able to say why."""
+        try:
+            args = self.hooks(
+                params["event"],
+                params["tool"],
+                params.get("args", {}),
+                params["request_id"],
+                params.get("result"),
+                cwd=params.get("cwd"),
+            )
+        except PermissionError as denied:
+            return {"denied": str(denied)}
+        return {"args": args}
+
     def execute_core(self, tool, args, key, server="native"):
         if tool in self.config.get("deny_tools", []):
             raise PermissionError(f"Remote execution policy denies {tool}")
@@ -1121,6 +1140,8 @@ class Executor:
             )
         if kind == "shell":
             return self.shell(params)
+        if kind == "tool_hooks":
+            return self.tool_hooks(params)
         if kind == "read_file":
             path = Path(native_path(params["path"]))
             if not path.is_absolute():

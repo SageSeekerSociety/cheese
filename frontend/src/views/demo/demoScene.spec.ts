@@ -14,11 +14,13 @@ describe.each(Object.entries(SCENES))('scene %s', (_, scene) => {
     expect(end.running).toEqual({})
   })
 
+  // 一步放下去只往后长：已经在的行不挪位置（步骤清单、按钮卡可以原地改内容）。
   it('only grows while a step plays', () => {
+    const ids = (rows: { id: string }[]) => rows.map((r) => r.id)
     scene.steps.forEach((s, i) => {
       const start = frameAt(scene, i, 0)
       const end = frameAt(scene, i, stepDuration(s))
-      expect(end.chat.slice(0, start.chat.length)).toEqual(start.chat)
+      expect(ids(end.chat).slice(0, start.chat.length)).toEqual(ids(start.chat))
       expect(end.site.slice(0, start.site.length)).toEqual(start.site)
     })
   })

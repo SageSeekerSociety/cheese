@@ -76,7 +76,8 @@ type Msg struct {
 // (or any message) resets a pongWait read deadline. If nothing arrives within
 // pongWait — e.g. a half-open connection where the server died but TCP never
 // closed — ReadMessage fails and the Run loop reconnects. pingPeriod must be
-// comfortably under pongWait.
+// comfortably under pongWait. A Heartbeat goes up at the same cadence, and the
+// backend's HEARTBEAT_S is this pingPeriod.
 const (
 	pingPeriod = 15 * time.Second
 	pongWait   = 45 * time.Second
@@ -180,9 +181,9 @@ func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 }
 
 // pingLoop keeps the connection provably alive: a ping every pingPeriod that the
-// server auto-pongs. Writes go through writeMu so they never interleave with a
-// Send. A failed write just ends the loop; the read side then errors and Run
-// reconnects.
+// server auto-pongs, and a Heartbeat the backend itself reads. Writes go through
+// writeMu so they never interleave with a Send. A failed write just ends the
+// loop; the read side then errors and Run reconnects.
 func (c *Conn) pingLoop(ctx context.Context, conn *websocket.Conn) {
 	t := time.NewTicker(pingPeriod)
 	defer t.Stop()
@@ -193,6 +194,9 @@ func (c *Conn) pingLoop(ctx context.Context, conn *websocket.Conn) {
 		case <-t.C:
 			c.writeMu.Lock()
 			err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+			if err == nil {
+				err = conn.WriteJSON(Heartbeat())
+			}
 			c.writeMu.Unlock()
 			if err != nil {
 				return

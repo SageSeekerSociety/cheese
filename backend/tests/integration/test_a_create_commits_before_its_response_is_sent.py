@@ -110,8 +110,13 @@ class _Asgi:
     def patch(self, path: str, body: dict, *, token: str | None = None) -> None:
         self._call("PATCH", path, body, token=token)
 
+    def request(
+        self, method: str, path: str, body: dict | None, *, token: str | None = None
+    ) -> None:
+        self._call(method, path, body, token=token)
+
     def _call(
-        self, method: str, path: str, body: dict, *, token: str | None = None
+        self, method: str, path: str, body: dict | None, *, token: str | None = None
     ) -> None:
         # 每一次请求都从零开始记：上一个请求的收尾提交（``get_db`` 退出码里那一次）
         # 会落在下一个请求的响应之前，留着它就会替这一次请求把断言顶过去 —— 发题
@@ -120,7 +125,7 @@ class _Asgi:
         headers = [(b"content-type", b"application/json")]
         if token is not None:
             headers.append((b"authorization", f"Bearer {token}".encode()))
-        payload = json.dumps(body).encode()
+        payload = b"" if body is None else json.dumps(body).encode()
         scope = {
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -355,6 +360,83 @@ def test_pdf_drafts_are_committed_before_their_response_is_sent(
     _assert_committed_before_responding(asgi)
 
 
+def _a_feedback(asgi: _Asgi, token: str) -> str:
+    """A public feedback item; the last request made is its ``POST /feedback``."""
+    asgi.post(
+        "/feedback",
+        {
+            "kind": "bug",
+            "title": f"Committed feedback ({uuid.uuid4().hex[:8]})",
+            "summary": "Read right after it is written.",
+            "problem": "Read right after it is written.",
+            "visibility": "public",
+        },
+        token=token,
+    )
+    assert asgi.status == 200, asgi.body
+    return json.loads(asgi.body)["data"]["id"]
+
+
+def test_a_feedback_item_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, author
+) -> None:
+    _, token = author
+
+    _a_feedback(asgi, token)
+
+    _assert_committed_before_responding(asgi)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/feedback/{item}/supports", {}),
+        ("DELETE", "/feedback/{item}/supports", None),
+        ("POST", "/feedback/{item}/comments", {"body": "A comment."}),
+        ("POST", "/feedback/read", {}),
+        ("DELETE", "/feedback/{item}", None),
+    ],
+)
+def test_a_feedback_write_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, author, method: str, path: str, body: dict | None
+) -> None:
+    """The e2e flake this pins (merge queue, run 36415331698)::
+
+    POST /feedback/<id>/supports   200   <- {"count": 1}
+    GET /feedback/<id>                   <- "supports": 0, drawn over the 1
+    """
+    _, token = author
+    item = _a_feedback(asgi, token)
+
+    asgi.request(method, path.format(item=item), body, token=token)
+
+    assert asgi.status == 200, asgi.body
+    _assert_committed_before_responding(asgi)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/feedback/{item}/comments/{comment}/likes"),
+        ("DELETE", "/feedback/{item}/comments/{comment}/likes"),
+        ("DELETE", "/feedback/{item}/comments/{comment}"),
+    ],
+)
+def test_a_feedback_comment_write_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, author, method: str, path: str
+) -> None:
+    _, token = author
+    item = _a_feedback(asgi, token)
+    asgi.post(f"/feedback/{item}/comments", {"body": "A comment."}, token=token)
+    assert asgi.status == 200, asgi.body
+    comment = json.loads(asgi.body)["data"]["id"]
+
+    asgi.request(method, path.format(item=item, comment=comment), None, token=token)
+
+    assert asgi.status == 200, asgi.body
+    _assert_committed_before_responding(asgi)
+
+
 def test_a_space_review_is_committed_before_its_response_is_sent(
     asgi: _Asgi, _portal, db_session: AsyncSession, author, monkeypatch
 ) -> None:
@@ -379,6 +461,79 @@ def test_a_space_review_is_committed_before_its_response_is_sent(
         {"approved": True, "reason": ""},
         token=create_access_token(reviewer_id, handle=reviewer),
     )
+
+    assert asgi.status == 200, asgi.body
+    _assert_committed_before_responding(asgi)
+
+
+def _a_person(db_session: AsyncSession, _portal) -> tuple[str, str]:
+    handle = f"commit-order-{uuid.uuid4().hex[:10]}"
+    user_id = _portal.call(registered, db_session, handle)
+    return handle, create_access_token(user_id, handle=handle)
+
+
+def _an_alert(asgi: _Asgi, handle: str, token: str, kind: str) -> tuple[str, int]:
+    """A project owned by ``handle`` and one alert addressed to them; the last
+    request made is the ``POST /projects/{id}/alerts``."""
+    asgi.post(
+        "/projects",
+        {"name": f"Inbox {uuid.uuid4().hex[:8]}", "owner_handle": handle},
+        token=token,
+    )
+    assert asgi.status == 200, asgi.body
+    project_id = json.loads(asgi.body)["data"]["id"]
+    asgi.post(
+        f"/projects/{project_id}/alerts",
+        {
+            "level": "light",
+            "kind": kind,
+            "title": "A reminder",
+            "body": "Read once, then gone.",
+            "target_handle": handle,
+        },
+        token=token,
+    )
+    assert asgi.status == 200, asgi.body
+    return project_id, json.loads(asgi.body)["data"]["data"][0]["id"]
+
+
+def test_an_alert_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, db_session: AsyncSession, _portal, stub_project_forge
+) -> None:
+    handle, token = _a_person(db_session, _portal)
+
+    _an_alert(asgi, handle, token, "change_alert")
+
+    _assert_committed_before_responding(asgi)
+
+
+@pytest.mark.parametrize(
+    ("kind", "path", "body"),
+    [
+        ("change_alert", "/alerts/{alert}/read", {}),
+        ("change_alert", "/alerts/{alert}/feedback", {"feedback": "up"}),
+        ("change_alert", "/projects/{project}/alerts/read-all", {}),
+        ("decision_request", "/alerts/{alert}/resolve", {"chosen": "yes"}),
+    ],
+)
+def test_answering_an_alert_is_committed_before_the_response_is_sent(
+    asgi: _Asgi,
+    db_session: AsyncSession,
+    _portal,
+    stub_project_forge,
+    kind: str,
+    path: str,
+    body: dict,
+) -> None:
+    """The e2e flake this pins (merge queue, run 36411087478)::
+
+    POST /alerts/<id>/read               200   <- "read": true
+    GET /projects/<id>/inbox                   <- the alert, still unread
+    """
+    handle, token = _a_person(db_session, _portal)
+    project_id, alert_id = _an_alert(asgi, handle, token, kind)
+
+    asgi.post(path.format(alert=alert_id, project=project_id), body, token=token)
 
     assert asgi.status == 200, asgi.body
     _assert_committed_before_responding(asgi)

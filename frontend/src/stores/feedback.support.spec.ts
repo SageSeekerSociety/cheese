@@ -87,3 +87,28 @@ describe('冷启动进详情页', () => {
     expect(getFeedbackCounts).toHaveBeenCalled()
   })
 })
+
+describe('详情在后台重读时点了「支持」', () => {
+  // 提交之后进详情页：先画缓存里那份，背后重读一次。那次重读还在路上时点了支持，
+  // 支持的回答先到、画出 1；晚到的重读是点之前的那份（0）。它不能把 1 盖回 0。
+  it('重读回来时不把刚写下的计数盖回去', async () => {
+    getFeedback.mockResolvedValueOnce(detail(0, false))
+    const store = useFeedbackStore()
+    await store.loadDetail('fb-1')
+
+    let answerStaleRead!: (d: FeedbackDetail) => void
+    getFeedback.mockReturnValueOnce(new Promise((resolve) => (answerStaleRead = resolve)))
+    getFeedback.mockResolvedValueOnce(detail(1, true))
+    supportFeedback.mockResolvedValue({ count: 1, supported: true })
+
+    const reading = store.loadDetail('fb-1')
+    await store.toggleSupport('fb-1')
+    expect(store.detail?.supports).toBe(1)
+
+    answerStaleRead(detail(0, false))
+    await reading
+
+    expect(store.detail?.supports).toBe(1)
+    expect(store.detail?.supported).toBe(true)
+  })
+})

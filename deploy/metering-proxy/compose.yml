@@ -1,5 +1,7 @@
 # Subscription metering proxy — meters, caps and routes every Claude turn. It
-# holds no model credential: sessions carry their host's own Claude login.
+# holds the platform's only model credential: every session boots on
+# NO_LOGIN_PLACEHOLDER, which authenticates nothing, and the real credential is
+# put on the request here, on its way to Anthropic.
 #
 # Values come from a box-local .env next to this file (never committed):
 #   CHEESE_SCOPED_SECRET    = the backend's SANDBOX_TOKEN (rotate together)

@@ -1,10 +1,11 @@
 """Turn Claude Code's stream-json records into the room's event vocabulary.
 
-The records are what the runner journaled: every line Claude Code wrote to
-stdout, plus the transcript lines of agents only their own file reports on
-(``cheese_file``). One assistant record may carry several content blocks, so the
-events a record comes out as each get their own id: the record's ``uuid``
-(Claude Code's, stable across a re-read) plus the block's index.
+The records are what the runner journaled: the lines Claude Code wrote to
+stdout about what the session did, plus the transcript lines of agents only
+their own file reports on (``cheese_file``). One assistant record may carry
+several content blocks, so the events a record comes out as each get their own
+id: the record's ``uuid`` (Claude Code's, stable across a re-read) plus the
+block's index.
 
 Which card a sub-thread's work lands on is the contract's ``thread_label``
 (结论 43), and no field of a Claude Code record carries one. The agent writes it

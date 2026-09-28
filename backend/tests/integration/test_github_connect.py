@@ -165,3 +165,93 @@ def test_connect_requires_auth(client, monkeypatch):
 
     r = client.post(f"/projects/{pid}/github/connect")
     assert r.status_code == 401
+
+
+_WIDGETS = {
+    "full_name": "acme/widgets",
+    "owner": {"login": "acme"},
+    "permissions": {"push": True},
+}
+
+
+def _project_of(client, owner: str, name: str) -> str:
+    r = post_project(
+        client,
+        json={"name": name, "owner_handle": owner, "forge_kind": "github_app"},
+    )
+    assert r.status_code == 200
+    return r.json()["data"]["id"]
+
+
+def test_connect_names_the_project_already_holding_the_repo(client, monkeypatch):
+    _github_world(
+        monkeypatch,
+        upstream="https://github.com/acme/widgets.git",
+        installations=[{"id": 77}],
+        repos_by_installation={77: [_WIDGETS]},
+    )
+    first = _project_of(client, "alice", "Widgets main")
+    second = _project_of(client, "alice", "Widgets again")
+    headers = session_auth_headers("alice")
+    assert client.post(f"/projects/{first}/github/connect", headers=headers).json()[
+        "data"
+    ]["connected"]
+
+    r = client.post(f"/projects/{second}/github/connect", headers=headers)
+
+    assert r.status_code == 409
+    message = r.json()["error"]["message"]
+    assert "acme/widgets" in message
+    assert "「Widgets main」" in message
+    assert "installation" not in message
+    assert client.get(f"/projects/{second}/github/connection", headers=headers).json()[
+        "data"
+    ] == {"connected": False}
+
+
+def test_connect_does_not_name_a_project_the_caller_cannot_see(client, monkeypatch):
+    _github_world(
+        monkeypatch,
+        upstream="https://github.com/acme/widgets.git",
+        installations=[{"id": 77}],
+        repos_by_installation={77: [_WIDGETS]},
+    )
+    alices = _project_of(client, "alice", "Private widgets")
+    bobs = _project_of(client, "bob", "Bob widgets")
+    assert client.post(
+        f"/projects/{alices}/github/connect", headers=session_auth_headers("alice")
+    ).json()["data"]["connected"]
+
+    r = client.post(
+        f"/projects/{bobs}/github/connect", headers=session_auth_headers("bob")
+    )
+
+    assert r.status_code == 409
+    message = r.json()["error"]["message"]
+    assert "acme/widgets" in message
+    assert "Private widgets" not in message
+
+
+def test_connect_shares_one_installation_across_repos(client, monkeypatch):
+    world = {
+        77: [
+            _WIDGETS,
+            {
+                "full_name": "acme/gadgets",
+                "owner": {"login": "acme"},
+                "permissions": {"push": True},
+            },
+        ]
+    }
+    headers = session_auth_headers("alice")
+    for name in ("widgets", "gadgets"):
+        _github_world(
+            monkeypatch,
+            upstream=f"https://github.com/acme/{name}.git",
+            installations=[{"id": 77}],
+            repos_by_installation=world,
+        )
+        pid = _project_of(client, "alice", name)
+        r = client.post(f"/projects/{pid}/github/connect", headers=headers)
+        assert r.status_code == 200
+        assert r.json()["data"]["repo"] == f"acme/{name}"

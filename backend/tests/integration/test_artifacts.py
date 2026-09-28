@@ -263,7 +263,17 @@ def test_malformed_base64_is_refused_rather_than_written(client):
 # --- 运行环境预览: an artifact that is a RUNNING app, not a file ----------------
 
 
-def _preview_machine(topic_id: str, *, alive: bool):
+def _room_agent(client, topic_id: str) -> str:
+    """The teammate a room answers as — who a declaration made without a
+    teammate's credential is recorded as, and so whose tunnel it follows."""
+    body = client.get(f"/topics/{topic_id}/members")
+    assert body.status_code == 200, body.text
+    return next(
+        row["member_handle"] for row in body.json()["data"]["data"] if row["agent"]
+    )
+
+
+def _preview_machine(client, topic_id: str, *, alive: bool):
     """A machine whose preview helper is connected, with or without an app behind
     it. Attaches to the real hub over the real frame codec — the two states the
     panel has to tell apart are exactly what a probe through the tunnel decides.
@@ -271,41 +281,42 @@ def _preview_machine(topic_id: str, *, alive: bool):
     import uuid
 
     from app.domain.agent import preview_tunnel as wire
-    from app.domain.agent.preview_hub import preview_hub
+    from app.domain.agent.preview_hub import PreviewMachine, preview_hub
 
     tid = uuid.UUID(topic_id)
 
     class _Machine:
+        attached: PreviewMachine | None = None
+
+        def reply(self, frame: bytes) -> None:
+            assert self.attached is not None
+            self.attached.on_frame(frame)
+
         async def send_bytes(self, data: bytes) -> None:
             op, stream, _payload = wire.decode(data)
             if op != wire.OP_REQ:
                 return
             if not alive:
-                preview_hub.on_frame(
-                    tid, wire.encode(wire.OP_ERR, stream, b"connection refused")
-                )
+                self.reply(wire.encode(wire.OP_ERR, stream, b"connection refused"))
                 return
-            preview_hub.on_frame(
-                tid,
+            self.reply(
                 wire.encode(
                     wire.OP_RESP,
                     stream,
                     wire.encode_meta({"status": 200, "headers": []}, b"ok"),
                 ),
             )
-            preview_hub.on_frame(tid, wire.encode(wire.OP_END, stream))
+            self.reply(wire.encode(wire.OP_END, stream))
 
     machine = _Machine()
-    preview_hub.attach(tid, machine)
+    machine.attached = preview_hub.attach(tid, _room_agent(client, topic_id), machine)
     return machine
 
 
 def _detach(topic_id: str, machine) -> None:
-    import uuid
-
     from app.domain.agent.preview_hub import preview_hub
 
-    preview_hub.detach(uuid.UUID(topic_id), machine)
+    preview_hub.detach(machine.attached)
 
 
 def test_app_artifact_and_preview(client):
@@ -318,7 +329,7 @@ def test_app_artifact_and_preview(client):
     tr = client.post("/topics", json={"project_id": pid, "title": "T"})
     tid = tr.json()["data"]["id"]
 
-    machine = _preview_machine(tid, alive=True)
+    machine = _preview_machine(client, tid, alive=True)
     try:
         r = client.post(
             f"/topics/{tid}/shown", json={"path": "Vue dev server", "as": "app"}
@@ -339,7 +350,7 @@ def test_app_artifact_and_preview(client):
 
     # Tunnel up, app dead → no url, and said distinctly: a live tunnel with
     # nothing behind it is exactly the white-frame case.
-    dead = _preview_machine(tid, alive=False)
+    dead = _preview_machine(client, tid, alive=False)
     try:
         d = client.get(f"/topics/{tid}/preview").json()["data"]
         assert d["kind"] == "app" and d["url"] is None and d["tunnel_up"] is True
@@ -386,7 +397,7 @@ def test_serve_is_refused_when_nothing_answers_on_the_declared_port(client):
     white frame."""
     _pid, tid = _topic(client)
 
-    dead = _preview_machine(tid, alive=False)
+    dead = _preview_machine(client, tid, alive=False)
     try:
         r = client.post(f"/topics/{tid}/shown", json={"path": "app", "as": "app"})
     finally:

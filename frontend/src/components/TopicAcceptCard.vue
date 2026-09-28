@@ -39,6 +39,7 @@ import {
   rejectCard,
   revokeCard,
   setAutoMerge,
+  voidCard,
 } from '@/api'
 import { t } from '@/i18n'
 import { columnDotStyle } from '@/lib/board'
@@ -73,6 +74,10 @@ const animate = ref(false)
 const acceptBusy = ref(false)
 const rejectNote = ref('')
 const showRejectInput = ref(false)
+// 作废：卡停在一个没人能推进的地方（PR 在 GitHub 上被关掉、冲突卡等）时的出口。
+// 它不是退回——不叫芝士改，只结束这次审阅，所以同样要先展开、再确认。
+const voidNote = ref('')
+const showVoidInput = ref(false)
 // 人工放行 (#718): 明知合并态不是 clean 仍合并。默认拒绝、显式放行，所以
 // 它藏在一个要先展开、再填理由的小表单后面——不是一个可以顺手点到的按钮。
 const showForceMergeInput = ref(false)
@@ -190,10 +195,16 @@ const bar = computed<{ icon: string; color: string; title: string; sub: string }
     return {
       icon: 'mdi-source-merge',
       color: 'success',
-      // 被审阅的东西按它实际是什么说：一份产物就写它的名字和第几版，否则是一段改动。
-      title: pending.artifact
-        ? t('work.room.accept.artifact', { name: pending.artifact.name, version: pending.artifact.version })
-        : t('work.room.accept.change'),
+      // 被审阅的东西按它实际是什么说。交一次合并时，产物是整个代码仓库，每张卡都是
+      // 「《同一个名字》第 N 版」，一行里说不出这次改了什么 —— 那就用这次改动自己的
+      // 标题；产物和第几版在展开的「这次交付」里。交文件、交地址时，产物的名字和第几版
+      // 就是这次交的东西。
+      title:
+        pending.deliverable?.kind === 'merge' && pending.change_subject
+          ? pending.change_subject
+          : pending.artifact
+            ? t('work.room.accept.artifact', { name: pending.artifact.name, version: pending.artifact.version })
+            : t('work.room.accept.change'),
       sub:
         pending.reviewer_handle === AUTHOR
           ? t('work.room.accept.waitingOnYou')
@@ -432,6 +443,22 @@ async function onRejectCard() {
     await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
   } catch (e) {
     store.reportError(e, '退回失败')
+  } finally {
+    acceptBusy.value = false
+  }
+}
+
+async function onVoidCard() {
+  const card = pendingCard.value
+  if (!card) return
+  acceptBusy.value = true
+  try {
+    await voidCard(card.id, voidNote.value)
+    showVoidInput.value = false
+    voidNote.value = ''
+    await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
+  } catch (e) {
+    store.reportError(e, '作废失败')
   } finally {
     acceptBusy.value = false
   }
@@ -792,6 +819,15 @@ defineExpose({ reload: loadAcceptCard })
                         >
                           退回
                         </v-btn>
+                        <v-btn
+                          variant="text"
+                          class="text-medium-emphasis"
+                          :disabled="acceptBusy"
+                          prepend-icon="mdi-close-circle-outline"
+                          @click="showVoidInput = !showVoidInput"
+                        >
+                          作废
+                        </v-btn>
                       </div>
                       <!-- 绿了自动合 (#718)：项目允许、规则还没满足时才有；布防人由后端认定。 -->
                       <div v-if="autoMergeVisible" class="d-flex align-center flex-wrap ga-2 mt-2">
@@ -881,6 +917,25 @@ defineExpose({ reload: loadAcceptCard })
                         <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard">
                           确认退回
                         </v-btn>
+                      </div>
+                      <div v-if="showVoidInput" class="mt-3">
+                        <div class="text-caption text-medium-emphasis mb-1">
+                          作废会结束这次审阅：不合并，也不退回修改。之后可以重新提交审阅
+                        </div>
+                        <div class="d-flex align-end ga-2">
+                          <v-text-field
+                            v-model="voidNote"
+                            autocomplete="off"
+                            variant="outlined"
+                            density="compact"
+                            hide-details
+                            placeholder="作废理由（可选）"
+                            class="flex-grow-1"
+                          />
+                          <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onVoidCard">
+                            确认作废
+                          </v-btn>
+                        </div>
                       </div>
                     </div>
                   </v-card>
@@ -1093,14 +1148,21 @@ defineExpose({ reload: loadAcceptCard })
 .accept-bar__toggle:hover {
   background: var(--fill);
 }
+/* 标题可以是一次改动的整句标题（最长 72 字），窄屏上一行放不下，所以它也跟着截断；
+   「等谁」那半句更短，先让标题让位。 */
 .accept-bar__title {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--ink);
   font-size: 14px;
   font-weight: 600;
   line-height: var(--lh-14);
 }
 .accept-bar__sub {
+  flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);

@@ -244,6 +244,63 @@ def _replace_file(path, text):
     os.replace(temporary, path)
 
 
+#: Where a Claude Code session's runner listens, as the runner tells the
+#: session it starts (`claude_code.runner.Runner.start`, which spells the same
+#: name: this file ships alone and imports nothing of it). The session's own
+#: helpers reach the runner there, never the agent, whose commands run on the
+#: room's machine.
+SESSION_SOCKET = "CHEESE_SESSION_SOCKET"
+
+
+def register_project_hooks(config, hooks):
+    """Give a running Claude Code session the project's own tool hooks.
+
+    The session registers them from the machine when it starts
+    (`client.prepare`). One started before it had a machine had none to
+    register, so this runs when the machine attaches: the runner hands the
+    hooks to the build as flag settings (`apply_flag_settings`), which take
+    effect before the answer comes back, so every later tool call fires them,
+    as it would in a session started on the machine. Returns whether the
+    session's hooks changed. A target with no settings of its own (Codex: the
+    executor runs the hooks around its calls) has nothing to change.
+    """
+    import socket
+    from pathlib import Path
+
+    target_file = config.get("target_file")
+    if not config.get("central_config") or not target_file:
+        return False
+    record = Path(target_file).with_name("project-hooks.json")
+    previous = json.loads(record.read_text()) if record.exists() else {}
+    if previous == hooks:
+        return False
+    path = os.environ.get(SESSION_SOCKET)
+    if not path:
+        raise RuntimeError(
+            "This session cannot take up the project's tool hooks: "
+            "it was started without its runner's socket"
+        )
+    request = {
+        "method": "control",
+        "params": {
+            "request": {"subtype": "apply_flag_settings", "settings": {"hooks": hooks}}
+        },
+    }
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(60)
+        connection.connect(path)
+        connection.sendall(json.dumps(request).encode() + b"\n")
+        answer = json.loads(connection.makefile("rb").readline())
+    response = answer.get("result") or {}
+    if "error" in answer or response.get("subtype") != "success":
+        raise RuntimeError(
+            "The session did not take up the project's tool hooks: "
+            + str(answer.get("error") or response.get("error") or response)
+        )
+    _replace_file(str(record), json.dumps(hooks))
+    return True
+
+
 class RemoteClient:
     def __init__(self, config, *, shared_connection=False):
         import threading
@@ -571,6 +628,50 @@ class RemoteClient:
             raise RuntimeError(answer["error"])
         return answer["result"]
 
+    def remote_call_with_hooks(self, call_id, server, tool, args):
+        """A remote server's tool call with the project's PreToolUse and
+        PostToolUse hooks around it, for a harness that does not fire them
+        itself (Codex; pi). Claude Code fires them itself, so its bridge calls
+        `call("invoke", …)` without this. The hooks run on the room's machine,
+        which is taken for it; a PreToolUse deny, or a machine out of reach,
+        means the call is not made. Returns what `call("invoke", …)` does."""
+        name = f"mcp__{server}__{tool}"
+        before = self.control(
+            {
+                "subtype": "tool_hooks",
+                "event": "PreToolUse",
+                "tool": name,
+                "args": args,
+                "request_id": call_id,
+            }
+        )
+        if "denied" in before:
+            return {"error": before["denied"]}
+        args = before["args"]
+        receipt = self.remote_mcp(
+            "invoke", {"id": call_id, "server": server, "tool": tool, "args": args}
+        )
+        after = self.control(
+            {
+                "subtype": "tool_hooks",
+                "event": "PostToolUse",
+                "tool": name,
+                "args": args,
+                "request_id": call_id,
+                "result": receipt.get("value", receipt.get("error")),
+            }
+        )
+        if "denied" in after and "value" in receipt:
+            # The call has happened; a PostToolUse block is feedback on its
+            # result, which the model reads beside it, as in Claude Code.
+            value = dict(receipt["value"])
+            value["content"] = [
+                *value.get("content", []),
+                {"type": "text", "text": f"PostToolUse hook: {after['denied']}"},
+            ]
+            return {"value": value}
+        return receipt
+
     def remote_servers(self):
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
 
@@ -604,6 +705,8 @@ class RemoteClient:
                 and (params or {}).get("subtype") == "shell"
                 and (params or {}).get("operation") == "start"
             )
+            # A project's hooks run on the machine that holds the project.
+            or (method == "control" and (params or {}).get("subtype") == "tool_hooks")
         ):
             # Only a requested execution operation acquires hands. Bootstrap,
             # context discovery and a platform-only tool never enter this path.
@@ -644,15 +747,24 @@ class RemoteClient:
                 _replace_file(
                     Path(target_file).with_name("context-tree.json"), json.dumps(tree)
                 )
+                hooks_changed = register_project_hooks(
+                    self.config, tree.get("hooks") or {}
+                )
                 context = self.call("context", {"known_files": {}})
-                if context.get("instructions"):
-                    # No project operation has run yet. Let the caller read its
-                    # newly available repository instructions before trying it.
+                if context.get("instructions") or hooks_changed:
+                    # No project operation has run yet. The caller reads the
+                    # repository's instructions, and the build takes up its
+                    # hooks, before the operation is tried: this one passed
+                    # its PreToolUse before either was known.
                     raise RuntimeError(
                         "Work environment is ready. "
                         "The requested operation has not run. "
-                        "Apply these repository instructions "
-                        "before issuing the next tool:\n" + context["instructions"]
+                        + (
+                            "Apply these repository instructions "
+                            "before issuing the next tool:\n" + context["instructions"]
+                            if context.get("instructions")
+                            else "The project's tool hooks now apply; issue it again."
+                        )
                     )
         if self.config.get("kind") == "deferred":
             if method == "context_fs" and (params or {}).get("operation") == "tree":

@@ -126,6 +126,7 @@ export async function load(manifest: Partial<Record<string, unknown>> = {}) {
       jobs,
       tools: CATALOG,
       unavailable: "",
+      mcp: [],
       notice: NOTICE,
       ...manifest,
     }),
