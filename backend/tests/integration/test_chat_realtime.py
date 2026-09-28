@@ -45,7 +45,8 @@ def _said(message: dict) -> str:
 
 class SlowScreen(StubChannel):
     """A session that works for minutes: it takes the prompt and answers only
-    once released."""
+    once released. Several seats answer side by side: being busy holds back
+    only a SECOND write to the same seat's session, never another seat's."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -53,31 +54,43 @@ class SlowScreen(StubChannel):
         self.release = asyncio.Event()
         self.runs = 0
         self.delivered: list[str] = []
-        self._answering: set[asyncio.Task] = set()
+        self.prompts: dict[str, str] = {}
+        self._answering: dict[str, asyncio.Task] = {}
 
-    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+    def arrive(
+        self, topic_id: uuid.UUID, message: dict, *, agent: str | None = None
+    ) -> None:
         prompt = _said(message)
-        if self._answering:
+        seat = agent or ""
+        if seat in self._answering:
             # A write into a session that is already working: it reads it at
             # its next tool boundary, and echoes it only then.
             self.delivered.append(prompt)
             return
         self.runs += 1
         self.last_prompt = prompt
-        self.acknowledges(topic_id, prompt)
+        self.prompts[seat] = prompt
+        self.acknowledges(topic_id, prompt, agent=agent)
         self.started.set()
-        task = asyncio.get_running_loop().create_task(self._answer(topic_id))
-        self._answering.add(task)
-        task.add_done_callback(self._answering.discard)
+        task = asyncio.get_running_loop().create_task(self._answer(topic_id, agent))
+        self._answering[seat] = task
+        task.add_done_callback(lambda _t, s=seat: self._answering.pop(s, None))
 
-    async def _answer(self, topic_id: uuid.UUID) -> None:
+    async def _answer(self, topic_id: uuid.UUID, agent: str | None) -> None:
         await self.release.wait()
-        self.says(topic_id, "done")
-        self.stops(topic_id, "done", session_id="s1")
+        self.says(topic_id, "done", agent=agent)
+        self.stops(topic_id, "done", agent=agent)
 
 
 class InstantScreen(StubChannel):
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id, session_id="s-affinity")
         self.acknowledges(topic_id, prompt)
@@ -261,7 +274,14 @@ async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tm
 class ProcessNotesScreen(StubChannel):
     """A turn that narrates as it works: two assistant messages, then the end."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
         self.says(topic_id, "Read workspace files.")
@@ -430,9 +450,14 @@ async def test_backend_mention_starts_when_browser_did_not_summon(
 
 
 @pytest.mark.anyio
-async def test_other_teammate_message_waits_for_live_turn(
-    business_db_factory, tmp_path, monkeypatch
+async def test_other_teammate_message_runs_beside_the_live_turn(
+    business_db_factory, tmp_path
 ):
+    """点名另一位队友的消息不排队等当前这轮：那位队友的轮次当场并行起跑。
+
+    一轮锁的只是自己那一席 —— 默认 agent 的轮次被捏住不放时，@Second 的
+    消息起 Second 自己的一轮，两条会话同时在跑。
+    """
     from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
     from app.domain.agent_instance.services import AgentInstanceService
 
@@ -456,9 +481,8 @@ async def test_other_teammate_message_waits_for_live_turn(
             type_name=None,
             display_name="Second",
         )
-        await TopicMemberService(session).ensure_agent_seat(
-            topic.id, agent_instance_handle(second.id)
-        )
+        second_seat = agent_instance_handle(second.id)
+        await TopicMemberService(session).ensure_agent_seat(topic.id, second_seat)
         topic_id = topic.id
         await session.commit()
     async for _ in svc.converse(
@@ -466,14 +490,6 @@ async def test_other_teammate_message_waits_for_live_turn(
     ):
         pass
     await screen.started.wait()
-    waiting = asyncio.Event()
-    wait = svc.wait_for_recipient
-
-    async def observed_wait(*args):
-        waiting.set()
-        return await wait(*args)
-
-    monkeypatch.setattr(svc, "wait_for_recipient", observed_wait)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     runner.subscribe_messages()
@@ -482,15 +498,20 @@ async def test_other_teammate_message_waits_for_live_turn(
     await broker.receive_message(
         svc, topic_id, author="u", content="@Second Second task"
     )
-    await asyncio.wait_for(waiting.wait(), HANG_S)
+    # The default agent's turn is still held — Second's runs beside it: its
+    # own session takes the prompt, and nothing is written mid-turn into the
+    # default one's (merge_into_running_turn only delivers to the seat the
+    # message named).
+    async with asyncio.timeout(HANG_S):
+        while screen.runs < 2:
+            await asyncio.sleep(0.01)
+    assert "Second task" in (screen.prompts.get(second_seat) or "")
     assert screen.delivered == []
-    assert screen.runs == 1
     screen.release.set()
     # The turn ends when it ends. A deadline here raced it and cancelled it
     # mid-turn when a loaded runner was slower than the deadline.
     await runner.drain(timeout_s=60)
     await finish_turn(svc, topic_id)
-    assert "Second task" in screen.last_prompt
     assert screen.runs == 2
 
 

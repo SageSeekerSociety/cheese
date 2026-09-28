@@ -123,7 +123,7 @@ def test_site_steps_are_authored_by_the_agent_that_was_addressed(client, stub_ho
     own = _own_agent(client, topic_id)
     ops = _seat_second_agent(client, project_id, topic_id, "ops")
 
-    def emit_turn(topic, prompt, reply):
+    def emit_turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.uses(topic, "Grep", pattern="TODO", path="src")

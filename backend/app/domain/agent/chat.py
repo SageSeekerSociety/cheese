@@ -1331,19 +1331,25 @@ class ChatService:
         self._gateway_lock = asyncio.Lock()
         # Keep the publication contract present before native skills are invoked.
         self._skills = NATIVE_CHAT_GUIDANCE
-        # Prompt construction is serialized per topic. The lock is released as
-        # soon as an interactive provider injects the prompt; non-interactive
+        # Prompt construction is serialized per (topic, agent) seat: two agents
+        # addressed in one room run their turns in parallel, while one agent's
+        # turns still queue — a second turn of the SAME seat would assemble
+        # while the first is mid-run, claim its pending messages, and starting
+        # its session would park the one that is working. The lock is released
+        # as soon as an interactive provider injects the prompt; non-interactive
         # providers still hold it while running because they cannot accept a
         # second message into a live screen.
+        self._seat_locks: dict[tuple[uuid.UUID, str], asyncio.Lock] = {}
+        # Room-level locks for the few operations that are nobody's turn:
+        # swapping the room's environment mid-turn, heartbeat and memory
+        # consolidation on the root topic.
         self._topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
         # Work currently attributed to each active session. Mid-session delivery
         # captures this id before writing to the lower layer, then stamps the
         # message only after the exact UserPromptSubmit receipt.
-        # A SET per topic, though today it holds at most one id: turns on a
-        # topic still serialize (`_prompt_lock` + `wait_for_recipient`). The
-        # set is the shape multi-agent parallel turns need, so every reader
-        # below already answers "is THIS turn among the live ones" rather than
-        # "is this THE one" — when parallel turns arrive, no reader changes.
+        # A SET per topic: several seats can have a live turn in one room, so
+        # every reader below answers "is THIS turn among the live ones" rather
+        # than "is this THE one".
         self._active_turn_ids: dict[uuid.UUID, set[uuid.UUID]] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
         # 房间里此刻那个会话是哪位队友的（最近一次 AgentSessionInfo 说的）。会话
@@ -1391,6 +1397,14 @@ class ChatService:
             self._topic_locks[topic_id] = lock
         return lock
 
+    def _seat_lock_for(self, topic_id: uuid.UUID, agent_handle: str) -> asyncio.Lock:
+        key = (topic_id, agent_handle)
+        lock = self._seat_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._seat_locks[key] = lock
+        return lock
+
     def _mark_turn_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
         self._active_turn_ids.setdefault(topic_id, set()).add(work_id)
 
@@ -1434,16 +1448,67 @@ class ChatService:
                 hits.append(work_id)
         return hits[0] if len(hits) == 1 else None
 
+    async def _turn_seat_handle(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        user_block_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
+        recipient_handle: str | None = None,
+    ) -> str:
+        """The conversation handle whose seat this turn serializes on.
+
+        Resolved BEFORE the seat lock is taken, from the same facts
+        `_assemble_turn` will resolve the running agent from: an explicitly
+        addressed instance, the recipient the message was stamped with at
+        posting, the oldest pending message's addressee (a platform turn picks
+        that conversation up), and finally the room's default agent. The two
+        reads moments apart agree unless the roster mutates mid-admission; a
+        stale key then costs one extra parallel turn, never a lost one.
+        """
+        if recipient_handle is not None:
+            return recipient_handle
+        from app.domain.agent_instance.models import AgentInstance
+
+        async with self._sessions() as session:
+            instance_id = recipient_instance_id
+            if instance_id is None:
+                blocks = BlockRepository(session)
+                addressed = None
+                if user_block_id is not None:
+                    addressed = await blocks.get(user_block_id)
+                else:
+                    place = await PlaceResolver(session).resolve(topic_id)
+                    if place is not None:
+                        pending = _pending_input_blocks(
+                            await blocks.turn_history(place.room_id)
+                        )
+                        addressed = pending[0] if pending else None
+                recipient = (
+                    (addressed.meta or {}).get("agent_recipient")
+                    if addressed is not None
+                    else None
+                )
+                if recipient is not None and recipient.get("instance_id") is not None:
+                    instance_id = uuid.UUID(recipient["instance_id"])
+            if instance_id is not None:
+                instance = await session.get(AgentInstance, instance_id)
+                if instance is not None and instance.is_active:
+                    return instance.handle
+            topic = await TopicRepository(session).get(topic_id)
+            if topic is None:
+                raise NotFoundError("Topic not found")
+            agent = await self._resolved_agent(session, topic)
+            return agent.handle
+
     @asynccontextmanager
     async def _prompt_lock(
         self,
         topic_id: uuid.UUID,
         work_id: uuid.UUID,
-        recipient_handle: str | None = None,
+        seat_handle: str,
     ) -> AsyncIterator[None]:
-        async with self._lock_for(topic_id):
-            if recipient_handle is not None:
-                await self.wait_for_recipient(topic_id, recipient_handle)
+        async with self._seat_lock_for(topic_id, seat_handle):
             self._mark_turn_active(topic_id, work_id)
             try:
                 yield
@@ -1621,7 +1686,12 @@ class ChatService:
                 if instance is None or not instance.is_active:
                     raise ValidationError("The addressed agent is unavailable")
                 recipient_handle = instance.handle
-        async with self._prompt_lock(topic_id, turn_id, recipient_handle):
+        seat_handle = await self._turn_seat_handle(
+            topic_id,
+            user_block_id=user_block_id,
+            recipient_handle=recipient_handle,
+        )
+        async with self._prompt_lock(topic_id, turn_id, seat_handle):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -1653,7 +1723,12 @@ class ChatService:
         ``InProcessBroker.receive_message`` owns the receive-before-admission ordering;
         this method starts only after the project gate admits the model work.
         """
-        async with self._prompt_lock(topic_id, turn_id, recipient_handle):
+        seat_handle = await self._turn_seat_handle(
+            topic_id,
+            user_block_id=user_block_id,
+            recipient_handle=recipient_handle,
+        )
+        async with self._prompt_lock(topic_id, turn_id, seat_handle):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -1796,30 +1871,6 @@ class ChatService:
                 pending.remove(entry)
             return False
         return True
-
-    async def wait_for_recipient(
-        self, topic_id: uuid.UUID, recipient_handle: str
-    ) -> bool:
-        from app.domain.agent.runtime import get_broker
-
-        waited = False
-        async with get_broker().subscribe(str(topic_id)) as events:
-            while True:
-                # Wait while ANOTHER agent instance holds a live turn here.
-                # Turns on a topic serialize today, so the active set is at
-                # most one id; reading it as a set keeps this loop correct
-                # the day several agents run in one room.
-                others = [
-                    work_id
-                    for work_id in self._active_turn_ids.get(topic_id, ())
-                    if (state := self._hook_work.get((topic_id, work_id))) is not None
-                    and state.agent_instance_handle is not None
-                    and state.agent_instance_handle != recipient_handle
-                ]
-                if not others:
-                    return waited
-                waited = True
-                await events.get()
 
     async def remind_silent_turns(self) -> int:
         """Queue an internal reminder while a room response is still running."""
@@ -2644,8 +2695,8 @@ class ChatService:
         ``agent_handle`` is the agent whose session this is, when the caller
         knows it. Recovery does — it is on the session's own key — and must pass
         it: the room's fallback is the project default, and a teammate's turn
-        recorded under the default holds every message addressed to that
-        teammate in ``wait_for_recipient`` until the turn ends by itself.
+        recorded under the default authors every block of that turn under the
+        wrong seat.
 
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
@@ -3260,7 +3311,12 @@ class ChatService:
                 project_id,
                 topic_id,
                 turn_id,
-                agent_handle=self._room_session_agents.get(topic_id),
+                # The event's own seat first (stamped by the subscription that
+                # read it): with several seats live in one room, the
+                # room-keyed fallback below answers "who spoke LAST", not
+                # "whose session this output came from".
+                agent_handle=getattr(event, "agent_handle", None)
+                or self._room_session_agents.get(topic_id),
             )
         # Whose work this is. Deliberately NOT asked of AgentResult: that event
         # is the turn ending, which is the session's business no matter what id
@@ -5383,13 +5439,27 @@ class ChatService:
                     )
                 )
             pending = [block for block in pending if _addressed_to(block, agent.handle)]
-            pending_ids = [b.id for b in pending]
+            prompt_pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
                 # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
                 # @，第一轮在锁上把两条合并答掉）。再跑一轮就是白烧一轮算力，还会
                 # 走下面的 platform_prompt 兜底、把已经答过的话当成平台指令重投一
                 # 遍。这里直接收工 —— 只是不跑这一轮，不碰任何排队/锁的逻辑。
                 return _TurnBail([{"type": "done"}])
+            # 盖章清单比 prompt 清单窄（多 agent 房间，2026-09-28 定）：
+            # 没被 @ 的公共消息每个轮次都看得见，但只由「被人召唤起来的轮次」
+            # 或「房间默认 agent 的轮次」盖章认领；其余在场轮次（另一个 agent
+            # 被 @、平台自检）看过就算。不这么窄，并行的几个轮次会给同一条
+            # 消息各盖一个 consumed_turn，而谁都没答它的话却被所有人收走。
+            claims_backlog = (
+                user_block_id is not None
+                or agent.handle == (await self._resolved_agent(session, topic)).handle
+            )
+            pending_ids = [
+                b.id
+                for b in pending
+                if claims_backlog or (b.meta or {}).get("agent_recipient") is not None
+            ]
             # 图片输入: every pending image is offered to the provider as
             # {"path", "media_type"}. Whether it actually reaches the model as a
             # native base64 block depends on the provider (`embeds_images`), and
@@ -5552,7 +5622,7 @@ class ChatService:
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]
             earlier_messages = await blocks.count_messages(
-                place.room_id, excluding=pending_ids
+                place.room_id, excluding=prompt_pending_ids
             )
             # Read for the stage derivation below, and for nothing else: what
             # the cards SAY is `cheese_status`'s answer, and restating it in a
@@ -5767,7 +5837,7 @@ class ChatService:
                 b.id: parent
                 for b in pending
                 if b.reply_to is not None
-                and b.reply_to not in pending_ids
+                and b.reply_to not in prompt_pending_ids
                 and (parent := await blocks.get(b.reply_to)) is not None
             }
             backlog = "\n".join(
@@ -5804,7 +5874,7 @@ class ChatService:
             # "this one batch keeps failing" look identical, and the second one
             # is the diagnosis. Counting at prompt-build time is the only place
             # that sees a failed attempt at all.
-            replay_n = await blocks.bump_prompt_attempts(pending_ids, turn_id)
+            replay_n = await blocks.bump_prompt_attempts(prompt_pending_ids, turn_id)
             # Committed HERE and not left to ride the conditional commit further
             # down: that one only fires on a topic's FIRST turn (compute_config
             # still None), so on every later turn this session closes without a

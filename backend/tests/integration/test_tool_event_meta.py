@@ -14,7 +14,14 @@ from tests.integration.conftest import chat_ws_url, post_project
 class ToolScreen(StubChannel):
     """A session using a mix of platform / plain / unmapped tools."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)

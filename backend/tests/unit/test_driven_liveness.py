@@ -32,14 +32,21 @@ class Scripted(StubChannel):
         self.script = script
         self.opened = False
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         if not self.opened:
             self.opened = True
             self.script(self, topic_id, prompt)
 
     def begins(self, topic_id: uuid.UUID, prompt: str) -> None:
         """The build takes the input — without echoing it back yet."""
-        session = self.sessions[topic_id]
+        session = self._session_for(topic_id)
         identifier = next(
             message["uuid"]
             for message in reversed(session.written)
@@ -207,7 +214,7 @@ async def test_a_session_whose_process_exited_ends_the_turn_visibly():
     room = Room(Scripted(_talks))
     try:
         await room.send("fix the login page")
-        await _until(lambda: room.channel.sessions[room.topic].working)
+        await _until(lambda: room.channel._session_for(room.topic).working)
         room.channel.alive = False
         await _until(lambda: room.results())
 
@@ -224,10 +231,10 @@ async def test_a_runner_out_of_reach_too_long_ends_the_turn(monkeypatch):
     room = Room(Scripted(_talks))
     try:
         await room.send("fix the login page")
-        await _until(lambda: room.channel.sessions[room.topic].working)
+        await _until(lambda: room.channel._session_for(room.topic).working)
         # The runner is gone: every call to it now raises DeviceCallError.
         lost_at = time.monotonic()
-        room.channel.sessions.pop(room.topic)
+        room.channel.drop_session(room.topic)
         await _until(lambda: room.results())
 
         (ended,) = room.results()
@@ -244,10 +251,10 @@ async def test_a_runner_back_within_the_limit_keeps_its_turn(monkeypatch):
     room = Room(Scripted(_talks))
     try:
         await room.send("fix the login page")
-        await _until(lambda: room.channel.sessions[room.topic].working)
-        session = room.channel.sessions.pop(room.topic)
+        await _until(lambda: room.channel._session_for(room.topic).working)
+        session = room.channel.drop_session(room.topic)
         await _REAL_SLEEP(0.2)
-        room.channel.sessions[room.topic] = session
+        room.channel.sessions[(room.topic, session.actor)] = session
         await _REAL_SLEEP(0.6)  # past the limit, counted from the outage
         assert room.results() == []
 
@@ -267,7 +274,7 @@ async def test_an_input_is_read_when_its_echo_comes_back_not_when_it_is_taken():
     room = Room(Scripted(_takes_it_without_echo))
     try:
         await room.send("fix the login page")
-        await _until(lambda: room.channel.sessions[room.topic].working)
+        await _until(lambda: room.channel._session_for(room.topic).working)
         await room.runtime.subscriptions[(room.topic, "cheese")].drain()
         assert room.receipts == []
 

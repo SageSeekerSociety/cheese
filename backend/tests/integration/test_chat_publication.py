@@ -196,7 +196,7 @@ def test_publish_during_work_keeps_the_turn_open(client, stub_hooks, monkeypatch
     topic, headers = room(client)
     raw_text = "Internal investigation detail"
 
-    def begin(topic_id, prompt, reply):
+    def begin(topic_id, prompt, reply, agent=None):
         stub_hooks.starts(topic_id)
         stub_hooks.acknowledges(topic_id, prompt)
         stub_hooks.says(topic_id, raw_text)
@@ -283,7 +283,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
     system_event = AsyncMock(wraps=chat.post_system_event)
     monkeypatch.setattr(chat, "post_system_event", system_event)
 
-    def begin(topic_id, prompt, reply):
+    def begin(topic_id, prompt, reply, agent=None):
         stub_hooks.starts(topic_id)
         stub_hooks.acknowledges(topic_id, prompt)
         stub_hooks.says(topic_id, "Internal output")
@@ -380,7 +380,7 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
     threshold = 90
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
 
-    def begin(topic_id, prompt, reply):
+    def begin(topic_id, prompt, reply, agent=None):
         stub_hooks.starts(topic_id)
         stub_hooks.acknowledges(topic_id, prompt)
         stub_hooks.says(topic_id, "Internal output")

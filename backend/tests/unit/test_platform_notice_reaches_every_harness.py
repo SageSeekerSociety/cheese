@@ -36,7 +36,14 @@ class _OpenTurn(StubChannel):
         super().__init__()
         self.opened = False
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         if not self.opened:
             self.opened = True
             self.starts(topic_id)
@@ -83,7 +90,7 @@ async def _claude_code(tmp_path):
 
     def heard():
         said = []
-        for message in channel.sessions[session.topic_id].written:
+        for message in channel._session_for(session.topic_id).written:
             if message.get("type") != "user":
                 continue
             content = message["message"]["content"]
