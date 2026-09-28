@@ -2,7 +2,8 @@
 step 5): which project, which room, which agent, and whether it can see the
 whole machine. One notice per session start, not one per tool call; an owner
 who is a person in that room is not told. The team page shows the owner who is
-on each of their machines now.
+on each of their machines now, including one attached to a project and not
+registered for the team.
 """
 
 import json
@@ -31,9 +32,10 @@ from tests.integration.conftest import post_project, registered
 pytestmark = pytest.mark.anyio
 
 
-async def _room_on_a_device(client, owner_handle):
+async def _room_on_a_device(client, owner_handle, *, attached_to="team"):
     """Alice's room, whose agent session will work on ``owner_handle``'s device,
-    which is registered for the project's team."""
+    which is registered for the project's team, or with ``attached_to="project"``
+    attached to the project alone."""
     project = post_project(
         client, json={"name": "Orchard", "owner_handle": "alice"}
     ).json()["data"]
@@ -63,7 +65,14 @@ async def _room_on_a_device(client, owner_handle):
             supply=Supply.self_hosted,
             visibility=Visibility.host,
         )
-        await devices.assign_to_team(device.device_id, team_id, actor_user_id=owner_id)
+        if attached_to == "team":
+            await devices.assign_to_team(
+                device.device_id, team_id, actor_user_id=owner_id
+            )
+        else:
+            await devices.assign_to_project(
+                device.device_id, project_id, actor_user_id=owner_id
+            )
         agent = await IdentityService(db).ensure_room_agent_user(topic_id)
         topic = await db.get(Topic, topic_id)
         resource = str(topic.resource_id or topic_id)
@@ -97,6 +106,7 @@ async def _room_on_a_device(client, owner_handle):
         team_id=team_id,
         owner_id=owner_id,
         owner=owner_handle,
+        project_id=project_id,
         device_id=device.device_id,
         lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
         agent={"X-Cheese-Token": token},
@@ -190,3 +200,56 @@ async def test_the_team_page_shows_the_owner_who_is_on_their_device(
         alice = await registered(db, "alice")
     other = client.get(path, headers=_signed_in(alice, "alice")).json()["devices"]
     assert other[0]["in_use"] is None
+
+
+async def test_the_team_page_lists_a_device_attached_only_to_a_project(
+    client, monkeypatch
+):
+    room = await _room_on_a_device(client, "bob", attached_to="project")
+    _machines(monkeypatch)
+    leased = client.post(room.lease_path, headers=room.agent, json={"env": {}})
+    assert leased.status_code == 200, leased.text
+    path = f"/connector/teams/{room.team_id}/devices"
+
+    listed = client.get(path, headers=_signed_in(room.owner_id, "bob"))
+
+    assert listed.status_code == 200, listed.text
+    [device] = listed.json()["devices"]
+    assert device["device_id"] == room.device_id
+    assert device["team_ids"] == []
+    assert device["attached_projects"] == [
+        {"id": str(room.project_id), "name": "Orchard"}
+    ]
+    [user] = device["in_use"]
+    assert (user["project_name"], user["topic_title"]) == ("Orchard", "Pricing")
+    async with client.test_factory() as db:
+        alice = await registered(db, "alice")
+    [seen] = client.get(path, headers=_signed_in(alice, "alice")).json()["devices"]
+    assert seen["device_id"] == room.device_id
+    assert seen["in_use"] is None
+
+
+async def test_a_device_attached_to_another_teams_project_is_not_listed(client):
+    room = await _room_on_a_device(client, "bob")
+    elsewhere = post_project(
+        client, json={"name": "Elsewhere", "owner_handle": "bob"}
+    ).json()["data"]
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        other = await devices.approve(
+            await devices.start("laptop"),
+            owner_user_id=room.owner_id,
+            supply=Supply.self_hosted,
+            visibility=Visibility.isolated,
+        )
+        await devices.assign_to_project(
+            other.device_id, uuid.UUID(elsewhere["id"]), actor_user_id=room.owner_id
+        )
+        await db.commit()
+
+    listed = client.get(
+        f"/connector/teams/{room.team_id}/devices",
+        headers=_signed_in(room.owner_id, "bob"),
+    ).json()["devices"]
+
+    assert [d["device_id"] for d in listed] == [room.device_id]

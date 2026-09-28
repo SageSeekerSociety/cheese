@@ -261,6 +261,18 @@ class DeviceService:
         Every project of the team may run on these."""
         return await self._repo.list_devices_by_team(team_id)
 
+    async def list_devices_attached_to_projects(
+        self, project_ids: list[uuid.UUID]
+    ) -> list[Device]:
+        """The machines attached directly to any of these projects, whatever team
+        they are registered for, each once."""
+        found: dict[str, Device] = {}
+        for project_id in project_ids:
+            for device in await self._repo.list_devices_by_project(project_id):
+                if project_id in device.project_ids:
+                    found.setdefault(device.device_id, device)
+        return list(found.values())
+
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
         """Whether a project or its team currently shares this device."""
         return any(

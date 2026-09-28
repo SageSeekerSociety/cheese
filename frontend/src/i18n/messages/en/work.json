@@ -78,7 +78,8 @@
     "retry": "Retry"
   },
   "deviceInUse": {
-    "line": "In use: {project} · {room} · {agent}"
+    "line": "In use: {project} · {room} · {agent}",
+    "attached": "Only for {projects}"
   },
   "bulkSwitch": {
     "open": "View and switch…",

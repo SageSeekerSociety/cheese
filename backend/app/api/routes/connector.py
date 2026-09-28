@@ -582,15 +582,24 @@ async def team_devices(
     service: DeviceServiceDep,
     db: DbSession,
 ) -> dict[str, Any]:
-    """The machines registered for a team (为团队注册设备, v4) — the team's compute,
-    with liveness. Any team member may view; every project of the team may run on
-    these."""
+    """Every self-hosted machine the team's projects can run on, with liveness:
+    the ones registered for the team, and the ones attached directly to one of
+    its projects (``attached_projects`` names those projects). Any team member
+    may view."""
     user_id = await _require_user(resolver)
     if not await TeamRepository(db).is_team_member(team_id, user_id):
         raise ForbiddenError("你不是该团队成员")
     from app.domain.machine.session_work import device_users
+    from app.domain.project.services import ProjectService
 
+    names = {p.id: p.name for p in await ProjectService(db).list_for_team(team_id)}
     devices = await service.list_devices_for_team(team_id)
+    listed = {d.device_id for d in devices}
+    devices += [
+        d
+        for d in await service.list_devices_attached_to_projects(list(names))
+        if d.device_id not in listed
+    ]
     # Its owner sees who works on each of their machines, in any project (#1900
     # step 5). Nobody else does: a room's title is not every team member's.
     users = await device_users(
@@ -598,7 +607,16 @@ async def team_devices(
     )
     return {
         "devices": [
-            {**_device_view(d), "in_use": users.get(d.device_id)} for d in devices
+            {
+                **_device_view(d),
+                "attached_projects": [
+                    {"id": str(p), "name": names[p]}
+                    for p in d.project_ids
+                    if p in names
+                ],
+                "in_use": users.get(d.device_id),
+            }
+            for d in devices
         ]
     }
 
