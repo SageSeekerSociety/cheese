@@ -2,9 +2,10 @@
 import type { Project, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { replyStalled } from '../lib/replyWait'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
 import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
@@ -25,6 +26,8 @@ import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+import LeaveProjectDialog from './LeaveProjectDialog.vue'
+import TransferProjectDialog from './TransferProjectDialog.vue'
 
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -97,9 +100,10 @@ function startResize(e: MouseEvent) {
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
 //
-// 「退出项目 / 转让项目」只在成员页：那里有名册，知道我是所有者、负责人还是团队带进来
-// 的人，而这几种人能不能退、能不能转各不相同。这里只知道项目行上的所有者，按它判
-// 会把退出递给退不掉的人。
+// 「退出项目」只在成员页：那里有名册，知道我是所有者、负责人还是团队带进来的人，
+// 而这几种人能不能退各不相同。项目行上读不出这些，按它判会把退出递给退不掉的人。
+// 「转让项目」两处都有（这里一条，成员页那颗按钮保留）——它只需要「我是不是所有者
+// 或这个项目的团队管理员」，项目行自己就带着这个答案。
 const router = useRouter()
 const route = useRoute()
 
@@ -181,6 +185,26 @@ function openProject(projectId: string) {
   if (projectId === props.selectedProjectId) return
   router.push({ name: 'workspace-project', params: { projectId } })
 }
+
+// 「转让项目」在这个菜单里也有一条（成员页那颗按钮保留，别删）。谁转得动，项目行
+// 自己就说得出：所有者，或者管得了这个项目的团队管理员（`can_manage_members`）——
+// 和成员页那颗按钮同一个判据，后端动手时按同一条规则再判一次。
+//
+// 「退出项目」这里也有一条（成员页那颗按钮保留，别删）——所有者换「转让项目」，其余
+// 的人换「退出项目」，两句是同一件事的两半。
+//
+// 判据只有「我不是所有者」这一条，项目行上读得出来。为什么够：退项目退的是项目成员
+// 身份，而因团队而在这里的人现在也能退（退的是这个项目，不是小队），剩下能拦的只有
+// owner 那一条，而 owner 看到的是「转让项目」。
+const transferOpen = ref(false)
+const leaveOpen = ref(false)
+const currentProject = computed(() => props.projects.find((p) => p.id === props.selectedProjectId) ?? null)
+const canTransfer = computed(
+  () =>
+    !!currentProject.value &&
+    (currentProject.value.owner_handle === myHandle() || currentProject.value.can_manage_members === true)
+)
+const canLeave = computed(() => !!currentProject.value && currentProject.value.owner_handle !== myHandle())
 
 // New topic: don't ask the human for a title — create an untitled one and open
 // it; the title is derived from the first message (and 芝士 can refine it).
@@ -367,6 +391,28 @@ function runningOf(id: string): boolean {
 function awaitsOf(id: string): boolean {
   return topicById.value.get(id)?.awaits_me === true
 }
+// 红灯要跟着钟亮：列表 30 秒才刷一次，而「等满五分钟」是时间自己走到的，不是
+// 数据变出来的。所以这里自己有一只慢钟，每 10 秒拨一下让判断重算。
+const clock = ref(Date.now())
+let clockTimer: number | undefined
+onMounted(() => {
+  clockTimer = window.setInterval(() => (clock.value = Date.now()), 10_000)
+})
+onUnmounted(() => {
+  if (clockTimer !== undefined) window.clearInterval(clockTimer)
+})
+// 红灯两个来源：最近一轮报错了（立刻亮），或有人 @ 了 AI 等满五分钟没回话。
+function failedOf(id: string): boolean {
+  return Boolean(topicById.value.get(id)?.turn_failed_at)
+}
+function stalledOf(id: string): boolean {
+  return failedOf(id) || replyStalled(topicById.value.get(id)?.awaiting_reply_since, clock.value)
+}
+function stalledTitle(id: string): string {
+  return failedOf(id)
+    ? `${store.agentName}最近一轮报错了`
+    : `有事等${store.agentName}处理超过 5 分钟（@了它没回，或 PR 反馈、检查报错没人接）`
+}
 
 // ---- 分组 (C2): 我参与的平铺，其他话题收进一个默认折叠的组 ----
 // 判定住在 lib/topicTree.ts 里（纯函数 + 单测），这里只管接线、组的开关和落盘。
@@ -383,6 +429,7 @@ function rowsOf(rows: readonly FlatRow<Topic>[]) {
     unreadOf,
     runningOf,
     awaitsOf,
+    stalledOf,
   })
 }
 
@@ -437,6 +484,9 @@ const railSections = computed(() => [
 // 收起来的后代的」并成一个信号。收起来的父话题会把子话题的呼吸点整个藏掉是原
 // 先的一个 bug（只有未读会聚合，"在跑" 不聚合），合槽顺手修掉它。展开一层就能
 // 分清动静是本行的还是子话题的，扫侧栏时要的本来就是"这里面有动静"。
+function rowStalled(row: VisibleRow<Topic>): boolean {
+  return stalledOf(row.topic.id) || row.hiddenStalled
+}
 function rowAwaits(row: VisibleRow<Topic>): boolean {
   return row.topic.awaits_me === true || row.hiddenAwaits
 }
@@ -445,6 +495,7 @@ function rowRunning(row: VisibleRow<Topic>): boolean {
 }
 function toggleTitle(row: VisibleRow<Topic>): string {
   if (!row.collapsed) return '收起'
+  if (row.hiddenStalled) return '展开：里面有话题出了故障'
   if (row.hiddenAwaits) return '展开：里面有待处理的事项'
   if (row.hiddenRunning) return `展开：${store.agentName}正在里面工作`
   return '展开'
@@ -635,10 +686,30 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 :disabled="!selectedProjectId"
                 @click="openProjectPage('project-settings')"
               />
+              <!-- 只有转得动的人看得见：必然被拒的按钮比不给更糟。 -->
+              <v-list-item
+                v-if="canTransfer"
+                prepend-icon="mdi-account-arrow-right-outline"
+                :title="t('work.members.transfer')"
+                :disabled="!selectedProjectId"
+                @click="transferOpen = true"
+              />
+              <!-- 另一半：我不是所有者时换「退出项目」。所有者看到的上一条就是它的替代
+                   ——所有者退不掉，只能先把项目交出去。 -->
+              <v-list-item
+                v-if="canLeave"
+                prepend-icon="mdi-exit-to-app"
+                :title="t('work.members.leave')"
+                :disabled="!selectedProjectId"
+                @click="leaveOpen = true"
+              />
             </v-list>
           </v-menu>
         </div>
       </Teleport>
+
+      <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
+      <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
       <div class="rail-scroll flex-grow-1 overflow-y-auto">
@@ -812,8 +883,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         type="button"
                         class="row-slot subtree-toggle"
                         :class="{
-                          'subtree-toggle--awaits': rowAwaits(row),
-                          'subtree-toggle--running': !rowAwaits(row) && rowRunning(row),
+                          'subtree-toggle--stalled': rowStalled(row),
+                          'subtree-toggle--awaits': !rowStalled(row) && rowAwaits(row),
+                          'subtree-toggle--running': !rowStalled(row) && !rowAwaits(row) && rowRunning(row),
                         }"
                         :title="toggleTitle(row)"
                         :aria-expanded="!row.collapsed"
@@ -823,6 +895,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                           {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
                         </v-icon>
                       </button>
+                      <!-- 红灯：最近一轮报错了，或有人 @ 了芝士等了 5 分钟还没有一句
+                         回话——多半是卡住、排队太久或掉线了。排在最前面：它说的是
+                         「出故障了」，比等你拍板更该先看见。 -->
+                      <span v-else-if="stalledOf(row.topic.id)" class="row-slot">
+                        <span class="stalled-dot" :title="stalledTitle(row.topic.id)" />
+                      </span>
                       <!-- 等你处理：有点名给你的验收卡、没答的决策请求，或芝士停在一道只有
                          你能回答的问题上。未读的 @ 不点这颗灯——芝士汇报、递卡都 @人，
                          算进来几乎每行都亮，灯就没意义了；未读有右边的数字。排在"在跑"前面——芝士在忙是它的事，等你做
@@ -1393,24 +1471,36 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 /* !important 是被逼的，不是偷懒：上面 .topic-row.is-active :deep(.v-icon) 为了
    压住 Vuetify 的琥珀 active overlay 用了 !important，选中的那一行会连带把这里
    的状态色刷成 --muted——正好是"这一行收起来了、里面有事等你"最该看见的时候。 */
+.subtree-toggle--stalled :deep(.v-icon),
+.subtree-toggle--stalled:hover :deep(.v-icon) {
+  color: var(--danger) !important;
+}
 .subtree-toggle--awaits :deep(.v-icon),
 .subtree-toggle--awaits:hover :deep(.v-icon) {
-  color: var(--warn) !important;
+  color: var(--signal-yellow) !important;
 }
 .subtree-toggle--running :deep(.v-icon),
 .subtree-toggle--running:hover :deep(.v-icon) {
   color: var(--ok) !important;
 }
 
-/* 等你处理：看板「待处理」那一列的同一颗点（`lib/board.ts` 的 needs_you：--warn
-   实心）——侧栏和看板说的是同一件事，就得是同一个样子。琥珀留给主操作和导航位置。
-   跟绿色呼吸点靠三个通道区分（颜色 / 大小 / 动不动），不是只靠颜色——红绿色觉障碍
-   下也分得开。 */
+/* 侧栏是一组红黄绿灯：红 = 有人等芝士回话太久，黄 = 有事等你拍板，绿呼吸 =
+   芝士在干活。黄不用琥珀/橙：右边的未读数字就是琥珀色，同色会让人把「有新消息」
+   和「等你拍板」读成一回事。红灯 = 最近一轮报错，或有人等芝士回话满五分钟。
+   只靠颜色分不开的，靠形状补：红灯外面多一圈淡红晕，黄灯是实心点，绿灯更小且会
+   呼吸——红绿、红黄色觉障碍下也分得开。 */
+.stalled-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-wash);
+}
 .await-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--warn);
+  background: var(--signal-yellow);
 }
 /* 收起来了收了几个——形态沿用「已归档」那颗计数丸。 */
 .subtree-count {

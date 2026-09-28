@@ -73,6 +73,8 @@
   --danger: #dc2626;
   --danger-ink: #b91c1c;
   --danger-wash: #fdecec;
+  /* 侧栏红黄绿灯的黄：和琥珀（--accent/--warn）拉开，未读数字是琥珀色。 */
+  --signal-yellow: #eab308;
 
   /* ---- Brand glow (header corner gradient in styles/common.scss) ----
      Only ever composited at 4–8% alpha, so these are deliberately brighter
@@ -279,6 +281,7 @@
   --danger: #f0625c;
   --danger-ink: #f79490;
   --danger-wash: #2e1a1a;
+  --signal-yellow: #facc15;
 
   /* ---- Syntax highlighting (see the light block for why these exist) ----
      Same hues, lifted into readable range on a dark ground. Measured against

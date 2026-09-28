@@ -10,6 +10,9 @@
 //    因为「你是不是这块板的人」而不出现，而那件事轮不到首页判。
 // 5. **公告横幅挂的是置顶那条，不是最新那条**，一条公告都没有时整块不出现。
 //    这一条和公告页共用一个排序判据，所以它同时也在钉「两处不会各排各的」。
+// 6. **「参与 N 人」是去重后的人数**，它和同一行上的「领取次数」一起从列表那次
+//    响应里来（不是另打一次请求），服务端没给那一格时整块不出现 —— 「参与 0 人」
+//    会把「没读到」说成「没人参与」。
 import type { Component } from 'vue'
 
 import { defineComponent, h } from 'vue'
@@ -133,6 +136,11 @@ function notice(): Element | null {
   return document.querySelector('.home__notice')
 }
 
+/** 顶上那一行数字（板上 N 道题 / 共 N 次领取 / 参与 N 人）。 */
+function stats(): string {
+  return document.querySelector('.home__stats')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+}
+
 describe('空间首页', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -196,6 +204,33 @@ describe('空间首页', () => {
     // 标签写「置顶」而不是「最新」，两者说的是同一件事。
     expect(notice()?.textContent).toContain('置顶')
     expect(notice()?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/board/announcements`)
+  })
+
+  it('「参与 N 人」用的是服务端去重后的那个数，不是领取次数', async () => {
+    signIn('someone-else')
+    // 两道题各 3 次领取 = 6 次；跨题去重后是 5 人。两个数字不一样，所以「拿领取
+    // 次数冒充人数」这条错法在这条用例下会红。
+    listTasks.mockImplementation(async (params: { approved?: string }) =>
+      params?.approved === 'NONE'
+        ? { data: { tasks: [PENDING], page: {} } }
+        : { data: { tasks: [PUBLISHED, PENDING], page: {}, distinctParticipants: 5 } }
+    )
+    await mount()
+    await waitFor(() => expect(stats()).toContain('参与'))
+
+    expect(stats()).toContain('共 6 次领取')
+    expect(stats()).toContain('参与 5 人')
+    // 顺带钉住「同一次加载」：它是跟着列表那次请求要的，不是另开一次。
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ queryDistinctParticipants: true }))
+  })
+
+  it('服务端没给这个数时不画「参与 0 人」—— 那一格整块不出现', async () => {
+    signIn('someone-else')
+    await mount()
+    await waitFor(() => expect(stats()).toContain('共'))
+
+    expect(stats()).toContain('共 6 次领取')
+    expect(stats()).not.toContain('参与')
   })
 
   it('一条公告都没有时，横幅整块不出现', async () => {

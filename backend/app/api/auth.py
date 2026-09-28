@@ -495,6 +495,31 @@ class ActorResolver:
             is_private=bool(topic and topic.is_private),
         )
 
+    async def topic_admits_handle(
+        self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID, handle: str
+    ) -> bool:
+        """Would this room admit ``handle``, whoever that is?
+
+        The caller is not always the person the request is about: a card names a
+        reviewer in its body, and whether the room will later let that reviewer
+        accept the card is exactly this question — asked at filing time so the
+        two ends cannot drift (`app/domain/review/services.py` lays a card only
+        to somebody this answers yes about).
+
+        The rule is not restated here. The handle is swapped on the actor and the
+        door's own method answers, which keeps ONE read of ``is_private`` in this
+        file (``tests/unit/test_is_private_read_points.py`` is a ratchet: a
+        second read point is a second declaration of the same fact, and two
+        declarations drift). What is taken as given is the credential half only —
+        a handle in a body presents nothing, and this asks whether the room would
+        admit them if it did.
+        """
+        if not actor.authenticated:
+            return False
+        return await self.can_access_topic(
+            replace(actor, handle=handle), project_id=project_id, topic_id=topic_id
+        )
+
     async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
         """Require a verified participant with project membership.
 
@@ -590,7 +615,8 @@ class ActorResolver:
 
     async def _is_project_member(self, project_id: uuid.UUID, handle: str) -> bool:
         """The one notion of 项目成员 both guards share: on the project's roster,
-        its owner, or a member of the team the project belongs to.
+        its owner, or a member of the team the project belongs to — unless they
+        have left THIS project (``ProjectMemberExclusion``).
 
         Those are exactly the three claims ``ProjectRepository.list_visible_to``
         lists a project under. Until 2026-09-04 the guards accepted only the
@@ -599,6 +625,11 @@ class ActorResolver:
         promised what the door refused. Measured on dev: a member who had
         accepted a team invitation minutes earlier got 200 on
         ``/projects/{id}`` and 403 on ``/topics?project_id=``.
+
+        This is the injection point for ``authorize_topic_access``'s
+        ``is_project_member``: ``can_access_topic`` hands that guard this very
+        method, so the room-seat path and the project path answer with one
+        judgment and no second declaration of "谁是项目成员" exists.
 
         The claim set itself now lives in ``app.auth.project_access`` so that
         every route reading a project's conversations asks the same question —

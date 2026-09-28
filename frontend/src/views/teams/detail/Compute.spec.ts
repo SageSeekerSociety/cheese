@@ -9,7 +9,7 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 
 import Compute from './Compute.vue'
 
-import { changeProjectMachinePower, listProjectMachines, listTeamDevices } from '@/api'
+import { changeProjectMachinePower, listMyDevices, listProjectMachines, listTeamDevices } from '@/api'
 import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
@@ -138,6 +138,53 @@ it('shows the owner who is on each of their machines, and nobody else', async ()
 
   expect(await view.findByText('正在用：Orchard · Pricing · Cedar')).toBeTruthy()
   expect(view.getAllByText(/正在用/)).toHaveLength(1)
+})
+
+it("lists a device attached only to a project, with the project and its owner's in-use line", async () => {
+  vi.mocked(listProjectMachines).mockImplementation(
+    async () => ({ data: [] as ProjectMachine[] }) as Awaited<ReturnType<typeof listProjectMachines>>
+  )
+  vi.mocked(listMyDevices).mockResolvedValueOnce({
+    devices: [{ device_id: 'dev-box', name: 'dev-box', online: true, project_ids: ['p1'], team_ids: [], screens: [] }],
+  })
+  vi.mocked(listTeamDevices).mockResolvedValueOnce({
+    devices: [
+      {
+        device_id: 'dev-box',
+        name: 'dev-box',
+        online: true,
+        project_ids: ['p1'],
+        team_ids: [],
+        screens: [],
+        attached_projects: [
+          { id: 'p1', name: 'Orchard' },
+          { id: 'p2', name: 'Atlas' },
+        ],
+        in_use: [
+          {
+            project_id: 'p1',
+            project_name: 'Orchard',
+            topic_id: 't1',
+            topic_title: 'Pricing',
+            agent_handle: 'cedar',
+            agent_name: 'Cedar',
+          },
+        ],
+      },
+    ],
+  })
+  const view = render(Compute, {
+    global: {
+      plugins: [createVuetify({ components, directives })],
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'MEMBER' }) },
+    },
+  })
+
+  expect(await view.findByText('仅供 Orchard、Atlas 使用')).toBeTruthy()
+  expect(view.getByText('1 台机器 · 1 台在线')).toBeTruthy()
+  expect(view.getByText('正在用：Orchard · Pricing · Cedar')).toBeTruthy()
+  // It was never added to the team, so there is nothing to take it out of.
+  expect(view.queryByRole('button', { name: '移出团队' })).toBeNull()
 })
 
 it('suspends and resumes the same machine through its project', async () => {

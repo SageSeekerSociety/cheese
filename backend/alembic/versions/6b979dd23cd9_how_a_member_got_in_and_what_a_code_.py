@@ -24,12 +24,13 @@ So both columns start empty for every existing row, and the read side says
 "nobody recorded this", which is not the same claim as "no code was involved".
 
 This revision was first written on ``7c2e91a4d3f6`` and has been re-chained onto
-the head main reached while it was in review (``b380c2e8f60c``). The two touch
-disjoint tables — 成员/邀请码 here, remote MCP connections there — so the order
+whatever head main had reached while it was in review — ``b380c2e8f60c`` first,
+then ``a3d1f0c72b94``. Those revisions touch disjoint tables from this one (成员/
+邀请码 here; remote MCP connections and project exclusions there), so the order
 between them does not matter; only having one head does.
 
 Revision ID: 6b979dd23cd9
-Revises: b380c2e8f60c
+Revises: a3d1f0c72b94
 Create Date: 2026-09-27 03:00:00.000000
 
 """
@@ -41,7 +42,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "6b979dd23cd9"
-down_revision: str | Sequence[str] | None = "b380c2e8f60c"
+down_revision: str | Sequence[str] | None = "a3d1f0c72b94"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

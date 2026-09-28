@@ -54,6 +54,25 @@ def test_the_room_is_data_its_markup_cannot_escape():
     assert material.endswith(naming._STAGE_ASK["name"])
 
 
+def test_a_mention_is_the_handle_and_not_the_rest_of_the_sentence():
+    """Only the handle goes; the sentence stays. `@\\S+` took everything up to
+    the next whitespace, which in Chinese is the whole line, so room b031c720's
+    opening message — 71 characters — counted as the four characters before its
+    first `@` and the room was never named (2026-09-27)."""
+    assert naming._said("<@cheese-c82aeb40555a> 在吗") == "在吗"
+    assert naming._said("@芝士 在吗") == "在吗"
+    assert naming._said("回车不是换行吗？怎么是发送呢？<@caisongyang>") == (
+        "回车不是换行吗？怎么是发送呢？"
+    )
+    opener = naming._said(
+        "<@cheese-c82aeb40555a> 当我打开@的时候，我不能通过键盘上的上下键"
+        "进行AI队友的切换，得通过鼠标移动，我希望加上这个功能"
+    )
+    assert len(opener) >= naming._SUBSTANTIVE_CHARS
+    # An empty opener is still empty.
+    assert len(naming._said("@芝士")) < naming._SUBSTANTIVE_CHARS
+
+
 def test_the_latest_messages_survive_the_budget():
     lines = [Line(person=True, text=f"旧消息{i}" + "x" * 390) for i in range(12)]
     lines.append(Line(person=False, text="最新的一句"))

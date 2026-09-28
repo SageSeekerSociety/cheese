@@ -50,6 +50,8 @@ export interface VisibleRow<T extends TopicNodeLike = TopicNodeLike> extends Fla
   hiddenRunning: boolean
   /** 隐藏后代里有没有在等人处理的。 */
   hiddenAwaits: boolean
+  /** 隐藏后代里有没有 @ 了 AI 却等太久没回的。 */
+  hiddenStalled: boolean
 }
 
 interface Node<T extends TopicNodeLike> {
@@ -170,6 +172,8 @@ export interface VisibleRowsOptions {
   runningOf?: (id: string) => boolean
   /** 这个话题是不是在等人处理；缺省当否。 */
   awaitsOf?: (id: string) => boolean
+  /** 这个话题里是不是有人 @ 了 AI 却等太久没回；缺省当否。 */
+  stalledOf?: (id: string) => boolean
 }
 
 /**
@@ -188,6 +192,7 @@ export function visibleRows<T extends TopicNodeLike>(
   const unreadOf = options.unreadOf ?? (() => 0)
   const runningOf = options.runningOf ?? (() => false)
   const awaitsOf = options.awaitsOf ?? (() => false)
+  const stalledOf = options.stalledOf ?? (() => false)
 
   const roots = buildNodes(rows)
   const rendered: Node<T>[] = []
@@ -209,16 +214,20 @@ export function visibleRows<T extends TopicNodeLike>(
 
   // 每个隐藏行只记在「离它最近的、自己也看得见的、收起来的祖先」名下，
   // 这样嵌套折叠时同一条未读不会在两层父行上各显示一次。
-  const owned = new Map<Node<T>, { count: number; unread: number; running: boolean; awaits: boolean }>()
+  const owned = new Map<
+    Node<T>,
+    { count: number; unread: number; running: boolean; awaits: boolean; stalled: boolean }
+  >()
   for (const node of hidden) {
     let owner: Node<T> | null = node.parent
     while (owner && !(renderedSet.has(owner) && collapsedIds.has(owner.row.topic.id))) owner = owner.parent
     if (!owner) continue
-    const acc = owned.get(owner) ?? { count: 0, unread: 0, running: false, awaits: false }
+    const acc = owned.get(owner) ?? { count: 0, unread: 0, running: false, awaits: false, stalled: false }
     acc.count += 1
     acc.unread += unreadOf(node.row.topic.id)
     acc.running = acc.running || runningOf(node.row.topic.id)
     acc.awaits = acc.awaits || awaitsOf(node.row.topic.id)
+    acc.stalled = acc.stalled || stalledOf(node.row.topic.id)
     owned.set(owner, acc)
   }
 
@@ -237,6 +246,7 @@ export function visibleRows<T extends TopicNodeLike>(
       unreadTotal: unreadOf(id) + hiddenUnread,
       hiddenRunning: acc?.running ?? false,
       hiddenAwaits: acc?.awaits ?? false,
+      hiddenStalled: acc?.stalled ?? false,
     }
   })
 }
