@@ -74,6 +74,11 @@ class StillRunning(RuntimeError):
     """
 
 
+# How this script says `StillRunning` to the backend that ran it on a device:
+# waiting is not a failure, and the exit code is all that crosses the exec.
+STILL_RUNNING_EXIT = 75
+
+
 def platform_dir(home: Path) -> Path:
     """Where this room's platform files actually are.
 
@@ -197,22 +202,33 @@ def check_no_writers(paths: list[Path]) -> None:
     directories in one call cost 2.07s, and the same five in five calls cost
     10.14s. A sweep over 102 rooms was therefore 3.4 minutes of lsof alone.
 
-    Nothing is given up by batching: the message never named which path it was,
+    Nothing is given up by batching: the message never names which path it was,
     because for every caller the answer is the same either way — do not delete.
+    It names the processes: they are what the room is waiting on.
     """
     present = [str(path) for path in paths if path.exists()]
     if not present:
         return
     if sys.platform == "win32":
-        if windows_holders([Path(path) for path in present]):
+        pids = windows_holders([Path(path) for path in present])
+        if pids:
             raise StillRunning(
-                "resource still has processes holding files or working directories"
+                "resource still has processes holding files or working "
+                "directories: " + ", ".join(str(pid) for pid in pids)
             )
         return
     result = run_command(["lsof", "-t", "+D", *present])
     if result.stdout.strip():
+        pids = sorted(set(result.stdout.split()), key=int)
+        listing = run_command(["ps", "-o", "pid=,args=", "-p", ",".join(pids)])
+        named = [
+            " ".join(line.split())[:160]
+            for line in listing.stdout.splitlines()
+            if line.strip()
+        ]
         raise StillRunning(
-            "resource still has processes holding files or working directories"
+            "resource still has processes holding files or working directories: "
+            + ("; ".join(named) or ", ".join(pids))
         )
     if result.returncode not in {0, 1} or result.stderr.strip():
         raise RuntimeError(
@@ -647,4 +663,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except StillRunning as waiting:
+        print(waiting, file=sys.stderr)
+        sys.exit(STILL_RUNNING_EXIT)
