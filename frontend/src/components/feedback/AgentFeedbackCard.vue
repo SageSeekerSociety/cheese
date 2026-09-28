@@ -5,9 +5,10 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
+import { kindLabel } from './feedbackLabels'
 import SubmitFeedbackDialog from './SubmitFeedbackDialog.vue'
 
-import { KIND_LABEL } from '@/lib/feedbackMeta'
+import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -120,36 +121,36 @@ function onSubmitted(id: string) {
 
 <template>
   <template v-for="proposal in visibleCards()" :key="proposal.block_id">
-    <v-card v-if="submitted[proposal.block_id]" variant="outlined" class="fb-agent-card mt-2">
-      <div class="pa-3">
+    <div v-if="submitted[proposal.block_id]" class="fb-agent-card mt-2">
+      <div class="fb-agent-card__pad">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon color="success" size="19">mdi-check-circle-outline</v-icon>
-          <span class="t-title">已提交</span>
+          <span class="t-title">{{ t('feedback.proposal.submitted') }}</span>
         </div>
-        <div class="t-body mb-3">反馈中心里能看到它的进展。</div>
+        <div class="t-body mb-3">{{ t('feedback.proposal.progress') }}</div>
         <v-btn
           variant="outlined"
           color="secondary"
           size="small"
           @click="router.push(`/feedback/${submitted[proposal.block_id]}`)"
         >
-          查看这条反馈
+          {{ t('feedback.proposal.view') }}
         </v-btn>
       </div>
-    </v-card>
+    </div>
 
-    <v-card v-else variant="outlined" class="fb-agent-card mt-2">
-      <div class="pa-3">
+    <div v-else class="fb-agent-card mt-2">
+      <div class="fb-agent-card__pad">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon size="19">mdi-robot-outline</v-icon>
-          <span class="t-title">我确认这里更像是平台问题，而不是你的使用方式</span>
+          <span class="t-title">{{ t('feedback.proposal.confirm') }}</span>
         </div>
         <!-- 这张卡只有一个作者，而且一定是 agent（提案接口就是 agent 那条通道），
              所以 `is-agent` 直接写死，不按 handle 去猜。 -->
         <div class="t-meta mb-2 d-flex align-center ga-2">
           <FeedbackAuthorAvatar :handle="proposal.author_handle" is-agent :size="20" />
           <span>
-            {{ KIND_LABEL[proposal.payload.kind] }} · {{ proposal.author_handle }} ·
+            {{ kindLabel(proposal.payload.kind) }} · {{ proposal.author_handle }} ·
             {{ relTime(proposal.authored_at) }}
           </span>
         </div>
@@ -159,12 +160,12 @@ function onSubmitted(id: string) {
         <!-- 用户原话。**放在判断依据上面**，理由见文件开头：这是这张卡唯一一个
              不用解释就成立的诚信机制，读的人该先看见它。 -->
         <div class="fb-agent-card__said mb-3">
-          <div class="t-eyebrow mb-1">你当时说的</div>
+          <div class="t-eyebrow mb-1">{{ t('feedback.proposal.userSaid') }}</div>
           <div class="t-body fb-agent-card__quote">{{ proposal.payload.user_said }}</div>
         </div>
 
         <div v-if="proposal.payload.why" class="fb-agent-card__reason mb-3">
-          <div class="t-eyebrow mb-1">判断依据（为什么这不是你的使用方式）</div>
+          <div class="t-eyebrow mb-1">{{ t('feedback.proposal.why') }}</div>
           <div class="t-body fb-agent-card__text">{{ proposal.payload.why }}</div>
         </div>
 
@@ -176,25 +177,29 @@ function onSubmitted(id: string) {
         <v-expand-transition>
           <div v-if="expanded.has(proposal.block_id)" class="fb-agent-card__evidence mb-3">
             <div v-if="proposal.payload.what_happened" class="fb-evidence-block">
-              <div class="t-eyebrow mb-1">发生了什么</div>
+              <div class="t-eyebrow mb-1">{{ t('feedback.detail.whatHappened') }}</div>
               <div class="t-body fb-agent-card__text">{{ proposal.payload.what_happened }}</div>
             </div>
             <div v-if="proposal.payload.repro" class="fb-evidence-block">
-              <div class="t-eyebrow mb-1">复现步骤</div>
+              <div class="t-eyebrow mb-1">{{ t('feedback.detail.repro') }}</div>
               <pre class="fb-evidence-pre">{{ proposal.payload.repro }}</pre>
             </div>
             <div v-if="proposal.payload.evidence" class="fb-evidence-block">
-              <div class="t-eyebrow mb-1">证据</div>
+              <div class="t-eyebrow mb-1">{{ t('feedback.detail.evidence') }}</div>
               <div class="t-body fb-agent-card__text">{{ proposal.payload.evidence }}</div>
             </div>
             <!-- 日志只给个长度，不铺开：它是最大的一段（上限两万字），而这一屏的
                  目的是让人决定要不要提交，不是读日志。真正的日志随反馈一起走。 -->
             <div v-if="proposal.payload.logs" class="fb-evidence-block">
-              <div class="t-eyebrow mb-1">日志</div>
-              <div class="t-meta">已附上（{{ proposal.payload.logs.length }} 字），跟着反馈一起提交</div>
+              <div class="t-eyebrow mb-1">{{ t('feedback.proposal.logs') }}</div>
+              <div class="t-meta">
+                {{ t('feedback.proposal.logsAttached', { n: proposal.payload.logs.length }) }}
+              </div>
             </div>
             <div v-if="proposal.payload.session_id || proposal.payload.environment" class="t-meta">
-              <template v-if="proposal.payload.session_id">会话 {{ proposal.payload.session_id }}</template>
+              <template v-if="proposal.payload.session_id">
+                {{ t('feedback.sessionLine', { id: proposal.payload.session_id }) }}
+              </template>
               <template v-if="proposal.payload.session_id && proposal.payload.environment"> · </template>
               <template v-if="proposal.payload.environment">{{ proposal.payload.environment }}</template>
             </div>
@@ -209,14 +214,18 @@ function onSubmitted(id: string) {
             :prepend-icon="expanded.has(proposal.block_id) ? 'mdi-chevron-up' : 'mdi-chevron-down'"
             @click="toggleExpanded(proposal.block_id)"
           >
-            {{ expanded.has(proposal.block_id) ? '收起详情' : '查看详情' }}
+            {{ expanded.has(proposal.block_id) ? t('feedback.proposal.collapse') : t('feedback.proposal.expand') }}
           </v-btn>
-          <v-btn variant="text" color="secondary" size="small" @click="dismiss(proposal)">不用</v-btn>
+          <v-btn variant="text" color="secondary" size="small" @click="dismiss(proposal)">
+            {{ t('feedback.proposal.dismiss') }}
+          </v-btn>
           <v-spacer />
-          <v-btn color="primary" size="small" @click="openForm(proposal)">提交反馈</v-btn>
+          <v-btn color="primary" size="small" @click="openForm(proposal)">
+            {{ t('feedback.proposal.submit') }}
+          </v-btn>
         </div>
       </div>
-    </v-card>
+    </div>
   </template>
 
   <!-- 对话框挂在卡片外面：跟着卡片一起被条件渲染的话，点「提交反馈」到它出现之间会
@@ -225,8 +234,18 @@ function onSubmitted(id: string) {
 </template>
 
 <style scoped>
-/* 圆角不在这里写：VCard 默认的 rounded="xl"(24px) 带 !important，scoped 的 12px
-   压不过它（FeedbackCard.vue 里有同一段说明）。 */
+/* 卡片自己画边框圆角，不用 VCard：VCard 默认 rounded="xl"(24px) 带 `!important`，
+   而这一屏里的卡片该和平台别处的面一样是 --radius-lg、1px --line。颜色也不交给
+   Vuetify 的那组主题变量 —— 这一页整块走 style.css 的令牌。 */
+.fb-agent-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  color: var(--ink);
+}
+.fb-agent-card__pad {
+  padding: 12px;
+}
 /* 用户原话用左边一道竖线引用，判断依据用 inset 底色 —— 两件事不该长得一样：
    原话是**证据**（不可改写），判断依据是**推理**（可能错）。 */
 .fb-agent-card__said {

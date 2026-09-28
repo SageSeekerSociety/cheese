@@ -161,7 +161,14 @@ class _CallsATool(StubChannel):
     tool = "mcp__native__cheese_doc_set"
     arguments: dict = {"path": "/tmp/x.md"}
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del prompt
         self.starts(topic_id)
         self.uses(topic_id, self.tool, eid="e-tool", **self.arguments)
@@ -235,7 +242,14 @@ def _is_decision_card(frame: dict) -> bool:
 
 def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path):
     class _DecidesAndKeepsGoing(StubChannel):
-        def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        def emit_turn(
+            self,
+            topic_id: uuid.UUID,
+            prompt: str,
+            reply: str,
+            *,
+            agent: str | None = None,
+        ) -> None:
             del prompt, reply
             self.starts(topic_id)
             self.uses(
@@ -271,7 +285,14 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
 
 def test_a_turn_announces_each_kind_of_action_once(client, tmp_path):
     class _DecidesTwice(StubChannel):
-        def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        def emit_turn(
+            self,
+            topic_id: uuid.UUID,
+            prompt: str,
+            reply: str,
+            *,
+            agent: str | None = None,
+        ) -> None:
             del prompt
             self.starts(topic_id)
             self.uses(

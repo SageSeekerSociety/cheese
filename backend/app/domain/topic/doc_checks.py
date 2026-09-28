@@ -12,9 +12,9 @@
 
 import re
 
-#: 一份实况文档的写作预算（字符）。超了照样写入，只提醒：文档是给下一个读者
-#: 读的，长到没人读完就已经不是文档了。
-LIVING_DOC_CHAR_LIMIT = 6000
+#: 一份实况文档的写作预算（字符）。超了照样写入，只提醒：它是一页状态页，每轮
+#: 都注入，要一分钟读完。
+LIVING_DOC_CHAR_LIMIT = 1500
 
 #: 一个代码块超过这些行、或者这么多字符，就当作「把命令输出/日志原样贴进来了」。
 _PASTED_CODE_LINES = 40
@@ -79,8 +79,8 @@ def living_doc_warnings(content: str) -> list[str]:
     if len(content) > LIVING_DOC_CHAR_LIMIT:
         warnings.append(
             f"正文 {len(content)} 字，超过 {LIVING_DOC_CHAR_LIMIT} 字的写作预算。"
-            "实况文档是「现在的状态」，不是积累的过程：把已经被替换掉的说法删掉，"
-            "只留此刻成立的，过程留在聊天和任务卡里。"
+            "删掉做完的事、过程和证据细节，只留目标、现状、分工、已确定的事和待决；"
+            "细节留在聊天、任务卡和 PR 里。"
         )
 
     headings = [m.group(1) for m in _HEADING_RE.finditer(content)]

@@ -100,3 +100,20 @@ describe('打开房间时开在哪一格', () => {
     expect(emitted()['update:tab']).toBeUndefined()
   })
 })
+
+// 「现场」那一格在有人干活时把「谁在干」写进标签的 title：一间房几个座位并行在跑
+// 就并列几个名字（对话栏按轮次帧报上来的名单）；名单空着 = 帧没带座位（老后端），
+// 退回 agentName 的单数说法，和从前一样。
+describe('「现场」tab 上谁在干活', () => {
+  it('几个队友并行在干：名字并列报出来', async () => {
+    const { findByRole } = mount({ working: true, workingAgents: ['芝士K', '芝士O'] })
+    const site = await findByRole('tab', { name: /现场/ })
+    expect(site.getAttribute('title')).toBe('现场（芝士K、芝士O正在工作）')
+  })
+
+  it('名单空着：退回 agentName 的单数说法', async () => {
+    const { findByRole } = mount({ working: true, agentName: '芝士', workingAgents: [] })
+    const site = await findByRole('tab', { name: /现场/ })
+    expect(site.getAttribute('title')).toBe('现场（芝士正在工作）')
+  })
+})

@@ -62,7 +62,14 @@ def project_configs(project_settings: dict | None) -> ProjectComputeConfigs:
 
 
 def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
-    """What a new agent session in this room starts on (结论 60).
+    """The work computer THIS ROOM works on — every session in it (2026-09-28).
+
+    一个话题一个容器（2026-09-28 的决定，推翻结论 60）：一间房只有一条算力选择，
+    房间里坐着的每一条会话都工作在它算出来的那台机器上，所以会话要手的时候
+    （``machine/session_work._attempt``）和闸门问「要谁的机器」的时候
+    （``machine_policy_call``）读的都是它——不是会话行上那份副本，那份只是跟着它
+    写、必须与它一致的记录。这条决定推翻了结论 60 里「手是 agent 的，不是房间
+    的」那一半。
 
     The room's own choice once it has one — written the first time the room
     runs, so every later session gets the same full choice the first one did —

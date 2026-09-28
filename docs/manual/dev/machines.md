@@ -17,6 +17,31 @@ covers:
 
 > 讲：几种机器、连接方式、出错时怎么办。不讲：连接器命令，见 [cheese CLI 原理](/dev/cli#connector)。
 
+```demo-steps
+title: 一台机器怎么变成芝士的手
+note: 右下角「幕后」是设备卡和连接器的输出
+embed: machines
+steps:
+  - label: 几种机器
+    desc: 本机沙盒容器、用户接入的自托管设备、每个话题一台的云机器，以及会话在中心、工具调用落到租用机器上的执行机。
+    link: /dev/machines#kinds
+  - label: 连接器登录，保持一条长连接
+    desc: 连接器登录后和机器连接服务保持一条长连接。机器连接服务单独常驻，主 API 发版时设备链接不断。
+    link: /dev/machines#link
+  - label: 房间选这台机器
+    desc: 机器是房间的：房间的算力选择就是房间里每条会话的选择，换机器是整个房间一起搬。
+    link: /dev/turn#seats-machine
+  - label: 开跑前探一下，再打开屏幕
+    desc: 租用的机器开跑前最多探测 15 秒。服务器为这个房间打开一个屏幕，屏幕里运行骨架的 runner。
+    link: /dev/machines#link
+  - label: 机器上平台装了什么
+    desc: 执行器、CLI、环境脚本、会话目录、包缓存都在机器主人 $HOME 下的同一个目录里。模型流量经模型隧道回到主机上的计量代理，机器上只有短期令牌。
+    link: /dev/machines#footprint
+  - label: 机器出错时
+    desc: 失败记在设备上，连续两次同类失败就隔离一段冷却时间。话题不会被自动换到别的机器上，由人决定怎么处理。
+    link: /dev/machines#failure
+```
+
 ## 几种机器 {#kinds}
 
 | 机器 | 是什么 | 代码 |

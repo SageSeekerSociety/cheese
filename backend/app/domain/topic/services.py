@@ -72,7 +72,7 @@ from app.domain.topic.overview import (
     decision_summary,
     first_sentence,
     overview_auto_blocks,
-    topic_conclusion,
+    topic_status,
 )
 from app.domain.topic.repositories import (
     SortOrder,
@@ -1247,7 +1247,7 @@ class TopicService:
             if prefer_card and card is not None and card.conclusion:
                 return first_sentence(card.conclusion)
             doc = docs.get(topic.id)
-            return topic_conclusion(doc.content) if doc is not None else None
+            return topic_status(doc.content) if doc is not None else None
 
         decisions = (
             await self._blocks.list_by_kind_for_project(project_id, BlockKind.decision)

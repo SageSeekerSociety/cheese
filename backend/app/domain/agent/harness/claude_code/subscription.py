@@ -87,8 +87,14 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         marks = subscription.marks_of(events)
-        message = record.get("entry") if record.get("type") == "cheese_file" else record
-        content = ((message or {}).get("message") or {}).get("content")
+        message = (
+            record.get("entry") if record.get("type") == "cheese_file" else record
+        ) or {}
+        # A tool comes back in a user record. Other records carry a `message`
+        # of their own shape: a refused permission's is a plain string.
+        if message.get("type") != "user":
+            return marks
+        content = (message.get("message") or {}).get("content")
         for block in content if isinstance(content, list) else []:
             if isinstance(block, dict) and block.get("type") == "tool_result":
                 marks |= {

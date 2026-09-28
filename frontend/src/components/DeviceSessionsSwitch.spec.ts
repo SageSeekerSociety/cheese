@@ -1,5 +1,5 @@
-// 「现在的分布」里一台自有设备上的 agent：选一些，换到另一台工作电脑。每一个走名册
-// 那条更换；正在干活的跳过并说明原因，连不上的只由人逐个决定不推送直接更换。
+// 「现在的分布」里一台自有设备上的 agent：选一些，换到另一台工作电脑。换的是它所在
+// 的整个房间（一个话题一个容器），走名册那条更换；正在干活的跳过并说明原因，连不上的只由人逐个决定不推送直接更换。
 import type { ComputeChoice, DeviceSession } from '../cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -10,7 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   listDeviceSessions: vi.fn(),
-  setSessionWorkChoice: vi.fn(),
+  setTopicComputeChoice: vi.fn(),
   ApiError: class extends Error {
     constructor(
       readonly status: number,
@@ -115,21 +115,21 @@ it('switches the selected agents one by one and says what happened to each', asy
   expect(dialog().getByText('另有 2 个 agent 在你打不开的房间里')).toBeTruthy()
   expect(dialog().getByRole('button', { name: '推送并更换' }).hasAttribute('disabled')).toBe(true)
 
-  api.setSessionWorkChoice.mockImplementation(async (topic: string) => {
+  api.setTopicComputeChoice.mockImplementation(async (topic: string) => {
     if (topic === 'room-b') throw new ApiError(409, '正在运行任务，稍后再换', 'SessionWorking')
     if (topic === 'room-c')
       throw new ApiError(409, '原来那台工作电脑连不上，无法推送改动，没有更换', 'WorkComputerUnreachable')
-    return { session: {} }
+    return { choice: {}, proposal: null }
   })
   // Vuetify's checkbox reads the input event, as a person's click produces it.
   await fireEvent.input(dialog().getByLabelText('全选'), { target: { checked: true } })
   await fireEvent.click(dialog().getByRole('button', { name: '推送并更换' }))
 
-  await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledTimes(3))
-  expect(api.setSessionWorkChoice.mock.calls.map((call) => [call[0], call[1], call[2].profile, call[3]])).toEqual([
-    ['room-a', 'a', 'cloud', { ifIdle: true, abandonUnpushed: false }],
-    ['room-b', 'b', 'cloud', { ifIdle: true, abandonUnpushed: false }],
-    ['room-c', 'c', 'cloud', { ifIdle: true, abandonUnpushed: false }],
+  await waitFor(() => expect(api.setTopicComputeChoice).toHaveBeenCalledTimes(3))
+  expect(api.setTopicComputeChoice.mock.calls.map((call) => [call[0], call[1].profile, call[2]])).toEqual([
+    ['room-a', 'cloud', { ifIdle: true, abandonUnpushed: false }],
+    ['room-b', 'cloud', { ifIdle: true, abandonUnpushed: false }],
+    ['room-c', 'cloud', { ifIdle: true, abandonUnpushed: false }],
   ])
   expect(await dialog().findByText('已更换')).toBeTruthy()
   expect(dialog().getByText('正在运行任务，稍后再换').getAttribute('role')).toBe('alert')
@@ -138,10 +138,10 @@ it('switches the selected agents one by one and says what happened to each', asy
   const [abandon] = dialog().getAllByRole('button', { name: '不推送，直接更换' })
   expect(dialog().getAllByRole('button', { name: '不推送，直接更换' })).toHaveLength(1)
 
-  api.setSessionWorkChoice.mockResolvedValue({ session: {} })
+  api.setTopicComputeChoice.mockResolvedValue({ choice: {}, proposal: null })
   await fireEvent.click(abandon)
   await waitFor(() =>
-    expect(api.setSessionWorkChoice).toHaveBeenLastCalledWith('room-c', 'c', expect.anything(), {
+    expect(api.setTopicComputeChoice).toHaveBeenLastCalledWith('room-c', expect.anything(), {
       ifIdle: true,
       abandonUnpushed: true,
     })
@@ -162,4 +162,20 @@ it('offers every other work computer but the one being left', async () => {
   expect(await screen.findByRole('option', { name: '云端 · 标准配置' })).toBeTruthy()
   expect(screen.getByRole('option', { name: '备用机 · 不可用' })).toBeTruthy()
   expect(screen.queryByRole('option', { name: /旧工作站/ })).toBeNull()
+})
+
+it('switches a room once and moves every teammate listed in it', async () => {
+  // 一个话题一个容器：同一个房间的两个队友在这台设备上是两行，换的却是同一个房间。
+  const second = { ...row('b', '定价'), topic_id: 'room-a' }
+  api.listDeviceSessions.mockResolvedValue({ sessions: [row('a', '定价'), second], hidden: 0 })
+  api.setTopicComputeChoice.mockResolvedValue({ choice: {}, proposal: null })
+  await open()
+  await dialog().findAllByText('定价')
+
+  await fireEvent.input(dialog().getByLabelText('全选'), { target: { checked: true } })
+  await fireEvent.click(dialog().getByRole('button', { name: '推送并更换' }))
+
+  expect(await dialog().findAllByText('已更换')).toHaveLength(2)
+  expect(api.setTopicComputeChoice).toHaveBeenCalledTimes(1)
+  expect(api.setTopicComputeChoice.mock.calls[0][0]).toBe('room-a')
 })

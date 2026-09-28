@@ -49,7 +49,14 @@ class PrivateScreen(StubChannel):
         )
         return await super().ensure(session, opening)
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         self.prompts.append(prompt)
         self.starts(topic_id, session_id="private-session")
         self.acknowledges(topic_id, prompt)

@@ -1,6 +1,7 @@
 {
   "queue": {
     "label": "反馈队列",
+    "sub": "一条一条往前推的分诊队列：归谁、下一步是什么，都写在这一页上。",
     "tab": {
       "all": "全部",
       "scope": "只筛这一页",
@@ -138,6 +139,7 @@
   },
   "dashboard": {
     "title": "看板",
+    "sub": "平台最近怎么样、卡在哪 —— 交付、用量、集成、性能各一段。",
     "kindsAria": "分类",
     "window": {
       "switchAria": "统计窗口",
@@ -459,13 +461,46 @@
     "viewAll": "查看全部"
   },
   "center": {
+    "title": "反馈中心",
+    "mine": "我的反馈",
+    "admin": "管理后台",
+    "submit": "提交反馈",
+    "tab": {
+      "label": "反馈栏位",
+      "all": "全部",
+      "hot": "热门",
+      "active": "处理中",
+      "resolved": "已完成"
+    },
+    "filter": {
+      "kind": "类型",
+      "status": "状态",
+      "author": "作者",
+      "days": "时间",
+      "any": "不限",
+      "authorPlaceholder": "作者",
+      "clear": "清除筛选",
+      "days24": "24 小时",
+      "days7": "7 天",
+      "days30": "30 天"
+    },
+    "hot": {
+      "note": "按支持数算，但越新的越算数：今天 2 个支持，和 {halfLife} 天前的 4 个一样重。够 {threshold} 分、又还没办完的进这一栏；够线的不足 {minItems} 条时按分数补齐，所以刚开板也不会空着。"
+    },
+    "more": {
+      "load": "加载更多",
+      "showing": "已显示 {shown} / 共 {total} 条"
+    },
+    "foot": "公开反馈所有人可见；提交时选「私密」的只有你和平台管理员能看到，别人搜不到、也拿不到链接",
     "empty": {
       "title": "暂无反馈",
       "desc": "你提交的反馈会出现在这里。"
     },
     "error": {
       "title": "反馈加载失败",
-      "desc": "检查网络后重试。"
+      "desc": "检查网络后重试。",
+      "retry": "重试",
+      "dismiss": "关闭这条提示"
     },
     "filtered": {
       "title": "没有符合条件的反馈",
@@ -473,11 +508,121 @@
       "clear": "清除筛选"
     },
     "search": {
+      "placeholder": "搜索反馈",
       "title": "没有匹配的反馈",
       "desc": "换一个关键词。搜索只覆盖标题、摘要、正文、提交人。"
     }
   },
+  "mine": {
+    "title": "我的反馈",
+    "back": "回反馈中心",
+    "submit": "提交反馈",
+    "lede": "这里是我提的、我替 AI 队友提的，以及指派给我的。",
+    "total": "共 {n} 条。",
+    "ledeRest": "别人的反馈不在这里，去反馈中心搜。",
+    "empty": {
+      "title": "你还没有提过反馈，也没有指派给你的",
+      "action": "提交一条"
+    },
+    "foot": "办完的反馈（已修复、已上线）留在列表里，但不再接受支持；私密的那几种只有你、平台管理员、以及提出它时在那个房间里的人看得到"
+  },
+  "status": {
+    "received": "已收录",
+    "in_progress": "处理中",
+    "resolved": "已修复",
+    "deployed": "已上线",
+    "unknown": "未知"
+  },
+  "timeline": {
+    "notStarted": "未开始"
+  },
+  "kind": {
+    "bug": "Bug",
+    "suggestion": "建议",
+    "other": "其他"
+  },
+  "source": {
+    "user": "用户提交",
+    "agent": "Agent 发现"
+  },
+  "private": "私密",
+  "privateHint": "私密反馈：只有你、平台管理员、以及提出它时在那个房间里的人能看到，其他人看不到它",
+  "security": "安全",
+  "closedHint": "已办完，无需再支持",
+  "sessionLine": "会话 {id}",
+  "card": {
+    "support": "支持",
+    "unsupport": "取消支持",
+    "supportAria": "支持这个反馈，当前 {n} 人支持",
+    "unsupportAria": "取消支持，当前 {n} 人支持"
+  },
+  "comment": {
+    "like": "赞",
+    "liked": "已赞",
+    "likeAria": "点赞这条评论",
+    "unlikeAria": "取消点赞",
+    "reply": "回复",
+    "collapse": "收起",
+    "replyTo": "回复 {handle}",
+    "replyPlaceholder": "回复 {handle}",
+    "delete": "删除",
+    "confirm": "确认删除",
+    "cancel": "取消",
+    "agent": "AI 队友",
+    "deleteAsk": "删掉这条评论？",
+    "deleteAskWithReplies": "删掉这条评论，连同它下面的 {n} 条回复一起？"
+  },
+  "thread": {
+    "expand": "展开更多 {n} 条回复",
+    "loadReplies": "加载更多回复（还有 {n} 条）",
+    "collapse": "收起",
+    "loading": "正在加载…",
+    "loadMore": "加载更多评论"
+  },
+  "proposal": {
+    "submitted": "已提交",
+    "progress": "反馈中心里能看到它的进展。",
+    "view": "查看这条反馈",
+    "confirm": "我确认这里更像是平台问题，而不是你的使用方式",
+    "userSaid": "你当时说的",
+    "why": "判断依据（为什么这不是你的使用方式）",
+    "logs": "日志",
+    "logsAttached": "已附上（{n} 字），跟着反馈一起提交",
+    "expand": "查看详情",
+    "collapse": "收起详情",
+    "dismiss": "不用",
+    "submit": "提交反馈"
+  },
   "detail": {
+    "back": "反馈中心",
+    "missingBack": "回到反馈中心",
+    "submittedBy": "由 {handle} 提交",
+    "problem": "问题描述",
+    "why": "为什么需要",
+    "expectation": "期望方案",
+    "context": "现场",
+    "whatHappened": "发生了什么",
+    "repro": "复现步骤",
+    "evidence": "证据",
+    "commentsLabel": "评论 {n}",
+    "composer": {
+      "open": "写下你的评论…",
+      "placeholder": "补充你遇到的情况，或者说明为什么这个改动对你重要",
+      "submit": "发表评论"
+    },
+    "aside": {
+      "progress": "进展",
+      "supports": "支持人数",
+      "comments": "评论数",
+      "source": "来源",
+      "topic": "由某个话题里的对话发现"
+    },
+    "action": {
+      "support": "支持这个反馈",
+      "supported": "已支持",
+      "share": "分享"
+    },
+    "copied": "链接已复制",
     "delete": {
       "label": "删除",
       "confirm": "确认删除",
@@ -549,7 +694,9 @@
       "tags": {
         "label": "标签",
         "placeholder": "回车添加",
-        "helper": "方便归类，比如登录、移动端"
+        "helper": "方便归类，比如登录、移动端",
+        "suggestions": "常用标签",
+        "remove": "移除标签 {tag}"
       }
     },
     "visibility": {

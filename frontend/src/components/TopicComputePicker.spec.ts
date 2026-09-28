@@ -8,8 +8,21 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const setTopicComputeChoice = vi.fn()
+const ApiError = vi.hoisted(
+  () =>
+    class extends Error {
+      constructor(
+        readonly status: number,
+        message: string,
+        readonly code?: string
+      ) {
+        super(message)
+      }
+    }
+)
 
 vi.mock('../api', () => ({
+  ApiError,
   setTopicComputeChoice: (...args: unknown[]) => setTopicComputeChoice(...args),
 }))
 
@@ -134,16 +147,16 @@ describe('room work computer choice', () => {
     expect(screen.queryByText('家里那台')).toBeNull()
     expect(screen.getByRole('button', { name: /其他配置与设备/ })).toBeTruthy()
   })
-  it('sets what AI teammates that have not started will use', async () => {
+  it('sets the machine the whole room runs on', async () => {
     setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
     const { emitted } = mountPicker(profile({ project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    expect(screen.getByText('只影响还没开工的 AI 队友；已经开工的继续用自己那台')).toBeTruthy()
+    expect(screen.getByText(/房间里所有 AI 队友共用这一台/)).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
-    await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab))
+    await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab, {}))
     expect(emitted().changed).toHaveLength(1)
   })
-  it('stays changeable after the room has started', async () => {
+  it('stays changeable after the room has started, and moves the room', async () => {
     setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
     const working: ComputeChoice = { ...lab, name: '办公室 Mac mini' }
     mountPicker(
@@ -164,7 +177,7 @@ describe('room work computer choice', () => {
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     expect(screen.queryByText('房间初始配置')).toBeNull()
     await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
-    await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab))
+    await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab, {}))
   })
   it('keeps a named offline default visible without silently substituting cloud', async () => {
     const home = { ...lab, name: '家里那台', device_id: 'home' }
@@ -183,5 +196,21 @@ describe('room work computer choice', () => {
     await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
     expect((await screen.findByRole('status')).textContent).toContain('这一步等 @andyl 点头。')
     expect(emitted().changed).toBeUndefined()
+  })
+  it('offers to switch without pushing only when the old machine is unreachable', async () => {
+    setTopicComputeChoice.mockRejectedValueOnce(
+      new ApiError(409, '原来那台工作电脑连不上，无法推送改动，没有更换', 'WorkComputerUnreachable')
+    )
+    const { emitted } = mountPicker(profile({ project_default: lab }))
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
+    expect((await screen.findByRole('alert')).textContent).toContain('连不上')
+
+    setTopicComputeChoice.mockResolvedValueOnce({ choice: lab, proposal: null })
+    await fireEvent.click(screen.getByTestId('room-machine-abandon'))
+    await waitFor(() =>
+      expect(setTopicComputeChoice).toHaveBeenLastCalledWith('topic-1', lab, { abandonUnpushed: true })
+    )
+    expect(emitted().changed).toHaveLength(1)
   })
 })

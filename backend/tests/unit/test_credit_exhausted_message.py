@@ -72,7 +72,14 @@ class _CreditsRefusedScreen(StubChannel):
     failed — the records the pinned build prints for a refused key
     (`tests/fixtures/harness-contract/the-turn-failed.json`)."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)

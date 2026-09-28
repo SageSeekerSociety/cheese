@@ -138,6 +138,22 @@ class AgentSessionRepository:
         )
         return result.scalar_one_or_none()
 
+    async def ids_in_room(self, room_id: uuid.UUID) -> list[uuid.UUID]:
+        """Every session id in this room, whether or not it has a machine yet.
+
+        一个话题一个容器（2026-09-28 决定，推翻结论 60）：换工作电脑是**房间**的动
+        作，而写下去要逐条会话去写（每一条各自先推后搬），所以先要一张「这间房里
+        有哪几条」的清单。没开工的那条也算：它的选择是同一项，只是还没有手。
+
+        顺序（agent、id）只为了可复现：搬的先后不影响结果，每一条各自算自己的。
+        """
+        result = await self._session.execute(
+            select(AgentSession.id)
+            .where(AgentSession.topic_id == room_id)
+            .order_by(AgentSession.agent_handle, AgentSession.id)
+        )
+        return list(result.scalars())
+
     async def placed_in_room(self, room_id: uuid.UUID) -> list[AgentSession]:
         """Every session in this room that is sitting on a machine, newest first.
 

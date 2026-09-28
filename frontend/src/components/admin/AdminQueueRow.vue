@@ -20,11 +20,10 @@ import { relTime } from '@/lib/relTime'
  * 都是钉死的：标题和 meta 的行盒由各自的字号决定（14 / 12），换字号就得重新量这一行，
  * 而不是让行高跟着内容长。
  *
- * 右侧三列（指派 116 / 更新 88 / 按钮）宽度是固定的，只有标题那一列吃剩下的空间
- * （§4.1 的算式里它是 F）。把弹性留给 F 而不是均摊：指派和更新这两列要跨行对齐，
- * 标题是唯一一列「多宽都读得下去」的。代价是按钮文案长短会带动左边三列整体平移，
- * 因为按钮是 `max-content`（规格明确要求），而它右侧没有可回收的空间 —— 这一条留在
- * 这里，免得下一个人把它当成错位的 bug 去「修」。
+ * 右侧三列（指派 116 / 更新 88 / 下一步 104）宽度都是固定的，只有标题那一列吃剩下
+ * 的空间（§4.1 的算式里它是 F）。按钮本身仍是 `max-content`，但它住在一格定宽、靠右
+ * 的格子里：按钮一宽一窄不再带动左边的指派和更新整体平移，列头也就能逐列对齐。104 是
+ * 最长的文案（英文 “Mark shipped”）加内边距；已上线没有按钮，格子照样占着位置。
  *
  * 行的 `id` 直接由 `item.id` 长出来：列表容器要用 `aria-activedescendant` 指到当前
  * 行，而这个 prop 是契约里没有的，两边只能靠同一个名字约定，不能靠传值。
@@ -125,14 +124,20 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
     </span>
 
     <span class="qrow__assignee" role="gridcell">
-      <template v-if="item.assignee_handle">{{ item.assignee_handle }}</template>
-      <span v-else class="qrow__dim">—</span>
+      <!-- 窄屏下这一格不再是「列头底下的一列」，它单独占一行，前面得有这句话才读得出
+           「carol」是干什么的。宽屏那一列有列头（`qrow__updated` 同理靠右对齐的列位
+           说明自己），所以标签只在窄屏画出来。 -->
+      <span class="qrow__alabel">{{ t('feedback.queue.col.assignee') }}</span>
+      <!-- 值单独包一层：窄屏那个标签也是这一格的文字，读「指派给了谁」的地方（e2e 的
+           feedback-flows 就是一处）要读的是这一层，不是整格。 -->
+      <span v-if="item.assignee_handle" class="qrow__avalue">{{ item.assignee_handle }}</span>
+      <span v-else class="qrow__avalue qrow__dim">—</span>
     </span>
 
     <span class="qrow__updated t-meta-read t-num" role="gridcell">{{ updatedAt }}</span>
 
-    <span v-if="next" class="qrow__action" role="gridcell">
-      <button type="button" class="qrow__btn" @click="emit('advance')">{{ advanceLabel }}</button>
+    <span class="qrow__action" role="gridcell">
+      <button v-if="next" type="button" class="qrow__btn" @click="emit('advance')">{{ advanceLabel }}</button>
     </span>
   </div>
 </template>
@@ -258,6 +263,12 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
   color: var(--muted);
 }
 
+/* 指派那一格的行内标签。宽屏没有它（列头写着「指派」），窄屏才有 —— 规则在下面那条
+   媒体查询里。 */
+.qrow__alabel {
+  display: none;
+}
+
 /* 更新列不写 `--font-mono`，即使 §5.1 的那一列标着 mono：这个值是 `relTime` 算出来的
    相对时间（「刚刚」「昨天」「3天前」），而 mono 栈是 JetBrains Mono，**没有 CJK 字形**
    —— 汉字会回落到系统字体、数字留在等宽里，同一格里两种字体。等宽数字由 `.t-num`
@@ -273,7 +284,9 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
 }
 
 .qrow__action {
-  flex: 0 0 auto;
+  display: flex;
+  flex: 0 0 104px;
+  justify-content: flex-end;
   margin-left: 16px;
 }
 
@@ -308,6 +321,77 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
 @media (hover: hover) and (pointer: fine) {
   .qrow__btn:hover {
     background: var(--fill);
+  }
+}
+
+/* 窄屏（≤700，和 `AdminPageHeader` / 后台壳同一条线）：**一行翻成一张小卡片**，
+   不再横着滚。原来那条「整行 1100px、容器横着滚」在 390 下等于把「指派」整列和
+   「下一步」按钮推到屏幕外 —— 而这两样正是这一页要回答的问题（归谁、我该做什么），
+   看不见就等于这条队列只剩标题可读。61px 的行高在这一档放开：卡片按内容长。 */
+@media (max-width: 700px) {
+  .qrow {
+    flex-wrap: wrap;
+    align-items: center;
+    height: auto;
+    min-height: 61px;
+    padding: 12px 16px 12px 24px;
+    row-gap: 6px;
+    column-gap: 12px;
+  }
+
+  /* 阶梯条退出 flex 流、贴在卡片左沿：标题那格 basis 100% 之后，条若还是一个 flex
+     项目，就会自己占掉第一行。 */
+  .qrow__rail {
+    position: absolute;
+    top: 12px;
+    left: 10px;
+  }
+
+  /* 标题和 meta 独占第一行（basis 100%），右边三格整组掉到第二行成为卡片的底栏。
+     给个「够大的下限」不够：390 下 240 + 指派那格还挤得下一行，「指派 —」就浮在
+     标题右边。`min-width: 0` 保住长标题的截断。 */
+  .qrow__main {
+    flex: 1 1 100%;
+    min-width: 0;
+    margin: 0;
+  }
+
+  /* 卡片里高度是自由的，标题折两行比一句省略号有用。 */
+  .fbrow__link {
+    white-space: normal;
+  }
+
+  .qrow__meta {
+    flex-wrap: wrap;
+    row-gap: 2px;
+    white-space: normal;
+  }
+
+  /* 第二行：指派靠左，更新与按钮靠右（grow 给指派，它吃中间那段空）。 */
+  .qrow__assignee {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .qrow__alabel {
+    display: inline;
+    margin-right: 6px;
+    color: var(--muted);
+  }
+
+  .qrow__updated {
+    flex: 0 0 auto;
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .qrow__action {
+    flex: 0 0 auto;
+    margin-left: 0;
+  }
+
+  .qrow__action:empty {
+    display: none;
   }
 }
 </style>

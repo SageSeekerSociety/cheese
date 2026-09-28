@@ -17,12 +17,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.memory.files import (
     INDEX_NAME,
     MemoryFileScope,
     check_path,
     fit_index,
+    limit_breach,
     prefix_of,
 )
 from app.domain.memory.models import MemoryFileRecord
@@ -51,6 +52,15 @@ class MemoryFileConflict(ConflictError):
             # 的人（界面上的那次重试）需要知道自己在重读第几版。
             data={"path": path, "expected": expected, "current": current},
         )
+
+
+class MemoryFileLimit(ValidationError):
+    """这一版超了单条上限（`files.limit_breach`），一个字都没写。"""
+
+    def __init__(self, path: str, reason: str):
+        self.path = path
+        self.reason = reason
+        super().__init__(f"{path} 没有写入：{reason}")
 
 
 class MemoryFileMissing(NotFoundError):
@@ -140,7 +150,8 @@ class MemoryFileStore:
         updated_by: str,
         expected_version: int | None,
     ) -> MemoryFileRecord:
-        """写入一版；版本对不上就抛 :class:`MemoryFileConflict`。
+        """写入一版；版本对不上就抛 :class:`MemoryFileConflict`，超了单条上限就抛
+        :class:`MemoryFileLimit`。
 
         ``expected_version=None`` 是**新建**：已经有一条同名记忆时它也是冲突，
         因为「先查重，再新建」是写记忆的规矩，而一个新的空文件正好是它最容易被
@@ -159,6 +170,8 @@ class MemoryFileStore:
         """
         check_path(path)
         row = await self.get(project_id, scope, owner_handle, path, for_update=True)
+        if breach := limit_breach(path, content, row.content if row else None):
+            raise MemoryFileLimit(path, breach)
         if row is None:
             if expected_version is not None:
                 raise MemoryFileConflict(path, expected_version, None)

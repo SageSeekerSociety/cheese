@@ -15,7 +15,7 @@ import * as esbuild from 'esbuild'
 import { marked } from 'marked'
 import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS, WHO } from './src/structure.mjs'
 import { esc, docHref, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
-import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset } from './src/demos.mjs'
+import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed } from './src/demos.mjs'
 import { homePage } from './src/home.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -23,6 +23,12 @@ const REPO = path.resolve(HERE, '../..')
 const MANUAL = path.join(REPO, 'docs/manual')
 const OUT = path.resolve(process.env.OUT || path.join(REPO, 'frontend/public/docs'))
 const SITE = 'https://okcheese.com'
+
+// The demo scenes a fence can embed (`embed: <name>`), by their step titles.
+const SCENES = path.join(REPO, 'frontend/src/views/demo/scenes')
+for (const f of fs.readdirSync(SCENES).filter((f) => f.endsWith('.json'))) {
+  registerEmbed(f.replace(/\.json$/, ''), JSON.parse(fs.readFileSync(path.join(SCENES, f), 'utf8')).steps.map((s) => s.label))
+}
 
 const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: 'Asia/Shanghai' } })
 const fail = (msg) => { console.error(`FAIL: ${msg}`); process.exit(1) }

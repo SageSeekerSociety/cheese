@@ -5,6 +5,7 @@ database refused 83 connections in a minute and one of them reached the request
 error handler. The rest were background work that logged and carried on.
 """
 
+import asyncio
 import logging
 
 import httpx
@@ -299,3 +300,55 @@ def test_different_failures_keep_different_keys(logger, keys):
     logger.error({"event": "unhandled_error", "path": "/projects/y/environment"})
 
     assert len(set(keys)) == 2
+
+
+@pytest.fixture
+def uvicorn_logger():
+    """uvicorn's own error logger, as the server writes to it."""
+    log = logging.getLogger("uvicorn.error")
+    saved = (list(log.handlers), log.propagate, log.level)
+    log.handlers[:] = [AlertOnError()]
+    log.propagate = False
+    log.setLevel(logging.DEBUG)
+    yield log
+    log.handlers[:], log.propagate, log.level = saved
+
+
+def _cancelled(message: str) -> asyncio.CancelledError:
+    try:
+        raise asyncio.CancelledError(message)
+    except asyncio.CancelledError as exc:
+        return exc
+
+
+def test_a_release_cutting_requests_short_is_not_an_alert(uvicorn_logger, sent):
+    """What uvicorn logs when a deploy outlasts the graceful-shutdown window: a
+    count, then one record per request it cancelled. A release is not a fault."""
+    uvicorn_logger.error(
+        "Cancel %s running task(s), timeout graceful shutdown exceeded", 2
+    )
+    uvicorn_logger.error(
+        "Exception in ASGI application\n",
+        exc_info=_cancelled("Task cancelled, timeout graceful shutdown exceeded"),
+    )
+
+    assert sent == []
+
+
+def test_other_failures_uvicorn_reports_still_alert(uvicorn_logger, sent):
+    uvicorn_logger.error(
+        "Exception in ASGI application\n", exc_info=RuntimeError("handler broke")
+    )
+    uvicorn_logger.error("Exception in ASGI application\n", exc_info=_cancelled(""))
+
+    assert len(sent) == 2
+
+
+def test_the_shutdown_text_elsewhere_still_alerts(logger, sent):
+    """Only uvicorn's own shutdown record is exempt, not the words."""
+    logger.error(
+        "work stopped",
+        exc_info=_cancelled("Task cancelled, timeout graceful shutdown exceeded"),
+    )
+
+    assert len(sent) == 1

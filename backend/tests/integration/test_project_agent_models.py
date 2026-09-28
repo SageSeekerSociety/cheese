@@ -350,9 +350,8 @@ async def test_a_subagent_may_ask_for_a_catalog_model(client, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_a_subagent_asking_for_the_inherited_main_model_is_allowed(client):
-    """fork 分身继承父模型：体里的名字翻译回来等于父会话绑定的,按「未指
-    定」退回分身默认 —— 继承名不会被推进目录校验。"""
+async def test_a_subagent_asking_for_the_main_model_is_allowed(client):
+    """指定主模型（在本池里）：绑得上。"""
     project = create(client)
     pid = project["id"]
     body = client.post(
@@ -364,9 +363,11 @@ async def test_a_subagent_asking_for_the_inherited_main_model_is_allowed(client)
 
 
 @pytest.mark.anyio
-async def test_an_inherited_subagent_keeps_the_projects_subagent_default(client):
-    """继承不算指定（这是 I27 那一侧最容易写错的一条）: CC 对 fork 和未带
-    model 的定义都在体里写父模型 —— 项目显式设的分身默认必须照走,池都不换。"""
+async def test_a_subagent_naming_the_parents_model_runs_on_it(client):
+    """指定和父会话同一个模型就是指定了它，不退回分身默认。
+
+    会话启动时 CLAUDE_CODE_SUBAGENT_MODEL 钉着分身默认，没指定的分身体里写
+    的是分身默认；体里写父会话的模型，只能是主 agent 要它和自己同模型。"""
     project = create(client)
     pid = project["id"]
     response = client.put(
@@ -374,32 +375,32 @@ async def test_an_inherited_subagent_keeps_the_projects_subagent_default(client)
         json={"model": "deepseek-flash", "subagent_model": "sonnet"},
     )
     assert response.status_code == 200, response.text
-    # 主芝士没绑模型(继承项目默认 deepseek-flash),体里写着 deepseek-flash
-    # 的 fork 不是「指定了 deepseek-flash」,是「没指定」。
     body = client.post(
         "/llm/admission",
         headers=_subagent_headers(pid, project["root_topic_id"], "deepseek-flash"),
     ).json()["data"]
     assert body["allow"] is True
-    assert "sonnet" in body["supply"]["model"]
-    assert body["supply"]["pool"] == "subscription"
+    assert body["supply"] == {
+        "pool": "gateway",
+        "model": "deepseek-flash",
+        "key": body["supply"]["key"],
+    }
 
 
 @pytest.mark.anyio
-async def test_a_fork_of_a_teammate_session_also_reads_as_inherit(client):
-    """父会话是队友也一样:队友会话 fork 出来的分身,体里写的是队友绑的那
-    个模型 —— 同样按继承退回分身默认,不吃目录校验。"""
+async def test_a_subagent_naming_its_teammate_parents_model_runs_on_it_across_pools(
+    client,
+):
+    """父会话是绑了订阅模型的队友，项目在网关池：分身指定同一个模型照样绑上。
+
+    这个模型本来不在项目池的可指定范围里，但父会话此刻就在这个席位上跑着
+    它 —— 「让分身和我同模型」不该被拒，更不该被悄悄换成分身默认。"""
     project = create(client)
     pid = project["id"]
     teammate = agents(client, pid)[0]
     response = client.put(
         f"/projects/{pid}/agents/{teammate['id']}",
         json={"configuration": {"model": "opus"}},
-    )
-    assert response.status_code == 200, response.text
-    response = client.put(
-        f"/projects/{pid}/default-model",
-        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
     )
     assert response.status_code == 200, response.text
     token = mint_scoped_token(
@@ -410,11 +411,12 @@ async def test_a_fork_of_a_teammate_session_also_reads_as_inherit(client):
     headers = {
         "Authorization": f"Bearer {token}",
         "X-Cheese-Subagent": "1",
-        "X-Cheese-Requested-Model": "claude-opus-5",
+        "X-Cheese-Child-Model": "claude-opus-5",
     }
     body = client.post("/llm/admission", headers=headers).json()["data"]
-    assert body["allow"] is True
-    assert "sonnet" in body["supply"]["model"]
+    assert body["allow"] is True, body
+    assert body["supply"]["pool"] == "subscription"
+    assert body["supply"]["model"] == "claude-opus-5"
 
 
 @pytest.mark.anyio
@@ -450,7 +452,7 @@ async def test_a_subagent_asking_for_a_model_the_catalogue_lacks_is_refused(clie
 
 @pytest.mark.anyio
 async def test_an_unspecified_subagent_keeps_the_project_default(client):
-    """没指定的分身（fork、定义里不带 model 的）维持现状:走分身默认。"""
+    """没指定模型的分身走分身默认。"""
     project = create(client)
     pid = project["id"]
     response = client.put(

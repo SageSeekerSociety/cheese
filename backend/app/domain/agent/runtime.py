@@ -53,7 +53,7 @@ from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
-from app.domain.identity.handles import agent_instance_handle, names_a_person
+from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.topic import doc_nudge
 from app.domain.topic_membership.services import addressable_seat
 
@@ -70,13 +70,6 @@ def _a_turn_was_addressed(addressed: Addressed) -> bool:
     的物理形态。平台因此发不起一轮：它可以点谁的名，点到人就是一条站内信。
     """
     return any(how_it_arrives(r.handle) is Arrival.turn for r in addressed.recipients)
-
-
-def _seat(recipient: dict | None) -> str | None:
-    """The seat a message's `agent_recipient` names, as `how_it_arrives` reads it."""
-    if recipient and recipient.get("instance_id"):
-        return agent_instance_handle(uuid.UUID(str(recipient["instance_id"])))
-    return (recipient or {}).get("handle")
 
 
 def addressed_to_agent(handle: str | None) -> Addressed:
@@ -170,6 +163,7 @@ class InProcessBroker:
         self._buffer: dict[str, list[Frame]] = {}
         self._active: dict[str, set[str]] = {}
         self._active_since: dict[tuple[str, str], float] = {}
+        self._active_agents: dict[tuple[str, str], str] = {}
         self._last_activity_at: dict[str, float] = {}
         self._replay_size = replay_size
         self._message_subscriber: Callable[..., None] | None = None
@@ -184,6 +178,7 @@ class InProcessBroker:
         self._buffer.clear()
         self._active.clear()
         self._active_since.clear()
+        self._active_agents.clear()
         self._last_activity_at.clear()
 
     async def receive_message(
@@ -253,8 +248,8 @@ class InProcessBroker:
         # 轮。席位由实例 id 定，和名册上坐的那个字符串是同一个。
         #
         # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
-        # / `wait_for_recipient` 问的是「哪个实例在跑」，那边认的就是实例名。
-        addressed = addressed_to_agent(_seat(recipient) if mentioned else None)
+        # 问的是「哪个实例在跑」，那边认的就是实例名。
+        addressed = addressed_to_agent(recipient_seat(recipient) if mentioned else None)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self.publish(channel, {"type": "user_block", "block": payload})
@@ -318,6 +313,8 @@ class InProcessBroker:
             if turn_id:
                 self._active.setdefault(channel, set()).add(turn_id)
                 self._active_since.setdefault((channel, turn_id), time.time())
+                if agent := frame.get("agent"):
+                    self._active_agents[(channel, turn_id)] = str(agent)
 
         if self._active.get(channel):
             self._last_activity_at[channel] = time.monotonic()
@@ -337,6 +334,7 @@ class InProcessBroker:
             if active is not None:
                 active.discard(turn_id)
                 self._active_since.pop((channel, turn_id), None)
+                self._active_agents.pop((channel, turn_id), None)
                 if not active:
                     self._active.pop(channel, None)
                     self._buffer.pop(channel, None)
@@ -362,6 +360,16 @@ class InProcessBroker:
             turn_id: self._active_since[(channel, turn_id)]
             for turn_id in self.active_turn_ids(channel)
             if (channel, turn_id) in self._active_since
+        }
+
+    def active_turn_agents(self, channel: str) -> dict[str, str]:
+        """Which seat each live turn on this channel is running on — so a
+        client that joins halfway through names every worker, not just the
+        one that happened to start after it arrived."""
+        return {
+            turn_id: self._active_agents[(channel, turn_id)]
+            for turn_id in self.active_turn_ids(channel)
+            if (channel, turn_id) in self._active_agents
         }
 
     def active_channels(self) -> set[str]:
@@ -1017,6 +1025,10 @@ class AgentWorkRunner:
             # a moment without it is a row a Stop landing in that moment cannot
             # close, and nothing would ever come back to close it.
             delivered_at=now,
+            # The session goes on with its work while backends are replaced, so
+            # its output can reach a process that never opened this turn after
+            # one that did. That turn has its row already.
+            exists_ok=True,
         )
 
     def close_turn_the_session_started(self, turn_id: uuid.UUID) -> None:
@@ -1248,7 +1260,7 @@ class AgentWorkRunner:
                 chat_service,
                 topic_id,
                 block.id,
-                addressed=addressed_to_agent(_seat(recipient)),
+                addressed=addressed_to_agent(recipient_seat(recipient)),
                 continuation_id=block.id,
                 author=block.author,
                 content=block.content,
@@ -1954,9 +1966,6 @@ class AgentWorkRunner:
         attachments=None,
         **_message,
     ) -> bool:
-        if recipient_handle is not None:
-            if await chat_service.wait_for_recipient(topic_id, recipient_handle):
-                live_delivery_expected = False
         if landed_user_block_id is not None and (content or attachments):
             delivered = await chat_service.merge_into_running_turn(
                 topic_id,

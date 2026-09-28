@@ -13,7 +13,14 @@ class MultiMessageScreen(StubChannel):
     session produces. The Stop text repeats the LAST message, exactly like a
     real one does."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
@@ -91,7 +98,7 @@ def test_result_text_is_not_duplicated_as_extra_block(client):
 def test_stop_only_text_stays_in_activity(client, stub_hooks):
     """A missing MessageDisplay never promotes Stop text into chat."""
 
-    def _plain(topic_id, prompt, reply):
+    def _plain(topic_id, prompt, reply, agent=None):
         del reply
         stub_hooks.starts(topic_id)
         stub_hooks.acknowledges(topic_id, prompt)

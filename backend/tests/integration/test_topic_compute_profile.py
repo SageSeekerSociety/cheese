@@ -154,7 +154,7 @@ def test_select_persists_only_to_topic(client, monkeypatch):
     assert retired.status_code == 422
 
     r = client.put(f"/topics/{tid}/compute-profile", json={"profile": "device"})
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     assert r.json()["data"]["current"] == "device"
 
     # Persisted on the topic...
@@ -250,19 +250,13 @@ def test_get_lists_only_project_devices_with_live_online_state(client, monkeypat
     assert outside not in {device["device_id"] for device in body["devices"]}
 
 
-def test_a_started_room_takes_a_new_default_without_moving_its_pin(client):
-    """开工之后，房间这一项只是之后邀请的 AI 队友的默认：改得动，钉不搬。"""
+def test_a_started_room_takes_its_pin_along(client):
+    """一个话题一个容器（2026-09-28，推翻结论 60）：开工之后改房间这一项，就是整个
+    房间搬过去，钉子跟着搬。"""
     pid = _project(client)
     tid = _topic(client, pid)
     first, second = _project_devices(client, pid, "first", "second")
 
-    assert (
-        client.put(
-            f"/topics/{tid}/compute-profile",
-            json={"profile": "device", "device_id": first},
-        ).status_code
-        == 200
-    )
     assert (
         client.put(
             f"/topics/{tid}/compute-profile",
@@ -281,22 +275,42 @@ def test_a_started_room_takes_a_new_default_without_moving_its_pin(client):
     assert changed.status_code == 200, changed.text
     body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert body["choice"]["device_id"] == first
-    assert _topic_binding(client, tid).device_id == second
+    assert _topic_binding(client, tid).device_id == first
 
 
-def test_a_new_default_does_not_move_an_agent_already_working(client, monkeypatch):
-    """换的是之后邀请的 AI 队友用哪台；已经在干活的那位还在自己那台上。"""
+def test_changing_the_room_moves_every_agent_already_working(client, monkeypatch):
+    """房间里两位队友都在「这里」干活；房间换到「那里」，两位都跟着搬——各自先在
+    离开的那台上推送。"""
+    from app.domain.agent import execution
+
     monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
+    pushes = []
+
+    async def push(target, method, params, **_kwargs):
+        pushes.append((target["device_id"], method, params.get("subtype")))
+        return {"value": {"stdout": "", "stderr": "", "interrupted": False}}
+
+    monkeypatch.setattr(execution, "call", push)
     pid = _project(client)
     tid = _topic(client, pid)
     here, there = _project_devices(client, pid, "here", "there")
-    working = _session(
-        client,
-        tid,
-        "analyst",
-        choice=ComputeChoice(name="here", profile="device", device_id=here),
-        lease={"kind": "device", "device_id": here, "status": "ready"},
-    )
+    lease = {
+        "kind": "device",
+        "device_id": here,
+        "status": "ready",
+        "home": "/here",
+        "state": "/here/state",
+    }
+    working = {
+        _session(
+            client,
+            tid,
+            handle,
+            choice=ComputeChoice(name="here", profile="device", device_id=here),
+            lease=lease,
+        )
+        for handle in ("analyst", "writer")
+    }
 
     changed = client.put(
         f"/topics/{tid}/compute-profile",
@@ -304,13 +318,13 @@ def test_a_new_default_does_not_move_an_agent_already_working(client, monkeypatc
     )
 
     assert changed.status_code == 200, changed.text
+    assert pushes == [(here, "control", "checkpoint")] * 2
     body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert body["choice"]["device_id"] == there
-    (session,) = body["sessions"]
-    assert session["id"] == working
-    assert session["agent_handle"] == "analyst"
-    assert session["choice"]["device_id"] == here
-    assert session["lease"]["device_id"] == here
+    assert {s["id"] for s in body["sessions"]} == working
+    for session in body["sessions"]:
+        assert session["choice"]["device_id"] == there
+        assert session["lease"] is None
 
 
 def test_selecting_cloud_without_machine_create_authority_is_refused(
@@ -396,19 +410,23 @@ def _visibility(client, tid: str) -> dict:
     return client.get(f"/topics/{tid}/compute-profile").json()["data"]["visibility"]
 
 
-def test_a_session_on_a_machine_it_picked_itself_shows_the_badge(client):
-    """A session that let the system pick an enrolled machine has the whole
-    machine as surely as one whose room named it — and no room pin says so."""
+def test_a_room_that_let_the_system_pick_an_enrolled_machine_shows_the_badge(client):
+    """「系统挑一台」的房间没有钉子，但房间里的手已经站在那台登记过的机器上——它
+    看得见整台机器，和点名那台的房间一样。"""
     pid = _project(client)
     tid = _topic(client, pid)
     (lab,) = _project_devices(client, pid, "lab")
-    _project_default(client, pid, standard_choice("cloud"))
+    _project_default(client, pid, standard_choice("device"))
     _session(
         client,
         tid,
         "analyst",
-        choice=standard_choice("device"),
-        lease={"kind": "device", "device_id": lab, "status": "ready"},
+        lease={
+            "kind": "device",
+            "device_id": lab,
+            "status": "ready",
+            "room_resource_id": tid,
+        },
     )
 
     vis = _visibility(client, tid)
@@ -417,26 +435,26 @@ def test_a_session_on_a_machine_it_picked_itself_shows_the_badge(client):
     assert vis["machine_access"] is True
 
 
-def test_a_session_moved_to_an_enrolled_machine_later_shows_the_badge(client):
+def test_a_room_moved_to_an_enrolled_machine_later_shows_the_badge(client):
     pid = _project(client)
     tid = _topic(client, pid)
     (lab,) = _project_devices(client, pid, "lab")
     _project_default(client, pid, standard_choice("cloud"))
     _session(client, tid, "writer", choice=standard_choice("cloud"))
-    moving = _session(client, tid, "analyst", choice=standard_choice("cloud"))
+    _session(client, tid, "analyst", choice=standard_choice("cloud"))
     assert _visibility(client, tid)["machine_access"] is False
 
     from tests.integration.conftest import session_auth_headers
 
     moved = client.put(
-        f"/topics/{tid}/sessions/{moving}/work-choice",
+        f"/topics/{tid}/compute-profile",
         headers=session_auth_headers("andyl"),
         json={"choice": {"name": "Lab", "profile": "device", "device_id": lab}},
     )
     assert moved.status_code == 200, moved.text
 
     vis = _visibility(client, tid)
-    assert _topic_binding(client, tid) is None
+    assert _topic_binding(client, tid).device_id == lab
     assert vis["effective"] == "host"
     assert vis["machine_access"] is True
 

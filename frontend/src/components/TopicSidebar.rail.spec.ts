@@ -314,6 +314,20 @@ describe('行左边那一个槽', () => {
     expect(fresh.querySelector('.running-dot')).not.toBeNull()
   })
 
+  it('已采纳在等合并、没有 AI 在干活时绿灯常亮；有 AI 在干活时让位给呼吸点', () => {
+    const rows = topics.map((t) => (t.id === 'a' ? ({ ...t, merging: true } as Topic) : t))
+    const { container } = mount({ topics: rows })
+    const slot = slotsOf(topicRowFor(container, 'a'))[0]
+    expect(slot.querySelector('.merging-dot')).not.toBeNull()
+    expect(slot.querySelector('.running-dot')).toBeNull()
+
+    const busy = topics.map((t) => (t.id === 'a' ? ({ ...t, merging: true, running: true } as Topic) : t))
+    const second = mount({ topics: busy })
+    const busySlot = slotsOf(topicRowFor(second.container, 'a'))[0]
+    expect(busySlot.querySelector('.running-dot')).not.toBeNull()
+    expect(busySlot.querySelector('.merging-dot')).toBeNull()
+  })
+
   it('最近一轮报错了，不等五分钟立刻亮红灯', () => {
     const rows = topics.map((t) => (t.id === 'a' ? ({ ...t, turn_failed_at: new Date().toISOString() } as Topic) : t))
     const { container } = mount({ topics: rows })

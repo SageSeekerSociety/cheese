@@ -892,29 +892,6 @@ export function getTopicComputeProfile(topicId: string): Promise<TopicComputePro
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
 }
 
-// The platform pushes the session's work on its old machine first and refuses
-// the change when that fails. `abandonUnpushed` switches anyway, and only when
-// the old machine could not be reached (`WorkComputerUnreachable`).
-export function setSessionWorkChoice(
-  topicId: string,
-  sessionId: string,
-  choice: import('./cx_types').ComputeChoice,
-  // ifIdle: leave a session whose room is mid-turn alone (409 SessionWorking).
-  options: { abandonUnpushed?: boolean; ifIdle?: boolean } = {}
-) {
-  return request<{ session: import('./cx_types').SessionWorkLease }>(
-    `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/work-choice`,
-    {
-      method: 'PUT',
-      body: JSON.stringify({
-        choice,
-        ...(options.abandonUnpushed ? { abandon_unpushed: true } : {}),
-        ...(options.ifIdle ? { if_idle: true } : {}),
-      }),
-    }
-  )
-}
-
 // The project's agent sessions on one self-hosted device, for a project manager
 // to switch some elsewhere. Rooms the caller cannot open are only counted.
 export function listDeviceSessions(
@@ -947,13 +924,22 @@ export interface ComputeProposal {
   content: string
 }
 
+// 一个话题一个容器：改的是整个房间，房间里每一条会话都跟着搬。平台先在各自离开
+// 的那台上把改动推上去，推不上去就整个不换。`abandonUnpushed` 只在原来那台够不着
+// 时成立（`WorkComputerUnreachable`）；`ifIdle` 跳过正在干活的房间（409
+// SessionWorking）。
 export function setTopicComputeChoice(
   topicId: string,
-  choice: import('./cx_types').ComputeChoice
+  choice: import('./cx_types').ComputeChoice,
+  options: { abandonUnpushed?: boolean; ifIdle?: boolean } = {}
 ): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
-    body: JSON.stringify({ choice }),
+    body: JSON.stringify({
+      choice,
+      ...(options.abandonUnpushed ? { abandon_unpushed: true } : {}),
+      ...(options.ifIdle ? { if_idle: true } : {}),
+    }),
   })
 }
 // ---- AI 队友 (agent 类型与实例) ----
@@ -2175,6 +2161,15 @@ export function rejectCard(cardId: string, decidedBy: string, note: string): Pro
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/reject`, {
     method: 'POST',
     body: JSON.stringify({ decided_by: decidedBy, note }),
+  })
+}
+
+// 作废：结束一张未决的卡，不合并也不退回。作废人由后端从会话认定；验收人、
+// 项目所有者、团队管理员能作废（server-side）。
+export function voidCard(cardId: string, note: string): Promise<AcceptCard> {
+  return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/void`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
   })
 }
 

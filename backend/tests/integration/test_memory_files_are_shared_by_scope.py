@@ -370,3 +370,75 @@ def test_a_bad_scope_is_a_422_not_a_500(client):
         content="x",
     )
     assert bad.status_code == 422, bad.text
+
+
+def _long_note() -> str:
+    return _TEAM_FILE.replace("有结论就先说结论，理由跟在后面。", "字" * 1001)
+
+
+def test_a_memory_over_the_length_limit_is_refused_and_nothing_is_written(client):
+    """超了单条上限就一个字都不写：新建的不存在，改写的还是原来那一版。"""
+    project_id = _project(client)
+
+    created = _put(
+        client, project_id, "alice", path="too-long.md", content=_long_note()
+    )
+    assert created.status_code == 422, created.text
+
+    kept = _put(client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE)
+    assert kept.status_code == 200, kept.text
+    longer = _put(
+        client,
+        project_id,
+        "alice",
+        path="answer-first.md",
+        content=_long_note(),
+        version=1,
+    )
+    assert longer.status_code == 422, longer.text
+
+    files = {
+        row["path"]: row
+        for row in _get(client, project_id, "alice").json()["data"]["data"]
+    }
+    assert "too-long.md" not in files
+    assert files["answer-first.md"]["content"] == _TEAM_FILE
+    assert files["answer-first.md"]["version"] == 1
+
+
+def test_a_session_that_skips_the_check_is_still_refused_by_the_platform(client):
+    """会话那一侧没拦下的超长版本（比这一版旧的会话），平台那一道照样不收。"""
+    import uuid
+
+    from app.domain.memory.files import MemoryFileScope
+    from app.domain.memory.session import apply_tree, read_tree
+
+    project_id = _project(client)
+    written = _put(
+        client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE
+    )
+    assert written.status_code == 200, written.text
+    scopes = [(MemoryFileScope.team, None)]
+
+    async def run():
+        async with client.test_request_factory() as session:
+            project = uuid.UUID(project_id)
+            stored = await read_tree(session, project, scopes)
+            change = await apply_tree(
+                session,
+                project,
+                stored,
+                {"files": {"team/answer-first.md": _long_note()}, "refused": {}},
+                scopes=scopes,
+                updated_by="cheese",
+            )
+            await session.commit()
+            return change
+
+    change = client.portal.call(run)
+    assert "team/answer-first.md" in change.rejected
+    files = {
+        row["path"]: row
+        for row in _get(client, project_id, "alice").json()["data"]["data"]
+    }
+    assert files["answer-first.md"]["content"] == _TEAM_FILE

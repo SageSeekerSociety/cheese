@@ -69,6 +69,9 @@ const props = withDefaults(
     memberNames?: Record<string, string>
     /** 项目 AI 队友的名字（项目可以给它改名），提示和空态里用它，不写死「芝士」。 */
     agentName?: string
+    // 正在干活的队友们的名字（几个座位并行在跑就几个），「现场」tab 的标签把
+    // 他们并列报出来。空着 = 帧没带座位（老后端），退回 agentName 的单数说法。
+    workingAgents?: string[]
   }>(),
   {
     working: false,
@@ -81,6 +84,7 @@ const props = withDefaults(
     phase: undefined,
     withChat: false,
     agentName: '芝士',
+    workingAgents: () => [],
   }
 )
 
@@ -381,9 +385,14 @@ function hasContent(key: TabKey): boolean {
 
 const tabs = computed(() => ALL_TABS.filter((t) => t.key !== 'chat' || props.withChat))
 
+// 「现场」tab 上「谁正在工作」的说法：几个队友并行在干就把名字并列报出来
+// （对话栏按轮次帧学来的名单）；名单空着 = 帧没带座位（老后端），退回默认
+// 队友的单数说法，和从前一样。
+const workingNames = computed(() => (props.workingAgents.length ? props.workingAgents.join('、') : props.agentName))
+
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(t: TabDef): string {
-  if (t.key === 'site' && props.working) return `${t.label}（${props.agentName}正在工作）`
+  if (t.key === 'site' && props.working) return `${t.label}（${workingNames.value}正在工作）`
   if (t.key === 'overview' && threads.value.total) {
     const { total, open } = threads.value
     return open ? `${t.label}（${total} 件任务，${open} 件进行中）` : `${t.label}（${total} 件任务）`

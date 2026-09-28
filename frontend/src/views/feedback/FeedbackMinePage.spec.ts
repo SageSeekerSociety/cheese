@@ -36,6 +36,7 @@ vi.mock('@/api', async () => {
 
 import FeedbackMinePage from './FeedbackMinePage.vue'
 
+import { setLocale } from '@/i18n'
 import FeedbackRoutes from '@/router/feedback'
 
 // `author_handle` 得给：卡片会把它交给头像组件，缺了 Vue 会在控制台喊一句 prop
@@ -69,6 +70,9 @@ function mountPage() {
 }
 
 beforeEach(() => {
+  // 这一份钉的是**中文那一份文案**（用例里比的就是那几句）。文案搬进 i18n 之后，
+  // 测试环境的默认语言是英文，不钉语言这里量到的就是另一句话。
+  setLocale('zh-CN')
   listMyFeedback.mockReset()
   supportFeedback.mockReset()
   getFeedbackCounts.mockReset()
@@ -92,10 +96,10 @@ describe('我的反馈', () => {
 
     const { queryByText, baseElement } = mountPage()
 
-    // 钉页面里**这一处**（`.fb-empty`），不是「树上某处有这句话」：要验的正是失败
-    // 画在空态里，而不是被谁吸收了。
+    // 钉页面里**这一处**（`.aes`，共用的那块空态），不是「树上某处有这句话」：要验的
+    // 正是失败画在空态里，而不是被谁吸收了。
     await waitFor(() => {
-      expect(baseElement.querySelector('.fb-page__inner .fb-empty')?.textContent).toContain('「我的反馈」加载失败')
+      expect(baseElement.querySelector('.fb-page__inner .aes')?.textContent).toContain('「我的反馈」加载失败')
     })
     expect(queryByText('你还没有提过反馈，也没有指派给你的')).toBeNull()
   })

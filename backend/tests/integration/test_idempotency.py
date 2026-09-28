@@ -89,7 +89,14 @@ class _SameMessageTwice(StubChannel):
         super().__init__()
         self._text = text
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id, session_id="s1")
         self.acknowledges(topic_id, prompt)

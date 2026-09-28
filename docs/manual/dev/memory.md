@@ -31,6 +31,34 @@ covers:
 
 > 讲：分层、两个作用域、写入与对账的时机、上限与权限、整理（dream）、旧表迁移、正文读数。不讲：每个 `type` 该怎么写（那是 `instructions.py` 里那段散文）。
 
+```demo-steps
+title: 一轮里记忆怎么流转
+note: 右下角「幕后」是会话目录里的记忆文件树；上面那格是真的现场
+embed: memory
+steps:
+  - label: 输入之前：铺好、注入索引
+    desc: 平台把库里这一份铺进会话目录，系统提示词里注入 team/MEMORY.md 和本轮说话那个人的 private 索引。正文不注入，芝士要用时自己读。
+    link: /dev/memory#scopes
+  - label: 被纠正
+    desc: 纠正的是做法倾向才值得记；纠正的是某一次的结果，改完就结束。
+    link: /dev/memory#write
+  - label: 写之前先查重
+    desc: 表达习惯进说话人的 private，项目规矩才进 team。同一件事已有文件就改它，不新建副本。
+    link: /dev/memory#write
+  - label: 写一条：一个文件加索引一行
+    desc: 新建一条记忆是新建一个文件、索引里加一行。索引一行不超过 150 字符，正文不超过 1000 字，超了存成 .rejected.md。
+    link: /dev/memory#limits
+  - label: 这一轮结束：收回会话、写回库
+    desc: 会话改过的收回来写进库。两边都改了同一条时平台那一份赢，会话那一版存成旁路的 .conflict.md，并请它重读再写。
+    link: /dev/memory#write
+  - label: 房间里的那条事件
+    desc: 有改动就留一条折叠的灰字事件，不点任何人的名。team 的改动说进总览房间，private 的改动说进那个人的私聊。
+    link: /dev/memory#events
+  - label: 下一次开场
+    desc: 别人刚改的也在铺进来的那一份里。换一个人说话，注入的 private 索引跟着换成他的。
+    link: /dev/memory#scopes
+```
+
 ## 分层 {#layers}
 
 三层，只有第一层进上下文：
@@ -76,11 +104,19 @@ covers:
 
 ## 上限与超限 {#limits}
 
-L1 索引：**200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`），超出的部分按行截断，并在注入块里回一句警告（`fit_index` → `MemoryIndex.warnings` → `memory_block`）。
+**单条有上限，超了拒绝**（`files.limit_breach`）：
+
+| 什么 | 上限 | 量法 |
+|---|---|---|
+| 一条记忆的正文（frontmatter 之后） | 1000 字（`BODY_MAX`） | 整条；改一条已经超长的记忆，要改到上限以内 |
+| 索引里的一行 | 150 字符（`INDEX_LINE_MAX`） | 只量这一版新写的行；别人早先留下的一行长的不挡这一次 |
+
+写的人手上就有这一条，当场就改得短，所以这两条在写入时拦。拦在两处：会话那一侧对账时（`tree.sync_tree` → `TreeSync.rejected`），那一版不收、平台那一版留着，会话写的那一版存成旁路文件 `<名字>.rejected.md`（`files.rejected_path`）；数据库那一侧 `MemoryFileStore.write` 再查一次（`MemoryFileLimit`，接口上是 422），挡住比这一版旧的会话和直接调接口的写入。必须在对账里拦，不能只在数据库拦：对账一旦收下，基线就记成了会话那一版，下一次对账会把平台的旧版静默地铺回磁盘。
+
+**总长没有写入闸。** L1 索引 **200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`）是注入预算：超了照样写，注入时按行截断，并在注入块里回一句警告（`fit_index` → `MemoryIndex.warnings` → `memory_block`）。删哪一条要看整个作用域，写的人手上没有这份信息，所以取舍交给整理。
 
 - 截断发生在**读**的时候，所以警告跟着索引一起进上下文：读到一段短的索引却不知道它短了的人，会去改错地方。写入端（`/memory/files`）也会跑一次 `fit_index`，把它当 `warning` 还回去。
-- **超限的写入照样成功**，只是每次注入都带一句「超出部分读不到，请压缩」——写入被拒绝意味着 agent 的心智模型和磁盘上的东西开始分叉，那比一份太长的索引糟。
-- 同样按 `warning` 还回去的还有两个：`MEMORY.md` 里放不下的一条（`name` 不是 kebab-case 等），和 `description` 超过 150 字符。都是提醒，不是拒绝。
+- 格式问题只回 `warning` 不拒绝：`MEMORY.md` 里放不下的一条（`name` 不是 kebab-case 等），和 `description` 超过 150 字符。
 
 ## 权限 {#permissions}
 
@@ -105,7 +141,7 @@ L1 索引：**200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`），超
 
 一条记忆是 agent 写下的一份观察，没有人欠它一个动作，所以它是一条灰字事件，事件本身收进 `meta.detail`（统一 diff，按路径分段、每段上限 200 行）。两棵树分开说，因为读它们的人不是一批：把某个人的 private diff 说进总览，等于把一个人的偏好广播给整个项目。
 
-写记忆的那个 agent 读不到这条灰字事件——它在会话机上，它看到的世界就是那棵树。所以**有被平台盖回去的版本时，那条通知还带一句 `agent_notice`**（`platform_notices.memory_conflict_notice`）：点名哪几条被盖了、它写的那一版在哪个 `.conflict.md` 里、请重读再写。不说，它下一轮写的还是同一版，而每一轮都会被盖回去。
+写记忆的那个 agent 读不到这条灰字事件——它在会话机上，它看到的世界就是那棵树。所以**有被平台盖回去的版本时，那条通知还带一句 `agent_notice`**（`platform_notices.memory_conflict_notice`）：点名哪几条被盖了、它写的那一版在哪个 `.conflict.md` 里、请重读再写。不说，它下一轮写的还是同一版，而每一轮都会被盖回去。超了单条上限没收的那几条同理，`agent_notice` 里点名哪几条、为什么、没收的那一版在哪个 `.rejected.md` 里（`platform_notices.memory_rejected_notice`）。
 
 ## 为什么不是「条目池 + 关键词召回」 {#why}
 
@@ -126,7 +162,7 @@ L1 索引：**200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`），超
 
 | 条件 | 默认 | 在哪配 |
 |---|---|---|
-| 自上次整理以来累计的 `resource_usage.output_tokens` | 2,000,000 | `project.settings["memory_dream"]["threshold_output_tokens"]` |
+| 自上次整理以来累计的 `resource_usage.output_tokens` | 10,000,000 | `project.settings["memory_dream"]["threshold_output_tokens"]` |
 | 距上次整理至少 | 4 小时 | `project.settings["memory_dream"]["min_interval_hours"]` |
 
 两个数写进项目设置而不是散在代码里，因为它们量的是**这个项目**的节奏：一个一天到晚在跑的代码项目和一个一周动两次的文档项目，同一个数没有意义。
@@ -139,7 +175,9 @@ L1 索引：**200 行 / 25 KB**（`INDEX_MAX_LINES`、`INDEX_MAX_BYTES`），超
 
 **怎么跑。** 派法和巡检一样（`platform_work` + `run_turn`）：跑在这个项目**默认芝士**的会话上，用它自己的模型。读进来的是 team 和每个人的 private 的 L1 索引加 L2 正文、有新增对话的房间的记录与活文档、是代码项目的话还有仓库和 `CLAUDE.md`。工具只有只读的那些，加一只能在记忆目录里写和删的手。提示词照搬 Claude Code 2.1.283 的 dream 段（`strings` 从二进制里取出来，见 `dream_prompt.py`），翻成中文、按芝士的量纲改过：四段（Orient / Gather / Consolidate / Prune-and-index）、团队记忆那一段、以及「拿记忆和 `CLAUDE.md` 对一遍」都在。**两条规矩一字不改**：private 的内容永远不许升级进 team；和 `CLAUDE.md` 冲突时只做标注，不改 `CLAUDE.md`。
 
-**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、房间事件都一样）。收尾时在**总览房间**发一条折叠事件，列出改动的文件和 diff，**不点任何人的名**，然后把判据那个计数器归零。
+**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、房间事件都一样）。收尾时在**总览房间**发一条折叠事件，只列 team 里改动的文件，**不点任何人的名**，然后把判据那个计数器归零。private 的文件名和整理的人写下的那段交代都不进总览：总览全项目都看得见，而那段交代是看着所有人的 private 写的；它们留在 `memory_dream_runs`（`files`、`summary`）。拒绝执行时也一样，总览只说「这一次没做」，拦下的是哪几条记在那一条运行记录里。
+
+同一间房的两场对账排队跑（`ChatService._sync_memory`）：整理那一轮结束时，轮次钩子和整理收尾各要对一次账，交错时后一场读到的是前一场提交之前的数据库，整理算出的「改了哪些」就会是空的。
 
 ## 旧表迁移（`memory_entries` → 文件树） {#migration}
 

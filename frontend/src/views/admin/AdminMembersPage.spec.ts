@@ -31,6 +31,8 @@
  *    who 列挂 agent 徽章。三种「死权限」（没账号/已注销、agent）以前完全不可见。
  * 9. **刷新时旧名单只压暗（busy）不换骨架**：手上有数据时再取数，骨架闪一下是比
  *    「旧内容多停半秒」更糟的手感（AdminGrid 的 busy 槽就是为这个存在的）。
+ * 10. **读失败只在一处说话**：那一条画在表体里（列头下面、重试按钮就在旁边），页头
+ *    下面不再叠一条同样的话 —— 同一件事说两遍，人会以为是两次失败。
  *
  * 没测到的一条，说清楚省得下次有人以为它被覆盖了：**从候选里选中再点「添加」**这一步
  * 在 happy-dom 里做不到 —— `v-autocomplete` 的候选画在浮层菜单里，而浮层在这个环境
@@ -220,7 +222,7 @@ describe('成员管理', () => {
     const { container, findByText } = mountPage()
     await findByText('andy')
 
-    const avatars = container.querySelectorAll('.fb-avatar')
+    const avatars = container.querySelectorAll('.am__avatar')
     expect(avatars.length).toBeGreaterThan(0)
     avatars.forEach((el) => {
       // 没有 `aria-hidden` 的话，读屏会把头像当成一个无名图形挨个念出来。
@@ -260,8 +262,23 @@ describe('成员管理', () => {
     expect(row?.textContent).toContain('wangchangxin')
     // 头像那格是彩色首字母，不是空白。
     expect(row?.querySelector('.user-avatar-char')?.textContent).toBe('W')
-    // 「平台里没这个账号」不是错误：加载完不该弹任何失败提示（`v-alert` 那一块）。
-    expect(container.querySelector('.am__alert')).toBeNull()
+    // 「平台里没这个账号」不是错误：加载完不该弹任何失败提示（页头下面那条横条）。
+    expect(container.querySelector('.am__flash')).toBeNull()
+  })
+
+  it('读不到名单时，那一条画在表格自己的位置上，重试就在旁边', async () => {
+    listPlatformAdmins.mockRejectedValue(new Error('403 需要管理员权限'))
+    const { container, findByText, getByRole } = mountPage()
+
+    // 原话显示（服务端说的话不加工）。它落在**表体**里 —— 页面顶部再画一条同样的话，
+    // 人会以为是两次失败（这一页上一版就是那样）。
+    const message = await findByText(/需要管理员权限/)
+    expect(message.closest('tbody')).not.toBeNull()
+    expect(container.querySelectorAll('.am__flash')).toHaveLength(0)
+
+    // 重试真的再打一次。
+    await fireEvent.click(getByRole('button', { name: '重试' }))
+    await vi.waitFor(() => expect(listPlatformAdmins).toHaveBeenCalledTimes(2))
   })
 
   it('账号状态与注册时间：没账号的明画、正常行画 —；agent 行挂徽章', async () => {

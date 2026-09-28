@@ -15,6 +15,34 @@ covers:
 
 > 讲：请求经过哪些节点、每个节点做什么决定。不讲：用量怎么折算成额度，见[计费流程](/dev/billing)。
 
+```demo-steps
+title: 一次模型请求经过哪几站
+note: 右下角「幕后」是这次请求走过的几站，顶上是项目额度
+embed: llm
+steps:
+  - label: 一个出口：计量代理
+    desc: 所有会话的模型流量都经过计量代理。沙盒容器走 :443 反向代理，裸进程走 :8444 CONNECT 代理。
+    link: /dev/llm#one-exit
+  - label: 每个请求先问准入
+    desc: 转发之前调主 API 的准入接口，回答能不能跑、走哪条路、用哪个模型名。每个请求现查，改绑模型不用重启会话。
+    link: /dev/llm#admission
+  - label: 走网关路，流式回来
+    desc: 网关路换上项目的虚拟 key，按 key 记账。上游 key 不出平台主机。
+    link: /dev/llm#routes
+  - label: 额度用完：拒绝并说一声
+    desc: 返回 allow false、reason_kind budget，话题里出现一条平台提示，这一轮不执行。
+    link: /dev/llm#admission
+  - label: 绑定的模型解析不出来
+    desc: 返回 allow false、reason_kind binding，不会悄悄换到另一条路。
+    link: /dev/llm#admission
+  - label: 问不到主 API：软放行
+    desc: 准入这一道是软的：计量代理放行，退回订阅路，由订阅路自己的滚动 token 上限兜底。
+    link: /dev/llm#admission
+  - label: 分身指定模型
+    desc: 分身请求头带着和父会话不同的模型名，才算显式指定。在项目模型目录里、在允许范围内就用它，否则拒绝并列出能指定的。
+    link: /dev/llm#subagent
+```
+
 ## 一个出口：计量代理 {#one-exit}
 
 所有会话的模型流量都经过计量代理（mitmproxy，`deploy/metering-proxy/`）。它有两个入口：

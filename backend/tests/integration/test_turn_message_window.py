@@ -37,7 +37,9 @@ class RecordingScreen(StubChannel):
         self.release = asyncio.Event()
         self._answering: set[asyncio.Task] = set()
 
-    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+    def arrive(
+        self, topic_id: uuid.UUID, message: dict, *, agent: str | None = None
+    ) -> None:
         prompt = _said(message)
         self.prompts.append(prompt)
         self.last_prompt = prompt
@@ -113,7 +115,7 @@ async def _until_written(agent: StubChannel, topic_id: uuid.UUID, inputs: int) -
     would test a turn that had already ended instead of one still running.
     """
     for _ in range(500):
-        written = agent.sessions[topic_id].written
+        written = agent._session_for(topic_id).written
         if sum(message.get("type") == "user" for message in written) >= inputs:
             return
         await asyncio.sleep(0.01)

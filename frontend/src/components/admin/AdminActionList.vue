@@ -4,6 +4,7 @@ import type { RouteLocationRaw } from 'vue-router'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
 
 // 「等你处理 / 卡住了」那一列。有 `to` 的行整行是一个目的地 —— 这一块的全部用处
@@ -60,7 +61,9 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
       <v-skeleton-loader v-for="i in 3" :key="i" type="text" class="aal__skel" />
     </div>
 
-    <p v-else-if="!rows.length" class="aal__none t-meta-read">{{ empty }}</p>
+    <!-- 空态是共用那块（图标 + 一句邀请），`compact` 档：它落在一张已经有 16px
+         内边距的卡里，用整档的顶距会把这半张卡撑成一块空地。 -->
+    <AdminEmptyState v-else-if="!rows.length" compact :title="empty" />
 
     <ol v-else class="aal__rows">
       <li v-for="row in shown" :key="row.id" class="aal__row">
@@ -193,12 +196,6 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
   margin-top: 8px;
   color: var(--muted);
   text-decoration: none;
-}
-
-.aal__none {
-  margin: 0;
-  padding: 12px 6px;
-  color: var(--muted);
 }
 
 .aal__skeleton {
