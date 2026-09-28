@@ -656,3 +656,57 @@ def test_an_uploaded_attachment_is_committed_before_its_201_is_sent(
 
     assert asgi.status == 201, asgi.body
     _assert_committed_before_responding(asgi)
+
+
+def test_a_team_claim_is_committed_before_its_response_is_sent(
+    asgi: _Asgi, _portal, db_session: AsyncSession, author, stub_project_forge
+) -> None:
+    """The team half of the member's claim above: the same write, and the
+    publisher lists the pending claims on the next request."""
+    from datetime import UTC, datetime
+
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from tests.integration.conftest import a_team
+
+    user_id, token = author
+    space_id = _an_approved_board(asgi, db_session, _portal, token)
+    asgi.post(
+        "/tasks",
+        {
+            "name": f"Team task ({uuid.uuid4().hex[:8]})",
+            "intro": "An intro.",
+            "description": "A description.",
+            "space": space_id,
+            "submitterType": "TEAM",
+            "resubmittable": True,
+            "editable": True,
+            "defaultDeadline": 30,
+        },
+        token=token,
+    )
+    assert asgi.status == 200, asgi.body
+    task_id = json.loads(asgi.body)["data"]["task"]["id"]
+    asgi.patch(f"/tasks/{task_id}", {"approved": "APPROVED"}, token=token)
+    assert asgi.status == 200, asgi.body
+
+    team_id = _portal.call(a_team, db_session)
+
+    async def _join_team() -> None:
+        now = datetime.now(UTC)
+        db_session.add(
+            TeamUserRelation(
+                team_id=team_id,
+                user_id=user_id,
+                role=TeamMemberRole.OWNER,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await db_session.flush()
+
+    _portal.call(_join_team)
+
+    asgi.post(f"/tasks/{task_id}/participations/team", {"teamId": team_id}, token=token)
+
+    assert asgi.status == 200, asgi.body
+    _assert_committed_before_responding(asgi)
