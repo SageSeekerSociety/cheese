@@ -241,3 +241,68 @@ class TestConditionsThatAreNotThisServerSFault:
             response = self._client().get("/hung-up")
         assert response.status_code == 499
         assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+
+class TestABrowserThatHangsUpOnAContentHost:
+    """Previews and published Sites are answered by middleware that sits
+    outside the platform's exception handlers. A dev server's page reloading
+    cancels its module fetches by the dozen, and each one reached the
+    catch-all as two ERROR records and a page for a fault that never happened.
+    """
+
+    @staticmethod
+    def _hang_up(host: str, monkeypatch) -> list[dict]:
+        import anyio
+        from fastapi import FastAPI
+
+        from app.api.preview_host import AUTH_PATH, PreviewHostMiddleware
+        from app.core.config import settings
+        from app.core.errors import register_exception_handlers
+        from app.domain.site.hosting import SiteHostMiddleware
+
+        monkeypatch.setattr(settings, "sites_domain", "content.example.net")
+        monkeypatch.setattr(settings, "frontend_url", "https://cheese.example.com")
+        app = FastAPI()
+        register_exception_handlers(app)
+        app.add_middleware(SiteHostMiddleware, platform=app)
+        app.add_middleware(PreviewHostMiddleware, platform=app)
+
+        sent: list[dict] = []
+
+        async def receive() -> dict:
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict) -> None:
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "https",
+            "path": AUTH_PATH,
+            "raw_path": AUTH_PATH.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"host", host.encode()),
+                (b"origin", b"https://cheese.example.com"),
+            ],
+            "client": ("203.0.113.9", 50000),
+            "server": (host, 443),
+        }
+        anyio.run(app, scope, receive, send)
+        return sent
+
+    def test_on_a_preview_it_is_not_an_error(self, caplog, monkeypatch) -> None:
+        host = "preview-" + "a" * 32 + ".content.example.net"
+        with caplog.at_level(logging.DEBUG):
+            self._hang_up(host, monkeypatch)
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+    def test_on_a_site_it_is_not_an_error(self, caplog, monkeypatch) -> None:
+        host = "b" * 32 + ".content.example.net"
+        with caplog.at_level(logging.DEBUG):
+            self._hang_up(host, monkeypatch)
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []

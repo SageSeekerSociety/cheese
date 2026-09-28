@@ -3,6 +3,7 @@
 // or writes prose: it reveals steps, moves a bar, and re-runs a simulation over
 // the parameters the fence declared.
 import { evaluate, truthy, show, fill, parameters } from './demo-model.mjs'
+import { mountContextWindow } from './context-window.mjs'
 
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 const $ = (s, r = document) => r.querySelector(s)
@@ -60,25 +61,42 @@ function mountSteps(el) {
     paint()
   }
 
+  // A demo with a stage (`embed:` in the fence) plays each step as a scene on
+  // the product's own components, in an iframe. The list here still counts the
+  // steps; the stage says when a step has finished playing, and only then does
+  // the list move on — a fixed GAP would cut a long step off halfway.
+  const stage = $('[data-dm-embed]', el)
+  const show = (andPlay) => stage?.contentWindow?.postMessage({ cheeseDemo: 'go', step: pos - 1, play: andPlay }, location.origin)
+  if (stage) {
+    window.addEventListener('message', (e) => {
+      if (e.source !== stage.contentWindow || e.origin !== location.origin) return
+      const kind = e.data?.cheeseDemo
+      if (kind === 'ready') show(playing)
+      if (kind === 'done' && playing && e.data.step === pos - 1) timer = setTimeout(tick, GAP / 3)
+    })
+  }
+
   function tick() {
     timer = 0
     if (pos >= n) return stop()
     pos++
     paint()
     if (gates[pos - 1]) return stop()   // it is the reader's turn to speak
-    timer = setTimeout(tick, GAP)
+    if (stage) show(true)
+    else timer = setTimeout(tick, GAP)
   }
 
   function play() {
     if (playing) return stop()
-    if (pos >= n) { pos = 0; paint() }
+    if (pos >= n) { pos = stage ? 1 : 0; paint() }
     playing = true
     if (playBtn) playBtn.setAttribute('aria-pressed', 'true')
     if (playLabel) playLabel.textContent = '暂停'
-    timer = setTimeout(tick, GAP)
+    if (stage) show(true)
+    else timer = setTimeout(tick, GAP)
   }
 
-  const goTo = (p) => { stop(); pos = Math.max(1, Math.min(n, p)); paint() }
+  const goTo = (p) => { stop(); pos = Math.max(1, Math.min(n, p)); paint(); show(false) }
   const next = () => goTo(pos + 1)
   const prev = () => goTo(pos - 1)
 
@@ -159,4 +177,5 @@ function mountSim(el) {
 export function mountDemos(root = document) {
   $$('[data-demo="steps"]', root).forEach(mountSteps)
   $$('[data-demo="sim"]', root).forEach(mountSim)
+  $$('[data-demo="context"]', root).forEach(mountContextWindow)
 }
