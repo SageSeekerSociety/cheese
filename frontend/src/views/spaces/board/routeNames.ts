@@ -6,7 +6,10 @@ import type { TaskRouteNames } from '@/lib/shellRouteNames'
  */
 export const BOARD_TASK_ROUTE_NAMES: TaskRouteNames = {
   detail: 'SpaceBoardTaskDetail',
-  overview: 'SpaceBoardTaskOverview',
+  // 「概览」这一格**就是**题目详情那一页：第八批重画之后，原型的形状（题目卡、视频、
+  // 材料、领取）与老概览的内容（题目详情的富文本）都长在这一页上，不再另有一条默认
+  // 子路由。老页面里「返回概览」指向这里，落点没变过。
+  overview: 'SpaceBoardTaskDetail',
   participants: 'SpaceBoardTaskParticipants',
   submissions: 'SpaceBoardTaskSubmissions',
   submit: 'SpaceBoardTaskSubmit',
