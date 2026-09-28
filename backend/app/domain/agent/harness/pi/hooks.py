@@ -23,7 +23,9 @@ from app.domain.agent import project_hooks
 Denied = project_hooks.Denied
 
 #: pi's tool -> (Claude Code's tool, pi's argument keys that Claude Code names
-#: differently, what Claude Code's input carries that pi's does not).
+#: differently, what Claude Code's input carries that pi's does not). The
+#: Claude Code side is the pinned build's own tool schemas; a key with no
+#: equivalent there keeps pi's name.
 AS_CLAUDE_CODE: dict[str, tuple[str, dict[str, str], dict]] = {
     "bash": ("Bash", {}, {}),
     # The extension's own background shell (`platform.ts`): a command started
@@ -31,27 +33,62 @@ AS_CLAUDE_CODE: dict[str, tuple[str, dict[str, str], dict]] = {
     "bash_start": ("Bash", {"label": "description"}, {"run_in_background": True}),
     "read": ("Read", {"path": "file_path"}, {}),
     "write": ("Write", {"path": "file_path"}, {}),
-    "edit": ("Edit", {"path": "file_path"}, {}),
-    "grep": ("Grep", {}, {}),
+    # pi answers with the matching lines and their line numbers, which is
+    # Grep's `content` mode. pi's `limit` counts matches and Grep's
+    # `head_limit` counts output lines, so it keeps its own name, as does
+    # `literal`, which Grep has no flag for.
+    "grep": ("Grep", {"ignoreCase": "-i"}, {"output_mode": "content", "-n": True}),
     "find": ("Glob", {}, {}),
 }
 
 
-def shown(tool: str, args: dict) -> tuple[str, dict]:
-    """The tool name and input the project's hooks see for a pi call."""
+def shown(tool: str, args: dict) -> list[tuple[str, dict]]:
+    """The calls the project's hooks see for one pi call: one, except for an
+    `edit` of several replacements, which Claude Code would make as that many
+    `Edit` calls (it has no tool that takes several)."""
+    if tool == "edit":
+        rest = {k: v for k, v in args.items() if k not in ("path", "edits")}
+        return [
+            (
+                "Edit",
+                {
+                    **rest,
+                    "file_path": args.get("path"),
+                    "old_string": edit.get("oldText"),
+                    "new_string": edit.get("newText"),
+                },
+            )
+            for edit in args.get("edits") or []
+        ]
     if tool not in AS_CLAUDE_CODE:
-        return tool, args
+        return [(tool, args)]
     name, renamed, added = AS_CLAUDE_CODE[tool]
-    return name, {**{renamed.get(k, k): v for k, v in args.items()}, **added}
+    return [(name, {**{renamed.get(k, k): v for k, v in args.items()}, **added})]
 
 
-def taken(tool: str, updated: dict) -> dict:
-    """A hook's `updatedInput` as pi's tool takes it."""
+def taken(tool: str, updated: list[dict]) -> dict:
+    """The hooks' `updatedInput`, one per call they saw, as pi's tool takes it."""
+    if tool == "edit":
+        paths = {edit.get("file_path") for edit in updated}
+        if len(paths) != 1:
+            raise Denied(
+                "The project's hooks moved these edits to different files, "
+                "which one edit call cannot make"
+            )
+        own = ("file_path", "old_string", "new_string")
+        return {
+            **{k: v for edit in updated for k, v in edit.items() if k not in own},
+            "path": paths.pop(),
+            "edits": [
+                {"oldText": edit.get("old_string"), "newText": edit.get("new_string")}
+                for edit in updated
+            ],
+        }
     if tool not in AS_CLAUDE_CODE:
-        return updated
+        return updated[0]
     _, renamed, added = AS_CLAUDE_CODE[tool]
     back = {theirs: ours for ours, theirs in renamed.items()}
-    return {back.get(k, k): v for k, v in updated.items() if k not in added}
+    return {back.get(k, k): v for k, v in updated[0].items() if k not in added}
 
 
 async def run(
@@ -68,18 +105,26 @@ async def run(
 ) -> dict:
     """Run the project's `event` hooks for one pi call to `tool`; return the
     arguments it proceeds with, in pi's shape. Raises `Denied` when a hook
-    blocks it."""
-    name, seen = shown(tool, args)
-    updated = await asyncio.to_thread(
-        project_hooks.run,
-        event,
-        name,
-        seen,
-        call_id=call_id,
-        root=root,
-        cwd=cwd if cwd and Path(cwd).is_dir() else root,
-        env=env,
-        session_id=session_id,
-        result=result,
-    )
-    return args if updated is seen else taken(tool, updated)
+    blocks it, or any part of it."""
+    calls = shown(tool, args)
+    updated = []
+    for index, (name, seen) in enumerate(calls):
+        updated.append(
+            await asyncio.to_thread(
+                project_hooks.run,
+                event,
+                name,
+                seen,
+                # One id per call the hooks see, so a hook pairing its
+                # PreToolUse with its PostToolUse pairs each edit's.
+                call_id=call_id if len(calls) == 1 else f"{call_id}.{index}",
+                root=root,
+                cwd=cwd if cwd and Path(cwd).is_dir() else root,
+                env=env,
+                session_id=session_id,
+                result=result,
+            )
+        )
+    if all(after is seen for after, (_, seen) in zip(updated, calls, strict=True)):
+        return args
+    return taken(tool, updated)

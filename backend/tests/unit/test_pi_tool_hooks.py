@@ -50,6 +50,25 @@ if event["tool_input"]["file_path"] == "old-notes.md":
         "updatedInput": {**event["tool_input"], "file_path": "notes.md"}}}))
 """
 
+# One that corrects what an Edit writes, through `updatedInput`.
+FIX_TYPOS = """import json, sys
+event = json.load(sys.stdin)
+fixed = event["tool_input"]["new_string"].replace("teh", "the")
+if fixed != event["tool_input"]["new_string"]:
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "updatedInput": {**event["tool_input"], "new_string": fixed}}}))
+"""
+
+# And one that makes a Grep for "todo" case-insensitive, by Grep's own flag.
+ANY_CASE = """import json, sys
+event = json.load(sys.stdin)
+if event["tool_input"]["pattern"] == "todo" and not event["tool_input"].get("-i"):
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "updatedInput": {**event["tool_input"], "-i": True}}}))
+"""
+
 
 def _checkout(tmp_path: Path) -> Path:
     work = tmp_path / "room"
@@ -59,6 +78,8 @@ def _checkout(tmp_path: Path) -> Path:
         ("guard.py", GUARD),
         ("no_secrets.py", NO_SECRETS),
         ("redirect.py", REDIRECT),
+        ("fix_typos.py", FIX_TYPOS),
+        ("any_case.py", ANY_CASE),
     ):
         (work / ".claude" / name).write_text(source)
 
@@ -78,6 +99,8 @@ def _checkout(tmp_path: Path) -> Path:
                         {"matcher": "Bash", "hooks": [script("guard.py")]},
                         {"matcher": "Write|Edit", "hooks": [script("no_secrets.py")]},
                         {"matcher": "Read", "hooks": [script("redirect.py")]},
+                        {"matcher": "Edit", "hooks": [script("fix_typos.py")]},
+                        {"matcher": "Grep", "hooks": [script("any_case.py")]},
                     ],
                     "PostToolUse": [
                         {"matcher": "", "hooks": [{"type": "command", "command": LOG}]}
@@ -105,6 +128,21 @@ def _pi_runs(work: Path, tool: str, args: dict) -> str:
         (work / args["path"]).parent.mkdir(parents=True, exist_ok=True)
         (work / args["path"]).write_text(args["content"])
         return "written"
+    if tool == "edit":
+        target = work / args["path"]
+        text = target.read_text()
+        for edit in args["edits"]:
+            text = text.replace(edit["oldText"], edit["newText"], 1)
+        target.write_text(text)
+        return "edited"
+    if tool == "grep":
+        flags = ["-rn"] + (["-i"] if args.get("ignoreCase") else [])
+        return subprocess.run(
+            ["grep", *flags, args["pattern"], args.get("path", ".")],
+            cwd=work,
+            capture_output=True,
+            text=True,
+        ).stdout
     raise AssertionError(tool)
 
 
@@ -241,3 +279,111 @@ def test_a_tool_claude_code_has_no_equivalent_for_keeps_its_own_name(tmp_path, t
         if line.strip()
     ]
     assert event["tool_name"] == tool
+
+
+def _events(work: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in (work / "hooks.log").read_text().splitlines()
+        if line.strip()
+    ]
+
+
+def test_an_edit_reaches_the_hooks_as_claude_codes_edit_calls(tmp_path):
+    """pi takes several replacements in one `edit`; Claude Code's Edit takes
+    one, and the pinned build has no tool that takes several. So the hooks see
+    one Edit per replacement, and a deny of any of them stops the whole call."""
+    work = _checkout(tmp_path)
+    (work / "notes.md").write_text("one\ntwo\n")
+    (work / "secrets").mkdir()
+    (work / "secrets/key").write_text("kept\n")
+
+    answers = asyncio.run(
+        _session(
+            tmp_path,
+            work,
+            [
+                (
+                    "edit",
+                    {
+                        "path": "notes.md",
+                        "edits": [
+                            {"oldText": "one", "newText": "teh first"},
+                            {"oldText": "two", "newText": "second"},
+                        ],
+                    },
+                ),
+                (
+                    "edit",
+                    {
+                        "path": "secrets/key",
+                        "edits": [{"oldText": "kept", "newText": "leaked"}],
+                    },
+                ),
+            ],
+        )
+    )
+
+    # The typo hook's `updatedInput` reached pi's edit in pi's own keys.
+    assert answers[0] == ("ran", "edited")
+    assert (work / "notes.md").read_text() == "the first\nsecond\n"
+    kind, said = answers[1]
+    assert kind == "blocked" and "PROJECT_POLICY: secrets/ is read-only" in said
+    assert (work / "secrets/key").read_text() == "kept\n"
+
+    events = _events(work)
+    assert [
+        (e["hook_event_name"], e["tool_name"], e["tool_use_id"]) for e in events
+    ] == [
+        ("PreToolUse", "Edit", "call-0.0"),
+        ("PreToolUse", "Edit", "call-0.1"),
+        ("PostToolUse", "Edit", "call-0.0"),
+        ("PostToolUse", "Edit", "call-0.1"),
+        ("PreToolUse", "Edit", "call-1"),
+    ]
+    assert events[0]["tool_input"] == {
+        "file_path": "notes.md",
+        "old_string": "one",
+        "new_string": "teh first",
+    }
+    assert events[3]["tool_input"] == {
+        "file_path": "notes.md",
+        "old_string": "two",
+        "new_string": "second",
+    }
+    # PostToolUse sees what ran, after the hook's correction.
+    assert events[2]["tool_input"]["new_string"] == "the first"
+
+
+def test_a_grep_reaches_the_hooks_with_claude_codes_grep_flags(tmp_path):
+    work = _checkout(tmp_path)
+    (work / "src").mkdir()
+    (work / "src/a.py").write_text("# TODO: later\n")
+
+    answers = asyncio.run(
+        _session(
+            tmp_path,
+            work,
+            [
+                (
+                    "grep",
+                    {"pattern": "todo", "path": "src", "literal": True, "limit": 5},
+                ),
+            ],
+        )
+    )
+
+    # The hook turned on Grep's `-i`, and pi searched case-insensitively.
+    assert answers == [("ran", "src/a.py:1:# TODO: later\n")]
+    before, after = _events(work)
+    assert before["tool_name"] == "Grep"
+    assert before["tool_input"] == {
+        "pattern": "todo",
+        "path": "src",
+        "output_mode": "content",
+        "-n": True,
+        # No Grep parameter means the same, so these keep pi's names.
+        "literal": True,
+        "limit": 5,
+    }
+    assert after["tool_input"]["-i"] is True
