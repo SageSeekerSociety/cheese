@@ -13,6 +13,22 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import { register } from "node:module";
+
+// The extension builds its bash on pi's own (`createBashTool`), imported from
+// pi's package, which only pi can resolve. Here that name is the stand-in beside
+// this file; everything else resolves as it always does.
+const PI_PACKAGE = new URL("./pi-coding-agent.ts", import.meta.url).href;
+register(
+  "data:text/javascript," +
+    encodeURIComponent(
+      "export async function resolve(specifier, context, next) {" +
+        `  if (specifier === "@earendil-works/pi-coding-agent")` +
+        `    return { url: ${JSON.stringify(PI_PACKAGE)}, shortCircuit: true };` +
+        "  return next(specifier, context);" +
+        "}",
+    ),
+);
 
 const SOURCE = new URL(
   "../../app/domain/agent/harness/pi/platform.ts",
