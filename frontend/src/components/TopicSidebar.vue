@@ -208,6 +208,58 @@ const canTransfer = computed(
 )
 const canLeave = computed(() => !!currentProject.value && currentProject.value.owner_handle !== myHandle())
 
+// 手机上的项目菜单（整页形态）：侧栏上摆在话题上面的那几页、项目文档、平时收在 ⋯
+// 里的那几页、项目设置、转让或退出，一张面板全列出来。顺序照桌面：先是侧栏上那几
+// 行，再是菜单里那几项。
+const projectSheetOpen = ref(false)
+const projectSheetActions = computed<MenuAction[]>(() => {
+  if (!props.selectedProjectId) return []
+  const page = (key: string): MenuAction => ({
+    key,
+    label: t(pageOf(key).label, terms.value),
+    icon: pageOf(key).icon,
+    badge: key === 'project-members' && privateUnreadTotal.value > 0 ? countLabel(privateUnreadTotal.value) : undefined,
+    onSelect: () => openProjectPage(key),
+  })
+  const actions: MenuAction[] = [
+    ...plan.value.visible.map(page),
+    {
+      key: 'project-docs',
+      label: t('navigation.project.docs'),
+      icon: 'mdi-file-document-outline',
+      onSelect: () => emit('select-docs', 'charter'),
+    },
+    ...menuPages.value.map((p) => page(p.key)),
+    {
+      key: 'project-settings',
+      label: '项目设置',
+      icon: 'mdi-cog-outline',
+      onSelect: () => openProjectPage('project-settings'),
+    },
+  ]
+  if (canTransfer.value)
+    actions.push({
+      key: 'transfer',
+      label: t('work.members.transfer'),
+      icon: 'mdi-account-arrow-right-outline',
+      onSelect: () => (transferOpen.value = true),
+    })
+  if (canLeave.value)
+    actions.push({
+      key: 'leave',
+      label: t('work.members.leave'),
+      icon: 'mdi-exit-to-app',
+      danger: true,
+      onSelect: () => (leaveOpen.value = true),
+    })
+  return actions
+})
+
+function switchProjectFromSheet(projectId: string) {
+  projectSheetOpen.value = false
+  openProject(projectId)
+}
+
 // New topic: don't ask the human for a title — create an untitled one and open
 // it; the title is derived from the first message (and 芝士 can refine it).
 //
@@ -667,13 +719,27 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
           <!-- 有人找你：私聊的未读原来挂在「成员」那一行上，而那一行进了菜单。
                它是主导航上唯一会亮的「有人在等你回话」，所以跟着菜单入口走。 -->
           <span v-if="privateUnreadTotal > 0" class="unread-badge me-1">{{ countLabel(privateUnreadTotal) }}</span>
-          <v-menu location="bottom end">
+          <!-- 整页形态（手机）：同一个入口从底部升起一张面板，见下面的 MobileActionSheet。 -->
+          <button
+            v-if="page"
+            type="button"
+            class="rail-header__more tap-target"
+            :class="{ 'rail-header__more--active': projectSheetOpen }"
+            title="项目菜单"
+            aria-label="项目菜单"
+            aria-haspopup="dialog"
+            :aria-expanded="projectSheetOpen ? 'true' : 'false'"
+            @click="projectSheetOpen = true"
+          >
+            <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
+          </button>
+          <v-menu v-else location="bottom end">
             <template #activator="{ isActive, props: menuProps }">
               <button
                 v-bind="menuProps"
                 type="button"
                 class="rail-header__more"
-                :class="{ 'rail-header__more--active': isActive, 'tap-target': page }"
+                :class="{ 'rail-header__more--active': isActive }"
                 title="项目菜单"
                 aria-label="项目菜单"
               >
@@ -681,30 +747,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               </button>
             </template>
             <v-list density="compact" nav max-height="60vh">
-              <!-- 整页形态下这个菜单是**唯一**能换项目的地方：一个项目一格的那条
-                 竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目，于是
-                 手机上进了一个项目就再也走不到别的项目去。桌面不列——rail 已经
-                 是那个入口，同一件事有两个入口只会让人猜哪个才算数。 -->
-              <template v-if="page && projects.length > 1">
-                <v-list-subheader class="t-eyebrow">切换项目</v-list-subheader>
-                <v-list-item
-                  v-for="p in projects"
-                  :key="p.id"
-                  :active="p.id === selectedProjectId"
-                  rounded="lg"
-                  @click="openProject(p.id)"
-                >
-                  <template #prepend>
-                    <span class="private-avatar-slot me-3">
-                      <span class="dm-avatar project-avatar" :style="{ backgroundColor: avatarColor(p.name) }">{{
-                        avatarInitial(p.name)
-                      }}</span>
-                    </span>
-                  </template>
-                  <v-list-item-title class="t-body">{{ p.name }}</v-list-item-title>
-                </v-list-item>
-                <v-divider class="my-1" />
-              </template>
               <v-list-item
                 v-for="p in menuPages"
                 :key="p.key"
@@ -746,6 +788,31 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
+      <!-- 手机上的项目菜单。话题列表上面那几行（资料库、成员、项目文档）在手机上收进
+           这里：列表只留话题，打开项目先看到的是它们。换项目也只能在这里——一个项目
+           一格的那条竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目。 -->
+      <MobileActionSheet v-if="page" v-model="projectSheetOpen" :actions="projectSheetActions">
+        <div v-if="projects.length > 1" class="project-switch">
+          <div class="project-switch__head t-eyebrow">切换项目</div>
+          <button
+            v-for="p in projects"
+            :key="p.id"
+            type="button"
+            class="project-switch__item"
+            :aria-current="p.id === selectedProjectId ? 'true' : undefined"
+            @click="switchProjectFromSheet(p.id)"
+          >
+            <span
+              class="dm-avatar project-avatar project-switch__avatar"
+              :style="{ backgroundColor: avatarColor(p.name) }"
+              >{{ avatarInitial(p.name) }}</span
+            >
+            <span class="project-switch__name">{{ p.name }}</span>
+            <v-icon v-if="p.id === selectedProjectId" size="18" class="project-switch__check" icon="mdi-check" />
+          </button>
+          <div class="project-switch__rule" />
+        </div>
+      </MobileActionSheet>
       <MobileActionSheet
         v-model="rowSheetOpen"
         :actions="rowSheetActions"
@@ -795,8 +862,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               </template>
             </v-list-item>
 
+            <!-- 手机上这几行收进了项目菜单（项目名旁边那颗 ⌄），列表只留话题。 -->
             <v-list-item
-              v-for="key in plan.visible"
+              v-for="key in page ? [] : plan.visible"
               :key="key"
               :active="route.name === key"
               rounded="lg"
@@ -825,6 +893,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                  个项目的一页，所以和它们排在一起，不压在话题列表底下——话题一多，
                  那个位置就被挤出了视野。 -->
             <v-list-item
+              v-if="!page"
               :active="onDocs"
               rounded="lg"
               class="nav-row pinned-row docs-row"
@@ -1477,6 +1546,52 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
+}
+/* 手机项目菜单里的「切换项目」：一行的尺寸、字号和面板里的操作行一样（手指点得中），
+   头像换成项目自己的方头像。当前这个项目行尾一个勾，不用琥珀——它不是导航位置。 */
+.project-switch__head {
+  padding: 4px 20px;
+}
+.project-switch__item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 20px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: var(--lh-15);
+  text-align: start;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.project-switch__item:active {
+  background: var(--fill);
+}
+.project-switch__avatar {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+}
+.project-switch__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-switch__check {
+  flex: none;
+  color: var(--muted);
+}
+.project-switch__rule {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
 }
 /* 项目头像：和人的头像同一个底子（.dm-avatar），只换形状——方头像，和桌面那条
    竖 rail 上一个项目一格的画法是同一种语言。人是靠方/圆区分「这是个项目」还是
