@@ -98,6 +98,9 @@ export interface Topic {
   // 最近一轮以报错收场（「本轮未完成：…」、502/404）而之后 AI 还没开过口：那次
   // 报错的时间，没有就 null。侧栏见到它立刻亮红灯。只有 list/get 话题时才带。
   turn_failed_at?: string | null
+  // 已采纳、在等检查 / 合并队列走完，而此刻没有 AI 在干活：侧栏绿灯常亮。只有
+  // list/get 话题时才带。
+  merging?: boolean
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
   // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时

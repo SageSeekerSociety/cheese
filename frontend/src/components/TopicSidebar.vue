@@ -383,6 +383,9 @@ const selectedPath = computed(() => ancestorPathIds(props.topics, props.selected
 // 状态查表：折叠聚合要按 id 问「这个话题在跑吗 / 在等人吗」，而拍平树里只留了
 // id。走一遍 props.topics 建索引，别在每一行上做线性查找。
 const topicById = computed(() => new Map(props.topics.map((t) => [t.id, t])))
+function mergingOf(id: string): boolean {
+  return topicById.value.get(id)?.merging === true
+}
 function runningOf(id: string): boolean {
   return topicById.value.get(id)?.running === true
 }
@@ -427,6 +430,7 @@ function rowsOf(rows: readonly FlatRow<Topic>[]) {
     reveal: selectedPath.value,
     unreadOf,
     runningOf,
+    mergingOf,
     awaitsOf,
     stalledOf,
   })
@@ -492,11 +496,15 @@ function rowAwaits(row: VisibleRow<Topic>): boolean {
 function rowRunning(row: VisibleRow<Topic>): boolean {
   return row.topic.running === true || row.hiddenRunning
 }
+function rowMerging(row: VisibleRow<Topic>): boolean {
+  return row.topic.merging === true || row.hiddenMerging
+}
 function toggleTitle(row: VisibleRow<Topic>): string {
   if (!row.collapsed) return '收起'
   if (row.hiddenStalled) return '展开：里面有话题出了故障'
   if (row.hiddenAwaits) return '展开：里面有待处理的事项'
   if (row.hiddenRunning) return `展开：${store.agentName}正在里面工作`
+  if (row.hiddenMerging) return '展开：里面有已采纳的改动在等合并'
   return '展开'
 }
 
@@ -854,7 +862,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         :class="{
                           'subtree-toggle--stalled': rowStalled(row),
                           'subtree-toggle--awaits': !rowStalled(row) && rowAwaits(row),
-                          'subtree-toggle--running': !rowStalled(row) && !rowAwaits(row) && rowRunning(row),
+                          'subtree-toggle--running':
+                            !rowStalled(row) && !rowAwaits(row) && (rowRunning(row) || rowMerging(row)),
                         }"
                         :title="toggleTitle(row)"
                         :aria-expanded="!row.collapsed"
@@ -882,6 +891,11 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                          任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->
                       <span v-else-if="row.topic.running" class="row-slot">
                         <span class="running-dot" :title="`${store.agentName}正在这个话题里工作`" />
+                      </span>
+                      <!-- 绿灯常亮：已采纳，在等检查 / 合并队列走完，此刻没有 AI 在干活。
+                         合并完就灭。空心圈：关掉动效时呼吸点也不动，靠形状分开。 -->
+                      <span v-else-if="row.topic.merging" class="row-slot">
+                        <span class="merging-dot" title="已采纳，在等合并" />
                       </span>
                       <span v-else class="row-slot" />
                     </template>
@@ -1489,6 +1503,13 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
     opacity: 0.45;
     transform: scale(0.7);
   }
+}
+/* 在等合并：常亮的空心绿圈。和呼吸点靠「动不动」「实心还是空心」两样分开。 */
+.merging-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--ok);
 }
 /* 关掉动效时是一颗常亮的绿点：和「等你」那颗靠颜色、大小两样还分得开。 */
 @media (prefers-reduced-motion: reduce) {

@@ -48,6 +48,9 @@ class TopicOut(BaseModel):
     # 最近一轮以报错收场（「本轮未完成：…」、502/404）而之后 AI 还没开过口：那
     # 次报错的时间，没有就 None。侧栏见到它立刻亮红灯，不等五分钟。
     turn_failed_at: datetime | None = None
+    # 已采纳、在等检查 / 合并队列走完，而此刻没有 AI 在干活：侧栏绿灯常亮。
+    # 合并完卡结算，它随之变回 False。只有 list/get 话题时填。
+    merging: bool = False
     # Lifecycle markers (spec §6.3): who accepted, when archived, and — for an
     # upgraded topic — which block it grew from (for the 活引用 back-link).
     accepted_by: str | None = None

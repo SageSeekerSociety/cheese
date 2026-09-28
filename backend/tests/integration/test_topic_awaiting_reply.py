@@ -376,6 +376,122 @@ def test_the_check_wait_ends_when_the_card_is_withdrawn(client):
     assert _since(client, pid, rid) is None
 
 
+def _rejected(client, pid, rid, tid, *, ago):
+    return _on_task(
+        client,
+        pid,
+        rid,
+        tid,
+        "cheese",
+        ago=ago,
+        author_type=AuthorType.platform,
+        meta={"event_type": "card_rejected", "severity": "warn"},
+    )
+
+
+def test_a_rejected_card_nobody_picks_up_waits_for_an_agent(client):
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid)
+    _update_card(client, card, status=AcceptStatus.rejected, decided_by="alice")
+    at = _rejected(client, pid, rid, tid, ago=timedelta(minutes=7))
+
+    since = _since(client, pid, rid)
+    assert since is not None
+    assert abs(since - at) < timedelta(seconds=1)
+
+
+def test_refiling_after_a_rejection_ends_the_wait(client):
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid)
+    _update_card(client, card, status=AcceptStatus.rejected, decided_by="alice")
+    _rejected(client, pid, rid, tid, ago=timedelta(minutes=7))
+    _card(client, pid, rid, tid)  # 改完重递了一张新卡
+
+    assert _since(client, pid, rid) is None
+
+
+def test_a_card_the_gate_failed_waits_for_an_agent(client):
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid)
+    _update_card(client, card, status=AcceptStatus.gate_failed)
+    _on_task(
+        client,
+        pid,
+        rid,
+        tid,
+        "cheese",
+        ago=timedelta(minutes=7),
+        author_type=AuthorType.platform,
+        meta={"event_type": "gate_failed", "severity": "error"},
+    )
+    assert _since(client, pid, rid) is not None
+
+
+# ---- 绿灯常亮：已采纳、在等合并 -------------------------------------------
+
+
+def _merging(client, pid, rid) -> bool:
+    rows = client.get(f"/topics?project_id={pid}").json()["data"]["data"]
+    listed = next(t for t in rows if t["id"] == rid)["merging"]
+    assert client.get(f"/topics/{rid}").json()["data"]["merging"] == listed
+    return listed
+
+
+def test_an_approved_card_in_the_merge_queue_is_merging(client):
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    _card(
+        client,
+        pid,
+        rid,
+        tid,
+        decided_by="alice",
+        note_code="waiting_merge_queue",
+        merge_state={"state": "blocked", "who": "ci", "reasons": []},
+    )
+    assert _merging(client, pid, rid) is True
+
+
+def test_checks_running_before_anyone_approved_are_not_merging(client):
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    _card(
+        client,
+        pid,
+        rid,
+        tid,
+        merge_state={"state": "blocked", "who": "ci", "reasons": []},
+    )
+    assert _merging(client, pid, rid) is False
+
+
+def test_a_merged_card_is_no_longer_merging(client):
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(
+        client,
+        pid,
+        rid,
+        tid,
+        decided_by="alice",
+        merge_state={"state": "blocked", "who": "ci", "reasons": []},
+    )
+    assert _merging(client, pid, rid) is True
+    _update_card(client, card, status=AcceptStatus.accepted)
+    assert _merging(client, pid, rid) is False
+
+
 def test_a_check_event_without_a_red_card_does_not_wait(client):
     pid, rid = _room(client)
     tid = _task(client, pid, rid)

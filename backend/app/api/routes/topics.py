@@ -230,8 +230,11 @@ async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[Accep
     """
     if not room_ids:
         return []
-    return await AcceptCardRepository(db).list_live_for_places(
-        room_ids, statuses=archive.OPEN_CARD_STATUSES
+    # 结算过的也带上最近一周的：「退回了还没重递」要靠它看出来（`_stuck_on_checks`）。
+    return await AcceptCardRepository(db).list_recent_for_places(
+        room_ids,
+        open_statuses=archive.OPEN_CARD_STATUSES,
+        settled_since=datetime.now(UTC) - BlockRepository.REPLY_LOOKBACK,
     )
 
 
@@ -242,7 +245,26 @@ def _own_cards(cards: list[AcceptCard]) -> dict[uuid.UUID, AcceptCard]:
     过滤的话，一条活在等验收会让它上面那个房间也显示成等验收。
     """
     # 按 created_at 升序回来，所以同一个房间后写的覆盖先写的 = 留下最新那张。
-    return {c.topic_id: c for c in cards if c.task_id is None}
+    return {
+        c.topic_id: c
+        for c in cards
+        if c.task_id is None and c.status in archive.OPEN_CARD_STATUSES
+    }
+
+
+def _latest_per_place(cards: list[AcceptCard]) -> dict[tuple, AcceptCard]:
+    """同一个地方（房间自己，或某一条活）只留最新那张：旧卡被新卡顶掉后可能还没
+    结算，它说的不代表现在。"""
+    return {(c.topic_id, c.task_id): c for c in cards}
+
+
+def _merging(cards: list[AcceptCard]) -> set[uuid.UUID]:
+    """名下有一张已采纳、在等检查 / 合并队列的卡的房间（`card_is_merging`）。"""
+    return {
+        room
+        for (room, _), card in _latest_per_place(cards).items()
+        if presentation.card_is_merging(card)
+    }
 
 
 async def _rooms_with_running_work(
@@ -286,10 +308,9 @@ def _stuck_on_checks(cards: list[AcceptCard]) -> set[uuid.UUID]:
     同一个地方（房间自己，或某一条活）只看最新那张：旧卡被新卡顶掉后可能还没结算，
     它的红不代表现在。判据和看板同一个（`presentation.card_needs_agent_fix`）。
     """
-    latest = {(c.topic_id, c.task_id): c for c in cards}
     return {
         room
-        for (room, _), card in latest.items()
+        for (room, _), card in _latest_per_place(cards).items()
         if presentation.card_needs_agent_fix(card)
     }
 
@@ -305,6 +326,7 @@ def _topic_out(
     asked: Mapping[uuid.UUID, str | None] | None = None,
     asks_me: set[uuid.UUID] | None = None,
     working_ids: set[uuid.UUID] | None = None,
+    merging_ids: set[uuid.UUID] | None = None,
     waiting: Mapping[uuid.UUID, ReplyWait] | None = None,
     failed: Mapping[uuid.UUID, datetime] | None = None,
 ) -> dict:
@@ -347,6 +369,8 @@ def _topic_out(
     # 侧栏的绿点：房间自己那一轮在跑，或它名下有一条活在跑。看板那一格
     # （下面的 facts_for_room）仍只看房间自己——活在看板上有自己的一格。
     data["running"] = topic.id in running_ids or topic.id in (working_ids or set())
+    # 绿灯常亮：已采纳、在等合并落地。有 AI 在干活时让位给「在跑」（闪）。
+    data["merging"] = not data["running"] and topic.id in (merging_ids or set())
     facts = presentation.facts_for_room(
         topic,
         running_ids,
@@ -424,8 +448,9 @@ async def list_topics(
             asked,
             asks_me,
             working,
-            waiting,
-            failed,
+            merging_ids=_merging(live),
+            waiting=waiting,
+            failed=failed,
         )
         for t in topics
     ]
@@ -483,6 +508,7 @@ async def get_topic(
             asked=asked,
             asks_me=_asks_me(asked, _viewer(actor)),
             working_ids=working,
+            merging_ids=_merging(live),
             waiting=await BlockRepository(db).rooms_awaiting_a_reply(
                 [topic.id],
                 now=datetime.now(UTC),

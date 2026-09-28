@@ -700,6 +700,8 @@ class BlockRepository:
         "accept_conflict",
         "upstream_conflict",
         "migration_collision",
+        # 验收人把改动退回了：下一步是 AI 改完重递。
+        "card_rejected",
     )
 
     async def _checks_awaiting_an_agent(

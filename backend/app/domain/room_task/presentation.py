@@ -430,6 +430,10 @@ def card_needs_agent_fix(card: "AcceptCard") -> bool:
     侧栏红灯的「检查报错没人处理」问它：卡还停在这里，这件事就还没了；检查重跑
     绿了、冲突解了、卡被撤了，它自然不再成立 —— 不靠「AI 说没说过话」去猜。
     """
+    # 被验收人退回、被闸门判红 / 没跑成：卡已经结算了，但下一步明摆着是 AI 改完
+    # 重递。调用方只把「这个地方最新那张」传进来，所以一旦重递了新卡就不再是它。
+    if str(card.status) in _BOUNCED_TO_AGENT:
+        return True
     facts = facts_for_card(card)
     if facts is None:
         return False
@@ -437,6 +441,25 @@ def card_needs_agent_fix(card: "AcceptCard") -> bool:
         _show(Delivering.fixing_checks),
         _show(Delivering.resolving_conflict),
         _show(NeedsYou.checks_failed),
+    )
+
+
+#: 结算了、但把球交回给 AI 的那几种卡：退回、闸门红、闸门没跑成。
+_BOUNCED_TO_AGENT = frozenset({"rejected", "gate_failed", "gate_blocked"})
+
+
+def card_is_merging(card: "AcceptCard") -> bool:
+    """人已经采纳（或布防了绿了自动合），这张卡在等检查 / 合并队列走完。
+
+    侧栏的绿灯常亮读它：没有人要动手，也没有 AI 在干活，只是在等合并落地。合并
+    完卡就结算了，灯随之熄灭。还没人采纳时在跑的检查不算 —— 那不是「在等合并」。
+    """
+    if not (card.decided_by or card.auto_merge_armed_by):
+        return False
+    facts = facts_for_card(card)
+    return facts is not None and _card_presentation(facts) in (
+        _show(Delivering.awaiting_checks),
+        _show(Delivering.updating_branch),
     )
 
 

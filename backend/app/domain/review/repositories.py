@@ -156,6 +156,37 @@ class AcceptCardRepository:
                 latest[card.task_id] = card
         return latest
 
+    async def list_recent_for_places(
+        self,
+        place_ids: list[uuid.UUID],
+        *,
+        open_statuses: tuple[AcceptStatus, ...],
+        settled_since: datetime,
+    ) -> list[AcceptCard]:
+        """这些地方（房间或活）上的卡：还没结算的全部，加上 `settled_since` 之后递
+        的已结算的 —— 按 created_at 升序，同一个地方后递的覆盖先递的就是「最新那张」。
+
+        侧栏要问「这个地方最新那张卡停在哪」：只拉没结算的，就分不出「退回了还没重
+        递」和「早就合了」；拉全部历史又太多。结算的只看最近一段就够。
+        """
+        if not place_ids:
+            return []
+        stmt = (
+            select(AcceptCard)
+            .where(
+                or_(
+                    AcceptCard.topic_id.in_(place_ids),
+                    AcceptCard.task_id.in_(place_ids),
+                ),
+                or_(
+                    AcceptCard.status.in_(open_statuses),
+                    AcceptCard.created_at >= settled_since,
+                ),
+            )
+            .order_by(AcceptCard.created_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_live_for_places(
         self, place_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
     ) -> list[AcceptCard]:
