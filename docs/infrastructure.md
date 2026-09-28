@@ -227,8 +227,8 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 ## CI runner pool (cheese-ci)
 
-Backend CI (`test.yml`) runs on GitHub-hosted Ubuntu runners. E2E runs on the
-**cheese-ci** label — a pool of MicroCloud VMs (prod tenant, customer
+Backend CI (`test.yml`) and E2E (`e2e.yml`, split into Playwright shards) run
+on GitHub-hosted Ubuntu runners. The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
 keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
