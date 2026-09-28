@@ -22,13 +22,18 @@
            页面跟着抖。 -->
       <mobile-app-bar v-if="!hideAppBar" />
 
-      <!-- 一级导航：桌面端左侧 Rail，移动端底部 -->
+      <!-- 一级导航：桌面端左侧 Rail，移动端底部。页面栈里的那几层（hideTabs）没有它；
+           它进出时 v-main 的下内边距跟着变，手机上这一下不做过渡（见 .app-main--phone）。 -->
       <keep-alive>
         <BottomAppBar v-if="!hideAppBar && !hideTabs" :items="tabs" />
       </keep-alive>
     </template>
 
-    <v-main ref="mainRef" class="bg-background h-100" :class="{ 'app-main--pending': firstRoutePending }">
+    <v-main
+      ref="mainRef"
+      class="bg-background h-100"
+      :class="{ 'app-main--pending': firstRoutePending, 'app-main--phone': !$vuetify.display.mdAndUp }"
+    >
       <div class="border-t-sm bg-background h-100 overflow-hidden">
         <div id="app-scrollable" class="app-content h-100">
           <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
@@ -594,6 +599,12 @@ function projectAvatar(name: string): string {
 <style lang="scss" scoped>
 .app-main--pending {
   visibility: hidden;
+  transition: none;
+}
+/* 手机上 v-main 的内边距只随底栏的有无变（顶栏从不卸载）。Vuetify 给 .v-main 定了
+   .2s 的内边距过渡，于是每走进、退出一层页面栈，整页内容都要滑 56px——底栏已经
+   不在了，内容还在往下挪。这一下跟着换页一起完成，不单独演。 */
+.app-main--phone {
   transition: none;
 }
 .app-content {
