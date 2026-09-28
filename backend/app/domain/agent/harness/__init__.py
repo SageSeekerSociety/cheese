@@ -477,12 +477,24 @@ class AgentRuntime(Protocol):
         """
         ...
 
-    def holds(self, topic_id: uuid.UUID) -> bool:
+    def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Is there a session here this runtime can still reach?
 
         This is what "the work survived" means after a backend restart: the
         coroutine waiting on the turn died with the process, the agent in the
         execution environment did not, and ``recover`` found it again.
+        ``agent_handle`` narrows the question to one seat of the room.
+        """
+        ...
+
+    def work_in_flight(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> uuid.UUID | None:
+        """The work this runtime's live seat in the room is running, if one is.
+
+        With the agent named the answer is exact; without it only a room with
+        exactly one working seat gets one — between two working teammates a
+        guess would aim the caller at the wrong conversation.
         """
         ...
 

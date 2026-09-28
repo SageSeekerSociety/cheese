@@ -208,12 +208,13 @@ class ComputePool:
             if runtime.holds(topic_id, agent_handle)
         ]
         for backend in candidates:
-            kwargs = {"agent_handle": agent_handle}
-            if images:
-                kwargs["images"] = images
-            if expected_work_id is not None:
-                kwargs["expected_work_id"] = expected_work_id
-            delivered = await backend.deliver(topic_id, text, **kwargs)
+            delivered = await backend.deliver(
+                topic_id,
+                text,
+                images=images,
+                expected_work_id=expected_work_id,
+                agent_handle=agent_handle,
+            )
             if delivered:
                 return True
         return False

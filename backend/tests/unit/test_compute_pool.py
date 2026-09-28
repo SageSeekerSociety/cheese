@@ -28,7 +28,11 @@ async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
     assert await pool.deliver(session.topic_id, "follow up")
     native.deliver.assert_not_awaited()
     codex.deliver.assert_awaited_once_with(
-        session.topic_id, "follow up", agent_handle=None
+        session.topic_id,
+        "follow up",
+        images=None,
+        expected_work_id=None,
+        agent_handle=None,
     )
 
 
@@ -151,6 +155,9 @@ class _FakeBackend:
 
     def holds(self, topic_id: uuid.UUID, agent_handle=None) -> bool:
         return False
+
+    def work_in_flight(self, topic_id: uuid.UUID, agent_handle=None):
+        return None
 
     async def recover(self, device_id=None):
         return []
