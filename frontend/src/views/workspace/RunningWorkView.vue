@@ -165,8 +165,25 @@ function toggleMine() {
   void router.replace({ query })
 }
 
+/** 已归档的房间。
+ *
+ *  活不归档，房间归档：一个房间收了尾，里面没走完的活（已退回、待回答）后端照样
+ *  按它自己的状态落在施工中 / 交付中 / 待处理里，一挂就是几周。可房间归档了，就
+ *  没人会再去动它们——三列答的是「接下来谁要动什么」，它们不该在上面。
+ *
+ *  已完成不筛：那是交付过的东西，房间归档了也还是交付过。 */
+const archivedRooms = computed(
+  () => new Set((store.topics as Topic[]).filter((t) => t.status === 'archived').map((t) => t.id))
+)
+
+/** 板上真正要看的那些：去掉已归档房间里没走完的活。计数、统计、「只看我的」都从
+ *  这一份出发，列里没有的活不能在数字里还算着。 */
+const boardRows = computed(() =>
+  rows.value.filter((r) => r.presentation.column === 'done' || !archivedRooms.value.has(r.room_id))
+)
+
 const visibleRows = computed(() =>
-  mine.value && mineHandle.value ? rows.value.filter((r) => r.owner_handle === mineHandle.value) : rows.value
+  mine.value && mineHandle.value ? boardRows.value.filter((r) => r.owner_handle === mineHandle.value) : boardRows.value
 )
 
 function bucket(list: RoomTask[]): Map<BoardColumn, RoomTask[]> {
@@ -182,7 +199,7 @@ function bucket(list: RoomTask[]): Map<BoardColumn, RoomTask[]> {
 }
 
 const byColumn = computed(() => bucket(visibleRows.value))
-const totalByColumn = computed(() => bucket(rows.value))
+const totalByColumn = computed(() => bucket(boardRows.value))
 
 function inColumn(column: BoardColumn): RoomTask[] {
   return byColumn.value.get(column) ?? []
@@ -235,7 +252,7 @@ function openHomeRoom() {
  *  在开关一开的时候把「房间满员」凭空数没。 */
 const runningPerRoom = computed(() => {
   const n = new Map<string, number>()
-  for (const r of rows.value) {
+  for (const r of boardRows.value) {
     if (isRunning(r)) n.set(r.room_id, (n.get(r.room_id) ?? 0) + 1)
   }
   return n
