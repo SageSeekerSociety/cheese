@@ -88,6 +88,22 @@ class Forge(ABC):
         """Refresh a proposal with no displayed revision and require another look."""
         raise NotImplementedError
 
+    async def refresh_snapshot(
+        self,
+        service: "AcceptService",
+        card: "AcceptCard",
+        topic: "Topic",
+    ) -> None:
+        """重算一遍卡面上那份合并态快照。读卡这条路要它 (`poll` 之外的那个时机)。
+
+        默认什么都不做：轮询器下一跳照样会算，读卡不欠这一份。有廉价现成判定的
+        托管方覆盖它，好让盯着卡看的人不必等满一个轮询周期才看见检查已经全绿
+        —— 卡面上的合并态是快照，而采纳按钮按它亮不亮。
+
+        只重算、写回；**不发事件、不合并、不推进 head**。那些是 `poll` 的职责。
+        """
+        return None
+
     @abstractmethod
     async def poll(
         self,
@@ -129,6 +145,9 @@ class GitHubForge(Forge):
         await service._advance_github_card(
             card, topic, chat_service=chat_service, runner=runner
         )
+
+    async def refresh_snapshot(self, service, card, topic) -> None:
+        await service._refresh_github_snapshot(card, topic)
 
     async def merge_despite_checks(
         self,
