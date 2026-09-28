@@ -54,6 +54,17 @@ steps:
 
 订阅方式只能在传输层引流：设置 `ANTHROPIC_BASE_URL` 会让 Claude Code 切到 API key 模式、不再用订阅登录。
 
+下面这张图把入口摊开：换入口、换场景，都能看到包从哪个口进、停在哪一站，每一站的面板写着它收到什么、又交出什么。额度用完时四个入口都停住，停的位置却不一样——容器、裸进程、云机器停在准入，Codex、Pi 停在网关。
+
+```demo-arch
+title: 换入口：包从哪进、在哪拦
+note: 换入口、换场景，看包停在哪一站；被拦下的那一站在图上标出来
+kind: llm
+entries: sandbox, bare, cloud, codex
+scenes: ok, budget
+blocks: sandbox/budget, bare/budget, cloud/budget, codex/budget
+```
+
 ## 每个请求先问准入 {#admission}
 
 计量代理转发每个 `/v1/messages` 之前，调用主 API 的 `POST /llm/admission`（`backend/app/api/routes/llm_proxy.py`），用沙盒自己的短期令牌鉴权。这是唯一的控制点，回答三件事：
@@ -122,6 +133,17 @@ out:
 - **用哪个模型名**：`supply.model`，由计量代理写进请求体。
 
 绑定的模型解析不出来时，返回 `allow: false` 和 `reason_kind: "binding"`，不会悄悄换到另一条路。主 API 不可达时，计量代理放行并退回订阅路，同时靠它自己的滚动 token 上限兜底。
+
+拒绝的形状由 `reason_kind` 决定，不是由「额度」这一件事决定：绑定解析不出去充值是白跑一趟，所以它回的是「重试没用」那个形状。下面这张图把不放行的两种、软放行的一种，和分身指定模型放在一起看（云机器走的是和裸进程同一条路，只多了隧道那两站）。
+
+```demo-arch
+title: 另外三种情形：绑错、问不到、分身指定
+note: 绑定解析不出拦在准入，问不到主 API 退回订阅路，分身指定模型在准入这一站被翻译
+kind: llm
+entries: sandbox, bare
+scenes: binding, failopen, subagent
+blocks: sandbox/binding, bare/binding
+```
 
 ## 两条路 {#routes}
 

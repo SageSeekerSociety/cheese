@@ -413,7 +413,15 @@ function stalledOf(id: string): boolean {
 function stalledTitle(id: string): string {
   return failedOf(id)
     ? `${store.agentName}最近一轮报错了`
-    : stallReasonText(topicById.value.get(id)?.reply_wait_reason, store.agentName)
+    : stallReasonText(
+        {
+          reason: topicById.value.get(id)?.reply_wait_reason,
+          since: topicById.value.get(id)?.awaiting_reply_since,
+          pr: topicById.value.get(id)?.reply_wait_pr,
+        },
+        store.agentName,
+        clock.value
+      )
 }
 
 // ---- 分组 (C2): 我参与的平铺，其他话题收进一个默认折叠的组 ----

@@ -13,13 +13,14 @@ import json
 import sqlite3
 import threading
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from app.domain.agent.harness import HarnessEvent, SessionRef
 from app.domain.agent.harness.driven import journal, runner, subscription
+from app.domain.agent.harness.driven.backlog import JournalBacklog
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.service import AgentMessage, AgentResult
 
@@ -96,29 +97,16 @@ async def call(state: Path, method: str, params: dict) -> dict:
     return response["result"]
 
 
-class Backlog:
-    def __init__(self, path: Path):
-        self.path = path
-        self.entries: list[HarnessEvent] = []
-        mirror = Journal(path)
-        try:
-            after = int(mirror.recall("landed") or 0)
-            while page := mirror.read(after):
-                self.entries += [
-                    HarnessEvent(
-                        key=f"{row['sequence']:019d}",
-                        eid=f"stand-in:{row['sequence']}",
-                        record=row["record"],
-                        age_s=0,
-                    )
-                    for row in page
-                ]
-                after = page[-1]["sequence"]
-        finally:
-            mirror.close()
+class Backlog(JournalBacklog[Journal]):
+    journal = Journal
 
-    def unread(self) -> list[HarnessEvent]:
-        return self.entries
+    def event(self, row: dict, now: datetime) -> HarnessEvent:
+        return HarnessEvent(
+            key=f"{row['sequence']:019d}",
+            eid=f"stand-in:{row['sequence']}",
+            record=row["record"],
+            age_s=0,
+        )
 
     def assemble(self, entry: HarnessEvent) -> list:
         assert isinstance(entry.record, dict)
@@ -131,25 +119,6 @@ class Backlog:
 
     def unfinished(self) -> set[str]:
         return set()
-
-    def give_up(self) -> list[AgentMessage]:
-        return []
-
-    def landed(self, *, through: str) -> None:
-        mirror = Journal(self.path)
-        try:
-            mirror.acknowledge(int(through))
-        finally:
-            mirror.close()
-
-    def forget(self, *, older_than_s: float) -> None:
-        mirror = Journal(self.path)
-        try:
-            mirror.prune(
-                (datetime.now(UTC) - timedelta(seconds=older_than_s)).isoformat()
-            )
-        finally:
-            mirror.close()
 
 
 class Subscription(subscription.Subscription[Backlog]):
@@ -391,8 +360,8 @@ async def test_a_reader_let_go_mid_write_is_released_after_the_write(
     state, mirror, room = tmp_path / "state", tmp_path / "mirror.sqlite", Room()
     running = await start(state, "a", "b")
     try:
-        # The first commit imports the page; the second lands the first record,
-        # the write a cancelled drain leaves running with nobody waiting on it.
+        # The first commit imports the page; the second lands it, the write a
+        # cancelled drain leaves running with nobody waiting on it.
         disk = Disk(mirror, hold=2)
         monkeypatch.setattr(journal.sqlite3, "connect", disk.connect)
         first = subscribe(state, mirror, room)
@@ -411,7 +380,6 @@ async def test_a_reader_let_go_mid_write_is_released_after_the_write(
         await asyncio.wait_for(release, HANG_S)
         assert disk.synced.is_set()
 
-        assert await subscribe(state, mirror, room).drain() == 4
         assert await subscribe(state, mirror, room).drain() == 0
     finally:
         await running.close()

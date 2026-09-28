@@ -584,8 +584,10 @@ class Backlog(Protocol):
     """
 
     def unread(self) -> Sequence[HarnessEvent]:
-        """Everything after the cursor, oldest first. A snapshot: landing
-        things during the pass does not change what this returned."""
+        """The next page after what this reader has handed out, oldest first,
+        starting at the landing cursor; empty once it has caught up. A page,
+        not the whole tail: a cursor that fell behind can have a million
+        records waiting, and a pass must not hold them all at once."""
         ...
 
     def assemble(self, entry: HarnessEvent) -> Sequence[AgentEvent]:
