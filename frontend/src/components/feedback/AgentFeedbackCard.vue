@@ -61,11 +61,21 @@ const pending = ref<string | null>(null)
  *  凭证」，关掉对话框要给那张卡留一句话，所以它得活到 `onSubmitted` 跑完。 */
 const formOpen = ref(false)
 
+/** 拉一次这个话题里还活着的卡。开着页面时，卡落下、被发出去、被「不用」，房间都会
+ *  推一句「提案卡变了」（`TopicView` 收到后调这里），所以这不止在挂载时跑一次。
+ *
+ *  这里发出去的卡已经不在「还活着」的那份里了，但它此刻正翻成一张凭证摆在屏幕上 ——
+ *  那张凭证留着，直到人离开这个页面。 */
 async function load() {
-  proposals.value = await store.loadProposals(props.topicId)
+  const live = await store.loadProposals(props.topicId)
+  const sentHere = proposals.value.filter(
+    (p) => submitted.value[p.block_id] && !live.some((l) => l.block_id === p.block_id)
+  )
+  proposals.value = [...live, ...sentHere]
 }
 
 onMounted(load)
+defineExpose({ reload: load })
 
 function visibleCards(): FeedbackProposal[] {
   return proposals.value.filter((p) => !dismissed.value.has(p.block_id))
