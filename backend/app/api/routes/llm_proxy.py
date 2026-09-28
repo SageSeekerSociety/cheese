@@ -120,8 +120,6 @@ async def _bind_requested_subagent_model(
     choices: dict[str, dict],
     requested: str,
     parent_handle: str | None,
-    *,
-    explicit: bool = False,
 ):
     """分身指定了模型时的绑定：翻译成目录 id，校验它在项目模型目录内。
 
@@ -130,37 +128,33 @@ async def _bind_requested_subagent_model(
     拍板）。指定了就要么绑它、要么明说为什么不行 —— 静默改写回默认模型正是
     「指定了却不生效」那个旧行为（I27 的另一种长相）。
 
-    继承不算指定：CC 对每个分身请求都在体里写一个顶层 model 成员，fork 和
-    定义里不带 model 的分身写的是**父会话的模型** —— 那才是「未指定」在请
-    求体里真正的长相。体里的名字翻译回来等于父会话绑定的，退回分身默认，
-    与今天逐字节一致。（容器路径上父会话钉的就是席位模型，这里比得上；
-    device 路径上不钉模型、CC 回显它自己的内建默认，那一路由计量代理在
-    送这个头之前就认掉，到不了这里。）
+    体里的名字就是这个分身的模型，没有「回显」要认：会话启动时
+    ``CLAUDE_CODE_SUBAGENT_MODEL`` 钉着分身默认（``agent/chat.py``），没指定
+    的分身体里写的就是它；和父会话同名只能是主 agent 指定了父会话那个模型。
+    父会话自己在跑的模型因此总是可指定的，跨池也一样 —— 它已经在这个席位
+    上跑着了。
     """
     requested_id = binding.catalog_id(requested, choices)
     parent = await agents.for_seat_handle(project, parent_handle)
     if parent is None:
         parent = await agents.for_project(project)
-    parent_model = (parent.configuration or {}).get("model") if parent else None
-    inherited_id = (
-        parent_model
-        if isinstance(parent_model, str) and parent_model
-        else _default_catalog_id(choices)
+    settings_ = project.settings or {}
+    # The same order the parent's own admission resolves in: seat, project
+    # default, catalogue default.
+    parent_id = (
+        ((parent.configuration or {}).get("model") if parent else None)
+        or settings_.get("default_model")
+        or _default_catalog_id(choices)
     )
-    # A native selection is explicit even when it names the parent's model.
-    if not explicit and requested_id is not None and requested_id == inherited_id:
-        return binding.resolve(
-            None,
-            choices,
-            default_model=(project.settings or {}).get("default_subagent_model"),
-        )
     allowed = _offerable_model_ids(project, choices)
-    # 项目显式配的两个默认（主模型、分身默认）也合法：它们跨池也真跑得起来
-    # （供给跟着绑定走），主 agent 复述默认值不该吃到一个拒绝。但只列目录
-    # 里还在的 —— 列一个 resolve 绑不上的,是把人从一个拒绝指到另一个拒绝。
+    # 父会话的模型和项目显式配的两个默认（主模型、分身默认）也合法：它们跨
+    # 池也真跑得起来（供给跟着绑定走），主 agent 复述它们不该吃到一个拒绝。
+    # 但只列目录里还在的 —— 列一个 resolve 绑不上的,是把人从一个拒绝指到另
+    # 一个拒绝。
     for configured in (
-        (project.settings or {}).get("default_model"),
-        (project.settings or {}).get("default_subagent_model"),
+        parent_id,
+        settings_.get("default_model"),
+        settings_.get("default_subagent_model"),
     ):
         if isinstance(configured, str) and configured and configured in choices:
             allowed.add(configured)
@@ -257,7 +251,6 @@ async def admission(
                 choices,
                 requested,
                 claims.get("a"),
-                explicit=bool(child_model),
             )
         else:
             bound = binding.resolve(
