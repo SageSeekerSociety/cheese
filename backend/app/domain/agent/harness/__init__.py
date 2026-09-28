@@ -351,6 +351,7 @@ class AgentRuntime(Protocol):
         images: list[dict] | None = None,
         *,
         expected_work_id: uuid.UUID | None = None,
+        agent_handle: str | None = None,
     ) -> bool:
         """Put text into a session that is already working, with no turn opened
         for it. True = it landed; False = there is no live session here.
@@ -363,7 +364,10 @@ class AgentRuntime(Protocol):
 
         Keyed by topic rather than by ``SessionRef`` because the caller is on the
         hot path with a person waiting and has no project id in hand — the same
-        reason ``close`` is topic-keyed underneath.
+        reason ``close`` is topic-keyed underneath. ``agent_handle`` names the
+        seat inside the room when the caller knows it: a room seats one session
+        per agent, and a delivery with no seat named lands only when the room
+        has just one working seat (or the expected work id names it).
         """
         ...
 
@@ -473,12 +477,24 @@ class AgentRuntime(Protocol):
         """
         ...
 
-    def holds(self, topic_id: uuid.UUID) -> bool:
+    def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Is there a session here this runtime can still reach?
 
         This is what "the work survived" means after a backend restart: the
         coroutine waiting on the turn died with the process, the agent in the
         execution environment did not, and ``recover`` found it again.
+        ``agent_handle`` narrows the question to one seat of the room.
+        """
+        ...
+
+    def work_in_flight(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> uuid.UUID | None:
+        """The work this runtime's live seat in the room is running, if one is.
+
+        With the agent named the answer is exact; without it only a room with
+        exactly one working seat gets one — between two working teammates a
+        guess would aim the caller at the wrong conversation.
         """
         ...
 

@@ -115,13 +115,17 @@ class CentralChannel(DeviceChannel):
         factory = self._session_factory or async_session_factory
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
-        scopes = [
-            (project_id, room_id, place.machine)
-            for project_id, room_id, _handle, _harness, place in sessions
-            if place.channel == self.name
-            and (device_id is None or place.machine == device_id)
-            and self._hub.is_online(place.machine)
-        ]
+        # One screen per (room, machine): the session list is per seat now, and
+        # a room that seats two agents on one machine appears twice.
+        scopes = list(
+            dict.fromkeys(
+                (project_id, room_id, place.machine)
+                for project_id, room_id, _handle, _harness, place in sessions
+                if place.channel == self.name
+                and (device_id is None or place.machine == device_id)
+                and self._hub.is_online(place.machine)
+            )
+        )
         await self.restore_screens(scopes)
 
     async def ensure_ready(

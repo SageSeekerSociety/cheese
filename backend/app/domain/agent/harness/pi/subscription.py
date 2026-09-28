@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from app.domain.agent.harness import (
-    ActivityConsumer,
     EventConsumer,
     HarnessEvent,
     SessionRef,
@@ -51,7 +50,7 @@ class Subscription(subscription.Subscription[PiBacklog]):
         path: Path,
         call: Callable[[str, dict], Awaitable[dict]],
         consume: EventConsumer,
-        activity: ActivityConsumer,
+        activity: subscription.SeatActivity,
         session_id: str | None = None,
         *,
         pulse: subscription.Pulse | None = None,

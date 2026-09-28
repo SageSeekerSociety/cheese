@@ -45,6 +45,7 @@ from app.domain.agent.harness.driven.subscription import (
     PROGRESS,
     TOOL_RETURNED,
     TOOL_STARTED,
+    Seat,
     Subscription,
 )
 from app.domain.agent.platform_failures import (
@@ -169,20 +170,25 @@ class DrivenRuntime[H: Handle]:
         self.hard_ceiling_s = hard_ceiling_s
         self.no_progress_s = no_progress_s
         self.unread_grace_s = unread_grace_s
-        self.clocks: dict[uuid.UUID, Clock] = {}
+        # 一间房给每个 agent 各摆一个座位（Seat = (topic, agent_handle)）：会话、
+        # 订阅、轮询任务、在跑的活和它的钟都按座位键住。同一间房里另一个 agent 的
+        # 会话与这里互不相干——它开它的轮、它等它的设备，谁也不顶掉谁。按房间键住
+        # 的那个版本里，第二个 agent 一进房就把第一个的会话停了（ensure）、订阅顶
+        # 掉（_attach）、在跑的活盖掉（work[topic]），多 agent 同房间因此不可能。
+        self.clocks: dict[Seat, Clock] = {}
         # Work a verdict already ended. What the session goes on saying still
         # lands; a second ending for it does not.
         self.closed: set[uuid.UUID] = set()
-        self.unreachable: dict[uuid.UUID, float] = {}
-        # The open work each room was last told is waiting on its machine.
-        self.told_waiting: dict[uuid.UUID, uuid.UUID] = {}
+        self.unreachable: dict[Seat, float] = {}
+        # The open work each seat was last told is waiting on its machine.
+        self.told_waiting: dict[Seat, uuid.UUID] = {}
         self.unread: UnreadProbe | None = None
-        self.live: dict[uuid.UUID, H] = {}
-        self.subscriptions: dict[uuid.UUID, Subscription] = {}
-        self.tasks: dict[uuid.UUID, asyncio.Task] = {}
-        self.work: dict[uuid.UUID, uuid.UUID] = {}
+        self.live: dict[Seat, H] = {}
+        self.subscriptions: dict[Seat, Subscription] = {}
+        self.tasks: dict[Seat, asyncio.Task] = {}
+        self.work: dict[Seat, uuid.UUID] = {}
         self.queues: dict[uuid.UUID, asyncio.Queue[AgentEvent]] = {}
-        self.woken: dict[uuid.UUID, asyncio.Event] = {}
+        self.woken: dict[Seat, asyncio.Event] = {}
         self.consumer: EventConsumer | None = None
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
@@ -291,14 +297,44 @@ class DrivenRuntime[H: Handle]:
         """
         return None
 
-    def pulse(self, topic: uuid.UUID, marks: frozenset[str]) -> None:
-        """What the subscription just read about the open turn."""
-        if clock := self.clocks.get(topic):
+    @staticmethod
+    def _seat_of(session: SessionRef) -> Seat:
+        """The seat a session ref names: (topic, agent)."""
+        return (session.topic_id, session.agent_handle)
+
+    @staticmethod
+    def _seat_of_handle(handle: "Handle") -> Seat:
+        """The seat a live handle sits in — its session's, not its own.
+
+        A handle carries two names for the agent: ``session.agent_handle`` keys
+        the conversation (the session row, the resume token, every ref chat
+        builds), while ``agent_handle`` is the acting seat the machine recorded
+        (the token's `a` claim), and the two differ whenever a room addresses a
+        teammate by instance. The runtime's seats key conversations — send and
+        recover must land on the same key or one conversation gets two
+        subscriptions reading the same mirror — so the session's name wins.
+        """
+        return (handle.session.topic_id, handle.session.agent_handle)
+
+    def _room_seat(self, topic_id: uuid.UUID) -> Seat | None:
+        """The room's only live seat, or None when there is none — or several.
+
+        Room-scoped questions (the controls relay, the memory relay) predate
+        seats; with two teammates live in one room they have no single answer,
+        and None makes the caller say so rather than pick a teammate at random.
+        """
+        seats = [seat for seat in self.live if seat[0] == topic_id]
+        return seats[0] if len(seats) == 1 else None
+
+    def pulse(self, seat: Seat, marks: frozenset[str]) -> None:
+        """What the subscription just read about the seat's open turn."""
+        if clock := self.clocks.get(seat):
             clock.pulse(marks, time.monotonic())
 
-    def verdict(self, topic: uuid.UUID) -> AgentResult | None:
-        """Is the open turn stuck in a way only its own clocks can show?"""
-        clock = self.clocks.get(topic)
+    def verdict(self, seat: Seat) -> AgentResult | None:
+        """Is the seat's open turn stuck in a way only its own clocks can show?"""
+        topic = seat[0]
+        clock = self.clocks.get(seat)
         if clock is None:
             return None
         now = time.monotonic()
@@ -352,7 +388,8 @@ class DrivenRuntime[H: Handle]:
     async def _end_by_verdict(self, handle: H, result: AgentResult) -> None:
         """End the turn in the room's books, and take the work away."""
         topic = handle.session.topic_id
-        work = self.work[topic]
+        seat = self._seat_of_handle(handle)
+        work = self.work[seat]
         await self._consume(
             handle.session.project_id,
             topic,
@@ -369,7 +406,7 @@ class DrivenRuntime[H: Handle]:
             False,
             False,
         )
-        await self._activity(handle.session.project_id, topic, work, False)
+        await self._activity(handle.session.project_id, seat, work, False)
         self.closed.add(work)
         try:
             await self.interrupt(handle.session)
@@ -386,70 +423,71 @@ class DrivenRuntime[H: Handle]:
         else:
             raise RuntimeError(f"{self.label} room persistence is not bound")
 
-    async def _activity(self, project, topic, work, active):
+    async def _activity(self, project, seat: Seat, work, active):
         if work in self.closed:
             return
         if active:
-            self.work[topic] = work
+            self.work[seat] = work
             now = time.monotonic()
-            self.clocks[topic] = Clock(opened=now, progressed=now)
-        elif self.work.get(topic) == work:
-            self.work.pop(topic, None)
-            self.clocks.pop(topic, None)
+            self.clocks[seat] = Clock(opened=now, progressed=now)
+        elif self.work.get(seat) == work:
+            self.work.pop(seat, None)
+            self.clocks.pop(seat, None)
         if self.activity and work not in self.queues:
-            await self.activity(project, topic, work, active)
+            await self.activity(project, seat[0], work, active)
 
     async def _attach(self, handle: H) -> None:
-        topic = handle.session.topic_id
-        if self.live.get(topic) == handle and topic in self.subscriptions:
+        seat = self._seat_of_handle(handle)
+        if self.live.get(seat) == handle and seat in self.subscriptions:
             return
-        await self._detach(topic)
+        await self._detach(seat)
         handle.mirror.parent.mkdir(parents=True, exist_ok=True)
 
         async def call(method: str, params: dict) -> dict:
             return await self.channel.call(handle, method, params)
 
-        self.live[topic] = handle
-        self.subscriptions[topic] = self.subscribe(handle, call)
+        self.live[seat] = handle
+        self.subscriptions[seat] = self.subscribe(handle, call)
 
-    def _listen(self, topic: uuid.UUID) -> None:
-        if topic not in self.tasks or self.tasks[topic].done():
-            self.tasks[topic] = asyncio.create_task(
-                self._poll(topic), name=f"{self.records} {topic}"
+    def _listen(self, seat: Seat) -> None:
+        if seat not in self.tasks or self.tasks[seat].done():
+            self.tasks[seat] = asyncio.create_task(
+                self._poll(seat), name=f"{self.records} {seat[0]}/{seat[1]}"
             )
 
-    def _wake(self, topic: uuid.UUID) -> None:
-        """Cut short the wait of a room that has just been given something."""
-        if event := self.woken.get(topic):
+    def _wake(self, seat: Seat) -> None:
+        """Cut short the wait of a seat that has just been given something."""
+        if event := self.woken.get(seat):
             event.set()
 
-    async def _wait(self, topic: uuid.UUID, delay: float) -> None:
-        event = self.woken.setdefault(topic, asyncio.Event())
+    async def _wait(self, seat: Seat, delay: float) -> None:
+        event = self.woken.setdefault(seat, asyncio.Event())
         try:
             await asyncio.wait_for(event.wait(), delay)
         except TimeoutError:
             return
         event.clear()
 
-    async def _poll(self, topic: uuid.UUID) -> None:
+    async def _poll(self, seat: Seat) -> None:
+        topic = seat[0]
         checked_at = 0.0
         # Waiting for a device to come back is this loop's job, not a failure of
         # it, so the wait is said once and the return is said once. Per-task
-        # state: one of these runs per topic.
+        # state: one of these runs per seat.
         waiting = False
         delay = READ_FLOOR_S
-        while topic in self.subscriptions:
+        while seat in self.subscriptions:
             try:
-                delivered = await self.subscriptions[topic].drain()
-                self.unreachable.pop(topic, None)
-                if topic in self.work and time.monotonic() - checked_at >= 1:
-                    handle = self.live[topic]
+                delivered = await self.subscriptions[seat].drain()
+                self.unreachable.pop(seat, None)
+                if seat in self.work and time.monotonic() - checked_at >= 1:
+                    handle = self.live[seat]
                     status = await self.channel.call(handle, "ping", {})
                     checked_at = time.monotonic()
                     if not status.get("alive", True):
                         await self._died(handle)
                         return
-                    if verdict := self.verdict(topic):
+                    if verdict := self.verdict(seat):
                         await self._end_by_verdict(handle, verdict)
             except DeviceOffline:
                 # A room whose machine is switched off is the ordinary state of
@@ -463,8 +501,8 @@ class DrivenRuntime[H: Handle]:
                     self.logger.warning(
                         "%s waiting for the device topic=%s", self.records, topic
                     )
-                await self._say_waiting(topic, "device offline")
-                if await self._gone(topic):
+                await self._say_waiting(seat, "device offline")
+                if await self._gone(seat):
                     return
                 await asyncio.sleep(2)
             except DeviceCallError as exc:
@@ -480,8 +518,8 @@ class DrivenRuntime[H: Handle]:
                         topic,
                         exc,
                     )
-                await self._say_waiting(topic, f"runner not answering: {exc}")
-                if await self._gone(topic):
+                await self._say_waiting(seat, f"runner not answering: {exc}")
+                if await self._gone(seat):
                     return
                 await asyncio.sleep(2)
             except httpx.TransportError as exc:
@@ -498,8 +536,8 @@ class DrivenRuntime[H: Handle]:
                         topic,
                         exc,
                     )
-                await self._say_waiting(topic, f"device connection lost: {exc}")
-                if await self._gone(topic):
+                await self._say_waiting(seat, f"device connection lost: {exc}")
+                if await self._gone(seat):
                     return
                 await asyncio.sleep(2)
             except Exception:
@@ -512,7 +550,7 @@ class DrivenRuntime[H: Handle]:
                 if waiting:
                     waiting = False
                     self.logger.info("%s resumed topic=%s", self.records, topic)
-                    await self._say_resumed(topic)
+                    await self._say_resumed(seat)
                 # A room being worked reads at the floor, and so does one whose
                 # journal just gave us something — the next record of a stream
                 # is due immediately. A room nobody is talking to costs a call
@@ -520,55 +558,57 @@ class DrivenRuntime[H: Handle]:
                 # eleven of them idling held a core between them. Sending wakes
                 # the wait, so nothing a person does is served at the
                 # backed-off rate.
-                if delivered or topic in self.work:
+                if delivered or seat in self.work:
                     delay = READ_FLOOR_S
                 else:
                     delay = min(delay * 2, READ_CEILING_S)
-                await self._wait(topic, delay)
+                await self._wait(seat, delay)
 
-    async def _say_waiting(self, topic: uuid.UUID, reason: str) -> None:
-        """Tell the room its open turn is waiting on the machine — once per turn
-        per outage. A room with no turn open is not waiting for anything: its
-        machine being off is the ordinary state of a platform nobody is using."""
-        work = self.work.get(topic)
-        handle = self.live.get(topic)
-        if work is None or handle is None or self.told_waiting.get(topic) == work:
+    async def _say_waiting(self, seat: Seat, reason: str) -> None:
+        """Tell the room this seat's open turn is waiting on the machine — once
+        per turn per outage. A seat with no turn open is not waiting for
+        anything: its machine being off is the ordinary state of a platform
+        nobody is using."""
+        work = self.work.get(seat)
+        handle = self.live.get(seat)
+        if work is None or handle is None or self.told_waiting.get(seat) == work:
             return
-        self.told_waiting[topic] = work
+        self.told_waiting[seat] = work
         if self.reachability:
             await self.reachability(
-                handle.session.project_id, topic, work, False, reason
+                handle.session.project_id, seat[0], work, False, reason
             )
 
-    async def _say_resumed(self, topic: uuid.UUID) -> None:
-        work = self.told_waiting.pop(topic, None)
-        handle = self.live.get(topic)
-        if work is None or handle is None or self.work.get(topic) != work:
+    async def _say_resumed(self, seat: Seat) -> None:
+        work = self.told_waiting.pop(seat, None)
+        handle = self.live.get(seat)
+        if work is None or handle is None or self.work.get(seat) != work:
             return
         if self.reachability:
-            await self.reachability(handle.session.project_id, topic, work, True, "")
+            await self.reachability(handle.session.project_id, seat[0], work, True, "")
 
-    async def _gone(self, topic: uuid.UUID) -> bool:
+    async def _gone(self, seat: Seat) -> bool:
         """Has the runner of an open turn been out of reach for too long?
 
         A turn nobody can reach is not one that will ever report an ending,
         and the room waits on it until somebody says so.
         """
-        if topic not in self.work or topic not in self.live:
-            self.unreachable.pop(topic, None)
+        if seat not in self.work or seat not in self.live:
+            self.unreachable.pop(seat, None)
             return False
-        since = self.unreachable.setdefault(topic, time.monotonic())
+        since = self.unreachable.setdefault(seat, time.monotonic())
         if time.monotonic() - since < RUNNER_GONE_S:
             return False
-        self.unreachable.pop(topic, None)
-        await self._died(self.live[topic])
+        self.unreachable.pop(seat, None)
+        await self._died(self.live[seat])
         return True
 
     async def _died(self, handle: H) -> None:
         """The process is gone with a turn open. Say so where the turn is, or
         the room waits on something that will never answer."""
         topic = handle.session.topic_id
-        work = self.work[topic]
+        seat = self._seat_of_handle(handle)
+        work = self.work[seat]
         await self._consume(
             handle.session.project_id,
             topic,
@@ -584,15 +624,17 @@ class DrivenRuntime[H: Handle]:
             False,
             False,
         )
-        await self._activity(handle.session.project_id, topic, work, False)
+        await self._activity(handle.session.project_id, seat, work, False)
         self.closed.add(work)
-        self.live.pop(topic, None)
+        self.live.pop(seat, None)
 
     async def ensure(self, session, opening, *, work_id=None) -> H:
-        previous = self.live.get(session.topic_id)
+        seat = self._seat_of(session)
+        previous = self.live.get(seat)
         if previous and opening.agent_handle != previous.agent_handle:
-            # A different teammate is taking the room; the conversation that
-            # belonged to the last one does not carry over to them.
+            # A different teammate is taking this seat over; the conversation
+            # that belonged to the last one does not carry over to them. Other
+            # seats in the same room are not this call's business.
             await self.interrupt(session)
             await self.close(session)
         handle = await self.channel.ensure(session, opening)
@@ -625,8 +667,8 @@ class DrivenRuntime[H: Handle]:
             False,
             False,
         )
-        self.work[session.topic_id] = work_id
-        self._wake(session.topic_id)
+        self.work[self._seat_of(session)] = work_id
+        self._wake(self._seat_of(session))
         # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
         # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
         await self.reconcile_memory(session.topic_id)
@@ -645,23 +687,30 @@ class DrivenRuntime[H: Handle]:
                 await self.receipts(session.topic_id, message)
         finally:
             # A lost acknowledgement does not mean the session stopped working.
-            self._listen(session.topic_id)
+            self._listen(self._seat_of(session))
         return True
 
     async def deliver(
-        self, topic_id, text, images=None, *, expected_work_id=None
+        self, topic_id, text, images=None, *, expected_work_id=None, agent_handle=None
     ) -> bool:
-        """A person talking to a session that is already working."""
-        handle = self.live.get(topic_id)
-        work = self.work.get(topic_id)
-        if handle is None or work is None:
+        """A person talking to a session that is already working.
+
+        ``agent_handle`` names the seat when the caller knows whose turn this
+        belongs to; without it the room must have exactly one working seat,
+        or the expected work id must pick it out — a guess between two
+        working teammates would inject the words into the wrong conversation.
+        """
+        seat = self._deliver_seat(topic_id, expected_work_id, agent_handle)
+        if seat is None:
             return False
-        if expected_work_id is not None and work != expected_work_id:
+        handle = self.live.get(seat)
+        work = self.work.get(seat)
+        if handle is None or work is None:
             return False
         status = await self.channel.call(handle, "ping", {})
         if not self.working(status):
             return False
-        if self.live.get(topic_id) is not handle or self.work.get(topic_id) != work:
+        if self.live.get(seat) is not handle or self.work.get(seat) != work:
             return False
         await self.channel.call(
             handle,
@@ -677,20 +726,46 @@ class DrivenRuntime[H: Handle]:
             await self.receipts(topic_id, text)
         return True
 
-    def holds(self, topic_id) -> bool:
-        return topic_id in self.live
+    def _deliver_seat(self, topic_id, expected_work_id, agent_handle) -> Seat | None:
+        """Which seat a topic-addressed delivery means, or None when ambiguous."""
+        if agent_handle is not None:
+            return (topic_id, agent_handle)
+        working = [seat for seat in self.work if seat[0] == topic_id]
+        if expected_work_id is not None:
+            working = [seat for seat in working if self.work[seat] == expected_work_id]
+        return working[0] if len(working) == 1 else None
 
-    async def _detach(self, topic: uuid.UUID) -> None:
-        task = self.tasks.pop(topic, None)
+    def holds(self, topic_id, agent_handle=None) -> bool:
+        if agent_handle is not None:
+            return (topic_id, agent_handle) in self.live
+        return any(seat[0] == topic_id for seat in self.live)
+
+    def work_in_flight(self, topic_id, agent_handle=None) -> uuid.UUID | None:
+        """The work this runtime's live seat in the room is running, if one is.
+
+        The runtime-side companion of ``ComputePool.work_in_flight``: with the
+        agent named the answer is exact; without it only an unambiguous room
+        gets one.
+        """
+        seats = [
+            seat
+            for seat in self.work
+            if seat[0] == topic_id and (agent_handle is None or seat[1] == agent_handle)
+        ]
+        return self.work[seats[0]] if len(seats) == 1 else None
+
+    async def _detach(self, seat: Seat) -> None:
+        task = self.tasks.pop(seat, None)
         if task:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        subscription = self.subscriptions.pop(topic, None)
-        self.live.pop(topic, None)
-        self.work.pop(topic, None)
-        self.woken.pop(topic, None)
-        self.clocks.pop(topic, None)
-        self.unreachable.pop(topic, None)
+        subscription = self.subscriptions.pop(seat, None)
+        self.live.pop(seat, None)
+        self.work.pop(seat, None)
+        self.woken.pop(seat, None)
+        self.clocks.pop(seat, None)
+        self.unreachable.pop(seat, None)
+        self.told_waiting.pop(seat, None)
         if subscription is not None:
             await subscription.release()
 
@@ -703,8 +778,8 @@ class DrivenRuntime[H: Handle]:
         """
         subscriptions = dict(self.subscriptions)
         self.subscriptions.clear()
-        for topic in subscriptions:
-            self._wake(topic)
+        for seat in subscriptions:
+            self._wake(seat)
         polls = [task for task in self.tasks.values() if not task.done()]
         if polls:
             _, stuck = await asyncio.wait(polls, timeout=5)
@@ -715,11 +790,13 @@ class DrivenRuntime[H: Handle]:
         for held in (self.tasks, self.live, self.work, self.woken, self.clocks):
             held.clear()
         self.unreachable.clear()
+        self.told_waiting.clear()
 
     async def close(self, session: SessionRef) -> None:
-        if subscription := self.subscriptions.get(session.topic_id):
+        seat = self._seat_of(session)
+        if subscription := self.subscriptions.get(seat):
             await subscription.drain()
-        await self._detach(session.topic_id)
+        await self._detach(seat)
 
     async def recover(self, device_id=None) -> list[SessionRef]:
         handles = await self.channel.discover(device_id)
@@ -739,18 +816,19 @@ class DrivenRuntime[H: Handle]:
                 continue
             await self._attach(handle)
             if self.working(status) and status.get("work_id"):
-                topic = handle.session.topic_id
-                self.work[topic] = uuid.UUID(status["work_id"])
+                seat = self._seat_of_handle(handle)
+                self.work[seat] = uuid.UUID(status["work_id"])
                 now = time.monotonic()
-                self.clocks[topic] = Clock(opened=now, progressed=now)
+                self.clocks[seat] = Clock(opened=now, progressed=now)
             recovered.append(handle.session)
         # Chat restores room bookkeeping before replay starts consumption.
         return recovered
 
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
-        if subscription := self.subscriptions.get(session.topic_id):
+        seat = self._seat_of(session)
+        if subscription := self.subscriptions.get(seat):
             await subscription.drain()
-            self._listen(session.topic_id)
+            self._listen(seat)
 
     async def run_turn(
         self,
