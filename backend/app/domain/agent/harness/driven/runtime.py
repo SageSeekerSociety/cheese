@@ -434,7 +434,7 @@ class DrivenRuntime[H: Handle]:
             self.work.pop(seat, None)
             self.clocks.pop(seat, None)
         if self.activity and work not in self.queues:
-            await self.activity(project, seat[0], work, active)
+            await self.activity(project, seat[0], work, active, agent_handle=seat[1])
 
     async def _attach(self, handle: H) -> None:
         seat = self._seat_of_handle(handle)

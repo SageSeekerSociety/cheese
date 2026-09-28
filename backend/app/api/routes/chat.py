@@ -159,6 +159,7 @@ async def chat(
                     "type": "turn_active",
                     "turn_ids": active_turn_ids,
                     "since": broker.active_turns_since(channel),
+                    "agents": broker.active_turn_agents(channel),
                 }
             )
 

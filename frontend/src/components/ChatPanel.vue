@@ -123,6 +123,9 @@ const emit = defineEmits<{
   // 走：干出来的东西是干活的**证据**，不是干活的**开始**，而右边那格「现场」得
   // 在开工那一刻就在那儿——它就是用来看它在干什么的。
   (e: 'working', working: boolean): void
+  // 正在干活的队友们的名字：一间房几个座位并行在跑就几个名字。帧不带座位的
+  // （老后端）这项是空的，界面退回 agentName 的单数说法。
+  (e: 'working-agents', names: string[]): void
   // 会话状态（任务、模型）动了：socket 上的这一帧转给现场那格的会话详情。
   (e: 'agent-control', state: AgentControlState): void
   // 现场那格的时间线上多了一行，或者已有的一行变了（挂了、重试次数涨了）。socket
@@ -219,6 +222,35 @@ function turnEnded(id: string) {
   delete next[id]
   turnStarts.value = next
 }
+
+// 每个在跑的轮次在哪个座位上（块署名的那个 handle，从 turn_started /
+// turn_active 帧学来）。一间房几个队友并行在干时，「谁在干活」靠它报名字；
+// 帧不带 agent 的（老后端）这项空着，上面报 working-agents 就是空名单。
+const turnAgents = ref<Record<string, string>>({})
+function turnAgentNoted(id: string, agent?: string) {
+  if (!agent || turnAgents.value[id] === agent) return
+  turnAgents.value = { ...turnAgents.value, [id]: agent }
+}
+function turnAgentForgot(id: string) {
+  if (!(id in turnAgents.value)) return
+  const next = { ...turnAgents.value }
+  delete next[id]
+  turnAgents.value = next
+}
+
+// 正在干活的队友们的名字，按房间名册翻；座位翻不到名字的（老房间的默认座位
+// 不在名册上）退回这个房间 AI 的名字。同名去重：同一个队友并行两轮只报一次。
+const workingAgentNames = computed(() => {
+  const names: string[] = []
+  for (const id of activeTurnIds.value) {
+    const handle = turnAgents.value[id]
+    if (!handle) continue
+    const name = seatByHandle.value.get(handle)?.name ?? agentName.value
+    if (!names.includes(name)) names.push(name)
+  }
+  return names
+})
+watch(workingAgentNames, (v) => emit('working-agents', v))
 // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
 function toSite(b: Block) {
   if (b.kind === 'event' && !b.task_id) emit('site-block', b)
@@ -645,6 +677,7 @@ function handleFrame(frame: WsServerFrame) {
       for (const id of frame.turn_ids ?? []) {
         const since = frame.since?.[id]
         turnBegan(id, typeof since === 'number' ? since * 1000 : Date.now())
+        turnAgentNoted(id, frame.agents?.[id])
       }
       awaitingReply.value = true
       break
@@ -653,6 +686,7 @@ function handleFrame(frame: WsServerFrame) {
       next.add(frame.turn_id)
       activeTurnIds.value = next
       turnBegan(frame.turn_id)
+      turnAgentNoted(frame.turn_id, frame.agent)
       awaitingReply.value = true
       break
     }
@@ -661,6 +695,7 @@ function handleFrame(frame: WsServerFrame) {
       next.delete(frame.turn_id)
       activeTurnIds.value = next
       turnEnded(frame.turn_id)
+      turnAgentForgot(frame.turn_id)
       awaitingReply.value = next.size > 0
       emit('turn-done')
       autoScroll()
@@ -696,6 +731,7 @@ async function loadTopic(topic: Topic, entering = false) {
   awaitingReply.value = false
   activeTurnIds.value = new Set()
   turnStarts.value = {}
+  turnAgents.value = {}
   reactionPickerFor.value = null
   // 悬停条是绝对定位的：收起只是透明，它仍停在上一个话题那一行的 translateY 上，
   // 仍算进这一栏的可滚动高度。从一个翻到很深的长话题切到短话题，它把滚动区撑高，
