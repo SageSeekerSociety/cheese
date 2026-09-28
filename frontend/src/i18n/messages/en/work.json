@@ -373,5 +373,42 @@
   "external": {
     "tag": "External",
     "tagHint": "Not on the team; takes part in this project only"
+  },
+  "mcp": {
+    "title": "MCP servers",
+    "hint": "The upstream service sees the account that authorized it. Authorize with a bot or service account.",
+    "empty": "No remote MCP servers",
+    "loadFailed": "Failed to load MCP servers",
+    "connectFailed": "Failed to connect",
+    "connectFailedWith": "Failed to connect {name}: {reason}",
+    "connectedNotice": "{name} connected",
+    "disconnectFailed": "Failed to disconnect",
+    "saveFailed": "Failed to save",
+    "listSeparator": ", ",
+    "valueSet": "Set",
+    "valueSetBy": "Set by {name}, {when}",
+    "problem": {
+      "invalid": "Cannot read .mcp.json: invalid format",
+      "unreadable": "Cannot read .mcp.json from the repository. Try again later."
+    },
+    "status": {
+      "connected": "Connected",
+      "connectedBy": "Connected (authorized by {name}, {when})",
+      "ready": "Ready",
+      "needsReconnect": "Needs reconnecting",
+      "missingValues": "Needs {names}",
+      "disconnected": "Not connected"
+    },
+    "action": {
+      "connect": "Connect",
+      "reconnect": "Reconnect",
+      "disconnect": "Disconnect",
+      "save": "Save",
+      "clear": "Clear"
+    },
+    "room": {
+      "heading": "Project MCP servers",
+      "setUp": "Needs connecting in project settings"
+    }
   }
 }

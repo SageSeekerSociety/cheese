@@ -53,6 +53,10 @@ describe('项目设置', () => {
     expect(groupOf('>连接 GitHub 账号<')).toBe('仓库')
   })
 
+  it('MCP 服务器跟着仓库走：清单读自仓库里的 .mcp.json', () => {
+    expect(groupOf('<ProjectMcpSettings')).toBe('仓库')
+  })
+
   it('页头不再把人指去别的页面改角色设定', () => {
     expect(view).not.toContain('请到')
   })

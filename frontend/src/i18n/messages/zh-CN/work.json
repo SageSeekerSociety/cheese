@@ -373,5 +373,42 @@
   "external": {
     "tag": "外部",
     "tagHint": "团队以外的成员，只参与这个项目"
+  },
+  "mcp": {
+    "title": "MCP 服务器",
+    "hint": "上游服务看到的是授权人的账号，建议用机器人或服务账号授权。",
+    "empty": "暂无远程 MCP 服务器",
+    "loadFailed": "读取 MCP 服务器失败",
+    "connectFailed": "连接失败",
+    "connectFailedWith": "连接 {name} 失败：{reason}",
+    "connectedNotice": "{name} 已连接",
+    "disconnectFailed": "断开失败",
+    "saveFailed": "保存失败",
+    "listSeparator": "、",
+    "valueSet": "已填写",
+    "valueSetBy": "由 {name} 设置，{when}",
+    "problem": {
+      "invalid": "无法读取 .mcp.json：格式不正确",
+      "unreadable": "无法读取仓库里的 .mcp.json，稍后重试"
+    },
+    "status": {
+      "connected": "已连接",
+      "connectedBy": "已连接（由 {name} 授权，{when}）",
+      "ready": "已就绪",
+      "needsReconnect": "需要重新连接",
+      "missingValues": "需要填写 {names}",
+      "disconnected": "未连接"
+    },
+    "action": {
+      "connect": "连接",
+      "reconnect": "重新连接",
+      "disconnect": "断开",
+      "save": "保存",
+      "clear": "清除"
+    },
+    "room": {
+      "heading": "项目 MCP 服务器",
+      "setUp": "需要在项目设置里连接"
+    }
   }
 }
