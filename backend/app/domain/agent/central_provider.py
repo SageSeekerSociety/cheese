@@ -18,7 +18,6 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent.harness.claude_code.runner import LAUNCH as RUNNER_LAUNCH
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.remote_mcp import service as remote_mcp
@@ -277,14 +276,10 @@ class CentralChannel(DeviceChannel):
                 "resource_id": str(resource),
                 "session_id": str(session_id),
                 "lease_path": f"/topics/{topic_id}/sessions/{session_id}/work-lease",
-                # The machine's setup, which is part of what the session was
-                # started with (`_launch_identity`). The name of this start of
-                # the session's runner is not: it is new on every turn, and in
-                # here it made every idle turn relaunch the session.
                 "setup_env": {
                     key: value
                     for key, value in values.items()
-                    if key.startswith(("CHEESE_", "GIT_")) and key != RUNNER_LAUNCH
+                    if key.startswith(("CHEESE_", "GIT_"))
                 },
                 # A session started before its lease was ready sees the project
                 # at a placeholder. One started on the machine sees it where the
