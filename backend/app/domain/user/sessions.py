@@ -10,10 +10,19 @@ valid for the rest of its lifetime after its session is revoked.
 
 A session ends on sign-out, on revocation from the device list, when the
 password is changed or reset, when it has gone unused past the idle timeout,
-when its absolute lifetime runs out, and when a refresh token that was
-rotated away is presented again outside the grace window. The last one is how
-RFC 9700 §4.14.2 has a public client detect a stolen refresh token: the thief
-and the owner both hold it, and whichever uses it second finds it spent.
+when its absolute lifetime runs out, and when two parties are seen holding it.
+
+That last one is RFC 9700 §4.14.2's detection of a stolen refresh token, and
+it has to be told apart from a browser that simply never heard the answer to
+its last refresh. The server rotates and commits; the answer is lost to a
+client-side timeout, a dropped connection or a proxy error; the browser still
+holds the token that was rotated away and presents it at its next refresh.
+Treating that as theft ended about a quarter of all sign-ins on a slow day.
+So the rotated-away token, presented after the grace window, gets a fresh
+successor, and the one it never received is kept as ``abandoned_hash``. The
+successor cannot have been used, or ``previous_hash`` would have moved past
+it. If the abandoned token turns up later, somebody did receive it, the chain
+has two holders, and the session ends.
 """
 
 import hashlib
@@ -114,7 +123,10 @@ class SessionService:
         same token exactly one rotates it. The other finds the token in
         ``previous_hash``: moments after the rotation that is a second tab
         refreshing at the same time, and it is answered without a new token.
-        Later than that, the token has been copied, and the session ends.
+        Later than that, the browser never received the successor, and it is
+        given another one (see the module docstring). A token found in
+        ``abandoned_hash`` was received after all, by someone, and the
+        session ends.
         """
         presented = _digest(token)
         now = _now()
@@ -143,13 +155,43 @@ class SessionService:
         earlier = await self._db.scalar(
             select(UserSession).where(UserSession.previous_hash == presented)
         )
-        if earlier is None or not _is_live(earlier, now):
+        if earlier is not None:
+            if not _is_live(earlier, now):
+                return None
+            grace = timedelta(seconds=settings.refresh_reuse_grace_seconds)
+            if earlier.rotated_at is not None and now - earlier.rotated_at <= grace:
+                return Refreshed(earlier.id, earlier.user_id, earlier.expires_at, None)
+            # Conditional on the successor this request saw, so of two
+            # browsers retrying at once exactly one replaces it; the other
+            # lands inside the grace window of the one that did.
+            reissued = (
+                await self._db.execute(
+                    update(UserSession)
+                    .where(
+                        UserSession.id == earlier.id,
+                        UserSession.previous_hash == presented,
+                        UserSession.current_hash == earlier.current_hash,
+                    )
+                    .values(
+                        abandoned_hash=UserSession.current_hash,
+                        current_hash=_digest(successor),
+                        rotated_at=now,
+                        last_used_at=now,
+                    )
+                    .returning(UserSession.id)
+                )
+            ).one_or_none()
+            if reissued is None:
+                return Refreshed(earlier.id, earlier.user_id, earlier.expires_at, None)
+            return Refreshed(earlier.id, earlier.user_id, earlier.expires_at, successor)
+
+        copied = await self._db.scalar(
+            select(UserSession).where(UserSession.abandoned_hash == presented)
+        )
+        if copied is None or not _is_live(copied, now):
             return None
-        grace = timedelta(seconds=settings.refresh_reuse_grace_seconds)
-        if earlier.rotated_at is not None and now - earlier.rotated_at <= grace:
-            return Refreshed(earlier.id, earlier.user_id, earlier.expires_at, None)
-        earlier.revoked_at = now
-        earlier.revoked_reason = RevokeReason.REUSED
+        copied.revoked_at = now
+        copied.revoked_reason = RevokeReason.REUSED
         # Committed here: the caller answers this with a 401, and the
         # request's transaction is rolled back on an error.
         await self._db.commit()

@@ -201,9 +201,9 @@ class Settings(BaseSettings):
     # A sign-in nobody has refreshed for this long is over, however much of
     # its lifetime remains.
     refresh_idle_timeout_seconds: int = 60 * 60 * 24 * 14
-    # How long a refresh token that was just rotated away still answers.
-    # Two tabs refreshing at the same moment both present the old token; the
-    # slower one must not read as a stolen copy and sign the user out.
+    # How long a refresh token that was just rotated away is answered as a
+    # second tab refreshing at the same moment: with an access token and no new
+    # cookie, because the first tab's answer carries the successor.
     refresh_reuse_grace_seconds: int = 30
 
     # --- Agent (Claude Agent SDK) ---
