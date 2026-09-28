@@ -47,7 +47,7 @@ import { SudoCancelledError, withSudo } from '../utils/sudo'
 import { t } from '@/i18n'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
-// Project defaults and favorites never change an already running room.
+// The project default never moves an agent that has already started working.
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const route = useRoute()
@@ -418,7 +418,7 @@ watch(
       <section class="page-section">
         <div class="page-section-head">
           <v-icon size="14" class="c-faint">mdi-server-outline</v-icon>
-          <span class="page-section-title">默认工作电脑与常用配置</span>
+          <span class="page-section-title">默认工作电脑</span>
         </div>
         <div class="page-section-body">
           <ProjectComputeSettings :project-id="projectId" />

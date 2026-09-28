@@ -76,6 +76,19 @@
     "saveFailed": "Could not choose the work computer",
     "retry": "Retry"
   },
+  "projectMachine": {
+    "defaultLabel": "New agents use",
+    "change": "Change",
+    "collapse": "Collapse",
+    "hint": "Only affects agents that have not started; agents already working keep their own computer",
+    "distribution": "Where agents are now",
+    "onCloud": "Cloud · {count} agents",
+    "onDevice": "{name} · {count} agents",
+    "noneStarted": "No agents have started",
+    "managedBy": "Project managers can change the default",
+    "loadFailed": "Could not load work computer settings",
+    "saveFailed": "Could not save work computer settings"
+  },
   "teamLink": {
     "title": "Team link",
     "description": "Anyone with the link can sign in, find this team and join it. The link does not expire; reset it when you need to.",

@@ -31,7 +31,6 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
   return {
     choice: cloud,
     project_default: cloud,
-    favorites: [],
     current: 'cloud',
     device_id: null,
     devices: [
@@ -126,7 +125,7 @@ afterEach(() => cleanup())
 
 describe('room work computer choice', () => {
   it('keeps the default first without listing every team device', async () => {
-    mountPicker(profile({ project_default: lab, choice: cloud, favorites: [lab] }))
+    mountPicker(profile({ project_default: lab, choice: cloud }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     const list = screen.getAllByRole('button').filter((b) => /自有设备|平台标准配置/.test(b.textContent ?? ''))
     expect(list).toHaveLength(2)
@@ -137,7 +136,7 @@ describe('room work computer choice', () => {
   })
   it('sets what AI teammates that have not started will use', async () => {
     setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
-    const { emitted } = mountPicker(profile({ favorites: [lab] }))
+    const { emitted } = mountPicker(profile({ project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     expect(screen.getByText('只影响还没开工的 AI 队友；已经在干活的继续用自己那台')).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
@@ -149,7 +148,7 @@ describe('room work computer choice', () => {
     const working: ComputeChoice = { ...lab, name: '办公室 Mac mini' }
     mountPicker(
       profile({
-        favorites: [lab],
+        project_default: lab,
         sessions: [
           {
             id: 's1',
@@ -179,7 +178,7 @@ describe('room work computer choice', () => {
       choice: cloud,
       proposal: { approver: 'andyl', tier: 'byo', content: '这一步等 @andyl 点头。' },
     })
-    const { emitted } = mountPicker(profile({ favorites: [lab] }))
+    const { emitted } = mountPicker(profile({ project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
     expect((await screen.findByRole('status')).textContent).toContain('这一步等 @andyl 点头。')

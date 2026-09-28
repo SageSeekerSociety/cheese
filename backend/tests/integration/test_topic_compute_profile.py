@@ -143,7 +143,6 @@ def test_select_persists_only_to_topic(client, monkeypatch):
     # verified human caller (it provisions a billed VM — see the authorization test
     # below). This test covers room-local profile selection.
     monkeypatch.setattr("app.api.routes.topics.project_device_online", _online)
-    monkeypatch.setattr("app.api.routes.projects.project_device_online", _online)
 
     # An undeployed pool can't be selected.
     bad = client.put(f"/topics/{tid}/compute-profile", json={"profile": "gpu"})
@@ -161,9 +160,9 @@ def test_select_persists_only_to_topic(client, monkeypatch):
     # Persisted on the topic...
     tbody = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert tbody["choice"]["profile"] == "device"
-    # The deployment's existing device default is unchanged.
-    pbody = client.get(f"/projects/{pid}/compute-profiles").json()["data"]
-    assert pbody["current"] == "device"
+    # The project's default is unchanged.
+    pbody = client.get(f"/projects/{pid}/compute-configs").json()["data"]
+    assert pbody["default"]["profile"] == "device"
 
 
 def test_named_device_resolves_instead_of_first_healthy_device(client, monkeypatch):

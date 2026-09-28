@@ -227,7 +227,7 @@ ExecutionProfile(project):
 
 # Compute ownership, project defaults, and room affinity
 
-Teams own permissions and quotas. Projects store explicit defaults and favorites. Rooms inherit the project default until they select or start an environment; a room choice never changes project settings. These rules supersede the earlier selection model above.
+Teams own permissions and quotas. Projects store the default new agents start on. Rooms inherit the project default until they select or start an environment; a room choice never changes project settings. These rules supersede the earlier selection model above.
 
 > 前提：产品形态 = **一套代码的 N 个隔离部署**（每机构一个 + 消费版），deployment = 机构/租户。v3 "三级可见"的**机构级 = 部署本身**，不再是 in-app 多空间。归属层（团队/工作区一等公民、项目归属收敛到团队）由 **Space refactor**（独立 issue #47）承载；本节算力模型踩在它上面，但**下面的 §affinity 冻结不依赖它，可独立落地**。
 
@@ -242,10 +242,10 @@ Teams own permissions and quotas. Projects store explicit defaults and favorites
 | 层 | 管什么 | 载体 |
 |---|---|---|
 | Team | Resource permissions, quotas, shared devices | Team compute page |
-| Project | Explicit default and optional favorites | `Project.settings.compute_configs`, first in project settings |
+| Project | The default new agents start on, and where its agents are now | `Project.settings.compute_configs`, first in project settings |
 | Room | Inherits project default; a temporary choice affects only this room | `Topic.compute_config` and the pinned device binding |
 
-New projects use standard cloud when provisioning is available. A project may instead default to a shared device. The room picker lists the actual default first with a badge, followed by favorites; other resources stay collapsed. An agent session that has started keeps its machine until someone changes that agent's work computer.
+New projects use standard cloud when provisioning is available. A project may instead default to a shared device. The room picker lists the actual default first with a badge, followed by the room's current choice; other resources stay collapsed. An agent session that has started keeps its machine until someone changes that agent's work computer.
 
 ## §affinity：实例化冻结（数据正确性红线，独立可落地）
 

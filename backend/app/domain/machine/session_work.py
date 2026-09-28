@@ -117,6 +117,48 @@ async def session_machines(db, topic) -> list[dict]:
     return out
 
 
+async def project_distribution(db, project_id) -> dict:
+    """Where the project's agents that have started work are, right now.
+
+    Counted per agent session in the project's open rooms: how many are on
+    cloud, and how many on each self-hosted device, with whether an agent there
+    can see the whole machine. A session that has not started working has no
+    machine and is not counted: the project default decides where it goes.
+    """
+    from app.domain.topic.models import Topic, TopicStatus
+
+    rows = await db.scalars(
+        select(AgentSession)
+        .join(Topic, Topic.id == AgentSession.topic_id)
+        .where(Topic.project_id == project_id, Topic.status != TopicStatus.archived)
+    )
+    cloud = 0
+    on_devices: dict[str | None, dict] = {}
+    for row in rows:
+        choice = (row.execution_request or {}).get("choice")
+        if not choice:
+            continue
+        if choice.get("profile") == "cloud":
+            cloud += 1
+            continue
+        device_id = (row.work_lease or {}).get("device_id") or choice.get("device_id")
+        entry = on_devices.setdefault(
+            device_id, {"device_id": device_id, "name": choice["name"], "agents": 0}
+        )
+        entry["agents"] += 1
+    devices = sql_device_service(db)
+    listed = []
+    for entry in on_devices.values():
+        if entry["device_id"] is not None:
+            device = await devices.get_device(entry["device_id"])
+            if device is not None:
+                entry["name"] = device.name
+        visibility = await _visibility_of(devices, entry["device_id"])
+        listed.append({**entry, "machine_access": visibility is Visibility.host})
+    listed.sort(key=lambda entry: (-entry["agents"], entry["name"]))
+    return {"cloud": cloud, "devices": listed}
+
+
 async def room_machine_visibility(
     db, topic, project_settings, sessions: list[dict]
 ) -> Visibility | None:

@@ -52,7 +52,6 @@ function profile(machineAccess: boolean): TopicComputeProfile {
   return {
     choice: cloud,
     project_default: cloud,
-    favorites: [],
     current: 'cloud',
     device_id: null,
     devices: [],
