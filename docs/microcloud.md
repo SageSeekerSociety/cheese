@@ -18,8 +18,8 @@ its built-in AI channels) is in its README and is not repeated here.
 - `aiMode: none`. The machine only executes tools; the models its sessions use come from
   the session host, so it needs no AI channel of MicroCloud's. Without the field MicroCloud
   would wire its default channel onto the machine;
-- `sshPubkey`: three keys on separate lines. A one-shot bootstrap key the platform uses
-  once to enrol the machine (erased at enrolment), the requesting human's key if any, and
+- `sshPubkey`: two keys on separate lines. A one-shot bootstrap key the platform uses
+  once to enrol the machine (erased at enrolment), and
   `MICROCLOUD_OPERATOR_SSH_PUBKEY` so an operator can still log in afterwards. On dev the
   operator key is the dev box's own, so `ssh cheese@<machine ip>` from the dev box works.
 

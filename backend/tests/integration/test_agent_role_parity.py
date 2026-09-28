@@ -1,5 +1,7 @@
 """Credentials identify participants; membership and roles grant permission."""
 
+import uuid
+
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
@@ -362,14 +364,14 @@ def test_cloud_management_requires_team_standing_even_with_an_agent_credential(
 ):
     project, origin, _ = _rooms(client)
     auth = _agent(client, project, origin)
-    endpoint = f"/projects/{project['id']}/machines"
+    endpoint = f"/projects/{project['id']}/machines/{uuid.uuid4()}"
     handle = _seated_agent(client, origin)
     join_project_team(client, project["id"], handle)
-    assert client.post(endpoint, json={}, headers=auth).status_code == 403
+    assert client.delete(endpoint, headers=auth).status_code == 403
     _promote(client, project["id"], handle)
     # No provider is configured in this harness. Reaching that check proves the
-    # management grant passed without making an external provisioning request.
-    assert client.post(endpoint, json={}, headers=auth).status_code == 422
+    # management grant passed without making an external provider request.
+    assert client.delete(endpoint, headers=auth).status_code == 422
 
 
 def test_room_only_credential_cannot_use_project_management_roles(client):
@@ -381,7 +383,6 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
     for path, body in (
         ("members", {"user_handle": "bob"}),
         ("agent-credential", {}),
-        ("machines", {}),
     ):
         assert (
             client.post(
@@ -389,6 +390,8 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
             ).status_code
             == 403
         )
+    machine = f"/projects/{project['id']}/machines/{uuid.uuid4()}"
+    assert client.delete(machine, headers=auth).status_code == 403
 
 
 def test_people_and_agents_can_ask_and_record_decisions_with_their_own_identity(client):

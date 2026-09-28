@@ -1031,12 +1031,6 @@ export interface ProjectMachine {
   created_at: string
 }
 
-export interface ProjectMachineCreate {
-  cores: number
-  memoryMb: number
-  diskGb: number
-}
-
 // #282 §四 / #358 · whether an agent in this room can see a whole enrolled machine.
 // `effective` is the widest visibility any agent session here has on the enrolled
 // machine it works on ('host' | 'isolated' | null when none is on one); `machine_access`
