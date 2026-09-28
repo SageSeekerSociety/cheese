@@ -495,6 +495,31 @@ class ActorResolver:
             is_private=bool(topic and topic.is_private),
         )
 
+    async def topic_admits_handle(
+        self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID, handle: str
+    ) -> bool:
+        """Would this room admit ``handle``, whoever that is?
+
+        The caller is not always the person the request is about: a card names a
+        reviewer in its body, and whether the room will later let that reviewer
+        accept the card is exactly this question — asked at filing time so the
+        two ends cannot drift (`app/domain/review/services.py` lays a card only
+        to somebody this answers yes about).
+
+        The rule is not restated here. The handle is swapped on the actor and the
+        door's own method answers, which keeps ONE read of ``is_private`` in this
+        file (``tests/unit/test_is_private_read_points.py`` is a ratchet: a
+        second read point is a second declaration of the same fact, and two
+        declarations drift). What is taken as given is the credential half only —
+        a handle in a body presents nothing, and this asks whether the room would
+        admit them if it did.
+        """
+        if not actor.authenticated:
+            return False
+        return await self.can_access_topic(
+            replace(actor, handle=handle), project_id=project_id, topic_id=topic_id
+        )
+
     async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
         """Require a verified participant with project membership.
 
