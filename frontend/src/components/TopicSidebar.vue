@@ -694,6 +694,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
           <div class="t-body c-muted pa-4">先选择一个项目</div>
         </template>
         <template v-else>
+          <!-- 列表顶上由外面填的一行（手机上是看板的摘要，见 ProjectSidebar）。 -->
+          <slot name="top" />
           <!-- 置顶行 (C1): 全局房间 + 总览 + 日历。和话题行同一种语法——同图标
                槽、同缩进基准、同选中态、同未读角标，所以「点它会发生什么」不用
                另学一遍。 -->

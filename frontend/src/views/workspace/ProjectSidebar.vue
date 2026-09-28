@@ -6,6 +6,7 @@ import { useDisplay } from 'vuetify'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 import { useWorkspaceStore } from '@/stores/workspace'
+import BoardSummary from '@/views/workspace/BoardSummary.vue'
 
 // 项目侧栏, rendered through the app-wide `sidebar` named view so it survives
 // every navigation inside the project (ProjectShell's doc comment says why).
@@ -99,5 +100,11 @@ async function onArchiveTopic(topicId: string) {
     @unarchive-topic="store.unarchive"
     @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     @create-topic="onCreateTopic"
-  />
+  >
+    <!-- 手机上进项目落在话题列表上而不是看板上，所以看板的一句话摘要放在列表最顶上，
+         点下去是看板。桌面上项目名那一行就是看板的入口。 -->
+    <template v-if="page" #top>
+      <BoardSummary :project-id="projectId" />
+    </template>
+  </TopicSidebar>
 </template>
