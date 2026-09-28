@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { replyStalled, stallReasonText } from './replyWait'
+import { replyStalled, stallReasonText, waitedFor } from './replyWait'
 
 describe('replyStalled', () => {
   const now = Date.parse('2026-09-27T08:00:00Z')
@@ -30,10 +30,35 @@ describe('replyStalled', () => {
 })
 
 describe('stallReasonText', () => {
+  const now = Date.parse('2026-09-28T16:00:00Z')
+  const hoursAgo = (h: number) => new Date(now - h * 3_600_000).toISOString()
+
+  it('写出是哪个 PR、已经等了多久', () => {
+    const text = stallReasonText({ reason: 'check', since: hoursAgo(4), pr: 1950 }, '芝士', now)
+    expect(text).toContain('PR #1950')
+    expect(text).toContain('4 小时')
+  })
+
   it('不同原因给不同的说法', () => {
-    const texts = ['device_waiting', 'machine_provisioning', 'sandbox_rebuilt', 'check', 'mention'].map((r) =>
-      stallReasonText(r, '芝士')
-    )
+    const texts = [
+      'device_waiting',
+      'machine_provisioning',
+      'sandbox_rebuilt',
+      'check',
+      'conflict',
+      'rejected',
+      'gate',
+      'mention',
+    ].map((reason) => stallReasonText({ reason, since: hoursAgo(1) }, '芝士', now))
     expect(new Set(texts).size).toBe(texts.length)
+  })
+})
+
+describe('waitedFor', () => {
+  const now = Date.parse('2026-09-28T16:00:00Z')
+  it('分钟、小时、天三档', () => {
+    expect(waitedFor(new Date(now - 7 * 60_000).toISOString(), now)).toBe('7 分钟')
+    expect(waitedFor(new Date(now - 3 * 3_600_000).toISOString(), now)).toBe('3 小时')
+    expect(waitedFor(new Date(now - 50 * 3_600_000).toISOString(), now)).toBe('2 天')
   })
 })

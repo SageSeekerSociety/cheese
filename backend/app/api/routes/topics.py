@@ -71,7 +71,7 @@ from app.domain.block.models import (
     BlockKind,
     agent_notice,
 )
-from app.domain.block.repositories import BlockRepository, ReplyWait
+from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.addressing import Event as Addressee
 from app.domain.device.wiring import sql_device_service
@@ -301,17 +301,18 @@ async def _rooms_with_running_work(
     }
 
 
-def _stuck_on_checks(cards: list[AcceptCard]) -> set[uuid.UUID]:
+def _stuck_on_checks(cards: list[AcceptCard]) -> dict[uuid.UUID, StuckCard]:
     """房间（连同名下的活）里，最新那张卡停在「检查红 / 冲突，要 AI 修」上的。
 
     同一个地方（房间自己，或某一条活）只看最新那张：旧卡被新卡顶掉后可能还没结算，
     它的红不代表现在。判据和看板同一个（`presentation.card_needs_agent_fix`）。
     """
-    return {
-        room
-        for (room, _), card in _latest_per_place(cards).items()
-        if presentation.card_needs_agent_fix(card)
-    }
+    stuck: dict[uuid.UUID, StuckCard] = {}
+    for (room, _), card in _latest_per_place(cards).items():
+        kind = presentation.agent_fix_kind(card)
+        if kind is not None and room not in stuck:
+            stuck[room] = StuckCard(kind=kind, pr=card.pr_number)
+    return stuck
 
 
 def _topic_out(
@@ -351,12 +352,13 @@ def _topic_out(
     # 检查红了但 AI 此刻正在这个房间（或名下的活）里干活：它就是在处理，不算没人管。
     if (
         wait is not None
-        and wait.reason == "check"
+        and wait.source == "card"
         and (topic.id in running_ids or topic.id in (working_ids or set()))
     ):
         wait = None
     out.awaiting_reply_since = wait.since if wait else None
     out.reply_wait_reason = wait.reason if wait else None
+    out.reply_wait_pr = wait.pr if wait else None
     out.turn_failed_at = (failed or {}).get(topic.id)
     mine = (relevance or {}).get(topic.id, TopicRelevance())
     # 芝士停在一道只有我能回答的问题上，同样是「在等我」——而且比一张卡更急：卡是
@@ -2092,6 +2094,10 @@ async def ask_options(
         place.room_id
     )
     asked = None if waiting_for == "system" else waiting_for
+    if waiting_for is None:
+        # 没有开着的轮次区间可问（有的执行路径不记它）：芝士此刻在回应的，就是
+        # 最近点它名的那个人。不兜底的话 `asked` 为空，谁那里都不亮黄灯。
+        asked = await BlockRepository(db).last_summoner(place.room_id)
     blk = await BlockRepository(db).add(
         project_id=place.project_id,
         # The place id: `add` splits it, so a thread's question is asked in the
