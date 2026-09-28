@@ -4,15 +4,15 @@
 // 试、机器断了，从外面看都是「没动静」。这一行把它们分开说，而且只要一轮在跑就
 // 不留白。
 //
-// 能从时间线本身读出来的都从时间线读：一步刚开始（工具行）、平台说它在重试或在等
-// 机器（两种提示行，原地更新）。读不出来的那一种——请求发出去了、还没有任何东西回
+// 能从时间线本身读出来的都从时间线读：一步刚开始（工具行）、平台说它在重试、在压缩
+// 上下文或在等机器（三种提示行，原地更新）。读不出来的那一种——请求发出去了、还没有任何东西回
 // 来——就是「思考中」。
 
 import type { Block } from '../cx_types'
 
 import { eventFailed, eventVerb, isNarration } from './siteLog'
 
-export type SiteState = 'thinking' | 'acting' | 'retrying' | 'waiting' | 'stopped' | 'idle'
+export type SiteState = 'thinking' | 'acting' | 'retrying' | 'compacting' | 'waiting' | 'stopped' | 'idle'
 
 export interface SiteStatus {
   state: SiteState
@@ -83,6 +83,8 @@ export function siteStatus(blocks: Block[], working: boolean, turns: Record<stri
     const attempt = typeof last.meta?.attempt === 'number' ? last.meta.attempt : null
     return { state: 'retrying', attempt, ...base }
   }
+  // 在压缩上下文：几分钟不说话、也不回新消息，但它没挂。整理完那一行会改成已结束。
+  if (type === 'context_compact' && last.meta?.state !== 'over') return { state: 'compacting', ...base }
   if (type === 'device_waiting' && last.meta?.state !== 'over') return { state: 'waiting', ...base }
   // 一步开始了、还没听说它结束：它就是此刻在做的事。挂了的、交回了输出的，都已
   // 经结束了。

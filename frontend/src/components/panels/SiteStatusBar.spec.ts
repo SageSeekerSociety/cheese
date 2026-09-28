@@ -103,6 +103,13 @@ describe('现场状态条', () => {
     expect(bar([back], true, RUNNING)).toContain('思考中')
   })
 
+  it('会话在压缩上下文：整理上下文中；整理完就不再这么说', () => {
+    const running = row('1', '2026-09-25T10:04:00Z', { event_type: 'context_compact', state: 'running' })
+    expect(bar([running], true, RUNNING)).toContain('整理上下文中')
+    const over = row('1', '2026-09-25T10:04:00Z', { event_type: 'context_compact', state: 'over' })
+    expect(bar([over], true, RUNNING)).toContain('思考中')
+  })
+
   it('运行环境还在起来、这一轮还没开始：等待机器', () => {
     const startup = row('1', '2026-09-25T10:04:30Z', { event_type: 'cloud_startup' }, null)
     expect(bar([startup], true)).toContain('等待机器')

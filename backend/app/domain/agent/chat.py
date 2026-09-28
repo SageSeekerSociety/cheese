@@ -65,6 +65,7 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_API_RETRY,
+    EVENT_CONTEXT_COMPACT,
     EVENT_DEVICE_WAITING,
     EVENT_MCP_NOT_CONNECTED,
     EVENT_MEMORY_CHANGED,
@@ -82,6 +83,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.service import (
+    AgentCompacting,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -1255,6 +1257,34 @@ def _is_dm(topic: Topic) -> bool:
     return topic.is_private
 
 
+def _compaction_notice(event: AgentCompacting) -> tuple[str, dict]:
+    """The room's line for a compaction: while it runs, and once it is over.
+
+    One line per compaction, restated in place: it says why the session is
+    silent while it runs, and whether it came back once it has ended."""
+    if not event.done:
+        content = "对话太长，正在整理上下文；整理完会接着处理，期间不会回复"
+        severity, detail = SEVERITY_INFO, None
+    elif event.error:
+        content = "上下文整理没有完成"
+        severity, detail = SEVERITY_WARN, event.error
+    else:
+        content = "上下文已整理，接着处理"
+        severity, detail = SEVERITY_INFO, None
+    meta = {
+        **notice(
+            EVENT_CONTEXT_COMPACT,
+            severity=severity,
+            who=WHO_PLATFORM,
+            detail=detail,
+            detail_label="原因" if detail else None,
+        ),
+        "state": "over" if event.done else "running",
+        "at": datetime.now(UTC).isoformat(),
+    }
+    return content, meta
+
+
 class ChatService:
     def __init__(
         self,
@@ -1359,6 +1389,7 @@ class ChatService:
         # wait for its machine. One line per streak, restated as it moves on.
         self._retry_notes: dict[uuid.UUID, uuid.UUID] = {}
         self._waiting_notes: dict[uuid.UUID, uuid.UUID] = {}
+        self._compact_notes: dict[uuid.UUID, uuid.UUID] = {}
         # Which child agents the running sessions say are still doing something,
         # per room. Only the harness's own lifecycle events can answer this:
         # they fire in the session's process and carry the child's id, while
@@ -3347,6 +3378,15 @@ class ChatService:
             self._retry_notes.pop(turn_id, None)
         if isinstance(event, AgentResult):
             self._waiting_notes.pop(turn_id, None)
+            if turn_id in self._compact_notes:
+                # The turn ended with the compaction still open (it was stopped,
+                # or the session died): the line must not go on saying it is
+                # compacting.
+                await self._note_compaction(
+                    turn_id,
+                    AgentCompacting(done=True, error="会话在整理完成前结束了"),
+                    channel=channel,
+                )
         if isinstance(event, AgentSessionInfo):
             self._note_room_session(topic_id, event.session_id)
             if event.agent_handle:
@@ -3435,6 +3475,21 @@ class ChatService:
                 payload = await self._record_step_output(block_id, event.text)
                 if payload is not None:
                     frame = {"type": "block_updated", "block": without_output(payload)}
+        elif isinstance(event, AgentCompacting):
+            if event.done:
+                await self._note_compaction(turn_id, event, channel=channel)
+            else:
+                content, meta = _compaction_notice(event)
+                await self._keep_note(
+                    self._compact_notes,
+                    topic_id,
+                    turn_id,
+                    content,
+                    meta,
+                    author=state.acting_agent if state is not None else None,
+                    task_id=task_id,
+                    channel=channel,
+                )
         elif isinstance(event, AgentRetrying):
             await self._note_retry(
                 topic_id,
@@ -4451,6 +4506,16 @@ class ChatService:
             task_id=task_id,
             channel=channel,
         )
+
+    async def _note_compaction(
+        self, turn_id: uuid.UUID, event: AgentCompacting, *, channel: str
+    ) -> None:
+        """Restate the turn's compaction line as over, if it has one."""
+        block_id = self._compact_notes.pop(turn_id, None)
+        if block_id is None:
+            return
+        content, meta = _compaction_notice(event)
+        await self._restate_note(block_id, content, meta, channel)
 
     async def _note_reachability(
         self,
