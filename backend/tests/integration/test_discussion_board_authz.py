@@ -96,7 +96,9 @@ class TestDiscussionBoardBelongsToItsParent:
         self, board: dict, api_client: TestClient
     ):
         """先证明「空间对 B 不存在」，后面的 404 才有意义 —— 同一个答案。"""
-        resp = api_client.get(f"/spaces/{board['space_id']}", headers=_bearer(board["bob"]))
+        resp = api_client.get(
+            f"/spaces/{board['space_id']}", headers=_bearer(board["bob"])
+        )
         assert resp.status_code == 404, resp.text
 
     def test_a_stranger_cannot_list_the_boards_discussions(
@@ -147,9 +149,7 @@ class TestDiscussionBoardBelongsToItsParent:
         assert resp.status_code == 404, f"{resp.status_code} {resp.text}"
         assert "A 的回复" not in resp.text
 
-    def test_a_stranger_cannot_react(
-        self, board: dict, api_client: TestClient
-    ):
+    def test_a_stranger_cannot_react(self, board: dict, api_client: TestClient):
         resp = api_client.post(
             f"/discussions/{board['discussion_id']}/reactions/1",
             headers=_bearer(board["bob"]),
@@ -285,9 +285,7 @@ class TestDiscussionBoardBelongsToItsParent:
 
     # --- 没有父对象 / 不认识的父对象 -----------------------------------
 
-    def test_list_without_a_board_is_refused(
-        self, board: dict, api_client: TestClient
-    ):
+    def test_list_without_a_board_is_refused(self, board: dict, api_client: TestClient):
         """不给 modelType / modelId 从前等于「不过滤」= 全平台讨论总汇。"""
         resp = api_client.get("/discussions", headers=_bearer(board["alice"]))
         assert resp.status_code == 400, f"{resp.status_code} {resp.text}"
