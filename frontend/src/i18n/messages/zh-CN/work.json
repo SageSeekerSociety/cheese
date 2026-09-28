@@ -66,7 +66,7 @@
     "change": "更换",
     "edit": "改",
     "heading": "AI 队友开工时用",
-    "hint": "只影响还没开工的 AI 队友；已经在干活的继续用自己那台",
+    "hint": "只影响还没开工的 AI 队友；已经开工的继续用自己那台",
     "more": "其他配置与设备",
     "projectDefault": "项目默认",
     "wholeMachine": "能访问整台机器",
@@ -78,17 +78,18 @@
     "retry": "重试"
   },
   "deviceInUse": {
-    "line": "正在用：{project} · {room} · {agent}"
+    "line": "正在用：{project} · {room} · {agent}",
+    "attached": "仅供 {projects} 使用"
   },
   "bulkSwitch": {
     "open": "查看并更换…",
     "title": "「{name}」上的 agent",
     "selectAll": "全选",
     "meta": "{agent} · 最近活动 {time}",
-    "working": "正在干活",
+    "working": "正在运行任务",
     "empty": "暂无 agent",
     "hidden": "另有 {count} 个 agent 在你打不开的房间里",
-    "pushFirst": "原来那台上没推送的改动不会跟过去。换之前先把每个 agent 的改动推送到分支；推送失败的不换，并说明原因。正在干活的先不换",
+    "pushFirst": "原来那台上没推送的改动不会跟过去。换之前先把每个 agent 的改动推送到分支；推送失败的不换，并说明原因。正在运行任务的先不换",
     "done": "已更换",
     "loadFailed": "加载失败"
   },
@@ -96,7 +97,7 @@
     "defaultLabel": "新 agent 默认用",
     "change": "更换",
     "collapse": "收起",
-    "hint": "只影响还没开工的 agent；已经在干活的 agent 继续用自己那台",
+    "hint": "只影响还没开工的 agent；已经开工的 agent 继续用自己那台",
     "distribution": "现在的分布",
     "onCloud": "云端 · {agents}",
     "onDevice": "{name} · {agents}",
