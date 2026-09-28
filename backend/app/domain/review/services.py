@@ -2467,6 +2467,12 @@ class AcceptService:
             await self._note_pr_closed_unmerged(card=card, topic=topic)
             await self._session.flush()
             return
+        if card.note_code == notes.NoteCode.pr_closed_unmerged:
+            # Reopened. The closure note now describes a PR that is open again,
+            # and archiving / voiding read this code to decide whether a human
+            # still has a PR to close (`archive.pr_left_open`).
+            notes.clear(card)
+            await self._session.flush()
 
         if card.note_code == notes.NoteCode.waiting_merge_queue:
             if await client.merge_queue_entry(
@@ -3875,7 +3881,7 @@ class AcceptService:
             f"{VOIDED_PREFIX}：<@{decided_by}> 作废于状态「{was}」。"
             f"话题可以重新提交审阅。{reason}"
         )
-        if card.pr_number is not None and card.pr_merged_at is None:
+        if archive.pr_left_open(card):
             # 跟归档收敛同一条产品判断 (review/archive.py 的模块 docstring)：平台
             # 不拿别人的 token 去关别人名下的 PR。停止跟进 + 留痕。
             headline = (
