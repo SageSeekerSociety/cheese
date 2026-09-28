@@ -1,4 +1,9 @@
-"""整理跑完，它改过的每一条都记在运行记录里。"""
+"""整理跑完：记下它改了哪些，总览房间里只说 team 的那几条。
+
+总览全项目都看得见，而一次整理读的是 team 加每个人的 private。某个人 private 里的
+文件名、整理的人看着所有人的 private 写下的那段交代，都是那个人的内容，不能出现在
+总览里。
+"""
 
 import uuid
 from pathlib import Path
@@ -39,6 +44,15 @@ class DreamingScreen(StubChannel):
             _note(SECRET, "改过的个人偏好"), encoding="utf-8"
         )
         super().emit_turn(topic_id, prompt, SUMMARY)
+
+
+def test_the_overview_hears_about_team_files_and_nothing_private(
+    client, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _, said = client.portal.call(lambda: _dream_and_listen(client, tmp_path))
+    assert any("team/shared-rule.md" in text for text in said), said
+    assert not any(SECRET in text for text in said), said
 
 
 def test_the_run_record_lists_every_file_the_dream_changed(

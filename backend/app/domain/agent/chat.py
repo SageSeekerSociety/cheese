@@ -2801,9 +2801,9 @@ class ChatService:
             # 把删除放回去了（`held`），所以这里多半只是把它说出来；两处都判，
             # 是因为会话那一侧判不了「树是新的、基线还没有」的情况。写在
             # `apply_tree` 之前，是因为它一旦返回，那些删除已经落库了。
+            # 说进总览的那一句在整轮收尾时说（`run_memory_dream`），这里只记下来。
             logger.warning("memory dream refused a bulk delete: %s", refusal)
             self._dream_refusals[topic_id] = refusal
-            await self._say_memory_dream_refused(topic_id, project_id, refusal)
             return
         async with self._sessions() as session:
             change = await apply_tree(
@@ -3107,10 +3107,11 @@ class ChatService:
             project_id,
             len(changed),
         )
-        if status is MemoryDreamRunStatus.completed and changed:
-            await self._say_memory_dream(project_id, final_text, changed)
+        team_changed = [path for path in changed if path.startswith("team/")]
+        if status is MemoryDreamRunStatus.completed and team_changed:
+            await self._say_memory_dream(project_id, team_changed)
         if refusal:
-            await self._say_memory_dream_refused(project_id, run_id, refusal)
+            await self._say_memory_dream_refused(project_id, run_id)
         return {
             "status": status.value,
             "tokens": tokens,
@@ -3119,14 +3120,18 @@ class ChatService:
         }
 
     async def _say_memory_dream(
-        self, project_id: uuid.UUID, summary: str, changed: list[str]
+        self, project_id: uuid.UUID, changed: list[str]
     ) -> None:
-        """整理跑完了：在项目总览里说一句改了哪几条。
+        """整理跑完了：在项目总览里说一句 team 改了哪几条。
 
         谁的名都不点：一条记忆是 agent 写下的一份观察，没有人在等它（`who`
         是 platform，投递那一层因此发不出收件人）。改动的 diff 由对账那条路自己说
         （`_say_memory_change`，team 的进总览、某个人的 private 只进他的私聊），这
-        一条说的是**这一次整理本身**：哪些文件动了、整理的人怎么想。
+        一条说的是**这一次整理本身**动了 team 的哪些文件。
+
+        总览是全项目都看得见的房间，所以只说 team：某个人 private 里的文件名也是
+        他的内容。整理的人自己写的那段交代不进来——它是看着所有人的 private 写的，
+        留在 `memory_dream_runs.summary` 里。
         """
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
@@ -3135,26 +3140,28 @@ class ChatService:
             await announce(
                 session,
                 place_id=project.root_topic_id,
-                content=f"记忆整理：改了 {len(changed)} 条",
+                content=f"记忆整理：项目共享记忆改了 {len(changed)} 条",
                 meta=notice(
                     EVENT_MEMORY_CHANGED,
                     severity=SEVERITY_INFO,
                     who=WHO_PLATFORM,
-                    detail="\n".join(f"- `{path}`" for path in changed)
-                    + ("\n\n" + summary.strip() if summary.strip() else ""),
-                    detail_label="改了哪些、整理的人怎么说",
+                    detail="\n".join(f"- `{path}`" for path in changed),
+                    detail_label="改了哪些",
                 ),
             )
             await session.commit()
 
     async def _say_memory_dream_refused(
-        self, project_id: uuid.UUID, run_id: uuid.UUID, refusal: str
+        self, project_id: uuid.UUID, run_id: uuid.UUID
     ) -> None:
         """整理要删掉一大半，整轮作废：说进总览。
 
         这条必须说话，因为它说的是一次**什么都没发生**：记忆一条都没少，而人会
         以为整理跑过了。说给谁听也是这次的一部分——没人被点名（`who=platform`），
         要动手的是人：去看那棵树到底怎么了。
+
+        拦下的是哪个作用域、哪几条不在这里说：那可能是某个人 private 里的文件，而
+        总览全项目都看得见。它们记在 `memory_dream_runs` 这一条的 summary 里。
         """
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
@@ -3163,7 +3170,7 @@ class ChatService:
             await announce(
                 session,
                 place_id=project.root_topic_id,
-                content=f"记忆整理这一次没做：{refusal}",
+                content="记忆整理这一次没做：要删的条数超过了上限",
                 meta=notice(
                     EVENT_MEMORY_CHANGED,
                     severity=SEVERITY_WARN,
