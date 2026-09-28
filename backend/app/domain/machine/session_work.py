@@ -117,31 +117,48 @@ async def session_machines(db, topic) -> list[dict]:
     return out
 
 
+async def _placed_sessions(db, project_id):
+    """Each agent session in the project's open rooms that has a machine, with
+    its room and the device it is on (None for Cloud, and for a device the
+    platform picks when the session leases).
+
+    A session that has not started working has no machine and is left out:
+    the project default decides where it goes.
+    """
+    from app.domain.topic.models import Topic, TopicStatus
+
+    rows = await db.execute(
+        select(AgentSession, Topic)
+        .join(Topic, Topic.id == AgentSession.topic_id)
+        .where(Topic.project_id == project_id, Topic.status != TopicStatus.archived)
+    )
+    placed = []
+    for row, topic in rows:
+        choice = (row.execution_request or {}).get("choice")
+        if not choice:
+            continue
+        device_id = None
+        if choice.get("profile") != "cloud":
+            device_id = (row.work_lease or {}).get("device_id") or choice.get(
+                "device_id"
+            )
+        placed.append((row, topic, choice, device_id))
+    return placed
+
+
 async def project_distribution(db, project_id) -> dict:
     """Where the project's agents that have started work are, right now.
 
     Counted per agent session in the project's open rooms: how many are on
     cloud, and how many on each self-hosted device, with whether an agent there
-    can see the whole machine. A session that has not started working has no
-    machine and is not counted: the project default decides where it goes.
+    can see the whole machine.
     """
-    from app.domain.topic.models import Topic, TopicStatus
-
-    rows = await db.scalars(
-        select(AgentSession)
-        .join(Topic, Topic.id == AgentSession.topic_id)
-        .where(Topic.project_id == project_id, Topic.status != TopicStatus.archived)
-    )
     cloud = 0
     on_devices: dict[str | None, dict] = {}
-    for row in rows:
-        choice = (row.execution_request or {}).get("choice")
-        if not choice:
-            continue
+    for _row, _topic, choice, device_id in await _placed_sessions(db, project_id):
         if choice.get("profile") == "cloud":
             cloud += 1
             continue
-        device_id = (row.work_lease or {}).get("device_id") or choice.get("device_id")
         entry = on_devices.setdefault(
             device_id, {"device_id": device_id, "name": choice["name"], "agents": 0}
         )
@@ -157,6 +174,55 @@ async def project_distribution(db, project_id) -> dict:
         listed.append({**entry, "machine_access": visibility is Visibility.host})
     listed.sort(key=lambda entry: (-entry["agents"], entry["name"]))
     return {"cloud": cloud, "devices": listed}
+
+
+async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
+    """The project's agent sessions on one device, the ones its distribution
+    counts there, as ``(room, session presentation)`` pairs, most recently
+    active first.
+
+    ``working`` is whether the room has a turn running. Turns are recorded per
+    room, not per session, so a session whose room is mid-turn counts as
+    working: a bulk switch skips it rather than take its machine away mid-turn.
+    """
+    from app.domain.agent.models import AgentTurn
+
+    placed = [
+        (row, topic)
+        for row, topic, _choice, on in await _placed_sessions(db, project_id)
+        if on == device_id
+    ]
+    if not placed:
+        return []
+    project = await ProjectService(db).get_or_404(project_id)
+    busy = set(
+        await db.scalars(
+            select(AgentTurn.topic_id).where(
+                AgentTurn.topic_id.in_({topic.id for _row, topic in placed}),
+                AgentTurn.stopped_at.is_(None),
+            )
+        )
+    )
+    out = []
+    for row, topic in sorted(placed, key=lambda pair: pair[0].updated_at, reverse=True):
+        out.append(
+            (
+                topic,
+                {
+                    "id": str(row.id),
+                    "topic_id": str(topic.id),
+                    "topic_title": topic.title,
+                    "agent_handle": row.agent_handle,
+                    "agent_name": await _agent_name(
+                        db, project, topic, row.agent_handle
+                    ),
+                    "choice": (row.execution_request or {}).get("choice"),
+                    "last_active": row.updated_at.isoformat(),
+                    "working": topic.id in busy,
+                },
+            )
+        )
+    return out
 
 
 async def room_machine_visibility(
@@ -285,6 +351,11 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
     )
 
 
+class SessionWorking(ConflictError):
+    """The session's room is mid-turn, and the switch was asked not to take a
+    machine away from a turn (``if_idle``, the project's bulk switch)."""
+
+
 class WorkComputerUnreachable(ConflictError):
     """The machine a session is leaving could not run the push before a switch.
 
@@ -296,6 +367,18 @@ class WorkComputerUnreachable(ConflictError):
 # a command 120s and then reports it as still running (``runtime.bash``).
 PUSH_WAIT_S = 150.0
 PUSH_UNREACHABLE = "原来那台工作电脑连不上，无法推送改动，没有更换"
+WORKING = "正在干活，稍后再换"
+
+
+async def _room_is_working(db, topic_id) -> bool:
+    from app.domain.agent.models import AgentTurn
+
+    running = await db.scalar(
+        select(AgentTurn.id)
+        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
+        .limit(1)
+    )
+    return running is not None
 
 
 async def push_before_switch(lease: dict) -> None:
@@ -331,14 +414,22 @@ async def push_before_switch(lease: dict) -> None:
 
 
 async def request_choice(
-    db, *, topic_id, session_id, actor, choice, abandon_unpushed=False
+    db,
+    *,
+    topic_id,
+    session_id,
+    actor,
+    choice,
+    abandon_unpushed=False,
+    if_idle=False,
 ):
     """Point one session at another work computer, after its work is pushed.
 
     The push runs on the machine the session leaves, with no transaction open.
     Only a person may switch without it, and only when that machine could not
     be reached (``abandon_unpushed``). A Cloud machine left after a push is
-    deleted, so it stops counting against the team's quota.
+    deleted, so it stops counting against the team's quota. With ``if_idle``
+    a session whose room is mid-turn is left alone (``SessionWorking``).
     """
     topic = await TopicService(db).lock_for_execution(topic_id)
     row = await AgentSessionService(db).by_id(session_id, lock=True)
@@ -371,6 +462,8 @@ async def request_choice(
         return presentation(row)
     if old and old.get("status", "ready") != "ready":
         raise ConflictError("机器分配仍在进行，请稍后再换机")
+    if if_idle and await _room_is_working(db, topic_id):
+        raise SessionWorking(WORKING)
     pushed = False
     if old:
         generation = request.get("generation")

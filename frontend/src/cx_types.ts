@@ -1123,6 +1123,19 @@ export interface ProjectComputeConfigs {
   distribution: ComputeDistribution
 }
 
+// One agent session on a self-hosted device, as the project's bulk switch lists
+// it. `working` = its room is mid-turn; a bulk switch leaves it alone.
+export interface DeviceSession {
+  id: string
+  topic_id: string
+  topic_title: string
+  agent_handle: string
+  agent_name: string
+  choice: ComputeChoice
+  last_active: string
+  working: boolean
+}
+
 export interface ComputeDistribution {
   cloud: number
   devices: { device_id: string | null; name: string; agents: number; machine_access: boolean }[]

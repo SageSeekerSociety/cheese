@@ -1717,6 +1717,8 @@ async def request_session_work_choice(
                 # Honoured for a person, and only when the old machine could
                 # not be reached to push (`request_choice`).
                 abandon_unpushed=body.get("abandon_unpushed") is True,
+                # The project's bulk switch leaves a session mid-turn alone.
+                if_idle=body.get("if_idle") is True,
             )
         }
     )

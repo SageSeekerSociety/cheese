@@ -80,6 +80,18 @@
   "deviceInUse": {
     "line": "In use: {project} · {room} · {agent}"
   },
+  "bulkSwitch": {
+    "open": "View and switch…",
+    "title": "Agents on {name}",
+    "selectAll": "Select all",
+    "meta": "{agent} · last active {time}",
+    "working": "Working",
+    "empty": "No agents",
+    "hidden": "1 more agent is in a room you cannot open | {count} more agents are in rooms you cannot open",
+    "pushFirst": "Changes not pushed on the old machine do not come along. Each agent's changes are pushed to its branch first; an agent whose push fails is not switched, and the reason is shown. Agents that are working are skipped",
+    "done": "Switched",
+    "loadFailed": "Could not load"
+  },
   "projectMachine": {
     "defaultLabel": "New agents use",
     "change": "Change",

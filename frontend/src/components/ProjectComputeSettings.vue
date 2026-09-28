@@ -12,6 +12,7 @@ import { t } from '../i18n'
 import { choiceDetail } from '../lib/computeConfig'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
+import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
 const props = defineProps<{ projectId: string }>()
 const state = ref<ProjectComputeConfigs | null>(null)
@@ -91,6 +92,15 @@ watch(() => props.projectId, load)
             <span class="status-dot" :class="{ 'status-dot--warn': device.machine_access }" />{{
               t('work.projectMachine.onDevice', { name: device.name, agents: agents(device.agents) })
             }}<template v-if="device.machine_access"> · {{ t('work.roomMachine.wholeMachine') }}</template>
+            <DeviceSessionsSwitch
+              v-if="state.can_manage && device.device_id"
+              :project-id="projectId"
+              :device="{ device_id: device.device_id, name: device.name }"
+              :devices="state.devices"
+              :cloud-available="state.cloud_available"
+              :project-default="state.default"
+              @changed="load"
+            />
           </li>
         </ul>
       </div>

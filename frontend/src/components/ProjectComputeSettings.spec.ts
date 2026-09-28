@@ -151,5 +151,27 @@ describe('project work computer settings', () => {
 
     expect(screen.queryByRole('button', { name: '更换' })).toBeNull()
     expect(screen.getByText('项目负责人可以更换默认')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '查看并更换…' })).toBeNull()
+  })
+
+  it('offers a manager to view and switch the agents on each named device', async () => {
+    api.getProjectComputeConfigs.mockResolvedValue(
+      configs({
+        distribution: {
+          cloud: 1,
+          devices: [
+            { device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: true },
+            // Picked when those sessions lease; there is no one device to list yet.
+            { device_id: null, name: '自有设备 · 自动选择', agents: 1, machine_access: true },
+          ],
+        },
+      })
+    )
+    await mount()
+
+    const rows = within(screen.getByTestId('project-distribution')).getAllByRole('listitem')
+    expect(within(rows[1]).getByRole('button', { name: '查看并更换…' })).toBeTruthy()
+    expect(within(rows[0]).queryByRole('button', { name: '查看并更换…' })).toBeNull()
+    expect(within(rows[2]).queryByRole('button', { name: '查看并更换…' })).toBeNull()
   })
 })
