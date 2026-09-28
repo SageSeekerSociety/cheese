@@ -181,6 +181,11 @@ describe('壳决定露出哪几格、什么顺序', () => {
     expect(shortcutTarget(rail, 2)).toBe('/projects/p0')
   })
 
+  it('手机底栏的待办也带着件数：两端答的是同一个数', () => {
+    const tabs = tabItems({ ...sources(2, 'p0'), awaitingCount: 3 }, DEFAULT_SHELL)
+    expect(tabs.find((i) => i.to === '/inbox')?.badge).toBe(3)
+  })
+
   it('文案按词表切', () => {
     const add = items(railItems(sources(0), mine)).find((i) => i.add)
     expect(add?.title).toBe('新建工作')

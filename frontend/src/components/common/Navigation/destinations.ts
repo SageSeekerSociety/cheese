@@ -48,7 +48,7 @@ export interface NavSources {
   workspaceProjectId: string | null
   projectAvatar: (name: string) => string
   createProject: () => void
-  /** 待我处理的件数；还没读到是 0。只有桌面 rail 画它——底栏那一格点开就是同一份清单。 */
+  /** 待我处理的件数；还没读到是 0。rail 和底栏的「待办」那一格都画它。 */
   awaitingCount?: number
 }
 
@@ -156,7 +156,7 @@ function tabParts(src: NavSources, shell: Shell): Record<string, NavItem> {
     // 名字是「首页」而不是「空间」：它亮着的范围是整个首页层（我的工作 / 空间 / 团队）。
     spaces: { ...SPACES, title: t('navigation.home', terms) },
     workspace: workspace(src),
-    inbox: { ...INBOX, title: t('navigation.inbox', terms) },
+    inbox: { ...INBOX, title: t('navigation.inbox', terms), badge: src.awaitingCount || 0 },
   }
 }
 

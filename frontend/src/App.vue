@@ -221,7 +221,6 @@ import type { NavSources } from './components/common/Navigation/destinations'
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
-import { useDisplay } from 'vuetify'
 import { useEventListener } from '@vueuse/core'
 
 import { avatarColor } from '@/utils/avatar'
@@ -417,9 +416,8 @@ const workspaceProjectId = computed<string | null>(() =>
   workspaceProject(railProjects.value, workspace.projectId, lastOpenedProjectId())
 )
 
-// 只有桌面 rail 画这个角标，手机上不去读。
-const display = useDisplay()
-const awaitingCount = useAwaitingCount(computed(() => AccountService._loggedIn.value && display.mdAndUp.value))
+// 「待办」那一格的件数：桌面画在 rail 上，手机画在底栏上。
+const awaitingCount = useAwaitingCount(computed(() => AccountService._loggedIn.value))
 
 const navSources = computed<NavSources>(() => ({
   projects: railProjects.value,
