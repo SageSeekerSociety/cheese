@@ -7,17 +7,30 @@ broke loudly — every reader falls back to someone else — so the project's
 owner-level authority silently collapsed, and nobody noticed until someone went
 looking.
 
-These tests pin the way out and the two rails on it: only someone who manages
-the project (its owner, or a team owner/admin) may move ownership, and it may
-only move to someone on the project's team.
+These tests pin the way out and the rails on it: only someone who manages the
+project (its owner, or a team owner/admin) may move ownership; a project that
+belongs to a SHARED team may only go to a member of that team; and a project
+that is the transferor's own — it sits in their personal team — moves into the
+recipient's personal team instead, so the transferor really is out (2026-09-27,
+caisongyang's decision: 选中谁就立刻换 owner，项目跟着人走).
+
+That last case is why the recipient no longer has to be on the project's team:
+a personal project has no other stakeholder to stay with, so the project moves.
+Handing a SHARED team's project to an outsider is still refused — the project
+would stay in that team, where its former owner keeps reading it and could take
+the owner back.
 """
 
+import asyncio
 import uuid
 
+from app.domain.team.repositories import TeamRepository
 from tests.integration.conftest import (
+    a_team,
     add_external_member,
     join_project_team,
     post_project,
+    registered,
     session_auth_headers,
 )
 
@@ -29,6 +42,93 @@ def _project(client, owner: str | None = None) -> dict:
     r = post_project(client, json=body, headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
     return r.json()["data"]
+
+
+def _register(client, handle: str) -> int:
+    """Make ``handle`` a real account (and no personal team yet — the transfer
+    is what provisions it)."""
+
+    async def _seed() -> int:
+        async with client.test_factory() as session:
+            user_id = await registered(session, handle)
+            await session.commit()
+            return user_id
+
+    return asyncio.run(_seed())
+
+
+def _personal_team_id(client, handle: str) -> int | None:
+    """The id of ``handle``'s personal team, or None when they have none yet."""
+    from app.domain.user.repositories import UserRepository
+
+    async def _read() -> int | None:
+        async with client.test_factory() as session:
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None, handle
+            team = await TeamRepository(session).get_personal_team(user.id)
+            return team.id if team is not None else None
+
+    return asyncio.run(_read())
+
+
+def _shared_team_project(client, *, owner: str = "alice", name: str = "P") -> dict:
+    """A project that belongs to a SHARED team — one with other people in it,
+    which is the case where the project cannot follow its owner."""
+
+    async def _make() -> int:
+        async with client.test_factory() as session:
+            team_id = await a_team(session, owner_handle=owner)
+            await session.commit()
+            return team_id
+
+    team_id = asyncio.run(_make())
+    resp = post_project(
+        client,
+        {"name": name, "owner_handle": owner, "team_id": team_id},
+        headers=session_auth_headers(owner),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]
+
+
+def _root_topic(client, project_id: str, *, actor: str = "alice") -> dict:
+    """The project's 项目总览 room — the one the owner is seeded into."""
+    r = client.get(
+        f"/topics?project_id={project_id}", headers=session_auth_headers(actor)
+    )
+    assert r.status_code == 200, r.text
+    root = next(
+        (row for row in r.json()["data"]["data"] if row.get("kind") == "root"), None
+    )
+    assert root is not None, r.text
+    return root
+
+
+def _room_roster(client, topic_id: str, *, actor: str) -> list[dict]:
+    r = client.get(f"/topics/{topic_id}/members", headers=session_auth_headers(actor))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def _seat(client, topic_id: str, handle: str, *, role: str, actor: str) -> None:
+    """Put ``handle`` in the room at ``role`` — invited if new, promoted if not."""
+    seated = any(
+        row["member_handle"] == handle
+        for row in _room_roster(client, topic_id, actor=actor)
+    )
+    if seated:
+        r = client.put(
+            f"/topics/{topic_id}/members/{handle}",
+            json={"role": role},
+            headers=session_auth_headers(actor),
+        )
+    else:
+        r = client.post(
+            f"/topics/{topic_id}/members",
+            json={"handle": handle, "role": role},
+            headers=session_auth_headers(actor),
+        )
+    assert r.status_code == 200, r.text
 
 
 def _add_member(client, project_id: str, handle: str, *, admin: bool = False) -> None:
@@ -57,6 +157,223 @@ def test_the_owner_can_hand_the_project_to_another_member(client):
     assert r.status_code == 200, r.text
     assert r.json()["data"]["owner_handle"] == "bob"
     assert _owner_of(client, p["id"]) == "bob"
+    # A teammate receiving it changes the owner and NOTHING else: the project
+    # is still the team's, byte for byte.
+    assert r.json()["data"]["team_id"] == p["team_id"]
+
+
+def test_a_personal_project_follows_the_person_it_is_given_to(client):
+    """The project is the transferor's own — it sits in their personal team — so
+    handing it to someone outside that team moves it into the recipient's
+    personal team. 项目跟着人走."""
+    p = _project(client, owner="alice")
+    _register(client, "carol")
+    assert _personal_team_id(client, "carol") is None  # provisioned by the move
+
+    r = _set_owner(client, p["id"], "carol", actor="alice")
+
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["owner_handle"] == "carol"
+    carol_team = _personal_team_id(client, "carol")
+    assert carol_team is not None
+    assert data["team_id"] == carol_team
+    assert data["team_id"] != p["team_id"]
+
+    # And the move is a move, not a swapped field: `Project.team_id`'s readers
+    # (the team's 项目 page goes through `ProjectService.list_for_team`) now see
+    # the project on the recipient's side and no longer on the giver's.
+    mine = client.get(
+        f"/projects?team_id={carol_team}", headers=session_auth_headers("carol")
+    )
+    assert mine.status_code == 200, mine.text
+    assert [row["id"] for row in mine.json()["data"]["data"]] == [p["id"]]
+    alices_team = _personal_team_id(client, "alice")
+    assert alices_team is not None
+    gone = client.get(
+        f"/projects?team_id={alices_team}", headers=session_auth_headers("alice")
+    )
+    assert gone.status_code == 200, gone.text
+    assert [row["id"] for row in gone.json()["data"]["data"]] == []
+
+
+def test_the_transferor_is_out_for_good(client):
+    """A transfer that leaves the giver reading the project is a loan, not a
+    transfer: it would still be in their team and they still its team's owner."""
+    p = _project(client, owner="alice")
+    _register(client, "carol")
+    assert _set_owner(client, p["id"], "carol", actor="alice").status_code == 200
+
+    read = client.get(f"/projects/{p['id']}", headers=session_auth_headers("alice"))
+    assert read.status_code in (403, 404), read.text
+    # And the same route that gave it away cannot take it back.
+    take_back = _set_owner(client, p["id"], "alice", actor="alice")
+    assert take_back.status_code == 404, take_back.text
+    assert _owner_of(client, p["id"]) == "carol"
+    # Nor through any other door: the project's records are closed to them too.
+    listed = client.get(
+        f"/topics?project_id={p['id']}", headers=session_auth_headers("alice")
+    )
+    assert listed.status_code in (403, 404), listed.text
+
+
+def test_the_transferor_loses_the_projects_rooms_too(client):
+    """项目那一层的门关上不算数。
+
+    A project's membership admits you to every one of its topics, but a ROOM
+    keeps its own roster and `authorize_topic_access` reads the roster before it
+    ever asks about the project. Creating the project seeded the owner as the
+    root topic's own `owner` row, so a transfer that only swaps
+    `owner_handle` leaves the giver in every room: still delivered 项目总览's
+    messages, still speaking in it, still managing its roster. That is the
+    difference between 转让 and 借, so the transfer hands the seats over.
+
+    Both directions are asserted — the same calls must have worked BEFORE the
+    transfer, or the 403 afterwards proves only that the room was shut to
+    everyone.
+    """
+    p = _project(client, owner="alice")
+    _register(client, "carol")
+    root = _root_topic(client, p["id"])
+    before = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert before.status_code == 200, before.text
+    assert _room_roster(client, root["id"], actor="alice")
+
+    assert _set_owner(client, p["id"], "carol", actor="alice").status_code == 200
+
+    after = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert after.status_code in (403, 404), after.text
+    people = client.get(
+        f"/topics/{root['id']}/members", headers=session_auth_headers("alice")
+    )
+    assert people.status_code in (403, 404), people.text
+
+
+def test_the_recipient_takes_the_rooms_over(client):
+    """接手人接手的是同一把椅子，不是被塞进来当个普通成员。
+
+    So they end up the root topic's OWNER, which is the only role that manages
+    it — the roster read alone would not show that, so the room is also managed
+    from their account afterwards (seat someone into 项目总览).
+    """
+    p = _project(client, owner="alice")
+    _register(client, "carol")
+    root = _root_topic(client, p["id"])
+    # Before the transfer she cannot even reach the room, let alone manage it.
+    early = client.post(
+        f"/topics/{root['id']}/members",
+        json={"handle": "carol", "role": "member"},
+        headers=session_auth_headers("carol"),
+    )
+    assert early.status_code == 403, early.text
+
+    assert _set_owner(client, p["id"], "carol", actor="alice").status_code == 200
+
+    rows = _room_roster(client, root["id"], actor="carol")
+    carol = next(row for row in rows if row["member_handle"] == "carol")
+    assert carol["role"] == "owner"
+    # Managing the room: only its owner/admin may seat anyone, and only
+    # someone the project has may be seated — so the person comes into the
+    # project first, through the new owner.
+    add_external_member(client, p["id"], "dana", by="carol")
+    seated = client.post(
+        f"/topics/{root['id']}/members",
+        json={"handle": "dana", "role": "member"},
+        headers=session_auth_headers("carol"),
+    )
+    assert seated.status_code == 200, seated.text
+
+
+def test_a_team_member_keeps_the_projects_rooms(client):
+    """The other branch must not be swept up by this.
+
+    When the recipient is already on the project's team the giver stays in the
+    project — by way of that team — so their room seats are not leftovers to be
+    cleaned up. Revoking them there would evict someone who is still a member,
+    which is why the handover is called on the personal-project branch only.
+    """
+    p = _shared_team_project(client)
+    _add_member(client, p["id"], "bob")
+    root = _root_topic(client, p["id"])
+    held = next(
+        row
+        for row in _room_roster(client, root["id"], actor="alice")
+        if row["member_handle"] == "alice"
+    )
+    assert held["role"] == "owner"
+
+    r = _set_owner(client, p["id"], "bob", actor="alice")
+
+    assert r.status_code == 200, r.text
+    still = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert still.status_code == 200, still.text
+    rows = _room_roster(client, root["id"], actor="alice")
+    alice = next(row for row in rows if row["member_handle"] == "alice")
+    assert alice["role"] == "owner"
+
+
+def test_the_recipient_may_already_be_seated_in_the_room(client):
+    """The natural way a personal project changes hands.
+
+    Invite someone into the project (they are seated `member` in 项目总览 by the
+    ordinary invite path) and then hand the project to them. Succession has to
+    move them UP into the chair the giver held: mirroring the roster as-is would
+    leave them a plain member, the giver still the room's last owner, and the
+    transfer refused with 「你是话题…唯一的 owner，先把话题交给别人」 — advice
+    that is nonsense here, since handing the room over is exactly what is being
+    done. So this asserts the transfer SUCCEEDS, that the recipient ends up the
+    room's owner, and that the giver holds no seat there.
+    """
+    p = _project(client, owner="alice")
+    root = _root_topic(client, p["id"])
+    add_external_member(client, p["id"], "dana", by="alice")
+    _seat(client, root["id"], "dana", role="member", actor="alice")
+
+    r = _set_owner(client, p["id"], "dana", actor="alice")
+
+    assert r.status_code == 200, r.text
+    rows = _room_roster(client, root["id"], actor="dana")
+    dana = next(row for row in rows if row["member_handle"] == "dana")
+    assert dana["role"] == "owner"
+    assert all(row["member_handle"] != "alice" for row in rows)
+    gone = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert gone.status_code in (403, 404), gone.text
+
+
+def test_succession_never_demotes_a_higher_seat(client):
+    """Succession only ever moves a seat UP.
+
+    Here the giver is a plain member of the room and the recipient already owns
+    it, which is the arrangement the handover must leave alone: what changes
+    hands is the chair, not the roster. An implementation that "just sets the
+    recipient to the giver's role" fails this.
+    """
+    p = _project(client, owner="alice")
+    root = _root_topic(client, p["id"])
+    add_external_member(client, p["id"], "dana", by="alice")
+    _seat(client, root["id"], "dana", role="owner", actor="alice")
+    _seat(client, root["id"], "alice", role="member", actor="alice")
+
+    assert _set_owner(client, p["id"], "dana", actor="alice").status_code == 200
+
+    rows = _room_roster(client, root["id"], actor="dana")
+    dana = next(row for row in rows if row["member_handle"] == "dana")
+    assert dana["role"] == "owner"
+    assert all(row["member_handle"] != "alice" for row in rows)
+    gone = client.get(f"/topics/{root['id']}", headers=session_auth_headers("alice"))
+    assert gone.status_code in (403, 404), gone.text
+
+
+def test_an_unknown_recipient_is_refused_by_name(client):
+    """A handle nobody answers to is a 422 that says so — not a 500, and not a
+    silent "not a member" about a person who does not exist."""
+    p = _project(client, owner="alice")
+
+    r = _set_owner(client, p["id"], "nobody-at-all", actor="alice")
+
+    assert r.status_code == 422, r.text
+    assert "账号" in r.json()["message"]
+    assert _owner_of(client, p["id"]) == "alice"
 
 
 def test_a_team_admin_can_take_the_project(client):
@@ -97,27 +414,29 @@ def test_an_anonymous_caller_cannot_take_the_project(client):
     assert _owner_of(client, p["id"]) == "alice"
 
 
-def test_ownership_cannot_be_handed_to_someone_off_the_team(client):
-    """An owner from outside the project's team is worse than no owner: they
-    would own a project they cannot open."""
-    p = _project(client, owner="alice")
+def test_a_shared_team_project_cannot_be_handed_to_someone_off_the_team(client):
+    """The project belongs to a team with other people in it, so it stays that
+    team's: an outside owner would hold a project still sitting in the giver's
+    team, where the giver keeps reading it and could take it back."""
+    p = _shared_team_project(client)
+    _register(client, "stranger")
 
     r = _set_owner(client, p["id"], "stranger", actor="alice")
 
-    assert r.status_code == 422
-    assert "成员" in r.json()["message"]
+    assert r.status_code == 422, r.text
+    assert "团队" in r.json()["message"]
     assert _owner_of(client, p["id"]) == "alice"
 
 
-def test_ownership_cannot_go_to_an_external_member(client):
+def test_a_shared_team_project_cannot_go_to_an_external_member(client):
     """An external member sees this one project and nothing else of the team;
     the project is the team's, so its owner is someone from the team."""
-    p = _project(client, owner="alice")
+    p = _shared_team_project(client)
     add_external_member(client, p["id"], "guest", by="alice")
 
     r = _set_owner(client, p["id"], "guest", actor="alice")
 
-    assert r.status_code == 422
+    assert r.status_code == 422, r.text
     assert _owner_of(client, p["id"]) == "alice"
 
 

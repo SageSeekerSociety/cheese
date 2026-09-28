@@ -3,7 +3,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, create_approved_space, unique_int
+from tests.integration.conftest import (
+    CreatedUser,
+    UserCreator,
+    create_approved_space,
+    unique_int,
+)
 
 
 class TestTaskIntegration:
@@ -919,6 +924,114 @@ class TestTaskEnumeration:
         assert list_resp.status_code == 200
         tasks = list_resp.json()["data"]["tasks"]
         assert len(tasks) >= 1
+
+    def test_enumerate_tasks_distinct_participants(
+        self,
+        api_client: TestClient,
+        multi_task_setup: dict,
+        user_client: UserCreator,
+    ) -> None:
+        """首页那句「参与 N 人」得是跨题**去重后的人**，而且只数这一页的题。
+
+        `participants.total` 是报名行数，一个人领两道就是 2；首页要的人数是 1。
+        这个数在客户端拼不出来（列表接口不给报名名单），所以它由服务端算 —— 这条
+        用例钉的就是「服务端算的那个数 = 真名单的并集」，而不是拿行数充数。
+
+        两条各钉一个方向：整页时它必须是**去重**后的（3 行 → 2 人），而 `pageSize=1`
+        时它必须只数**那一页**那道题（1 人），不是全板的 2 人。
+        """
+        creator = multi_task_setup["creator"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+        space_id = multi_task_setup["space_id"]
+        task_ids = multi_task_setup["task_ids"]
+
+        # 报名要过审的题，所以先把前两道推上板。
+        for task_id in task_ids[:2]:
+            resp = api_client.patch(
+                f"/tasks/{task_id}", json={"approved": "APPROVED"}, headers=headers
+            )
+            assert resp.status_code == 200, resp.text
+
+        def join(user: CreatedUser, task_id: int) -> None:
+            resp = api_client.post(
+                f"/tasks/{task_id}/participants",
+                json={},
+                headers={"Authorization": f"Bearer {user.token}"},
+            )
+            assert resp.status_code == 200, resp.text
+
+        alice = user_client.create_user()
+        alice.token = user_client.login(api_client, alice.username, alice.password)
+        bob = user_client.create_user()
+        bob.token = user_client.login(api_client, bob.username, bob.password)
+
+        # 甲先领了第一道，然后甲和乙都领了第二道 —— 三行报名，两个人。
+        join(alice, task_ids[0])
+        join(alice, task_ids[1])
+        join(bob, task_ids[1])
+
+        def members_of(task_id: int) -> set[int]:
+            resp = api_client.get(f"/tasks/{task_id}/participants", headers=headers)
+            assert resp.status_code == 200, resp.text
+            return {row["memberId"] for row in resp.json()["data"]["participants"]}
+
+        assert members_of(task_ids[0]) == {alice.user_id}
+        assert members_of(task_ids[1]) == {alice.user_id, bob.user_id}
+        both_tasks = members_of(task_ids[0]) | members_of(task_ids[1])
+        assert len(both_tasks) == 2  # 甲领了两道，去重才有意义
+
+        page = api_client.get(
+            "/tasks",
+            params={
+                "space": space_id,
+                "approved": "APPROVED",
+                "queryDistinctParticipants": "true",
+            },
+            headers=headers,
+        )
+        assert page.status_code == 200, page.text
+        data = page.json()["data"]
+        # 去重：两个人，不是三行。
+        assert data["distinctParticipants"] == 2
+        # 同一行上那个「领取次数」是逐题 total 的和 —— 两个数不一样，才说明去重真做了。
+        assert sum(t["participants"]["total"] for t in data["tasks"]) == 3
+
+        # 收口：只取一页时它只数那一页的题。第一道题上只有甲（1 人），要是服务端
+        # 数了全板，这里会是 2。
+        first_page = api_client.get(
+            "/tasks",
+            params={
+                "space": space_id,
+                "approved": "APPROVED",
+                "pageSize": 1,
+                "sort_by": "createdAt",
+                "sort_order": "asc",
+                "queryDistinctParticipants": "true",
+            },
+            headers=headers,
+        )
+        assert first_page.status_code == 200, first_page.text
+        page_data = first_page.json()["data"]
+        assert [t["id"] for t in page_data["tasks"]] == [task_ids[0]]
+        assert len(members_of(task_ids[0])) == 1
+        assert page_data["distinctParticipants"] == 1
+
+    def test_enumerate_tasks_without_the_flag_carries_no_participant_count(
+        self, api_client: TestClient, multi_task_setup: dict
+    ) -> None:
+        """不问就不给 —— 那一格要多跑一次报名名单查询。
+
+        默认问会让每个调 `/tasks` 的页面都白付一趟；更要紧的是前端那格是「没有就
+        不显示」，所以「有没有这一格」本身是接口契约的一部分。
+        """
+        creator = multi_task_setup["creator"]
+        resp = api_client.get(
+            "/tasks",
+            params={"space": multi_task_setup["space_id"]},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert "distinctParticipants" not in resp.json()["data"]
 
 
 class TestTaskApprovalWorkflow:

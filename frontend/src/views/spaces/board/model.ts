@@ -63,7 +63,11 @@ export interface BoardTask {
   maxTeamSize: number
   /** 讲解视频。真库 `Task.video_url`；详情页只把 B 站链接转成内嵌播放器。 */
   videoUrl?: string | null
-  /** 这道题是怎么来的。从 PDF 生成的那批会写「PDF · 第 2 页」，手写的没有这一项。 */
+  /** 这道题是怎么来的，例如「PDF · 第 2 页」。手写的题没有这一项。
+   *
+   *  它不是接口来的：后端没有出处这一列，从 PDF 发出去的那批把出处写进了简介开头，
+   *  `store.ts` 映射时用 `splitOrigin` 从 `intro` 里认出来，**正文里那串字同时被摘掉**。
+   *  所以这一格和 `summary` 是同一段文本的两半，不能各填各的。 */
   origin?: string
   /** 发题时附上的材料。真平台还没有这一层，暂时是空数组。 */
   files: TaskFile[]
@@ -116,6 +120,17 @@ export interface SpaceInfo {
   isCourse: boolean
 }
 
+/** 管理员名单上的一项。真接口 `Space.admins` 的每一项就是「人 + 角色」这一对
+ *  （`backend/app/api/routes/spaces.py` 的 `_build_admins_payload`）。
+ *
+ *  **所有者也在这一份名单里** —— 后端的 `list_admins` 把 `role=OWNER` 那一条一起
+ *  返回（`SpaceAdminRelation` 一张表装两种角色）。所以这份名单就是完整的「谁能管」，
+ *  不要再把 `SpaceInfo.owner` 拼进来，那会把所有者列两遍。 */
+export interface Manager {
+  person: Person
+  role: 'OWNER' | 'ADMIN'
+}
+
 export const ROLE_LABEL: Record<Role, string> = {
   OWNER: '所有者',
   ADMIN: '管理员',
@@ -134,6 +149,41 @@ export const CLAIM_LABEL: Record<Claimant['status'], string> = {
   SUBMITTED: '已提交',
   PASSED: '已通过',
   REJECTED: '未通过',
+}
+
+// --- 出处 --------------------------------------------------------------------
+
+/**
+ * 出处前缀。真题目模型里**没有**「来源」这一列，也不给它加（见 `BoardTask.origin`
+ * 那一格的注释）：从 PDF 生成的那批题，出处是写进**简介开头**的一段字 ——
+ * `GET /tasks` 回来的就是一段带前缀的 `intro`，没有任何结构化字段。所以「这道题从
+ * 哪来」在真数据里不是读某一格，而是**认出正文开头那一小段**，摘掉它、单独给人看。
+ *
+ * 写这一段的是从 PDF 发题那条路（第八批 #1793）：`【PDF · 第 N 页】` **紧跟题干、
+ * 中间不换行**。所以这里也**不能要求那串之后有换行** —— 要求了，真从 PDF 发出来的
+ * 题一个都认不出来。页号是 1 起的整数（`draftPage(index) = index + 1`）。
+ */
+const ORIGIN_PREFIX = /^【PDF · 第 \d+ 页】/
+
+/**
+ * 把一段简介拆成「正文」与「出处」。
+ *
+ * 认不出来时只回正文 —— 手写的题走的都是这一支。
+ *
+ * **误判的边界，认了**：判据只有「开头是不是那一串」。手写的题如果简介恰好以
+ * `【PDF · 第 3 页】` 开头，就会被当成 PDF 来的：那串字从正文里消失、变成一枚标。
+ * 要消掉它就得有一个「这道题是 PDF 发的」的痕迹，而真库里没有（上面那段说的就是
+ * 这件事）—— 拿别的信号去猜只会猜错得更离谱。代价写在这里，不埋在代码里。
+ */
+export function splitOrigin(intro: string): { summary: string; origin?: string } {
+  const prefix = ORIGIN_PREFIX.exec(intro)?.[0]
+  if (!prefix) return { summary: intro }
+  return {
+    // 那对书名号是给机器认的，给人看的是里面那段（原型上也是「PDF · 第 2 页」）。
+    origin: prefix.slice(1, -1),
+    // 摘干净：前缀后面紧跟的就是题干，不留一个空格在开头。
+    summary: intro.slice(prefix.length).trimStart(),
+  }
 }
 
 /** 板上现在真正可领的题：审过了，且没到截止日。 */

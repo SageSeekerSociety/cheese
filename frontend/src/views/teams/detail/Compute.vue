@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // The team's work computers: its Cloud quota and usage, the Cloud machines its
-// projects already have, and its self-hosted devices. Cloud machines are opened
-// by an agent in a room that needs one; nothing here opens one.
+// projects already have, and every self-hosted device its projects can use,
+// whether registered for the team or attached to one of its projects. Cloud
+// machines are opened by an agent in a room that needs one; nothing here opens one.
 import type { TeamResourceQuotas } from '@/api'
 import type { MyDevice, Project, ProjectMachine } from '@/cx_types'
 
@@ -427,6 +428,13 @@ onBeforeUnmount(() => {
                   </span>
                 </div>
                 <div class="text-caption text-medium-emphasis machine-id">{{ device.device_id }}</div>
+                <div v-if="!device.team_ids.includes(teamId)" class="mt-2 device-user">
+                  {{
+                    t('work.deviceInUse.attached', {
+                      projects: (device.attached_projects ?? []).map((project) => project.name).join('、'),
+                    })
+                  }}
+                </div>
                 <div v-if="device.screens.length" class="mt-3 d-flex flex-wrap ga-2">
                   <v-chip
                     v-for="screen in device.screens"
@@ -452,7 +460,10 @@ onBeforeUnmount(() => {
                     })
                   }}
                 </div>
-                <div v-if="myDeviceIds.has(device.device_id)" class="mt-2 d-flex justify-end">
+                <div
+                  v-if="myDeviceIds.has(device.device_id) && device.team_ids.includes(teamId)"
+                  class="mt-2 d-flex justify-end"
+                >
                   <v-btn
                     size="small"
                     variant="text"

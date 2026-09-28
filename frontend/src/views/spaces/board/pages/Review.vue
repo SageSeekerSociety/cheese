@@ -143,6 +143,22 @@ function detailTo(id: string) {
               >
                 你自己出的 · 可直接通过
               </v-chip>
+              <!-- 出处：队列是刚确认发布那批题的**唯一去处**（还没上板，列表里看
+                   不到），而正文里那串 `【PDF · 第 N 页】` 已经被 `splitOrigin`
+                   摘掉、变成题上的一枚标了 —— 所以审的人要看出处，就得看这里。
+                   形状与 `components/TaskCard.vue` 那枚一致。 -->
+              <v-chip
+                v-if="task.origin"
+                size="x-small"
+                label
+                variant="tonal"
+                color="info"
+                class="queue__origin"
+                data-testid="queue-origin"
+              >
+                <v-icon icon="mdi-file-pdf-box" size="13" start />
+                {{ task.origin }}
+              </v-chip>
             </div>
             <p class="queue__summary">{{ task.summary }}</p>
             <div class="queue__meta">

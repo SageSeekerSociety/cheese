@@ -18,9 +18,12 @@ def _topic_and_card(client) -> str:
     ]
     # 2026-09-26: /reassign 和被指派的审阅人一起，现在都要求话题成员资格
     # (`_card_actor`)。user-1 是被指派的那个人，alice 是改派的人 —— 两个都得真在
-    # 这个项目里，才轮得到改派本身那条规则被检验。改派的目标（mentor-1）不需要是
-    # 成员：显式指定优先没变，只是指定一个房间外的人会得到一张他采纳不了的卡。
-    for handle in ("user-1", "alice"):
+    # 这个项目里，才轮得到改派本身那条规则被检验。
+    # 2026-09-27: 改派的目标也不再能是房间外的人 —— 写卡这道门提前问一次
+    # (`_require_reviewer_in_room`)，一个人采纳不了卡，就不该先把卡挂到他名下。
+    # 所以 mentor-1 也进项目；「改派给陌生人」那条规则归
+    # test_accept_reviewer_membership.py。
+    for handle in ("user-1", "alice", "mentor-1"):
         join_project_team(client, p["id"], handle)
     return _make_card(client, t["id"], "user-1")
 

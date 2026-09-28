@@ -14,7 +14,11 @@ import uuid
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import NeedsYou
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.turn_log import close_turn, open_turn
 
 
@@ -91,6 +95,10 @@ def test_the_person_who_asked_for_the_work_is_on_it_too(client):
     project = _project(client, "alice")
     room = _room(client, project, "alice")
     _set_reporter(client, room, "alice")
+    # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
+    # (`_require_reviewer_in_room`)。这张卡递给 carol（提需求的 alice 与验收人必须
+    # 是两个人，否则量到的不是「提需求的人也进清单」），就让她真在项目里。
+    join_project_team(client, project, "carol")
 
     _file_card(client, room, reviewer="carol")
 

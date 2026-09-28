@@ -1240,6 +1240,9 @@ export interface MyDevice {
   // Who works on this machine now, for its owner only (null for anyone else):
   // each agent session whose work computer it is, in a room that is open.
   in_use?: DeviceUser[] | null
+  // On a team's device list: the team's projects this machine is attached to
+  // directly, rather than through the team.
+  attached_projects?: { id: string; name: string }[]
 }
 
 export interface DeviceUser {

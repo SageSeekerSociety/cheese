@@ -3257,6 +3257,8 @@ class ChatService:
                 eid=eid or event.eid,
                 platform_unsolicited=platform_unsolicited,
                 task_id=task_id,
+                author=event.agent_handle,
+                at=event.at,
             )
             if payload is not None:
                 frame = {"type": "event_block", "block": payload}
@@ -3372,6 +3374,7 @@ class ChatService:
                     continuation_id=(
                         state.continuation_id if state is not None else None
                     ),
+                    closing=result_text_seen,
                 )
                 if payload is not None:
                     if state is not None:
@@ -3968,6 +3971,7 @@ class ChatService:
         publication_id: str | None = None,
         own_output: bool = False,
         extra_meta: dict | None = None,
+        closing: bool = False,
     ) -> dict | None:
         """Persist output immediately; only explicit publications enter chat.
 
@@ -3985,7 +3989,11 @@ class ChatService:
         ``own_output`` 告诉轮次输入账目：这一条是作者自己跑出来的产出，不是谁对
         房间说的一句待读的话。默认不必填 —— 「署名是 agent 且落在某一轮里」已经
         答得出这件事。填它的是那种平台填不出轮次号的写入端（远程控制里芝士问出
-        口的那句话）。"""
+        口的那句话）。
+
+        ``closing`` 说这一条是轮次收尾的结果文本。它照例就是这一轮最后说过的那
+        段话，已经作为一条消息落过了；和那段一字不差时不再落第二遍。比对的是库
+        里这一轮最后一段，不是内存账目——发版交接后接手的后端没有账目。"""
         # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
         # 当成助手输出印了出来。拦在这里而不是调用方:每一条写入路都经过这个方法,
         # 拦在门口才不会有一条漏网。
@@ -4078,6 +4086,12 @@ class ChatService:
                 # as a non-member while silently dropping its notification.
                 roster = await _room_roster(session, project_id, topic)
             text = _expand_mention_names(text, roster, topic_refs)
+            if (
+                closing
+                and turn_id is not None
+                and await blocks.last_said_in_turn(topic_id, turn_id) == text
+            ):
+                return None
             author = author or await self._agent_handle(session, topic_id)
             # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
             # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
@@ -4168,6 +4182,8 @@ class ChatService:
         eid: str | None = None,
         platform_unsolicited: bool = False,
         task_id: uuid.UUID | None = None,
+        author: str | None = None,
+        at: datetime | None = None,
     ) -> dict | None:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
@@ -4192,6 +4208,8 @@ class ChatService:
             eid=eid,
             platform_unsolicited=platform_unsolicited,
             task_id=task_id,
+            author=author,
+            at=at,
         )
 
     async def _mark_step_failed(self, block_id: uuid.UUID, error: str) -> dict | None:
@@ -4403,6 +4421,8 @@ class ChatService:
         in_room: bool = False,
         author_type: AuthorType = AuthorType.participant,
         task_id: uuid.UUID | None = None,
+        author: str | None = None,
+        at: datetime | None = None,
     ) -> dict | None:
         """One event block, committed NOW and deduped by event-id.
 
@@ -4450,15 +4470,16 @@ class ChatService:
                 topic_id=landed.topic_id,
                 task_id=landed.task_id,
                 author=(
-                    state.acting_agent
-                    if state is not None
-                    else await self._agent_handle(session, topic_id)
+                    author
+                    or (state.acting_agent if state is not None else None)
+                    or await self._agent_handle(session, topic_id)
                 ),
                 author_type=author_type,
                 content=content,
                 kind=BlockKind.event,
                 turn_id=turn_id,
                 meta=meta,
+                created_at=at,
             )
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
@@ -4485,6 +4506,7 @@ class ChatService:
             eid=eid or event.eid,
             platform_unsolicited=platform_unsolicited,
             task_id=task_id,
+            author=event.agent_handle,
         )
 
     async def _persist_worker_event(

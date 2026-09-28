@@ -45,7 +45,13 @@ def _authenticated_project_owner(client):
 
 
 def _make_project(client) -> str:
-    return post_project(client, json={"name": "P"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
+    # (`_require_reviewer_in_room`)。
+    # 这些用例把卡递给 alice / bob，就让他们真在项目里 —— 要检验的是孤儿闸本身。
+    for handle in ("alice", "bob"):
+        join_project_team(client, pid, handle)
+    return pid
 
 
 def _make_topic(client, project_id: str) -> str:

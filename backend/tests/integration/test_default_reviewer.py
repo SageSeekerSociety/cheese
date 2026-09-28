@@ -16,7 +16,11 @@ import itertools
 import uuid
 
 from tests.delivery import delivery_artifact
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_project_tree import _insert_block
 from tests.machine_work import declare_task, machine_commits
 
@@ -27,7 +31,13 @@ def _project(client) -> str:
     client.headers.update(session_auth_headers("alice"))
     r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # 2026-09-27: 递卡与改派那道门现在先问「这个人在不在房间里」
+    # (`_require_reviewer_in_room`)。这里的 bob / carol / dave 是「被指派的审阅
+    # 人」—— 让他们像真实参与者一样在项目里，量到的才是默认审阅人那条梯子本身。
+    for handle in ("bob", "carol", "dave"):
+        join_project_team(client, pid, handle)
+    return pid
 
 
 def _default_reviewer(client, pid: str, handle: str) -> None:

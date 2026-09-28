@@ -89,7 +89,7 @@ describe('project work computer settings', () => {
 
     expect(row.textContent).toContain('新 agent 默认用')
     expect(row.textContent).toContain('云端 · 标准配置')
-    expect(screen.getByText('只影响还没开工的 agent；已经在干活的 agent 继续用自己那台')).toBeTruthy()
+    expect(screen.getByText('只影响还没开工的 agent；已经开工的 agent 继续用自己那台')).toBeTruthy()
     const distribution = within(screen.getByTestId('project-distribution'))
     expect(distribution.getByText('现在的分布')).toBeTruthy()
     expect(distribution.getByText(/云端 · 3 个 agent/)).toBeTruthy()
