@@ -60,6 +60,9 @@ LINE_LIMIT = 64 * 1024 * 1024
 IDLE_EXIT_S = 600.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
+# How long a new turn waits to see the project's context as it is now before it
+# starts on what the session already has.
+CATCH_UP_TIMEOUT_S = 30.0
 TAIL_POLL_S = 0.5
 # How often the runner checks whether it has been idle long enough to let go.
 IDLE_CHECK_S = 5.0
@@ -364,6 +367,9 @@ class Runner(runner.Runner[Journal]):
         self.read_at = time.monotonic()
         self.session_id: str | None = None
         self.config_dir: Path | None = None
+        # Where the session's execution target is, when it runs against an
+        # executor: the context `_catch_up` synchronizes before a turn.
+        self.execution: str | None = None
         self.helpers: list[asyncio.Task] = []
         self.proven = False
 
@@ -379,6 +385,7 @@ class Runner(runner.Runner[Journal]):
     ) -> str:
         self.claim()
         self.config_dir = Path(env["CLAUDE_CONFIG_DIR"])
+        self.execution = env.get("CHEESE_EXECUTION_CONFIG")
         end(sessions_on(self.config_dir))
         saved = self.journal.recall("session_id")
         failed = self.journal.recall("resume_failed")
@@ -863,6 +870,8 @@ class Runner(runner.Runner[Journal]):
         how = "steer" if steering else "send"
 
         async def submit() -> dict:
+            if not steering and not self.working:
+                await self._catch_up()
             await self._put(identifier, work_id, text, images or [], how)
             return {"input_id": identifier}
 
@@ -871,6 +880,50 @@ class Runner(runner.Runner[Journal]):
             {"text": text, "images": images or [], "work_id": work_id, "how": how},
             submit,
         )
+
+    async def _catch_up(self) -> None:
+        """A new turn starts on the project's skills as they are on the machine.
+
+        Plain Claude Code watches its skill directories and picks up a skill
+        added, edited or removed while it runs. A room's session reads the
+        project's through a view of the executor that no watcher sees change,
+        so before a turn the runner has the executor client synchronize the
+        session's context (`client.py catch-up`, which relinks what changed),
+        and when anything changed the session reloads its skills. Run from
+        here and not through the session's own context service: that one
+        listens inside the session's namespace, whose `/tmp` is its own. A
+        failure costs the turn nothing: it starts on what the session has.
+        """
+        if not self.execution:
+            return
+        try:
+            helper = json.loads(Path(self.execution).read_text())["helper"]
+            process = await asyncio.create_subprocess_exec(
+                *helper,
+                "catch-up",
+                self.execution,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                out, err = await asyncio.wait_for(
+                    process.communicate(), CATCH_UP_TIMEOUT_S
+                )
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+                raise
+            if process.returncode:
+                raise RuntimeError(err.decode(errors="replace")[-600:])
+            if json.loads(out or b"{}").get("changed"):
+                await self.command("/reload-skills")
+        except Exception as error:  # noqa: BLE001 — the turn goes on regardless
+            print(
+                f"project context not synchronized before the turn: {error!r}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     async def control(self, request: dict, timeout: float = CONTROL_TIMEOUT_S) -> dict:
         identifier = f"cheese-{uuid.uuid4().hex}"
