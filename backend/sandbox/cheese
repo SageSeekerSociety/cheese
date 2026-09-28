@@ -1876,6 +1876,31 @@ def _recover_task(task_id):
     print(f"已恢复到独立目录：{recovered}\n原工作目录和评审分支均未覆盖。")
 
 
+def _has_work_to_sync(worktree: Path) -> bool:
+    """Whether `_sync_task` would deliver or back up anything from this checkout.
+
+    Nothing, when its files are exactly its commit and that commit is already
+    its branch on the forge as this checkout last pushed or fetched it: the
+    push would be a no-op and the backup is the commit itself, already on the
+    forge. Answered from the checkout alone, with no network call, because
+    `sync --all` asks it of every task the room ever opened and a room keeps
+    them all (56 in one room on dev): pushing each one again made a switch's
+    push outlast its two minutes once a room was old enough. Anything this
+    cannot read goes to the full sync, which reports its own failures.
+    """
+    try:
+        # No index refresh: an agent may be using this checkout right now.
+        if _git_task(worktree, "--no-optional-locks", "status", "--porcelain"):
+            return True
+        branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+        pushed = _git_task(
+            worktree, "rev-parse", "--verify", f"refs/remotes/origin/{branch}"
+        )
+        return pushed != _git_task(worktree, "rev-parse", "HEAD")
+    except RuntimeError:
+        return True
+
+
 def _sync_all_tasks() -> None:
     root = _task_root()
     if not root.exists():
@@ -1883,6 +1908,8 @@ def _sync_all_tasks() -> None:
     failed = []
     for worktree in sorted(root.iterdir()):
         if not (worktree / ".git").exists():
+            continue
+        if not _has_work_to_sync(worktree):
             continue
         try:
             _sync_task(worktree.name)

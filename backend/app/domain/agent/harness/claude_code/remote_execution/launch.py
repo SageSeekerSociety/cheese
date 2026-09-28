@@ -27,7 +27,7 @@ from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetch
 from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):
-# every task checkout backed up and pushed.
+# every task checkout with something unpushed backed up and pushed.
 CHEESE_SYNC_SCRIPT = """#!/bin/sh
 exec cheese sync --all
 """
