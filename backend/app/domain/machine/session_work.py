@@ -432,8 +432,10 @@ async def push_before_switch(lease: dict, start: Callable[[], Awaitable[dict]]) 
     """Push the session's work to its branches on the machine it is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
-    --all``): every task checkout's commits go to its branch, and what is not
-    committed is backed up as a snapshot ``cheese recover`` restores. Raises
+    --all``): every task checkout's unpushed commits go to its branch, and
+    what is not committed is backed up as a snapshot ``cheese recover``
+    restores; a checkout with neither is not touched, so the push costs what
+    is unpushed rather than how many tasks the room has opened. Raises
     ``WorkComputerUnreachable`` when the command could not run at all, and a
     ``ConflictError`` with the machine's own words when it ran and failed.
 

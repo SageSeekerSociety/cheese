@@ -99,6 +99,11 @@ def device(tmp_path, monkeypatch):
             self.end_headers()
             self.wfile.write(json.dumps({"data": tasks[task]}).encode())
 
+        def log_request(self, *_):
+            # Every call the machine made to the platform, for a test to count.
+            with (home / "requests.log").open("a") as seen:
+                seen.write(f"{self.command} {self.path}\n")
+
         def log_message(self, *_):
             pass
 
@@ -165,6 +170,46 @@ def test_sync_backs_up_uncommitted_work_without_changing_index_or_pr_head(device
     git(home, "clone", str(remote), str(recovered))
     git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
     assert git(recovered, "show", "FETCH_HEAD:same.txt") == "unstaged"
+
+
+def test_sync_all_touches_only_the_tasks_with_something_to_sync(device):
+    """A room keeps every task it ever opened, so the push before a switch (and
+    at every Stop) has to cost what is unpushed, not how old the room is."""
+    cli, tasks, remote, home = device
+    template = next(iter(tasks.values()))
+    for _ in range(6):
+        task = str(uuid.uuid4())
+        branch = f"task/{uuid.UUID(task).hex[:8]}"
+        git(remote, "branch", branch, "main")
+        tasks[task] = {**template, "task_id": task, "branch": branch}
+    worktrees = {}
+    for task in tasks:
+        work = worktrees[task] = cli._task_worktree(task)
+        (work / "done.txt").write_text(f"finished {task}\n")
+        git(work, "add", "done.txt")
+        git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "finished work")
+        cli._sync_task(task)
+    committed, edited, *finished = tasks
+    work = worktrees[committed]
+    (work / "more.txt").write_text("not pushed yet\n")
+    git(work, "add", "more.txt")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "more work")
+    (worktrees[edited] / "draft.txt").write_text("not committed\n")
+    (home / "requests.log").unlink()
+    shutil.rmtree(home / "backups")
+
+    cli._sync_all_tasks()
+
+    assert git(remote, "rev-parse", tasks[committed]["branch"]) == git(
+        work, "rev-parse", "HEAD"
+    )
+    assert {path.name for path in (home / "backups").iterdir()} == {
+        committed,
+        edited,
+    }
+    seen = (home / "requests.log").read_text()
+    assert committed in seen and edited in seen
+    assert not [task for task in finished if task in seen]
 
 
 def test_reopening_a_task_preserves_unpushed_commits_and_dirty_files(device):
