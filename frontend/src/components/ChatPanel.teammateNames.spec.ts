@@ -134,13 +134,16 @@ function mount() {
   })
 }
 
-// 每条通知那一行：署的名字（头像上的 aria-label）和它说的话。
+// 每条通知那一行以谁的身份出现：头像是谁的（记号上的 aria-label）、名字那一行写的
+// 是谁，和它说的话。平台自己的那一行两样都没有。
 function notices(container: Element) {
   return Array.from(container.querySelectorAll('.notice-row')).map((row) => ({
-    name: row.querySelector('.notice-row__mark')?.getAttribute('aria-label') ?? null,
+    avatar: row.querySelector('.notice-row__mark[role="img"]')?.getAttribute('aria-label') ?? null,
+    name: row.querySelector('.notice-row__name')?.textContent?.trim() ?? null,
     text: row.textContent ?? '',
   }))
 }
+const as = (name: string) => ({ avatar: name, name })
 
 beforeEach(() => {
   setLocale('zh-CN')
@@ -165,6 +168,14 @@ describe('一间房里几位队友，各署各的名', () => {
         notice('opus-turn-2', 'timed_delivery', 'cheese', 'Opus 的兜底投递'),
         ask(OPUS.own, 'opus-turn-3'),
         notice('opus-turn-3', 'turn_failed', 'human', 'Opus 这一轮失败了'),
+        // 不属于哪位队友那一轮的：人编辑了文档。
+        block({
+          kind: 'event',
+          author_type: 'platform',
+          author: 'me',
+          content: '我 编辑了文档',
+          meta: { action: 'doc', detail: '改了第二节' },
+        }),
       ],
       has_more: false,
     })
@@ -176,10 +187,15 @@ describe('一间房里几位队友，各署各的名', () => {
     expect(names).toContain('芝士K')
     expect(names).toContain('芝士Opus')
     const rows = notices(container)
-    const find = (text: string) => rows.find((row) => row.text.includes(text))
-    expect(find('Kimi 这一轮失败了')?.name).toBe('芝士K')
-    expect(find('Opus 这一轮失败了')?.name).toBe('芝士Opus')
-    expect(find('Opus 的兜底投递')?.text).toContain('芝士Opus正在处理')
+    const find = (text: string) => {
+      const row = rows.find((r) => r.text.includes(text))
+      return row && { avatar: row.avatar, name: row.name }
+    }
+    expect(find('Kimi 这一轮失败了')).toEqual(as('芝士K'))
+    expect(find('Opus 这一轮失败了')).toEqual(as('芝士Opus'))
+    expect(find('Opus 的兜底投递')).toEqual(as('芝士Opus'))
+    expect(rows.find((r) => r.text.includes('Opus 的兜底投递'))?.text).toContain('芝士Opus正在处理')
+    expect(find('编辑了文档')).toEqual({ avatar: null, name: null })
   })
 
   it('轮次帧写的是队友自己的 handle，「谁在干活」报它的名字', async () => {

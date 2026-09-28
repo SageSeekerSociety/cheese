@@ -1109,8 +1109,9 @@ function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
   // This event contains the worker's actual result, rather than a status notice.
   if (block.meta?.event_type === 'subagent_stop') return null
   if (isPersonBlock(block)) return null
-  // 平台替某个参与者写下的一条（「XX 编辑了文档」就是这样）：档位说「平台」，
-  // 署名说是谁 —— 所以这里问的是署名，名册在手时以名册为准。
+  // 关于某位 AI 队友那件事的通知，以那位队友的身份出现（头像和名字），不另署「平
+  // 台」。是哪位：署名是队友就是它，否则是这一轮的那位（turnAgentName）。不属于任
+  // 何一位队友那一轮的平台通知（人编辑了文档之类）照旧不署队友。
   if (isAgentHandle(block.author) || seatByHandle.value.get(block.author)?.agent) {
     return agentDisplayName(block.author)
   }
