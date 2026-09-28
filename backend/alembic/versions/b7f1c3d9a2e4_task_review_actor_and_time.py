@@ -10,7 +10,7 @@
 只看 ``approved``。
 
 Revision ID: b7f1c3d9a2e4
-Revises: 7c2e91a4d3f6
+Revises: a3d1f0c72b94
 """
 
 from collections.abc import Sequence
@@ -21,7 +21,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b7f1c3d9a2e4"
-down_revision: str | Sequence[str] | None = "b380c2e8f60c"
+down_revision: str | Sequence[str] | None = "a3d1f0c72b94"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
