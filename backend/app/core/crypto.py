@@ -48,6 +48,9 @@ class Purpose(StrEnum):
     REALNAME = "realname"
     INTEGRATION_SECRET = "integration-secret"
     INTEGRATION_STATE = "integration-state"
+    MCP_OAUTH_TOKEN = "mcp-oauth-token"
+    MCP_OAUTH_STATE = "mcp-oauth-state"
+    MCP_SECRET = "mcp-secret"
 
 
 class DecryptionError(InternalServerError):
