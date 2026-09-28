@@ -17,10 +17,19 @@ address — so the browser renders those from the original bytes instead.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
+import os
+import uuid
 from collections import OrderedDict
+from pathlib import Path
 
 import httpx
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 #: What this module will send onward. A suffix outside this set never reaches the
 #: service, so an unsupported file fails here with a sentence rather than there
@@ -38,6 +47,48 @@ _CACHE_MAX_ENTRIES = 32
 _CACHE_MAX_BYTES = 128 * 1024 * 1024
 _cache: OrderedDict[str, bytes] = OrderedDict()
 _cache_bytes = 0
+
+
+#: Converted PDFs on disk, by the same key. The memory cache dies with every
+#: deploy, and on dev that was often enough that the first open of a Word file
+#: after one waited 3–3.6s for LibreOffice (measured 2026-09-27). The disk copy
+#: survives; oldest files go first past the cap.
+_DISK_MAX_BYTES = 1024 * 1024 * 1024
+
+
+def _disk_root() -> Path:
+    return Path(settings.workspace_root) / ".preview-cache"
+
+
+def _disk_get(key: str) -> bytes | None:
+    path = _disk_root() / f"{key}.pdf"
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    try:
+        os.utime(path)  # recently used: pruned last
+    except OSError:
+        pass
+    return data if data.startswith(b"%PDF") else None
+
+
+def _disk_put(key: str, pdf: bytes) -> None:
+    root = _disk_root()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        staging = root / f".{key}.{uuid.uuid4().hex}"
+        staging.write_bytes(pdf)
+        staging.replace(root / f"{key}.pdf")
+        files = sorted(root.glob("*.pdf"), key=lambda f: f.stat().st_mtime)
+        total = sum(f.stat().st_size for f in files)
+        while files and total > _DISK_MAX_BYTES:
+            oldest = files.pop(0)
+            total -= oldest.stat().st_size
+            oldest.unlink(missing_ok=True)
+    except OSError:
+        # A full or read-only disk costs speed, never the preview itself.
+        logger.warning("preview cache write failed", exc_info=True)
 
 
 class OfficeRenderUnavailable(RuntimeError):
@@ -86,6 +137,10 @@ async def render_to_pdf(
     if cached is not None:
         _cache.move_to_end(key)
         return cached
+    stored = await asyncio.to_thread(_disk_get, key)
+    if stored is not None:
+        _remember(key, stored)
+        return stored
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -116,4 +171,32 @@ async def render_to_pdf(
     if not pdf.startswith(b"%PDF"):
         raise OfficeRenderFailed("转换结果不是有效的 PDF")
     _remember(key, pdf)
+    await asyncio.to_thread(_disk_put, key, pdf)
     return pdf
+
+
+_warming: set[asyncio.Task] = set()
+
+
+def prewarm(raw: bytes, path: str) -> None:
+    """Convert a just-saved Word or PowerPoint file now, so opening it is a hit.
+
+    Fire and forget: a save must not wait for LibreOffice, and a conversion that
+    fails here fails again, with its sentence, when someone opens the preview.
+    """
+    endpoint = settings.office_render_endpoint
+    if not endpoint or not is_renderable(path):
+        return
+
+    async def run() -> None:
+        try:
+            await render_to_pdf(raw, path, endpoint)
+        except Exception:  # noqa: BLE001 — see docstring
+            logger.info("preview prewarm skipped for %s", path, exc_info=True)
+
+    try:
+        task = asyncio.get_running_loop().create_task(run())
+    except RuntimeError:
+        return
+    _warming.add(task)
+    task.add_done_callback(_warming.discard)

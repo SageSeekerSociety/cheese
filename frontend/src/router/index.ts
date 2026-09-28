@@ -17,6 +17,7 @@ import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
 
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
+import { preloadPdfViewer } from '@/lib/pdfPreload'
 import { recordEntry } from '@/lib/projectEntry'
 import { myId } from '@/me'
 import { reloadForNewBuild } from '@/services/staleBuild'
@@ -180,6 +181,8 @@ router.beforeEach((to) => {
   if (to.name !== 'workspace-topic' || !myId()) return
   const topicId = String(to.params.topicId)
   if (!cachedWindow(topicId)) void refreshBlockCache(topicId)
+  // 房间里会点开文档预览：趁浏览器空闲把 pdf.js 先取下来（只取一次）。
+  preloadPdfViewer()
 })
 
 // A lazily imported view is fetched at navigation time, so a release that
