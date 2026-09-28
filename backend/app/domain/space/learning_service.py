@@ -204,7 +204,14 @@ class SpaceLearningService:
         return by_project, names_by_category
 
     async def _knowledge_point_options(self, space_id: int) -> list[dict[str, Any]]:
-        """这门课可筛的知识点 —— 分类本身就是课程设计的格子，不限于已有项目的那些。"""
+        """这门课可筛的知识点 —— 分类本身就是课程设计的格子，不限于已有项目的那些。
+
+        这里读的是 `space_categories` 本身: 课程级的元数据，不是某个成员项目里的
+        行，所以那套逐项目的 `may_read_project`（本文件其余每一处读法都过它）在这
+        里无从下手 —— 没有项目可以逐条判。挡它的是课程级那道门，挂在唯一一个调用
+        者 `filters` 的路由上（`_ensure_space_visible`，非成员答 404）。**别把这个
+        方法接到没挂那道门的路由上**: 接上去就等于把别人课程的分类名念给外人听。
+        """
         rows = (
             await self._session.execute(
                 select(SpaceCategory.id, SpaceCategory.name)
