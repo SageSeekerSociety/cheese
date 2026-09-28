@@ -36,6 +36,26 @@ const DATASETS = {}
 
 export function registerDataset(name, rows) { DATASETS[name] = rows }
 
+// A fence that says `embed: seats` also plays on the product's own components:
+// the page at /demo/seats (frontend/src/views/demo) goes in an iframe above the
+// step list, and the list drives it. The scene there and the steps here are two
+// files describing one demo, so the build holds them to the same step titles in
+// the same order — the list stays the words, the scene stays the pictures.
+const EMBEDS = {}
+
+export function registerEmbed(name, labels) { EMBEDS[name] = labels }
+
+function embedStage(spec, steps, where) {
+  if (!spec.embed) return ''
+  const labels = EMBEDS[spec.embed]
+  if (!labels) missing(where, `no demo scene named «${spec.embed}» — frontend/src/views/demo/scenes has ${Object.keys(EMBEDS).join(', ') || '(none)'}`)
+  const mine = steps.map((s) => s.label)
+  if (labels.length !== mine.length || labels.some((l, i) => l !== mine[i])) {
+    missing(where, `the scene «${spec.embed}» has steps «${labels.join(' / ')}», this fence has «${mine.join(' / ')}» — change both together`)
+  }
+  return `<div class="dm-stage"><iframe data-dm-embed src="/demo/${esc(spec.embed)}?embed=1" title="${esc(spec.title)}（演示画面）" loading="lazy"></iframe></div>`
+}
+
 // ---------- the fence body ----------
 function scalar(v) {
   const s = v.trim()
@@ -170,6 +190,7 @@ function renderSteps(spec, where, timeline) {
     <div class="dm-track"><span class="dm-fill" data-dm-fill style="--p:100%"></span></div>
     <div class="dm-segs" role="group" aria-label="跳到某一步">${segs}</div>
   </div>
+  ${embedStage(spec, steps, where)}
   <ol class="dm-list">
 ${li}
   </ol>
