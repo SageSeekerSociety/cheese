@@ -735,6 +735,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .panel-preview {
+  /* 上面那一格的地板：一面预览低到看不出东西就不叫预览了。列高不够时它缩到这
+     么高就停住，其余交给整块面板滚——见下面 .preview-wrap 和 .doc 的说明。 */
+  --preview-min: 240px;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -758,9 +761,14 @@ onBeforeUnmount(() => {
   padding: 2px 6px;
   border-bottom: 1px solid var(--line);
 }
+/* 填满剩下的空间，但**不许被下面那块挤没**：flex-shrink 是 0，不是 1。
+   这一格和「这个房间里的东西」同在一条纵向 flex 列里，而那一块按自己的内容长；
+   两下一挤，能缩到 0 的只有这一格。真缩到 0 的时候它的内容不会跟着消失——应用条
+   和 iframe 会溢出到下面的列表上：小标题和应用名叠在同一行，深色主题下还在列表头
+   上压出一块白的 iframe。shrink 归零之后高度由内容决定（应用条 + 预览自己的
+   240px 地板），再长就整块面板一起滚，谁也不盖谁。 */
 .preview-wrap {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
 }
@@ -777,7 +785,7 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   width: 100%;
   border: none;
-  min-height: 240px;
+  min-height: var(--preview-min);
   /* Theme-invariant on purpose: the iframe renders arbitrary user HTML that
      assumes a white page (its own text is near-black). Painting the backing
      dark would leave black text on a dark ground wherever that document is
@@ -791,9 +799,12 @@ onBeforeUnmount(() => {
 }
 
 /* ---- 文档交付物 ---- */
+/* 文档这一格要能缩到面板那么高（正文自己在里面滚），但不能缩到没有——理由和上面
+   .preview-wrap 是同一条：下面的列表一长，它会被挤成 0，文档条就叠在列表标题上。
+   留一块地板，缩到这里就停，其余交给整块面板滚。 */
 .doc {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: var(--preview-min);
   display: flex;
   flex-direction: column;
   position: relative;
