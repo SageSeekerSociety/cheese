@@ -1337,6 +1337,35 @@ def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
     assert platform.seen[before:] == ["lease", "invoke"]
 
 
+def test_a_session_back_on_its_machine_keeps_what_it_wrote_at_the_placeholder(
+    leased_session,
+):
+    """A conversation that already lived at the machine's path, resumed at the
+    placeholder and then relaunched onto the machine again: its subagent
+    transcripts and saved tool results from both stays end up in one place,
+    and the relaunch starts."""
+    _, work, launch = leased_session
+    config = work.parent / "session" / "config"
+    machine = central.project_dir(config, str(work))
+    placeholder = central.project_dir(config, "/unavailable-project")
+    (machine / "s/subagents").mkdir(parents=True)
+    (machine / "s.jsonl").write_text("conversation\n")
+    (machine / "s/subagents/agent-first.jsonl").write_text("first\n")
+    (placeholder / "s/subagents").mkdir(parents=True)
+    (placeholder / "s/tool-results").mkdir(parents=True)
+    (placeholder / "s/subagents/agent-second.jsonl").write_text("second\n")
+    (placeholder / "s/tool-results/result.txt").write_text("result\n")
+
+    started = launch()
+
+    assert started["workspace"] == str(work)
+    assert (machine / "s.jsonl").read_text() == "conversation\n"
+    assert (machine / "s/subagents/agent-first.jsonl").read_text() == "first\n"
+    assert (machine / "s/subagents/agent-second.jsonl").read_text() == "second\n"
+    assert (machine / "s/tool-results/result.txt").read_text() == "result\n"
+    assert not placeholder.exists()
+
+
 def test_a_session_never_starts_at_the_machines_path_without_the_machine(
     leased_session,
 ):
