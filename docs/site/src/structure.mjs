@@ -27,7 +27,7 @@ export const DEV = [
   ['平台与安全', ['auth', 'seats', 'admins', 'backend-app', 'frontend']],
   ['部署与运维', ['topology', 'data', 'ci', 'docs-site', 'deploy-scripts']],
   ['参考（自动生成）', ['ref-cli', 'ref-env', 'ref-ci']],
-  ['索引（自动生成）', ['by-path', 'by-kind']],
+  ['索引（自动生成）', ['by-path']],
 ]
 
 // Pages that moved; their old URLs keep working.
