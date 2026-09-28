@@ -20,6 +20,9 @@ const shipped = new Set(execution.shipped_skills || []);
 // change while the session runs (`release.touch_skills`), so they are read
 // each time (`client.py` `skill_places` reads the same file).
 const placesFile = execution.target_file.replace(/[^/]*$/, "skill-places.json");
+// The one native Read this plugin lets through the session's PreToolUse guard
+// (`client.py` `probed`): its look at a file before the executor reads it.
+const probeFile = execution.target_file.replace(/[^/]*$/, "read-probe.json");
 
 async function skillPlaces($) {
   try {
@@ -224,10 +227,12 @@ export function register(on) {
         // result, as a native session does (Write and Edit cannot be looked
         // at this way; `release.touch_skills` covers them). Bounded, since the
         // file is looked up in the view, and the view asks the executor.
+        await $.fs.write(probeFile, JSON.stringify({ path: args.file_path }));
         await Promise.race([
           next(e).catch(() => undefined),
           $.clock.sleep(5000),
         ]);
+        await $.fs.write(probeFile, "{}");
       }
       for (const field of ["file_path", "path", "notebook_path"]) {
         if (typeof args[field] === "string") args[field] = remotePath(args[field], known.places);

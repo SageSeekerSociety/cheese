@@ -1917,6 +1917,21 @@ def own_output(config, call):
     )
 
 
+def probed(config, call):
+    """The session's own Read of a project file, which `proxy.js` lets through
+    to have the session offer the skills whose `paths` name it; the executor
+    answers the call. Only the path the plugin named for it is admitted."""
+    if call.get("tool_name") != "Read":
+        return False
+    try:
+        named = json.loads(
+            (Path(config["target_file"]).parent / "read-probe.json").read_text()
+        ).get("path")
+    except (OSError, ValueError, KeyError):
+        return False
+    return bool(named) and (call.get("tool_input") or {}).get("file_path") == named
+
+
 def own_memory(config, call):
     """A file tool on the session's memory tree, which lives on this host
     (`prepare`'s `central_memory`). The plugin has already spelled the path
@@ -1999,7 +2014,7 @@ def main():
             print(json.dumps(decision))
     elif args.mode == "guard":
         call = json.load(sys.stdin)
-        if own_output(config, call) or own_memory(config, call):
+        if own_output(config, call) or own_memory(config, call) or probed(config, call):
             return
         print(
             json.dumps(
