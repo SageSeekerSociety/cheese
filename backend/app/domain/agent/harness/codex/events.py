@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from app.domain.agent.service import (
     STEP_ERROR_MAX,
+    AgentCompacting,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -89,6 +90,17 @@ class Assembler:
         if method in ("item/started", "item/completed"):
             item = params["item"]
             eid = f"codex:{params['threadId']}:{item['id']}"
+            if item["type"] == "contextCompaction":
+                # The thread's history is being summarised (codex 0.154.0 writes
+                # it as an item of its own). The item says nothing about how it
+                # went: a compaction that failed fails the turn, and the turn's
+                # ending says so.
+                return [
+                    AgentCompacting(
+                        done=method == "item/completed",
+                        **self.attribution(params["threadId"]),
+                    )
+                ]
             if item["type"] == "agentMessage":
                 if method == "item/started":
                     at = params.get("startedAtMs", record.get("emittedAtMs"))

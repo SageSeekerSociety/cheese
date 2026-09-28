@@ -1,0 +1,284 @@
+{
+ "why": "Constructed, not recorded: the preamble and user message are pi-retry-refused.json's; the rest follows the event shapes pi 0.85.1's docs/rpc.md gives for compaction_start and compaction_end, here a threshold compaction after the turn that fails.",
+ "stream": [
+  {
+   "entry": {
+    "type": "model_change",
+    "id": "f0c220bc",
+    "parentId": null,
+    "timestamp": "2026-09-26T01:48:34.235Z",
+    "provider": "cheese",
+    "modelId": "fake"
+   }
+  },
+  {
+   "entry": {
+    "type": "thinking_level_change",
+    "id": "f4f46f98",
+    "parentId": "f0c220bc",
+    "timestamp": "2026-09-26T01:48:34.235Z",
+    "thinkingLevel": "off"
+   }
+  },
+  {
+   "event": {
+    "type": "agent_start"
+   }
+  },
+  {
+   "event": {
+    "type": "turn_start"
+   }
+  },
+  {
+   "event": {
+    "type": "message_start",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "say something"
+      }
+     ],
+     "timestamp": 1790387314240
+    }
+   }
+  },
+  {
+   "entry": {
+    "type": "message",
+    "id": "15ce242b",
+    "parentId": "f4f46f98",
+    "timestamp": "2026-09-26T01:48:34.240Z",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "say something"
+      }
+     ],
+     "timestamp": 1790387314240
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_end",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "say something"
+      }
+     ],
+     "timestamp": 1790387314240
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_start",
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "done"
+      }
+     ],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1790387314300
+    }
+   }
+  },
+  {
+   "entry": {
+    "type": "message",
+    "id": "a1b2c3d4",
+    "parentId": "15ce242b",
+    "timestamp": "2026-09-26T01:48:34.300Z",
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "done"
+      }
+     ],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1790387314300
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "message_end",
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "done"
+      }
+     ],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1790387314300
+    }
+   }
+  },
+  {
+   "event": {
+    "type": "turn_end",
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "done"
+      }
+     ],
+     "api": "openai-completions",
+     "provider": "cheese",
+     "model": "fake",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1790387314300
+    },
+    "toolResults": []
+   }
+  },
+  {
+   "event": {
+    "type": "agent_end",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "say something"
+       }
+      ],
+      "timestamp": 1790387314240
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "done"
+       }
+      ],
+      "api": "openai-completions",
+      "provider": "cheese",
+      "model": "fake",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "stop",
+      "timestamp": 1790387314300
+     }
+    ]
+   }
+  },
+  {
+   "event": {
+    "type": "compaction_start",
+    "reason": "threshold"
+   }
+  },
+  {
+   "event": {
+    "type": "compaction_end",
+    "reason": "threshold",
+    "result": null,
+    "aborted": false,
+    "willRetry": false,
+    "errorMessage": "summarization failed: 429"
+   }
+  },
+  {
+   "event": {
+    "type": "agent_settled"
+   }
+  }
+ ]
+}

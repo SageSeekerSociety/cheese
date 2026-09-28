@@ -33,7 +33,7 @@ from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.pi import catalog
-from app.domain.agent.harness.pi.journal import GAVE_UP, RETRYING, Journal
+from app.domain.agent.harness.pi.journal import COMPACTING, GAVE_UP, RETRYING, Journal
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 
 # A live event that can only mean an entry was written. Anything else is
@@ -96,6 +96,16 @@ class Runner(runner.Runner[Journal]):
             elif self.failing:
                 # A retry cut short while it waited: no agent_end follows.
                 self._give_up(event.get("finalError"))
+        elif kind == "compaction_start":
+            self._verdict(COMPACTING, after=None, done=False)
+        elif kind == "compaction_end":
+            self._verdict(
+                COMPACTING,
+                after=None,
+                done=True,
+                aborted=bool(event.get("aborted")),
+                errorMessage=str(event.get("errorMessage") or ""),
+            )
         elif kind == "agent_end":
             # The call that ended this run, if it failed. When pi is not trying
             # again — a request it cannot retry, or the retries ran out — that
@@ -157,6 +167,10 @@ class Runner(runner.Runner[Journal]):
             # after a held entry waits with it: the cursor stays before it.
             verdicts, self.verdicts = self.verdicts, []
             owner = json.loads(self.journal.recall("owner") or "{}")
+            # A compaction names no entry: it is news the moment pi says it,
+            # and a failed call held back for its verdict must not hold it too.
+            loose = [v for v in verdicts if v["type"] == COMPACTING]
+            verdicts = [v for v in verdicts if v["type"] != COMPACTING]
 
             def stamped(record: dict) -> dict:
                 return {**record, "cheese": owner} if owner else record
@@ -186,10 +200,15 @@ class Runner(runner.Runner[Journal]):
                     rows.append(stamped(entry))
                     rows += [stamped(v) for v in behind]
                     verdicts = [v for v in verdicts if v not in behind]
+                if held:
+                    rows += [stamped(v) for v in loose]
+                    loose = []
                 if rows:
                     self.journal.import_entries(rows)
                 if len(page) < PAGE:
                     break
+            if loose:
+                self.journal.import_entries([stamped(v) for v in loose])
             # Not placed yet: the entry each names is still to be pulled.
             self.verdicts = verdicts + self.verdicts
 
