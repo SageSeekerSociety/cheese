@@ -72,6 +72,14 @@ OP_WS_OK = 9  # machine → backend: the app accepted the WebSocket
 WS_TEXT = 0
 WS_BINARY = 1
 
+# The close code the backend hangs up with when this helper no longer carries its
+# teammate's preview: a newer launch of the same teammate has taken the tunnel,
+# or already holds it when this one dials. It is the one close that must NOT be
+# redialled — the helper that replaced this one is alive, and dialling back in
+# would take the tunnel from it, which is how two helpers used to knock each
+# other off once a second.
+CLOSE_SUPERSEDED = 4001
+
 _HEAD = struct.Struct("!BI")
 
 
@@ -167,11 +175,14 @@ def send_frame(sock: socket.socket, payload: bytes, opcode: int = _OP_BIN) -> No
 
 def recv_message(
     sock: socket.socket, write_lock: threading.Lock | None = None
-) -> tuple[int, bytes] | None:
-    """The next data message as ``(opcode, payload)``, reassembled; None when the
-    peer closed. Fragments and control frames are handled here rather than by the
-    caller: a peer may split a message across continuations and interleave a ping
-    at any point, and treating either as data corrupts the stream.
+) -> tuple[int, bytes]:
+    """The next data message as ``(opcode, payload)``, reassembled. A close from
+    the peer comes back as ``(_OP_CLOSE, <its payload>)``: the payload carries
+    the close code, and one of those codes (``CLOSE_SUPERSEDED``) changes what
+    the caller does next. Fragments and control frames are handled here rather
+    than by the caller: a peer may split a message across continuations and
+    interleave a ping at any point, and treating either as data corrupts the
+    stream.
 
     ``write_lock`` is the caller's lock over writes to this same socket. Answering
     a ping is a WRITE from the reading thread, so on any socket another thread
@@ -197,7 +208,7 @@ def recv_message(
             data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
 
         if opcode == _OP_CLOSE:
-            return None
+            return opcode, data
         if opcode == _OP_PING:
             if write_lock is None:
                 send_frame(sock, data, _OP_PONG)
@@ -372,6 +383,9 @@ class Session:
         # writes when it answers a ping. Its own lock keeps those two apart.
         self._ws_streams: dict[int, tuple[socket.socket, threading.Lock]] = {}
         self._lock = threading.Lock()
+        # Why the backend let go of this helper, when it said it no longer wants
+        # it (``CLOSE_SUPERSEDED``); None for every other end of a session.
+        self.superseded: str | None = None
 
     def send(self, op: int, stream: int, payload: bytes = b"") -> None:
         """One frame to the backend, or nothing at all if the tunnel has gone.
@@ -392,18 +406,20 @@ class Session:
         """Read frames until the backend goes away.
 
         Losing the connection RETURNS rather than raises: it is the normal end of
-        a session (a redeploy, a laptop's wifi), the caller's only answer is to
+        a session (a redeploy, a laptop's wifi), the caller's usual answer is to
         dial again, and an exception escaping here would be an unhandled one on
-        a thread nobody is watching.
+        a thread nobody is watching. The one end that is not answered by dialling
+        again is recorded in ``superseded``.
         """
         stop = threading.Event()
         threading.Thread(target=self._keepalive, args=(stop,), daemon=True).start()
         try:
             while True:
-                message = recv_message(self._sock, self._write_lock)
-                if message is None:
+                kind, data = recv_message(self._sock, self._write_lock)
+                if kind == _OP_CLOSE:
+                    if data[:2] == struct.pack("!H", CLOSE_SUPERSEDED):
+                        self.superseded = data[2:].decode(errors="replace")
                     return
-                _, data = message
                 try:
                     op, stream, payload = decode(data)
                 except ValueError as exc:
@@ -526,10 +542,9 @@ class Session:
         )
         try:
             while True:
-                message = recv_message(upstream, upstream_lock)
-                if message is None:
+                opcode, data = recv_message(upstream, upstream_lock)
+                if opcode == _OP_CLOSE:
                     break
-                opcode, data = message
                 kind = WS_TEXT if opcode == _OP_TEXT else WS_BINARY
                 self.send(OP_WS_MSG, stream, bytes([kind]) + data)
         except (OSError, PreviewError):
@@ -591,6 +606,10 @@ def run(
     get is a token that no longer proves which topic it speaks for, and a helper
     that outlived its topic should go rather than knock forever. The launcher
     starts a fresh one on the next turn that wants a preview.
+
+    Being SUPERSEDED ends it too, for the opposite reason: the backend has a
+    newer helper for the same teammate, and redialling would take the tunnel
+    back from the one that is supposed to have it.
     """
     delay = _RECONNECT_START_S
     while True:
@@ -616,7 +635,13 @@ def run(
             continue
         logger.info("preview tunnel up")
         delay = _RECONNECT_START_S
-        Session(sock, ports).serve()
+        session = Session(sock, ports)
+        session.serve()
+        if session.superseded is not None:
+            logger.info(
+                "preview tunnel handed over, not redialling: %s", session.superseded
+            )
+            return 0
         time.sleep(_RECONNECT_START_S)
 
 

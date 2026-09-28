@@ -3028,7 +3028,7 @@ async def _source_bytes(
     return library.read_attachment(project_id, room_id, path)
 
 
-async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
+async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
     """Refuse an app artifact the platform provably cannot render (``cheese serve``).
 
     Setting it used to always succeed, so 芝士 announced 「预览已就绪」 while the
@@ -3037,14 +3037,14 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
     machine is carrying a preview out) and the app behind it (the tunnel is up and
     the declared port answers nothing).
     """
-    if not await preview_hub.wait_online(topic_id, _PREVIEW_ATTACH_WAIT_S):
+    if not await preview_hub.wait_online(topic_id, seat, _PREVIEW_ATTACH_WAIT_S):
         raise ValidationError(
             "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
             "用 cheese serve <端口> 登记（它会把通道带起来）；"
             "要给人看结果也可以用 cheese show 点名一个文件——网页、图片，"
             "或报告、表格这类文档。"
         )
-    if not await preview_hub.probe(topic_id):
+    if not await preview_hub.probe(topic_id, seat):
         raise ValidationError(
             "登记的端口上没有服务在应答，预览会是一个白框。"
             "先把应用起在 127.0.0.1 上、确认能访问，再登记这个端口。"
@@ -3090,12 +3090,21 @@ async def show_in_room(
     （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
+    # The teammate that showed it, when a teammate did. A room may seat several,
+    # and for an app the author is also WHICH app: each teammate serves from its
+    # own checkout through its own tunnel, and the preview follows the author.
+    # Taken from the credential, because the helper's tunnel is keyed by the
+    # same claim of the same credential.
+    seat = resolver.credential_agent() if actor.via == "cheese" else None
+    author = seat or await TopicMemberService(db).resolve_agent_handle(
+        topic_id, room_id=place.room_id
+    )
     declared = (body.get("as") or "").strip().lower()
     if declared == "app":
         # An app artifact points at the running server, not a file — the stored
         # content is a human note ("Vue dev server"), not a path.
         path = (body.get("path") or "app").strip()[:120]
-        await _reject_unreachable_app(topic_id)
+        await _reject_unreachable_app(topic_id, author)
     else:
         path = _clean_artifact_path(body.get("path") or "")
     as_ = declared or artifact_kind_for(path)
@@ -3126,9 +3135,6 @@ async def show_in_room(
             raise ValidationError(
                 f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
             )
-    author = await TopicMemberService(db).resolve_agent_handle(
-        topic_id, room_id=place.room_id
-    )
     if as_ != "app" and ("content" in body or "content_b64" in body):
         # Through the draft history: the state this replaces stays restorable,
         # and `base_version` (the version `cheese pull` read) turns an overwrite
@@ -3453,8 +3459,8 @@ async def get_preview(
         # the machine goes offline, the helper's token ages out — and each of
         # those renders as a white iframe unless the two states are reported
         # apart. `tunnel_up` without a `url` is 「通道在，应用没在跑」.
-        tunnel_up = preview_hub.is_online(topic_id)
-        alive = tunnel_up and await preview_hub.probe(topic_id)
+        tunnel_up = preview_hub.is_online(topic_id, art.author)
+        alive = tunnel_up and await preview_hub.probe(topic_id, art.author)
         return ok(
             {
                 "kind": "app",
