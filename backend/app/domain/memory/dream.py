@@ -63,7 +63,7 @@ DREAM_KIND = "memory_dream"
 DREAM_SETTINGS_KEY = "memory_dream"
 
 #: 累计到这个数才值得整理一次（输出 token）。
-DEFAULT_THRESHOLD_OUTPUT_TOKENS = 2_000_000
+DEFAULT_THRESHOLD_OUTPUT_TOKENS = 10_000_000
 
 #: 两次整理之间至少隔这么久。跑得再勤也不会更干净，只会更贵。
 DEFAULT_MIN_INTERVAL = timedelta(hours=4)
