@@ -37,6 +37,9 @@ const SPACES: NavItem = {
 }
 
 // 「待办」这个词还没定（设计文档 §7 拍板 1），路径和标签都可能再改。
+//
+// 两端都有它：手机上是底栏一格，桌面上是 rail 里紧贴首页的那一格（不随项目滚走）。
+// 桌面曾经没有这一格，唯一沾边的是顶栏铃铛——那是通知，答不出「还有哪些没处理」。
 const INBOX: NavItem = { key: 'Inbox', type: 'item', title: '待办', to: '/inbox', icon: 'mdi-inbox-outline' }
 
 export interface NavSources {
@@ -45,6 +48,8 @@ export interface NavSources {
   workspaceProjectId: string | null
   projectAvatar: (name: string) => string
   createProject: () => void
+  /** 待我处理的件数；还没读到是 0。只有桌面 rail 画它——底栏那一格点开就是同一份清单。 */
+  awaitingCount?: number
 }
 
 /**
@@ -90,6 +95,9 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
   const terms = termParams(shell)
   return {
     home: [{ ...HOME, title: t('navigation.home', terms) }],
+    // 不参与 ⌘N 编号：加这一格之前 ⌘2 就是第一个项目，人手已经记住了；「待办」
+    // 是看一眼的地方，不是要频繁切进去干活的地方。
+    inbox: [{ ...INBOX, title: t('navigation.inbox', terms), badge: src.awaitingCount || 0, unnumbered: true }],
     projects: [
       ...(src.projects.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
       // Discord 式：一个项目一格方头像（首字母 + 颜色），不是截断的标题。
@@ -115,14 +123,14 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
   }
 }
 
-/** 桌面左侧 rail：首页（容器，空间/小队在它的侧栏里）+ 项目实例 + ＋新建项目。 */
+/** 桌面左侧 rail：首页（容器，空间/小队在它的侧栏里）+ 待办 + 项目实例 + ＋新建项目。 */
 export function railItems(src: NavSources, shell: Shell): NavGenericItem[] {
   const parts = railParts(src, shell)
   const items = orderedNav(shell, 'rail', Object.keys(parts)).flatMap((key) => parts[key])
   // ⌘N 是**画出来的位置**，不是某一格固有的属性：壳把项目排到第一格时，⌘1 就该是
   // 那个项目。所以编号发生在排完之后，而不是在建格子的地方写死。
   let n = 1
-  return items.map((item) => (item.type === 'item' && item.to ? { ...item, shortcut: n++ } : item))
+  return items.map((item) => (item.type === 'item' && item.to && !item.unnumbered ? { ...item, shortcut: n++ } : item))
 }
 
 /**

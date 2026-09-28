@@ -82,6 +82,40 @@ describe('RailItem 的可访问名称', () => {
     expect(link!.getAttribute('aria-label')).toBe('首页')
   })
 
+  it('待办格子的件数角标画出来了，而且名字里也听得到', async () => {
+    const { container } = mount({
+      key: 'Inbox',
+      type: 'item',
+      title: '待办',
+      to: '/inbox',
+      icon: 'mdi-inbox-outline',
+      badge: 3,
+      unnumbered: true,
+    })
+
+    const link = container.querySelector('a[href="/inbox"]') as HTMLAnchorElement | null
+    expect(link).not.toBeNull()
+    expect(link!.querySelector('.app-rail-item__badge')?.textContent).toBe('3')
+    // 角标本身是 aria-hidden 的（画给眼睛），件数必须同时进可访问名称。
+    expect(link!.getAttribute('aria-label')).toBe('待办（3）')
+  })
+
+  it('没有待办时不画角标，名字里也不多那对括号', async () => {
+    const { container } = mount({
+      key: 'Inbox',
+      type: 'item',
+      title: '待办',
+      to: '/inbox',
+      icon: 'mdi-inbox-outline',
+      badge: 0,
+      unnumbered: true,
+    })
+
+    const link = container.querySelector('a[href="/inbox"]') as HTMLAnchorElement | null
+    expect(link!.querySelector('.app-rail-item__badge')).toBeNull()
+    expect(link!.getAttribute('aria-label')).toBe('待办')
+  })
+
   it('悬停浮层里带项目全名（读屏之外，鼠标用户靠它认项目）', async () => {
     const { container } = mount({
       key: 'cx-1',

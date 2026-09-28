@@ -221,11 +221,13 @@ import type { NavSources } from './components/common/Navigation/destinations'
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { useEventListener } from '@vueuse/core'
 
 import { avatarColor } from '@/utils/avatar'
 import { pendingSudo } from '@/utils/sudo'
 
+import { useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
 
@@ -415,11 +417,16 @@ const workspaceProjectId = computed<string | null>(() =>
   workspaceProject(railProjects.value, workspace.projectId, lastOpenedProjectId())
 )
 
+// 只有桌面 rail 画这个角标，手机上不去读。
+const display = useDisplay()
+const awaitingCount = useAwaitingCount(computed(() => AccountService._loggedIn.value && display.mdAndUp.value))
+
 const navSources = computed<NavSources>(() => ({
   projects: railProjects.value,
   workspaceProjectId: workspaceProjectId.value,
   projectAvatar,
   createProject: createNewProject,
+  awaitingCount: awaitingCount.value,
 }))
 
 // 壳 (shell)：**地址里那个项目**的壳决定这份导航怎么画。不在项目里（首页、空间、
