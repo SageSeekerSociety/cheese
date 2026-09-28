@@ -15,7 +15,7 @@ import * as esbuild from 'esbuild'
 import { marked } from 'marked'
 import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS, WHO } from './src/structure.mjs'
 import { esc, docHref, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
-import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed, registerSource, ciSelections } from './src/demos.mjs'
+import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed, registerSource, registerArchFacts, ciSelections } from './src/demos.mjs'
 import { homePage } from './src/home.mjs'
 import { selectSuites } from './src/ci-scope.mjs'
 import { fitIndex, limitBreach, indexTextOf } from './src/memory-limits.mjs'
@@ -394,6 +394,68 @@ registerSource('memory-limits', {
   const indexName = memory.constants.INDEX_NAME || 'MEMORY.md'
   for (const c of memory.lineCases) say(`an index line of ${c.chars} characters, ${c.alreadyInIndex ? 'already in the index' : 'new'},`, limitBreach(limits, { name: indexName, newLineChars: c.chars, alreadyInIndex: c.alreadyInIndex }), c.rejected)
   for (const c of memory.bodyCases) say(`a body of ${c.chars} characters,`, limitBreach(limits, { name: 'a-thing.md', bodyChars: c.chars, indexName }), c.rejected)
+}
+
+// The 原理分解 figures' constants, grepped out of the code that enforces them by
+// `gen/arch_facts.py` and pinned here. Two checks, both of them load-bearing:
+//
+//   1. every value the generator read is written down below with the value the
+//      picture is drawn against — so a port renumbered or a status changed in
+//      the code fails the build instead of quietly redrawing the map;
+//   2. the exact source text each value came from must still be in its file —
+//      so a value that only survives in a comment or another page is not a fact.
+//      A fact assembled from two greps («the prefix» + «the route») carries one
+//      piece of source per grep, and every piece has to still be there.
+//
+// Every fact must be pinned: an unpinned one fails too, so a constant cannot
+// arrive in the figure without someone writing down here what it should be.
+// src/arch.mjs draws the stations from these; the walks name them by dotted key.
+const ARCH_SAMPLES = {
+  'paths.admission': '/llm/admission',
+  'paths.tunnel': '/llm/tunnel',
+  'paths.catch_all': '/llm/v1',
+  'ports.reverse': '443',
+  'ports.connect': '8444',
+  'budget.status': '429',
+  'budget.type': 'rate_limit_error',
+  'budget.prefix': 'cheese project budget: ',
+  'budget.allow_reason': '150.0000 of budget remaining',
+  'budget.refusal_reason': 'budget spent: 250.0000 of 250.0000',
+  'binding.status': '400',
+  'binding.type': 'invalid_request_error',
+  'connect_refusal': '407',
+  'placeholder_token': 'sk-ant-oat01-cheese-no-claude-login-on-this-host',
+  'sub_model.id': 'sonnet',
+  'sub_model.wire': 'claude-sonnet-5',
+  'admission.fail_open_reason': 'admission unreachable (fail-open)',
+  'probe_seconds': '15',
+  'failure_threshold': '2',
+  'quarantine_minutes': '30',
+  'footprint_root': '.cheese',
+  'dispatch_log': 'dispatch_log.py',
+}
+{
+  const arch = gen('arch_facts.py')
+  if (arch.error) fail(`Architecture facts: ${arch.error} (gen/arch_facts.py reads the code the figures are about)`)
+  const facts = arch.facts || {}
+  const sourceOf = new Map()
+  for (const [key, f] of Object.entries(facts)) {
+    if (!(key in ARCH_SAMPLES)) fail(`Architecture facts: ${key} = ${f.value} is not pinned in build.mjs' ARCH_SAMPLES — write down what the figure should say before it says it`)
+    if (String(f.value) !== ARCH_SAMPLES[key]) fail(`Architecture facts: the code says ${key} = ${f.value}, ARCH_SAMPLES says ${ARCH_SAMPLES[key]} (${f.file}) — the figure and the code have parted; update both`)
+    for (const piece of f.sources) {
+      if (!sourceOf.has(piece.file)) sourceOf.set(piece.file, fs.readFileSync(path.join(REPO, piece.file), 'utf8'))
+      if (!sourceOf.get(piece.file).includes(piece.text)) fail(`Architecture facts: ${key} was read from ${piece.file}, but «${piece.text.trim()}» is gone from it — gen/arch_facts.py is reading a stale copy`)
+    }
+  }
+  for (const key of Object.keys(ARCH_SAMPLES)) if (!(key in facts)) fail(`Architecture facts: ARCH_SAMPLES pins ${key}, and gen/arch_facts.py did not find it — the constant it names has moved or been renamed`)
+  const nested = {}
+  for (const [key, f] of Object.entries(facts)) {
+    const parts = key.split('.')
+    let at = nested
+    while (parts.length > 1) at = at[parts.shift()] ??= {}
+    at[parts[0]] = f.value
+  }
+  registerArchFacts(nested)
 }
 function referencePages() {
   const out = {}

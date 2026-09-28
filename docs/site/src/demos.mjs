@@ -26,8 +26,10 @@ import { esc, docHref } from './render.mjs'
 import { num, show, simulate, fill, evaluate, sumContext } from './demo-model.mjs'
 import { selectSuites, fnmatchcase } from './ci-scope.mjs'
 import { fitIndex, limitBreach, indexTextOf } from './memory-limits.mjs'
+import { archSpec, archText } from './arch.mjs'
+import { archBoard, archCtl, archFallback, archSide, walkOf } from './arch-view.mjs'
 
-export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim', 'demo-context', 'demo-ci', 'demo-flow', 'demo-memory']
+export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim', 'demo-context', 'demo-ci', 'demo-flow', 'demo-memory', 'demo-arch']
 
 // Some fences carry no numbers of their own: they point at a `source`, a blob
 // the build composed from the code the page is about. `registerSource` is how
@@ -72,6 +74,17 @@ export function registerDataset(name, rows) { DATASETS[name] = rows }
 const EMBEDS = {}
 
 export function registerEmbed(name, labels) { EMBEDS[name] = labels }
+
+// The architecture figures' constants, grepped out of the code they are about
+// (`gen/arch_facts.py`) and held to src/arch.mjs by build.mjs. A fence's walks
+// are written against these, so a port that moves or a path that is renamed
+// fails the build with the fence's line number instead of leaving the picture
+// telling the old story. See `ARCH_SAMPLES` in build.mjs for the constants and
+// the code each one must still appear in.
+let ARCH_FACTS = null
+
+export function registerArchFacts(facts) { ARCH_FACTS = facts }
+
 
 function embedStage(spec, steps, where) {
   if (!spec.embed) return ''
@@ -173,7 +186,38 @@ export function renderDemo(lang, body, where) {
   if (lang === 'demo-ci') return renderCi(spec, where)
   if (lang === 'demo-flow') return renderFlow(spec, where)
   if (lang === 'demo-memory') return renderMemory(spec, where)
+  if (lang === 'demo-arch') return renderArch(spec, where)
   return renderSteps(spec, where, lang === 'demo-timeline')
+}
+
+// ---------- demo-arch ----------
+// 一次经过，一站一站地看：会话进程怎么把包交给计量代理、每一站看见了什么、
+// 又送出去了什么、哪一站把它拦下。地图、站点、每一步的事实都在 src/arch.mjs
+// 里，数字来自 gen/arch_facts.py（从代码里 grep 出来的常量，build.mjs 比对）。
+// 这一段只把数据摆成页面：地图（build 和浏览器用同一份 src/arch-view.mjs）、
+// 右侧的检视面板、上面的两组按钮，外加一份窄屏和无脚本能读的清单。
+export function archData(spec, where) {
+  if (!ARCH_FACTS) missing(where, 'the build has no architecture facts — build.mjs must register them from gen/arch_facts.py')
+  const cfg = archSpec(spec, where, missing, ARCH_FACTS)
+  for (const walk of Object.values(cfg.walks)) for (const stop of walk.stops) if (stop.link) stop.link = docHref(stop.link)
+  return cfg
+}
+
+function renderArch(spec, where) {
+  const cfg = archData(spec, where)
+  const entry = cfg.entries[0].key
+  const scene = cfg.matrix[entry][0]
+  const walk = walkOf(cfg, entry, scene)
+  return `<figure class="demo demo-arch" data-demo="arch" data-kind="${esc(cfg.kind)}" data-entry="${esc(entry)}" data-scene="${esc(scene)}" data-pos="1" aria-label="${esc(cfg.title)}">
+  ${head(cfg.title, cfg.note)}
+  <div class="ar-board" data-ar-board>${archBoard(cfg, walk, 1)}</div>
+  <div class="ar-stage">
+    <div class="ar-side-wrap" data-ar-side>${archSide(cfg, walk, 1)}</div>
+    <div class="ar-ctl-wrap" data-ar-ctl>${archCtl(cfg, entry, scene, 1)}</div>
+  </div>
+  ${archFallback(cfg)}
+  <script type="application/json" data-arch>${JSON.stringify(cfg).replace(/</g, '\\u003c')}</script>
+</figure>`
 }
 
 // ---------- demo-context ----------
@@ -537,6 +581,7 @@ ${varHtml}
 // what the default position concludes. No markup, no colors, no controls.
 export function demoText(lang, body, { where }) {
   const spec = parseFence(body, where)
+  if (lang === 'demo-arch') return archText(archData(spec, where))
   if (lang === 'demo-sim') {
     const vars = (spec.vars || []).map((v) => {
       if (v.type === 'toggle') return `${v.label}（开关，默认${v.on === true || v.value === true ? '开' : '关'}）`
