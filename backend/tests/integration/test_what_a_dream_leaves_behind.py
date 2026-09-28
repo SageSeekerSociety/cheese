@@ -35,7 +35,9 @@ class DreamingScreen(StubChannel):
         super().__init__()
         self.home = home
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self, topic_id: uuid.UUID, prompt: str, reply: str, *, agent: str | None = None
+    ) -> None:
         root = self.home / MEMORY_ROOT
         (root / "team" / "shared-rule.md").write_text(
             _note("shared-rule", "改过的项目约定"), encoding="utf-8"
@@ -43,7 +45,7 @@ class DreamingScreen(StubChannel):
         (root / "private" / "bob" / f"{SECRET}.md").write_text(
             _note(SECRET, "改过的个人偏好"), encoding="utf-8"
         )
-        super().emit_turn(topic_id, prompt, SUMMARY)
+        super().emit_turn(topic_id, prompt, SUMMARY, agent=agent)
 
 
 def test_the_overview_hears_about_team_files_and_nothing_private(
