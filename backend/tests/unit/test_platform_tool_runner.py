@@ -514,25 +514,15 @@ def test_a_lock_someone_else_holds_is_a_refusal():
 # --- memory, roster, status and the rest -----------------------------------
 
 
-def test_remember_no_longer_offers_writing_for_everyone():
-    """`everyone` 已停用：工具不再提供这个参数，私聊里记的仍是个人记忆。"""
-    tool = next(
-        t for t in cheese.PLATFORM_TOOLS.schemas() if t["name"] == "cheese_remember"
-    )
-    assert "everyone" not in json.dumps(tool, ensure_ascii=False)
-    personal = {"CHEESE_MEMORY_SCOPE": "personal", "CHEESE_OWNER": "alice"}
-    host = Host(environ=personal)
-    assert "个人记忆" in run("cheese_remember", {"fact": "x"}, host)
-    assert host.requests[-1]["body"] == {
-        "content": "x",
-        "topic": _ROOM,
-        "scope": "user",
-        "owner": "alice",
-    }
+def test_remember_is_gone_and_a_call_to_it_says_so():
+    """`cheese_remember` 整个撤掉：写记忆改成直接写文件（见系统提示的记忆一节）。
 
-
-def test_an_empty_recall_says_it_is_not_proof_of_absence():
-    assert "换个说法" in run("cheese_recall", {"query": "技术栈"}, Host())
+    旧会话里还在调它的调用方，得到的是「没有这个工具」，而不是一句「已记入」——
+    记进旧条目池的事实以后再也不会被注入任何地方，那是最坏的一种丢法。
+    """
+    assert "cheese_remember" not in set(cheese.PLATFORM_TOOLS.names())
+    with pytest.raises(ValueError, match="Unknown platform tool: cheese_remember"):
+        run("cheese_remember", {"fact": "x"}, Host())
 
 
 def test_members_reads_the_current_topic_roster():
@@ -603,7 +593,7 @@ def test_machine_reports_its_session_choice():
         }
     )
     out = run("cheese_machine", {"profile": "device", "device_id": "workstation"}, host)
-    assert "Workstation" in out and "文件不会自动迁移" in out and "点头" not in out
+    assert "Workstation" in out and "推送到分支" in out and "点头" not in out
 
 
 def test_a_page_that_could_not_be_read_says_how_each_rung_failed():

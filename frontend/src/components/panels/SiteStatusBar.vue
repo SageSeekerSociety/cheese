@@ -75,9 +75,13 @@ function seconds(from: number | null): number | null {
 }
 
 const elapsed = computed(() => (props.working ? seconds(status.value.startedAt ?? workingSince.value) : null))
-// 刚有过动静的那几秒不说：「最近活动 0 秒前」每秒一跳，说的却是「它在动」，而这
+// 「多久没动静了」是一轮在跑时判断它卡没卡住的读数，只在跑的时候说。闲着时秒表是
+// 停的（见上面的计时器），说出来就是一个停在某一刻、却写着「前」的数：「最近活动
+// 4 分 07 秒前」挂上三分钟不变，读起来是错的。闲着的时候那个词已经说了「空闲」。
+// 刚有过动静的那几秒也不说：「最近活动 0 秒前」每秒一跳，说的却是「它在动」，而这
 // 一点前面那个词已经说了。
 const quiet = computed(() => {
+  if (!props.working) return null
   const s = seconds(status.value.lastAt)
   return s !== null && s >= 5 ? s : null
 })

@@ -162,7 +162,7 @@ onBeforeUnmount(() => {
         />
         <details class="t-body c-muted mb-3">
           <summary>运行说明</summary>
-          <p>Cloud、Hosted Machine 使用相同配置方式；Hosted Sandbox 暂未开放。机器需要支持脚本中的命令。</p>
+          <p>云端和自有设备使用同一份脚本，机器需要支持脚本中的命令。</p>
           初始化脚本在房间目录运行，启动脚本在任务代码目录运行。两者使用 Bash，每段最多 30
           分钟；使用机器当前权限。环境变量同时传给两个脚本和 AI 进程，脚本里的 export 不会传给下一步。 工具可安装到
           $HOME/.local/bin。

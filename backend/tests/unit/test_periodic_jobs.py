@@ -127,7 +127,11 @@ def _jobs():
         return None
 
     return periodic_jobs(
-        chat=SimpleNamespace(remind_silent_turns=_noop, session_factory=lambda: None),
+        chat=SimpleNamespace(
+            remind_silent_turns=_noop,
+            sweep_memory_dreams=_noop,
+            session_factory=lambda: None,
+        ),
         machines=SimpleNamespace(sweep=_noop),
         sessions=lambda: None,
     )
@@ -139,6 +143,9 @@ def _jobs():
         ("notification email drain", "notification_email_drain_interval_s"),
         ("task deadline sweep", "task_deadline_sweep_interval_s"),
         ("chat progress reminder", "chat_progress_check_interval_s"),
+        # 记忆整理（dream）：这条钟是它唯一的入口，而它管的是**所有人共看的那棵
+        # 树**——没跑起来不会有人报错，只会有一棵越来越乱的记忆。
+        ("memory dream", "memory_dream_sweep_interval_s"),
     ],
 )
 def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):

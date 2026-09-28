@@ -65,7 +65,7 @@ __pycache__/
 .probe-*/
 
 # ---- Node ----
-node_modules/
+node_modules
 dist/
 dist-ssr/
 .porkbun-state.json
@@ -76,7 +76,6 @@ scripts/ops/etrip-proxy.yaml
 
 # playwright run artifacts
 e2e/test-results/
-e2e/node_modules/
 
 tmp/
 .tmp/
@@ -102,6 +101,5 @@ tmp/
 
 # 文档站的构建产物与依赖（docs/site 构建出 frontend/public/docs）
 frontend/public/docs/
-docs/site/node_modules/
 frontend/.docs-island-build/
 frontend/dist-dashboard-proto/

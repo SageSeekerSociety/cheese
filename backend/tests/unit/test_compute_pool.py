@@ -1,6 +1,7 @@
 """ComputePool: which machine a turn lands on (design §3 / review R2)."""
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -64,6 +65,8 @@ class _FakeBackend:
 
     embeds_images = True
     provisions_machine = False
+    # 会话不存记忆文件（下面的 `memory()` 答 None），和它答的那条契约一致。
+    keeps_memory = False
 
     def __init__(self, name: str, harness: str = "claude-code"):
         self.name = name
@@ -106,6 +109,13 @@ class _FakeBackend:
         self.unread_probe = probe
 
     def bind_reachability(self, consumer) -> None:
+        return None
+
+    def bind_memory(self, consumer) -> None:
+        return None
+
+    async def memory(self, topic_id, request):
+        # 这个 double 的会话不存记忆文件：「这里没有」而不是「失败了」。
         return None
 
     def holds(self, topic_id: uuid.UUID) -> bool:
@@ -387,5 +397,9 @@ def test_resolve_compute_id_uses_room_then_explicit_project_default():
         default=ComputeChoice(name="Lab", profile="device", device_id="lab")
     )
     values = {"compute_configs": configs.model_dump()}
-    assert _resolve_compute_id(values, "cloud") == "cloud"
+    cloud = ComputeChoice(name="Cloud", profile="cloud")
+    room = SimpleNamespace(compute_config=cloud.model_dump())
+    fresh = SimpleNamespace(compute_config=None)
+    assert _resolve_compute_id(values, room) == "cloud"
+    assert _resolve_compute_id(values, fresh) == "device"
     assert _resolve_compute_id(values) == "device"

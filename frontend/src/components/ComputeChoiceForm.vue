@@ -3,10 +3,9 @@ import type { ComputeChoice, TopicComputeDevice } from '../cx_types'
 
 import { computed, ref } from 'vue'
 
-const props = defineProps<{ devices: TopicComputeDevice[]; cloudAvailable: boolean; busy?: boolean; named?: boolean }>()
+const props = defineProps<{ devices: TopicComputeDevice[]; cloudAvailable: boolean; busy?: boolean }>()
 const emit = defineEmits<{ select: [choice: ComputeChoice] }>()
 const target = ref(props.cloudAvailable ? 'cloud' : props.devices[0]?.device_id ?? '')
-const name = ref('')
 const custom = ref(false)
 const cores = ref(4)
 const memory = ref(8)
@@ -18,20 +17,17 @@ const options = computed(() => [
 const valid = computed(
   () =>
     Boolean(target.value) &&
-    (!props.named || name.value.trim()) &&
     (!custom.value || target.value !== 'cloud' || (cores.value >= 1 && memory.value >= 0.5 && disk.value >= 1))
 )
 function submit() {
   if (!valid.value) return
   const cloud = target.value === 'cloud'
   emit('select', {
-    name:
-      name.value.trim() ||
-      (cloud
-        ? custom.value
-          ? '云端 · 自定义配置'
-          : '云端 · 标准配置'
-        : props.devices.find((d) => d.device_id === target.value)?.name ?? '自有设备'),
+    name: cloud
+      ? custom.value
+        ? '云端 · 自定义配置'
+        : '云端 · 标准配置'
+      : props.devices.find((d) => d.device_id === target.value)?.name ?? '自有设备',
     profile: cloud ? 'cloud' : 'device',
     device_id: cloud ? null : target.value,
     cores: cloud && custom.value ? Number(cores.value) : null,
@@ -47,12 +43,12 @@ function submit() {
       v-model="target"
       autocomplete="off"
       :items="options"
-      label="运行资源"
+      label="工作电脑"
       density="compact"
       variant="outlined"
       hide-details
     />
-    <p v-if="!options.length" class="text-body-2 my-3">暂无可用资源，请在团队算力页添加设备或接入云服务</p>
+    <p v-if="!options.length" class="text-body-2 my-3">暂无可用的工作电脑</p>
     <template v-if="target === 'cloud'">
       <v-checkbox v-model="custom" label="自定义 CPU、内存和磁盘" density="compact" hide-details />
       <div v-if="custom" class="d-flex ga-2 my-2">
@@ -90,19 +86,8 @@ function submit() {
     <p v-else-if="target" class="text-body-2 text-medium-emphasis my-3">
       设备已加入团队，无需再次授权；离线时需要等待设备上线
     </p>
-    <v-text-field
-      v-if="named"
-      v-model="name"
-      autocomplete="off"
-      label="常用配置名称"
-      maxlength="60"
-      density="compact"
-      variant="outlined"
-      class="mt-3"
-      hide-details
-    />
-    <v-btn class="mt-3" color="primary" variant="tonal" :disabled="!valid || busy" :loading="busy" @click="submit">{{
-      named ? '保存到项目常用' : '使用此配置'
-    }}</v-btn>
+    <v-btn class="mt-3" color="primary" variant="tonal" :disabled="!valid || busy" :loading="busy" @click="submit"
+      >使用此配置</v-btn
+    >
   </div>
 </template>

@@ -47,19 +47,65 @@
   "quiet": "No recent activity",
   "running": "{count} running",
   "sessionMachine": {
-    "title": "Change work computer",
-    "teammate": "Teammate",
-    "machine": "Work computer",
-    "empty": "No teammate sessions yet",
-    "current": "Current computer: {name}",
-    "retained": "The old computer is kept. Files are not copied to the new computer.",
-    "confirm": "Confirm change",
+    "title": "Change {name}'s work computer",
+    "machine": "Change to",
+    "current": "Now using: {name}",
+    "confirm": "Push and change",
     "saved": "Changed. The next operation will use the new computer.",
     "cloud": "Cloud · Standard configuration",
     "unavailable": "{name} · Unavailable",
-    "initial": "Initial room configuration",
     "numberedSession": "{name} (Session {number})",
-    "switchWarning": "Changing computers may interrupt running tasks and lose unsaved work. Subsequent operations will use the new computer."
+    "pushFirst": "Unpushed changes on the old computer do not move over. {name}'s changes are pushed to their branch first; if the push fails, nothing changes and the reason is shown.",
+    "abandonWarning": "Changing without pushing leaves the unpushed changes on the old computer. They will not reach the new one.",
+    "abandon": "Change without pushing"
+  },
+  "roomMachine": {
+    "current": "Work computer: {name}",
+    "notStarted": "Not started · Will use: {name}",
+    "future": "AI teammates invited later use: {name}",
+    "change": "Change",
+    "edit": "Edit",
+    "heading": "AI teammates start on",
+    "hint": "Only affects AI teammates that have not started; those already working keep their own computer",
+    "more": "Other configurations and devices",
+    "projectDefault": "Project default",
+    "wholeMachine": "Can access the whole machine",
+    "online": "Online",
+    "offline": "Offline",
+    "removed": "Removed from the team",
+    "loadFailed": "Could not load work computers",
+    "saveFailed": "Could not choose the work computer",
+    "retry": "Retry"
+  },
+  "deviceInUse": {
+    "line": "In use: {project} · {room} · {agent}",
+    "attached": "Only for {projects}"
+  },
+  "bulkSwitch": {
+    "open": "View and switch…",
+    "title": "Agents on {name}",
+    "selectAll": "Select all",
+    "meta": "{agent} · last active {time}",
+    "working": "Working",
+    "empty": "No agents",
+    "hidden": "1 more agent is in a room you cannot open | {count} more agents are in rooms you cannot open",
+    "pushFirst": "Changes not pushed on the old machine do not come along. Each agent's changes are pushed to its branch first; an agent whose push fails is not switched, and the reason is shown. Agents that are working are skipped",
+    "done": "Switched",
+    "loadFailed": "Could not load"
+  },
+  "projectMachine": {
+    "defaultLabel": "New agents use",
+    "change": "Change",
+    "collapse": "Collapse",
+    "hint": "Only affects agents that have not started; agents already working keep their own computer",
+    "distribution": "Where agents are now",
+    "onCloud": "Cloud · {agents}",
+    "onDevice": "{name} · {agents}",
+    "agents": "1 agent | {count} agents",
+    "noneStarted": "No agents have started",
+    "managedBy": "Project managers can change the default",
+    "loadFailed": "Could not load work computer settings",
+    "saveFailed": "Could not save work computer settings"
   },
   "teamLink": {
     "title": "Team link",
@@ -105,7 +151,7 @@
     "failed": "Something went wrong. Please try again",
     "retry": "Retry",
     "loading": "Loading",
-    "joinHint": "Once you confirm, you become a team member and can use the team's projects and compute",
+    "joinHint": "Once you confirm, you become a team member and can use the team's projects and work computers",
     "join": "Join team",
     "edit": "Edit team profile",
     "editTitle": "Edit team profile",
@@ -146,8 +192,8 @@
   },
   "resourceLimits": {
     "projects": "Projects: no limit is set",
-    "concurrent": "Environments are created on demand. A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue.",
-    "machines": "Cloud machines: a team shares {count} by default. See the team compute page for the actual quota and usage.",
+    "concurrent": "Work computers are created on demand. A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue.",
+    "machines": "Cloud machines: a team shares {count} by default. See the team's Work computers page for quota and usage.",
     "failed": "Could not load resource limits",
     "retry": "Retry",
     "loading": "Loading resource limits…"
@@ -175,13 +221,51 @@
         "idle": "Idle",
         "elapsed": "{span} so far",
         "quiet": "last activity {span} ago"
+      },
+      "frontendError": "Frontend error",
+      "span": {
+        "seconds": "{s}s",
+        "minutes": "{m}m {s}s",
+        "hours": "{h}h {m}m"
+      },
+      "session": {
+        "label": "Session details",
+        "connected": "Session connected",
+        "none": "No session running",
+        "expand": "Show details",
+        "collapse": "Hide details",
+        "view": "View",
+        "what": "What to view",
+        "loadFailed": "Could not load the session state",
+        "askFailed": "Could not read it",
+        "task": {
+          "running": "Running",
+          "queued": "Queued",
+          "pending": "Waiting",
+          "completed": "Done",
+          "failed": "Failed",
+          "stopped": "Stopped",
+          "unknown": "Status pending"
+        },
+        "reads": {
+          "initialize": "Session state",
+          "file_suggestions": "Find a file",
+          "read_file": "Read a file",
+          "get_workspace_diff": "Workspace changes",
+          "get_context_usage": "Context usage",
+          "get_usage": "Account usage",
+          "mcp_status": "External tool connections"
+        },
+        "fields": {
+          "query": "File name",
+          "path": "File path"
+        }
       }
     },
     "menu": {
       "more": "More",
       "focus": "Focus mode",
       "exitFocus": "Exit focus mode",
-      "compute": "Runtime",
       "usage": "Usage",
       "thisTopic": "This topic",
       "wholeProject": "Whole project",
@@ -192,6 +276,18 @@
     "progress": {
       "title": "Progress",
       "tally": "{done}/{total} done"
+    },
+    "overviewAuto": {
+      "badge": "Generated by the platform, not editable",
+      "milestone": {
+        "upcoming": "In progress",
+        "done": "Done",
+        "missed": "Overdue",
+        "due": "Due {date}",
+        "noDue": "No date"
+      },
+      "decisionFrom": "From \u201c{topic}\u201d",
+      "failed": "This part could not be loaded"
     },
     "accept": {
       "change": "Changes",
@@ -216,11 +312,17 @@
     "notice": {
       "platform": "Platform",
       "changedFiles": "Changed files",
-      "moreFiles": "{n} more files"
+      "moreFiles": "{n} more files",
+      "goConfirm": "Review and confirm"
     },
     "message": {
       "copy": "Copy",
-      "copied": "Copied"
+      "copied": "Copied",
+      "edit": "Edit",
+      "edited": "Edited",
+      "save": "Save",
+      "cancel": "Cancel",
+      "saveFailed": "Could not save the edit"
     },
     "outbox": {
       "failed": "Not sent: {reason}",
@@ -229,12 +331,6 @@
       "editHint": "Put it back in the message box"
     },
     "newMessages": "new",
-    "stop": {
-      "action": "Stop",
-      "title": "Stop this run by {name}",
-      "failed": "Could not stop: {reason}",
-      "notStarted": "{name} has not started running yet"
-    },
     "composer": {
       "replyTo": "Replying to {name}: {text}",
       "cancelReply": "Cancel reply",
@@ -249,6 +345,9 @@
       "title": "“{title}”",
       "done": "Done",
       "running": "In progress"
+    },
+    "checklist": {
+      "updatedAt": "Checklist updated {time}"
     }
   },
   "members": {
@@ -290,5 +389,42 @@
   "external": {
     "tag": "External",
     "tagHint": "Not on the team; takes part in this project only"
+  },
+  "mcp": {
+    "title": "MCP servers",
+    "hint": "The upstream service sees the account that authorized it. Authorize with a bot or service account.",
+    "empty": "No remote MCP servers",
+    "loadFailed": "Failed to load MCP servers",
+    "connectFailed": "Failed to connect",
+    "connectFailedWith": "Failed to connect {name}: {reason}",
+    "connectedNotice": "{name} connected",
+    "disconnectFailed": "Failed to disconnect",
+    "saveFailed": "Failed to save",
+    "listSeparator": ", ",
+    "valueSet": "Set",
+    "valueSetBy": "Set by {name}, {when}",
+    "problem": {
+      "invalid": "Cannot read .mcp.json: invalid format",
+      "unreadable": "Cannot read .mcp.json from the repository. Try again later."
+    },
+    "status": {
+      "connected": "Connected",
+      "connectedBy": "Connected (authorized by {name}, {when})",
+      "ready": "Ready",
+      "needsReconnect": "Needs reconnecting",
+      "missingValues": "Needs {names}",
+      "disconnected": "Not connected"
+    },
+    "action": {
+      "connect": "Connect",
+      "reconnect": "Reconnect",
+      "disconnect": "Disconnect",
+      "save": "Save",
+      "clear": "Clear"
+    },
+    "room": {
+      "heading": "Project MCP servers",
+      "setUp": "Needs connecting in project settings"
+    }
   }
 }

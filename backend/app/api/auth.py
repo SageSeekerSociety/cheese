@@ -195,6 +195,19 @@ class ActorResolver:
             and not is_global_sandbox_token(self._cheese_token)
             and (not actor.authenticated or actor.handle == UNRESOLVED_AGENT_HANDLE)
         ):
+            # A live scoped token is bound to a project, so a route that names
+            # neither a project nor a room gives it nothing to authenticate
+            # against. Saying "invalid or expired" there sends the agent off to
+            # distrust a credential that works everywhere it is meant to.
+            if (
+                topic_id is None
+                and project_id is None
+                and scoped_token_claims(self._cheese_token) is not None
+            ):
+                raise ForbiddenError(
+                    "This credential is restricted to one project; "
+                    "call a route that names the project or room"
+                )
             raise AuthenticationRequiredError("Agent credential is invalid or expired")
         actor = await self._recover_numeric_handle(actor)
         # An authenticated actor whose credential carried no int PK: look the

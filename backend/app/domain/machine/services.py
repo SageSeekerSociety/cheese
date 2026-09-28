@@ -199,12 +199,10 @@ class MachineService:
         self,
         *,
         project_id: uuid.UUID,
-        topic_id: uuid.UUID | None = None,
+        topic_id: uuid.UUID,
         session_id: uuid.UUID | None = None,
         requested_by: str | None,
-        ssh_pubkey: str | None = None,
         owner_user_id: int | None = None,
-        login_user: str | None = None,
         cores: int | None = None,
         memory_mb: int | None = None,
         disk_gb: int | None = None,
@@ -245,14 +243,14 @@ class MachineService:
         }
 
         customer_id, account_id = await self._ensure_account(project_id)
-        user = login_user or settings.microcloud_login_user
+        user = settings.microcloud_login_user
 
         await self._repo.lock_team_quota(team_id)
         existing = await self.quota_machines(team_id)
         limit = await get_machine_limit(self._session, team_id)
         if len(existing) >= limit:
             raise ValidationError(
-                f"团队云虚拟机已使用 {len(existing)} / {limit} 台，"
+                f"团队云端机器已使用 {len(existing)} / {limit} 台，"
                 "请先释放不再使用的机器"
             )
         project_used = sum(m.project_id == project_id for m in existing)
@@ -270,7 +268,7 @@ class MachineService:
             "aiMode": "none",
             **spec,
         }
-        if topic_id is not None and owner_user_id is not None and not ssh_pubkey:
+        if owner_user_id is not None:
             warm = await self._warm_pool.reserve(
                 body=body,
                 project_id=project_id,
@@ -282,14 +280,12 @@ class MachineService:
             if warm is not None:
                 await startup_progress(topic_id, "已选中预热机器，正在分配给本话题")
                 return warm
-        # The platform needs its own way in to enroll the machine later, and the
-        # human must not lose theirs by us taking the single key slot: both are
-        # authorised, one per line, which is what authorized_keys is.
+        # The platform needs its own way in to enroll the machine later. The
+        # operator's key too: the bootstrap key is erased at enrollment, and a
+        # machine nobody can log into cannot be diagnosed (see the setting).
         bootstrap_private, bootstrap_public = await enrollment.generate_keypair()
-        # The operator's key too: the bootstrap key is erased at enrollment, and
-        # a machine nobody can log into cannot be diagnosed (see the setting).
         authorized = enrollment.combine_authorized_keys(
-            bootstrap_public, ssh_pubkey, settings.microcloud_operator_ssh_pubkey
+            bootstrap_public, settings.microcloud_operator_ssh_pubkey
         )
         if authorized:
             body["sshPubkey"] = authorized
@@ -321,12 +317,7 @@ class MachineService:
             owner_user_id=owner_user_id,
             bootstrap_key=bootstrap_private,
         )
-        creating = (
-            _create_locks.setdefault(session_id or topic_id, asyncio.Lock())
-            if topic_id is not None
-            else asyncio.Lock()
-        )
-        async with creating:
+        async with _create_locks.setdefault(session_id or topic_id, asyncio.Lock()):
             await self._session.commit()
             await startup_progress(topic_id, "正在请求创建机器")
             try:
@@ -451,7 +442,6 @@ class MachineService:
         if choice.profile != "cloud":
             raise ValidationError("当前房间未选择云端配置")
         topic.compute_config = choice.model_dump()
-        topic.compute_profile = "cloud"
         agent = await IdentityService(self._session).ensure_room_agent_user(topic_id)
         return await self.provision(
             project_id=topic.project_id,
@@ -534,8 +524,9 @@ class MachineService:
 
     async def supersede_session_machine(
         self, session_id: uuid.UUID, *, actor: Actor
-    ) -> None:
-        """Retain the replaced VM and its quota while releasing the session.
+    ) -> ProjectMachine | None:
+        """Detach the session from its VM, which keeps its files and its quota
+        until ``release_left_machine`` or the room's cleanup deletes it.
 
         Pending allocation stays attached until its provider outcome is known.
         """
@@ -551,12 +542,32 @@ class MachineService:
         await self._repo.lock_topic(topic.id)
         machine = await self._repo.get_active_for_session(session_id)
         if machine is None:
-            return
+            return None
         await self.require_use_authority(topic.project_id, actor)
         if machine.warm_claim_pending or machine.machine_id is None:
             raise ConflictError("cloud allocation is still pending")
         machine.superseded_at = datetime.now(UTC)
         await self._session.flush()
+        return machine
+
+    async def release_left_machine(self, machine_id: uuid.UUID) -> None:
+        """Delete a VM its session left once nothing of the session's work is
+        only there, and stop counting it against the team's quota.
+
+        The provider delete runs with no transaction open. A provider that
+        refuses leaves the VM superseded, where the room's cleanup finds it.
+        """
+        machine = await self._repo.get(machine_id)
+        if machine is None or machine.released_at is not None:
+            return
+        await self._session.commit()
+        try:
+            machine = await self.destroy(machine)
+        except MicroCloudError:
+            logger.warning("deleting left machine %s failed", machine.hostname)
+            return
+        await self._repo.mark_released(machine, when=datetime.now(UTC))
+        await self._session.commit()
 
     async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:
         return await self._repo.list_active_for_topic(topic_id)

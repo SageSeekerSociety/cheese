@@ -1,21 +1,21 @@
-import type { ProjectMachine } from '@/cx_types'
+import type { MyDevice, ProjectMachine } from '@/cx_types'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 
 import Compute from './Compute.vue'
 
-import { changeProjectMachinePower, createProjectMachine, getTeamResourceQuotas, listProjectMachines } from '@/api'
+import { changeProjectMachinePower, listMyDevices, listProjectMachines, listTeamDevices } from '@/api'
+import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { handle: 'crew' } }) }))
 vi.mock('@/api', () => ({
   changeProjectMachinePower: vi.fn(),
-  createProjectMachine: vi.fn(),
   deleteProjectMachine: vi.fn(),
   listMyDevices: vi.fn(async () => ({ devices: [] })),
   listTeamDevices: vi.fn(async () => ({ devices: [] })),
@@ -49,6 +49,7 @@ vi.mock('@/network/api/teams', () => ({
 }))
 
 beforeAll(() => {
+  setLocale('zh-CN')
   vi.stubGlobal('devicePixelRatio', 1)
   vi.stubGlobal('visualViewport', {
     width: 1024,
@@ -69,42 +70,121 @@ beforeAll(() => {
 })
 afterEach(cleanup)
 
-it('switching projects cannot bypass a full team quota', async () => {
+it('lists the machines projects already have and offers no way to open one', async () => {
+  const machine = {
+    id: 'm0',
+    project_id: 'p2',
+    hostname: 'kept-one',
+    status: 'running',
+    cores: 8,
+    memory_mb: 20480,
+    disk_gb: 128,
+    ai_status: 'ready',
+    device_id: 'device-zero',
+  } as ProjectMachine
+  vi.mocked(listProjectMachines).mockImplementation(
+    async (projectId) =>
+      ({ data: projectId === 'p2' ? [machine] : [] }) as Awaited<ReturnType<typeof listProjectMachines>>
+  )
   const view = render(Compute, {
     global: {
       plugins: [createVuetify({ components, directives })],
       provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
     },
   })
-  await fireEvent.click(await view.findByRole('button', { name: '开通云算力' }))
-  expect(await view.findByText('团队云虚拟机已使用 50 / 50 台')).toBeTruthy()
-  expect(view.getByText('剩余 70 额度')).toBeTruthy()
-  const confirm = view.getByRole('button', { name: '确认开通' }) as HTMLButtonElement
-  expect(confirm.disabled).toBe(true)
-  expect(createProjectMachine).not.toHaveBeenCalled()
-  await fireEvent.mouseDown(view.getByRole('combobox'))
-  await fireEvent.click(await view.findByRole('option', { name: 'Available' }))
-  await waitFor(() => expect(view.getByText('本项目占用 1 台；团队内所有项目共享名额')).toBeTruthy())
-  expect(confirm.disabled).toBe(true)
-  expect(view.getByText('团队云虚拟机已使用 50 / 50 台')).toBeTruthy()
+  expect(await view.findByText('kept-one')).toBeTruthy()
+  expect(view.getByText('费用归属：Available')).toBeTruthy()
+  expect(view.getByText('8 核')).toBeTruthy()
+  expect(view.getByText('团队云端机器')).toBeTruthy()
+  expect(view.getByText('50 / 50 台')).toBeTruthy()
+  expect(view.queryByRole('button', { name: /开通/ })).toBeNull()
+  expect(view.queryByText(/开通云端机器/)).toBeNull()
 })
 
-it('shows the resulting team usage before spending a free slot', async () => {
-  vi.mocked(getTeamResourceQuotas).mockResolvedValueOnce({
-    team_id: 1,
-    machines: { used: 30, limit: 50 },
-    credits: { unlimited: true, credits_total: 0, credits_used: 0, credits_remaining: 0, tokens_per_credit: 10000 },
-    projects: [{ id: 'p1', name: 'Full', machines_used: 20, total_tokens: 0, restricted_credits_remaining: 0 }],
+it('shows the owner who is on each of their machines, and nobody else', async () => {
+  vi.mocked(listProjectMachines).mockImplementation(
+    async () => ({ data: [] as ProjectMachine[] }) as Awaited<ReturnType<typeof listProjectMachines>>
+  )
+  const device = (id: string, inUse: MyDevice['in_use']): MyDevice => ({
+    device_id: id,
+    name: id,
+    online: true,
+    project_ids: [],
+    team_ids: [1],
+    screens: [],
+    in_use: inUse,
+  })
+  vi.mocked(listTeamDevices).mockResolvedValueOnce({
+    devices: [
+      device('mine', [
+        {
+          project_id: 'p1',
+          project_name: 'Orchard',
+          topic_id: 't1',
+          topic_title: 'Pricing',
+          agent_handle: 'cedar',
+          agent_name: 'Cedar',
+        },
+      ]),
+      device('theirs', null),
+    ],
   })
   const view = render(Compute, {
     global: {
       plugins: [createVuetify({ components, directives })],
-      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'MEMBER' }) },
     },
   })
-  await fireEvent.click(await view.findByRole('button', { name: '开通云算力' }))
-  expect(await view.findByText('本次创建后，团队占用 31 / 50 台')).toBeTruthy()
-  expect((view.getByRole('button', { name: '确认开通' }) as HTMLButtonElement).disabled).toBe(false)
+
+  expect(await view.findByText('正在用：Orchard · Pricing · Cedar')).toBeTruthy()
+  expect(view.getAllByText(/正在用/)).toHaveLength(1)
+})
+
+it("lists a device attached only to a project, with the project and its owner's in-use line", async () => {
+  vi.mocked(listProjectMachines).mockImplementation(
+    async () => ({ data: [] as ProjectMachine[] }) as Awaited<ReturnType<typeof listProjectMachines>>
+  )
+  vi.mocked(listMyDevices).mockResolvedValueOnce({
+    devices: [{ device_id: 'dev-box', name: 'dev-box', online: true, project_ids: ['p1'], team_ids: [], screens: [] }],
+  })
+  vi.mocked(listTeamDevices).mockResolvedValueOnce({
+    devices: [
+      {
+        device_id: 'dev-box',
+        name: 'dev-box',
+        online: true,
+        project_ids: ['p1'],
+        team_ids: [],
+        screens: [],
+        attached_projects: [
+          { id: 'p1', name: 'Orchard' },
+          { id: 'p2', name: 'Atlas' },
+        ],
+        in_use: [
+          {
+            project_id: 'p1',
+            project_name: 'Orchard',
+            topic_id: 't1',
+            topic_title: 'Pricing',
+            agent_handle: 'cedar',
+            agent_name: 'Cedar',
+          },
+        ],
+      },
+    ],
+  })
+  const view = render(Compute, {
+    global: {
+      plugins: [createVuetify({ components, directives })],
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'MEMBER' }) },
+    },
+  })
+
+  expect(await view.findByText('仅供 Orchard、Atlas 使用')).toBeTruthy()
+  expect(view.getByText('1 台机器 · 1 台在线')).toBeTruthy()
+  expect(view.getByText('正在用：Orchard · Pricing · Cedar')).toBeTruthy()
+  // It was never added to the team, so there is nothing to take it out of.
+  expect(view.queryByRole('button', { name: '移出团队' })).toBeNull()
 })
 
 it('suspends and resumes the same machine through its project', async () => {

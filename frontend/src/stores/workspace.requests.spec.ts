@@ -70,6 +70,30 @@ it('overlapping topic refreshes share one pending request', async () => {
   await Promise.all(requests)
 })
 
+it('a refresh asked for while an older read is in flight reads the list again', async () => {
+  const store = useWorkspaceStore()
+  await store.openProject('a')
+  const before = deferred<Awaited<ReturnType<typeof listTopics>>>()
+  const after = deferred<Awaited<ReturnType<typeof listTopics>>>()
+  vi.mocked(listTopics).mockClear().mockReturnValueOnce(before.promise).mockReturnValueOnce(after.promise)
+  // A turn ends and the sidebar starts reading; the platform then names the
+  // room and says so while that read is still on its way back.
+  try {
+    const onTurnDone = store.refreshTopics()
+    const onRenamed = store.refreshTopics()
+    before.resolve({ data: [{ ...room('r', 'a'), title: '新话题' }], total: 1 })
+    await onTurnDone
+    after.resolve({ data: [{ ...room('r', 'a'), title: 'Named' }], total: 1 })
+    await onRenamed
+    expect(store.topics.map((topic) => topic.title)).toEqual(['Named'])
+  } finally {
+    // An answer this test queued but never asked for must not reach the next one.
+    vi.mocked(listTopics)
+      .mockReset()
+      .mockResolvedValue({ data: [] } as never)
+  }
+})
+
 it('overlapping unread refreshes share one pending request', async () => {
   const store = useWorkspaceStore()
   store.projectId = 'a'

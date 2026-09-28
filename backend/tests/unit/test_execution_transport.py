@@ -63,6 +63,69 @@ def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch)
     assert seen == ["first", "rotated"]
 
 
+def test_a_command_starting_while_another_takes_the_lease_has_the_token(
+    tmp_path, monkeypatch
+):
+    """A session that took its machine through a lease takes it again at every
+    command start, and keeps the token the lease hands it in the token file.
+    Commands start side by side (a background Bash and the PostToolUse hook
+    that follows it, parallel Bash calls): none may find the file empty while
+    another start is writing it."""
+    lease = {
+        "data": {
+            "target": {"kind": "device", "url": "http://executor.test"},
+            "token": "execution-only",
+        }
+    }
+    token = tmp_path / "execution.token"
+    token.write_text("execution-only")
+    config = {
+        "kind": "device",
+        "url": "http://executor.test",
+        "lease_path": "/lease",
+        "target_file": str(tmp_path / "execution.json"),
+        "token_file": str(token),
+    }
+
+    class Connection:
+        def request(self, method, path, *, body, headers):
+            pass
+
+        def getresponse(self):
+            return self
+
+        status = 200
+
+        def read(self):
+            return json.dumps(lease).encode()
+
+    def connection(self):
+        self.transport.headers = {}
+        return Connection(), ""
+
+    monkeypatch.setattr(executor_transport.RemoteClient, "connection", connection)
+    monkeypatch.setenv("CHEESE_API", "http://platform.test")
+    done = threading.Event()
+
+    def take_the_lease():
+        client = executor_transport.RemoteClient(dict(config))
+        for _ in range(3000):
+            client.acquire(deadline=0)
+        done.set()
+
+    taking = threading.Thread(target=take_the_lease)
+    taking.start()
+    failures = 0
+    starting = executor_transport.RemoteClient(dict(config))
+    while not done.is_set():
+        try:
+            starting.platform_request({"method": "POST", "path": "/lease"})
+        except RuntimeError:
+            failures += 1
+    taking.join()
+    assert failures == 0
+
+
 def test_platform_requests_read_the_rotated_room_token(tmp_path, monkeypatch):
     token = tmp_path / "execution.token"
     token.write_text("first")
@@ -791,6 +854,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     copied_helper = helpers / source.name
     shutil.copyfile(source, copied_helper)
     shutil.copyfile(source.with_name("proxy.js"), helpers / "proxy.js")
+    shutil.copyfile(central.cheese_source(), helpers / "cheese.py")
     shutil.copyfile(executor_transport.__file__, helpers / "executor_transport.py")
     monkeypatch.setattr(central, "__file__", str(copied_helper))
     target = json.loads((tmp_path / "central.json").read_text())
@@ -1173,7 +1237,7 @@ class LeasingPlatform:
                             "token": "execution-only",
                         }
                         if platform.lease == "ready"
-                        else {"unavailable": "工作机器未连接；对话和平台工具仍可用。"}
+                        else {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
                     }
                 else:
                     platform.seen.append(body["method"])
@@ -1282,7 +1346,7 @@ def test_a_session_never_starts_at_the_machines_path_without_the_machine(
     that machine would run."""
     platform, _, launch = leased_session
     platform.lease = "unavailable"
-    with pytest.raises(RuntimeError, match="工作机器未连接"):
+    with pytest.raises(RuntimeError, match="工作电脑未连接"):
         launch()
     assert platform.seen == ["lease"]
 
@@ -1308,7 +1372,7 @@ def test_a_tool_waits_while_its_machine_is_prepared_unless_it_is_cancelled(
                 seen.append("lease")
                 result = {
                     "data": {
-                        "unavailable": "Cloud 机器正在准备；对话和平台工具仍可用。",
+                        "unavailable": "云端工作电脑正在准备；对话和平台工具仍可用。",
                         "preparing": True,
                     }
                     if seen.count("lease") < 3

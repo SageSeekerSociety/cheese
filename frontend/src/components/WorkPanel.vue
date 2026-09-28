@@ -45,7 +45,7 @@ const props = withDefaults(
     activityTick: number
     // 芝士 正在这个话题里干活 —— tab 栏据此给「现场」加一个跳动的点。
     working?: boolean
-    // 会话控制状态的最近一帧，一路透传给现场那格的控制条。
+    // 会话状态的最近一帧，一路透传给现场那格的会话详情。
     agentControl?: AgentControlState | null
     // 正在跑的轮次各自的开始时间（毫秒），一路透传给现场那格的状态条。
     siteTurns?: Record<string, number>
@@ -90,6 +90,8 @@ const emit = defineEmits<{
   /** 卡片面板里的「去验收」——同 `chatEvents.review`，切到「改动」那一格。 */
   (e: 'review'): void
   (e: 'mention-click', handle: string): void
+  /** 总览自动区里的一条决策 / 里程碑：去向是项目里的一页，交给 `TopicView`。 */
+  (e: 'open-resource', resource: 'decision' | 'milestone'): void
   (e: 'update:tab', key: string): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层。
   (e: 'locate', message: string): void
@@ -632,11 +634,13 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           :active="active === 'overview'"
           :refresh-tick="refreshTick"
           :open-card-id="openCardId"
+          :member-names="memberNames"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
           @review="emit('review')"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
+          @open-resource="emit('open-resource', $event)"
         />
         <PanelSite
           v-if="mounted.has('site')"

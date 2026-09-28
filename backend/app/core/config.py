@@ -167,6 +167,17 @@ class Settings(BaseSettings):
     #: may be spoken to without TLS. Only for a local test mail server: on a
     #: deployment it would let anyone make the backend dial its own network.
     integration_allow_private_hosts: bool = False
+    #: Remote MCP servers a `.mcp.json` names may be plain HTTP and on a private
+    #: network. Only for a local test server: on a deployment it would let a
+    #: project member make the backend dial its own network.
+    remote_mcp_allow_private_hosts: bool = False
+    #: Clients registered in advance with an MCP authorization server that
+    #: supports neither Client ID Metadata Documents nor Dynamic Client
+    #: Registration, keyed by the authorization server's issuer:
+    #: {"https://as.example": {"client_id": …, "client_secret": …,
+    #: "token_endpoint_auth_method": "client_secret_basic"}}. The redirect URI
+    #: they were registered with is `{frontend_url}/api/mcp/oauth/callback`.
+    remote_mcp_oauth_clients: dict[str, dict[str, str]] = {}
     # Where a mail host's real address is looked up when the local resolver
     # only hands out a proxy's fake-ip placeholder (198.18.0.0/15).
     integration_doh_url: str = "https://dns.alidns.com/resolve"
@@ -784,6 +795,24 @@ class Settings(BaseSettings):
     # this interval is what covers the "process still alive, task died" half.
     # 0 disables the periodic sweep (the startup one still runs).
     gate_sweep_interval_s: int = 300
+
+    # --- 记忆整理 dream (2026-09-27) ---
+    # 多久问一次「有没有项目该整理记忆了」。这一档**不是**整理的周期：该不该跑由
+    # 项目自己的花销和上次整理的时刻决定（`domain/memory/dream.py`），这里只是那
+    # 台钟走多快。所以它可以跑得勤（问一次很便宜，不该整理的项目问完就返回），而
+    # 真正跑起来的整理是几分钟一轮的会话。0 关掉这个 job。
+    memory_dream_sweep_interval_s: int = 600
+
+    # --- 旧表迁移 (2026-09-27) ---
+    # dry-run 出来的报告要**人**点头才落笔（`domain/memory/migration.py`），而点头
+    # 的那个人是固定的一个：写在这里而不是每次调用带一个参数——「谁复核」是这次
+    # 迁移的决定，不是请求的属性，跟着请求走就等于谁都能给自己批。
+    memory_migration_reviewer: str = "wangchangxin"
+    # 问模型那一步的超时。一次问的是一批旧记忆（几十条、几万字），比一次普通对话
+    # 长得多，默认的几十秒会在长项目上直接超时。
+    memory_migration_timeout_s: float = 600.0
+    # 一次问模型的旧记忆条数（见 `migration.MIGRATION_CHUNK`）。
+    memory_migration_chunk: int = 60
 
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
