@@ -8,12 +8,17 @@ import type { Frame, Scene } from './demoScene'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
+import { answer } from './demoBackend'
 import DemoBackstage from './DemoBackstage.vue'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import DispatchedMarker from '@/components/DispatchedMarker.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
+import RoomNotice from '@/components/room/RoomNotice.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
+import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
 
 const props = defineProps<{ scene: Scene; frame: Frame }>()
 
@@ -25,23 +30,43 @@ const isAgent = (handle: string) => props.scene.people[handle]?.agent === true
 const defaultAgent = computed(() => props.scene.seats?.[0] ?? '')
 const topic = { id: 'demo' } as Topic
 
-function block(line: Frame['chat'][number]): Block {
-  return {
-    id: line.id,
-    topic_id: 'demo',
-    kind: 'message',
-    author_type: 'participant',
-    author: line.author,
-    content: line.text,
-    created_at: '',
-  }
+// 时间线的行和产品里一样由 collapseNotices 算：藏掉不露面的、折叠同类事件、把同一轮
+// 的动作行和改动摘要折成「本轮摘要」。分隔说明和已派出标记不是块，夹在中间原样放。
+interface Row {
+  key: string
+  line: Frame['chat'][number]
+  block: Block | null
+  notice: PlatformNotice | null
+  run: Block[]
 }
+const rows = computed<Row[]>(() => {
+  const out: Row[] = []
+  let pending: Frame['chat'] = []
+  const flush = () => {
+    if (!pending.length) return
+    const byId = new Map(pending.map((l) => [l.block!.id, l]))
+    for (const r of collapseNotices(pending.map((l) => l.block!))) {
+      out.push({ key: r.block.id, line: byId.get(r.block.id)!, block: r.block, notice: r.notice, run: r.run })
+    }
+    pending = []
+  }
+  for (const line of props.frame.chat) {
+    if (line.block) {
+      pending.push(line)
+      continue
+    }
+    flush()
+    out.push({ key: line.id, line, block: null, notice: null, run: [] })
+  }
+  flush()
+  return out
+})
 
 // 同一个人连着说，只有第一条带头像和名字；中间隔了一条分隔说明就重新带上。
 function runStart(index: number): boolean {
-  const line = props.frame.chat[index]
-  const prev = props.frame.chat[index - 1]
-  return !prev || prev.kind !== 'message' || prev.author !== line.author
+  const row = rows.value[index]
+  const prev = rows.value[index - 1]
+  return !prev || !!prev.notice || !prev.block || prev.block.author !== row.block?.author
 }
 
 const working = computed(() => Object.keys(props.frame.running).length > 0)
@@ -78,6 +103,32 @@ onMounted(() => {
   fed = props.frame.site
   feed(fed)
 })
+
+// 验收卡是真的 TopicAcceptCard，它自己去取数：剧本里的卡和检查交给演示后端
+// 回答，卡一变就换一张新的，让它重新取一次（它自己十五秒才刷一回）。
+const cardKey = computed(() => JSON.stringify([props.frame.card, props.frame.checks, props.frame.cardOpen]))
+const cardBox = ref<HTMLElement | null>(null)
+
+// 卡面默认是收着的一行；剧本说要摊开，就替人点一下卡上的展开钮。卡自己去取数，
+// 所以钮要等它取回来才出现 —— 最多等一秒。
+async function openCard(): Promise<void> {
+  for (let i = 0; i < 20 && props.frame.cardOpen; i++) {
+    const toggle = cardBox.value?.querySelector<HTMLElement>('[aria-expanded="false"]')
+    if (toggle) return toggle.click()
+    await new Promise((r) => setTimeout(r, 50))
+  }
+}
+watch(cardKey, () => void nextTick(openCard), { immediate: true })
+watch(
+  cardKey,
+  () => {
+    const card = props.frame.card
+    const checks = props.frame.checks
+    answer('/topics/demo/accept-card', card ? () => ({ data: [card], total: 1 }) : null)
+    answer('/topics/demo/pr-checks', () => checks ?? { available: false })
+  },
+  { immediate: true }
+)
 
 const TABS = ['总览', '现场', '改动', '预览']
 </script>
@@ -126,26 +177,40 @@ const TABS = ['总览', '现场', '改动', '预览']
     <div class="demo-body">
       <div class="demo-chat" data-region="chat">
         <TransitionGroup name="demo-line" tag="div" class="demo-lines">
-          <template v-for="(line, i) in frame.chat" :key="line.id">
-            <TimelineMark v-if="line.kind === 'mark'" quiet>{{ line.text }}</TimelineMark>
+          <template v-for="(row, i) in rows" :key="row.key">
+            <TimelineMark v-if="row.line.kind === 'mark'" quiet>{{ row.line.text }}</TimelineMark>
+            <DispatchedMarker v-else-if="row.line.kind === 'split' && row.line.split" :marker="row.line.split" />
+            <RoomNotice
+              v-else-if="row.block && row.notice"
+              :block="row.block"
+              :notice="row.notice"
+              :run="row.run"
+              :name="row.block.author === 'system' ? null : names[row.block.author] ?? null"
+              :time="row.line.time"
+              :agent-name="names[defaultAgent] ?? '芝士'"
+              :refs="refs"
+            />
             <RoomMessage
-              v-else
-              :block="block(line)"
+              v-else-if="row.block"
+              :block="row.block"
               :parent="null"
               :parent-name="null"
               :run-start="runStart(i)"
               :mine="false"
               :topic-id="null"
-              :author-name="names[line.author] ?? line.author"
+              :author-name="names[row.block.author] ?? row.block.author"
               :avatar="null"
-              :is-agent="isAgent(line.author)"
-              :time="line.time"
+              :is-agent="isAgent(row.block.author)"
+              :time="row.line.time"
               :refs="refs"
               viewer=""
               :ask-busy="false"
             />
           </template>
         </TransitionGroup>
+        <div v-if="frame.card" ref="cardBox" class="demo-card" data-region="card">
+          <TopicAcceptCard :key="cardKey" topic-id="demo" topic-status="active" :task-id="frame.card.task_id" docked />
+        </div>
         <div class="demo-composer">发消息，@ 队友让它干活</div>
       </div>
 
@@ -323,6 +388,10 @@ const TABS = ['总览', '现场', '改动', '预览']
   overflow: hidden;
 }
 
+.demo-card {
+  margin: 8px 16px 0;
+}
+
 .demo-composer {
   display: flex;
   align-items: center;
@@ -413,7 +482,8 @@ const TABS = ['总览', '现场', '改动', '预览']
 .demo-room[data-focus='site'] [data-region='site'],
 .demo-room[data-focus='tabs'] [data-region='tabs'],
 .demo-room[data-focus='title'] [data-region='title'],
-.demo-room[data-focus='backstage'] [data-region='backstage'] {
+.demo-room[data-focus='backstage'] [data-region='backstage'],
+.demo-room[data-focus='card'] [data-region='card'] {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 

@@ -17,6 +17,7 @@ from app.domain.room_task.models import (
 )
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.thread_label import task_of_thread_label
+from app.domain.topic.models import Topic, TopicStatus
 
 
 class TaskService:
@@ -41,11 +42,21 @@ class TaskService:
         await self._session.refresh(task)
 
     async def open_without_pr(self) -> list[Task]:
+        """Open tasks on live rooms that could still need a draft PR.
+
+        A room that is archived is not worked in, so its tasks are left out
+        like the PR pollers leave them out: every one of them costs a GitHub
+        request on each sweep, and rooms archived before archiving closed
+        their tasks still hold open ones whose branches never reached GitHub.
+        """
         rows = await self._session.scalars(
-            select(Task).where(
+            select(Task)
+            .join(Topic, Topic.id == Task.room_id)
+            .where(
                 Task.status == TaskStatus.open,
                 Task.branch_name.is_not(None),
                 Task.pr_number.is_(None),
+                Topic.status != TopicStatus.archived,
             )
         )
         return list(rows.all())

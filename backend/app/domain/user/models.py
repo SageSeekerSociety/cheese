@@ -198,8 +198,9 @@ class UserSession(Base):
     Only a digest of the refresh token is stored. Each refresh replaces
     ``current_hash`` and keeps the digest it replaced in ``previous_hash``, so
     a token presented again after it was rotated away is recognised: within
-    the grace window as a concurrent refresh, after it as a copy in someone
-    else's hands.
+    the grace window as a concurrent refresh, after it as a browser that never
+    received its successor. ``abandoned_hash`` is that undelivered successor;
+    if it is ever presented, two parties hold this sign-in.
     """
 
     __tablename__ = "user_sessions"
@@ -210,6 +211,9 @@ class UserSession(Base):
     )
     current_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     previous_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    abandoned_hash: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )
     # The credential that completed the sign-in: ``password``, ``passkey``,

@@ -287,7 +287,8 @@ def test_changing_the_room_moves_every_agent_already_working(client, monkeypatch
     pushes = []
 
     async def push(target, method, params, **_kwargs):
-        pushes.append((target["device_id"], method, params.get("subtype")))
+        if method == "control":
+            pushes.append((target["device_id"], method, params.get("subtype")))
         return {"value": {"stdout": "", "stderr": "", "interrupted": False}}
 
     monkeypatch.setattr(execution, "call", push)

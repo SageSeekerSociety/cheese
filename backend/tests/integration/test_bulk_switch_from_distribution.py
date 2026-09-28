@@ -189,7 +189,8 @@ async def test_a_bulk_switch_moves_an_idle_session_and_skips_one_mid_turn(
     assert busy.json()["error"]["name"] == "SessionWorking"
     assert busy.json()["error"]["message"] == "正在运行任务，稍后再换"
     # Only the idle session's machine was asked to push.
-    assert remote.await_count == 1
+    pushes = [c for c in remote.await_args_list if c.args[1] == "control"]
+    assert len(pushes) == 1
     async with client.test_factory() as db:
         moved = await AgentSessionService(db).by_id(p.sessions["Idle"])
         kept = await AgentSessionService(db).by_id(p.sessions["Busy"])

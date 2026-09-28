@@ -6,6 +6,8 @@ nobody else may. A Cloud machine left after a push stops counting against the
 team's quota.
 """
 
+import json
+import re
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -14,8 +16,13 @@ import pytest
 from sqlalchemy import select
 
 from app.common.auth import create_access_token
-from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
+from app.core.sandbox_auth import (
+    bind_resource_token,
+    mint_scoped_token,
+    scoped_token_claims,
+)
 from app.domain.agent import execution
+from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -299,3 +306,79 @@ async def test_a_cloud_machine_left_after_a_push_stops_counting_against_quota(
         assert left.released_at is None
         assert machine_id in {m.id for m in counted}
         assert session.execution_request["retained_leases"] == [room.lease]
+
+
+class _IdleMachine:
+    """An online machine on which the session's executor has exited: a call
+    to it finds no socket until the installation starts it again."""
+
+    def __init__(self, push=PUSHED, install_exit=0):
+        self.started = False
+        self.push = push
+        self.install_exit = install_exit
+        self.calls = []
+        self.installs = []
+
+    def is_online(self, device):
+        return True
+
+    async def call_executor(self, device_id, state, method, params, **kwargs):
+        self.calls.append((device_id, method, params))
+        if not self.started:
+            raise DeviceCallError(
+                "dial unix /tmp/cheese-execution-1000-x.sock: connect: "
+                "no such file or directory"
+            )
+        return {} if method == "ping" else self.push
+
+    async def exec(self, device_id, argv, *, stdin, timeout):
+        self.installs.append((device_id, stdin))
+        if self.install_exit:
+            return {"exit": self.install_exit, "stderr": "no python3"}
+        self.started = True
+        return {
+            "exit": 0,
+            "stdout": json.dumps(
+                {"state": "/old/state", "workspace": "/old/work", "mcp_servers": []}
+            ),
+        }
+
+
+async def test_an_idle_sessions_executor_is_started_to_push_before_a_switch(
+    client, monkeypatch
+):
+    room = await _room(client)
+    machine = _IdleMachine()
+    monkeypatch.setattr(work_lease, "device_hub", machine)
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    # Started on the machine being left, then pushed there.
+    [(device, script)] = machine.installs
+    assert device == room.old_device
+    device, method, params = machine.calls[-1]
+    assert device == room.old_device
+    assert method == "control" and params["subtype"] == "checkpoint"
+    # With a credential for this session that is good now.
+    [token] = re.findall(r'"CHEESE_TOKEN": "([^"]+)"', script)
+    claims = scoped_token_claims(token)
+    assert claims is not None
+    assert claims["session"] == str(room.session_id)
+    assert claims["t"] == str(room.topic_id)
+    session = await _session(client, room)
+    assert session.execution_request["choice"]["device_id"] == room.new_device
+
+
+async def test_a_machine_that_cannot_start_the_executor_is_unreachable(
+    client, monkeypatch
+):
+    room = await _room(client)
+    monkeypatch.setattr(work_lease, "device_hub", _IdleMachine(install_exit=1))
+
+    refused = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["name"] == "WorkComputerUnreachable"
+    session = await _session(client, room)
+    assert session.execution_request["choice"]["device_id"] == room.old_device
