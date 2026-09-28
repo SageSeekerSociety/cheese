@@ -67,7 +67,7 @@ class Runner:
 
 
 def wire(tmp_path):
-    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="pi")
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "teammate", harness="pi")
     handle = Handle(
         session,
         "device",

@@ -109,7 +109,7 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
 
 @pytest.mark.anyio
 async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
-    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="codex")
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "agent", harness="codex")
     work = uuid.uuid4()
     handle = Handle(session, "center", "/state", "thread", "agent", tmp_path / "mirror")
     journal = Journal(tmp_path / "remote")
@@ -170,7 +170,7 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
             "steer",
         ]
         # Lose only the backend reader. The remote process completes on its own.
-        await runtime._detach(session.topic_id)
+        await runtime._detach(runtime._seat_of(session))
         for method, params in [
             (
                 "item/completed",
@@ -215,7 +215,7 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
         assert not replacement.work
         assert await replacement.interrupt(session)
     finally:
-        await runtime._detach(session.topic_id)
+        await runtime._detach(runtime._seat_of(session))
         if replacement:
             await replacement._detach(session.topic_id)
         journal.close()

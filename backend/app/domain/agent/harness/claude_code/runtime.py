@@ -109,7 +109,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
         edits stay on that machine's disk and come back the next time it is
         reached, the same shape as every other call on this path.
         """
-        handle = self.live.get(topic_id)
+        handle = self.live.get(self._room_seat(topic_id))
         if handle is None:
             return None
         try:
@@ -118,7 +118,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             return None
 
     def backlog(self, session: SessionRef) -> ClaudeCodeBacklog:
-        handle = self.live.get(session.topic_id)
+        handle = self.live.get(self._seat_of(session))
         return ClaudeCodeBacklog(
             handle.mirror if handle else None,
             handle.session_id if handle else None,
@@ -128,7 +128,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
         return bool(status.get("working"))
 
     async def interrupt(self, session: SessionRef) -> bool:
-        handle = self.live.get(session.topic_id)
+        handle = self.live.get(self._seat_of(session))
         if handle is None:
             return False
         return bool((await self.channel.call(handle, "interrupt", {}))["interrupted"])
@@ -137,8 +137,9 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
 
     async def control_state(self, topic: uuid.UUID) -> dict:
         """What the room's controls show, from the mirror alone."""
-        handle = self.live.get(topic)
-        subscription = self.subscriptions.get(topic)
+        seat = self._room_seat(topic)
+        handle = self.live.get(seat)
+        subscription = self.subscriptions.get(seat)
         mirrored = (
             await subscription.on_disk(control_state, subscription.path)
             if subscription is not None
@@ -153,7 +154,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
 
     async def control(self, topic: uuid.UUID, request: dict) -> dict:
         """One control request on the session's stdin, to its response."""
-        handle = self.live.get(topic)
+        handle = self.live.get(self._room_seat(topic))
         if handle is None:
             raise LookupError("No session is running in this room")
         return await self.channel.call(handle, "control", {"request": request})

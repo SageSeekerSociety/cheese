@@ -1769,10 +1769,21 @@ class ChatService:
             if archived:
                 delivered = False
             else:
+                # 话说给在跑这一轮的那个座位：同房间另一个 agent 也有一轮在跑
+                # 时，不带座位就是把话猜进别人的会话里。
+                seat_agent = (
+                    (state.agent_instance_handle or state.acting_agent)
+                    if state
+                    else None
+                )
                 delivered = (
-                    await self._compute.deliver(topic_id, line, images=images)
+                    await self._compute.deliver(
+                        topic_id, line, images=images, agent_handle=seat_agent
+                    )
                     if images
-                    else await self._compute.deliver(topic_id, line)
+                    else await self._compute.deliver(
+                        topic_id, line, agent_handle=seat_agent
+                    )
                 )
         except Exception:  # noqa: BLE001 — caller reports the queued fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
@@ -1935,10 +1946,17 @@ class ChatService:
                 )
             )
             del pending[:-16]  # a dead session must not grow this forever
+        state = self._hook_work.get((topic_id, consuming_turn_id))
+        seat_agent = (
+            (state.agent_instance_handle or state.acting_agent) if state else None
+        )
         try:
             return bool(
                 await self._compute.deliver(
-                    topic_id, line, expected_work_id=consuming_turn_id
+                    topic_id,
+                    line,
+                    expected_work_id=consuming_turn_id,
+                    agent_handle=seat_agent,
                 )
             )
         except Exception:  # noqa: BLE001 — a failed notice must not fail the write
@@ -2350,7 +2368,9 @@ class ChatService:
                 # and its result lands here. Without its bookkeeping that result
                 # closes nothing: the batch it answered is never stamped
                 # consumed, and the next turn sends it again.
-                work = self._compute.work_in_flight(session.topic_id)
+                work = self._compute.work_in_flight(
+                    session.topic_id, session.agent_handle or None
+                )
                 if work is not None and (session.topic_id, work) not in self._hook_work:
                     await self._begin_self_started_turn(
                         session.project_id,
