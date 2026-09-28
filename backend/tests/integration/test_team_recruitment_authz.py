@@ -152,9 +152,7 @@ class TestTeamRecruitmentIsBehindTheTeamGate:
         self, api_client: TestClient, stealth: dict
     ) -> None:
         """队内成员照旧看得见自己队的招募帖。"""
-        _add_member(
-            api_client, stealth["owner"], stealth["team_id"], stealth["member"]
-        )
+        _add_member(api_client, stealth["owner"], stealth["team_id"], stealth["member"])
 
         resp = api_client.get(
             f"/teams/{stealth['team_id']}/recruitment",
