@@ -134,6 +134,7 @@ from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
     names_a_person,
+    recipient_seat,
 )
 from app.domain.membership.roster import roster_rows
 from app.domain.memory import dream
@@ -2039,6 +2040,32 @@ class ChatService:
                 topic_id, task_id=None
             )
             return bool(_pending_input_blocks(history))
+
+    async def pending_seat(self, topic_id: uuid.UUID) -> str | None:
+        """The teammate this room's unread inputs were addressed to, if any.
+
+        重试按钮问的就是这一句。那批还没人读的消息**是点名交给谁的**，这一轮就
+        该交给谁：一个房间可以坐好几位 AI 队友，而「房间的默认席位」是另一个答
+        案 —— 取它的话，另一位队友的轮次失败之后一点重试就换成默认芝士来接，而
+        默认芝士那一轮的待读窗口里根本没有点名给那位队友的消息（`_addressed_to`
+        按收件人过滤），于是它接了一轮却读不到真正找它的那句话。
+
+        「没人被点名」是常态而不是异常（没 @ 不等于没说）：那种消息本来就是房间
+        认的那一位的事，所以返回 None，由调用点回落到默认席位。
+
+        窗口语义与 :meth:`has_unread_input` 共用同一个 `_pending_input_blocks`，
+        理由同它：一份近似的复制品会在窗口语义改动时悄悄和它分叉。
+        """
+        async with self._sessions() as session:
+            history = await BlockRepository(session).list_for_topic(
+                topic_id, task_id=None
+            )
+            # 从新到旧：最近一次点名是这批消息现在要交给谁的最新说法。
+            for block in reversed(_pending_input_blocks(history)):
+                recipient = (block.meta or {}).get("agent_recipient") or {}
+                if recipient.get("mentioned"):
+                    return recipient_seat(recipient)
+            return None
 
     @asynccontextmanager
     async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
