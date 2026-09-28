@@ -496,27 +496,6 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
           <PanelCard title="出题最多的" subtitle="按累计被领取">
             <BarList :rows="publisherRows" unit=" 次" empty="还没有出题人" />
           </PanelCard>
-
-          <PanelCard
-            class="an__span2"
-            title="领了但没动的"
-            :subtitle="`${stalledCount} 道题上有已通过的领取者、两周没提交`"
-          >
-            <template #actions>
-              <v-btn size="small" variant="tonal" @click="tab = 'alerts'">去待处理看逐题</v-btn>
-            </template>
-
-            <div class="stalled">
-              <b class="stalled__num">{{ stalledCount }}</b>
-              <span class="stalled__unit">道题</span>
-            </div>
-            <p class="an__note">
-              口径是<strong>两周</strong>：有已通过的领取者，而最近一次提交在 14 天以前（或者从来没交过）。
-              原型那一格写「超过五天」，真版按接口的 14 天说，这个差是有意记在案的。
-              能给的也只有<strong>题</strong>这一层 —— 谁在哪道题上没动，逐人的名单接口不返回
-              （真平台上只有一份带审计的导出 CSV 里有），所以这一格只有数、不列名字：少画，不编。
-            </p>
-          </PanelCard>
         </div>
       </div>
 
@@ -537,6 +516,20 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
             <v-btn v-if="a.to" size="small" variant="tonal" :to="a.to">{{ a.cta }}</v-btn>
           </div>
         </div>
+
+        <!-- 原型把这一格挂在「待处理」里（那一排 alert 之后），不是总览 —— 照原型摆。 -->
+        <PanelCard title="领了但没动的" :subtitle="`${stalledCount} 道题上有已通过的领取者、两周没提交`">
+          <div class="stalled">
+            <b class="stalled__num">{{ stalledCount }}</b>
+            <span class="stalled__unit">道题</span>
+          </div>
+          <p class="an__note">
+            口径是<strong>两周</strong>：有已通过的领取者，而最近一次提交在 14 天以前（或者从来没交过）。
+            原型那一格写「超过五天」，真版按接口的 14 天说，这个差是有意记在案的。 能给的也只有<strong>题</strong>这一层
+            —— 谁在哪道题上没动，逐人的名单接口不返回 （真平台上只有一份带审计的导出 CSV
+            里有），所以这一格只有数、不列名字：少画，不编。
+          </p>
+        </PanelCard>
 
         <PanelCard
           v-if="noSubmitTasks.length"

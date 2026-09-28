@@ -414,8 +414,12 @@ describe('整板看板', () => {
 
   // --- 三个新 tab 与「领了但没动的」那一格 ---------------------------------------
 
-  it('「领了但没动的」那一格：数是 alerts 的题数，口径写两周，逐人名单如实说不返回', async () => {
+  it('「领了但没动的」那一格在「待处理」里：数是 alerts 的题数，口径写两周，逐人名单如实说不返回', async () => {
     await mount()
+
+    // 原型把它摆在待处理那一格（那一排 alert 之后），**不在总览** —— 摆错了这一条就红。
+    expect(panel('领了但没动的')).toBeUndefined()
+    await openTab('待处理')
 
     const p = panel('领了但没动的')
     expect(p).toBeTruthy()
