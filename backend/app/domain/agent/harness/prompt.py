@@ -199,6 +199,19 @@ TODO_WRITE = (
 )
 
 
+#: 提问也是平台工具：`cheese_ask` 的问题带按钮出现在对话里，答案下一轮带回。各
+#: harness 自带的提问工具大多已关掉，关不掉的只剩 Codex 的
+#: `request_user_input_async`（issue #1880：由模型目录决定，没有配置开关）。它
+#: 不卡住这一轮，但问出去的话是普通输出，只进现场、不进对话，房间里没人看得到，
+#: 所以只能在这里说清楚。
+ASK_ONLY_CHEESE_ASK = (
+    "## 向人提问\n"
+    "要人回答或拍板时只用 `cheese_ask`。你自带的其他提问工具（例如 "
+    "`request_user_input_async`）不要用：它问出去的话只落在现场，房间里没人看得到，"
+    "也不会有人回答。"
+)
+
+
 #: 实况文档的五块模板：有文档时和文档还空着时说的是同一套，所以只写一份。
 DOC_FORM = (
     "写它的时候按这五块组织：\n"
@@ -255,6 +268,7 @@ def build_system_prompt(
         )
     parts.append(ALWAYS_PUSH)
     parts.append(TODO_WRITE)
+    parts.append(ASK_ONLY_CHEESE_ASK)
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if teaching is not None and (section := teaching_section(teaching)):
