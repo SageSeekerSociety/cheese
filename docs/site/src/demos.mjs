@@ -23,9 +23,9 @@
 // build, loudly, with the line number.
 
 import { esc, docHref } from './render.mjs'
-import { num, show, simulate, fill, evaluate } from './demo-model.mjs'
+import { num, show, simulate, fill, evaluate, sumContext } from './demo-model.mjs'
 
-export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim']
+export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim', 'demo-context']
 
 // A fence that says `data: prompt-blocks` does not carry its own numbers: the
 // step is bound, by position, to a row of a dataset the build computed from the
@@ -141,8 +141,72 @@ export function renderDemo(lang, body, where) {
   const spec = parseFence(body, where)
   if (!spec.title) missing(where, 'a demo needs a «title»')
   if (lang === 'demo-sim') return renderSim(spec, where)
+  if (lang === 'demo-context') return renderContext(spec, where)
   return renderSteps(spec, where, lang === 'demo-timeline')
 }
+
+// ---------- demo-context ----------
+// One context window filling up over a turn, after Claude Code's «Explore the
+// context window». The startup rows are bound to the prompt-blocks dataset like
+// demo-timeline; `before:` rows come ahead of them (the harness's own prompt),
+// `then:` rows after. A `kind: sub` row lives in a subagent's own window and
+// does not count; the `kind: compact` row keeps only the categories in its
+// `keeps:` and adds its `value` as the summary. A row with `gate:` waits for a
+// click before it goes in. The interactive part is src/context-window.mjs.
+export const CONTEXT_CATS = {
+  harness: { label: '骨架自带', c: '--faint' },
+  rules: { label: '平台规则', c: '--info' },
+  state: { label: '项目状态', c: '--sec' },
+  memory: { label: '记忆', c: '--accent-3' },
+  you: { label: '人和平台的话', c: '--ok' },
+  work: { label: '文件和输出', c: '--warn' },
+  say: { label: '芝士发言', c: '--accent' },
+  compact: { label: '压缩摘要', c: '--accent-2' },
+  sub: { label: '分身', c: '--sec' },
+}
+const KIND_NAMES = ['auto', 'you', 'platform', 'cheese', 'sub', 'compact']
+const SEEN = {
+  chat: { label: '对话里看得见' },
+  site: { label: '现场里有一行' },
+  none: { label: '房间里看不见' },
+}
+
+export function contextRows(spec, where) {
+  const before = (spec.before || []).map((s) => ({ ...s, cat: s.cat || 'harness', kind: s.kind || 'auto' }))
+  const bound_ = bound(spec, where).map((s) => ({ ...s, cat: s.cat || 'rules', kind: s.kind || 'auto' }))
+  // `skip: true` keeps a bound row checked against the dataset but out of this window (a block only some projects get).
+  const rows = [...before, ...bound_].filter((s) => s.skip !== true).map((s) => ({ ...s, seen: s.seen || 'none', value: s.value ?? 0 }))
+  rows.forEach((r, i) => {
+    if (r.kind === 'sub') r.cat = 'sub'
+    if (r.kind === 'compact') r.cat = 'compact'
+    if (!KIND_NAMES.includes(r.kind)) missing(where, `row «${r.label}»: «kind» is one of ${KIND_NAMES.join(', ')}`)
+    if (!CONTEXT_CATS[r.cat]) missing(where, `row «${r.label}»: no category «${r.cat}» — use one of ${Object.keys(CONTEXT_CATS).join(', ')}`)
+    if (!SEEN[r.seen]) missing(where, `row «${r.label}»: «seen» is chat, site or none`)
+    if (typeof r.value !== 'number') missing(where, `row «${r.label}»: «value» must be a number of tokens`)
+    if (r.keeps) r.keeps = String(r.keeps).split(',').map((x) => x.trim())
+    r.subStart = r.kind === 'sub' && rows[i - 1]?.kind !== 'sub'
+    r.subEnd = r.kind === 'sub' && rows[i + 1]?.kind !== 'sub'
+    if (r.link) r.link = docHref(r.link)
+  })
+  if (rows.filter((r) => r.kind === 'compact').length > 1) missing(where, 'one compaction per demo')
+  return rows
+}
+
+function renderContext(spec, where) {
+  const rows = contextRows(spec, where)
+  const window_ = spec.window || 200000
+  const used = new Set(rows.map((r) => r.cat))
+  const cats = Object.entries(CONTEXT_CATS).filter(([k]) => used.has(k) && k !== 'sub').map(([key, v]) => ({ key, label: v.label, color: v.c }))
+  const cfg = { title: spec.title, note: spec.note, topic: spec.topic, window: window_, line: spec.compact_line || 0.9, takeaway: spec.takeaway, room: spec.room, cats, rows }
+  // Narrow screens and no script get the rows as a plain list.
+  const li = rows.map((r) => `<li><b>${esc(r.label)}</b>${r.kind === 'compact' ? '' : `<span class="cw-f-tok">${num(r.value)}${r.kind === 'sub' ? '（在分身的窗口里）' : ''}</span>`}<span class="cw-f-seen">${SEEN[r.seen].label}</span><p>${esc(r.desc || '')}</p></li>`).join('')
+  return `<figure class="demo demo-cw" data-demo="context" aria-label="${esc(spec.title)}">
+  ${head(spec.title, spec.note)}
+  <ol class="cw-fallback">${li}</ol>
+  <script type="application/json" data-cw>${JSON.stringify(cfg).replace(/</g, '\\u003c')}</script>
+</figure>`
+}
+
 
 function head(title, note) {
   return `<div class="dm-head"><b class="dm-title">${esc(title)}</b>${note ? `<span class="dm-note">${esc(note)}</span>` : ''}</div>`
@@ -297,6 +361,11 @@ export function demoText(lang, body, { where }) {
     const rules = state.rules.length ? `\n\n判定规则（默认可调参数下命中的是第 ${state.hit + 1} 条）：\n${state.rules.map((r, i) => `${i + 1}. ${r.label ? `${r.label}：` : ''}${r.text}${r.hit ? '（默认命中）' : ''}`).join('\n')}` : ''
     const out = state.out.length ? `\n\n默认位置的结果：\n${state.out.map((o) => `- ${o.label}：${o.text}${o.unit ? ` ${o.unit}` : ''}`).join('\n')}` : ''
     return `**${spec.title}**（网页上是一个可以拖动参数的模拟器；这里是它的文字版：${vars.join('、')}。）${rules}${out}`
+  }
+  if (lang === 'demo-context') {
+    const rows = contextRows(spec, where)
+    const list = rows.map((r) => `- ${r.label}（${CONTEXT_CATS[r.cat].label}，${SEEN[r.seen].label}${r.cat === 'compact' ? '' : `，约 ${num(r.value)} tokens`}）：${r.desc || ''}`).join('\n')
+    return `**${spec.title}**（网页上是一根随时间填满的上下文窗口，这里是它的文字版，窗口 ${num(spec.window || 200000)} tokens。）\n\n${list}`
   }
   const steps = bound(spec, where)
   const list = steps.map((s) => {
