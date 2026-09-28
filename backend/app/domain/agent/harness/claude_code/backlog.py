@@ -9,13 +9,14 @@ a sub-thread to its card may be far behind it.
 
 import json
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from app.domain.agent.harness import HarnessEvent
 from app.domain.agent.harness.claude_code.events import Assembler, bind
 from app.domain.agent.harness.claude_code.journal import Journal
+from app.domain.agent.harness.driven.backlog import JournalBacklog, age
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.service import AgentEvent
 
@@ -123,36 +124,24 @@ def control_state(path: Path | None) -> dict:
     return {"tasks": kept, "state": state}
 
 
-class ClaudeCodeBacklog:
-    def __init__(self, path: Path | None, session_id: str | None = None):
-        self.path = path
-        self.entries: list[HarnessEvent] = []
-        facts: dict[str, str] = {}
-        if path is not None and path.exists():
-            journal = Journal(path)
-            try:
-                facts = journal.facts(FACT)
-                after = int(journal.recall("landed") or 0)
-                now = datetime.now(UTC)
-                while page := journal.read(after):
-                    for entry in page:
-                        record = entry["record"]
-                        at = datetime.fromisoformat(entry["at"])
-                        self.entries.append(
-                            HarnessEvent(
-                                key=f"{entry['sequence']:019d}",
-                                eid=f"claude:{record.get('uuid') or entry['sequence']}",
-                                record=record,
-                                age_s=(now - at).total_seconds(),
-                            )
-                        )
-                    after = page[-1]["sequence"]
-            finally:
-                journal.close()
-        self.assembler = Assembler(facts, session_id)
+class ClaudeCodeBacklog(JournalBacklog[Journal]):
+    journal = Journal
 
-    def unread(self) -> list[HarnessEvent]:
-        return self.entries
+    def __init__(self, path: Path | None, session_id: str | None = None):
+        self.assembler = Assembler({}, session_id)
+        super().__init__(path)
+
+    def prepare(self, journal: Journal) -> None:
+        self.assembler.facts = journal.facts(FACT)
+
+    def event(self, row: dict, now: datetime) -> HarnessEvent:
+        record = row["record"]
+        return HarnessEvent(
+            key=f"{row['sequence']:019d}",
+            eid=f"claude:{record.get('uuid') or row['sequence']}",
+            record=record,
+            age_s=age(row, now),
+        )
 
     def assemble(self, entry: HarnessEvent) -> list[AgentEvent]:
         if not isinstance(entry.record, dict):
@@ -162,22 +151,3 @@ class ClaudeCodeBacklog:
     def unfinished(self) -> set[str]:
         # A record is whole when it is written: nothing arrives in pieces.
         return set()
-
-    def landed(self, *, through: str) -> None:
-        assert self.path is not None
-        journal = Journal(self.path)
-        try:
-            journal.acknowledge(int(through))
-        finally:
-            journal.close()
-
-    def forget(self, *, older_than_s: float) -> None:
-        if self.path is None or not self.path.exists():
-            return
-        journal = Journal(self.path)
-        try:
-            journal.prune(
-                (datetime.now(UTC) - timedelta(seconds=older_than_s)).isoformat()
-            )
-        finally:
-            journal.close()

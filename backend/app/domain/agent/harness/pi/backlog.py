@@ -14,47 +14,35 @@ harmless — which is the whole recovery story: a reader that dies mid-pass cost
 a re-read, never an event.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from app.domain.agent.harness import HarnessEvent
+from app.domain.agent.harness.driven.backlog import JournalBacklog, age
 from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.journal import Journal
 from app.domain.agent.service import AgentEvent
 
 
-class PiBacklog:
-    def __init__(self, path: Path | None, session_id: str | None = None):
-        self.path = path
-        self.assembler = Assembler(session_id)
-        self.entries: list[HarnessEvent] = []
-        if path is None or not path.exists():
-            return
-        journal = Journal(path)
-        try:
-            landed = int(journal.recall("landed") or 0)
-            # Resume the running total of a turn a previous pass landed part of.
-            for entry in journal.between(journal.turn_started_at(landed), landed):
-                self.assembler.absorb(entry)
-            now = datetime.now(UTC)
-            after = landed
-            while page := journal.read(after):
-                for row in page:
-                    at = datetime.fromisoformat(row["at"])
-                    self.entries.append(
-                        HarnessEvent(
-                            key=f"{row['sequence']:019d}",
-                            eid=f"pi:{row['record']['id']}",
-                            record=row["record"],
-                            age_s=(now - at).total_seconds(),
-                        )
-                    )
-                after = page[-1]["sequence"]
-        finally:
-            journal.close()
+class PiBacklog(JournalBacklog[Journal]):
+    journal = Journal
 
-    def unread(self) -> list[HarnessEvent]:
-        return self.entries
+    def __init__(self, path: Path | None, session_id: str | None = None):
+        self.assembler = Assembler(session_id)
+        super().__init__(path)
+
+    def prepare(self, journal: Journal) -> None:
+        # Resume the running total of a turn a previous pass landed part of.
+        for entry in journal.between(journal.turn_started_at(self.after), self.after):
+            self.assembler.absorb(entry)
+
+    def event(self, row: dict, now: datetime) -> HarnessEvent:
+        return HarnessEvent(
+            key=f"{row['sequence']:019d}",
+            eid=f"pi:{row['record']['id']}",
+            record=row["record"],
+            age_s=age(row, now),
+        )
 
     def assemble(self, entry: HarnessEvent) -> list[AgentEvent]:
         if not isinstance(entry.record, dict):
@@ -63,22 +51,3 @@ class PiBacklog:
 
     def unfinished(self) -> set[str]:
         return set()
-
-    def landed(self, *, through: str) -> None:
-        assert self.path is not None
-        journal = Journal(self.path)
-        try:
-            journal.acknowledge(int(through))
-        finally:
-            journal.close()
-
-    def forget(self, *, older_than_s: float) -> None:
-        if self.path is None or not self.path.exists():
-            return
-        journal = Journal(self.path)
-        try:
-            journal.prune(
-                (datetime.now(UTC) - timedelta(seconds=older_than_s)).isoformat()
-            )
-        finally:
-            journal.close()

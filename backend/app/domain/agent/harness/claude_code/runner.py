@@ -523,6 +523,11 @@ class Runner(runner.Runner[Journal]):
                 continue
             if kind == "keep_alive":
                 continue
+            if kind == "system" and record.get("subtype") == "thinking_tokens":
+                # The build's running estimate of how much it has thought, one
+                # line per streamed delta of a token or two. Nothing reads it,
+                # and journaled it was nineteen records in twenty.
+                continue
             self.observe(record)
 
     def observe(self, record: dict, *, from_file: bool = False) -> None:

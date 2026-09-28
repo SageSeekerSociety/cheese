@@ -1,13 +1,14 @@
 """Mirror the runner's durable log before handing events to room persistence."""
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from app.domain.agent.harness import HarnessEvent
 from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.journal import Journal
+from app.domain.agent.harness.driven.backlog import JournalBacklog, age
 from app.domain.agent.harness.driven.journal import PAGE
 
 
@@ -29,52 +30,38 @@ async def receive(
         await on_disk(journal.close)
 
 
-class CodexBacklog:
-    def __init__(self, path: Path | None):
-        self.path = path
-        self.assembler = Assembler()
-        self.entries: list[HarnessEvent] = []
-        if path is None or not path.exists():
-            return
-        journal = Journal(path)
-        try:
-            self.assembler.children = journal.children()
-            after = int(journal.recall("landed") or 0)
-            now = datetime.now(UTC)
-            while entries := journal.read(after):
-                for entry in entries:
-                    record = entry["record"]
-                    record.setdefault(
-                        "emittedAtMs",
-                        datetime.fromisoformat(entry["at"]).timestamp() * 1000,
-                    )
-                    params = record.get("params", {})
-                    item = params.get("item", {})
-                    item_id = params.get("itemId") or item.get("id")
-                    thread_id = params.get("threadId") or params.get("thread", {}).get(
-                        "id", "server"
-                    )
-                    eid = (
-                        f"codex:{thread_id}:{item_id}"
-                        if item_id
-                        else f"codex:{thread_id}:event:{entry['sequence']}"
-                    )
-                    self.entries.append(
-                        HarnessEvent(
-                            key=f"{entry['sequence']:019d}",
-                            eid=eid,
-                            record=record,
-                            age_s=(
-                                now - datetime.fromisoformat(entry["at"])
-                            ).total_seconds(),
-                        )
-                    )
-                after = entries[-1]["sequence"]
-        finally:
-            journal.close()
+class CodexBacklog(JournalBacklog[Journal]):
+    journal = Journal
 
-    def unread(self) -> list[HarnessEvent]:
-        return self.entries
+    def __init__(self, path: Path | None):
+        self.assembler = Assembler()
+        super().__init__(path)
+
+    def prepare(self, journal: Journal) -> None:
+        self.assembler.children = journal.children()
+
+    def event(self, row: dict, now: datetime) -> HarnessEvent:
+        record = row["record"]
+        record.setdefault(
+            "emittedAtMs", datetime.fromisoformat(row["at"]).timestamp() * 1000
+        )
+        params = record.get("params", {})
+        item = params.get("item", {})
+        item_id = params.get("itemId") or item.get("id")
+        thread_id = params.get("threadId") or params.get("thread", {}).get(
+            "id", "server"
+        )
+        eid = (
+            f"codex:{thread_id}:{item_id}"
+            if item_id
+            else f"codex:{thread_id}:event:{row['sequence']}"
+        )
+        return HarnessEvent(
+            key=f"{row['sequence']:019d}",
+            eid=eid,
+            record=record,
+            age_s=age(row, now),
+        )
 
     def assemble(self, entry: HarnessEvent):
         if not isinstance(entry.record, dict):
@@ -83,22 +70,3 @@ class CodexBacklog:
 
     def unfinished(self) -> set[str]:
         return set(self.assembler.pending)
-
-    def landed(self, *, through: str) -> None:
-        assert self.path is not None
-        journal = Journal(self.path)
-        try:
-            journal.acknowledge(int(through))
-        finally:
-            journal.close()
-
-    def forget(self, *, older_than_s: float) -> None:
-        if self.path is None or not self.path.exists():
-            return
-        journal = Journal(self.path)
-        try:
-            journal.prune(
-                (datetime.now(UTC) - timedelta(seconds=older_than_s)).isoformat()
-            )
-        finally:
-            journal.close()
