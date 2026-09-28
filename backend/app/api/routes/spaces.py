@@ -1763,10 +1763,14 @@ async def export_space_analytics_participants(
 # ── 学习: 成员怎么与 AI 协作、卡在哪 (issue #945 的管理员看板) ────────────────────
 #
 # 上面那一组读 赛题 与报名表，这一组读成员项目里的**对话**，所以门也不同: 课程页
-# 本身对所有人可见（`Role.GUEST` 就能读 Space），成员项目的对话不是。判定不写在
-# 这几条路由里 —— 它在 `app.auth.project_access`，由 `SpaceLearningService` 逐个
-# 项目过一次（`ActorResolver.authorize_project` 是同一个判据的请求内形态）。这里
-# 只负责「先登录」，和本文件其它路由同一个写法。
+# 本身对所有人可见（`Role.GUEST` 就能读 Space），成员项目的对话不是。行数据的判定
+# 不写在这几条路由里 —— 它在 `app.auth.project_access`，由 `SpaceLearningService`
+# 逐个项目过一次（`ActorResolver.authorize_project` 是同一个判据的请求内形态）。
+# 这两条只负责「先登录」，和本文件其它路由同一个写法。
+#
+# 唯一的例外是 `filters`：它除了行数据（成员、计数）还报课程级的分类名，那一项没有
+# 项目可逐条过，所以那条路由照本文件的空间路由挂了 `_ensure_space_visible` —— 见它
+# 自己的说明。
 #
 # 缺了哪些数据（review_flag、「再给一点提示」、知识点）写在 `SpaceLearningService`
 # 的模块说明里，接口如实把它们报成缺失，不拿别的信号顶替。
@@ -1873,9 +1877,19 @@ async def get_space_learning_filters(
     resolver: ActorResolverDep,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceLearningService = Depends(get_space_learning_service),
+    db=Depends(get_db),
 ) -> dict:
-    """这一格能筛的两维: 成员、知识点。时间那一维在前端的筛选栏里。"""
-    _ = auth_user
+    """这一格能筛的两维: 成员、知识点。时间那一维在前端的筛选栏里。
+
+    这里比同族其它三条多一道 `_ensure_space_visible`，因为返回的东西里有一项不
+    是行数据: `knowledgePoints` 报的是这个课程自己划的分类格子
+    (`space_categories`)，不是某个成员项目里的行。成员与计数走
+    `SpaceLearningService` 那道逐项目的 `may_read_project`，一个都读不到就是空
+    表；分类名没有项目可逐条过，只有课程级的一道门能挡 —— 少了它，一个不在这个
+    板里的人在 404 的 `GET /spaces/{id}` 旁边拿到 200，还能读出别人课程的设计。
+    门本身照抄本文件其它空间路由的那道 (非成员答 404，不确认板子存在)。
+    """
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     actor = await resolver.resolve(fallback_handle=None)
     data = await service.filters(space_id=space_id, handle=_learning_handle(actor))
     return {"code": 200, "message": "OK", "data": data}

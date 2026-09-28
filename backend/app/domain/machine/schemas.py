@@ -3,22 +3,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from app.domain.machine.models import MAX_ENROLL_ATTEMPTS, AiStatus, MachineStatus
-
-
-class MachineCreate(BaseModel):
-    # The key authorised on the machine for `login_user`. Optional because
-    # MicroCloud allows a machine with no key — it is simply unreachable by a
-    # human until one is added, which is a legitimate "just give me compute".
-    ssh_pubkey: str | None = Field(default=None, alias="sshPubkey")
-    login_user: str | None = Field(default=None, alias="loginUser")
-    cores: int | None = Field(default=None, ge=1)
-    memory_mb: int | None = Field(default=None, alias="memoryMb", ge=128)
-    disk_gb: int | None = Field(default=None, alias="diskGb", ge=2)
-
-    model_config = ConfigDict(populate_by_name=True)
 
 
 class MachineOut(BaseModel):

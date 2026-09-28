@@ -37,6 +37,13 @@ class TopicOut(BaseModel):
     # Derived per query, so — like `running` — only the endpoints that ask for
     # it (list_topics/get_topic) fill it in; elsewhere it stays None.
     last_activity_at: datetime | None = None
+    # 有人点了 AI 的名、到现在还没有 AI 回话：最早那条没人接的消息的时间，没有就
+    # None。侧栏拿它亮红灯（等了太久）——阈值在前端，因为「多久算太久」要跟着
+    # 当下的钟走，而这一行是某一刻读出来的。同样只有 list_topics/get_topic 填。
+    awaiting_reply_since: datetime | None = None
+    # 最近一轮以报错收场（「本轮未完成：…」、502/404）而之后 AI 还没开过口：那
+    # 次报错的时间，没有就 None。侧栏见到它立刻亮红灯，不等五分钟。
+    turn_failed_at: datetime | None = None
     # Lifecycle markers (spec §6.3): who accepted, when archived, and — for an
     # upgraded topic — which block it grew from (for the 活引用 back-link).
     accepted_by: str | None = None
@@ -58,11 +65,14 @@ class TopicOut(BaseModel):
     #
     # `i_participate`: I'm in the topic's roster, OR I created it, OR a card
     # here is routed to me, OR I've been @'d in it.
-    # `awaits_me`: it is waiting on ME right now — a card routed to me is still
-    # pending, an @ at me is unread, or 芝士 is stopped on a question only I can
-    # answer (I started the turn). This is the "永远不折叠" signal, and it
-    # implies `i_participate` (every way of being awaited is also a way of
-    # participating), so the folding rule only ever reads one of the two.
+    # `awaits_me`: it is waiting on ME to decide right now — a card routed to
+    # me is still pending, a decision request to me is unanswered, or 芝士 is
+    # stopped on a question only I can answer (I started the turn). An unread @
+    # is deliberately NOT here: it only makes me a participant — counting it
+    # lit almost every row, and unread already has its own badge. This is the
+    # "永远不折叠" signal, and it implies `i_participate` (every way of being
+    # awaited is also a way of participating), so the folding rule only ever
+    # reads one of the two.
     #
     # Derived per caller, so — like `last_activity_at` and `running` — only the
     # endpoints that ask for them fill them in (list_topics/get_topic);

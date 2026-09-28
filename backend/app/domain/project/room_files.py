@@ -35,6 +35,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.library import service as library
+from app.domain.preview import office
 from app.domain.project.models import RoomFileRevision
 from app.domain.textfile import content_version
 
@@ -217,6 +218,7 @@ async def _record(
     )
     session.add(row)
     await session.flush()
+    office.prewarm(data, path)
     return row
 
 

@@ -1,4 +1,5 @@
 import type { Component } from 'vue'
+import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -6,10 +7,13 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const machines = vi.hoisted(() => ({ get: vi.fn() }))
+
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
   return {
     ...actual,
+    getTopicComputeProfile: (...args: unknown[]) => machines.get(...args),
     listTopicMembers: vi.fn(async () => ({
       data: [
         { id: '1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false, avatar_id: null },
@@ -92,9 +96,34 @@ async function openRoster() {
   return utils
 }
 
+const CLOUD: ComputeChoice = {
+  name: '云端 · 标准配置',
+  profile: 'cloud',
+  device_id: null,
+  cores: null,
+  memory_mb: null,
+  disk_gb: null,
+}
+const LAB: ComputeChoice = { ...CLOUD, name: '自有设备 · 自动选择', profile: 'device', device_id: null }
+
+function roomMachines(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProfile {
+  return {
+    choice: CLOUD,
+    project_default: CLOUD,
+    current: 'cloud',
+    device_id: null,
+    devices: [{ device_id: 'lab', name: '实验室工作站', online: true }],
+    sessions: [],
+    profiles: [],
+    visibility: { options: [], effective: null, machine_access: false, notice: '能操作这台机器上的服务和其他房间' },
+    ...overrides,
+  }
+}
+
 beforeEach(() => {
   setLocale('zh-CN')
   document.body.innerHTML = ''
+  machines.get.mockReset().mockResolvedValue(roomMachines())
 })
 
 describe('成员名册', () => {
@@ -108,7 +137,7 @@ describe('成员名册', () => {
     expect(agentRow.querySelector('.roster__remove')).not.toBeNull()
     expect(agentRow.querySelector('.roster__role--btn')).toBeNull()
     expect(humanRow.querySelector('.roster__role')).not.toBeNull()
-    expect(document.body.textContent).not.toContain('换')
+    expect(document.body.textContent).not.toMatch(/换队友|更换 AI 队友/)
   })
 
   it('「添加」列表里有还没进房间的队友，和人排在同一张单子上', async () => {
@@ -187,5 +216,126 @@ describe('外部成员在房间里', () => {
     expect(dave).toContain('外部')
     // 单子上只有项目名册里还没进房间的人和队友，没有别的来源。
     expect(items.filter((t) => !t.includes('AI 队友'))).toEqual([dave])
+  })
+})
+
+function agentRow(): Element {
+  return Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('cheese-t1'))!
+}
+
+describe('名册上 AI 队友的工作电脑', () => {
+  it('开工了的队友写它现在那台，自有设备后面跟着「能访问整台机器」', async () => {
+    machines.get.mockResolvedValue(
+      roomMachines({
+        visibility: {
+          options: [],
+          effective: 'host',
+          machine_access: true,
+          notice: '能操作这台机器上的服务和其他房间',
+        },
+        sessions: [
+          {
+            id: 's1',
+            agent_handle: 'cheese-t1',
+            harness: 'test-harness',
+            choice: LAB,
+            lease: { device_id: 'lab', generation: 1, status: 'ready', online: true },
+            machine_access: true,
+          },
+        ],
+      })
+    )
+    await openRoster()
+    const line = agentRow().querySelector('[data-testid="agent-machine"]')!
+    // 「自动选一台」开工后已经落在某一台上：写那一台的名字。
+    expect(line.textContent).toContain('工作电脑：实验室工作站')
+    expect(line.textContent).toContain('能访问整台机器')
+    expect(line.textContent).toContain('更换')
+    // 已经在干活的那一台不跟着项目走，不挂「项目默认」。
+    expect(line.textContent).not.toContain('项目默认')
+    const humans = Array.from(document.querySelectorAll('.roster__item')).filter((r) => r !== agentRow())
+    expect(humans.every((r) => !r.textContent?.includes('工作电脑'))).toBe(true)
+  })
+
+  it('云端上的队友不挂整台机器的提醒', async () => {
+    machines.get.mockResolvedValue(
+      roomMachines({
+        sessions: [
+          {
+            id: 's1',
+            agent_handle: 'cheese-t1',
+            harness: 'test-harness',
+            choice: CLOUD,
+            lease: null,
+            machine_access: false,
+          },
+        ],
+      })
+    )
+    await openRoster()
+    const line = agentRow().querySelector('[data-testid="agent-machine"]')!
+    expect(line.textContent).toContain('工作电脑：云端 · 标准配置')
+    expect(line.textContent).not.toContain('能访问整台机器')
+    expect(line.textContent).not.toContain('项目默认')
+  })
+
+  it('还没开工的队友写开工时会用哪台，跟着项目默认时标出来', async () => {
+    await openRoster()
+    const line = agentRow().querySelector('[data-testid="agent-machine"]')!
+    expect(line.textContent).toContain('还没开工 · 将用：云端 · 标准配置')
+    expect(line.textContent).toContain('项目默认')
+    expect(line.textContent).toContain('改')
+    expect(line.textContent).not.toContain('更换')
+  })
+
+  it('名册下面写着之后邀请的 AI 队友用哪台', async () => {
+    machines.get.mockResolvedValue(roomMachines({ choice: { ...LAB, name: '实验室工作站', device_id: 'lab' } }))
+    await openRoster()
+    const future = document.querySelector('[data-testid="future-machine"]')!
+    expect(future.textContent).toContain('之后邀请的 AI 队友用：实验室工作站')
+    expect(future.textContent).not.toContain('项目默认')
+    expect(future.textContent).toContain('改')
+  })
+
+  it('更换打开的是给这一位队友换电脑的对话框', async () => {
+    machines.get.mockResolvedValue(
+      roomMachines({
+        sessions: [
+          {
+            id: 's1',
+            agent_handle: 'cheese-t1',
+            harness: 'test-harness',
+            choice: CLOUD,
+            lease: null,
+            machine_access: false,
+          },
+        ],
+      })
+    )
+    await openRoster()
+    const change = Array.from(agentRow().querySelectorAll('button')).find((b) => b.textContent?.trim() === '更换')!
+    await fireEvent.click(change)
+    await settle()
+    expect(document.body.textContent).toContain('给 芝士 换一台工作电脑')
+  })
+
+  it('有队友能访问整台机器时告诉页头，名册合着也看得见', async () => {
+    machines.get.mockResolvedValue(
+      roomMachines({
+        visibility: {
+          options: [],
+          effective: 'host',
+          machine_access: true,
+          notice: '能操作这台机器上的服务和其他房间',
+        },
+      })
+    )
+    const { emitted } = render(Roster, {
+      props: { topicId: 't1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await settle()
+    const notices = emitted()['machine-access'] as [string | null][]
+    expect(notices.at(-1)).toEqual(['能操作这台机器上的服务和其他房间'])
   })
 })

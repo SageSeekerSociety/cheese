@@ -261,12 +261,34 @@ async def test_the_room_is_given_the_tools_the_installed_cli_actually_has(
         published = {tool["name"] for tool in spec["tools"]}
         # The platform's table, under the names every harness uses, and the
         # commands that have to run here as a process.
-        assert {"chat_send", "cheese_doc_get", "cheese_recall"} <= published
+        assert {"chat_send", "cheese_doc_get", "cheese_notify"} <= published
         assert {"cheese_worktree", "cheese_sync"} <= published
         assert "cheese_chat_send" not in published
         worktree = next(t for t in spec["tools"] if t["name"] == "cheese_worktree")
         # The CLI's own help, so the description cannot drift from the command.
         assert worktree["inputSchema"]["properties"]["task_id"]["description"]
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has(
+    tmp_path, monkeypatch
+):
+    """The prompt names the publishing tool on every turn. A session given no
+    tool by that name is told to do the one thing it cannot, and says nothing
+    to anybody."""
+    from app.domain.agent.harness import prompt
+
+    published = prompt.publication_prompt("x")
+    named = {word.strip("`. ") for word in published.split() if "chat_send" in word}
+    assert named, "the room's prompt no longer names a publishing tool"
+    runner = await with_tools(tmp_path, monkeypatch)
+    try:
+        spec = json.loads(
+            (runner.state / "extension/platform.json").read_text(encoding="utf-8")
+        )
+        assert named <= {tool["name"] for tool in spec["tools"]}
     finally:
         await runner.close()
 

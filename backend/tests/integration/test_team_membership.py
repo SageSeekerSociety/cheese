@@ -231,9 +231,17 @@ def test_removing_an_external_member_ends_their_access(client):
     assert not can_enter(client, pid, "guest6")
 
 
-def test_an_external_member_may_leave_and_a_team_member_is_sent_to_the_team(client):
+def test_both_an_external_member_and_a_team_member_may_leave(client):
+    """两条来路的人都走得掉，走的是**这个项目**。
+
+    团队成员那一半从前答 409（「退出团队」），因为他的访问读时从小队继承、「在小队
+    里」就是「在这个项目里」。现在他按下去写下的是一条项目级事实
+    （``ProjectMemberExclusion``）：名册上少他一个人，小队那一行没动。
+    ``test_leaving_a_project_is_not_leaving_the_team.py`` 逐面钉这一条。
+    """
     tid = team_of(client, owner="own7", members=("mem7",))
     pid = project_in(client, tid, owner="own7")
+    other = project_in(client, tid, owner="own7", name="other")
     seed_user(client, "guest7")
     accept(
         client,
@@ -248,8 +256,11 @@ def test_an_external_member_may_leave_and_a_team_member_is_sent_to_the_team(clie
     stay = client.delete(
         f"/projects/{pid}/membership", headers=auth(seed_user(client, "mem7"))
     )
-    assert stay.status_code == 409
-    assert "退出团队" in stay.text
+    assert stay.status_code == 200, stay.text
+    assert not can_enter(client, pid, "mem7")
+    assert "mem7" not in roster(client, pid, "own7")
+    # 退的是这个项目：小队名下别的项目照常进得来。
+    assert can_enter(client, other, "mem7")
 
 
 def test_people_are_not_added_to_a_project_directly(client):

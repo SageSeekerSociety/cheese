@@ -56,7 +56,7 @@
 - Modify: `frontend/src/cx_types.ts`
 - Modify: `frontend/src/types/teams.ts`
 
-1. Put defaults and favorites first in project settings.
+1. Put the default first in project settings.
 2. Keep permissions, quotas, and device registration on the team page.
 3. List MicroCloud machines across the team's projects, showing provisioning, AI setup, enrollment, online state, billing project, and resource size.
 4. Let team admins provision via a dialog. Select a billing project when the team has several; use 4 cores, 8 GiB RAM, and 64 GiB disk as the explicit defaults.

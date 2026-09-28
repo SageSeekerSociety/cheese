@@ -86,7 +86,7 @@ def _running_turn(client, topic_id: str) -> _Screen:
         workspace_root="/tmp/doc-notice-ws",
         compute=stub_compute(),
     )
-    service._active_turn_ids[uuid.UUID(topic_id)] = uuid.uuid4()
+    service._active_turn_ids[uuid.UUID(topic_id)] = {uuid.uuid4()}
     service._compute.deliver = screen.deliver  # type: ignore[method-assign]
     app.dependency_overrides[get_chat_service] = lambda: service
     return screen

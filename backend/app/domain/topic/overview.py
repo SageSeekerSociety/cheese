@@ -130,46 +130,133 @@ def _block(title: str, rows: list[str]) -> str:
     return f"{title}\n" + "\n".join(f"- {r}" for r in rows)
 
 
-def _active_row(topic: dict) -> str:
-    conclusion = topic.get("conclusion")
-    return _row(
-        [
-            f"<#{topic['id']}> {topic['title']}",
-            f"负责人：{topic['owner']}" if topic.get("owner") else None,
-            topic.get("status") or None,
-            f"当前结论：{conclusion}" if conclusion else "当前结论：（没写）",
-        ]
-    )
+#: 里程碑的状态说成人话。注入的那一行是给模型读的，`upcoming` 不是中文提示词里
+#: 该出现的词——它也不是界面上该出现的字。
+MILESTONE_STATE = {"upcoming": "进行中", "done": "已完成", "missed": "已逾期"}
+
+#: 自动区各块的键与标题。键是给机器认的（前端按它选渲染方式，测试按它找块），
+#: 标题是给人读的；两者在 markdown 和结构化数据里必须是同一份，不然同一块会有
+#: 两个名字。
+ACTIVE_TOPICS_KEY, ACTIVE_TOPICS_TITLE = "active_topics", "现在在做什么"
+DECISIONS_KEY, DECISIONS_TITLE = "decisions", "最近决策"
+MILESTONES_KEY, MILESTONES_TITLE = "milestones", "里程碑"
+CLOSED_TOPICS_KEY, CLOSED_TOPICS_TITLE = "closed_topics", "已结束的话题"
 
 
-def _closed_row(topic: dict) -> str:
-    conclusion = topic.get("conclusion")
-    return _row(
-        [
-            f"<#{topic['id']}> {topic['title']}",
-            f"结论：{conclusion}" if conclusion else "结论：（没写）",
-        ]
-    )
+def decision_summary(content: str) -> str:
+    """决策卡正文的第一句 —— 注入的和列表里显示的都是索引，全文在那张卡上。"""
+    for line in content.splitlines():
+        text = line.strip().lstrip("#-*> ").strip()
+        if text:
+            return first_sentence(text) or text
+    return content.strip()
 
 
-def _decision_row(decision: dict) -> str:
+# ---- ②~⑤：条目只定义一次，两个读者各自排版 ----
+#
+# 这几块有两个读者：提示词要一段 markdown，总览那一栏要能逐个点击的结构化数据
+# （`GET /topics/{id}/overview`）。所以字段在 `_*_item()` 里定义一次，两个公开
+# 函数只负责排版——各拼一遍、各定义一套字段，才是两边迟早对不上的写法。
+
+
+def _topic_item(row: dict) -> dict:
+    """话题在列表里的一行。`owner` / `status` 只有活跃的那几行才有。
+
+    ``kind`` 说的是这一行的去处（一个话题房间），不是它在哪一块里——已结束的话题
+    也是同一个去处，只是分组不同。
+    """
+    return {
+        "kind": "topic",
+        "topic_id": str(row["id"]),
+        "title": row["title"],
+        "owner": row.get("owner") or None,
+        "status": row.get("status") or None,
+        "conclusion": row.get("conclusion") or None,
+    }
+
+
+def _decision_item(row: dict) -> dict:
     # 决策卡的正文是要点，不是一句话；这里只取前 120 字，全文在那张卡上。
+    return {
+        "kind": "decision",
+        # id 只有取数的那一头有；markdown 那一版用不到它，所以缺了也照排。
+        "block_id": str(row["id"]) if row.get("id") else None,
+        "text": _clip(row["text"], 120),
+        "topic_id": str(row["topic_id"]) if row.get("topic_id") else None,
+        "topic_title": row.get("topic") or None,
+    }
+
+
+def _milestone_item(row: dict) -> dict:
+    # 状态给的是原值（upcoming / done / missed）：怎么说是界面的事，它按状态上点
+    # 和色。`due` 是日期字符串，没有就是没定。
+    return {
+        "kind": "milestone",
+        # 同上：id 给界面拿去当 key / 跳转，markdown 那一版用不到。
+        "milestone_id": str(row["id"]) if row.get("id") else None,
+        "title": row["title"],
+        "due": row.get("due") or None,
+        "status": row.get("status") or None,
+    }
+
+
+def _active_items(rows: list[dict]) -> list[dict]:
+    return [_topic_item(t) for t in rows[:ACTIVE_TOPICS_LIMIT]]
+
+
+def _decision_items(rows: list[dict]) -> list[dict]:
+    return [_decision_item(d) for d in rows[:DECISIONS_LIMIT]]
+
+
+def _milestone_items(rows: list[dict]) -> list[dict]:
+    return [_milestone_item(m) for m in rows[:MILESTONES_LIMIT]]
+
+
+def _closed_items(rows: list[dict]) -> list[dict]:
+    return [_topic_item(t) for t in rows[:CLOSED_TOPICS_LIMIT]]
+
+
+def _active_row(item: dict) -> str:
     return _row(
         [
-            _clip(decision["text"], 120),
-            f"（<#{decision['topic_id']}> {decision['topic']}）"
-            if decision.get("topic")
+            f"<#{item['topic_id']}> {item['title']}",
+            f"负责人：{item['owner']}" if item["owner"] else None,
+            item["status"],
+            f"当前结论：{item['conclusion']}"
+            if item["conclusion"]
+            else "当前结论：（没写）",
+        ]
+    )
+
+
+def _closed_row(item: dict) -> str:
+    return _row(
+        [
+            f"<#{item['topic_id']}> {item['title']}",
+            f"结论：{item['conclusion']}" if item["conclusion"] else "结论：（没写）",
+        ]
+    )
+
+
+def _decision_row(item: dict) -> str:
+    return _row(
+        [
+            item["text"],
+            f"（<#{item['topic_id']}> {item['topic_title']}）"
+            if item["topic_title"]
             else None,
         ]
     )
 
 
-def _milestone_row(milestone: dict) -> str:
+def _milestone_row(item: dict) -> str:
     return _row(
         [
-            milestone["title"],
-            f"截止 {milestone['due']}" if milestone.get("due") else "没定截止日期",
-            milestone.get("status") or None,
+            item["title"],
+            f"截止 {item['due']}" if item["due"] else "没定截止日期",
+            MILESTONE_STATE.get(item["status"], item["status"])
+            if item["status"]
+            else None,
         ]
     )
 
@@ -189,20 +276,20 @@ def render_overview_auto(
     """
     blocks = [
         _block(
-            "## 现在在做什么",
-            [_active_row(t) for t in active_topics[:ACTIVE_TOPICS_LIMIT]],
+            f"## {ACTIVE_TOPICS_TITLE}",
+            [_active_row(i) for i in _active_items(active_topics)],
         ),
         _block(
-            "## 最近决策",
-            [_decision_row(d) for d in decisions[:DECISIONS_LIMIT]],
+            f"## {DECISIONS_TITLE}",
+            [_decision_row(i) for i in _decision_items(decisions)],
         ),
         _block(
-            "## 里程碑",
-            [_milestone_row(m) for m in milestones[:MILESTONES_LIMIT]],
+            f"## {MILESTONES_TITLE}",
+            [_milestone_row(i) for i in _milestone_items(milestones)],
         ),
         _block(
-            "## 已结束的话题",
-            [_closed_row(t) for t in closed_topics[:CLOSED_TOPICS_LIMIT]],
+            f"## {CLOSED_TOPICS_TITLE}",
+            [_closed_row(i) for i in _closed_items(closed_topics)],
         ),
     ]
     blocks = [b for b in blocks if b]
@@ -212,3 +299,28 @@ def render_overview_auto(
         "以下四块由平台从结构化数据现拼（话题、决策卡、里程碑、结论卡），"
         "不在本文档正文里，也不要往正文里抄：\n\n" + "\n\n".join(blocks)
     )
+
+
+def overview_auto_blocks(
+    *,
+    active_topics: list[dict],
+    decisions: list[dict],
+    milestones: list[dict],
+    closed_topics: list[dict],
+) -> list[dict]:
+    """②~⑤ 的结构化形态：``[{key, title, items}]``，**空块不出现**（同
+    `render_overview_auto`——一份「最近决策（暂无）」对读者也是噪音）。
+
+    和 markdown 那一份读的是同一个 `_*_items()`，所以两头永远不会各说各的。
+    """
+    built = [
+        (ACTIVE_TOPICS_KEY, ACTIVE_TOPICS_TITLE, _active_items(active_topics)),
+        (DECISIONS_KEY, DECISIONS_TITLE, _decision_items(decisions)),
+        (MILESTONES_KEY, MILESTONES_TITLE, _milestone_items(milestones)),
+        (CLOSED_TOPICS_KEY, CLOSED_TOPICS_TITLE, _closed_items(closed_topics)),
+    ]
+    return [
+        {"key": key, "title": title, "items": items}
+        for key, title, items in built
+        if items
+    ]

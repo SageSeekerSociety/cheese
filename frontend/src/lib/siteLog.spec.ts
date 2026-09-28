@@ -6,7 +6,7 @@
 import type { Block } from '../cx_types'
 
 import { render } from '@testing-library/vue'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
   countLines,
@@ -17,6 +17,11 @@ import {
   SITE_CLAMP_LINES,
   SITE_TAIL_PIN_FRAMES,
 } from './siteLog'
+
+import { setLocale } from '@/i18n'
+
+// 这些词是中文界面上的那一套；测试环境起步是英文。
+beforeEach(() => setLocale('zh-CN'))
 
 describe('isLongSiteEntry', () => {
   it('catches wide prose and tall output alike', () => {

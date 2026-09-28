@@ -233,7 +233,11 @@ async def test_the_hands_decide_the_workspace_not_the_memory_scope(
 
     opened = channel._ensure_screen.await_args.kwargs
     assert "CHEESE_EXECUTION_TARGET" not in opened["env"]
-    assert opened["env"]["CHEESE_MEMORY_SCOPE"] == "personal"
+    # 记忆算个人的这件事（`memory_scope`）不再往 env 里塞东西：`CHEESE_MEMORY_SCOPE`
+    # /`CHEESE_OWNER` 是给 `cheese remember` 用的，那个工具撤了，两个变量也没有读
+    # 取方了。它到这一层就为止——上面那两个断言正是「它没顺手改工作区」。
+    assert "CHEESE_MEMORY_SCOPE" not in opened["env"]
+    assert "CHEESE_OWNER" not in opened["env"]
 
 
 class CountsConnections:

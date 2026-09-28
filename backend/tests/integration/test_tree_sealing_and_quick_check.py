@@ -66,6 +66,16 @@ async def _task(session, project, room, title, **extra):
     return task
 
 
+async def _admits_anyone(topic: Topic, handle: str) -> bool:
+    """递给 ``AcceptService`` 的那道门：放行。
+
+    真实的那一份由路由注入（``api/routes/accept.py`` 里拿 ``ActorResolver``
+    拼出来的 ``ReviewerAdmission``），它自己的用例在
+    ``tests/integration/test_accept_reviewer_membership.py``。
+    """
+    return True
+
+
 def test_two_tasks_edit_the_same_path_without_sharing_commits(client):
     project, room = _room(client)
 
@@ -109,6 +119,11 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
                 reviewer_handle="alice",
                 routing_reason="ready",
                 change_subject="feat: add first result",
+                # 这道门（「审阅人在不在房间里」）有它自己的用例：
+                # `test_accept_reviewer_membership.py`。这个文件的房间是直接写库
+                # 铺的、没有名册，而它量的是「收下一道题不会动到别的题与房间」，
+                # 所以让门放行 —— 别把名册的事混进这条断言。
+                admits_reviewer=_admits_anyone,
             )
             fake = app_world["fake"]
             fake.seed_pr(11, head=first.branch_name)

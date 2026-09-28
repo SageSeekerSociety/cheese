@@ -1,4 +1,7 @@
-"""Project machine routes — a project's compute, provisioned from MicroCloud."""
+"""Project machine routes — a project's MicroCloud machines: list, power, delete.
+
+Machines are opened by a room's agent session (``session_work``), never here.
+"""
 
 import uuid
 from typing import Annotated, Literal
@@ -18,7 +21,7 @@ from app.domain.identity.actor import Actor
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import MachineStatus
-from app.domain.machine.schemas import MachineCreate, MachineOut
+from app.domain.machine.schemas import MachineOut
 from app.domain.machine.services import MachineService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
@@ -49,8 +52,8 @@ async def _require_project_access(
     """Authorize the participant before exposing or spending team compute.
 
     Machine reads contain the private address of provisioned infrastructure, and
-    creates/deletes mutate a prepaid MicroCloud account. Team members may inspect
-    their shared pool; only team owners/admins may spend or destroy it. Agent
+    power changes and deletes act on a prepaid MicroCloud account. Team members
+    may inspect their shared pool; only team owners/admins may change it. Agent
     identities need the same team standing.
     """
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
@@ -99,42 +102,6 @@ async def list_machines(
             },
         }
     )
-
-
-@router.post("/{project_id}/machines")
-async def create_machine(
-    project_id: uuid.UUID,
-    body: MachineCreate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Provision a machine for this project.
-
-    Asynchronous: returns immediately with a transitional status. Poll the list
-    endpoint until it reaches `running` (or `error`).
-    """
-    # Provisioning spends a project's money and leaves a machine running, so —
-    # unlike the read paths — an unverified handle is not good enough.
-    who = await _require_project_access(project_id, db, resolver, mutate=True)
-
-    service = _service(db)
-    try:
-        machine = await service.provision(
-            project_id=project_id,
-            requested_by=who.handle,
-            # Enrollment happens later, in the enrollment sweep, long after this
-            # request returned — so the device's future owner is recorded now.
-            owner_user_id=who.user_id,
-            ssh_pubkey=body.ssh_pubkey,
-            login_user=body.login_user,
-            cores=body.cores,
-            memory_mb=body.memory_mb,
-            disk_gb=body.disk_gb,
-        )
-    except MicroCloudError as exc:
-        raise ValidationError(f"MicroCloud rejected the request: {exc}") from exc
-    await db.commit()
-    return ok(MachineOut.model_validate(machine).model_dump(mode="json"))
 
 
 @router.delete("/{project_id}/machines/{machine_row_id}")

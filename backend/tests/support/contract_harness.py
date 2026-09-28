@@ -149,6 +149,9 @@ class ContractHarness:
     """An ``AgentRuntime`` that declares nothing and keeps the six verbs."""
 
     harness = "contract"
+    # 它的会话不存记忆文件（`memory()` 答 None），所以系统提示词里那一段记忆也
+    # 不该进来——这一条和 `harness` 一样是「这个骨架是什么」，不是可选声明。
+    keeps_memory = False
 
     def __init__(self) -> None:
         self._held: dict[uuid.UUID, _Held] = {}
@@ -277,6 +280,12 @@ class ContractHarness:
         return None
 
     def bind_reachability(self, consumer: Any) -> None:
+        return None
+
+    def bind_memory(self, consumer: Any) -> None:
+        return None
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         return None
 
     def holds(self, topic_id: uuid.UUID) -> bool:

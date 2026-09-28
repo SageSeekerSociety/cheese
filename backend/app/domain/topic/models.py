@@ -84,11 +84,36 @@ class TopicRole(enum.StrEnum):
 
     A topic is a group room; its membership governs who can manage the roster
     and who @all/@here reaches.
+
+    The three are RANKED — see :attr:`rank`. Which seat outranks which is a fact
+    about this enum rather than something each caller re-derives: owner outranks
+    admin outranks member, and code that means 「至少这么高」 asks ``rank``.
     """
 
     owner = "owner"  # 话题创建者, 不可被移除到只剩空 owner
     admin = "admin"
     member = "member"
+
+    @property
+    def rank(self) -> int:
+        """How senior this seat is — owner > admin > member.
+
+        A lookup rather than comparisons between the members, because these are
+        ``str``s and their built-in comparison is the *alphabetical* one:
+        ``TopicRole.member >= TopicRole.admin`` is True ("m" > "a"), which is
+        backwards, and nothing about the obvious spelling warns you. Roster
+        succession (「接手人不能比他接的那把椅子低」) asks this instead.
+        """
+        return _ROLE_RANKS[self]
+
+
+# owner (2) > admin (1) > member (0). Written after the class it ranks, because
+# its keys are the members.
+_ROLE_RANKS: dict[TopicRole, int] = {
+    TopicRole.owner: 2,
+    TopicRole.admin: 1,
+    TopicRole.member: 0,
+}
 
 
 class Topic(UuidPk, Timestamps, Base):
@@ -129,15 +154,13 @@ class Topic(UuidPk, Timestamps, Base):
         Enum(TopicStatus, native_enum=False, length=16),
         default=TopicStatus.active,
     )
-    # Default compute pool for the sessions started in this room. NULL = explicit
-    # project default, then the deployment default. It is a default and not a
-    # placement: where a conversation actually runs is its own session's business
-    # (`agent_sessions.runtime_location` / `.work_lease`). Switchable only until
-    # the room has run — i.e. until a session here has a resume token — after
-    # which it is frozen, matching the device-affinity boundary.
-    compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # A room keeps its script revision when project settings change.
     environment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The compute choice (`ComputeChoice`) every new agent session in this room
+    # starts on. NULL = the project default. Written in full the first time the
+    # room runs, so a later session gets what the first one got. It is a default
+    # and not a placement: where a conversation actually runs is its own
+    # session's business (`agent_sessions.execution_request` / `.work_lease`).
     compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the

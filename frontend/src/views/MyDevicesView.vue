@@ -38,7 +38,7 @@ const error = ref<string | null>(null)
 
 // This page is the 认证 (enrollment) layer: enroll / rename / forget machines, and
 // see at a glance which teams each machine serves. 归属 (加机器/移出) lives on each
-// team's 「算力」 page — the chips here are read-only links into those pages.
+// team's 「工作电脑」 page — the chips here are read-only links into those pages.
 const myTeams = ref<MyTeam[]>([])
 function teamName(id: number): string {
   return myTeams.value.find((t) => t.id === id)?.name ?? `团队 #${id}`
@@ -288,10 +288,10 @@ onMounted(load)
           </div>
 
           <!-- Read-only 归属 overview: which teams this machine serves (personal team
-             included). Registering/removing happens on each team's 「算力」 page —
+             included). Registering/removing happens on each team's 「工作电脑」 page —
              each chip links straight there. -->
           <div class="mt-3">
-            <div class="t-caption c-muted mb-1">正在为这些团队提供算力</div>
+            <div class="t-caption c-muted mb-1">正在为这些团队提供工作电脑</div>
             <div class="d-flex flex-wrap align-center ga-2">
               <v-chip
                 v-for="tid in d.team_ids"
@@ -305,7 +305,7 @@ onMounted(load)
                 {{ teamName(tid) }}
               </v-chip>
               <span v-if="!d.team_ids.length" class="t-caption c-muted">
-                暂无团队在用，可在团队页面的「算力」里添加
+                暂无团队在用，可在团队页面的「工作电脑」里添加
               </span>
             </div>
           </div>

@@ -75,8 +75,7 @@ class DeviceService:
         can still (re)name the node on the approval page or later."""
         code = AuthCode(
             code=uuid.uuid4().hex,
-            device_name=(device_name or "").strip()
-            or f"算力节点-{uuid.uuid4().hex[:6]}",
+            device_name=(device_name or "").strip() or f"设备-{uuid.uuid4().hex[:6]}",
             status=DeviceStatus.PENDING,
             created_at=self._now(),
         )
@@ -261,6 +260,18 @@ class DeviceService:
         """The machines registered for a team (为团队注册设备, v4) — the team's compute.
         Every project of the team may run on these."""
         return await self._repo.list_devices_by_team(team_id)
+
+    async def list_devices_attached_to_projects(
+        self, project_ids: list[uuid.UUID]
+    ) -> list[Device]:
+        """The machines attached directly to any of these projects, whatever team
+        they are registered for, each once."""
+        found: dict[str, Device] = {}
+        for project_id in project_ids:
+            for device in await self._repo.list_devices_by_project(project_id):
+                if project_id in device.project_ids:
+                    found.setdefault(device.device_id, device)
+        return list(found.values())
 
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
         """Whether a project or its team currently shares this device."""

@@ -210,6 +210,12 @@ class TeamService:
         if existing is not None:
             return existing
         team = await self._repo.create_personal_team(user_id, name="个人")
+        if team is None:
+            # Another request created it after the lookup above and has committed
+            # by now (the insert waited for it), so this lookup finds it.
+            team = await self._repo.get_personal_team(user_id)
+            assert team is not None, user_id
+            return team
         await self._repo.add_member(team.id, user_id, TeamMemberRole.OWNER)
         return team
 
