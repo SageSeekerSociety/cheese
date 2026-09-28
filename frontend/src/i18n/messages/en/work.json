@@ -47,20 +47,14 @@
   "quiet": "No recent activity",
   "running": "{count} running",
   "sessionMachine": {
-    "title": "Change {name}'s work computer",
     "machine": "Change to",
-    "current": "Now using: {name}",
     "confirm": "Push and change",
-    "saved": "Changed. The next operation will use the new computer.",
     "cloud": "Cloud · Standard configuration",
     "unavailable": "{name} · Unavailable",
-    "numberedSession": "{name} (Session {number})",
-    "pushFirst": "Unpushed changes on the old computer do not move over. {name}'s changes are pushed to their branch first; if the push fails, nothing changes and the reason is shown.",
     "abandonWarning": "Changing without pushing leaves the unpushed changes on the old computer. They will not reach the new one.",
     "abandon": "Change without pushing"
   },
   "roomMachine": {
-    "change": "Change",
     "edit": "Edit",
     "heading": "This topic's work computer",
     "hint": "Every AI teammate in the room shares this one. Changing it pushes each teammate’s work to its branch first and switches only when all of them are pushed; otherwise nothing moves and you are told why.",
