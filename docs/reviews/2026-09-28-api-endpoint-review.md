@@ -853,3 +853,9 @@
 
 测试：`backend/tests/integration/test_auth_attempt_limits.py::TestClientAddressLimits` 新增两条（探已注册地址按来源限流、跨收件人共用额度，且另一个来源不受牵连；真正发码的注册流程连发多次不占额度），连同原有的 `test_wrong_email_codes_from_one_address_are_limited`、`test_verification_mail_from_one_address_is_limited_across_recipients` 一起跑绿。
 
+### 3. 验证做到了哪一层
+
+- 五个受影响的测试文件本地合跑：**92 passed**。`ruff check` / `ruff format --check` 干净，`pyright` 对改动到的 17 个路由文件 0 error。
+- **CI 全绿**（`4cec5b8c`，run 36475419457）：backend 的 integration 0-4/4、pure、contract、search、extension、lint、migration-heads 全部 pass，另有 e2e、guards、remote acceptance / private-chat、docs build。这就是 9387 个用例的全量，在 CI 的分片上跑完的。
+- 本地全量跑不完，是**机器的问题不是用例的问题**：这台工作机 4 GiB 内存、512 MiB swap（swap 已用满），`pytest -n 4 --reruns 2` 会在跑到 32% 和 39% 时把 xdist 的 worker 打死，日志里是 `[gw0] node down: Not properly terminated`，worker 一死它正在跑的那批就集体报 E/F——那条密集红区是这么来的，不是测试断言失败。要在这台机器上跑全量，得降到 `-n 1` 或 `-n 2`。
+
