@@ -79,10 +79,15 @@ def mint_scoped_token(
     transcript drain mints one of these, and the endpoints it posts to verify
     the token directly rather than resolving an actor at all.
     """
+    now = int(time.time())
     payload: dict[str, str | int | None] = {
         "p": project_id,
         "t": topic_id,
-        "exp": int(time.time()) + ttl_s,
+        # When it was issued, so two credentials for the same agent in the same
+        # room can be told apart by age: the newer one is the launch that is
+        # current (the preview tunnel keeps the helper holding it).
+        "iat": now,
+        "exp": now + ttl_s,
     }
     actor = agent_handle
     if access_scope == "project":
@@ -112,6 +117,8 @@ def bind_resource_token(
     if claims is None:
         raise ValueError("A valid scoped launch credential is required")
     claims["r"] = resource_id
+    # Binding issues a new credential for a new place, so it is a new issue.
+    claims["iat"] = int(time.time())
     if session_id is not None:
         claims["session"] = session_id
     if lease_generation is not None:

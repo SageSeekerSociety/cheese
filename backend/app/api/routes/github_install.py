@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
+from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
@@ -41,6 +42,7 @@ from app.domain.oauth.services import OAuthService
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
+    RepositoryTakenError,
 )
 from app.domain.project.services import ProjectService
 from app.domain.review.github_pr import parse_github_repo
@@ -110,15 +112,43 @@ def _writable(repo: dict) -> bool:
     return permissions.get("push") is True or permissions.get("admin") is True
 
 
+async def _visible_holder(
+    db: AsyncSession, taken: RepositoryTakenError, handle: str
+) -> str | None:
+    """The name of the project holding the repo, if `handle` may see it."""
+    if not await may_read_project(
+        db, project_id=taken.holder_project_id, handle=handle
+    ):
+        return None
+    holder = await ProjectRepository(db).get(taken.holder_project_id)
+    return holder.name if holder else None
+
+
 async def _connect(
-    db: AsyncSession, project_id: uuid.UUID, installation_id: int, repo: dict
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    installation_id: int,
+    repo: dict,
+    actor: Actor,
 ) -> dict:
-    await ProjectGitInstallationRepository(db).upsert(
-        project_id=project_id,
-        installation_id=installation_id,
-        repo=repo["full_name"],
-        account=repo["owner"]["login"],
-    )
+    try:
+        await ProjectGitInstallationRepository(db).upsert(
+            project_id=project_id,
+            installation_id=installation_id,
+            repo=repo["full_name"],
+            account=repo["owner"]["login"],
+        )
+    except RepositoryTakenError as taken:
+        holder = await _visible_holder(db, taken, actor.handle)
+        where = f"项目「{holder}」" if holder else "另一个你看不到的项目"
+        raise ConflictError(
+            f"仓库 {taken.repo} 已经连接在{where}上，一个仓库只能连接一个项目。"
+            + (
+                "请到那个项目里工作，或者换一个仓库。"
+                if holder
+                else "请换一个仓库，或者请那个项目的成员邀请你加入。"
+            )
+        ) from None
     return {
         "connected": True,
         "repo": repo["full_name"],
@@ -171,7 +201,9 @@ async def connect_github_repo(
                                 "连接仓库需要你的 GitHub 账号对该仓库有写入权限"
                             )
                         return ok(
-                            await _connect(db, project_id, installation["id"], repo)
+                            await _connect(
+                                db, project_id, installation["id"], repo, actor
+                            )
                         )
         except GitHubAppError as exc:
             raise GatewayUnavailableError(
@@ -247,12 +279,27 @@ async def github_app_install_callback(
             return failure("repository_selection_required")
         if not _writable(repo):
             return failure("repository_write_required")
-        await _connect(db, project_id, installation_id, repo)
+        await ProjectGitInstallationRepository(db).upsert(
+            project_id=project_id,
+            installation_id=installation_id,
+            repo=repo["full_name"],
+            account=repo["owner"]["login"],
+        )
     except ForbiddenError:
         return failure("access_denied")
+    except RepositoryTakenError as taken:
+        holder = await _visible_holder(db, taken, claims.handle)
+        await db.rollback()
+        return _settings_redirect(
+            project_id,
+            github_install="error",
+            reason="repository_taken",
+            repo=taken.repo,
+            **({"holder": holder} if holder else {}),
+        )
     except ConflictError:
         await db.rollback()
-        return failure("installation_conflict")
+        return failure("forge_conflict")
     except GitHubAppError:
         return failure("github_error")
     except SingleUseUnavailableError:

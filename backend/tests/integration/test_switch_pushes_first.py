@@ -69,7 +69,6 @@ async def _room(client, *, on_cloud=False):
         )
         generation = str(uuid.uuid4())
         if on_cloud:
-            old_device = "cloud-vm"
             choice = {"name": "Cloud", "profile": "cloud"}
         else:
             choice = {"name": "Old", "profile": "device", "device_id": old_device}
@@ -91,6 +90,12 @@ async def _room(client, *, on_cloud=False):
             "workspace": "/old/work",
             "mcp_servers": [],
         }
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        topic.compute_config = choice
         agent_token = bind_resource_token(
             mint_scoped_token(
                 project_id=str(project_id),
@@ -114,6 +119,7 @@ async def _room(client, *, on_cloud=False):
             lease=dict(session.work_lease),
             person=person,
             agent={"X-Cheese-Token": agent_token},
+            lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
             path=f"/topics/{topic_id}/compute-profile",
         )
 

@@ -124,6 +124,33 @@ async def test_the_current_root_wins_when_both_are_on_disk(tmp_path):
     assert await _probe(place) == {"state": "ready"}
 
 
+async def test_a_runner_that_reads_its_home_from_userprofile_finds_the_room(
+    tmp_path,
+):
+    """Windows: Python's `Path.home()` is USERPROFILE there, not HOME.
+
+    The runner below resolves its home the way Windows Python does, and reads
+    the status the room's environment wrote under the room's home. Probed with
+    HOME alone, it read the device owner's profile instead and answered
+    `pending` for a room whose environment was ready.
+    """
+    place = _place(tmp_path)
+    runner_dir = place.home / ".cheese"
+    runner_dir.mkdir()
+    (runner_dir / "cheese-environment.py").write_text(
+        "import json, os, pathlib\n"
+        "home = pathlib.Path(os.environ.get('USERPROFILE', '/nonexistent'))\n"
+        "status = home / '.cheese-environment' / 'status.json'\n"
+        "print(status.read_text() if status.exists() else "
+        "json.dumps({'state': 'pending'}))\n"
+    )
+    written = place.home / ".cheese-environment"
+    written.mkdir()
+    (written / "status.json").write_text('{"state": "ready"}')
+
+    assert await _probe(place) == {"state": "ready"}
+
+
 async def test_probe_still_reports_pending_when_nothing_was_shipped(tmp_path):
     place = _place(tmp_path)
 

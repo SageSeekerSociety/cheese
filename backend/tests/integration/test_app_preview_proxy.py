@@ -1,5 +1,6 @@
 """Browser traffic reaches app previews through the real machine tunnel codec."""
 
+import time
 import uuid
 
 import pytest
@@ -7,8 +8,9 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.api.preview_host import cookie_name, preview_origin
 from app.core.config import settings
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import preview_tunnel as wire
-from app.domain.agent.preview_hub import preview_hub
+from app.domain.agent.preview_hub import PreviewMachine, preview_hub
 from tests.integration.conftest import (
     add_external_member,
     post_project,
@@ -32,27 +34,28 @@ class FakeMachine:
         self.extra_headers = extra_headers or []
         self.asked: list[str] = []
         self.requests: list[tuple[dict, bytes]] = []
-        self.topic_id: uuid.UUID | None = None
+        self.machine: PreviewMachine | None = None
 
-    def attach(self, topic_id: uuid.UUID) -> "FakeMachine":
-        self.topic_id = topic_id
-        preview_hub.attach(topic_id, self)
+    def attach(self, topic_id: uuid.UUID, seat: str) -> "FakeMachine":
+        self.machine = preview_hub.attach(topic_id, seat, self)
         return self
 
     def detach(self) -> None:
-        if self.topic_id is not None:
-            preview_hub.detach(self.topic_id, self)
+        if self.machine is not None:
+            preview_hub.detach(self.machine)
+
+    def reply(self, data: bytes) -> None:
+        assert self.machine is not None
+        self.machine.on_frame(data)
 
     async def send_bytes(self, data: bytes) -> None:
-        assert self.topic_id is not None
         op, stream, payload = wire.decode(data)
         if op != wire.OP_REQ:
             return
         meta, body = wire.decode_meta(payload)
         self.asked.append(f"{meta['method']} {meta['path']}")
         self.requests.append((meta, body))
-        preview_hub.on_frame(
-            self.topic_id,
+        self.reply(
             wire.encode(
                 wire.OP_RESP,
                 stream,
@@ -68,7 +71,7 @@ class FakeMachine:
                 ),
             ),
         )
-        preview_hub.on_frame(self.topic_id, wire.encode(wire.OP_END, stream))
+        self.reply(wire.encode(wire.OP_END, stream))
 
 
 class EchoingMachine(FakeMachine):
@@ -80,23 +83,19 @@ class EchoingMachine(FakeMachine):
         self.ws_headers: list[list[str]] = []
 
     async def send_bytes(self, data: bytes) -> None:
-        assert self.topic_id is not None
         op, stream, payload = wire.decode(data)
         if op == wire.OP_WS_OPEN:
             meta, _ = wire.decode_meta(payload)
             self.ws_path = meta["path"]
             self.ws_headers = meta["headers"]
-            preview_hub.on_frame(
-                self.topic_id,
+            self.reply(
                 wire.encode(
                     wire.OP_WS_OK, stream, wire.encode_meta({"subprotocol": "vite-hmr"})
                 ),
             )
             return
         if op == wire.OP_WS_MSG:
-            preview_hub.on_frame(
-                self.topic_id, wire.encode(wire.OP_WS_MSG, stream, payload)
-            )
+            self.reply(wire.encode(wire.OP_WS_MSG, stream, payload))
             return
         await super().send_bytes(data)
 
@@ -124,6 +123,17 @@ def _project_topic(client, handle: str = "alice"):
     return project, response.json()["data"]
 
 
+def _room_agent(client, topic_id) -> str:
+    """The teammate a room answers as — who a declaration made by a person is
+    recorded as, and so whose tunnel the room's preview follows."""
+    response = client.get(
+        f"/topics/{topic_id}/members", headers=session_auth_headers("alice")
+    )
+    assert response.status_code == 200, response.text
+    rows = response.json()["data"]["data"]
+    return next(row["member_handle"] for row in rows if row["agent"])
+
+
 def _open_preview(client, topic_id, handle="alice", path="/"):
     response = client.post(
         f"/topics/{topic_id}/preview-session", headers=session_auth_headers(handle)
@@ -144,7 +154,7 @@ def _open_preview(client, topic_id, handle="alice", path="/"):
 def app_preview(client, preview_config):
     project, topic = _project_topic(client)
     topic_id = uuid.UUID(topic["id"])
-    machine = EchoingMachine().attach(topic_id)
+    machine = EchoingMachine().attach(topic_id, _room_agent(client, topic_id))
     try:
         response = client.post(
             f"/topics/{topic_id}/shown",
@@ -438,9 +448,130 @@ def test_a_tunnel_whose_peer_dropped_is_an_absent_preview_not_a_fault(
         return websocket
 
     dead = _WebSocketPreviewTransport(asyncio.run(peer_gone()))
-    preview_hub.attach(topic_id, dead)
+    attached = preview_hub.attach(topic_id, _room_agent(client, topic_id), dead)
+    assert attached is not None
     try:
         response = client.get(preview_origin(topic_id) + "/src/main.ts")
     finally:
-        preview_hub.detach(topic_id, dead)
+        preview_hub.detach(attached)
     assert response.status_code == 404, response.text
+
+
+# --- one tunnel per teammate ----------------------------------------------------
+
+
+def _tunnel_url(project, topic_id, seat: str) -> str:
+    token = mint_scoped_token(
+        project_id=project["id"], topic_id=str(topic_id), agent_handle=seat
+    )
+    return f"/preview/tunnel?token={token}"
+
+
+def _eventually(check) -> None:
+    """The route attaches right after it accepts, so the client can see the
+    upgrade a moment before the hub sees the helper."""
+    deadline = time.monotonic() + 5
+    while not check():
+        assert time.monotonic() < deadline, "the tunnel never attached"
+        time.sleep(0.01)
+
+
+def test_two_teammates_in_one_room_each_keep_their_tunnel(client, preview_config):
+    """Two teammates in one room serve from their own checkouts and each start a
+    helper. Keyed by the room alone, each arrival hung up on the other, the one
+    hung up dialled back a second later and did the same, and a page load that
+    fell between the two saw `preview unavailable`."""
+    project, topic = _project_topic(client)
+    topic_id = uuid.UUID(topic["id"])
+
+    with client.websocket_connect(_tunnel_url(project, topic_id, "cheese-one")):
+        _eventually(lambda: preview_hub.is_online(topic_id, "cheese-one"))
+        with client.websocket_connect(_tunnel_url(project, topic_id, "cheese-two")):
+            _eventually(lambda: preview_hub.is_online(topic_id, "cheese-two"))
+            assert preview_hub.is_online(topic_id, "cheese-one")
+
+
+def test_a_relaunched_teammate_tells_its_old_helper_to_stop(client, preview_config):
+    """The same teammate relaunched, or moved to another machine: the new helper
+    takes the tunnel, and the old one is told so in a way it does not answer by
+    dialling straight back in."""
+    project, topic = _project_topic(client)
+    topic_id = uuid.UUID(topic["id"])
+    url = _tunnel_url(project, topic_id, "cheese-one")
+
+    with client.websocket_connect(url) as old:
+        _eventually(lambda: preview_hub.is_online(topic_id, "cheese-one"))
+        with client.websocket_connect(url):
+            message = old.receive()
+            assert message["type"] == "websocket.close"
+            assert message["code"] == wire.CLOSE_SUPERSEDED
+            assert message["reason"], "the old helper's log has to say why"
+
+
+def test_a_stale_helper_cannot_take_the_tunnel_back(client, preview_config):
+    """A helper left on the machine a teammate moved off — a laptop waking up
+    hours later — still holds a valid credential. It is older than the one the
+    live helper holds, so it is refused rather than allowed to displace it."""
+    project, topic = _project_topic(client)
+    topic_id = uuid.UUID(topic["id"])
+    stale = _tunnel_url(project, topic_id, "cheese-one")
+    time.sleep(1.05)  # credentials are dated to the second
+    current = _tunnel_url(project, topic_id, "cheese-one")
+
+    with client.websocket_connect(current):
+        _eventually(lambda: preview_hub.is_online(topic_id, "cheese-one"))
+        with client.websocket_connect(stale) as late:
+            message = late.receive()
+            assert message["type"] == "websocket.close"
+            assert message["code"] == wire.CLOSE_SUPERSEDED
+        assert preview_hub.is_online(topic_id, "cheese-one")
+
+
+def test_the_room_preview_shows_the_app_of_the_teammate_who_served_it(
+    client, preview_config
+):
+    """Each teammate's app runs in its own checkout behind its own tunnel, so
+    the room's preview has to reach the one the declaring teammate is serving,
+    not whichever helper connected last."""
+    project, topic = _project_topic(client)
+    topic_id = uuid.UUID(topic["id"])
+    made = client.post(
+        f"/projects/{project['id']}/agents",
+        json={"handle": "planner", "display_name": "规划师"},
+        headers=session_auth_headers("alice"),
+    )
+    assert made.status_code == 200, made.text
+    teammate = made.json()["data"]["seat_handle"]
+    joined = client.post(
+        f"/topics/{topic_id}/members",
+        json={"handle": teammate, "role": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert joined.status_code == 200, joined.text
+    theirs = FakeMachine(body=b"the teammate's app").attach(topic_id, teammate)
+    other = FakeMachine(body=b"another app").attach(
+        topic_id, _room_agent(client, topic_id)
+    )
+    try:
+        declared = client.post(
+            f"/topics/{topic_id}/shown",
+            json={"path": "dev server", "as": "app"},
+            headers={
+                "X-Cheese-Token": mint_scoped_token(
+                    project_id=project["id"],
+                    topic_id=str(topic_id),
+                    agent_handle=teammate,
+                )
+            },
+        )
+        assert declared.status_code == 200, declared.text
+        _open_preview(client, topic_id)
+
+        response = client.get(preview_origin(topic_id) + "/")
+
+        assert response.status_code == 200, response.text
+        assert response.content == b"the teammate's app"
+        assert other.asked == []
+    finally:
+        theirs.detach()
+        other.detach()

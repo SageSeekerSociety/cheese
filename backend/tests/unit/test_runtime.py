@@ -1026,6 +1026,29 @@ async def test_a_self_started_turn_opens_an_interval_nothing_will_re_send(db_fac
 
 
 @pytest.mark.anyio
+async def test_a_self_started_turn_outlives_the_backend_that_opened_it(db_factory):
+    """会话自己开的一轮不随后端重启而结束：新进程收到它的下一段产出时，这一轮
+    已经有一行了。那一行就是它的，照旧由它的 Stop 关、由收尸判安静 —— 而不是
+    每来一段产出就撞一次主键，这一轮在新进程里没有任何记账。"""
+    topic = await a_topic(db_factory)
+    turn_id = uuid.uuid4()
+    await AgentWorkRunner(InProcessBroker()).open_turn_the_session_started(
+        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+    )
+    first = await turn_row(db_factory, turn_id)
+
+    replacement = AgentWorkRunner(InProcessBroker())
+    await replacement.open_turn_the_session_started(
+        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+    )
+
+    row = await turn_row(db_factory, turn_id)
+    assert row.started_at == first.started_at, "这一轮从它真正开始的时候算起"
+    assert await open_turn_ids(db_factory) == {turn_id}
+    assert str(turn_id) in replacement._last_frame_at, "新进程的收尸看不见它"
+
+
+@pytest.mark.anyio
 async def test_a_self_started_turn_that_went_quiet_is_swept_but_not_re_sent(db_factory):
     """自启轮次是唯一一种两条老路都抓不到的轮次：它没有协程（所以不在 `_live`），
     而它的屏幕是房间自己的、在它背后那件事早就停了以后照样答「我还在」（所以

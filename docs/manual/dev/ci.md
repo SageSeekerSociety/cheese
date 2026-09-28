@@ -38,6 +38,47 @@ covers:
 
 这样做的好处：分支保护里只有一个名字，加减套件不用改仓库设置；只改文档不会触发后端测试，改了后端也不可能漏跑。
 
+```demo-ci
+title: 勾几行路径，看这套检查选了什么
+note: 左边勾上这次改到的路径，右边就是 Required CI 会要求成功的套件。选中的必须成功，没选中的必须是跳过。
+source: ci-scope
+expect: backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, docs
+paths:
+  - path: docs/manual/dev/ci.md
+    label: 改文档
+  - path: frontend/src/views/MyDevicesView.vue
+    label: 改前端组件
+  - path: backend/app/domain/agent/harness/prompt.py
+    label: 改骨架提示词
+  - path: deploy/deploy-docker.sh
+    label: 改部署脚本
+  - path: cli/cheese
+    label: 改 CLI 连接器
+  - path: .github/scripts/required-ci.py
+    label: 改这套检查本身
+scenarios:
+  - key: docs
+    label: 只改文档
+    paths: docs/manual/dev/ci.md
+  - key: frontend
+    label: 改前端组件
+    paths: frontend/src/views/MyDevicesView.vue
+  - key: prompt
+    label: 改骨架提示词
+    paths: backend/app/domain/agent/harness/prompt.py
+  - key: deploy
+    label: 改部署脚本
+    paths: deploy/deploy-docker.sh
+  - key: cli
+    label: 改 CLI 连接器
+    paths: cli/cheese
+  - key: gate
+    label: 改这套检查本身
+    paths: .github/scripts/required-ci.py
+```
+
+上面这张表里的套件名、pattern 和勾选结果都是构建时从 `.github/scripts/required-ci-paths.json` 读出来的，而且和真跑一遍 `required-ci.py` 的结果逐条对过：对不上，构建就失败。
+
 ## 哪些跑在托管 runner，哪些跑在自己的机器上 {#runners}
 
 后端、前端、端到端和 guards 默认用 GitHub 托管的 `ubuntu-latest`：每台机器一次只跑一件事，没有时长上限。

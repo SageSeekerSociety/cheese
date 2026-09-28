@@ -6,8 +6,22 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render, waitFor } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// happy-dom 里模块内的 `fetch` 不走测试替换的那一份，所以验收卡读卡的两个函数
+// 直接接到演示后端的路由表上——答的内容和页面里 fetch 拿到的是同一份。
+vi.mock('@/api', async () => {
+  const actual = await vi.importActual<typeof import('@/api')>('@/api')
+  const { answerFor } = await import('./demoBackend')
+  return {
+    ...actual,
+    getAcceptCards: async (topicId: string) => answerFor(`/topics/${topicId}/accept-card`) ?? { data: [], total: 0 },
+    getPrChecks: async (topicId: string) => answerFor(`/topics/${topicId}/pr-checks`) ?? { available: false },
+  }
+})
+
+import { demoRouter } from './demoRouter'
 import DemoView from './DemoView.vue'
 
 import { setLocale } from '@/i18n'
@@ -16,13 +30,18 @@ const View = DemoView as unknown as Component
 
 describe('DemoView', () => {
   const fetchSpy = vi.fn()
+  let original: typeof fetch
 
   beforeEach(() => {
     setLocale('zh-CN')
-    vi.stubGlobal('fetch', fetchSpy)
+    // 直接换掉 fetch（不用 stubGlobal）：演示后端要能包在它外面，没走演示后端的请求
+    // 才会落到这个替身上。
+    original = globalThis.fetch
+    fetchSpy.mockClear()
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
   })
   afterEach(() => {
-    vi.unstubAllGlobals()
+    globalThis.fetch = original
     vi.restoreAllMocks()
   })
 
@@ -30,7 +49,7 @@ describe('DemoView', () => {
     const [path, search = ''] = url.split('?')
     return render(View, {
       props: { path, search: search ? `?${search}` : '' },
-      global: { plugins: [createVuetify({ components, directives })] },
+      global: { plugins: [createVuetify({ components, directives }), createPinia(), demoRouter()] },
     })
   }
 
@@ -56,5 +75,19 @@ describe('DemoView', () => {
     await waitFor(() => expect(view.getByText('uv run pytest tests/api -x -q')).toBeTruthy())
     window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 1, play: false } }))
     await waitFor(() => expect(view.queryByText('uv run pytest tests/api -x -q')).toBeNull())
+  })
+
+  it('draws the real accept card, checklist and turn summary from the scene', async () => {
+    vi.spyOn(window, 'parent', 'get').mockReturnValue({ postMessage: () => {} } as unknown as Window)
+    const view = mount('/demo/quickstart?embed=1')
+    window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 4, play: false } }))
+    // 验收卡是真的 TopicAcceptCard，数据来自演示后端。
+    await waitFor(() => expect(view.getAllByRole('button').some((b) => /采纳/.test(b.textContent ?? ''))).toBe(true))
+    expect(view.getAllByText('docs: add a welcome note', { exact: false }).length).toBeGreaterThan(0)
+    // 本轮摘要由 collapseNotices 折出来：文件数和增删。
+    expect(view.getByText(/改动了 1 个文件/)).toBeTruthy()
+    // 步骤清单：三项都打勾，结果那一句在。
+    expect(view.getByText('README.md 写好了，验收卡已递给王长鑫', { exact: false })).toBeTruthy()
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })

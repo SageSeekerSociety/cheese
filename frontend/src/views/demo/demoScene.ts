@@ -4,9 +4,12 @@
 //
 // 状态永远从头重放算出来，不在播放器里累积：往回跳一步、从文档那边直接跳到
 // 第五步，得到的都是同一帧，不会因为跳的路径不同而长得不一样。
-import type { Block } from '@/cx_types'
+import type { AcceptCard, Block, PrChecks } from '@/cx_types'
 
-export type Focus = 'machine' | 'seats' | 'chat' | 'site' | 'tabs' | 'title'
+export type Focus = 'machine' | 'seats' | 'chat' | 'site' | 'tabs' | 'title' | 'backstage' | 'card'
+
+// 右下角「幕后」那一格画什么：界面上看不见、但这一段要讲的机制。
+export type Backstage = 'memory' | 'pipeline' | 'devices'
 
 export interface Person {
   name: string
@@ -16,7 +19,29 @@ export interface Person {
 // 剧本里的一件事。`at` 是这一步开始后的毫秒数。
 export type SceneEvent =
   // 有人在房间里说一句话（人或队友）。点名写成 <@handle>，和真消息一样。
-  | { at: number; do: 'say'; who: string; text: string }
+  // 带 `options` 的是芝士用 cheese_ask 发的按钮卡；`id` 让后面的 answer 找得到它。
+  | { at: number; do: 'say'; who: string; text: string; id?: string; options?: string[] }
+  // 有人点了按钮卡上的一个选项。
+  | { at: number; do: 'answer'; id: string; option: string; by: string }
+  // 芝士的步骤清单（todo_write）。同一个 id 再写一次是改那一条，不是新发一条。
+  | {
+      at: number
+      do: 'checklist'
+      who: string
+      id: string
+      items: { subject: string; status: ChecklistStatus }[]
+      result?: string
+    }
+  // 一条平台事件（灰字、动作行、事故卡……），由真的 platformNotice 决定怎么画。
+  // 同一个 `turn` 的连续几条（动作行、改动摘要）会像产品里一样折成一行「本轮摘要」。
+  | { at: number; do: 'notice'; text: string; who?: string; turn?: string; meta?: Record<string, unknown> }
+  // 「已派出」标记：拆出去的一条活。同一个 id 再写一次是改它的状态。
+  | { at: number; do: 'split'; id: string; title: string; status: 'open' | 'closed' }
+  // 输入框上方的验收卡，整张换掉；null 是收起。字段按 AcceptCard，没写的取默认。
+  // `open` 把卡摊开（等于点了卡上的展开）：卡面上的采纳、退回、检查都露出来。
+  | { at: number; do: 'card'; card: Partial<AcceptCard> | null; open?: boolean }
+  // 验收卡那个 PR 的检查。
+  | { at: number; do: 'checks'; checks: Partial<PrChecks> | null }
   // 对话栏里一条安静的分隔说明（不是谁说的话）。
   | { at: number; do: 'mark'; text: string }
   // 一位队友开始一轮。
@@ -45,6 +70,37 @@ export type SceneEvent =
   | { at: number; do: 'lock'; who: string | null }
   // 话题标题换了。
   | { at: number; do: 'title'; text: string }
+  // 记忆文件树：建一个文件或者改它。`add` 在末尾加一行，`remove` 删掉等于它的那行，
+  // `lines` 整份换掉；`gone` 把文件删掉。
+  | { at: number; do: 'file'; path: string; add?: string; remove?: string; lines?: string[]; gone?: boolean }
+  // 哪几份文件此刻正被装进上下文（空数组 = 没有）。
+  | { at: number; do: 'inject'; paths: string[] }
+  // 一次请求走到哪一站、那一站怎么说。`clear` 把所有站熄掉，好走下一条路线。
+  | { at: number; do: 'hop'; station: string; state: StationState; note?: string }
+  | { at: number; do: 'clear' }
+  // 幕后那一格里的一个读数（剩余额度、心跳间隔……）。
+  | { at: number; do: 'meter'; label: string; value: string }
+  // 一台设备的状态。
+  | { at: number; do: 'device'; id: string; status: DeviceStatus; text?: string }
+  // 连接器终端里多一行。
+  | { at: number; do: 'term'; text: string }
+
+export type ChecklistStatus = 'pending' | 'in_progress' | 'completed'
+export type StationState = 'on' | 'ok' | 'deny' | 'off'
+export type DeviceStatus = 'offline' | 'pairing' | 'online' | 'busy' | 'lost' | 'cooling'
+
+export interface Station {
+  id: string
+  label: string
+  // 这一站是什么，一句话。
+  note?: string
+}
+
+export interface DeviceDef {
+  id: string
+  name: string
+  kind: string
+}
 
 export interface SceneStep {
   label: string
@@ -62,7 +118,21 @@ export interface Scene {
   people: Record<string, Person>
   // 座位卡按这个顺序排；不写就不显示座位栏。
   seats?: string[]
+  backstage?: Backstage
+  // backstage = pipeline：从上到下的几站。
+  stations?: Station[]
+  // backstage = devices：有哪几台设备。
+  devices?: DeviceDef[]
+  // backstage = memory：开场时已经在的文件。
+  files?: { path: string; lines: string[] }[]
   steps: SceneStep[]
+}
+
+export interface MemoryFile {
+  path: string
+  lines: string[]
+  // 这一步里刚被改过。
+  fresh: boolean
 }
 
 export interface Seat {
@@ -72,13 +142,23 @@ export interface Seat {
   state: string
 }
 
+export interface SplitLine {
+  taskId: string
+  title: string
+  status: 'open' | 'closed'
+  createdAt: string
+}
+
 export interface ChatLine {
-  kind: 'message' | 'mark'
+  // message 和 notice 都画成真块（block）：前者走 RoomMessage，后者走 RoomNotice。
+  kind: 'message' | 'notice' | 'mark' | 'split'
   id: string
   author: string
   text: string
   // 显示用的 HH:mm。
   time: string
+  block?: Block
+  split?: SplitLine
 }
 
 export interface Frame {
@@ -95,6 +175,17 @@ export interface Frame {
   runningWho: string[]
   focus: Focus | null
   tag: string
+  card: AcceptCard | null
+  cardOpen: boolean
+  checks: PrChecks | null
+  files: MemoryFile[]
+  injected: string[]
+  stations: Record<string, { state: StationState; note: string }>
+  // 请求此刻停在哪一站（最近一次亮起的那一站）。
+  at: string | null
+  meters: { label: string; value: string }[]
+  devices: Record<string, { status: DeviceStatus; text: string }>
+  term: string[]
 }
 
 // 一步放完之后停多久再算「这一步放完了」：最后一件事出来，读的人要有时间看见它。
@@ -114,6 +205,55 @@ function hhmm(ms: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
+// 剧本里的验收卡只写要讲的那几项，其余按一张普通的、接了 GitHub 的卡补齐。
+function fullCard(card: Partial<AcceptCard>, created_at: string): AcceptCard {
+  return {
+    id: 'demo-card',
+    task_id: 'demo-task',
+    topic_id: 'demo',
+    reviewer_handle: 'wang',
+    routing_reason: '',
+    change_subject: null,
+    change_body: null,
+    status: 'pending',
+    decided_by: null,
+    decided_at: null,
+    note: '',
+    note_level: null,
+    created_at,
+    gate_passed_at: null,
+    gate_output: '',
+    approvals: [],
+    approvals_required: 1,
+    pr_number: null,
+    pr_url: null,
+    merge_state: {
+      state: 'clean',
+      who: 'human',
+      reasons: [{ kind: 'ready', checks: [], detail: '' }],
+      head_sha: null,
+      checked_at: null,
+      since: null,
+    },
+    forge: {
+      kind: 'github_app',
+      reports_checks: true,
+      hosts_proposals: true,
+      can_write_remote: true,
+      pushes_to_external_remote: false,
+      identity: 'platform',
+      declaration: '',
+    },
+    auto_merge: { allowed: false, armed_by: null, armed_at: null },
+    pr_repo: null,
+    pr_head_sha: null,
+    pr_merged_at: null,
+    artifact: null,
+    deliverable: null,
+    ...card,
+  } as AcceptCard
+}
+
 /** 放到第 `step` 步（从 0 数）的第 `elapsed` 毫秒时，画面是什么样。 */
 export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
   const last = Math.max(0, Math.min(step, scene.steps.length - 1))
@@ -124,19 +264,106 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
   const chat: ChatLine[] = []
   const site: Block[] = []
   const running = new Map<string, { at: number; who: string }>()
+  const files = new Map<string, MemoryFile>(
+    (scene.files ?? []).map((f) => [f.path, { path: f.path, lines: [...f.lines], fresh: false }])
+  )
+  let injected: string[] = []
+  let card: AcceptCard | null = null
+  let cardOpen = false
+  let checks: PrChecks | null = null
+  const stations: Frame['stations'] = {}
+  let at: string | null = null
+  const meters = new Map<string, string>()
+  const devices: Frame['devices'] = {}
+  const term: string[] = []
 
   let offset = 0
   for (let i = 0; i <= last; i++) {
     const s = scene.steps[i]
     const until = i < last ? Infinity : elapsed
+    for (const f of files.values()) f.fresh = false
     s.events.forEach((e, n) => {
       if (e.at > until) return
       const clock = CLOCK_BASE + (offset + e.at) * CLOCK_SCALE
       const created_at = new Date(clock).toISOString()
       const id = `s${i}e${n}`
       switch (e.do) {
-        case 'say':
-          chat.push({ kind: 'message', id, author: e.who, text: e.text, time: hhmm(clock) })
+        case 'say': {
+          const block: Block = {
+            id: e.id ?? id,
+            topic_id: 'demo',
+            kind: 'message',
+            author_type: 'participant',
+            author: e.who,
+            content: e.text,
+            created_at,
+            ...(e.options ? { meta: { options: e.options } } : {}),
+          }
+          chat.push({ kind: 'message', id: block.id, author: e.who, text: e.text, time: hhmm(clock), block })
+          break
+        }
+        case 'answer': {
+          const line = chat.find((l) => l.id === e.id)
+          if (line?.block)
+            line.block = { ...line.block, meta: { ...line.block.meta, answered: e.option, answered_by: e.by } }
+          break
+        }
+        case 'checklist': {
+          const items = e.items.map((it, n) => ({ id: String(n + 1), subject: it.subject, status: it.status }))
+          const existing = chat.find((l) => l.id === e.id)
+          const block: Block = {
+            id: e.id,
+            topic_id: 'demo',
+            kind: 'message',
+            author_type: 'participant',
+            author: e.who,
+            content: e.items.map((it) => `- ${it.subject}`).join('\n'),
+            created_at: existing?.block?.created_at ?? created_at,
+            meta: {
+              checklist: { items, result: e.result ?? null },
+              ...(existing ? { edited_at: created_at } : {}),
+            },
+          }
+          if (existing) {
+            existing.block = block
+          } else {
+            chat.push({ kind: 'message', id: e.id, author: e.who, text: block.content, time: hhmm(clock), block })
+          }
+          break
+        }
+        case 'notice': {
+          const block: Block = {
+            id,
+            topic_id: 'demo',
+            kind: 'event',
+            author_type: 'participant',
+            author: e.who ?? 'system',
+            content: e.text,
+            turn_id: e.turn ?? `n${id}`,
+            meta: e.meta ?? {},
+            created_at,
+          }
+          chat.push({ kind: 'notice', id, author: block.author, text: e.text, time: hhmm(clock), block })
+          break
+        }
+        case 'split': {
+          const existing = chat.find((l) => l.id === `split-${e.id}`)
+          const split: SplitLine = {
+            taskId: e.id,
+            title: e.title,
+            status: e.status,
+            createdAt: existing?.split?.createdAt ?? created_at,
+          }
+          if (existing) existing.split = split
+          else chat.push({ kind: 'split', id: `split-${e.id}`, author: '', text: e.title, time: hhmm(clock), split })
+          break
+        }
+        case 'card':
+          card = e.card ? fullCard(e.card, created_at) : null
+          cardOpen = !!e.card && e.open === true
+          break
+        case 'checks':
+          checks = e.checks ? { available: true, ...e.checks } : null
           break
         case 'mark':
           chat.push({ kind: 'mark', id, author: '', text: e.text, time: hhmm(clock) })
@@ -195,6 +422,39 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
         case 'title':
           topic = e.text
           break
+        case 'file': {
+          if (e.gone) {
+            files.delete(e.path)
+            break
+          }
+          const f = files.get(e.path) ?? { path: e.path, lines: [], fresh: false }
+          if (e.lines) f.lines = [...e.lines]
+          if (e.remove !== undefined) f.lines = f.lines.filter((l) => l !== e.remove)
+          if (e.add !== undefined) f.lines = [...f.lines, e.add]
+          f.fresh = true
+          files.set(e.path, f)
+          break
+        }
+        case 'inject':
+          injected = [...e.paths]
+          break
+        case 'hop':
+          stations[e.station] = { state: e.state, note: e.note ?? '' }
+          if (e.state !== 'off') at = e.station
+          break
+        case 'clear':
+          for (const k of Object.keys(stations)) delete stations[k]
+          at = null
+          break
+        case 'meter':
+          meters.set(e.label, e.value)
+          break
+        case 'device':
+          devices[e.id] = { status: e.status, text: e.text ?? '' }
+          break
+        case 'term':
+          term.push(e.text)
+          break
       }
     })
     offset += stepDuration(s)
@@ -215,6 +475,16 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
     runningWho,
     focus: current?.focus ?? null,
     tag: current?.tag ?? '',
+    card,
+    cardOpen,
+    checks,
+    files: [...files.values()].sort((a, b) => a.path.localeCompare(b.path)),
+    injected,
+    stations,
+    at,
+    meters: [...meters].map(([label, value]) => ({ label, value })),
+    devices,
+    term,
   }
 }
 
@@ -228,10 +498,16 @@ export function checkScene(scene: Scene): string[] {
     for (const e of s.events) {
       if (e.at < prev) problems.push(`${where}: events are out of order at ${e.at}ms`)
       prev = e.at
-      if ('who' in e && e.who !== null && !(e.who in scene.people)) problems.push(`${where}: nobody called «${e.who}»`)
+      if ('who' in e && typeof e.who === 'string' && !(e.who in scene.people))
+        problems.push(`${where}: nobody called «${e.who}»`)
       if (e.do === 'turn') open.add(e.turn)
       if ((e.do === 'act' || e.do === 'note') && !open.has(e.turn))
         problems.push(`${where}: «${e.turn}» is not running`)
+      if (e.do === 'hop' && !(scene.stations ?? []).some((st) => st.id === e.station)) {
+        problems.push(`${where}: no station «${e.station}»`)
+      }
+      if (e.do === 'device' && !(scene.devices ?? []).some((d) => d.id === e.id))
+        problems.push(`${where}: no device «${e.id}»`)
       if (e.do === 'end') {
         if (!open.has(e.turn)) problems.push(`${where}: ends «${e.turn}», which is not running`)
         open.delete(e.turn)

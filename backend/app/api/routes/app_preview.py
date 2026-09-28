@@ -103,44 +103,63 @@ class _WebSocketPreviewTransport:
 
     async def hang_up(self) -> None:
         try:
-            await self._websocket.close(code=1000)
+            await self._websocket.close(
+                code=wire.CLOSE_SUPERSEDED, reason=_SUPERSEDED_REASON
+            )
         except RuntimeError:
             pass
+
+
+# What a helper that no longer carries its teammate's preview is told. It lands
+# in that machine's cheese-preview.log, which is where anyone asking "why did my
+# tunnel stop" will look.
+_SUPERSEDED_REASON = "a newer launch of this teammate carries this room's preview"
 
 
 @tunnel_router.websocket("/tunnel")
 async def preview_tunnel(
     websocket: WebSocket, token: str | None = Query(default=None)
 ) -> None:
-    """The machine's dial-out preview tunnel, one per topic.
+    """The machine's dial-out preview tunnel, one per teammate in a room.
 
     Authenticated with the scoped cheese token the turn already runs on, so this
     transport widens nothing: the token names the topic, the topic names the
-    audience, and a caller who cannot prove a topic is refused. Verification is an
+    audience, and a caller who cannot prove a topic is refused. It also names the
+    teammate, which is the other half of the tunnel's key (see ``preview_hub``).
+    Verification is an
     HMAC over the token's own claims, so this route touches no database — which
     also keeps it clear of the trap a long-lived socket falls into when it holds a
     request session open for the life of the connection (#356).
     """
-    claims = scoped_token_claims(token or "")
-    raw_topic = (claims or {}).get("t")
+    claims = scoped_token_claims(token or "") or {}
+    seat = claims.get("a")
+    issued = claims.get("iat")
     try:
-        topic_id = uuid.UUID(str(raw_topic))
+        topic_id = uuid.UUID(str(claims.get("t")))
     except (TypeError, ValueError):
+        topic_id = None
+    if topic_id is None or not isinstance(seat, str) or not seat:
         # Refused BEFORE accept: an unaccepted handshake is a plain HTTP 403 the
         # helper reports as a refusal (and stops retrying), instead of a socket
         # that opens and dies for reasons it cannot tell from a network fault.
         await websocket.close(
-            code=1008, reason="a valid topic-scoped cheese token is required"
+            code=1008,
+            reason="a cheese token naming a topic and a teammate is required",
         )
         return
     await websocket.accept()
     transport = _WebSocketPreviewTransport(websocket)
-    # A topic runs on one machine at a time, and it moves — a relaunched screen,
-    # a Cloud box replaced. Hang up on the one being displaced: it would otherwise
-    # sit here forever holding a socket nothing will ever speak on again, and its
-    # own end has no way to notice it has been superseded.
-    displaced = preview_hub.machine(topic_id)
-    preview_hub.attach(topic_id, transport)
+    # A seat moves — a relaunched screen, a Cloud box replaced — and the helper
+    # it left behind is still dialling. Hang up on the one being displaced: it
+    # would otherwise sit here forever holding a socket nothing will ever speak
+    # on again, and the close code tells it not to dial back in.
+    displaced = preview_hub.machine(topic_id, seat)
+    machine = preview_hub.attach(
+        topic_id, seat, transport, issued=issued if isinstance(issued, int) else 0
+    )
+    if machine is None:
+        await transport.hang_up()
+        return
     if displaced is not None and isinstance(
         displaced.transport, _WebSocketPreviewTransport
     ):
@@ -152,20 +171,22 @@ async def preview_tunnel(
                 break
             data = message.get("bytes")
             if data is not None:
-                preview_hub.on_frame(topic_id, data)
+                machine.on_frame(data)
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        preview_hub.detach(topic_id, transport)
+        preview_hub.detach(machine)
 
 
 # --- the browser's end ---------------------------------------------------------
 
 
-async def relay_http(topic_id: uuid.UUID, request: Request) -> Response:
-    """Forward an already authorized content-host request without URL rewriting."""
+async def relay_http(topic_id: uuid.UUID, seat: str, request: Request) -> Response:
+    """Forward an already authorized content-host request without URL rewriting,
+    to the app ``seat`` (the teammate who declared it) is serving."""
     upstream = await preview_hub.request(
         topic_id,
+        seat,
         method=request.method,
         path=_upstream_path(request),
         headers=_app_headers(request),
@@ -193,9 +214,9 @@ async def relay_http(topic_id: uuid.UUID, request: Request) -> Response:
     return response
 
 
-async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID) -> None:
+async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID, seat: str) -> None:
     """Pump the authorized preview's HMR socket without holding a DB session."""
-    stream = preview_hub.open_stream(topic_id)
+    stream = preview_hub.open_stream(topic_id, seat)
     if stream is None:
         await websocket.close(code=1011)
         return

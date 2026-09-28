@@ -161,3 +161,16 @@ export function simulate(spec, values) {
   const rules = (spec.rules || []).map((r, i) => ({ label: r.label || '', text: fill(r.text, vals), tone: r.tone || '', hit: i === hit }))
   return { vars: vals, out, rules, hit }
 }
+
+// What the window holds after the first n rows: compaction keeps only its
+// `keeps` categories, a subagent's rows never land here.
+export function contextSegments(data, n = data.length) {
+  let segs = []
+  data.slice(0, n).forEach((d, i) => {
+    if (d.cat === 'sub') return
+    if (d.cat === 'compact') segs = segs.filter((s) => (d.keeps || []).includes(s.cat))
+    segs.push({ i, cat: d.cat, v: d.v })
+  })
+  return segs
+}
+export function sumContext(data, n) { return contextSegments(data, n).reduce((a, s) => a + s.v, 0) }

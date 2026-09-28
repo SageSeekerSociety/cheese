@@ -3,6 +3,11 @@
 // or writes prose: it reveals steps, moves a bar, and re-runs a simulation over
 // the parameters the fence declared.
 import { evaluate, truthy, show, fill, parameters } from './demo-model.mjs'
+import { mountContextWindow } from './context-window.mjs'
+import { mountCiScope } from './ci-window.mjs'
+import { mountFlow } from './flow-window.mjs'
+import { mountMemory } from './memory-window.mjs'
+import { mountArch } from './arch-window.mjs'
 
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 const $ = (s, r = document) => r.querySelector(s)
@@ -176,4 +181,9 @@ function mountSim(el) {
 export function mountDemos(root = document) {
   $$('[data-demo="steps"]', root).forEach(mountSteps)
   $$('[data-demo="sim"]', root).forEach(mountSim)
+  $$('[data-demo="context"]', root).forEach(mountContextWindow)
+  $$('[data-demo="ci"]', root).forEach(mountCiScope)
+  $$('[data-demo="flow"]', root).forEach(mountFlow)
+  $$('[data-demo="memory"]', root).forEach(mountMemory)
+  $$('[data-demo="arch"]', root).forEach(mountArch)
 }

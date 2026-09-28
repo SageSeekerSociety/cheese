@@ -83,7 +83,9 @@ Set one without the other and every launch logs an error naming the missing one.
   quietly works. `CHEESE_ALLOW_HEADER_ATTR=1` stays the one explicit opt-out.
 - **Fail-open admission**: an unreachable backend logs and allows. A brake that
   can take the platform down is worse than the overspend it prevents; the token
-  cap stays as the deployment-wide backstop.
+  cap stays as the deployment-wide backstop. A session the backend answered for
+  within the last hour keeps that answer's pool, key and model while it is
+  unreachable; only a session with no answer on record goes to the subscription.
 
 ## Release on the dev box
 
