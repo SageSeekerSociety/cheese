@@ -2013,6 +2013,9 @@ async def join_task_as_team(
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
+    # Commit before answering, as in ``join_task_as_user``: the publisher lists
+    # the pending claims on the next request.
+    await db.commit()
 
     return await _participation_response(db, task, membership, auth_user)
 
