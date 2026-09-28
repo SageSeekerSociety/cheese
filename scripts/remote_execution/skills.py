@@ -57,11 +57,6 @@ NOTICE_PAUSE_S = 2.0
 
 # Observations where the room knowingly differs, and why.
 EXPECTED: dict[str, str] = {
-    # Plain Claude Code 2.1.282 goes on offering and loading a skill whose
-    # directory was deleted, even after `/reload-skills`; a room's session
-    # reloads what the project has, and the skill is gone.
-    "removed skill no longer offered": "the room drops a deleted skill",
-    "removed skill no longer loads": "the room drops a deleted skill",
     # A room's session reads only the user setting source, and nested
     # discovery is the project source's.
     "nested skill offered once its directory is read": "#1985",
