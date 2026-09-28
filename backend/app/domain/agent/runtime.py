@@ -1933,7 +1933,7 @@ class AgentWorkRunner:
                 "turn_id": str(turn_id),
                 "topic_id": str(topic_id),
                 "status": "rejected",
-                "detail": "算力额度已用完，未执行",
+                "detail": "额度已用完，未执行",
                 "started_at": time.time(),
             }
         )
@@ -2594,16 +2594,16 @@ class AgentWorkRunner:
                 timeout_meta = notice(
                     EVENT_TURN_TIMEOUT,
                     severity=SEVERITY_WARN,
-                    # 运行环境没起来，平台不再自动重试 —— 要有人看一眼。
+                    # 工作电脑没起来，平台不再自动重试 —— 要有人看一眼。
                     who=WHO_HUMAN,
                     detail=(
                         f"{round(self._first_output_timeout_s)} 秒内没有模型输出，"
-                        "也没有工具调用，按运行环境没有启动处理。"
+                        "也没有工具调用，按工作电脑没有启动处理。"
                         "常见原因：模型订阅凭据过期（需要在主机上重新认证）、"
                         "沙箱容器无法创建、磁盘已满，或者无法连接模型。"
                         "任务没有开始，所以没有已完成的改动。"
                         "平台不会自动重试，因为重试会遇到同一个没有启动的环境。"
-                        "需要有人检查运行环境（容器、磁盘、模型连接），"
+                        "需要有人检查工作电脑（容器、磁盘、模型连接），"
                         "修复后可以重试。"
                     ),
                     detail_label="原因",

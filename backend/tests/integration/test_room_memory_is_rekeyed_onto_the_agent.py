@@ -7,6 +7,9 @@
 
 跑的是迁移里那段真实 SQL（从迁移模块 import），不是照抄一份——照抄测的就不是要发
 布的东西。
+
+读的是这张表本身，不是池的读路径：那条路（`recall`）连同条目池一起撤了，而这条用
+例要守的是「重键之后那些行归谁」，跟谁来读它们无关。
 """
 
 import importlib.util
@@ -18,8 +21,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
-from app.domain.memory.models import MemoryScope, agent_project_scope_id
-from app.domain.memory.store import memory_store
+from app.domain.memory.models import MemoryEntry, MemoryScope, agent_project_scope_id
+from app.domain.memory.store import live_entries, memory_store
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered
@@ -90,20 +93,30 @@ def test_the_same_cheese_recalls_the_same_facts_after_the_rekey(
         )
         await db_session.flush()
 
+        async def pool(scope_kind: MemoryScope, scope_id: str) -> set[str]:
+            rows = await db_session.execute(
+                sa.select(MemoryEntry.content).where(
+                    MemoryEntry.scope == scope_kind,
+                    MemoryEntry.scope_id == scope_id,
+                    live_entries(),
+                )
+            )
+            return set(rows.scalars())
+
         room_pool = _room_pool(project.id, room.id)
-        before = set(await store.recall(scope, own)) | set(
-            await store.recall(MemoryScope.agent_project, room_pool)
+        before = await pool(scope, own) | await pool(
+            MemoryScope.agent_project, room_pool
         )
 
         for _ in range(2):
             await db_session.execute(sa.text(_rekey_sql()))
             await db_session.flush()
 
-            assert set(await store.recall(scope, own)) == before
-            assert await store.recall(MemoryScope.agent_project, room_pool) == []
+            assert await pool(scope, own) == before
+            assert await pool(MemoryScope.agent_project, room_pool) == set()
             # 隔壁项目那条既没被搬走，也没被搬进这个池。
-            assert await store.recall(
+            assert await pool(
                 MemoryScope.agent_project, _room_pool(other.id, room.id)
-            ) == ["这条不属于那个项目"]
+            ) == {"这条不属于那个项目"}
 
     _portal.call(run)

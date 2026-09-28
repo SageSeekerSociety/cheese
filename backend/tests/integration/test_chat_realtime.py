@@ -7,10 +7,18 @@ import asyncio
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.compute_configs import (
+    ComputeChoice,
+    ProjectComputeConfigs,
+    room_choice,
+    standard_choice,
+)
 from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -537,14 +545,15 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         workspace_root=str(tmp_path / "ws"),
     )
 
+    started_on = ComputeChoice(name="Eight cores", profile="cloud", cores=8)
     async with factory() as session:
         await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
-        project.settings = {"compute_profile": "local-docker"}
+        project.settings = _default_compute(started_on)
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )
-        topic_id = topic.id
+        project_id, topic_id = project.id, topic.id
         await session.commit()
 
     async for _ in svc.converse(
@@ -554,15 +563,91 @@ async def test_first_turn_materializes_inherited_compute_before_running(
     await finish_turn(svc, topic_id)
 
     async with factory() as session:
+        project = await ProjectService(session).get_or_404(project_id)
+        project.settings = _default_compute(standard_choice("cloud"))
         topic = await TopicRepository(session).get(topic_id)
         assert topic is not None
-        assert topic.compute_profile == InstantScreen.name
+        assert room_choice(topic, project.settings) == started_on
         # The room's own Cheese: its conversation is kept under the agent,
         # whichever seat the session authored under.
         resumes_by = await AgentSessionService(session).resume_token(
             topic_id, CHEESE_HANDLE, harness=deployment_harness()
         )
     assert resumes_by == "s-affinity"
+
+
+def _default_compute(choice: ComputeChoice) -> dict:
+    return {"compute_configs": ProjectComputeConfigs(default=choice).model_dump()}
+
+
+class DeferredScreen(InstantScreen):
+    """A session whose hands are leased later, per session — the central path."""
+
+    deferred_work = True
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "default",
+    [
+        ComputeChoice(name="Eight cores", profile="cloud", cores=8, memory_mb=16384),
+        ComputeChoice(name="Lab workstation", profile="device", device_id="lab-box"),
+    ],
+    ids=["cloud-spec", "named-device"],
+)
+async def test_a_teammate_joining_later_starts_on_the_rooms_choice(
+    business_db_factory, tmp_path, default
+):
+    """结论 60: the room's setting is the default for its new sessions, and it is
+    what the room started with — the whole choice, not the pool it belongs to."""
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    factory = business_db_factory  # type: ignore[attr-defined]
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(DeferredScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        await registered(session, "u")
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project.settings = _default_compute(default)
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        later = await AgentInstanceService(session).create(
+            project_id=project.id,
+            handle="later",
+            type_name=None,
+            display_name="Later",
+        )
+        await TopicMemberService(session).ensure_agent_seat(
+            topic.id, agent_instance_handle(later.id)
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="start", summon=True
+    ):
+        pass
+    await finish_turn(svc, topic_id)
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="@Later join in", summon=True
+    ):
+        pass
+    await finish_turn(svc, topic_id)
+
+    async with factory() as session:
+        rows = list(
+            await session.scalars(
+                select(AgentSession).where(AgentSession.topic_id == topic_id)
+            )
+        )
+    choices = {row.agent_handle: row.execution_request["choice"] for row in rows}
+    assert set(choices) == {CHEESE_HANDLE, "later"}
+    assert choices["later"] == choices[CHEESE_HANDLE] == default.model_dump()
 
 
 @pytest.mark.anyio
@@ -980,7 +1065,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
         return True
 
     monkeypatch.setattr(svc._compute, "deliver", slow_deliver)
-    svc._active_turn_ids[topic_id] = uuid.uuid4()
+    svc._active_turn_ids[topic_id] = {uuid.uuid4()}
     merge = asyncio.create_task(
         svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
     )
@@ -1035,7 +1120,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     monkeypatch.setattr(svc._compute, "deliver", fake_deliver)
     turn_id = uuid.uuid4()
-    svc._active_turn_ids[topic_id] = turn_id
+    svc._active_turn_ids[topic_id] = {turn_id}
 
     assert (
         await svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")

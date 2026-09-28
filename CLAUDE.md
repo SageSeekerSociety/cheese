@@ -55,3 +55,7 @@ A test earns its place by guarding a rule someone could state before the code ex
 ## Report real bugs, not theoretical ones
 
 When auditing, a finding needs a way to actually happen: a crash, corruption, a security hole, a wrong result. Style opinions and "this could in principle" are noise that buries the real ones.
+
+## Fix bugs freely; propose product and interaction changes first
+
+A bug — the product failing to do what it already sets out to do, including a message that says something untrue — is fixed without asking. A change to what people see or do is proposed to whoever you are working for, and waits for their yes before it merges: a new, moved or removed control, a new element on screen, new behaviour behind an existing action. This holds when the change is the natural fix for a bug; ship the part that restores the intended behaviour and propose the rest.

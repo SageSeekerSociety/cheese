@@ -6,22 +6,27 @@
 // 你还在这个房间里，只是从看板往下钻了一层，`?card=` 把这一层写进地址。
 //
 // 屏幕上每一个状态词都是后端 `presentation` 算好的，这一段一个都不推。
-import type { Block, RoomTask } from '../../cx_types'
+import type { Block, RoomTask, TodoItem } from '../../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
-import DOMPurify from 'dompurify'
 
-import { getRoomTask, sayOnRoomTask } from '../../api'
-import { isAgentBlock } from '../../lib/authorship'
+import { editMessage, getProgress, getRoomTask, sayOnRoomTask } from '../../api'
+import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
-import { markdown } from '../../lib/markdown'
 import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
 import { relTime } from '../../lib/relTime'
+import { editableText, type RefMaps, renderMarkdown as renderWithRefs, renderPlain } from '../../lib/renderMessage'
 import { eventArg, eventFailed, eventVerb, isNarration } from '../../lib/siteLog'
 import { myHandle } from '../../me'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import { useRoomSocket } from '../room/composables/useRoomSocket'
+import MessageEditor from '../room/MessageEditor.vue'
 import RoomNotice from '../room/RoomNotice.vue'
 import TopicAcceptCard from '../TopicAcceptCard.vue'
+
+import TodoChecklist from './TodoChecklist.vue'
+
+import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -33,8 +38,12 @@ const props = withDefaults(
     active?: boolean
     /** 每有一轮动静就加一 —— 分身干活的每一步都记在这张卡上。 */
     refreshTick?: number
+    /** handle → 名字。简报里的 `<@handle>` 和对话里谁说的，都照它换成名字。 */
+    memberNames?: Record<string, string>
+    /** 名册上查不到的 AI 座位叫什么（做这条活的分身不一定坐在名册上）。 */
+    agentName?: string
   }>(),
-  { active: false, refreshTick: 0 }
+  { active: false, refreshTick: 0, memberNames: () => ({}), agentName: '芝士' }
 )
 
 const emit = defineEmits<{
@@ -95,6 +104,66 @@ watch(
   { immediate: true }
 )
 
+// 做这张卡的分身写下的步骤清单（`todo_write` 带着卡的 id）。它存在卡上、推在卡自己
+// 的频道上，房间那条频道收不到——所以打开卡先读一次存下的，再订这张卡的频道跟着它
+// 改。和房间的清单一样整份替换：屏幕上永远是分身最后说的那一份。
+const checklist = ref<TodoItem[]>([])
+const checklistDone = computed(() => checklist.value.filter((i) => i.status === 'completed').length)
+// 读存下的那份还没回来，频道上先到了一份新的：那一份更新，读回来的旧的不能盖掉它。
+let liveSeq = 0
+
+async function loadChecklist() {
+  const room = props.roomId
+  const id = props.cardId
+  if (!room || !id) return
+  const seq = liveSeq
+  try {
+    const progress = await getProgress(room, id)
+    if (props.roomId !== room || props.cardId !== id || seq !== liveSeq) return
+    checklist.value = progress.items ?? []
+  } catch {
+    // 清单是背景信息，拿不到就不画，不为它报错。
+  }
+}
+
+const cardSocket = useRoomSocket({
+  topicId: () => (props.active ? props.cardId ?? undefined : undefined),
+  onFrame(frame) {
+    if (frame.type === 'todo') {
+      liveSeq += 1
+      checklist.value = frame.items
+    } else if (frame.type === 'block_updated') {
+      replaceBlock(frame.block)
+    } else if (frame.type === 'error' && cardSocket.isConnectRefusal(frame.code)) {
+      cardSocket.connectRefused.value = true
+    }
+  },
+  onOpen: () => {},
+  onDrop: () => {},
+  // 断线期间可能漏掉了几次改动：重读一次，再连回去。
+  reconnect(id) {
+    void loadChecklist()
+    cardSocket.open(id)
+  },
+  // 这条频道只用来跟清单，断线不值得在卡上挂一条横幅；重连照常。
+  errorMsg: ref(null),
+})
+
+watch(
+  () => [props.roomId, props.cardId, props.active] as const,
+  ([room, id, isActive], prev) => {
+    if (prev?.[1] !== id) checklist.value = []
+    if (!room || !id || !isActive) {
+      cardSocket.close()
+      return
+    }
+    cardSocket.connectRefused.value = false
+    cardSocket.open(id)
+    void loadChecklist()
+  },
+  { immediate: true }
+)
+
 const dotStyle = computed(() => (card.value ? columnDotStyle(card.value.presentation.column) : {}))
 
 // 这张卡的时间线：说过的话，和话与话之间它做过的事。
@@ -135,8 +204,47 @@ function toggleSteps(key: string) {
   openSteps.value = next
 }
 
+// 简报和结论是人（或芝士）写给人读的 markdown，和对话栏走同一条路：点名换成名字
+// 的 chip，而不是把 `<@caisongyang>` 原样摊在标题里。
+const refs = computed<RefMaps>(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(markdown.parse(text, { async: false, breaks: true }))
+  return renderWithRefs(text, refs.value)
+}
+
+// 谁说的：名册上的名字；查不到的 AI 座位叫它的角色名，别露 `cheese-c82aeb40555a`。
+function whoSaid(b: Block): string {
+  return props.memberNames[b.author] || (isAgentHandle(b.author) ? props.agentName : b.author)
+}
+
+// 改自己在这张卡上说过的话：和房间里一样，正文原地换成输入框。
+const editingId = ref<string | null>(null)
+const editSaving = ref(false)
+const editError = ref<string | null>(null)
+function canEdit(b: Block): boolean {
+  return b.kind === 'message' && b.author === myHandle() && !isAgentBlock(b)
+}
+function replaceBlock(updated: Block) {
+  const blocks = card.value?.blocks
+  const at = blocks?.findIndex((b) => b.id === updated.id) ?? -1
+  if (blocks && at >= 0) blocks.splice(at, 1, updated)
+}
+async function saveEdit(b: Block, text: string) {
+  const content = text.trim()
+  if (editSaving.value || !content) return
+  if (content === editableText(b.content, refs.value).trim()) {
+    editingId.value = null
+    return
+  }
+  editSaving.value = true
+  editError.value = null
+  try {
+    replaceBlock(await editMessage(b.id, content))
+    if (editingId.value === b.id) editingId.value = null
+  } catch {
+    editError.value = t('work.room.message.saveFailed')
+  } finally {
+    editSaving.value = false
+  }
 }
 
 async function send() {
@@ -208,18 +316,52 @@ async function send() {
         <div class="panel-card__block-head t-meta">结论</div>
         <div class="panel-card__block-body card-markdown t-body" v-html="renderMarkdown(card.conclusion)" />
       </div>
+      <!-- 分身的步骤清单，排在过程上面：先看它打算怎么做、做到了哪一步，再往下翻
+           它具体做过什么。一项都没有就整段不画。 -->
+      <div v-if="checklist.length" class="panel-card__block" data-testid="card-progress">
+        <div class="panel-card__block-head panel-card__progress-head t-meta">
+          <span>{{ t('work.room.progress.title') }}</span>
+          <span class="panel-card__tally">
+            {{ t('work.room.progress.tally', { done: checklistDone, total: checklist.length }) }}
+          </span>
+        </div>
+        <TodoChecklist :items="checklist" />
+      </div>
 
       <div ref="timelineRef" class="panel-card__timeline">
         <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">暂无消息</div>
         <template v-for="e in entries" :key="e.kind === 'steps' ? e.key : e.block.id">
           <div v-if="e.kind === 'say'" class="card-msg">
-            <span class="card-msg__who t-meta">{{ e.block.author }}</span>
+            <div class="card-msg__head">
+              <span class="card-msg__who t-meta">{{ whoSaid(e.block) }}</span>
+              <button
+                v-if="canEdit(e.block) && editingId !== e.block.id"
+                type="button"
+                class="card-msg__edit t-meta"
+                @click="editingId = e.block.id"
+              >
+                {{ t('work.room.message.edit') }}
+              </button>
+            </div>
+            <MessageEditor
+              v-if="editingId === e.block.id"
+              :text="editableText(e.block.content, refs)"
+              :saving="editSaving"
+              @save="saveEdit(e.block, $event)"
+              @cancel="editingId = null"
+            />
             <div
-              v-if="isAgentBlock(e.block)"
+              v-else-if="isAgentBlock(e.block)"
               class="card-msg__text card-markdown t-body"
               v-html="renderMarkdown(e.block.content)"
             />
-            <span v-else class="card-msg__text t-body">{{ e.block.content }}</span>
+            <span v-else class="card-msg__text t-body" v-html="renderPlain(e.block.content, refs)" />
+            <span v-if="e.block.meta?.edited_at && editingId !== e.block.id" class="card-msg__edited">{{
+              t('work.room.message.edited')
+            }}</span>
+            <span v-if="editingId === e.block.id && editError" class="card-msg__error" role="alert">{{
+              editError
+            }}</span>
           </div>
           <RoomNotice
             v-else-if="e.kind === 'notice'"
@@ -229,7 +371,7 @@ async function send() {
             :name="null"
             :time="relTime(e.block.created_at)"
             agent-name="分身"
-            :refs="{ mentionNames: {}, topicTitles: {} }"
+            :refs="refs"
           />
           <div v-else class="card-steps">
             <button
@@ -334,6 +476,14 @@ async function send() {
   color: var(--faint);
   padding-bottom: 2px;
 }
+.panel-card__progress-head {
+  display: flex;
+  align-items: center;
+}
+.panel-card__tally {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
 .panel-card__block-body {
   color: var(--ink);
   white-space: pre-wrap;
@@ -357,8 +507,47 @@ async function send() {
   gap: 1px;
   padding: 4px 0;
 }
+.card-msg__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
 .card-msg__who {
   color: var(--faint);
+}
+/* 自己说的话后面一颗「编辑」：指到这一句才露出来，没有悬停的设备上一直在。 */
+.card-msg__edit {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+.card-msg:hover .card-msg__edit,
+.card-msg__edit:focus-visible {
+  opacity: 1;
+}
+.card-msg__edit:hover {
+  color: var(--ink);
+}
+@media (hover: none) {
+  .card-msg__edit {
+    opacity: 1;
+  }
+}
+.card-msg__edited {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--faint);
+}
+.card-msg__error {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--danger-ink);
 }
 .card-msg__text {
   color: var(--ink);
@@ -414,21 +603,70 @@ async function send() {
 .card-step--failed .card-step__verb {
   color: var(--danger-ink);
 }
+/* 简报/结论/芝士的话里的 markdown。它们住在一张卡的窄栏里、正文 14px，所以标题
+   不按文档那套放大：浏览器默认的 h1 是 2em，一段「## 背景」会比卡的标题大一倍，
+   上下又没留白，看上去就是几块黑字砸在正文里。这里标题只比正文重、不比正文大，
+   靠上方留白分段——同对话栏 RoomMessage 的 .md-content。 */
 .card-markdown {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.card-markdown :deep(> :first-child) {
+  margin-top: 0;
+}
+.card-markdown :deep(> :last-child) {
+  margin-bottom: 0;
+}
 .card-markdown :deep(p) {
   margin: 0 0 8px;
+}
+.card-markdown :deep(h1),
+.card-markdown :deep(h2),
+.card-markdown :deep(h3),
+.card-markdown :deep(h4),
+.card-markdown :deep(h5),
+.card-markdown :deep(h6) {
+  margin: 14px 0 4px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  font-weight: 600;
+  color: var(--ink);
+}
+.card-markdown :deep(h1),
+.card-markdown :deep(h2) {
+  font-size: 15px;
+  line-height: var(--lh-15);
+}
+.card-markdown :deep(strong) {
+  font-weight: 600;
+  color: var(--ink);
 }
 .card-markdown :deep(ul),
 .card-markdown :deep(ol) {
   padding-left: 20px;
-  margin: 4px 0;
+  margin: 4px 0 8px;
+}
+.card-markdown :deep(li) {
+  margin: 2px 0;
+}
+.card-markdown :deep(li::marker) {
+  color: var(--faint);
 }
 .card-markdown :deep(a) {
-  color: var(--ink);
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+.card-markdown :deep(a:hover) {
   text-decoration: underline;
+}
+/* 行内代码：等宽字、缩一号、压一层浅底，和正文分得开又不跳出来。 */
+.card-markdown :deep(code) {
+  padding: 0.5px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
 }
 .card-markdown :deep(pre),
 .card-markdown :deep(table) {
@@ -438,6 +676,7 @@ async function send() {
 .card-markdown :deep(table) {
   display: block;
   border-collapse: collapse;
+  margin: 4px 0 8px;
 }
 .card-markdown :deep(th),
 .card-markdown :deep(td) {
@@ -445,9 +684,28 @@ async function send() {
   border: 1px solid var(--line);
 }
 .card-markdown :deep(pre) {
-  padding: 8px;
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
   background: var(--fill);
   white-space: pre;
+}
+.card-markdown :deep(pre code) {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.card-markdown :deep(blockquote) {
+  margin: 6px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--line-2);
+  color: var(--muted);
+}
+.card-markdown :deep(hr) {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 .card-markdown :deep(img) {
   max-width: 100%;

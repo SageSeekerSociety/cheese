@@ -136,6 +136,17 @@ export interface BlockMeta {
   // 一份周报讲的那一周（kind=weekly）。并排摆着的几份周报，是它把它们分开的。
   since?: string
   until?: string
+  // 作者改过这条消息（ISO 时间）。有它，消息就标「已编辑」。
+  edited_at?: string
+  // 这条是队友的步骤清单（`todo_write`）：房间照它画清单，正文是给别的读者的同一份话。
+  // 更早的清单消息这里只有一个 `true`，照普通消息画。
+  checklist?: ChecklistMeta | boolean
+}
+
+export interface ChecklistMeta {
+  items: TodoItem[]
+  /** 做完时队友写的一句结果。 */
+  result: string | null
 }
 
 export interface Block {
@@ -314,9 +325,8 @@ export type WsServerFrame =
   | { type: 'user_block'; block: Block }
   // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
-  // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
-  // turn start; without the flag the UI cannot tell it from live progress.
-  | { type: 'todo'; items: TodoItem[]; restored?: boolean }
+  // A 分身's checklist, on its card's channel (the room's own list is a message).
+  | { type: 'todo'; items: TodoItem[] }
   | { type: 'state'; resource: string }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
@@ -344,7 +354,6 @@ export type WsServerFrame =
 
 export interface AgentControlState {
   id: string | null
-  agent_handle?: string | null
   connected: boolean
   controls?: string[]
   tasks?: Record<
@@ -858,6 +867,62 @@ export interface MilestoneFull {
   created_at: string
 }
 
+// ---- 项目总览的自动区 (GET /topics/{root_topic_id}/overview, #1889) ----
+
+// 总览是五块：①「项目是什么」写在文档正文里，②~⑤ 由平台现拼。这一份是 ②~⑤
+// 的结构化形态，给总览房间文档正文下面那一栏 —— 每条带着自己去的地方，人点得动。
+// 注入 AI 队友提示词的那一份 markdown 读的是同一次取数（backend
+// `domain/topic/overview.py`），所以两边不会各说各的。
+//
+// 空块整块不出现（没有「暂无」占位）：`blocks` 里少一块就是那一块现在没内容。
+export interface OverviewTopicItem {
+  kind: 'topic'
+  /** 去处：这个话题的房间。 */
+  topic_id: string
+  title: string
+  /** 最新那张任务卡的负责人，`@名字`。 */
+  owner: string | null
+  /** 它现在在做什么（「还没开活」/「在做」/「已收工」）。 */
+  status: string | null
+  /** 一句话结论，没有就是没写。 */
+  conclusion: string | null
+}
+
+export interface OverviewDecisionItem {
+  kind: 'decision'
+  /** 去处：这条决策卡所在的房间。 */
+  block_id: string | null
+  text: string
+  /** 全文在哪个话题里（点它跳过去）。 */
+  topic_id: string | null
+  topic_title: string | null
+}
+
+export interface OverviewMilestoneItem {
+  kind: 'milestone'
+  /** 去处：日历上的这一条。 */
+  milestone_id: string | null
+  title: string
+  /** `YYYY-MM-DD`，没定就是没有。 */
+  due: string | null
+  /** 原值 `upcoming` / `done` / `missed`，怎么说是界面的事。 */
+  status: string | null
+}
+
+export type OverviewAutoItem = OverviewTopicItem | OverviewDecisionItem | OverviewMilestoneItem
+
+export interface OverviewAutoBlock {
+  /** `active_topics` / `decisions` / `milestones` / `closed_topics`。 */
+  key: string
+  title: string
+  items: OverviewAutoItem[]
+}
+
+export interface OverviewAuto {
+  root_topic_id: string
+  blocks: OverviewAutoBlock[]
+}
+
 // ---- 资源池市场 (design v3: AI 池 + 算力池) ----
 
 // A pool listing in the 市场 catalog / a project's settings selector.
@@ -926,12 +991,6 @@ export interface ProjectCredits {
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
-// GET /projects/{id}/compute-profiles
-export interface ComputeProfiles {
-  current: string
-  profiles: PoolListing[]
-}
-
 export type ProjectMachineStatus =
   | 'provisioning'
   | 'starting'
@@ -972,16 +1031,10 @@ export interface ProjectMachine {
   created_at: string
 }
 
-export interface ProjectMachineCreate {
-  cores: number
-  memoryMb: number
-  diskGb: number
-}
-
-// #282 §四 / #358 · whether a topic's turn can see the whole machine it runs on.
-// `effective` is the visibility of the device the topic is pinned to ('host' |
-// 'isolated' | null when on platform compute / not yet pinned); `machine_access`
-// is the one flag the room's Hosted Machine badge keys on; `notice` is the honest
+// #282 §四 / #358 · whether an agent in this room can see a whole enrolled machine.
+// `effective` is the widest visibility any agent session here has on the enrolled
+// machine it works on ('host' | 'isolated' | null when none is on one); `machine_access`
+// is the one flag the room's 「能访问整台机器」 notice keys on; `notice` is the honest
 // #282 UI line, used as the badge's tooltip. `options` carries the two 档 with
 // their capability copy (isolated = boxed default, host = whole-machine, 申请制).
 export interface TopicComputeVisibility {
@@ -997,23 +1050,26 @@ export interface TopicComputeDevice {
   online: boolean
 }
 
-// GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
-// `current` is effective (room choice → project default → deployment default);
-// `locked` freezes the picker once the topic has run (session started);
-// `inherited` = still following the project default (no own choice yet);
-// `device_id` is the self-hosted machine pinned to this topic, or null while
+// GET /topics/{id}/compute-profile — the room's work computers (结论 60).
+// `choice` is what an agent that has not started yet will be given (room choice
+// → project default → deployment default); `sessions` is each agent session and
+// the machine it works on, `choice: null` for one that has not started working;
+// `device_id` is the self-hosted machine pinned to this room, or null while
 // 「系统挑一台」still waits for the first turn to choose one.
 export interface TopicComputeProfile {
   choice: ComputeChoice
   project_default: ComputeChoice
-  favorites: ComputeChoice[]
   current: string
   device_id: string | null
   devices: TopicComputeDevice[]
-  locked: boolean
-  inherited: boolean
+  sessions: RoomSessionMachine[]
   profiles: PoolListing[]
   visibility: TopicComputeVisibility
+}
+
+// One agent session in the room and whether its agent can see a whole machine.
+export interface RoomSessionMachine extends SessionWorkLease {
+  machine_access: boolean
 }
 
 export interface EnvironmentConfig {
@@ -1053,16 +1109,36 @@ export interface SessionWorkLease {
   id: string
   agent_handle: string
   harness: string
-  choice: ComputeChoice
+  choice: ComputeChoice | null
   lease: { device_id: string; generation: number; status: string; online: boolean } | null
 }
 
+// GET /projects/{id}/compute-configs — the machine new agents start on, and where
+// the project's agents that have started are working now.
 export interface ProjectComputeConfigs {
   default: ComputeChoice
-  favorites: ComputeChoice[]
   can_manage: boolean
   devices: TopicComputeDevice[]
   cloud_available: boolean
+  distribution: ComputeDistribution
+}
+
+// One agent session on a self-hosted device, as the project's bulk switch lists
+// it. `working` = its room is mid-turn; a bulk switch leaves it alone.
+export interface DeviceSession {
+  id: string
+  topic_id: string
+  topic_title: string
+  agent_handle: string
+  agent_name: string
+  choice: ComputeChoice
+  last_active: string
+  working: boolean
+}
+
+export interface ComputeDistribution {
+  cloud: number
+  devices: { device_id: string | null; name: string; agents: number; machine_access: boolean }[]
 }
 
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)
@@ -1161,6 +1237,18 @@ export interface MyDevice {
   // these teams may run on it.
   team_ids: number[]
   screens: DeviceScreen[]
+  // Who works on this machine now, for its owner only (null for anyone else):
+  // each agent session whose work computer it is, in a room that is open.
+  in_use?: DeviceUser[] | null
+}
+
+export interface DeviceUser {
+  project_id: string
+  project_name: string
+  topic_id: string
+  topic_title: string
+  agent_handle: string
+  agent_name: string
 }
 
 // A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what

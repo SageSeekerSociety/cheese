@@ -20,7 +20,11 @@ import pytest
 
 from app.api import auth as auth_mod
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
-from app.core.sandbox_auth import SANDBOX_TOKEN, mint_scoped_token
+from app.core.sandbox_auth import (
+    SANDBOX_TOKEN,
+    bind_resource_token,
+    mint_scoped_token,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -135,3 +139,44 @@ async def test_no_token_is_untouched(monkeypatch):
 
     assert actor.handle == "wangchangxin"
     assert actor.via == "handle"
+
+
+async def test_live_session_credential_at_a_route_naming_no_project(monkeypatch):
+    """A remote session calling a route that names no project (``GET /projects``)
+    with its live, project-scoped credential. The credential still works on every
+    project and room route, so answering "invalid or expired" sent the agent off
+    to report its platform access as broken. It is a scope refusal: 403."""
+    token = bind_resource_token(
+        mint_scoped_token(
+            project_id=str(PROJECT),
+            topic_id=str(TOPIC),
+            agent_handle="cedar",
+            access_scope="project",
+        ),
+        "resource-1",
+        session_id="session-1",
+    )
+    resolver = _resolver(monkeypatch, cheese_token=token)
+
+    with pytest.raises(ForbiddenError):
+        await resolver.resolve(fallback_handle=None)
+
+    actor = await _resolver(monkeypatch, cheese_token=token).resolve(
+        fallback_handle=None, project_id=PROJECT
+    )
+    assert actor.handle == "cedar"
+
+
+async def test_expired_credential_at_a_route_naming_no_project(monkeypatch):
+    """Only a live credential is out of scope; an expired one is still a 401."""
+    token = mint_scoped_token(
+        project_id=str(PROJECT),
+        topic_id=str(TOPIC),
+        agent_handle="cedar",
+        access_scope="project",
+        ttl_s=-1,
+    )
+    resolver = _resolver(monkeypatch, cheese_token=token)
+
+    with pytest.raises(AuthenticationRequiredError):
+        await resolver.resolve(fallback_handle=None)

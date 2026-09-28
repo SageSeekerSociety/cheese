@@ -101,5 +101,10 @@
   "CHEESE_QUESTION": {
     "body": "In \"{topicTitle}\" — paused, waiting for your answer",
     "untitled": "Cheese has a question for you"
+  },
+  "DEVICE_IN_USE": {
+    "title": "{agent} started working on {device}",
+    "body": "{project} · {room}",
+    "wholeMachine": "Can access the whole machine"
   }
 }

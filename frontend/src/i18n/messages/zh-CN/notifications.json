@@ -105,5 +105,10 @@
   "CHEESE_QUESTION": {
     "body": "在「{topicTitle}」，已暂停，待你回答",
     "untitled": "有一个问题待你回答"
+  },
+  "DEVICE_IN_USE": {
+    "title": "{agent} 开始在「{device}」上工作",
+    "body": "{project} · {room}",
+    "wholeMachine": "能访问整台机器"
   }
 }

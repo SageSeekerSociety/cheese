@@ -474,7 +474,7 @@ watch(
             label="范围"
           />
           <p class="t-meta c-faint">
-            AI 队友需要执行环境在线才能开工：用云端机器的项目随时可以；用你自己设备的项目，设备离线时这次执行会排队，
+            AI 队友的工作电脑在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，
             两小时内没开始会记为失败并通知你
           </p>
           <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>

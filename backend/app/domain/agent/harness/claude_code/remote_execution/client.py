@@ -141,6 +141,14 @@ def _ensure_sync_agents_hook(hooks: dict) -> None:
         )
 
 
+def cheese_source() -> Path:
+    """The platform tool table: shipped beside this helper, or the checkout's."""
+    shipped = Path(__file__).with_name("cheese.py")
+    if shipped.is_file():
+        return shipped
+    return Path(__file__).resolve().parents[6] / "sandbox/cheese"
+
+
 def prepare(
     directory,
     target: dict[str, Any],
@@ -209,6 +217,11 @@ def prepare(
         central_workspace=str(workspace),
         central_config=str(config),
         central_tmp=str(temporary),
+        # The session's memory tree, in its own home on this host: the runner
+        # lays the platform's copy down and collects the agent's edits there
+        # (`runner.memory_root`, `memory.files.MEMORY_ROOT`), so its file tools
+        # reach it here and not on the executor (`proxy.js` `memoryPath`).
+        central_memory=str(home / ".cheese/memory"),
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -284,25 +297,24 @@ def prepare(
         json.dumps({"name": "cheese-remote-execution", "version": "0.1.0"})
     )
     (plugin / "hooks/hooks.json").write_text('{"modules":["proxy.js"]}')
-    module = (Path(__file__).parent / "proxy.js").read_text()
-    module = module.replace("__EXECUTION_CONFIG__", json.dumps(target))
-    (plugin / "hooks/proxy.js").write_text(module)
+    if __package__:
+        from .release import allow_native_tools, hook_module, platform_tool_names
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import allow_native_tools, hook_module, platform_tool_names
+
+    platform_tools = platform_tool_names(cheese_source().read_text())
+    (plugin / "hooks/proxy.js").write_text(
+        hook_module(
+            (Path(__file__).parent / "proxy.js").read_text(), target, platform_tools
+        )
+    )
     settings = json.loads(json.dumps(base_settings or {}))
     # The project's own tool hooks, which the build fires and the shell prefix
     # runs on the executor (never here: they are not in `central_hooks`).
     for event, groups in ((context_tree or {}).get("hooks") or {}).items():
         settings.setdefault("hooks", {}).setdefault(event, []).extend(groups)
-    permissions = settings.setdefault("permissions", {})
-    allowed = permissions.setdefault("allow", [])
-    for tool in (
-        "invoke",
-        "chat_send",
-        "platform_request",
-        "project_tools",
-        "cheese_*",
-    ):
-        if f"mcp__native__{tool}" not in allowed:
-            allowed.append(f"mcp__native__{tool}")
+    allow_native_tools(settings, platform_tools)
     hooks = settings.setdefault("hooks", {})
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
@@ -383,7 +395,13 @@ def prepare(
             "args": [*helper[1:], "transport", str(target_path)],
         }
     }
-    for name in target.get("mcp_servers", []):
+    # The room machine's stdio servers and the project's remote ones take the
+    # same bridge; `RemoteClient.call` sends each to where it is served.
+    bridged = [
+        *target.get("mcp_servers", []),
+        *(target.get("remote_mcp") or {}).get("servers", []),
+    ]
+    for name in bridged:
         if name == "native":
             raise ValueError("MCP server name native is reserved for file operations")
         servers[name] = {
@@ -420,8 +438,7 @@ def prepare(
         for mode in ("guard", "context", "checkpoint", "transport")
     )
     local_commands.update(
-        shlex.join([*helper, "bridge", str(target_path), name])
-        for name in target.get("mcp_servers", [])
+        shlex.join([*helper, "bridge", str(target_path), name]) for name in bridged
     )
     # Match complete trusted commands; appended shell syntax takes the usual route.
     dispatch = (
@@ -1351,10 +1368,9 @@ def transport(config, target_path):
         from context_service import serve
 
     client = RemoteClient(config)
-    cheese_source = Path(__file__).with_name("cheese.py")
-    if not cheese_source.is_file():
-        cheese_source = Path(__file__).resolve().parents[6] / "sandbox/cheese"
-    cheese = SourceFileLoader("cheese_request_plans", str(cheese_source)).load_module()
+    cheese = SourceFileLoader(
+        "cheese_request_plans", str(cheese_source())
+    ).load_module()
     output_lock = threading.Lock()
     active = {}
     active_lock = threading.RLock()
@@ -1730,6 +1746,18 @@ def own_output(config, call):
     )
 
 
+def own_memory(config, call):
+    """A file tool on the session's memory tree, which lives on this host
+    (`prepare`'s `central_memory`). The plugin has already spelled the path
+    out; anything that resolves outside the tree is not admitted."""
+    if call.get("tool_name") not in NATIVE_TOOLS or not config.get("central_memory"):
+        return False
+    tool_input = call.get("tool_input") or {}
+    path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+    memory = os.path.realpath(config["central_memory"]) + os.sep
+    return os.path.realpath(str(path)).startswith(memory)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1763,7 +1791,8 @@ def main():
 
         release(config)
     elif args.mode == "bridge":
-        if config.get("kind") == "device":
+        remote = (config.get("remote_mcp") or {}).get("servers", [])
+        if config.get("kind") == "device" or args.args[0] in remote:
             if __package__:
                 from .runtime import bridge
             else:
@@ -1793,7 +1822,7 @@ def main():
             raise RuntimeError(result["error"])
     elif args.mode == "guard":
         call = json.load(sys.stdin)
-        if own_output(config, call):
+        if own_output(config, call) or own_memory(config, call):
             return
         print(
             json.dumps(

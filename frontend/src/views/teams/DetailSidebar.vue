@@ -70,7 +70,7 @@
           rounded="lg"
           class="function-item"
         >
-          <v-list-item-title>算力</v-list-item-title>
+          <v-list-item-title>工作电脑</v-list-item-title>
         </v-list-item>
       </v-list>
     </div>

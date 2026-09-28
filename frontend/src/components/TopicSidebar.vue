@@ -484,7 +484,10 @@ function cancelRename() {
 }
 
 function saveRename(t: Topic) {
-  if (suggestingTopicId.value === t.id) return // the suggestion is still coming
+  // Nothing typed while the suggestion is still coming: wait for it. A name the
+  // person typed meanwhile is theirs, and the suggestion is dropped for it.
+  if (suggestingTopicId.value === t.id && !draftTitle.value.trim()) return
+  suggestingTopicId.value = null
   const title = normalizeTopicTitle(draftTitle.value, t.title)
   const suggested = suggestion.value !== null && title === suggestion.value
   renamingTopicId.value = null
@@ -500,12 +503,15 @@ const suggestion = ref<string | null>(null)
 
 async function startSuggest(t: Topic) {
   startRename(t)
+  // Empty until the suggestion lands, so the field says 正在生成标题… instead of
+  // showing the current title as if it were the suggestion.
+  draftTitle.value = ''
   suggestingTopicId.value = t.id
   suggestion.value = null
   const title = await store.suggestTitle(t.id)
   if (suggestingTopicId.value !== t.id) return
   suggestingTopicId.value = null
-  if (title && renamingTopicId.value === t.id) {
+  if (title && renamingTopicId.value === t.id && !draftTitle.value.trim()) {
     suggestion.value = title
     draftTitle.value = title
   }

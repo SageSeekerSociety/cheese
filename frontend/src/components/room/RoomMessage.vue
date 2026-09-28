@@ -19,6 +19,8 @@ import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 
+import ChecklistMessage from './ChecklistMessage.vue'
+import MessageEditor from './MessageEditor.vue'
 import RollingNumber from './RollingNumber.vue'
 
 import { t } from '@/i18n'
@@ -55,6 +57,13 @@ const props = defineProps<{
    * 没送出去的那条带「重试」和「编辑」：编辑把原文放回输入框。
    */
   outgoing?: { error?: string; failed: boolean } | null
+  /**
+   * 正在改这条自己发过的消息：正文换成输入框，里面先放着 `editText`。
+   * `saving` 是保存请求还在路上。
+   */
+  editing?: boolean
+  editText?: string
+  saving?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -69,7 +78,18 @@ const emit = defineEmits<{
   (e: 'avatar-error', handle: string): void
   (e: 'retry'): void
   (e: 'edit'): void
+  (e: 'save-edit', text: string): void
+  (e: 'cancel-edit'): void
 }>()
+
+// 作者改过它：正文后面标一句「已编辑」。
+const edited = computed(() => !!props.block.meta?.edited_at)
+
+// 队友的步骤清单：照结构画，不照正文画。
+const checklist = computed(() => {
+  const value = props.block.meta?.checklist
+  return value && typeof value === 'object' ? value : null
+})
 
 function renderMarkdown(text: string): string {
   return renderMarkdownWith(text, props.refs)
@@ -208,10 +228,31 @@ async function onAgentTextClick(e: MouseEvent) {
         </span>
         <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
       </button>
-      <div v-else-if="isAgent" class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />
+      <MessageEditor
+        v-else-if="editing"
+        :text="editText ?? block.content"
+        :saving="!!saving"
+        @save="emit('save-edit', $event)"
+        @cancel="emit('cancel-edit')"
+      />
+      <ChecklistMessage
+        v-else-if="checklist"
+        :checklist="checklist"
+        :updated-at="block.meta?.edited_at ?? block.created_at"
+        :edited="edited"
+      />
+      <template v-else-if="isAgent">
+        <div class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />
+        <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
+      </template>
       <!-- 现场尊重原文: human text renders verbatim — newlines and
-         spacing preserved (pre-wrap), no markdown reflow. -->
-      <div v-else class="im-text im-text--verbatim" v-html="renderPlain(block.content)" />
+         spacing preserved (pre-wrap), no markdown reflow. 「已编辑」接在最后
+         一个字后面，不另起一行。 -->
+      <div v-else class="im-text im-text--verbatim">
+        <span v-html="renderPlain(block.content)" /><span v-if="edited" class="im-edited">{{
+          t('work.room.message.edited')
+        }}</span>
+      </div>
       <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
         <span class="outbox-fail__text">{{
           outgoing.error ? t('work.room.outbox.failed', { reason: outgoing.error }) : t('work.room.outbox.undelivered')
@@ -352,6 +393,15 @@ async function onAgentTextClick(e: MouseEvent) {
 /* 现场尊重原文: exactly what the human typed, line breaks included. */
 .im-text--verbatim {
   white-space: pre-wrap;
+}
+/* 「已编辑」：元信息那一档的字，跟在正文后面。 */
+.im-edited {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--faint);
+}
+.im-text--verbatim .im-edited {
+  margin-left: 6px;
 }
 /* 芝士摆出来的一份东西。正文平铺之后，这一栏里描边的块只剩它——所以那道边就是
    「这不是一句话，是一个可以打开的东西」。 */
@@ -574,6 +624,19 @@ async function onAgentTextClick(e: MouseEvent) {
 }
 .md-content :deep(li::marker) {
   color: var(--faint);
+}
+/* 任务清单（`- [ ]` / `- [x]`，队友的步骤清单就是这样写的）：勾选框顶替圆点，
+   用中性色——浏览器默认的勾是系统蓝。 */
+.md-content :deep(li:has(> input[type='checkbox'])) {
+  list-style: none;
+}
+.md-content :deep(ul:has(> li > input[type='checkbox'])) {
+  padding-left: 2px;
+}
+.md-content :deep(li > input[type='checkbox']) {
+  margin: 0 6px 0 0;
+  vertical-align: -2px;
+  accent-color: var(--muted);
 }
 .md-content :deep(a) {
   color: var(--accent-ink);
