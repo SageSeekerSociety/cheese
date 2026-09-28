@@ -1699,6 +1699,34 @@ class RemoteExecutionTests(unittest.TestCase):
             )
         assert not (self.root / "leak").exists()
 
+    def test_context_fs_carries_subdirectory_skills_and_what_scopes_a_skill(self):
+        subprocess.run(["git", "init", "-q", str(self.workspace)], check=True)
+        (self.workspace / ".gitignore").write_text("vendored/\n")
+        for place in ("pkg", "vendored/dep"):
+            skill = self.workspace / place / ".claude/skills/one"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("---\nname: one\n---\nbody\n")
+        listed = self.workspace / ".claude/skills/listed"
+        listed.mkdir(parents=True)
+        (listed / "SKILL.md").write_text(
+            '---\nname: listed\npaths:\n  - "src/**"\n  - docs/*.md\n---\nbody\n'
+        )
+        inline = self.workspace / ".claude/skills/inline"
+        inline.mkdir(parents=True)
+        (inline / "SKILL.md").write_text("---\nname: inline\npaths: lib/**\n---\nb\n")
+
+        tree = runtime.request(self.state, "context_fs", {"operation": "tree"})
+        entries = tree["entries"]
+
+        self.assertIn("pkg/.claude/skills/one/SKILL.md", entries)
+        # Claude Code does not offer a gitignored directory's skills.
+        self.assertNotIn("vendored/dep/.claude/skills/one/SKILL.md", entries)
+        self.assertEqual(
+            entries[".claude/skills/listed/SKILL.md"]["paths"], ["src/**", "docs/*.md"]
+        )
+        self.assertEqual(entries[".claude/skills/inline/SKILL.md"]["paths"], ["lib/**"])
+        self.assertNotIn("paths", entries["pkg/.claude/skills/one/SKILL.md"])
+
     def test_context_fs_reports_imports_outside_project_boundary(self):
         absolute_project_import = str(self.workspace / "inside.md")
         (self.workspace / "inside.md").write_text("inside")

@@ -256,6 +256,16 @@ def prepare(
     home.mkdir(exist_ok=True)
     config = Path(config_override) if config_override else directory / "config"
     config.mkdir(exist_ok=True)
+    if __package__:
+        from .release import forget_touched_skills
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import forget_touched_skills
+
+    # What an earlier session process reached is not this one's: it starts
+    # offering a subdirectory's skills only once it reaches them itself, and
+    # the copies written for that are not skills the platform shipped.
+    forget_touched_skills(directory, config)
     # The build's own temporary files — a Bash command's output, the file its
     # shell reports its directory in — kept to this session.
     temporary = directory / "tmp"
@@ -367,6 +377,7 @@ def prepare(
             Path(seen),
             {"entries": {}} if unavailable else context_tree,
             Path(__file__).parent,
+            view=workspace,
         )
     if __package__:
         from .release import allow_native_tools, platform_tool_names
@@ -686,6 +697,7 @@ def sync_context(target_path, supplied_tree=None):
                     Path(target["session_workspace"]),
                     tree,
                     Path(__file__).parent,
+                    view=target["central_workspace"],
                 )
         return tree
     workspace = Path(target["central_workspace"])
@@ -815,6 +827,18 @@ def shell(target_path, command):
     return run_on_the_machine(target, command)
 
 
+def skill_places(target):
+    """Where the executor holds each skill the session names by an entry that
+    is not the project's root skill of that name: a subdirectory's, and one
+    written without its `paths` (`release.SKILL_PLACES`)."""
+    path = Path(target.get("target_file", "")).parent / "skill-places.json"
+    try:
+        places = json.loads(path.read_text())["places"]
+    except (OSError, ValueError, KeyError):
+        return {}
+    return {name: place["place"] for name, place in places.items()}
+
+
 def skill_paths(target, text):
     """`text` with each skill file named in the session's config dir named
     where the executor holds it: a project skill in the project's
@@ -824,9 +848,12 @@ def skill_paths(target, text):
     project = session_path(target["workspace"]) + "/.claude/skills/"
     shipped = set(target.get("shipped_skills") or [])
     executor = target.get("executor_config")
+    places = skill_places(target)
 
     def place(match):
         name = match.group(1)
+        if name in places:
+            return places[name]
         if name in shipped:
             return f"{executor}/skills/{name}" if executor else match.group(0)
         return project + name
@@ -1473,6 +1500,32 @@ def deliver_send_user_file(client, config, payload, args, invoke):
     return {"value": result}
 
 
+def reached_skills(target_path, target, args):
+    """A file tool reached a file on the executor: the session offers what
+    Claude Code offers once one has (`release.touch_skills`). The tool's own
+    result stands whatever happens here."""
+    if __package__:
+        from .release import touch_skills
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import touch_skills
+
+    path = args.get("file_path") or args.get("notebook_path")
+    if not isinstance(path, str) or "session_workspace" not in target:
+        return
+    try:
+        touch_skills(
+            Path(target_path).parent,
+            target["central_config"],
+            target["session_workspace"],
+            Path(__file__).parent,
+            path,
+            view=target.get("central_workspace"),
+        )
+    except Exception as error:  # noqa: BLE001 — the call it followed succeeded
+        print(f"skills not updated after {path}: {error!r}", file=sys.stderr)
+
+
 def transport(config, target_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -1782,6 +1835,8 @@ def transport(config, target_path):
                     outcome = {"deny": receipt["error"]}
                 else:
                     outcome = {"result": receipt["value"]}
+                    if tool == "invoke":
+                        reached_skills(target_path, config, args)
                 image = outcome.get("result", {})
                 if isinstance(image, dict) and image.get("type") == "image":
                     # Base64 in text hits Claude Code's MCP text-output limit.
@@ -1984,9 +2039,14 @@ def main():
     elif args.mode == "context":
         sync_context(args.config)
     elif args.mode == "catch-up":
-        # The runner, before a turn: whether the project's context changed.
+        # The runner, before a turn: whether the project's context changed,
+        # or a file tool reached skills the session did not offer before
+        # (`release.touch_skills`).
+        touched = Path(args.config).parent / "skills-changed"
+        reached = touched.exists()
+        touched.unlink(missing_ok=True)
         tree = sync_context(args.config)
-        print(json.dumps({"changed": bool(tree.get("changed"))}))
+        print(json.dumps({"changed": bool(tree.get("changed")) or reached}))
     elif args.mode == "control":
         print(json.dumps(RemoteClient(config).control(json.load(sys.stdin))))
     elif args.mode == "prepare":

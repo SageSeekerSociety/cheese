@@ -56,10 +56,17 @@ NOTICE_TURNS = 6
 NOTICE_PAUSE_S = 2.0
 
 # Observations where the room knowingly differs, and why.
+LINKED_ON_RETURN = (
+    "plain Claude Code finds these in its own file tool, before the tool's "
+    "result goes back; a room's file tools run on the executor, and the room "
+    "links what they reached when they return, which the session notices "
+    "within seconds or before the next turn (`release.touch_skills`)"
+)
 EXPECTED: dict[str, str] = {
-    # A room's session reads only the user setting source, and nested
-    # discovery is the project source's.
-    "nested skill offered once its directory is read": "#1985",
+    "nested skill offered in the turn that read its directory": LINKED_ON_RETURN,
+    "path-scoped skill offered in the turn that wrote a matching file": (
+        LINKED_ON_RETURN
+    ),
 }
 
 
@@ -112,7 +119,45 @@ def project(path):
         path / "pkg/.claude/skills/nested",
         "nested",
         "Belongs to the package. NESTED_LISTED.",
-        "NESTED_BODY",
+        "NESTED_BODY. The details are in reference.md beside this file.",
+    )
+    (path / "pkg/.claude/skills/nested/reference.md").write_text(
+        "NESTED_REFERENCE_BODY\n"
+    )
+    # A name the root and a subdirectory both use.
+    skill(skills / "deploy", "deploy", "Deploys. ROOTDEPLOY_LISTED.", "ROOTDEPLOY_BODY")
+    skill(
+        path / "pkg/.claude/skills/deploy",
+        "deploy",
+        "Deploys the package. PKGDEPLOY_LISTED.",
+        "PKGDEPLOY_BODY",
+    )
+    # A dependency's skills, in a directory git ignores.
+    (path / ".gitignore").write_text("vendored/\n")
+    (path / "vendored/dep").mkdir(parents=True)
+    (path / "vendored/dep/file.txt").write_text("DEP_FILE\n")
+    skill(
+        path / "vendored/dep/.claude/skills/dep",
+        "dep",
+        "A dependency's. IGNOREDDEP_LISTED.",
+        "IGNOREDDEP_BODY",
+    )
+    # Skills for some files only.
+    (path / "src").mkdir()
+    (path / "src/a.py").write_text("SRC_FILE\n")
+    skill(
+        skills / "scoped",
+        "scoped",
+        "For the sources. PATHSCOPED_LISTED.",
+        "PATHSCOPED_BODY",
+        "paths: src/**\n",
+    )
+    skill(
+        skills / "outputs",
+        "outputs",
+        "For what is written out. WRITESCOPED_LISTED.",
+        "WRITESCOPED_BODY",
+        "paths:\n  - \"out/**/*.txt\"\n",
     )
     git = ["git", "-c", "user.name=fixture", "-c", "user.email=f@example.invalid"]
     git += ["-c", "maintenance.auto=false"]
@@ -356,6 +401,10 @@ def scenario(run, layout):
         "USER_ONLY_LISTED",
         "LEGACY_LISTED",
         "NESTED_LISTED",
+        "ROOTDEPLOY_LISTED",
+        "PKGDEPLOY_LISTED",
+        "PATHSCOPED_LISTED",
+        "WRITESCOPED_LISTED",
     )
 
     mark = turn(run, do("Skill", skill="greet"))
@@ -396,9 +445,65 @@ def scenario(run, layout):
     seen["a person starts a command file"] = "LEGACY_BODY" in text_since(run, mark)
 
     turn(run, do("Read", file_path=str(layout.project / "pkg/file.txt")))
-    turn(run, "after reading in the package")
-    seen["nested skill offered once its directory is read"] = (
+    seen["nested skill offered in the turn that read its directory"] = (
         "NESTED_LISTED" in listing(run)
+    )
+    turn(run, "after reading in the package")
+    offered = listing(run)
+    seen["nested skill offered once its directory is read"] = "NESTED_LISTED" in offered
+    seen["nested skill described with its directory"] = (
+        "NESTED_LISTED. (from pkg/.claude/skills \u2014 applies when working on "
+        "files under pkg/)" in offered
+    )
+    seen["nested skill sharing a root skill's name described as scoped"] = (
+        "PKGDEPLOY_LISTED. (scoped to pkg/ \u2014 use this instead of the unscoped "
+        '\\"deploy\\" skill' in offered
+    )
+    mark = turn(run, do("Skill", skill="nested"))
+    seen["nested skill body"] = "NESTED_BODY" in text_since(run, mark)
+    directory = skill_directory(run, mark)
+    mark = turn(run, do("Read", file_path=f"{directory}/reference.md"))
+    seen["nested skill supporting file"] = any(
+        "NESTED_REFERENCE_BODY" in r for r in results(run, mark)
+    )
+    mark = turn(run, do("Skill", skill="deploy"))
+    loaded = text_since(run, mark)
+    seen["the root skill keeps a shared name"] = (
+        "ROOTDEPLOY_BODY" in loaded and "PKGDEPLOY_BODY" not in loaded
+    )
+    mark = turn(run, do("Skill", skill="pkg:deploy"))
+    seen["the nested skill of a shared name runs as dir:name"] = (
+        "PKGDEPLOY_BODY" in text_since(run, mark)
+    )
+
+    turn(run, do("Read", file_path=str(layout.project / "vendored/dep/file.txt")))
+    turn(run, "after reading in the dependency")
+    seen["a gitignored directory's skill offered"] = "IGNOREDDEP_LISTED" in listing(run)
+
+    turn(run, do("Read", file_path=str(layout.project / "src/a.py")))
+    seen["path-scoped skill offered in the turn that read a matching file"] = (
+        "PATHSCOPED_LISTED" in listing(run)
+    )
+    turn(run, "after reading a source")
+    seen["path-scoped skill offered once a matching file is read"] = (
+        "PATHSCOPED_LISTED" in listing(run)
+    )
+    mark = turn(run, do("Skill", skill="scoped"))
+    seen["path-scoped skill body"] = "PATHSCOPED_BODY" in text_since(run, mark)
+    turn(
+        run,
+        do("Write", file_path=str(layout.project / "out/deep/new.txt"), content="NEW"),
+    )
+    seen["path-scoped skill offered in the turn that wrote a matching file"] = (
+        "WRITESCOPED_LISTED" in listing(run)
+    )
+    turn(run, "after writing an output")
+    seen["path-scoped skill offered once a matching file is written"] = (
+        "WRITESCOPED_LISTED" in listing(run)
+    )
+    mark = turn(run, do("Skill", skill="outputs"))
+    seen["path-scoped skill written for body"] = "WRITESCOPED_BODY" in text_since(
+        run, mark
     )
 
     # Changed on the machine while the session runs: a pull, an edit in

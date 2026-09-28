@@ -188,6 +188,77 @@ def native_path(path):
     return re.sub(r"^/([A-Za-z])(?:/|$)", lambda m: m.group(1).upper() + ":/", path)
 
 
+def gitignored(root, directories):
+    """Those of `directories`, all under `root`, that git ignores. None when
+    `root` is not a work tree or git cannot be run: nothing is ignored then."""
+    if not directories:
+        return set()
+    names = [directory.relative_to(root).as_posix() + "/" for directory in directories]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "--stdin"],
+            input="\n".join(names) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if result.returncode not in (0, 1):
+        return set()
+    found = set(result.stdout.splitlines())
+    return {
+        directory
+        for directory, name in zip(directories, names, strict=True)
+        if name in found
+    }
+
+
+def _unquote(value):
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def skill_paths(path):
+    """What a SKILL.md's frontmatter `paths` scopes it to, as written: each
+    string it lists (a flow sequence as its inner text), for the session to
+    split and expand as Claude Code does (`release.path_patterns`). None when
+    the frontmatter has no `paths`."""
+    try:
+        with open(path, encoding="utf-8") as stream:
+            if stream.readline().strip() != "---":
+                return None
+            lines = []
+            for line in stream:
+                line = line.rstrip("\r\n")
+                if line.strip() == "---":
+                    break
+                lines.append(line)
+            else:
+                return None
+    except (OSError, UnicodeError):
+        return None
+    for index, line in enumerate(lines):
+        match = re.match(r"paths\s*:(.*)$", line)
+        if not match:
+            continue
+        value = match.group(1).strip()
+        if value.startswith("[") and value.endswith("]"):
+            return [value[1:-1]]
+        if value:
+            return [_unquote(value)]
+        items = []
+        for following in lines[index + 1 :]:
+            item = re.match(r"\s*-\s*(.*)$", following)
+            if item:
+                items.append(_unquote(item.group(1).strip()))
+            elif following.strip() and not following[:1].isspace():
+                break
+        return items
+    return None
+
+
 def request(state, method, params=None):
     with connect(state) as connection:
         with connection.makefile("rwb") as stream:
@@ -1695,10 +1766,24 @@ class Executor:
             root / ".claude/agents",
         ):
             include(path, imports=True)
-        for name in ("CLAUDE.md", "CLAUDE.local.md"):
-            for path in root.rglob(name):
-                if ".git" not in path.relative_to(root).parts:
-                    include(path, imports=True)
+        # One walk for everything a subdirectory contributes: its instruction
+        # files, and its own `.claude/skills`, which a session offers once a
+        # file tool reaches into that subdirectory (`release.lazy_skills`).
+        nested_skills = []
+        for directory, directories, files in os.walk(root):
+            directories[:] = [name for name in directories if name != ".git"]
+            here = Path(directory)
+            for name in ("CLAUDE.md", "CLAUDE.local.md"):
+                if name in files:
+                    include(here / name, imports=True)
+            if here != root and (here / ".claude/skills").is_dir():
+                nested_skills.append(here)
+        ignored = gitignored(root, nested_skills)
+        for here in nested_skills:
+            # Claude Code skips a gitignored subdirectory's skills (a
+            # dependency's, under `node_modules`), and so does the room.
+            if here not in ignored:
+                include(here / ".claude/skills")
         if (root / ".claude").is_dir() and not (root / ".claude").is_symlink():
             selected.add(root / ".claude")
         include(root / ".claude/skills")
@@ -1729,6 +1814,12 @@ class Executor:
             }
             if kind == "symlink":
                 entries[relative]["target"] = os.readlink(path)
+            elif kind == "file" and path.name == "SKILL.md":
+                scoped = skill_paths(path)
+                if scoped is not None:
+                    # The files it applies to: the session holds it back
+                    # until a file tool reaches one (`release.lazy_skills`).
+                    entries[relative]["paths"] = scoped
             parent = path.parent
             while parent != root:
                 name = parent.relative_to(root).as_posix()
