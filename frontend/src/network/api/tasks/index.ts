@@ -165,7 +165,7 @@ export namespace TasksApi {
     owner?: number
     pageSize?: number
     pageStart?: string
-    sort_by: 'createdAt' | 'updatedAt' | 'deadline' | 'publishedAt'
+    sort_by: 'createdAt' | 'updatedAt' | 'deadline' | 'publishedAt' | 'reviewedAt'
     sort_order: 'asc' | 'desc'
     querySpace?: boolean
     queryJoinability?: boolean

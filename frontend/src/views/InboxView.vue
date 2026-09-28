@@ -2,6 +2,7 @@
 import type { WaitingItem } from '@/cx_types'
 
 import { computed, onMounted, ref } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import { listAwaitingMe } from '@/api'
 
@@ -39,6 +40,9 @@ async function load() {
 
 onMounted(load)
 
+// 手机上标题在顶栏里；桌面没有那条顶栏标题，页面自己说「这是哪儿」。
+const { mdAndUp } = useDisplay()
+
 const empty = computed(() => !loading.value && !failed.value && items.value.length === 0)
 
 function linkTo(item: WaitingItem) {
@@ -50,7 +54,12 @@ function linkTo(item: WaitingItem) {
 </script>
 
 <template>
-  <div class="inbox-page">
+  <div class="inbox-page" :class="{ 'inbox-page--wide': mdAndUp }">
+    <header v-if="mdAndUp" class="inbox-page__head">
+      <h1 class="t-page-title">待办</h1>
+      <p class="t-body inbox-page__lede">点到你、还没处理完的事，跨你所在的全部项目。</p>
+    </header>
+
     <div v-if="loading" class="inbox-page__state">
       <v-progress-circular indeterminate size="24" width="2" color="primary" />
     </div>
@@ -90,6 +99,35 @@ function linkTo(item: WaitingItem) {
   height: 100%;
   overflow-y: auto;
   background: var(--surface);
+}
+
+.inbox-page--wide {
+  /* 宽屏上一整行拉满屏幕，标题和状态隔得太远，眼睛来回扫；收成一栏居中。 */
+  padding: 24px 24px 48px;
+}
+
+.inbox-page--wide > * {
+  max-width: 760px;
+  margin-inline: auto;
+}
+
+.inbox-page__head {
+  margin-bottom: 16px;
+}
+
+.inbox-page__lede {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.inbox-page--wide .inbox-page__list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.inbox-page--wide .inbox-item:last-child {
+  border-bottom: none;
 }
 
 .inbox-page__state {

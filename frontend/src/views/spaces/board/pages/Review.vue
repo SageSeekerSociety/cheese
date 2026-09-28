@@ -9,11 +9,13 @@
 //   这一屏要显眼地说出「这道题是你自己出的，你可以直接过」，而不是把它藏起来。
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import dayjs from 'dayjs'
 
 import PageBar from '../components/PageBar.vue'
 import PanelCard from '../components/PanelCard.vue'
-import { type BoardTask, deadlineText } from '../model'
-import { loadPending, me, reviewTask } from '../store'
+import { type BoardTask, type ReviewedTask } from '../model'
+import { deadlineText } from '../model'
+import { loadPending, loadRecentReviews, me, reviewTask, space } from '../store'
 
 /** 一页 20 道，与空间首页同一口径。队列积压时（开放发题之后就一定会积压）才翻页。 */
 const PAGE_SIZE = 20
@@ -22,16 +24,40 @@ const route = useRoute()
 const spaceId = computed(() => route.params.spaceId as string)
 
 const pending = ref<BoardTask[]>([])
+/** 最近处理过的那几道 —— 审核痕迹（谁、什么时候）只在这张卡上露面。 */
+const recent = ref<ReviewedTask[]>([])
 const busy = ref(false)
 const rejectFor = ref<string | null>(null)
 const reason = ref('')
 const page = ref(1)
 
 async function refresh() {
-  pending.value = await loadPending()
+  const [queue, handled] = await Promise.all([loadPending(), loadRecentReviews()])
+  pending.value = queue
+  recent.value = handled
 }
 
-refresh()
+// 首屏两块都等空间到齐再取：审核人的名字要从这块板的管理员名册里对出来（真接口
+// 只给 `reviewedBy` 那个 user id），而名册是外壳**异步**装进来的 —— 直接落在这条
+// 路由上（刷新页面）时 setup 跑的那一刻它还没到。首页的待审队列是同一个理由，见
+// `BoardHome.vue` 顶部那段。`space` 每次装板都会换成新对象，所以用一个 flag 把
+// 「首屏」与后面那些 `refresh()` 分开，免得每审一道题都再取一遍。
+let booted = false
+watch(
+  space,
+  async (s) => {
+    if (!s || booted) return
+    booted = true
+    await refresh()
+  },
+  { immediate: true }
+)
+
+/** 审核那一刻。同一天只给时分，更早的给出日期 —— 这一栏要的是「刚刚」还是「上周」。 */
+function reviewedText(at: string) {
+  const when = dayjs(at)
+  return when.isSame(dayjs(), 'day') ? `今天 ${when.format('HH:mm')}` : when.format('MM-DD HH:mm')
+}
 
 const queue = computed(() =>
   [...pending.value].sort((a, b) => {
@@ -164,6 +190,23 @@ function detailTo(id: string) {
 
     <v-empty-state v-else icon="mdi-check-all" title="队列是空的" text="没有待审的题。有新题提交时会出现在这里。" />
 
+    <PanelCard title="最近处理过" subtitle="最近审过的题、是谁审的、什么时候" class="rev__recent">
+      <ul v-if="recent.length" class="recent">
+        <li v-for="item in recent" :key="item.id" class="recent__row">
+          <v-icon
+            :icon="item.result === 'APPROVED' ? 'mdi-check-circle-outline' : 'mdi-close-circle-outline'"
+            :color="item.result === 'APPROVED' ? 'success' : 'error'"
+            size="16"
+          />
+          <router-link :to="detailTo(item.id)" class="recent__title">{{ item.title }}</router-link>
+          <span class="recent__result">{{ item.result === 'APPROVED' ? '通过' : '驳回' }}</span>
+          <span class="recent__by">{{ item.reviewer ? `${item.reviewer.name} 审` : '不知是谁审的' }}</span>
+          <time class="recent__at" :datetime="item.reviewedAt">{{ reviewedText(item.reviewedAt) }}</time>
+        </li>
+      </ul>
+      <p v-else class="recent__empty">暂无处理记录</p>
+    </PanelCard>
+
     <v-dialog :model-value="rejectFor !== null" max-width="520" @update:model-value="rejectFor = null">
       <v-card rounded="lg" class="pa-5">
         <h3 class="text-body-1 font-weight-bold mb-2">驳回「{{ nowHandling?.title }}」</h3>
@@ -275,5 +318,66 @@ function detailTo(id: string) {
   flex: 0 0 auto;
   gap: 8px;
   align-items: center;
+}
+
+.rev__recent {
+  margin-top: 16px;
+}
+
+.recent {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.recent__row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 0;
+  font-size: 0.8rem;
+  border-top: 1px solid var(--line);
+}
+
+.recent__row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.recent__title {
+  overflow: hidden;
+  font-weight: 600;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.recent__title:hover {
+  text-decoration: underline;
+}
+
+.recent__result {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+/* 审核人与时间靠右、同一列起 —— 一列里的这几行要能竖着扫下来。 */
+.recent__by {
+  margin-left: auto;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.recent__at {
+  flex: 0 0 auto;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.recent__empty {
+  margin: 0;
+  color: var(--faint);
+  font-size: 0.8rem;
 }
 </style>

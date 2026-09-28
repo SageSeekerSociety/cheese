@@ -88,15 +88,37 @@ export type CreateTaskFromPdfRequestData = {
 }
 
 /**
+ * 预览时已经**落成文件行**、可以勾来当附件的东西。
+ *
+ * **没有 url**：与题目附件那一份同一个理由 —— 存储给的是直链，发出来就等于绕开下载
+ * 那道门。要文件走 `GET /tasks/{id}/attachments/{id}/download`。
+ */
+export interface PdfPublishAttachmentData {
+  id: number
+  name: string
+  size: number
+  contentType: string
+}
+
+export type PdfPublishAttachmentsData = {
+  /** 上传的那份 PDF 本身。没有就是没有，不画一颗点了没用的勾。 */
+  pdf: PdfPublishAttachmentData | null
+  /** 从 PDF 里抽出来、并且真的进了某条草稿正文的那些插图。 */
+  images: PdfPublishAttachmentData[]
+}
+
+/**
  * PDF 解析预览的响应数据
  * @property drafts - 解析出的赛题草稿列表
  * @property templateUsed - 实际使用的模板信息
  * @property tokenUsed - 本次解析消耗的 token 数量
+ * @property attachments - 服务端已经替调用者落好的、可以勾来当附件的文件
  */
 export type PreviewTaskFromPdfResponseData = {
   drafts: PdfTaskDraftData[]
   templateUsed: Record<string, any>
   tokenUsed: number
+  attachments: PdfPublishAttachmentsData
 }
 
 /** 确认发布 PDF 解析草稿的请求数据 */

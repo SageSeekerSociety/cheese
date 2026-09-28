@@ -153,6 +153,25 @@ it('keeps the room header usable when the app changes between desktop and mobile
   }
 })
 
+it('desktop rail carries 待办 as its own destination, right under 首页', async () => {
+  const app = await mountApp('/', 1280)
+  try {
+    expect(app.failures).toEqual([])
+    const rail = app.container.querySelector('.app-rail')
+    expect(rail).not.toBeNull()
+    // 桌面以前只有手机底栏到得了 /inbox（顶栏那颗铃铛是通知，不是待办）：
+    // 这一格是链接，不是装饰，而且钉在首页下面、项目之前。
+    const labels = Array.from(rail!.querySelectorAll('a[aria-label]')).map((a) => a.getAttribute('aria-label'))
+    expect(labels.slice(0, 2)).toEqual(['首页', '待办'])
+    expect(rail!.querySelector('a[href="/inbox"]')).not.toBeNull()
+    // 点这一格走的是和项目格同一套 Vuetify 链接，所以这里只证明它到得了：
+    // 这套测试的假路由只要从 /projects/:id 这种 barSlot 页出栈就崩（与本改动
+    // 无关——换成去 /spaces 同样崩），点进去的路由跳转留给真环境验证。
+  } finally {
+    app.dispose()
+  }
+})
+
 it.each(['/projects/p1', '/projects/p1/topics/t1'])(
   'keeps initial mobile entry at %s and normal navigation working',
   async (path) => {
