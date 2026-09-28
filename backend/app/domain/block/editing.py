@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.chat import announce_mentions, text_as_sent
 from app.domain.agent.harness.prompt import thread_relay_prompt
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
@@ -119,9 +120,13 @@ async def _tell_the_room(blocks: BlockRepository, block: Block, editor: str) -> 
     now and, if nothing is running or the push misses, how the next turn reads
     it: pending until a turn stamps it. Not a line in the room — the room
     already shows the edit on the message itself."""
+    landed = landing(
+        EventAbout.room, project_id=block.project_id, room_id=block.topic_id
+    )
     return await blocks.add(
-        project_id=block.project_id,
-        topic_id=block.topic_id,
+        project_id=landed.project_id,
+        topic_id=landed.topic_id,
+        task_id=landed.task_id,
         author=editor,
         author_type=AuthorType.participant,
         content=f"<@{editor}> 改了一条之前的消息",

@@ -6304,10 +6304,16 @@ async def announce_mentions(
             continue
         # Beside the message it is about, not in the room the message did not
         # go to — same landing as the message.
-        await BlockRepository(session).add(
+        landed = landing(
+            EventAbout.task if block.task_id is not None else EventAbout.room,
             project_id=block.project_id,
-            topic_id=block.topic_id,
+            room_id=block.topic_id,
             task_id=block.task_id,
+        )
+        await BlockRepository(session).add(
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author=author,
             author_type=AuthorType.participant,
             content=f"未能通知 <@{bad}>：项目中没有这个成员",
