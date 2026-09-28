@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
-from app.core.db import get_db
+from app.core.db import get_db, release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.platform_notices import (
@@ -312,6 +312,11 @@ async def _pr_checks_payload(
     client = await proposal_client(topic.project_id, db)
     if client is None:
         return {"available": False}
+    # Every open card polls this, and the two forge calls below can take as
+    # long as the forge's timeout. Holding the request's connection across them
+    # pinned one pool slot per open card, so a slow forge alone could drain the
+    # pool and stall every other page.
+    await release_read_session(db)
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")
