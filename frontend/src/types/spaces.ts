@@ -66,6 +66,17 @@ export type SpaceMember = {
     avatarId?: number | null
     intro?: string
   }
+  /**
+   * 加入方式：这个人当初是靠哪张码进来的。
+   *
+   * `null`（老接口里则是缺这一格）是**「没有记录」**，不是「没用过码」：
+   * 加这一格之前进来的成员谁都没记过，所有者直接加进来的人本来就没用码，而成员行
+   * 分不开这两种。所以界面一律说「未知」，绝不替它认领一张码 —— 见
+   * `views/spaces/board/pages/Members.vue`。
+   *
+   * 可选，因为它比这个类型新；缺了按 `null` 读。
+   */
+  inviteCode?: { id: number; code: string } | null
 }
 
 /**
@@ -80,6 +91,25 @@ export type SpaceInviteCode = {
   useCount: number
   expiresAt: number | null
   createdAt: number
+  /**
+   * 这张码给谁 / 干什么用，建码人自己写的一句话（「十月这批同学」）。
+   * `null` = 他什么都没写，包括每一张在这一格存在之前建的码 —— 那不是「未知」，
+   * 是「本来就没有」，所以界面说的是「没写说明」而不是「未知」。
+   * 可选，因为它比这个类型新；缺了按 `null` 读。
+   */
+  note?: string | null
+  /**
+   * 谁建的这张码。**没有这一格时不要显示「未知」以外的东西** —— `created_by`
+   * 可空，一个没有 actor 的调用者建的码会留着空，界面那行就写「未知」。
+   * 形状与成员行的 `user` 同一个（同一次批量查询给的）。可选，同上。
+   */
+  createdBy?: {
+    id: number
+    username: string
+    nickname?: string
+    avatarId?: number | null
+    intro?: string
+  } | null
 }
 
 export type SpaceCategory = {

@@ -409,6 +409,27 @@ test.describe("空间新界面（真路由）", () => {
     await expect(page.getByText("附件（可选）")).toBeVisible();
     await expect(page.getByLabel("题目名称")).toBeVisible();
 
+    // 右栏两张卡。第一张「发出去之后」讲这道题会经过哪几站：四站一站一句都写在
+    // 页面上，而第二句是**按登录的人算出来的** —— 这块板是 alice 用她的令牌建的
+    // （`createReviewedSpace`），名单里她是所有者，所以她看到的是「自己发的题自己审」。
+    await expect(page.getByRole("heading", { name: "发出去之后" })).toBeVisible();
+    const lifecycle = page.getByTestId("publish-lifecycle");
+    await expect(lifecycle).toContainText("待审核 —— 题目只有你自己和管理员看得到。");
+    await expect(page.getByTestId("publish-audience")).toContainText("你可以直接通过（自己发的题自己审）。");
+    await expect(lifecycle).toContainText("上板 —— 所有人可见可领，领取进度开始计。");
+    await expect(lifecycle).toContainText("「我的 → 我发布的」里有这道题的领取走势、领取者名单和完成情况。");
+    await expect(page.getByText("被驳回会带原因退回，改完可以重新提交，不用重写一遍。")).toBeVisible();
+
+    // 第二张「提交前」：它列的不是另写一份规则，而是底下这张真表单现在拦着什么
+    // （`lib/taskPublishChecks.ts` 那份规则表按表单的 `values` 现算）。刚进来三栏
+    // 必填全是空的，所以那几条在、按钮是灰的 —— 灰不灰看它原生的 `disabled`。
+    await expect(page.getByRole("heading", { name: "提交前" })).toBeVisible();
+    const checklist = page.getByTestId("publish-checks");
+    await expect(checklist).toContainText("标题：必填，最多 100 个字");
+    await expect(checklist).toContainText("参与者类型：必选一个（个人 / 团队）");
+    await expect(checklist).toContainText("题目难度：必选一个（初级 / 中级 / 高级）");
+    await expect(page.getByRole("button", { name: "提交审核" })).toBeDisabled();
+
     const taskName = `从新外壳发出的题 ${Date.now().toString(36)}（E2E）`;
     await page.getByLabel("题目名称").fill(taskName);
     // 表单有三栏必填而初始为空：参与者类型、题目难度、所属分类。不选就点提交，
@@ -425,6 +446,12 @@ test.describe("空间新界面（真路由）", () => {
     await page.getByRole("option").first().click();
     await page.locator(".tiptap-editor").click();
     await page.keyboard.type("正文（E2E）。");
+
+    // 三栏必填都选上之后，清单就空了：一句「看起来没问题。」+ 按钮能点。这一步
+    // 也正好量到「列出来的都是真会拦的」—— 上面那几条现在都不拦了，一条都不留。
+    await expect(page.getByTestId("publish-ok")).toHaveText("看起来没问题。");
+    await expect(page.getByRole("button", { name: "提交审核" })).toBeEnabled();
+
     await page.getByRole("button", { name: "提交", exact: true }).click();
 
     // 发完不跳走，落到新外壳自己的「我的」（老树那一步是「我发布的」页）。

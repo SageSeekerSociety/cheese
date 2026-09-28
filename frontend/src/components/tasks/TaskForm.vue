@@ -668,7 +668,7 @@
 import type { DomainGroup, TaskFormSubmitData, Topic } from '@/types'
 import type { SpaceCategory } from '@/types'
 
-import { computed, ref, toRefs, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, ref, toRefs, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VDateInput } from 'vuetify/labs/VDateInput'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -678,6 +678,7 @@ import { z } from 'zod'
 import { truncateString, vuetifyConfig } from '@/utils/form'
 
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import { evaluatePublishChecks, PUBLISH_CHECKS_SINK } from '@/lib/taskPublishChecks'
 
 const isAllowedDates = (date: unknown) => {
   if (!(date instanceof Date)) return false
@@ -729,7 +730,7 @@ const { t } = useI18n()
 const taskForm = ref(null)
 const descriptionEditor = ref<InstanceType<typeof TipTapEditor> | null>(null)
 
-const { handleSubmit, defineField, isSubmitting } = useForm({
+const { handleSubmit, defineField, isSubmitting, values } = useForm({
   validationSchema: toTypedSchema(
     z
       .object({
@@ -892,6 +893,24 @@ const submitFormData = (values: any) => {
     videoUrl: videoUrl.value || null,
   }
   emit('submit', submissionData)
+}
+
+// --- 发题页右栏那张「提交前」清单 ------------------------------------------------
+//
+// 表单把自己现在**拦着你的**那几条报给挂着这一页的外壳（`lib/taskPublishChecks.ts`
+// 里那份规则表就是下面这份 zod schema 的逐条对译），并把自己的提交交出去 ——
+// 清单那张卡上的「提交审核」按钮走的就是它，不是另开一条假路。
+//
+// 不 provide 就没有这一段（老树、改题页都照旧）：规则表只读 `values`，一个字段都
+// 不动，也不替表单校验 —— vee-validate 该什么时候标红还是什么时候标红。
+const publishChecksSink = inject(PUBLISH_CHECKS_SINK, null)
+if (publishChecksSink) {
+  watch(values, (current) => publishChecksSink.report(evaluatePublishChecks(current)), {
+    deep: true,
+    immediate: true,
+  })
+  publishChecksSink.handOverSubmit(submitForm)
+  onBeforeUnmount(() => publishChecksSink.handOverSubmit(null))
 }
 
 const privacyDialogOpen = ref(false)
