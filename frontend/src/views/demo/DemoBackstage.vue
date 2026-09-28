@@ -105,7 +105,7 @@ const STATUS: Record<DeviceStatus, string> = {
         >
           <v-icon :icon="d.kind === '云机器' ? 'mdi-cloud-outline' : 'mdi-laptop'" size="18" />
           <div class="dev-card-body">
-            <b>{{ d.name }}</b>
+            <b class="dev-card-name">{{ d.name }}</b>
             <span>{{ d.kind }} · {{ STATUS[frame.devices[d.id]?.status ?? 'offline'] }}</span>
             <small v-if="frame.devices[d.id]?.text">{{ frame.devices[d.id].text }}</small>
           </div>
@@ -349,7 +349,7 @@ const STATUS: Record<DeviceStatus, string> = {
   line-height: var(--lh-12);
 }
 
-.dev-card-body b {
+.dev-card-name {
   font-size: 13px;
   color: var(--ink);
 }
