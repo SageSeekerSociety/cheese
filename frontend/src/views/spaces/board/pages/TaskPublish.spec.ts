@@ -144,8 +144,11 @@ async function mount() {
   const view = render(TaskPublish as Component, {
     global: { plugins: [createVuetify({ components, directives }), router, pinia, i18n] },
   })
-  // 表单是异步组件、空间也要先装 —— 等到它真画出来为止。
-  await waitFor(() => expect(view.container.querySelector('form')).not.toBeNull())
+  // 表单是异步组件、空间也要先装 —— 等到它真画出来为止。第一条用例要冷加载
+  // `TaskForm` 那一整棵依赖，CI 满载时远超默认的 1 秒（见过 40 秒那次红），所以给足。
+  await waitFor(() => expect(view.container.querySelector('form')).not.toBeNull(), {
+    timeout: 20_000,
+  })
   return { ...view, router }
 }
 
