@@ -2,13 +2,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
+from app.api.routes.answers import get_answers_service
+from app.api.routes.knowledge import get_knowledge_service
+from app.api.routes.questions import get_questions_service
 from app.api.routes.spaces import _ensure_space_visible
-from app.api.routes.tasks import _ensure_task_readable
+from app.api.routes.tasks import _ensure_task_readable, get_task_service
+from app.api.routes.teams import get_team_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
-from app.domain.answers.repositories import AnswerRepository
 from app.domain.discussion.models import DiscussableModelType
 from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.repositories import (
@@ -17,12 +20,6 @@ from app.domain.discussion.repositories import (
     ReactionTypeRepository,
 )
 from app.domain.discussion.services import DiscussionService
-from app.domain.knowledge.repositories import KnowledgeRepository
-from app.domain.knowledge.services import KnowledgeService
-from app.domain.questions.repositories import QuestionRepository
-from app.domain.task.repositories import TaskRepository
-from app.domain.team.repositories import TeamRepository
-from app.domain.team.services import TeamService
 from app.domain.user.repositories import UserProfileRepository
 
 router = APIRouter(prefix="/discussions", tags=["Discussions"])
@@ -62,21 +59,28 @@ async def _ensure_model_visible(
     把 ``model_id`` 指的那个父对象**加载出来**，再问它自己所属域已经问了很多遍的
     那句话。不在这里另写一套判据：每一条都是同域其它读路由正在用的那一条。
 
-    各类型对应哪条判据（一句话一个）：
+    各类型对应哪条判据（一句话一个）。每一条都是**用那个域自己的 service 问的**，
+    不是摸它的 repository：分层纪律见 ``tests/unit/test_domain_import_guard.py``，
+    路由 import 对方的 repository 会让那道守卫红。取服务走的是各路由模块现成的工厂
+    （``get_task_service`` 等），与 ``app/api/routes/dashboard.py`` import
+    ``get_space_service``、``_require_project_access`` 是同一个做法：
 
     * ``SPACE`` —— ``_ensure_space_visible``（``SpaceRepository.is_member``：成员行
       或管理员关系），不是成员答 404，和 ``/spaces/{spaceId}/...`` 一致。
-    * ``TASK`` —— ``_ensure_task_readable``（未过审 403、``can_view_task`` 不可见
-      404、超本板上限 404），与题目详情、材料清单同一处判断。
+    * ``TASK`` —— ``TaskService.get_task`` 取那一行（不存在 404），再交给
+      ``_ensure_task_readable``（未过审 403、``can_view_task`` 不可见 404、超本板上限
+      404）—— 与题目详情、材料清单同一处判断。
     * ``PROJECT`` —— 一律 404。本平台的项目主键是 UUID，而 ``Discussion.model_id``
       这一列是整数，没有任何整数能指向一个项目，父对象因此**加载不出来**；加载不出
       来就不放行（fail closed）。若将来给项目板一个整数可寻址的键，这里应当挂
-      ``app.auth.project_access.may_read_project`` —— 项目读权那一条单点判据。
+      ``app.auth.project_access.may_read_project`` —— 项目读权那一条单点判据（服务上
+      没有可用的读法，届时也不需要摸 repository）。
     * ``TEAM`` —— ``TeamService.visible_team``（成员，或公开共享团队），看不见答
       404，与 ``GET /teams/{teamId}`` 同一句话。
-    * ``KNOWLEDGE`` —— ``KnowledgeService._ensure_team_member``（知识条目所属团队的
-      成员），不是成员答 403，与 ``/knowledge/{knowledgeId}`` 一致。
-    * ``QUESTION`` / ``ANSWER`` —— 只要这个问答对象存在（``... not found`` 404）。
+    * ``KNOWLEDGE`` —— ``KnowledgeService.get`` 本身就是那道门：条目不存在 404、条目
+      所属团队的非成员 403，与 ``/knowledge/{knowledgeId}`` 一致。
+    * ``QUESTION`` / ``ANSWER`` —— ``QuestionsService.get_question`` /
+      ``AnswersService.get_answer``：只要这个问答对象存在（``... not found`` 404）。
       学习问答按设计对每一个登录用户公开（``GET /questions/{id}``、
       ``GET /answers`` 本来就不做逐人判断），所以这里照抄「存在即可见」，不收紧也
       不放松 —— 讨论板不比它挂着的那道题更私密。
@@ -95,7 +99,7 @@ async def _ensure_model_visible(
         return
 
     if kind is DiscussableModelType.TASK:
-        task = await TaskRepository(session=db).get_by_id(model_id)
+        task = await (await get_task_service(db=db)).get_task(model_id)
         if task is None:
             raise NotFoundError(
                 "Resource task not found", data={"type": "task", "id": model_id}
@@ -109,31 +113,26 @@ async def _ensure_model_visible(
         )
 
     if kind is DiscussableModelType.TEAM:
-        await TeamService(repo=TeamRepository(session=db)).visible_team(
-            model_id, user_id
-        )
+        await (await get_team_service(db=db)).visible_team(model_id, user_id)
         return
 
     if kind is DiscussableModelType.KNOWLEDGE:
-        knowledge = await KnowledgeRepository(session=db).get_by_id(model_id)
-        if knowledge is None:
-            raise NotFoundError(
-                "Resource knowledge not found",
-                data={"type": "knowledge", "id": model_id},
-            )
-        await KnowledgeService.for_lookup(session=db)._ensure_team_member(
-            knowledge.team_id, user_id
+        # ``KnowledgeService.get`` 自己就是那道门：条目不存在 404，条目所属团队的
+        # 非成员 403 —— 与 ``/knowledge/{knowledgeId}`` 逐字相同。
+        await (await get_knowledge_service(db=db)).get(
+            knowledge_id=model_id, user_id=user_id
         )
         return
 
     if kind is DiscussableModelType.QUESTION:
-        if await QuestionRepository(session=db).get_by_id(model_id) is None:
-            raise NotFoundError("Question not found", data={"id": model_id})
+        # 学习问答对每个登录用户公开，所以这里的门就是「这道题存在」。
+        await (await get_questions_service(db=db)).get_question(model_id, user_id)
         return
 
     if kind is DiscussableModelType.ANSWER:
-        if await AnswerRepository(session=db).get_by_id(model_id) is None:
-            raise NotFoundError("Answer not found", data={"id": model_id})
+        await (await get_answers_service(db=db)).get_answer(
+            answer_id=model_id, user_id=user_id
+        )
         return
 
 
