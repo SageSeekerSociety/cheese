@@ -18,7 +18,14 @@ That is exactly the line the status axis is supposed to draw ("accepted means
 success"), which is what this guard must not contradict: it reads the reviews
 the same way a writer of ``SUCCESS`` would. What it deliberately does not do is
 advance the axis itself; that is a separate, larger change.
+
+The same four states, spelled out rather than collapsed to one yes/no, are what
+a 领取 shows on a board card — :func:`claim_state` below draws the finer line
+over the very same rows, and a caller that already has the verdicts does not
+have to invent its own reading of them.
 """
+
+from collections.abc import Iterable
 
 from sqlalchemy import ColumnElement, SQLColumnExpression, exists, or_, select
 
@@ -27,6 +34,46 @@ from app.domain.task.models import (
     TaskSubmission,
     TaskSubmissionReview,
 )
+
+#: 「这道题我走到哪了」—— 卡片上那一格，与前端 `Claimant['status']` 同名同义。
+#: 取值只看提交与评审，不看 ``completion_status``（理由见上面那段）。
+CLAIM_IN_PROGRESS = "IN_PROGRESS"
+CLAIM_SUBMITTED = "SUBMITTED"
+CLAIM_PASSED = "PASSED"
+CLAIM_REJECTED = "REJECTED"
+
+
+def claim_state(verdicts: Iterable[bool | None]) -> str:
+    """一个领取现在是什么档位，按它每条 live 提交的判决算。
+
+    ``verdicts`` 是这个领取名下**每条 live 提交**的判决：``True`` 判过、``False``
+    退回、``None`` 还没判。空 = 一条都没交。判决与提交的「live」两个条件由取数的
+    那一边按 ``has_work_in_hand`` 同一口径给（提交行 ``deleted_at IS NULL``、评审行
+    同样），这里只负责排序，不重复判一次。
+
+    一条领取可以同时有多版提交：退回之后重交是新的一版，**旧的那版还在**（它只是
+    带着一条退回的评审躺着，见 ``TaskSubmissionService.submit_task``）。所以排的是
+    优先级，不是「最新那版」：
+
+    - 任一版通过 → 已通过 —— 交出去并被认下来的东西不会被后来的一版抹掉；
+    - 没有通过的，但有还没判的 → 已提交 —— 退回后重交就是这一档，人正在队列里；
+    - 剩下的（每条都判了，没有一条通过）→ 未通过，可以重交；
+    - 一条提交都没有 → 进行中。
+    """
+    handed_back = False
+    queued = False
+    for verdict in verdicts:
+        if verdict is True:
+            return CLAIM_PASSED
+        if verdict is None:
+            queued = True
+        else:
+            handed_back = True
+    if queued:
+        return CLAIM_SUBMITTED
+    if handed_back:
+        return CLAIM_REJECTED
+    return CLAIM_IN_PROGRESS
 
 
 def has_work_in_hand(membership_id: SQLColumnExpression[int]) -> ColumnElement[bool]:

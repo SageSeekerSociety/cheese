@@ -93,3 +93,50 @@ describe('题目卡上的出处标', () => {
     expect(document.querySelector('.tcard__tags')?.textContent?.replace(/\s+/g, '')).toBe('')
   })
 })
+
+// 卡片上另外两格：挂着几份材料（份数，不是清单）和题目的标签。两格都是**画出来
+// 才算数**的东西 —— 映射对不对在 `store.spec.ts`，这里钉的是「0 份时会不会画出
+// 『附件 0』」「标签画成什么样子」。
+describe('题目卡上的材料份数与标签', () => {
+  function fileChip(): Element | null {
+    return document.querySelector('.tcard__files')
+  }
+
+  function tagTexts(): string[] {
+    return Array.from(document.querySelectorAll('.tcard__tag')).map((el) =>
+      (el.textContent || '').replace(/\s+/g, '').trim()
+    )
+  }
+
+  it('挂了两份材料就写「附件 2」', async () => {
+    await draw(task({ attachmentCount: 2 }))
+
+    expect(fileChip()?.textContent?.replace(/\s+/g, '')).toBe('附件2')
+  })
+
+  it('一份材料都没有时那一格整块不出现，不是「附件 0」', async () => {
+    await draw(task({}))
+
+    expect(fileChip()).toBeNull()
+    expect(document.body.textContent).not.toContain('附件')
+  })
+
+  it('题目的标签一枚一枚写成 #名字', async () => {
+    await draw(
+      task({
+        topics: [
+          { id: 1, name: '缓存' },
+          { id: 2, name: '并发' },
+        ],
+      })
+    )
+
+    expect(tagTexts()).toEqual(['#缓存', '#并发'])
+  })
+
+  it('一个标签都没有时那片区域是空的（不出现一枚空标）', async () => {
+    await draw(task({}))
+
+    expect(tagTexts()).toEqual([])
+  })
+})

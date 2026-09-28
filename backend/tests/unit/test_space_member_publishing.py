@@ -34,6 +34,8 @@ def _task(**overrides):
         "published_at": None,
         "ended_at": None,
         "deadline": None,
+        # 真库里 0 表示不限；这一格是卡片上「N / 上限 人领取」要的数。
+        "participant_limit": None,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)

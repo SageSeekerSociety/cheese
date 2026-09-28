@@ -56,7 +56,14 @@ const visible = computed(() => {
   if (onlyOpen.value) list = list.filter((t) => isOpen(t))
   const kw = keyword.value.trim().toLowerCase()
   if (kw) {
-    list = list.filter((t) => t.title.toLowerCase().includes(kw) || t.summary.toLowerCase().includes(kw))
+    // 标题、简介、标签三处都匹配：标签是题目的 topics，卡片上就摆在那里
+    // （`#名字`），搜不到它等于卡片上那几枚标只是装饰。
+    list = list.filter(
+      (t) =>
+        t.title.toLowerCase().includes(kw) ||
+        t.summary.toLowerCase().includes(kw) ||
+        t.tags.some((tag) => tag.toLowerCase().includes(kw))
+    )
   }
   if (sort.value === 'hot') list.sort((a, b) => b.claimCount - a.claimCount)
   if (sort.value === 'new')

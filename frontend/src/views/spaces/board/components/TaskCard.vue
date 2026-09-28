@@ -4,7 +4,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { type BoardTask, deadlineText, isOpen, STATE_LABEL } from '../model'
+import { type BoardTask, CLAIM_LABEL, deadlineText, isOpen, STATE_LABEL } from '../model'
 import { alreadyClaimed } from '../store'
 
 const props = defineProps<{ task: BoardTask; showPublisher?: boolean }>()
@@ -51,6 +51,13 @@ const teamText = computed(() => {
 })
 
 const claimed = computed(() => alreadyClaimed(props.task))
+
+/** 「我的领取档位」那一格的字。
+ *
+ *  档位有就说档位（进行中 / 已提交 / 已通过 / 未通过），拿不到档位时才退回
+ *  「已领取」—— 所以「我领了」这件事不会因为服务端没给那一格而在卡片上消失。
+ *  小队提交的题就是这一支：接手的是小队那条领取，不是我这条。 */
+const mineText = computed(() => (props.task.myClaimStatus ? CLAIM_LABEL[props.task.myClaimStatus] : '已领取'))
 </script>
 
 <template>
@@ -61,7 +68,7 @@ const claimed = computed(() => alreadyClaimed(props.task))
       <v-spacer />
       <span v-if="claimed" class="tcard__mine">
         <v-icon icon="mdi-check-circle" size="14" />
-        已领取
+        {{ mineText }}
       </span>
     </div>
 
@@ -81,9 +88,11 @@ const claimed = computed(() => alreadyClaimed(props.task))
         <v-icon icon="mdi-play-circle-outline" size="13" start />
         视频
       </v-chip>
-      <v-chip v-if="task.files?.length" size="x-small" label variant="tonal" class="tcard__files">
+      <!-- 附件只显示**份数**：清单与下载在详情页（`GET /tasks/{id}/attachments`），
+           列表这一趟不带文件本体，也不改变谁能下载。 -->
+      <v-chip v-if="task.attachmentCount" size="x-small" label variant="tonal" class="tcard__files">
         <v-icon icon="mdi-paperclip" size="13" start />
-        附件 {{ task.files.length }}
+        附件 {{ task.attachmentCount }}
       </v-chip>
       <v-chip v-for="tag in task.tags" :key="tag" size="x-small" label variant="text" class="tcard__tag"
         >#{{ tag }}</v-chip

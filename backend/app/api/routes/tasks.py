@@ -36,7 +36,10 @@ from app.domain.space.repositories import (
     SpaceUserRankRepository,
 )
 from app.domain.tag.repositories import TagRepository
-from app.domain.task.attachment_service import TaskAttachmentService
+from app.domain.task.attachment_service import (
+    TaskAttachmentRepository,
+    TaskAttachmentService,
+)
 from app.domain.task.models import (
     Task,
     TaskAttachment,
@@ -64,6 +67,7 @@ from app.domain.task.services import (
     TaskSubmissionReviewService,
     TaskSubmissionService,
 )
+from app.domain.task.submission_state import claim_state
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.visibility_service import TaskVisibilityService
@@ -674,19 +678,58 @@ async def _enrich_task_models(
     return task_models
 
 
+async def _enrich_task_attachment_counts(db, task_models: list[dict]) -> None:
+    """把每道题挂着几个材料填进列表响应（就地改）。
+
+    只是**一个数**：不带文件本体、不带文件名，也不问谁能下载 —— 卡片上那格「附件
+    N」就靠它，而清单与下载各有自己的门（`GET /tasks/{id}/attachments`）。一个材料
+    都没有的题给 0，不是缺字段：卡片按「有就列、没有就不显示」写，而 0 与「不知道」
+    是两件事。
+
+    整页一次分组计数，不按题各发一条。
+    """
+    task_ids = [
+        task_model["id"]
+        for task_model in task_models
+        if isinstance(task_model.get("id"), int)
+    ]
+    if not task_ids:
+        return
+    counts = await TaskAttachmentRepository(session=db).count_live_by_task_ids(
+        task_ids=task_ids
+    )
+    for task_model in task_models:
+        model_id = task_model.get("id")
+        if not isinstance(model_id, int):
+            continue
+        task_model["attachmentCount"] = counts.get(model_id, 0)
+
+
 async def _enrich_task_topics(db, task_models: list[dict]) -> None:
     """Populate `task.topics: Topic[]` for the given task dicts in-place.
 
     Frontend `Task.topics` is an array of {id, name} objects, accessed via
     `task.topics.length` in TaskCard.vue, so we always return at least an
     empty array (not undefined).
+
+    整页一次取回，不按题各发一条 —— 卡片现在每道题都显示标签，逐题各查一次就是
+    一屏 20 条查询。
     """
     if not task_models:
         return
-    topic_repo = TopicRepository(session=db)
+    task_ids = [
+        task_model["id"]
+        for task_model in task_models
+        if isinstance(task_model.get("id"), int)
+    ]
+    grouped = await TopicRepository(session=db).list_by_task_ids(task_ids)
     for task_model in task_models:
-        topic_entities = await topic_repo.list_by_task_id(task_model["id"])
-        task_model["topics"] = [{"id": t.id, "name": t.name} for t in topic_entities]
+        model_id = task_model.get("id")
+        if not isinstance(model_id, int):
+            continue
+        task_model["topics"] = [
+            {"id": t.id, "name": t.name} for t in grouped.get(model_id, [])
+        ]
 
 
 async def _enrich_task_user_state(
@@ -713,6 +756,7 @@ async def _enrich_task_user_state(
             task_model.setdefault("submittableAsTeam", [])
             task_model.setdefault("userDeadline", None)
             task_model.setdefault("participationEligibility", None)
+            task_model.setdefault("myClaimStatus", None)
         return
 
     # Frontend Task.joinedTeams / submittableAsTeam are typed `Team[]`; the
@@ -750,6 +794,22 @@ async def _enrich_task_user_state(
 
     def _team_summary(team_id: int) -> dict:
         return team_summary(teams_map.get(team_id), fallback_id=team_id)
+
+    # 我在每道题上走到哪一步（卡片上那格「我的领取档位」）。只问我**本人**那条
+    # 领取：队友那条说的是小队走到哪了，不是这张卡要说的事。判决照
+    # `app.domain.task.submission_state` 的口径算，不读 `completion_status`（那一列
+    # 除了领取与逾期，没人推进）—— 整页一次查询，不按题各发一条。
+    my_membership_by_task_id = {
+        task_id: state["user_membership"].id
+        for task_id, state in pending.items()
+        if state["user_membership"] is not None
+        and state["user_membership"].approved != 1
+    }
+    verdicts_by_membership_id = await TaskSubmissionRepository(
+        session=db
+    ).list_review_verdicts_for_memberships(
+        membership_ids=list(my_membership_by_task_id.values())
+    )
 
     for task_model in task_models:
         task_id = task_model["id"]
@@ -793,6 +853,15 @@ async def _enrich_task_user_state(
                 )
             )
 
+        # 没领过的题给 null（卡片那一格整块不出现），领过的题给四档之一 ——
+        # 一条提交都没有的领取是 IN_PROGRESS，不是 null：领了没交和没领是两件事。
+        my_membership_id = my_membership_by_task_id.get(task_id)
+        my_claim_status: str | None = None
+        if my_membership_id is not None:
+            my_claim_status = claim_state(
+                verdicts_by_membership_id.get(my_membership_id, [])
+            )
+
         task_model.update(
             {
                 "joined": joined,
@@ -801,6 +870,7 @@ async def _enrich_task_user_state(
                 "submittableAsTeam": submittable_as_team,
                 "userDeadline": user_deadline_ms,
                 "participationEligibility": participation_eligibility,
+                "myClaimStatus": my_claim_status,
             }
         )
 
@@ -2640,6 +2710,9 @@ async def get_tasks(
     )
     items = [_task_to_api_model(t) for t in tasks]
     items = await _enrich_task_models(db, items, space_id=space)
+    # 卡片上那格「附件 N」要的数。跟每次列表一起给：它是卡片的一部分，不是可选的
+    # 附加信息 —— 只有被点名才带的话，卡片就得为它多等一次请求。
+    await _enrich_task_attachment_counts(db, items)
 
     # 提交表单只在被点名时才带（审核页要显示「提交要求」，见函数注释）。
     if querySubmissionSchema:

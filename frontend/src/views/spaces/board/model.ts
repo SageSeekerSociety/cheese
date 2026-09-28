@@ -33,16 +33,6 @@ export interface Claimant {
   status: 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED'
 }
 
-/** 题目的附件。真平台上题目还没有这一层（题目表没有附件字段），这一栏先留着空，
- *  等附件那一批落地再填 —— 界面按「有就列、没有就不显示」写，不假装它已经存在。 */
-export interface TaskFile {
-  name: string
-  /** 字节。 */
-  size: number
-  kind: 'pdf' | 'image' | 'code' | 'archive' | 'doc'
-  downloads: number
-}
-
 export interface BoardTask {
   id: string
   title: string
@@ -69,11 +59,21 @@ export interface BoardTask {
    *  `store.ts` 映射时用 `splitOrigin` 从 `intro` 里认出来，**正文里那串字同时被摘掉**。
    *  所以这一格和 `summary` 是同一段文本的两半，不能各填各的。 */
   origin?: string
-  /** 发题时附上的材料。真平台还没有这一层，暂时是空数组。 */
-  files: TaskFile[]
+  /** 这道题挂着几份材料（`GET /tasks` 一并给的那个数）。卡片上只显示「附件 N」，
+   *  清单与下载走 `TasksApi.listAttachments` / 下载端点 —— 列表接口不带文件本体，
+   *  也不改变谁能下载。 */
+  attachmentCount: number
   claims: Claimant[]
   /** 领取人数（真接口给的是 `participants.total`，不是整份名单）。 */
   claimCount: number
+  /** 「我」这条领取现在是什么档位（`Claimant.status` 那四档之一）。`null` = 我没领
+   *  这道题 —— 领了没交是 `IN_PROGRESS`，与没领是两件事，卡片上「我的领取档位」
+   *  那一格只在非 `null` 时出现。
+   *
+   *  后端按**提交与评审**算（`app/domain/task/submission_state.py`），不读
+   *  `completion_status`：那一列除了领取与逾期没人推进，用它算出来的人永远停在
+   *  「进行中」。 */
+  myClaimStatus: Claimant['status'] | null
 }
 
 /** 「最近处理过」上的一行 —— 一次审核动作，不是一道题的当前状态。
