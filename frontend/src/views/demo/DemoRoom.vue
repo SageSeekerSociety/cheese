@@ -8,12 +8,17 @@ import type { Frame, Scene } from './demoScene'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
+import { answer } from './demoBackend'
 import DemoBackstage from './DemoBackstage.vue'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import DispatchedMarker from '@/components/DispatchedMarker.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
+import RoomNotice from '@/components/room/RoomNotice.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
+import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import { type PlatformNotice, platformNotice } from '@/lib/platformNotice'
 
 const props = defineProps<{ scene: Scene; frame: Frame }>()
 
@@ -26,15 +31,22 @@ const defaultAgent = computed(() => props.scene.seats?.[0] ?? '')
 const topic = { id: 'demo' } as Topic
 
 function block(line: Frame['chat'][number]): Block {
-  return {
-    id: line.id,
-    topic_id: 'demo',
-    kind: 'message',
-    author_type: 'participant',
-    author: line.author,
-    content: line.text,
-    created_at: '',
-  }
+  return (
+    line.block ?? {
+      id: line.id,
+      topic_id: 'demo',
+      kind: 'message',
+      author_type: 'participant',
+      author: line.author,
+      content: line.text,
+      created_at: '',
+    }
+  )
+}
+
+// 平台事件交给真的分类器：同一条 meta 在产品里画成什么，这里就画成什么。
+function notice(line: Frame['chat'][number]): PlatformNotice | null {
+  return line.block ? platformNotice(line.block) : null
 }
 
 // 同一个人连着说，只有第一条带头像和名字；中间隔了一条分隔说明就重新带上。
@@ -78,6 +90,20 @@ onMounted(() => {
   fed = props.frame.site
   feed(fed)
 })
+
+// 验收卡是真的 TopicAcceptCard，它自己去取数：剧本里的卡和检查交给演示后端
+// 回答，卡一变就换一张新的，让它重新取一次（它自己十五秒才刷一回）。
+const cardKey = computed(() => JSON.stringify([props.frame.card, props.frame.checks]))
+watch(
+  cardKey,
+  () => {
+    const card = props.frame.card
+    const checks = props.frame.checks
+    answer('/topics/demo/accept-card', card ? () => ({ data: [card], total: 1 }) : null)
+    answer('/topics/demo/pr-checks', () => checks ?? { available: false })
+  },
+  { immediate: true }
+)
 
 const TABS = ['总览', '现场', '改动', '预览']
 </script>
@@ -128,8 +154,19 @@ const TABS = ['总览', '现场', '改动', '预览']
         <TransitionGroup name="demo-line" tag="div" class="demo-lines">
           <template v-for="(line, i) in frame.chat" :key="line.id">
             <TimelineMark v-if="line.kind === 'mark'" quiet>{{ line.text }}</TimelineMark>
+            <DispatchedMarker v-else-if="line.kind === 'split' && line.split" :marker="line.split" />
+            <RoomNotice
+              v-else-if="line.kind === 'notice' && notice(line)"
+              :block="block(line)"
+              :notice="notice(line)!"
+              :run="[block(line)]"
+              :name="line.author === 'system' ? null : names[line.author] ?? null"
+              :time="line.time"
+              :agent-name="names[defaultAgent] ?? '芝士'"
+              :refs="refs"
+            />
             <RoomMessage
-              v-else
+              v-else-if="line.kind === 'message'"
               :block="block(line)"
               :parent="null"
               :parent-name="null"
@@ -146,6 +183,9 @@ const TABS = ['总览', '现场', '改动', '预览']
             />
           </template>
         </TransitionGroup>
+        <div v-if="frame.card" class="demo-card" data-region="card">
+          <TopicAcceptCard :key="cardKey" topic-id="demo" topic-status="active" :task-id="frame.card.task_id" docked />
+        </div>
         <div class="demo-composer">发消息，@ 队友让它干活</div>
       </div>
 
@@ -323,6 +363,10 @@ const TABS = ['总览', '现场', '改动', '预览']
   overflow: hidden;
 }
 
+.demo-card {
+  margin: 8px 16px 0;
+}
+
 .demo-composer {
   display: flex;
   align-items: center;
@@ -413,7 +457,8 @@ const TABS = ['总览', '现场', '改动', '预览']
 .demo-room[data-focus='site'] [data-region='site'],
 .demo-room[data-focus='tabs'] [data-region='tabs'],
 .demo-room[data-focus='title'] [data-region='title'],
-.demo-room[data-focus='backstage'] [data-region='backstage'] {
+.demo-room[data-focus='backstage'] [data-region='backstage'],
+.demo-room[data-focus='card'] [data-region='card'] {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
