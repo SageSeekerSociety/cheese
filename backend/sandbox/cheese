@@ -526,7 +526,8 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_machine",
             "更换你自己的工作电脑，后续文件和命令操作使用新电脑。"
-            "只能选择项目授权的资源；旧机器保留，文件不会自动迁移。",
+            "只能选择项目授权的资源。更换前平台先在原来那台上把改动推送到分支，"
+            "推送失败或原来那台连不上就不换；新电脑从分支拉代码。",
             {
                 "profile": {
                     "type": "string",
@@ -1195,8 +1196,8 @@ def _say_machine(args, data, env) -> str:
     if data.get("session"):
         choice = data["session"]["choice"]
         return (
-            f"工作电脑已设为 {choice['name']}，下次执行操作时使用。"
-            "旧机器保留，文件不会自动迁移。"
+            f"改动已推送到分支，工作电脑已设为 {choice['name']}，"
+            "下次执行操作时使用；在新电脑上从分支拉代码继续。"
         )
     if data.get("proposal"):
         return f"已提请 {data['proposal']['approver']} 点头，等他拍板。"

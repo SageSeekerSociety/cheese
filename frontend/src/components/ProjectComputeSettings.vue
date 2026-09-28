@@ -18,6 +18,8 @@ const state = ref<ProjectComputeConfigs | null>(null)
 const error = ref('')
 const busy = ref(false)
 const editing = ref(false)
+// English says 1 agent / 2 agents; the count's own key carries the plural.
+const agents = (count: number) => t('work.projectMachine.agents', { count })
 async function load() {
   error.value = ''
   try {
@@ -81,11 +83,13 @@ watch(() => props.projectId, load)
         </p>
         <ul v-else class="distribution-list">
           <li v-if="state.distribution.cloud">
-            <span class="status-dot" />{{ t('work.projectMachine.onCloud', { count: state.distribution.cloud }) }}
+            <span class="status-dot" />{{
+              t('work.projectMachine.onCloud', { agents: agents(state.distribution.cloud) })
+            }}
           </li>
           <li v-for="device in state.distribution.devices" :key="device.device_id ?? device.name">
             <span class="status-dot" :class="{ 'status-dot--warn': device.machine_access }" />{{
-              t('work.projectMachine.onDevice', { name: device.name, count: device.agents })
+              t('work.projectMachine.onDevice', { name: device.name, agents: agents(device.agents) })
             }}<template v-if="device.machine_access"> · {{ t('work.roomMachine.wholeMachine') }}</template>
           </li>
         </ul>

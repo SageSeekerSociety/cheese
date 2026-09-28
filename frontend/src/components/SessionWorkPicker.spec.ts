@@ -9,8 +9,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   setSessionWorkChoice: vi.fn(),
+  // The backend's refusal as `request` raises it: the class name is the code.
+  ApiError: class extends Error {
+    constructor(
+      readonly status: number,
+      message: string,
+      readonly code?: string
+    ) {
+      super(message)
+    }
+  },
 }))
 vi.mock('../api', () => api)
+import { ApiError } from '../api'
 import { setLocale } from '../i18n'
 
 import SessionWorkPicker from './SessionWorkPicker.vue'
@@ -57,7 +68,7 @@ function dialog() {
   return within(screen.getByRole('dialog'))
 }
 function confirmButton() {
-  return dialog().getByRole('button', { name: '更换' })
+  return dialog().getByRole('button', { name: '推送并更换' })
 }
 
 beforeEach(() => {
@@ -105,36 +116,58 @@ describe("changing one teammate's work computer", () => {
     expect(confirmButton().hasAttribute('disabled')).toBe(true)
     await chooseMachine()
     expect(screen.getByRole('note').textContent).toBe(
-      '更换电脑可能中断正在运行的任务，并丢失未保存的工作。后续操作将使用新电脑。'
+      '原来那台上没推送的改动不会跟过去。换之前先把 分析员 的改动推送到分支；推送失败就不换，并说明原因。'
     )
+    expect(dialog().getByRole('button', { name: '取消' })).toBeTruthy()
     expect(api.setSessionWorkChoice).not.toHaveBeenCalled()
     api.setSessionWorkChoice.mockResolvedValue({ session: session({ choice: device, lease: null }) })
     await fireEvent.click(confirmButton())
-    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-a', device))
+    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-a', device, {}))
     expect(await screen.findByText('现在用：测试工作站')).toBeTruthy()
     expect(screen.getByRole('status').textContent).toContain('已更换')
     expect(api.setSessionWorkChoice).toHaveBeenCalledTimes(1)
     expect(emitted().changed).toHaveLength(1)
   })
 
-  it('does not offer extra approval or investigation steps when the old machine is offline', async () => {
-    await open(profile, session({ lease: { ...session().lease!, online: false } }))
-    expect(screen.queryByRole('checkbox')).toBeNull()
-    expect(screen.queryByText(/批准|待核实/)).toBeNull()
-    await chooseMachine()
-    api.setSessionWorkChoice.mockResolvedValue({ session: session({ choice: device, lease: null }) })
-    await fireEvent.click(confirmButton())
-    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledTimes(1))
-  })
-
-  it('keeps the current machine and allows retry when changing fails', async () => {
+  it('keeps the current machine and says why when the push fails', async () => {
     await open()
     await chooseMachine()
-    api.setSessionWorkChoice.mockRejectedValue(new Error('设备已离线'))
+    api.setSessionWorkChoice.mockRejectedValue(
+      new ApiError(409, '推送失败，没有更换：rejected non-fast-forward', 'ConflictError')
+    )
     await fireEvent.click(confirmButton())
-    expect((await screen.findByText('设备已离线')).getAttribute('role')).toBe('alert')
+    expect((await screen.findByText('推送失败，没有更换：rejected non-fast-forward')).getAttribute('role')).toBe(
+      'alert'
+    )
     expect(screen.getByText('现在用：云端')).toBeTruthy()
+    // A push that ran and failed has no way around it; only retrying.
+    expect(dialog().queryByRole('button', { name: '不推送，直接更换' })).toBeNull()
     expect(confirmButton().hasAttribute('disabled')).toBe(false)
+  })
+
+  it('lets the person change without pushing only after the old machine could not be reached', async () => {
+    const { emitted } = await open()
+    await chooseMachine()
+    expect(dialog().queryByRole('button', { name: '不推送，直接更换' })).toBeNull()
+    api.setSessionWorkChoice.mockRejectedValueOnce(
+      new ApiError(409, '原来那台工作电脑连不上，无法推送改动，没有更换', 'WorkComputerUnreachable')
+    )
+    await fireEvent.click(confirmButton())
+    expect(await screen.findByText('原来那台工作电脑连不上，无法推送改动，没有更换')).toBeTruthy()
+    expect(
+      screen.getByText('不推送直接更换的话，原来那台上没推送的改动会留在那台电脑上，不会跟到新电脑。')
+    ).toBeTruthy()
+    expect(emitted().changed).toBeUndefined()
+    api.setSessionWorkChoice.mockResolvedValueOnce({ session: session({ choice: device, lease: null }) })
+    await fireEvent.click(dialog().getByRole('button', { name: '不推送，直接更换' }))
+    await waitFor(() =>
+      expect(api.setSessionWorkChoice).toHaveBeenLastCalledWith('room-a', 'session-a', device, {
+        abandonUnpushed: true,
+      })
+    )
+    expect(api.setSessionWorkChoice.mock.calls[0]).toEqual(['room-a', 'session-a', device, {}])
+    expect(await screen.findByText('现在用：测试工作站')).toBeTruthy()
+    expect(emitted().changed).toHaveLength(1)
   })
 
   it('prevents duplicate changes while the request is in flight', async () => {
@@ -164,7 +197,7 @@ describe('existing machine choices', () => {
     expect(api.setSessionWorkChoice).not.toHaveBeenCalled()
     api.setSessionWorkChoice.mockResolvedValue({ session: session({ choice: automatic, lease: null }) })
     await fireEvent.click(confirmButton())
-    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-a', automatic))
+    await waitFor(() => expect(api.setSessionWorkChoice).toHaveBeenCalledWith('room-a', 'session-a', automatic, {}))
   })
 
   it('keeps a current custom choice even when it is not in the project presets', async () => {

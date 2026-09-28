@@ -97,6 +97,27 @@ describe('project work computer settings', () => {
     expect(screen.queryByText(/常用/)).toBeNull()
   })
 
+  it('counts one agent as one in English', async () => {
+    setLocale('en')
+    api.getProjectComputeConfigs.mockResolvedValue(
+      configs({
+        distribution: {
+          cloud: 1,
+          devices: [
+            { device_id: 'lab', name: 'Lab', agents: 1, machine_access: false },
+            { device_id: 'rig', name: 'Rig', agents: 2, machine_access: false },
+          ],
+        },
+      })
+    )
+    await mount()
+
+    const distribution = within(screen.getByTestId('project-distribution'))
+    expect(distribution.getByText('Cloud · 1 agent')).toBeTruthy()
+    expect(distribution.getByText('Lab · 1 agent')).toBeTruthy()
+    expect(distribution.getByText('Rig · 2 agents')).toBeTruthy()
+  })
+
   it('says so when no agent has started', async () => {
     api.getProjectComputeConfigs.mockResolvedValue(configs({ distribution: { cloud: 0, devices: [] } }))
     await mount()

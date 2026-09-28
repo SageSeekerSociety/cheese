@@ -23,6 +23,5 @@
     "maxLength": "Must be at most {max} characters",
     "required": "This field is required"
   },
-  "close": "Close",
   "updateFailed": "Couldn't update"
 }
