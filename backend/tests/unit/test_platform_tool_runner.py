@@ -35,7 +35,13 @@ cheese = _load()
 class Host:
     """Records what a tool asked for; answers with `answers[(method, path)]`."""
 
-    def __init__(self, answers=None, *, files=None, environ=None, sync=None):
+    def __init__(
+        self, answers=None, *, files=None, environ=None, sync=None, envelope=None
+    ):
+        # `envelope` 是后端在 `data` 之外捎回来的东西（今天只有文档的格式警告）。
+        # 记在这里而不是塞进 `answers`：`answers` 是「这个地址答什么数据」，而
+        # 警告跟的是哪一次响应，不是哪一个地址。
+        self.envelope = envelope or {}
         self.environ = {
             "CHEESE_TOPIC": _ROOM,
             "CHEESE_PROJECT": "project-1",
@@ -55,7 +61,7 @@ class Host:
         answer = self.answers.get((plan["method"], plan["path"].split("?")[0]), {})
         if isinstance(answer, Exception):
             raise answer
-        return {"data": answer}
+        return {"data": answer, **self.envelope}
 
     def read_file(self, path):
         self.read.append(path)
@@ -231,7 +237,7 @@ def test_invalid_read_arguments_fail_before_any_request(tool, args):
 # what the agent READ, never something it can state.
 
 
-def _doc_host(files=None):
+def _doc_host(files=None, envelope=None):
     return Host(
         {
             ("GET", f"/topics/{_ROOM}/doc"): {
@@ -241,6 +247,7 @@ def _doc_host(files=None):
             ("PUT", f"/topics/{_ROOM}/doc"): {"doc_version": 8},
         },
         files={"notes/d.md": "# 我写的"} if files is None else files,
+        envelope=envelope,
     )
 
 
@@ -290,6 +297,27 @@ def test_a_refused_set_says_how_to_recover():
 def test_an_empty_doc_says_so_instead_of_answering_nothing():
     host = Host({("GET", f"/topics/{_ROOM}/doc"): None})
     assert "还没有实况文档" in run("cheese_doc_get", {}, host)
+
+
+def test_a_write_back_says_what_does_not_read_like_state():
+    """写入照样成功，格式警告跟着这一次返回回来（#1889 第 3 条）。
+
+    警告不回在别处：改的机会就是现在，而此刻在写字的人只看得见这次工具返回。
+    """
+    host = _doc_host(envelope={"warnings": ["正文 9000 字，超过 6000 字。"]})
+
+    said = run("cheese_doc_set", {"path": "notes/d.md"}, host)
+
+    assert "已更新实况文档（第 8 版）" in said
+    assert "正文 9000 字" in said
+
+
+def test_a_clean_write_back_carries_no_warning():
+    host = _doc_host()
+
+    said = run("cheese_doc_set", {"path": "notes/d.md"}, host)
+
+    assert said == "已更新实况文档（第 8 版）。"
 
 
 def test_a_file_the_machine_cannot_give_writes_nothing():
@@ -486,29 +514,15 @@ def test_a_lock_someone_else_holds_is_a_refusal():
 # --- memory, roster, status and the rest -----------------------------------
 
 
-def test_everyone_outranks_the_private_chats_personal_memory():
-    """私聊里的 `everyone` 写的是文档，不是对这一位的个人记忆。"""
-    personal = {"CHEESE_MEMORY_SCOPE": "personal", "CHEESE_OWNER": "alice"}
-    host = Host(environ=personal)
-    assert "项目总览的实况文档" in run(
-        "cheese_remember", {"fact": "x", "everyone": True}, host
-    )
-    assert host.requests[-1]["body"] == {
-        "content": "x",
-        "topic": _ROOM,
-        "scope": "everyone",
-    }
-    assert "个人记忆" in run("cheese_remember", {"fact": "x"}, host)
-    assert host.requests[-1]["body"] == {
-        "content": "x",
-        "topic": _ROOM,
-        "scope": "user",
-        "owner": "alice",
-    }
+def test_remember_is_gone_and_a_call_to_it_says_so():
+    """`cheese_remember` 整个撤掉：写记忆改成直接写文件（见系统提示的记忆一节）。
 
-
-def test_an_empty_recall_says_it_is_not_proof_of_absence():
-    assert "换个说法" in run("cheese_recall", {"query": "技术栈"}, Host())
+    旧会话里还在调它的调用方，得到的是「没有这个工具」，而不是一句「已记入」——
+    记进旧条目池的事实以后再也不会被注入任何地方，那是最坏的一种丢法。
+    """
+    assert "cheese_remember" not in set(cheese.PLATFORM_TOOLS.names())
+    with pytest.raises(ValueError, match="Unknown platform tool: cheese_remember"):
+        run("cheese_remember", {"fact": "x"}, Host())
 
 
 def test_members_reads_the_current_topic_roster():
@@ -579,7 +593,7 @@ def test_machine_reports_its_session_choice():
         }
     )
     out = run("cheese_machine", {"profile": "device", "device_id": "workstation"}, host)
-    assert "Workstation" in out and "文件不会自动迁移" in out and "点头" not in out
+    assert "Workstation" in out and "推送到分支" in out and "点头" not in out
 
 
 def test_a_page_that_could_not_be_read_says_how_each_rung_failed():

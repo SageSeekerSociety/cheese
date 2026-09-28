@@ -7,13 +7,17 @@
     <p class="t-body c-muted">{{ t('work.teamProfile.notFound') }}</p>
   </v-container>
   <template v-else-if="teamData">
-    <DetailSidebar :team-data="teamData" :team-members-count="teamMembersCount" />
+    <DetailSidebar
+      :team-data="teamData"
+      :team-members-count="teamMembersCount"
+      @updated="(team: Team) => (teamData = team)"
+    />
     <v-container fluid class="pa-0 layout-container">
       <v-row no-gutters class="fill-height">
         <!-- 右侧内容区 -->
         <v-col>
           <v-sheet class="h-100 d-flex flex-column" rounded="lg">
-            <!-- 成员/知识库沿用公共头；项目、算力 tab 自带标题行。 -->
+            <!-- 成员/知识库沿用公共头；项目、工作电脑 tab 自带标题行。 -->
             <div v-if="headerTitle" class="content-header px-6 py-3 d-flex align-center">
               <v-icon :icon="headerIcon" class="mr-2"></v-icon>
               <h2 class="text-h6 font-weight-medium">{{ headerTitle }}</h2>
@@ -31,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-// 小队详情外框：侧栏（项目/成员/知识库/算力）+ 当前 tab。原来的聊天频道已随
+// 小队详情外框：侧栏（项目/成员/知识库/工作电脑）+ 当前 tab。原来的聊天频道已随
 // "都归项目" 的决定退役 —— 会话面是项目里的话题，这里只剩小队的资产。
 import type { Team, User } from '@/types'
 

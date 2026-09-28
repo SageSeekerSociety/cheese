@@ -13,8 +13,11 @@ import {
   listProjects,
   listTopics,
   markTopicRead,
+  restoreTopicAutoTitle,
   setTopicTitle,
+  suggestTopicTitle,
   unarchiveTopic,
+  undoTopicTitle,
   upgradeBlock,
 } from '@/api'
 import { ApiError } from '@/api'
@@ -73,10 +76,30 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   let projectEpoch = 0
   let topicRevision = 0
   const pendingReads = new Map<string, Promise<unknown>>()
-  function readOnce<T>(key: string, read: () => Promise<T>): Promise<T> {
+  const queuedReads = new Map<string, Promise<unknown>>()
+  // One read in flight per key, and at most one queued behind it.
+  //
+  // A caller asking while a read is in flight cannot take that read's answer:
+  // the request left before whatever the caller is reacting to (a room renamed
+  // by the platform, a new unread message) and can answer with things as they
+  // were. So it waits for that read and reads once more; everyone who asks in
+  // the meantime shares that second read.
+  function readLatest<T>(key: string, read: () => Promise<T>): Promise<T> {
     const scopedKey = `${projectEpoch}:${key}`
     const pending = pendingReads.get(scopedKey)
-    if (pending) return pending as Promise<T>
+    if (pending) {
+      let queued = queuedReads.get(scopedKey)
+      if (!queued) {
+        queued = pending
+          .catch(() => undefined)
+          .then(() => {
+            queuedReads.delete(scopedKey)
+            return readLatest(key, read)
+          })
+        queuedReads.set(scopedKey, queued)
+      }
+      return queued as Promise<T>
+    }
     const request = read().finally(() => pendingReads.delete(scopedKey))
     pendingReads.set(scopedKey, request)
     return request
@@ -205,7 +228,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const epoch = projectEpoch
     if (!pid) return
     try {
-      const payload = await readOnce(`members:${pid}`, () => listProjectMembers(pid))
+      const payload = await readLatest(`members:${pid}`, () => listProjectMembers(pid))
       if (epoch === projectEpoch && projectId.value === pid) members.value = payload.data
     } catch {
       // Best-effort; the roster-driven menus just stay empty.
@@ -220,7 +243,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const epoch = projectEpoch
     if (!pid) return
     try {
-      const payload = await readOnce(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
+      const payload = await readLatest(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
       if (epoch === projectEpoch && projectId.value === pid && revision === topicRevision) topics.value = payload.data
     } catch {
       // Best-effort background refresh; ignore.
@@ -257,7 +280,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     void refreshMembers()
     if (projects.value.length === 0) void refreshProjects()
     try {
-      const payload = await readOnce(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
+      const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
       if (epoch !== projectEpoch || projectId.value !== id) return
       if (revision === topicRevision) topics.value = payload.data
     } catch (e) {
@@ -278,7 +301,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (!pid || !me) return
     void refreshPrivateUnread(pid, me)
     try {
-      const map = await readOnce(`unread:${pid}:${me}`, () => getTopicUnread(pid, me))
+      const map = await readLatest(`unread:${pid}:${me}`, () => getTopicUnread(pid, me))
       if (epoch !== projectEpoch || projectId.value !== pid) return
       // The open topic is being read right now — its badge never shows.
       if (activeTopicId.value) delete map[activeTopicId.value]
@@ -303,7 +326,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   async function refreshPrivateUnread(pid: string, me: string) {
     const epoch = projectEpoch
     try {
-      const map = await readOnce(`private-unread:${pid}:${me}`, () => getPrivateUnread(pid, me))
+      const map = await readLatest(`private-unread:${pid}:${me}`, () => getPrivateUnread(pid, me))
       if (epoch !== projectEpoch || projectId.value !== pid) return
       // The DM being read right now never shows a badge on itself.
       if (activeDmPeer.value) delete map[activeDmPeer.value]
@@ -352,16 +375,49 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  async function renameTopic(topicId: string, title: string) {
+  function applyTopic(updated: Topic) {
+    const t = topics.value.find((x) => x.id === updated.id)
+    if (t) {
+      topicRevision += 1
+      t.title = updated.title
+      t.title_source = updated.title_source
+    }
+  }
+
+  // 人起的名字：平台之后不会再自动改它（见后端 topic/naming.py）。
+  async function renameTopic(topicId: string, title: string, suggested = false) {
     try {
-      const updated = await setTopicTitle(topicId, title)
-      const t = topics.value.find((x) => x.id === topicId)
-      if (t) {
-        topicRevision += 1
-        t.title = updated.title
-      }
+      applyTopic(await setTopicTitle(topicId, title, suggested))
     } catch (e) {
       reportError(e, '重命名失败')
+    }
+  }
+
+  /** 智能重命名：只拿一个建议，不改任何东西；人确认后才走 renameTopic。 */
+  async function suggestTitle(topicId: string): Promise<string | null> {
+    try {
+      return (await suggestTopicTitle(topicId)).title
+    } catch (e) {
+      reportError(e, '没能生成标题，稍后再试')
+      return null
+    }
+  }
+
+  /** 撤销房间里那条「标题自动更新为…」：原来的名字回来，并且算人定的。 */
+  async function undoAutoTitle(topicId: string, eventId: string) {
+    try {
+      applyTopic(await undoTopicTitle(topicId, eventId))
+    } catch (e) {
+      reportError(e, '撤销失败')
+    }
+  }
+
+  /** 恢复自动命名：把人定的名字交还给平台，方向变了它会再改。 */
+  async function restoreAutoTitle(topicId: string) {
+    try {
+      applyTopic(await restoreTopicAutoTitle(topicId))
+    } catch (e) {
+      reportError(e, '恢复自动命名失败')
     }
   }
 
@@ -466,6 +522,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     markRead,
     markDmRead,
     renameTopic,
+    suggestTitle,
+    undoAutoTitle,
+    restoreAutoTitle,
     archive,
     unarchive,
     create,

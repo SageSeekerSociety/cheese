@@ -1,7 +1,9 @@
 """私聊的两席在名册上：「谁被点名」由此推出，不需要 @（结论 19、20）。
 
 一间私聊就是项目内名册两席的房间。所以「对面是谁」只有名册一个出处：谁答这间房、
-个人记忆记在谁名下、未读按谁归类、再打开是不是同一间，四个问题问的都是这两席。
+未读按谁归类、再打开是不是同一间，这几个问题问的都是这两席。（「个人记忆记在谁名
+下」曾经也在这里问——写记忆的旧入口连同按名册两席做的授权一起停用了，记忆改成写
+文件，私有一层现在守的是 `memory_files` 那个作用域。）
 
 名册是唯一的出处：同一件事没有第二个地方记着，所以这里的每一条断言都只能是名册答
 出来的。
@@ -123,37 +125,11 @@ def test_a_dm_names_its_teammate_from_the_roster(client):
     assert _who_answers(client, dm) == "reviewer"
 
 
-def test_personal_memory_in_a_dm_is_authorized_by_the_two_seats(client):
-    """个人记忆只在当事人自己的私聊里读写。当事人是谁，名册说了算。"""
-    project_id = _project(client)
-    dm = _dm(client, project_id, "user-1")
-
-    mine = client.post(
-        f"/projects/{project_id}/memory",
-        json={
-            "content": "偏好简洁汇报",
-            "scope": "user",
-            "owner": "user-1",
-            "topic": dm,
-        },
-    )
-    assert mine.status_code == 200, mine.text
-
-    someone_elses = client.post(
-        f"/projects/{project_id}/memory",
-        json={
-            "content": "别人的事",
-            "scope": "user",
-            "owner": "user-2",
-            "topic": dm,
-        },
-    )
-    assert someone_elses.status_code == 403, someone_elses.text
-
-
 def test_a_dm_badge_is_keyed_by_the_other_seat(client):
     """未读按对面那一席归类：人按 handle，队友按 agent: 前缀。"""
     project_id = _project(client)
+    # 徽章图是项目的读路由，先过项目的门 —— 说话的人本来就在名册上。
+    join_project_team(client, project_id, "user-1")
     _add_agent(client, project_id, "reviewer", "评审")
     with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
     with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
@@ -236,7 +212,7 @@ def test_a_dm_has_no_member_list_even_when_its_roster_is_not_two_seats(client):
 
     「这间房有没有名册」和「两席里的人是哪一位」是两个问题。名册解析不到的 @ 只
     是一条 ⚠️；解析得到，正文前 200 字就进了那个人的强提醒
-    （``_notify_mentions``），而他不在这间房里。所以席位不齐的时候不能退：答不出
+    （``announce_mentions``），而他不在这间房里。所以席位不齐的时候不能退：答不出
     对面是谁，可以退回项目默认那位；答错「有没有名册」，是把私聊正文发出去。
 
     席位不齐这件事真实存在：#1380 那次发布的窗口里旧镜像建的私聊一行席位都没有，

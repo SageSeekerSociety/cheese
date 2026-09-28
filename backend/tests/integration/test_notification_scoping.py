@@ -626,6 +626,10 @@ def test_a_scoped_token_for_another_project_cannot_notify_here(client):
 
 def test_topic_unread_refuses_an_unverified_or_mismatched_handle(client):
     pid = _project(client)
+    # alice is on the roster: this test is about WHOSE mailbox is being asked
+    # for, and the route asks the project door first (a non-member gets 403 for
+    # the project before the mailbox question is ever reached).
+    _add_member(client, pid, "alice")
 
     r = client.get(f"/projects/{pid}/topic-unread", params={"handle": "bob"})
     assert r.status_code == 401, r.text
@@ -689,13 +693,9 @@ def test_deleting_a_notification_takes_it_out_of_the_project_side_too(client):
     pid = _project(client)
     _add_member(client, pid, "alice")
     tid = _topic(client, pid, "被@的房间")
-    decision = _notify(
-        client,
-        pid,
-        "alice拍板",
-        target="alice",
-        level="strong",
-        kind="decision_request",
+    # 决策请求落在房间里：话题相关性的「在等我」数的是它，不是那条 @。
+    decision = _notify_in_room(
+        client, pid, tid, "alice拍板", kind="decision_request", target_handle="alice"
     )
     mention = _notify_in_room(
         client, pid, tid, "有人@你", kind="MENTION", target_handle="alice"

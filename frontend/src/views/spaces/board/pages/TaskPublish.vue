@@ -324,9 +324,12 @@ async function confirmPdf() {
         defaultDeadline: 30,
         deadline: null,
         space: id,
-        // 提交表单这一项**建题那两条路都只做占位**（`create_task` 的 docstring：
-        // 「submissionSchema / topics 仅做占位处理，暂不影响提交与评分」），老页那条路
-        // 也照样报它。留着是为了两条路报同一份形状，不是因为它今天管用。
+        // 提交表单这一项**是真会落库的**，不是占位：`_create_task_entity` 的两种
+        // 入参形状（Pydantic 与这里的 dict）都在读它，最后一起走 `replace_schema`
+        // 写进 `task_submission_schema`（`routes/tasks.py` 那行注释：「发布页总会
+        // 带上这张表（至少一个『提交文件』项）。建题时不写，题目的提交页就一个
+        // 输入项都没有」）。详情接口把它读回来给 `Submit.vue` 出表单。老页那条路
+        // （`buildTaskOptions`）报的也是同一份。
         submissionSchema: [{ prompt: '提交文件', type: 'FILE' }],
         // 上面那两颗勾勾中的文件：**每一道**都挂同一份（后端
         // `attach_uploaded_to_tasks`）。没勾就整项不出现，这条路的形状与从前一致。

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Annotated
@@ -40,6 +41,7 @@ from app.domain.task.models import (
     Task,
     TaskAttachment,
     TaskMembership,
+    TaskSubmissionSchemaEntry,
     TaskTagRelation,
 )
 from app.domain.task.repositories import (
@@ -211,6 +213,9 @@ class CreateTaskRequest(BaseModel):
     team_locking_policy: str = Field(default="NO_LOCK", alias="teamLockingPolicy")
     video_url: str | None = Field(default=None, alias="videoUrl")
     topics: list[int] = Field(default_factory=list)
+    submission_schema: list[dict] = Field(
+        default_factory=list, alias="submissionSchema"
+    )
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
@@ -370,6 +375,22 @@ class PatchSubmissionReviewRequest(BaseModel):
     comment: str | None = None
 
 
+_SUBMISSION_SCHEMA_TYPES = {0: "TEXT", 1: "FILE"}
+
+
+def _submission_schema_to_api(
+    entries: Sequence[TaskSubmissionSchemaEntry],
+) -> list[dict]:
+    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。"""
+    return [
+        {
+            "prompt": entry.description,
+            "type": _SUBMISSION_SCHEMA_TYPES.get(entry.type, "TEXT"),
+        }
+        for entry in entries
+    ]
+
+
 def _task_to_api_model(task: Task) -> dict:
     created_at_ms = (
         int(task.created_at.timestamp() * 1000) if task.created_at is not None else 0
@@ -425,6 +446,33 @@ def _task_to_api_model(task: Task) -> dict:
         "publishedAt": published_at_ms,
         "endedAt": ended_at_ms,
     }
+
+
+async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
+    """把这一页每道题的提交表单填进列表响应（就地改）。
+
+    列表默认不带这张表单（``_task_to_api_model`` 报空数组），因为它的调用方
+    很多、多数不关心；审核页那种要显示「提交要求」的读法点名要它。
+    整页一次查询，不按题各发一条。
+    """
+    task_ids = [
+        task_model["id"]
+        for task_model in task_models
+        if isinstance(task_model.get("id"), int)
+    ]
+    if not task_ids:
+        return
+
+    grouped = await TaskSubmissionSchemaRepository(session=db).list_by_task_ids(
+        task_ids
+    )
+    for task_model in task_models:
+        model_id = task_model.get("id")
+        if not isinstance(model_id, int):
+            continue
+        task_model["submissionSchema"] = _submission_schema_to_api(
+            grouped.get(model_id, [])
+        )
 
 
 async def _enrich_task_models(
@@ -906,6 +954,42 @@ async def _ensure_task_visible_for_ordinary_user(
         )
 
 
+async def _ensure_task_readable(
+    *,
+    db,
+    task: Task,
+    auth_user: AuthUserInfo,
+) -> None:
+    """「这道题在这个读者眼里存不存在」—— 题目详情与它的附属读路由共用的那一个判断。
+
+    三道闸，按顺序各答一句话：
+
+    1. **还没过审**（``approved == 2``，且未结项）：对出题者与本版管理员是草稿，
+       对其他人还不该存在 —— 403；
+    2. **看不见**（``TaskVisibilityService.can_view_task``）：题目自己设了可见范围
+       而这个人不在里面 —— 404，与「这道题不存在」同一句话；
+    3. **超出本板上限**（``visibleTaskLimit``）：对普通用户来说它就是看不见了 ——
+       404。
+
+    为什么要抽出来：材料清单（``/attachments``）是拿着 task id 取数的另一条读
+    路由，它只走了第 2 道 —— 而第 2 道在 ``access_control_enabled`` 为假（题目
+    默认值）时对任何登录用户都放行，于是 403 / 404 的题照旧把材料清单交出去。
+    「题看不见，清单也看不见」是同一件事，只该有一处判断。
+    """
+    if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
+        if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+            raise ForbiddenError(
+                "Only space admins or task creator can view unapproved tasks"
+            )
+    if not await TaskVisibilityService(session=db).can_view_task(
+        task=task, user_id=auth_user.user_id
+    ):
+        raise NotFoundError(
+            "Resource task not found", data={"type": "task", "id": task.id}
+        )
+    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
+
+
 async def _create_task_entity(
     *,
     payload: dict | CreateTaskRequest,
@@ -935,6 +1019,7 @@ async def _create_task_entity(
         topics = payload.topics
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
+        submission_schema = payload.submission_schema or []
     else:
         # Dict path — used by PDF-based creation flow
         required_fields = [
@@ -1017,6 +1102,13 @@ async def _create_task_entity(
                     topics.append(int(topic))
                 except (TypeError, ValueError):
                     continue
+
+        schema_raw = payload.get("submissionSchema") or []
+        submission_schema = (
+            [e for e in schema_raw if isinstance(e, dict)]
+            if isinstance(schema_raw, list)
+            else []
+        )
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
@@ -1124,6 +1216,14 @@ async def _create_task_entity(
             db.add(relation)
         await db.flush()
 
+    # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
+    # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
+    if submission_schema:
+        await TaskSubmissionSchemaRepository(session=db).replace_schema(
+            task.id, submission_schema
+        )
+        await db.flush()
+
     return task
 
 
@@ -1139,10 +1239,12 @@ async def create_task(
     """Create a new task (simplified port of Kotlin TaskService.createTask).
 
     NOTE:
-    - 权限：调用者必须是 ``space`` 的管理员/创建者，否则 403 ——
-      从前这条 route 只要求提供 space 并验证 category 归属，任何登录用户都能发题，
-      现在收权了（见 ``_create_task_entity`` 里的 ``may_publish_in_space``）；
-    - submissionSchema / topics 仅做占位处理，暂不影响提交与评分。
+    - 权限：调用者必须是 ``space`` 的成员（在成员名册里，或所有者在管理员关系里），
+      否则 403 —— 从前这条 route 只要求提供 space 并验证 category 归属，任何登录
+      用户都能往别人的板里发题；中间一度收成「只有管理员能发」，重设计后放开为
+      「板里的人都能发、所有者与管理员审」（见 ``_create_task_entity`` 里的
+      ``may_publish_in_space``）；
+    - submissionSchema 与 PATCH 一样写入提交表单；topics 只插关系行，不做校验。
     """
     task = await _create_task_entity(
         payload=payload,
@@ -1160,6 +1262,13 @@ async def create_task(
             user_id=auth_user.user_id,
             attachment_ids=payload.attachment_ids,
         )
+
+    # 写到这里就完了 —— 题目、话题关系行、提交表单、材料都已落库，下面全是读。
+    # 先提交再构造响应：``get_db`` 的提交在 ``yield`` 的退出码里，而那段跑在响应
+    # 发出**之后**（FastAPI 0.137 的 ``request_stack`` 在 ``await response(...)``
+    # 之后才关），不在这里提交，客户端拿到响应时这道题还没落地，紧接着来读它的
+    # 请求就找不到（同 ``spaces.create_space``，合并队列 run 36296605673 实测）。
+    await db.commit()
 
     task_model = _task_to_api_model(task)
     task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[
@@ -1239,8 +1348,15 @@ async def list_task_attachments(
     判据放在服务里，两件事一起算：看得见才给清单（否则 403），能不能下载按
     「出题人 / 板管理员 / 已领取者」。前端只据此决定那行显示「下载」还是
     「领取这道题之后才能下载」，不自己猜。
+
+    「看得见这道题」用的是题目详情那三道闸（``_ensure_task_readable``），不是
+    服务里那条更宽的 ``can_view_task``：后者在题目没开可见范围时对任何登录用户
+    都放行，于是未审批（403）与超出板上限（404）的题会在这里把材料清单交出去。
+    清单不比题更公开 —— 文件名常常就是答案，而「有没有清单」本身就是那道题的
+    探针。
     """
     task = await _require_task(db, task_id)
+    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
     files, links, can_download = await _task_attachment_service(db).list_for_task(
         task=task, user_id=auth_user.user_id
     )
@@ -1300,8 +1416,16 @@ async def download_task_attachment(
     db=Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> Response:
+    """下载一道题的材料。
+
+    先过题目详情那三道闸（``_ensure_task_readable``），再看「你来不来得到」：
+    一道 403 / 404 的题，它的材料连「拿不到（403）」这个回答都不该给 —— 对读者
+    来说这道题不存在，回答里不该有它的 id 之外的任何东西。
+    """
+    task = await _require_task(db, task_id)
+    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
     content, filename, content_type = await _task_attachment_service(db).download(
-        task=await _require_task(db, task_id),
+        task=task,
         user_id=auth_user.user_id,
         attachment_id=attachment_id,
     )
@@ -1368,6 +1492,22 @@ async def preview_task_from_pdf(
     space = await space_repo.get_by_id(space_id)
     if space is None:
         raise NotFoundError("Space not found")
+
+    # 发题的门，与 ``_create_task_entity`` 是同一句、同一处口径
+    # （``may_publish_in_space``：「这个板里的人都能发」）。预览是发题的前半截 ——
+    # `confirm` 那条路逐条落进 `_create_task_entity` 时已经过这道门，只有预览这一
+    # 条漏着：从前只 `require_auth_user`，于是板外的登录用户拿别人的 `spaceId`
+    # （小整数、可枚举）就能让模型为这块板花掉 token，并把 `task_templates` 原样
+    # 读回去（返回体的 `templateUsed`）—— 而同一份模板在 `GET /spaces/{spaceId}`
+    # 上要先 ``_ensure_space_visible`` 才看得到。
+    #
+    # 门放在读 PDF 之前：挡的是「谁可以让这块板干活」，不是「响应里少写几个字段」。
+    # 措辞照抄发题那道门（它自己那句「board manager」与判据的注释在
+    # `space_access.may_publish_in_space` 里已有交代）——两处一句话，不另立说法。
+    if not await may_publish_in_space(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    ):
+        raise ForbiddenError("Only a board manager can publish tasks here")
 
     resolved_category_id = category_id
     if resolved_category_id is None:
@@ -1504,6 +1644,12 @@ async def confirm_publish_task_from_pdf(
             user_id=auth_user.user_id,
             attachment_ids=attachment_ids,
         )
+
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told the drafts are
+    # published could open the review queue on its next request and not find them.
+    # Same reason as the commit in ``create_task``.
+    await db.commit()
 
     task_models = [_task_to_api_model(task) for task in created_tasks]
     if space_id is not None:
@@ -1870,24 +2016,10 @@ async def get_task(
             "Resource task not found", data={"type": "task", "id": task_id}
         )
 
-    # 权限检查：未审批的题只有出题者或本版管理员能看 —— 一道还没过审的
-    # 题在管理员手上是「草稿」，在成员手上不该存在。
-    if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
-        if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-            raise ForbiddenError(
-                "Only space admins or task creator can view unapproved tasks"
-            )
-
-    visibility_service = TaskVisibilityService(session=db)
-    can_view = await visibility_service.can_view_task(
-        task=task,
-        user_id=auth_user.user_id,
-    )
-    if not can_view:
-        raise NotFoundError(
-            "Resource task not found", data={"type": "task", "id": task_id}
-        )
-    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
+    # 权限检查：未审批的题只有出题者与本版管理员能看 —— 一道还没过审的题在他们手上
+    # 是「草稿」，对其他人来说还不该存在。三道闸都在 `_ensure_task_readable` 里，
+    # 题目的附属读路由（材料清单）走同一个判断。
+    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
 
     # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。  # noqa: E501
     participation: dict
@@ -2023,12 +2155,7 @@ async def get_task(
     # Fetch submissionSchema
     schema_repo = TaskSubmissionSchemaRepository(session=db)
     schema_entries = await schema_repo.list_by_task_id(task_id)
-    type_map = {0: "TEXT", 1: "FILE"}
-    submission_schema = [
-        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")}
-        for e in schema_entries
-    ]
-    task_dict["submissionSchema"] = submission_schema
+    task_dict["submissionSchema"] = _submission_schema_to_api(schema_entries)
 
     # Fetch topics if queryTopics is true
     if queryTopics:
@@ -2282,17 +2409,17 @@ async def patch_task(
 
     task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told a task is approved
+    # could open the board on its next request and not find the task there yet.
+    # Same reason as the commit in ``create_task``.
+    await db.commit()
 
     # Fetch submissionSchema for response
     schema_repo = TaskSubmissionSchemaRepository(session=db)
     schema_entries = await schema_repo.list_by_task_id(task.id)
-    type_map = {0: "TEXT", 1: "FILE"}
-    submission_schema = [
-        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")}
-        for e in schema_entries
-    ]
     task_response = _task_to_api_model(task)
-    task_response["submissionSchema"] = submission_schema
+    task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
     task_response = (
         await _enrich_task_models(db, [task_response], space_id=task.space_id)
     )[0]
@@ -2330,6 +2457,7 @@ async def get_tasks(
     queryJoined: bool = Query(default=False),
     queryUserDeadline: bool = Query(default=False),
     queryTopics: bool = Query(default=False),
+    querySubmissionSchema: bool = Query(default=False),
     keywords: str | None = Query(default=None),
     db=Depends(get_db),
     service: TaskService = Depends(get_task_service),
@@ -2413,6 +2541,10 @@ async def get_tasks(
     )
     items = [_task_to_api_model(t) for t in tasks]
     items = await _enrich_task_models(db, items, space_id=space)
+
+    # 提交表单只在被点名时才带（审核页要显示「提交要求」，见函数注释）。
+    if querySubmissionSchema:
+        await _enrich_task_submission_schema(db, items)
 
     # Topic enrichment when requested. The frontend's Task.topics is accessed
     # as `task.topics.length` so populate even when not asked (empty array)
@@ -2775,7 +2907,25 @@ async def get_task_participant(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     db=Depends(get_db),
 ) -> dict:
-    _ = auth_user
+    """一条报名记录，判据与上面的列表版**一模一样**。
+
+    返回体里带着报名者填的 ``email`` / ``phone``（``_membership_to_api_model``），而
+    ``participantId`` 是小整数、可枚举 —— 从前这里那句 ``_ = auth_user`` 等于把报名
+    表交给任何登录用户。单条是列表的一种取法，没有理由比列表更宽：看得了名单的人
+    （``may_teach_task``）才看得到单条。
+
+    403 而不是 404，口径照抄列表版：同一个调用者在同一个资源上，列表版已经用 403
+    说了「你看不了这份名单」；换 404 是另一句话（「这道题上没有这个人」），而调用者
+    早已知道这个人存在。
+    """
+    task_repo = TaskRepository(session=db)
+    task = await task_repo.get_by_id(task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only task owner or space admin can view participants")
+
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
@@ -3055,6 +3205,42 @@ async def patch_task_submission(
     }
 
 
+async def _bind_review_path(
+    *,
+    db,
+    task_id: int,
+    participant_id: int,
+    submission_id: int,
+) -> tuple[Task, TaskMembership]:
+    """Resolve what a review route addresses, binding every path id to one row.
+
+    评审五条路由都挂在
+    ``/{taskId}/participants/{participantId}/submissions/{submissionId}/review``
+    之下，所以 ``submissionId`` 从来不是一个单独的主键：它只能沿着「谁提交的」
+    （membership）和「提交到哪道题」（task）走到。以前把它当全局自由主键，于是
+    任何一个在别的题上通过 ``may_teach_task`` 的人都能给这道题的任意提交打分、改分、
+    删分 —— 拿到一个 id 就够。这里一次判完三段：membership 必须属于 path 的 task、
+    submission 必须属于 path 的 participant，判据只写这一处（五条路由共用，第六个
+    方法照抄这行就不会漏）。
+
+    任何一段不成立都答 404 而不是 403：错配的 id 说明这条路径没指向任何东西，
+    403 会替调用者确认「这个 submissionId 存在」。
+    """
+    task = await TaskRepository(session=db).get_by_id(task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+
+    membership = await TaskMembershipRepository(session=db).get_by_id(participant_id)
+    if membership is None or membership.task_id != task_id:
+        raise NotFoundError.for_resource("participant", participant_id)
+
+    submission = await TaskSubmissionRepository(session=db).get_by_id(submission_id)
+    if submission is None or submission.membership_id != participant_id:
+        raise NotFoundError.for_resource("submission", submission_id)
+
+    return task, membership
+
+
 @router.post(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Create Submission Review",
@@ -3067,15 +3253,15 @@ async def post_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
-    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    _ = participant_id
-
-    task = await task_service.get_task(task_id=task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
+    task, _ = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only the author or a board manager can create review")
 
@@ -3107,9 +3293,34 @@ async def get_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
+    team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
-    _ = (task_id, participant_id, auth_user)
+    """一条评审的读者，就是这条提交的读者。
+
+    以前这里整个函数没有鉴权（只把三个参数 ``_ = (...)`` 丢掉），登录的人知道一个
+    submissionId 就能读到它的成绩与评语。判据照抄同一路径上的提交列表
+    ``GET .../submissions``：出题者与管理员、提交者本人、以及小队提交时的小队成员。
+    """
+    task, membership = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
+
+    is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
+    is_own_participant = (
+        membership.member_id == auth_user.user_id and not membership.is_team
+    )
+    is_team_member = False
+    if membership.is_team:
+        is_team_member = await team_service.is_team_member(
+            membership.member_id, auth_user.user_id
+        )
+    if not is_teacher and not is_own_participant and not is_team_member:
+        raise ForbiddenError("You are not authorized to view this review")
 
     review_dto = await review_service.get_review_dto(submission_id)
 
@@ -3135,15 +3346,15 @@ async def patch_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
-    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    _ = participant_id
-
-    task = await task_service.get_task(task_id=task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
+    task, _ = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only the author or a board manager can update review")
 
@@ -3172,15 +3383,15 @@ async def put_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
-    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    _ = participant_id
-
-    task = await task_service.get_task(task_id=task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
+    task, _ = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only the author or a board manager can update review")
 
@@ -3208,15 +3419,15 @@ async def delete_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
-    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    _ = participant_id
-
-    task = await task_service.get_task(task_id=task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
+    task, _ = await _bind_review_path(
+        db=db,
+        task_id=task_id,
+        participant_id=participant_id,
+        submission_id=submission_id,
+    )
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only the author or a board manager can delete review")
 

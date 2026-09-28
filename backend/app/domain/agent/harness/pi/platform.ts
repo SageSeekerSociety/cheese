@@ -33,12 +33,6 @@ type Manifest = {
   notice: string;
 };
 
-// What a room is published with. Everything else a turn produces stays on the
-// machine, so a turn that never calls this said nothing to anybody. The name is
-// the one the room's system prompt uses on every turn, and the catalog carries
-// it under that name.
-const PUBLISH = "chat_send";
-
 const HOME = process.env.CHEESE_PI_EXTENSION ?? "";
 
 function manifest(): Manifest {
@@ -666,71 +660,21 @@ function announceExits(pi: any, spec: Manifest) {
   });
 }
 
-// --- going quiet ------------------------------------------------------------
-//
-// pi was built for one person watching a terminal, where working IS the
-// visible output. A room sees none of it: tool calls are not published, so an
-// agent that works for forty calls without publishing has, from the room's
-// side, done nothing and said nothing. Nobody can tell that from stuck.
-//
-// The reminder rides on `context` rather than on a message, because it must
-// not accumulate: `context` is a per-call copy pi does not persist, so a
-// session that went quiet ten times does not end up carrying ten notices in
-// its history forever.
-
-// Tool calls, not turns: a single turn can hold twenty of them. Ten is a guess
-// that has to be some number — few enough that a room is not left wondering,
-// many enough that ordinary work (read a file, run the tests, read the failure)
-// is never interrupted to announce itself.
-const QUIET_LIMIT = 10;
-
-function watchForSilence(pi: any, spec: Manifest) {
-  let since = 0;
-  pi.on("turn_end", async (event: any) => {
-    for (const result of event.toolResults ?? []) {
-      // In order, so a publish halfway through a turn clears what came before
-      // it and the calls after it start the count again.
-      const published = result.toolName === PUBLISH;
-      if (published && !result.isError) since = 0;
-      else since += 1;
-    }
-  });
-  pi.on("context", async (event: any) => {
-    if (since < QUIET_LIMIT) return;
-    const body =
-      `你已经连续调用了 ${since} 次工具，其间没有向房间发过消息。` +
-      `房间里的人看不到工具调用，只能看到你用 ${PUBLISH} 发出的内容，` +
-      `所以他们现在无从判断你在做什么、是否还在进行。` +
-      `请先用 ${PUBLISH} 说明当前进展和接下来要做的事，然后继续。`;
-    return {
-      messages: [
-        ...event.messages,
-        {
-          role: "user",
-          content: [{ type: "text", text: `${spec.notice}\n${body}` }],
-        },
-      ],
-    };
-  });
-}
-
 export default function (pi: any) {
   const spec = manifest();
   carryRepositoryContext(pi);
   if (spec.tools.length) registerPlatformTools(pi, spec);
-  if (spec.background && spec.python) {
-    registerBackgroundTools(pi, spec);
-    announceExits(pi, spec);
-  }
-  // Nothing to ask for if the room has no way to publish: a reminder naming a
-  // tool that is not registered is worse than silence.
-  if (spec.tools.some((tool) => tool.name === PUBLISH) && spec.notice) {
-    watchForSilence(pi, spec);
-  }
   else if (spec.unavailable) {
     // Said where a launch failure is read, not swallowed: a room whose platform
     // tools are all missing looks from the inside exactly like a room that was
     // never given any, and the agent will conclude it must shell out.
     process.stderr.write(`[cheese] no platform tools: ${spec.unavailable}\n`);
   }
+  if (spec.background && spec.python) {
+    registerBackgroundTools(pi, spec);
+    announceExits(pi, spec);
+  }
+  // No reminder to publish lives here. A room that has heard nothing for a while
+  // is reminded by the platform (ChatService.remind_silent_turns), which steers
+  // the same notice into a running turn on every harness.
 }

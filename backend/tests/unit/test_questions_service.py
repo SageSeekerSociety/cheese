@@ -1335,7 +1335,7 @@ class TestGetInvitation:
         )
         a_repo.has_user_answered_question.return_value = True
 
-        result = await svc.get_invitation(invitation_id=3)
+        result = await svc.get_invitation(question_id=10, invitation_id=3)
 
         assert result["id"] == 3
         assert result["user"]["nickname"] == "bob"
@@ -1349,7 +1349,7 @@ class TestGetInvitation:
         p_repo.get_profile_by_user_id.return_value = None
         a_repo.has_user_answered_question.return_value = False
 
-        result = await svc.get_invitation(invitation_id=3)
+        result = await svc.get_invitation(question_id=10, invitation_id=3)
 
         assert result["user"] is None
         assert result["is_answered"] is False
@@ -1360,7 +1360,23 @@ class TestGetInvitation:
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError, match="Invitation not found"):
-            await svc.get_invitation(invitation_id=999)
+            await svc.get_invitation(question_id=10, invitation_id=999)
+
+    @pytest.mark.anyio
+    async def test_a_wrong_parent_question_is_not_found(self):
+        """邀请挂在别的题上 —— 父级 id 是地址的一部分，对不上就是 404。
+
+        404（NotFoundError）而不是 403：错配的 id 不指向任何东西，403 会承认
+        「这张邀请存在，只是不给你看」。这条也顺手钉住「读都别读」—— 拒在查
+        profile 之前，错配的地址不该换来一次对别人的档案的读。
+        """
+        svc, repo, _q_repo, p_repo, _a_repo = _make_invitation_service()
+        repo.get_by_id.return_value = _invitation(id=3, question_id=10, user_id=99)
+
+        with pytest.raises(NotFoundError, match="Invitation not found"):
+            await svc.get_invitation(question_id=7, invitation_id=3)
+
+        p_repo.get_profile_by_user_id.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_without_answer_repo(self):
@@ -1374,7 +1390,7 @@ class TestGetInvitation:
         repo.get_by_id.return_value = inv
         p_repo.get_profile_by_user_id.return_value = _profile(user_id=99)
 
-        result = await svc.get_invitation(invitation_id=3)
+        result = await svc.get_invitation(question_id=10, invitation_id=3)
 
         # is_answered stays at default False when no answer_repo
         assert result["is_answered"] is False
@@ -1393,7 +1409,7 @@ class TestDeleteInvitation:
         repo.get_by_id.return_value = inv
         q_repo.get_by_id.return_value = _question(id=10, created_by_id=50)
 
-        await svc.delete_invitation(invitation_id=3, user_id=50)
+        await svc.delete_invitation(question_id=10, invitation_id=3, user_id=50)
 
         repo.hard_delete.assert_awaited_once_with(inv)
 
@@ -1403,7 +1419,7 @@ class TestDeleteInvitation:
         repo.get_by_id.return_value = None
 
         with pytest.raises(BadRequestError, match="Invitation not found"):
-            await svc.delete_invitation(invitation_id=999, user_id=50)
+            await svc.delete_invitation(question_id=10, invitation_id=999, user_id=50)
 
     @pytest.mark.anyio
     async def test_not_question_owner(self):
@@ -1413,7 +1429,7 @@ class TestDeleteInvitation:
         q_repo.get_by_id.return_value = _question(id=10, created_by_id=50)
 
         with pytest.raises(ForbiddenError, match="Only the question owner"):
-            await svc.delete_invitation(invitation_id=3, user_id=77)
+            await svc.delete_invitation(question_id=10, invitation_id=3, user_id=77)
 
     @pytest.mark.anyio
     async def test_question_deleted_forbidden(self):
@@ -1423,7 +1439,34 @@ class TestDeleteInvitation:
         q_repo.get_by_id.return_value = None  # question was deleted
 
         with pytest.raises(ForbiddenError, match="Only the question owner"):
-            await svc.delete_invitation(invitation_id=3, user_id=50)
+            await svc.delete_invitation(question_id=10, invitation_id=3, user_id=50)
+
+    @pytest.mark.anyio
+    async def test_a_wrong_parent_question_is_answered_like_a_missing_one(self):
+        """拿另一道题的路径撤不掉这张邀请，而且答得和「它根本不存在」一字不差。
+
+        以前这里是**真的删掉了**：只按 `invitation_id` 取行，再看那行自己的题的
+        主人是不是调用者，URL 里写的是哪道题完全不参与。所以走错题的路径一样能
+        撤回，只要那张邀请挂在调用者自己的某道题上。
+
+        绑上父级还不够：DELETE 缺行本来就回 400，若错配回 404，两个答案的差别
+        本身就是「这张邀请存在（在别的地方）」的探针 —— 而绑父级要关掉的正是
+        这件事。所以这里连响应体都比。
+        """
+        svc, repo, q_repo, _p_repo, _a_repo = _make_invitation_service()
+        repo.get_by_id.return_value = _invitation(id=3, question_id=10)
+
+        with pytest.raises(BadRequestError) as wrong:
+            await svc.delete_invitation(question_id=7, invitation_id=3, user_id=50)
+
+        repo.get_by_id.return_value = None
+        with pytest.raises(BadRequestError) as nowhere:
+            await svc.delete_invitation(question_id=7, invitation_id=3, user_id=50)
+
+        assert wrong.value.to_response_body() == nowhere.value.to_response_body()
+
+        repo.hard_delete.assert_not_awaited()
+        q_repo.get_by_id.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

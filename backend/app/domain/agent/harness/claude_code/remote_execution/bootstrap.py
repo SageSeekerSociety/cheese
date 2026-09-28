@@ -37,6 +37,18 @@ PREVIOUS_PLATFORM_DIR = ".claude"
 CHECKOUT_DIR = "room"
 
 
+def process_servers(config):
+    """The `.mcp.json` servers this machine runs: the stdio ones. An entry with
+    a `url` is a remote server, which the platform calls itself with the
+    project's credential (`app.domain.remote_mcp`) — not something to start
+    here, and not something to bridge to here."""
+    return [
+        name
+        for name, spec in config["mcp_servers"].items()
+        if not (isinstance(spec, dict) and isinstance(spec.get("url"), str))
+    ]
+
+
 class UpgradeDeferred(Exception):
     def __init__(self, info):
         self.info = info
@@ -479,7 +491,9 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                         runtime["request"](state, "configure", {"env": refreshed})
                         info.update(
                             state=str(state),
-                            mcp_servers=list(previous.get("mcp_servers", {})),
+                            mcp_servers=process_servers(
+                                {"mcp_servers": previous.get("mcp_servers", {})}
+                            ),
                             upgrade_pending=True,
                             desired_release=str(release),
                         )
@@ -563,7 +577,7 @@ def configure_idle(payload):
                     json.dumps(
                         {
                             **info,
-                            "mcp_servers": list(config["mcp_servers"]),
+                            "mcp_servers": process_servers(config),
                             "state": str(state),
                         }
                     )
@@ -620,7 +634,7 @@ def configure_idle(payload):
                 {
                     **info,
                     "workspace": str(work),
-                    "mcp_servers": list(config["mcp_servers"]),
+                    "mcp_servers": process_servers(config),
                     "state": str(state),
                 }
             )

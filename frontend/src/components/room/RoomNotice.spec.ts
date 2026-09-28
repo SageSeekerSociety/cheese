@@ -85,3 +85,96 @@ describe('本轮改动的文件', () => {
     expect(container.textContent).toContain('另 8 个文件')
   })
 })
+
+describe('平台自动改了标题', () => {
+  const renamed = {
+    id: 'rename-1',
+    topic_id: 't',
+    kind: 'event',
+    author_type: 'platform',
+    author: 'system',
+    content: '标题自动更新为「Valkey 连接池耗尽」（原为「dev 外网访问慢」）',
+    turn_id: null,
+    created_at: '2026-09-26T08:00:00Z',
+    meta: { action: 'title', who: 'platform', from: 'dev 外网访问慢', to: 'Valkey 连接池耗尽' },
+  } as unknown as Block
+
+  it('行尾是撤销，按下去带着这一行自己的 id', async () => {
+    const [row] = collapseNotices([renamed])
+    const view = render(RoomNotice as Component, {
+      props: {
+        block: row.block,
+        notice: row.notice!,
+        run: row.run,
+        name: '芝士',
+        time: '16:05',
+        agentName: '芝士',
+        refs: { mentionNames: {}, topicTitles: {} },
+      },
+      global: { plugins: [vuetify] },
+    })
+    expect(view.container.textContent).toContain('标题自动更新为「Valkey 连接池耗尽」')
+    await fireEvent.click(view.getByRole('button', { name: '撤销' }))
+    expect(view.emitted('undo-title')).toEqual([['rename-1']])
+    expect(view.emitted('open-resource')).toBeUndefined()
+  })
+})
+
+describe('芝士起草、等人确认的那一行', () => {
+  function proposed(meta: Record<string, unknown>): Block {
+    return {
+      id: 'p1',
+      topic_id: 't',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
+      content: '芝士起草了「每周进展」，要你确认后才会执行',
+      created_at: '2026-09-27T08:00:00Z',
+      meta: { severity: 'info', who: 'cheese', detail: '名称：每周进展', detail_label: '待确认的配置', ...meta },
+    } as unknown as Block
+  }
+
+  async function mountWithRouter(block: Block) {
+    const { createMemoryHistory, createRouter } = await import('vue-router')
+    const stub = { template: '<div />' }
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: stub },
+        { name: 'project-routines', path: '/projects/:projectId/routines', component: stub },
+        { name: 'project-skills', path: '/projects/:projectId/skills', component: stub },
+      ],
+    })
+    const [row] = collapseNotices([block])
+    return render(RoomNotice as Component, {
+      props: {
+        block: row.block,
+        notice: row.notice!,
+        run: row.run,
+        name: '芝士',
+        time: '16:05',
+        agentName: '芝士',
+        refs: { mentionNames: {}, topicTitles: {} },
+        projectId: 'proj-1',
+      },
+      global: { plugins: [vuetify, router] },
+    })
+  }
+
+  it('起草的规则：一颗「去确认」直接通到那一条', async () => {
+    const { getByTestId } = await mountWithRouter(proposed({ event_type: 'routine_proposed', routine_id: 'r-9' }))
+    const link = getByTestId('notice-confirm')
+    expect(link.textContent?.trim()).toBe('去确认')
+    expect(link.getAttribute('href')).toBe('/projects/proj-1/routines?routine=r-9')
+  })
+
+  it('整理的工作方法：通到工作方法页的那一条', async () => {
+    const { getByTestId } = await mountWithRouter(proposed({ event_type: 'skill_proposed', skill_id: 's-3' }))
+    expect(getByTestId('notice-confirm').getAttribute('href')).toBe('/projects/proj-1/skills?skill=s-3')
+  })
+
+  it('别的平台提示不带这颗按钮', async () => {
+    const { queryByTestId } = await mountWithRouter(proposed({ event_type: 'routine_result' }))
+    expect(queryByTestId('notice-confirm')).toBeNull()
+  })
+})

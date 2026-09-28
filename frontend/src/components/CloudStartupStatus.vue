@@ -14,9 +14,9 @@ const finished = computed(() => ['ready', 'failed'].includes(String(lifecycle.va
 const latest = computed(() => props.events.at(-1)!)
 const steps = computed(() => props.events.filter((event) => event.meta?.event_type === 'cloud_startup'))
 const title = computed(() => {
-  if (lifecycle.value?.meta?.state === 'ready') return '运行环境已就绪'
+  if (lifecycle.value?.meta?.state === 'ready') return '工作电脑已就绪'
   if (lifecycle.value?.meta?.state === 'failed') return lifecycle.value.content
-  return steps.value.at(-1)?.content || '正在准备运行环境'
+  return steps.value.at(-1)?.content || '正在准备工作电脑'
 })
 const end = computed(() => (finished.value ? Date.parse(lifecycle.value!.created_at) : now.value))
 function duration(start: string, until = end.value) {
@@ -78,7 +78,7 @@ onBeforeUnmount(() => clearInterval(timer))
 </template>
 
 <style scoped>
-/* 和它身边的事件行同一档：13px、--muted。它说的是运行环境在做什么，不是谁的话。 */
+/* 和它身边的事件行同一档：13px、--muted。它说的是工作电脑在做什么，不是谁的话。 */
 .cloud-startup {
   font-size: 13px;
   line-height: var(--lh-13);

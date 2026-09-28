@@ -22,6 +22,8 @@ vi.mock('../../api', async () => {
 
 import PanelSite from './PanelSite.vue'
 
+import { setLocale } from '@/i18n'
+
 const Site = PanelSite as unknown as Component
 
 const topic = {
@@ -60,6 +62,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 动词和时长是中文界面上的那一套；测试环境起步是英文。
+  setLocale('zh-CN')
   getTranscript.mockReset()
 })
 

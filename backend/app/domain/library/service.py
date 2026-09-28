@@ -72,6 +72,42 @@ def read_room_text_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) ->
     return text_payload(_safe_path(room_files_root(project_id, room_id), path), path)
 
 
+def room_file_exists(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bool:
+    return _safe_path(room_files_root(project_id, room_id), path).is_file()
+
+
+def _revision_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
+    """Where a room's saved states live, by content hash — beside the room
+    files and never inside them, so no room path can name one."""
+    root = (
+        Path(settings.workspace_root)
+        / ".room-file-history"
+        / str(project_id)
+        / str(room_id)
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def write_revision_blob(project_id: uuid.UUID, room_id: uuid.UUID, data: bytes) -> str:
+    digest = hashlib.sha256(data).hexdigest()
+    target = _revision_root(project_id, room_id) / digest
+    if not target.is_file():
+        temporary = target.with_name(f"{digest}.{uuid.uuid4().hex}")
+        temporary.write_bytes(data)
+        temporary.replace(target)
+    return digest
+
+
+def read_revision_blob(project_id: uuid.UUID, room_id: uuid.UUID, digest: str) -> bytes:
+    if len(digest) != 64 or not all(c in "0123456789abcdef" for c in digest):
+        raise ValidationError("不是一个修订")
+    target = _revision_root(project_id, room_id) / digest
+    if not target.is_file():
+        raise NotFoundError("这一版的内容不在了")
+    return target.read_bytes()
+
+
 # 带着房间走的那种地址（`uploads/<随机串>/<名字>`）只属于贴进来的那一份：它没有
 # 名字，也就没有第二个房间会引用它。
 

@@ -173,15 +173,10 @@ async function becomeOnThisPage(page: import("@playwright/test").Page, username:
   return session.accessToken;
 }
 
-// 串行：这一份要**现建空间**再当场审过，两个用例并发跑同一套栈时，后一个的
-// `POST /admin/spaces/{id}/review` 会拿到 404 —— 单独跑各自都绿。这不是本页的问题
-// （同一个空间在同一台栈上来回建，本来就该排队），所以这里显式串起来，
-// 不去和一个属于建空间那条路的现象缠斗。
-//
 // 时限放宽到 3 分钟：第一次进题目详情要让 vite **现编**那一大片依赖树
 // （tiptap / prism / 聊天），冷启动时可以慢到几十秒（见 playwright.config.ts
 // 里 timeout 那段注释），默认那 60 秒不够「冷编译一次 + 后面几步断言」。
-test.describe.configure({ mode: "serial", timeout: 180_000 });
+test.describe.configure({ timeout: 180_000 });
 
 test.describe("空间新界面（真路由）", () => {
   test("所有者打开 /spaces/:id/board，看到真数据", async ({ page }) => {
@@ -258,6 +253,12 @@ test.describe("空间新界面（真路由）", () => {
     await page.goto(`/spaces/${spaceId}/board/analytics`);
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board$`));
     await expect(page.getByRole("heading", { name: "总览" })).toHaveCount(0);
+
+    // 但「出题目」是有的：这块板任何人都能出题，成员发出来的题进待审队列，
+    // 由所有者或管理员审。少一颗按钮就等于这条要求没落地。
+    await expect(page.getByRole("link", { name: "出题目" })).toBeVisible();
+    await page.getByRole("link", { name: "出题目" }).click();
+    await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/publish$`));
   });
 
   test("点一道题在新外壳里打开详情，导航还在；老地址也还开着", async ({ page }) => {
@@ -466,9 +467,8 @@ test.describe("空间新界面（真路由）", () => {
 
     // 解析这一步要跑大模型，而这套栈里没有推理后端（stub-gateway 只答 LLM 网关那几条
     // 管理接口，真发出去只会拿到「LLM is not configured」）。所以**只拦这一步**，答案
-    // 照真接口的形状给（`{code,message,data:{drafts,templateUsed,tokenUsed,attachments}}`，
-    // 草稿那几项就是 `PdfTaskDraftData`、附件的 id 是上面真传上来的那两行）；确认发布、
-    // 审核队列、题目详情、下载那道门，页面上其余每一样都还是真栈在答。
+    // 照真接口的形状给（`{code,message,data:{drafts,templateUsed,tokenUsed}}`，草稿那几
+    // 项就是 `PdfTaskDraftData`）；确认发布、审核队列、页面上其余每一样都还是真栈在答。
     let gotPreview = "";
     let previewType = "";
     await page.route("**/api/tasks/publish/from-pdf/preview", async (route) => {

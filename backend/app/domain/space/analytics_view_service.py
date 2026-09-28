@@ -12,8 +12,6 @@ in bulk and aggregates in-memory. For demo-scale data this is simple and fast.
 
 from __future__ import annotations
 
-import csv
-import io
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -21,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.csv_export import csv_row
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.space.repositories import SpaceCategoryRepository, SpaceRepository
@@ -336,10 +335,10 @@ class SpaceAnalyticsViewService:
             "Failed",
             "Task Status",
         ]
-        lines = [self._csv_row(*header)]
+        lines = [csv_row(*header)]
         for task in data["tasks"]:
             lines.append(
-                self._csv_row(
+                csv_row(
                     task["taskId"],
                     task["taskName"],
                     task["category"]["name"],
@@ -392,10 +391,10 @@ class SpaceAnalyticsViewService:
             "Success Rate",
             "Last Task Created At",
         ]
-        lines = [self._csv_row(*header)]
+        lines = [csv_row(*header)]
         for p in data["publishers"]:
             lines.append(
-                self._csv_row(
+                csv_row(
                     p["publisherId"],
                     p["publisherName"],
                     p["taskCount"],
@@ -542,7 +541,7 @@ class SpaceAnalyticsViewService:
             "Is Team",
             "Join Date",
         ]
-        lines = [self._csv_row(*header)]
+        lines = [csv_row(*header)]
         for m in memberships:
             task = ctx.tasks_by_id.get(m.task_id)
             if task is None:
@@ -571,7 +570,7 @@ class SpaceAnalyticsViewService:
             approval_status = APPROVED_REVERSE_MAP.get(m.approved, "NONE")
             task_rank = task.rank if task.rank is not None else ""
             lines.append(
-                self._csv_row(
+                csv_row(
                     task.id,
                     task.name,
                     category_name,
@@ -911,8 +910,10 @@ class SpaceAnalyticsViewService:
             approved_count = sum(
                 1 for m in members if m.approved == APPROVED_MAP["APPROVED"]
             )
+            # Same judgement as the overview: a member has submitted iff a
+            # submission row exists (see _compute_entity_metrics).
             submitted_count = sum(
-                1 for m in members if m.completion_status in SUBMITTED_STATUSES
+                1 for m in members if ctx.submissions_by_membership_id.get(m.id)
             )
             success_count = sum(
                 1 for m in members if m.completion_status == SUCCESS_STATUS
@@ -949,7 +950,12 @@ class SpaceAnalyticsViewService:
         pending_approval = sum(1 for m in members if m.approved == APPROVED_MAP["NONE"])
         approved = sum(1 for m in members if m.approved == APPROVED_MAP["APPROVED"])
         rejected = sum(1 for m in members if m.approved == APPROVED_MAP["DISAPPROVED"])
-        submitted = sum(1 for m in members if m.completion_status in SUBMITTED_STATUSES)
+        # Same judgement as the overview / publishers table: a member has
+        # submitted iff a submission row exists (not completion_status, which
+        # nothing advances server-side).
+        submitted = sum(
+            1 for m in members if ctx.submissions_by_membership_id.get(m.id)
+        )
 
         # pendingReview: a membership counts once if it has submissions
         # but none of them has been reviewed yet.
@@ -1196,14 +1202,6 @@ class SpaceAnalyticsViewService:
             "approvedStudentCount": approved_student_count,
             "successfulStudentCount": successful_student_count,
         }
-
-    @staticmethod
-    def _csv_row(*values) -> str:
-        """Render a single CSV row with RFC 4180 quoting."""
-        buf = io.StringIO()
-        writer = csv.writer(buf, lineterminator="")
-        writer.writerow(["" if v is None else v for v in values])
-        return buf.getvalue()
 
     @staticmethod
     def _format_local_datetime_ms(ms: int | None) -> str:

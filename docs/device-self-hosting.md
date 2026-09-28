@@ -94,7 +94,7 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
 
 4. **同一条命令接着上线**。CLI 轮询拿到 token，写入 `~/.config/cheese/config.json`，随即拨出 `WS /connector/agent`，用 durable token 鉴权。握手成功后这台机器在 `device_hub` 里标记为在线。`cheesehost link auto-connect` 可让它开机自动重连。**这一步不需要 sudo**：service 装在当前账户下（Linux 顺带 `loginctl enable-linger`，macOS 是 LaunchAgent），细节和它的边界见 §0。
 
-5. **绑定项目/团队**。在「我的设备」页或各小队的「算力」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
+5. **绑定项目/团队**。在「我的设备」页或各团队的「工作电脑」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
 
 6. **话题选 device 算力**。两种姿势：
    - **全局**：不配 Cloud 的部署，整个算力池就是 DeviceChannel，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
@@ -211,6 +211,6 @@ cheesehost link connect https://<你的站点>/connector    # 先登录：打印
 # 人浏览器打开 approve_url → 登录 → 批准（可命名/绑项目）
 # 同一条命令拿到 token 后装用户级 service 上线——全程不需要 sudo
 
-# 平台侧：在小队「算力」页把设备绑给团队（或「我的设备」绑项目）
-# 话题选 device 算力（不配 Cloud 时就是默认，也可以用 compute_profile/provider_id 显式选）
+# 平台侧：在团队「工作电脑」页把设备绑给团队（或「我的设备」绑项目）
+# 话题选 device 算力（不配 Cloud 时就是默认，也可以在房间的工作电脑选择里显式选）
 ```

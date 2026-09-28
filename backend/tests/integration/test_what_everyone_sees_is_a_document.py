@@ -4,8 +4,15 @@
 而它偏偏又是「大家都该知道的事」唯一的落点——于是项目的共识住在一个只有模型读
 得到的地方。文档三样都有，所以那一路的去向是项目总览那个房间的实况文档。
 
-这一组守两头：写进去的那一条，人在总览文档里读得到；别的房间跑一轮时，总览文档
-整份在它的提示词里——共享池能做到的第二件事，文档也做到了。
+写记忆的那个旧入口已经整个停用（话题「记忆机制照搬CC」）：先是 `cheese_remember
+everyone` 往这份文档里追加的那一路——它把总览写成了只增不减的观察清单——接着是
+`cheese_remember` 本身，它写的条目池已经不再注入任何地方。这一组守的是还成立的那
+几头：停用要明说、并且说清该去哪写；别的房间跑一轮时，总览文档在它的提示词里；
+迁移把旧项目池落进这份文档。
+
+文档本身现在分五块，只有「项目是什么」是写的（#1889 第 1 条）：总览房间的一轮拿
+得到 ②~⑤（从话题、决策卡、里程碑现拼），别的房间只拿到 ①。手抄进正文的副本谁都
+读不到——写在别块的字一个字都不该进提示词。
 """
 
 import importlib.util
@@ -16,10 +23,14 @@ from typing import TYPE_CHECKING
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.memory import redundant
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import chat_ws_url, post_project, registered
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_project,
+    registered,
+    session_auth_headers,
+)
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -49,183 +60,59 @@ def _overview_room(client, project_id: str) -> str:
     return client.get(f"/projects/{project_id}").json()["data"]["root_topic_id"]
 
 
+def _say(client, topic_id: str, text: str = "@芝士 现在什么状态") -> None:
+    """在这一轮里说一句话，等它跑完。提示词落在 `stub_hooks` 上。"""
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": text})
+        while True:
+            if ws.receive_json()["type"] in ("done", "error"):
+                break
+
+
 def _doc_text(client, topic_id: str) -> str:
     doc = client.get(f"/topics/{topic_id}/doc").json()["data"]
     return (doc or {}).get("content", "")
 
 
-def _write_for_everyone(client, project_id: str, topic_id: str, fact: str) -> None:
-    r = client.post(
-        f"/projects/{project_id}/memory",
-        json={"content": fact, "topic": topic_id, "scope": "everyone"},
-    )
-    assert r.status_code == 200, r.text
+def test_writing_memory_through_this_endpoint_is_retired_and_says_where(client):
+    """写记忆的旧入口整个停用了，而且明说停在哪、该去哪写，不是静默吞掉。
 
-
-def _project_agent(client, project_id: str) -> str:
-    return client.get(f"/projects/{project_id}/agents").json()["data"]["data"][0][
-        "handle"
-    ]
-
-
-def _checkout_holding(monkeypatch, *lines: dict) -> None:
-    async def search(terms: list[str]) -> list[dict]:
-        return [
-            line
-            for line in lines
-            if any(term.lower() in str(line["text"]).lower() for term in terms)
-        ]
-
-    monkeypatch.setattr(
-        redundant,
-        "agent_checkout_search",
-        lambda db, room, agent_handle, harness: search,
-    )
-
-
-def test_a_fact_for_everyone_is_readable_in_the_project_overview_document(client):
-    """芝士 写下一条「所有人都该知道」的事实，人打开总览文档就看得到。"""
+    `scope="everyone"` 那一路先停：它把总览文档写成了一份只增不减的观察清单
+    （话题「记忆机制照搬CC」）。剩下的写入面随后一起收掉——`cheese_remember` 写
+    的是条目池，而条目池已经不再注入任何地方，所以「已记入」是一句谎话。旧会话
+    里的调用方读到的这句要说清记忆现在是什么形状：`~/.cheese/memory/` 下的
+    文件。总览文档只写「项目是什么」。
+    """
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
 
-    _write_for_everyone(client, project_id, topic_id, FACT)
-
-    assert FACT in _doc_text(client, overview)
-
-
-def test_a_request_that_names_no_place_writes_nothing_into_that_document(client):
-    """不说自己在哪儿的那一路，一个字也写不进大家共看的文档。
-
-    这个端点的授权全在「你在哪个话题」那一句上；不带 `topic`，谁都没被解析、
-    没被授权过。落在记忆上时那只是自己池子里的一行，落在文档上就是往所有人共看
-    的那一份里添字，还在总览房间留一条「编辑了文档」。
-    """
-    project_id, _ = _project_and_room(client)
-    overview = _overview_room(client, project_id)
-
-    refused = client.post(
-        f"/projects/{project_id}/memory",
-        json={"content": FACT, "scope": "everyone"},
-    )
-
-    assert refused.status_code == 403, refused.text
+    for body in (
+        {"content": FACT, "topic": topic_id, "scope": "everyone"},
+        {"content": FACT, "scope": "everyone"},
+        {"content": FACT, "topic": topic_id},
+        {"content": FACT},
+    ):
+        refused = client.post(f"/projects/{project_id}/memory", json=body)
+        assert refused.status_code == 422, refused.text
+        assert "停用" in refused.text
+        assert "~/.cheese/memory/" in refused.text
     assert FACT not in _doc_text(client, overview)
 
 
-def test_it_is_a_document_and_not_a_memory(client):
-    """同一条事实不会同时又是一条记忆。
-
-    两份的那一刻起，改文档的人和整理记忆的芝士各改各的，而谁也不知道另一份还在。
-    """
-    project_id, topic_id = _project_and_room(client)
-    _write_for_everyone(client, project_id, topic_id, FACT)
-
-    hits = client.post(
-        f"/projects/{project_id}/memory/search",
-        json={"query": "中期答辩 demo", "topic": topic_id},
-    ).json()["data"]["hits"]
-    assert hits == []
-    assert client.get(f"/memory?project_id={project_id}").json()["data"]["data"] == []
-
-
-def test_the_overview_document_keeps_what_was_already_written_in_it(client):
-    """追加，不改写：人写在总览文档里的字，芝士添一条观察时一个字都不动。"""
+def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_hooks):
+    """别的房间跑一轮，总览那一份在提示词里——而它自己的文档是另一份。"""
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
     client.put(
         f"/topics/{overview}/doc",
-        json={
-            "content": "## 目标\n做课程推荐系统",
-            "author": "user-1",
-            "expected_version": 0,
-        },
+        json={"content": FACT, "author": "user-1", "expected_version": 0},
     )
 
-    _write_for_everyone(client, project_id, topic_id, FACT)
-
-    text = _doc_text(client, overview)
-    assert "做课程推荐系统" in text
-    assert FACT in text
-
-
-def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_hooks):
-    """别的房间跑一轮，总览那一份整份在提示词里——而它自己的文档是另一份。"""
-    project_id, topic_id = _project_and_room(client)
-    _write_for_everyone(client, project_id, topic_id, FACT)
-
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 现在什么状态"})
-        while True:
-            if ws.receive_json()["type"] in ("done", "error"):
-                break
+    _say(client, topic_id)
 
     prompt = stub_hooks.last_system_prompt
     assert prompt is not None
     assert FACT in prompt
-
-
-def test_every_fact_lands_in_one_section_and_carries_who_wrote_it(client):
-    """文档里看得见是谁说的，而且这几条聚在自己那一节里。
-
-    裸追加到末尾的一条，落在文档最后一个标题底下——总览文档最后一节叫「数据」，
-    读的人就把它当成数据那一节的内容；而正文里不署名，谁说的就只剩「最近一次编辑
-    这份文档的人」，下一个人一改就没了。
-    """
-    project_id, topic_id = _project_and_room(client)
-    overview = _overview_room(client, project_id)
-    agent = _project_agent(client, project_id)
-    client.put(
-        f"/topics/{overview}/doc",
-        json={
-            "content": "## 目标\n做课程推荐系统\n\n## 数据\n教务处脱敏导出",
-            "author": "user-1",
-            "expected_version": 0,
-        },
-    )
-
-    _write_for_everyone(client, project_id, topic_id, FACT)
-    _write_for_everyone(client, project_id, topic_id, "前端交给张衡，后端交给李四")
-
-    text = _doc_text(client, overview)
-    for fact in (FACT, "前端交给张衡，后端交给李四"):
-        assert f"{fact} —— @{agent}" in text
-    # 两条在同一节里往下排，不是一条一个标题——被观察切碎的文档没人再往里写字。
-    section = [line for line in text.split("\n") if line.startswith("## ")]
-    assert len(section) == len(set(section)) == 3
-    # 人自己写的那一节到此为止，芝士 的观察不挂在它底下。
-    assert text.index("教务处脱敏导出") < text.index(FACT)
-
-
-def test_a_fact_the_repo_already_carries_still_goes_into_the_document(
-    client, monkeypatch
-):
-    """repo 里写着，不是不让所有人知道的理由。
-
-    「只记 repo 里查不到的」是记忆那一侧的判据（结论 61）——记忆是一份会过期的副
-    本。文档不是副本，它是人和所有芝士共看的那一份状态，而项目定了什么、谁负责什
-    么写在哪个文件里，正是它该说的话。两条一起测：同一条事实，记忆那一路拒，文档
-    这一路收。
-    """
-    project_id, topic_id = _project_and_room(client)
-    overview = _overview_room(client, project_id)
-    fact = "前端构建用 pnpm，不要用 npm"
-    _checkout_holding(
-        monkeypatch,
-        {
-            "path": "docs/frontend.md",
-            "line": 12,
-            "text": "前端构建用 pnpm，不要用 npm。",
-        },
-    )
-
-    refused = client.post(
-        f"/projects/{project_id}/memory",
-        json={"content": fact, "topic": topic_id},
-    )
-    assert refused.status_code == 422
-
-    _write_for_everyone(client, project_id, topic_id, fact)
-    assert fact in _doc_text(client, overview)
 
 
 def _move_statements() -> tuple[str, ...]:
@@ -363,12 +250,160 @@ def test_the_overview_room_does_not_read_its_own_document_twice(client, stub_hoo
         json={"content": FACT, "author": "user-1", "expected_version": 0},
     )
 
-    with client.websocket_connect(chat_ws_url(overview, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 现在什么状态"})
-        while True:
-            if ws.receive_json()["type"] in ("done", "error"):
-                break
+    _say(client, overview)
 
     prompt = stub_hooks.last_system_prompt
     assert prompt is not None
     assert prompt.count(FACT) == 1
+
+
+DECISION = "分页用 cursor，不用 offset"
+
+
+def test_the_overview_room_reads_the_other_four_blocks_from_the_data(
+    client, stub_hooks
+):
+    """总览房间那一轮，②~⑤ 现拼：话题、决策卡、里程碑都不在文档正文里。
+
+    这一块有个前提：注入的那一份必须**不是**文档原文。人写进正文的副本，和平台
+    从结构化数据拼的那一份，是两个版本；一旦拼接，读到的人分不出哪个算数。
+    """
+    project_id, topic_id = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    client.post(f"/topics/{topic_id}/decision", json={"decision": DECISION})
+    client.post(f"/projects/{project_id}/milestones", json={"title": "中期答辩"})
+    client.put(
+        f"/topics/{overview}/doc",
+        json={
+            "content": "## 项目是什么\n\n给高中生做算法课。\n\n"
+            "## 最近决策\n\n- 这一条是手抄的，不算数。\n",
+            "author": "user-1",
+            "expected_version": 0,
+        },
+    )
+
+    _say(client, overview)
+
+    prompt = stub_hooks.last_system_prompt
+    assert prompt is not None
+    assert "给高中生做算法课" in prompt
+    for heading in ("## 现在在做什么", "## 最近决策", "## 里程碑"):
+        assert heading in prompt
+    assert "干活的房间" in prompt
+    assert DECISION in prompt
+    assert "中期答辩" in prompt
+    # 手抄进正文的那一份谁都读不到：写在那儿等于没写。
+    assert "这一条是手抄的" not in prompt
+
+
+def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
+    """别的房间只注入 ①，②~⑤ 要哪一块自己查——不必每轮往每间房塞项目快照。"""
+    project_id, topic_id = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    client.post(f"/topics/{topic_id}/decision", json={"decision": DECISION})
+    client.put(
+        f"/topics/{overview}/doc",
+        json={
+            "content": "## 项目是什么\n\n给高中生做算法课。\n",
+            "author": "user-1",
+            "expected_version": 0,
+        },
+    )
+
+    _say(client, topic_id)
+
+    prompt = stub_hooks.last_system_prompt
+    assert prompt is not None
+    assert "给高中生做算法课" in prompt
+    assert "## 最近决策" not in prompt
+    assert DECISION not in prompt
+
+
+def test_the_panel_gets_the_same_four_blocks_as_structured_data(client):
+    """前端那一栏读的是同一份 ②~⑤，只是给的是点得动的条目。
+
+    提示词那一份 markdown 是给模型读的；这一份每条要带上自己的去处（话题 id /
+    决策卡 id / 里程碑 id）和一句话结论。人看总览时读到的东西，和芝士那一轮读到
+    的是同一次取数（`TopicService.overview_auto_data`）——两个读者，一份来源。
+    """
+    project_id, topic_id = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    client.post(f"/topics/{topic_id}/decision", json={"decision": DECISION})
+    client.post(f"/projects/{project_id}/milestones", json={"title": "中期答辩"})
+    ended = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "做完的房间", "created_by": "user-1"},
+    ).json()["data"]["id"]
+    archived = client.post(
+        f"/topics/{ended}/archive",
+        json={"by": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
+    assert archived.status_code == 200, archived.text
+
+    body = client.get(f"/topics/{overview}/overview").json()["data"]
+    assert body["root_topic_id"] == overview
+    # 块按 ②③④⑤ 排，空块整块不出现（同提示词那一份）。
+    assert [b["key"] for b in body["blocks"]] == [
+        "active_topics",
+        "decisions",
+        "milestones",
+        "closed_topics",
+    ]
+    blocks = {b["key"]: b for b in body["blocks"]}
+    assert [b["title"] for b in body["blocks"]] == [
+        "现在在做什么",
+        "最近决策",
+        "里程碑",
+        "已结束的话题",
+    ]
+
+    # ② 活跃话题：去处是那个房间，状态是它最新的那张卡（还没开活）。
+    (active,) = blocks["active_topics"]["items"]
+    assert active["kind"] == "topic"
+    assert active["topic_id"] == topic_id
+    assert active["title"] == "干活的房间"
+    assert active["status"] == "还没开活"
+    assert active["owner"] is None
+
+    # ③ 最近决策：一条决策卡，去哪儿看全文是它所在的话题。
+    (decision,) = blocks["decisions"]["items"]
+    assert decision["kind"] == "decision"
+    assert decision["text"] == DECISION
+    assert decision["topic_id"] == topic_id
+    assert decision["topic_title"] == "干活的房间"
+    assert decision["block_id"]
+
+    # ④ 里程碑：状态给原值（界面按它上点），日期没定就是没有。
+    (milestone,) = blocks["milestones"]["items"]
+    assert milestone["kind"] == "milestone"
+    assert milestone["title"] == "中期答辩"
+    assert milestone["status"] == "upcoming"
+    assert milestone["due"] is None
+
+    # ⑤ 已结束的话题：归档的那一间落在这里，不在 ②。
+    (closed,) = blocks["closed_topics"]["items"]
+    assert closed["kind"] == "topic"
+    assert closed["topic_id"] == ended
+    assert closed["title"] == "做完的房间"
+
+
+def test_only_the_overview_room_has_an_overview(client):
+    """别的房间名下没有这么一件东西，是 404 而不是一个空壳。
+
+    总览是项目级的：一个干活的房间读它自己的实况文档，没有人从那里看项目全局。
+    给它拼一份出来，等于凭空多出一个「这个房间的总览」。
+    """
+    project_id, topic_id = _project_and_room(client)
+    resp = client.get(f"/topics/{topic_id}/overview")
+    assert resp.status_code == 404, resp.text
+
+
+def test_a_stranger_cannot_read_the_overview(client):
+    """权限和读总览文档一样：认得出来是谁，还得在名册上。"""
+    project_id, _ = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    resp = client.get(
+        f"/topics/{overview}/overview", headers=session_auth_headers("stranger")
+    )
+    assert resp.status_code == 403, resp.text

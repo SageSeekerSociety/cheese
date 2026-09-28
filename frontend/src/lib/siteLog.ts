@@ -9,7 +9,9 @@
 
 import type { Block } from '../cx_types'
 
-import { toolLabel } from './toolLabels'
+import { TOOL_LABELS, toolLabel } from './toolLabels'
+
+import { t } from '@/i18n'
 
 /** Collapsed height for a long entry, in lines of the 现场 monospace type. */
 export const SITE_CLAMP_LINES = 12
@@ -135,25 +137,16 @@ export function groupByTurn<T extends TurnLike>(blocks: T[]): SiteTurn<T>[] {
 
 /** 一轮用了多久，写成组头上的那一小截。 */
 export function formatSpan(seconds: number): string {
-  if (seconds < 60) return `${seconds} 秒`
+  if (seconds < 60) return t('work.room.site.span.seconds', { s: seconds })
   const minutes = Math.floor(seconds / 60)
-  const rest = seconds % 60
-  if (minutes < 60) return `${minutes} 分 ${String(rest).padStart(2, '0')} 秒`
-  return `${Math.floor(minutes / 60)} 小时 ${String(minutes % 60).padStart(2, '0')} 分`
+  const rest = String(seconds % 60).padStart(2, '0')
+  if (minutes < 60) return t('work.room.site.span.minutes', { m: minutes, s: rest })
+  return t('work.room.site.span.hours', { h: Math.floor(minutes / 60), m: String(minutes % 60).padStart(2, '0') })
 }
 
 // 工具事件那一行：backend stores "verb\npreview"; legacy rows are "🔧 toolname".
 // Split into the action verb and an optional argument preview. 现场和卡片详情都按
-// 这一份翻译，同一步操作在两处写成同一个词。
-const LEGACY_VERB: Record<string, string> = {
-  update_doc: '更新文档',
-  remember: '记入记忆',
-  notify: '发送通知',
-  request_accept: '提交审阅',
-  pin_milestone: '添加里程碑',
-  write_file: '写入文件',
-  record_decision: '记录决策',
-}
+// 这一份翻译，同一步操作在两处写成同一个词。legacy 行的工具名也查同一张表。
 
 // Meta-first rendering: an event block with structured meta ({tool, arg}) is
 // translated at DISPLAY time via the full toolLabels table — so a verb missing
@@ -167,12 +160,12 @@ function frontendError(b: Block): boolean {
 }
 
 export function eventVerb(b: Block): string {
-  if (frontendError(b)) return '前端报错'
+  if (frontendError(b)) return t('work.room.site.frontendError')
   // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
   // tool 仍然如实记着真正跑的是哪个工具。
   if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
   const first = (b.content.split('\n')[0] || '').replace(/^🔧\s*/, '')
-  return LEGACY_VERB[first] ?? first
+  return Object.hasOwn(TOOL_LABELS, first) ? toolLabel(first) : first
 }
 
 export function eventArg(b: Block): string {

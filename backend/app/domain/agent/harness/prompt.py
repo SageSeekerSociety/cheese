@@ -26,6 +26,8 @@ import re
 import uuid
 
 from app.domain.block.models import BlockKind
+from app.domain.memory.files_store import MemoryIndex
+from app.domain.memory.instructions import MEMORY_INSTRUCTIONS, memory_block
 from app.domain.task.teaching import TeachingContext
 
 _BARE_PATH_RE = re.compile(
@@ -113,14 +115,10 @@ TOPIC_DOC_CHAR_BUDGET = 6000
 _DOC_HEADING_RE = re.compile(r"(?m)^#{1,6} .*$")
 _TEMP_SECTION_RE = re.compile(r"临时|TODO|待办|草稿|暂定|scratch|todo", re.IGNORECASE)
 _PROGRESS_SECTION_RE = re.compile(r"进展|进度|状态|日志|记录|下一步|本周|历史")
-#: 机器写进总览的两段共享事实：丢它们等于静默删掉全项目共同状态，钉死最后才动。
-_KEEP_LAST_SECTIONS = ("大家都该知道的", "项目记忆（由记忆整理迁入）")
 
 
 def _doc_drop_class(label: str) -> int:
     """0 = 先丢（临时/待办），1 = 次之（进展/记录），2 = 最后才动。"""
-    if any(name in label for name in _KEEP_LAST_SECTIONS):
-        return 2
     if _TEMP_SECTION_RE.search(label):
         return 0
     if _PROGRESS_SECTION_RE.search(label):
@@ -192,10 +190,39 @@ ALWAYS_PUSH = (
 #: 时关掉（见各 harness 的 ``behaviour.py``），所以什么时候用它要在这里说一次。
 TODO_WRITE = (
     "## 步骤清单（todo_write）\n"
-    "多步的活（大约三步以上）开工时先用 `todo_write` 写下计划，房间里正在进行的那条"
-    "消息会原地显示这份清单。同一时刻只让一项 in_progress；做完一项就再写一次，把它"
-    "标成 completed、把下一项标成 in_progress。每次都传完整的清单。简单的问答不用写。"
+    "多步的活（大约三步以上）开工时先用 `todo_write` 写下计划，它在房间里发成你的一条"
+    "清单消息；之后每次写都是改这同一条。同一时刻只让一项 in_progress；做完一项就再写"
+    "一次，把它标成 completed、把下一项标成 in_progress。每次都传完整的清单。做完时"
+    "再写一次，所有项标 completed，用 result 写一句落下了什么。有人提了新的请求，就带"
+    " new=true 另起一条。简单的问答不用写。"
     "清单只说做到哪了，要说的话照样用 `chat_send` 发。"
+)
+
+
+#: 提问也是平台工具：`cheese_ask` 的问题带按钮出现在对话里，答案下一轮带回。各
+#: harness 自带的提问工具大多已关掉，关不掉的只剩 Codex 的
+#: `request_user_input_async`（issue #1880：由模型目录决定，没有配置开关）。它
+#: 不卡住这一轮，但问出去的话是普通输出，只进现场、不进对话，房间里没人看得到，
+#: 所以只能在这里说清楚。
+ASK_ONLY_CHEESE_ASK = (
+    "## 向人提问\n"
+    "要人回答或拍板时只用 `cheese_ask`。你自带的其他提问工具（例如 "
+    "`request_user_input_async`）不要用：它问出去的话只落在现场，房间里没人看得到，"
+    "也不会有人回答。"
+)
+
+
+#: 实况文档的五块模板：有文档时和文档还空着时说的是同一套，所以只写一份。
+DOC_FORM = (
+    "写它的时候按这五块组织：\n"
+    "- **目标** —— 这个话题要解决什么，≤3 句。\n"
+    "- **当前结论** —— 每条都必须是「现在成立的状态」。变了就**替换**，"
+    "不要追加一条「更正」或「补充」，让读者自己去推断哪一版有效。\n"
+    "- **进行中与下一步** —— 每条带负责人。\n"
+    "- **待决** —— 需要人拍板的问题。\n"
+    "- **相关**（平台自动）—— 任务卡、PR、决策卡、子话题，不用手写。\n"
+    "文档记状态，不记过程：聊天里说过什么、命令跑出什么，留在聊天和任务卡"
+    "里，这里只留此刻成立的那几条和指回证据的引用。\n"
 )
 
 
@@ -203,7 +230,7 @@ def build_system_prompt(
     base: str,
     skills: str,
     doc: str | None,
-    memories: list[str],
+    memory: MemoryIndex | None,
     role: str | None = None,
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
@@ -213,9 +240,18 @@ def build_system_prompt(
     session_opening: list[str] | None = None,
     stage_guide: str | None = None,
     teaching: TeachingContext | None = None,
-    memories_omitted: int = 0,
-    memories_core_omitted: int = 0,
+    keeps_memory: bool = False,
 ) -> str:
+    """拼这一轮的 system prompt。
+
+    ``keeps_memory`` 说的是**这一轮跑的 harness 会不会把记忆文件对账回平台**
+    （``AgentRuntime.keeps_memory``，调用方按当前 runtime 传入）。默认不注：记忆
+    那一段（说明书 + L1 索引）讲的是「写进 `~/.cheese/memory/`，下一轮平台的
+    那一份里有它」，而 codex、pi 没有这条回路——照说明书写下的文件永远同步不回
+    来，agent 却以为自己在写项目记忆。索引同理：正文铺不下去，注入的也就只是一
+    串指向不存在的文件的指针。巡检和一页纸总结那两轮自己也传 False：它们不是某
+    个人的会话，那两段说的是会话里怎么写记忆，跟它们做的事无关。
+    """
     parts = [base]
     if untitled:
         # First in the prompt on purpose: naming the topic is the FIRST action
@@ -232,6 +268,7 @@ def build_system_prompt(
         )
     parts.append(ALWAYS_PUSH)
     parts.append(TODO_WRITE)
+    parts.append(ASK_ONLY_CHEESE_ASK)
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if teaching is not None and (section := teaching_section(teaching)):
@@ -339,14 +376,28 @@ def build_system_prompt(
         )
     if overview_doc:
         # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目
-        # 有一份总览文档，每间房间都读到同一份，谁改了都留痕。所以「所有人都该
-        # 知道」的事实写这里，而不是记进记忆——记忆是这一个实例自己的观察。
+        # 有一份总览文档，每间房间都读到同一份，谁改了都留痕。
+        #
+        # 这一份**分五块，只有第一块是写的**（#1889 第 1 条）。②~⑤ 由平台从结构
+        # 化数据现拼，进不了文档正文：手抄一份进去，读的人读到的不是它，而抄的人
+        # 会以为事情办完了。哪一块谁写必须在这里说清——不说清，写的人只会照旧把
+        # 手抄的结论贴回来。
+        #
+        # 传进来的那一段已经按这个结构拼好了（`chat._project_overview`）：① 从总览
+        # 文档里取，②~⑤ 只在总览房间拼。帽子仍然戴在整段上，防的是一份还没按新
+        # 结构写过的老总览——那时 ① 取不到，注入的就是全文。
         parts.append(
-            "## 项目总览的实况文档（全项目共看的那一份，不是本话题的）\n"
-            "这是这个项目所有人和所有芝士共同看的那一份状态：项目在做什么、"
-            "定了什么、谁在负责。**你观察到「所有人都该知道」的事实，写进它**"
-            "（`cheese_remember` 带 `everyone`），不要记进只有你自己读得到的"
-            "记忆池。\n"
+            "## 项目总览（全项目共看的那一份，不是本话题的）\n"
+            "项目所有人和所有芝士共同看的就是它：项目是什么、现在在做什么、定了"
+            "什么、谁在负责。它分五块，**只有第一块是写的**：\n"
+            "- **① 项目是什么** —— 你和人写，正文只有这一块（到总览房间用 "
+            "`cheese_doc_set` 整份更新根话题的实况文档）：目标、范围（做 / 不做）、"
+            "对外口径，≤1500 字。它很少变，变了才改。\n"
+            "- **② 现在在做什么 / ③ 最近决策 / ④ 里程碑 / ⑤ 已结束的话题** —— "
+            "**平台从结构化数据现拼，不在文档正文里**。要改就改源头：话题本身、"
+            "`cheese_decision`、`cheese_milestone`、结掉的那张卡。往正文里抄一份，"
+            "谁都不会读到它（本话题里没拼给你的那几块，自己查：`/topics`、"
+            "`/projects/<本项目 id>/decisions`、`milestones`）。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,
@@ -354,43 +405,47 @@ def build_system_prompt(
             )
         )
     if doc:
+        # 话题文档的模板（#1889 第 2 条）。这五块不是格式洁癖：读者是**没参与过
+        # 讨论的人**和下一轮的自己，「现在是什么情况」得一眼看得到。流水账、追加
+        # 的「更正」、粘贴的原文，都要后来的人自己推断哪一版有效——那不叫文档，
+        # 叫过程。
+        #
+        # 写入时的检查（`doc_checks`）只提醒不拦，所以这里说一次就够；两处说的是
+        # 同一套要求，不另立一份声明。
         parts.append(
             "## 当前话题的实况文档（这是最新状态；用户可能编辑了它，"
             "请按它继续工作，并在状态变化时用 `cheese_doc_set` 更新它）\n"
+            + DOC_FORM
             + fit_doc_to_budget(
                 doc,
                 TOPIC_DOC_CHAR_BUDGET,
                 full_read_hint="用 `cheese_doc_get` 读全文",
             )
         )
-    if memories or memories_omitted:
-        block = "## 项目记忆（你已知道的事实，回答时可引用）"
-        if memories:
-            block += "\n\n### 核心记忆（每轮都在场，与本轮说什么无关）\n" + "\n".join(
-                f"- {chipify_paths(m)}" for m in memories
+    elif doc is not None:
+        # 房间有文档位、只是还空着（`""`，区别于没有文档这回事的 None）。只在
+        # 上面那一支里说「维护它」，等于把第一版留给模型自己悟：Claude 会悟，
+        # Kimi / MiMo 近 30 天在本项目里一篇都没建过——文档谁来维护就取决于
+        # 坐进房间的是哪个模型。所以空的时候也说，而且说清「什么时候」。
+        parts.append(
+            "## 当前话题的实况文档（还没有）\n"
+            "本话题还没有实况文档。它是给没参与讨论的人和下一轮的你看的，"
+            "由在这个话题里干活的 AI 队友维护——不论你是哪个队友。"
+            "等话题的目标或第一条结论清楚了（通常就在本轮），先 `cheese_doc_get`、"
+            "再用 `cheese_doc_set` 建第一版；之后状态变化时更新它。"
+            "只是寒暄或一句话就答完的问题不用建。\n" + DOC_FORM
+        )
+    if keeps_memory:
+        # 记忆这一段是有意整份在场的（照搬 CC）：四类记忆是什么、什么不该写、写前
+        # 查重、用前核对——它是这个机制的说明书，而 agent 只有读了它才知道第一条
+        # 记忆该写成什么样。索引（L1）跟着它走，正文留在会话目录里让它自己读。
+        parts.append(MEMORY_INSTRUCTIONS)
+        if memory is not None and not memory.is_empty():
+            index_text = "\n\n".join(
+                f"### {section.label}（`{section.prefix}/`）\n{section.text}"
+                for section in memory.sections
             )
-        if memories_omitted:
-            # 没注入必须可见: the pool's size is stated even though its contents
-            # are not. A reader who cannot tell "nothing was stored" from "this
-            # is not everything" stops trusting memory entirely — and stops
-            # asking for the part it can still get. This line is the only entry
-            # to that part, so it says the number and how to reach it.
-            block += (
-                f"\n\n> 📚 记忆池里另有 **{memories_omitted} 条**，"
-                "**不会自动出现在这里**——核心记忆之外的都要自己查。"
-                "开工前、话题拐弯时、要用到某条旧约定或踩过的坑时，"
-                "用 `cheese_recall` 查一次。"
-                "**一次没查到不等于没有**：换个说法、或只用其中一两个关键词再试一次。"
-            )
-        if memories_core_omitted:
-            # Core is the layer that is supposed to be unconditional. If even
-            # it had to be cut, saying so is the only way it gets pruned.
-            block += (
-                f"\n\n> ⚠️ **核心记忆超预算了**：有 {memories_core_omitted} 条核心记忆"
-                "没放下。核心记忆本该每轮全在场，出现这种情况说明它被当成普通记忆写"
-                "了——挑几条降级成普通记忆（`cheese_remember` 不带 `core`）。"
-            )
-        parts.append(block)
+            parts.append(memory_block(index_text, memory.warnings))
     if session_opening:
         # 会话开场，不是本轮：这两条一次写对就一直对（机器多大不会变；上次的清单
         # 是给「不在场的那一轮」看的，会话活着的时候它自己的历史就是答案）。会变的

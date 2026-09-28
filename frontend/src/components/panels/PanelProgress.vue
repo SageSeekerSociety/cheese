@@ -12,6 +12,8 @@ import { computed, ref, watch } from 'vue'
 
 import { getProgress } from '../../api'
 
+import TodoChecklist from './TodoChecklist.vue'
+
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -34,34 +36,19 @@ async function load() {
   }
   try {
     const progress = await getProgress(tid)
-    if (props.topic?.id === tid) items.value = progress.items ?? []
+    items.value = progress.items ?? []
   } catch {
     // 进度是背景信息，拿不到就不画，不为它报错。
   }
 }
 
-watch(
-  () => props.topic?.id,
-  () => {
-    items.value = []
-    open.value = false
-    void load()
-  },
-  { immediate: true }
-)
+void load()
 watch(
   () => props.refreshTick,
   () => void load()
 )
 
 const done = computed(() => items.value.filter((i) => i.status === 'completed').length)
-
-// 三态用填充程度递进，一眼可分：空心圈 = 还没做，半填充 = 做到这里，带勾 = 做完了。
-function icon(status: TodoItem['status']): string {
-  if (status === 'completed') return 'mdi-check-circle'
-  if (status === 'in_progress') return 'mdi-circle-slice-4'
-  return 'mdi-circle-outline'
-}
 </script>
 
 <template>
@@ -73,12 +60,9 @@ function icon(status: TodoItem['status']): string {
         {{ t('work.room.progress.tally', { done, total: items.length }) }}
       </span>
     </button>
-    <ul v-if="open" class="panel-progress__list">
-      <li v-for="item in items" :key="item.id" class="progress-item" :class="`progress-item--${item.status}`">
-        <v-icon class="progress-item__mark" size="14">{{ icon(item.status) }}</v-icon>
-        <span>{{ item.subject }}</span>
-      </li>
-    </ul>
+    <div v-if="open" class="panel-progress__list">
+      <TodoChecklist :items="items" />
+    </div>
   </section>
 </template>
 
@@ -113,34 +97,6 @@ function icon(status: TodoItem['status']): string {
   font-variant-numeric: tabular-nums;
 }
 .panel-progress__list {
-  margin: 0;
   padding: 0 12px 10px 34px;
-  list-style: none;
-}
-.progress-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 2px 0;
-  color: var(--text);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-/* 图标盒子没有文字基线，整行顶对齐，再把图标压到第一行文字的中线上。 */
-.progress-item__mark {
-  flex: none;
-  margin-top: 2px;
-  color: var(--faint);
-}
-/* 做到这一项：字加深加粗，不用琥珀——这里不是主操作，也不是导航位置。 */
-.progress-item--in_progress {
-  color: var(--ink);
-  font-weight: 600;
-}
-.progress-item--in_progress .progress-item__mark {
-  color: var(--muted);
-}
-.progress-item--completed {
-  color: var(--faint);
 }
 </style>

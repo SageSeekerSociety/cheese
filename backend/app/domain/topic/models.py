@@ -61,6 +61,24 @@ class TopicKind(enum.StrEnum):
     subtopic = "subtopic"  # 历史值: task 的前身
 
 
+# What an unnamed room is called until someone — usually the platform — names it.
+PLACEHOLDER_TITLE = "新话题"
+
+
+class TitleSource(enum.StrEnum):
+    """Who decided a room's current title — and so whether the platform may
+    still change it (app/domain/topic/naming.py).
+
+    ``human`` is final: a person typed it (the sidebar), asked 芝士 for it
+    (`cheese_title`), confirmed a suggestion, or undid a rename. Nothing
+    automatic writes over it until a person hands the room back.
+    """
+
+    placeholder = "placeholder"  # still 「新话题」
+    auto = "auto"  # the platform named it
+    human = "human"
+
+
 class TopicRole(enum.StrEnum):
     """A member's role in a topic's roster (话题成员名册, fusion-design §3).
 
@@ -84,6 +102,26 @@ class Topic(UuidPk, Timestamps, Base):
         ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True
     )
     title: Mapped[str] = mapped_column(String(300))
+    # Title bookkeeping for the platform's naming (app/domain/topic/naming.py).
+    # `title_version` moves on every rename, by anyone: an automatic rename is
+    # written only if it still matches the version it was computed from, so a
+    # person who renames mid-generation always wins.
+    title_source: Mapped[TitleSource] = mapped_column(
+        Enum(TitleSource, native_enum=False, length=16),
+        default=TitleSource.placeholder,
+        server_default=TitleSource.placeholder.value,
+    )
+    title_version: Mapped[int] = mapped_column(default=0, server_default="0")
+    # When the platform last judged this title (named it, or decided to keep
+    # it); later messages are what a follow-up judgement reads.
+    title_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The title has been re-read against the first turn's conversation, not
+    # just the opening message. Later changes are follow-ups.
+    title_calibrated: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
+    )
     kind: Mapped[TopicKind] = mapped_column(
         Enum(TopicKind, native_enum=False, length=16), default=TopicKind.topic
     )
@@ -91,15 +129,13 @@ class Topic(UuidPk, Timestamps, Base):
         Enum(TopicStatus, native_enum=False, length=16),
         default=TopicStatus.active,
     )
-    # Default compute pool for the sessions started in this room. NULL = explicit
-    # project default, then the deployment default. It is a default and not a
-    # placement: where a conversation actually runs is its own session's business
-    # (`agent_sessions.runtime_location` / `.work_lease`). Switchable only until
-    # the room has run — i.e. until a session here has a resume token — after
-    # which it is frozen, matching the device-affinity boundary.
-    compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # A room keeps its script revision when project settings change.
     environment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The compute choice (`ComputeChoice`) every new agent session in this room
+    # starts on. NULL = the project default. Written in full the first time the
+    # room runs, so a later session gets what the first one got. It is a default
+    # and not a placement: where a conversation actually runs is its own
+    # session's business (`agent_sessions.execution_request` / `.work_lease`).
     compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
@@ -132,6 +168,32 @@ class Topic(UuidPk, Timestamps, Base):
     )
     resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     cleanup_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
+
+class TopicTitle(UuidPk, Base):
+    """Every title a room has had, newest last, and who gave it.
+
+    Read to undo an automatic rename, to find a room by a name it used to have,
+    and to see how often automatic names get overridden by people.
+    """
+
+    __tablename__ = "topic_titles"
+
+    topic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE")
+    )
+    title: Mapped[str] = mapped_column(String(300))
+    source: Mapped[TitleSource] = mapped_column(
+        Enum(TitleSource, native_enum=False, length=16)
+    )
+    # name | calibrate | follow | rename | suggest | undo | restore
+    reason: Mapped[str] = mapped_column(String(16))
+    by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+    __table_args__ = (Index("ix_topic_titles_topic_created", "topic_id", "created_at"),)
 
 
 class RoomCleanup(UuidPk, Timestamps, Base):

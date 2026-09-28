@@ -13,7 +13,9 @@ from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
+    CHECKLIST_META_KEY,
     CONSUMED_TURN_META_KEY,
+    EDITED_AT_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
     PROMPTED_TURN_META_KEY,
     AuthorType,
@@ -389,6 +391,39 @@ class BlockRepository:
         await self._session.flush()
         return block
 
+    async def replace_content(
+        self, block: Block, content: str, *, checklist: dict | None = None
+    ) -> Block:
+        """Replace a message's text and stamp when that happened. The checklist
+        it carries is replaced along with it, or dropped: text written some
+        other way no longer says what the old list said."""
+        meta = {
+            key: value
+            for key, value in (block.meta or {}).items()
+            if key != CHECKLIST_META_KEY
+        }
+        if checklist is not None:
+            meta[CHECKLIST_META_KEY] = checklist
+        block.content = content
+        block.meta = {**meta, EDITED_AT_META_KEY: datetime.now(UTC).isoformat()}
+        await self._session.flush()
+        return block
+
+    async def current_checklist(self, room_id: uuid.UUID, author: str) -> Block | None:
+        """The newest checklist message ``author`` posted on the room's own line."""
+        stmt = (
+            select(Block)
+            .where(
+                *self._in_place(room_id, None),
+                Block.kind == BlockKind.message,
+                Block.author == author,
+                Block.meta[CHECKLIST_META_KEY].as_string().is_not(None),
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(1)
+        )
+        return (await self._session.scalars(stmt)).first()
+
     async def update_node(
         self, block: Block, *, node_type: str, struct_order: float
     ) -> Block:
@@ -414,6 +449,30 @@ class BlockRepository:
             .order_by(Block.created_at)
         )
         return (await self._session.scalars(stmt)).first()
+
+    async def doc_roots(self, topic_ids: list[uuid.UUID]) -> dict[uuid.UUID, Block]:
+        """Several rooms' living docs at once, keyed by room id.
+
+        总览要列每个活跃话题的「当前结论」：一间房一次往返，而这是每一轮都要拼
+        的东西，170 间房就是 170 次。只取房间自己那一份（``task_id`` 为空）——
+        线程的文档是那张卡的东西，不是房间的状态。
+        """
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(Block)
+            .where(
+                Block.topic_id.in_(topic_ids),
+                Block.task_id.is_(None),
+                Block.kind == BlockKind.doc,
+            )
+            .order_by(Block.created_at)
+        )
+        roots: dict[uuid.UUID, Block] = {}
+        for block in (await self._session.scalars(stmt)).all():
+            # Oldest first, so the first one seen is the room's canonical doc.
+            roots.setdefault(block.topic_id, block)
+        return roots
 
     async def list_doc_nodes(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None

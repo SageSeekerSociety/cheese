@@ -4,8 +4,8 @@ The session lives in a runner on the session host (``runner.py``) that outlives
 this process; ``DrivenRuntime`` reads its journal from a cursor, one poller per
 room, and ``recover`` finds it again after a restart. What is Claude Code's here
 is the protocol's vocabulary: a message said mid-turn is ``steer``, the receipt
-is the echo rather than the write, and the room's controls are control requests
-written to the session's stdin.
+is the echo rather than the write, and what the room asks of the session is a
+control request written to its stdin.
 """
 
 import logging
@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.backlog import (
     ClaudeCodeBacklog,
@@ -27,29 +28,19 @@ from app.domain.agent.harness.driven.runtime import DrivenRuntime
 
 logger = logging.getLogger(__name__)
 
-#: The controls a room may send a session. Each is a ``control_request`` on the
-#: session's stdin (`scripts/remote_execution/headless_contract.py` checks them
-#: against the pinned build), except the file ones the room's executor answers
+#: What a room may ask a session. Each only reads: the room watches its session
+#: and never steers it. Each is a ``control_request`` on the session's stdin
+#: (`scripts/remote_execution/headless_contract.py` checks them against the
+#: pinned build), except the file ones the room's executor answers
 #: (``routes/agent_control.py``).
 CONTROLS = (
     "initialize",
-    "interrupt",
-    "background_tasks",
-    "stop_task",
-    "set_model",
-    "set_permission_mode",
-    "set_max_thinking_tokens",
-    "apply_flag_settings",
-    "rename_session",
     "file_suggestions",
     "read_file",
     "get_workspace_diff",
     "get_context_usage",
     "get_usage",
     "mcp_status",
-    "mcp_authenticate",
-    "mcp_oauth_callback_url",
-    "mcp_reconnect",
 )
 
 
@@ -79,6 +70,10 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
     controls = CONTROLS
     # The files live on the executor, so it answers these.
     executor_controls = frozenset(REMOTE_CONTROLS)
+    # 会话把记忆存成会话机上 `~/.cheese/memory/` 下的文件（文件工具在那里读写，
+    # 见 `remote_execution/proxy.js` 的 `memoryPath`），runner 对得了账（下面那个
+    # `memory()`），所以系统提示词里的「记忆」那一段对它说的是真话。
+    keeps_memory = True
 
     def conversation(self, handle: Handle) -> str:
         return handle.session_id
@@ -103,7 +98,24 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             announce=announce,
             receipts=receipt,
             pulse=self.pulse,
+            memory=self._memory_hook(handle.session.topic_id),
         )
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """One memory reconciliation, over the runner that owns this session.
+
+        A session that is not there (or a device that dropped) answers ``None``:
+        the platform's copy is still the truth and nothing is lost — the agent's
+        edits stay on that machine's disk and come back the next time it is
+        reached, the same shape as every other call on this path.
+        """
+        handle = self.live.get(topic_id)
+        if handle is None:
+            return None
+        try:
+            return await self.channel.call(handle, "memory", request)
+        except (DeviceCallError, DeviceOffline):
+            return None
 
     def backlog(self, session: SessionRef) -> ClaudeCodeBacklog:
         handle = self.live.get(session.topic_id)
@@ -121,7 +133,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             return False
         return bool((await self.channel.call(handle, "interrupt", {}))["interrupted"])
 
-    # --- the room's controls -------------------------------------------------
+    # --- what the room asks of its session -----------------------------------
 
     async def control_state(self, topic: uuid.UUID) -> dict:
         """What the room's controls show, from the mirror alone."""
@@ -134,7 +146,6 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
         )
         return {
             "id": handle.session_id if handle else None,
-            "agent_handle": handle.agent_handle if handle else None,
             "connected": handle is not None,
             "controls": list(CONTROLS),
             **mirrored,

@@ -211,7 +211,7 @@ class TestExportParticipants:
         assert "APPROVED" in lines[1]
 
     @pytest.mark.anyio
-    async def test_csv_escape_with_special_chars(self):
+    async def test_a_task_name_with_special_chars_keeps_the_row_intact(self):
         """Line 166: task name with special CSV characters."""
         t = SimpleNamespace(
             id=1,

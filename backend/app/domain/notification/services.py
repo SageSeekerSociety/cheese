@@ -348,6 +348,12 @@ class ProjectNotificationService:
         """
         return await self._repo.mention_topic_ids(topic_ids, target_handle)
 
+    async def decision_topic_ids(
+        self, topic_ids: list[uuid.UUID], target_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{topic_id: 这里向他要的决策还有没有没拍板的}。"""
+        return await self._repo.decision_topic_ids(topic_ids, target_handle)
+
     async def mark_all_read(self, project_id: uuid.UUID, *, target_handle: str) -> int:
         return await self._repo.mark_all_read_in_project(
             project_id, recipient_handle=target_handle

@@ -6,6 +6,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
+import { renderMarkdown } from '../../lib/renderMessage'
 import {
   countLines,
   eventArg,
@@ -19,9 +20,9 @@ import {
   SITE_CLAMP_LINES,
 } from '../../lib/siteLog'
 import { isPlatformEvent } from '../../lib/toolLabels'
-import AgentControls from '../AgentControls.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import SessionInspector from '../SessionInspector.vue'
 
 import SiteStatusBar from './SiteStatusBar.vue'
 import SiteStepOutput from './SiteStepOutput.vue'
@@ -40,7 +41,7 @@ const props = withDefaults(
     // 这个房间现在有没有活在跑。现场自己听不到轮次帧（WS 在对话栏那边），而
     // 「最后一组还没完」和「最后一组是上一轮留下的」看起来一模一样。
     working?: boolean
-    // 房间 socket 上最近一帧会话控制状态（对话栏收到，经 TopicView 转过来）。
+    // 房间 socket 上最近一帧会话状态（对话栏收到，经 TopicView 转过来）。
     agentControl?: AgentControlState | null
     // 在跑的轮次 id → 开始时间（毫秒），对话栏从 socket 上算的。哪一组「进行中」、
     // 状态条上「已用多久」都读它。
@@ -52,6 +53,12 @@ const props = withDefaults(
   }>(),
   { active: false, memberNames: () => ({}), working: false, agentControl: null, agentName: '芝士' }
 )
+
+const emit = defineEmits<{
+  (e: 'open-file', path: string, taskId: string | null): void
+  (e: 'open-topic', id: string): void
+  (e: 'mention-click', handle: string): void
+}>()
 
 const loading = ref(false)
 const errorMsg = ref<string | null>(null)
@@ -71,7 +78,6 @@ async function loadOlder() {
   const before = el ? { top: el.scrollTop, height: el.scrollHeight } : null
   try {
     const page = await getTranscript(tid, { limit: SITE_PAGE_SIZE, before: oldest.id })
-    if (props.topic?.id !== tid) return
     transcript.value = [...page.data, ...transcript.value]
     hasOlder.value = page.has_more === true
     // Prepending grows the content ABOVE the viewport; without this the reader
@@ -148,7 +154,6 @@ async function load() {
   errorMsg.value = null
   try {
     const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE })
-    if (props.topic?.id !== tid) return
     transcript.value = mergeSite(tx.data, transcript.value)
     if (!quiet) hasOlder.value = tx.has_more === true
     // Follow the tail on every open of a topic's 现场 — that is what "open on
@@ -157,7 +162,7 @@ async function load() {
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
-    if (props.topic?.id === tid) loading.value = false
+    loading.value = false
   }
 }
 
@@ -209,18 +214,6 @@ watch(
   { immediate: true }
 )
 
-// Topic switch: drop the previous topic's transcript so it can't flash in the new
-// 现场.
-watch(
-  () => props.topic?.id,
-  () => {
-    transcript.value = []
-    expandedSite.value = new Set()
-    errorMsg.value = null
-    if (props.active) void load()
-  }
-)
-
 // ---- 按队友看 ----
 // 一个房间可以先后、甚至同时交给几个队友。时间线是他们交错着的，而人来看的往往
 // 是其中一个在干什么。作者就是做这一步的那个队友：做过一步、说过一句的参与者。
@@ -235,10 +228,6 @@ const agents = computed(() => {
 })
 // null = 全部。
 const selectedAgent = ref<string | null>(null)
-watch(
-  () => props.topic?.id,
-  () => (selectedAgent.value = null)
-)
 const viewing = computed(() =>
   selectedAgent.value !== null && agents.value.includes(selectedAgent.value) ? selectedAgent.value : null
 )
@@ -319,6 +308,26 @@ function isSay(b: Block): boolean {
   return b.kind !== 'event' || isNarration(b.meta)
 }
 
+// 芝士说的话按 markdown 渲染，和对话栏走同一条路（lib/renderMessage）。
+// 这一栏原来是把原文摆出来（mono + pre-wrap，Claude Code 会话那种），但一段汇报
+// 落到人眼里就是一堆星号和反引号，粗体、列表、代码块全丢了信息。引用 token 也照
+// 对话栏展开成 chip —— 光看 `<@handle>` `<&path>` 是认不出人的。
+const sayRefs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
+
+function renderSay(text: string): string {
+  return renderMarkdown(text, sayRefs.value)
+}
+
+// chip 是 v-html 塞进来的，点击只能从容器上委派（同对话栏）。文件 chip 带上这条
+// 消息自己的 task_id：现场读的是别的任务的记录时，路径要在那个任务的目录里找。
+function onSayClick(event: MouseEvent, b: Block): void {
+  const chip = (event.target as HTMLElement | null)?.closest('.mention') as HTMLElement | null
+  if (!chip) return
+  if (chip.dataset.handle) emit('mention-click', chip.dataset.handle)
+  else if (chip.dataset.topic) emit('open-topic', chip.dataset.topic)
+  else if (chip.dataset.file) emit('open-file', chip.dataset.file, b.task_id ?? null)
+}
+
 const turns = computed(() => groupByTurn(visible.value))
 
 // 这一组还在跑吗：它的轮次在对话栏听到的在跑的轮次里。只看「房间有没有活」的话，
@@ -337,7 +346,7 @@ function isLive(index: number): boolean {
 
     <!-- read-only transcript timeline (芝士 messages + tool events) -->
     <template v-else>
-      <AgentControls v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
+      <SessionInspector v-if="topic" :topic-id="topic.id" :active="active" :pushed="agentControl" />
       <div v-if="agents.length > 1" class="site-agents" role="tablist">
         <button
           type="button"
@@ -407,15 +416,19 @@ function isLive(index: number): boolean {
               </button>
               <span v-else class="site-act__argtext"></span>
               <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
-              <!-- 挂了的那一步：错误摘要另起一行，缩进到参数那一列，和上面对齐。 -->
-              <p
+              <!-- 挂了的那一步：错误摘要另起一行，缩进到参数那一列，和上面对齐。
+                   它自己也能点开：一个会话没起来时，这里是它启动时打印的原文，
+                   而那一行没有参数可点。 -->
+              <button
                 v-if="eventFailed(b) && eventError(b)"
+                type="button"
                 class="site-act__error"
                 :class="{ 'site-act__error--full': expandedSite.has(b.id) }"
                 data-testid="site-act-error"
+                @click="toggleSiteEntry(b.id)"
               >
                 {{ eventError(b) }}
-              </p>
+              </button>
               <!-- 摊开的这一步打印了什么：收着，点了才取。 -->
               <SiteStepOutput
                 v-if="topic && expandedSite.has(b.id) && b.meta?.output_bytes"
@@ -433,17 +446,15 @@ function isLive(index: number): boolean {
                   <span class="site-msg__name">{{ authorLabel(b) }}</span>
                   <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
                 </div>
-                <!-- Raw transcript text on purpose (决定: 现场内容改为raw): 现场 shows
-                   what 芝士 actually emitted — markdown syntax, <@handle> tokens
-                   and all — like a Claude Code session, NOT the rendered chat
-                   version. -->
+                <!-- 渲染成正文，不摆原文：现场读的也是人说的话，粗体、列表、代码块
+                   和对话栏一个样子（走同一个 renderMarkdown）。 -->
                 <div
-                  class="site-msg__raw"
-                  :class="{ 'site-msg__raw--clamped': isLongSiteEntry(b.content) && !expandedSite.has(b.id) }"
+                  class="site-msg__body md-content"
+                  :class="{ 'site-msg__body--clamped': isLongSiteEntry(b.content) && !expandedSite.has(b.id) }"
                   :style="{ '--site-clamp-lines': SITE_CLAMP_LINES }"
-                >
-                  {{ b.content }}
-                </div>
+                  @click="onSayClick($event, b)"
+                  v-html="renderSay(b.content)"
+                />
                 <!-- 过长时不直接摊开：一条几千字的输出会把它前后的所有东西挤出
                    屏幕，而 现场 的价值恰恰是「一眼看完发生了什么」。折叠到 12
                    行，想看全的自己点开。 -->
@@ -622,8 +633,14 @@ function isLive(index: number): boolean {
    + 间隙 —— 写成 calc 而不是量出来的一个数，改了上面这一行不用回来改它。 */
 .site-act__error {
   flex: 0 0 100%;
+  min-width: 0;
   margin: 2px 0 0;
-  padding-left: calc(5px + 8px + 4em + 8px);
+  padding: 0 0 0 calc(5px + 8px + 4em + 8px);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   color: var(--danger-ink);
   /* 13px 而不是 12：这一行是挂了的那一步上唯一有人真去读的字。 */
   font-size: 13px;
@@ -631,6 +648,11 @@ function isLive(index: number): boolean {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.site-act__error:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 .site-act__error--full {
   white-space: pre-wrap;
@@ -708,13 +730,11 @@ function isLive(index: number): boolean {
   opacity: 0;
   transition: opacity var(--dur-quick) var(--ease-standard);
 }
-/* 现场 is a transcript, not a doc — 芝士's messages are shown RAW (markdown
-   source, <@handle> tokens intact), Claude Code style: mono + pre-wrap. */
-.site-msg__raw {
-  font-family: var(--font-mono);
+/* 芝士说话的那一段：排版规则（标题、列表、代码块、表格）来自全局的 .md-content，
+   这里只定这一栏自己的字号 —— 现场比对话栏密，13px 和旁边那些工具行对得上。 */
+.site-msg__body {
   font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
+  line-height: 1.6;
   word-break: break-word;
   color: var(--text);
 }
@@ -722,7 +742,7 @@ function isLive(index: number): boolean {
    custom property rather than a literal here: the template asks that same
    module whether to render the 展开 button, so if the two drift an entry gets
    clamped with no way out of the clamp. */
-.site-msg__raw--clamped {
+.site-msg__body--clamped {
   display: -webkit-box;
   -webkit-line-clamp: var(--site-clamp-lines);
   line-clamp: var(--site-clamp-lines);

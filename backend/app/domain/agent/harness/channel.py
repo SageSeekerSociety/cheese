@@ -6,6 +6,7 @@ from typing import NamedTuple
 from app.domain.agent import place
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.launch import MachinePlan
+from app.domain.agent.platform_failures import classify_session_start
 from app.domain.device.supply import Supply
 
 # How long a session's scoped credential lives. It is baked into the process at
@@ -23,11 +24,31 @@ class ScreenSetupError(Exception):
     is (`platform_failures`). Left None for the setup failures it has no
     classification for, which then land as an unnamed turn error — the same
     place they landed before, but by omission rather than by a sentence not
-    matching."""
+    matching.
 
-    def __init__(self, message: str, *, failure_code: str | None = None) -> None:
+    ``log`` is what the failing process itself printed, when there is such a
+    text. It is shown in 现场 beside the notice and never becomes the room's
+    line: the message is what the room is told."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_code: str | None = None,
+        log: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.failure_code = failure_code
+        self.log = log
+
+
+def startup_refused(
+    log: str, *, harness: str, timed_out: bool = False
+) -> ScreenSetupError:
+    """The refusal for a session that did not start: one sentence for the room,
+    chosen from what the machine recorded, and that record for 现场."""
+    failure = classify_session_start(log, harness=harness, timed_out=timed_out)
+    return ScreenSetupError(failure.content, failure_code=failure.code, log=log)
 
 
 class Placement(NamedTuple):
@@ -52,7 +73,7 @@ class Channel:
     channel places the session and performs the launch it is handed.
     """
 
-    # WHICH machine pool this is: what a topic's ``compute_profile`` stores and
+    # WHICH machine pool this is: what a compute choice's ``profile`` names and
     # what the market board lists. Deliberately not the runtime's ``harness`` —
     # this says which machine, that says what runs on it.
     name: str = "channel"

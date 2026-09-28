@@ -36,7 +36,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.announce import announce, notify_question
-from app.domain.agent.chat import ChatService
+from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.agent.market import (
@@ -64,7 +64,14 @@ from app.domain.agent.runtime import (
 )
 from app.domain.agent.step_output import without_output
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
+from app.domain.block.editing import edit_message
+from app.domain.block.models import (
+    CHECKLIST_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+    agent_notice,
+)
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.addressing import Event as Addressee
@@ -115,6 +122,8 @@ from app.domain.room_task.services import (
     TaskService,
 )
 from app.domain.textfile import content_version
+from app.domain.topic import naming
+from app.domain.topic.doc_checks import living_doc_warnings
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import (
@@ -230,6 +239,41 @@ async def _live_room_cards(
     return {c.topic_id: c for c in cards if c.task_id is None}
 
 
+async def _rooms_with_running_work(
+    db: AsyncSession, chat: ChatService, room_ids: list[uuid.UUID], now: datetime
+) -> set[uuid.UUID]:
+    """名下有一条活正在「运行中」的房间 —— 一次查完。
+
+    房间自己那一轮结束了，它派出去的分身可能还在干：只看 `running_topic_ids()`
+    的话，侧栏的绿点在主 agent 收尾那一刻就灭了，人以为没人在做事。判据和看板
+    同一个函数（`presentation.task_is_running`），所以两边不会说出两种话。
+
+    卡不喂进去：「运行中」排在卡前面判，卡对这个答案没有影响。
+    """
+    tasks = await TaskRepository(db).list_worked_open_for_rooms(room_ids)
+    if not tasks:
+        return set()
+    task_ids = [t.id for t in tasks]
+    beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
+    asked = await BlockRepository(db).tasks_awaiting_an_answer(task_ids)
+    live_rooms = {t.room_id: chat.has_live_screen(t.room_id) for t in tasks}
+    return {
+        t.room_id
+        for t in tasks
+        if presentation.task_is_running(
+            presentation.facts_for_task(
+                t,
+                None,
+                beats.get(t.id),
+                room_screen_live=live_rooms[t.room_id],
+                worker_live=chat.worker_live(t.room_id, t.subagent_id),
+                awaiting_answer=t.id in asked,
+            ),
+            now=now,
+        )
+    }
+
+
 def _topic_out(
     topic: Topic,
     running_ids: set[uuid.UUID],
@@ -240,6 +284,7 @@ def _topic_out(
     managed_ids: set[uuid.UUID] | None = None,
     asked: Mapping[uuid.UUID, str | None] | None = None,
     asks_me: set[uuid.UUID] | None = None,
+    working_ids: set[uuid.UUID] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: the in-memory
     turn-running flag (separate from `status`/归档 — see TopicOut.running: a
@@ -266,7 +311,9 @@ def _topic_out(
     out.i_participate = mine.i_participate or asking_me
     out.awaits_me = mine.awaits_me or asking_me
     data = out.model_dump(mode="json")
-    data["running"] = topic.id in running_ids
+    # 侧栏的绿点：房间自己那一轮在跑，或它名下有一条活在跑。看板那一格
+    # （下面的 facts_for_room）仍只看房间自己——活在看板上有自己的一格。
+    data["running"] = topic.id in running_ids or topic.id in (working_ids or set())
     facts = presentation.facts_for_room(
         topic,
         running_ids,
@@ -284,6 +331,7 @@ async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
@@ -320,6 +368,7 @@ async def list_topics(
     asks_me = _asks_me(asked, _viewer(actor))
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
     now = datetime.now(UTC)
+    working = await _rooms_with_running_work(db, chat, [t.id for t in topics], now)
     items = [
         _topic_out(
             t,
@@ -331,6 +380,7 @@ async def list_topics(
             managed,
             asked,
             asks_me,
+            working,
         )
         for t in topics
     ]
@@ -375,6 +425,7 @@ async def get_topic(
         else set()
     )
     asked = await BlockRepository(db).rooms_awaiting_an_answer([topic.id])
+    working = await _rooms_with_running_work(db, chat, [topic.id], datetime.now(UTC))
     return ok(
         _topic_out(
             topic,
@@ -385,6 +436,7 @@ async def get_topic(
             managed_ids=managed,
             asked=asked,
             asks_me=_asks_me(asked, _viewer(actor)),
+            working_ids=working,
         )
     )
 
@@ -765,9 +817,7 @@ async def say_on_task(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    content = await canonicalize_refs(
-        db, place.project_id, content, exclude_topic_id=place.room_id
-    )
+    content = await project_refs_text(db, place.project_id, place.room_id, content)
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=place.room_id,
@@ -1274,6 +1324,33 @@ class ProgressIn(BaseModel):
     # the room's credentials, so the call cannot tell it apart from the room's
     # own agent: it says so, the way `cheese_lock` names its task.
     task: uuid.UUID | None = None
+    # Post a new checklist message instead of editing the current one. Which
+    # request a list belongs to is the agent's call: it sets this when someone
+    # brings it a new one.
+    new: bool = False
+    # One line on what landed, written when the work is done; shown under the
+    # list in the same message. Same ceiling as an item.
+    result: (
+        Annotated[
+            str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+        ]
+        | None
+    ) = None
+
+
+# The step markers of the checklist message's text. The room draws its own
+# icons from `meta.checklist`; this text is what every other reader gets — the
+# agent reading the history, a copy, a notification preview.
+_CHECKLIST_MARK = {"completed": "✓", "in_progress": "✱", "pending": "○"}
+
+
+def _checklist_text(items: list[dict], result: str | None) -> str:
+    """The checklist as the message's text: one line per step, and the result
+    line under it once there is one."""
+    lines = [f"{_CHECKLIST_MARK[item['status']]} {item['subject']}" for item in items]
+    if result:
+        lines += ["", f"✅ {result}"]
+    return "\n".join(lines)
 
 
 @router.put("/{topic_id}/progress")
@@ -1282,18 +1359,25 @@ async def write_topic_progress(
     body: ProgressIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """`todo_write`: the agent's whole checklist for the running turn (进度层).
+    """`todo_write`: the agent's whole checklist (进度层), and its message.
+
+    Whole-list replace, so what is stored is exactly what the agent last said,
+    never a merge of two plans. The stored list is what 总览 shows and what the
+    room's next turn is handed back.
+
+    In the room the list is an ordinary message by the agent. The first call
+    posts it; later calls edit the agent's current checklist message through
+    the same edit every author has (`domain/block/editing`); ``new`` posts a
+    fresh one.
 
     With ``task`` it is that card's 分身 writing, and the list is the card's:
     stored under the card and pushed on the card's channel, the same channel its
-    attributed events go to (`chat.py`), leaving the room's own list alone.
+    attributed events go to (`chat.py`), leaving the room's own list and
+    conversation alone.
 
-    Whole-list replace, so what the room shows is exactly what the agent last
-    said, never a merge of two plans. Stored first, then pushed as the `todo`
-    frame the room's working message renders in place. A platform tool, so it
-    reaches here the same way from every harness — the checklist is not
-    captured from any harness's own tool events.
+    A platform tool, so it reaches here the same way from every harness.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
@@ -1314,17 +1398,55 @@ async def write_topic_progress(
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)
     ]
-    work = get_work_runner().live_work_for_topic(place.room_id)
+    runner = get_work_runner()
+    work = runner.live_work_for_topic(place.room_id)
+    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
     await TopicProgressRepository(db).save(
-        place.room_id,
-        items,
-        task_id=body.task,
-        turn_id=uuid.UUID(work["turn_id"]) if work is not None else None,
+        place.room_id, items, task_id=body.task, turn_id=turn_id
     )
     await db.commit()
-    channel = str(body.task) if body.task is not None else str(topic_id)
-    await get_broker().publish(channel, {"type": "todo", "items": items})
-    return ok({"items": items})
+    if body.task is not None:
+        await get_broker().publish(str(body.task), {"type": "todo", "items": items})
+        return ok({"items": items})
+    text = _checklist_text(items, body.result)
+    checklist = {"items": items, "result": body.result}
+    current = (
+        None
+        if body.new
+        else await BlockRepository(db).current_checklist(place.room_id, actor.handle)
+    )
+    if current is not None:
+        message = await edit_message(
+            db,
+            get_broker(),
+            current.id,
+            editor=actor.handle,
+            content=text,
+            chat=chat,
+            runner=runner,
+            checklist=checklist,
+        )
+        return ok({"items": items, "message_id": message["id"], "posted": False})
+    message = await chat._persist_assistant_message(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        text=await project_refs_text(db, place.project_id, place.room_id, text),
+        turn_id=turn_id,
+        reply_to=None,
+        roster=None,
+        topic_refs=[],
+        publish=True,
+        author=actor.handle,
+        own_output=True,
+        extra_meta={CHECKLIST_META_KEY: checklist},
+    )
+    assert message is not None  # a publication with no eid never deduplicates
+    await get_broker().publish(
+        str(place.room_id), {"type": "assistant_block", "block": message}
+    )
+    if turn_id is not None:
+        runner.note_session_output(turn_id, tool=False)
+    return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
 @router.get("/{topic_id}/doc")
@@ -1345,6 +1467,28 @@ async def get_topic_doc(
     if doc is None:
         return ok(None)
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
+
+
+@router.get("/{topic_id}/overview")
+async def get_topic_overview(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """总览房间的自动区（#1889）：②~⑤，结构化，给文档面板正文下方那一栏。
+
+    总览文档是五块：① 写在文档正文里，②~⑤ 由平台现拼。注入 agent 提示词的
+    那一份是同一批数据的 markdown 排版（`topic/overview.py`），这里给的是能
+    逐个点击的结构化条目。
+
+    授权和读文档那一份完全一样：先认出「谁在这儿」，再看他在不在这个房间的
+    名册上。只有根话题有总览，别处 404（见 `TopicService.overview_auto`）。
+    """
+    topics = TopicService(db)
+    place = await topics.place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    blocks = await topics.overview_auto(topic_id)
+    return ok({"root_topic_id": str(place.room_id), "blocks": blocks})
 
 
 @router.put("/{topic_id}/doc")
@@ -1409,6 +1553,9 @@ async def edit_topic_doc(
             },
         )
     await announce_stale(place.room_id, "doc")
+    if topic_id == place.room_id:
+        # A rewritten goal is the clearest sign a room changed direction.
+        naming.nudge(place.room_id, "signal")
     if notice is not None and (line := agent_notice(notice)):
         # The notice tells 芝士 to go re-read the doc, so the doc has to BE the
         # new one by the time it does — same ordering as the comment route.
@@ -1417,7 +1564,13 @@ async def edit_topic_doc(
         # is what lets the receipt stamp it consumed instead of it being said
         # twice.
         await chat.notify_running_turn(topic_id, line, blocks=[notice.id])
-    return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
+    # 写入检查（#1889 第 3 条）：**照样写入**，只把「哪里不像状态」跟着响应
+    # 带回去，让写它的人当场改。拦下来是错的——让人先猜格式再写字，比一条警告
+    # 贵得多；而只写进日志的警告等于没写（没人读日志，写它的人也不在那儿）。
+    return ok(
+        BlockOut.model_validate(doc).model_dump(mode="json"),
+        warnings=living_doc_warnings(content),
+    )
 
 
 @router.get("/{topic_id}/compute-profile")
@@ -1426,7 +1579,8 @@ async def get_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Room choice, project favorites and the matching execution lock."""
+    """The room's work computers: what each agent session works on, and what an
+    agent that has not started yet will be given (the room's choice)."""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
@@ -1436,7 +1590,6 @@ async def get_topic_compute_profile(
     )
     project = await ProjectRepository(db).get(topic.project_id)
     from app.domain.agent.compute_configs import project_configs, room_choice
-    from app.domain.machine.repositories import ProjectMachineRepository
 
     configs = project_configs(project.settings if project else None)
     choice = room_choice(topic, project.settings if project else None)
@@ -1444,27 +1597,34 @@ async def get_topic_compute_profile(
     device_online = await project_device_online(db, topic.project_id)
     device_service = sql_device_service(db)
     devices = await device_service.list_devices_for_project(topic.project_id)
-    # #282 §四 / #358 · whether THIS topic's agent can see the whole machine. The
-    # effective answer is the visibility on the topic↔machine binding (device
-    # affinity freezes a topic to one machine on its first turn); a topic
-    # on platform compute or not yet pinned has none. Surfaced so the room can show
-    # a visible safety badge for a Hosted Machine turn instead of the platform
-    # granting whole-machine access silently (原则八).
     binding = await device_service.topic_binding(topic_id)
-    if current == COMPUTE_DEVICE and binding is not None:
+    if current == COMPUTE_DEVICE and binding is not None and choice.device_id is None:
+        # 「自动选一台」的房间，第一轮钉下的是哪一台。
         choice.device_id = binding.device_id
         if topic.compute_config is None:
             named = next((d for d in devices if d.device_id == binding.device_id), None)
             choice.name = named.name if named else "自有设备"
-    effective_visibility: str | None = None
-    if binding is not None:
-        effective_visibility = binding.visibility.value
+    # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
+    # machine. Read from the sessions' own machines, not the room's pin: a
+    # session that picked a device automatically, or moved to one later, has
+    # the same access and no pin. Surfaced so the room shows a visible safety
+    # badge instead of the platform granting whole-machine access silently
+    # (原则八).
+    from app.domain.machine.session_work import (
+        room_machine_visibility,
+        session_machines,
+    )
+
+    sessions = await session_machines(db, topic)
+    visibility = await room_machine_visibility(
+        db, topic, project.settings if project else None, sessions
+    )
+    effective_visibility = visibility.value if visibility is not None else None
     return ok(
         {
             "current": current,
             "choice": choice.model_dump(),
             "project_default": configs.default.model_dump(),
-            "favorites": [v.model_dump() for v in configs.favorites],
             # A machine id only has selection meaning under the self-hosted pool.
             # Cloud also records its connector in device_topic, but that endpoint is
             # an implementation detail of the freshly provisioned topic machine, not
@@ -1482,18 +1642,18 @@ async def get_topic_compute_profile(
                 }
                 for device in devices
             ],
-            "locked": bool(
-                await AgentSessionService(db).has_run(topic_id)
-                or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
-            ),
-            "inherited": topic.compute_profile is None,
+            # Each agent session and its machine; `choice` is None for one that
+            # has not started working and will be given `choice` above.
+            "sessions": [
+                {k: v for k, v in row.items() if k != "visibility"} for row in sessions
+            ],
             "profiles": [
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
             ],
             "visibility": {
                 "options": [asdict(v) for v in visibility_listings()],
-                # "host" | "isolated" | null (platform compute / not yet pinned).
+                # "host" | "isolated" | null (no agent here on an enrolled machine).
                 "effective": effective_visibility,
                 # The one boolean the room's badge keys on: this turn can see and
                 # operate the whole machine.
@@ -1508,30 +1668,6 @@ async def get_topic_compute_profile(
 class WorkLeaseRequest(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     timeout: float = Field(default=660, gt=0, le=660)
-
-
-@router.get("/{topic_id}/sessions/work-leases")
-async def session_work_leases(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    from sqlalchemy import select
-
-    from app.domain.agent_session.models import AgentSession
-    from app.domain.machine.session_work import presentation
-
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    rows = await db.scalars(
-        select(AgentSession)
-        .where(AgentSession.topic_id == topic_id)
-        .order_by(AgentSession.agent_handle)
-    )
-    return ok({"sessions": [presentation(row) for row in rows]})
 
 
 @router.put("/{topic_id}/sessions/{session_id}/work-choice")
@@ -1569,7 +1705,7 @@ async def request_session_work_choice(
     try:
         choice = ComputeChoice.model_validate(body.get("choice"))
     except SchemaError as exc:
-        raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+        raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
     return ok(
         {
             "session": await work_lease.request_choice(
@@ -1578,6 +1714,11 @@ async def request_session_work_choice(
                 session_id=session_id,
                 actor=actor,
                 choice=choice,
+                # Honoured for a person, and only when the old machine could
+                # not be reached to push (`request_choice`).
+                abandon_unpushed=body.get("abandon_unpushed") is True,
+                # The project's bulk switch leaves a session mid-turn alone.
+                if_idle=body.get("if_idle") is True,
             )
         }
     )
@@ -1620,7 +1761,7 @@ async def acquire_session_work_lease(
                 )
             )
     except TimeoutError as exc:
-        raise GatewayTimeoutError("工作机器仍在准备，对话和平台工具仍可用") from exc
+        raise GatewayTimeoutError("工作电脑仍在准备，对话和平台工具仍可用") from exc
 
 
 @router.put("/{topic_id}/compute-profile")
@@ -1631,7 +1772,9 @@ async def set_topic_compute_profile(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Room defaults before startup; signed running sessions request their own hands."""
+    """The room's choice: what an agent gets when it starts working here.
+
+    A signed session names its own machine instead (``request_choice``)."""
     from pydantic import ValidationError as SchemaError
 
     from app.domain.agent.compute_configs import (
@@ -1662,15 +1805,12 @@ async def set_topic_compute_profile(
         or claims.get("r") != str(topic.resource_id or topic.id)
     ):
         raise ForbiddenError("Execution credential does not own this room generation")
-    asked_by_this_rooms_turn = bool(
-        scoped_session
-    ) or resolver.speaks_for_this_rooms_turn(topic_id)
+    # 开工之后，房间这一项只是之后邀请的 AI 队友的默认（结论 60）：已经在干活的
+    # 会话各有各的机器，改它不会把谁搬走。
     started = bool(
         await AgentSessionService(db).has_run(topic_id)
         or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
     )
-    if started and not asked_by_this_rooms_turn:
-        raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
     name = (body.get("profile") or "").strip() or compute_default_name()
     try:
         choice = ComputeChoice.model_validate(
@@ -1682,7 +1822,7 @@ async def set_topic_compute_profile(
             }
         )
     except SchemaError as exc:
-        raise ValidationError("算力配置无效，请检查名称、设备和资源规格") from exc
+        raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
     if scoped_session:
         from app.domain.machine import session_work as work_lease
 
@@ -1701,7 +1841,7 @@ async def set_topic_compute_profile(
         raise ValidationError("device_id 必须是字符串")
     device_id = (raw_device_id or "").strip() or None
     if name != COMPUTE_DEVICE and device_id is not None:
-        raise ValidationError("只有自托管设备可以指定 device_id")
+        raise ValidationError("只有自有设备可以指定 device_id")
 
     device_online = await project_device_online(db, topic.project_id)
     allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
@@ -1709,7 +1849,7 @@ async def set_topic_compute_profile(
     # now and waits for that exact box. The automatic option keeps the old rule and
     # is selectable only when at least one project-scoped device is online.
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
-        raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
+        raise ValidationError(f"这类工作电脑尚未接入，暂不可选：{name!r}")
     if body.get("choice"):
         await validate_choice(db, topic.project_id, choice)
 
@@ -1731,32 +1871,24 @@ async def set_topic_compute_profile(
         raise NotFoundError("Project not found")
     policy = gate.policy_of(project.settings)
     # 不限档的项目——今天的每一个——连这次调用都不必写出来：构造它要再列一遍项目设
-    # 备、再取一次机主，而不限档时判决与那几条查询无关。房间已经开跑的那一次是例
-    # 外：它无论档位都要人点头，所以那次调用照写。
+    # 备、再取一次机主，而不限档时判决与那几条查询无关。
     verdict: gate.Allowed | gate.Proposal | None = None
-    if started or not policy.lets_everything_through:
+    if not policy.lets_everything_through:
         call = await machine_policy_call(
             db, project=project, topic=topic, choice=choice
         )
-        # 先问闸门 —— 房间开没开跑都问。「超档怎么办」全仓只有 `policy/gate.py`
-        # 回答，路由自己答一遍就是第二份答案：项目把这一档的处置写成 `deny` 时，
-        # 这里要的是一次**看得见的**拒绝（`OverTier` 抛出去，不变量 I27），而不是
-        # 一条等人点头的提议 —— 提议读起来像「再等等」，拒绝说的是「这条路不通」。
+        # 「超档怎么办」全仓只有 `policy/gate.py` 回答，路由自己答一遍就是第二份
+        # 答案：项目把这一档的处置写成 `deny` 时，这里要的是一次**看得见的**拒绝
+        # （`OverTier` 抛出去，不变量 I27），而不是一条等人点头的提议 —— 提议读起
+        # 来像「再等等」，拒绝说的是「这条路不通」。
         verdict = gate.check(call, policy, actor.handle)
-        # 档内也不当场换（结论 23）：房间跑起来之后换机器，丢掉的是这台机器上的
-        # 工作区和还没提交的改动，而那是别人的机器、别人的电（自托管的收件人是机
-        # 主本人）或者项目的钱（Cloud 的收件人是项目主人）。所以档内那一档在这里
-        # 换成同一种东西：这次调用没有发生，房间里多的是一条给人的提议。超档那一
-        # 档闸门已经答过，理由更强，不覆盖它。
-        if started and isinstance(verdict, gate.Allowed):
-            verdict = gate.because_the_room_is_running(call, actor.handle)
     if isinstance(verdict, gate.Proposal):
-        # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
+        # 这次调用没有发生：绑定不写，`topic.compute_config` 不动。房间里多的
         # 是一条提议，下一步在 approver 手上。
         await propose(db, verdict, place_id=topic_id)
         await db.flush()
         # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
-        # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
+        # `room_choice` 算出来，不是 `topic` 上那一列还没被写过的值。第一轮之前
         # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
         # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
         # 法，先信谁？
@@ -1766,8 +1898,6 @@ async def set_topic_compute_profile(
                 "current": current.profile,
                 "choice": current.model_dump(),
                 "device_id": current.device_id,
-                "locked": started,
-                "inherited": topic.compute_profile is None,
                 "proposal": {
                     "approver": verdict.approver,
                     "tier": verdict.call.tier,
@@ -1786,27 +1916,29 @@ async def set_topic_compute_profile(
     if name == COMPUTE_CLOUD:
         await MachineService(db).require_use_authority(topic.project_id, actor)
 
-    # A pre-turn choice has no worktree/session state yet, so it remains editable.
-    # Release then bind preserves bind_topic_device's write-once contract: the bind
-    # itself never overwrites, while an explicit user change before the lock removes
-    # the obsolete choice first. Selecting Cloud or 「系统挑一台」 leaves no pin;
-    # the latter is frozen by resolve_pinned_device on the first turn as before.
-    binding = await device_service.topic_binding(topic_id)
-    if binding is not None and (
-        name != COMPUTE_DEVICE or binding.device_id != device_id
-    ):
-        await device_service.release_topic_device(
-            topic_id, reason="compute choice changed before the first turn"
-        )
-        binding = None
-    if name == COMPUTE_DEVICE and device_id is not None and binding is None:
-        await device_service.bind_topic_device(
-            topic_id,
-            device_id,
-            visibility=await device_service.binding_visibility(device_id),
-        )
+    # Before the first turn the room's pin is the choice itself. Release then
+    # bind preserves bind_topic_device's write-once contract: the bind itself
+    # never overwrites, while an explicit change removes the obsolete pin first.
+    # Selecting Cloud or 「系统挑一台」 leaves no pin; the latter is frozen by
+    # resolve_pinned_device on the first turn. Once the room has started, the pin
+    # belongs to the machine its first turn is using (a Cloud room's connector
+    # included), so a new default for later agents leaves it where it is.
+    if not started:
+        binding = await device_service.topic_binding(topic_id)
+        if binding is not None and (
+            name != COMPUTE_DEVICE or binding.device_id != device_id
+        ):
+            await device_service.release_topic_device(
+                topic_id, reason="compute choice changed before the first turn"
+            )
+            binding = None
+        if name == COMPUTE_DEVICE and device_id is not None and binding is None:
+            await device_service.bind_topic_device(
+                topic_id,
+                device_id,
+                visibility=await device_service.binding_visibility(device_id),
+            )
 
-    topic.compute_profile = name
     topic.compute_config = choice.model_dump()
     await db.flush()
     return ok(
@@ -1814,8 +1946,6 @@ async def set_topic_compute_profile(
             "current": name,
             "choice": choice.model_dump(),
             "device_id": device_id if name == COMPUTE_DEVICE else None,
-            "locked": False,
-            "inherited": False,
             "proposal": None,
         }
     )
@@ -1861,9 +1991,7 @@ async def publish_chat_message(
             or parent.task_id is not None
         ):
             raise ValidationError("reply_to must belong to this conversation")
-    content = await canonicalize_refs(
-        db, place.project_id, content, exclude_topic_id=place.room_id
-    )
+    content = await project_refs_text(db, place.project_id, place.room_id, content)
     # The input request can finish while its terminal session is still working.
     runner = get_work_runner()
     work = runner.live_work_for_topic(place.room_id)
@@ -2105,7 +2233,7 @@ async def answer_options(
 ) -> dict:
     """One-click answer to an option question: validates the choice against the
     ask block's own options, records it on the block (meta.answered), and posts
-    the choice as the answerer's message, addressed to the 芝士 that asked."""
+    the choice as the answerer's message, addressed to the teammate that asked."""
     option = (body.get("option") or "").strip()
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
@@ -2147,7 +2275,16 @@ async def answer_options(
     # 回来的，塞一个不在名册上的 handle 进去，落在时间线上就是一个谁也对不上的
     # chip，而这一下点选项什么也不会发生。名册上没有 agent 时就谁也不点，选择照
     # 样记在卡上。
-    seat = await TopicMemberService(db).addressable_agent_handle(blk.topic_id)
+    #
+    # 「问问题的那个席位」就是这张卡的署名：一个房间可以坐好几位 AI 队友，点房间
+    # 的默认席位的话，别的队友问出的题一点选项就换成默认芝士来接，而它手上没有那
+    # 道题的来龙去脉。署名者已不在名册上（被请出房间、或者题是人问的）才退回默认
+    # 席位。
+    members = TopicMemberService(db)
+    if blk.author in await members.agent_handles(blk.topic_id):
+        seat: str | None = blk.author
+    else:
+        seat = await members.addressable_agent_handle(blk.topic_id)
     await get_broker().receive_message(
         chat,
         blk.topic_id,
@@ -2319,8 +2456,10 @@ async def record_weekly(
 async def set_title(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """给这个地方起/改标题 — used by both `cheese_title` (AI-generated, naming an
-    untitled place) and the frontend sidebar rename UI (dual-use, like doc/split).
+    """给这个地方起/改标题 — used by both `cheese_title` (a person asked 芝士
+    for this name) and the frontend sidebar rename UI (dual-use, like doc/split).
+    Either way a person chose it, so the platform's naming leaves it alone from
+    now on (`topic/naming.py`).
 
     Names the THREAD when the id is a thread's. Resolving only rooms did not
     fail here, which is what made it dangerous: a 分身 naming the piece of work
@@ -2338,9 +2477,83 @@ async def set_title(
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError("title 不能为空")
-    place.room.title = title[:80]
+    await naming.rename_by_person(
+        db,
+        place.room,
+        title[:80],
+        by=actor.handle,
+        reason="suggest" if body.get("suggested") else "rename",
+    )
     await db.flush()
-    return ok(TopicOut.model_validate(place.room).model_dump(mode="json"))
+    out = TopicOut.model_validate(place.room).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(place.room_id, "topics")
+    return ok(out)
+
+
+async def _title_actor(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> tuple[Topic, str]:
+    """The room and the signed-in person acting on its title."""
+    room = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=room.id, project_id=room.project_id
+    )
+    await resolver.authorize_topic(actor, project_id=room.project_id, topic_id=room.id)
+    if not actor.authenticated:
+        raise ForbiddenError("改标题需要登录")
+    return room, actor.handle
+
+
+@router.post("/{topic_id}/title/suggest")
+async def suggest_title(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """智能重命名: a name for this room from what it is about now, for a person
+    to confirm or edit. Nothing is written; the confirmed name is set through
+    ``POST /title`` like any other a person chose."""
+    room, _ = await _title_actor(topic_id, db, resolver)
+    if not naming.available():
+        raise SystemBusyError("智能命名暂不可用")
+    title = await naming.suggest(db, room)
+    if title is None:
+        raise SystemBusyError("这次没能生成标题，稍后再试")
+    return ok({"title": title})
+
+
+@router.post("/{topic_id}/title/undo")
+async def undo_title(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """撤销一次自动改名 (the button on the line that announced it). The old
+    title comes back and, being a person's choice now, stays."""
+    room, handle = await _title_actor(topic_id, db, resolver)
+    try:
+        event_id = uuid.UUID(str(body.get("event_id")))
+    except ValueError as exc:
+        raise ValidationError("event_id 不是有效的 id") from exc
+    await naming.undo(db, room, event_id, by=handle)
+    await db.flush()
+    out = TopicOut.model_validate(room).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(room.id, "topics")
+    return ok(out)
+
+
+@router.post("/{topic_id}/title/auto")
+async def restore_auto_title(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """恢复自动命名: hand a title a person chose back to the platform, which
+    judges it again at the room's next message or turn."""
+    room, handle = await _title_actor(topic_id, db, resolver)
+    await naming.restore_auto(db, room, by=handle)
+    await db.flush()
+    out = TopicOut.model_validate(room).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(room.id, "topics")
+    naming.nudge(room.id, "signal")
+    return ok(out)
 
 
 @router.post("/{topic_id}/read")
@@ -2520,6 +2733,8 @@ async def split_topic(
     # them.
     await db.commit()
     await announce_stale(parent_place.room_id, "topics")
+    # Work split out of a room is a sign of where the room is going.
+    naming.nudge(parent_place.room_id, "signal")
     return ok(out)
 
 
@@ -2829,6 +3044,32 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         )
 
 
+async def record_shown(
+    db: AsyncSession, place: Place, path: str, *, author: str, mime: str | None = None
+) -> dict:
+    """List a room file among what the room has on show, and tell open clients.
+
+    What `cheese show` does after writing the file; a file a person creates in
+    the room (a copy, a new one from a template) is on show the same way."""
+    block = await BlockRepository(db).add(
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        author=author,
+        author_type=AuthorType.participant,
+        content=path,
+        kind=BlockKind.artifact,
+        mime_type=mime or _ARTIFACT_MIME[artifact_kind_for(path)],
+        refs=[path],
+    )
+    payload = BlockOut.model_validate(block).model_dump(mode="json")
+    # Live, like a published message: the reader is usually in the room while
+    # 芝士 works, and the card has to appear then, not on the next reload.
+    await get_broker().publish(
+        str(place.room_id), {"type": "assistant_block", "block": payload}
+    )
+    return payload
+
+
 @router.post("/{topic_id}/shown")
 async def show_in_room(
     topic_id: uuid.UUID,
@@ -2841,7 +3082,7 @@ async def show_in_room(
     摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
     （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     declared = (body.get("as") or "").strip().lower()
     if declared == "app":
         # An app artifact points at the running server, not a file — the stored
@@ -2878,26 +3119,28 @@ async def show_in_room(
             raise ValidationError(
                 f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
             )
-        library.write_room_file(place.project_id, topic_id, path, raw)
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=topic_id,  # the place; `add` splits it
-        author=await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
-        ),
-        author_type=AuthorType.participant,
-        content=path,
-        kind=BlockKind.artifact,
-        mime_type=mime,
-        refs=[path],
+    author = await TopicMemberService(db).resolve_agent_handle(
+        topic_id, room_id=place.room_id
     )
-    payload = BlockOut.model_validate(block).model_dump(mode="json")
-    # Live, like a published message: the reader is usually in the room while
-    # 芝士 works, and the card has to appear then, not on the next reload.
-    await get_broker().publish(
-        str(topic_id), {"type": "assistant_block", "block": payload}
-    )
-    return ok(payload)
+    if as_ != "app" and ("content" in body or "content_b64" in body):
+        # Through the draft history: the state this replaces stays restorable,
+        # and `base_version` (the version `cheese pull` read) turns an overwrite
+        # of somebody's newer save into a 409.
+        base = body.get("base_version")
+        note = body.get("note")
+        await room_files.save_room_file(
+            db,
+            project_id=place.project_id,
+            room_id=place.room_id,
+            path=path,
+            data=raw,
+            author=author if actor.via == "cheese" else actor.handle,
+            author_kind="agent" if actor.via == "cheese" else "human",
+            source="ai" if actor.via == "cheese" else "upload",
+            note=note if isinstance(note, str) else None,
+            base_version=base if isinstance(base, str) and base else None,
+        )
+    return ok(await record_shown(db, place, path, author=author, mime=mime))
 
 
 @router.get("/{topic_id}/shown")
@@ -3123,7 +3366,18 @@ async def decide_document_revisions(
             clean, made, expected
         )
     else:
-        library.write_room_file(topic.project_id, topic_id, clean, made)
+        await room_files.save_room_file(
+            db,
+            project_id=topic.project_id,
+            room_id=topic_id,
+            path=clean,
+            data=made,
+            author=actor.handle,
+            author_kind="agent" if actor.via == "cheese" else "human",
+            source="editor",
+            note="处理修订",
+            base_version=expected,
+        )
     return ok(
         {
             "path": clean,
@@ -3470,7 +3724,15 @@ async def project_topic_unread(
 
     Read-state is per-person, so the recipient comes from the verified
     credential (``handle`` is only checked against it) — a caller without one
-    used to read anybody's badge map by naming them here."""
+    used to read anybody's badge map by naming them here.
+
+    The project door comes first, the way it does on every other route that
+    takes a ``project_id``: without it this map is a room directory. A
+    non-member has no read cursor, so every count equals that topic's message
+    total — the shape of the answer is "which rooms exist, and how busy each
+    one is", even though the topics themselves answer 403 to the same caller."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     recipient = await resolver.resolve_recipient(
         requested=handle, project_id=project_id, allow_anonymous=False
     )
@@ -3496,7 +3758,13 @@ async def project_private_unread(
     Same rule as ``topic-unread``: the recipient comes from the verified
     credential, never from the query string. It matters more here — this map
     names who a person is talking to privately, so honouring a caller-supplied
-    handle would leak the shape of everyone's DMs."""
+    handle would leak the shape of everyone's DMs.
+
+    Same project door as ``topic-unread`` too, and for the same reason: the
+    recipient question ("whose inbox") is not the resource question ("may you
+    see this project"), and this route only used to ask the first."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     recipient = await resolver.resolve_recipient(
         requested=handle, project_id=project_id, allow_anonymous=False
     )
@@ -3514,6 +3782,7 @@ async def upgrade_block(
     body: UpgradeBlockIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
 ) -> dict:
     """讨论升级：upgrade a block into a place of its own (eval A1).
 
@@ -3529,7 +3798,23 @@ async def upgrade_block(
     一轮：作者 `system`、提示词是平台写的一段开工说明，房间被平台叫醒去给这条活起名
     字、起分身。按结论 31，开一条活剩下的只有分支、卡和负责人，谁来做是负责人的事 ——
     所以平台在这里只做投递：房间时间线上落一条事件，收件人恰好是这条活的负责人。
+
+    这是一条**在房间里造东西**的写：升级的 block 住在哪个房间，就要在那个房间站得
+    住。以前两样都没有 —— block id 就是全部的门票，一个匿名调用者能往别人的房间里
+    落一张卡，`created_by` 填谁它就是谁的。凭据由 resolve/authorize_topic 认
+    （`app.api.auth`：会话说 token、agent 的 scoped token、或沙箱 token），房间由
+    block 自己带 —— block 的 `topic_id` 就是那个房间，不是它自己去请求体里说。
     """
+    block = await BlockRepository(db).get(block_id)
+    if block is None:
+        raise NotFoundError("Block not found")
+    parent = await TopicService(db).get_or_404(block.topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=parent.id, project_id=parent.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=parent.project_id, topic_id=parent.id
+    )
     room, thread, created = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
         created_by=body.created_by,

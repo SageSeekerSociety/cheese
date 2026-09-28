@@ -9,8 +9,9 @@ from sqlalchemy import select, update
 from app.domain.agent.models import AgentTurn
 from app.domain.delivery.models import Delivery
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.routine import service as routine_service
 from app.domain.routine.models import Routine, RoutineRun
-from app.domain.routine.service import REPORT_GRACE, sweep
+from app.domain.routine.service import REPORT_TIMEOUT, sweep
 from tests.integration.conftest import post_project, session_auth_headers
 
 OWNER = "user-1"
@@ -170,22 +171,23 @@ def test_a_report_settles_the_run_and_tells_the_owner(client):
     assert mine[0]["topic_id"] == room
 
 
-def test_a_turn_that_ends_without_a_report_is_a_failure(client):
-    room = _room(client, _project(client))
-    routine = _weekly(client, room, headers=PERSON).json()["data"]
-    _make_due(client, routine["id"])
+def _delivered_run(client, room, routine_id, delivered_ago):
+    """A run whose turn row was delivered `delivered_ago` and, as every input's
+    row in a live session is, stopped a few milliseconds later — long before the
+    work it carries ends."""
+    _make_due(client, routine_id)
     _sweep(client)
-    run = _runs(client, routine["id"])[0]
+    run = _runs(client, routine_id)[0]
 
-    async def the_turn_ran_and_stopped(session):
+    async def delivered(session):
         run_row = await session.get(RoutineRun, uuid.UUID(run["id"]))
         delivery = await session.scalar(
             select(Delivery).where(Delivery.event_id == run_row.delivery_event_id)
         )
-        stopped = datetime.now(UTC) - REPORT_GRACE - timedelta(minutes=1)
+        at = datetime.now(UTC) - delivered_ago
         attempt = delivery.attempt_id or uuid.uuid4()
         delivery.attempt_id = attempt
-        delivery.state = "received"
+        delivery.state = "uncertain"
         session.add(
             AgentTurn(
                 id=attempt,
@@ -193,18 +195,97 @@ def test_a_turn_that_ends_without_a_report_is_a_failure(client):
                 continuation_id=attempt,
                 author="system",
                 content="",
-                started_at=stopped - timedelta(minutes=5),
-                delivered_at=stopped - timedelta(minutes=5),
-                stopped_at=stopped,
+                started_at=at,
+                delivered_at=at,
+                stopped_at=at + timedelta(milliseconds=12),
+            )
+        )
+        return attempt
+
+    return run, _db(client, delivered)
+
+
+def test_a_stopped_turn_row_does_not_end_the_run(client):
+    """Seen on dev: the row stopped 12ms after delivery and the run was failed two
+    minutes later while the teammate was still writing the summary."""
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    run, _ = _delivered_run(client, room, routine["id"], timedelta(minutes=10))
+
+    _sweep(client)
+    assert _runs(client, routine["id"])[0]["status"] == "running"
+
+    done = client.post(
+        f"/routine-runs/{run['id']}/report",
+        json={"status": "succeeded", "summary": "摘要写好了", "outputs": ["a.md"]},
+    )
+    assert done.status_code == 200, done.text
+    assert _runs(client, routine["id"])[0]["status"] == "succeeded"
+
+
+def test_no_report_past_the_turn_ceiling_fails_and_a_late_report_still_lands(client):
+    project = _project(client)
+    room = _room(client, project)
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    run, _ = _delivered_run(
+        client, room, routine["id"], REPORT_TIMEOUT + timedelta(minutes=1)
+    )
+
+    _sweep(client)
+    failed = _runs(client, routine["id"])[0]
+    assert failed["status"] == "failed"
+    assert failed["error"] == routine_service.NO_REPORT
+
+    late = client.post(
+        f"/routine-runs/{run['id']}/report",
+        json={"status": "succeeded", "summary": "晚了一点", "outputs": ["b.md"]},
+    )
+    assert late.status_code == 200, late.text
+    _sweep(client)
+    settled = _runs(client, routine["id"])[0]
+    assert settled["status"] == "succeeded"
+    assert not settled["error"], "a run that succeeded still carries the old failure"
+    inbox = client.get(f"/projects/{project}/alerts", headers=PERSON).json()["data"][
+        "data"
+    ]
+    said = [n["body"] for n in inbox if "每周进展" in n["title"]]
+    assert any("b.md" in body for body in said), said
+
+    again = client.post(
+        f"/routine-runs/{run['id']}/report",
+        json={"status": "failed", "summary": "重复"},
+    )
+    assert again.status_code >= 400, "a settled run took a second report"
+
+
+def test_a_turn_the_room_says_failed_fails_the_run_with_its_reason(client):
+    from app.domain.block.authorship import AuthorType
+    from app.domain.block.models import Block, BlockKind
+
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    _, attempt = _delivered_run(client, room, routine["id"], timedelta(minutes=1))
+
+    async def it_failed(session):
+        session.add(
+            Block(
+                id=uuid.uuid4(),
+                project_id=uuid.UUID(routine["project_id"]),
+                topic_id=uuid.UUID(room),
+                author="system",
+                author_type=AuthorType.platform,
+                kind=BlockKind.event,
+                content="本轮未完成：模型接口连续报错",
+                meta={"event_type": "turn_failed"},
+                turn_id=attempt,
             )
         )
 
-    _db(client, the_turn_ran_and_stopped)
+    _db(client, it_failed)
     _sweep(client)
-
     run = _runs(client, routine["id"])[0]
     assert run["status"] == "failed"
-    assert run["error"], "a failed run gave no reason"
+    assert "模型接口连续报错" in run["error"]
 
 
 def test_paused_rules_do_not_fire_and_resume_does_not_replay_the_missed_moment(client):

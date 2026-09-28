@@ -24,9 +24,9 @@ from app.auth.space_access import may_teach_task
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.core.storage import StorageBackend
 from app.domain.attachment.models import Attachment
-from app.domain.attachment.repositories import AttachmentRepository
 from app.domain.attachment.services import AttachmentService
 from app.domain.task.models import Task, TaskAttachment
+from app.domain.task.repositories import TaskRepository
 from app.domain.task.visibility_service import TaskVisibilityService
 
 
@@ -101,8 +101,10 @@ class TaskAttachmentService:
         self._session = session
         self._storage = storage
         self._links = TaskAttachmentRepository(session=session)
-        self._attachment_repo = AttachmentRepository(session=session)
-        self._files = AttachmentService(repo=self._attachment_repo, storage=storage)
+        self._tasks = TaskRepository(session=session)
+        # 附件那一域的文件行一律经它的 service 去拿，不自己摸它的 repository ——
+        # 跨领域摸 repository 是 `test_domain_import_guard.py` 拦的那一条。
+        self._files = AttachmentService.from_session(session=session, storage=storage)
         self._visibility = TaskVisibilityService(session=session)
 
     # ---- 看 ----
@@ -121,7 +123,7 @@ class TaskAttachmentService:
         links = await self._links.list_live(task_id=task.id)
         files = {
             attachment.id: attachment
-            for attachment in await self._attachment_repo.get_by_ids(
+            for attachment in await self._files.get_many(
                 [link.attachment_id for link in links]
             )
         }
@@ -133,6 +135,30 @@ class TaskAttachmentService:
         ]
         can_download = await self._may_download(task=task, user_id=user_id)
         return [f for f, _ in pairs], [link for _, link in pairs], can_download
+
+    async def may_read_file(self, *, attachment_id: int, user_id: int) -> bool | None:
+        """这个文件在**题目这一侧**归谁读 —— 没有挂在任何题上时返回 ``None``。
+
+        返回 ``None`` 不是 ``False``：它说的是「题目这一域没有主张」，不是「不许」。
+        通用附件路由（``routes/attachments.py``）拿这个答案决定要不要再问别的判据，
+        题目域自己的路由用不着它 —— 那边调的是 ``download``，一开始就知道是哪道题。
+
+        每道挂着它的题都问一次「谁能拿这道题的材料」（``_may_download``：出题人 /
+        板管理员 / 已领取的人），任何一道成立就成立。同一个文件正常只属于一道题
+        （``attach_uploaded`` 拦了第二次挂载），真出现多道时按最宽的那道放行。
+        """
+        links = await self._links.list_live_for_attachments(
+            attachment_ids=[attachment_id]
+        )
+        if not links:
+            return None
+        for link in links:
+            task = await self._tasks.get_by_id(link.task_id)
+            if task is None:
+                continue
+            if await self._may_download(task=task, user_id=user_id):
+                return True
+        return False
 
     async def _may_download(self, *, task: Task, user_id: int) -> bool:
         if await may_teach_task(self._session, task=task, user_id=user_id):
@@ -170,7 +196,7 @@ class TaskAttachmentService:
         一道没有材料的题。前者的代价是用户中途放弃时留下一个没人引用的文件，这与
         素材库、PDF 导入抽图今天的处境一样。
 
-        三道校验收在这里（``_ensure_attachable``），是因为**附件 id 是可猜的连续
+        三道校验收在这里（``ensure_attachable``），是因为**附件 id 是可猜的连续
         整数**：不校验的话，任何登录用户都能把别人上传的文件（例如别人交作业时附的
         材料）挂到自己的题目上，借这块板把它公开出去。
         """
@@ -220,7 +246,7 @@ class TaskAttachmentService:
         """
         files = {
             attachment.id: attachment
-            for attachment in await self._attachment_repo.get_by_ids(attachment_ids)
+            for attachment in await self._files.get_many(attachment_ids)
         }
         missing = [i for i in attachment_ids if i not in files]
         if missing:
@@ -259,9 +285,8 @@ class TaskAttachmentService:
         if link is None:
             raise NotFoundError("Attachment not found")
 
-        attachment = await self._attachment_repo.get_by_id(attachment_id)
-        if attachment is None:
-            raise NotFoundError("Attachment not found")
+        # 拿不到就是 404 —— `get` 自己会抛，与上面那条关联行缺失同一个结局。
+        attachment = await self._files.get(attachment_id)
 
         storage_key = attachment.meta.get("storageKey")
         if not storage_key:

@@ -5,6 +5,7 @@ summary: 浏览器里存了什么、每次请求带什么，以及芝士和机�
 covers:
   - backend/app/api/routes/users.py
   - backend/app/core/sandbox_auth.py
+  - backend/app/api/preview_host.py
 ---
 
 # 登录与令牌 {#auth}

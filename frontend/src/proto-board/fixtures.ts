@@ -989,8 +989,12 @@ export interface Announcement {
   createdAt: string
   updatedAt: string
   publisher: Person
-  /** 置顶。**真平台现在没有这一项** —— 公告只是一段数组，没有排序字段，谁也没法把一条
-   *  一直摆在最前面。这一条是这次重设计**新增**的，落真代码要给元素加一个布尔字段。 */
+  /** 置顶。**这一项已经落到真平台了**（2026-09-26 那一批）：公告元素多了一个可选的
+   *  `pinned` 布尔字段，真界面在 `views/spaces/board/` 里 —— 列表与首页横幅共用
+   *  `board/model.ts` 的 `compareAnnouncements`（置顶在前，其余按发布时间倒序）。
+   *  真元素里它是**可选**的：加这一格之前发出去的公告都没有它，读的时候当 `false`。
+   *  后端一个字没改 —— 公告是随空间一起 PATCH 下去的 jsonb 数组，元素里的键原样透传，
+   *  所以没有迁移。 */
   pinned: boolean
 }
 

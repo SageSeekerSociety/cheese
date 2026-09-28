@@ -4,6 +4,10 @@ Every project belongs to a team: an explicit team_id sticks, a personal
 project (no team given) is linked to its owner's personal team at CREATE time
 (个人 = 单人真团队), and an owner who is no registered person, with no team
 given, has nowhere for the project to belong — it is refused.
+
+Naming a team is a claim about the CALLER, not about the body: the caller has to
+be in that team (see `_require_team_membership` in the projects route). So the
+explicit-team cases below create the team with an owner and post as that owner.
 """
 
 import asyncio
@@ -13,18 +17,27 @@ from datetime import UTC, datetime
 from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository
 from app.domain.user.models import User
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _create(client, name: str, owner: str, team_id: int | None = None) -> dict:
+def _create(
+    client,
+    name: str,
+    owner: str,
+    team_id: int | None = None,
+    *,
+    caller: str | None = None,
+) -> dict:
     body: dict = {"name": name, "owner_handle": owner}
     if team_id is not None:
         body["team_id"] = team_id
-    resp = post_project(client, json=body)
+    resp = post_project(
+        client, json=body, headers=session_auth_headers(caller or owner)
+    )
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]
 
@@ -64,6 +77,9 @@ def test_personal_project_links_to_personal_team_at_create(client):
 
 def test_explicit_team_id_sticks_and_an_unknown_owner_is_refused(client):
     async def seed_team() -> int:
+        from app.domain.team.models import TeamMemberRole, TeamUserRelation
+        from tests.integration.conftest import registered
+
         async with client.test_factory() as s:
             team = Team(
                 name="Proj Owners",
@@ -76,13 +92,23 @@ def test_explicit_team_id_sticks_and_an_unknown_owner_is_refused(client):
             )
             s.add(team)
             await s.flush()
+            # The caller has to be in the team it names, so the team has a member.
+            s.add(
+                TeamUserRelation(
+                    team_id=team.id,
+                    user_id=await registered(s, "lead"),
+                    role=TeamMemberRole.OWNER,
+                    created_at=_now(),
+                    updated_at=_now(),
+                )
+            )
             tid = team.id
             await s.commit()
             return tid
 
     tid = asyncio.run(seed_team())
 
-    shared = _create(client, "shared-proj", "nobody-here", team_id=tid)
+    shared = _create(client, "shared-proj", "nobody-here", team_id=tid, caller="lead")
     assert shared["team_id"] == tid
     # Links to the owning team go by its handle, so the project carries it.
     assert shared["team_handle"].startswith("t-")

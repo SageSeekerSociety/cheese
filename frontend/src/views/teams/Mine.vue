@@ -41,12 +41,12 @@
             <v-list v-else class="my-teams-list pa-0">
               <!-- The personal team (个人 = 单人真团队) arrives first from the
                    backend and behaves exactly like any other team — click in to
-                   manage its projects and 算力. Only the badge marks it apart. -->
+                   manage its projects and work computers. Only the badge marks it apart. -->
               <v-list-item
                 v-for="team in myTeams"
                 :key="team.id"
                 :title="team.name"
-                :subtitle="team.personal ? '只有你自己的团队 · 个人项目与个人算力都在这里' : team.intro"
+                :subtitle="team.personal ? '只有你自己的团队 · 个人项目与设备都在这里' : team.intro"
                 :prepend-avatar="getAvatarUrl(team.avatarId)"
                 :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                 rounded="md"

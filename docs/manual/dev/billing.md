@@ -37,11 +37,51 @@ covers:
 `backend/app/domain/usage/credits.py`：
 
 - 默认按 token 折算：**1 额度 = 1 万 token**（`COMPUTE_CREDIT_TOKENS`，默认 10000）。订阅路把四类 token（输入、输出、缓存读、缓存写）全部计入。缓存读不免费，而且占大头：一次观测到 290 万缓存 token 对 14 万新 token。
-- 网关路在设置了 `LLM_GATEWAY_CREDIT_USD` 时，按网关给出的真实花费折算：额度 = 花费 ÷ 每额度价格。缓存折扣因此会体现出来。
+- 走网关的轮次上，设置了 `LLM_GATEWAY_CREDIT_USD`、网关也报回了花费时，按真实花费折算：额度 = 花费 ÷ 每额度价格。缓存折扣因此会体现出来。
 
 ## 两道刹车 {#brakes}
 
-1. **准入**：每个请求之前，主 API 比较已用额度和总额度，用完就拒绝。
+```demo-sim
+title: 两道刹车读同一份额度
+note: 按 1 额度 = 1 万 token 折算，拖一拖看两道刹车各自什么时候拦
+vars:
+  - key: tokens
+    label: 已经用掉的 token
+    unit: 千
+    min: 0
+    max: 1000
+    step: 20
+    value: 300
+  - key: total
+    label: 团队给的额度
+    unit: 额度
+    min: 10
+    max: 100
+    step: 10
+    value: 50
+derived:
+  - key: spent
+    expr: tokens / 10
+  - key: left
+    expr: total - spent
+rules:
+  - label: 额度用完
+    when: 'left <= 0'
+    text: 准入拒绝，房间里出现平台提示；项目虚拟 key 的 max_budget 也已经在网关上把调用挡住了。
+    tone: bad
+  - label: 放行
+    text: 准入放行，网关那边也还没到 max_budget。两道刹车读的是同一份额度，一个按额度数、一个按美元。
+    tone: ok
+out:
+  - label: 已用，折算成额度
+    expr: spent
+    unit: 额度
+  - label: 还剩（负数即超了）
+    expr: left
+    unit: 额度
+```
+
+1. **准入**：每个请求之前，主 API 比较已用额度和总额度，用完就拒绝。这一道在计量代理那边是软的：拿不到准入答案时放行，由订阅路自己的滚动 token 上限兜底。
 2. **网关预算**：项目虚拟 key 的 `max_budget` 按额度设置，网关直接拒绝超额调用。
 
 两道刹车读的是同一份额度，一个按额度数、一个按美元。

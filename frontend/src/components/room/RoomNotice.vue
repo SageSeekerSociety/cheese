@@ -2,7 +2,7 @@
 // 平台替这个房间写下的一条：出了什么事、谁在处理、详情在一次点击之后。
 //
 // 一条通知和一条消息长得不一样是有意的——它不是谁说的话。它按「是什么」分成两类：
-// - **谁做了一件事**（芝士改了文件、检查没过、运行环境就绪、平台记下一次报错）：
+// - **谁做了一件事**（芝士改了文件、检查没过、工作电脑就绪、平台记下一次报错）：
 //   一种行，记号在头像列、正文在消息的正文轴上、时间在行尾（`AgentNoticeFrame`）。
 //   档位之间只差那一行里装什么；轻重只改底色和状态字的颜色，不改形状。
 // - **房间里发生的事**（有人加入、话题归档）：没有署名的一行淡字，居中。
@@ -15,6 +15,7 @@ import type { PlatformNotice } from '../../lib/platformNotice'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { parseDiffLines } from '../../lib/diff'
+import { confirmTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import CloudStartupStatus from '../CloudStartupStatus.vue'
@@ -41,12 +42,16 @@ const props = defineProps<{
   canRetry?: boolean
   /** 重试请求已经发出、还没回来。 */
   retrying?: boolean
+  /** 房间所在的项目：「去确认」要带人去项目级的页面。 */
+  projectId?: string | null
 }>()
 
 const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string): void
   (e: 'open-card', taskId: string): void
   (e: 'retry'): void
+  // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
+  (e: 'undo-title', blockId: string): void
 }>()
 
 /** 没有署名的一行字：房间里发生的事，不是谁做的事。 */
@@ -85,6 +90,9 @@ const showRetry = computed(
       (props.notice.mode === 'fold' && props.notice.retryable))
 )
 
+// 芝士起草的规则 / 工作方法：这一行直接通到要确认的那一条。
+const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
+
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
 }
@@ -108,6 +116,8 @@ const ACTION_META: Record<string, { btn: string }> = {
   decision: { btn: '查看决策记录' },
   topics: { btn: '' },
   split: { btn: '查看任务' },
+  // 平台自动改了标题：行尾是撤销，不是「去看看」，见下面的模板分支。
+  title: { btn: '撤销' },
   milestone: { btn: '查看日历' },
   accept: { btn: '审阅' },
   notify: { btn: '' },
@@ -201,9 +211,11 @@ const ACTION_META: Record<string, { btn: string }> = {
           type="button"
           class="sys-btn"
           @click="
-            splitTask
-              ? emit('open-card', splitTask)
-              : emit('open-resource', notice.resource, block.turn_id ?? undefined)
+            notice.resource === 'title'
+              ? emit('undo-title', block.id)
+              : splitTask
+                ? emit('open-card', splitTask)
+                : emit('open-resource', notice.resource, block.turn_id ?? undefined)
           "
         >
           {{ ACTION_META[notice.resource].btn }}
@@ -272,6 +284,9 @@ const ACTION_META: Record<string, { btn: string }> = {
           notice.who === 'cheese' ? `${name || agentName}正在处理` : notice.whoLabel
         }}</span>
         <!-- 在 summary 里点它不能顺带展开这一行。 -->
+        <router-link v-if="confirmAt" :to="confirmAt" class="sys-btn" data-testid="notice-confirm" @click.stop>
+          {{ t('work.room.notice.goConfirm') }}
+        </router-link>
         <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click.prevent.stop="emit('retry')">
           {{ t('work.room.retry.action') }}
         </button>

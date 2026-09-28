@@ -169,7 +169,7 @@ async def get_room_environment(
             # message alone is not a pending machine reservation.
             state = {"state": "unbound"}
         elif any(machine.status == MachineStatus.error for machine in machines):
-            state = {"state": "failed", "log": "Cloud 机器创建失败，运行环境尚未接入。"}
+            state = {"state": "failed", "log": "云端工作电脑创建失败，尚未接入。"}
         else:
             # A cloud machine on its way IS preparation, whatever stage it's at.
             state = {"state": "pending"}

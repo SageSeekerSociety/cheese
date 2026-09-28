@@ -336,9 +336,12 @@ def test_a_teammate_who_joined_after_the_project_is_not_invited(client, bearer):
     按读时推导、不留副本的。
     """
     team_id = _make_team(client, "teamlead")
+    # 点名一个团队的人必须是那个团队的人，所以建它的是这个团队的人（项目的所有者仍是
+    # 请求体里那位：``owner_handle`` 由调用方指定是这个接口的设计）。
     r = post_project(
         client,
         json={"name": "P", "owner_handle": OWNER, "team_id": team_id},
+        headers=bearer("teamlead"),
     )
     assert r.status_code == 200, r.text
     project_id = r.json()["data"]["id"]

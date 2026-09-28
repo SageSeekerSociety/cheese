@@ -231,7 +231,7 @@
       "project": "Project",
       "spend": "Spend in window",
       "usage": "Usage in window",
-      "credits": "Compute credits",
+      "credits": "Credits",
       "brake": "Brake"
     },
     "action": {
@@ -240,7 +240,7 @@
     "dialog": {
       "title": "Set the budget cap",
       "field": "Cap (USD)",
-      "hint": "The default brake is derived from compute credits ({derived}); entering a number overrides it on the gateway at once, and leaving it empty clears the override.",
+      "hint": "The default brake is derived from credits ({derived}); entering a number overrides it on the gateway at once, and leaving it empty clears the override.",
       "clear": "Clear override"
     }
   },

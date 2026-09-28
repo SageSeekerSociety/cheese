@@ -80,8 +80,16 @@ class Building(enum.StrEnum):
     """还没递出交付。"""
 
     running = "运行中"
-    #: 活才有：没有人在做它。还没派出去、排着队等空位，或者上一次递的卡被驳回、
-    #: 撤回、没过检查，都是这一格：下一步是有人再动手。
+    #: 活才有：这条活上有人动过手，但此刻没有人在做它，也还没递出交付 —— 做了一半
+    #: 停在原地。和「待开工」分开，是因为「有人碰过、停下来了」和「从来没人碰过」
+    #: 对看的人是两件事：前者的下一步多半是接着做，后者是决定要不要开。
+    #:
+    #: 判据只有 `TaskFacts.has_progress` 一条，而它读的是**平台看得见的痕迹**（草稿
+    #: PR / 工作树），所以这一格不是「有人在上面干活」的证据 —— 那是「运行中」的
+    #: 活。主 agent 自己动手的那条路，平台今天看不见过程，只看得见留下的东西。
+    started = "已动工"
+    #: 活才有：没有人在做它，而且它上面一点痕迹都没有。还没派出去、排着队等空位，
+    #: 都是这一格：下一步是有人动手。
     not_started = "待开工"
     #: 活才有：做它的分身已经交回了结论，在等房间把卡递出去。和「待开工」分开，
     #: 是因为东西已经做出来了，看的人不该以为还没人碰过它。
@@ -193,6 +201,16 @@ class TaskFacts:
     card: CardFacts | None
     #: 有没有分身在做这条活（`Task.subagent_id`）。
     has_worker: bool = False
+    #: 这条活上有没有人动过手的痕迹 —— 问的是「它被碰过」，不是「此刻有人在动它」。
+    #: 两个来源，都是平台看得见的那几个动作：`Task.pr_number` 非空（平台已经为它开
+    #: 出了草稿 PR，而那要等它的分支上真有提交才开得出来），或 `Task.author_handle`
+    #: 非空（有人开过它的工作树）。
+    #:
+    #: 为什么只有这两样：主 agent 自己动手那条路，平台看不见过程 —— 提交是直接推去
+    #: GitHub 的、工作树是在沙箱里自己开的，都不经过这里。所以这一位只够把「做了一半
+    #: 停着」和「还没人碰过」分开，不够说明「正在做」（那是 `worker_live` 那一组），
+    #: 也不够说明做到了哪一步。
+    has_progress: bool = False
     #: 那个分身活在**房间的**会话里，所以房间的屏幕没了，它一定也没了 —— 这一位
     #: 是跑轮次的进程当下的事实（`ChatService.has_live_screen`），不是一列时间戳，
     #: 所以它得从外面喂进来（这一层不碰 I/O）。
@@ -260,6 +278,8 @@ def facts_for_task(
         accepted_at=task.accepted_at,
         card=facts_for_card(card),
         has_worker=bool(task.subagent_id),
+        # 两个来源都是「有人做过这件事」的痕迹，不是「有人在做事」——见 TaskFacts。
+        has_progress=bool(task.pr_number is not None or task.author_handle),
         room_screen_live=room_screen_live,
         worker_live=worker_live,
         has_conclusion=bool(task.conclusion),
@@ -446,12 +466,30 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     # 放在最后：一条已交付的活即使关掉了，它首先是已交付的（规矩 1 已经拦了它）。
     if facts.status == TaskStatus.closed:
         return _show(Done.closed)
-    # 被驳回的卡说明交回来的那一版不算数，所以它压过「已交回」。
+    # 被驳回的卡说明交回来的那一版不算数，所以它压过「已交回」。它压不过「已动工」：
+    # 那一版不算数，但分支上留下的痕迹还在，看的人该看到的仍是「做了一半停着」。
     if facts.card is not None and facts.card.status in _SETTLED_CARD:
-        return _show(Building.not_started)
+        return _show(_parked(facts))
     if facts.has_conclusion:
         return _show(Building.returned)
-    return _show(Building.not_started)
+    return _show(_parked(facts))
+
+
+def task_is_running(facts: TaskFacts, *, now: datetime) -> bool:
+    """这条活此刻在不在看板的「运行中」那一格 —— 给房间问「我名下有没有活在跑」用。
+
+    不另写一套判据：同一条活在侧栏和看板上必须是同一个说法。
+    """
+    return task_presentation(facts, now=now) == _show(Building.running)
+
+
+def _parked(facts: TaskFacts) -> Building:
+    """没人在做、也没递出交付时，这条活停在「施工中」的哪一格。
+
+    只有一条判据：它上面有没有人动过手的痕迹（`TaskFacts.has_progress`）。有，就是
+    「已动工」——东西做了一半停在原地；一点痕迹都没有，才是「待开工」。
+    """
+    return Building.started if facts.has_progress else Building.not_started
 
 
 def _worker_alive(facts: TaskFacts, *, now: datetime) -> bool:

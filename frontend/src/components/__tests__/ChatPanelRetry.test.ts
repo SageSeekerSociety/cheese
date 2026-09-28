@@ -23,7 +23,6 @@ vi.mock('../../api', async () => {
     listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
-    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     summonAgent: (...a: unknown[]) => summonAgent(...a),
     chatWsUrl: () => 'ws://test/ws',

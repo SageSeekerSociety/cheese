@@ -43,7 +43,8 @@
     ".github/workflows/deploy-prod.yml",
     ".github/workflows/build.yml",
     ".github/scripts/plan-image-builds.sh",
-    ".github/scripts/test-plan-image-builds.sh"
+    ".github/scripts/test-plan-image-builds.sh",
+    ".github/scripts/test-ensure-claude-cli.sh"
   ],
   "harness": [
     "backend/app/domain/agent/**",
@@ -60,7 +61,9 @@
     ".dockerignore",
     ".github/scripts/allow-user-namespaces.sh",
     ".github/scripts/ensure-apt.sh",
+    ".github/scripts/ensure-claude-cli.sh",
     ".github/scripts/ci-test-evidence.py",
+    "deploy/ci-runner/prune-private-images.sh",
     ".github/workflows/remote-execution.yml"
   ],
   "mcp": [
@@ -80,6 +83,7 @@
     "backend/app/domain/agent/executor_transport.py",
     "backend/app/domain/agent/cli_worker.py",
     "backend/sandbox/cheese",
+    ".github/scripts/ensure-claude-cli.sh",
     ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/mcp-contract.yml"
   ],

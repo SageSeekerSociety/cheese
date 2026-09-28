@@ -18,6 +18,10 @@ vi.mock('@/network/api/teams', () => ({
     join: (...args: unknown[]) => join(...args),
   },
 }))
+// 侧栏（即便这里被 stub 掉，模块还是会被加载）那头挂着编辑小队资料的弹窗，
+// 它会 import 头像接口 —— 而真实的网络客户端一转手就把 src/router 拉进来，
+// 在 vue-router 已被整包替掉的这里会炸在 createRouter 上。接口本身不用假装有行为。
+vi.mock('@/network/api/avatars', () => ({ AvatarsApi: { createAvatar: vi.fn() } }))
 const route = reactive({ params: { handle: 'crew' } as Record<string, string>, name: 'TeamsDetailDefault' })
 vi.mock('vue-router', () => ({ useRoute: () => route }))
 

@@ -139,7 +139,7 @@
    "from": "pool",
    "to": "machine",
    "y": 396,
-   "label": "远端机器探活（≤15 秒）",
+   "label": "需要重落时探活（≤15 秒）",
    "variant": "dashed"
   },
   {

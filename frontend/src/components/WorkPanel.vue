@@ -21,12 +21,14 @@
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
+import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
 import type { TopicPhase } from '../lib/topicState'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
+import { useTopicMemory } from '../composables/useTopicMemory'
 import { fileIcon, previewCanShowInRoom } from '../lib/fileKind'
 
 import PanelChanges from './panels/PanelChanges.vue'
@@ -43,7 +45,7 @@ const props = withDefaults(
     activityTick: number
     // 芝士 正在这个话题里干活 —— tab 栏据此给「现场」加一个跳动的点。
     working?: boolean
-    // 会话控制状态的最近一帧，一路透传给现场那格的控制条。
+    // 会话状态的最近一帧，一路透传给现场那格的会话详情。
     agentControl?: AgentControlState | null
     // 正在跑的轮次各自的开始时间（毫秒），一路透传给现场那格的状态条。
     siteTurns?: Record<string, number>
@@ -88,6 +90,8 @@ const emit = defineEmits<{
   /** 卡片面板里的「去验收」——同 `chatEvents.review`，切到「改动」那一格。 */
   (e: 'review'): void
   (e: 'mention-click', handle: string): void
+  /** 总览自动区里的一条决策 / 里程碑：去向是项目里的一页，交给 `TopicView`。 */
+  (e: 'open-resource', resource: 'decision' | 'milestone'): void
   (e: 'update:tab', key: string): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层。
   (e: 'locate', message: string): void
@@ -118,10 +122,6 @@ const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview'
 // ---- 自由区 ----
 // 一份文件一个页签，键是 `file:<路径>`，地址里的 `?tab=` 用的也是它——「你看一下
 // 这份报告」得是一条能发出去的链接。
-interface FileTab {
-  path: string
-  pinned: boolean
-}
 const FILE_TAB = 'file:'
 function fileKey(path: string): string {
   return FILE_TAB + path
@@ -129,9 +129,9 @@ function fileKey(path: string): string {
 function fileName(path: string): string {
   return path.split('/').pop() || path
 }
-const openFiles = ref<FileTab[]>([])
+const openFiles = ref<OpenFileTab[]>([])
 // 自由区属于房间：切去别的房间再回来，开着的那几份还在。只记在这一次会话里。
-const filesByTopic = new Map<string, FileTab[]>()
+const { filesByTopic } = useTopicMemory()
 
 const active = ref<string>(defaultTab.value)
 /** The URL's answer, if it names a tab that exists (or one that used to). */
@@ -214,9 +214,9 @@ function setTab(key: string) {
 //
 // `settled` is what keeps it to that moment. The phase arrives asynchronously —
 // the accept card has to load before anyone knows a card is pending, and until
-// it has the prop is undefined rather than 「没有卡」 — so this cannot run on the
-// topic switch itself. It runs on the first phase this topic reports, and never
-// again unless another topic is opened.
+// it has the prop is undefined rather than 「没有卡」 — so this cannot run when the
+// topic opens. It runs on the first phase this topic reports, and never again
+// (another topic gets its own panel).
 const settled = ref(false)
 
 // 只挑有东西可看的那一格：挑中一格空的，人一进房间看到的就是一句「暂无」——
@@ -300,7 +300,6 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
     // reports errors; this one only ever adds a hint.
     return
   }
-  if (props.topic?.id !== tid) return
   previewPath.value = art?.path ?? null
   const id = art?.artifact_id ?? null
   // Opening a topic must not greet the reader with a dot for something that was
@@ -329,10 +328,9 @@ async function pollWorkSummary(opts: { seen?: boolean } = {}) {
     // A failed poll is not a state: what the tabs show stays as it was. It still
     // counts as an answer for 「开在哪一格」, which then stays on the default tab
     // rather than waiting on a summary that may never come.
-    if (props.topic?.id === tid) summaryLoaded.value = true
+    summaryLoaded.value = true
     return
   }
-  if (props.topic?.id !== tid) return
   summary.value = { changedFiles: next.changed_files, hasRun: next.has_run }
   summaryLoaded.value = true
   // Arriving at a topic that already had changes is not news, exactly as it is
@@ -364,7 +362,6 @@ async function pollThreads() {
     // limit: 1 — see TaskProgress. Without it this asks for every card's whole
     // history just to count them.
     const rows = (await listRoomTasks(roomId, { limit: 1 })).data
-    if (props.topic?.id !== roomId) return
     threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
   } catch {
     // A failed poll is not a state — same rule as the two polls above.
@@ -399,37 +396,29 @@ function tabTitle(t: TabDef): string {
   return t.label
 }
 
-// Topic switch: the address decides, 文档 when it says nothing. Baseline the dot
-// against whatever this topic already had, so opening a topic — including
+// Opening the topic: the address decides, 文档 when it says nothing. Baseline the
+// dot against whatever this topic already had, so opening a topic — including
 // straight onto 预览 from someone's link — never greets you with a hint for work
 // that was there before you arrived.
-watch(
-  () => props.topic?.id,
-  (id) => {
-    openFiles.value = (id && filesByTopic.get(id)) || []
-    const asked = tabFromUrl()
-    ensureFileFromUrl(asked)
-    active.value = asked ?? defaultTab.value
-    // 「URL 里显式带 ?tab= 时以 URL 为准」: an address that names a tab has already
-    // decided, so the phase does not get to.
-    settled.value = !!asked
-    markPreviewSeen(null)
-    previewPath.value = null
-    summary.value = { changedFiles: [], hasRun: false }
-    summaryLoaded.value = false
-    changesSeen.value = ''
-    threads.value = { total: 0, open: 0 }
-    if (id) {
-      void pollPreviewPointer({ seen: true })
-      void pollWorkSummary({ seen: true })
-      void pollThreads()
-    }
-  },
-  { immediate: true }
-)
+{
+  const id = props.topic?.id
+  openFiles.value = (id && filesByTopic.get(id)) || []
+  const asked = tabFromUrl()
+  ensureFileFromUrl(asked)
+  active.value = asked ?? defaultTab.value
+  // 「URL 里显式带 ?tab= 时以 URL 为准」: an address that names a tab has already
+  // decided, so the phase does not get to.
+  settled.value = !!asked
+  markPreviewSeen(null)
+  if (id) {
+    void pollPreviewPointer({ seen: true })
+    void pollWorkSummary({ seen: true })
+    void pollThreads()
+  }
+}
 
-// Declared after the topic watcher on purpose: both fire immediately on mount,
-// in declaration order, and this one must see the `settled` that watcher sets.
+// Declared after the opening block on purpose: it fires immediately on mount and
+// must see the `settled` that block sets.
 //
 // 待验收 / 交付中要等 summary 回来才挑：开在「改动」的前提是真有改动，而两个请求
 // 同时发出，谁先到说不准。等到的是一个事实，不是一场赛跑。
@@ -533,7 +522,7 @@ function closeFile(path: string) {
   setTab(neighbour ? fileKey(neighbour.path) : 'overview')
 }
 
-function setFiles(next: FileTab[]) {
+function setFiles(next: OpenFileTab[]) {
   openFiles.value = next
   const tid = props.topic?.id
   if (tid) filesByTopic.set(tid, next)
@@ -645,11 +634,13 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           :active="active === 'overview'"
           :refresh-tick="refreshTick"
           :open-card-id="openCardId"
+          :member-names="memberNames"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
           @review="emit('review')"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
+          @open-resource="emit('open-resource', $event)"
         />
         <PanelSite
           v-if="mounted.has('site')"
@@ -663,6 +654,9 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           :member-names="memberNames"
           :working="working"
           :agent-control="agentControl"
+          @open-file="openFile"
+          @open-topic="emit('open-topic', $event)"
+          @mention-click="emit('mention-click', $event)"
         />
         <PanelChanges
           v-if="mounted.has('changes')"

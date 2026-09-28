@@ -151,16 +151,6 @@ def test_a_task_is_opened_without_the_machine(client, room):
     assert "数据清洗" in closed
 
 
-def test_a_remembered_fact_is_recalled(client, room):
-    host = BackendHost(client, *room)
-    cheese.run_platform_tool(
-        "cheese_remember", {"fact": "部署走 blue-green 切换"}, host
-    )
-    assert "blue-green" in cheese.run_platform_tool(
-        "cheese_recall", {"query": "部署 切换"}, host
-    )
-
-
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [

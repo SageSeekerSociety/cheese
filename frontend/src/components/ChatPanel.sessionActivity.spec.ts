@@ -7,22 +7,23 @@ import { render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
+const listTopicMembers = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
-    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
     listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listTopicMembers: (...args: unknown[]) => listTopicMembers(...args),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
-    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     chatWsUrl: () => 'ws://test/chat',
   }
 })
 
 import ChatPanel from './ChatPanel.vue'
+
+import { setLocale } from '@/i18n'
 
 const topic: Topic = {
   id: 'session-activity-topic',
@@ -68,19 +69,38 @@ const assistantBlock: Block = {
   created_at: '2026-08-17T00:00:01Z',
 } as Block
 
+// 队友的步骤清单是它发在房间里的一条消息（`todo_write`），和它别的话一样。
+const checklist: Block = {
+  ...assistantBlock,
+  id: 'checklist-1',
+  content: '✓ Read the brief\n✱ Write the fix',
+  turn_id: 'one',
+  meta: {
+    checklist: {
+      items: [
+        { id: '1', subject: 'Read the brief', status: 'completed' },
+        { id: '2', subject: 'Write the fix', status: 'in_progress' },
+      ],
+      result: null,
+    },
+  },
+} as Block
+
 async function flush() {
   for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 beforeEach(() => {
+  setLocale('zh-CN')
   vi.clearAllMocks()
   FakeWebSocket.instances = []
   listBlocks.mockResolvedValue({ data: [], has_more: false })
+  listTopicMembers.mockResolvedValue({ data: [], total: 0 })
   vi.stubGlobal('WebSocket', FakeWebSocket)
 })
 
 describe('session activity', () => {
-  it('keeps the working indicator until every active work id finishes', async () => {
+  it('reports working until every active work id finishes', async () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic] },
@@ -94,15 +114,60 @@ describe('session activity', () => {
     socket.emit({ type: 'assistant_block', block: assistantBlock })
     socket.emit({ type: 'done' })
     await flush()
-    expect(view.getByText('芝士正在处理…')).toBeTruthy()
+    expect(view.emitted('working')?.at(-1)).toEqual([true])
 
     socket.emit({ type: 'turn_finished', turn_id: 'one' })
     await flush()
-    expect(view.getByText('芝士正在处理…')).toBeTruthy()
+    expect(view.emitted('working')?.at(-1)).toEqual([true])
 
     socket.emit({ type: 'turn_finished', turn_id: 'two' })
     await flush()
-    expect(view.queryByText('芝士正在处理…')).toBeNull()
+    expect(view.emitted('working')?.at(-1)).toEqual([false])
+  })
+
+  // 队友在房间里和别人一样：干活时对话里不另起一行「正在处理」，也没有一行跟着
+  // 这一轮来去的清单。它的清单是它发的一条消息，这一轮结束了还在原处。
+  it('a running turn adds no working line and no checklist row to the chat', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic] },
+      global: { plugins: [vuetify] },
+    })
+    await flush()
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({ type: 'turn_started', turn_id: 'one' })
+    socket.emit({ type: 'todo', items: [{ id: '1', subject: 'Transient step', status: 'in_progress' }] })
+    await flush()
+    expect(view.container.textContent).not.toMatch(/正在处理|正在交给/)
+    expect(view.queryByRole('button', { name: /停止/ })).toBeNull()
+    expect(view.queryByText('Transient step')).toBeNull()
+
+    socket.emit({ type: 'assistant_block', block: checklist })
+    await flush()
+    expect(view.getByText('Write the fix')).toBeTruthy()
+
+    socket.emit({
+      type: 'block_updated',
+      block: {
+        ...checklist,
+        content: '✓ Read the brief\n✓ Write the fix',
+        meta: {
+          edited_at: '2026-08-17T00:00:05Z',
+          checklist: {
+            items: [
+              { id: '1', subject: 'Read the brief', status: 'completed' },
+              { id: '2', subject: 'Write the fix', status: 'completed' },
+            ],
+            result: null,
+          },
+        },
+      } as Block,
+    })
+    socket.emit({ type: 'turn_finished', turn_id: 'one' })
+    await flush()
+    expect(view.getAllByText('Write the fix')).toHaveLength(1)
+    expect(view.getByText('已编辑')).toBeTruthy()
   })
 
   // 「现场」那一格靠这个事件在开工那一刻出现。以前它等的是第一个工具调用——而一个
@@ -127,8 +192,8 @@ describe('session activity', () => {
   })
 
   // 重连（掉线自动重连、切回这个话题）会重跑一次 loadTopic。上一轮早就结束了，
-  // 而房间里那句「正在处理…」是靠事件翻回去的——不报 false 的话，右边那格现场
-  // 会在一个没人干活的话题上一直亮着。
+  // 而 working 是靠事件翻回去的——不报 false 的话，右边那格现场会在一个没人干活的
+  // 话题上一直亮着。
   it('重新载入话题时把 working 报回 false', async () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {

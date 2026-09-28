@@ -25,7 +25,9 @@ import pathlib
 BASELINE = {
     "app/api/auth.py": 2,
     "app/api/routes/project_environment.py": 2,
-    "app/api/routes/projects.py": 1,
+    # 0：项目这一侧本来有一处，现在推回 `_is_dm` 那一类了（结论 19）。留着这一行
+    # 是把它钉在 0，谁再加一处回来，红的就是这条。
+    "app/api/routes/projects.py": 0,
     "app/domain/agent/chat.py": 1,
     "app/domain/agent_instance/services.py": 1,
     "app/domain/authz/policy.py": 2,
