@@ -6,13 +6,18 @@ import pathlib
 import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from typing import Any, cast
 
 import pymupdf4llm
 
 from app.core.config import settings
 from app.core.errors import BadRequestError
-from app.core.storage import generate_storage_key, get_storage_backend
+from app.core.storage import (
+    compute_file_hash,
+    generate_storage_key,
+    get_storage_backend,
+)
 from app.domain.llm.llm_client import (
     LLMAPIError,
     LLMClient,
@@ -21,6 +26,24 @@ from app.domain.llm.llm_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class UploadedIllustration:
+    """一张抽出来的插图：已经躺在存储上，等着被登记成发布者名下的附件。
+
+    生成草稿这一步只把它写进存储（题干里的图片链接指的就是它），**落成附件行**是
+    预览路由的事 —— 只有那一层有数据库会话。所以这里把「登记一行附件」要用的每
+    一项都带出去，而不是只给一个 URL。``url`` 是存储给的那一份（相对地址），题干
+    里内联的是它加上站点前缀的绝对地址。
+    """
+
+    filename: str
+    content_type: str
+    storage_key: str
+    url: str
+    size: int
+    file_hash: str
 
 
 class TaskPdfDraftService:
@@ -70,7 +93,7 @@ class TaskPdfDraftService:
         default_topic_ids: list[int] | None = None,
     ) -> tuple[dict[str, Any], int]:
         """Convenience wrapper: return a single task payload from a PDF."""
-        payloads, token_used = await self.generate_task_payloads_from_pdf(
+        payloads, token_used, _ = await self.generate_task_payloads_from_pdf(
             pdf_bytes=pdf_bytes,
             template=template,
             space_id=space_id,
@@ -157,7 +180,8 @@ class TaskPdfDraftService:
         user_id: int,
         default_topic_ids: list[int] | None = None,
         max_tasks: int = 20,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[dict[str, Any]], int, list[UploadedIllustration]]:
+        """按页读出草稿。第三个返回值是**真的进了某条草稿题干**的那些插图。"""
         if not pdf_bytes:
             raise BadRequestError("Uploaded PDF is empty")
         if max_tasks < 1:
@@ -184,6 +208,7 @@ class TaskPdfDraftService:
                 return payloads, token_used
 
             all_payloads: list[dict[str, Any]] = []
+            illustrations: list[UploadedIllustration] = []
             total_tokens = 0
             failed_pages: list[int] = []
             attempted_pages = 0
@@ -213,12 +238,14 @@ class TaskPdfDraftService:
                     image_map = page_data[page_index][1]
                     for payload in selected_payloads:
                         if payload.get("description") and image_map:
-                            payload[
-                                "description"
-                            ] = await self._upload_and_replace_images(
+                            (
+                                payload["description"],
+                                page_illustrations,
+                            ) = await self._upload_and_replace_images(
                                 markdown_text=payload["description"],
                                 image_map=image_map,
                             )
+                            illustrations.extend(page_illustrations)
                     all_payloads.extend(selected_payloads)
 
                 if len(all_payloads) >= max_tasks:
@@ -245,7 +272,7 @@ class TaskPdfDraftService:
                 total_tokens,
             )
 
-            return all_payloads, total_tokens
+            return all_payloads, total_tokens, illustrations
         finally:
             if os.path.isdir(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
@@ -331,18 +358,27 @@ class TaskPdfDraftService:
         *,
         markdown_text: str,
         image_map: dict[str, str],
-    ) -> str:
-        """Upload extracted images to storage and replace local references with URLs.
+    ) -> tuple[str, list[UploadedIllustration]]:
+        """把抽出的插图传上存储，并把正文里的本地引用换成它的地址。
 
-        Returns the markdown text with image paths replaced by uploaded URLs.
+        返回换好地址的 Markdown，以及**这次真的传上去了**的那些插图。正文里没引用
+        的图不传：题干里没有它，就没有人看得见它，把它登记成一道题名下的附件只会让
+        屏幕上那句「抽出的插图 N 张」跟真的数得到的张数对不上。
         """
         if not image_map:
-            return markdown_text
+            return markdown_text, []
 
         storage = get_storage_backend()
         replaced = markdown_text
+        uploaded: list[UploadedIllustration] = []
 
         for filename, local_path in image_map.items():
+            # Replace image references in markdown:
+            #   ![alt](images/filename)  or  ![](images/filename)
+            escaped_name = re.escape(filename)
+            pattern = r"!\[([^\]]*)\]\([^)]*" + escaped_name + r"\)"
+            if not re.search(pattern, replaced):
+                continue
             if not await asyncio.to_thread(os.path.isfile, local_path):
                 continue
 
@@ -351,9 +387,11 @@ class TaskPdfDraftService:
 
             import io as _io
 
-            storage_url = await storage.upload(
-                _io.BytesIO(content), storage_key, "image/png"
-            )
+            buffer = _io.BytesIO(content)
+            # 摘要先算：``compute_file_hash`` 读完会 seek 回开头，接着上传的就是同一
+            # 份字节，不必为了算摘要再读一遍文件、也不必多留一份副本。
+            file_hash = compute_file_hash(buffer)
+            storage_url = await storage.upload(buffer, storage_key, "image/png")
 
             # Convert relative storage URL to absolute URL pointing to the backend
             # storage_url is like "/uploads/task-images/2026/05/01/abc.png"
@@ -361,14 +399,20 @@ class TaskPdfDraftService:
             backend_base = settings.avatar_base_url.rstrip("/")
             url = f"{backend_base}{storage_url}"
 
-            # Replace image references in markdown:
-            #   ![alt](images/filename)  or  ![](images/filename)
-            escaped_name = re.escape(filename)
-            pattern = r"!\[([^\]]*)\]\([^)]*" + escaped_name + r"\)"
             replacement = r"![\1](" + url + ")"
             replaced = re.sub(pattern, replacement, replaced)
+            uploaded.append(
+                UploadedIllustration(
+                    filename=filename,
+                    content_type="image/png",
+                    storage_key=storage_key,
+                    url=storage_url,
+                    size=len(content),
+                    file_hash=file_hash,
+                )
+            )
 
-        return replaced
+        return replaced, uploaded
 
     def _build_system_prompt(self) -> str:
         return (
