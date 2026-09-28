@@ -798,7 +798,22 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         "claim": claim,
         "claim_until": (now + timedelta(seconds=660)).isoformat(),
     }
-    row.work_lease = reservation
+    # Every command start and file tool of the session comes through here, so
+    # hands it already holds are re-checked many times a turn, while its other
+    # calls — parallel tools, subagents, a running command being read — are in
+    # flight on them. The execution route admits only a ready lease, so these
+    # hands stay ready while they are re-checked: marking them preparing
+    # refused every one of those calls for the length of the check.
+    holding = (
+        {
+            **lease,
+            "claim": reservation["claim"],
+            "claim_until": reservation["claim_until"],
+        }
+        if lease is not None and ready and lease.get("device_id") == device_id
+        else reservation
+    )
+    row.work_lease = holding
     actor = await user_by_handle(db, claims.get("a", ""))
     if actor is None:
         raise ForbiddenError("Execution actor no longer exists")
@@ -886,7 +901,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         # dispatched model operation and must not create a replacement lease.
         row = await sessions.by_id(session_id, lock=True)
         if row and (row.work_lease or {}).get("claim") == claim:
-            row.work_lease = {**reservation, "claim_until": now.isoformat()}
+            row.work_lease = {**holding, "claim_until": now.isoformat()}
             await db.commit()
         raise
     current = await TopicService(db).lock_for_execution(topic_id)
