@@ -27,7 +27,7 @@ from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
 from app.domain.agent.harness.channel import (
     SESSION_TOKEN_TTL_S,
     Placement,
-    ScreenSetupError,
+    startup_refused,
 )
 from app.domain.agent.harness.claude_code.runner import LAUNCH, ended
 from app.domain.agent.harness.claude_code.runtime import Handle
@@ -140,7 +140,8 @@ class ClaudeCodeChannel:
         and reported as soon as its log says this launch has ended: the socket
         went with it, and nothing will answer however long the room waits.
         Past the window with no such record, the session is not coming either,
-        and whatever the log last said travels back with the refusal.
+        and whatever the log last said travels back with the refusal: as the
+        text 现场 shows, with a sentence for the room chosen from it.
         """
         deadline = time.monotonic() + STARTUP_WAIT_S
         while True:
@@ -158,11 +159,14 @@ class ClaudeCodeChannel:
                 # arrive as HTTP errors; whatever shape it takes, a ping that
                 # does not come back means the session cannot be reached yet.
                 failure = exc
-            reason = await self._ended(device_id, state, launch)
-            if not reason and time.monotonic() >= deadline:
-                reason = await self._why(device_id, state, failure)
-            if reason:
-                raise ScreenSetupError("Claude Code 会话进程没有起来：" + reason)
+            if record := await self._ended(device_id, state, launch):
+                raise startup_refused(record, harness="Claude Code")
+            if time.monotonic() >= deadline:
+                raise startup_refused(
+                    await self._why(device_id, state, failure),
+                    harness="Claude Code",
+                    timed_out=True,
+                )
             await asyncio.sleep(STARTUP_POLL_S)
 
     async def _ended(self, device_id: str, state: str, launch: str) -> str:

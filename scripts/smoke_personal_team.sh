@@ -4,10 +4,10 @@
 # Proves the whole loop against the running demo backend (:8799):
 #   1. GET /teams/my-teams auto-provisions the personal team, sorts it first,
 #      and flags it personal:true.
-#   2. Registering a machine to the personal team (加机器 on its 算力 page) is
+#   2. Registering a machine to the personal team (加机器 on its 工作电脑 page) is
 #      the same connector call as for a shared team.
-#   3. A NEW personal project (no team) sees that machine in its compute
-#      profiles — routed through the owner's personal team, zero manual setup.
+#   3. A NEW personal project (no team) sees that machine among its work
+#      computers — routed through the owner's personal team, zero manual setup.
 #
 # Self-cleaning: removes the device↔team binding and the probe project.
 # Usage: bash scripts/smoke_personal_team.sh [base_url]
@@ -48,9 +48,9 @@ PID=$(curl -sf "$BASE/api/projects" -H "$AUTH" -H 'content-type: application/jso
 [ -n "$PID" ] && [ "$PID" != "null" ] || fail "project create"
 echo "project: $PID"
 
-say "compute profiles for the personal project"
-PROFILES=$(curl -sf "$BASE/api/projects/$PID/compute-profiles" -H "$AUTH")
-echo "$PROFILES" | jq -c '.data.profiles | map({id, available})'
+say "work computers for the personal project"
+CONFIGS=$(curl -sf "$BASE/api/projects/$PID/compute-configs" -H "$AUTH")
+echo "$CONFIGS" | jq -c '.data.devices | map({device_id, online})'
 
 say "cleanup (unbind device, delete probe project)"
 curl -sf -X DELETE "$BASE/connector/my/devices/$DEVICE/teams/$PERSONAL_TID" -H "$AUTH" >/dev/null
@@ -60,8 +60,8 @@ curl -sf -X DELETE "$BASE/connector/my/devices/$DEVICE/teams/$PERSONAL_TID" -H "
 curl -s -o /dev/null -w 'project delete: %{http_code} (405 expected — clean via psql, see comment)\n' \
   -X DELETE "$BASE/api/projects/$PID" -H "$AUTH"
 
-# The device profile must have been offered while the binding existed.
-echo "$PROFILES" | jq -e '.data.profiles | map(.id) | index("device") != null' >/dev/null ||
-  fail "device profile missing from personal project"
+# The device must have been offered while the binding existed.
+echo "$CONFIGS" | jq -e --arg d "$DEVICE" '.data.devices | map(.device_id) | index($d) != null' >/dev/null ||
+  fail "device missing from personal project"
 echo
 echo "SMOKE OK: personal team = first-class compute target"

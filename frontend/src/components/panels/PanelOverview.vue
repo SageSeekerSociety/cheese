@@ -32,8 +32,10 @@ const props = withDefaults(
     openCardId?: string | null
     /** 项目 AI 队友的名字，传给文档那一格。 */
     agentName?: string
+    /** handle → 名字，给钻进去的那张卡换点名和说话人。 */
+    memberNames?: Record<string, string>
   }>(),
-  { topicList: () => [], active: false, refreshTick: 0, openCardId: null, agentName: '芝士' }
+  { topicList: () => [], active: false, refreshTick: 0, openCardId: null, agentName: '芝士', memberNames: () => ({}) }
 )
 
 const emit = defineEmits<{
@@ -43,6 +45,8 @@ const emit = defineEmits<{
   (e: 'review'): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
+  /** 总览自动区里的一条决策 / 里程碑：面板不导航，交给 `TopicView`。 */
+  (e: 'open-resource', resource: 'decision' | 'milestone'): void
 }>()
 
 const docRef = ref<{ pulse: () => void; highlightTurn: (turnId: string) => void } | null>(null)
@@ -67,6 +71,8 @@ defineExpose({
         :card-id="props.openCardId"
         :active="props.active"
         :refresh-tick="props.refreshTick"
+        :member-names="props.memberNames"
+        :agent-name="props.agentName"
         @back="emit('open-card', null)"
         @review="emit('review')"
       />
@@ -88,6 +94,7 @@ defineExpose({
           @open-topic="emit('open-topic', $event)"
           @mention-click="emit('mention-click', $event)"
           @open-file="emit('open-file', $event)"
+          @open-resource="emit('open-resource', $event)"
         />
       </div>
     </Transition>

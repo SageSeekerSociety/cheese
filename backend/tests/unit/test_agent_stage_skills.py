@@ -139,11 +139,11 @@ def test_awaiting_stage_tells_the_agent_how_prs_move_now():
 
 
 def test_stage_guide_lands_in_the_system_prompt():
-    prompt = build_prompt("base", "", None, [], stage_guide="阶段内容XYZ")
+    prompt = build_prompt("base", "", None, None, stage_guide="阶段内容XYZ")
     assert "阶段内容XYZ" in prompt
     assert "当前阶段的操作说明" in prompt
 
 
 def test_no_stage_guide_adds_no_section():
-    prompt = build_prompt("base", "", None, [])
+    prompt = build_prompt("base", "", None, None)
     assert "当前阶段的操作说明" not in prompt

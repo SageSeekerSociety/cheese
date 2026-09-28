@@ -50,7 +50,7 @@ def test_room_choice_does_not_change_project_default_or_new_room(client, monkeyp
     tid = new_room(client, pid)
     original = client.get(f"/projects/{pid}/compute-configs").json()["data"]
     assert original["default"]["profile"] == "cloud"
-    assert original["favorites"] == []
+    assert original["distribution"] == {"cloud": 0, "devices": []}
     choice = ComputeChoice(
         name="Large memory", profile="cloud", cores=8, memory_mb=16384, disk_gb=64
     ).model_dump()
@@ -97,9 +97,7 @@ def test_team_device_can_be_project_default_without_project_assignment(
     choice = ComputeChoice(
         name="Lab workstation", profile="device", device_id=device_id
     ).model_dump()
-    response = client.put(
-        f"/projects/{pid}/compute-configs", json={"default": choice, "favorites": []}
-    )
+    response = client.put(f"/projects/{pid}/compute-configs", json={"default": choice})
     assert response.status_code == 200, response.text
     tid = new_room(client, pid)
     room = client.get(f"/topics/{tid}/compute-profile").json()["data"]
@@ -134,7 +132,7 @@ def test_team_device_can_be_project_default_without_project_assignment(
     assert (
         client.put(
             f"/projects/{pid}/compute-configs",
-            json={"default": outside, "favorites": []},
+            json={"default": outside},
         ).status_code
         == 422
     )
@@ -169,7 +167,7 @@ def test_team_member_uses_cloud_but_cannot_edit_project_defaults(client, monkeyp
     assert (
         client.put(
             f"/projects/{pid}/compute-configs",
-            json={"default": choice, "favorites": []},
+            json={"default": choice},
         ).status_code
         == 403
     )
@@ -199,9 +197,100 @@ def test_team_member_uses_cloud_but_cannot_edit_project_defaults(client, monkeyp
     assert progress_loops
     assert all(loop is request_loop for loop in progress_loops)
     assert (machine.cores, machine.memory_mb, machine.disk_gb) == (2, 4096, 32)
-    assert (
-        client.put(
-            f"/topics/{tid}/compute-profile", json={"choice": {**choice, "cores": 4}}
-        ).status_code
-        == 422
+    # The room has started: a new choice is the default for agents that start
+    # later, and the machine the room already has keeps its size.
+    changed = client.put(
+        f"/topics/{tid}/compute-profile", json={"choice": {**choice, "cores": 4}}
     )
+    assert changed.status_code == 200, changed.text
+    assert (
+        client.get(f"/topics/{tid}/compute-profile").json()["data"]["choice"]["cores"]
+        == 4
+    )
+
+    async def machines():
+        from app.domain.machine.repositories import ProjectMachineRepository
+
+        async with client.test_factory() as session:
+            return await ProjectMachineRepository(session).list_active_for_topic(
+                uuid.UUID(tid)
+            )
+
+    assert [m.cores for m in asyncio.run(machines())] == [2]
+
+
+def test_the_project_shows_where_its_started_agents_work(client, monkeypatch):
+    """「现在的分布」数的是已经开工的会话：云端几个，每台自有设备几个。
+
+    还没开工的会话没有机器，由项目默认决定，不算进来；归档了的房间也不算。
+    """
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.topic.models import Topic, TopicStatus
+
+    pid = setup_project(client, monkeypatch)
+    room = new_room(client, pid)
+    archived = new_room(client, pid)
+    lab = ComputeChoice(name="Lab", profile="device", device_id=None)
+    cloud = ComputeChoice(name="云端 · 标准配置", profile="cloud")
+
+    async def seed():
+        async with client.test_factory() as session:
+            project = await ProjectRepository(session).get(uuid.UUID(pid))
+            owner = await UserRepository(session).get_by_username("config_owner")
+            devices = sql_device_service(session)
+            code = await devices.start("Lab")
+            device = await devices.approve(
+                code,
+                owner_user_id=owner.id,
+                supply=Supply.self_hosted,
+                visibility=Visibility.host,
+            )
+            await devices.assign_to_team(
+                device.device_id, project.team_id, actor_user_id=owner.id
+            )
+            on_lab = lab.model_copy(update={"device_id": device.device_id})
+            sessions = AgentSessionService(session)
+
+            async def agent(topic, handle, choice, lease=None):
+                row = await sessions.ensure(
+                    uuid.UUID(topic), handle, harness="claude-code"
+                )
+                if choice is not None:
+                    row.execution_request = {
+                        "generation": str(uuid.uuid4()),
+                        "choice": choice.model_dump(),
+                        "authorized_by": None,
+                    }
+                row.work_lease = lease
+
+            await agent(room, "analyst", cloud)
+            await agent(
+                room,
+                "builder",
+                lab,
+                {"kind": "device", "device_id": device.device_id, "status": "ready"},
+            )
+            await agent(room, "writer", on_lab)
+            await agent(room, "idle", None)
+            await agent(archived, "retired", on_lab)
+            (
+                await session.get(Topic, uuid.UUID(archived))
+            ).status = TopicStatus.archived
+            await session.commit()
+            return device.device_id
+
+    device_id = asyncio.run(seed())
+
+    body = client.get(f"/projects/{pid}/compute-configs").json()["data"]
+
+    assert body["distribution"] == {
+        "cloud": 1,
+        "devices": [
+            {
+                "device_id": device_id,
+                "name": "Lab",
+                "agents": 2,
+                "machine_access": True,
+            }
+        ],
+    }

@@ -20,6 +20,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
 
@@ -256,12 +257,10 @@ class CentralChannel(DeviceChannel):
             session_id=str(session_id),
             lease_generation=(leased or {}).get("generation"),
         )
-        # 记忆算谁的，只决定记忆算谁的：它跟着 ``memory_scope`` 走，不跟着「这
-        # 一轮租没租手」走。
-        if memory_scope == "personal":
-            values["CHEESE_MEMORY_SCOPE"] = "personal"
-            if owner:
-                values["CHEESE_OWNER"] = owner
+        # 记忆算谁的（``memory_scope`` / ``owner``）到这一层就为止了：它曾经从这
+        # 里塞进 ``CHEESE_MEMORY_SCOPE``/``CHEESE_OWNER`` 两个环境变量给 ``cheese
+        # remember`` 用，而那个工具已经撤掉（记忆现在直接写文件），两个变量最后
+        # 一个读取方也没了。
         # 这一轮没有租手 (``precheck`` 说的)，所以它跑在这条会话自己的草稿区里：
         # 一个有界的一次性容器，开在会话机上，不是一个地点 (结论 19)。
         if precheck.deferred:
@@ -287,6 +286,16 @@ class CentralChannel(DeviceChannel):
                 else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
+            # The project's remote MCP servers need no machine: the platform
+            # holds their credentials and calls them (`remote_mcp`), so they are
+            # the session's from its start. Only the usable ones: a server
+            # someone still has to connect is a capability line in the prompt
+            # instead. Part of the target, so connecting one relaunches an idle
+            # session with it (`_launch_identity`).
+            async with factory() as db:
+                remote = await remote_mcp.session_target(db, project_id, topic_id)
+            if remote is not None:
+                target["remote_mcp"] = remote
         else:
             target = private_chat.scratch_target(project_id, resource, device_id=center)
         location = {

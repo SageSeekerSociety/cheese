@@ -525,7 +525,7 @@ hooks: {on_start: …, on_stop: …}
 
 ### 12.2 Project agent configuration
 
-`agent_instances.configuration` stores what one project agent IS — role instructions, skills, MCP servers. Memory remains keyed by its project and stable handle. A room's `compute_profile` selects where the work runs; which model a turn requests comes from the binding on the piece of work (`room_task/binding.py`), never from the agent.
+`agent_instances.configuration` stores what one project agent IS — role instructions, skills, MCP servers. Memory remains keyed by its project and stable handle. A room's `compute_config` is where a new session's work runs by default; which model a turn requests comes from the binding on the piece of work (`room_task/binding.py`), never from the agent.
 
 Built-in presets in `agent_type/library.py` initialize new agents. The saved `type_name` records which preset was used at creation and is not consulted when the agent runs. Users edit individual agents; there is no mutable shared role catalog. See spec §8.2 for turn boundaries and migration behavior.
 

@@ -1775,7 +1775,7 @@ class Executor:
                 )
             info = {
                 **self.dispatch("configure", {"env": config["env"]}),
-                "mcp_servers": list(config["mcp_servers"]),
+                "mcp_servers": bootstrap["process_servers"](config),
                 "context_tree": self.context_fs({"operation": "tree"}),
             }
             if payload.get("environment"):

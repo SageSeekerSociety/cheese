@@ -4,23 +4,46 @@
 // drawer showing every member with their role; an owner/admin can add project
 // members, remove them, or change roles. 芝士 (the AI member) wears an Agent
 // badge, mirroring the @-mention menu.
-import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
+//
+// 每个 AI 队友那一行还写着它的工作电脑：它现在在哪台机器上干活，谁都可以给它换；
+// 还没开工的写它开工时会用哪台（房间这一项，结论 60）。
+import type {
+  ComputeChoice,
+  ProjectMemberRow,
+  RoomSessionMachine,
+  TopicComputeProfile,
+  TopicMemberRow,
+} from '../cx_types'
 
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
+import {
+  addTopicMember,
+  getTopicComputeProfile,
+  listTopicMembers,
+  removeTopicMember,
+  updateTopicMemberRole,
+} from '../api'
 import { t } from '../i18n'
+import { choiceKey } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
 import ExternalTag from './common/ExternalTag.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import SessionWorkPicker from './SessionWorkPicker.vue'
+import TopicComputePicker from './TopicComputePicker.vue'
 
 const props = defineProps<{
   topicId: string
   projectMembers: ProjectMemberRow[]
   me: string
+}>()
+const emit = defineEmits<{
+  // 有 AI 队友能访问整台机器。这是权限，不是设置，名册合着的时候页头也要写着——
+  // 挂它的地方据此常驻一个标记。null = 没有，或者还不知道。
+  (e: 'machine-access', notice: string | null): void
 }>()
 
 const members = ref<TopicMemberRow[]>([])
@@ -47,6 +70,55 @@ async function load() {
 }
 
 void load()
+
+// 工作电脑：一次读回房间这一项和每个会话在哪台机器上。
+const machines = ref<TopicComputeProfile | null>(null)
+const machinesError = ref('')
+async function loadMachines() {
+  if (!props.topicId) return
+  machinesError.value = ''
+  try {
+    machines.value = await getTopicComputeProfile(props.topicId)
+  } catch (e) {
+    machinesError.value = e instanceof Error ? e.message : t('work.roomMachine.loadFailed')
+  }
+}
+onMounted(() => {
+  void loadMachines()
+  window.addEventListener('project-compute-updated', loadMachines)
+})
+onBeforeUnmount(() => window.removeEventListener('project-compute-updated', loadMachines))
+watch(open, (value) => {
+  if (value) void loadMachines()
+})
+watch(
+  () => (machines.value?.visibility.machine_access ? machines.value.visibility.notice || '' : null),
+  (notice) => emit('machine-access', notice),
+  { immediate: true }
+)
+
+// 开工了的会话：它有自己的选择。一个队友在同一个房间里通常只有一条会话。
+function startedSessions(handle: string): (RoomSessionMachine & { choice: ComputeChoice })[] {
+  return (machines.value?.sessions ?? []).filter(
+    (s): s is RoomSessionMachine & { choice: ComputeChoice } => s.agent_handle === handle && s.choice !== null
+  )
+}
+// 设备按名字说：「自动选一台」开工后已经落在某一台上，写那一台。
+function machineName(s: RoomSessionMachine & { choice: ComputeChoice }): string {
+  const deviceId = s.choice.profile === 'device' ? s.choice.device_id ?? s.lease?.device_id : null
+  const device = deviceId ? machines.value?.devices.find((d) => d.device_id === deviceId) : undefined
+  return device?.name ?? s.choice.name
+}
+function sessionLabel(handle: string, index: number, s: RoomSessionMachine & { choice: ComputeChoice }): string {
+  const line = t('work.roomMachine.current', { name: machineName(s) })
+  return startedSessions(handle).length > 1
+    ? t('work.sessionMachine.numberedSession', { name: line, number: index + 1 })
+    : line
+}
+// 「项目默认」只挂在还没开工的选择上：只有这时它才真的跟着项目走。
+const roomChoiceIsProjectDefault = computed(
+  () => !!machines.value && choiceKey(machines.value.choice) === choiceKey(machines.value.project_default)
+)
 
 // 一份名册：AI 队友就是上面的一行，不在人数外面再挂一个。列表本来就是这样渲染
 // 的（`members` 全量），只有这颗按钮上的头像堆和人数把它挑出去单独摆，读起来像
@@ -238,8 +310,57 @@ async function onSetRole(handle: string, role: string) {
           </template>
           <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义。 -->
           <span v-else-if="!m.agent" class="roster__role">{{ roleLabel(m.role) }}</span>
+
+          <div v-if="m.agent && machines" class="roster__machine">
+            <template v-if="startedSessions(m.member_handle).length">
+              <div
+                v-for="(s, i) in startedSessions(m.member_handle)"
+                :key="s.id"
+                class="roster__machine-line"
+                data-testid="agent-machine"
+              >
+                <span class="roster__machine-text">{{ sessionLabel(m.member_handle, i, s) }}</span>
+                <span v-if="s.machine_access" class="roster__notice" :title="machines.visibility.notice">
+                  <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
+                </span>
+                <SessionWorkPicker
+                  :topic-id="topicId"
+                  :profile="machines"
+                  :session="s"
+                  :name="m.name || m.member_handle"
+                  @changed="loadMachines"
+                />
+              </div>
+            </template>
+            <div v-else class="roster__machine-line" data-testid="agent-machine">
+              <span class="roster__machine-text">{{
+                t('work.roomMachine.notStarted', { name: machines.choice.name })
+              }}</span>
+              <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{
+                t('work.roomMachine.projectDefault')
+              }}</span>
+              <span
+                v-if="machines.choice.profile === 'device'"
+                class="roster__notice"
+                :title="machines.visibility.notice"
+              >
+                <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
+              </span>
+              <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
+            </div>
+          </div>
         </li>
       </ul>
+
+      <div v-if="machines" class="roster__future" data-testid="future-machine">
+        <span class="roster__machine-text">{{ t('work.roomMachine.future', { name: machines.choice.name }) }}</span>
+        <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{ t('work.roomMachine.projectDefault') }}</span>
+        <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
+      </div>
+      <div v-else-if="machinesError" class="roster__hint">
+        {{ t('work.roomMachine.loadFailed') }}
+        <button type="button" class="roster__retry" @click="loadMachines">{{ t('work.roomMachine.retry') }}</button>
+      </div>
 
       <!-- Add a project member (owner/admin only). -->
       <div v-if="canManage" class="roster__add">
@@ -338,7 +459,7 @@ async function onSetRole(handle: string, role: string) {
 }
 
 .roster {
-  width: 320px;
+  width: 360px;
   max-width: 88vw;
   background: var(--surface);
   border: 1px solid var(--line-2);
@@ -383,9 +504,57 @@ async function onSetRole(handle: string, role: string) {
 }
 .roster__item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
   padding: 6px 14px;
+}
+/* 工作电脑那一行对齐名字，不对齐头像：它说的是这位队友，不是另起一行。 */
+.roster__machine {
+  flex: 1 0 100%;
+  padding-left: 35px;
+  margin-top: -4px;
+}
+.roster__machine-line,
+.roster__future {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+.roster__future {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-2);
+}
+.roster__machine-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.roster__tag {
+  flex: none;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  color: var(--muted);
+}
+.roster__notice {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+}
+.roster__retry {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-decoration: underline;
+  cursor: pointer;
 }
 .roster__item:hover {
   background: var(--fill);

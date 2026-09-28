@@ -161,9 +161,31 @@ def _real_addresses(host: str) -> list[IPAddress]:
     return found
 
 
-def _refuse_if_internal(host: str, address: IPAddress) -> None:
+def refuse_internal_host(host: str, what: str) -> None:
+    """Refuse a host a person named that is this platform's own network.
+
+    `what` names the host in the refusal (「邮件服务器」, 「MCP 服务器」). Blocking:
+    it resolves the name, and asks public DNS past a fake-ip proxy's placeholder.
+    """
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError as exc:
+        raise ValidationError(f"找不到{what} {host}") from exc
+    for info in infos:
+        address = ipaddress.ip_address(info[4][0])
+        if address in FAKE_IP_RANGE:
+            real = _real_addresses(host)
+            if not real:
+                raise ValidationError(f"查不到{what} {host} 的真实地址，暂时不能使用")
+            for actual in real:
+                _refuse_if_internal(host, actual, what)
+            continue
+        _refuse_if_internal(host, address, what)
+
+
+def _refuse_if_internal(host: str, address: IPAddress, what: str) -> None:
     if not address.is_global or address.is_multicast:
-        raise ValidationError(f"邮件服务器 {host} 指向内网地址，不能使用")
+        raise ValidationError(f"{what} {host} 指向内网地址，不能使用")
 
 
 def guard_mail_hosts(config: dict) -> None:
@@ -173,23 +195,7 @@ def guard_mail_hosts(config: dict) -> None:
     if config.get("security") == "plain":
         raise ValidationError("邮件服务器必须用 SSL 或 STARTTLS 加密连接")
     for key in ("imap_host", "smtp_host"):
-        host = str(config.get(key) or "")
-        try:
-            infos = socket.getaddrinfo(host, None)
-        except OSError as exc:
-            raise ValidationError(f"找不到邮件服务器 {host}") from exc
-        for info in infos:
-            address = ipaddress.ip_address(info[4][0])
-            if address in FAKE_IP_RANGE:
-                real = _real_addresses(host)
-                if not real:
-                    raise ValidationError(
-                        f"查不到邮件服务器 {host} 的真实地址，暂时不能使用"
-                    )
-                for actual in real:
-                    _refuse_if_internal(host, actual)
-                continue
-            _refuse_if_internal(host, address)
+        refuse_internal_host(str(config.get(key) or ""), "邮件服务器")
 
 
 class IntegrationService:

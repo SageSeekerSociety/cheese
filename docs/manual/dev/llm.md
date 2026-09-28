@@ -30,6 +30,56 @@ covers:
 
 计量代理转发每个 `/v1/messages` 之前，调用主 API 的 `POST /llm/admission`（`backend/app/api/routes/llm_proxy.py`），用沙盒自己的短期令牌鉴权。这是唯一的控制点，回答三件事：
 
+```demo-sim
+title: 每个请求先问准入
+note: 准入只看这三件事，默认位置是「能跑、走绑定的那条路」
+vars:
+  - key: route
+    label: 绑定的路
+    type: choice
+    options: 网关路 | 订阅路
+    value: 网关路
+  - key: left
+    label: 项目还剩的额度
+    unit: '%'
+    min: 0
+    max: 100
+    step: 5
+    value: 100
+  - key: bound
+    label: 绑定的模型能解析出来
+    type: toggle
+    value: true
+  - key: reachable
+    label: 主 API 能问到
+    type: toggle
+    value: true
+rules:
+  - label: 问不到主 API
+    when: '!reachable'
+    text: 准入这一道是软的：计量代理放行，退回订阅路，由订阅路自己的滚动 token 上限兜底。
+    tone: warn
+  - label: 绑定的模型解析不出来
+    when: '!bound'
+    text: 返回 allow: false、reason_kind: binding。不会悄悄换到另一条路。
+    tone: bad
+  - label: 额度用完
+    when: 'left <= 0'
+    text: 返回 allow: false、reason_kind: budget，并在话题里发一条平台提示「可用的 tokens 额度已用完，这轮没有执行」。
+    tone: bad
+  - label: 放行
+    text: 返回 allow: true、reason_kind: budget，supply.pool 是{route}，模型名由计量代理写进请求体。
+    tone: ok
+out:
+  - label: 这一轮能不能跑
+    expr: '(bound && left > 0) || !reachable'
+  - label: 剩的额度
+    expr: left
+    unit: '%'
+```
+
+它回答的三件事就是这段 JSON：
+
 ```json
 {
   "allow": true,

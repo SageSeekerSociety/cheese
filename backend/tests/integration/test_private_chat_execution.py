@@ -11,6 +11,7 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -80,7 +81,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
                     project_id=project.id, title="Work", created_by="u"
                 )
             topic_id = topic.id
-            topic.compute_profile = "cloud"
+            topic.compute_config = standard_choice("cloud").model_dump()
             await session.commit()
         async for _ in svc.converse(
             topic_id=topic_id,
@@ -97,7 +98,9 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # 私聊是名册两席的房间（结论 19）: it is told how to publish in its system
         # prompt like any room, and still told what is particular to a private chat.
         assert "chat_send" in screen.last_system_prompt
-        assert ("cheese_remember" in screen.last_system_prompt) is private
+        # 私聊独有的那段技能说明（`# 私聊`）只进私聊的提示词。停用之前这里看的是
+        # 工具表里 `cheese_remember` 那一行——工具没了，换这段。
+        assert ("\n# 私聊\n" in screen.last_system_prompt) is private
         assert not central.prompts
         assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
         async with factory() as session:

@@ -124,16 +124,19 @@ async def test_platform_tools_are_listed_and_answered_by_the_backend(monkeypatch
     monkeypatch.setattr(tools.client, "call", call)
     monkeypatch.setattr(tools.client, "platform_request", platform_request)
     names = {tool["name"] for tool in await tools.discover([])}
-    assert {"chat_send", "cheese_recall", "cheese_task"} <= names
+    assert {"chat_send", "cheese_notify", "cheese_task"} <= names
 
     executor_calls.clear()
     result = await tools(
         "item/tool/call",
-        {"tool": "cheese_recall", "callId": "c-1", "arguments": {"query": "技术栈"}},
+        {
+            "tool": "cheese_notify",
+            "callId": "c-1",
+            "arguments": {"title": "看一眼"},
+        },
     )
     assert result["success"] is True
-    assert "没有找到相关记忆" in result["contentItems"][0]["text"]
-    assert requests[0]["path"] == "/projects/project/memory/search"
+    assert requests[0]["path"] == "/projects/project/alerts"
     assert executor_calls == []
 
 

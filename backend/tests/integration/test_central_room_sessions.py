@@ -778,6 +778,69 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
     assert client.post(new_endpoint, headers=headers, json=payload).status_code == 409
 
 
+@pytest.mark.anyio
+async def test_the_room_looks_at_its_session_and_never_steers_it(client, room):
+    """What a person in the room may send its Claude Code session only reads.
+
+    Stopping it, changing its model or permissions, moving or stopping its
+    tasks, renaming it and driving its MCP servers are all turned away before
+    anything reaches the session; asking how full its context is goes through.
+    """
+    _, topic = room
+    sent: list[dict] = []
+
+    async def control_state(_topic):
+        return {"id": "session-1", "connected": True, "tasks": {}}
+
+    async def control(_topic, request):
+        sent.append(request)
+        return {"subtype": "success", "response": {"totalTokens": 1}}
+
+    session = SimpleNamespace(
+        controls=ClaudeCodeRuntime.controls,
+        executor_controls=ClaudeCodeRuntime.executor_controls,
+        control_state=control_state,
+        control=control,
+    )
+    fastapi_app.dependency_overrides[get_chat_service] = lambda: SimpleNamespace(
+        session_controls=lambda _topic: session
+    )
+    steering = [
+        {"subtype": "interrupt"},
+        {"subtype": "background_tasks"},
+        {"subtype": "stop_task", "task_id": "t1"},
+        {"subtype": "set_model", "model": "opus"},
+        {"subtype": "set_permission_mode", "mode": "plan"},
+        {"subtype": "set_max_thinking_tokens", "max_thinking_tokens": 2048},
+        {"subtype": "apply_flag_settings", "settings": {"effortLevel": "max"}},
+        {"subtype": "rename_session", "title": "x"},
+        {"subtype": "mcp_reconnect", "serverName": "native"},
+        {"subtype": "mcp_authenticate", "serverName": "native"},
+        {"subtype": "mcp_oauth_callback_url", "serverName": "native"},
+    ]
+    try:
+        for request in steering:
+            refused = client.post(
+                f"/topics/{topic}/agent/control",
+                headers=session_auth_headers("alice"),
+                json={"session_id": "session-1", "request": request},
+            )
+            assert refused.status_code == 422, (request, refused.text)
+        assert sent == []
+        looked = client.post(
+            f"/topics/{topic}/agent/control",
+            headers=session_auth_headers("alice"),
+            json={
+                "session_id": "session-1",
+                "request": {"subtype": "get_context_usage"},
+            },
+        )
+        assert looked.status_code == 200, looked.text
+        assert sent == [{"subtype": "get_context_usage"}]
+    finally:
+        fastapi_app.dependency_overrides.pop(get_chat_service, None)
+
+
 class CenterHub(FakeHub):
     """The session host, a connector whose screens run a Claude Code runner,
     and the room's machine, connected while ``machine_up``."""
