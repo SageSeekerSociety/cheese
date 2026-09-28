@@ -1295,6 +1295,8 @@ class ChatService:
         # 上面那几间房里，对账时挡下来的删除（topic → 那句话）。跑整理的那个函数
         # 读走它，写进 `memory_dream_runs`，然后清掉。
         self._dream_refusals: dict[uuid.UUID, str] = {}
+        # 同一间房的对账一次只跑一场（`_sync_memory`）。
+        self._memory_syncs: dict[uuid.UUID, asyncio.Lock] = {}
         # Mid-turn messages whose write the transport accepted but whose
         # UserPromptSubmit receipt has not arrived yet (#539 decision A):
         # topic → [(injected text, block ids, consuming turn)]. The receipt
@@ -2758,6 +2760,16 @@ class ChatService:
         ]
 
     async def _sync_memory(self, topic_id: uuid.UUID) -> None:
+        """对一遍这一间房的记忆账；同一间房的两场对账排队，不交错。
+
+        一轮结束时，钩子要对一次账，整理那一轮收尾时自己也要当场对一次。两场交错时，
+        后一场读到的是前一场提交之前的数据库：它把平台的旧版铺回会话，整理拿它算出
+        的「改了哪些」也是空的，而那些改动其实已经落库了。
+        """
+        async with self._memory_syncs.setdefault(topic_id, asyncio.Lock()):
+            await self._sync_memory_once(topic_id)
+
+    async def _sync_memory_once(self, topic_id: uuid.UUID) -> None:
         """对一遍这一间房的记忆账：平台这一份铺下去，会话改过的收回来。
 
         两个时刻问它：输入之前（让 agent 一睁眼读到的就是平台现在这一份，别人刚
