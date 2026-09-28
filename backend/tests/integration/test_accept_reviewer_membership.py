@@ -133,7 +133,9 @@ def test_a_card_can_be_routed_to_the_rooms_own_agent_seat(client):
     seat = room_agent_seat(client, room)
     task = _split(client, room, "一条活", reviewer=seat)
 
-    r = _file(client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=seat)
+    r = _file(
+        client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=seat
+    )
 
     assert r.status_code == 200, r.text
     assert r.json()["data"]["reviewer_handle"] == seat
