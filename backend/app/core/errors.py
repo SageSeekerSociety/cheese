@@ -269,6 +269,9 @@ class AppError(Exception):
 
     code: int = 400
     message: str = "Bad request"
+    # Whether the same request can succeed later unchanged. Callers (agents
+    # included) read it to decide between waiting and giving up.
+    retryable: bool = False
 
     def __init__(self, message: str | None = None) -> None:
         if message is not None:
@@ -424,7 +427,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "error": {
                     "name": type(exc).__name__,
                     "message": exc.message,
-                    "retryable": False,
+                    "retryable": exc.retryable,
                 },
             },
         )

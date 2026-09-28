@@ -425,23 +425,36 @@ def card_waits_on_reviewer(card: "AcceptCard") -> bool:
 
 
 def card_needs_agent_fix(card: "AcceptCard") -> bool:
-    """这张卡是不是停在「检查红了 / 冲突了，要 AI 去修」上。
+    """这张卡是不是停在「检查红了 / 冲突了 / 被退回，要 AI 去修」上。
 
     侧栏红灯的「检查报错没人处理」问它：卡还停在这里，这件事就还没了；检查重跑
     绿了、冲突解了、卡被撤了，它自然不再成立 —— 不靠「AI 说没说过话」去猜。
     """
+    return agent_fix_kind(card) is not None
+
+
+def agent_fix_kind(card: "AcceptCard") -> str | None:
+    """卡停在哪一种「要 AI 去修」上：`rejected`（被退回）、`gate`（闸门红 / 没跑
+    成）、`conflict`（合并冲突）、`check`（检查没过）；不是这几种就 None。
+
+    侧栏悬停按它说清楚是哪件事。
+    """
     # 被验收人退回、被闸门判红 / 没跑成：卡已经结算了，但下一步明摆着是 AI 改完
     # 重递。调用方只把「这个地方最新那张」传进来，所以一旦重递了新卡就不再是它。
-    if str(card.status) in _BOUNCED_TO_AGENT:
-        return True
+    status = str(card.status)
+    if status == "rejected":
+        return "rejected"
+    if status in _BOUNCED_TO_AGENT:
+        return "gate"
     facts = facts_for_card(card)
     if facts is None:
-        return False
-    return _card_presentation(facts) in (
-        _show(Delivering.fixing_checks),
-        _show(Delivering.resolving_conflict),
-        _show(NeedsYou.checks_failed),
-    )
+        return None
+    shown = _card_presentation(facts)
+    if shown == _show(Delivering.resolving_conflict):
+        return "conflict"
+    if shown in (_show(Delivering.fixing_checks), _show(NeedsYou.checks_failed)):
+        return "check"
+    return None
 
 
 #: 结算了、但把球交回给 AI 的那几种卡：退回、闸门红、闸门没跑成。

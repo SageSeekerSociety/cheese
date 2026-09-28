@@ -1,10 +1,11 @@
 // Refreshing a session that the server rotates.
 //
-// Every refresh replaces the refresh cookie, and the server treats the
-// replaced one, presented again, as stolen: it ends the sign-in. Tabs share
-// the cookie. So two tabs that refresh without knowing about each other sign
-// the user out — which is what the fake server below does, exactly as the real
-// one would once its grace window has passed.
+// Every refresh replaces the refresh cookie, and tabs share the cookie. The
+// fake server below ends the sign-in the moment a replaced cookie comes back.
+// The real one is more forgiving (a grace window for simultaneous tabs, and a
+// fresh successor for a browser that lost an answer) but still ends it once two
+// holders have each used their own successor. The fake shows what the lock
+// prevents without reproducing those timings.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type Session = typeof import('./session')

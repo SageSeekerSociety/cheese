@@ -1,8 +1,8 @@
 """Block data access."""
 
 import uuid
-from collections.abc import Collection
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
@@ -39,12 +39,25 @@ class BlockPage:
 class ReplyWait:
     """一个房间在等 AI：从什么时候开始等，以及为什么多半还没回。
 
-    `reason`：`mention`（有人点了 AI 的名）、`check`（PR 反馈 / 检查没过没人
-    接），或者等待期间最近一条机器/环境事件的类型（`MACHINE_EVENTS`）。
+    `reason`：`mention`（有人点了 AI 的名）；卡停在要 AI 修的那几种上时是
+    `check` / `conflict` / `rejected` / `gate`（见 `presentation.agent_fix_kind`）；
+    或者等待期间最近一条机器/环境事件的类型（`MACHINE_EVENTS`）。`source` 说这段
+    等待本来是从哪来的（`mention` / `card`），机器事件只改 `reason` 不改它。
+    `pr` 是那张卡的 PR 号，悬停时写出来。
     """
 
     since: datetime
     reason: str
+    source: str = "mention"
+    pr: int | None = None
+
+
+@dataclass(frozen=True)
+class StuckCard:
+    """一个房间里停在「要 AI 去修」上的那张卡：哪一种，PR 号几。"""
+
+    kind: str
+    pr: int | None
 
 
 class BlockRepository:
@@ -591,7 +604,7 @@ class BlockRepository:
         topic_ids: list[uuid.UUID],
         *,
         now: datetime,
-        stuck_rooms: Collection[uuid.UUID] = (),
+        stuck_rooms: Mapping[uuid.UUID, StuckCard] | None = None,
     ) -> dict[uuid.UUID, ReplyWait]:
         """{房间: 从什么时候开始有人在等 AI 回话} —— 一次查完，只看房间自己那条线。
 
@@ -640,17 +653,21 @@ class BlockRepository:
             topic_id: ReplyWait(since=at, reason="mention")
             for topic_id, at in (await self._session.execute(stmt)).all()
         }
-        stuck = [t for t in topic_ids if t in set(stuck_rooms)]
+        stuck_rooms = stuck_rooms or {}
+        stuck = [t for t in topic_ids if t in stuck_rooms]
         for topic_id, at in await self._checks_awaiting_an_agent(stuck, since):
             if topic_id not in waiting or at < waiting[topic_id].since:
-                waiting[topic_id] = ReplyWait(since=at, reason="check")
+                card = stuck_rooms[topic_id]
+                waiting[topic_id] = ReplyWait(
+                    since=at, reason=card.kind, source="card", pr=card.pr
+                )
         if waiting:
             machine = await self._machine_events_since_last_reply(list(waiting), since)
             for topic_id, (event, at) in machine.items():
                 wait = waiting[topic_id]
                 # 只认等待开始之后的：等之前机器早就好了，那这次没回话跟它无关。
                 if at >= wait.since:
-                    waiting[topic_id] = ReplyWait(since=wait.since, reason=event)
+                    waiting[topic_id] = replace(wait, reason=event)
         return waiting
 
     async def _machine_events_since_last_reply(
@@ -780,7 +797,7 @@ class BlockRepository:
         if not place_ids:
             return {}
         stmt = (
-            select(place_column, Block.meta)
+            select(place_column, Block.meta, Block.created_at)
             .where(
                 place_column.in_(place_ids),
                 Block.kind == BlockKind.message,
@@ -792,12 +809,63 @@ class BlockRepository:
             .order_by(place_column, Block.created_at.desc())
             .distinct(place_column)
         )
-        rows = (await self._session.execute(stmt)).all()
-        return {
-            place_id: (meta or {}).get("asked")
-            for place_id, meta in rows
+        rows = [
+            (place_id, meta or {}, at)
+            for place_id, meta, at in (await self._session.execute(stmt)).all()
             if place_id is not None and not (meta or {}).get("answered")
-        }
+        ]
+        if not rows:
+            return {}
+        # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
+        # （题上没记是谁，就任何一个人）在这里说过话，这道题就不再挂在他身上。
+        spoke = (
+            select(place_column, Block.author, func.max(Block.created_at))
+            .where(
+                place_column.in_([place_id for place_id, _, _ in rows]),
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                ~agent_handle_column(Block.author),
+                *extra,
+            )
+            .group_by(place_column, Block.author)
+        )
+        last_said: dict[uuid.UUID, dict[str, datetime]] = {}
+        for place_id, author, at in (await self._session.execute(spoke)).all():
+            last_said.setdefault(place_id, {})[author] = at
+        waiting: dict[uuid.UUID, str | None] = {}
+        for place_id, meta, asked_at in rows:
+            asked = meta.get("asked")
+            said = last_said.get(place_id, {})
+            if asked:
+                times = [said[asked]] if asked in said else []
+            else:
+                times = list(said.values())
+            if any(at > asked_at for at in times):
+                continue
+            waiting[place_id] = asked
+        return waiting
+
+    async def last_summoner(self, room_id: uuid.UUID) -> str | None:
+        """房间自己那条线上，最近一个点了 AI 名的人。
+
+        `cheese_ask` 要记下「这道题在等谁」，本该问开着的那一轮是谁发起的；轮次
+        没记下来的时候（有些执行路径不开轮次区间），退到这一条：芝士此刻在回应的，
+        就是最近叫它的那个人。
+        """
+        stmt = (
+            select(Block.author)
+            .where(
+                Block.topic_id == room_id,
+                Block.task_id.is_(None),
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                ~agent_handle_column(Block.author),
+                Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+            )
+            .order_by(Block.created_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_topic(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None

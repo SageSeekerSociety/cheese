@@ -954,6 +954,34 @@ async def test_a_session_started_before_its_machine_moves_there_once_idle(
 
 
 @pytest.mark.anyio
+async def test_a_room_without_a_machine_keeps_its_session_from_turn_to_turn(
+    client, room, monkeypatch
+):
+    """A room whose session runs at the placeholder, through the Claude Code
+    channel as a room's turns reach it: every turn starts nothing new, since
+    nothing the session was started with has changed."""
+    project, topic = room
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    hub = CenterHub()
+    hub.ping = {"alive": True, "working": False, "tasks": {}, "session_id": "s"}
+    central: Any = CentralChannel(
+        DeviceChannel(hub=hub, session_factory=client.test_request_factory)
+    )
+    central._device_api_base = AsyncMock(return_value="http://central-api")
+    claude = ClaudeCodeChannel(central)
+
+    async def exercise():
+        session = ref(project, topic)
+        for _ in range(3):
+            await claude.ensure(session, Opening("System", resume_token="s"))
+        assert len(hub.envs) == 1 and hub.closed == []
+        target = json.loads(hub.envs[0]["CHEESE_EXECUTION_TARGET"])
+        assert target["workspace"] == "/unavailable-project"
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
 async def test_a_session_started_on_its_leased_machine_stays(client, room, monkeypatch):
     project, topic = room
     hub, turn = center_room(client, monkeypatch)
