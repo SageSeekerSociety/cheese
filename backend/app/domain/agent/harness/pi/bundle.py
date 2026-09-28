@@ -14,6 +14,8 @@ def build() -> bytes:
             # `RemoteClient`, which carries a remote MCP server's calls to the
             # platform the way Codex's tools do (`mcp.py`).
             "domain/agent/executor_transport.py",
+            # The project's tool hooks, by the executor's own rules (`hooks.py`).
+            "domain/agent/project_hooks.py",
             "domain/agent/harness/pi/rpc.py",
             "domain/agent/harness/pi/journal.py",
             "domain/agent/harness/pi/catalog.py",

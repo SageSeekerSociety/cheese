@@ -32,7 +32,7 @@ from app.domain.agent.harness import Opening
 from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import socket_path
-from app.domain.agent.harness.pi import catalog
+from app.domain.agent.harness.pi import catalog, hooks
 from app.domain.agent.harness.pi.journal import COMPACTING, GAVE_UP, RETRYING, Journal
 from app.domain.agent.harness.pi.mcp import ProjectServers
 from app.domain.agent.harness.pi.project_skills import project_skills
@@ -70,6 +70,10 @@ class Runner(runner.Runner[Journal]):
         # The project's MCP servers (`mcp.py`), opened with the session.
         self.servers: ProjectServers | None = None
         self.mcp_tools: list[dict] = []
+        # The checkout and environment pi runs in, which its tool calls'
+        # hooks run in too (`tool_hooks`).
+        self.workspace = ""
+        self.env: dict[str, str] = {}
 
     # --- reading -------------------------------------------------------------
 
@@ -327,6 +331,30 @@ class Runner(runner.Runner[Journal]):
             "stderr": err.decode("utf-8", "replace"),
         }
 
+    async def tool_hooks(self, params: dict) -> dict:
+        """The project's hooks for one event of one of pi's own tool calls,
+        asked by the extension before the call and after it (`platform.ts`).
+
+        A deny is an answer, not a failure: the extension blocks the call with
+        it, or adds it to the result. A hook that could not run is a failure,
+        and pi blocks a call whose `tool_call` handler throws.
+        """
+        try:
+            args = await hooks.run(
+                params["event"],
+                params["tool"],
+                params.get("input") or {},
+                call_id=params["id"],
+                root=self.workspace,
+                cwd=params.get("cwd"),
+                env=self.env,
+                session_id=self.state.name,
+                result=params.get("result"),
+            )
+        except hooks.Denied as denied:
+            return {"denied": str(denied)}
+        return {"input": args}
+
     # --- lifecycle -----------------------------------------------------------
 
     async def start(
@@ -343,6 +371,7 @@ class Runner(runner.Runner[Journal]):
         remote_mcp: dict | None = None,
     ) -> str:
         self.claim()
+        self.workspace, self.env = cwd, env
         saved = self.journal.recall("session_id")
         if saved is not None and opening.resume_token not in (None, saved):
             raise ValueError("A session directory cannot resume a different session")
@@ -518,6 +547,8 @@ class Runner(runner.Runner[Journal]):
                 call_id=params.get("id") or str(uuid.uuid4()),
                 cwd=params.get("cwd"),
             )
+        if method == "hooks":
+            return await self.tool_hooks(params)
         if method == "abort":
             if self.client is None:
                 return {"aborted": False}
