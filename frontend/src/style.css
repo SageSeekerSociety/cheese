@@ -990,6 +990,20 @@ button:not(.v-btn) {
   background: var(--selection-bg);
 }
 
+/* iOS Safari zooms the page in when a text field under 16px takes focus, and
+   because <html> never scrolls here, it stays zoomed after the keyboard closes.
+   So on touch screens every place you can type is at least 16px. One rule for
+   the whole app rather than one per field: a field added later is covered too.
+   `!important` because the fields set their own size in scoped styles. */
+@media (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'], [type='hidden']),
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable='false']) {
+    font-size: 16px !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
