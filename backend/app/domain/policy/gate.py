@@ -10,14 +10,14 @@
 
 - 轮次组装（`agent/chat.py`）——这一轮要用的模型（`room_task/binding.py` 解析出来
   的那个）落在哪一档；
-- 换算力（`api/routes/topics.py` 的 `set_topic_compute_profile`）——要的是自托管的
-  那台机器还是 Cloud。
+- 选工作电脑（`api/routes/topics.py` 的 `set_topic_compute_profile`、
+  `machine/session_work.py` 的 `request_choice`）——要的是自托管的那台机器还是 Cloud。
 
 ## 档位是资源的一个事实，写在目录里
 
 结论 3 说模型是「工作占用的资源，与机器（地点）同形」，所以两者共用一套档位的词，
 而且那些词只在**目录**里声明一次（`agent/market.py`）：订阅模型在 `_SUB_MODELS`
-的那一列，算力池在 `COMPUTE_TIERS`。这里只做比较，不认识任何一个型号——策略说的是
+的那一列，工作电脑在 `COMPUTE_TIERS`。这里只做比较，不认识任何一个型号——策略说的是
 「哪几档可以自己发生」，不是一张型号白名单。白名单的毛病是它会过期：目录里加一个
 新型号，白名单不认识它，于是最贵的那个新模型反而随便用。
 
@@ -168,31 +168,9 @@ def check(call: Call, policy: Policy, actor: str) -> Allowed | Proposal:
     raise OverTier(_refusal_line(call))
 
 
-def because_the_room_is_running(call: Call, actor: str) -> Proposal:
-    """档内，但房间已经开跑了 —— 同样要人点头（结论 23）。
-
-    `check` 答的是「这一档可不可以自己发生」；这一条答的是另一件事，所以它是一个
-    单独的入口而不是 `check` 里的一个分支：换过去丢掉的是这台机器上的工作区和还
-    没提交的改动，跟那台机器贵不贵无关。调用点先问 `check`（超档的处置更强，拒绝
-    就在那里抛出去），只有判决是 `Allowed` 时才换成这一条。
-
-    正文写在这里而不是调用点，跟 `_proposal_line` 并排：人在房间里和在通知里读到
-    的是同一句，而那句话由产出提议的这个模块统一措辞。
-    """
-    return Proposal(
-        call=call,
-        asked_by=actor,
-        content=(
-            f"{actor} 要把这个房间换到「{call.label}」上去。"
-            "房间已经在跑，换过去会丢掉现在这台机器上的工作区和还没提交的改动；"
-            f"这一步等 @{call.approver} 点头。"
-        ),
-    )
-
-
 _WHAT: Final[dict[Resource, str]] = {
     Resource.model: "模型",
-    Resource.machine: "算力",
+    Resource.machine: "工作电脑",
 }
 
 

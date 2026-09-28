@@ -150,7 +150,8 @@
 
 .hero-title {
   font-family: var(--font-display);
-  font-size: clamp(96px, 13vw, 208px);
+  /* 72px is the floor at which four characters still fit one line on a 390px phone. */
+  font-size: clamp(72px, 13vw, 208px);
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.02em;
@@ -277,6 +278,11 @@
   padding: 64px var(--gutter);
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 24px 32px;
+}
+
+/* The solutions page nests the three-up grid inside a section that already has the gutter. */
+.solutions > .resources {
+  padding: 0;
 }
 
 .resources-item {

@@ -98,9 +98,17 @@ def ensure(config, directory, environ):
         fcntl.flock(lock, fcntl.LOCK_EX)
         info = inspect(config)
         if info is None:
-            subprocess.run(
-                run_command(config), check=True, capture_output=True, timeout=60
+            created = subprocess.run(
+                run_command(config), capture_output=True, text=True, timeout=60
             )
+            if created.returncode:
+                # Docker's stderr is the only place the reason is (a missing
+                # image, a name still taken, no daemon): it goes into the
+                # failure, which is what the session's startup log records.
+                raise RuntimeError(
+                    f"docker run {config['image']} exited with status "
+                    f"{created.returncode}: {created.stderr.strip()}"
+                )
         elif not info["State"]["Running"]:
             raise RuntimeError(
                 "Private executor stopped; release it before recreating scratch"
@@ -114,8 +122,6 @@ def ensure(config, directory, environ):
                 "CHEESE_PROJECT",
                 "CHEESE_TOPIC",
                 "CHEESE_AUTHOR",
-                "CHEESE_MEMORY_SCOPE",
-                "CHEESE_OWNER",
             )
             if key in environ
         }

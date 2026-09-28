@@ -151,5 +151,5 @@ Release-based deployment with approval gate. See [`deploy/`](deploy/) for produc
 
 1. Create a feature branch from `main`
 2. Make changes, run `task check`
-3. Open a PR — Claude will auto-review
+3. Open a PR — CI runs on it
 4. All PRs require review before merge; never commit directly to `main`

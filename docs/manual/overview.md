@@ -22,7 +22,7 @@ summary: 知是是什么、给谁用，空间、团队、项目、话题、芝�
             │
             ├── 话题：和芝士讨论、交代一件事的地方
             │     │
-            │     └── 芝士干活（在一台机器上：你的电脑、服务器或云机器）
+            │     └── 芝士干活（在它的工作电脑上：云端，或你的电脑、服务器）
             │           │
             │           ├── 任务：拆出来并行推进的一条条活
             │           │     │
@@ -45,14 +45,14 @@ summary: 知是是什么、给谁用，空间、团队、项目、话题、芝�
 | 任务 | 芝士把一件事拆成的一条条活，在看板上按「下一步在谁手上」排列 | [任务与看板](/tasks#tasks) |
 | 验收与采纳 | 芝士交活时递一张验收卡；你审阅后采纳，改动才算进了项目 | [验收与采纳](/accept#accept) |
 | 文件与成果 | 你交给芝士的材料，和它做出来的东西 | [文件与成果](/files#files) |
-| 设备与运行环境 | 芝士干活的那台机器：你的电脑、服务器或团队的云机器 | [设备与运行环境](/devices#devices) |
-| 额度 | 芝士调用模型消耗的 tokens，1 额度 = 1 万 tokens | [额度与算力](/quota#quota) |
+| 工作电脑 | AI 队友干活的那台机器：云端，或你的电脑、服务器 | [设备与工作电脑](/devices#devices) |
+| 额度 | 芝士调用模型消耗的 tokens，1 额度 = 1 万 tokens | [额度](/quota#quota) |
 | 空间与课程 | 老师或组织发布题目的地方；新建的空间默认就是课程 | [空间与题目](/challenges#spaces)、[课程与作业](/courses#courses) |
 
 ## 一件事是怎么做完的 {#flow}
 
 1. **交代**：在话题里写清要什么、给谁、做到什么程度，`@` 芝士或按 `Ctrl/Cmd+Enter` 交给它。见[与芝士协作](/working-with-cheese#working-with-cheese)。
-2. **执行**：芝士先复述它的理解，再在运行环境里读写文件、跑命令，必要时拆成几条任务并行推进。右侧「现场」能看到它在做什么。
+2. **执行**：芝士先复述它的理解，再在工作电脑上读写文件、跑命令，必要时拆成几条任务并行推进。右侧「现场」能看到它在做什么。
 3. **插话**：做的过程中随时补一句，执行中的消息会并进正在进行的这一轮。
 4. **交付**：芝士做完会递一张验收卡，写着改了什么、推荐谁审。
 5. **验收**：点「审阅」看改动，满意就「采纳」，不满意就「退回」并写明原因。
@@ -64,6 +64,6 @@ summary: 知是是什么、给谁用，空间、团队、项目、话题、芝�
 | 学生 | [学生：在空间里完成第一道题目](/student-tutorial#tut-student) | [提交](/submissions#submit)、[课程与作业](/courses#student) |
 | 老师 / 助教 | [老师 / 助教：开一门课，收作业、打分](/teacher-tutorial#tut-teacher) | [课程与作业](/courses#courses)、[空间与题目](/challenges#spaces) |
 | 办公 | [办公：完成第一个协作项目](/office-tutorial#tut-office) | [团队](/teams#teams)、[文件与成果](/files#files) |
-| 团队项目、写代码 | [快速开始](/quickstart#quickstart) | [验收与采纳](/accept#accept)、[设备与运行环境](/devices#devices)、[发布网站](/sites#sites) |
+| 团队项目、写代码 | [快速开始](/quickstart#quickstart) | [验收与采纳](/accept#accept)、[设备与工作电脑](/devices#devices)、[发布网站](/sites#sites) |
 
 遇到问题先看[常见问题与排障](/troubleshooting#troubleshooting)；想告诉我们哪里不好用，去[反馈中心](/feedback#feedback)。

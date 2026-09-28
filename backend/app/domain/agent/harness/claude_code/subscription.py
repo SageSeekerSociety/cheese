@@ -47,9 +47,17 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         announce: Callable[[], Awaitable[None]],
         receipts: ReceiptConsumer | None = None,
         pulse: subscription.Pulse | None = None,
+        memory: Callable[[], Awaitable[None]] | None = None,
     ):
         super().__init__(
-            session, path, call, consume, activity, receipts=receipts, pulse=pulse
+            session,
+            path,
+            call,
+            consume,
+            activity,
+            receipts=receipts,
+            pulse=pulse,
+            memory=memory,
         )
         self.session_id = session_id
         self.announce = announce

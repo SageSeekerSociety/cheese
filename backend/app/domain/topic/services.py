@@ -43,6 +43,8 @@ from app.domain.identity.handles import (
     looks_like_agent_handle,
     names_a_person,
 )
+from app.domain.membership.roster import roster_rows
+from app.domain.milestone.services import MilestoneService
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
@@ -57,6 +59,20 @@ from app.domain.topic.models import (
     TopicKind,
     TopicRole,
     TopicStatus,
+)
+from app.domain.topic.overview import (
+    ACTIVE_TOPICS_KEY,
+    ACTIVE_TOPICS_LIMIT,
+    CLOSED_TOPICS_KEY,
+    CLOSED_TOPICS_LIMIT,
+    DECISIONS_KEY,
+    DECISIONS_LIMIT,
+    MILESTONES_KEY,
+    MILESTONES_LIMIT,
+    decision_summary,
+    first_sentence,
+    overview_auto_blocks,
+    topic_conclusion,
 )
 from app.domain.topic.repositories import (
     SortOrder,
@@ -1144,6 +1160,134 @@ class TopicService:
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
         place = await self.place_or_404(topic_id)
         return await self._blocks.doc_root(place.room_id)
+
+    async def overview_auto(self, topic_id: uuid.UUID) -> list[dict]:
+        """总览房间（项目根话题）的 ②~⑤，结构化（#1889）。
+
+        总览只属于根话题：别的房间读得到的是它们自己的实况文档，没有人从那里看
+        项目全局。非根话题给的是一句 404 —— 它名下确实没有这么一件东西，这和
+        「有这个地方但你看不到」是两回事。
+        """
+        place = await self.place_or_404(topic_id)
+        project = await self._projects.get(place.project_id)
+        if project is None or project.root_topic_id != place.room_id:
+            raise NotFoundError("Topic not found")
+        data = await self.overview_auto_data(place.project_id)
+        return overview_auto_blocks(**data)
+
+    async def overview_auto_data(
+        self,
+        project_id: uuid.UUID,
+        *,
+        all_topics: list[Topic] | None = None,
+        roster: list[dict] | None = None,
+    ) -> dict[str, list[dict]]:
+        """②~⑤ 的每一行：活跃话题、最近决策卡、里程碑、已结束话题的结论。
+
+        全部来自结构化数据，所以**没有一句是手抄的**——谁改了源头，下一次就是
+        新的。负责人取该话题最新那张任务卡的 owner：一个房间可以有好几张卡，最新
+        的那张才说得出现在谁在做。
+
+        总览房间的提示词注入（`agent/chat.py`）和前端那一栏
+        （`GET /topics/{id}/overview`）读的是**同一次取数**：两个读者，一份来源。
+        手上已经有话题表和名册的调用方传进来，省掉把同一张名册再读一遍。
+        """
+        if all_topics is None:
+            all_topics = await self._repo.list_for_project(project_id)
+        if roster is None:
+            roster = await roster_rows(self._session, project_id)
+
+        name_of = {m["handle"]: m["name"] for m in roster}
+
+        def person(handle: str | None) -> str | None:
+            # 名册上的名字才是 @ 得到的名字；查不到就照 handle 写，那是真的。
+            return f"@{name_of.get(handle, handle)}" if handle else None
+
+        latest_card: dict[uuid.UUID, Task] = {}
+        for card in await TaskService(self._session).list_in_project(project_id):
+            # Oldest first: the newest card in each room wins.
+            latest_card[card.room_id] = card
+
+        def card_state(topic_id: uuid.UUID) -> str:
+            card = latest_card.get(topic_id)
+            if card is None:
+                return "还没开活"
+            return "在做" if card.status == TaskStatus.open else "已收工"
+
+        live = [
+            t
+            for t in all_topics
+            if t.kind != TopicKind.root and t.status != TopicStatus.archived
+        ][:ACTIVE_TOPICS_LIMIT]
+        closed = sorted(
+            (
+                t
+                for t in all_topics
+                if t.kind != TopicKind.root and t.status == TopicStatus.archived
+            ),
+            key=lambda t: t.archived_at or t.updated_at,
+            reverse=True,
+        )[:CLOSED_TOPICS_LIMIT]
+        # 只取要渲染的那几间房的文档：一屏之外的结论没人读，问了也是白问。
+        docs = await self._blocks.doc_roots([t.id for t in (*live, *closed)])
+
+        def conclusion(topic: Topic, *, prefer_card: bool) -> str | None:
+            """话题现在的一句话结论：卡上那句优先，没有就看它自己的实况文档。"""
+            card = latest_card.get(topic.id)
+            if prefer_card and card is not None and card.conclusion:
+                return first_sentence(card.conclusion)
+            doc = docs.get(topic.id)
+            return topic_conclusion(doc.content) if doc is not None else None
+
+        decisions = (
+            await self._blocks.list_by_kind_for_project(project_id, BlockKind.decision)
+        )[:DECISIONS_LIMIT]
+        milestones, _ = await MilestoneService(self._session).list_for_project(
+            project_id
+        )
+        title_of = {t.id: t.title for t in all_topics}
+        return {
+            ACTIVE_TOPICS_KEY: [
+                {
+                    "id": str(t.id),
+                    "title": t.title,
+                    "owner": person(
+                        card.owner_handle
+                        if (card := latest_card.get(t.id)) is not None
+                        else None
+                    ),
+                    "status": card_state(t.id),
+                    "conclusion": conclusion(t, prefer_card=False),
+                }
+                for t in live
+            ],
+            DECISIONS_KEY: [
+                {
+                    "id": str(block.id),
+                    "text": decision_summary(block.content),
+                    "topic_id": str(block.topic_id),
+                    "topic": title_of.get(block.topic_id),
+                }
+                for block in decisions
+            ],
+            MILESTONES_KEY: [
+                {
+                    "id": str(m.id),
+                    "title": m.title,
+                    "due": m.due_date.date().isoformat() if m.due_date else None,
+                    "status": m.status.value,
+                }
+                for m in milestones[:MILESTONES_LIMIT]
+            ],
+            CLOSED_TOPICS_KEY: [
+                {
+                    "id": str(t.id),
+                    "title": t.title,
+                    "conclusion": conclusion(t, prefer_card=True),
+                }
+                for t in closed
+            ],
+        }
 
     async def get_progress(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None

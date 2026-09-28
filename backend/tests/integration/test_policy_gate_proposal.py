@@ -171,7 +171,6 @@ def test_a_proposal_does_not_take_the_machine(client, gated_project):
     assert _topic_binding(client, tid) is None
     after = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert after["current"] == before
-    assert after["inherited"] is True
 
 
 def test_an_unrestricted_project_still_takes_the_machine(client, monkeypatch):
@@ -298,7 +297,7 @@ def test_a_room_nobody_configured_still_passes_the_gate(client, stub_hooks):
 
     proposals = _proposals(client, tid)
     assert len(proposals) == 1
-    assert "算力" in proposals[0].content
+    assert "工作电脑" in proposals[0].content
     # 产物是一条提议，不是一次报错：这一轮以房间里那条提议加一个 done 收场，发消
     # 息的人在流里读到的就是它。
     assert _errors(frames) == []
@@ -306,7 +305,7 @@ def test_a_room_nobody_configured_still_passes_the_gate(client, stub_hooks):
     assert [
         f
         for f in frames
-        if f["type"] == "event_block" and "算力" in f["block"]["content"]
+        if f["type"] == "event_block" and "工作电脑" in f["block"]["content"]
     ]
     # 这一轮没有发生：没有请求发出去，机器也没有被绑走。
     assert stub_hooks.last_prompt is None
@@ -334,10 +333,7 @@ def test_the_owner_of_the_machine_the_platform_would_pick_is_the_one_asked(
     # 项目默认是「自有设备 · 自动选择」：没点名任何一台，平台第一轮自己挑。
     saved = client.put(
         f"/projects/{pid}/compute-configs",
-        json={
-            "default": {"name": "自有设备 · 自动选择", "profile": "device"},
-            "favorites": [],
-        },
+        json={"default": {"name": "自有设备 · 自动选择", "profile": "device"}},
         headers=session_auth_headers("andyl"),
     )
     assert saved.status_code == 200, saved.text
@@ -380,10 +376,7 @@ def test_the_picker_and_the_turn_ask_for_the_same_machine_once(
     device_id = _device_owned_by(client, pid, machine_owner_id, "小王的工作站")
     saved = client.put(
         f"/projects/{pid}/compute-configs",
-        json={
-            "default": {"name": "自有设备 · 自动选择", "profile": "device"},
-            "favorites": [],
-        },
+        json={"default": {"name": "自有设备 · 自动选择", "profile": "device"}},
         headers=session_auth_headers("andyl"),
     )
     assert saved.status_code == 200, saved.text

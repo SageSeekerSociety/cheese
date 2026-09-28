@@ -454,8 +454,8 @@ register_all_permissions()
 # not follow a route that moves. #370 step 2 flattened the 2.0 prefix and every
 # one of them stopped matching, which does not fail: it silently opens the
 # cheese write-surface to anyone who can reach the port. The suite caught it
-# (test_project_agent_credential, test_ask_options and test_memory_search all
-# went from "refused" to "allowed"), which is the only
+# (test_project_agent_credential and test_ask_options both went from "refused"
+# to "allowed"), which is the only
 # reason to say it out loud here: a gate defined by strings has to be moved by
 # hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
@@ -475,7 +475,6 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/lock$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
-    ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.

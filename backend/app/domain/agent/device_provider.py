@@ -107,12 +107,11 @@ class EnvironmentPreparationError(ScreenSetupError):
 DEVICE_ISOLATED_UNSUPPORTED_MESSAGE = (
     "话题与机器的绑定登记为『沙盒』档（visibility=isolated），但按房间隔离的容器传输"
     "尚未实现（#358 第二步）；平台拒绝以裸跑代替——那等于静默把整台机器暴露给这个"
-    "房间。请把这台机器改登记为『整台机器（Hosted Machine）』后再继续。"
+    "房间。把这台机器改登记为「整台机器」后再继续。"
 )
 
 DEVICE_NOT_HOSTED_MESSAGE = (
-    "话题当前绑定的是云端连接器，不是 Hosted 机器；Hosted 解析器拒绝把云端端点"
-    "当作人的机器运行。"
+    "话题当前绑定的是云端工作电脑，不是自有设备；平台不会把云端机器当作自有设备运行。"
 )
 
 
@@ -1580,12 +1579,10 @@ class DeviceChannel(Channel):
         device_id = precheck.machine
         agent_user_id, agent_handle = precheck.agent_user_id, precheck.agent_handle
         rented = precheck.rented
-        # 记忆算谁的，只决定记忆算谁的。这一轮开在哪个工作区是 ``rented`` 的事，
-        # 下面那一句说；两个事实各说各的，其中一个换了另一个不跟着动。
-        if memory_scope == "personal":
-            env = dict(env or {}, CHEESE_MEMORY_SCOPE="personal")
-            if owner:
-                env["CHEESE_OWNER"] = owner
+        # 记忆算谁的（``memory_scope`` / ``owner``）到这一层就为止了。它曾经从这里
+        # 塞进 ``CHEESE_MEMORY_SCOPE``/``CHEESE_OWNER`` 给 ``cheese remember`` 用，
+        # 而那个工具已经撤掉（记忆现在直接写文件），两个变量没有读取方了。这一轮开
+        # 在哪个工作区是 ``rented`` 的事，下面那一句说。
         prepares_environment = (
             bool((env or {}).get("CHEESE_ENVIRONMENT"))
             and rented

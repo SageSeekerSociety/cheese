@@ -475,6 +475,14 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     return _show(_parked(facts))
 
 
+def task_is_running(facts: TaskFacts, *, now: datetime) -> bool:
+    """这条活此刻在不在看板的「运行中」那一格 —— 给房间问「我名下有没有活在跑」用。
+
+    不另写一套判据：同一条活在侧栏和看板上必须是同一个说法。
+    """
+    return task_presentation(facts, now=now) == _show(Building.running)
+
+
 def _parked(facts: TaskFacts) -> Building:
     """没人在做、也没递出交付时，这条活停在「施工中」的哪一格。
 

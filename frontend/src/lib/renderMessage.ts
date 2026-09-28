@@ -62,6 +62,15 @@ export function plainTokens(text: string, maps: RefMaps): string {
   })
 }
 
+// 改一条自己发过的消息时，输入框里放的字：点过名的人写回「@名字」，和当初在输入框
+// 里打的一样，保存时后端再把名字认回 token。话题和文件引用原样留着 —— 写成标题或
+// 文件名的话，保存时就认不回原来那一个了。
+const MENTION_TOKEN = /<@([\w-]+)>/g
+
+export function editableText(text: string, maps: RefMaps): string {
+  return text.replace(MENTION_TOKEN, (_m, handle) => `@${maps.mentionNames[handle] || handle}`)
+}
+
 // 芝士's markdown replies → safe HTML (spec §3: AI 必须说人话, 可读).
 // breaks:true — this is chat: a single newline the author typed IS a line
 // break; strict-markdown paragraph rules would silently swallow it.

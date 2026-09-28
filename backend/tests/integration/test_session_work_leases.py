@@ -111,8 +111,10 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     )
     monkeypatch.setattr(work_lease, "device_hub", hub)
 
-    def executor_answer(target, method, *_args, **_kwargs):
+    def executor_answer(target, method, *args, **_kwargs):
         if method == "control":
+            if args and args[0].get("subtype") == "checkpoint":
+                return {"value": {"stdout": ""}}
             return {"tasks": []}
         if method == "ping":
             import hashlib
@@ -274,7 +276,7 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         assert dispatch.outcome is None
     hub.is_online = lambda device: old_online or device != first_device
     listing = client.get(
-        f"/topics/{topic_id}/sessions/work-leases", headers=owner_headers
+        f"/topics/{topic_id}/compute-profile", headers=owner_headers
     ).json()["data"]["sessions"]
     assert (
         next(item for item in listing if item["id"] == str(first_id))["lease"]["online"]
@@ -302,8 +304,9 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
             )
         )
         await db.commit()
-    # An agent may change its own work destination, including away from an
-    # offline machine. No human approver or extra acknowledgement is required.
+    # An agent may change its own work destination once its work is pushed on
+    # the machine it leaves. Away from a machine that cannot be reached for
+    # that, only a person may switch, and says so explicitly.
     from app.domain.agent.models import AgentTurn
 
     async with client.test_factory() as db:
@@ -331,7 +334,8 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         if method == "control":
             if background_state == "unresponsive":
                 raise TimeoutError("old executor does not respond")
-            return {"tasks": [{"status": "running"}]}
+            assert params["subtype"] == "checkpoint"
+            return {"value": {"stdout": ""}}
         return {"device": target["device_id"]}
 
     remote.side_effect = finishing_call
@@ -361,13 +365,29 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
                 headers={"X-Cheese-Token": first_token},
                 json={"profile": "device", "device_id": second_device},
             )
-            assert response.status_code == 200, response.text
+            if old_online and background_state == "running":
+                assert response.status_code == 200, response.text
+            else:
+                assert response.status_code == 409, response.text
+                assert response.json()["error"]["name"] == "WorkComputerUnreachable"
+                response = client.put(
+                    choice_path,
+                    headers=owner_headers,
+                    json={**selection, "abandon_unpushed": True},
+                )
+                assert response.status_code == 200, response.text
         finally:
             release.set()
         finished = pending_call.result(timeout=10)
     assert finished.status_code == 200, finished.text
     assert finished.json()["device"] == first_device
-    assert not any(call.args[1] == "control" for call in remote.await_args_list)
+    # The only thing the switch asks of the old machine is the push; it does
+    # not wait for that machine's background work.
+    assert all(
+        call.args[2]["subtype"] == "checkpoint"
+        for call in remote.await_args_list
+        if call.args[1] == "control"
+    )
     async with client.test_factory() as db:
         assert (await db.get(Task, child_id)).conclusion is None
     assert response.json()["data"]["session"]["lease"] is None

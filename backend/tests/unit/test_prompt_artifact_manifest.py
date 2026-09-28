@@ -19,7 +19,7 @@ from app.domain.agent.harness.prompt import build_system_prompt
 
 
 def _prompt(artifacts: list[dict] | None) -> str:
-    return build_system_prompt("底稿", "", None, [], artifacts=artifacts)
+    return build_system_prompt("底稿", "", None, None, artifacts=artifacts)
 
 
 REPORT = {

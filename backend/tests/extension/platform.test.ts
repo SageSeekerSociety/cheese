@@ -21,8 +21,6 @@ import { after, describe, it } from "node:test";
 // drifted goes on passing.
 import {
   CATALOG,
-  FakePi,
-  NOTICE,
   cleanup,
   load,
   runner,
@@ -173,52 +171,21 @@ describe("仓库自己的说明", () => {
 });
 
 describe("连续工具调用", () => {
-  const quiet = async (pi: FakePi, count: number, name = "bash", isError = false) => {
-    await pi.emit("turn_end", {
-      toolResults: Array.from({ length: count }, () => ({ toolName: name, isError })),
-    });
-  };
-  const injected = async (pi: FakePi) => {
-    const answer = await pi.emit("context", { messages: [{ role: "user", content: [] }] });
-    if (!answer) return null;
-    return answer.messages.at(-1).content[0].text;
-  };
-
-  it("不到阈值不提醒", async () => {
+  it("多少次都不由 extension 插话：提醒房间的是平台", async () => {
+    // One reminder, sent by the platform to every harness alike. A second one
+    // produced here would reach pi rooms only, and reach them twice.
     const { pi } = await load();
-    await quiet(pi, 9);
-    assert.equal(await injected(pi), null, "ordinary work must not be interrupted");
-  });
-
-  it("到阈值提醒一次，用的是提示里那个工具名", async () => {
-    const { pi } = await load();
-    await quiet(pi, 10);
-
-    const said = await injected(pi);
-    assert.ok(said?.startsWith(NOTICE), "it has to read as a platform instruction");
-    assert.match(said, /chat_send/);
-    assert.doesNotMatch(said, /cheese_chat_send/);
-  });
-
-  it("成功发布之后重新数起", async () => {
-    const { pi } = await load();
-    await quiet(pi, 10);
-    assert.ok(await injected(pi));
-
-    await quiet(pi, 1, "chat_send");
-    assert.equal(await injected(pi), null, "the room has just been told what is going on");
-
-    await quiet(pi, 9);
-    assert.equal(await injected(pi), null);
-    await quiet(pi, 1);
-    assert.ok(await injected(pi), "silence since the last publish is what counts");
-  });
-
-  it("房间没有发布工具时不提这件事", async () => {
-    // A reminder naming a tool that is not registered is worse than silence.
-    const { pi } = await load({ tools: [CATALOG[1]] });
-    await quiet(pi, 30);
-    assert.equal(await injected(pi), null);
+    for (let turn = 0; turn < 5; turn++) {
+      await pi.emit("turn_end", {
+        toolResults: Array.from({ length: 10 }, () => ({
+          toolName: "bash",
+          isError: false,
+        })),
+      });
+    }
+    const messages = [{ role: "user", content: [] }];
+    const answer = await pi.emit("context", { messages });
+    assert.deepEqual(answer?.messages ?? messages, messages);
   });
 });
 

@@ -986,6 +986,8 @@ body.page-home .foot .fine{color:#8d8577}
 .kind-reference{background:var(--ok-wash);color:var(--ok)}
 .kind-decision{background:var(--sec-wash);color:var(--sec)}
 .kind-howto{background:var(--warn-wash);color:var(--warn)}
+/* 概念 (Diátaxis' explanation): the one pair of colours no other kind uses. */
+.kind-concept{background:var(--accent-wash);color:var(--accent-ink)}
 .gen{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:999px;border:1px dashed var(--line-2);color:var(--muted)}
 .covers{display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex-basis:100%}
 .covers small{color:var(--faint);margin-right:2px}
@@ -1234,3 +1236,99 @@ html:has(.tour.pinned){scroll-snap-type:y proximity}
 .aq-x{flex:none;width:22px;height:22px;border-radius:6px;color:var(--muted);font-size:16px;line-height:1}
 .aq-x:hover{background:color-mix(in srgb,var(--ink) 8%,transparent);color:var(--ink)}
 .drawer-b .q .q-quote{display:block;margin-bottom:6px;padding-left:8px;border-left:2px solid color-mix(in srgb,var(--btn-ink) 45%,transparent);font-size:12.5px;opacity:.8}
+
+/* ---------- interactive demos ----------
+   Written in a Markdown fence, prerendered by src/demos.mjs, switched on by
+   src/demo-dom.mjs. Everything they say is already in the HTML: with the script
+   off, a demo is a list you read top to bottom. The dimming and the controls
+   hang off `.dm-live`, which src/demo-dom.mjs puts on the figure once it has
+   wired it up — so a bundle that never loads costs the behaviour, not the
+   text. */
+.demo{margin:0 0 28px;padding:16px 18px 14px;border:1px solid var(--line-2);border-radius:16px;background:var(--surface);box-shadow:var(--shadow);font-size:14px}
+.demo .dm-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin-bottom:12px}
+.demo .dm-title{font-size:15.5px;font-weight:650;color:var(--ink);letter-spacing:-.01em}
+.demo .dm-note{flex:1;min-width:200px;font-size:12.5px;line-height:1.55;color:var(--muted)}
+
+/* controls: hidden without the script, and on a narrow screen */
+.dm-ctl{display:none;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
+html.js .demo.dm-live .dm-ctl{display:flex}
+.dm-btn{display:grid;place-items:center;width:32px;height:32px;border:1px solid var(--line-2);border-radius:9px;background:var(--surface);color:var(--text);font-size:13px;transition:border-color .2s,color .2s}
+.dm-btn:hover{border-color:var(--accent);color:var(--accent-ink)}
+.dm-play{width:auto;padding:0 13px}
+.dm-range{flex:1;min-width:90px;height:20px;accent-color:var(--accent)}
+.dm-count{font:12px var(--mono);color:var(--faint);white-space:nowrap}
+
+/* the accumulation bar, and a segment per step you can click */
+.dm-track{height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden}
+.dm-fill{display:block;width:var(--p,100%);height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent-2),var(--accent));transition:width .5s var(--out)}
+.dm-segs{display:flex;gap:2px;height:12px;margin:5px 0 14px}
+.dm-seg{flex:0 0 auto;width:var(--w);height:100%;padding:0;opacity:.85;transition:opacity .3s}
+.dm-seg i{display:block;height:100%;border-radius:2px;background:var(--c)}
+html.js .demo.dm-live .dm-seg{opacity:.28}
+html.js .demo.dm-live .dm-seg.on{opacity:.85}
+html.js .demo.dm-live .dm-seg:hover{opacity:1}
+
+/* the steps: a rail, a title, a sentence, sometimes a number */
+.dm-list{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none}
+.dm-step{display:flex;gap:10px;padding:8px 10px;border-radius:11px;transition:background .3s,opacity .3s}
+html.js .demo.dm-live .dm-step{opacity:.28}
+html.js .demo.dm-live .dm-step.done{opacity:.6}
+html.js .demo.dm-live .dm-step.on{opacity:1;background:var(--panel)}
+.dm-rail{flex:none;width:16px;display:flex;justify-content:center;padding-top:7px}
+.dm-dot{width:8px;height:8px;border-radius:50%;background:var(--c);transition:transform .4s var(--spring)}
+html.js .demo.dm-live .dm-step.on .dm-dot{transform:scale(1.6)}
+.dm-body{flex:1;min-width:0}
+.demo .dm-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.demo .dm-line b{font-size:14px;font-weight:620;color:var(--ink)}
+.demo .dm-val{font:11.5px var(--mono);color:var(--faint);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:0 6px}
+.demo .dm-desc{margin:2px 0 0;font-size:13.5px;line-height:1.65;color:var(--text)}
+.demo .dm-link{display:inline-block;margin-top:4px;font-size:12.5px}
+.dm-go{display:inline-flex;align-items:center;gap:5px;height:27px;margin-top:8px;padding:0 13px;border-radius:999px;background:var(--btn);color:var(--btn-ink);font-size:12.5px;font-weight:500}
+.dm-go[hidden]{display:none}
+.dm-go:hover{filter:brightness(1.1)}
+
+/* a parameter simulator: sliders on the left, what they add up to on the right */
+.sm-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:20px}
+@media (max-width:760px){.sm-grid{grid-template-columns:1fr}}
+.sm-vars{display:flex;flex-direction:column;gap:13px}
+.sm-var{display:grid;grid-template-columns:1fr auto;gap:3px 10px;align-items:baseline}
+.demo .sm-name{font-size:13.5px;color:var(--text)}
+.sm-val{font:12.5px var(--mono);color:var(--accent-ink);text-align:right}
+.sm-var input[type=range]{grid-column:1/-1;width:100%;height:18px;accent-color:var(--accent)}
+.sm-toggle{display:flex;align-items:center;gap:8px}
+.sm-toggle input{accent-color:var(--accent);width:15px;height:15px}
+.sm-toggle .sm-val{margin-left:auto}
+.sm-choice{align-items:center}
+.sm-choice select{grid-column:2;max-width:15em;padding:3px 8px;border:1px solid var(--line-2);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px}
+.sm-rules{display:flex;flex-direction:column;gap:6px;margin:0 0 12px;padding:0;list-style:none}
+.sm-rule{display:flex;gap:8px;align-items:baseline;padding:7px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:13px;line-height:1.55;color:var(--muted);opacity:.55;transition:opacity .25s,background .25s,border-color .25s}
+.sm-rule b{flex:none;font-weight:600;color:var(--ink)}
+.sm-rule[data-tone=ok]{--t:var(--ok);--tw:var(--ok-wash)}
+.sm-rule[data-tone=warn]{--t:var(--warn);--tw:var(--warn-wash)}
+.sm-rule[data-tone=bad]{--t:var(--accent-3);--tw:var(--accent-wash)}
+.sm-rule.hit{opacity:1;color:var(--text);border-color:color-mix(in srgb,var(--t,var(--accent)) 45%,var(--line-2));background:var(--tw,var(--accent-wash))}
+.sm-rule.hit b{color:var(--t,var(--accent-ink))}
+.sm-facts{margin:0}
+.sm-facts>div{display:flex;justify-content:space-between;gap:14px;padding:5px 0;border-bottom:1px dashed var(--line)}
+.sm-facts>div:last-child{border-bottom:0}
+.demo .sm-facts dt{font-size:13px;color:var(--muted)}
+.sm-facts dd{margin:0;font:13px var(--mono);color:var(--ink);text-align:right}
+.demo .sm-nojs{display:none;margin:10px 0 0;font-size:12.5px;color:var(--faint)}
+html:not(.js) .sm-nojs{display:block}
+
+/* narrow screens: the controls and the bar go, the steps read as a plain list */
+@media (max-width:700px){
+  .dm-ctl,.dm-bar{display:none !important}
+  html.js .demo.dm-live .dm-step{opacity:1}
+  .sm-grid{gap:14px}
+}
+@media (prefers-reduced-motion: reduce){
+  .dm-fill,.dm-dot,.dm-step,.dm-seg,.sm-rule{transition:none}
+  .dm-play{display:none}
+  html.js .demo.dm-live .dm-step.on .dm-dot{transform:none}
+  /* Everything at once, not "everything, faded to how-far-along-you-are":
+     the script starts a reduced-motion demo at the last step. */
+  html.js .demo.dm-live .dm-step,
+  html.js .demo.dm-live .dm-step.done{opacity:1}
+  html.js .demo.dm-live .dm-seg{opacity:.85}
+}

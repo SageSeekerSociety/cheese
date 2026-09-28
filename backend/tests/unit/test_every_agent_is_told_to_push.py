@@ -16,7 +16,7 @@ from app.domain.agent.harness.prompt import build_system_prompt
 
 
 def _assembled(**kwargs) -> str:
-    return build_system_prompt("你是芝士。", "", None, [], **kwargs)
+    return build_system_prompt("你是芝士。", "", None, None, **kwargs)
 
 
 def test_the_assembled_prompt_tells_the_agent_to_push():

@@ -19,7 +19,7 @@ export const SECTIONS = [
 // or `by-` are generated at build time (see gen/), not written by hand.
 export const DEV = [
   ['总览', ['overview', 'topology', 'data']],
-  ['关键流程', ['turn', 'context', 'ref-prompt', 'llm', 'billing', 'machines', 'cli', 'delivery', 'preview', 'ci', 'docs-site']],
+  ['关键流程', ['turn', 'context', 'memory', 'ref-prompt', 'llm', 'billing', 'machines', 'cli', 'delivery', 'preview', 'ci', 'docs-site']],
   ['安全与权限', ['auth', 'seats', 'admins']],
   ['参考（自动生成）', ['ref-cli', 'ref-env', 'ref-ci']],
   ['索引（自动生成）', ['by-path', 'by-kind']],

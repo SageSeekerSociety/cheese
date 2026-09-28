@@ -52,6 +52,8 @@ const pendingB = vi.hoisted(() => ({
 
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
+  // The roster's work computers: a neighbour of what this test is about.
+  getTopicComputeProfile: vi.fn(() => new Promise(() => {})),
   listTopicMembers: vi.fn((topicId: string) =>
     topicId === 'topic-a'
       ? Promise.resolve({ data: [member('old-member', 'Old Roster Person')], total: 1 })

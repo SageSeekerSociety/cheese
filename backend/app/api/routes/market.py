@@ -66,7 +66,7 @@ async def list_nodes(runner: Runner) -> dict:
     # What makes each pool live, in its own terms — the mono line under the card.
     detail = {
         COMPUTE_DEVICE: ("有已连接的设备", "暂无已连接的设备"),
-        COMPUTE_CLOUD: ("可以为话题开一台机器", "这个部署还没有云端算力"),
+        COMPUTE_CLOUD: ("可以为房间开一台云端机器", "这个部署还没有接入云端"),
     }
     nodes = [
         {

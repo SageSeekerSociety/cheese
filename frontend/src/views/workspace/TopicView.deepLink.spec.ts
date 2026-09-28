@@ -96,7 +96,7 @@ describe('Cheese-Task 那条地址', () => {
     await waitFor(() => expect(container.querySelector('[data-testid="panel"]')).not.toBeNull())
 
     expect(getRoomEnvironment).not.toHaveBeenCalled()
-    expect(container.textContent).not.toContain('正在准备运行环境')
+    expect(container.textContent).not.toContain('正在准备工作电脑')
   })
 
   it('打开后停在总览那一格，并且下钻到地址点名的那条活', async () => {
