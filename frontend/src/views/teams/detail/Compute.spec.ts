@@ -103,7 +103,7 @@ it('lists the machines projects already have and offers no way to open one', asy
 
 it('shows the owner who is on each of their machines, and nobody else', async () => {
   vi.mocked(listProjectMachines).mockImplementation(
-    async () => ({ data: [] }) as Awaited<ReturnType<typeof listProjectMachines>>
+    async () => ({ data: [] as ProjectMachine[] }) as Awaited<ReturnType<typeof listProjectMachines>>
   )
   const device = (id: string, inUse: MyDevice['in_use']): MyDevice => ({
     device_id: id,
