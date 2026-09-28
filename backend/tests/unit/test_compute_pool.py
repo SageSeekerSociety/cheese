@@ -41,9 +41,12 @@ async def test_activate_parks_only_the_same_seats_previous_harness():
     native.interrupt = AsyncMock()
     native.close = AsyncMock()
     # native holds agent-a's session in the room; agent-b's turn activates codex.
-    native.holds = lambda topic_id, agent_handle=None: agent_handle in (
-        None,
-        "agent-a",
+    native.holds = lambda topic_id, agent_handle=None: (
+        agent_handle
+        in (
+            None,
+            "agent-a",
+        )
     )
     pool = ComputePool([native, codex], "device")
     topic = uuid.uuid4()

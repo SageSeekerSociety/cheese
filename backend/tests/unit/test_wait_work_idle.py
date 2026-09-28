@@ -12,7 +12,7 @@ async def _session_that_said_something(channel: conftest.StubChannel):
     handle = await channel.ensure(session, Opening(system_prompt=""))
     await channel.runtime._attach(handle)
     channel.starts(session.topic_id)
-    return session.topic_id
+    return session.topic_id, "cheese"
 
 
 async def test_pending_records_are_the_ones_the_room_has_not_landed(monkeypatch):
@@ -23,7 +23,7 @@ async def test_pending_records_are_the_ones_the_room_has_not_landed(monkeypatch)
     idle = await _session_that_said_something(quiet)
     await quiet.runtime.subscriptions[idle].drain()
     try:
-        assert conftest._topics_with_pending_records() == {str(topic)}
+        assert conftest._topics_with_pending_records() == {str(topic[0])}
 
         await channel.runtime.subscriptions[topic].drain()
         assert conftest._topics_with_pending_records() == set()
@@ -51,7 +51,6 @@ def test_wait_work_idle_waits_for_records_but_not_an_idle_lifecycle(monkeypatch)
         asyncio.run(channel.runtime.subscriptions[topic].drain())
 
     monkeypatch.setattr(conftest.time, "sleep", the_reader_lands_it)
-
     conftest.wait_work_idle()
 
     assert sleeps == [0.01]

@@ -304,9 +304,17 @@ class DrivenRuntime[H: Handle]:
 
     @staticmethod
     def _seat_of_handle(handle: "Handle") -> Seat:
-        """The seat a live handle sits in — the agent the machine recorded for
-        this session, which is the agent the ref that placed it named."""
-        return (handle.session.topic_id, handle.agent_handle)
+        """The seat a live handle sits in — its session's, not its own.
+
+        A handle carries two names for the agent: ``session.agent_handle`` keys
+        the conversation (the session row, the resume token, every ref chat
+        builds), while ``agent_handle`` is the acting seat the machine recorded
+        (the token's `a` claim), and the two differ whenever a room addresses a
+        teammate by instance. The runtime's seats key conversations — send and
+        recover must land on the same key or one conversation gets two
+        subscriptions reading the same mirror — so the session's name wins.
+        """
+        return (handle.session.topic_id, handle.session.agent_handle)
 
     def _room_seat(self, topic_id: uuid.UUID) -> Seat | None:
         """The room's only live seat, or None when there is none — or several.
