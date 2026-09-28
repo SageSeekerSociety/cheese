@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
@@ -57,10 +58,31 @@ class AgentTurnRepository:
         resendable: bool,
         started_at: datetime,
         delivered_at: datetime | None = None,
+        exists_ok: bool = False,
     ) -> None:
         # `delivered_at` is for a turn that has no 投喂 phase to stamp later — it
         # is born delivered or it is born unclosable. Everything the platform
         # feeds leaves it None and stamps it when the transport accepts.
+        if exists_ok:
+            # A session's own work keeps its id across backend processes: the
+            # row an earlier process opened for it is this row, and stays as
+            # that process wrote it.
+            await self._session.execute(
+                insert(AgentTurn)
+                .values(
+                    id=turn_id,
+                    topic_id=topic_id,
+                    continuation_id=continuation_id,
+                    author=author,
+                    content=content,
+                    is_resume=is_resume,
+                    resendable=resendable,
+                    started_at=started_at,
+                    delivered_at=delivered_at,
+                )
+                .on_conflict_do_nothing(index_elements=[AgentTurn.id])
+            )
+            return
         self._session.add(
             AgentTurn(
                 id=turn_id,
