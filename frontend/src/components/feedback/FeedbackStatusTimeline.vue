@@ -70,10 +70,10 @@ const steps = computed<Step[]>(() => {
         <div class="fb-step__title" :class="{ 'c-muted': !step.done && !step.current }">
           {{ step.label }}
         </div>
-        <div v-if="step.at" class="t-meta">
+        <div v-if="step.at" class="t-meta-read t-num">
           {{ relTime(step.at) }}<template v-if="step.by"> · {{ step.by }}</template>
         </div>
-        <div v-else class="t-meta">{{ t('feedback.timeline.notStarted') }}</div>
+        <div v-else class="t-meta-read t-num">{{ t('feedback.timeline.notStarted') }}</div>
       </div>
     </li>
   </ol>

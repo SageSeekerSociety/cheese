@@ -51,12 +51,12 @@ const emit = defineEmits<{ more: [] }>()
       <v-btn variant="outlined" color="secondary" size="small" :loading="loadingMore" @click="emit('more')">
         {{ t('feedback.center.more.load') }}
       </v-btn>
-      <span class="t-meta">{{ t('feedback.center.more.showing', { shown, total }) }}</span>
+      <span class="t-meta-read t-num">{{ t('feedback.center.more.showing', { shown, total }) }}</span>
     </div>
 
     <!-- 页脚是「读完了、下面是空的」这句话的一部分，跟着骨架一起出现等于提前说了还没到
          的话。 -->
-    <p v-if="$slots.foot" class="t-meta fb-foot"><slot name="foot" /></p>
+    <p v-if="$slots.foot" class="t-meta-read fb-foot"><slot name="foot" /></p>
   </template>
 </template>
 

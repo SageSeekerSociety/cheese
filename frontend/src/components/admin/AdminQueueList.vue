@@ -109,10 +109,8 @@ function onKeydown(e: KeyboardEvent) {
       data-owns-arrow-keys
       @keydown="onKeydown"
     >
-      <!-- 列头。右侧那三格跟着行的同一套宽度走，但**不逐列对齐**：按钮是
-           `max-content`（§5.2），它一宽一窄会带动它左边的三列整体平移，所以任何固定
-           的列头宽度都只能对上其中一部分行。这几格落在自己那一列的范围里，读的时候
-           够用了 —— 想把它们钉死，得先把按钮改成定宽，那是改规格不是改这里。 -->
+      <!-- 列头。右侧三格和行用同一套定宽（116 / 88 / 104，见 AdminQueueRow），
+           所以逐列对齐；改其中一处就得三处（行、列头、骨架）一起改。 -->
       <div class="qlist__head" role="row">
         <span class="qlist__head-title" role="columnheader">{{ t('feedback.queue.col.title') }}</span>
         <span class="qlist__head-assignee" role="columnheader">{{ t('feedback.queue.col.assignee') }}</span>
@@ -233,8 +231,9 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .qlist__head-next {
-  flex: 0 0 auto;
+  flex: 0 0 104px;
   margin-left: 16px;
+  text-align: right;
 }
 
 .qlist__foot {
@@ -292,7 +291,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .qskel__action {
-  flex: 0 0 auto;
+  flex: 0 0 104px;
   margin-left: 16px;
 }
 

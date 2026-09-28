@@ -90,7 +90,7 @@ function onEmptyAction() {
     <!-- 这一页的说明。**总数只在拉到之后才说**：加载中写「共 0 条」是在报一个还不知道
          的数。 -->
     <template #sub>
-      <p class="t-meta fb-lede">
+      <p class="t-meta-read t-num fb-lede">
         {{ t('feedback.mine.lede') }}
         <span v-if="!store.mineLoading && !store.error">
           {{ t('feedback.mine.total', { n: store.mineTotal }) }}

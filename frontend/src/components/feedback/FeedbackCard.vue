@@ -52,8 +52,9 @@ import { useFeedbackStore } from '@/stores/feedback'
 //
 // （私密，或管理员标了安全问题）—— 它不该让人知道它存在，而支持是公开表态。
 //
-// 底行的一串读数是 12px `--faint` 的等宽（`.t-meta`）：**它们是同一档东西**（谁提的、
-// 什么时候、多少人参与、走到哪一步），一起淡下去，读者先看到标题和摘要。
+// 底行的一串读数是同一档东西（谁提的、什么时候、多少人参与、走到哪一步），一起用
+// `.t-meta-read` 淡下去，读者先看到标题和摘要。不用等宽的 `.t-meta`：mono 栈没有
+// CJK 字形，「19小时前」会在一格里混两种字体，作者名也读着像代码；数字对齐由 `.t-num` 给。
 //
 // 数据是 `FeedbackCard`（后端 `schemas.FeedbackCard`）本身，**不在这里转成第二种形状**。
 const props = defineProps<{ item: FeedbackCard }>()
@@ -94,7 +95,7 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
 
     <!-- 底行在链接外面（支持按钮是一颗真按钮，理由见文件头）。左半边是「哪一类、谁提的、
          多少人参与」，右半边是「走到哪一步」和「我能做什么」。 -->
-    <div class="fb-card__meta t-meta">
+    <div class="fb-card__meta t-meta-read t-num">
       <span v-if="kind" class="chip-neutral fb-card__kind">{{ kind }}</span>
       <FeedbackAuthorAvatar
         class="fb-card__avatar"

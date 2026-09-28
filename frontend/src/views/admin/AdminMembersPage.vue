@@ -279,7 +279,7 @@ onMounted(load)
     <div class="am__inner">
       <AdminPageHeader :title="t('members.header.title')" :sub="t('members.header.subtitle')">
         <template #tools>
-          <span class="t-meta am__count">{{ countLine }}</span>
+          <span class="t-meta-read t-num am__count">{{ countLine }}</span>
           <v-btn
             icon="mdi-refresh"
             variant="text"
@@ -797,7 +797,9 @@ onMounted(load)
   text-align: center;
 }
 
-.am__num {
+/* 带上 `.v-table`：Vuetify 给列头写的 `text-align: start` 选择器更长，光一个类名压
+   不住它，「操作」列头会靠左、底下的按钮靠右。 */
+.v-table .am__num {
   text-align: right;
 }
 

@@ -257,7 +257,7 @@ async function share() {
               </v-btn>
             </template>
             <template v-else>
-              <span class="fb-del__ask t-meta">{{ deleteAsk }}</span>
+              <span class="fb-del__ask t-meta-read">{{ deleteAsk }}</span>
               <v-btn variant="text" color="error" size="small" :loading="deletingDelete" @click="doDelete">
                 {{ t('feedback.detail.delete.confirm') }}
               </v-btn>
@@ -288,18 +288,21 @@ async function share() {
                才是「什么时候提的」。挤在一行会让编号看着像作者名的一部分。
                头像是这一页最大的一处（28px）：详情页是唯一一处读者真的会停下来看
                「这是谁提的」的地方，列表里那个 18px 的在这里就太小了。 -->
-          <div class="t-meta mb-1 d-flex align-center ga-2">
+          <div class="t-meta-read t-num mb-1 d-flex align-center ga-2">
             <FeedbackAuthorAvatar
               :handle="item.author_handle"
               :is-agent="item.author_is_agent"
               :avatar-id="item.author_avatar_id"
               :size="28"
             />
-            <span>{{ item.display_id }} · {{ item.author_handle }} · {{ relTime(item.created_at) }}</span>
+            <span
+              ><span class="fb-id">{{ item.display_id }}</span> · {{ item.author_handle }} ·
+              {{ relTime(item.created_at) }}</span
+            >
           </div>
           <!-- 提案卡发出来的那条有两个名字：agent 找出来的、人发出去的。两个都写，
                因为「这是谁提的」在这条路径上有两个都对但不同的答案。 -->
-          <div v-if="item.submitted_by_handle" class="t-meta">
+          <div v-if="item.submitted_by_handle" class="t-meta-read t-num">
             {{ t('feedback.detail.submittedBy', { handle: item.submitted_by_handle }) }}
           </div>
         </div>
@@ -425,11 +428,11 @@ async function share() {
             <!-- 私密反馈没有「支持人数」这一格：它恒为 0，摆在那里只会让人以为
                  「还没人支持」，而不是「这件事对私密反馈不成立」。 -->
             <div v-if="!restricted" class="fb-aside__stat">
-              <span class="t-meta">{{ t('feedback.detail.aside.supports') }}</span
+              <span class="t-meta-read t-num">{{ t('feedback.detail.aside.supports') }}</span
               ><span class="fb-aside__num">{{ item.supports }}</span>
             </div>
             <div class="fb-aside__stat">
-              <span class="t-meta">{{ t('feedback.detail.aside.comments') }}</span
+              <span class="t-meta-read t-num">{{ t('feedback.detail.aside.comments') }}</span
               ><span class="fb-aside__num">{{ item.comments }}</span>
             </div>
           </div>
@@ -438,7 +441,7 @@ async function share() {
                就没有这一格 —— 那正是它要报的那类问题。 -->
           <div v-if="item.topic_id" class="fb-aside__card">
             <div class="t-eyebrow mb-2">{{ t('feedback.detail.aside.source') }}</div>
-            <div class="t-meta">{{ t('feedback.detail.aside.topic') }}</div>
+            <div class="t-meta-read t-num">{{ t('feedback.detail.aside.topic') }}</div>
           </div>
         </aside>
       </div>
@@ -592,6 +595,9 @@ async function share() {
 }
 .fb-support-count {
   margin-left: 8px;
+}
+/* 编号是这一行里唯一的标识符，只有它用等宽。 */
+.fb-id {
   font-family: var(--font-mono);
 }
 /* 用户写的正文是**多段**的（换行要保留），不是一句一句拼接的 —— 不写这个，
@@ -705,7 +711,7 @@ async function share() {
   padding: 4px 0;
 }
 .fb-aside__num {
-  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 14px;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
@@ -730,7 +736,18 @@ async function share() {
      没有这个变量时 `0px` 是空操作。 */
   padding-bottom: env(safe-area-inset-bottom, 0);
   gap: 8px;
+  /* 只占正文那一栏的宽：它装的是「读完这条之后」的动作，跟着正文走。横跨两栏时，
+     短页面上它是一条悬在页面中段、把右栏底下也划掉的白条。一栏那一档正文锁 660
+     居中，这里同一个上限、同样居中；两栏那一档左对齐到正文列。 */
+  width: 100%;
+  max-width: var(--page-w-read);
+  margin: 0 auto;
   background: var(--surface);
   border-top: 1px solid var(--line);
+}
+@media (min-width: 1280px) {
+  .fb-actionbar {
+    margin-left: 0;
+  }
 }
 </style>

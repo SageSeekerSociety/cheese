@@ -20,11 +20,10 @@ import { relTime } from '@/lib/relTime'
  * 都是钉死的：标题和 meta 的行盒由各自的字号决定（14 / 12），换字号就得重新量这一行，
  * 而不是让行高跟着内容长。
  *
- * 右侧三列（指派 116 / 更新 88 / 按钮）宽度是固定的，只有标题那一列吃剩下的空间
- * （§4.1 的算式里它是 F）。把弹性留给 F 而不是均摊：指派和更新这两列要跨行对齐，
- * 标题是唯一一列「多宽都读得下去」的。代价是按钮文案长短会带动左边三列整体平移，
- * 因为按钮是 `max-content`（规格明确要求），而它右侧没有可回收的空间 —— 这一条留在
- * 这里，免得下一个人把它当成错位的 bug 去「修」。
+ * 右侧三列（指派 116 / 更新 88 / 下一步 104）宽度都是固定的，只有标题那一列吃剩下
+ * 的空间（§4.1 的算式里它是 F）。按钮本身仍是 `max-content`，但它住在一格定宽、靠右
+ * 的格子里：按钮一宽一窄不再带动左边的指派和更新整体平移，列头也就能逐列对齐。104 是
+ * 最长的文案（英文 “Mark shipped”）加内边距；已上线没有按钮，格子照样占着位置。
  *
  * 行的 `id` 直接由 `item.id` 长出来：列表容器要用 `aria-activedescendant` 指到当前
  * 行，而这个 prop 是契约里没有的，两边只能靠同一个名字约定，不能靠传值。
@@ -135,8 +134,8 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
 
     <span class="qrow__updated t-meta-read t-num" role="gridcell">{{ updatedAt }}</span>
 
-    <span v-if="next" class="qrow__action" role="gridcell">
-      <button type="button" class="qrow__btn" @click="emit('advance')">{{ advanceLabel }}</button>
+    <span class="qrow__action" role="gridcell">
+      <button v-if="next" type="button" class="qrow__btn" @click="emit('advance')">{{ advanceLabel }}</button>
     </span>
   </div>
 </template>
@@ -283,7 +282,9 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
 }
 
 .qrow__action {
-  flex: 0 0 auto;
+  display: flex;
+  flex: 0 0 104px;
+  justify-content: flex-end;
   margin-left: 16px;
 }
 
@@ -331,15 +332,24 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
     align-items: center;
     height: auto;
     min-height: 61px;
-    padding: 12px 16px;
+    padding: 12px 16px 12px 24px;
     row-gap: 6px;
     column-gap: 12px;
   }
 
-  /* 换行是按 `flex-basis`（base size）判的，不是按 grow 之后的结果：给标题那格一个
-     够大的下限，右边三格才会整组掉到第二行。`min-width: 0` 保住长标题的截断。 */
+  /* 阶梯条退出 flex 流、贴在卡片左沿：标题那格 basis 100% 之后，条若还是一个 flex
+     项目，就会自己占掉第一行。 */
+  .qrow__rail {
+    position: absolute;
+    top: 12px;
+    left: 10px;
+  }
+
+  /* 标题和 meta 独占第一行（basis 100%），右边三格整组掉到第二行成为卡片的底栏。
+     给个「够大的下限」不够：390 下 240 + 指派那格还挤得下一行，「指派 —」就浮在
+     标题右边。`min-width: 0` 保住长标题的截断。 */
   .qrow__main {
-    flex: 1 1 240px;
+    flex: 1 1 100%;
     min-width: 0;
     margin: 0;
   }
@@ -374,7 +384,12 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
   }
 
   .qrow__action {
+    flex: 0 0 auto;
     margin-left: 0;
+  }
+
+  .qrow__action:empty {
+    display: none;
   }
 }
 </style>

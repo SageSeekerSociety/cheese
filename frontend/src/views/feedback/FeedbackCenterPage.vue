@@ -382,7 +382,7 @@ function clearFilters() {
          「说明和实际排序对不上」，页面上看不出任何异常。
          加载中不藏它：这句话说的是这一栏的规则，不是这一栏的结果，跟着骨架一起闪一下
          反倒是多一次闪动。 -->
-    <p v-if="store.tab === 'hot'" class="t-meta fb-hot-note">
+    <p v-if="store.tab === 'hot'" class="t-meta-read t-num fb-hot-note">
       {{
         t('feedback.center.hot.note', {
           halfLife: store.hotHalfLifeDays,

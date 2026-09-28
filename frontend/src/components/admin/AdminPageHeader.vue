@@ -61,9 +61,13 @@ defineProps<{
   gap: 8px;
 }
 
+/* 上限按 em 而不是 ch 算：`ch` 是「0」的宽度，约半个汉字，72ch 只装得下三十几个
+   字，一句五十字的说明就会折成两行、末行只剩一两个字。`text-wrap: pretty` 再兜一层，
+   真要折行时不留孤字。 */
 .aph__sub {
   margin: 4px 0 0;
-  max-width: 72ch;
+  max-width: 60em;
+  text-wrap: pretty;
   color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);

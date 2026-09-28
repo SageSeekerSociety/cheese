@@ -134,7 +134,7 @@ function confirmRemove() {
       />
       <span class="fb-ci__author">{{ comment.author_handle }}</span>
       <span v-if="comment.author_is_agent" class="chip-neutral">{{ t('feedback.comment.agent') }}</span>
-      <span class="t-meta">{{ relTime(comment.created_at) }}</span>
+      <span class="t-meta-read t-num">{{ relTime(comment.created_at) }}</span>
     </div>
 
     <!-- 回的是谁。单独一行而不是塞进正文前面：正文是用户写的多段文字（保留换行），

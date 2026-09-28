@@ -244,7 +244,7 @@ onMounted(() => {
          一段不是自己刚打的字，会以为串了别人的内容。 -->
     <div v-if="restoredNotice" class="sb-restored">
       <v-icon size="16" aria-hidden="true">mdi-history</v-icon>
-      <span class="t-meta">{{ t('feedback.submit.draft.restored') }}</span>
+      <span class="t-meta-read t-num">{{ t('feedback.submit.draft.restored') }}</span>
       <v-btn variant="text" size="small" color="secondary" @click="discardDraft">
         {{ t('feedback.submit.draft.discard') }}
       </v-btn>
@@ -270,12 +270,12 @@ onMounted(() => {
           {{ kindLabel(kind) }}
         </button>
       </div>
-      <p class="sb-hint t-meta">{{ kindHint }}</p>
+      <p class="sb-hint t-meta-read">{{ kindHint }}</p>
     </div>
 
     <!-- 必填/选填的分界。这一行是整张表单的骨架：以前每一栏平铺在同一屏、只有标题
          算门槛，于是它同时读起来像「什么都没要求」和「一堆都要填」。 -->
-    <p class="sb-legend t-meta">{{ t('feedback.submit.requiredLegend') }}</p>
+    <p class="sb-legend t-meta-read">{{ t('feedback.submit.requiredLegend') }}</p>
 
     <div class="sb-field">
       <label class="sb-label" for="sb-title">
@@ -314,7 +314,7 @@ onMounted(() => {
     </div>
 
     <hr class="sb-divider" />
-    <p class="sb-optional t-meta">{{ t('feedback.submit.optionalDivider') }}</p>
+    <p class="sb-optional t-meta-read">{{ t('feedback.submit.optionalDivider') }}</p>
 
     <!-- 按类型出现的两栏。它们不是「选填的额外信息」，而是把正文里常常混成一段的两件
          事分开：**你原本期待什么**（哪里不对）和**怎么重现**（别人能不能看到同一件
@@ -382,12 +382,12 @@ onMounted(() => {
         />
       </div>
       <div v-if="tagSuggestions.length" class="sb-suggest">
-        <span class="sb-suggest__label t-meta">{{ t('feedback.submit.field.tags.suggestions') }}</span>
+        <span class="sb-suggest__label t-meta-read">{{ t('feedback.submit.field.tags.suggestions') }}</span>
         <button v-for="tag in tagSuggestions" :key="tag" type="button" class="sb-suggest__item" @click="addTag(tag)">
           {{ tag }}
         </button>
       </div>
-      <p class="sb-hint t-meta">{{ t('feedback.submit.field.tags.helper') }}</p>
+      <p class="sb-hint t-meta-read">{{ t('feedback.submit.field.tags.helper') }}</p>
     </div>
 
     <!-- 可见范围是一次**决定**，不是一栏「选填」：它有默认值（公开），而且提完之后
@@ -436,7 +436,7 @@ onMounted(() => {
           </span>
         </label>
       </div>
-      <p class="sb-hint t-meta">{{ t('feedback.submit.visibility.once') }}</p>
+      <p class="sb-hint t-meta-read">{{ t('feedback.submit.visibility.once') }}</p>
     </div>
 
     <!-- 服务端的原话（412 的「已经办完了」之类也走这里）：把服务端说过的话照抄一遍，
@@ -457,11 +457,12 @@ onMounted(() => {
 
 <style scoped>
 /* 一列到底，宽度收在 --content-readable 那一档：这一页要读的是一段一段的话，铺满
-   1440px 的输入框每行一百多个字，读起来会串行。 */
+   1440px 的输入框每行一百多个字，读起来会串行。
+   靠左而不居中：页壳的标题靠左，表单居中的话标题会比表单往左突出一截，页面上就有
+   两条左沿。 */
 .sb-form {
   width: 100%;
   max-width: 720px;
-  margin: 0 auto;
 }
 /* 每一栏之间留的是**标题之外**的那点距离：标签在上、输入框在下，两栏之间要能一眼
    看出是两个问题，所以间距比输入框自己的高度小、比行距大。 */
