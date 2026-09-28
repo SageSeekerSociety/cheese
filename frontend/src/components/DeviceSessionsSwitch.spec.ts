@@ -111,12 +111,12 @@ it('switches the selected agents one by one and says what happened to each', asy
   })
   const { emitted } = await open()
   expect(await dialog().findByText('定价')).toBeTruthy()
-  expect(dialog().getByText(/助手b · 最近活动 .* · 正在干活/)).toBeTruthy()
+  expect(dialog().getByText(/助手b · 最近活动 .* · 正在运行任务/)).toBeTruthy()
   expect(dialog().getByText('另有 2 个 agent 在你打不开的房间里')).toBeTruthy()
   expect(dialog().getByRole('button', { name: '推送并更换' }).hasAttribute('disabled')).toBe(true)
 
   api.setSessionWorkChoice.mockImplementation(async (topic: string) => {
-    if (topic === 'room-b') throw new ApiError(409, '正在干活，稍后再换', 'SessionWorking')
+    if (topic === 'room-b') throw new ApiError(409, '正在运行任务，稍后再换', 'SessionWorking')
     if (topic === 'room-c')
       throw new ApiError(409, '原来那台工作电脑连不上，无法推送改动，没有更换', 'WorkComputerUnreachable')
     return { session: {} }
@@ -132,7 +132,7 @@ it('switches the selected agents one by one and says what happened to each', asy
     ['room-c', 'c', 'cloud', { ifIdle: true, abandonUnpushed: false }],
   ])
   expect(await dialog().findByText('已更换')).toBeTruthy()
-  expect(dialog().getByText('正在干活，稍后再换').getAttribute('role')).toBe('alert')
+  expect(dialog().getByText('正在运行任务，稍后再换').getAttribute('role')).toBe('alert')
   expect(dialog().getByText('原来那台工作电脑连不上，无法推送改动，没有更换')).toBeTruthy()
   // Only the unreachable one offers the override, and only for itself.
   const [abandon] = dialog().getAllByRole('button', { name: '不推送，直接更换' })

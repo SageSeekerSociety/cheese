@@ -36,15 +36,22 @@ from tests.integration.conftest import (
 _SUBJECT = "chore(test): file an accept card"
 
 
-def _room(client) -> str:
+def _room_and_project(client) -> tuple[str, str]:
+    """`_room`, plus the id of the project the room lives in — for a test that
+    also has to put the card's reviewer on the project roster."""
     pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
     # alice is the reviewer these cards are routed to, and the person who
     # rejects one below. A card decision requires room membership since
     # 2026-09-26 (`_card_actor`), so she is a participant of the project.
     join_project_team(client, pid, "alice")
-    return client.post("/topics", json={"project_id": pid, "title": "预算复核"}).json()[
+    room = client.post("/topics", json={"project_id": pid, "title": "预算复核"}).json()[
         "data"
     ]["id"]
+    return pid, room
+
+
+def _room(client) -> str:
+    return _room_and_project(client)[1]
 
 
 def _set_reporter(client, room: str, handle: str) -> None:
@@ -142,11 +149,16 @@ def test_an_agent_reviewer_reads_it_in_the_room_instead_of_the_mailbox(client):
     谁都不会打开的记录，没有报错也没有人看得见。同一条事件对人和 agent 说的是同一
     句话（谁该收到），分岔只在怎么送到（`identity/arrival.py`）。
     """
-    room = _room(client)
+    project_id, room = _room_and_project(client)
     agent = agent_instance_handle(uuid.uuid4())
     agent_token = seed_user(client, agent)
     reporter = seed_user(client, "bob")
     _set_reporter(client, room, "bob")
+    # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
+    # (`_require_reviewer_in_room`)。这张卡递给的是一位 agent —— 一张卡只有房间会
+    # 放进来的人才接得住，所以让他像真实参与者一样进项目，量到的才是「agent 的收件
+    # 箱是空的」那件事，不是名册。
+    join_project_team(client, project_id, agent)
 
     assert _file_card(client, room, reviewer=agent).status_code == 200
 

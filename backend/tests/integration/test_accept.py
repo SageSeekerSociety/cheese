@@ -38,8 +38,11 @@ def _make_project(client) -> str:
     # 里的 `authorize_topic`，与 `_task_actor` 同一条线)。alice / bob 在这个文件里
     # 本来是"报个 handle 就能表决"的世界里的裸 handle；让他们像真实参与者一样进
     # 项目，每个用例要测的才还是它自己那条规则（谁被指派、谁已经表决过……），而不是
-    # 所有用例一起撞在同一个 403 上。成员资格本身的安全回归在
-    # test_accept_authorization.py。
+    # 所有用例一起撞在同一个 403 上。
+    # 2026-09-27: 递卡与改派在写入之前也过同一道门（`_require_reviewer_in_room`），
+    # 所以这里同样不能让裸 handle 收卡。成员资格本身的安全回归分两处：
+    # test_accept_authorization.py（决策路由）与
+    # test_accept_reviewer_membership.py（递卡与改派）。
     for handle in ("alice", "bob"):
         join_project_team(client, pid, handle)
     return pid
@@ -170,10 +173,11 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
 def test_ai_cannot_accept_own_work_collaborative(client):
     # Default project ai_mode is collaborative. Route the card TO the AI so the
     # reviewer-identity check passes and `_forbid_ai` is what actually fires —
-    # and to the seat that is really in this room's roster, so the room-membership
-    # gate on the decision routes passes too. The bare ``cheese`` handle is on no
-    # roster; every topic's 分身 acts as ``cheese-<topic hex>`` (see
-    # `_forbid_ai`, which matches the whole namespace).
+    # and to the seat that is really in this room's roster: a card is filed only to
+    # somebody this room admits, and the room-membership gate on the decision routes
+    # has to pass for them too. The bare ``cheese`` handle is on no roster; every
+    # topic's 分身 acts as ``cheese-<topic hex>`` (see `_forbid_ai`, which matches
+    # the whole namespace).
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     ai = room_agent_seat(client, tid)

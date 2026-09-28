@@ -83,6 +83,22 @@ def _count(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _authored(events: list[AgentEvent], record: dict) -> list[AgentEvent]:
+    """Name who wrote these, from the runner's stamp on the record.
+
+    Every record carries it, not just the init and the result. Read only there,
+    the words and calls in between were signed by whatever the backend holding
+    the turn remembered — and a backend that took the turn over during a deploy
+    remembers nothing, so it signed them as the room's default agent.
+    """
+    handle = (record.get("cheese") or {}).get("agent_handle")
+    if handle:
+        for event in events:
+            if isinstance(event, AgentMessage | AgentToolUse | AgentToolResult):
+                event.agent_handle = event.agent_handle or handle
+    return events
+
+
 def _retrying(record: dict, label: str | None) -> AgentRetrying:
     """``system/api_retry``, as the pinned build writes it: ``attempt``,
     ``max_retries``, ``retry_delay_ms``, ``error_status`` (null for a
@@ -215,9 +231,9 @@ class Assembler:
             return self._system(record)
         message, thread = _message(record)
         if message.get("type") == "assistant":
-            return self._assistant(message, thread)
+            return _authored(self._assistant(message, thread), record)
         if message.get("type") == "user" and not message.get("isReplay"):
-            return self._returned(message, thread)
+            return _authored(self._returned(message, thread), record)
         return []
 
     def _assistant(self, message: dict, thread: str | None) -> list[AgentEvent]:
@@ -252,6 +268,7 @@ class Assembler:
                         eid=eid,
                         call_id=str(block.get("id")),
                         thread_label=label,
+                        at=_at(message),
                     )
                 )
         return events

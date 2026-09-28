@@ -69,6 +69,13 @@ const claimed = computed(() => alreadyClaimed(props.task))
     <p class="tcard__summary">{{ task.summary }}</p>
 
     <div class="tcard__tags">
+      <!-- 出处：从 PDF 生成的那批题在列表里也看得出是哪一页来的。它是简介开头的
+           一段文本、不是一列（见 `model.ts` 的 `splitOrigin`），所以正文里那串字
+           已经被摘掉了，这里就是它唯一出现的地方。手写的题 `origin` 是空的。 -->
+      <v-chip v-if="task.origin" size="x-small" label variant="tonal" color="info" class="tcard__origin">
+        <v-icon icon="mdi-file-pdf-box" size="13" start />
+        {{ task.origin }}
+      </v-chip>
       <!-- 带讲解视频的题在列表里也看得出来，不用点进去才发现。 -->
       <v-chip v-if="task.videoUrl" size="x-small" label variant="tonal" class="tcard__video">
         <v-icon icon="mdi-play-circle-outline" size="13" start />

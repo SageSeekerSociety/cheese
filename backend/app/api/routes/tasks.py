@@ -474,6 +474,40 @@ async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
         )
 
 
+async def _count_distinct_participants(
+    db,
+    *,
+    space_id: int,
+    task_ids: list[int],
+) -> int:
+    """这些题上加起来**有多少个不同的人**领过。
+
+    逐题的 `participants.total` 是 `TaskMembership` 的行数 —— 一个人领三道题就是 3，
+    求和得到的是「领取次数」。首页那句「参与 N 人」要的是**跨题去重后的人**，而列表
+    接口不给报名名单（`_enrich_task_models` 把 `participants.examples` 写死成空数组，
+    且 `TaskParticipantSummary` 里没有 username），客户端拼不出来，只能在这一层算。
+
+    `task_ids` 就是同一个响应里返回的那几道题，所以这个数和逐题的 `participants.total`
+    **同一批题**：两个数字摆在同一行上，不能一个数的是这一页、另一个数的是全板。
+
+    只在 `queryDistinctParticipants` 为真时调用：它跑的 `list_memberships_for_space`
+    与 `_enrich_task_models` 里那次是同一条查询，不该让每个调 `/tasks` 的页面都付两遍。
+    """
+    if not task_ids:
+        return 0
+    wanted = set(task_ids)
+    memberships = await TaskMembershipRepository(session=db).list_memberships_for_space(
+        space_id
+    )
+    return len(
+        {
+            membership.member_id
+            for membership in memberships
+            if membership.task_id in wanted
+        }
+    )
+
+
 async def _enrich_task_models(
     db,
     task_models: list[dict],
@@ -2459,6 +2493,10 @@ async def get_tasks(
     queryUserDeadline: bool = Query(default=False),
     queryTopics: bool = Query(default=False),
     querySubmissionSchema: bool = Query(default=False),
+    # 让响应里多带一个 data.distinctParticipants（这一页题目上去重后的参与人数）。
+    # 默认不问：它要多跑一次本题目的报名名单查询，只有首页那种「数字要和列表一起
+    # 上屏」的地方才值这一趟。
+    queryDistinctParticipants: bool = Query(default=False),
     keywords: str | None = Query(default=None),
     db=Depends(get_db),
     service: TaskService = Depends(get_task_service),
@@ -2593,19 +2631,26 @@ async def get_tasks(
     returned = len(items)
     has_more = offset + returned < total
     next_start = str(offset + returned) if has_more and returned > 0 else None
+    data: dict = {
+        "tasks": items,
+        "page": {
+            "pageStart": pageStart or "",
+            "pageSize": returned,
+            "hasMore": has_more,
+            "nextStart": next_start,
+            "total": total,
+        },
+    }
+    if queryDistinctParticipants:
+        # 正是上面返回的那几道题（`items`），不是全板 —— 页面上的「领取次数」也是
+        # 这几道题的和，两个数字要对得上。
+        data["distinctParticipants"] = await _count_distinct_participants(
+            db, space_id=space, task_ids=[item["id"] for item in items]
+        )
     return {
         "code": 200,
         "message": "OK",
-        "data": {
-            "tasks": items,
-            "page": {
-                "pageStart": pageStart or "",
-                "pageSize": returned,
-                "hasMore": has_more,
-                "nextStart": next_start,
-                "total": total,
-            },
-        },
+        "data": data,
     }
 
 

@@ -191,6 +191,12 @@ function noticeWhen(ms: number): string {
       <span
         >共 <b>{{ kpis.claims }}</b> 次领取</span
       >
+      <!-- 人，不是次数：跨题去重后的人数，与上面那行「领取次数」同一批题、同一次
+           加载（见 `store.ts` 的 `Kpis.participants`）。服务端没给这一格时整块
+           不出现 —— 「参与 0 人」会把「没读到」说成「没人参与」。 -->
+      <span v-if="kpis.participants !== null"
+        >参与 <b>{{ kpis.participants }}</b> 人</span
+      >
       <span v-if="closingSoon.length" class="home__stats-warn">{{ closingSoon.length }} 道即将截止</span>
     </div>
 

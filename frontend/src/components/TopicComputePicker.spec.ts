@@ -138,7 +138,7 @@ describe('room work computer choice', () => {
     setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
     const { emitted } = mountPicker(profile({ project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    expect(screen.getByText('只影响还没开工的 AI 队友；已经在干活的继续用自己那台')).toBeTruthy()
+    expect(screen.getByText('只影响还没开工的 AI 队友；已经开工的继续用自己那台')).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
     await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab))
     expect(emitted().changed).toHaveLength(1)

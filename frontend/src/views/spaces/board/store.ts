@@ -15,11 +15,16 @@
  * - 「我发布的 / 我领取的」不走这里：那两块有**专为它们准备的接口**
  *   （`/spaces/{id}/me/publishing*`、`/me/participating*`），在 `Mine.vue` 里直接取，
  *   因为那些数（谁在等我审、多少人在我这卡住）全板列表里根本没有。
+ * - 首页那句「参与 N 人」是**跨题去重**后的人，拿逐题的 `participants.total` 拼不出来
+ *   （那是行数）。它跟着列表那次 `GET /tasks` 一起回来（`queryDistinctParticipants`，
+ *   见 `Kpis.participants`），不另开一次请求。
  */
 import type { Space, SpaceInviteCode, Task, User } from '@/types'
-import type { BoardTask, InviteCode, Person, Role, SpaceInfo, TaskState } from './model'
+import type { BoardTask, InviteCode, Manager, Person, Role, SpaceInfo, TaskState } from './model'
 
 import { computed, ref } from 'vue'
+
+import { splitOrigin } from './model'
 
 import { myHandle } from '@/me'
 import { SpacesApi } from '@/network/api/spaces'
@@ -31,6 +36,11 @@ const spaceId = ref<number | null>(null)
 const spaceRaw = ref<Space | null>(null)
 const rawTasks = ref<Task[]>([])
 const rawCodes = ref<SpaceInviteCode[]>([])
+/** 首页那句「参与 N 人」的数：这一页题目上去重后的参与人数，由 `GET /tasks` 在
+ *  **同一个响应里**给（见 `Kpis.participants` 与 `TasksApi.list` 的
+ *  `queryDistinctParticipants`）。`null` = 这一次没拿到 —— 拿不到就不显示那一格，
+ *  不画一个 0 顶上去。 */
+const distinctParticipants = ref<number | null>(null)
 const loading = ref(false)
 const loadedOnce = ref(false)
 /** 空间读不到（不存在、没权限、板子没过审）。外壳拿它换掉整页，而不是留一张空表。 */
@@ -54,10 +64,15 @@ function toState(task: Task): TaskState {
 const iso = (ms: number | null | undefined): string => (ms == null ? '' : new Date(ms).toISOString())
 
 export function toBoardTask(task: Task): BoardTask {
+  // 出处不是一列，是简介开头的一段文本（见 `model.ts` 的 `splitOrigin`）：认出来的
+  // 那一段进 `origin` 变成一枚标记，**同时从 `summary` 里摘掉** —— 不然同一句话在
+  // 卡片上会出现两次，一次当标记一次当正文。
+  const { summary, origin } = splitOrigin(task.intro)
   return {
     id: String(task.id),
     title: task.name,
-    summary: task.intro,
+    summary,
+    origin,
     category: task.category?.name ?? '',
     tags: [],
     publisher: toPerson(task.creator),
@@ -95,10 +110,14 @@ export async function loadBoard(id: number, force = false) {
         sort_order: 'desc',
         querySpace: false,
         queryJoined: true,
+        // 首页那句「参与 N 人」跟这一份列表一起回来 —— 它不能是另一次请求，否则
+        // 首页多等一轮，而且两次读到的题目集合可能不一样（一边正在审、正在发）。
+        queryDistinctParticipants: true,
       }),
     ])
     spaceRaw.value = spaceRes.data.space
     rawTasks.value = taskRes.data.tasks
+    distinctParticipants.value = taskRes.data.distinctParticipants ?? null
     loadedOnce.value = true
   } catch {
     // 读不到就是读不到：真接口对「不存在」和「没权限」都答 404（`require_reviewed_space`
@@ -106,6 +125,7 @@ export async function loadBoard(id: number, force = false) {
     // 接 rejected promise，漏出去就是一条未处理的拒绝，而且页面看着像加载失败。
     spaceRaw.value = null
     rawTasks.value = []
+    distinctParticipants.value = null
     loadedOnce.value = false
     loadFailed.value = true
   } finally {
@@ -136,6 +156,23 @@ export async function loadCodes() {
 }
 
 // --- 派生 --------------------------------------------------------------------
+
+/** 「谁能管这块板」的完整名单，**角色一起带出来**：`SpaceInfo` 那两格（`owner` /
+ *  `admins`）是给别处算角色用的，各自都没带角色；管理员设置那块弹窗要显示的是
+ *  「这个人是什么角色」，所以另起一份，直接映射真接口的 `Space.admins`。
+ *
+ *  所有者排最前，其余按接口给的顺序（后端 `list_admins` 按 `created_at` 升序，见
+ *  `backend/app/domain/space/repositories.py`）。**不拼 `space.owner`** —— 名单里
+ *  本来就有它。 */
+const ROLE_RANK: Record<'OWNER' | 'ADMIN', number> = { OWNER: 0, ADMIN: 1 }
+
+export const managers = computed<Manager[]>(() => {
+  const s = spaceRaw.value
+  if (!s) return []
+  return s.admins
+    .map((a) => ({ person: toPerson(a.user), role: a.role }))
+    .sort((a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role])
+})
 
 export const space = computed<SpaceInfo | null>(() => {
   const s = spaceRaw.value
@@ -191,7 +228,14 @@ export interface Kpis {
   taskTotal: number
   published: number
   pending: number
+  /** 领取**次数**：每题的 `participants.total` 之和。一个人领三道题算三次。 */
   claims: number
+  /** 参与**人数**：跨题去重后的人。和 `claims` **同一批题、同一次加载** —— 前者是
+   *  次数、后者是人，两个数字摆在同一行上，不能一个数的是这一页、另一个数的是全板。
+   *
+   *  `null` = 这一次没拿到（服务端没回那一格）。首页那一格随之整块不出现 ——
+   *  「参与 0 人」会把「没读到」说成「没人参与」。 */
+  participants: number | null
 }
 
 export const kpis = computed<Kpis>(() => {
@@ -201,6 +245,7 @@ export const kpis = computed<Kpis>(() => {
     published: list.filter((t) => t.state === 'PUBLISHED').length,
     pending: list.filter((t) => t.state === 'PENDING').length,
     claims: list.reduce((n, t) => n + t.claimCount, 0),
+    participants: distinctParticipants.value,
   }
 })
 
