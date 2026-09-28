@@ -27,9 +27,15 @@ def build() -> bytes:
             "domain/agent/harness/claude_code/journal.py",
             "domain/agent/harness/claude_code/runner.py",
             "domain/agent/harness/claude_code/entry.py",
+            # What the runner asks, before a turn, to synchronize the
+            # project's context: the service the session's native server keeps.
+            "domain/agent/harness/claude_code/remote_execution/context_service.py",
         ),
         extra={
-            f"app/{relative}": (source / relative).read_text()
-            for relative in MEMORY_MODULES
+            **{
+                f"app/{relative}": (source / relative).read_text()
+                for relative in MEMORY_MODULES
+            },
+            "app/domain/agent/harness/claude_code/remote_execution/__init__.py": "",
         },
     )

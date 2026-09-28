@@ -102,7 +102,7 @@ def machine(contract, tmp_path):
 class Screen:
     """The runner archive, started the way the launcher starts it."""
 
-    def __init__(self, machine: Machine):
+    def __init__(self, machine: Machine, env: dict[str, str] | None = None):
         self.machine = machine
         artifact = machine.root / "runner.pyz"
         artifact.write_bytes(build())
@@ -114,6 +114,7 @@ class Screen:
                 **machine.env,
                 "CHEESE_CLAUDE_COMMAND": machine.command,
                 "CHEESE_AUTHOR": AGENT,
+                **(env or {}),
             },
             stdout=subprocess.DEVNULL,
             stderr=self.errors,
@@ -738,3 +739,61 @@ def test_the_hooks_a_helper_hands_the_session_hold_for_its_next_tool_call(
     assert [entry["tool_input"]["command"] for entry in fired] == [
         "echo AFTER_THE_MACHINE"
     ]
+
+
+# --- a new turn starts on the project's skills as they are now ------------------
+
+
+def _ends(work):
+    return lambda r: (
+        r.get("type") == "result" and (r.get("cheese") or {}).get("work_id") == work
+    )
+
+
+def test_a_skill_the_project_gained_between_turns_is_offered_in_the_next(
+    machine, contract
+):
+    """A room's session reads the project's skills through links into the
+    executor's view, which no file watcher sees change. Before a turn the runner
+    synchronizes them (the service the session's native server keeps) and, when
+    they changed, the session reloads its skills before the turn starts."""
+    from app.domain.agent.harness.claude_code.remote_execution.context_service import (
+        serve,
+    )
+
+    execution = machine.root / "execution.json"
+    synchronized = []
+
+    def synchronize():
+        """What `client.sync_context` does once the project gained a skill:
+        the skill is linked into the config dir, and the answer says so."""
+        synchronized.append(True)
+        added = machine.config / "skills/pulled"
+        if added.exists():
+            return {"changed": False}
+        added.mkdir(parents=True)
+        (added / "SKILL.md").write_text(
+            "---\nname: pulled\ndescription: Came with a pull. PULLED_LISTED.\n---\n"
+            "PULLED_BODY\n"
+        )
+        return {"changed": True}
+
+    screen = Screen(machine, env={"CHEESE_EXECUTION_CONFIG": str(execution)})
+    try:
+        with serve(execution, synchronize):
+            requests = machine.server.state["requests"]
+            work = str(uuid.uuid4())
+            screen.send("hello", work_id=work)
+            first = screen.wait(_ends(work))
+            asked = len(requests)
+            offered = "PULLED_LISTED" in json.dumps(requests[-1])
+            work = str(uuid.uuid4())
+            screen.send(contract.do("Skill", skill="pulled"), work_id=work)
+            screen.wait(_ends(work), after=first["sequence"])
+            loaded = "PULLED_BODY" in json.dumps(requests[asked:])
+    finally:
+        screen.stop()
+
+    assert synchronized, "the runner never synchronized before a turn"
+    assert offered, "the first turn was not offered the skill the project gained"
+    assert loaded

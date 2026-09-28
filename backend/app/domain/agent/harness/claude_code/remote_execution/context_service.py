@@ -11,7 +11,9 @@ def address(target):
     return f"/tmp/cheese-context-{os.getuid()}-{digest}.sock"
 
 
-def call(target):
+def call(target) -> dict | bool:
+    """Synchronize through the resident service: its answer, or False when
+    there is none. The answer says whether the project context changed."""
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(60)
         try:
@@ -21,17 +23,18 @@ def call(target):
         connection.sendall(b"context\n")
         with connection.makefile("rb") as response:
             raw = response.readline()
-        # The resident service emits this exact success response on every turn.
-        if raw == b'{"ok": true}\n':
-            return True
         import json
 
         result = json.loads(raw)
         if "error" in result:
             raise RuntimeError(result["error"])
-        if result != {"ok": True}:
+        if (
+            not isinstance(result, dict)
+            or result.get("ok") is not True
+            or not set(result) <= {"ok", "changed"}
+        ):
             raise RuntimeError("Invalid context synchronization response")
-        return True
+        return result
 
 
 @contextmanager
@@ -46,8 +49,13 @@ def serve(target, synchronize):
             if self.rfile.readline(32) != b"context\n":
                 return
             try:
-                synchronize()
-                result = {"ok": True}
+                synchronized = synchronize()
+                result = {
+                    "ok": True,
+                    "changed": bool(
+                        isinstance(synchronized, dict) and synchronized.get("changed")
+                    ),
+                }
             except Exception as exc:
                 result = {"error": str(exc)}
             self.wfile.write(json.dumps(result).encode() + b"\n")

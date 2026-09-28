@@ -57,6 +57,10 @@ else:
     )
 
 PINNED_VERSION = "2.1.282"
+# Where a session's execution target is written. The launcher names it, so the
+# runner that holds the session and `bootstrap` preparing it agree on the file
+# without either spelling the other's layout.
+EXECUTION_CONFIG = "CHEESE_EXECUTION_CONFIG"
 # The file tools the plugin runs on the executor. Bash is not one: the build
 # runs it itself, through the shell prefix (`shell`), so its tasks, their
 # controls and their notifications are the build's own.
@@ -426,7 +430,7 @@ def prepare(
         # `defer_loading`. `auto` would switch deferral on only once a room's
         # MCP definitions pass 10% of the window, and then fail there.
         "ENABLE_TOOL_SEARCH": "false",
-        "CHEESE_EXECUTION_CONFIG": str(target_path),
+        EXECUTION_CONFIG: str(target_path),
         "CLAUDE_CODE_TMPDIR": str(temporary),
     }
     prefix = directory / "shell-prefix"
@@ -603,6 +607,23 @@ def sync_context(target_path, supplied_tree=None):
             temporary.write_text(json.dumps(tree))
             temporary.replace(tree_path)
             generation_path.write_text(tree["generation"])
+            if "session_workspace" in target:
+                # A session already running: the skills, commands, agents and
+                # rules the project has now are the ones linked into its
+                # config dir. (`prepare` links them itself, once mounted.)
+                if __package__:
+                    from .release import link_forwarded_user_context
+                else:
+                    sys.path.insert(0, str(Path(__file__).parent))
+                    from release import link_forwarded_user_context
+
+                link_forwarded_user_context(
+                    Path(target_path).parent,
+                    target["central_config"],
+                    Path(target["session_workspace"]),
+                    tree,
+                    Path(__file__).parent,
+                )
         return tree
     workspace = Path(target["central_workspace"])
     manifest = Path(target_path).parent / "context-manifest.json"
@@ -1856,13 +1877,12 @@ def main():
     elif args.mode == "enter":
         enter(args.config, args.args)
     elif args.mode == "bootstrap":
-        # The platform's own directory holds the target file and this client;
-        # the harness's config dir is the harness's, and is where `claude` reads
+        # The launcher names where the session's target goes; the harness's
+        # config dir is the harness's, and is where `claude` reads
         # the settings we are extending and writes everything it owns.
-        base_dir = args.config.parent
         config_dir = Path(os.environ["CLAUDE_CONFIG_DIR"])
         launch = prepare(
-            base_dir / "remote-session",
+            Path(os.environ[EXECUTION_CONFIG]).parent,
             config,
             claude=args.args[0],
             extra_args=args.args[1:],

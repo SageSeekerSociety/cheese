@@ -327,9 +327,13 @@ def link_forwarded_user_context(directory, config, forwarded, tree, helpers):
                 continue
             destination.unlink()
         elif destination.exists():
-            raise RuntimeError(
-                f"Forwarded user context conflicts with central file: {destination}"
-            )
+            # The platform ships something by this name (its own skill, or a
+            # way of working the project saved). Plain Claude Code gives a
+            # personal skill precedence over a project skill of the same name
+            # and carries on, and so does the room: the repository's stays in
+            # the project, unlinked, and the session starts.
+            wanted.discard(str(destination.relative_to(config)))
+            continue
         destination.symlink_to(
             source,
             target_is_directory=entries[str(source.relative_to(forwarded))]["kind"]

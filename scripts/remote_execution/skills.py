@@ -18,7 +18,7 @@ the session happens to print: a room's session names a skill's directory in
 its own config dir, which its file tools and commands carry to the project's
 `.claude/skills` (`docs/remote-execution.md`). The room must observe what the
 reference observes. A difference is a bug in how a room carries skills, unless
-the observation is in EXPECTED with the issue that tracks it.
+the observation is in EXPECTED with the reason the room differs.
 
 Needs Linux: the session's namespace, and FUSE for the view.
 
@@ -55,8 +55,17 @@ MACHINE_MARK = "SKILL_FIXTURE_ON_THE_MACHINE"
 NOTICE_TURNS = 6
 NOTICE_PAUSE_S = 2.0
 
-# Observations the room is known not to match yet: name -> issue.
-EXPECTED: dict[str, int] = {}
+# Observations where the room knowingly differs, and why.
+EXPECTED: dict[str, str] = {
+    # Plain Claude Code 2.1.282 goes on offering and loading a skill whose
+    # directory was deleted, even after `/reload-skills`; a room's session
+    # reloads what the project has, and the skill is gone.
+    "removed skill no longer offered": "the room drops a deleted skill",
+    "removed skill no longer loads": "the room drops a deleted skill",
+    # A room's session reads only the user setting source, and nested
+    # discovery is the project source's.
+    "nested skill offered once its directory is read": "#1985",
+}
 
 
 def skill(directory, name, description, body, extra=""):
@@ -491,13 +500,14 @@ def main():
             verdict = (
                 "PASS"
                 if row["equal"]
-                else f"KNOWN #{row['expected difference']}"
+                else "KNOWN"
                 if row["expected difference"]
                 else "FAIL"
             )
             print(
                 f"{verdict:10} {row['observation']}: reference={json.dumps(row['reference'])}"
-                f" room={json.dumps(row['room'])}",
+                f" room={json.dumps(row['room'])}"
+                + (f" ({row['expected difference']})" if not row["equal"] and row["expected difference"] else ""),
                 flush=True,
             )
         for side, error in receipt["errors"].items():
@@ -516,7 +526,7 @@ def main():
                     shutil.copytree(
                         source,
                         arguments.output / side,
-                        ignore=shutil.ignore_patterns("*.pyz", "executor"),
+                        ignore=shutil.ignore_patterns("*.pyz", "executor", "forwarded-project"),
                         dirs_exist_ok=True,
                     )
         return 1 if failed or stale else 0
