@@ -147,74 +147,63 @@ export function renderDemo(lang, body, where) {
 
 // ---------- demo-context ----------
 // One context window filling up over a turn, after Claude Code's «Explore the
-// context window»: a bar that is the whole window, a list of what went in and
-// when, and for each item who can see it. The startup rows are bound to the
-// prompt-blocks dataset like demo-timeline; `before:` rows come ahead of them
-// (the harness's own prompt), `then:` rows after. A row with `cat: sub` lives
-// in a subagent's own window and does not count; a row with `cat: compact`
-// keeps only the categories listed in its `keeps:` and adds `value` as the
-// summary.
+// context window». The startup rows are bound to the prompt-blocks dataset like
+// demo-timeline; `before:` rows come ahead of them (the harness's own prompt),
+// `then:` rows after. A `kind: sub` row lives in a subagent's own window and
+// does not count; the `kind: compact` row keeps only the categories in its
+// `keeps:` and adds its `value` as the summary. A row with `gate:` waits for a
+// click before it goes in. The interactive part is src/context-window.mjs.
 export const CONTEXT_CATS = {
   harness: { label: '骨架自带', c: '--faint' },
   rules: { label: '平台规则', c: '--info' },
   state: { label: '项目状态', c: '--sec' },
   memory: { label: '记忆', c: '--accent-3' },
-  you: { label: '人的消息', c: '--ok' },
-  work: { label: '芝士干活', c: '--warn' },
+  you: { label: '人和平台的话', c: '--ok' },
+  work: { label: '文件和输出', c: '--warn' },
   say: { label: '芝士发言', c: '--accent' },
-  sub: { label: '分身的窗口', c: '--sec' },
-  compact: { label: '压缩摘要', c: '--accent' },
+  compact: { label: '压缩摘要', c: '--accent-2' },
+  sub: { label: '分身', c: '--sec' },
 }
+const KIND_NAMES = ['auto', 'you', 'platform', 'cheese', 'sub', 'compact']
 const SEEN = {
-  chat: { label: '对话里看得见', short: '对话' },
-  site: { label: '现场里看得见', short: '现场' },
-  none: { label: '房间里看不见', short: '看不见' },
+  chat: { label: '对话里看得见' },
+  site: { label: '现场里有一行' },
+  none: { label: '房间里看不见' },
 }
 
 export function contextRows(spec, where) {
-  const before = (spec.before || []).map((s) => ({ ...s, cat: s.cat || 'harness' }))
-  const bound_ = bound(spec, where).map((s) => ({ ...s, cat: s.cat || 'rules' }))
-  const rows = [...before, ...bound_].map((s) => ({ ...s, seen: s.seen || 'none', value: s.value ?? 0 }))
-  for (const r of rows) {
+  const before = (spec.before || []).map((s) => ({ ...s, cat: s.cat || 'harness', kind: s.kind || 'auto' }))
+  const bound_ = bound(spec, where).map((s) => ({ ...s, cat: s.cat || 'rules', kind: s.kind || 'auto' }))
+  // `skip: true` keeps a bound row checked against the dataset but out of this window (a block only some projects get).
+  const rows = [...before, ...bound_].filter((s) => s.skip !== true).map((s) => ({ ...s, seen: s.seen || 'none', value: s.value ?? 0 }))
+  rows.forEach((r, i) => {
+    if (r.kind === 'sub') r.cat = 'sub'
+    if (r.kind === 'compact') r.cat = 'compact'
+    if (!KIND_NAMES.includes(r.kind)) missing(where, `row «${r.label}»: «kind» is one of ${KIND_NAMES.join(', ')}`)
     if (!CONTEXT_CATS[r.cat]) missing(where, `row «${r.label}»: no category «${r.cat}» — use one of ${Object.keys(CONTEXT_CATS).join(', ')}`)
     if (!SEEN[r.seen]) missing(where, `row «${r.label}»: «seen» is chat, site or none`)
     if (typeof r.value !== 'number') missing(where, `row «${r.label}»: «value» must be a number of tokens`)
-  }
+    if (r.keeps) r.keeps = String(r.keeps).split(',').map((x) => x.trim())
+    r.subStart = r.kind === 'sub' && rows[i - 1]?.kind !== 'sub'
+    r.subEnd = r.kind === 'sub' && rows[i + 1]?.kind !== 'sub'
+    if (r.link) r.link = docHref(r.link)
+  })
+  if (rows.filter((r) => r.kind === 'compact').length > 1) missing(where, 'one compaction per demo')
   return rows
 }
 
 function renderContext(spec, where) {
   const rows = contextRows(spec, where)
   const window_ = spec.window || 200000
-  const legend = Object.entries(CONTEXT_CATS).filter(([k]) => rows.some((r) => r.cat === k))
-    .map(([k, v]) => `<span class="cx-key" data-cx-cat="${k}"><i style="--c:var(${v.c})"></i>${esc(v.label)}</span>`).join('')
-  let phase = null
-  const li = rows.map((r, i) => {
-    const head = r.phase && r.phase !== phase ? `<li class="cx-phase" data-cx-phase="${i}">${esc(r.phase)}</li>` : ''
-    if (r.phase) phase = r.phase
-    const cat = CONTEXT_CATS[r.cat]
-    const seen = SEEN[r.seen]
-    const tokens = r.cat === 'compact' ? '' : `${r.cat === 'sub' ? '' : '+'}${num(r.value)}`
-    return `${head}<li class="cx-row cx-${r.cat}" data-cx-row="${i}" data-cx-cat="${r.cat}" tabindex="0">
-      <i class="cx-dot" style="--c:var(${cat.c})"></i>
-      <div class="cx-main"><div class="cx-line"><b>${esc(r.label)}</b><span class="cx-seen cx-seen-${r.seen}" title="${esc(seen.label)}">${esc(seen.short)}</span><span class="cx-tok" data-cx-tok>${tokens}</span></div>
-      <p class="cx-desc">${esc(r.desc || '')}${r.link ? ` <a class="link" href="${esc(docHref(r.link))}">看这一节</a>` : ''}</p></div>
-    </li>`
-  }).join('\n')
-  const data = rows.map((r) => ({ cat: r.cat, v: r.value, keeps: r.keeps ? String(r.keeps).split(',').map((x) => x.trim()) : null }))
-  return `<figure class="demo demo-ctx" data-demo="context" data-window="${window_}" aria-label="${esc(spec.title)}">
+  const used = new Set(rows.map((r) => r.cat))
+  const cats = Object.entries(CONTEXT_CATS).filter(([k]) => used.has(k) && k !== 'sub').map(([key, v]) => ({ key, label: v.label, color: v.c }))
+  const cfg = { title: spec.title, note: spec.note, topic: spec.topic, window: window_, line: spec.compact_line || 0.9, takeaway: spec.takeaway, room: spec.room, cats, rows }
+  // Narrow screens and no script get the rows as a plain list.
+  const li = rows.map((r) => `<li><b>${esc(r.label)}</b>${r.kind === 'compact' ? '' : `<span class="cw-f-tok">${num(r.value)}${r.kind === 'sub' ? '（在分身的窗口里）' : ''}</span>`}<span class="cw-f-seen">${SEEN[r.seen].label}</span><p>${esc(r.desc || '')}</p></li>`).join('')
+  return `<figure class="demo demo-cw" data-demo="context" aria-label="${esc(spec.title)}">
   ${head(spec.title, spec.note)}
-  <div class="dm-ctl cx-ctl" role="group" aria-label="演示控制">
-    <button class="dm-btn dm-play" data-cx-play aria-pressed="false"><span data-cx-play-label>播放</span></button>
-    <input class="dm-range" type="range" data-cx-range min="0" max="${rows.length}" step="1" value="${rows.length}" aria-label="进度">
-    <span class="dm-count cx-used"><b data-cx-used>${num(sumContext(data))}</b> / ${num(window_)} tokens</span>
-  </div>
-  <div class="cx-bar" data-cx-bar></div>
-  <div class="cx-legend">${legend}<span class="cx-note">「对话 / 现场 / 看不见」说的是房间里谁看得见这一条</span></div>
-  <ol class="cx-list" data-cx-list>
-${li}
-  </ol>
-  <script type="application/json" data-cx-data>${JSON.stringify(data).replace(/</g, '\\u003c')}</script>
+  <ol class="cw-fallback">${li}</ol>
+  <script type="application/json" data-cw>${JSON.stringify(cfg).replace(/</g, '\\u003c')}</script>
 </figure>`
 }
 

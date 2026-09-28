@@ -2,7 +2,8 @@
 // is already in the HTML (build.mjs put it there), so nothing here builds DOM
 // or writes prose: it reveals steps, moves a bar, and re-runs a simulation over
 // the parameters the fence declared.
-import { evaluate, truthy, show, fill, parameters, contextSegments } from './demo-model.mjs'
+import { evaluate, truthy, show, fill, parameters } from './demo-model.mjs'
+import { mountContextWindow } from './context-window.mjs'
 
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 const $ = (s, r = document) => r.querySelector(s)
@@ -173,104 +174,8 @@ function mountSim(el) {
   paint()
 }
 
-// ---------- demo-context ----------
-// The list and the bar are both prerendered with everything in; this reveals
-// the rows one by one and redraws the bar from what the window holds so far.
-function mountContext(el) {
-  const data = JSON.parse($('[data-cx-data]', el)?.textContent || '[]')
-  const rows = $$('[data-cx-row]', el)
-  const phases = $$('[data-cx-phase]', el)
-  const bar = $('[data-cx-bar]', el)
-  const used = $('[data-cx-used]', el)
-  const range = $('[data-cx-range]', el)
-  const list = $('[data-cx-list]', el)
-  const playBtn = $('[data-cx-play]', el)
-  const playLabel = $('[data-cx-play-label]', el)
-  const n = data.length
-  const window_ = Number(el.dataset.window || 200000)
-  const fmt = (x) => Math.round(x).toLocaleString('en-US')
-  if (!n || !bar) return
-  el.classList.add('dm-live')
-  let pos = n
-  let playing = false
-  let timer = 0
-
-  function paint() {
-    const segs = contextSegments(data, pos)
-    bar.innerHTML = segs.map((s) => `<i class="cx-seg cx-${s.cat}" data-cx-seg="${s.i}" style="width:${Math.max((s.v / window_) * 100, 0.25).toFixed(3)}%"></i>`).join('')
-    if (used) used.textContent = fmt(segs.reduce((a, s) => a + s.v, 0))
-    rows.forEach((r, i) => {
-      r.classList.toggle('cx-hidden', i >= pos)
-      r.classList.toggle('cx-now', i === pos - 1)
-      if (data[i].cat === 'compact') {
-        const tok = $('[data-cx-tok]', r)
-        const before = contextSegments(data, i).reduce((a, s) => a + s.v, 0)
-        const after = contextSegments(data, i + 1).reduce((a, s) => a + s.v, 0)
-        if (tok) tok.textContent = `${fmt(before)} → ${fmt(after)}`
-      }
-    })
-    phases.forEach((p) => p.classList.toggle('cx-hidden', Number(p.dataset.cxPhase) >= pos))
-    if (range) range.value = String(pos)
-    const now = rows[pos - 1]
-    if (now && list && playing) list.scrollTop = now.offsetTop - list.offsetTop - list.clientHeight / 2
-  }
-
-  function stop() {
-    playing = false
-    clearTimeout(timer)
-    if (playBtn) playBtn.setAttribute('aria-pressed', 'false')
-    if (playLabel) playLabel.textContent = '播放'
-  }
-  function tick() {
-    if (pos >= n) return stop()
-    pos++
-    paint()
-    // Startup blocks go in quickly — nobody is typing yet; the turn itself reads at a pace.
-    const next = data[pos]
-    timer = setTimeout(tick, !next ? 0 : ['harness', 'rules', 'state', 'memory'].includes(next.cat) ? 260 : 1100)
-  }
-  function play() {
-    if (playing) return stop()
-    if (pos >= n) { pos = 0; paint() }
-    playing = true
-    if (playBtn) playBtn.setAttribute('aria-pressed', 'true')
-    if (playLabel) playLabel.textContent = '暂停'
-    timer = setTimeout(tick, 300)
-  }
-  playBtn?.addEventListener('click', play)
-  range?.addEventListener('input', () => { stop(); pos = Number(range.value); paint() })
-
-  // Hovering a row lights its piece of the bar; hovering a legend key lights a whole category.
-  const light = (pred) => $$('[data-cx-seg]', bar).forEach((g) => g.classList.toggle('cx-hot', pred(g)))
-  rows.forEach((r, i) => {
-    r.addEventListener('mouseenter', () => light((g) => Number(g.dataset.cxSeg) === i))
-    r.addEventListener('focus', () => light((g) => Number(g.dataset.cxSeg) === i))
-    r.addEventListener('mouseleave', () => light(() => false))
-  })
-  $$('.cx-key', el).forEach((k) => {
-    k.addEventListener('mouseenter', () => light((g) => g.classList.contains(`cx-${k.dataset.cxCat}`)))
-    k.addEventListener('mouseleave', () => light(() => false))
-  })
-  bar.addEventListener('mouseover', (e) => {
-    const i = e.target?.dataset?.cxSeg
-    rows.forEach((r, j) => r.classList.toggle('cx-hot', String(j) === i))
-  })
-  bar.addEventListener('mouseleave', () => rows.forEach((r) => r.classList.remove('cx-hot')))
-
-  if (!reduced && 'IntersectionObserver' in window) {
-    pos = 0
-    const io = new IntersectionObserver((es) => {
-      if (!es[0].isIntersecting) return
-      io.disconnect()
-      play()
-    }, { threshold: 0.4 })
-    io.observe(el)
-  }
-  paint()
-}
-
 export function mountDemos(root = document) {
   $$('[data-demo="steps"]', root).forEach(mountSteps)
   $$('[data-demo="sim"]', root).forEach(mountSim)
-  $$('[data-demo="context"]', root).forEach(mountContext)
+  $$('[data-demo="context"]', root).forEach(mountContextWindow)
 }
