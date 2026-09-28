@@ -845,8 +845,10 @@ defineExpose({
   /* 菜单最多 7 项（`mentionMatches` 里 slice(0, 7)），每项 min-height 36px，展开
      就是 254px；而 `.composer` 是 `.chat`（flex column）里不肯收缩的那一项。面板
      一矮（尤其手机上），多出来的部分连同输入框一起从 `.chat` 底部溢出、被外壳裁
-     掉，还没有滚动条。给个上限让它自己滚——40vh 与 `.panel-card__block-body` 同例。 */
-  max-height: 40vh;
+     掉，还没有滚动条。给个上限让它自己滚，量的是看得见的那一截：手机上键盘弹起来
+     时 40vh 还是按整屏算，菜单会伸到顶栏底下（--app-height / --keyboard-inset 见
+     lib/keyboardInset.ts）。 */
+  max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.4);
   background: var(--surface);
   box-shadow: var(--shadow-2);
 }
