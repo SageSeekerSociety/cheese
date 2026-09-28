@@ -64,6 +64,26 @@ class TopicMembershipRepository:
             stmt = stmt.where(TopicMembership.role.in_(roles))
         return set((await self._session.scalars(stmt)).all())
 
+    async def roles_for_member(
+        self, topic_ids: list[uuid.UUID], member_handle: str
+    ) -> dict[uuid.UUID, TopicRole]:
+        """The role this handle holds in each of these topics, in ONE query.
+
+        ``topic_ids_for_member`` answers 在不在里面; this answers 坐的是哪把椅子.
+        ``hand_over_project_seats`` needs the second question — it seats the
+        successor in the chair the transferor held — and asking it one topic at
+        a time is a round trip per room. Topics the handle is not in simply do
+        not appear in the result.
+        """
+        if not topic_ids:
+            return {}
+        stmt = select(TopicMembership.topic_id, TopicMembership.role).where(
+            TopicMembership.topic_id.in_(topic_ids),
+            TopicMembership.member_handle == member_handle,
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: role for topic_id, role in rows}
+
     async def count_for_topic(self, topic_id: uuid.UUID) -> int:
         stmt = (
             select(func.count())
