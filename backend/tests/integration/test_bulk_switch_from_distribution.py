@@ -1,7 +1,7 @@
 """A project manager lists the agent sessions on one self-hosted device and
 switches some of them elsewhere (#1900 step 6): each switch is the room's own
 (push first, per-session refusal), and a session whose room is mid-turn is
-left alone with the reason 「正在干活，稍后再换」.
+left alone with the reason 「正在运行任务，稍后再换」.
 """
 
 import uuid
@@ -187,7 +187,7 @@ async def test_a_bulk_switch_moves_an_idle_session_and_skips_one_mid_turn(
     assert idle.status_code == 200, idle.text
     assert busy.status_code == 409, busy.text
     assert busy.json()["error"]["name"] == "SessionWorking"
-    assert busy.json()["error"]["message"] == "正在干活，稍后再换"
+    assert busy.json()["error"]["message"] == "正在运行任务，稍后再换"
     # Only the idle session's machine was asked to push.
     assert remote.await_count == 1
     async with client.test_factory() as db:
