@@ -198,7 +198,7 @@ describe('这一张码是谁的、给谁用的', () => {
     }))
     await mount()
 
-    expect(document.body.textContent).toContain('建码人 林')
+    expect(document.body.textContent).toMatch(/建码人\s*@林/)
     expect(document.body.textContent).toContain('给新来的设计师')
     // 昵称为空时退到用户名，这是后端 `createdBy` 里两个都可能缺的那一格的兜底。
     expect(document.body.textContent).not.toContain('未知')

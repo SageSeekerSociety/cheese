@@ -309,6 +309,16 @@ class UserProfileRepository:
         rows = list(result.scalars().all())
         return {row.user_id: row for row in rows}
 
+    async def usernames_by_user_ids(self, user_ids: Sequence[int]) -> dict[int, str]:
+        """user_id -> handle. 通知里「谁做了这件事」要按 handle 链到那个人的主页。"""
+        if not user_ids:
+            return {}
+        stmt = select(User.id, User.username).where(
+            User.id.in_(list(user_ids)), User.deleted_at.is_(None)
+        )
+        result = await self._session.execute(stmt)
+        return {uid: username for uid, username in result.all()}
+
     async def nickname_and_avatar_by_user_id(
         self, user_ids: Sequence[int]
     ) -> dict[int, tuple[str | None, int | None]]:

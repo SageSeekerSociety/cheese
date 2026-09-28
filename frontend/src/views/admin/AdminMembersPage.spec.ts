@@ -185,7 +185,8 @@ describe('成员管理', () => {
     // `wangchangxin` 没有昵称（平台上没这个账号）：主行退回 handle，而且只画一次。
     expect(await findByText('wangchangxin')).toBeTruthy()
     // 页面上加的那一行带出处：谁加的、什么时候。
-    expect(await findAllByText(/andy 加的/)).toHaveLength(1)
+    await vi.waitFor(() => expect(document.body.textContent).toMatch(/@andy\s*加的/))
+    expect(document.querySelectorAll('.am__dim .mention[data-handle="andy"]')).toHaveLength(1)
 
     // 整页只有一个「移出」，在 `pengwenbo` 那一行。根那三行（andy、wangchangxin、
     // cheese-bot）每个都画一个的话这里会是四个。

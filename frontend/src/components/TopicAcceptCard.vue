@@ -41,6 +41,7 @@ import {
   setAutoMerge,
   voidCard,
 } from '@/api'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { columnDotStyle } from '@/lib/board'
 import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
@@ -516,7 +517,10 @@ defineExpose({ reload: loadAcceptCard })
                   <v-card v-if="gateCard && gateCard.status === 'gate_failed'" variant="outlined" class="merge-box">
                     <div class="pa-3">
                       <div class="text-caption text-medium-emphasis mb-2">
-                        检查未通过，未提交审阅。{{ store.agentName }}修复后会重新提交
+                        检查未通过，未提交审阅。<UserRef
+                          :handle="store.agentHandle"
+                          :name="store.agentName"
+                        />修复后会重新提交
                       </div>
                       <v-btn
                         size="small"
@@ -539,7 +543,10 @@ defineExpose({ reload: loadAcceptCard })
                   >
                     <div class="pa-3">
                       <div class="text-caption text-medium-emphasis mb-2">
-                        检查未能运行，未提交审阅。{{ store.agentName }}修复检查环境后会重新提交，多次失败时需要手动处理
+                        检查未能运行，未提交审阅。<UserRef
+                          :handle="store.agentHandle"
+                          :name="store.agentName"
+                        />修复检查环境后会重新提交，多次失败时需要手动处理
                       </div>
                       <v-btn
                         size="small"
@@ -557,7 +564,7 @@ defineExpose({ reload: loadAcceptCard })
                     <div class="pa-3">
                       <div v-if="pendingCard.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
                         {{ pendingCard.note || '与主分支冲突，未能合并' }}
-                        {{ store.agentName }}正在处理，完成后可以重新采纳
+                        <UserRef :handle="store.agentHandle" :name="store.agentName" />正在处理，完成后可以重新采纳
                       </div>
                       <!-- 合并态 (#718): 状态词 + 「谁的活」的圈。词和 who 都是后端算好下发的，
                圈用看板「该谁动」的点语言（同一个问题在整套界面里只有一种颜色）。
@@ -599,7 +606,7 @@ defineExpose({ reload: loadAcceptCard })
                       </div>
                       <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
                         <span>待</span>
-                        <strong>@{{ pendingCard.reviewer_handle }}</strong>
+                        <UserRef :handle="pendingCard.reviewer_handle" />
                         <span>审阅</span>
                         <!-- 改验收人 (spec §4.4): 任何成员都可以改推荐/加人 -->
                         <v-menu>
@@ -768,7 +775,9 @@ defineExpose({ reload: loadAcceptCard })
                           已批准
                         </v-chip>
                         <span v-if="pendingCard.approvals.length" class="text-caption text-medium-emphasis">
-                          {{ pendingCard.approvals.map((h) => '@' + h).join('、') }}
+                          <template v-for="(h, i) in pendingCard.approvals" :key="h"
+                            >{{ i ? '、' : '' }}<UserRef :handle="h"
+                          /></template>
                         </span>
                         <v-btn
                           v-if="!pendingCard.approvals.includes(AUTHOR)"
@@ -841,7 +850,7 @@ defineExpose({ reload: loadAcceptCard })
                           @update:model-value="onToggleAutoMerge"
                         />
                         <span v-if="autoMergeArmedBy" class="text-caption text-medium-emphasis">
-                          由 @{{ autoMergeArmedBy }} 开启
+                          由 <UserRef :handle="autoMergeArmedBy" /> 开启
                         </span>
                       </div>
                       <!--
@@ -946,7 +955,7 @@ defineExpose({ reload: loadAcceptCard })
                   <v-card v-else-if="deliveringCard" variant="outlined" class="merge-box">
                     <div class="pa-3">
                       <div class="text-caption text-medium-emphasis mb-2">
-                        <strong>@{{ deliveringCard.decided_by }}</strong> 已采纳，但合并未完成，需要手动处理
+                        <UserRef :handle="deliveringCard.decided_by" /> 已采纳，但合并未完成，需要手动处理
                       </div>
                       <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。轻重由后端下发的
                note_level 决定，不是从文案开头那个字符猜的 —— 所以这里画一个真的图
@@ -1019,9 +1028,7 @@ defineExpose({ reload: loadAcceptCard })
                   <!-- Accepted topic: 采纳可撤销 (spec §6.3). -->
                   <v-card v-else-if="acceptedCard" variant="outlined" class="merge-box">
                     <div class="pa-3">
-                      <div class="text-body-2 c-muted mb-3">
-                        <strong>@{{ acceptedCard.decided_by }}</strong> 已采纳
-                      </div>
+                      <div class="text-body-2 c-muted mb-3"><UserRef :handle="acceptedCard.decided_by" /> 已采纳</div>
                       <v-btn
                         variant="outlined"
                         class="btn-secondary"

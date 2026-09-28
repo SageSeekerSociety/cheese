@@ -5,6 +5,7 @@ import { computed } from 'vue'
 
 import { statusLabel } from './feedbackLabels'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
@@ -71,7 +72,7 @@ const steps = computed<Step[]>(() => {
           {{ step.label }}
         </div>
         <div v-if="step.at" class="t-meta-read t-num">
-          {{ relTime(step.at) }}<template v-if="step.by"> · {{ step.by }}</template>
+          {{ relTime(step.at) }}<template v-if="step.by"> · <UserRef :handle="step.by" /></template>
         </div>
         <div v-else class="t-meta-read t-num">{{ t('feedback.timeline.notStarted') }}</div>
       </div>

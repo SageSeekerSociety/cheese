@@ -22,6 +22,7 @@ import SplitBar from '../components/SplitBar.vue'
 import TrendChart from '../components/TrendChart.vue'
 import { isManager, me } from '../store'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 
@@ -179,7 +180,7 @@ function mineTo() {
       <div>
         <h1>{{ task.name }}</h1>
         <p>
-          {{ task.creator?.nickname || task.creator?.username }} 出题
+          <UserRef :handle="task.creator?.username" :name="task.creator?.nickname" /> 出题
           <template v-if="task.category?.name"> · {{ task.category.name }}</template>
           · {{ deadlineText(task) }} · {{ task.participantLimit ? `领取上限 ${task.participantLimit}` : '领取不限' }} ·
           {{

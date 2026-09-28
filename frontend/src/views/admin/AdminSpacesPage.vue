@@ -10,6 +10,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { relTime } from '@/lib/relTime'
 import { SpacesApi } from '@/network/api/spaces'
 
@@ -199,7 +200,12 @@ onMounted(load)
                   <span v-if="item.reviewStatus !== 'PENDING'" class="asp__chip">
                     {{ item.reviewStatus === 'APPROVED' ? t('spaces.review.APPROVED') : t('spaces.review.REJECTED') }}
                   </span>
-                  <span class="asp__meta">{{ t('spaces.review.applicant') }}：{{ item.owner ?? '—' }}</span>
+                  <span class="asp__meta"
+                    >{{ t('spaces.review.applicant') }}：<UserRef v-if="item.owner" :handle="item.owner" /><template
+                      v-else
+                      >—</template
+                    ></span
+                  >
                   <span class="asp__meta" :title="item.createdAt">{{ relTime(item.createdAt) }}</span>
                 </div>
                 <p v-if="blurb(item).main" class="asp__desc">{{ blurb(item).main }}</p>
@@ -208,7 +214,7 @@ onMounted(load)
                   {{ t('spaces.review.reason') }}：{{ item.reviewReason }}
                 </p>
                 <p v-if="item.reviewedBy" class="asp__meta asp__meta--wrap">
-                  {{ item.reviewedBy }} · {{ item.reviewedAt }}
+                  <UserRef :handle="item.reviewedBy" /> · {{ item.reviewedAt }}
                 </p>
               </div>
               <div v-if="item.reviewStatus === 'PENDING'" class="asp__actions">
