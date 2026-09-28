@@ -33,12 +33,6 @@ AS_CLAUDE_CODE: dict[str, tuple[str, dict[str, str], dict]] = {
     "bash_start": ("Bash", {"label": "description"}, {"run_in_background": True}),
     "read": ("Read", {"path": "file_path"}, {}),
     "write": ("Write", {"path": "file_path"}, {}),
-    # pi answers with the matching lines and their line numbers, which is
-    # Grep's `content` mode. pi's `limit` counts matches and Grep's
-    # `head_limit` counts output lines, so it keeps its own name, as does
-    # `literal`, which Grep has no flag for.
-    "grep": ("Grep", {"ignoreCase": "-i"}, {"output_mode": "content", "-n": True}),
-    "find": ("Glob", {}, {}),
 }
 
 
