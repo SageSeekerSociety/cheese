@@ -393,8 +393,17 @@ test.describe("空间新界面（真路由）", () => {
 
     // 交完之后那一跳也走新外壳：老页面在自己那棵树里跳「提交记录」，
     // 名字是同一个、树是另一棵 —— 这里正好量到接缝有没有接错。
+    //
+    // 量接缝的那只钩子是**刚交上去的那一版正文**。这里原来断言的是「暂无提交记录」
+    // 不出现，那句话量不动接缝：它画在 `TaskSubmissionHistory` 里 `infinite-scroll`
+    // 的 `#empty` 槽上，开关写作 `:is-empty="submissions.length <= 1"` —— 只有一版
+    // 的时候，上面「最新提交」明明写着那一版，底下「历史提交」那一格里照样是
+    // 「暂无提交记录」。也就是说这句话在「数据到了」与「数据没到」两种情形下一样会
+    // 出现，量的只是这一格有没有画出来。老页面用同一个组件、同一个 `<= 1`（`Submissions.vue`
+    // 两边都传 `empty-text="暂无提交记录"`），所以这里改看那一版正文，才说得清这一跳
+    // 接住的是真数据。
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/tasks/${taskId}/submissions$`));
-    await expect(page.getByText("暂无提交记录")).toHaveCount(0);
+    await expect(page.getByText("我的作业正文（E2E）")).toBeVisible();
   });
 
   test("在新外壳里发题，发出去的题落到审核队列", async ({ page }) => {
