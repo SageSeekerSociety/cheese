@@ -20,17 +20,23 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { loadBoard } from '../store'
+
 import TaskPublish from './TaskPublish.vue'
 
 const previewFromPdf = vi.fn()
 const confirmFromPdf = vi.fn()
 const spaceDetail = vi.fn()
 const listCategories = vi.fn()
+const listTasks = vi.fn()
 
 vi.mock('@/network/api/tasks', () => ({
   TasksApi: {
     previewFromPdf: (...a: unknown[]) => previewFromPdf(...a),
     confirmFromPdf: (...a: unknown[]) => confirmFromPdf(...a),
+    // 右栏那两张卡要读板子的角色（`isManager`），那要板上那一份 `GET /tasks`
+    // 跟着一起回来（见 `board/store.ts` 的 `loadBoard`）。
+    list: (...a: unknown[]) => listTasks(...a),
   },
 }))
 
@@ -43,11 +49,41 @@ vi.mock('@/network/api/spaces', () => ({
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
+/** 假表单那几件东西：`checks` 是它「现在拦着的规则」，`submit` 是它自己的提交，
+ *  `mute` 摆的是「底下那一页还没挂上/还没开口」那个状态（真应用里空间还在装、
+ *  `PublishTaskView` 的 `v-if="ready"` 还没放行的那一小会儿）。
+ *  `vi.hoisted` 是因为 `vi.mock` 的工厂会先跑，够不着这一层声明的变量。 */
+const probe = vi.hoisted(() => ({
+  checks: [] as { id: string; text: string }[],
+  submit: vi.fn(),
+  mute: false,
+}))
+
 // 底下那一页（老发题页）整个换掉：这一份测的是新外壳那一层，不是它裹着的那页。
 // 「裹得住、接缝接对了」在 `wrappers.spec.ts` 里另有一份。
+//
+// 换上的这一份**按真表单那份契约说话**：照 `PUBLISH_CHECKS_SINK` 把它现在拦着的
+// 规则报上去、把它自己的提交交上来（`components/tasks/TaskForm.vue` 里注入的就是
+// 这两件事）。真表单**什么时候**报、报**哪几条**，由
+// `components/tasks/__tests__/TaskFormPublishChecks.test.ts` 挂真表单钉住；这一份
+// 只管外壳那一半：报上来的画不画、按钮跟不跟着走、点下去打到哪儿。两边合起来才是
+// 「表单真拦的都列出来了，列出来的也真的发不出去」。
 vi.mock('@/views/spaces/detail/PublishTask.vue', async () => {
-  const { defineComponent: dc, h: hh } = await import('vue')
-  return { default: dc({ name: 'WriteProbe', setup: () => () => hh('div', { 'data-testid': 'write-probe' }) }) }
+  const { defineComponent: dc, h: hh, inject } = await import('vue')
+  const { PUBLISH_CHECKS_SINK: SINK } = await import('@/lib/taskPublishChecks')
+  return {
+    default: dc({
+      name: 'WriteProbe',
+      setup() {
+        const sink = inject(SINK, null)
+        if (sink && !probe.mute) {
+          sink.report(probe.checks)
+          sink.handOverSubmit(() => probe.submit())
+        }
+        return () => hh('div', { 'data-testid': 'write-probe' })
+      },
+    }),
+  }
 })
 
 const SPACE_ID = 7
@@ -359,5 +395,138 @@ describe('发题页：手写一道 / 从 PDF 生成', () => {
     expect(view.container.querySelector('[data-testid="pdf-meta"]')).toBeNull()
     expect(view.container.querySelector('[data-testid="pdf-drafts"]')).toBeNull()
     expect(view.queryByRole('button', { name: /确认发布/ })).toBeNull()
+  })
+})
+
+// ============ 手写一道右栏那两张卡 ============
+//
+// 两张卡讲两件事：「这道题发出去之后会经过哪几站」（第二句跟着身份变），和
+// 「现在提交得出去吗」。身份那个信号是板上的 `isManager`（`board/store.ts` 的
+// `role` 从空间的管理员名单里认领当前这台机器上登着的人，见 `me.ts`），所以真应用
+// 里这一页挂在空间外壳里、外壳已经 `loadBoard` 过了；这一份单独挂它，就自己把板子
+// 装上 —— `boardAs` 干的就是这件事（和 `SpaceBoardShell.vue:73` 那次同一个调用）。
+
+const MANAGER = { username: 'alice', nickname: '爱丽丝' }
+const MEMBER = { username: 'bob', nickname: '鲍勃' }
+
+/** 这块板的管理员名单：当前这台机器上登的是谁，`role` 就从这里认。 */
+function spaceBody() {
+  return {
+    data: {
+      space: {
+        id: SPACE_ID,
+        name: '数据结构空间',
+        admins: [
+          { role: 'OWNER', user: { username: 'owner', nickname: '所有者' } },
+          { role: 'ADMIN', user: { username: 'alice', nickname: '爱丽丝' } },
+        ],
+      },
+    },
+  }
+}
+
+/** 以某个人的身份打开这块板：先「登录」，再装板子（`me.ts` 读的就是这个 user）。 */
+async function boardAs(user: { username: string; nickname: string }) {
+  localStorage.setItem('user', JSON.stringify(user))
+  await loadBoard(SPACE_ID, true)
+}
+
+/** 「提交前」那颗按钮。灰不灰看它原生的 `disabled`，不猜 class 也不猜颜色。 */
+function submitButton(view: ReturnType<typeof render>): HTMLButtonElement {
+  return view.getByRole('button', { name: '提交审核' }) as HTMLButtonElement
+}
+
+describe('发题页：手写一道右栏那两张卡', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    spaceDetail.mockImplementation(async () => spaceBody())
+    listCategories.mockImplementation(async () => ({ data: { categories: [{ id: 3, name: '基础题' }] } }))
+    listTasks.mockImplementation(async () => ({ data: { tasks: [], distinctParticipants: 0 } }))
+  })
+
+  afterEach(() => {
+    cleanup()
+    localStorage.clear()
+    probe.checks = []
+    probe.submit.mockReset()
+    probe.mute = false
+    vi.clearAllMocks()
+  })
+
+  it('两张卡都在手写一道里：四站一站一句，表单还没开口之前按钮是灰的', async () => {
+    await boardAs(MEMBER)
+    probe.mute = true
+    const view = await mount()
+
+    // 第一张卡：四站，一站一句 —— 摆的是真流程（审核队列、上板、我的）。
+    const steps = Array.from(view.container.querySelectorAll('[data-testid="publish-lifecycle"] li')).map((li) =>
+      li.textContent?.replace(/\s+/g, ' ').trim()
+    )
+    expect(steps).toEqual([
+      '待审核 —— 题目只有你自己和管理员看得到。',
+      '有人审了 —— 所有者或管理员通过后就上板。',
+      '上板 —— 所有人可见可领，领取进度开始计。',
+      '你能看到 —— 「我的 → 我发布的」里有这道题的领取走势、领取者名单和完成情况。',
+    ])
+    expect(view.getByText(/被驳回会带原因退回，改完可以重新提交，不用重写一遍。/)).toBeTruthy()
+
+    // 第二张卡：底下那一页这会儿是个空壳（这一份里没挂真表单），所以既不能说
+    // 「看起来没问题」，也不能让人点 —— 说清在等什么，按钮灰着。
+    expect(textOf(view.container, 'publish-checks-waiting')).toContain('表单装好之后')
+    expect(textOf(view.container, 'publish-ok')).toBeNull()
+    expect(submitButton(view).disabled).toBe(true)
+
+    // 从 PDF 生成那条路上没有这两张卡（那条路上没有这张表单，卡也不该在）。
+    await switchToPdf(view)
+    expect(view.container.querySelector('[data-testid="publish-lifecycle"]')).toBeNull()
+    expect(view.queryByTestId('publish-checks-waiting')).toBeNull()
+    expect(view.queryByRole('button', { name: '提交审核' })).toBeNull()
+  })
+
+  it('「有人审了」那一句跟着身份变：管理员看到自己审，成员看到等所有者或管理员', async () => {
+    await boardAs(MANAGER)
+    const asManager = await mount()
+    expect(textOf(asManager.container, 'publish-audience')).toContain('你可以直接通过（自己发的题自己审）。')
+    expect(textOf(asManager.container, 'publish-audience')).not.toContain('所有者或管理员通过后就上板。')
+    cleanup()
+
+    await boardAs(MEMBER)
+    const asMember = await mount()
+    expect(textOf(asMember.container, 'publish-audience')).toContain('所有者或管理员通过后就上板。')
+    expect(textOf(asMember.container, 'publish-audience')).not.toContain('你可以直接通过')
+  })
+
+  it('表单拦着的规则逐条列出来（就是报上来的那几句），按钮跟着灰掉', async () => {
+    await boardAs(MEMBER)
+    probe.checks = [
+      { id: 'name', text: '标题：必填，最多 100 个字' },
+      { id: 'categoryId', text: '所属分类：必选一个（这块板的分类）' },
+    ]
+    const view = await mount()
+
+    const listed = Array.from(view.container.querySelectorAll('[data-testid="publish-checks"] li')).map((li) =>
+      li.textContent?.trim()
+    )
+    // 一个字都不改地画出来 —— 卡片这一层不加戏。
+    expect(listed).toEqual(probe.checks.map((check) => check.text))
+    // 拦着的时候不画那句「看起来没问题。」，按钮是灰的。
+    expect(view.queryByTestId('publish-ok')).toBeNull()
+    expect(submitButton(view).disabled).toBe(true)
+  })
+
+  it('表单一条都不拦的时候：「看起来没问题。」+ 按钮能点，点下去走的是表单自己的提交', async () => {
+    await boardAs(MEMBER)
+    probe.checks = []
+    const view = await mount()
+
+    expect(textOf(view.container, 'publish-ok')).toBe('看起来没问题。')
+    expect(view.container.querySelector('[data-testid="publish-checks"]')).toBeNull()
+    expect(view.queryByTestId('publish-checks-waiting')).toBeNull()
+
+    const button = submitButton(view)
+    expect(button.disabled).toBe(false)
+    await fireEvent.click(button)
+    // 交出去的是表单交上来的那一个提交，不是这一层另发一次请求。
+    expect(probe.submit).toHaveBeenCalledTimes(1)
   })
 })

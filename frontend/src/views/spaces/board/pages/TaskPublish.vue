@@ -38,15 +38,18 @@
 // **每一道**一起发（确认时走 `taskOptions.attachmentIds`）。**勾只画接口真给了东西
 // 的那一颗** —— 哪一样服务端没落成文件行，就不画那一颗、并说明为什么（见
 // `pdfAttachments` 与 `attachmentIds` 的注释）。
+import type { PublishCheck } from '@/lib/taskPublishChecks'
 import type { PdfPublishAttachmentsData, PdfTaskDraftData } from '@/network/api/tasks/types'
 
-import { computed, provide, ref, watch } from 'vue'
+import { computed, provide, ref, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import PanelCard from '../components/PanelCard.vue'
 import { BOARD_PUBLISH_DONE_ROUTE } from '../routeNames'
+import { isManager } from '../store'
 
 import { PUBLISH_DONE_ROUTE } from '@/lib/shellRouteNames'
+import { PUBLISH_CHECKS_SINK } from '@/lib/taskPublishChecks'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 import PublishTaskView from '@/views/spaces/detail/PublishTask.vue'
@@ -76,6 +79,34 @@ watch(
 
 /** 手写一道（老页原样），或从一份 PDF 里批量生成（原型那一版）。 */
 const mode = ref<'write' | 'pdf'>('write')
+
+// --- 右栏两张卡 ---------------------------------------------------------------
+
+/**
+ * 「提交前」那张清单：底下那张真表单每变一次就报一次它现在**拦着你的**规则，
+ * 报空数组就是提交得出去。规则表与这句话的出处写在 `lib/taskPublishChecks.ts`。
+ *
+ * `null` = 表单还没挂上（空间还在装、或者这会儿在 PDF 那条路上）—— 那时这张卡
+ * 说不出「没问题」，所以按钮是灰的、也不画那一行。**不拿空数组顶上**：那是
+ * 「校验过了」，跟「还没得可校验」不是一句话。
+ */
+const formChecks = shallowRef<PublishCheck[] | null>(null)
+/** 表单交上来的它自己的提交。清单那颗「提交审核」按钮走的就是它。 */
+const formSubmit = shallowRef<(() => void) | null>(null)
+
+provide(PUBLISH_CHECKS_SINK, {
+  report: (checks) => {
+    formChecks.value = checks
+  },
+  handOverSubmit: (submit) => {
+    formSubmit.value = submit
+  },
+})
+
+/** 清单那颗按钮：真表单自己会拦的就让它拦（`handleSubmit` 校验不过什么都不发生）。 */
+function submitFromChecklist() {
+  formSubmit.value?.()
+}
 
 // --- 从 PDF 生成 --------------------------------------------------------------
 
@@ -365,11 +396,54 @@ async function confirmPdf() {
       </v-btn-toggle>
     </div>
 
-    <!-- ============ 手写一道：老页原样 ============ -->
-    <PublishTaskView v-if="mode === 'write' && ready" />
+    <!-- ============ 手写一道：老页原样，右栏两张卡 ============ -->
+    <div v-if="mode === 'write'" class="pub__grid">
+      <div class="pub__main">
+        <!-- 装好再挂（理由见顶部第二点）。没装好之前右栏那张「提交前」是哑的。 -->
+        <PublishTaskView v-if="ready" />
+      </div>
+
+      <aside class="pub__side">
+        <!-- 这道题发出去之后会经过哪几站。一句话是给谁看的，跟着身份变。 -->
+        <PanelCard title="发出去之后">
+          <ol class="pub__steps" data-testid="publish-lifecycle">
+            <li><b>待审核</b> —— 题目只有你自己和管理员看得到。</li>
+            <li data-testid="publish-audience">
+              <b>有人审了</b> ——
+              <template v-if="isManager">你可以直接通过（自己发的题自己审）。</template>
+              <template v-else>所有者或管理员通过后就上板。</template>
+            </li>
+            <li><b>上板</b> —— 所有人可见可领，领取进度开始计。</li>
+            <li><b>你能看到</b> —— 「我的 → 我发布的」里有这道题的领取走势、领取者名单和完成情况。</li>
+          </ol>
+          <p class="pub__side-note">被驳回会带原因退回，改完可以重新提交，不用重写一遍。</p>
+        </PanelCard>
+
+        <!-- 现在提交得出去吗。清单里每一条都是底下那张表单**真会拦**的规则，
+             由表单自己报上来（`lib/taskPublishChecks.ts`）。 -->
+        <PanelCard title="提交前">
+          <ul v-if="formChecks?.length" class="pub__errors" data-testid="publish-checks">
+            <li v-for="check in formChecks" :key="check.id">{{ check.text }}</li>
+          </ul>
+          <p v-else-if="formChecks" class="pub__ok" data-testid="publish-ok">看起来没问题。</p>
+          <p v-else class="pub__wait" data-testid="publish-checks-waiting">
+            表单装好之后，这里会逐条列出它现在拦着你的规则。
+          </p>
+          <v-btn
+            block
+            color="primary"
+            variant="flat"
+            :disabled="!formChecks || formChecks.length > 0"
+            @click="submitFromChecklist"
+          >
+            提交审核
+          </v-btn>
+        </PanelCard>
+      </aside>
+    </div>
 
     <!-- ============ 从 PDF 生成 ============ -->
-    <div v-else-if="mode === 'pdf'" class="pub__pdf">
+    <div v-else class="pub__pdf">
       <!-- 回执：确认之后就地给，不跳走 —— 队列是「先审自己的、再按提交时间」排的，
            刚发的落在靠后，跳过去反而看不见自己刚做了什么。 -->
       <PanelCard v-if="receipt" title="已发布" data-testid="pdf-receipt">
@@ -612,6 +686,67 @@ async function confirmPdf() {
 
 .pub__mode {
   flex: 0 0 auto;
+}
+
+/* 手写一道：左边是老页，右边两张卡。窄屏（这一页左边那一列是重表单）摞成一列。 */
+.pub__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  align-items: start;
+}
+
+.pub__main {
+  min-width: 0;
+}
+
+.pub__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pub__steps {
+  padding-left: 18px;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.9;
+}
+
+.pub__side-note {
+  padding-top: 12px;
+  margin: 12px 0 0;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+
+.pub__errors {
+  padding-left: 18px;
+  margin: 0 0 14px;
+  color: rgb(var(--v-theme-error));
+  font-size: 0.82rem;
+  line-height: 1.8;
+}
+
+.pub__ok {
+  margin: 0 0 14px;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  font-size: 0.82rem;
+}
+
+.pub__wait {
+  margin: 0 0 14px;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+
+@media (max-width: 1100px) {
+  .pub__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .pub__pdf {
