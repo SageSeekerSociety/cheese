@@ -15,6 +15,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project
+from app.auth.topic_access import may_act_in_topic
 from app.common.auth import verify_access_token
 from app.core.config import settings
 from app.core.db import get_db
@@ -35,16 +36,13 @@ from app.core.sandbox_auth import (
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
-from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.project.repositories import ProjectRepository
 from app.domain.task.repositories import TaskRepository
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
-from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
-from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
@@ -463,23 +461,13 @@ class ActorResolver:
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> bool:
         """Check actual membership even on isolated content hosts in dev mode."""
-        members = TopicMembershipRepository(self._session)
-        topic = await TopicRepository(self._session).get(topic_id)
-
-        async def topic_role(tid: uuid.UUID, handle: str) -> TopicRole | None:
-            row = await members.get(topic_id=tid, member_handle=handle)
-            return row.role if row is not None else None
-
-        async def is_project_member(pid: uuid.UUID, handle: str) -> bool:
-            return await self._is_project_member(pid, handle)
-
-        return await authorize_topic_access(
-            actor,
+        if not actor.authenticated:
+            return False
+        return await may_act_in_topic(
+            self._session,
             project_id=project_id,
             topic_id=topic_id,
-            topic_role=topic_role,
-            is_project_member=is_project_member,
-            is_private=bool(topic and topic.is_private),
+            handle=actor.handle,
         )
 
     async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:

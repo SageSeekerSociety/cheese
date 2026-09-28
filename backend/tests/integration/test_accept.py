@@ -15,7 +15,12 @@ import uuid
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
 
@@ -28,7 +33,17 @@ def remote_delivery(client, app_world):
 def _make_project(client) -> str:
     r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # 2026-09-27: 一张卡只递给这道门放得进来的人
+    # （`AcceptService._require_reviewer_in_room`，与采纳那道门的
+    # `resolver.authorize_topic` 同一份判据）。alice / bob 在这个文件里本来是
+    # "报个 handle 就能收卡"的世界里的裸 handle；让他们像真实参与者一样进项目，
+    # 每个用例要测的才还是它自己那条规则（谁被指派、谁已经表决过……），而不是所有
+    # 用例一起撞在同一个 403 上。成员资格本身的安全回归在
+    # test_accept_reviewer_membership.py。
+    for handle in ("alice", "bob"):
+        join_project_team(client, pid, handle)
+    return pid
 
 
 def _make_topic(client, project_id: str) -> str:
@@ -155,15 +170,20 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
 
 def test_ai_cannot_accept_own_work_collaborative(client):
     # Default project ai_mode is collaborative. Route the card TO the AI so the
-    # reviewer-identity check passes and `_forbid_ai` is what actually fires.
+    # reviewer-identity check passes and `_forbid_ai` is what actually fires —
+    # and to the seat that is really in this room's roster, because a card is
+    # filed only to somebody this room admits. The bare ``cheese`` handle holds
+    # no seat anywhere: every room's 分身 acts as its own ``cheese-<topic hex>``
+    # handle (`_forbid_ai` matches the whole namespace, not the bare string).
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid, "cheese")
+    ai = room_agent_seat(client, tid)
+    cid = _make_card(client, tid, ai)
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "cheese", "head_sha": _rendered_head(client, cid)},
-        headers=session_auth_headers("cheese"),
+        json={"decided_by": ai, "head_sha": _rendered_head(client, cid)},
+        headers=session_auth_headers(ai),
     )
     assert r.status_code == 422
 
