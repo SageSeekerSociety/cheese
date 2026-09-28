@@ -43,6 +43,7 @@ const listCategories = vi.fn()
 const listDomainGroups = vi.fn()
 
 const uploadAttachment = vi.fn()
+const attachmentLimits = vi.fn()
 
 vi.mock('@/network/api/tasks', () => ({
   TasksApi: {
@@ -63,9 +64,13 @@ vi.mock('@/network/api/spaces', () => ({
   },
 }))
 
-// 附件卡片选中即传（`POST /attachments`），发题请求带的是它回来的那串 id。
+// 附件卡片选中即传（`POST /attachments`），发题请求带的是它回来的那串 id；卡片上那句
+// 「单个文件不超过…」问的是 `GET /attachments/limits`（与上传同一道门）。
 vi.mock('@/network/api/attachments', () => ({
-  AttachmentsApi: { upload: (...a: unknown[]) => uploadAttachment(...a) },
+  AttachmentsApi: {
+    upload: (...a: unknown[]) => uploadAttachment(...a),
+    limits: (...a: unknown[]) => attachmentLimits(...a),
+  },
 }))
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -89,6 +94,10 @@ import { loadBoard } from '../store'
 import TaskPublish from './TaskPublish.vue'
 
 const SPACE_ID = 7
+
+/** 接口报的单份文件上限。**不是**任何一版页面里写过的数：卡片上那句话若对得上它，
+ *  就只可能是照着接口报的写的。 */
+const LIMIT_BYTES = 12_345_678
 
 const MANAGER = { username: 'alice', nickname: '爱丽丝' }
 const MEMBER = { username: 'bob', nickname: '鲍勃' }
@@ -308,6 +317,8 @@ beforeEach(() => {
   }))
   createTask.mockImplementation(async () => ({ data: { task: { id: 501, approved: false } } }))
   uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ data: { id: 41, file } }))
+  // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
+  attachmentLimits.mockImplementation(async () => ({ data: { maxFileBytes: LIMIT_BYTES } }))
 })
 
 afterEach(() => {
@@ -429,6 +440,29 @@ describe('发题页：手写一道', () => {
 
     await fireEvent.click(view.getByRole('button', { name: '清空预览' }))
     await waitFor(() => expect(textOf(view.container, 'quick-drafts')).toBeNull())
+  })
+
+  it('附件卡上的上限是接口报的那个数；问不到就不写这句话', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    // 这句话只有一种来源：`GET /attachments/limits`（与上传那条路拦下超限文件读的是
+    // **同一个上限**）。接口这里答的是一个别处没出现过的数，写死的字面量对不上。
+    await waitFor(() => expect(textOf(view.container, 'attachment-limit')).toBe('单个文件不超过 11.77 MB'))
+    expect(attachmentLimits).toHaveBeenCalledTimes(1)
+    // 卡片本身照旧：这句话是建议，不是闸门。
+    expect(view.getByLabelText('选择要随题一起发出的材料')).toBeTruthy()
+    view.unmount()
+
+    // 问不到（这里是 503）：少说一句就是，不猜一个数出来，也不弹错 —— 用户到这一步还
+    // 什么都没要求做。
+    attachmentLimits.mockImplementation(async () => {
+      throw new Error('503 Service Unavailable')
+    })
+    const offline = await mount()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(offline.container.querySelector('[data-testid="attachment-limit"]')).toBeNull()
+    expect(offline.getByLabelText('选择要随题一起发出的材料')).toBeTruthy()
   })
 
   it('材料：只画接口真给了 id 的那几个，传失败的那份不画也不跟着发', async () => {

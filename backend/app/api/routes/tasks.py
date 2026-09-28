@@ -1456,8 +1456,10 @@ async def upload_task_attachment(
 ) -> dict:
     """传一个文件并挂到这道题上：出题人本人或板管理员。
 
-    大小不在这里判：前面那道 nginx 是 100M（``frontend/nginx.conf``），与素材库、
-    ``POST /attachments`` 同一个口径。真要有更细的限制，应该三处一起定。
+    大小不在这里判：这条路由与 ``POST /attachments`` 走的是同一个
+    ``AttachmentService.upload``，单份文件的上限在那一处判一次就够
+    （``settings.attachment_max_bytes``），报出去的也是那个数
+    （``GET /attachments/limits``）。
     """
     task = await _require_task(db, task_id)
     attachment, link = await _task_attachment_service(db).add(
