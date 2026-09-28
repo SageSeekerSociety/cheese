@@ -113,8 +113,10 @@ const mode = ref<'write' | 'pdf'>('write')
 /** 装好之前不挂表单。 */
 const ready = ref(false)
 
-/** 表单还没挂上（空间还在装、或者这会儿在 PDF 那条路上）时，右栏那张卡说不出
- *  「没问题」，所以它读的是 `null` 而不是空数组 —— 见下面 `formChecks`。 */
+/** 把这一页要的那几样装上：空间自己、这块板的分类与域名组，以及地址栏点名的模板。
+ *
+ *  顺序有意义（见文件头「装完再挂」）：`fetchCategories()` 与 `fetchDomainGroups()`
+ *  都挂在 `currentSpaceId` 上，空间没装好它们就是空操作 —— 不报错，但表单那一栏是空的。 */
 async function loadSpace(id: number) {
   if (!Number.isFinite(id) || id <= 0) return
   ready.value = false
