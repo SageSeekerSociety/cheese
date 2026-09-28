@@ -475,12 +475,34 @@ def test_a_credential_without_an_agent_identity_is_rejected(client):
 def _turn(client, room: str, text: str) -> None:
     """点名由正文说了算（I13）。已经点了名的原样发出去 —— 在 `<@seat> 还在吗`
     前面再补一个 `@芝士`，点到的就成了名册上排在前面的那一个，于是接话的不是被
-    叫的那个队友。"""
+    叫的那个队友。
+
+    这条 socket 等的是**自己这条消息**的那一轮，不是「随便哪一轮的收尾」。房间的
+    频道带重放缓冲（`InProcessBroker.subscribe(replay=True)`），一条 socket 从订上
+    到自己的消息被提交进去之间有一个窗口：上一轮收尾的 `done`（同一轮收尾还可能被
+    两条收尾路径各发一次）正好落在这个窗口里，就在自己的消息还没进房间时先到了手
+    上。哪些帧属于自己那一轮，帧上没有标识（`{"type": "done"}`），只能靠先后认——
+    所以先等自己那条消息真的落进房间（它一定由自己的 `user_block` 带回，而且一定
+    排在自己这一轮的帧前面），再等收尾。等不到就继续等，不是把断言放宽。
+    （`error` 不设这道门：它是响的一帧，而且平台在它后面照样补一个 `done` —— 挡它
+    只会把一条真失败换成一次 300 秒挂死。）
+
+    2026-09-27 CI 上这条用例的随机红就是这个：第 4 轮先收到上一轮的收尾就返回，
+    `stub_hooks.last_resume_session_id` 还停在评审那一轮（None），于是
+    `assert None == 'sess-test-1'`。"""
     addressed = text if "<@" in text else f"@芝士 {text}"
     with client.websocket_connect(chat_ws_url(room, "u")) as ws:
         ws.send_json({"type": "message", "content": addressed})
+        landed = False
         while True:
-            if ws.receive_json()["type"] in ("done", "error"):
+            frame = ws.receive_json()
+            if frame["type"] == "user_block":
+                landed = landed or text in str(
+                    (frame.get("block") or {}).get("content")
+                )
+            elif frame["type"] == "error":
+                break
+            elif landed and frame["type"] == "done":
                 break
 
 
