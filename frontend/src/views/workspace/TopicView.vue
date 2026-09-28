@@ -118,6 +118,7 @@ const panelRef = ref<{
 const chatColumn = ref<{
   connected: boolean
   reloadAccept: (silent?: boolean) => void
+  reloadFeedback: () => void
   say: (content: string) => boolean
 } | null>(null)
 
@@ -224,6 +225,8 @@ function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
   // silent：卡是这一刻递上来的，框里原有的留在屏幕上换新，不先清空再长出来。
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
+  // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
+  else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
   else activityTick.value += 1 // doc / decision / milestone / notify → reload
 }
 

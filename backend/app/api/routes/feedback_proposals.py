@@ -6,7 +6,12 @@
 用的就是它）。绕开它自己搭一套的话，第一个漏挂门禁的端点不会报错，只会安静地放人进去。
 
 卡本身是一条 `Block`（`meta.feedback_proposal`），不另开表 —— 它就是人看到的那张
-东西，而 Block 已经会渲染、已经会广播、已经会跟着话题一起消失。落表的只有「不用」。
+东西，而 Block 已经会渲染、已经会跟着话题一起消失。落表的只有「不用」。
+
+广播不是 Block 自己会做的事：`BlockRepository.add` 只写库。所以这里的三个写端点各自
+在提交之后告诉开着这个房间的页面「提案卡变了」（`announce_stale(..., "feedback")`），
+页面据此重拉卡片；新落的那张卡另外作为一条消息推给时间线，和 `/ask` 同一条路。
+没有这一句，开着页面的人既看不到新卡出现，也看不到发出去 / 不用了的卡消失，要刷新。
 
 **发送**放在这里而不是 `POST /feedback`：发送要读卡上的作者、要按话题鉴权，
 两个前提都只有在这个前缀下面才拿得到。`POST /feedback` 因此保持「人给自己提一条」
@@ -24,8 +29,10 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.domain.agent.runtime import announce_stale, get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
 from app.domain.feedback import proposals as proposal_rules
 from app.domain.feedback.schemas import (
     FeedbackCreate,
@@ -134,6 +141,14 @@ async def propose_feedback(
         own_output=await TopicMemberService(db).holds_an_agent_seat(place.room, handle),
     )
     await db.commit()
+    await get_broker().publish(
+        str(topic_id),
+        {
+            "type": "assistant_block",
+            "block": BlockOut.model_validate(block).model_dump(mode="json"),
+        },
+    )
+    await announce_stale(topic_id, "feedback")
     result = FeedbackProposalResult(block_id=block.id, fingerprint=fingerprint)
     return ok(result.model_dump(mode="json"))
 
@@ -157,6 +172,7 @@ async def dismiss_feedback_proposal(
         topic_id, payload["fingerprint"], handle=actor.handle
     )
     await db.commit()
+    await announce_stale(topic_id, "feedback")
     return ok({"dismissed": True})
 
 
@@ -235,5 +251,6 @@ async def accept_feedback_proposal(
     # it was sent and nothing to show for it.
     proposal_rules.mark_accepted(block, row.id, handle=actor.handle)
     await db.commit()
+    await announce_stale(topic_id, "feedback")
     view = await service.detail_of(row, handle=actor.handle, is_admin=is_admin)
     return ok(view.model_dump(mode="json"))
