@@ -1,7 +1,7 @@
 """project_member_exclusions：退出项目是一条记得下来的项目级事实
 
 Revision ID: a3d1f0c72b94
-Revises: 7c2e91a4d3f6
+Revises: b380c2e8f60c
 Create Date: 2026-09-27 12:00:00
 
 「退出项目」退的是这个项目，不是小队。在它之前「谁在这个项目里」只有两种来路写
@@ -34,7 +34,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a3d1f0c72b94"
-down_revision: str | Sequence[str] | None = "7c2e91a4d3f6"
+down_revision: str | Sequence[str] | None = "b380c2e8f60c"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
