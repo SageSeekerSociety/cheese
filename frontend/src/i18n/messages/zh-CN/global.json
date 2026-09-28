@@ -42,5 +42,10 @@
   "errorMessages": {
     "contentRequired": "回复内容不能为空",
     "reactionFailed": "回应失败"
+  },
+  "desktop": {
+    "macAppleSilicon": "Mac（Apple 芯片）",
+    "macIntel": "Mac（Intel 芯片）",
+    "windows": "Windows"
   }
 }
