@@ -56,6 +56,20 @@ def _validated_max_uses(value: object) -> int:
     return value
 
 
+def _normalized_note(value: str | None) -> str | None:
+    """A 说明, or ``None`` for "this code says nothing about itself".
+
+    Shared by minting and by editing so a note cannot mean one thing when it
+    is written and another when it is corrected. A whitespace-only string is
+    the same as no note at all — storing ``"  "`` would put an invisible row
+    in the list and read as though something had been said.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 @dataclass(frozen=True)
 class SpaceLabel:
     """How a board is named where something happened on it."""
@@ -579,7 +593,16 @@ class SpaceService:
         # in" is the only one that two concurrent redemptions cannot both
         # claim. Consuming the use first, as this used to, spends one for the
         # loser of a double-tap: both read "not a member", both spend.
-        _, created = await member_repo.add_member(space_id=space.id, user_id=user_id)
+        #
+        # The code goes onto the row in the same write, and the two writes stay
+        # one decision: if `consume_use` below refuses (exhausted, or expired
+        # in the window), the raise rolls this membership back with it, so a
+        # row can never claim a code whose use was never spent. The 成员 page
+        # reads this column to answer「他怎么进来的」— see the model's comment
+        # for what NULL means.
+        _, created = await member_repo.add_member(
+            space_id=space.id, user_id=user_id, invite_code_id=invite.id
+        )
         if not created:
             # A concurrent redeem already let them in. No use spent, no error.
             return space
@@ -708,6 +731,7 @@ class SpaceService:
         actor_user_id: int | None,
         max_uses: int | None = None,
         expires_at: datetime | None = None,
+        note: str | None = None,
     ) -> SpaceInviteCode:
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         await self._get_space_or_error(space_id)
@@ -722,6 +746,12 @@ class SpaceService:
             max_uses=uses,
             expires_at=expires_at,
             created_by=actor_user_id,
+            # 说明 is optional and free text: a code that says nothing about
+            # itself is a normal code (every code minted before this field is
+            # exactly that), so an empty one is stored as NULL rather than "".
+            # Normalising here rather than at the route keeps "what counts as
+            # no note" in one place.
+            note=_normalized_note(note),
         )
 
     async def update_invite_code(
@@ -734,6 +764,8 @@ class SpaceService:
         max_uses_set: bool = False,
         expires_at: datetime | None = None,
         expires_at_set: bool = False,
+        note: str | None = None,
+        note_set: bool = False,
     ) -> SpaceInviteCode:
         """Adjust how many people a live code admits, or when it stops working.
 
@@ -742,6 +774,13 @@ class SpaceService:
         clears it (the code then never expires). Only the field count is
         validated away, so a code that was handed out with ``maxUses: 5`` can
         be widened later without touching the people already in.
+
+        ``note`` follows the same absent-vs-null rule, for the same reason:
+        correcting a 说明 must not be the same request as deleting it. Editing
+        one is not in the prototype's 调整 form, but a 说明 that can be typed
+        once and never fixed is worse than one that can — the only other way
+        to correct it would be revoke-and-mint, which invalidates a code that
+        is already in people's hands.
 
         Lowering ``maxUses`` below the code's use count is refused rather than
         clamped. The result of allowing it — a code that reads as usable but
@@ -763,6 +802,8 @@ class SpaceService:
             invite.max_uses = uses
         if expires_at_set:
             invite.expires_at = expires_at
+        if note_set:
+            invite.note = _normalized_note(note)
 
         return await self._require_invite_code_repo().save(invite)
 
