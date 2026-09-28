@@ -128,8 +128,10 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
            「carol」是干什么的。宽屏那一列有列头（`qrow__updated` 同理靠右对齐的列位
            说明自己），所以标签只在窄屏画出来。 -->
       <span class="qrow__alabel">{{ t('feedback.queue.col.assignee') }}</span>
-      <template v-if="item.assignee_handle">{{ item.assignee_handle }}</template>
-      <span v-else class="qrow__dim">—</span>
+      <!-- 值单独包一层：窄屏那个标签也是这一格的文字，读「指派给了谁」的地方（e2e 的
+           feedback-flows 就是一处）要读的是这一层，不是整格。 -->
+      <span v-if="item.assignee_handle" class="qrow__avalue">{{ item.assignee_handle }}</span>
+      <span v-else class="qrow__avalue qrow__dim">—</span>
     </span>
 
     <span class="qrow__updated t-meta-read t-num" role="gridcell">{{ updatedAt }}</span>
