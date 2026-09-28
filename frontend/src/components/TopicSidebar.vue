@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import type { Project, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
+import type { MenuAction } from './common/menuAction'
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+
+import { useLongPress } from '@/composables/useLongPress'
 
 import { replyStalled, stallReasonText } from '../lib/replyWait'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
@@ -25,6 +28,7 @@ import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 import LeaveProjectDialog from './LeaveProjectDialog.vue'
 import TransferProjectDialog from './TransferProjectDialog.vue'
@@ -553,6 +557,61 @@ function setActionsMenu(topicId: string, open: boolean) {
   actionsMenuFor.value = open ? topicId : null
 }
 
+// 触屏上的行操作：长按一行，从底部升起这一行的操作（重命名、归档……），相当于桌面上
+// 悬停出来的那颗 ⋯。整页形态（手机）没有那颗 ⋯：它常驻在行尾会盖住未读数。桌面宽度
+// 的触屏上 ⋯ 还在，长按是多给的一条路。
+//
+// 一个 useLongPress 挂在滚动的那一段上，按下去的是哪一行由 data-row-actions 说：
+// 每一行各挂一个的话，折叠、分组、归档那几段模板都得各接一遍。
+const railScroll = ref<HTMLElement | null>(null)
+const rowSheetOpen = ref(false)
+const rowSheetTopicId = ref<string | null>(null)
+const rowSheetTopic = computed(() =>
+  rowSheetTopicId.value ? topicById.value.get(rowSheetTopicId.value) ?? null : null
+)
+
+useLongPress(
+  railScroll,
+  (event) => {
+    const row = (event.target as HTMLElement | null)?.closest?.('[data-row-actions]')
+    const id = row?.getAttribute('data-row-actions')
+    if (!id || !topicById.value.has(id)) return
+    rowSheetTopicId.value = id
+    if (rowSheetActions.value.length) rowSheetOpen.value = true
+  },
+  // 正在改名时手指按在输入框里是在选字，不是要这一行的操作。
+  { disabled: () => renamingTopicId.value !== null }
+)
+
+// 和 ⋯ 菜单里同一份：已归档的那几行只有「取消归档」（行尾那颗按钮做的事）。
+const rowSheetActions = computed<MenuAction[]>(() => {
+  const topic = rowSheetTopic.value
+  if (!topic) return []
+  if (topic.status === 'archived') {
+    return topic.can_archive
+      ? [
+          {
+            key: 'unarchive',
+            label: '取消归档',
+            icon: 'mdi-archive-arrow-up-outline',
+            onSelect: () => emit('unarchive-topic', topic.id),
+          },
+        ]
+      : []
+  }
+  const actions: MenuAction[] = [
+    { key: 'rename', label: '重命名', icon: 'mdi-pencil-outline', onSelect: () => startRename(topic) },
+  ]
+  if (topic.can_archive)
+    actions.push({
+      key: 'archive',
+      label: '归档',
+      icon: 'mdi-archive-arrow-down-outline',
+      onSelect: () => emit('archive-topic', topic.id),
+    })
+  return actions
+})
+
 // 项目文档 (C4): 章程 / 决策记录 / 周报集 / 记忆 在侧栏只占一行，点开进章程；
 // 四选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
 // 这一行在任何一种文档打开时都是选中态。
@@ -687,9 +746,14 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
+      <MobileActionSheet
+        v-model="rowSheetOpen"
+        :actions="rowSheetActions"
+        :title="rowSheetTopic ? topicTitle(rowSheetTopic) : undefined"
+      />
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
-      <div class="rail-scroll flex-grow-1 overflow-y-auto">
+      <div ref="railScroll" class="rail-scroll flex-grow-1 overflow-y-auto">
         <template v-if="!selectedProjectId">
           <div class="t-body c-muted pa-4">先选择一个项目</div>
         </template>
@@ -787,8 +851,10 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               variant="text"
               color="on-surface-variant"
               :title="creatingTopic ? '正在创建话题' : '新建话题'"
+              :aria-label="creatingTopic ? '正在创建话题' : '新建话题'"
               :loading="creatingTopic"
               :disabled="creatingTopic"
+              :class="{ 'tap-target': page }"
               @click="newTopic()"
             />
           </div>
@@ -836,10 +902,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     v-for="row in section.rows"
                     :key="row.topic.id"
                     :data-room-id="row.topic.id"
+                    :data-row-actions="row.topic.id"
                     :active="row.topic.id === selectedTopicId"
                     rounded="lg"
                     class="topic-row"
                     :class="{
+                      'topic-row--hover-actions': !page,
                       'is-active': row.topic.id === selectedTopicId,
                       'is-sub': row.depth > 0,
                       'is-menu-open': actionsMenuFor === row.topic.id,
@@ -862,6 +930,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         type="button"
                         class="row-slot subtree-toggle"
                         :class="{
+                          'tap-target': page,
                           'subtree-toggle--stalled': rowStalled(row),
                           'subtree-toggle--awaits': !rowStalled(row) && rowAwaits(row),
                           'subtree-toggle--running':
@@ -950,8 +1019,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
                         >{{ countLabel(row.unreadTotal) }}</span
                       >
-                      <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度 -->
-                      <div class="row-actions" @click.stop>
+                      <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度。
+                           整页形态（手机）没有它：那里长按一行打开同一组操作。 -->
+                      <div v-if="!page" class="row-actions" @click.stop>
                         <v-menu
                           :model-value="actionsMenuFor === row.topic.id"
                           location="bottom end"
@@ -1017,6 +1087,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 :key="t.id"
                 :active="t.id === selectedTopicId"
                 rounded="lg"
+                :data-row-actions="t.id"
                 class="topic-row topic-row--archived"
                 :class="{ 'is-active': t.id === selectedTopicId }"
                 @click="emit('select-topic', t.id)"
@@ -1043,6 +1114,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     density="comfortable"
                     title="取消归档"
                     class="split-btn"
+                    :class="{ 'tap-target': page }"
                     @click.stop="emit('unarchive-topic', t.id)"
                   />
                 </template>
@@ -1622,9 +1694,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   background: var(--fill);
   color: var(--accent);
 }
-/* 触摸屏没有 hover，:focus-within 又要先聚焦——这两条规则加起来，⋯ 菜单在手机上
-   根本摸不到。所以在没有 hover 能力的设备上它常驻。按输入方式判断，不按视口宽度：
-   带触摸屏的笔记本两样都对。 */
+/* 触摸屏没有 hover，:focus-within 又要先聚焦——这两条规则加起来，⋯ 菜单在桌面宽度
+   的触屏上（平板横屏、带触摸屏的笔记本）根本摸不到。所以在没有 hover 能力的设备上
+   它常驻。整页形态（手机）不画这颗 ⋯，那里长按一行打开同一组操作。 */
 @media (hover: none) {
   .row-actions {
     opacity: 1;
@@ -1642,10 +1714,29 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   opacity: 1;
   pointer-events: auto;
 }
-/* While the actions are out, the count steps aside (they share the tail). */
-.topic-row:hover .unread-badge,
-.topic-row:focus-within .unread-badge,
+/* While the actions are out, the count steps aside (they share the tail). 只在有那颗
+   ⋯ 的行上：手机上点过一行之后 :hover 会一直粘着，未读数不能因此消失。 */
+.topic-row--hover-actions:hover .unread-badge,
+.topic-row--hover-actions:focus-within .unread-badge,
 .topic-row.is-menu-open .unread-badge {
   opacity: 0;
+}
+/* 整页形态：手指点的地方至少 44px 高；改名的输入框 16px，iOS 聚焦时才不会整页放大。 */
+.topic-rail--page .topic-row,
+.topic-rail--page .nav-row {
+  min-height: 44px;
+}
+.topic-rail--page .group-toggle {
+  min-height: 44px;
+}
+.topic-rail--page .subtree-toggle {
+  position: relative;
+}
+.topic-rail--page .rename-field {
+  max-width: none;
+}
+.topic-rail--page .rename-field :deep(.v-field__input) {
+  min-height: 36px;
+  font-size: 16px;
 }
 </style>
