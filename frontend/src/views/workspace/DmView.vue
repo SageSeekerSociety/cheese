@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import type { Topic } from '@/cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import { getPrivateChat, listProjectAgents } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
 import { agentHandleOf } from '@/lib/dm'
 import { myHandle } from '@/me'
+import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 私聊 (飞书私聊): a normal 1:1 chat in the content area — no document, no PR
@@ -22,6 +24,8 @@ defineOptions({ name: 'DmView' })
 const props = defineProps<{ projectId: string; peer: string }>()
 const router = useRouter()
 const store = useWorkspaceStore()
+const { mdAndUp } = useDisplay()
+const pageTitle = usePageTitleStore()
 
 const agentHandle = computed<string | null>(() => agentHandleOf(props.peer))
 const peerHandle = computed<string | null>(() => (agentHandle.value === null ? props.peer : null))
@@ -39,6 +43,11 @@ const title = computed<string>(() => {
   const m = store.members.find((x) => x.user_handle === peerHandle.value)
   return m?.name || peerHandle.value || ''
 })
+
+// 手机上只有一条顶栏：它写对方的名字，← 回名册（路由的 backTo），页内那条头就
+// 不再画——两条头叠着，上面写「私聊」、下面写「← 成员 · 名字」，说的是同一件事。
+watch(title, (name) => pageTitle.setDynamicTitle(name, 'workspace-dm'), { immediate: true })
+onBeforeUnmount(() => pageTitle.clearDynamicTitle('workspace-dm'))
 
 async function load() {
   const pid = props.projectId
@@ -134,6 +143,7 @@ async function handleUpgradeMessage(messageId: string) {
       style="min-height: 0"
       :topic="topic"
       :pr-header="false"
+      :hide-header="!mdAndUp"
       :always-summon="agentHandle !== null"
       :title-override="title"
       back-label="成员"
