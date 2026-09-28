@@ -260,6 +260,11 @@ SESSION_START_WORK_MACHINE_OFFLINE = _start_failure(
     "这个房间的工作电脑没有连接",
     retryable=True,
 )
+SESSION_START_WORK_MACHINE_UNBOUND = _start_failure(
+    "session_start_work_machine_unbound",
+    "这个房间选的工作电脑已经解绑，需要重新选择",
+    retryable=False,
+)
 SESSION_START_WORK_MACHINE_REFUSED = _start_failure(
     "session_start_work_machine_refused",
     "没能取得这个房间的工作电脑",
@@ -311,6 +316,7 @@ _SESSION_START_FAILURES = (
     SESSION_START_RUNNER_BUSY,
     SESSION_START_WORK_MACHINE_PREPARING,
     SESSION_START_WORK_MACHINE_OFFLINE,
+    SESSION_START_WORK_MACHINE_UNBOUND,
     SESSION_START_WORK_MACHINE_REFUSED,
     SESSION_START_EXECUTOR_IMAGE_MISSING,
     SESSION_START_EXECUTOR_FAILED,
@@ -410,6 +416,8 @@ def _classify_session_start(log: str, *, timed_out: bool) -> PlatformFailure:
         # The lease route's own reason, as the session printed it.
         if "未连接" in text:
             return SESSION_START_WORK_MACHINE_OFFLINE
+        if "解绑" in text:
+            return SESSION_START_WORK_MACHINE_UNBOUND
         return SESSION_START_WORK_MACHINE_REFUSED
     if "docker" in lowered:
         # The executor container, as docker's own stderr describes it

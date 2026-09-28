@@ -10,10 +10,19 @@
  * `board` 不是它的子路径，所以不会被它接住，也就不会套上老侧栏。新界面有自己的
  * 外壳（`SpaceBoardShell.vue`）。
  *
- * **题目详情、发题在第五批收进来了**：那两处背后是成熟功能（按 `submissionSchema`
- * 出表单的提交、逐版评审、AI 建议、PDF 生成），所以老页面**一个字没改**，各由
- * `pages/` 下一层包着挂进这棵树 —— 每层文件顶部写明它补的是什么（provide 路由名、
- * 页头、pinia 的 space store）。老地址照常在原处服务，退场是下一批的事。
+ * **题目详情这一格不再是老树的副本**（第八批）：`/board/tasks/:taskId` 现在是这块板
+ * 自己的题目详情页（`pages/TaskDetail.vue`，按 `proto-board/pages/TaskDetail.vue` 的
+ * 形状重画：题目卡、B 站视频、带下载次数的材料、四种状态的领取按钮、出题人视角的
+ * 领取者名单、右栏的领取进度与走势）。老树那一页**一个字没改**，仍在
+ * `/spaces/:id/tasks/:taskId` 上原样服务（见 `router/spaces.ts` 文件头）。底下那四格
+ * （提交记录 / 参与者 / 交作业 / 启星研导）还是老页面，因为那背后是按 `submissionSchema`
+ * 出表单的提交与逐版评审这类成熟功能；默认那一格（老 `Overview.vue`）撤了 ——
+ * 它画的东西这一页的卡片里已经有了，见下面 `tasks/:taskId` 那一条的注释。
+ *
+ * **发题这一格仍是包着老页面**（第五批）：那背后同样是一整套成熟功能（按
+ * `submissionSchema` 出表单、PDF 解析发题），所以老页面**一个字没改**，由
+ * `pages/TaskPublish.vue` 那一层包着挂进这棵树 —— 那层文件顶部写明它补的是什么
+ * （provide 路由名、页头、pinia 的 space store）。老地址照常在原处服务。
  *
  * **整板看板这一格不再是老树那九页的副本**（第七批）：`/board/analytics` 现在渲染这
  * 块板自己的看板（`pages/Analytics.vue`：六个 KPI、领取与提交走势、题目构成、分类分布、
@@ -64,9 +73,15 @@ export const SpaceBoardRoutes: RouteRecordRaw = {
       meta: { backTo: 'SpaceBoardHome' },
     },
     {
-      // 题目详情这一条**带着五格**（概览 / 提交记录 / 参与者 / 交作业 / 启星研导），
-      // 和它底下那一页自己带的 `router-view` 对上：名字都在 `routeNames.ts` 里，
-      // 页面里跳转只认名字，所以老树那几条同名格子与这几条互不打架。
+      // 题目详情这一条**自己就是那一页**（第八批按原型重画，见 `pages/TaskDetail.vue`），
+      // 底下只剩四格子路由：提交记录 / 参与者 / 交作业 / 启星研导 —— 页面里一个
+      // `router-view` 与它们对上。名字都在 `routeNames.ts` 里，页面里跳转只认名字，
+      // 所以老树那几条同名格子与这几条互不打架。
+      //
+      // 原来还有第五格：默认子路由（`path: ''`）挂的是老树的 `Overview.vue`。这一批
+      // 撤了 —— 视频、附件、题目详情、领取现在都在这一页自己的卡片里，再挂一次老概览
+      // 就是同一段视频和同一份附件清单在一屏上出现两遍。`BOARD_TASK_ROUTE_NAMES.overview`
+      // 指回这一条路由本身，老页面里「返回概览」那颗按钮仍旧落在说得出去的地方。
       //
       // `backTo` 声明的是一块板上的上一层（题目板首页），顶栏那颗 ← 走的是它；
       // 老树里这一步是面包屑，新树没有面包屑（那几条路由没有 `meta.title`）。
@@ -75,11 +90,6 @@ export const SpaceBoardRoutes: RouteRecordRaw = {
       component: () => import('./pages/TaskDetail.vue'),
       meta: { backTo: 'SpaceBoardHome' },
       children: [
-        {
-          path: '',
-          name: 'SpaceBoardTaskOverview',
-          component: () => import('@/views/tasks/detail/Overview.vue'),
-        },
         {
           path: 'submissions',
           name: 'SpaceBoardTaskSubmissions',
@@ -94,7 +104,7 @@ export const SpaceBoardRoutes: RouteRecordRaw = {
           path: 'submit',
           name: 'SpaceBoardTaskSubmit',
           component: () => import('@/views/tasks/detail/Submit.vue'),
-          meta: { backTo: 'SpaceBoardTaskOverview' },
+          meta: { backTo: 'SpaceBoardTaskDetail' },
         },
         {
           path: 'ai-advice',

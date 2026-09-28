@@ -411,7 +411,8 @@ async def push_before_switch(lease: dict) -> None:
     ``WorkComputerUnreachable`` when the command could not run at all, and a
     ``ConflictError`` with the machine's own words when it ran and failed.
     """
-    if not device_hub.is_online(lease["device_id"]):
+    # A lease that never finished installing has no executor to run the push.
+    if not lease.get("state") or not device_hub.is_online(lease["device_id"]):
         raise WorkComputerUnreachable(PUSH_UNREACHABLE)
     try:
         result = await execution.call(
@@ -481,6 +482,18 @@ async def request_choice(
     return {"choice": choice.model_dump(), "sessions": len(sessions)}
 
 
+def _still_preparing(lease: dict | None) -> bool:
+    """Whether a request is installing this lease right now.
+
+    Only a live claim says so. A lease left ``preparing`` after its install
+    failed or was abandoned, or waiting on a project environment, has nobody
+    finishing it; treating it as busy refused every switch of its room for
+    good, the way back to a machine that works included.
+    """
+    until = (lease or {}).get("claim_until")
+    return bool(until) and datetime.fromisoformat(until) > datetime.now(UTC)
+
+
 async def _move_session(
     db,
     *,
@@ -515,10 +528,15 @@ async def _move_session(
             row.execution_request = {**request, "authorized_by": asdict(actor)}
             await db.commit()
         return presentation(row)
-    if old and old.get("status", "ready") != "ready":
+    if _still_preparing(old):
         raise ConflictError("机器分配仍在进行，请稍后再换机")
     if if_idle and await _room_is_working(db, topic_id):
         raise SessionWorking(WORKING)
+    if old and await sql_device_service(db).get_device(old["device_id"]) is None:
+        # The machine was unbound: nothing can reach it to push, and nothing
+        # left on it can be recovered or cleaned up, so leaving it takes no
+        # one's consent and keeps nothing for the room's cleanup.
+        old = None
     pushed = False
     if old:
         generation = request.get("generation")
@@ -537,7 +555,7 @@ async def _move_session(
         old = row.work_lease
         if request.get("generation") != generation or not old:
             raise ConflictError("工作电脑刚被更换过，刷新后重试")
-        if old.get("status", "ready") != "ready":
+        if _still_preparing(old):
             raise ConflictError("机器分配仍在进行，请稍后再换机")
     left = None
     if (request.get("choice") or {}).get("profile") == "cloud":
@@ -559,6 +577,11 @@ async def _move_session(
     if release is not None:
         await MachineService(db).release_left_machine(release.id)
     return presentation(row)
+
+
+# The room names a machine whose owner has since unbound it. It cannot come back
+# under that id (a re-bind enrols a new one), so the room needs another choice.
+UNBOUND = "这个房间选的工作电脑已经解绑，需要重新选择工作电脑；对话和平台工具仍可用。"
 
 
 # A tool that arrives while its session's machine is still being prepared
@@ -698,6 +721,11 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     devices = sql_device_service(db)
     selected = None
     if choice.profile == COMPUTE_DEVICE:
+        if lease and await devices.get_device(lease["device_id"]) is None:
+            # Its machine was unbound (a re-bind enrols a new device id): nothing
+            # on it can be reached again, and returning to it would report the
+            # room offline for good while its owner sees the machine online.
+            row.work_lease = lease = None
         # 这条会话手上那台第一（租约是它现在真正在用的那台），房间点名的那台其次，
         # 再没有就问房间里的队友——同一个房间里的会话落在同一台机器上，所以「系统挑
         # 一台」不该由谁先来谁挑一台在线的来决定（``_roommates_device``）。
@@ -706,11 +734,14 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             or choice.device_id
             or await _roommates_device(db, topic, resource)
         )
-        selected = (
-            await devices.get_device(device_id)
-            if device_id
-            else await devices.first_healthy_device(topic.project_id, hub.is_online)
-        )
+        selected = await devices.get_device(device_id) if device_id else None
+        if selected is None and device_id and device_id == choice.device_id:
+            await db.commit()
+            return {"unavailable": UNBOUND}
+        if selected is None:
+            selected = await devices.first_healthy_device(
+                topic.project_id, hub.is_online
+            )
         if selected is None or not hub.is_online(selected.device_id):
             await db.commit()
             return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
@@ -798,7 +829,22 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         "claim": claim,
         "claim_until": (now + timedelta(seconds=660)).isoformat(),
     }
-    row.work_lease = reservation
+    # Every command start and file tool of the session comes through here, so
+    # hands it already holds are re-checked many times a turn, while its other
+    # calls — parallel tools, subagents, a running command being read — are in
+    # flight on them. The execution route admits only a ready lease, so these
+    # hands stay ready while they are re-checked: marking them preparing
+    # refused every one of those calls for the length of the check.
+    holding = (
+        {
+            **lease,
+            "claim": reservation["claim"],
+            "claim_until": reservation["claim_until"],
+        }
+        if lease is not None and ready and lease.get("device_id") == device_id
+        else reservation
+    )
+    row.work_lease = holding
     actor = await user_by_handle(db, claims.get("a", ""))
     if actor is None:
         raise ForbiddenError("Execution actor no longer exists")
@@ -886,7 +932,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
         # dispatched model operation and must not create a replacement lease.
         row = await sessions.by_id(session_id, lock=True)
         if row and (row.work_lease or {}).get("claim") == claim:
-            row.work_lease = {**reservation, "claim_until": now.isoformat()}
+            row.work_lease = {**holding, "claim_until": now.isoformat()}
             await db.commit()
         raise
     current = await TopicService(db).lock_for_execution(topic_id)
