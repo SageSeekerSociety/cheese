@@ -582,4 +582,12 @@ watch(
   display: flex;
   gap: 8px;
 }
+/* 手机上三格并排每格只剩一百来像素，「频率」的下拉和时间都挤不下：竖着排。字段之间的
+   空隙由每一格底下的 details 行给。 */
+@media (max-width: 959.98px) {
+  .routine-form__row {
+    flex-direction: column;
+    gap: 0;
+  }
+}
 </style>
