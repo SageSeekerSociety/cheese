@@ -6,6 +6,8 @@
 让间歇性截断没法定位。
 """
 
+import asyncio
+
 import pytest
 
 from app.core.obs import ResponseIntegrityAudit
@@ -154,3 +156,34 @@ async def test_non_http_scope_passes_through(caplog) -> None:
     await ResponseIntegrityAudit(app)({"type": "websocket"}, receive, send)
     assert seen == ["websocket"]
     assert caplog.text == ""
+
+
+@pytest.mark.anyio
+async def test_a_request_the_server_cancels_is_logged_with_its_path(caplog) -> None:
+    """A release that outlasts the graceful-shutdown window cancels the requests
+    still working. No `req` line is written for them, so this is their trace."""
+    handler_started = asyncio.Event()
+
+    async def slow(scope, receive, send) -> None:
+        handler_started.set()
+        await asyncio.sleep(3600)
+
+    scope = {"type": "http", "path": "/topics/t1/work-lease", "method": "POST"}
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict) -> None:
+        pass
+
+    task = asyncio.ensure_future(ResponseIntegrityAudit(slow)(scope, receive, send))
+    await handler_started.wait()
+    task.cancel(msg="Task cancelled, timeout graceful shutdown exceeded")
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    record = _only_warning(caplog)
+    assert record["event"] == "request cut short"
+    assert (record["method"], record["path"]) == ("POST", "/topics/t1/work-lease")
+    assert record["started"] is False
+    assert "graceful shutdown" in record["reason"]
