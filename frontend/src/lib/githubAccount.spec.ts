@@ -91,7 +91,7 @@ describe('explainRepoInstallFailure', () => {
       'missing_installation_id',
       'project_not_found',
       'no_accessible_repos',
-      'installation_conflict',
+      'forge_conflict',
       'github_error',
       'access_denied',
       'upstream_not_accessible',
@@ -101,6 +101,19 @@ describe('explainRepoInstallFailure', () => {
     ]) {
       expect(explainRepoInstallFailure(code)).not.toContain(code)
     }
+  })
+
+  it('names the project already holding the repo when the caller may see it', () => {
+    const text = explainRepoInstallFailure('repository_taken', { repo: 'acme/widgets', holder: 'Widgets' })
+    expect(text).toContain('acme/widgets')
+    expect(text).toContain('「Widgets」')
+    expect(text).not.toContain('repository_taken')
+  })
+
+  it('does not invent a holder it was not told about', () => {
+    const text = explainRepoInstallFailure('repository_taken', { repo: 'acme/widgets' })
+    expect(text).toContain('acme/widgets')
+    expect(text).toContain('看不到')
   })
 
   it('is about the repo, not the account — the two flows have separate copy', () => {

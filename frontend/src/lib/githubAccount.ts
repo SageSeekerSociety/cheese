@@ -31,7 +31,7 @@ const REPO_INSTALL_REASONS: Record<string, string> = {
   missing_installation_id: 'GitHub 没有回传安装 ID，这次安装没有生效。重试一次。',
   project_not_found: '找不到这个项目，可能刚被删除。',
   no_accessible_repos: '这次安装没有授权任何仓库。请在 GitHub 的安装页里勾选至少一个仓库。',
-  installation_conflict: '这个安装已经绑给别的项目了。请换一个仓库，或先在那边解绑。',
+  forge_conflict: '这个项目的代码由芝士托管，不能改连 GitHub 仓库。',
   github_error: '无法验证你的 GitHub 仓库权限。请重新连接 GitHub 账号，确认该账号能访问安装和仓库后重试。',
   access_denied: '连接人的项目权限或 GitHub 账号连接已失效。请由项目 owner/lead 重新连接 GitHub 账号后重试。',
   upstream_not_accessible: '这次安装未授权项目的上游仓库，或你的 GitHub 账号无权访问。请检查上游地址与安装授权后重试。',
@@ -49,7 +49,20 @@ export function explainAccountLinkFailure(reason: string | undefined): string {
   return `连接 GitHub 账号失败：${explain(ACCOUNT_LINK_REASONS, reason)}`
 }
 
-export function explainRepoInstallFailure(reason: string | undefined): string {
+// `repository_taken` carries the repo and, when the person connecting may see
+// it, the name of the project already holding it (`holder`).
+export function explainRepoInstallFailure(
+  reason: string | undefined,
+  details: { repo?: string; holder?: string } = {}
+): string {
+  if (reason === 'repository_taken') {
+    const repo = details.repo ?? '这个仓库'
+    const where = details.holder ? `项目「${details.holder}」` : '另一个你看不到的项目'
+    const next = details.holder
+      ? '请到那个项目里工作，或者换一个仓库。'
+      : '请换一个仓库，或者请那个项目的成员邀请你加入。'
+    return `连接 GitHub 仓库失败：${repo} 已经连接在${where}上，一个仓库只能连接一个项目。${next}`
+  }
   return `连接 GitHub 仓库失败：${explain(REPO_INSTALL_REASONS, reason)}`
 }
 
