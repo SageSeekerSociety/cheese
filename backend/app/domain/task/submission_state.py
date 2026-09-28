@@ -6,9 +6,13 @@
 
 - 有 live 提交，其中任一评审 ``accepted``            → ``SUCCESS``
 - 否则有 live 提交、它的评审还没有                    → ``PENDING_REVIEW``
+- 否则（手上没活）已过截止                            → ``FAILED``
 - 否则有 live 提交（每一版的评审都被驳回）            → ``REJECTED_RESUBMITTABLE``
-- 否则一版没交、已过截止                              → ``FAILED``
 - 否则一版没交、还没过截止                            → ``NOT_SUBMITTED``
+
+「被驳回、过了截止还没重交」落在 ``FAILED``：截止清扫对它写的就是这个值（它在
+``_SWEEPABLE_STATUSES`` 里），推导若给出别的值，清扫写下的 ``FAILED`` 会被下一次
+重推（或回填）翻回去，两边来回打架。
 
 ``has_work_in_hand`` 就是这份清单的前两条 —— 「手上有活」当且仅当推出来的状态是
 ``SUCCESS`` 或 ``PENDING_REVIEW``。截止时间清扫任务（``deadline_scheduler``）靠它
@@ -136,20 +140,19 @@ def completion_status_for(
 ) -> str:
     """把三个「有没有」的事实翻成这条轴上的一个取值 —— 唯一的映射。
 
-    顺序就是模块 docstring 里那份清单：判通过压过一切；其次是还在队列里；再次是
-    全被驳回（这时确实交过，但不是手上有活）；一版没交才轮到截止时间说话。
-
-    末两档是「没交」那一侧，清扫任务写的 ``FAILED`` 与这里对得上：没交东西、又过了
-    截止，就是失败；没过截止是还没轮到失败。
+    顺序就是模块 docstring 里那份清单：判通过压过一切；其次是还在队列里；这两档
+    之外就是「手上没活」，过了截止即失败 —— 与截止清扫写的 ``FAILED`` 同一条线
+    （清扫只碰 ``~has_work_in_hand`` 的行）；没过截止时，交过但全被驳回是「可重交」，
+    一版没交是「未提交」。
     """
     if has_a_passed_submission:
         return COMPLETION_STATUS_SUCCESS
     if has_a_submission_in_the_queue:
         return COMPLETION_STATUS_PENDING_REVIEW
-    if has_a_live_submission:
-        return COMPLETION_STATUS_REJECTED_RESUBMITTABLE
     if past_deadline:
         return COMPLETION_STATUS_FAILED
+    if has_a_live_submission:
+        return COMPLETION_STATUS_REJECTED_RESUBMITTABLE
     return COMPLETION_STATUS_NOT_SUBMITTED
 
 
