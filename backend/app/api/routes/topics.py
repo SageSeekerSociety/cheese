@@ -72,7 +72,7 @@ from app.domain.block.models import (
     BlockKind,
     agent_notice,
 )
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.repositories import BlockRepository, ReplyWait
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.addressing import Event as Addressee
 from app.domain.device.wiring import sql_device_service
@@ -285,7 +285,7 @@ def _topic_out(
     asked: Mapping[uuid.UUID, str | None] | None = None,
     asks_me: set[uuid.UUID] | None = None,
     working_ids: set[uuid.UUID] | None = None,
-    waiting: Mapping[uuid.UUID, datetime] | None = None,
+    waiting: Mapping[uuid.UUID, ReplyWait] | None = None,
     failed: Mapping[uuid.UUID, datetime] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: the in-memory
@@ -306,7 +306,9 @@ def _topic_out(
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
-    out.awaiting_reply_since = (waiting or {}).get(topic.id)
+    wait = (waiting or {}).get(topic.id)
+    out.awaiting_reply_since = wait.since if wait else None
+    out.reply_wait_reason = wait.reason if wait else None
     out.turn_failed_at = (failed or {}).get(topic.id)
     mine = (relevance or {}).get(topic.id, TopicRelevance())
     # 芝士停在一道只有我能回答的问题上，同样是「在等我」——而且比一张卡更急：卡是

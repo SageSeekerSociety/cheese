@@ -41,6 +41,10 @@ class TopicOut(BaseModel):
     # None。侧栏拿它亮红灯（等了太久）——阈值在前端，因为「多久算太久」要跟着
     # 当下的钟走，而这一行是某一刻读出来的。同样只有 list_topics/get_topic 填。
     awaiting_reply_since: datetime | None = None
+    # 上面那段等待多半为什么还没人回：mention / check，或等待期间最近一条机器/
+    # 环境事件（machine_provisioning / device_waiting / sandbox_rebuilt /
+    # environment_repaired）。侧栏据此选阈值和悬停说明。没在等就 None。
+    reply_wait_reason: str | None = None
     # 最近一轮以报错收场（「本轮未完成：…」、502/404）而之后 AI 还没开过口：那
     # 次报错的时间，没有就 None。侧栏见到它立刻亮红灯，不等五分钟。
     turn_failed_at: datetime | None = None

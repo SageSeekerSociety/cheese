@@ -35,6 +35,18 @@ class BlockPage:
     has_more: bool
 
 
+@dataclass(frozen=True)
+class ReplyWait:
+    """一个房间在等 AI：从什么时候开始等，以及为什么多半还没回。
+
+    `reason`：`mention`（有人点了 AI 的名）、`check`（PR 反馈 / 检查没过没人
+    接），或者等待期间最近一条机器/环境事件的类型（`MACHINE_EVENTS`）。
+    """
+
+    since: datetime
+    reason: str
+
+
 class BlockRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -565,9 +577,18 @@ class BlockRepository:
     #: 不是这件事了；而不设界的话，这条查询要扫整个项目全部历史消息。
     REPLY_LOOKBACK = timedelta(days=7)
 
+    #: 机器 / 环境这一侧的平台事件。AI 没回话时，如果等待期间最近一条是它们，
+    #: 那 AI 多半不是卡住，而是脚下的机器还没好——侧栏据此换阈值和说法。
+    MACHINE_EVENTS = (
+        "machine_provisioning",
+        "device_waiting",
+        "sandbox_rebuilt",
+        "environment_repaired",
+    )
+
     async def rooms_awaiting_a_reply(
         self, topic_ids: list[uuid.UUID], *, now: datetime
-    ) -> dict[uuid.UUID, datetime]:
+    ) -> dict[uuid.UUID, ReplyWait]:
         """{房间: 从什么时候开始有人在等 AI 回话} —— 一次查完，只看房间自己那条线。
 
         「在等」有两种：一个人发了一条**点了 AI 名**的消息（`agent_recipient.
@@ -607,12 +628,54 @@ class BlockRepository:
             .group_by(Block.topic_id)
         )
         waiting = {
-            topic_id: at for topic_id, at in (await self._session.execute(stmt)).all()
+            topic_id: ReplyWait(since=at, reason="mention")
+            for topic_id, at in (await self._session.execute(stmt)).all()
         }
         for topic_id, at in await self._checks_awaiting_an_agent(topic_ids, since):
-            if topic_id not in waiting or at < waiting[topic_id]:
-                waiting[topic_id] = at
+            if topic_id not in waiting or at < waiting[topic_id].since:
+                waiting[topic_id] = ReplyWait(since=at, reason="check")
+        if waiting:
+            machine = await self._machine_events_since_last_reply(list(waiting), since)
+            for topic_id, (event, at) in machine.items():
+                wait = waiting[topic_id]
+                # 只认等待开始之后的：等之前机器早就好了，那这次没回话跟它无关。
+                if at >= wait.since:
+                    waiting[topic_id] = ReplyWait(since=wait.since, reason=event)
         return waiting
+
+    async def _machine_events_since_last_reply(
+        self, topic_ids: list[uuid.UUID], since: datetime
+    ) -> dict[uuid.UUID, tuple[str, datetime]]:
+        """{房间: (最近一条机器/环境事件, 时间)} —— 只算最后一次 AI 说话之后的。"""
+        under_room = (Block.topic_id.in_(topic_ids), Block.created_at >= since)
+        last_reply = (
+            select(Block.topic_id, func.max(Block.created_at).label("at"))
+            .where(
+                *under_room,
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+            )
+            .group_by(Block.topic_id)
+            .subquery()
+        )
+        event = Block.meta["event_type"].as_string()
+        stmt = (
+            select(Block.topic_id, event, Block.created_at)
+            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            .where(
+                *under_room,
+                ~participant_blocks(),
+                event.in_(self.MACHINE_EVENTS),
+                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
+            )
+            .order_by(Block.topic_id, Block.created_at.desc())
+            .distinct(Block.topic_id)
+        )
+        return {
+            topic_id: (kind, at)
+            for topic_id, kind, at in (await self._session.execute(stmt)).all()
+        }
 
     #: 要 AI 去接手的平台事件：PR 上有评审意见、检查没过、合不进去。这些落地时就
     #: 已经轮到芝士了（`platform_notices` 里各自写着「芝士要去改」）。

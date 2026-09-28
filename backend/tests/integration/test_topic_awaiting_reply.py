@@ -295,3 +295,56 @@ def test_a_notice_that_is_not_for_the_agent_does_not_wait(client):
         meta={"event_type": "card_filed", "severity": "info"},
     )
     assert _since(client, pid, rid) is None
+
+
+# ---- 为什么还没人回：机器 / 环境那一侧 -----------------------------------
+
+
+def _reason(client, project_id: str, room_id: str) -> str | None:
+    rows = client.get(f"/topics?project_id={project_id}").json()["data"]["data"]
+    listed = next(t for t in rows if t["id"] == room_id)["reply_wait_reason"]
+    header = client.get(f"/topics/{room_id}").json()["data"]["reply_wait_reason"]
+    assert listed == header
+    return listed
+
+
+def _machine(client, pid, rid, event_type, *, ago):
+    return _say(
+        client,
+        pid,
+        rid,
+        "cheese",
+        ago=ago,
+        author_type=AuthorType.platform,
+        meta={"event_type": event_type, "severity": "info"},
+    )
+
+
+def test_a_plain_summons_waits_for_the_agent(client):
+    pid, rid = _room(client)
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+    assert _reason(client, pid, rid) == "mention"
+
+
+def test_a_machine_event_during_the_wait_explains_it(client):
+    pid, rid = _room(client)
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+    _machine(client, pid, rid, "machine_provisioning", ago=timedelta(minutes=8))
+    assert _reason(client, pid, rid) == "machine_provisioning"
+    # 最近的那一条说了算：机器建好了又在等设备回来。
+    _machine(client, pid, rid, "device_waiting", ago=timedelta(minutes=4))
+    assert _reason(client, pid, rid) == "device_waiting"
+
+
+def test_a_machine_event_before_the_wait_does_not_explain_it(client):
+    """等待开始前机器就已经好了，这次没回话就跟机器无关。"""
+    pid, rid = _room(client)
+    _machine(client, pid, rid, "sandbox_rebuilt", ago=timedelta(minutes=20))
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+    assert _reason(client, pid, rid) == "mention"
+
+
+def test_no_wait_no_reason(client):
+    pid, rid = _room(client)
+    _machine(client, pid, rid, "environment_repaired", ago=timedelta(minutes=9))
+    assert _reason(client, pid, rid) is None

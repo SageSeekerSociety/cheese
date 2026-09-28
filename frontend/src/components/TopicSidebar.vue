@@ -5,7 +5,7 @@ import type { FlatRow, VisibleRow } from '../lib/topicTree'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { replyStalled } from '../lib/replyWait'
+import { replyStalled, stallReasonText } from '../lib/replyWait'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
 import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
@@ -404,12 +404,13 @@ function failedOf(id: string): boolean {
   return Boolean(topicById.value.get(id)?.turn_failed_at)
 }
 function stalledOf(id: string): boolean {
-  return failedOf(id) || replyStalled(topicById.value.get(id)?.awaiting_reply_since, clock.value)
+  const topic = topicById.value.get(id)
+  return failedOf(id) || replyStalled(topic?.awaiting_reply_since, clock.value, topic?.reply_wait_reason)
 }
 function stalledTitle(id: string): string {
   return failedOf(id)
     ? `${store.agentName}最近一轮报错了`
-    : `有事等${store.agentName}处理超过 5 分钟（@了它没回，或 PR 反馈、检查报错没人接）`
+    : stallReasonText(topicById.value.get(id)?.reply_wait_reason, store.agentName)
 }
 
 // ---- 分组 (C2): 我参与的平铺，其他话题收进一个默认折叠的组 ----
