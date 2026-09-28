@@ -29,15 +29,14 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import machine_launcher
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import (
-    SESSION_TOKEN_TTL_S,
     Placement,
     ScreenSetupError,
+    mint_session_token,
     startup_refused,
 )
 from app.domain.agent.harness.pi.device_launch import PiLaunch
@@ -89,13 +88,7 @@ class PiChannel:
         device_id, agent = precheck.machine, precheck.agent_handle
         if opening.agent_handle and opening.agent_handle != agent:
             raise ScreenSetupError("The room teammate changed before session startup")
-        token = mint_scoped_token(
-            project_id=str(session.project_id),
-            topic_id=str(session.topic_id),
-            ttl_s=SESSION_TOKEN_TTL_S,
-            access_scope="project",
-            agent_handle=agent,
-        )
+        token = mint_session_token(session.project_id, session.topic_id, agent)
         screen = await self.channel.ensure_ready(
             session=session,
             token=token,
