@@ -77,6 +77,7 @@ from app.domain.review.models import (
 )
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
@@ -2268,6 +2269,7 @@ class AcceptService:
         )
         task.status = TaskStatus.closed
         task.closed_at = task.closed_at or datetime.now(UTC)
+        after_close(self._session, task.room_id)
         task.accepted_at = task.accepted_at or datetime.now(UTC)
         task.accepted_by = task.accepted_by or card.decided_by
         if delivered_head and not task.delivered_head:
