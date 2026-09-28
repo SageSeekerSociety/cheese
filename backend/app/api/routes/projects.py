@@ -105,6 +105,7 @@ from app.domain.team.services import team_service
 from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheesex.projects")
