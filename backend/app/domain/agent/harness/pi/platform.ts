@@ -30,6 +30,7 @@ type Manifest = {
   jobs: string;
   tools: ToolSpec[];
   unavailable: string;
+  mcp: ToolSpec[];
   notice: string;
 };
 
@@ -44,6 +45,7 @@ function manifest(): Manifest {
     jobs: "",
     tools: [],
     unavailable: "the runner wrote no manifest",
+    mcp: [],
     notice: "",
   };
   if (!HOME) return empty;
@@ -87,7 +89,7 @@ function text(body: string) {
 
 // --- the platform's own tools ------------------------------------------------
 //
-// pi has no MCP, so these arrive as extension tools instead. The catalog is
+// pi has no MCP client, so these arrive as extension tools. The catalog is
 // read from the platform file installed on this machine by the runner: the
 // platform's own tool table (the same one the other harnesses serve) plus the
 // CLI commands that have to run here as a process.
@@ -112,6 +114,46 @@ function registerPlatformTools(pi: any, spec: Manifest) {
           };
         }
         return text(body || "done");
+      },
+    });
+  }
+}
+
+// --- the project's MCP servers ----------------------------------------------
+//
+// The runner is pi's MCP client (mcp.py): it started the checkout's stdio
+// servers, asked the platform for the remote ones, and listed their tools under
+// the name the other harnesses give them, `mcp__<server>__<tool>`. A call goes
+// back to the runner, which sends it to the server that owns the tool.
+//
+// The runner also runs the project's PreToolUse and PostToolUse hooks around
+// each call (hooks.py), as the executor does on the other harnesses; the call
+// id and working directory it hands them come from here.
+//
+// A failed call is thrown, not returned: pi marks a tool result as an error
+// only when `execute` throws, whatever the returned object says.
+
+function registerMcpTools(pi: any, spec: Manifest) {
+  for (const tool of spec.mcp ?? []) {
+    pi.registerTool({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.inputSchema,
+      async execute(id: string, params: any, _signal: any, _update: any, ctx: any) {
+        const result = await ask(spec.socket, "mcp", {
+          id,
+          tool: tool.name,
+          arguments: params ?? {},
+          cwd: ctx?.cwd,
+        });
+        if (result.isError) {
+          const said = result.content
+            .map((item: any) => (item.type === "text" ? item.text : `[${item.type}]`))
+            .join("\n")
+            .trim();
+          throw new Error(said || `${tool.name} failed`);
+        }
+        return { content: result.content };
       },
     });
   }
@@ -670,6 +712,7 @@ export default function (pi: any) {
     // never given any, and the agent will conclude it must shell out.
     process.stderr.write(`[cheese] no platform tools: ${spec.unavailable}\n`);
   }
+  registerMcpTools(pi, spec);
   if (spec.background && spec.python) {
     registerBackgroundTools(pi, spec);
     announceExits(pi, spec);

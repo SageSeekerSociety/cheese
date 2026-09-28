@@ -193,6 +193,10 @@ class PiLaunch:
     model: str
     resume_session_id: str | None = None
     agent_handle: str | None = None
+    #: The project's remote MCP servers this session can call now, and the
+    #: route that calls them (`remote_mcp.session_target`). Part of the launch
+    #: contract, so connecting one relaunches an idle session with it.
+    remote_mcp: dict | None = None
     harness: str = "pi"
 
     def arguments(self) -> list[str]:
@@ -248,6 +252,9 @@ class PiLaunch:
             # the extension raises is not a second convention the agent has to
             # learn — and cannot drift from the one every other notice uses.
             "notice": PLATFORM_NOTICE,
+            # Names and a route, never a credential: the backend attaches that
+            # to each call (`POST /topics/{id}/mcp/{name}`).
+            "remote_mcp": self.remote_mcp,
         }
 
     def on(self, place: MachinePlace) -> MachineLaunch:
