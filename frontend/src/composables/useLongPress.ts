@@ -21,7 +21,8 @@ export interface LongPressOptions {
  * - 按住 `delay`（500ms）不动才算；提前松手、指针被浏览器收走（开始滚动）、挪开超过
  *   `moveTolerance`（8px）都取消，所以正常的点按和滚动照旧。
  * - 真的触发了长按，紧跟着的那一下 click 被吞掉：不然松手时这一行还会被「点开」。
- *   没触发就什么都不吞。
+ *   吞的是落在哪儿的都算——长按打开的面板带着遮罩，松手那一下落在遮罩上，面板刚
+ *   升起来就被它关掉。下一次按下去之前没来的 click 就不会来了。没触发就什么都不吞。
  * - 按住期间关掉目标上的文字选择和 iOS 的长按预览，并拦下系统的右键菜单（Android
  *   长按会发 contextmenu）；松手后还原。
  *
@@ -62,6 +63,25 @@ export function useLongPress(
     }
   }
 
+  // 长按之后松手的那一下 click 可能不落在目标上（见上），所以在整个窗口的捕获阶段
+  // 等它：来了就吞掉；下一次按下、或者过了一会儿还没来，就不等了。
+  let swallowTimer: ReturnType<typeof setTimeout> | null = null
+  function armSwallow() {
+    window.addEventListener('click', onClick, { capture: true })
+    window.addEventListener('pointerdown', disarmSwallow, { capture: true })
+    swallowTimer = setTimeout(disarmSwallow, 1000)
+  }
+  function disarmSwallow() {
+    window.removeEventListener('click', onClick, { capture: true })
+    window.removeEventListener('pointerdown', disarmSwallow, { capture: true })
+    if (swallowTimer !== null) clearTimeout(swallowTimer)
+    swallowTimer = null
+    if (fired) {
+      fired = false
+      restoreStyle?.()
+    }
+  }
+
   function cancel() {
     if (timer !== null) clearTimeout(timer)
     timer = null
@@ -88,6 +108,7 @@ export function useLongPress(
       timer = null
       pressing.value = false
       fired = true
+      armSwallow()
       onLongPress(event)
     }, delay)
   }
@@ -100,22 +121,14 @@ export function useLongPress(
   function onPointerEnd(event: PointerEvent) {
     if (event.pointerId !== pointerId && timer !== null) return
     cancel()
-    if (fired) {
-      // click 在 pointerup 之后同一轮里派发；过了这一轮还没来就不会来了。
-      setTimeout(() => {
-        fired = false
-        restoreStyle?.()
-      }, 0)
-    }
   }
 
   function onClick(event: MouseEvent) {
     if (!fired) return
-    fired = false
     event.preventDefault()
-    // 同一个元素上的 @click 也要拦住：长按的目标通常就是那一行本身。
+    // 目标自己的 @click 也要拦住：长按的目标通常就是那一行本身。
     event.stopImmediatePropagation()
-    restoreStyle?.()
+    disarmSwallow()
   }
 
   function onContextMenu(event: Event) {
@@ -136,7 +149,6 @@ export function useLongPress(
     el.addEventListener('pointerup', onPointerEnd)
     el.addEventListener('pointercancel', onPointerEnd)
     el.addEventListener('pointerleave', onPointerEnd)
-    el.addEventListener('click', onClick, { capture: true })
     el.addEventListener('contextmenu', onContextMenu)
     el.addEventListener('touchend', onTouchEnd, { passive: false })
     detach = () => {
@@ -145,7 +157,6 @@ export function useLongPress(
       el.removeEventListener('pointerup', onPointerEnd)
       el.removeEventListener('pointercancel', onPointerEnd)
       el.removeEventListener('pointerleave', onPointerEnd)
-      el.removeEventListener('click', onClick, { capture: true })
       el.removeEventListener('contextmenu', onContextMenu)
       el.removeEventListener('touchend', onTouchEnd)
       detach = null
@@ -166,6 +177,7 @@ export function useLongPress(
 
   onScopeDispose(() => {
     detach?.()
+    disarmSwallow()
     if (timer !== null) clearTimeout(timer)
     restoreStyle?.()
   })
