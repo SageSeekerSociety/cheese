@@ -285,6 +285,8 @@ def _topic_out(
     asked: Mapping[uuid.UUID, str | None] | None = None,
     asks_me: set[uuid.UUID] | None = None,
     working_ids: set[uuid.UUID] | None = None,
+    waiting: Mapping[uuid.UUID, datetime] | None = None,
+    failed: Mapping[uuid.UUID, datetime] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: the in-memory
     turn-running flag (separate from `status`/归档 — see TopicOut.running: a
@@ -304,6 +306,8 @@ def _topic_out(
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
+    out.awaiting_reply_since = (waiting or {}).get(topic.id)
+    out.turn_failed_at = (failed or {}).get(topic.id)
     mine = (relevance or {}).get(topic.id, TopicRelevance())
     # 芝士停在一道只有我能回答的问题上，同样是「在等我」——而且比一张卡更急：卡是
     # 一轮结束后的状态，提问是一轮**停在半路**。它也蕴含参与，理由同上。
@@ -369,6 +373,13 @@ async def list_topics(
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
     now = datetime.now(UTC)
     working = await _rooms_with_running_work(db, chat, [t.id for t in topics], now)
+    # 侧栏红灯的两个来源，各一次查完：有人点了 AI 的名还没人接；最近一轮报错了。
+    waiting = await BlockRepository(db).rooms_awaiting_a_reply(
+        [t.id for t in topics], now=now
+    )
+    failed = await BlockRepository(db).rooms_with_a_failed_turn(
+        [t.id for t in topics], now=now
+    )
     items = [
         _topic_out(
             t,
@@ -381,6 +392,8 @@ async def list_topics(
             asked,
             asks_me,
             working,
+            waiting,
+            failed,
         )
         for t in topics
     ]
@@ -437,6 +450,12 @@ async def get_topic(
             asked=asked,
             asks_me=_asks_me(asked, _viewer(actor)),
             working_ids=working,
+            waiting=await BlockRepository(db).rooms_awaiting_a_reply(
+                [topic.id], now=datetime.now(UTC)
+            ),
+            failed=await BlockRepository(db).rooms_with_a_failed_turn(
+                [topic.id], now=datetime.now(UTC)
+            ),
         )
     )
 

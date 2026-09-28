@@ -88,6 +88,13 @@ export interface Topic {
   // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
   // 只有 list/get 话题时才带。
   awaits_me?: boolean
+  // 有人点了 AI 的名、到现在还没有 AI 回话：最早那条没人接的消息的时间（ISO），
+  // 没有就 null。侧栏按当下的钟判它等了多久（`lib/replyWait.ts`）。只有 list/get
+  // 话题时才带。
+  awaiting_reply_since?: string | null
+  // 最近一轮以报错收场（「本轮未完成：…」、502/404）而之后 AI 还没开过口：那次
+  // 报错的时间，没有就 null。侧栏见到它立刻亮红灯。只有 list/get 话题时才带。
+  turn_failed_at?: string | null
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
   // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
