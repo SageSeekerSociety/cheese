@@ -19,6 +19,7 @@ def build() -> bytes:
             "domain/agent/harness/pi/catalog.py",
             "domain/agent/harness/pi/hooks.py",
             "domain/agent/harness/pi/mcp.py",
+            "domain/agent/harness/pi/project_skills.py",
             "domain/agent/harness/pi/runner.py",
             "domain/agent/harness/pi/entry.py",
         ),
