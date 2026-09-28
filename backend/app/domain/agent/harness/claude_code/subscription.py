@@ -87,8 +87,15 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         marks = subscription.marks_of(events)
-        message = record.get("entry") if record.get("type") == "cheese_file" else record
-        content = ((message or {}).get("message") or {}).get("content")
+        message: dict = (
+            record.get("entry") or {} if record.get("type") == "cheese_file" else record
+        )
+        # Only a user record carries tool results, and only transcript records
+        # hold a message object there: others use ``message`` for their own
+        # sentence (``system/permission_denied``).
+        if message.get("type") != "user":
+            return marks
+        content = (message.get("message") or {}).get("content")
         for block in content if isinstance(content, list) else []:
             if isinstance(block, dict) and block.get("type") == "tool_result":
                 marks |= {

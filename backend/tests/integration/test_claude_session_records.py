@@ -282,6 +282,46 @@ def test_a_sub_threads_work_lands_on_its_card(client, stub_hooks):
     assert in_room == [], "a worker's step landed on the room instead of its card"
 
 
+def test_a_denied_command_does_not_stop_the_rest_of_the_turn_landing(
+    client, stub_hooks
+):
+    """When the build refuses a command it prints ``system/permission_denied``,
+    whose ``message`` is the refusal's own sentence rather than a transcript
+    message. What the session says after it still reaches the room, and the
+    turn still ends."""
+
+    def turn(topic, prompt, reply, agent=None):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        stub_hooks.uses(topic, "Bash", eid="toolu_rm", command='rm -rf "$W/$p"')
+        stub_hooks.record(
+            topic,
+            type="system",
+            subtype="permission_denied",
+            tool_name="Bash",
+            tool_use_id="toolu_rm",
+            decision_reason_type="safetyCheck",
+            decision_reason="Dangerous rm operation on possibly-empty variable path",
+            message="Dangerous rm operation detected. This requires explicit approval.",
+        )
+        stub_hooks.returns(
+            topic, "Bash", "Permission to use Bash has been denied.", error=True
+        )
+        stub_hooks.says(topic, "那条命令被拦了，换个写法")
+        stub_hooks.stops(topic, "那条命令被拦了，换个写法")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 清一下目录"})
+        frames = _until_done(ws)
+    assert frames[-1]["type"] == "done", frames[-1]
+    _wait_work_idle()
+
+    said = [block.content for block in _blocks(client, topic_id=uuid.UUID(room))]
+    assert "那条命令被拦了，换个写法" in said, said
+
+
 def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
     client, stub_hooks
 ):
