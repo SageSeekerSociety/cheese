@@ -167,6 +167,17 @@ class Settings(BaseSettings):
     #: may be spoken to without TLS. Only for a local test mail server: on a
     #: deployment it would let anyone make the backend dial its own network.
     integration_allow_private_hosts: bool = False
+    #: Remote MCP servers a `.mcp.json` names may be plain HTTP and on a private
+    #: network. Only for a local test server: on a deployment it would let a
+    #: project member make the backend dial its own network.
+    remote_mcp_allow_private_hosts: bool = False
+    #: Clients registered in advance with an MCP authorization server that
+    #: supports neither Client ID Metadata Documents nor Dynamic Client
+    #: Registration, keyed by the authorization server's issuer:
+    #: {"https://as.example": {"client_id": …, "client_secret": …,
+    #: "token_endpoint_auth_method": "client_secret_basic"}}. The redirect URI
+    #: they were registered with is `{frontend_url}/api/mcp/oauth/callback`.
+    remote_mcp_oauth_clients: dict[str, dict[str, str]] = {}
     # Where a mail host's real address is looked up when the local resolver
     # only hands out a proxy's fake-ip placeholder (198.18.0.0/15).
     integration_doh_url: str = "https://dns.alidns.com/resolve"
