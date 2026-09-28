@@ -303,7 +303,7 @@ def running_turn(client):
             workspace_root="/tmp/message-edit-ws",
             compute=stub_compute(),
         )
-        service._active_turn_ids[uuid.UUID(room)] = uuid.uuid4()
+        service._active_turn_ids[uuid.UUID(room)] = {uuid.uuid4()}
         service._compute.deliver = screen.deliver  # type: ignore[method-assign]
         app.dependency_overrides[get_chat_service] = lambda: service
         return screen

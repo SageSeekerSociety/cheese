@@ -19,7 +19,7 @@ import re
 import time
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -1325,7 +1325,12 @@ class ChatService:
         # Work currently attributed to each active session. Mid-session delivery
         # captures this id before writing to the lower layer, then stamps the
         # message only after the exact UserPromptSubmit receipt.
-        self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
+        # A SET per topic, though today it holds at most one id: turns on a
+        # topic still serialize (`_prompt_lock` + `wait_for_recipient`). The
+        # set is the shape multi-agent parallel turns need, so every reader
+        # below already answers "is THIS turn among the live ones" rather than
+        # "is this THE one" — when parallel turns arrive, no reader changes.
+        self._active_turn_ids: dict[uuid.UUID, set[uuid.UUID]] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
         # 房间里此刻那个会话是哪位队友的（最近一次 AgentSessionInfo 说的）。会话
         # 自己开一轮时没有人告诉我们它是谁的，就按这个认。
@@ -1372,6 +1377,49 @@ class ChatService:
             self._topic_locks[topic_id] = lock
         return lock
 
+    def _mark_turn_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+        self._active_turn_ids.setdefault(topic_id, set()).add(work_id)
+
+    def _mark_turn_inactive(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+        active = self._active_turn_ids.get(topic_id)
+        if active is None:
+            return
+        active.discard(work_id)
+        if not active:
+            self._active_turn_ids.pop(topic_id, None)
+
+    def _consuming_work_id(
+        self,
+        topic_id: uuid.UUID,
+        matches: Callable[[_HookWorkState], bool] | None = None,
+        *,
+        strict: bool = False,
+    ) -> uuid.UUID | None:
+        """The live turn an inbound message belongs to, if unambiguous.
+
+        Today turns on a topic serialize, so the active set holds at most one
+        id and this is that id (a missing hook state cannot rule it out, which
+        preserves the old single-slot tolerance; ``strict`` is for callers
+        that must NOT deliver without a state). When several turns are live
+        — parallel agents in one room — only an exact ``matches`` hit decides,
+        and only when exactly one hits: delivering to a guessed turn is worse
+        than holding the message for none.
+        """
+        active = self._active_turn_ids.get(topic_id)
+        if not active:
+            return None
+        if matches is None:
+            return next(iter(active)) if len(active) == 1 else None
+        hits = []
+        for work_id in active:
+            state = self._hook_work.get((topic_id, work_id))
+            if state is None:
+                if not strict:
+                    hits.append(work_id)
+            elif matches(state):
+                hits.append(work_id)
+        return hits[0] if len(hits) == 1 else None
+
     @asynccontextmanager
     async def _prompt_lock(
         self,
@@ -1382,15 +1430,12 @@ class ChatService:
         async with self._lock_for(topic_id):
             if recipient_handle is not None:
                 await self.wait_for_recipient(topic_id, recipient_handle)
-            self._active_turn_ids[topic_id] = work_id
+            self._mark_turn_active(topic_id, work_id)
             try:
                 yield
             finally:
-                if (
-                    self._active_turn_ids.get(topic_id) == work_id
-                    and (topic_id, work_id) not in self._hook_work
-                ):
-                    self._active_turn_ids.pop(topic_id, None)
+                if (topic_id, work_id) not in self._hook_work:
+                    self._mark_turn_inactive(topic_id, work_id)
 
     async def converse(
         self,
@@ -1643,17 +1688,17 @@ class ChatService:
         providers resolve that path into a native image block before the model
         sees the message; a remote device first stages the exact bytes and acks
         the file write."""
-        consuming_turn_id = self._active_turn_ids.get(topic_id)
+        consuming_turn_id = self._consuming_work_id(
+            topic_id,
+            lambda state: (
+                recipient_handle is None
+                or state.agent_instance_handle is None
+                or state.agent_instance_handle == recipient_handle
+            ),
+        )
         if consuming_turn_id is None:
             return None
         state = self._hook_work.get((topic_id, consuming_turn_id))
-        if (
-            recipient_handle is not None
-            and state is not None
-            and state.agent_instance_handle is not None
-            and state.agent_instance_handle != recipient_handle
-        ):
-            return None
         lines = []
         if content:
             lines.append(f"[{author}]: {strip_platform_notice(content)}")
@@ -1735,15 +1780,18 @@ class ChatService:
         waited = False
         async with get_broker().subscribe(str(topic_id)) as events:
             while True:
-                work_id = self._active_turn_ids.get(topic_id)
-                if work_id is None:
-                    return waited
-                state = self._hook_work.get((topic_id, work_id))
-                if (
-                    state is None
-                    or state.agent_instance_handle is None
-                    or state.agent_instance_handle == recipient_handle
-                ):
+                # Wait while ANOTHER agent instance holds a live turn here.
+                # Turns on a topic serialize today, so the active set is at
+                # most one id; reading it as a set keeps this loop correct
+                # the day several agents run in one room.
+                others = [
+                    work_id
+                    for work_id in self._active_turn_ids.get(topic_id, ())
+                    if (state := self._hook_work.get((topic_id, work_id))) is not None
+                    and state.agent_instance_handle is not None
+                    and state.agent_instance_handle != recipient_handle
+                ]
+                if not others:
                     return waited
                 waited = True
                 await events.get()
@@ -1766,13 +1814,14 @@ class ChatService:
                 )
             ).total_seconds()
             >= settings.chat_progress_reminder_after_s
-            and self._active_turn_ids.get(state.topic_id) == state.work_id
+            and state.work_id in self._active_turn_ids.get(state.topic_id, ())
         ]
 
         async def remind(state: _HookWorkState) -> bool:
-            if (
-                self._hook_work.get((state.topic_id, state.work_id)) is not state
-                or self._active_turn_ids.get(state.topic_id) != state.work_id
+            if self._hook_work.get(
+                (state.topic_id, state.work_id)
+            ) is not state or state.work_id not in self._active_turn_ids.get(
+                state.topic_id, ()
             ):
                 return False
             silent_for = now - (state.last_chat_at or state.started_at)
@@ -1852,13 +1901,15 @@ class ChatService:
         reads the doc fresh anyway, and the next turn does not — a reused
         session keeps the system prompt it was started with.
         """
-        consuming_turn_id = self._active_turn_ids.get(topic_id)
+        consuming_turn_id = self._consuming_work_id(
+            topic_id,
+            lambda state: (
+                recipient_seat is None or state.acting_agent == recipient_seat
+            ),
+            strict=recipient_seat is not None,
+        )
         if consuming_turn_id is None:
             return False
-        if recipient_seat is not None:
-            state = self._hook_work.get((topic_id, consuming_turn_id))
-            if state is None or state.acting_agent != recipient_seat:
-                return False
         line = platform_prompt(strip_platform_notice(notice))
         if blocks:
             # Registered BEFORE the write, for the reason the human-message path
@@ -1998,7 +2049,7 @@ class ChatService:
         turn gets no start of its own and will get no ending either. Asking by
         turn id is the difference between a handover and an assumption.
         """
-        return self._active_turn_ids.get(topic_id) == turn_id
+        return turn_id in self._active_turn_ids.get(topic_id, ())
 
     async def post_system_event(
         self,
@@ -2345,11 +2396,10 @@ class ChatService:
         from app.domain.agent.runtime import get_broker
 
         if active:
-            self._active_turn_ids[topic_id] = work_id
+            self._mark_turn_active(topic_id, work_id)
             frame = {"type": "turn_started", "turn_id": str(work_id)}
         else:
-            if self._active_turn_ids.get(topic_id) == work_id:
-                self._active_turn_ids.pop(topic_id, None)
+            self._mark_turn_inactive(topic_id, work_id)
             frame = {"type": "turn_finished", "turn_id": str(work_id)}
         await get_broker().publish(str(topic_id), frame)
         if not active:
@@ -2533,7 +2583,15 @@ class ChatService:
             # The session announced this turn's start to the process that fed
             # it, so this one never heard it: without this a message sent now
             # would start a turn beside it instead of joining it.
-            self._active_turn_ids[topic_id] = turn_id
+            # The single-slot world OVERWROTE the slot here, silently dropping
+            # a stale leftover; keep that hygiene by pruning ids whose hook
+            # state is gone — a genuinely live turn always has its state and
+            # survives, which is what several agents in one room will need.
+            self._active_turn_ids[topic_id] = {
+                work_id
+                for work_id in self._active_turn_ids.get(topic_id, ())
+                if (topic_id, work_id) in self._hook_work
+            } | {turn_id}
         return state
 
     async def _announce_action(self, state: _HookWorkState, resource: str) -> None:
@@ -3999,9 +4057,9 @@ class ChatService:
             # agent running off this process (a remote executor) publishes over
             # HTTP, where the runner knows no live work and hands in None. Its
             # turn still exists here, so fall back — but carefully, because a
-            # room seats several agents and `_active_turn_ids` holds only the
-            # one currently running: crediting agent A's publication to agent
-            # B's turn would silence B's reminder while A's room stays dark.
+            # room seats several agents: crediting agent A's publication to
+            # agent B's turn would silence B's reminder while A's room stays
+            # dark.
             # So: the publisher's own live turn first; an unambiguous single
             # live turn next (covers tokens that don't name an agent seat);
             # nothing when two agents' turns are live and neither is the
@@ -4026,8 +4084,9 @@ class ChatService:
         if len(own) == 1:
             return own[0].work_id
         if len(own) > 1:
-            active = self._active_turn_ids.get(topic_id)
-            return next((s.work_id for s in own if s.work_id == active), None)
+            active = self._active_turn_ids.get(topic_id, ())
+            hits = [s.work_id for s in own if s.work_id in active]
+            return hits[0] if len(hits) == 1 else None
         if len(live) == 1:
             return live[0].work_id
         return None
@@ -4471,7 +4530,10 @@ class ChatService:
             )
             # A delayed start from a replaced parent may remain historical
             # evidence, but cannot acquire control of the task's current worker.
-            if self._active_turn_ids.get(topic_id) != turn_id or instance is None:
+            if (
+                turn_id not in self._active_turn_ids.get(topic_id, ())
+                or instance is None
+            ):
                 return
             task.execution_agent_instance_id = instance.id
             task.execution_parent_session_id = parent_session_id
