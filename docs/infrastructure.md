@@ -271,8 +271,8 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   4 KB `oflag=dsync` write took 3.5 ms on runner-3, IO stall 23% of the time,
   #668 needed five attempts to finish inside the 20-minute timeout while #667
   had taken 7 minutes on a quiet host). Since #670 the Postgres data directory
-  of the `test` and `e2e` service containers is a 3 GB tmpfs: no disk in the
-  path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
+  of the `test` job's integration service container is a tmpfs (its size is
+  set in `test.yml`): no disk in the path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
   host). A full run writes about 1 GB including WAL, measured locally; if the
   suite ever outgrows the tmpfs, Postgres fails with ENOSPC and the size in the
   workflow is the knob. The unit-test third never touched the disk and runs at
