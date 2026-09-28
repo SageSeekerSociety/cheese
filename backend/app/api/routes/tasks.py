@@ -1939,8 +1939,13 @@ async def join_task_as_user(
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
-
-    return await _participation_response(db, task, membership, auth_user)
+    response = await _participation_response(db, task, membership, auth_user)
+    # Commit before answering (the claim and the project it opens). ``get_db``
+    # commits in its teardown, which FastAPI runs after the response has gone
+    # out, so the task owner listing the participants right after a claim could
+    # find no pending record yet. Same reason as the commit in ``create_task``.
+    await db.commit()
+    return response
 
 
 @router.post(
@@ -2061,6 +2066,10 @@ async def patch_task_participant(
     from app.domain.project.services import ProjectService
 
     await ProjectService(db).activate_participation(task=task, membership=updated)
+    # Commit before answering: the participant told they are approved can reload
+    # the task on their next request and must see it as theirs (download and
+    # submit). Same reason as the commit in ``create_task``.
+    await db.commit()
 
     return {
         "code": 200,
@@ -3206,6 +3215,7 @@ async def post_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     contents: list[dict],
+    db=Depends(get_db),
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
@@ -3252,6 +3262,10 @@ async def post_task_submission(
         submitter_id=auth_user.user_id,
         contents=contents,
     )
+    # Commit before answering: the page that just submitted opens the submission
+    # history next, and must find what it handed in. Same reason as the commit in
+    # ``create_task``.
+    await db.commit()
     return {
         "code": 200,
         "message": "OK",
