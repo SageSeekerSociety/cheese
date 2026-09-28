@@ -85,7 +85,6 @@ def test_context_entry_reports_service_failure_without_direct_retry(tmp_path):
     [
         (b'{"ok": true}\n', None),
         (b'{ "ok" : true }\n', None),
-        (b'{"ok": true, "changed": true}\n', None),
         (b'{"error": "sync denied"}\n', "sync denied"),
         (b'{"ok": false}\n', "Invalid context synchronization response"),
         (b'{"ok": true, "extra": 1}\n', "Invalid context synchronization response"),

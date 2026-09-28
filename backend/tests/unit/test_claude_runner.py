@@ -755,45 +755,45 @@ def test_a_skill_the_project_gained_between_turns_is_offered_in_the_next(
 ):
     """A room's session reads the project's skills through links into the
     executor's view, which no file watcher sees change. Before a turn the runner
-    synchronizes them (the service the session's native server keeps) and, when
-    they changed, the session reloads its skills before the turn starts."""
-    from app.domain.agent.harness.claude_code.remote_execution.context_service import (
-        serve,
+    has the executor client synchronize them (`client.py catch-up`, named in the
+    session's execution target) and, when they changed, the session reloads its
+    skills before the turn starts."""
+    # The executor client, standing in: the project gained a skill, which it
+    # links into the config dir, and it says so; after that nothing changes.
+    client = machine.root / "client.py"
+    client.write_text(
+        "import json, pathlib, sys\n"
+        f"added = pathlib.Path({str(machine.config / 'skills/pulled')!r})\n"
+        "assert sys.argv[1:3] == ['catch-up', sys.argv[2]]\n"
+        "changed = not added.exists()\n"
+        "if changed:\n"
+        "    added.mkdir(parents=True)\n"
+        "    (added / 'SKILL.md').write_text('---\\nname: pulled\\n"
+        "description: Came with a pull. PULLED_LISTED.\\n---\\nPULLED_BODY\\n')\n"
+        "with open(sys.argv[2] + '.calls', 'a') as calls:\n"
+        "    calls.write('called\\n')\n"
+        "print(json.dumps({'changed': changed}))\n"
     )
-
     execution = machine.root / "execution.json"
-    synchronized = []
-
-    def synchronize():
-        """What `client.sync_context` does once the project gained a skill:
-        the skill is linked into the config dir, and the answer says so."""
-        synchronized.append(True)
-        added = machine.config / "skills/pulled"
-        if added.exists():
-            return {"changed": False}
-        added.mkdir(parents=True)
-        (added / "SKILL.md").write_text(
-            "---\nname: pulled\ndescription: Came with a pull. PULLED_LISTED.\n---\n"
-            "PULLED_BODY\n"
-        )
-        return {"changed": True}
+    execution.write_text(json.dumps({"helper": [sys.executable, str(client)]}))
 
     screen = Screen(machine, env={"CHEESE_EXECUTION_CONFIG": str(execution)})
     try:
-        with serve(execution, synchronize):
-            requests = machine.server.state["requests"]
-            work = str(uuid.uuid4())
-            screen.send("hello", work_id=work)
-            first = screen.wait(_ends(work))
-            asked = len(requests)
-            offered = "PULLED_LISTED" in json.dumps(requests[-1])
-            work = str(uuid.uuid4())
-            screen.send(contract.do("Skill", skill="pulled"), work_id=work)
-            screen.wait(_ends(work), after=first["sequence"])
-            loaded = "PULLED_BODY" in json.dumps(requests[asked:])
+        requests = machine.server.state["requests"]
+        work = str(uuid.uuid4())
+        screen.send("hello", work_id=work)
+        first = screen.wait(_ends(work))
+        asked = len(requests)
+        offered = "PULLED_LISTED" in json.dumps(requests[-1])
+        work = str(uuid.uuid4())
+        screen.send(contract.do("Skill", skill="pulled"), work_id=work)
+        screen.wait(_ends(work), after=first["sequence"])
+        loaded = "PULLED_BODY" in json.dumps(requests[asked:])
     finally:
         screen.stop()
 
-    assert synchronized, "the runner never synchronized before a turn"
+    calls = machine.root / "execution.json.calls"
+    assert calls.exists(), screen.log()
+    assert calls.read_text().count("called") == 2, "once before each turn"
     assert offered, "the first turn was not offered the skill the project gained"
     assert loaded

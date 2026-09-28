@@ -1804,6 +1804,7 @@ def main():
             "bridge",
             "guard",
             "context",
+            "catch-up",
             "control",
             "shell",
             "bootstrap",
@@ -1897,6 +1898,10 @@ def main():
         )
     elif args.mode == "context":
         sync_context(args.config)
+    elif args.mode == "catch-up":
+        # The runner, before a turn: whether the project's context changed.
+        tree = sync_context(args.config)
+        print(json.dumps({"changed": bool(tree.get("changed"))}))
     elif args.mode == "control":
         print(json.dumps(RemoteClient(config).control(json.load(sys.stdin))))
     elif args.mode == "prepare":

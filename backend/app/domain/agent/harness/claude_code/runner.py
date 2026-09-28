@@ -37,7 +37,6 @@ from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.journal import Journal
-from app.domain.agent.harness.claude_code.remote_execution import context_service
 from app.domain.agent.harness.driven import runner
 from app.domain.memory.files import (
     INDEX_NAME,
@@ -888,24 +887,40 @@ class Runner(runner.Runner[Journal]):
         Plain Claude Code watches its skill directories and picks up a skill
         added, edited or removed while it runs. A room's session reads the
         project's through a view of the executor that no watcher sees change,
-        so before a turn the session's context is synchronized with the
-        executor (`client.sync_context`, through the service the session's
-        native server keeps), and when that changed anything the session
-        reloads its skills. A failure here costs the turn nothing: it starts
-        on what the session already has.
+        so before a turn the runner has the executor client synchronize the
+        session's context (`client.py catch-up`, which relinks what changed),
+        and when anything changed the session reloads its skills. Run from
+        here and not through the session's own context service: that one
+        listens inside the session's namespace, whose `/tmp` is its own. A
+        failure costs the turn nothing: it starts on what the session has.
         """
         if not self.execution:
             return
         try:
-            answer = await asyncio.wait_for(
-                asyncio.to_thread(context_service.call, self.execution),
-                CATCH_UP_TIMEOUT_S,
+            helper = json.loads(Path(self.execution).read_text())["helper"]
+            process = await asyncio.create_subprocess_exec(
+                *helper,
+                "catch-up",
+                self.execution,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if isinstance(answer, dict) and answer.get("changed"):
+            try:
+                out, err = await asyncio.wait_for(
+                    process.communicate(), CATCH_UP_TIMEOUT_S
+                )
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+                raise
+            if process.returncode:
+                raise RuntimeError(err.decode(errors="replace")[-600:])
+            if json.loads(out or b"{}").get("changed"):
                 await self.command("/reload-skills")
         except Exception as error:  # noqa: BLE001 — the turn goes on regardless
             print(
-                f"project context not synchronized before the turn: {error}",
+                f"project context not synchronized before the turn: {error!r}",
                 file=sys.stderr,
                 flush=True,
             )
