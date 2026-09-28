@@ -267,10 +267,18 @@ describe('新外壳里的题目详情', () => {
     expect(claimOf(container)).toEqual({ label: '领取这道题', disabled: false })
   })
 
-  it('已领取：这道题我已经领了（参与身份 APPROVED）', async () => {
+  it('已领取：这道题我已经领了（参与身份 APPROVED），领取之后才多出那几条去路', async () => {
     const { container } = await mount({}, { hasParticipation: true, identities: [{ id: 11, approved: 'APPROVED' }] })
 
     expect(claimOf(container)).toEqual({ label: '你已经领取', disabled: true })
+
+    // 老页面把这颗「提交」放在一格 Tab 里，这一页按原型排在领取旁边 —— 两条去路落的
+    // 都是**新树**的地址，e2e 点的就是它们，所以在这里钉住。
+    expect(Array.from(container.querySelectorAll('.td__claim a')).map((a) => a.getAttribute('href'))).toEqual([
+      `/spaces/${SPACE_ID}/board/tasks/${TASK_ID}/submit`,
+      `/spaces/${SPACE_ID}/board/tasks/${TASK_ID}/submissions`,
+    ])
+    expect(buttonWith(container, '退出这道题')).not.toBeNull()
   })
 
   it('待审核：这道题自己还在等审', async () => {
