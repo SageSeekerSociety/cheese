@@ -8,7 +8,7 @@
 type Answer = () => unknown
 
 const routes = new Map<string, Answer>()
-let installed = false
+let ours: typeof globalThis.fetch | null = null
 
 /** 设一条 GET 路由的答案；answer 为 null 就撤掉它。路径不带 /api、不带查询串。 */
 export function answer(path: string, value: Answer | null): void {
@@ -16,15 +16,20 @@ export function answer(path: string, value: Answer | null): void {
   else routes.delete(path)
 }
 
+/** 这条路由此刻的答案（没有就是 undefined）。测试里拿它替掉 api 的读函数。 */
+export function answerFor(path: string): unknown {
+  return routes.get(path)?.()
+}
+
 function reply(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
 
+// 装过了就不再套一层；但若有人（测试替身）换掉了 globalThis.fetch，就在它外面重新装上。
 export function installDemoBackend(): void {
-  if (installed) return
-  installed = true
-  const passThrough = window.fetch.bind(window)
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (ours && globalThis.fetch === ours) return
+  const passThrough = globalThis.fetch.bind(globalThis)
+  ours = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     const path = new URL(url, location.origin).pathname
     if (!path.startsWith('/api/')) return passThrough(input, init)

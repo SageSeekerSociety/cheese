@@ -33,11 +33,13 @@ export type SceneEvent =
       result?: string
     }
   // 一条平台事件（灰字、动作行、事故卡……），由真的 platformNotice 决定怎么画。
-  | { at: number; do: 'notice'; text: string; who?: string; meta?: Record<string, unknown> }
+  // 同一个 `turn` 的连续几条（动作行、改动摘要）会像产品里一样折成一行「本轮摘要」。
+  | { at: number; do: 'notice'; text: string; who?: string; turn?: string; meta?: Record<string, unknown> }
   // 「已派出」标记：拆出去的一条活。同一个 id 再写一次是改它的状态。
   | { at: number; do: 'split'; id: string; title: string; status: 'open' | 'closed' }
   // 输入框上方的验收卡，整张换掉；null 是收起。字段按 AcceptCard，没写的取默认。
-  | { at: number; do: 'card'; card: Partial<AcceptCard> | null }
+  // `open` 把卡摊开（等于点了卡上的展开）：卡面上的采纳、退回、检查都露出来。
+  | { at: number; do: 'card'; card: Partial<AcceptCard> | null; open?: boolean }
   // 验收卡那个 PR 的检查。
   | { at: number; do: 'checks'; checks: Partial<PrChecks> | null }
   // 对话栏里一条安静的分隔说明（不是谁说的话）。
@@ -174,6 +176,7 @@ export interface Frame {
   focus: Focus | null
   tag: string
   card: AcceptCard | null
+  cardOpen: boolean
   checks: PrChecks | null
   files: MemoryFile[]
   injected: string[]
@@ -266,6 +269,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
   )
   let injected: string[] = []
   let card: AcceptCard | null = null
+  let cardOpen = false
   let checks: PrChecks | null = null
   const stations: Frame['stations'] = {}
   let at: string | null = null
@@ -335,7 +339,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
             author_type: 'participant',
             author: e.who ?? 'system',
             content: e.text,
-            turn_id: `n${id}`,
+            turn_id: e.turn ?? `n${id}`,
             meta: e.meta ?? {},
             created_at,
           }
@@ -356,6 +360,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
         }
         case 'card':
           card = e.card ? fullCard(e.card, created_at) : null
+          cardOpen = !!e.card && e.open === true
           break
         case 'checks':
           checks = e.checks ? { available: true, ...e.checks } : null
@@ -471,6 +476,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
     focus: current?.focus ?? null,
     tag: current?.tag ?? '',
     card,
+    cardOpen,
     checks,
     files: [...files.values()].sort((a, b) => a.path.localeCompare(b.path)),
     injected,
