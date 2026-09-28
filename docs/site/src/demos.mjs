@@ -24,8 +24,36 @@
 
 import { esc, docHref } from './render.mjs'
 import { num, show, simulate, fill, evaluate, sumContext } from './demo-model.mjs'
+import { selectSuites, fnmatchcase } from './ci-scope.mjs'
+import { fitIndex, limitBreach, indexTextOf } from './memory-limits.mjs'
 
-export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim', 'demo-context']
+export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim', 'demo-context', 'demo-ci', 'demo-flow', 'demo-memory']
+
+// Some fences carry no numbers of their own: they point at a `source`, a blob
+// the build composed from the code the page is about. `registerSource` is how
+// build.mjs hands one over (the suite table from required-ci-paths.json, the
+// memory limits from files.py), and a fence naming a source that does not exist
+// — or a list that no longer matches it — fails the build.
+const SOURCES = {}
+
+export function registerSource(name, data) { SOURCES[name] = data }
+
+function sourceOf(spec, where) {
+  if (!spec.source) missing(where, 'this demo needs a «source» — the build-time data it shows')
+  const data = SOURCES[spec.source]
+  if (!data) missing(where, `no build source named «${spec.source}» — the build has ${Object.keys(SOURCES).join(', ') || '(none)'}`)
+  return data
+}
+
+// Every set of changed paths a `demo-ci` fence lets a reader tick, in the order
+// the fences were read. build.mjs runs them through the real
+// `.github/scripts/required-ci.py` as well as through src/ci-scope.mjs and
+// fails on any difference, so the demo answers with the gate's own answer.
+const CI_SELECTIONS = []
+
+// A page is parsed twice (the component and the prose for models), so the same
+// fence offers its paths twice; the gate only needs to answer each set once.
+export function ciSelections() { return [...new Set(CI_SELECTIONS.map((p) => JSON.stringify(p)))].map((s) => JSON.parse(s)) }
 
 // A fence that says `data: prompt-blocks` does not carry its own numbers: the
 // step is bound, by position, to a row of a dataset the build computed from the
@@ -142,6 +170,9 @@ export function renderDemo(lang, body, where) {
   if (!spec.title) missing(where, 'a demo needs a «title»')
   if (lang === 'demo-sim') return renderSim(spec, where)
   if (lang === 'demo-context') return renderContext(spec, where)
+  if (lang === 'demo-ci') return renderCi(spec, where)
+  if (lang === 'demo-flow') return renderFlow(spec, where)
+  if (lang === 'demo-memory') return renderMemory(spec, where)
   return renderSteps(spec, where, lang === 'demo-timeline')
 }
 
@@ -207,6 +238,161 @@ function renderContext(spec, where) {
 </figure>`
 }
 
+
+// ---------- demo-ci ----------
+// A merge diff goes in, the suites the gate would run come out. The suites and
+// their patterns are the build's (`.github/scripts/required-ci-paths.json`);
+// what the fence declares is what a reader may tick, and its `expect:` — the
+// suite names this page describes — is held to the file, so adding a suite to
+// the gate fails the build here until the page is read again.
+export function ciData(spec, where) {
+  const src = sourceOf(spec, where)
+  const suites = (src.suites || []).map((s) => ({ key: s.key, desc: s.desc || '', workflow: s.workflow || '', patterns: s.patterns || [] }))
+  const expect = String(spec.expect || '').split(',').map((x) => x.trim()).filter(Boolean)
+  const have = suites.map((s) => s.key)
+  if (expect.length !== have.length || expect.some((k) => !have.includes(k)))
+    missing(where, `this fence describes the suites «${expect.join(' · ')}», the repository has «${have.join(' · ')}» — read required-ci-paths.json again and update the fence and the prose together`)
+  if (!suites.length) missing(where, 'required-ci-paths.json names no suites')
+  const patterns = Object.fromEntries(suites.map((s) => [s.key, s.patterns]))
+  const check = (path, who) => {
+    if (!Object.values(patterns).some((pats) => pats.some((p) => fnmatchcase(path, p))))
+      missing(where, `${who} «${path}» matches no pattern in required-ci-paths.json — a path that selects nothing here teaches nothing`)
+  }
+  const paths = (spec.paths || []).map((p) => {
+    if (!p.path) missing(where, 'every «paths» entry needs a «path»')
+    check(p.path, 'path')
+    return { path: p.path, label: p.label || '' }
+  })
+  if (!paths.length) missing(where, 'a «demo-ci» needs a «paths» list — the paths a reader can tick')
+  const scenarios = (spec.scenarios || []).map((s) => {
+    if (!s.key || !s.label) missing(where, 'every scenario needs a «key» and a «label»')
+    const list = String(s.paths || '').split(',').map((x) => x.trim()).filter(Boolean)
+    if (!list.length) missing(where, `scenario «${s.key}» needs «paths»`)
+    for (const p of list) {
+      check(p, `scenario «${s.key}»`)
+      if (!paths.some((x) => x.path === p)) paths.push({ path: p, label: '' })
+    }
+    return { key: s.key, label: s.label, paths: list }
+  })
+  if (!scenarios.length) missing(where, 'a «demo-ci» needs at least one scenario')
+  // What a reader can end up asking about: each scenario, plus the ticked paths
+  // themselves. build.mjs answers all of these with the real script too.
+  CI_SELECTIONS.push(paths.map((p) => p.path), ...scenarios.map((s) => s.paths))
+  return { title: spec.title, note: spec.note, suites, paths, scenarios }
+}
+
+export function ciRuns(cfg) {
+  return cfg.scenarios.map((s) => {
+    const sel = selectSuites(s.paths, Object.fromEntries(cfg.suites.map((x) => [x.key, x.patterns])))
+    return { ...s, run: cfg.suites.filter((x) => sel[x.key].run).map((x) => x.key) }
+  })
+}
+
+function renderCi(spec, where) {
+  const cfg = ciData(spec, where)
+  const runs = ciRuns(cfg)
+  // Narrow screens and no script: the suites, their patterns, and what each
+  // scenario would select — all of it computed here, all of it in the HTML.
+  const li = cfg.suites.map((s) => `<li><b>${esc(s.key)}</b>${s.workflow ? `<span class="cix-f-wf">${esc(s.workflow)}</span>` : ''}<p>${esc(s.desc)}</p><p class="cix-f-pats">${s.patterns.map((p) => esc(p)).join(' ')}</p></li>`).join('')
+  const scen = runs.map((s) => `<li><b>${esc(s.label)}</b><span class="cix-f-run">跑 ${esc(s.run.join(' · '))}</span></li>`).join('')
+  return `<figure class="demo demo-cix" data-demo="ci" aria-label="${esc(spec.title)}">
+  ${head(spec.title, spec.note)}
+  <ol class="cix-fallback">${li}</ol>
+  <ul class="cix-fallback cix-f-scen">${scen}</ul>
+  <script type="application/json" data-ci>${JSON.stringify(cfg).replace(/</g, '\\u003c')}</script>
+</figure>`
+}
+
+// ---------- demo-flow ----------
+// One request walked lane by lane: the actors are columns, each step is an
+// arrow between two of them, and a route picks which steps belong to this
+// telling. A step marked `block:` is where this route is refused. `resident:`
+// names what is NOT in the picture — the layer a rollout does not touch, drawn
+// as a band that stays put while the lanes above it change.
+const FLOW_TONES = ['ok', 'bad', 'warn']
+
+export function flowData(spec, where) {
+  const actors = (spec.actors || []).map((a) => {
+    if (!a.key || !a.label) missing(where, 'every actor needs a «key» and a «label»')
+    return { key: a.key, label: a.label, sub: a.sub || '' }
+  })
+  if (actors.length < 2) missing(where, 'a flow needs at least two actors')
+  const keys = actors.map((a) => a.key)
+  if (new Set(keys).size !== keys.length) missing(where, 'two actors share a «key»')
+  const routes = (spec.routes || []).map((r) => {
+    if (!r.key || !r.label) missing(where, 'every route needs a «key» and a «label»')
+    if (r.tone && !FLOW_TONES.includes(r.tone)) missing(where, `route «${r.key}»: «tone» is one of ${FLOW_TONES.join(', ')}`)
+    return { key: r.key, label: r.label, note: r.note || '', result: r.result || '', tone: r.tone || 'ok' }
+  })
+  if (!routes.length) missing(where, 'a flow needs at least one «routes» entry')
+  const routeKeys = routes.map((r) => r.key)
+  const steps = (spec.steps || []).map((s, i) => {
+    const at = `${where} step ${i + 1}`
+    if (!s.from || !s.to || !s.label) missing(where, `${at}: every step needs «from», «to» and «label»`)
+    for (const end of [s.from, s.to]) if (!keys.includes(end)) missing(where, `${at}: «${end}» is not one of the actors (${keys.join(', ')})`)
+    const on = String(s.routes || '').split(',').map((x) => x.trim()).filter(Boolean)
+    for (const r of on) if (!routeKeys.includes(r)) missing(where, `${at}: «routes: ${s.routes}» names «${r}», which is not a route (${routeKeys.join(', ')})`)
+    if (s.link) s.link = docHref(s.link)
+    return { i, routes: on.length ? on : routeKeys, phase: s.phase || '', from: s.from, to: s.to, label: s.label, desc: s.desc || '', ref: s.ref || '', block: s.block === true, link: s.link || '' }
+  })
+  if (!steps.length) missing(where, 'a flow needs at least one step')
+  for (const r of routeKeys) {
+    if (!steps.some((s) => s.routes.includes(r))) missing(where, `route «${r}» has no steps — every route must show something`)
+  }
+  const resident = (spec.resident || []).map((x) => x.label).filter(Boolean)
+  return { title: spec.title, note: spec.note, actors, routes, steps, resident }
+}
+
+function renderFlow(spec, where) {
+  const cfg = flowData(spec, where)
+  const fallback = cfg.routes.map((r) => {
+    const mine = cfg.steps.filter((s) => s.routes.includes(r.key))
+    const li = mine.map((s) => `<li${s.block ? ' class="block"' : ''}><b>${esc(cfg.actors.find((a) => a.key === s.from).label)} → ${esc(cfg.actors.find((a) => a.key === s.to).label)}</b><span>${esc(s.label)}</span>${s.ref ? `<code>${esc(s.ref)}</code>` : ''}<p>${esc(s.desc)}</p></li>`).join('')
+    return `<li><b>${esc(r.label)}</b>${r.note ? `<span class="fl-f-note">${esc(r.note)}</span>` : ''}<ol class="fl-f-steps">${li}</ol>${r.result ? `<p class="fl-f-result">${esc(r.result)}</p>` : ''}</li>`
+  }).join('')
+  return `<figure class="demo demo-fl" data-demo="flow" aria-label="${esc(spec.title)}">
+  ${head(spec.title, spec.note)}
+  <ol class="fl-fallback">${fallback}</ol>
+  ${cfg.resident.length ? `<p class="fl-f-resident">常驻、不随发版替换：${cfg.resident.map((x) => esc(x)).join(' · ')}</p>` : ''}
+  <script type="application/json" data-fl>${JSON.stringify(cfg).replace(/</g, '\\u003c')}</script>
+</figure>`
+}
+
+// ---------- demo-memory ----------
+// The two single-entry limits and the injection budget, dragged instead of
+// described. The numbers are the build's (gen/memory_limits.py reads them out
+// of `backend/app/domain/memory/files.py`); the fence names the ones it shows,
+// so a constant that is renamed fails the build instead of quietly disappearing.
+export function memoryData(spec, where) {
+  const src = sourceOf(spec, where)
+  const wanted = String(spec.limits || '').split(',').map((x) => x.trim()).filter(Boolean)
+  if (!wanted.length) missing(where, 'a «demo-memory» needs a «limits» list — the constant names this page shows')
+  for (const name of wanted) {
+    if (typeof src.constants[name] !== 'number') missing(where, `no constant «${name}» in ${src.origin} — the page names ${Object.keys(src.constants).join(', ')}`)
+  }
+  return {
+    title: spec.title,
+    note: spec.note,
+    limits: { ...src.constants, linePrefix: src.linePrefix },
+    shown: wanted,
+  }
+}
+
+function renderMemory(spec, where) {
+  const cfg = memoryData(spec, where)
+  const c = cfg.limits
+  const facts = [
+    `索引进上下文前按行截断：超过 ${num(c.INDEX_MAX_LINES)} 行或 ${num(Math.round(c.INDEX_MAX_BYTES / 1024))}KB 就只注入前面的部分，并附一句警告。`,
+    `索引里新写的一行超过 ${num(c.INDEX_LINE_MAX)} 字符就拒收，那一版存成 .rejected.md。`,
+    `一条记忆的正文超过 ${num(c.BODY_MAX)} 字就拒收，那一版存成 .rejected.md。`,
+    `这两条在会话对账时和写接口上都拦，接口回 422。`,
+  ]
+  return `<figure class="demo demo-mem" data-demo="memory" aria-label="${esc(spec.title)}">
+  ${head(spec.title, spec.note)}
+  <ul class="mem-fallback">${facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
+  <script type="application/json" data-mem>${JSON.stringify(cfg).replace(/</g, '\\u003c')}</script>
+</figure>`
+}
 
 function head(title, note) {
   return `<div class="dm-head"><b class="dm-title">${esc(title)}</b>${note ? `<span class="dm-note">${esc(note)}</span>` : ''}</div>`
@@ -366,6 +552,32 @@ export function demoText(lang, body, { where }) {
     const rows = contextRows(spec, where)
     const list = rows.map((r) => `- ${r.label}（${CONTEXT_CATS[r.cat].label}，${SEEN[r.seen].label}${r.cat === 'compact' ? '' : `，约 ${num(r.value)} tokens`}）：${r.desc || ''}`).join('\n')
     return `**${spec.title}**（网页上是一根随时间填满的上下文窗口，这里是它的文字版，窗口 ${num(spec.window || 200000)} tokens。）\n\n${list}`
+  }
+  if (lang === 'demo-ci') {
+    const cfg = ciData(spec, where)
+    const suites = cfg.suites.map((s) => `- ${s.key}${s.workflow ? `（${s.workflow}）` : ''}：${s.desc}｜改到 ${s.patterns.join(' ')} 时运行`).join('\n')
+    const runs = ciRuns(cfg).map((s) => `- ${s.label}（${s.paths.join('、')}）：${s.run.join(' · ')}`).join('\n')
+    return `**${spec.title}**（网页上可以勾选改动路径，看哪些套件会跑；这里是文字版。）\n\n改动改到这些路径时运行：\n\n${suites}\n\n选中路径后要跑的套件：\n\n${runs}\n\n未被选中的套件必须是跳过，选中的必须成功，这一个检查（CI required）才算通过。`
+  }
+  if (lang === 'demo-flow') {
+    const cfg = flowData(spec, where)
+    const label = (k) => cfg.actors.find((a) => a.key === k).label
+    const routes = cfg.routes.map((r) => {
+      const steps = cfg.steps.filter((s) => s.routes.includes(r.key)).map((s) => `${s.block ? '（被拦）' : ''}${label(s.from)} → ${label(s.to)}：${s.label}${s.ref ? `（${s.ref}）` : ''}${s.desc ? `。${s.desc}` : ''}`).join('\n  ')
+      return `- ${r.label}${r.note ? `（${r.note}）` : ''}：\n  ${steps}${r.result ? `\n  结果：${r.result}` : ''}`
+    }).join('\n')
+    const resident = cfg.resident.length ? `\n\n常驻、不随发版替换：${cfg.resident.join(' · ')}。` : ''
+    return `**${spec.title}**（网页上是一条按参与方排开的时序演示，可以切换路线一步步走；这里是文字版。）\n\n参与方：${cfg.actors.map((a) => a.label).join(' · ')}。\n\n${routes}${resident}`
+  }
+  if (lang === 'demo-memory') {
+    const cfg = memoryData(spec, where)
+    const c = cfg.limits
+    const sample = fitIndex(c, indexTextOf(c, c.INDEX_MAX_LINES + 40, 128))
+    return `**${spec.title}**（网页上是一组可以拖的参数，看截断和拒收发生在哪；这里是文字版。）
+- 索引进上下文前按行截断：超过 ${num(c.INDEX_MAX_LINES)} 行或 ${num(c.INDEX_MAX_BYTES)} 字节（${Math.round(c.INDEX_MAX_BYTES / 1024)}KB）时只注入前面的部分，并附一句警告；照每行 128 字节算，${num(c.INDEX_MAX_LINES + 40)} 行的索引只注入 ${num(sample.keptLines)} 行。
+- 索引里新写的一行超过 ${num(c.INDEX_LINE_MAX)} 字符就拒收，那一版存成 .rejected.md；早先就有的一行不挡这一次。
+- 一条记忆的正文超过 ${num(c.BODY_MAX)} 字就拒收，那一版存成 .rejected.md。
+- 两条单条上限在会话对账时和写接口上都拦，接口回 422；总长没有写入闸，只截断。`
   }
   const steps = bound(spec, where)
   const list = steps.map((s) => {

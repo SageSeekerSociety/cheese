@@ -27,12 +27,14 @@ covers:
 
 ## 交互演示 {#demos}
 
-流程和机制光靠文字读不快，所以页面里可以放两个组件。它们都写成页面里的一段 fence，由 `build.mjs` 在构建时展开成静态 HTML：
+流程和机制光靠文字读不快，所以页面里可以放一组组件。它们都写成页面里的一段 fence，由 `build.mjs` 在构建时展开成静态 HTML：
 
 - **`demo-steps` / `demo-timeline`**：把过程一步步放出来，带上一页 / 下一步 / 播放 / 拖动进度条。每一步可以带一个数字（字符数、token 数），下面有一根按数字画的进度柱；某一步可以设成闸门，播到那里停下等人点继续。`demo-timeline` 只是多一层「这是一条时间线」的样式，数据形状完全一样。
 - **`demo-context`**：一个上下文窗口怎么被填满，仿 Claude Code 文档的「Explore the context window」。顶上一根横条就是整个窗口，下面按时间列出装进来的每一样，标明它属于哪一类、房间里谁看得见（对话 / 现场 / 看不见）。`before:` 排在数据集前面，`then:` 排在后面；`cat: sub` 的行在分身自己的窗口里、不占横条，`cat: compact` 那一行只留下 `keeps:` 列出的几类，再加上摘要。
 - **`demo-sim`**：拖参数看结论。参数是滑块、开关或下拉；判定规则和读数写在 fence 里，由 `src/demo-model.mjs` 里那个很小的表达式语言求值（数字、`&&` `||` `!`、比较和四则，没有 `eval`）。要跟着代码里的真实数字动的模拟，用 `data:` 绑定构建时算出来的数据集。
-
+- **`demo-ci`**：勾几行改动路径，看 `Required CI` 会要求哪些套件跑、哪些必须跳过，右边每一行说清是谁命中哪条 pattern。左栏有预设场景（只改文档 / 改前端 / 改部署脚本……），也可以自己敲一条路径进去。
+- **`demo-flow`**：把一次请求或一次交接按参与方分列，一步一支箭头，切换路线（正常 / 被拦 / 过期）看它停在哪一步。`resident:` 列出「不在这张图里、也不跟着变」的常驻那一层，画成底下那条带子。
+- **`demo-memory`**：拖上限看后果：索引几行、每行多少字节、新写的一行多少字符、一条正文多少字，右边立刻说这一版是注入时截断、拒收成 `.rejected.md`，还是接口回 422。
 ### 用产品里的真组件演 {#demos-embed}
 
 `demo-steps` 多写一行 `embed: <名字>`，步骤列表上方就多一块画面：前端的公开页 `/demo/<名字>?embed=1` 嵌在 iframe 里，用产品自己的消息行（`RoomMessage`）和现场（`PanelSite`）按剧本演，做法和首页的 `LandingRoom.vue` 一样。
@@ -85,11 +87,13 @@ covers:
 
 fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key:` 后面留空就跟一列 `- key: value`；条目下再缩进一层写 `key: value`。`- ` 条目里的 `key: value` 一律是这条自己的字段。看不懂的行会让构建带着「哪一页、第几行」失败，不会静默出一个空组件。规则的 `text` 里 `{key}` 会换成那个参数的值；`out` 和 `derived` 是表达式，同时给构建和浏览器用，所以组件在脚本加载前后不会说两套话。
 
+`source: <构建源名>` 让 fence 只说明它要展示什么（`expect:` 列出套件名、`limits:` 列出常数名），数据由 `build.mjs` 从代码里读出来交给它：名字对不上、常数被改名或删掉、某条路径一条 pattern 都命不中，构建就失败。比这更硬的一层是**对照真代码跑**：CI 那页的选择结果会和真跑一遍 `.github/scripts/required-ci.py` 的 `select()` 逐套件比，记忆那页的截断与拒收会和 `files.py` 的 `fit_index` / `limit_breach` 逐样本比（页面里的 `src/ci-scope.mjs`、`src/memory-limits.mjs` 是这两段代码的移植），差一条就让构建失败。
+
 `data: <数据集名>` 的步骤不带数字，它按位置绑到构建时算出来的那份数据上：行数和步骤数必须一致，每一步还可以用 `check:` 断言落在的那一行包含某个词。加了、删了或调了顺序的行会让构建失败，而不是把数字悄悄安到别的步骤上。[上下文那页](/dev/context)的时间线就是这么来的：`docs/site/gen/prompt.py` 真跑一遍 `build_system_prompt`，把输出按行首的 `## ` 切成块，字符数按一个固定比例折成 token（页面上写明是估算）。
 
 几条必须守住的：
 
-- 组件展开成 HTML 时，**每一句话都已经在 HTML 里**。JavaScript 关掉时页面是完整的：步骤全在，模拟器显示默认位置的那份结论。`src/demo-dom.mjs` 只切换状态，不生成文字。
+- 组件展开成 HTML 时，**每一句话都已经在 HTML 里**。JavaScript 关掉时页面是完整的：步骤全在，模拟器显示默认位置的那份结论。`src/demo-dom.mjs` 只切换状态，不生成文字。三个仪表盘（`demo-ci` / `demo-flow` / `demo-memory`）也一样：HTML 里先是一份读得完的清单（套件表加各场景结果、每条路线的分步、四句上限），脚本上来才把它换成能点、能拖的那一版。
 - `prefers-reduced-motion` 下不自动播放，一次全给；窄屏（700px 以下）收起控制器和进度柱，步骤直接铺开。
 - 键盘可用。控制器是原生 `button`、`input[type=range]` 和 `select`，焦点在组件里时左右箭头走一步。
 - 跟随现有的 CSS 变量，所以深浅色自动跟着走。
@@ -118,11 +122,13 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [任务 → 分支 → PR → 验收合并](/dev/delivery) | 一条活从开卡到合进主干 | `demo-steps` | 这一页「从任务到验收卡」那六步，采纳那一步是闸门 |
 | [模型调用流程](/dev/llm) | 准入对每个请求回答的三件事 | `demo-sim` | 这一页的准入 JSON 和两条路 |
 | [模型调用流程](/dev/llm) | 一次请求经过哪几站，被拦在哪 | `demo-steps` + `embed: llm` | 这一页各节；画面是剧本 `scenes/llm.json` |
+| [CI 设计](/dev/ci) | 改到哪些路径就跑哪些套件，谁被跳过 | `demo-ci` | `.github/scripts/required-ci-paths.json`，加 `required-ci.yml` 里的套件→工作流；结果和真跑一遍 `required-ci.py` 对过 |
+| [预览与项目网站](/dev/preview) | 凭证、cookie、房间访问权三步怎么换，谁在哪一步被挡 | `demo-flow` | `backend/app/api/preview_host.py` 与 `domain/site/hosting.py` 里的 TTL、cookie 属性和每个请求的检查 |
+| [部署拓扑](/dev/topology) | 滚动发版时正在跑的轮怎么交接，常驻那层为什么不断 | `demo-flow` | `backend/app/core/ownership.py`、`main.py` 的交接顺序、`handover_timeout_s` |
+| [记忆](/dev/memory#limits) | 三个上限分别在哪一步拦住什么 | `demo-memory` | `domain/memory/files.py` 的常数，`gen/memory_limits.py` 读出来，和 `fit_index` / `limit_breach` 对过 |
 | [记忆](/dev/memory) | 一轮里记忆怎么流转 | `demo-steps` + `embed: memory` | 这一页各节；画面是剧本 `scenes/memory.json` |
 | [设备与机器接入](/dev/machines) | 一台机器怎么接进来、出错时怎么办 | `demo-steps` + `embed: machines` | 这一页各节；画面是剧本 `scenes/machines.json` |
 | [计费流程](/dev/billing) | 两道刹车各在什么时候拦 | `demo-sim` | 这一页 1 额度 = 1 万 token 的折算 |
-
-[记忆](/dev/memory)那页还差一个：拖动索引行数看 200 行 / 25KB 的截断与警告。
 
 ## 首页与截图 {#home}
 

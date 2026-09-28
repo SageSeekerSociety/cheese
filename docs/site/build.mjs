@@ -15,8 +15,10 @@ import * as esbuild from 'esbuild'
 import { marked } from 'marked'
 import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS, WHO } from './src/structure.mjs'
 import { esc, docHref, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
-import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed } from './src/demos.mjs'
+import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed, registerSource, ciSelections } from './src/demos.mjs'
 import { homePage } from './src/home.mjs'
+import { selectSuites } from './src/ci-scope.mjs'
+import { fitIndex, limitBreach, indexTextOf } from './src/memory-limits.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '../..')
@@ -289,12 +291,110 @@ ${p.constants.map((c) => {
 
 // developer pages, generated from the code they describe
 const genCache = {}
-const gen = (script) => (genCache[script] ??= JSON.parse(execFileSync('python3', [path.join(HERE, 'gen', script)], { encoding: 'utf8', maxBuffer: 16 << 20 })))
+const gen = (script, input) => (genCache[script] ??= JSON.parse(execFileSync('python3', [path.join(HERE, 'gen', script)], { encoding: 'utf8', maxBuffer: 64 << 20, input })))
 // The blocks of the system prompt, in the order build_system_prompt adds them.
 // The context page's timeline is bound to this: the numbers it shows are the
 // character counts of the text that function really produced.
 registerDataset('prompt-blocks', gen('prompt.py').blocks.map((b) => ({ title: b.title, chars: b.chars })))
 const mdCell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n+/g, ' ')
+
+// ---------- what the interactive demos show ----------
+// A demo fence declares what it draws; the numbers behind it are read here, out
+// of the code the page is about. Two runners below check the browser's copy of
+// a rule against the real one and fail the build on any difference — a page
+// that drifts from the code it describes breaks the site instead of quietly
+// teaching the old rule.
+const CI_PATHS = '.github/scripts/required-ci-paths.json'
+const CI_WORKFLOW = '.github/workflows/required-ci.yml'
+
+// suite -> the reusable workflow that runs it, read off the job gated on
+// `needs.scope.outputs.<suite>`, plus that workflow's own name for the page.
+function ciSource() {
+  const patterns = JSON.parse(fs.readFileSync(path.join(REPO, CI_PATHS), 'utf8'))
+  const yml = fs.readFileSync(path.join(REPO, CI_WORKFLOW), 'utf8')
+  const marks = [...yml.matchAll(/^ {2}([a-z0-9_]+):$/gm)]
+  const jobs = new Map(marks.map((m, i) => [m[1], yml.slice(m.index, marks[i + 1]?.index ?? yml.length)]))
+  const declared = [...(jobs.get('scope') || '').matchAll(/^ {6}([a-z0-9_]+): \$\{\{ steps\.scope\.outputs\.\1 \}\}$/gm)].map((m) => m[1])
+  const runs = {}
+  for (const [job, body] of jobs) {
+    const gate = /^ {4}if: needs\.scope\.outputs\.([a-z0-9_]+) == 'true'$/m.exec(body)
+    const uses = /^ {4}uses: \.\/\.github\/workflows\/([\w.-]+)$/m.exec(body)
+    if (gate && uses) runs[gate[1]] = uses[1]
+  }
+  const suites = Object.entries(patterns).map(([key, pats]) => {
+    if (!declared.includes(key)) fail(`${CI_WORKFLOW}: the scope job has no «${key}» output, but ${CI_PATHS} calls it a suite`)
+    if (!runs[key]) fail(`${CI_WORKFLOW}: no job runs when the scope selects «${key}» — the demo would have no workflow to name`)
+    const name = ((/^name:\s*(.+)$/m.exec(fs.readFileSync(path.join(REPO, '.github/workflows', runs[key]), 'utf8')) || [])[1] || runs[key]).replace(/^['"]|['"]$/g, '')
+    return { key, patterns: pats, workflow: `.github/workflows/${runs[key]}`, desc: name }
+  })
+  for (const key of Object.keys(runs)) if (!(key in patterns)) fail(`${CI_WORKFLOW}: the «${key}» job has no entry in ${CI_PATHS}`)
+  return { origin: CI_PATHS, suites }
+}
+
+// Paths run through both the JavaScript port (src/ci-scope.mjs) and the real
+// `.github/scripts/required-ci.py`: the gate itself, a doc, a suite's own
+// workflow, a glob that stops at one level, a path in no list at all.
+const CI_SAMPLES = [
+  ['docs/manual/dev/ci.md'],
+  ['README.md'],
+  ['backend/app/main.py'],
+  ['frontend/src/views/Room.vue'],
+  ['deploy/deploy-docker.sh'],
+  ['cli/cheese'],
+  ['scripts/remote_execution/seed.py'],
+  ['backend/app/domain/agent/executor_transport.py'],
+  ['.pre-commit-config.yaml'],
+  ['.github/workflows/deploy.yml'],
+  ['backend/tests/fixtures/wire/x.json'],
+  ['docs/manual/dev/ci.md', 'backend/app/main.py'],
+  ['.github/scripts/required-ci.py'],
+  ['.github/scripts/test_required_ci.py'],
+  ['.github/workflows/required-ci.yml'],
+  ['backend/deploy/not-a-path'],
+]
+
+const ci = ciSource()
+registerSource('ci-scope', ci)
+const CI_PATTERNS = Object.fromEntries(ci.suites.map((s) => [s.key, s.patterns]))
+
+// Every one of these path sets is answered twice — by src/ci-scope.mjs in the
+// browser and by the real `.github/scripts/required-ci.py` here — and any
+// difference stops the build. This is the only guarantee that the demo a reader
+// clicks through picks the same suites the merge gate would.
+function checkCi(pathSets) {
+  const real = JSON.parse(execFileSync('python3', [path.join(HERE, 'gen', 'required_ci.py')], { encoding: 'utf8', maxBuffer: 64 << 20, input: JSON.stringify(pathSets) }))
+  pathSets.forEach((paths, i) => {
+    const mine = selectSuites(paths, CI_PATTERNS)
+    const got = real[i] || {}
+    for (const key of new Set([...Object.keys(mine), ...Object.keys(got)])) {
+      const what = `[${paths.join(', ') || '（空）'}]`
+      if (!(key in mine)) fail(`CI scope: for ${what} required-ci.py selects «${key}», which ${CI_PATHS} does not list — the page would not know that suite`)
+      if (mine[key].run !== got[key]) fail(`CI scope: for ${what} the page says «${key}» is ${mine[key].run ? 'selected' : 'not selected'}, required-ci.py says ${got[key] ? 'selected' : 'not selected'} — src/ci-scope.mjs must match select()`)
+    }
+  })
+}
+checkCi(CI_SAMPLES)
+
+// The memory limits, straight out of `backend/app/domain/memory/files.py`.
+const memory = gen('memory_limits.py')
+registerSource('memory-limits', {
+  origin: 'backend/app/domain/memory/files.py',
+  constants: memory.constants,
+  linePrefix: memory.linePrefix,
+})
+{
+  const limits = { ...memory.constants, linePrefix: memory.linePrefix }
+  for (const c of memory.indexCases) {
+    const mine = fitIndex(limits, indexTextOf(limits, c.lines, c.lineBytes))
+    for (const key of ['keptLines', 'keptBytes', 'truncated', 'oldLines', 'oldBytes']) {
+      if (mine[key] !== c[key]) fail(`Memory limits: an index of ${c.lines} lines × ${c.lineBytes} bytes — the page says ${key}=${mine[key]}, fit_index() says ${c[key]} (src/memory-limits.mjs)`)
+    }
+  }
+  const say = (what, mine, real) => { if (!!mine !== real) fail(`Memory limits: ${what} — the page says ${mine ? 'refused' : 'accepted'}, limit_breach() says ${real ? 'refused' : 'accepted'} (src/memory-limits.mjs)`) }
+  const indexName = memory.constants.INDEX_NAME || 'MEMORY.md'
+  for (const c of memory.lineCases) say(`an index line of ${c.chars} characters, ${c.alreadyInIndex ? 'already in the index' : 'new'},`, limitBreach(limits, { name: indexName, newLineChars: c.chars, alreadyInIndex: c.alreadyInIndex }), c.rejected)
+  for (const c of memory.bodyCases) say(`a body of ${c.chars} characters,`, limitBreach(limits, { name: 'a-thing.md', bodyChars: c.chars, indexName }), c.rejected)
+}
 function referencePages() {
   const out = {}
   const cli = gen('cli.py')
@@ -432,6 +532,11 @@ const devNav = DEV.map(([group, slugs]) => [group, slugs.map((slug) => {
   return page
 })])
 for (const slug of Object.keys(devFiles)) if (!pages[`dev/${slug}`]) fail(`docs/manual/dev/${slug}.md is not placed in src/structure.mjs`)
+
+// Every page is parsed by now, so the path sets the CI demo's own fences offer
+// a reader go through the real script too — the demo cannot drift from the gate
+// even by way of the data written into a page.
+checkCi(ciSelections())
 
 // ---------- diagrams (archify) ----------
 // diagrams/<slug>.<type>.json is the source; `npm run diagrams` renders <slug>.html.
