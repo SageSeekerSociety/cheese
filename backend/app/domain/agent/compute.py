@@ -97,6 +97,7 @@ class ComputeProvider(Protocol):
         images: list[dict] | None = None,
         *,
         expected_work_id: uuid.UUID | None = None,
+        agent_handle: str | None = None,
     ) -> bool:
         """Inject text into the session already running on this topic, if this
         backend has one. False = "nothing live here" — the caller queues instead.
@@ -106,6 +107,10 @@ class ComputeProvider(Protocol):
         rather than duck-typed so a backend that cannot take an injection has to
         say so, which is what stops the pool from silently skipping one that
         could.
+
+        ``agent_handle`` names the seat the words belong to; a room seats one
+        session per agent, and without it only an unambiguous room may be
+        delivered to.
         """
         ...
 
@@ -140,15 +145,25 @@ class ComputePool:
         self._default = (default_name, deployment_harness())
         if self._default not in self._backends:
             raise ValueError(f"default backend {self._default!r} not registered")
-        self._owners: dict[uuid.UUID, AgentRuntime] = {}
+        # 归属按座位记（topic, agent_handle）：一间房坐着几个 agent，各有各的
+        # 会话和它的属主 runtime。按房间记的那个版本里，B 的轮次一 activate 就
+        # 把 A 的会话 interrupt+close 掉——多 agent 同房间在这一层就不可能。
+        self._owners: dict[tuple[uuid.UUID, str], AgentRuntime] = {}
 
     async def activate(self, session: "SessionRef", runtime: AgentRuntime) -> None:
-        """Park other harnesses before giving the room to the selected one."""
+        """Park other harnesses before giving this seat to the selected one.
+
+        Only THIS seat's previous tenants are parked: another agent's session
+        in the same room is a different conversation on the same machine, and
+        taking a seat must not evict the neighbour.
+        """
         for previous in self._runtimes():
-            if previous is not runtime and previous.holds(session.topic_id):
+            if previous is not runtime and previous.holds(
+                session.topic_id, session.agent_handle
+            ):
                 await previous.interrupt(session)
                 await previous.close(session)
-        self._owners[session.topic_id] = runtime
+        self._owners[(session.topic_id, session.agent_handle)] = runtime
 
     def default(self) -> ComputeProvider:
         return self._backends[self._default]
@@ -174,23 +189,32 @@ class ComputePool:
         images: list[dict] | None = None,
         *,
         expected_work_id: uuid.UUID | None = None,
+        agent_handle: str | None = None,
     ) -> bool:
-        """Deliver to the owner selected when starting or recovering the work."""
-        owner = self._owners.get(topic_id)
-        candidates = (
-            [owner]
-            if owner
-            else [runtime for runtime in self._runtimes() if runtime.holds(topic_id)]
-        )
-        if len(candidates) > 1:
-            raise RuntimeError("Room has multiple live harnesses without a work owner")
+        """Deliver to the owner selected when starting or recovering the work.
+
+        ``agent_handle`` aims the delivery at one seat. Without it the seats
+        of the room are tried one by one and the runtime answers only for the
+        seat whose open work matches — a seat that is not working, or whose
+        work is not the expected one, says False and the next seat is asked.
+        """
+        candidates = [
+            runtime
+            for (topic, agent), runtime in self._owners.items()
+            if topic == topic_id and (agent_handle is None or agent == agent_handle)
+        ] or [
+            runtime
+            for runtime in self._runtimes()
+            if runtime.holds(topic_id, agent_handle)
+        ]
         for backend in candidates:
-            kwargs = {}
-            if images:
-                kwargs["images"] = images
-            if expected_work_id is not None:
-                kwargs["expected_work_id"] = expected_work_id
-            delivered = await backend.deliver(topic_id, text, **kwargs)
+            delivered = await backend.deliver(
+                topic_id,
+                text,
+                images=images,
+                expected_work_id=expected_work_id,
+                agent_handle=agent_handle,
+            )
             if delivered:
                 return True
         return False
@@ -204,12 +228,15 @@ class ComputePool:
         Only a backend that can lose them answers; everything else says no, so
         the caller needs no test for which machine a room is on.
         """
+        seat = (topic_id, agent_handle or "")
         for backend in self._backends.values():
             recover = getattr(backend, "recover_native_tools", None)
             if recover is None:
                 continue
             runtime = runtime_for(backend)
-            if self._owners.get(topic_id) is runtime or runtime.holds(topic_id):
+            if self._owners.get(seat) is runtime or runtime.holds(
+                topic_id, agent_handle
+            ):
                 return await recover(topic_id, agent_handle)
         return False
 
@@ -258,12 +285,9 @@ class ComputePool:
         harness whose sessions keep no memory files. Both are ordinary answers,
         not failures.
         """
-        owner = self._owners.get(topic_id)
-        candidates = (
-            [owner]
-            if owner
-            else [runtime for runtime in self._runtimes() if runtime.holds(topic_id)]
-        )
+        candidates = [
+            runtime for (topic, _), runtime in self._owners.items() if topic == topic_id
+        ] or [runtime for runtime in self._runtimes() if runtime.holds(topic_id)]
         for runtime in candidates:
             answer = await runtime.memory(topic_id, request)
             if answer is not None:
@@ -274,20 +298,29 @@ class ComputePool:
         """The runtime whose live session in this room takes controls, if any."""
         from app.domain.agent.harness import SessionControls
 
-        owner = self._owners.get(topic_id)
-        candidates = [owner] if owner else self._runtimes()
+        candidates = [
+            runtime for (topic, _), runtime in self._owners.items() if topic == topic_id
+        ] or self._runtimes()
         for runtime in candidates:
             if isinstance(runtime, SessionControls) and runtime.holds(topic_id):
                 return runtime
         return None
 
-    def work_in_flight(self, topic_id: uuid.UUID) -> uuid.UUID | None:
-        """The work a live session in this room is running, if one is."""
-        for runtime in self._runtimes():
-            work = getattr(runtime, "work", {}).get(topic_id)
-            if work is not None:
-                return work
-        return None
+    def work_in_flight(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> uuid.UUID | None:
+        """The work a live session in this room is running, if one is.
+
+        With the agent named the answer is that seat's; without it the room
+        answers only when a single seat is working — two working teammates
+        have two answers and picking one would be a guess.
+        """
+        works = {
+            work
+            for runtime in self._runtimes()
+            if (work := runtime.work_in_flight(topic_id, agent_handle)) is not None
+        }
+        return works.pop() if len(works) == 1 else None
 
     def holds(self, topic_id: uuid.UUID) -> bool:
         """Does any backend still hold a live session for this topic?"""
@@ -301,7 +334,7 @@ class ComputePool:
         for runtime in self._runtimes():
             sessions = await runtime.recover(device_id)
             for session in sessions:
-                self._owners[session.topic_id] = runtime
+                self._owners[(session.topic_id, session.agent_handle)] = runtime
             recovered.extend(sessions)
         return recovered
 

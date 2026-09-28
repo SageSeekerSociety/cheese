@@ -439,15 +439,15 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
 
     replayed = []
     sessions = [
-        type("S", (), {"topic_id": uuid.uuid4()})(),
-        type("S", (), {"topic_id": uuid.uuid4()})(),
+        type("S", (), {"topic_id": uuid.uuid4(), "agent_handle": "cheese"})(),
+        type("S", (), {"topic_id": uuid.uuid4(), "agent_handle": "cheese"})(),
     ]
 
     class Compute:
         async def recover_sessions(self, device_id):
             return sessions
 
-        def work_in_flight(self, topic_id):
+        def work_in_flight(self, topic_id, agent_handle=None):
             return None
 
         async def replay(self, session, known_texts):

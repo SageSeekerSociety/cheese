@@ -31,7 +31,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from app.domain.agent.harness import (
-    ActivityConsumer,
     Backlog,
     EventConsumer,
     HarnessEvent,
@@ -54,7 +53,17 @@ from app.domain.agent.service import (
 OUTPUT, PROGRESS = "output", "progress"
 TOOL_STARTED, TOOL_RETURNED = "tool_started:", "tool_returned:"
 
-Pulse = Callable[[uuid.UUID, frozenset[str]], None]
+#: 一间房里的一个座位：(topic, agent_handle)。一间房坐着几个 agent，就有几
+#: 条会话；runtime 那侧的会话、订阅、在跑的活和它的钟都按座位键住，不再按房间
+#: —— ``SessionRef`` 的文档一直说 (topic, agent_handle, harness) 才命名一条会话，
+#: 这里兑现它。
+Seat = tuple[uuid.UUID, str]
+
+Pulse = Callable[[Seat, frozenset[str]], None]
+
+#: 一轮开/关的回报，按座位而不是按房间：同一间房里另一个 agent 的一轮开开关关，
+#: 不碰这个座位的「在跑的活」和它的钟。
+SeatActivity = Callable[[uuid.UUID, Seat, uuid.UUID, bool], Awaitable[None]]
 
 #: How long a landed record stays in the mirror, and how often that is looked
 #: at. The mirror is not only the queue a room is fed from: it is the raw record
@@ -96,7 +105,7 @@ class Subscription[B: Backlog]:
         path: Path,
         call: Callable[[str, dict], Awaitable[dict]],
         consume: EventConsumer,
-        activity: ActivityConsumer,
+        activity: SeatActivity,
         *,
         receipts: ReceiptConsumer | None = None,
         pulse: Pulse | None = None,
@@ -113,6 +122,11 @@ class Subscription[B: Backlog]:
         self.disk = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix=f"mirror {session.topic_id}"
         )
+
+    @property
+    def seat(self) -> Seat:
+        """This subscription's own seat: (topic, agent) of the session it reads."""
+        return (self.session.topic_id, self.session.agent_handle)
 
     async def on_disk[T](self, work: Callable[..., T], /, *args, **kwargs) -> T:
         """Run ``work`` on the mirror's thread, after whatever was asked before."""
@@ -177,13 +191,13 @@ class Subscription[B: Backlog]:
                     if self.starts_turn(record, reader):
                         await self.activity(
                             self.session.project_id,
-                            self.session.topic_id,
+                            self.seat,
                             work_id,
                             True,
                         )
                     if self.pulse is not None:
                         self.pulse(
-                            self.session.topic_id,
+                            self.seat,
                             frozenset(self.marks(record, list(events))),
                         )
                     text = self.receipt(record)
@@ -207,7 +221,7 @@ class Subscription[B: Backlog]:
                     if self.ends_turn(record, reader):
                         await self.activity(
                             self.session.project_id,
-                            self.session.topic_id,
+                            self.seat,
                             work_id,
                             False,
                         )

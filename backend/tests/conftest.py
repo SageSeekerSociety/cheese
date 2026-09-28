@@ -193,7 +193,9 @@ def retire_topic(client: TestClient, topic_id) -> None:
     async def retire() -> None:
         for channel in list(_CHANNELS):
             channel.sessions.pop(topic, None)
-            await channel.runtime._detach(topic)
+            for seat in list(channel.runtime.subscriptions):
+                if seat[0] == topic:
+                    await channel.runtime._detach(seat)
 
     client.portal.call(retire)
 
@@ -469,7 +471,7 @@ class StubChannel:
 
         def play() -> None:
             session.observe(dict(record))
-            self.runtime._wake(topic_id)
+            self.runtime._wake((topic_id, session.session_agent))
 
         if threading.get_ident() == session.thread:
             play()
@@ -655,9 +657,9 @@ async def drain_hooks(screen: StubChannel, topic_id: uuid.UUID) -> None:
     to end: it asks whether what the session already said has landed, not
     whether the session is done saying things.
     """
-    subscription = screen.runtime.subscriptions.get(topic_id)
-    if subscription is not None:
-        await subscription.drain()
+    for seat, subscription in screen.runtime.subscriptions.items():
+        if seat[0] == topic_id:
+            await subscription.drain()
 
 
 async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
@@ -670,9 +672,9 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
     """
     for _ in range(tries):
         for runtime in service._compute._runtimes():
-            subscription = getattr(runtime, "subscriptions", {}).get(topic_id)
-            if subscription is not None:
-                await subscription.drain()
+            for seat, subscription in getattr(runtime, "subscriptions", {}).items():
+                if seat[0] == topic_id:
+                    await subscription.drain()
         if not any(t == topic_id for t, _ in service._hook_work) and not any(
             str(topic_id) == pending for pending in _topics_with_pending_records()
         ):
@@ -686,8 +688,9 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
 async def close_topic_subscriptions(service, topic_id) -> None:
     """Explicitly stop the runtimes' readers at a test boundary."""
     for runtime in service._compute._runtimes():
-        if topic_id in getattr(runtime, "subscriptions", {}):
-            await runtime._detach(topic_id)
+        for seat in list(getattr(runtime, "subscriptions", {})):
+            if seat[0] == topic_id:
+                await runtime._detach(seat)
 
 
 async def finish_turn(service, topic_id) -> None:

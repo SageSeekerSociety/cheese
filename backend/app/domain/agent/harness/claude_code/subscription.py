@@ -11,7 +11,6 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from app.domain.agent.harness import (
-    ActivityConsumer,
     EventConsumer,
     HarnessEvent,
     ReceiptConsumer,
@@ -41,7 +40,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         path: Path,
         call: Callable[[str, dict], Awaitable[dict]],
         consume: EventConsumer,
-        activity: ActivityConsumer,
+        activity: subscription.SeatActivity,
         *,
         session_id: str | None,
         announce: Callable[[], Awaitable[None]],

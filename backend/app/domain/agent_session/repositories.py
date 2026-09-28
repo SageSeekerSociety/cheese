@@ -159,25 +159,26 @@ class AgentSessionRepository:
         return list(result.scalars())
 
     async def placed_everywhere(self) -> list[tuple[AgentSession, uuid.UUID]]:
-        """Each room's last-placed session with its project, for a cold start.
+        """Every placed session with its project, for a cold start.
 
         A channel re-adopts what outlived the backend, and to do that it needs
         the project each session belongs to; the room is the only thing that
         knows, so the join happens once here rather than one query per row.
 
-        One row per room, and the same rule ``placed_in_room`` and
-        ``harness_in_room`` already answer by: a room has one screen and it
-        belongs to whichever session last opened one. A room that switched
-        harness keeps both session rows — nothing clears the location of the
-        one that stopped — and only the last-placed one comes back here. The
-        harness that row names is handed on as it stands; recognising it is the
+        One row per (room, agent, harness) seat, not per room: a room seats as
+        many agents as it has, and each one's session is re-adopted on its own
+        seat. The「一间房一块屏」rule (which session owns the pane) is answered
+        by ``placed_in_room``/``harness_in_room`` ordering, not by dropping the
+        other seats here — a room that seats two teammates must get both back
+        after a restart. A room that switched harness keeps both session rows —
+        nothing clears the location of the one that stopped — and the harness
+        each row names is handed on as it stands; recognising it is the
         runtime's, not the channel's, since one channel carries several of them.
         """
         result = await self._session.execute(
             select(AgentSession, Topic.project_id)
             .join(Topic, Topic.id == AgentSession.topic_id)
             .where(AgentSession.runtime_location.is_not(None))
-            .distinct(AgentSession.topic_id)
             .order_by(
                 AgentSession.topic_id,
                 AgentSession.placed_at.desc(),
