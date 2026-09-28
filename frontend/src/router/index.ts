@@ -63,13 +63,6 @@ const routes: RouteRecordRaw[] = [
   // —— 通配吃掉的直接后果是这几页打不开，而「打不开」看起来像后端 404。
   ...FeedbackRoutes,
   {
-    // 文档里的动态演示（views/demo）。不套应用外壳、不要登录：文档站把它嵌进 iframe。
-    name: 'demo',
-    path: '/demo/:scene',
-    component: () => import('@/views/demo/DemoView.vue'),
-    meta: { title: '演示', publicLanding: true },
-  },
-  {
     name: 'preview-open',
     path: '/previews/:topicId',
     component: () => import('@/views/PreviewOpenView.vue'),

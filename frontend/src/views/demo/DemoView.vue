@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// /demo/<名字>：文档里的动态演示。两种用法：
+// /demo/<名字>：文档里的动态演示（自己一个入口，见 src/demo-main.ts）。两种用法：
 //
 //   - 直接打开：自己带播放条，放完一步接下一步。
 //   - 文档嵌进 iframe（?embed=1）：没有播放条，听文档那边的步骤条。文档发
@@ -8,15 +8,27 @@
 import type { Scene } from './demoScene'
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
 
 import DemoRoom from './DemoRoom.vue'
 import { frameAt, stepDuration } from './demoScene'
 import { SCENES } from './scenes'
 
-const route = useRoute()
-const scene = computed<Scene | null>(() => SCENES[String(route.params.scene)] ?? null)
-const embedded = route.query.embed === '1'
+// 地址是 /demo/<名字>；只写 /demo（或者话题预览打开的根路径）就放第一个。
+// 入口（demo-main.ts）把地址当 props 传进来，而不是这里自己读 location：测试里
+// 换得了 props，换不了 happy-dom 的 location。
+const props = withDefaults(defineProps<{ path?: string; search?: string }>(), { path: '/', search: '' })
+const params = new URLSearchParams(props.search)
+const embedded = params.get('embed') === '1'
+const fromPath = /^\/demo\/([\w-]+)/.exec(props.path)?.[1]
+const name = ref(fromPath ?? params.get('scene') ?? Object.keys(SCENES)[0])
+const scene = computed<Scene | null>(() => SCENES[name.value] ?? null)
+
+// 直接打开时顶上能换一个演示看，地址跟着换，刷新还在同一个。
+function pick(next: string): void {
+  name.value = next
+  history.replaceState(null, '', `/demo/${next}`)
+  go(0, true)
+}
 const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
 const step = ref(0)
@@ -112,7 +124,18 @@ onBeforeUnmount(() => {
   <div class="demo-page" :class="{ 'demo-page-embed': embedded }">
     <template v-if="scene && frame">
       <header v-if="!embedded" class="demo-head">
-        <h1 class="demo-title">{{ scene.title }}</h1>
+        <nav class="demo-pick">
+          <button
+            v-for="(s, key) in SCENES"
+            :key="key"
+            type="button"
+            class="demo-pick-item"
+            :class="{ 'demo-pick-on': key === name }"
+            @click="pick(key)"
+          >
+            {{ s.title }}
+          </button>
+        </nav>
         <div class="demo-ctl">
           <v-btn icon="mdi-chevron-left" size="small" variant="text" aria-label="上一步" @click="go(step - 1, false)" />
           <v-btn
@@ -177,12 +200,27 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
-.demo-title {
-  margin: 0;
-  font-size: 18px;
+.demo-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.demo-pick-item {
+  padding: 4px 12px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--muted);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.demo-pick-on {
   font-weight: 600;
-  line-height: var(--lh-18);
   color: var(--ink);
+  background: var(--fill);
 }
 
 .demo-ctl {
