@@ -283,9 +283,10 @@ function warmDestination() {
 }
 
 // 件数角标：和看板、待办页那颗「待处理」标记同一个暖色。外圈一道 rail 底色，
-// 让它压在格子角上时边缘是清楚的。字是固定的深墨色而不是白：白字压在这个
-// 暖色上只有 2.4:1，深墨在两套主题的 --warn 上都在 7:1 以上（和芝士图标选中时
-// 的墨色同一个理由）。
+// 让它压在格子角上时边缘是清楚的。字要一块**不跟着主题翻白**的深色：白字压在
+// 这个暖色上只有 2.4:1，而 --ink 在深色主题下正好是白的。--inverse-surface 就是
+// 这块深墨（浅色 #23242A / 深色 #3A3D44），压在 --warn 上量出来 6.2:1 与 5.4:1，
+// 两套主题都过 4.5:1。
 .app-rail-item__badge {
   position: absolute;
   top: -4px;
@@ -296,7 +297,7 @@ function warmDestination() {
   border-radius: var(--radius-pill);
   background: var(--warn);
   box-shadow: 0 0 0 2px var(--canvas);
-  color: #23242a;
+  color: var(--inverse-surface);
   font-size: 11px;
   font-weight: 600;
   line-height: 18px;
