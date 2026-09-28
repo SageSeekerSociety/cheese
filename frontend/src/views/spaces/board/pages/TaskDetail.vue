@@ -22,7 +22,7 @@ import { computed, provide } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { BOARD_TASK_ROUTE_NAMES } from '../routeNames'
-import { space } from '../store'
+import { space, tasks } from '../store'
 
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/shellRouteNames'
@@ -33,6 +33,18 @@ provide(TASK_ROUTE_NAMES, BOARD_TASK_ROUTE_NAMES)
 const route = useRoute()
 const spaceId = computed(() => route.params.spaceId as string)
 const homeTo = computed(() => ({ name: 'SpaceBoardHome', params: { spaceId: spaceId.value } }))
+
+/** 出处那枚标记（「PDF · 第 3 页」）。
+ *
+ *  它读的是**外壳那份 store**，不是老详情页自己取的那道题：出处不是接口的一列，
+ *  是简介开头的一段文本，只有 `store.ts` 的映射（`splitOrigin`）把它摘出来。老详情
+ *  页不显示简介，所以正文里那串字在这儿本来也不会出现 —— 这枚标是唯一的呈现，
+ *  不是补一个重复的。
+ *
+ *  代价：那道题不在外壳这一页列表里（`loadBoard` 只取 100 道）时认不出来，标不显示。
+ *  拿它去另打一次详情接口不值 —— 为了一枚标把详情页多拖一轮。 */
+const taskId = computed(() => route.params.taskId as string)
+const origin = computed(() => tasks.value.find((t) => t.id === taskId.value)?.origin)
 </script>
 
 <template>
@@ -40,7 +52,16 @@ const homeTo = computed(() => ({ name: 'SpaceBoardHome', params: { spaceId: spac
     <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" :to="homeTo">
       {{ space?.name ?? '题目板' }}
     </v-btn>
+    <v-chip v-if="origin" size="x-small" label variant="tonal" color="info" class="td__origin">
+      {{ origin }}
+    </v-chip>
   </PageHeader>
 
   <TaskDetailView />
 </template>
+
+<style scoped>
+.td__origin {
+  margin-left: 8px;
+}
+</style>
