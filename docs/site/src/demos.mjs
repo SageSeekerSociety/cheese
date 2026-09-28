@@ -23,9 +23,9 @@
 // build, loudly, with the line number.
 
 import { esc, docHref } from './render.mjs'
-import { num, show, simulate, fill, evaluate } from './demo-model.mjs'
+import { num, show, simulate, fill, evaluate, sumContext } from './demo-model.mjs'
 
-export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim']
+export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim', 'demo-context']
 
 // A fence that says `data: prompt-blocks` does not carry its own numbers: the
 // step is bound, by position, to a row of a dataset the build computed from the
@@ -141,8 +141,83 @@ export function renderDemo(lang, body, where) {
   const spec = parseFence(body, where)
   if (!spec.title) missing(where, 'a demo needs a «title»')
   if (lang === 'demo-sim') return renderSim(spec, where)
+  if (lang === 'demo-context') return renderContext(spec, where)
   return renderSteps(spec, where, lang === 'demo-timeline')
 }
+
+// ---------- demo-context ----------
+// One context window filling up over a turn, after Claude Code's «Explore the
+// context window»: a bar that is the whole window, a list of what went in and
+// when, and for each item who can see it. The startup rows are bound to the
+// prompt-blocks dataset like demo-timeline; `before:` rows come ahead of them
+// (the harness's own prompt), `then:` rows after. A row with `cat: sub` lives
+// in a subagent's own window and does not count; a row with `cat: compact`
+// keeps only the categories listed in its `keeps:` and adds `value` as the
+// summary.
+export const CONTEXT_CATS = {
+  harness: { label: '骨架自带', c: '--faint' },
+  rules: { label: '平台规则', c: '--info' },
+  state: { label: '项目状态', c: '--sec' },
+  memory: { label: '记忆', c: '--accent-3' },
+  you: { label: '人的消息', c: '--ok' },
+  work: { label: '芝士干活', c: '--warn' },
+  say: { label: '芝士发言', c: '--accent' },
+  sub: { label: '分身的窗口', c: '--sec' },
+  compact: { label: '压缩摘要', c: '--accent' },
+}
+const SEEN = {
+  chat: { label: '对话里看得见', short: '对话' },
+  site: { label: '现场里看得见', short: '现场' },
+  none: { label: '房间里看不见', short: '看不见' },
+}
+
+export function contextRows(spec, where) {
+  const before = (spec.before || []).map((s) => ({ ...s, cat: s.cat || 'harness' }))
+  const bound_ = bound(spec, where).map((s) => ({ ...s, cat: s.cat || 'rules' }))
+  const rows = [...before, ...bound_].map((s) => ({ ...s, seen: s.seen || 'none', value: s.value ?? 0 }))
+  for (const r of rows) {
+    if (!CONTEXT_CATS[r.cat]) missing(where, `row «${r.label}»: no category «${r.cat}» — use one of ${Object.keys(CONTEXT_CATS).join(', ')}`)
+    if (!SEEN[r.seen]) missing(where, `row «${r.label}»: «seen» is chat, site or none`)
+    if (typeof r.value !== 'number') missing(where, `row «${r.label}»: «value» must be a number of tokens`)
+  }
+  return rows
+}
+
+function renderContext(spec, where) {
+  const rows = contextRows(spec, where)
+  const window_ = spec.window || 200000
+  const legend = Object.entries(CONTEXT_CATS).filter(([k]) => rows.some((r) => r.cat === k))
+    .map(([k, v]) => `<span class="cx-key" data-cx-cat="${k}"><i style="--c:var(${v.c})"></i>${esc(v.label)}</span>`).join('')
+  let phase = null
+  const li = rows.map((r, i) => {
+    const head = r.phase && r.phase !== phase ? `<li class="cx-phase" data-cx-phase="${i}">${esc(r.phase)}</li>` : ''
+    if (r.phase) phase = r.phase
+    const cat = CONTEXT_CATS[r.cat]
+    const seen = SEEN[r.seen]
+    const tokens = r.cat === 'compact' ? '' : `${r.cat === 'sub' ? '' : '+'}${num(r.value)}`
+    return `${head}<li class="cx-row cx-${r.cat}" data-cx-row="${i}" data-cx-cat="${r.cat}" tabindex="0">
+      <i class="cx-dot" style="--c:var(${cat.c})"></i>
+      <div class="cx-main"><div class="cx-line"><b>${esc(r.label)}</b><span class="cx-seen cx-seen-${r.seen}" title="${esc(seen.label)}">${esc(seen.short)}</span><span class="cx-tok" data-cx-tok>${tokens}</span></div>
+      <p class="cx-desc">${esc(r.desc || '')}${r.link ? ` <a class="link" href="${esc(docHref(r.link))}">看这一节</a>` : ''}</p></div>
+    </li>`
+  }).join('\n')
+  const data = rows.map((r) => ({ cat: r.cat, v: r.value, keeps: r.keeps ? String(r.keeps).split(',').map((x) => x.trim()) : null }))
+  return `<figure class="demo demo-ctx" data-demo="context" data-window="${window_}" aria-label="${esc(spec.title)}">
+  ${head(spec.title, spec.note)}
+  <div class="dm-ctl cx-ctl" role="group" aria-label="演示控制">
+    <button class="dm-btn dm-play" data-cx-play aria-pressed="false"><span data-cx-play-label>播放</span></button>
+    <input class="dm-range" type="range" data-cx-range min="0" max="${rows.length}" step="1" value="${rows.length}" aria-label="进度">
+    <span class="dm-count cx-used"><b data-cx-used>${num(sumContext(data))}</b> / ${num(window_)} tokens</span>
+  </div>
+  <div class="cx-bar" data-cx-bar></div>
+  <div class="cx-legend">${legend}<span class="cx-note">「对话 / 现场 / 看不见」说的是房间里谁看得见这一条</span></div>
+  <ol class="cx-list" data-cx-list>
+${li}
+  </ol>
+  <script type="application/json" data-cx-data>${JSON.stringify(data).replace(/</g, '\\u003c')}</script>
+</figure>`
+}
+
 
 function head(title, note) {
   return `<div class="dm-head"><b class="dm-title">${esc(title)}</b>${note ? `<span class="dm-note">${esc(note)}</span>` : ''}</div>`
@@ -297,6 +372,11 @@ export function demoText(lang, body, { where }) {
     const rules = state.rules.length ? `\n\n判定规则（默认可调参数下命中的是第 ${state.hit + 1} 条）：\n${state.rules.map((r, i) => `${i + 1}. ${r.label ? `${r.label}：` : ''}${r.text}${r.hit ? '（默认命中）' : ''}`).join('\n')}` : ''
     const out = state.out.length ? `\n\n默认位置的结果：\n${state.out.map((o) => `- ${o.label}：${o.text}${o.unit ? ` ${o.unit}` : ''}`).join('\n')}` : ''
     return `**${spec.title}**（网页上是一个可以拖动参数的模拟器；这里是它的文字版：${vars.join('、')}。）${rules}${out}`
+  }
+  if (lang === 'demo-context') {
+    const rows = contextRows(spec, where)
+    const list = rows.map((r) => `- ${r.label}（${CONTEXT_CATS[r.cat].label}，${SEEN[r.seen].label}${r.cat === 'compact' ? '' : `，约 ${num(r.value)} tokens`}）：${r.desc || ''}`).join('\n')
+    return `**${spec.title}**（网页上是一根随时间填满的上下文窗口，这里是它的文字版，窗口 ${num(spec.window || 200000)} tokens。）\n\n${list}`
   }
   const steps = bound(spec, where)
   const list = steps.map((s) => {

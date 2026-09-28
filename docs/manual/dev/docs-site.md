@@ -30,6 +30,7 @@ covers:
 流程和机制光靠文字读不快，所以页面里可以放两个组件。它们都写成页面里的一段 fence，由 `build.mjs` 在构建时展开成静态 HTML：
 
 - **`demo-steps` / `demo-timeline`**：把过程一步步放出来，带上一页 / 下一步 / 播放 / 拖动进度条。每一步可以带一个数字（字符数、token 数），下面有一根按数字画的进度柱；某一步可以设成闸门，播到那里停下等人点继续。`demo-timeline` 只是多一层「这是一条时间线」的样式，数据形状完全一样。
+- **`demo-context`**：一个上下文窗口怎么被填满，仿 Claude Code 文档的「Explore the context window」。顶上一根横条就是整个窗口，下面按时间列出装进来的每一样，标明它属于哪一类、房间里谁看得见（对话 / 现场 / 看不见）。`before:` 排在数据集前面，`then:` 排在后面；`cat: sub` 的行在分身自己的窗口里、不占横条，`cat: compact` 那一行只留下 `keeps:` 列出的几类，再加上摘要。
 - **`demo-sim`**：拖参数看结论。参数是滑块、开关或下拉；判定规则和读数写在 fence 里，由 `src/demo-model.mjs` 里那个很小的表达式语言求值（数字、`&&` `||` `!`、比较和四则，没有 `eval`）。要跟着代码里的真实数字动的模拟，用 `data:` 绑定构建时算出来的数据集。
 
 ### 用产品里的真组件演 {#demos-embed}
@@ -111,14 +112,17 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 
 | 页面 | 演示什么 | 组件 | 数据从哪来 |
 |---|---|---|---|
-| [提示词注入与上下文管理](/dev/context) | 一轮的上下文按什么顺序装进窗口，各占多少 | `demo-timeline` | `gen/prompt.py` 真跑 `build_system_prompt`，按行首的 `## ` 切块，字符数 ÷ 1.6 折成 token |
+| [提示词注入与上下文管理](/dev/context) | 一轮里上下文窗口怎么被填满，各占多少、谁看得见 | `demo-context` | `gen/prompt.py` 真跑 `build_system_prompt`，按行首的 `## ` 切块，字符数 ÷ 1.6 折成 token |
 | [一条消息怎么变成芝士的一轮](/dev/turn) | 一轮的七步 | `demo-steps` + `embed: turn` | 这一页自己那七节（每步链回本节）；画面是剧本 `scenes/turn.json` |
 | [一条消息怎么变成芝士的一轮](/dev/turn#seats) | 两个队友在同一个话题里并行 | `demo-steps` + `embed: seats` | 「同一话题里的几个 AI 队友」那六节；画面是剧本 `scenes/seats.json` |
 | [任务 → 分支 → PR → 验收合并](/dev/delivery) | 一条活从开卡到合进主干 | `demo-steps` | 这一页「从任务到验收卡」那六步，采纳那一步是闸门 |
 | [模型调用流程](/dev/llm) | 准入对每个请求回答的三件事 | `demo-sim` | 这一页的准入 JSON 和两条路 |
+| [模型调用流程](/dev/llm) | 一次请求经过哪几站，被拦在哪 | `demo-steps` + `embed: llm` | 这一页各节；画面是剧本 `scenes/llm.json` |
+| [记忆](/dev/memory) | 一轮里记忆怎么流转 | `demo-steps` + `embed: memory` | 这一页各节；画面是剧本 `scenes/memory.json` |
+| [设备与机器接入](/dev/machines) | 一台机器怎么接进来、出错时怎么办 | `demo-steps` + `embed: machines` | 这一页各节；画面是剧本 `scenes/machines.json` |
 | [计费流程](/dev/billing) | 两道刹车各在什么时候拦 | `demo-sim` | 这一页 1 额度 = 1 万 token 的折算 |
 
-[记忆](/dev/memory)那页还要两个：一轮之内记忆的七步流转，和拖动索引行数看 200 行 / 25KB 的截断与警告。等它手上那次改动落地再加。
+[记忆](/dev/memory)那页还差一个：拖动索引行数看 200 行 / 25KB 的截断与警告。
 
 ## 首页与截图 {#home}
 

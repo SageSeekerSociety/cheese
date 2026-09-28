@@ -20,12 +20,16 @@ covers:
 
 `build_system_prompt`（`backend/app/domain/agent/harness/prompt.py`）每一轮都从数据库重新组装，按下面的顺序：
 
-```demo-timeline
-title: 芝士的一轮上下文
+```demo-context
+title: 芝士一轮里的上下文窗口
 data: prompt-blocks
-unit: tokens
-estimate: true
-note: 每一步的数字是估算：那块提示词的字符数 ÷ 1.6。柱子只数启动阶段装进去的这些块
+note: 平台那十几块的数字是 build_system_prompt 真跑出来的（字符数 ÷ 1.6）；骨架自带和干活那几条是代表数。悬停一行看它占横条的哪一段
+window: 200000
+before:
+  - label: 骨架自己的系统提示词和工具定义
+    value: 12000
+    phase: 开口之前
+    desc: Claude Code 自己的那一份，加上内置工具和平台工具的定义。代表数，随骨架版本变。平台的那十几块接在它后面（--append-system-prompt-file）。
 steps:
   - label: 底稿
     check: 底稿
@@ -58,24 +62,31 @@ steps:
     check: 阶段的操作说明
     desc: 当前阶段的操作说明，由 stages.py 按话题所处阶段静态拼进来，模型没有「要不要读」的选择权。
   - label: 话题列表
+    cat: state
     check: 项目话题
     desc: 项目里活跃的话题，用来交叉引用（标题前加 @ 会渲染成可点的链接）。
   - label: 产物清单
+    cat: state
     check: 产物清单
     desc: 这个项目的产物清单，交出去的东西一项一行。
   - label: 成员名册
+    cat: state
     check: 成员
     desc: 项目成员和怎么点名。
   - label: 项目总览
+    cat: state
     check: 项目总览
     desc: 项目总览的实况文档，限 6000 字（OVERVIEW_DOC_CHAR_BUDGET），超了压缩并提示用 cheese_doc_get 读全文。
   - label: 实况文档
+    cat: state
     check: 实况文档
     desc: 当前话题的实况文档，同样限 6000 字（TOPIC_DOC_CHAR_BUDGET）。
   - label: 记忆
+    cat: memory
     check: 记忆（memory）
     desc: 记忆这一块：跑的是会把记忆文件对账回平台的骨架（keeps_memory），或者这一轮带了记忆时才在。记忆怎么用、超限了读得到什么，写在这里。
   - label: 记忆索引
+    cat: memory
     check: 你的记忆
     desc: L1 索引，team/MEMORY.md 加本轮说话那个人的 private/<handle>/MEMORY.md，正文在会话目录的文件里，模型自己去读。
   - label: 运行环境
@@ -83,13 +94,79 @@ steps:
     desc: 会话开场时的运行环境（机器、限制），标明是平台元信息而不是用户输入。
 then:
   - label: 人的消息
-    desc: 到这一步，装配好的提示词和待读的消息一起交给模型。每一轮的用户消息里只放待读的消息，每条前面带说话人标签（prompt_line）。
-    gate: true
-    go: 人发了消息
-  - label: 工具调用与结果
-    desc: 模型读文件、跑命令、调平台工具，结果一条条回到上下文里。外部内容以工具结果的形式出现，而不是混进用户消息。
+    phase: 人说话
+    cat: you
+    seen: chat
+    value: 60
+    desc: 用户消息里只放待读的消息，每条前面带说话人：[wangchangxin]: 正文（prompt_line）。回复某条时附上被回复的原文。
+    link: /dev/context#turn-prompt
+  - label: 平台的话
+    cat: you
+    seen: none
+    value: 90
+    desc: 平台自己发的指令以「【平台】以下是平台自动发出的指令」开头、作者记为 system，不冒充任何人。沉默提醒也是这样进来的。
+  - label: 读文件
+    phase: 芝士干活
+    cat: work
+    seen: site
+    value: 2400
+    desc: 工具结果一条条回到上下文里。外部内容（文件、网页、别人写的文档）只以工具结果的身份出现，不混进人的消息。
+    link: /dev/context#injection
+  - label: 搜索
+    cat: work
+    seen: site
+    value: 600
+    desc: 现场里看得见这一步，对话里看不见。
+  - label: 改文件
+    cat: work
+    seen: site
+    value: 400
+    desc: Edit 的参数和结果都进窗口。
+  - label: 跑测试
+    cat: work
+    seen: site
+    value: 1200
+    desc: 命令输出整段进窗口，是干活时最占地方的一类。
+  - label: 中途有人插话
+    cat: you
+    seen: chat
+    value: 45
+    desc: 这位队友已经在跑一轮，新消息并进正在跑的会话（merge_into_running_turn），下一步之前读到，格式和开场时一样。
+    link: /dev/turn#serialize
+  - label: chat_send 发言
+    cat: say
+    seen: chat
+    value: 300
+    desc: 普通输出不进房间。要让人看见，必须调 chat_send，这是窗口里唯一一类出现在对话里的芝士的话。
+    link: /dev/turn#publish
+  - label: 派一个分身
+    phase: 分身有自己的窗口
+    cat: work
+    seen: site
+    value: 80
+    desc: 大块的阅读交给分身，读进来的东西留在分身的窗口里，不占这一格。
+  - label: 分身读了三十个日志文件
+    cat: sub
+    seen: site
+    value: 38000
+    desc: 这些 token 在分身自己的窗口里，横条上不长。
+  - label: 分身读配置
+    cat: sub
+    seen: site
+    value: 6000
+    desc: 同上。
+  - label: 分身带回的总结
+    cat: work
+    seen: site
+    value: 420
+    desc: 回到主窗口的只有这一段。
   - label: 压缩
-    desc: 窗口快满时，骨架自己把前面的对话压成摘要腾出位置。这一步是骨架（这里就是 Claude Code）的事，平台不参与。
+    phase: 窗口快满时
+    cat: compact
+    seen: none
+    value: 2600
+    keeps: harness, rules, state, memory
+    desc: 骨架（这里是 Claude Code）自己把之前的对话压成一段摘要，平台不参与。系统提示词在会话启动时读一次，压缩后还在；所以实况文档和记忆索引是启动那一刻的版本，下一次冷启动才换成新的。
 ```
 
 上面这份是真实的装配顺序：每一步就是 `build_system_prompt` 输出里的一块，按行首的 `## ` 切开，数字也是从同一份输出算出来的，只折算了单位。每一块的原文、出现条件和预算见[系统提示词参考](/dev/ref-prompt)。

@@ -1272,6 +1272,39 @@ html.js .demo.dm-live .dm-seg:hover{opacity:1}
 /* The stage: the demo played on the product's own components (frontend /demo/<name>). */
 .dm-stage{height:clamp(420px,56vw,560px);margin:0 0 14px;border-radius:14px;overflow:hidden;background:var(--panel)}
 .dm-stage iframe{display:block;width:100%;height:100%;border:0}
+/* demo-context: the whole window as one bar, and what went into it. */
+.cx-bar{display:flex;height:22px;margin:4px 0 8px;border-radius:7px;background:var(--panel-2);overflow:hidden;box-shadow:inset 0 0 0 1px var(--line)}
+.cx-seg{display:block;height:100%;border-right:1px solid var(--surface);opacity:.75;transition:width .45s var(--out),opacity .15s}
+.cx-seg.cx-hot{opacity:1;filter:saturate(1.3)}
+.cx-seg.cx-harness{background:var(--faint)}.cx-seg.cx-rules{background:var(--info)}.cx-seg.cx-state{background:var(--sec)}.cx-seg.cx-memory{background:var(--accent-3)}
+.cx-seg.cx-you{background:var(--ok)}.cx-seg.cx-work{background:var(--warn)}.cx-seg.cx-say{background:var(--accent)}.cx-seg.cx-compact{background:repeating-linear-gradient(45deg,var(--accent),var(--accent) 4px,var(--accent-2) 4px,var(--accent-2) 8px)}
+.cx-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-bottom:12px;font-size:12px;color:var(--muted)}
+.cx-key{display:inline-flex;align-items:center;gap:5px;cursor:default}
+.cx-key i{width:8px;height:8px;border-radius:2px;background:var(--c)}
+.cx-note{margin-left:auto;color:var(--faint)}
+.cx-used b{color:var(--ink);font-weight:600}
+.cx-list{display:flex;flex-direction:column;gap:1px;margin:0;padding:0;list-style:none;max-height:420px;overflow:auto;scroll-behavior:smooth}
+.cx-phase{margin:12px 0 4px;padding-left:22px;font-size:11.5px;font-weight:700;letter-spacing:.04em;color:var(--faint)}
+.cx-phase:first-child{margin-top:0}
+.cx-row{display:flex;gap:10px;padding:6px 8px;border-radius:9px;transition:background .2s}
+.cx-row:hover,.cx-row.cx-hot,.cx-row:focus{background:var(--panel);outline:none}
+.cx-dot{flex:none;width:8px;height:8px;margin-top:7px;border-radius:50%;background:var(--c)}
+.cx-main{flex:1;min-width:0}
+.cx-line{display:flex;align-items:baseline;gap:8px}
+.cx-line b{font-size:13.5px;font-weight:600;color:var(--ink)}
+.cx-tok{margin-left:auto;font:12px var(--mono);color:var(--muted);white-space:nowrap}
+.cx-seen{flex:none;padding:0 6px;border-radius:6px;font-size:11px;line-height:18px}
+.cx-seen-chat{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+.cx-seen-site{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.cx-seen-none{background:var(--panel-2);color:var(--faint)}
+.cx-desc{margin:2px 0 0;font-size:12.5px;line-height:1.6;color:var(--muted)}
+.cx-sub{margin-left:22px;border-left:2px solid color-mix(in srgb,var(--sec) 45%,transparent);border-radius:0 9px 9px 0}
+.cx-sub .cx-tok{color:var(--faint)}
+.cx-compact{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+html.js .demo-ctx.dm-live .cx-hidden{display:none}
+html.js .demo-ctx.dm-live .cx-row.cx-now{animation:rise .45s var(--out)}
+html.js .demo-ctx.dm-live .cx-row:not(.cx-now):not(:hover) .cx-desc{display:none}
+@media (prefers-reduced-motion:reduce){.cx-seg{transition:none}html.js .demo-ctx.dm-live .cx-row.cx-now{animation:none}}
 .dm-list{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none}
 .dm-step{display:flex;gap:10px;padding:8px 10px;border-radius:11px;transition:background .3s,opacity .3s}
 html.js .demo.dm-live .dm-step{opacity:.28}
