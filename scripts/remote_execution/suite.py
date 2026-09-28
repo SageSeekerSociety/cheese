@@ -69,7 +69,7 @@ def main():
     receipt_file = folder / "results.json"
     receipts = json.loads(receipt_file.read_text()) if receipt_file.exists() else {}
 
-    def case(name, command, *, cwd=ROOT, env=None):
+    def case(name, command, *, cwd=ROOT, env=None, timeout=300):
         if receipts.get(name, {}).get("passed"):
             return
         attempt = len(list(folder.glob(name + ".attempt-*.log"))) + 1
@@ -87,7 +87,7 @@ def main():
                 env=env,
                 stdout=output,
                 stderr=subprocess.STDOUT,
-                timeout=300,
+                timeout=timeout,
             )
         receipts[name] = {
             "passed": process.returncode == 0,
@@ -140,6 +140,21 @@ def main():
             "--output",
             str(folder / f"{name}-{attempt}"),
         ],
+    )
+    name = "skills"
+    attempt = len(list(folder.glob(name + ".attempt-*.log"))) + 1
+    case(
+        name,
+        [
+            sys.executable,
+            str(ROOT / "scripts/remote_execution/skills.py"),
+            "--claude",
+            options.claude,
+            "--output",
+            str(folder / f"{name}-{attempt}"),
+        ],
+        # Two sessions of about thirty turns each, some a pause apart.
+        timeout=900,
     )
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
