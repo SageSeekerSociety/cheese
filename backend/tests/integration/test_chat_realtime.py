@@ -1065,7 +1065,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
         return True
 
     monkeypatch.setattr(svc._compute, "deliver", slow_deliver)
-    svc._active_turn_ids[topic_id] = uuid.uuid4()
+    svc._active_turn_ids[topic_id] = {uuid.uuid4()}
     merge = asyncio.create_task(
         svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
     )
@@ -1120,7 +1120,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     monkeypatch.setattr(svc._compute, "deliver", fake_deliver)
     turn_id = uuid.uuid4()
-    svc._active_turn_ids[topic_id] = turn_id
+    svc._active_turn_ids[topic_id] = {turn_id}
 
     assert (
         await svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
