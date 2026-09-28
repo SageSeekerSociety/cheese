@@ -159,6 +159,7 @@ function onLocate(message: string) {
 const chatEvents = {
   'turn-done': handleTurnDone,
   working: handleWorking,
+  'working-agents': (names: string[]) => (workingAgents.value = names),
   'agent-control': (state: AgentControlState) => (agentControl.value = state),
   'site-block': (block: Block) => panelRef.value?.siteBlock?.(block),
   'site-turns': (turns: Record<string, number>) => (siteTurns.value = turns),
@@ -175,6 +176,9 @@ const chatEvents = {
 
 // 芝士 是不是正在这个话题里干活 —— 话题头上的状态词和工作面板的 tab 都读它。
 const working = ref(false)
+// 正在干活的队友们的名字（一间房几个座位并行在跑就几个），对话栏按轮次帧报
+// 上来；空名单 = 帧没带座位（老后端），工作面板退回 agentName 的单数说法。
+const workingAgents = ref<string[]>([])
 // 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
 const agentControl = ref<AgentControlState | null>(null)
 // 正在跑的轮次各自从什么时候开始，对话栏从 socket 上算出来，现场的状态条读它。
@@ -349,6 +353,7 @@ void openPlace()
         <WorkPanel
           ref="panelRef"
           :agent-name="store.agentName"
+          :working-agents="workingAgents"
           class="col col-doc"
           :style="{ flex: '1 1 0', minWidth: 0 }"
           :topic="selectedTopic"

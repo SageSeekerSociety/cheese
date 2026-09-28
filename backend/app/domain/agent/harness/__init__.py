@@ -73,8 +73,22 @@ EventConsumer = Callable[
     Awaitable[None],
 ]
 
+
 # (project, topic, work id, active) — a session started or stopped working.
-ActivityConsumer = Callable[[uuid.UUID, uuid.UUID, uuid.UUID, bool], Awaitable[None]]
+# ``agent_handle`` names the seat that started or stopped: several seats work
+# side by side in one room, and the consumer's 「谁在干活」 frame is a guess
+# without it. Keyword-only so existing doubles keep ``active`` at args[-1].
+class ActivityConsumer(Protocol):
+    def __call__(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        work_id: uuid.UUID,
+        active: bool,
+        *,
+        agent_handle: str | None = None,
+    ) -> Awaitable[None]: ...
+
 
 # (topic, prompt text) — a session CONSUMED an input we injected. Late by
 # design: the write is delivery, this is the receipt.

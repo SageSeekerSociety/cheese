@@ -2555,17 +2555,24 @@ class ChatService:
         topic_id: uuid.UUID,
         work_id: uuid.UUID,
         active: bool,
+        *,
+        agent_handle: str | None = None,
     ) -> None:
         """Project subscription activity onto the existing realtime protocol."""
         del project_id
         from app.domain.agent.runtime import get_broker
 
+        # 「谁在干活」要和块署名答同一个名字：块落在 acting seat 上，所以
+        # 帧也带它。轮次开账前（自起的轮次，账还没开）状态不在，退回运行时
+        # 给的会话座位。
+        state = self._hook_work.get((topic_id, work_id))
+        agent = (state.acting_agent if state is not None else None) or agent_handle
         if active:
             self._mark_turn_active(topic_id, work_id)
-            frame = {"type": "turn_started", "turn_id": str(work_id)}
+            frame = {"type": "turn_started", "turn_id": str(work_id), "agent": agent}
         else:
             self._mark_turn_inactive(topic_id, work_id)
-            frame = {"type": "turn_finished", "turn_id": str(work_id)}
+            frame = {"type": "turn_finished", "turn_id": str(work_id), "agent": agent}
         await get_broker().publish(str(topic_id), frame)
         if not active:
             # The agent has said what it understood: the moment to check the

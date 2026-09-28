@@ -163,6 +163,7 @@ class InProcessBroker:
         self._buffer: dict[str, list[Frame]] = {}
         self._active: dict[str, set[str]] = {}
         self._active_since: dict[tuple[str, str], float] = {}
+        self._active_agents: dict[tuple[str, str], str] = {}
         self._last_activity_at: dict[str, float] = {}
         self._replay_size = replay_size
         self._message_subscriber: Callable[..., None] | None = None
@@ -177,6 +178,7 @@ class InProcessBroker:
         self._buffer.clear()
         self._active.clear()
         self._active_since.clear()
+        self._active_agents.clear()
         self._last_activity_at.clear()
 
     async def receive_message(
@@ -311,6 +313,8 @@ class InProcessBroker:
             if turn_id:
                 self._active.setdefault(channel, set()).add(turn_id)
                 self._active_since.setdefault((channel, turn_id), time.time())
+                if agent := frame.get("agent"):
+                    self._active_agents[(channel, turn_id)] = str(agent)
 
         if self._active.get(channel):
             self._last_activity_at[channel] = time.monotonic()
@@ -330,6 +334,7 @@ class InProcessBroker:
             if active is not None:
                 active.discard(turn_id)
                 self._active_since.pop((channel, turn_id), None)
+                self._active_agents.pop((channel, turn_id), None)
                 if not active:
                     self._active.pop(channel, None)
                     self._buffer.pop(channel, None)
@@ -355,6 +360,16 @@ class InProcessBroker:
             turn_id: self._active_since[(channel, turn_id)]
             for turn_id in self.active_turn_ids(channel)
             if (channel, turn_id) in self._active_since
+        }
+
+    def active_turn_agents(self, channel: str) -> dict[str, str]:
+        """Which seat each live turn on this channel is running on — so a
+        client that joins halfway through names every worker, not just the
+        one that happened to start after it arrived."""
+        return {
+            turn_id: self._active_agents[(channel, turn_id)]
+            for turn_id in self.active_turn_ids(channel)
+            if (channel, turn_id) in self._active_agents
         }
 
     def active_channels(self) -> set[str]:

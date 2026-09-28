@@ -347,12 +347,15 @@ export type WsServerFrame =
   // block; the client must not double-show it as a floating banner.
   | { type: 'error'; message: string; persisted?: boolean; code?: string; client_id?: string }
   | { type: 'done' }
-  | { type: 'turn_started'; turn_id: string }
-  | { type: 'turn_finished'; turn_id: string }
+  // `agent`：这一轮在哪个座位上跑（块署名的那个 handle）。一间房几个队友并行
+  // 在干时，「谁在干活」靠它区分；老后端没有这个字段，界面退回默认名字。
+  | { type: 'turn_started'; turn_id: string; agent?: string }
+  | { type: 'turn_finished'; turn_id: string; agent?: string }
   // Sent once on WS connect when a turn is already mid-stream on this topic,
   // so a re-entering client rebuilds the 正在思考 indicator.
   // `since`: when each of them started, epoch seconds.
-  | { type: 'turn_active'; turn_ids?: string[]; since?: Record<string, number> }
+  // `agents`：每个进行中的轮次在哪个座位上，键是 turn_id。
+  | { type: 'turn_active'; turn_ids?: string[]; since?: Record<string, number>; agents?: Record<string, string> }
   // A just-persisted block turned out to be a provider-error echo — remove it.
   | { type: 'retract_block'; block_id: string }
   // An existing block's data changed in place (e.g. an option question got
