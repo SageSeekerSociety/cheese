@@ -111,7 +111,12 @@ class CodexChannel:
                 "binary": "~/.cheese/tools/codex/node_modules/.bin/codex",
                 "opening": {**asdict(opening), "env": None, "agent_handle": agent},
                 "execution_target": target,
-                "mcp_servers": target["mcp_servers"],
+                # The machine's stdio servers and the project's remote ones;
+                # `RemoteClient.call` sends each to where it is served.
+                "mcp_servers": [
+                    *target["mcp_servers"],
+                    *(target.get("remote_mcp") or {}).get("servers", []),
+                ],
             }
             if target["kind"] == "private":
                 result = await self.channel._hub.exec(

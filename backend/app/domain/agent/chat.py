@@ -66,6 +66,7 @@ from app.domain.agent.platform_failures import (
 from app.domain.agent.platform_notices import (
     EVENT_API_RETRY,
     EVENT_DEVICE_WAITING,
+    EVENT_MCP_NOT_CONNECTED,
     EVENT_MEMORY_CHANGED,
     EVENT_PROMPT_REPLAYED,
     EVENT_TURN_FAILED,
@@ -915,6 +916,7 @@ def _session_opening_lines(
     progress: list[dict] | None = None,
     sandbox: tuple[int, int] | None = None,
     earlier_messages: int = 0,
+    unconnected_mcp: tuple[str, ...] = (),
 ) -> list[str]:
     """盲飞防护: what a session cannot find out for itself, at the moment it opens.
 
@@ -951,6 +953,15 @@ def _session_opening_lines(
             "有问题，也不是工具链坏了。"
         )
     lines.extend(_progress_lines(progress or []))
+    # A server the project's .mcp.json names but nobody has connected yet: the
+    # agent would otherwise go looking for tools that are not there, or take
+    # their absence for a broken setup. What to do about it is a person's.
+    if unconnected_mcp:
+        lines.append(
+            "- 项目的远程 MCP 服务器 "
+            + "、".join(unconnected_mcp)
+            + " 需要项目成员在项目设置里连接，这个会话里用不了它们的工具。"
+        )
     # A session that opens in a room with history has read none of it, while
     # the people in the room assume it has. The living docs, memory and the
     # checklist reach it as conclusions; what was said is only in the chat.
@@ -2050,6 +2061,60 @@ class ChatService:
         turn id is the difference between a handover and an assumption.
         """
         return turn_id in self._active_turn_ids.get(topic_id, ())
+
+    async def _unconnected_mcp(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> tuple[str, ...]:
+        """The project's remote MCP servers this room's session cannot use yet,
+        each said once in the room: 「<name> 需要在项目设置里连接」."""
+        from sqlalchemy import select
+
+        from app.domain.agent.runtime import get_broker
+        from app.domain.remote_mcp import service as remote_mcp
+
+        try:
+            async with self._sessions() as session:
+                unusable = (
+                    await remote_mcp.session_servers(session, project_id)
+                ).unusable
+                said = set(
+                    await session.scalars(
+                        select(Block.meta["server"].as_string()).where(
+                            Block.topic_id == topic_id,
+                            Block.kind == BlockKind.event,
+                            Block.meta["event_type"].as_string()
+                            == EVENT_MCP_NOT_CONNECTED,
+                        )
+                    )
+                )
+                landed = []
+                for name in unusable:
+                    if name in said:
+                        continue
+                    block = await announce(
+                        session,
+                        place_id=topic_id,
+                        content=f"{name} 需要在项目设置里连接",
+                        meta={
+                            **notice(
+                                EVENT_MCP_NOT_CONNECTED,
+                                severity=SEVERITY_WARN,
+                                who=WHO_HUMAN,
+                            ),
+                            "server": name,
+                        },
+                    )
+                    if block is not None:
+                        landed.append(_block_payload(BlockOut.model_validate(block)))
+                await session.commit()
+        except Exception:  # noqa: BLE001 — a notice must never fail a turn
+            logger.exception("remote MCP check failed for topic %s", topic_id)
+            return ()
+        for payload in landed:
+            await get_broker().publish(
+                str(topic_id), {"type": "event_block", "block": payload}
+            )
+        return unusable
 
     async def post_system_event(
         self,
@@ -5805,6 +5870,11 @@ class ChatService:
             overview_doc=overview_doc_text,
             teaching=teaching,
             session_opening=_session_opening_lines(
+                unconnected_mcp=(
+                    await self._unconnected_mcp(project_id, topic_id)
+                    if needs_place
+                    else ()
+                ),
                 progress=prior_progress,
                 sandbox=_sandbox_limits(provider),
                 # A resumed conversation already holds what was said in it.

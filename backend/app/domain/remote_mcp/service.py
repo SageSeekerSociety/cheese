@@ -147,6 +147,17 @@ async def session_servers(db: AsyncSession, project_id: uuid.UUID) -> SessionSer
     return SessionServers(tuple(usable), tuple(unusable))
 
 
+async def session_target(
+    db: AsyncSession, project_id: uuid.UUID, topic_id: uuid.UUID
+) -> dict | None:
+    """What a session's execution target carries about remote servers: where
+    it posts their calls, and which it may call. None when there are none."""
+    usable = (await session_servers(db, project_id)).usable
+    if not usable:
+        return None
+    return {"path": f"/topics/{topic_id}/mcp", "servers": list(usable)}
+
+
 def _when(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 

@@ -543,10 +543,58 @@ class RemoteClient:
             self.transport.connection = None
         return changed_lease
 
+    def remote_mcp(self, method, params):
+        """A call to one of the project's remote MCP servers. The platform holds
+        its credential and makes the call (`POST /topics/{id}/mcp/{name}`), so
+        it goes there and not to the room's machine, and no machine is taken
+        for it. The answer has the shape the executor's would."""
+        remote = self.config["remote_mcp"]
+        server = params["server"]
+        if method == "invoke":
+            request = {
+                "method": "tools/call",
+                "params": {"name": params["tool"], "arguments": params.get("args", {})},
+            }
+        else:
+            request = {"method": params["method"], "params": params.get("params") or {}}
+        response = self.platform_request(
+            {"method": "POST", "path": f"{remote['path']}/{server}", "body": request}
+        )
+        answer = json.loads(response["value"]["stdout"])["data"]
+        if method == "invoke":
+            return (
+                {"error": answer["error"]}
+                if "error" in answer
+                else {"value": answer["result"]}
+            )
+        if "error" in answer:
+            raise RuntimeError(answer["error"])
+        return answer["result"]
+
+    def remote_servers(self):
+        return list((self.config.get("remote_mcp") or {}).get("servers", []))
+
     def call(self, method, params=None, *, abandoned=None):
         """``abandoned`` says the caller has given the operation up (a cancelled
         tool call). Acquiring hands can wait for a machine being prepared; an
         operation given up during that wait is never started."""
+        asked = params or {}
+        if asked.get("server") in self.remote_servers():
+            if method in {"invoke", "mcp"}:
+                return self.remote_mcp(method, asked)
+            if method == "project_tools":
+                if asked.get("name"):
+                    return self.remote_mcp(
+                        "invoke",
+                        {
+                            "server": asked["server"],
+                            "tool": asked["name"],
+                            "args": asked.get("arguments", {}),
+                        },
+                    )
+                return self.remote_mcp(
+                    "mcp", {"server": asked["server"], "method": "tools/list"}
+                )
         operation_deadline = time.monotonic() + 660
         if self.config.get("lease_path") and (
             method in {"invoke", "mcp", "project_tools"}
@@ -618,7 +666,12 @@ class RemoteClient:
             params = params or {}
             server = params.get("server")
             if not server:
-                return {"servers": self.config.get("mcp_servers", [])}
+                return {
+                    "servers": [
+                        *self.config.get("mcp_servers", []),
+                        *self.remote_servers(),
+                    ]
+                }
             if server not in self.config.get("mcp_servers", []):
                 raise ValueError("Unknown project MCP server")
             tool = params.get("name")

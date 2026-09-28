@@ -395,7 +395,13 @@ def prepare(
             "args": [*helper[1:], "transport", str(target_path)],
         }
     }
-    for name in target.get("mcp_servers", []):
+    # The room machine's stdio servers and the project's remote ones take the
+    # same bridge; `RemoteClient.call` sends each to where it is served.
+    bridged = [
+        *target.get("mcp_servers", []),
+        *(target.get("remote_mcp") or {}).get("servers", []),
+    ]
+    for name in bridged:
         if name == "native":
             raise ValueError("MCP server name native is reserved for file operations")
         servers[name] = {
@@ -432,8 +438,7 @@ def prepare(
         for mode in ("guard", "context", "checkpoint", "transport")
     )
     local_commands.update(
-        shlex.join([*helper, "bridge", str(target_path), name])
-        for name in target.get("mcp_servers", [])
+        shlex.join([*helper, "bridge", str(target_path), name]) for name in bridged
     )
     # Match complete trusted commands; appended shell syntax takes the usual route.
     dispatch = (
@@ -1786,7 +1791,8 @@ def main():
 
         release(config)
     elif args.mode == "bridge":
-        if config.get("kind") == "device":
+        remote = (config.get("remote_mcp") or {}).get("servers", [])
+        if config.get("kind") == "device" or args.args[0] in remote:
             if __package__:
                 from .runtime import bridge
             else:
