@@ -3,13 +3,18 @@
 import uuid
 
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project
+from tests.integration.conftest import join_project_team, post_project
 
 
 def _make_project(client) -> str:
     r = post_project(client, json={"name": "P"})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
+    # (`_require_reviewer_in_room`)。这里的卡递给 alice，就让她像真实参与者一样进
+    # 项目 —— 要检验的是 status 快照带上卡与闸门输出，不是名册。
+    join_project_team(client, pid, "alice")
+    return pid
 
 
 def _make_topic(client, project_id: str) -> str:

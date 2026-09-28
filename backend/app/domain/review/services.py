@@ -8,7 +8,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
+from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.announce import announce
@@ -88,6 +89,11 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.review.github_pr import PullRequestStatus
 
 logger = logging.getLogger("cheesex.review")
+
+#: 「这个房间会放这个人进来吗」——由路由注入（`api/routes/accept.py` 拿
+#: `ActorResolver.topic_admits_handle`）。签名收 `topic` 而不是三个 id：注入方要的
+#: 是「哪个房间、哪个人」，而不是这一域怎么拆 id。
+ReviewerAdmission = Callable[[Topic, str], Awaitable[bool]]
 
 # 卡上那句话的措辞。状态码在 review/notes.py，这里只有文案——两者分开之后，改一
 # 句话不再改掉任何一处判断，所以这些常量存在的理由只剩「同一句话写在两处」。
@@ -537,6 +543,40 @@ class AcceptService:
             "或者在项目设置的「分支保护 → 任务默认 reviewer」里填一个。"
         )
 
+    async def _require_reviewer_in_room(
+        self, topic: Topic, handle: str, admits: ReviewerAdmission
+    ) -> None:
+        """一张卡只递给这道门会放进来的人。
+
+        递卡是「这次改动交给谁看」的一次指派，而采纳那张卡的门问的是同一句话
+        （`accept.py` 的 `_card_actor` → `resolver.authorize_topic`）。两个问题各答
+        各的，结果就是卡递得出去、却谁也采纳不了：`/reassign` 把请求体里的人直接
+        写进 `reviewer_handle`，点名一个不在这个话题里的人，就造出一张死卡 —— 卡面
+        看着一切正常，走到采纳那一步才 403。
+
+        判据不另造：`admits` 是路由注入的那道门自己（`ActorResolver
+        .topic_admits_handle`，与 `authorize_topic` 同一份规则、同一个读点），这里
+        判的是**目标人**而不是调用者。默认路由选出来的人一样要过这一关：项目的默认
+        验收人是一个设置，它记的是「谁验收」，不是「谁是成员」，而派活时按它写下的
+        `Task.reviewer_handle` 也照抄自同一个设置 —— 三条来源都从这里过。
+
+        不进这一域的理由：这道判据要问房间是不是私聊，而「谁在什么情况下问这个
+        布尔」在一个仓库里只该有一份声明（`tests/unit/test_is_private_read_points.py`
+        是那道棘轮）。在这里照抄一遍读法，就是同一件事的第二份声明。
+
+        挂的是同一只开关（`authz_enforce_topic_access`）：开关关掉时采纳那道门本来
+        就不问成员资格，此时按房间名册拦下递卡只会让一个配置里合法的人递不出去。
+        """
+        if not settings.authz_enforce_topic_access:
+            return
+        if await admits(topic, handle):
+            return
+        raise ForbiddenError(
+            f"审阅人 {handle} 不在这个话题里，递给他也没人能采纳这张卡。"
+            "先把他加进这个话题所在的项目，或者换一个审阅人"
+            "（`cheese_members` 查准确 handle）。"
+        )
+
     async def create_card(
         self,
         *,
@@ -551,6 +591,7 @@ class AcceptService:
         about: str | None = None,
         deliver: str | None = None,
         deliver_url: str | None = None,
+        admits_reviewer: ReviewerAdmission,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
         task = await TaskService(self._session).require_in_room(topic_id, task_id)
@@ -598,6 +639,7 @@ class AcceptService:
             reviewer_handle,
             from_work=[task],
         )
+        await self._require_reviewer_in_room(topic, reviewer_handle, admits_reviewer)
         # 这一版交出去的那一份，在它还存在的时候读下来 (#1085 结论五)。构建产物只
         # 活在这一轮的工作目录里，采纳时那个目录可能已经不在了 —— 建卡是唯一抓得
         # 住它的时刻。读在声明之前：路径写错这张卡递不上去，而一张递不上去的卡不该
@@ -1130,6 +1172,7 @@ class AcceptService:
         card_id: uuid.UUID,
         reviewer_handle: str | None = None,
         reason: str = "",
+        admits_reviewer: ReviewerAdmission,
     ) -> AcceptCard:
         """改验收人 (spec §4.4): anyone can re-route a pending accept card to a
         different reviewer — or, naming nobody, back to the project's default
@@ -1138,9 +1181,11 @@ class AcceptService:
         if card.status != AcceptStatus.pending:
             raise ValidationError("审阅已结束，无法改由他人审阅")
         topic = await self._topic_or_404(card.topic_id)
-        card.reviewer_handle = await self._reviewer_or_project_default(
+        reviewer = await self._reviewer_or_project_default(
             await self._projects.get(topic.project_id), reviewer_handle
         )
+        await self._require_reviewer_in_room(topic, reviewer, admits_reviewer)
+        card.reviewer_handle = reviewer
         if reason:
             card.routing_reason = reason
         await self._session.flush()

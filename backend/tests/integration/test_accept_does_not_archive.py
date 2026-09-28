@@ -13,7 +13,11 @@ from tests.delivery import (
     delivery_task,
     delivery_task_id,
 )
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
@@ -22,7 +26,13 @@ from tests.integration.test_accept_pr import app_world as app_world
 def _project(client) -> str:
     r = post_project(client, json={"name": "P", "owner_handle": "alice"})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    pid = r.json()["data"]["id"]
+    # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
+    # (`_require_reviewer_in_room`)。这些卡递给 alice 或 bob，就让他们像真实参与者
+    # 一样在项目里 —— 要检验的是交付/撤回那一整套规则本身，不是名册。
+    for handle in ("alice", "bob"):
+        join_project_team(client, pid, handle)
+    return pid
 
 
 def _topic(client, project_id: str) -> str:
