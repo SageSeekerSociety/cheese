@@ -238,6 +238,12 @@ _START_LOGS = {
         "RuntimeError: 工作电脑未连接；对话和平台工具仍可用。",
         "Claude Code 启动失败：这个房间的工作电脑没有连接",
     ),
+    "lease found the room's machine unbound": (
+        _LEASE + 'raise RuntimeError(result["unavailable"])\n'
+        "RuntimeError: 这个房间选的工作电脑已经解绑，需要重新选择工作电脑；"
+        "对话和平台工具仍可用。",
+        "Claude Code 启动失败：这个房间选的工作电脑已经解绑，需要重新选择",
+    ),
     "lease refused otherwise": (
         _LEASE + "executor_transport.PlatformHTTPError: Platform HTTP 403: "
         '{"message":"Device is not hosted"}',
