@@ -436,6 +436,12 @@ watch(
   ([phase, loaded]) => {
     if (settled.value || !phase) return
     if ((phase === 'reviewing' || phase === 'delivering') && !loaded) return
+    // 手机上房间永远开在对话：输入框就在那一格里，自动跳去现场等于把它藏起来。
+    // 现场那一格上的呼吸点照样说着「正在工作」。
+    if (props.withChat) {
+      settled.value = true
+      return
+    }
     const want = tabForPhase(phase)
     if (want === active.value) settled.value = true
     else setTab(want)
