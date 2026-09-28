@@ -272,14 +272,20 @@ async def room_machine_visibility(db, topic, project_settings) -> Visibility | N
 
 
 async def _agent_name(db, project, topic, handle: str) -> str:
-    """The name a room shows for the agent on ``handle``: its saved teammate's,
-    else the one the room falls back to (``topic_members``)."""
+    """The name a room shows for the agent whose session is keyed ``handle``:
+    its saved teammate's, else the one the room falls back to.
+
+    A session is keyed by its teammate's own handle, not by the seat it acts
+    under, so this asks the same lookup that turns a session back into its
+    author when it runs (``for_handle``). A handle that names no teammate (a
+    room-derived one) is the room's agent."""
     from app.domain.agent_instance.services import AgentInstanceService
 
-    seated = await AgentInstanceService(db).for_seat_handle(project, handle)
-    if seated is None:
-        seated = await TopicService(db).resolve_agent(topic)
-    return seated.display_name
+    agents = AgentInstanceService(db)
+    try:
+        return agents.resolved(await agents.for_handle(project, handle)).display_name
+    except NotFoundError:
+        return (await TopicService(db).resolve_agent(topic)).display_name
 
 
 async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
