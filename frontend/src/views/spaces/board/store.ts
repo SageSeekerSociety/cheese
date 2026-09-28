@@ -20,16 +20,7 @@
  *   见 `Kpis.participants`），不另开一次请求。
  */
 import type { Space, SpaceInviteCode, Task, User } from '@/types'
-import type {
-  BoardTask,
-  InviteCode,
-  Manager,
-  Person,
-  ReviewedTask,
-  Role,
-  SpaceInfo,
-  TaskState,
-} from './model'
+import type { BoardTask, InviteCode, Manager, Person, ReviewedTask, Role, SpaceInfo, TaskState } from './model'
 
 import { computed, ref } from 'vue'
 
