@@ -147,7 +147,9 @@ class SpaceMemberParticipatingService:
                 1 for r in rows if r["completionStatus"] == "REJECTED_RESUBMITTABLE"
             ),
             "successfulCount": sum(
-                1 for r in rows if r["completionStatus"] in successful_completion_statuses()
+                1
+                for r in rows
+                if r["completionStatus"] in successful_completion_statuses()
             ),
             "failedCount": sum(1 for r in rows if r["completionStatus"] == "FAILED"),
         }

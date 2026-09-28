@@ -93,7 +93,9 @@ def _has_submission_where(
     )
 
 
-def has_a_passed_submission(membership_id: SQLColumnExpression[int]) -> ColumnElement[bool]:
+def has_a_passed_submission(
+    membership_id: SQLColumnExpression[int],
+) -> ColumnElement[bool]:
     """这条领取有活干完了：某一版 live 提交的 live 评审判了通过。"""
     return _has_submission_where(membership_id, _review_passed())
 
@@ -105,7 +107,9 @@ def has_a_submission_in_the_queue(
     return _has_submission_where(membership_id, _review_not_written_yet())
 
 
-def has_a_live_submission(membership_id: SQLColumnExpression[int]) -> ColumnElement[bool]:
+def has_a_live_submission(
+    membership_id: SQLColumnExpression[int],
+) -> ColumnElement[bool]:
     """这条领取交过东西（任意一版，不管评审是什么）。"""
     return _has_submission_where(membership_id)
 
