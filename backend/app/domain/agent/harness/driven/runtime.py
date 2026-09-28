@@ -650,6 +650,7 @@ class DrivenRuntime[H: Handle]:
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
         images: list[dict] | None = None,
+        owes_reply: bool = False,
     ) -> bool:
         handle = await self.ensure(session, opening, work_id=work_id)
         payload = await self.channel.images(handle, images or [])
@@ -681,6 +682,7 @@ class DrivenRuntime[H: Handle]:
                     "work_id": str(work_id),
                     "text": message,
                     "images": payload,
+                    **({"owes_reply": True} if owes_reply else {}),
                 },
             )
             if self.receipts and self.receipt_on_accept:
@@ -691,7 +693,14 @@ class DrivenRuntime[H: Handle]:
         return True
 
     async def deliver(
-        self, topic_id, text, images=None, *, expected_work_id=None, agent_handle=None
+        self,
+        topic_id,
+        text,
+        images=None,
+        *,
+        expected_work_id=None,
+        agent_handle=None,
+        owes_reply=False,
     ) -> bool:
         """A person talking to a session that is already working.
 
@@ -720,6 +729,7 @@ class DrivenRuntime[H: Handle]:
                 "work_id": str(work),
                 "text": text,
                 "images": await self.channel.images(handle, images or []),
+                **({"owes_reply": True} if owes_reply else {}),
             },
         )
         if self.receipts and self.receipt_on_accept:

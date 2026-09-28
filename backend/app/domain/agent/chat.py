@@ -1791,9 +1791,15 @@ class ChatService:
         author: str,
         attachments: list[dict] | None = None,
         recipient_handle: str | None = None,
+        *,
+        owes_reply: bool = True,
     ) -> bool | None:
         """Inject a just-posted human message into the turn already running on
         this topic.
+
+        ``owes_reply`` is whether the message was addressed to the agent: then
+        the session answers it in the room before it uses any other tool. One
+        said to somebody else in the room is only for the agent to know about.
 
         ``True`` means the live session acknowledged the message, ``False``
         means live delivery was attempted but failed, and ``None`` means no live
@@ -1887,11 +1893,15 @@ class ChatService:
                 )
                 delivered = (
                     await self._compute.deliver(
-                        topic_id, line, images=images, agent_handle=seat_agent
+                        topic_id,
+                        line,
+                        images=images,
+                        agent_handle=seat_agent,
+                        owes_reply=owes_reply,
                     )
                     if images
                     else await self._compute.deliver(
-                        topic_id, line, agent_handle=seat_agent
+                        topic_id, line, agent_handle=seat_agent, owes_reply=owes_reply
                     )
                 )
         except Exception:  # noqa: BLE001 — caller reports the queued fallback
@@ -6266,7 +6276,11 @@ class ChatService:
 
         # 这一轮的提示词写下去之前先登记：会话说「收下了」的时候，记号落在召唤它
         # 的那条人类消息上。登记在 send 之前，因为回执可能比 send 返回还快。
+        # 同一个条件也是「这一轮欠人一句回话」：召唤它的是人，会话就得先在房间里
+        # 回一句，再做别的（`driven/runner.py`）。
+        summoned = False
         if user_block_id is not None and not is_resume and not platform_turn:
+            summoned = True
             self.arm_seen_receipt(
                 topic_id, prompt_text, [user_block_id], by=acting_agent
             )
@@ -6311,6 +6325,7 @@ class ChatService:
                 work_id=turn_id,
                 images=turn_images or None,
                 on_mark=_register_work,
+                owes_reply=summoned,
             )
         except Exception as exc:  # noqa: BLE001 — a failed write must be SAID
             # Nothing else will close this turn. `session_lifecycle` above told

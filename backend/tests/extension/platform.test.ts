@@ -355,3 +355,73 @@ describe("后台任务起不来的时候", () => {
     );
   });
 });
+
+describe("有人发来消息的时候", () => {
+  function owe(id: string) {
+    const file = process.env.CHEESE_REPLY_OWED as string;
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ id, answers: ["chat_send", "cheese_ask"], reason: "REPLY_FIRST" }),
+    );
+  }
+
+  function fresh() {
+    process.env.CHEESE_REPLY_OWED = path.join(scratch(), "reply-owed.json");
+  }
+
+  it("先回话，别的工具在那之前都被拒", async () => {
+    fresh();
+    const { pi } = await load();
+    owe("m1");
+
+    const refused = await pi.emit("tool_call", { toolName: "bash", input: {} });
+    assert.deepEqual(refused, { block: true, reason: "REPLY_FIRST" });
+    assert.equal(await pi.emit("tool_call", { toolName: "chat_send", input: {} }), undefined);
+    assert.equal(await pi.emit("tool_call", { toolName: "bash", input: {} }), undefined);
+  });
+
+  it("正在跑的命令转到后台，模型马上拿回控制，命令照样跑完", async () => {
+    fresh();
+    const { pi, jobs } = await load({ python: "python3", background: "/bg.py" });
+
+    const started = Date.now();
+    const call = pi.call("bash", { command: "echo EARLY; sleep 3; echo LATE" });
+    await new Promise((done) => setTimeout(done, 500));
+    owe("m1");
+    const answer = await call;
+
+    assert.ok(Date.now() - started < 2500, "the model waited for the command");
+    const said = answer.content[0].text;
+    assert.match(said, /EARLY/);
+    assert.match(said, /转到后台/);
+    const job = /任务 (job-[a-z0-9-]+)/.exec(said)?.[1] as string;
+    assert.match((await pi.call("bash_list", {})).content[0].text, /running/);
+
+    await new Promise((done) => setTimeout(done, 3500));
+    assert.match(fs.readFileSync(path.join(jobs, job, "output"), "utf8"), /LATE/);
+    assert.match((await pi.call("bash_list", {})).content[0].text, /exited 0/);
+  });
+
+  it("转到后台的命令用 bash_kill 停得掉", async () => {
+    fresh();
+    const { pi, jobs } = await load({ python: "python3", background: "/bg.py" });
+
+    const call = pi.call("bash", { command: "sleep 30" });
+    await new Promise((done) => setTimeout(done, 300));
+    owe("m1");
+    const job = /任务 (job-[a-z0-9-]+)/.exec((await call).content[0].text)?.[1] as string;
+
+    await pi.call("bash_kill", { id: job });
+    await new Promise((done) => setTimeout(done, 500));
+    assert.ok(fs.existsSync(path.join(jobs, job, "exit")), "the command is still running");
+  });
+
+  it("没有人说话，命令照常跑完再返回", async () => {
+    fresh();
+    const { pi } = await load({ python: "python3", background: "/bg.py" });
+
+    const answer = await pi.call("bash", { command: "sleep 1; echo DONE" });
+    assert.match(answer.content[0].text, /DONE/);
+    assert.doesNotMatch(answer.content[0].text, /转到后台/);
+  });
+});

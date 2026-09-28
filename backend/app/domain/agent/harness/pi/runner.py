@@ -85,6 +85,9 @@ class Runner(runner.Runner[Journal]):
             self.working = True
         elif kind == "agent_settled":
             self.working = False
+            # pi delivers a steered message before its next model call and
+            # settles only once none is left, so nothing unread survives this.
+            self.reply_settled()
         elif kind == "auto_retry_start":
             self.failing = True
             self._verdict(
@@ -401,7 +404,7 @@ class Runner(runner.Runner[Journal]):
             *appended,
             *args,
             cwd=cwd,
-            env=env,
+            env=self.agent_env(env),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=self.errors,
@@ -432,6 +435,7 @@ class Runner(runner.Runner[Journal]):
         steering: bool = False,
         images: list[dict] | None = None,
         work_id: str | None = None,
+        owes_reply: bool = False,
     ) -> dict:
         """``prompt``, or ``steer`` for words said to a session mid-turn."""
         return await self.accept(
@@ -443,6 +447,7 @@ class Runner(runner.Runner[Journal]):
                 "steer": steering,
             },
             lambda: self._submit(identifier, text, steering, images, work_id),
+            owes_reply=owes_reply,
         )
 
     async def _submit(
@@ -470,6 +475,11 @@ class Runner(runner.Runner[Journal]):
             await self.client.request("prompt", **fields)
         return {"input_id": identifier}
 
+    async def yield_foreground(self) -> None:
+        """Nothing to send: pi's shell runs inside pi, as the platform
+        extension's `bash` (`platform.ts`), which watches the file the debt was
+        just written to and lets go of its command as soon as it changes."""
+
     # --- the socket ----------------------------------------------------------
 
     async def dispatch(self, method: str, params: dict) -> dict:
@@ -484,6 +494,7 @@ class Runner(runner.Runner[Journal]):
                 params["text"],
                 images=params.get("images"),
                 work_id=params.get("work_id"),
+                owes_reply=bool(params.get("owes_reply")),
             )
         if method == "steer":
             return await self.send(
@@ -492,6 +503,7 @@ class Runner(runner.Runner[Journal]):
                 steering=True,
                 images=params.get("images"),
                 work_id=params.get("work_id"),
+                owes_reply=bool(params.get("owes_reply")),
             )
         if method == "cli":
             return await self.run_cli(

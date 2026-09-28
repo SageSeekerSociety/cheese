@@ -342,6 +342,10 @@ class Executor:
         self.commands_dir.mkdir(exist_ok=True)
         self.running = {}
         self.command_lock = threading.RLock()
+        # Foreground Bash calls still waiting on their command (call → command),
+        # and the ones told to stop waiting (`control` "background").
+        self.foreground = {}
+        self.backgrounded = set()
         # The shell working directory of this executor's own Bash tool, which
         # a `cd` changes for the next call, as the build's own Bash tool does.
         self.bash_cwd = self.root
@@ -615,7 +619,7 @@ class Executor:
         if tool not in NATIVE_TOOLS:
             raise ValueError(f"Unsupported remote tool: {tool}")
         if tool == "Bash":
-            return self.bash(args)
+            return self.bash(args, key)
         if tool == "TaskStop":
             record = self.stop_command(args["task_id"])
             return {
@@ -1063,7 +1067,7 @@ class Executor:
                 if meta.get("watched") and time.time() - last > COMMAND_ABANDONED_S:
                     shutil.rmtree(record, ignore_errors=True)
 
-    def bash(self, args):
+    def bash(self, args, key=None):
         """This executor's own Bash tool, for the callers that have no shell of
         their own here: the Codex harness and the platform's own commands.
 
@@ -1071,7 +1075,8 @@ class Executor:
         a `cd` holds for the next call and leaving the workspace returns to its
         root, a failure comes back as `Exit code N` followed by the output, a
         foreground command still running at its timeout goes on as a background
-        task, and `TaskStop` stops one.
+        task, and `TaskStop` stops one. So does one the caller moves to the
+        background while it runs (`background`), as Ctrl+B does to the build's.
         """
         command_id = "task-" + uuid.uuid4().hex[:16]
         record = self._record(command_id)
@@ -1094,16 +1099,29 @@ class Executor:
             "interrupted": False,
             "noOutputExpected": False,
             "backgroundTaskId": command_id,
+            # Where it goes on printing: a file on this machine, so the caller
+            # can read it with the same tools it reads the project with.
+            "outputFile": str(record / "out"),
         }
         if args.get("run_in_background"):
             return running
         deadline = (
             time.monotonic() + min(max(args.get("timeout", 120000), 1), 600000) / 1000
         )
-        while not (record / "exit").exists():
-            if time.monotonic() >= deadline:
-                return running
-            time.sleep(0.05)
+        with self.command_lock:
+            self.foreground[key] = command_id
+        try:
+            while not (record / "exit").exists():
+                with self.command_lock:
+                    yielded = key in self.backgrounded
+                    self.backgrounded.discard(key)
+                if yielded or time.monotonic() >= deadline:
+                    return running
+                time.sleep(0.05)
+        finally:
+            with self.command_lock:
+                self.foreground.pop(key, None)
+                self.backgrounded.discard(key)
         code = int((record / "exit").read_text())
         if code < 0:
             # Killed by signal n: the number a shell reports.
@@ -1140,6 +1158,14 @@ class Executor:
             )
         if kind == "shell":
             return self.shell(params)
+        if kind == "background":
+            # The named Bash call returns now, its command running on. Named by
+            # the call rather than by what is waiting: a call that is only
+            # starting has not registered yet, and must find the request when
+            # it does. Another session's calls on this machine are not touched.
+            with self.command_lock:
+                self.backgrounded.add(params["id"])
+                return {"background": self.foreground.get(params["id"])}
         if kind == "tool_hooks":
             return self.tool_hooks(params)
         if kind == "read_file":

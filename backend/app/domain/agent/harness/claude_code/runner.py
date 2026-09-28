@@ -427,7 +427,7 @@ class Runner(runner.Runner[Journal]):
             f"exec {command} {flag}",
             # The session's own helpers reach this runner here, to change the
             # session while it runs (`executor_transport.register_project_hooks`).
-            env={**env, SESSION_SOCKET: runner.socket_path(self.state)},
+            env=self.agent_env({**env, SESSION_SOCKET: runner.socket_path(self.state)}),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=self.errors,
@@ -609,6 +609,10 @@ class Runner(runner.Runner[Journal]):
             self.journal.remember("last_work", self.work)
         self.working, self.work, self.unsolicited = False, None, False
         self.interrupting = False
+        # A person's message the build has not taken yet opens the next turn,
+        # and it is that turn which owes the answer.
+        if self.owed not in self.sent:
+            self.reply_settled()
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -616,6 +620,11 @@ class Runner(runner.Runner[Journal]):
         subtype = record.get("subtype")
         if subtype == "task_started" and task:
             self.tasks[task] = str(record.get("task_type") or "")
+            # A command that was only starting when a person's message came in
+            # was not the build's to move yet, and the message would wait for
+            # it: move it too, as long as the message is still unread.
+            if self.owed is not None and self.owed in self.sent:
+                self.helpers.append(asyncio.create_task(self._yield_again()))
             if record.get("task_type") == "local_agent":
                 if str(record.get("tool_use_id")) not in self.main_calls:
                     self.tailing.setdefault(task, "agent")
@@ -807,6 +816,18 @@ class Runner(runner.Runner[Journal]):
                 await self.release()
                 return
 
+    async def yield_foreground(self) -> None:
+        """Ctrl+B, as the build takes it on stdin: every foreground Bash and
+        subagent returns to the model at once and goes on as a background task.
+        """
+        if self.working:
+            await self.control({"subtype": "background_tasks"})
+
+    async def _yield_again(self) -> None:
+        # A control the session did not answer changes nothing it was doing.
+        with contextlib.suppress(Exception):
+            await self.yield_foreground()
+
     async def release(self) -> None:
         """Let the session go the way it is meant to: close its stdin."""
         assert self.process is not None and self.process.stdin is not None
@@ -859,6 +880,7 @@ class Runner(runner.Runner[Journal]):
         images: list[dict] | None = None,
         work_id: str | None = None,
         steering: bool = False,
+        owes_reply: bool = False,
     ) -> dict:
         """A user message, or words said to a session that is working.
 
@@ -879,6 +901,7 @@ class Runner(runner.Runner[Journal]):
             identifier,
             {"text": text, "images": images or [], "work_id": work_id, "how": how},
             submit,
+            owes_reply=owes_reply,
         )
 
     async def _catch_up(self) -> None:
@@ -969,6 +992,7 @@ class Runner(runner.Runner[Journal]):
                 images=params.get("images"),
                 work_id=params.get("work_id"),
                 steering=method == "steer",
+                owes_reply=bool(params.get("owes_reply")),
             )
         if method == "interrupt":
             self.interrupting = self.working

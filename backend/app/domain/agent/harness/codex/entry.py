@@ -10,10 +10,15 @@ from pathlib import Path
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex.runner import Runner
 from app.domain.agent.harness.codex.tools import RemoteTools
+from app.domain.agent.harness.driven.runner import reply_owed_path
 
 
 async def serve(state: Path, config: dict) -> None:
-    tools = RemoteTools(config["execution_target"], mirror=state / "project-skills")
+    tools = RemoteTools(
+        config["execution_target"],
+        mirror=state / "project-skills",
+        reply_file=reply_owed_path(state),
+    )
     runner = Runner(state, tools, skills=tools)
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -22,7 +27,7 @@ async def serve(state: Path, config: dict) -> None:
     waits = []
     try:
         schemas = await tools.discover(config["mcp_servers"])
-        await runner.start(
+        tools.main_thread = await runner.start(
             Opening(**config["opening"]),
             binary=config["binary"],
             cwd=config["cwd"],

@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import importlib.resources
 import json
 import posixpath
@@ -16,6 +17,7 @@ from app.domain.agent.executor_transport import (
     RemoteClient,
     session_path,
 )
+from app.domain.agent.harness.driven.runner import reply_owed
 
 # The executor implements these tools. The platform's own tools are not the
 # executor's to list: they are the constant table (`platform_tools`).
@@ -31,6 +33,9 @@ NATIVE_TOOLS = {
     "TaskStop",
 }
 
+
+#: How often a running Bash looks for a person having written.
+YIELD_POLL_S = 0.2
 
 #: The route a platform tool takes: not a server on the executor, the backend.
 PLATFORM = "platform"
@@ -63,7 +68,12 @@ def platform_tools():
 
 
 class RemoteTools:
-    def __init__(self, target: dict, mirror: Path | None = None):
+    def __init__(
+        self,
+        target: dict,
+        mirror: Path | None = None,
+        reply_file: Path | None = None,
+    ):
         self.client = RemoteClient(target)
         self.routes: dict[str, tuple[str, str]] = {}
         self.platform = platform_tools()
@@ -74,6 +84,14 @@ class RemoteTools:
         self.mirror = mirror
         # What the mirror holds: its path -> the (size, mtime) it was read at.
         self.mirrored: dict[str, tuple[int, int]] | None = None
+        # Where the runner says a person is waiting on an answer
+        # (`driven/runner.py`), the thread that owes it — a subagent's thread
+        # reports to its parent, not to the room — and the debt already
+        # answered: a reply and the next call can come in one step, and the
+        # reply's call arrives here first.
+        self.reply_file = reply_file
+        self.main_thread: str | None = None
+        self.answered: str | None = None
 
     def skill_roots(self) -> list[str]:
         assert self.mirror is not None
@@ -212,6 +230,33 @@ class RemoteTools:
         self.routes = routes
         return tools
 
+    async def _yield_when_spoken_to(
+        self, call_id: str, invoked: asyncio.Future
+    ) -> None:
+        """While the session's Bash runs, watch for a person writing.
+
+        A message reaches Codex only between tool calls, so one written during
+        a long command waited for it to end. When the runner writes down a new
+        debt (`driven/runner.py`), the executor stops waiting on this call's
+        command and returns it as a background task that goes on running
+        (`runtime.bash`) — Claude Code's Ctrl+B, for a Bash that is the
+        executor's."""
+        while not invoked.done():
+            await asyncio.wait({invoked}, timeout=YIELD_POLL_S)
+            owed = reply_owed(self.reply_file)
+            # Unanswered: no tool starts while one is (`__call__`), so this
+            # command was already running when the person wrote.
+            if not invoked.done() and owed is not None and owed["id"] != self.answered:
+                # An executor that cannot do this leaves the command waiting,
+                # which is what it did before; the call itself must not fail.
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(
+                        self.client.call,
+                        "control",
+                        {"subtype": "background", "id": call_id},
+                    )
+                return
+
     def _platform_call(self, tool: str, call_id: str, arguments: dict) -> dict:
         def invoke(payload, args):
             return self.client.call(
@@ -235,6 +280,16 @@ class RemoteTools:
     async def __call__(self, method: str, params: dict) -> dict:
         if method != "item/tool/call":
             raise ValueError(f"Unsupported Codex server request: {method}")
+        session_call = self.main_thread in (None, params.get("threadId"))
+        if session_call:
+            owed = reply_owed(self.reply_file)
+            if owed is not None and owed["id"] != self.answered:
+                if params["tool"] not in owed["answers"]:
+                    return {
+                        "success": False,
+                        "contentItems": [{"type": "inputText", "text": owed["reason"]}],
+                    }
+                self.answered = owed["id"]
         server, tool = self.routes[params["tool"]]
         if server == PLATFORM:
             return await asyncio.to_thread(
@@ -257,16 +312,21 @@ class RemoteTools:
             except MachineOutOfReach:
                 receipt = {"error": MACHINE_OUT_OF_REACH}
         else:
-            receipt = await asyncio.to_thread(
-                self.client.call,
-                "invoke",
-                {
-                    "id": params["callId"],
-                    "server": server,
-                    "tool": tool,
-                    "args": params["arguments"],
-                },
+            invoked = asyncio.ensure_future(
+                asyncio.to_thread(
+                    self.client.call,
+                    "invoke",
+                    {
+                        "id": params["callId"],
+                        "server": server,
+                        "tool": tool,
+                        "args": params["arguments"],
+                    },
+                )
             )
+            if session_call and server == "native" and tool == "Bash":
+                await self._yield_when_spoken_to(params["callId"], invoked)
+            receipt = await invoked
         if "error" in receipt:
             return {
                 "success": False,
