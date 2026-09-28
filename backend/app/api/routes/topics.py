@@ -63,7 +63,6 @@ from app.domain.agent.runtime import (
     announce_stale,
 )
 from app.domain.agent.step_output import without_output
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -1778,10 +1777,6 @@ async def set_topic_compute_profile(
         or claims.get("r") != str(topic.resource_id or topic.id)
     ):
         raise ForbiddenError("Execution credential does not own this room generation")
-    started = bool(
-        await AgentSessionService(db).has_run(topic_id)
-        or await ProjectMachineRepository(db).list_active_for_topic(topic_id)
-    )
     name = (body.get("profile") or "").strip() or compute_default_name()
     try:
         choice = ComputeChoice.model_validate(
@@ -1876,29 +1871,6 @@ async def set_topic_compute_profile(
     if name == COMPUTE_CLOUD:
         await MachineService(db).require_use_authority(topic.project_id, actor)
 
-    # Before the first turn the room's pin is the choice itself. Release then
-    # bind preserves bind_topic_device's write-once contract: the bind itself
-    # never overwrites, while an explicit change removes the obsolete pin first.
-    # Selecting Cloud or 「系统挑一台」 leaves no pin; the latter is frozen by
-    # resolve_pinned_device on the first turn. Once the room has started, the pin
-    # belongs to the machine its first turn is using (a Cloud room's connector
-    # included), so a new default for later agents leaves it where it is.
-    if not started:
-        binding = await device_service.topic_binding(topic_id)
-        if binding is not None and (
-            name != COMPUTE_DEVICE or binding.device_id != device_id
-        ):
-            await device_service.release_topic_device(
-                topic_id, reason="compute choice changed before the first turn"
-            )
-            binding = None
-        if name == COMPUTE_DEVICE and device_id is not None and binding is None:
-            await device_service.bind_topic_device(
-                topic_id,
-                device_id,
-                visibility=await device_service.binding_visibility(device_id),
-            )
-
     # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
     # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——
     # 一条推不上去就是整个房间留在原地（它抛出去，路由把它变成一次可见的失败）。
@@ -1915,6 +1887,27 @@ async def set_topic_compute_profile(
         # 设备页的批量切换跳过正在跑任务的房间，而不是把它手上的机器抽走。
         if_idle=body.get("if_idle") is True,
     )
+    # The room's pin is the choice itself, before the first turn and after it:
+    # 一个话题一个容器（2026-09-28，推翻结论 60），换机器是整个房间搬过去，钉子跟
+    # 着搬——在每条会话都搬成之后才动，一条推不上去整个房间连钉子一起留在原地。
+    # Release then bind preserves bind_topic_device's write-once contract:
+    # the bind itself never overwrites, while an explicit change removes the
+    # obsolete pin first. Selecting Cloud or 「系统挑一台」 leaves no pin; the
+    # latter is frozen by resolve_pinned_device on the next turn.
+    binding = await device_service.topic_binding(topic_id)
+    if binding is not None and (
+        name != COMPUTE_DEVICE or binding.device_id != device_id
+    ):
+        await device_service.release_topic_device(
+            topic_id, reason="the room moved to another work computer"
+        )
+        binding = None
+    if name == COMPUTE_DEVICE and device_id is not None and binding is None:
+        await device_service.bind_topic_device(
+            topic_id,
+            device_id,
+            visibility=await device_service.binding_visibility(device_id),
+        )
     await db.flush()
     return ok(
         {

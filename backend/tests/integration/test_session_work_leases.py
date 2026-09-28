@@ -1,4 +1,8 @@
-"""First execution acquires one session's hands without changing its roommate."""
+"""First execution acquires the room's hands for the session asking.
+
+一个话题一个容器（2026-09-28，推翻结论 60）：房间里的每一条会话都落在房间那一项算
+出来的那台机器上；换机器是整个房间一起换。
+"""
 
 import json
 import uuid
@@ -26,7 +30,7 @@ pytestmark = pytest.mark.anyio
 
 @pytest.mark.parametrize("background_state", ["running", "unresponsive"])
 @pytest.mark.parametrize("old_online", [True, False])
-async def test_first_tool_acquires_the_addressed_sessions_device(
+async def test_every_session_in_a_room_acquires_the_rooms_device(
     client, monkeypatch, old_online, background_state
 ):
     project = post_project(
@@ -92,6 +96,13 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
             )
             identities.append((session.id, device.device_id, token))
             assert session.work_lease is None
+        # 房间的选择是第一台：两条会话各自那份 ``choice`` 指着不同的机器，也都落在这
+        # 一台上——会话行上那一份不是来源。
+        topic.compute_config = {
+            "name": "ada",
+            "profile": "device",
+            "device_id": identities[0][1],
+        }
         await db.commit()
 
     async def install(device, argv, **kwargs):
@@ -139,7 +150,9 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     remote = AsyncMock(side_effect=executor_answer)
     monkeypatch.setattr(execution, "call", remote)
     tokens = []
-    for session_id, device, token in identities:
+    room_device = identities[0][1]
+    for session_id, _own_choice, token in identities:
+        device = room_device
         response = client.post(
             f"/topics/{topic_id}/sessions/{session_id}/work-lease",
             headers={"X-Cheese-Token": token},
@@ -197,6 +210,13 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     assert hub.exec.await_count == 3
     assert upgraded.json()["data"]["target"]["device_id"] == identities[0][1]
     remote.side_effect = executor_answer
+    # Both sessions of the room hold hands on the one machine.
+    async with client.test_factory() as db:
+        leased = [
+            (await AgentSessionService(db).by_id(sid)).work_lease["device_id"]
+            for sid, _, _ in identities
+        ]
+    assert leased == [room_device, room_device]
     wrong_session = client.post(
         f"/topics/{topic_id}/sessions/{identities[1][0]}/work-lease",
         headers={"X-Cheese-Token": identities[0][2]},
@@ -207,7 +227,7 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     owner_headers = session_auth_headers("alice")
     first_id, first_device, first_token = identities[0]
     second_id, second_device, _ = identities[1]
-    choice_path = f"/topics/{topic_id}/sessions/{first_id}/work-choice"
+    choice_path = f"/topics/{topic_id}/compute-profile"
     selection = {
         "choice": {
             "name": "Second machine",
@@ -215,15 +235,6 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
             "device_id": second_device,
         }
     }
-    # A session credential cannot change its roommate's destination.
-    assert (
-        client.put(
-            f"/topics/{topic_id}/sessions/{second_id}/work-choice",
-            headers={"X-Cheese-Token": first_token},
-            json=selection,
-        ).status_code
-        == 403
-    )
     from app.domain.agent_instance.models import AgentInstance
     from app.domain.room_task.models import Task
 
@@ -249,10 +260,6 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         await db.flush()
         child_id = child.id
         await db.commit()
-    bob_path = f"/topics/{topic_id}/sessions/{second_id}/work-choice"
-    bob_change = client.put(bob_path, headers=owner_headers, json=selection)
-    assert bob_change.status_code == 200, bob_change.text
-    assert "pending" not in bob_change.json()["data"]["session"]
     bob_tools = client.post(
         f"/topics/{topic_id}/sessions/{second_id}/work-lease",
         headers={"X-Cheese-Token": identities[1][2]},
@@ -390,7 +397,14 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     )
     async with client.test_factory() as db:
         assert (await db.get(Task, child_id)).conclusion is None
-    assert response.json()["data"]["session"]["lease"] is None
+    async with client.test_factory() as db:
+        # 整个房间一起搬：发起的这一条和房间里的另一条都把手交了出来。
+        for sid in (first_id, second_id):
+            moved = await AgentSessionService(db).by_id(sid)
+            assert moved.work_lease is None
+            assert moved.execution_request["choice"]["device_id"] == second_device
+        room_now = await db.get(Topic, topic_id)
+        assert room_now.compute_config["device_id"] == second_device
     old_call = client.post(
         f"/topics/{topic_id}/execution/{resource}",
         headers={"X-Cheese-Token": tokens[0]},
@@ -418,10 +432,9 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         },
     )
     assert repeated.status_code == 200, repeated.text
-    assert (
-        repeated.json()["data"]["session"]["lease"]["generation"]
-        == current_target["generation"]
-    )
+    async with client.test_factory() as db:
+        kept = await AgentSessionService(db).by_id(first_id)
+        assert kept.work_lease["generation"] == current_target["generation"]
     assert (
         client.post(
             f"/topics/{topic_id}/execution/{resource}",
@@ -435,8 +448,6 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     )
     async with client.test_factory() as db:
         first = await AgentSessionService(db).by_id(first_id)
-        second = await AgentSessionService(db).by_id(second_id)
-        assert first.work_lease["resource_id"] != second.work_lease["resource_id"]
         assert (
             first.execution_request["retained_leases"][0]["device_id"] == first_device
         )
@@ -454,31 +465,13 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     )
     assert revoked.status_code == 403
 
-    # Choosing before the first tool records the destination without allocating.
+    # A session that joins the room later takes the room's choice with it.
     async with client.test_factory() as db:
         fresh = await AgentSessionService(db).ensure(
             topic_id, "first-tool-later", harness="claude-code"
         )
         fresh_id = fresh.id
         await db.commit()
-    proposed = client.put(
-        f"/topics/{topic_id}/sessions/{fresh_id}/work-choice",
-        headers=owner_headers,
-        json={
-            "choice": {
-                "name": "old machine",
-                "profile": "device",
-                "device_id": first_device,
-            }
-        },
-    )
-    assert proposed.status_code == 200, proposed.text
-    async with client.test_factory() as db:
-        fresh = await AgentSessionService(db).by_id(fresh_id)
-        assert fresh.execution_request["generation"]
-        assert fresh.execution_request["choice"]
-        assert fresh.execution_request["choice"]["device_id"] == first_device
-        assert "pending" not in fresh.execution_request
     fresh_token = bind_resource_token(
         mint_scoped_token(
             project_id=str(project_id),
@@ -784,15 +777,21 @@ async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
         (await db.get(Project, project_id)).team_id = team_id
         await db.commit()
     monkeypatch.setattr(compute_configs, "cloud_provisionable", lambda settings: True)
-    path = f"/topics/{topic_id}/sessions/{session_id}/work-choice"
+    # 房间那条路由也问池接没接入（``compute_selectable``）。
+    from app.domain.agent import market
+
+    monkeypatch.setattr(market, "cloud_provisionable", lambda settings: True)
+    # 会话凭据改的是房间（一个话题一个容器）。
+    path = f"/topics/{topic_id}/compute-profile"
     body = {"choice": {"name": "Cloud", "profile": "cloud"}}
     headers = {"X-Cheese-Token": token}
     selected = client.put(path, headers=headers, json=body)
     assert selected.status_code == 200, selected.text
-    assert selected.json()["data"]["session"]["choice"]["profile"] == "cloud"
-    assert selected.json()["data"]["session"]["lease"] is None
+    assert selected.json()["data"]["choice"]["profile"] == "cloud"
     async with client.test_factory() as db:
         row = await AgentSessionService(db).by_id(session_id)
+        assert row.execution_request["choice"]["profile"] == "cloud"
+        assert row.work_lease is None
         assert row.execution_request["authorized_by"]["via"] == "cheese"
         assert row.execution_request["authorized_by"]["handle"] == actor_handle
 

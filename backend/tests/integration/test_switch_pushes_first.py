@@ -114,7 +114,7 @@ async def _room(client, *, on_cloud=False):
             lease=dict(session.work_lease),
             person=person,
             agent={"X-Cheese-Token": agent_token},
-            path=f"/topics/{topic_id}/sessions/{session.id}/work-choice",
+            path=f"/topics/{topic_id}/compute-profile",
         )
 
 

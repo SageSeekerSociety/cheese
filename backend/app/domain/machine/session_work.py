@@ -17,9 +17,7 @@ from app.core.sandbox_auth import bind_resource_token
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
-    machine_policy_call,
     room_choice,
-    validate_choice,
 )
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
@@ -29,7 +27,7 @@ from app.domain.agent.device_provider import (
     environment_status,
 )
 from app.domain.agent.harness.claude_code import executor_launch as launch
-from app.domain.agent.market import COMPUTE_CLOUD, COMPUTE_DEVICE, COMPUTE_TIERS
+from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import (
@@ -264,9 +262,13 @@ async def room_machine_visibility(db, topic, project_settings) -> Visibility | N
     来——包括还没开工的房间，那正是它开工时会拿到的那一台。
     """
     choice = room_choice(topic, project_settings)
-    if choice.profile != "device":
+    if choice.profile != COMPUTE_DEVICE:
         return None
-    return await _visibility_of(sql_device_service(db), choice.device_id)
+    # 「系统挑一台」的房间：挑中的那台就是房间里的手已经站着的那台。
+    device_id = choice.device_id or await _roommates_device(
+        db, topic, str(topic.resource_id or topic.id)
+    )
+    return await _visibility_of(sql_device_service(db), device_id)
 
 
 async def _agent_name(db, project, topic, handle: str) -> str:
@@ -457,25 +459,11 @@ async def request_choice(
     够不着的时候成立；房间正在跑任务的房间，``if_idle`` 时整个不换
     （``SessionWorking``）。
     """
-    topic = await TopicService(db).lock_for_execution(topic_id)
-    project = await ProjectService(db).get_or_404(topic.project_id)
-    # 先在这个房间上问一遍「这个选择成不成立」，再动任何一条会话：档位、设备归属、
-    # 「自动选一台」挑中哪台都只答一次，于是房间里 N 条会话拿到的是**同一个**完整
-    # 选择——而不是各自解析出各自的「系统挑一台」。
-    await validate_choice(db, topic.project_id, choice)
-    if choice.profile == COMPUTE_DEVICE and not choice.device_id:
-        selected = await sql_device_service(db).first_healthy_device(
-            topic.project_id, device_hub.is_online
-        )
-        if selected is None:
-            raise ConflictError("选择一台工作电脑")
-        choice.device_id = selected.device_id
-    call = await machine_policy_call(db, project=project, topic=topic, choice=choice)
-    verdict = gate.check(call, gate.policy_of(project.settings), actor.handle)
-    if isinstance(verdict, gate.Proposal):
-        raise ForbiddenError("所选机器超出项目允许的档位，请选择已授权的资源")
-    if choice.profile == COMPUTE_CLOUD:
-        await MachineService(db).require_use_authority(topic.project_id, actor)
+    # 「这个选择成不成立、可不可以自己发生、谁付钱」房间那条路由已经答过（池接没
+    # 接入、设备归属、档位闸门、Cloud 的花钱权），这里只做搬：同一个选择原样落到每
+    # 一条会话上。「系统挑一台」也原样落下去，由第一条要手的会话挑、其余的跟着它
+    # （``_roommates_device``）。
+    await TopicService(db).lock_for_execution(topic_id)
     sessions = await AgentSessionService(db).ids_in_room(topic_id)
     for session_id in sessions:
         await _move_session(
