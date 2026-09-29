@@ -191,7 +191,7 @@ covers:
 | 网关与计量 | `test_metering_release.py`、`test_metering_health.py`、`test_gateway_release.py`、`test_gateway_health_workflow.py`、`test_claude_login.py`、`backend/scripts/test_gateway_supply_probe.py`、`.github/scripts/test-plan-image-builds.sh` |
 | Forge 配置 | `test_forge_config.py`、`test_forge_workspace_writers.py` |
 | 磁盘与容器 | `test-disk-pressure-guard.sh`、`test-evict-foreign-container.sh`、`test-dev-box-disk-cleanup.sh` |
-| CI runner | `test-ci-runner-job-hook.sh`、`test-ci-runner-disk-guard.sh`、`test-ci-runner-provision.sh`、`test-ci-runner-prune-retirement.sh`、`test-ci-runner-private-image-prune.sh`、`test_action_archive_cache.py` |
+| CI runner | `test-ci-runner-job-hook.sh`、`test-ci-runner-disk-guard.sh`、`test-ci-runner-provision.sh`、`test-ci-runner-prune-retirement.sh`、`test_action_archive_cache.py` |
 | 云隧道 | `test_cloud_control.py` |
 | 备份与 Forgejo | `test-db-restore-test.sh`、`test_forgejo-bootstrap.sh` |
 

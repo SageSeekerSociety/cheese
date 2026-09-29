@@ -66,9 +66,9 @@ function profile(machineAccess: boolean): TopicComputeProfile {
   } as TopicComputeProfile
 }
 
-function mountHeader(focus = false) {
+function mountHeader(focus = false, over: Partial<Topic> = {}) {
   return render(Header, {
-    props: { topic, members: [], me: 'me', connected: true, focus },
+    props: { topic: { ...topic, ...over }, members: [], me: 'me', connected: true, focus },
     global: {
       plugins: [createVuetify({ components, directives })],
     },
@@ -148,5 +148,78 @@ describe('话题头', () => {
     await fireEvent.click(bar().querySelector('[aria-label="退出专注模式"]') as HTMLElement)
 
     expect(emitted()['toggle-focus']).toHaveLength(1)
+  })
+})
+
+// 手机上话题列表的行尾没有 ⋯，改名、归档在房间顶栏的 ⋯ 里也得找得到。
+describe('手机上话题头的 ⋯', () => {
+  let slot: HTMLElement
+
+  beforeEach(() => {
+    window.innerWidth = 390
+    getTopicComputeProfile.mockResolvedValue(profile(false))
+    // 手机上这一行画进外壳顶栏里的那一格。
+    slot = document.createElement('div')
+    slot.id = 'app-bar-slot'
+    document.body.appendChild(slot)
+  })
+
+  afterEach(() => {
+    window.innerWidth = 1280
+    slot.remove()
+  })
+
+  async function openMore() {
+    await fireEvent.click(await screen.findByRole('button', { name: '更多' }))
+  }
+
+  it('改名：填上新名字保存，改的就是这个话题', async () => {
+    const { emitted } = mountHeader(false, { can_archive: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const field = await screen.findByLabelText('话题名称')
+    await fireEvent.update(field, '登录页改成浅色')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(emitted().rename).toEqual([['登录页改成浅色']])
+  })
+
+  it('名字没改就保存，不算改名', async () => {
+    const { emitted } = mountHeader(false, { can_archive: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    await screen.findByLabelText('话题名称')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(emitted().rename).toBeUndefined()
+  })
+
+  it('能归档的人可以从这里归档', async () => {
+    const { emitted } = mountHeader(false, { can_archive: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '归档' }))
+
+    expect(emitted().archive).toHaveLength(1)
+  })
+
+  it('不能归档的人看不到归档', async () => {
+    mountHeader(false, { can_archive: false })
+
+    await openMore()
+    await screen.findByRole('menuitem', { name: '重命名' })
+    expect(screen.queryByRole('menuitem', { name: '归档' })).toBeNull()
+  })
+
+  it('已归档的话题只能取消归档', async () => {
+    const { emitted } = mountHeader(false, { status: 'archived', can_archive: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '取消归档' }))
+
+    expect(emitted().unarchive).toHaveLength(1)
+    expect(screen.queryByRole('menuitem', { name: '重命名' })).toBeNull()
   })
 })

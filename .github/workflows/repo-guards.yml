@@ -28,10 +28,11 @@ on:
 permissions:
   contents: read
 
-# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
-# each merge in its own group: with a shared `github.ref` key, a second merge
-# cancelled the first one's run and main was left with no result for that
-# commit. build.yml already keyed on sha for main; these did not.
+# Cancel superseded runs on a PR, never in the merge queue. Keying queue runs
+# by sha gives each queued commit its own group, so one entry cannot cancel
+# another's run and leave the commit that lands on main with no result — a
+# cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
+# to one PR still supersede each other.
 concurrency:
   group: repo-guards-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -53,6 +54,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: .pre-commit-config.yaml
           prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
 
       # Each guard proves itself before it is trusted to judge the tree: a guard
       # that silently stopped matching would otherwise look identical to a clean

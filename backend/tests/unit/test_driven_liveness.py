@@ -239,7 +239,11 @@ async def test_a_runner_out_of_reach_too_long_ends_the_turn(monkeypatch):
 
         (ended,) = room.results()
         assert ended.is_error
-        assert ended.text == "Claude Code session process exited"
+        # Not the exited-process sentence: nothing said the process exited. The
+        # runner simply never answered, which is also what a machine still coming
+        # up looks like from here, so the room is told that and not a crash.
+        assert ended.text != "Claude Code session process exited"
+        assert "没有应答" in ended.text
         assert time.monotonic() - lost_at >= 0.5
     finally:
         await room.close()

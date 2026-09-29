@@ -36,13 +36,11 @@ on:
 permissions:
   contents: read
 
-# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
-# each merge in its own group: with a shared `github.ref` key, a second merge
-# cancelled the first one's run and main was left with no result for that
-# commit — and a cancelled run is not a red run, so main quietly loses the
-# coverage with nothing on the commit to show for it. build.yml already keyed
-# on sha for main; these did not. PR refs keep the ref key, so repeated pushes
-# to a single PR still supersede each other.
+# Cancel superseded runs on a PR, never in the merge queue. Keying queue runs
+# by sha gives each queued commit its own group, so one entry cannot cancel
+# another's run and leave the commit that lands on main with no result — a
+# cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
+# to one PR still supersede each other.
 concurrency:
   group: frontend-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -82,7 +80,8 @@ jobs:
 
       # Explicit cache rather than setup-node's `cache: pnpm`, which shells out
       # to pnpm to locate the store and so would have to run after corepack.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ github.workspace }}/.pnpm-store
           # runner.arch, not just runner.os: `runner.os` is "Linux" on both

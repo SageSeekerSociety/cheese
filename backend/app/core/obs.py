@@ -127,6 +127,25 @@ class RedactSecrets(logging.Filter):
         return True
 
 
+class QuietRoutineAccess(logging.Filter):
+    """Drop the access lines for calls that went through and nobody reads.
+
+    The device connection is called by the backend tens of times a second on
+    ``/internal/``, and probed on its health route; those lines were most of
+    the journal, and it was keeping hours where it should keep weeks. A call
+    that failed is still logged, and every other route is untouched.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn.access: (client, method, path, http version, status).
+        args = record.args
+        if not isinstance(args, tuple) or len(args) != 5:
+            return True
+        path, status = str(args[2]), args[4]
+        routine = path.startswith("/internal/") or path in ("/healthz", "/health")
+        return not (routine and isinstance(status, int) and status < 400)
+
+
 _ANSWERED_LIMIT = 200
 
 
@@ -436,6 +455,12 @@ def configure_logging() -> None:
         lg = logging.getLogger(name)
         lg.handlers.clear()
         lg.propagate = True
+    logging.getLogger("uvicorn.access").addFilter(QuietRoutineAccess())
+    # HTTP clients log every request they make at INFO. The backend's calls to
+    # the device connection alone were nine lines in ten of its output; a
+    # request that fails raises, and its caller logs that.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str):  # noqa: ANN201 — structlog's own typing
