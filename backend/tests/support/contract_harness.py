@@ -177,6 +177,7 @@ class ContractHarness:
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
         images: list[dict] | None = None,
+        owes_reply: bool = False,
     ) -> bool | None:
         held = await self.ensure(session, opening)
         assert isinstance(held, _Held)
@@ -195,6 +196,7 @@ class ContractHarness:
         *,
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
+        owes_reply: bool = False,
     ) -> bool:
         held = self._held.get(topic_id)
         if held is None:

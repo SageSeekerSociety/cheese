@@ -55,6 +55,7 @@ import RoomNotice from './room/RoomNotice.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 
 // Message rendering (markdown / plain / reference chips) lives in
@@ -1551,7 +1552,9 @@ onBeforeUnmount(() => {
 
           <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
             <h2 class="t-title mb-2">从一件具体的事开始</h2>
-            <p class="t-body c-muted mb-4">{{ agentName }}可以查找资料、起草文档，或和你一起拆分任务</p>
+            <p class="t-body c-muted mb-4">
+              <UserRef :handle="agentSeat?.handle" :name="agentName" />可以查找资料、起草文档，或和你一起拆分任务
+            </p>
             <div class="d-flex flex-wrap ga-2">
               <v-btn
                 v-for="prompt in starterPrompts"

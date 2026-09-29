@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the cheese DB backup every 6 hours
+Description=Run the cheese DB backup every hour
 
 [Timer]
 # Hourly: the DB is ~19 MB and a dump takes ~1s, so this is the pragmatic RPO

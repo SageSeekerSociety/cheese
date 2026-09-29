@@ -908,6 +908,7 @@ class AgentWorkRunner:
                 )
                 if not _a_turn_was_addressed(message["addressed"]):
                     if message["content"] or message["attachments"]:
+                        # Heard, not asked: nothing here is the agent's to answer.
                         await chat_service.merge_into_running_turn(
                             topic_id,
                             message["landed_user_block_ids"] or [turn_id],
@@ -919,6 +920,7 @@ class AgentWorkRunner:
                                 if message["recipient_handle"] is not None
                                 else {}
                             ),
+                            owes_reply=False,
                         )
                     await self._broker.publish(str(topic_id), {"type": "done"})
                     return

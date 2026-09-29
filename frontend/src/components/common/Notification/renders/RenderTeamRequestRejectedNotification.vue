@@ -1,7 +1,13 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
-    <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
+    <div class="text-body-2 text-medium-emphasis mt-1">
+      <i18n-t v-if="rejector" keypath="notifications.TEAM_REQUEST_REJECTED.body" tag="span">
+        <template #rejector><UserRef :handle="rejector.handle" :name="rejector.name" :project-id="null" /></template>
+        <template #team>{{ team?.name || t('notifications.common.unknownTeam') }}</template>
+      </i18n-t>
+      <template v-else>{{ body }}</template>
+    </div>
     <div v-if="rejectReason" class="text-body-2 text-medium-emphasis mt-2 message-box">
       <div class="text-caption mb-1">{{ t('notifications.common.reason') }}:</div>
       <div class="reason-text">{{ rejectReason }}</div>
@@ -16,6 +22,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getEntity, getStringMetadata } from './NotificationRenderUtils'
+
+import UserRef from '@/components/common/UserRef.vue'
 
 const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()

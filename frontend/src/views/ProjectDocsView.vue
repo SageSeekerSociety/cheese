@@ -401,9 +401,16 @@ function topicTo(topicId: string | null | undefined) {
 }
 .memory-card__del {
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-quick) var(--ease-standard);
 }
 .memory-card:hover .memory-card__del {
   opacity: 1;
+}
+/* 没有 hover 的设备上（手机、平板）等不到它出现，所以常驻。按输入方式判断，不按
+   视口宽度，和话题侧栏的行操作同一个判断。 */
+@media (hover: none) {
+  .memory-card__del {
+    opacity: 1;
+  }
 }
 </style>

@@ -180,15 +180,10 @@ async function becomeOnThisPage(page: import("@playwright/test").Page, username:
   return session.accessToken;
 }
 
-// 串行：这一份要**现建空间**再当场审过，两个用例并发跑同一套栈时，后一个的
-// `POST /admin/spaces/{id}/review` 会拿到 404 —— 单独跑各自都绿。这不是本页的问题
-// （同一个空间在同一台栈上来回建，本来就该排队），所以这里显式串起来，
-// 不去和一个属于建空间那条路的现象缠斗。
-//
 // 时限放宽到 3 分钟：第一次进题目详情要让 vite **现编**那一大片依赖树
 // （tiptap / prism / 聊天），冷启动时可以慢到几十秒（见 playwright.config.ts
 // 里 timeout 那段注释），默认那 60 秒不够「冷编译一次 + 后面几步断言」。
-test.describe.configure({ mode: "serial", timeout: 180_000 });
+test.describe.configure({ timeout: 180_000 });
 
 test.describe("空间新界面（真路由）", () => {
   test("所有者打开 /spaces/:id/board，看到真数据", async ({ page }) => {
@@ -415,8 +410,8 @@ test.describe("空间新界面（真路由）", () => {
     await page.getByRole("link", { name: "出题目" }).click();
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/publish$`));
 
-    // 发题页三块都在：PDF 那条路、材料那张卡、以及给发布参数用的表单
-    // （PDF 解析出的草稿也要落到下面这张表单里填参数，所以两条路共用它）。
+    // 发题页三块都在：PDF 那条路、材料那张卡、以及给发布参数用的表单 —— 第十批之后
+    // 这三块都是**这一页自己画的**（底下不再有老发题页），契约点与断言一条没变。
     await expect(page.getByText("PDF 快速发布")).toBeVisible();
     await expect(page.getByText("附件（可选）")).toBeVisible();
     await expect(page.getByLabel("题目名称")).toBeVisible();
@@ -505,8 +500,8 @@ test.describe("空间新界面（真路由）", () => {
 
     await page.goto(`/spaces/${spaceId}/board/publish`);
 
-    // 默认那一颗是「手写一道」：老发题页原样在底下（它自己那张「PDF 快速发布」卡也
-    // 还在 —— 老页一个字不动是本批的约束）。
+    // 默认那一颗是「手写一道」：这一页自己那三块都在。其中那张「PDF 快速发布」卡
+    // 第十批起由这一页自己画（能力与老页那张一字不差：老页一个字没动，仍在老地址上）。
     //
     // 这一屏要等 60 秒：发题页是这套栈里最重的一屏（老页把 tiptap 那一整片拖进来），
     // vite 冷启动时现编它要几十秒，而**第一次**进它的就是这条用例 —— 别的用例都从
@@ -519,7 +514,7 @@ test.describe("空间新界面（真路由）", () => {
 
     await page.getByRole("button", { name: "从 PDF 生成" }).click();
     await expect(page.getByRole("heading", { name: "从 PDF 生成题目" })).toBeVisible();
-    // 换过去之后老页让位：屏幕上换成这一条路，老页那三块一块都不在。
+    // 换过去之后手写那一半整个让位：屏幕上换成这一条路，那三块一块都不在。
     await expect(page.getByText("PDF 快速发布")).toHaveCount(0);
     await expect(page.getByLabel("题目名称")).toHaveCount(0);
     // 三条上限写在页面上，不是只写在代码里。

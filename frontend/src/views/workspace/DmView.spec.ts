@@ -11,6 +11,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render, waitFor } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getPrivateChat = vi.fn()
@@ -98,7 +99,7 @@ beforeEach(() => {
 })
 
 function open(peer = 'agent:reviewer') {
-  return render(Dm, { props: { projectId: 'p1', peer }, global: { plugins: [vuetify] } })
+  return render(Dm, { props: { projectId: 'p1', peer }, global: { plugins: [vuetify, createPinia()] } })
 }
 
 const settle = async () => {

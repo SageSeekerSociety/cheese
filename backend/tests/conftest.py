@@ -215,6 +215,13 @@ class ScriptedSession(Runner):
         self, state: Path, channel: "StubChannel", topic_id, session_id, agent
     ):
         super().__init__(state, idle_exit_s=0)
+        # A real runner is its own process on the session machine, so the fsync
+        # behind each journal commit holds nobody else up. This one runs on the
+        # backend's own event loop, where every commit's fsync stops the whole
+        # room: on a CI disk busy with the other workers' writes, one of them
+        # held the loop for 5 s and a turn missed its test's wait. Durability
+        # across a power cut is not what any test here asks of this journal.
+        self.journal.connection.execute("PRAGMA synchronous=OFF")
         # The loop that owns this runner, and the thread it runs on: a test
         # scripting a record from its own thread has it played there.
         self.loop = asyncio.get_running_loop()

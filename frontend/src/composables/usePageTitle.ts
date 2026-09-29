@@ -55,9 +55,13 @@ export function usePageTitle() {
 
         let title = ''
 
+        // A page that set an empty title (搜索 with no query yet) has not named
+        // itself: fall through to the route's own title rather than leave the
+        // layer blank, which makes the bar skip to a parent or to the site name.
         const dynamicKey = routeName ?? meta.dynamicTitleKey
-        if (dynamicKey && store.hasDynamicTitle(dynamicKey)) {
-          title = store.getDynamicTitle(dynamicKey)!
+        const dynamicTitle = dynamicKey ? store.getDynamicTitle(dynamicKey) : undefined
+        if (dynamicTitle) {
+          title = dynamicTitle
         } else if (meta.titleKey && t) {
           try {
             title = t(meta.titleKey)

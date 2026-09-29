@@ -405,7 +405,7 @@ watch(
 
     <!-- 下面各块各自取数；全部首次到齐之前整页藏在一个转圈后面，到齐后一起出现，
          不然每到一块就把下面的往下推一次。见 useRevealGate。 -->
-    <div v-else class="reveal-gate" :class="{ 'reveal-gate--waiting': !revealed }">
+    <div v-else class="reveal-gate settings-body" :class="{ 'reveal-gate--waiting': !revealed }">
       <!-- 分四组，因为这一页的读者一次只为一件事来：换队友 / 调机器 / 定交付
              规则 / 接仓库。原来是六块竖着铺满一页，读的人得自己认哪块是哪块；而
              没绑仓库的项目从头到尾只看得到跟仓库有关的东西，于是整页像是坏的。 -->
@@ -743,9 +743,9 @@ watch(
           >
             {{ githubRepoNotice.text }}
           </v-alert>
-          <div v-if="forgeConnection.connected" class="d-flex align-center" style="gap: 8px">
+          <div v-if="forgeConnection.connected" class="d-flex align-center flex-wrap" style="gap: 8px">
             <v-icon size="18" color="success">mdi-check-circle</v-icon>
-            <span class="t-body">
+            <span class="t-body settings-row-label">
               已连接 <strong>{{ forgeConnection.repo }}</strong>
             </span>
             <v-spacer />
@@ -753,7 +753,7 @@ watch(
               重新连接
             </v-btn>
           </div>
-          <div v-else class="d-flex align-center" style="gap: 8px">
+          <div v-else class="d-flex align-center flex-wrap" style="gap: 8px">
             <span class="t-body c-muted">暂无关联仓库</span>
             <v-spacer />
             <v-btn
@@ -825,18 +825,18 @@ watch(
           </div>
 
           <!-- 请求失败: never fall through to the "未连接" look, that would lie -->
-          <div v-else-if="githubAccountLoadState === 'error'" class="d-flex align-center" style="gap: 8px">
+          <div v-else-if="githubAccountLoadState === 'error'" class="d-flex align-center flex-wrap" style="gap: 8px">
             <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
-            <span class="t-body text-error">{{ githubAccountLoadError ?? '加载连接状态失败' }}</span>
+            <span class="t-body text-error settings-row-label">{{ githubAccountLoadError ?? '加载连接状态失败' }}</span>
             <v-spacer />
             <v-btn size="small" variant="text" @click="loadGithubAccountConnection">重试</v-btn>
           </div>
 
           <!-- 已连接 -->
           <template v-else-if="githubAccountConn">
-            <div class="d-flex align-center" style="gap: 8px">
+            <div class="d-flex align-center flex-wrap" style="gap: 8px">
               <v-icon size="18" color="success">mdi-check-circle</v-icon>
-              <span class="t-body">
+              <span class="t-body settings-row-label">
                 已连接 <strong>{{ githubAccountConn.login ?? githubAccountConn.providerUserId }}</strong>
                 <span v-if="githubAccountConn.connectedAt" class="c-faint settings-hint">
                   （{{ relTime(githubAccountConn.connectedAt) }}连接）
@@ -868,7 +868,7 @@ watch(
           </template>
 
           <!-- 未连接 -->
-          <div v-else class="d-flex align-center" style="gap: 8px">
+          <div v-else class="d-flex align-center flex-wrap" style="gap: 8px">
             <span class="t-body c-muted">暂无关联账号</span>
             <v-spacer />
             <v-btn
@@ -900,6 +900,17 @@ watch(
 /* 内容区是侧栏 (--canvas) 上面那张 surface —— 和话题视图、总览同一层关系。 */
 .settings-page {
   background: var(--surface);
+}
+/* 这一页各块的窄屏排法按内容列有多宽决定，不按窗口（docs/design-system.md §3.5）：
+   子组件（队友、环境变量）里的 @container 也量的是这一格。 */
+.settings-body {
+  container-type: inline-size;
+}
+/* 「已连接 owner/很长的仓库名」这种一行：字可以断开换行，按钮放不下就换到下一行，
+   而不是把字挤成一列。 */
+.settings-row-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 /* 区块节奏。区块不是卡片：区块标题是 eyebrow，划分靠留白加一条顶部发丝线。
    标题行、标题、正文三条用 :deep()，因为队友、工作电脑、额度那几块是子组件自己画
@@ -963,6 +974,7 @@ watch(
 }
 .bp-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 4px 0;
@@ -972,9 +984,18 @@ watch(
   align-items: stretch;
   gap: 8px;
 }
+/* 说明至少留 240 宽：控件和它挤不下一行时，控件换到说明下面，而不是把说明挤成
+   一列。开关那种窄控件照旧排在右边。 */
 .bp-main {
-  flex: 1;
+  flex: 1 1 240px;
   min-width: 0;
+}
+.bp-row--stack > .bp-main {
+  flex: none;
+}
+/* 下拉框不缩到看不清选了什么：放不下就整个换到下一行。 */
+.bp-row > .v-select {
+  flex: 1 1 200px;
 }
 .bp-label {
   font-size: 13px;

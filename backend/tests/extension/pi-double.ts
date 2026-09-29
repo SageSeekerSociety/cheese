@@ -13,6 +13,22 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import { register } from "node:module";
+
+// The extension builds its bash on pi's own (`createBashTool`), imported from
+// pi's package, which only pi can resolve. Here that name is the stand-in beside
+// this file; everything else resolves as it always does.
+const PI_PACKAGE = new URL("./pi-coding-agent.ts", import.meta.url).href;
+register(
+  "data:text/javascript," +
+    encodeURIComponent(
+      "export async function resolve(specifier, context, next) {" +
+        `  if (specifier === "@earendil-works/pi-coding-agent")` +
+        `    return { url: ${JSON.stringify(PI_PACKAGE)}, shortCircuit: true };` +
+        "  return next(specifier, context);" +
+        "}",
+    ),
+);
 
 const SOURCE = new URL(
   "../../app/domain/agent/harness/pi/platform.ts",
@@ -49,6 +65,48 @@ export class FakePi {
       answer = (await handler(payload, ctx)) ?? answer;
     }
     return answer;
+  }
+
+  /** One tool call as pi 0.85.1 makes it (`agent-loop.ts`, `agent-session.ts`):
+   *  `tool_call` first, where a `block` or a throw stops the call and its
+   *  reason becomes the error the model reads, and a mutated input is what
+   *  runs; then the tool; then `tool_result`, whose patches replace fields of
+   *  the result. `tool` stands in for the tool's own `execute`. */
+  async run(
+    name: string,
+    input: any,
+    tool: (input: any) => any,
+    ctx: any = {},
+    id = "call-1",
+  ) {
+    let verdict: any;
+    try {
+      for (const handler of this.handlers.get("tool_call") ?? []) {
+        verdict = await handler({ type: "tool_call", toolName: name, toolCallId: id, input }, ctx);
+        if (verdict?.block) break;
+      }
+    } catch (error: any) {
+      return { content: [{ type: "text", text: error.message }], isError: true };
+    }
+    if (verdict?.block) {
+      return {
+        content: [{ type: "text", text: verdict.reason || "Tool execution was blocked" }],
+        isError: true,
+      };
+    }
+    let result: any;
+    let isError = false;
+    try {
+      result = await tool(input);
+    } catch (error: any) {
+      result = { content: [{ type: "text", text: error.message }] };
+      isError = true;
+    }
+    const event = { type: "tool_result", toolName: name, toolCallId: id, input, ...result, isError };
+    for (const handler of this.handlers.get("tool_result") ?? []) {
+      Object.assign(event, (await handler({ ...event }, ctx)) ?? {});
+    }
+    return { content: event.content, isError: event.isError };
   }
 
   async call(name: string, params: any, ctx: any = {}) {
@@ -126,6 +184,7 @@ export async function load(manifest: Partial<Record<string, unknown>> = {}) {
       jobs,
       tools: CATALOG,
       unavailable: "",
+      mcp: [],
       notice: NOTICE,
       ...manifest,
     }),

@@ -4,6 +4,7 @@
   "mainNavigation": "Main navigation",
   "navProduct": "Product",
   "navSolutions": "Solutions",
+  "navDownload": "Download",
   "openWorkspace": "Open workspace",
   "getStarted": "Get started",
   "slogan": "Many minds, one work",
@@ -28,6 +29,9 @@
   "deviceTitle": "Your own devices",
   "deviceBody": "Connect your computer and let AI work in the folders you allow",
   "resourceTerms": "Free trial credit is included. Universities and companies can add models and cloud resources as needed.",
+  "downloadTitle": "Desktop app",
+  "downloadLead": "Install Cheese on a Mac or Windows computer. After signing in, connect that computer in one step and AI can work in the folders you allow.",
+  "downloadNote": "If the system blocks the first launch: on a Mac, go to System Settings → Privacy & Security and click Open Anyway; on Windows, click More info → Run anyway.",
   "peopleTitle": "Brought together by a problem",
   "peopleLead": "Companies post real problems, teachers bring them into class, students take them on in teams, and AI helps throughout.",
   "students": "Students",
@@ -162,7 +166,7 @@
     "teamsTitle": "Managed by team",
     "teamsBody": "Projects belong to teams, and team leads manage members, resources and quota.",
     "ctaTitle": "Grow people through real projects, together",
-    "ctaBody": "Write to ops@okcheese.com and tell us about your setting."
+    "ctaBody": "Write to ops{'@'}okcheese.com and tell us about your setting."
   },
   "visionLabel": "Vision · Future learning centers",
   "visionLead": "Learn on real problems. Grow by working together.",

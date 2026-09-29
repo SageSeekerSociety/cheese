@@ -206,6 +206,12 @@ python3 - "$CLAUDE_CONFIG_DIR" <<'CHEESE_SKILLS'
 import base64, gzip, json, os, sys
 files = json.loads(gzip.decompress(base64.b64decode("{skills}")))
 for name, content in files.items():
+    # An earlier session may have linked the repository's skill of this name
+    # here, into the project; the platform's is written in its place, never
+    # through the link.
+    top = os.path.join(sys.argv[1], *name.split("/")[:2])
+    if os.path.islink(top):
+        os.unlink(top)
     path = os.path.join(sys.argv[1], name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as out:
@@ -243,6 +249,7 @@ CHEESE_SKILLS"""
   > "$HOME/.cheese/remote-target.json"
 EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"
 EXECUTOR_TARGET="$HOME/.cheese/remote-target.json"
+export CHEESE_EXECUTION_CONFIG="$HOME/.cheese/remote-session/execution.json"
 CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
         configure = f"""\

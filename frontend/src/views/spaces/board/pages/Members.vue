@@ -10,8 +10,9 @@
 // 「加入方式」那一列（是靠哪个邀请码进来的）现在有了：接口的成员行带 `inviteCode`，
 // 来源是 `space_member.invite_code_id`，只在核销那一刻写下。**它是「有记录」的证据，
 // 不是「没用过码」的证据** —— 加这一格之前进来的成员没有记录，所有者直接加进来的人
-// 也没有，两者在行上长得一模一样，所以一律显示「未知」，不拿板上现有的某张码顶上：
-// 那会把一条没记过的事实说成一条很确定的事实。
+// 也没有，两者在行上长得一模一样，所以没记录的一律显示「未知」，不拿板上现有的某张码
+// 顶上：那会把一条没记过的事实说成一条很确定的事实。**唯一的例外是所有者那一行** ——
+// 他是建板的人，这是定义而不是从记录里推断的，所以读「建板时就在」。
 import type { SpaceMember } from '@/types'
 
 import { computed, ref } from 'vue'
@@ -33,6 +34,8 @@ interface Row {
   userId: number
   /** 加入方式：这张码的串，或 `null` = 没有记录（界面写「未知」）。 */
   viaCode: string | null
+  /** 角色旁那一句旁注：所有者「建板的人」、管理员「由所有者授予」。成员没有。 */
+  note?: string
 }
 
 const members = ref<SpaceMember[]>([])
@@ -57,12 +60,16 @@ const rows = computed<Row[]>(() => {
   return members.value.map((m) => {
     const user = m.user
     const handle = user?.username ?? String(m.userId)
+    const role = roleByHandle.get(handle) ?? 'MEMBER'
     return {
       person: { handle, name: user?.nickname || handle },
-      role: roleByHandle.get(handle) ?? 'MEMBER',
+      role,
       userId: m.userId,
       // 老接口不带这一格、库里没记过也是 `null` —— 两种都读成「没有记录」。
       viaCode: m.inviteCode?.code ?? null,
+      // 角色旁那句旁注说的是**这个角色是什么意思**，不是这个人的别的事：所有者
+      // 是建板的人，管理员是被所有者授上去的。成员是缺省，不需要解释。
+      note: role === 'OWNER' ? '建板的人' : role === 'ADMIN' ? '由所有者授予' : undefined,
     }
   })
 })
@@ -167,11 +174,16 @@ async function setRole(row: Row, next: Role) {
               >
                 {{ ROLE_LABEL[row.role] }}
               </v-chip>
+              <span v-if="row.note" class="mem__note">{{ row.note }}</span>
             </td>
             <td>
               <!-- 有记录就写那张码；没有就写「未知」——**不写空白，也不写「没用码」**：
                    空白读起来像「还没查」，而「没记过」和「没用过」是两句话。 -->
               <code v-if="row.viaCode" class="mem__code">{{ row.viaCode }}</code>
+              <!-- 所有者那一行不写「未知」：他是**建板的人**，压根不是靠哪张码进来的 ——
+                   这是定义，不是从记录里推断的，所以它读「建板时就在」。上面那条「不
+                   替没记录的人说话」管的是其余每一行，不适用于他。 -->
+              <span v-else-if="row.role === 'OWNER'" class="mem__note">建板时就在</span>
               <span v-else class="mem__unknown">未知</span>
             </td>
             <td class="num">

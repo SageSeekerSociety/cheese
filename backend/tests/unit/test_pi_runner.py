@@ -168,8 +168,8 @@ async def test_steering_is_not_a_second_turn_and_abort_stops_the_work(tmp_path):
 
 # --- the platform's tools, over the same socket ------------------------------
 #
-# pi has no MCP, so a room's platform tools reach it as extension tools whose
-# calls come back here. The catalog is read off the platform file installed on
+# pi has no MCP client, so a room's platform tools reach it as extension tools
+# whose calls come back here. The catalog is read off the platform file installed on
 # the machine: its tool table, which runs here against the backend, and its
 # argparse tree, whose commands run as the CLI — a command exists exactly when
 # the CLI has it, and takes exactly what the command takes.

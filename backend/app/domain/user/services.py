@@ -210,6 +210,9 @@ class UserService:
     async def get_users_by_ids(self, ids: Sequence[int]) -> dict[int, UserProfile]:
         return await self._repo.get_profiles_by_user_ids(ids)
 
+    async def get_handles_by_ids(self, ids: Sequence[int]) -> dict[int, str]:
+        return await self._repo.usernames_by_user_ids(ids)
+
 
 class AccountService:
     """账号表（`User`）上的读 —— 平台看板问「有多少账号、这七天来了几个」。

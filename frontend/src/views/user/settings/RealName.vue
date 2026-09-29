@@ -109,7 +109,21 @@
           </span>
           <UserAvatar v-else :avatar="avatarOf(entry)" :name="nameOf(entry)" size="28" class="log-row__avatar" />
           <span class="log-row__body">
-            <span class="log-row__what">{{ describe(entry) }}</span>
+            <span v-if="isOwnView(entry) && entry.accessType !== UserIdentityAccessType.EXPORT" class="log-row__what">{{
+              t('account.realName.log.youViewed')
+            }}</span>
+            <i18n-t
+              v-else
+              :keypath="
+                entry.accessType === UserIdentityAccessType.EXPORT
+                  ? 'account.realName.log.exported'
+                  : 'account.realName.log.viewed'
+              "
+              tag="span"
+              class="log-row__what"
+            >
+              <template #name><UserRef :handle="entry.accessor.username" :name="nameOf(entry)" /></template>
+            </i18n-t>
             <span v-if="entry.accessEntityName" class="log-row__where">
               {{
                 t('account.realName.log.where', {
@@ -150,6 +164,7 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import i18n, { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { UserIdentityAccessType } from '@/network/api/users/types'
@@ -343,15 +358,6 @@ const nameOf = (entry: UserIdentityAccessLog) => entry.accessor.nickname || entr
 
 const avatarOf = (entry: UserIdentityAccessLog) =>
   isChosenAvatar(entry.accessor.avatarId) ? getAvatarUrl(entry.accessor.avatarId) : ''
-
-function describe(entry: UserIdentityAccessLog) {
-  if (entry.accessType === UserIdentityAccessType.EXPORT) {
-    return t('account.realName.log.exported', { name: nameOf(entry) })
-  }
-  return isOwnView(entry)
-    ? t('account.realName.log.youViewed')
-    : t('account.realName.log.viewed', { name: nameOf(entry) })
-}
 
 function formatTime(ms: number) {
   const date = new Date(ms)

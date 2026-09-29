@@ -39,11 +39,16 @@ server {
     client_max_body_size 5m;
   }
 
-  # Device and execution traffic enters through this stable front door with
-  # the public /api prefix. Keep it off the frontend containers this proxy
-  # replaces during an ordinary application rollout.
-  location = /api/connector/agent {
-    proxy_pass http://127.0.0.1:18083/connector/agent;
+  # Device and execution traffic enters through this stable front door. Keep
+  # it off the frontend containers this proxy replaces during an ordinary
+  # application rollout: a rollout there ends every connection it carries.
+  # A connector dials <base>/agent, and its base is whatever it was connected
+  # with: the installer's <origin>/api/connector, or <site>/connector, which
+  # the desktop app and the documented `link connect` use. Both spellings of
+  # the device and screen channels go to the connection owner.
+  location ~ ^/(api/)?connector/agent\$ {
+    rewrite ^/api/(.*)\$ /\$1 break;
+    proxy_pass http://127.0.0.1:18083;
     proxy_http_version 1.1;
     proxy_set_header Host \$http_host;
     proxy_set_header Upgrade \$http_upgrade;
@@ -56,7 +61,7 @@ server {
     proxy_buffering off;
   }
 
-  location ~ ^/api/connector/session/[^/]+/screen\$ {
+  location ~ ^/(api/)?connector/session/[^/]+/screen\$ {
     rewrite ^/api/(.*)\$ /\$1 break;
     proxy_pass http://127.0.0.1:18083;
     proxy_http_version 1.1;

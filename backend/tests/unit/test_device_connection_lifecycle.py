@@ -358,6 +358,7 @@ async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -
     assert order == [
         "recover:new-cloud-machine",
         "cleanup device reconnect",
+        "closed task checkouts device reconnect",
         "wake:new-cloud-machine",
     ]
     await backend.close()

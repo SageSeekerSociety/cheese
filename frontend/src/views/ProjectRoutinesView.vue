@@ -20,6 +20,7 @@ import {
 } from '../api'
 
 import PageAction from '@/components/common/PageAction.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
@@ -290,7 +291,7 @@ watch(
                 <dt>结果放在</dt>
                 <dd>房间 {{ r.output_dir || '根目录' }}</dd>
                 <dt>执行者</dt>
-                <dd>{{ r.agent_handle }}（由 {{ r.proposed_by }} 起草）</dd>
+                <dd><UserRef :handle="r.agent_handle" />（由 <UserRef :handle="r.proposed_by" /> 起草）</dd>
               </dl>
               <div class="routine-row__actions">
                 <v-btn
@@ -538,7 +539,7 @@ watch(
 }
 .routine-row__spec {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: 4px 12px;
   margin: 8px 0;
 }
@@ -546,7 +547,9 @@ watch(
   color: var(--faint);
 }
 .routine-row__spec dd {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 .routine-row__actions {

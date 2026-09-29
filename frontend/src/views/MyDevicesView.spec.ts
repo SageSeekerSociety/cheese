@@ -18,6 +18,8 @@ vi.mock('../api', async () => ({
 
 import MyDevicesView from './MyDevicesView.vue'
 
+import { setLocale } from '@/i18n'
+
 function mount() {
   return render(MyDevicesView as unknown as Component, {
     global: { plugins: [createVuetify({ components, directives })], stubs: ['router-link'] },
@@ -53,6 +55,8 @@ vi.stubGlobal('visualViewport', {
 })
 
 beforeEach(() => {
+  // The download labels come from the catalog, and happy-dom starts in English.
+  setLocale('zh-CN')
   localStorage.setItem('accessToken', 'signed-in')
   listMyDevices.mockReset().mockResolvedValue({ devices: [] })
   connectDevice.mockReset().mockResolvedValue({})

@@ -132,6 +132,13 @@ async def _recover_business_state(device_id: str) -> None:
         sweep_retired_storage(async_session_factory),
         name="cleanup device reconnect",
     )
+    # A machine offline when a task of its rooms closed still has the checkout.
+    from app.domain.room_task.checkouts import remove_closed_checkouts
+
+    spawn(
+        remove_closed_checkouts(async_session_factory, device_id=device_id),
+        name="closed task checkouts device reconnect",
+    )
     try:
         # A Cloud topic whose machine just came up has been holding a message;
         # this attach is the last fact it was waiting for, so deliver now instead
