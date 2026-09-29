@@ -5,7 +5,9 @@ import { useDisplay } from 'vuetify'
 
 import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
+import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
+import { t } from '@/i18n'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 import { useWorkspaceStore } from '@/stores/workspace'
 import BoardSummary from '@/views/workspace/BoardSummary.vue'
@@ -74,6 +76,17 @@ async function onCreateTopic(title: string) {
 
 // Archiving the topic you are looking at closes it — go back to the project
 // root rather than leaving a frozen archive open in the content area.
+// 新建话题和侧栏上那颗 ＋ 是同一件事。
+useCommands(() => [
+  {
+    id: 'topic.new',
+    title: t('navigation.palette.newTopic'),
+    icon: 'mdi-plus',
+    disabled: creatingTopic.value,
+    run: () => void onCreateTopic(''),
+  },
+])
+
 async function onArchiveTopic(topicId: string) {
   await store.archive(topicId)
   if (activeTopicId.value === topicId) {

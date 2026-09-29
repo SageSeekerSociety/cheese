@@ -36,6 +36,9 @@ import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
 
+import { useCommands } from '@/commands'
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
@@ -404,6 +407,15 @@ function hasContent(key: TabKey): boolean {
 }
 
 const tabs = computed(() => ALL_TABS.filter((t) => t.key !== 'chat' || props.withChat))
+// 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
+useCommands(() =>
+  tabs.value.map((tab) => ({
+    id: `room.tab.${tab.key}`,
+    title: t('navigation.palette.showTab', { tab: tab.label }),
+    icon: tab.icon,
+    run: () => setTab(tab.key),
+  }))
+)
 
 // 「现场」tab 上「谁正在工作」的说法：几个队友并行在干就把名字并列报出来
 // （对话栏按轮次帧学来的名单）；名单空着 = 帧没带座位（老后端），退回默认
