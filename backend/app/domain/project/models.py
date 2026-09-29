@@ -99,6 +99,12 @@ class Project(UuidPk, Timestamps, Base):
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Set while the owner has archived the project: it leaves every member's
+    # project list, every write to it is refused (``ProjectArchivedError``), and
+    # its rooms are archived with it so nothing keeps running. NULL = in use.
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ProjectMember(UuidPk, Timestamps, Base):

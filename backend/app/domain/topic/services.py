@@ -808,6 +808,39 @@ class TopicService:
         await self._session.flush()
         return topic
 
+    async def archive_with_project(self, project_id: uuid.UUID, *, by: str) -> None:
+        """Archive every room of a project being archived — the overview and the
+        private chats too, which nobody can archive one at a time.
+
+        Each room goes the way a room archived by hand goes (``_archive_one``):
+        its session is stopped and its machine reclaimed after the grace, its
+        open cards are settled and its PRs stop being polled, its threads close.
+        A project that is archived keeps nothing running because its rooms keep
+        nothing running. The rooms are marked so unarchiving the project brings
+        back these and only these.
+        """
+        rooms = [
+            topic
+            for topic in await self._repo.lock_all_in_project(project_id)
+            if topic.status != TopicStatus.archived
+        ]
+        for topic in rooms:
+            # The overview's children were already taken along with it.
+            if topic.status != TopicStatus.archived:
+                await self._archive_one(topic, by=by)
+                await self._archive_children(topic, by=by)
+            topic.archived_with_project = True
+        await self._session.flush()
+
+    async def unarchive_with_project(self, project_id: uuid.UUID, *, by: str) -> None:
+        """Bring back the rooms :meth:`archive_with_project` took along."""
+        for topic in await self._repo.lock_all_in_project(project_id):
+            if not topic.archived_with_project:
+                continue
+            await self.unarchive(topic.id, by=by)
+            topic.archived_with_project = False
+        await self._session.flush()
+
     async def upgrade_block_to_place(
         self,
         *,

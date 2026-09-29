@@ -18,6 +18,7 @@ from app.api.deps import (
 )
 from app.api.place import project_reader
 from app.api.response import ok, page
+from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
@@ -249,16 +250,25 @@ async def create_project(
 
 @router.get("")
 async def list_projects(
-    db: DbSession, resolver: ActorResolverDep, team_id: int | None = None
+    db: DbSession,
+    resolver: ActorResolverDep,
+    team_id: int | None = None,
+    archived: bool = False,
 ) -> dict:
     """One team's 项目 page with ``team_id`` (a personal team also folds in its
     owner's legacy team-less projects); otherwise the caller's OWN projects.
+    Archived projects are in neither; ``archived=true`` lists the ones the
+    caller owns, which is where an owner goes to bring one back.
 
     Without ``team_id`` this used to return every project to everyone. That is
     survivable while five exist and wrong as soon as a class does — a student
     would find every other team's work in their sidebar.
     """
     service = ProjectService(db)
+    if archived:
+        who = await resolver.require_verified_caller()
+        projects = await service.list_archived_owned_by(who.handle)
+        return ok(page(await _project_payloads(db, projects), len(projects)))
     if team_id is not None:
         # A team's project list is not a directory: every row carries the
         # project's `id`, and that id opens its roster, decisions and usage. So
@@ -268,7 +278,9 @@ async def list_projects(
         await resolver.authorize_team(
             await resolver.resolve(fallback_handle=None), team_id=team_id
         )
-        projects = await service.list_for_team(team_id)
+        projects = [
+            p for p in await service.list_for_team(team_id) if p.archived_at is None
+        ]
         total = len(projects)
     else:
         who = await resolver.resolve(fallback_handle=None)
@@ -1413,6 +1425,50 @@ async def require_project_steward(
         return handle
     # Conceal project existence from anonymous callers and outsiders.
     raise NotFoundError("Project not found")
+
+
+async def _project_owner(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> Actor:
+    """The project's owner, verified. Archiving is the owner's alone — not a
+    team admin's — because it takes the project away from everyone in it.
+
+    Deliberately not ``authorize_project``: that door refuses every write to an
+    archived project, and unarchiving is the one write that has to get through.
+    A member who is not the owner is told so; anyone else learns nothing.
+    """
+    actor = await resolver.require_verified_caller()
+    project = await ProjectService(db).get_or_404(project_id)
+    if actor.authenticated and project.owner_handle == actor.handle:
+        return actor
+    if actor.authenticated and await may_read_project(
+        db, project_id=project_id, handle=actor.handle
+    ):
+        raise ForbiddenError("只有项目所有者能归档或取消归档项目")
+    raise NotFoundError("Project not found")
+
+
+@router.post("/{project_id}/archive")
+async def archive_project(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """归档项目: hide it from everyone's lists and stop everything it runs.
+    Nothing is deleted; ``/unarchive`` puts it back."""
+    owner = await _project_owner(project_id, db, resolver)
+    project = await ProjectService(db).archive(project_id, by=owner.handle)
+    await db.commit()
+    return ok(await _project_payload(db, project))
+
+
+@router.post("/{project_id}/unarchive")
+async def unarchive_project(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """取消归档: the project and the rooms archived with it come back."""
+    owner = await _project_owner(project_id, db, resolver)
+    project = await ProjectService(db).unarchive(project_id, by=owner.handle)
+    await db.commit()
+    return ok(await _project_payload(db, project))
 
 
 @router.put("/{project_id}/owner")

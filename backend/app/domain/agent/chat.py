@@ -3163,7 +3163,12 @@ class ChatService:
         done: list[str] = []
         failed: list[str] = []
         async with self._sessions() as session:
-            project_ids = [p.id for p in await ProjectRepository(session).list_all()]
+            # An archived project runs nothing, a dream (a real turn) included.
+            project_ids = [
+                p.id
+                for p in await ProjectRepository(session).list_all()
+                if p.archived_at is None
+            ]
         for project_id in project_ids:
             try:
                 answer = await self.run_memory_dream(project_id=project_id)

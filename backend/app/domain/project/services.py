@@ -2,12 +2,12 @@
 
 import logging
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
@@ -31,6 +31,26 @@ def _intent_brief(intent: str) -> str:
     if not text:
         return ""
     return f"## 这个项目要做什么\n\n{text}\n\n下一步：在下方对话中说明你要做什么。"
+
+
+class ProjectArchivedError(ConflictError):
+    """A write to a project its owner has archived. The class name travels in
+    the error body, which is what the web client keys on to show the archived
+    state instead of a passing error."""
+
+    def __init__(self) -> None:
+        super().__init__("项目已归档，取消归档后才能修改")
+
+
+async def refuse_writes_if_archived(
+    session: AsyncSession, project_id: uuid.UUID
+) -> None:
+    """Raise :class:`ProjectArchivedError` when this project is archived."""
+    archived_at = await session.scalar(
+        select(Project.archived_at).where(Project.id == project_id)
+    )
+    if archived_at is not None:
+        raise ProjectArchivedError()
 
 
 class ProjectService:
@@ -235,6 +255,43 @@ class ProjectService:
         if project is None:
             raise NotFoundError("Project not found")
         return project
+
+    async def archive(self, project_id: uuid.UUID, *, by: str) -> Project:
+        """Archive the project (idempotent): it leaves its members' lists,
+        writes to it are refused, and its rooms are archived with it — which is
+        what stops its sessions, machines, PR polling and routines. Its pending
+        invitations are withdrawn: an invitation to a project nobody can enter
+        would sit in the invitee's inbox with no answer that means anything.
+        Nothing is deleted."""
+        project = await self.get_or_404(project_id)
+        if project.archived_at is not None:
+            return project
+        from app.domain.membership.services import InvitationService
+        from app.domain.topic.services import TopicService
+
+        project.archived_at = datetime.now(UTC)
+        await TopicService(self._session).archive_with_project(project_id, by=by)
+        await InvitationService(self._session).revoke_all_pending(project_id)
+        await self._session.flush()
+        return project
+
+    async def unarchive(self, project_id: uuid.UUID, *, by: str) -> Project:
+        """Put the project back, with the rooms that were archived along with it.
+        Withdrawn invitations stay withdrawn; they are sent again if wanted."""
+        project = await self.get_or_404(project_id)
+        if project.archived_at is None:
+            return project
+        from app.domain.topic.services import TopicService
+
+        await TopicService(self._session).unarchive_with_project(project_id, by=by)
+        project.archived_at = None
+        await self._session.flush()
+        return project
+
+    async def list_archived_owned_by(self, handle: str) -> list[Project]:
+        """The archived projects this person owns — the one place they are
+        listed, so that the owner can bring one back."""
+        return await self._repo.list_archived_owned_by(handle)
 
     async def list_all(self) -> tuple[list[Project], int]:
         return await self._repo.list_all(), await self._repo.count()

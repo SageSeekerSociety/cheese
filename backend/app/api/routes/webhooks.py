@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.response import ok
 from app.core.db import async_session_factory, get_db
 from app.core.errors import AuthenticationRequiredError, ValidationError
+from app.domain.project.services import refuse_writes_if_archived
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
 
@@ -58,6 +59,9 @@ async def receive_webhook(
     topic = await TopicRepository(db).get(topic_id)
     if topic is None:
         raise AuthenticationRequiredError("Invalid or revoked webhook token")
+    # Authenticated by the webhook's own token rather than ActorResolver, so the
+    # archived-project refusal every other write gets is asked here.
+    await refuse_writes_if_archived(db, topic.project_id)
 
     landed = await webhook_service.post_with_retries(
         async_session_factory,

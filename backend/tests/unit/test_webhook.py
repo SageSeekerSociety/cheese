@@ -269,6 +269,9 @@ async def test_receive_webhook_lands_the_post_for_a_valid_token(monkeypatch):
         "get",
         AsyncMock(return_value=fake_topic),
     )
+    monkeypatch.setattr(
+        webhooks_route, "refuse_writes_if_archived", AsyncMock(return_value=None)
+    )
     post_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(webhooks_route.webhook_service, "post_with_retries", post_mock)
 
@@ -282,3 +285,34 @@ async def test_receive_webhook_lands_the_post_for_a_valid_token(monkeypatch):
     _, kwargs = post_mock.call_args
     assert kwargs["topic_id"] == topic_id
     assert kwargs["source"] == "deploy-bot"
+
+
+@pytest.mark.anyio
+async def test_receive_webhook_refuses_a_room_of_an_archived_project(monkeypatch):
+    from app.domain.project.services import ProjectArchivedError
+
+    topic_id = uuid.uuid4()
+    monkeypatch.setattr(
+        webhooks_route.webhook_service, "verify", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        webhooks_route.TopicRepository,
+        "get",
+        AsyncMock(return_value=SimpleNamespace(id=topic_id, project_id=uuid.uuid4())),
+    )
+    monkeypatch.setattr(
+        webhooks_route,
+        "refuse_writes_if_archived",
+        AsyncMock(side_effect=ProjectArchivedError()),
+    )
+    post_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(webhooks_route.webhook_service, "post_with_retries", post_mock)
+
+    with pytest.raises(ProjectArchivedError):
+        await webhooks_route.receive_webhook(
+            topic_id,
+            {"content": "deployed", "source": "deploy-bot"},
+            _request_with_headers({"authorization": "Bearer good"}),
+            db=None,
+        )
+    post_mock.assert_not_awaited()

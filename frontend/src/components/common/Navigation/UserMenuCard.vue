@@ -43,6 +43,9 @@
       <v-list-item :to="{ name: 'my-connections' }">
         <v-list-item-title>{{ t('navigation.userMenu.connections') }}</v-list-item-title>
       </v-list-item>
+      <v-list-item :to="{ name: 'my-archived-projects' }">
+        <v-list-item-title>{{ t('navigation.userMenu.archivedProjects') }}</v-list-item-title>
+      </v-list-item>
     </v-list>
 
     <v-divider />

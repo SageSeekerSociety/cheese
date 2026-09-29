@@ -37,6 +37,7 @@ async function mount(intro = '') {
       { path: '/users/:handle', name: 'UserPage', component: stub },
       { path: '/devices', name: 'my-devices', component: stub },
       { path: '/connections', name: 'my-connections', component: stub },
+      { path: '/archived-projects', name: 'my-archived-projects', component: stub },
       { path: '/users/settings/profile', name: 'UserSettingsProfile', component: stub },
     ],
   })
@@ -58,6 +59,8 @@ describe('「我」的菜单', () => {
     // 上传头像的地方：以前菜单里没有这一项，得先进个人主页再点资料卡上的编辑。
     expect(view.getByText('个人设置').closest('a')?.getAttribute('href')).toBe('#/users/settings/profile')
     expect(view.getByText('我的设备').closest('a')?.getAttribute('href')).toBe('#/devices')
+    // 归档了的项目不在任何列表里，这里是所有者找回它们的地方。
+    expect(view.getByText('已归档的项目').closest('a')?.getAttribute('href')).toBe('#/archived-projects')
     expect(view.getByText('退出登录')).toBeTruthy()
   })
 

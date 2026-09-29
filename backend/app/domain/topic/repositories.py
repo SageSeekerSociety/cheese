@@ -129,6 +129,21 @@ class TopicRepository:
             )
         ).one_or_none()
 
+    async def lock_all_in_project(self, project_id: uuid.UUID) -> list[Topic]:
+        """Every topic of the project, private chats included, locked the way
+        :meth:`lock` locks one — what archiving the whole project walks."""
+        return list(
+            (
+                await self._session.scalars(
+                    select(Topic)
+                    .where(Topic.project_id == project_id)
+                    .order_by(Topic.created_at)
+                    .with_for_update(key_share=True)
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        )
+
     async def list_for_project(
         self,
         project_id: uuid.UUID,
