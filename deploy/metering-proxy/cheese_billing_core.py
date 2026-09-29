@@ -583,6 +583,134 @@ def _fill(value, project: str, topic: str):
     return value
 
 
+_CODEX_STRING_END = re.compile(rb'["\\]')
+_CODEX_STRUCTURE = re.compile(rb'["{}\[\],]')
+
+
+class CodexBody:
+    """Reshape a streamed Responses body into what ChatGPT's Codex backend takes.
+
+    The backend refuses a request that does not say ``store: false`` ("Store
+    must be set to false") and one that carries ``max_output_tokens``
+    ("Unsupported parameter"), and the gateway's translation from Anthropic's
+    Messages writes the second and never the first. So the body goes out
+    opening with ``"store":false``, and any top-level ``store`` or
+    ``max_output_tokens`` member of its own is left out.
+
+    Streamed, never buffered (see `_write_bound_model` for why that matters):
+    only a member's key is held, while the member it opens is decided on; its
+    value, however large, passes through as it arrives. A body that does not
+    start with an object passes untouched.
+    """
+
+    DROPPED = frozenset({"store", "max_output_tokens"})
+    _OPENING = b'{"store":false'
+
+    def __init__(self) -> None:
+        # before: ahead of the opening brace. key: between members, or inside a
+        # member's key. value: inside a member's value. done: past the object.
+        self._state = "before"
+        self._key = b""  # the key being read, quotes included
+        self._keep = True
+        self._depth = 0  # nesting inside the current value
+        self._in_string = False
+        self._escaped = False
+
+    def feed(self, chunk: bytes) -> bytes:
+        """The next piece of the body; ``b""`` marks its end."""
+        if self._state == "done":
+            return chunk
+        out = bytearray()
+        i, n = 0, len(chunk)
+        while i < n:
+            if self._state == "before":
+                while i < n and chunk[i : i + 1].isspace():
+                    out += chunk[i : i + 1]
+                    i += 1
+                if i == n:
+                    break
+                if chunk[i : i + 1] != b"{":
+                    self._state = "done"
+                    return bytes(out) + chunk[i:]
+                out += self._OPENING
+                i += 1
+                self._state = "key"
+            elif self._state == "key":
+                if self._key:  # inside the key's string
+                    j = self._string_end(chunk, i)
+                    self._key += chunk[i:j]
+                    i = j
+                    if self._in_string:
+                        continue
+                    name = json.loads(self._key)
+                    self._keep = name not in self.DROPPED
+                    if self._keep:
+                        out += b"," + self._key
+                    self._key = b""
+                    self._state = "value"
+                    self._depth = 0
+                    continue
+                c = chunk[i : i + 1]
+                i += 1
+                if c == b'"':
+                    self._key = c
+                    self._in_string = True
+                elif c == b"}":
+                    out += b"}"
+                    self._state = "done"
+                    return bytes(out) + chunk[i:]
+                # whitespace and the comma between members are rewritten, not kept
+            else:  # value
+                if self._in_string:
+                    j = self._string_end(chunk, i)
+                else:
+                    m = _CODEX_STRUCTURE.search(chunk, i)
+                    j = m.start() if m else n
+                if self._keep:
+                    out += chunk[i:j]
+                i = j
+                if i == n or self._in_string:
+                    continue
+                c = chunk[i : i + 1]
+                i += 1
+                if c == b'"':
+                    self._in_string = True
+                elif c in b"{[":
+                    self._depth += 1
+                elif c in b"}]":
+                    if self._depth == 0:  # the object's own closing brace
+                        out += b"}"
+                        self._state = "done"
+                        return bytes(out) + chunk[i:]
+                    self._depth -= 1
+                elif c == b"," and self._depth == 0:
+                    self._state = "key"
+                    continue
+                if self._keep:
+                    out += c
+        return bytes(out)
+
+    def _string_end(self, chunk: bytes, i: int) -> int:
+        """Advance through a string's bytes; clears `_in_string` at its close
+        and returns the index just past what was consumed."""
+        n = len(chunk)
+        while i < n:
+            if self._escaped:
+                self._escaped = False
+                i += 1
+                continue
+            m = _CODEX_STRING_END.search(chunk, i)
+            if not m:
+                return n
+            i = m.start() + 1
+            if chunk[m.start() : i] == b"\\":
+                self._escaped = True
+            else:
+                self._in_string = False
+                return i
+        return n
+
+
 class ModelRewrite:
     """Write the admitted model name into a streamed ``/v1/messages`` body.
 

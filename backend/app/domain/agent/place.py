@@ -45,6 +45,8 @@ session process runs on — is what upstream reads, and nothing has to ask a
 channel which class it is (结论 24).
 """
 
+import hashlib
+
 _ROOT = ".cheese"
 
 # The directory the platform installed into inside a session home before the
@@ -60,6 +62,52 @@ def footprint_root() -> str:
 def session_platform_dirs() -> tuple[str, ...]:
     """The platform's directories inside a SESSION home, current one first."""
     return (_ROOT, _PREVIOUS_SESSION_DIR)
+
+
+# What a room's HOME is SHARED out of, and what a seat keeps for itself.
+#
+# A room's teammates share the machine, the checkout and the project store, and
+# everything that says where any of those are. They share none of what a TURN
+# writes: the forwarded-fs token, the execution target, the harness's system
+# prompt, and every file the execution client derives from the config beside
+# it (its `tmp/`, `plugin/`, `forwarded-project`, `mcp.json`, the shell prefix).
+# Those belong to one seat's session, and two seats writing one path is how a
+# room's second teammate starting a turn used to kill the first one's: the
+# token was replaced under a turn that was mid-flight (its command died with
+# exit 137) and the session came back pointed at the other seat's target.
+#
+# So the files that are per-seat live under this directory, one child per seat,
+# inside the room's home. Everything a seat needs and the room also needs —
+# `$HOME/.claude` and its transcripts, `$HOME/.cheese/executor`,
+# `$HOME/.cheese/remote-execution`, `.cheese-environment/status.json`, the
+# `room/` checkout — deliberately does NOT: those are read by programs that
+# resolve a room's paths and could not name a seat (`release.stage`'s busy
+# scan, `session_transfer`, `resource_cleanup`), and splitting them would take
+# a room's conversation and its cleanup apart.
+SEATS_DIR = "seats"
+
+
+def seat_name(agent_handle: str) -> str:
+    """One seat's name under `SEATS_DIR`, derived from its handle alone.
+
+    The same sha256 the launcher file and the runner's state directory are
+    named by (`device_provider.launcher_path`,
+    `machine_launcher.state_dir`): one handle, one name, everywhere. An empty
+    handle is the room's own seat — a screen from before seats, a probe, a
+    fixture — and hashes to a name of its own rather than to any teammate's.
+    """
+    return hashlib.sha256(agent_handle.encode()).hexdigest()[:12]
+
+
+def seat_dir(home: str, agent_handle: str = "") -> str:
+    """Where one seat's own files go inside the room's home.
+
+    ``home`` is the room's home as the backend names it — a path whose literal
+    ``$HOME`` only the machine can resolve (`device_provider.device_home_dir`)
+    — so the answer keeps that placeholder and stays a path the device's own
+    shell is the one to expand.
+    """
+    return f"{home}/{_ROOT}/{SEATS_DIR}/{seat_name(agent_handle)}"
 
 
 # The directory inside a session's home that files fetched for the agent go

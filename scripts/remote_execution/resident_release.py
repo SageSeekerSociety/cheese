@@ -87,7 +87,12 @@ def main():
 
         channel = object.__new__(DeviceChannel)
         channel._hub = hub = Hub()
-        screen = HubScreen("fixture", "fixture", [], "fixture", 1, "fixture")
+        # The seat a release lands in is the screen's (`place.seat_dir`), and
+        # the session this fixture started is the one acceptance's place names
+        # — no teammate, so the seat an empty handle names. A release aimed at
+        # any other name would read an `execution.json` that is not there,
+        # which is the very failure this case exists to catch.
+        screen = HubScreen("fixture", "fixture", [], "fixture", 1, "")
         state = str(session.state)
 
         async def update():

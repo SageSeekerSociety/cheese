@@ -4,10 +4,12 @@
 // 交出来：一个以 `.palette.ts` 结尾、默认导出一个 PaletteSource 的文件，放在它所属的
 // 那块代码旁边。面板启动时把它们全部收上来，加一类东西不用改面板，也不用改一张清单。
 //
-// 数据源只交候选，不做匹配：拼音首字母、打分、分组、「最近去过」都在面板里统一做。
+// 本地数据源（`items`）只交候选，不做匹配：拼音首字母、打分、分组、「最近去过」都在
+// 面板里统一做。远程数据源（`search`）交不出全部候选，只能拿着输入去后端问，问回来的
+// 就是结果，面板不再匹配，排在本地结果后面。
 import type { RouteLocationNormalizedLoaded, RouteLocationRaw, Router } from 'vue-router'
 
-export type Prefix = '#' | '@' | '>'
+export type Prefix = '#' | '@' | '>' | '?'
 
 export interface PaletteItem {
   /** 全面板唯一且稳定，形如 `topic:<id>`：「最近去过」靠它认。 */
@@ -43,7 +45,9 @@ export interface PaletteSource {
   order: number
   /** 输入以它开头时只看这一组。 */
   prefix?: Prefix
-  items: (ctx: SourceContext) => PaletteItem[]
+  items?: (ctx: SourceContext) => PaletteItem[]
+  /** 远程搜：停止打字后面板把输入交过来。没有结果就交空表，出错也一样。 */
+  search?: (query: string, ctx: SourceContext) => Promise<PaletteItem[]>
   /** 这个地址是不是这一类里的某一条：从别处（侧栏、链接）去过的地方也算「最近去过」。 */
   fromRoute?: (route: RouteLocationNormalizedLoaded, ctx: SourceContext) => PaletteItem | null
 }

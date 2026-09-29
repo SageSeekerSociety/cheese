@@ -33,6 +33,16 @@
 					upstream 127.0.0.1:18443
 				}
 			}
+			# The dev box's reverse SSH tunnel for the route above arrives wrapped
+			# in TLS under this name; socat on 127.0.0.1:2222 unwraps it for sshd.
+			# Bare SSH on :22 from the dev box's egress stalls for minutes at a
+			# time (docs/infrastructure.md, "Public edge").
+			@relay tls sni relay.okcheese.com
+			route @relay {
+				proxy {
+					upstream 127.0.0.1:2222
+				}
+			}
 			# Everything else (ruc-etrip.cn, including its TLS-ALPN challenge) is
 			# handed unchanged to this Caddy's own HTTPS sites.
 			route {
@@ -50,6 +60,8 @@
 #   :443 (layer4)          -> by SNI: okcheese.com, www, hk go encrypted to
 #                             127.0.0.1:18443, a reverse SSH tunnel to the dev
 #                             box (cheese-dev-env1-app), which terminates TLS;
+#                             relay.okcheese.com goes to socat on 127.0.0.1:2222,
+#                             the TLS-wrapped way that tunnel logs in;
 #                             every other name goes to this Caddy on 127.0.0.1:8443.
 #   ruc-etrip.cn           -> 127.0.0.1:80, the etrip deployment's frontend
 #                             container (cheese_prod_frontend), loopback only.

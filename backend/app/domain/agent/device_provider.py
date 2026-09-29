@@ -56,6 +56,7 @@ from app.domain.agent.harness.launch import ExecutorPlan, MachinePlace, MachineP
 from app.domain.agent.place import (
     CHECKOUT_DIR,
     footprint_root,
+    seat_dir,
     session_platform_dirs,
 )
 from app.domain.agent.platform_failures import (
@@ -831,7 +832,10 @@ class DeviceChannel(Channel):
         script = command[2]
         path = launcher_path(topic_id, agent_handle)
         transfer, exec_env = self._screen_file_refresh(
-            home_dir, release_state=release_state, execution_token=execution_token
+            home_dir,
+            release_state=release_state,
+            execution_token=execution_token,
+            agent_handle=agent_handle,
         )
         transfer = f'mkdir -p "{DEVICE_ROOT}/launch" && cat > "{path}" && ' + transfer
         started = time.monotonic()
@@ -878,11 +882,18 @@ class DeviceChannel(Channel):
         *,
         release_state: dict | None,
         execution_token: str | None,
+        agent_handle: str = "",
     ) -> tuple[str, dict[str, str] | None]:
         """The shell that brings a screen's per-turn files up to date: the
         forwarded-fs token (rotated every turn), and a read of the release
         marker when the caller tracks one. Shared by the launcher ship and the
-        live-screen refresh, so both paths write the same files the same way."""
+        live-screen refresh, so both paths write the same files the same way.
+
+        Two roots, because the two writes belong to different things. The token
+        is the SEAT's (`place.seat_dir`): its session is the one that reads it,
+        and a roommate writing it here used to swap a running turn's credential
+        for its own. The release marker is the ROOM's: the helpers it names are
+        installed once per room on the machine."""
         hook_dir = f"{home_dir}/{session_platform_dirs()[0]}"
         transfer = f'mkdir -p "{hook_dir}"'
         if release_state is not None:
@@ -892,9 +903,10 @@ class DeviceChannel(Channel):
             )
         exec_env = None
         if execution_token is not None:
-            token_path = f"{hook_dir}/remote-session/execution.token"
+            session_dir = f"{seat_dir(home_dir, agent_handle)}/remote-session"
+            token_path = f"{session_dir}/execution.token"
             transfer += (
-                f' && mkdir -p "{hook_dir}/remote-session"'
+                f' && mkdir -p "{session_dir}"'
                 f' && umask 077 && printf %s "$CHEESE_FORWARDED_TOKEN"'
                 f' > "{token_path}.next.$$"'
                 f' && mv "{token_path}.next.$$" "{token_path}"'
@@ -908,6 +920,7 @@ class DeviceChannel(Channel):
         home_dir: str,
         release_state: dict | None = None,
         execution_token: str | None = None,
+        agent_handle: str = "",
     ) -> None:
         """A live screen keeps the session it was born with and never runs its
         launcher again, so a reused turn ships only what that process will
@@ -915,7 +928,10 @@ class DeviceChannel(Channel):
         itself is 450 KB of embedded helper sources plus the prompt, and
         sending it here bought nothing but 46 ms on every turn."""
         transfer, exec_env = self._screen_file_refresh(
-            home_dir, release_state=release_state, execution_token=execution_token
+            home_dir,
+            release_state=release_state,
+            execution_token=execution_token,
+            agent_handle=agent_handle,
         )
         try:
             result = await self._hub.exec(
@@ -980,7 +996,11 @@ class DeviceChannel(Channel):
         reload: `/reload-plugins` for the plugin that routes its tools to the
         executor, and a reconnect of the MCP server that carries them. The
         session keeps its conversation throughout.
-        """
+
+        The session's directory is the SEAT's, and it is the screen's own seat
+        that names it: what is being released is that session's target and that
+        session's plugin, and a room's other teammate keeps its own."""
+        seat = seat_dir(home_dir, screen.agent_handle)
         sources = resident_release.sources()
         version = resident_release.digest(sources)
         if release.get("version") == version:
@@ -999,7 +1019,7 @@ class DeviceChannel(Channel):
                 )
             return json.loads(result["stdout"])
 
-        staged = await execute("stage", home_dir, sources)
+        staged = await execute("stage", home_dir, sources, seat)
         if staged.get("busy"):
             # Helpers are not replaced under a conversation that is still
             # running. This turn runs on the release it has; the marker stays
@@ -1408,6 +1428,7 @@ class DeviceChannel(Channel):
                     home_dir,
                     release_state=release_state,
                     execution_token=execution_token,
+                    agent_handle=agent_handle,
                 ),
             )
             retire_reason = None

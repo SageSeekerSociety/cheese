@@ -1,6 +1,8 @@
 // 命令面板：⌘K / Ctrl K 叫出来，打几个字（或拼音首字母）找到一个话题、成员、页面，
 // 回车就去；# @ > 只看一类；此刻做不了的事不出现；Esc 先清字再关上；拼音还在组字
-// 的时候回车不算数；去过的下次打开排在「最近去过」里。
+// 的时候回车不算数；去过的下次打开排在「最近去过」里。在项目里打字还会搜内容（消息、
+// 任务……），点开落到它所在的地方；? 只看内容。
+import type { ProjectSearchHits } from '@/api'
 import type { Command } from '@/commands'
 import type { Topic } from '@/cx_types'
 
@@ -20,6 +22,24 @@ import { useCommands } from '@/commands'
 import { installShortcuts } from '@/commands/shortcuts'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+
+const searchProject = vi.hoisted(() => vi.fn())
+vi.mock('@/api', async (original) => ({ ...(await original<object>()), searchProject }))
+
+const NOTHING: ProjectSearchHits = { records: [], tasks: [], library: [] }
+function hits(extra: Partial<ProjectSearchHits>): ProjectSearchHits {
+  return { ...NOTHING, ...extra }
+}
+const MESSAGE = {
+  id: 'b1',
+  room_id: 't3',
+  room_title: '合并队列偶发卡住',
+  kind: 'message' as const,
+  author: 'alice',
+  created_at: '2026-09-01T00:00:00Z',
+  task_id: null,
+  snippet: '重试以后队列就不卡了',
+}
 
 const Blank = defineComponent({ render: () => h('div') })
 
@@ -106,6 +126,8 @@ async function press(key: string, init: KeyboardEventInit = {}) {
 }
 
 beforeEach(() => {
+  searchProject.mockReset()
+  searchProject.mockResolvedValue(NOTHING)
   localStorage.clear()
   // 面板开没开着是整个应用共用的一格；上一条测试结束时开着的，别带进下一条。
   paletteOpen.value = false
@@ -232,5 +254,74 @@ describe('命令面板', () => {
     const recent = within(screen.getByRole('listbox')).getByText(t('navigation.palette.recent'))
     const afterRecent = recent.nextElementSibling
     expect(afterRecent?.textContent).toContain('搭建第一个原型')
+  })
+
+  it('打字也搜消息内容，选中一条就进它所在的房间', async () => {
+    searchProject.mockImplementation(async (_project: string, q: string) =>
+      q === '重试' ? hits({ records: [MESSAGE] }) : NOTHING
+    )
+    const { router } = await mount()
+    await open()
+    await type('重试')
+    await waitFor(() => expect(options().some((text) => text.includes('重试以后队列就不卡了'))).toBe(true))
+    await fireEvent.click(screen.getByText('合并队列偶发卡住', { exact: false, selector: '[role=option] *' }))
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3'))
+  })
+
+  it('搜到一件任务，选中就进房间并打开那张卡', async () => {
+    searchProject.mockResolvedValue(
+      hits({
+        tasks: [
+          { id: 'k9', room_id: 't2', room_title: '搭建第一个原型', title: '写登录接口', status: 'open', snippet: '' },
+        ],
+      })
+    )
+    const { router } = await mount()
+    await open()
+    await type('登录接口')
+    await waitFor(() => expect(options().some((text) => text.includes('写登录接口'))).toBe(true))
+    const row = screen.getAllByRole('option').find((el) => el.textContent?.includes('写登录接口'))!
+    await fireEvent.click(row)
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toContain('/projects/p1/topics/t2'))
+    expect(router.currentRoute.value.query.card).toBe('k9')
+  })
+
+  it('说在一件活卡片里的消息，选中就打开那张卡', async () => {
+    searchProject.mockResolvedValue(hits({ records: [{ ...MESSAGE, snippet: '卡片里说过的缓存方案', task_id: 'k2' }] }))
+    const { router } = await mount()
+    await open()
+    await type('缓存方案')
+    await waitFor(() => expect(options().some((text) => text.includes('卡片里说过的缓存方案'))).toBe(true))
+    const row = screen.getAllByRole('option').find((el) => el.textContent?.includes('卡片里说过的缓存方案'))!
+    await fireEvent.click(row)
+    await waitFor(() => expect(router.currentRoute.value.query.card).toBe('k2'))
+    expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3')
+  })
+
+  it('? 只看内容，话题名对上了也不列', async () => {
+    searchProject.mockResolvedValue(hits({ records: [{ ...MESSAGE, snippet: '原型的配色再调一下' }] }))
+    await mount()
+    await open()
+    await type('?原型')
+    await waitFor(() => expect(options()).toHaveLength(1))
+    expect(options()[0]).toContain('原型的配色再调一下')
+    expect(searchProject).toHaveBeenLastCalledWith('p1', '原型')
+  })
+
+  // 同一个词短时间内只问一次后端（五个数据源合用），所以各条用例用的词互不相同。
+  it('字已经改了，上一次输入搜回来的内容不出现', async () => {
+    let answerOld: (value: ProjectSearchHits) => void = () => {}
+    searchProject.mockImplementation((_project: string, q: string) =>
+      q === '队列' ? new Promise<ProjectSearchHits>((resolve) => (answerOld = resolve)) : Promise.resolve(NOTHING)
+    )
+    await mount()
+    await open()
+    await type('队列')
+    await waitFor(() => expect(searchProject).toHaveBeenCalledWith('p1', '队列'))
+    await type('深色')
+    await waitFor(() => expect(searchProject).toHaveBeenCalledWith('p1', '深色'))
+    answerOld(hits({ records: [MESSAGE] }))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(options().some((text) => text.includes('重试以后队列就不卡了'))).toBe(false)
   })
 })

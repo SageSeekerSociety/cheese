@@ -1173,3 +1173,58 @@ def test_a_chatgpt_refresh_goes_through_the_egress_as_a_form():
     assert b"Content-Type: application/x-www-form-urlencoded" in head
     assert dict(urllib.parse.parse_qsl(body.decode())) == fields
     assert (status, answer) == (200, {"access_token": "new"})
+
+
+# --- ChatGPT: the body Codex takes -------------------------------------------
+
+
+def _codex(*chunks: bytes) -> bytes:
+    body = core.CodexBody()
+    # An empty chunk is the end of the body, so only the non-empty pieces are fed.
+    return b"".join(body.feed(c) for c in chunks if c) + body.feed(b"")
+
+
+# What the gateway's Messages translation sends, with the awkward bytes a real
+# conversation carries inside its strings.
+_TRANSLATED = (
+    b'{"input":[{"role":"user","content":[{"type":"input_text",'
+    b'"text":"a } b ] c , d \\" e \\\\ \\"max_output_tokens\\": 9"}]}],'
+    b' "max_output_tokens" : 64,"model":"gpt-6-astra",'
+    b'"tools":[{"name":"t","parameters":{"store":true,"max_output_tokens":1}}],'
+    b'"stream":true}'
+)
+
+
+def test_a_translated_body_goes_out_the_way_codex_takes_it():
+    sent = json.loads(_codex(_TRANSLATED))
+    original = json.loads(_TRANSLATED)
+    del original["max_output_tokens"]
+    assert sent == {"store": False, **original}
+
+
+def test_the_reshaped_body_is_the_same_however_it_arrives():
+    whole = _codex(_TRANSLATED)
+    for cut in range(1, len(_TRANSLATED)):
+        assert _codex(_TRANSLATED[:cut], _TRANSLATED[cut:]) == whole, cut
+    assert _codex(*[_TRANSLATED[i : i + 1] for i in range(len(_TRANSLATED))]) == whole
+
+
+def test_store_is_false_whatever_the_body_said():
+    assert json.loads(_codex(b'{"store":true,"model":"m"}')) == {
+        "store": False,
+        "model": "m",
+    }
+    assert json.loads(_codex(b'{"model":"m","store":true}')) == {
+        "store": False,
+        "model": "m",
+    }
+
+
+def test_a_dropped_member_may_be_the_only_one():
+    assert json.loads(_codex(b'{ "max_output_tokens": 5 }')) == {"store": False}
+    assert json.loads(_codex(b"{ }")) == {"store": False}
+
+
+def test_a_body_that_is_not_an_object_passes_untouched():
+    assert _codex(b"[1,2]") == b"[1,2]"
+    assert _codex(b"") == b""
