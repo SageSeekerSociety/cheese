@@ -181,6 +181,7 @@ jobs:
 
           script = '''from pathlib import Path
           from datetime import datetime, timezone
+          import re
           root = Path.home() / ".cheese/harness/de808b13-ffd2-4b8a-9d1d-fba7babe389f/115ee22f-ffba-4d69-a579-0ce6033c8e84/claude-code"
           for name in ("46dd0e26bf01b5acd2e55ba67b2b8acc0dc64e5c2cc9ad27aeac000413d9ab86", "bee8ccd206b678111632e9cd5f4c3439aa80147ae0430bc981f2aa2e172ada04"):
               path = root / name
@@ -189,6 +190,11 @@ jobs:
                   for child in sorted(path.iterdir()):
                       stat = child.stat()
                       print(child.name, "dir" if child.is_dir() else "file", stat.st_size, datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat())
+                  log = path / "runner.log"
+                  if log.is_file():
+                      value = log.read_text(errors="replace")[-1200:]
+                      value = re.sub(r"(?i)(bearer\\s+|token[=:]\\s*|sk-[a-z0-9-]+)[^\\s]+", "[redacted]", value)
+                      print("runner_stderr", repr(value))
           '''
 
           async def main():
