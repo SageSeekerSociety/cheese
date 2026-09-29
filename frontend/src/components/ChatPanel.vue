@@ -33,7 +33,7 @@ import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { replySnippet } from '../lib/blockDisplay'
-import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
+import { mergeRefreshedTail, PAGE_SIZE, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks, editableText } from '../lib/renderMessage'
@@ -46,6 +46,8 @@ import { useChatScroll } from './room/composables/useChatScroll'
 import { useOutbox } from './room/composables/useOutbox'
 import { useRoomRoster } from './room/composables/useRoomRoster'
 import { useRoomSocket } from './room/composables/useRoomSocket'
+import { useRoomTurns } from './room/composables/useRoomTurns'
+import { useTimeline } from './room/composables/useTimeline'
 import RollingNumber from './room/RollingNumber.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomHoverBar from './room/RoomHoverBar.vue'
@@ -202,81 +204,18 @@ watch(
   { immediate: true, deep: true }
 )
 
-const messages = ref<Block[]>([])
+// 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline。
+const timeline = useTimeline()
+const { messages, hasMore } = timeline
 const loadingHistory = ref(false)
 
-// Slack-style discrete messages: 芝士 doesn't stream tokens — each complete
-// message lands as an `assistant_block` frame. `awaitingReply` is true from
-// summon until every active turn explicitly finishes, and is reported upward as
-// `working` (the 现场 status line reads it).
-const awaitingReply = ref(false)
-const activeTurnIds = ref<Set<string>>(new Set())
+// 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
+// 往上报（working / site-turns / working-agents）是这里的事。
+const turns = useRoomTurns({ messages, agentName, agentNameOf })
+const { awaitingReply, turnAgentName } = turns
 watch(awaitingReply, (v) => emit('working', v))
-
-// 每个在跑的轮次从什么时候开始。中途连进来的，后端在 turn_active 上带着开始时间；
-// 没带的（老后端）只能从连上的这一刻算。
-const turnStarts = ref<Record<string, number>>({})
-watch(turnStarts, (v) => emit('site-turns', v))
-function turnBegan(id: string, at = Date.now()) {
-  if (!(id in turnStarts.value)) turnStarts.value = { ...turnStarts.value, [id]: at }
-}
-function turnEnded(id: string) {
-  if (!(id in turnStarts.value)) return
-  const next = { ...turnStarts.value }
-  delete next[id]
-  turnStarts.value = next
-}
-
-// 每个在跑的轮次在哪个座位上（块署名的那个 handle，从 turn_started /
-// turn_active 帧学来）。一间房几个队友并行在干时，「谁在干活」靠它报名字；
-// 帧不带 agent 的（老后端）这项空着，上面报 working-agents 就是空名单。
-const turnAgents = ref<Record<string, string>>({})
-function turnAgentNoted(id: string, agent?: string) {
-  if (!agent || turnAgents.value[id] === agent) return
-  turnAgents.value = { ...turnAgents.value, [id]: agent }
-}
-function turnAgentForgot(id: string) {
-  if (!(id in turnAgents.value)) return
-  const next = { ...turnAgents.value }
-  delete next[id]
-  turnAgents.value = next
-}
-
-// 每一轮是哪个队友的。在跑的轮次，帧上说了（turnAgents）；落下来的轮次，块上也说：
-// 那一轮里队友自己写的块署的就是它，人发的那条记着交给了谁、开的是哪一轮
-// （`agent_recipient` 与 `consumed_turn` / `prompted_turn`）。平台替一轮写的通知
-// （失败、重试、排队）署名是 system，靠这张表认回是哪位的那一轮。
-const turnOwners = computed(() => {
-  const owners: Record<string, string> = {}
-  for (const m of messages.value) {
-    const recipient = (m.meta?.agent_recipient as { handle?: unknown } | undefined)?.handle
-    if (typeof recipient !== 'string') continue
-    for (const turn of [m.meta?.consumed_turn, m.meta?.prompted_turn]) {
-      if (typeof turn === 'string') owners[turn] = recipient
-    }
-  }
-  for (const m of messages.value) {
-    if (m.turn_id && isAgentHandle(m.author)) owners[m.turn_id] = m.author
-  }
-  return { ...owners, ...turnAgents.value }
-})
-// 这一轮那位队友的名字；认不出是谁的轮次，才退回这个房间 AI 的名字。
-function turnAgentName(turnId: string | null | undefined): string {
-  const owner = turnId ? turnOwners.value[turnId] : undefined
-  return (owner && agentNameOf(owner)) || agentName.value
-}
-
-// 正在干活的队友们的名字。同名去重：同一个队友并行两轮只报一次。
-const workingAgentNames = computed(() => {
-  const names: string[] = []
-  for (const id of activeTurnIds.value) {
-    if (!turnAgents.value[id]) continue
-    const name = turnAgentName(id)
-    if (!names.includes(name)) names.push(name)
-  }
-  return names
-})
-watch(workingAgentNames, (v) => emit('working-agents', v))
+watch(turns.turnStarts, (v) => emit('site-turns', v))
+watch(turns.workingAgentNames, (v) => emit('working-agents', v))
 // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
 function toSite(b: Block) {
   if (b.kind === 'event' && !b.task_id) emit('site-block', b)
@@ -290,9 +229,8 @@ async function pickOption(m: Block, option: string) {
   askBusy.value = m.id
   try {
     const updated = await answerOptions(m.id, option, AUTHOR)
-    const bi = messages.value.findIndex((x) => x.id === m.id)
-    if (bi >= 0) {
-      messages.value.splice(bi, 1, updated)
+    if (timeline.find(m.id)) {
+      timeline.replace(updated)
       historyChanges?.set(updated.id, updated)
     }
   } catch (e) {
@@ -309,7 +247,7 @@ const reactionPickerFor = ref<string | null>(null)
 
 function applyReactions(blockId: string, reactions: ReactionAgg[]) {
   historyReactions?.set(blockId, reactions)
-  const m = messages.value.find((x) => x.id === blockId)
+  const m = timeline.find(blockId)
   if (m) m.reactions = reactions
 }
 
@@ -372,7 +310,7 @@ const touchOnly = ref(!!touchQuery?.matches)
 useEventListener(touchQuery, 'change', (e: MediaQueryListEvent) => (touchOnly.value = e.matches))
 
 const sheet = reactive({ id: null as string | null, open: false })
-const sheetBlock = computed(() => (sheet.id ? messages.value.find((m) => m.id === sheet.id) ?? null : null))
+const sheetBlock = computed(() => (sheet.id ? timeline.find(sheet.id) ?? null : null))
 // 长按是在整列上听的，按在哪一条上由落点算：一条一条挂监听，几百条消息就是几百组。
 // 只认带操作的那几行（还没送出去的那条自己带着重试和编辑），正在改的那条不算。
 useLongPress(scrollRef, (e) => {
@@ -396,7 +334,7 @@ function toggleTime(target: HTMLElement) {
 // 的路上不该让它一闪一闪）；落在别的行上（事件、标记）或移出整列
 // 就收起。表情选择条开着的时候钉在那一行上，不跟指针走。
 const bar = reactive({ id: null as string | null, shown: false, top: 0, jump: false })
-const barBlock = computed(() => (bar.id ? messages.value.find((m) => m.id === bar.id) ?? null : null))
+const barBlock = computed(() => (bar.id ? timeline.find(bar.id) ?? null : null))
 
 function rowTop(row: HTMLElement): number | null {
   const content = contentRef.value
@@ -446,7 +384,6 @@ function onTimelineScroll() {
 // The panel holds a WINDOW of the timeline (newest PAGE_SIZE blocks), not the
 // whole thing: a long topic was 2.1 MB / 2226 rows in one response, and the
 // browser choked on all three of transfer, JSON parse, and 2226 live DOM nodes.
-const hasMore = ref(false)
 const loadingOlder = ref(false)
 
 // A page of very short messages can be shorter than the pane. Then there is
@@ -476,10 +413,7 @@ async function loadOlder() {
     const payload = await listBlocks(topic.id, { limit: PAGE_SIZE, before: oldest.id })
     // The user may have switched topics while this was in flight.
     if (props.topic?.id !== topic.id) return
-    const next = prependOlder({ blocks: messages.value, hasMore: hasMore.value }, payload.data, payload.has_more)
-    messages.value = next.blocks
-    hasMore.value = next.hasMore
-    setCachedWindow(topic.id, next)
+    setCachedWindow(topic.id, timeline.prepend(payload.data, payload.has_more))
     for (const b of payload.data) older.add(b.id)
     await nextTick()
     const sc = scrollRef.value
@@ -576,12 +510,9 @@ const older = reactive(new Set<string>())
 
 function pushBlock(b: Block) {
   historyChanges?.set(b.id, b)
-  if (!messages.value.some((m) => m.id === b.id)) {
-    if (historyChanges === null && b.author !== AUTHOR) {
-      arrived.add(b.id)
-      if (!atBottom.value && b.kind !== 'event') unseen.value.push(b.id)
-    }
-    messages.value.push(b)
+  if (timeline.append(b) && historyChanges === null && b.author !== AUTHOR) {
+    arrived.add(b.id)
+    if (!atBottom.value && b.kind !== 'event') unseen.value.push(b.id)
   }
 }
 
@@ -677,8 +608,7 @@ function handleFrame(frame: WsServerFrame) {
       break
     case 'block_updated': {
       // 已经在时间线上的一行变了：原地换掉，不追加第二行。
-      const at = messages.value.findIndex((m) => m.id === frame.block.id)
-      if (at >= 0) messages.value.splice(at, 1, frame.block)
+      timeline.replace(frame.block)
       historyChanges?.set(frame.block.id, frame.block)
       toSite(frame.block)
       break
@@ -687,13 +617,13 @@ function handleFrame(frame: WsServerFrame) {
       // One complete 芝士 message (Slack-style) — a turn may land several.
       pushBlock(frame.block)
       // Compatibility with an older backend that has no lifecycle markers.
-      if (activeTurnIds.value.size === 0) awaitingReply.value = false
+      turns.settleIfIdle()
       autoScroll()
       break
     case 'error':
       if (frame.client_id) {
         if (failOutgoing(frame.client_id, frame.message)) {
-          if (activeTurnIds.value.size === 0) awaitingReply.value = false
+          turns.settleIfIdle()
         } else {
           errorMsg.value = frame.message
         }
@@ -710,49 +640,29 @@ function handleFrame(frame: WsServerFrame) {
       // A persisted turn failure is already in the timeline as an event block
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
-      if (activeTurnIds.value.size === 0) awaitingReply.value = false
+      turns.settleIfIdle()
       break
     case 'done':
       // Mid-session messages fold into the existing Claude run and emit no
       // separate completion frame. Lifecycle markers own the running indicator.
-      if (activeTurnIds.value.size === 0) {
-        awaitingReply.value = false
-        emit('turn-done')
-      }
+      if (turns.settleIfIdle()) emit('turn-done')
       autoScroll()
       break
     case 'retract_block':
       historyChanges?.set(frame.block_id, null)
-      messages.value = messages.value.filter((m) => m.id !== frame.block_id)
+      timeline.remove(frame.block_id)
       break
     case 'agent_control':
       emit('agent-control', frame.state)
       break
     case 'turn_active':
-      if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
-      for (const id of frame.turn_ids ?? []) {
-        const since = frame.since?.[id]
-        turnBegan(id, typeof since === 'number' ? since * 1000 : Date.now())
-        turnAgentNoted(id, frame.agents?.[id])
-      }
-      awaitingReply.value = true
+      turns.active(frame.turn_ids ?? [], frame.since, frame.agents)
       break
-    case 'turn_started': {
-      const next = new Set(activeTurnIds.value)
-      next.add(frame.turn_id)
-      activeTurnIds.value = next
-      turnBegan(frame.turn_id)
-      turnAgentNoted(frame.turn_id, frame.agent)
-      awaitingReply.value = true
+    case 'turn_started':
+      turns.started(frame.turn_id, frame.agent)
       break
-    }
     case 'turn_finished': {
-      const next = new Set(activeTurnIds.value)
-      next.delete(frame.turn_id)
-      activeTurnIds.value = next
-      turnEnded(frame.turn_id)
-      turnAgentForgot(frame.turn_id)
-      awaitingReply.value = next.size > 0
+      turns.finished(frame.turn_id)
       emit('turn-done')
       autoScroll()
       break
@@ -784,10 +694,7 @@ async function loadTopic(topic: Topic, entering = false) {
   const stillHere = () => !disposed && generation === historyGeneration && props.topic?.id === topic.id
   errorMsg.value = null
   connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
-  awaitingReply.value = false
-  activeTurnIds.value = new Set()
-  turnStarts.value = {}
-  turnAgents.value = {}
+  turns.reset()
   reactionPickerFor.value = null
   // 悬停条是绝对定位的：收起只是透明，它仍停在上一个话题那一行的 translateY 上，
   // 仍算进这一栏的可滚动高度。从一个翻到很深的长话题切到短话题，它把滚动区撑高，
@@ -811,12 +718,10 @@ async function loadTopic(topic: Topic, entering = false) {
   loadingOlder.value = false
   const cached = cachedWindow(topic.id)
   if (cached) {
-    messages.value = cached.blocks
-    hasMore.value = cached.hasMore
+    timeline.show(cached)
     restoreScroll(topic.id)
   } else {
-    messages.value = []
-    hasMore.value = false
+    timeline.show({ blocks: [], hasMore: false })
     loadingHistory.value = true
   }
   try {
@@ -838,8 +743,7 @@ async function loadTopic(topic: Topic, entering = false) {
       const warmed = cachedWindow(topic.id)
       if (!warmed) return
       shownEarly = warmed
-      messages.value = warmed.blocks
-      hasMore.value = warmed.hasMore
+      timeline.show(warmed)
       loadingHistory.value = false
       restoreScroll(topic.id)
     })
@@ -872,12 +776,11 @@ async function loadTopic(topic: Topic, entering = false) {
       if (block) blocks.set(id, { ...block, reactions: updated })
     }
     merged.blocks = [...blocks.values()]
-    messages.value = merged.blocks
+    timeline.show(merged)
     // A reconnect starts with durable history. Settle sends that landed while
     // their echo was lost before opening the new socket; only absent client ids
     // remain queued for an idempotent resend.
     for (const block of merged.blocks) settleOutbox(block)
-    hasMore.value = merged.hasMore
     setCachedWindow(topic.id, merged)
     placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
     if (!shown) restoreScroll(topic.id)
@@ -933,8 +836,7 @@ async function saveEdit(m: Block, text: string) {
   editSaving.value = true
   try {
     const updated = await editMessage(m.id, content)
-    const at = messages.value.findIndex((x) => x.id === updated.id)
-    if (at >= 0) messages.value.splice(at, 1, updated)
+    timeline.replace(updated)
     if (editingId.value === m.id) editingId.value = null
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : t('work.room.message.saveFailed')
@@ -952,7 +854,7 @@ const replyLabel = computed(() =>
     : null
 )
 function parentOf(m: Block): Block | undefined {
-  return m.reply_to ? messages.value.find((x) => x.id === m.reply_to) : undefined
+  return m.reply_to ? timeline.find(m.reply_to) : undefined
 }
 function showReplyCue(m: Block): boolean {
   // Only a person's replies are explicit threads. An AI message's reply_to is
@@ -1178,7 +1080,7 @@ function editSend(item: Outgoing) {
   editing.add(item.clientId)
   dropSend(item.clientId)
   draft.value = draft.value.trim() ? `${item.content}\n${draft.value}` : item.content
-  const parent = item.replyTo ? messages.value.find((m) => m.id === item.replyTo) : undefined
+  const parent = item.replyTo ? timeline.find(item.replyTo) : undefined
   if (parent) replyTarget.value = parent
   if (item.atts?.length) pendingAtts.value = [...item.atts, ...pendingAtts.value]
   composerRef.value?.focus()
@@ -1446,7 +1348,7 @@ watch(
       void loadTopic(props.topic, true)
       restoreComposer(id)
     } else {
-      messages.value = []
+      timeline.show({ blocks: [], hasMore: false })
       closeSocket()
     }
   },
