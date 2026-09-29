@@ -1,11 +1,11 @@
 // The end of a sign-in made in the browser, in the app: a code alone signs
 // nobody in. Only a sign-in this app started, with the secret it kept, does.
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMemoryHistory, createRouter } from 'vue-router'
 
 import AppSignInFinish from './AppSignInFinish.vue'
 
