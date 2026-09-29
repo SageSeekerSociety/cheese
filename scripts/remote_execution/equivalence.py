@@ -102,6 +102,12 @@ NORMALIZATIONS = {
     "user message (environment, git status, skill list, date) describe the "
     "session it runs in, which stays on the session host by design; they are "
     "not produced by any command, so this check leaves them out.",
+    "date change": "The notice the build appends to a tool result when the "
+    "local date has changed since the session last said it: a run that "
+    "crosses midnight gets it and one that does not never does. It is read "
+    "off the clock, not produced by any command; the pinned build takes no "
+    "setting that fixes its date (CLAUDE_CODE_OVERRIDE_DATE leaves it "
+    "unchanged), so exactly that notice is removed.",
     "environment: session-host process": "CLAUDE_PID, "
     "CLAUDE_CODE_MESSAGING_SOCKET and CLAUDE_CODE_MESSAGING_TOKEN name the "
     "session host's Claude Code process: a pid, and a Unix socket with its "
@@ -117,6 +123,11 @@ HOST_PROCESS_ENV = {
 # Lines of an environment listing the normalizations above remove.
 UNLISTED = re.compile(
     r"^(" + "|".join(sorted(HOST_PROCESS_ENV)) + r")=.*(\n|$)", re.MULTILINE
+)
+DATE_CHANGED = re.compile(
+    r"\n\n<system-reminder>\nThe date has changed\. Today's date is now "
+    r"\d{4}-\d{2}-\d{2}\. No need to announce the new date \u2014 the user's "
+    r"own clock shows it\.\n</system-reminder>"
 )
 DROPPED = {
     "uuid",
@@ -430,6 +441,7 @@ class Run:
             for old, new in pairs:
                 string = string.replace(old, new)
             string = UNLISTED.sub("", string)
+            string = DATE_CHANGED.sub("", string)
             return re.sub(
                 r"tool-results/[A-Za-z0-9_-]+\.txt", "tool-results/<FILE>", string
             )
@@ -523,16 +535,16 @@ class Room:
         layout.rebuild()
         self.binary, self.layout, self.port = binary, layout, port
         programs = layout.programs
-        shutil.copyfile(SOURCE / "runtime.py", programs / "runtime.py")
-        shutil.copyfile(SOURCE / "portable.py", programs / "portable.py")
-        shutil.copyfile(
-            SOURCE.parents[2] / "project_hooks.py", programs / "project_hooks.py"
-        )
+        # Started where it is, as `test_native_shell` starts it, so nothing is
+        # copied. A release would also bring the platform CLI's preload
+        # worker, whose socket (CHEESE_CLI_SOCKET) every command it runs
+        # sees: the platform's own addition, outside what this check compares.
+        self.runtime = SOURCE / "runtime.py"
         self.state = programs / "state"
         subprocess.run(
             [
                 sys.executable,
-                str(programs / "runtime.py"),
+                str(self.runtime),
                 "start",
                 "--state",
                 str(self.state),
@@ -623,7 +635,7 @@ class Room:
             subprocess.run(
                 [
                     sys.executable,
-                    str(self.layout.programs / "runtime.py"),
+                    str(self.runtime),
                     "stop",
                     "--state",
                     str(self.state),

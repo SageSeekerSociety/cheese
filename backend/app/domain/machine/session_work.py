@@ -48,7 +48,9 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.services import MachineService
 from app.domain.policy import gate
+from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.services import ProjectService
+from app.domain.topic.models import TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
 
@@ -581,6 +583,14 @@ async def _restart_executor(db, row, lease):
         "generation"
     )
     api = await device_api_base(db, lease["device_id"], settings.connector_public_base)
+    # The room's environment, as a turn hands it over: the executor records the
+    # one it was installed with, and the next turn's start is refused while the
+    # two differ.
+    environment = (
+        EnvironmentConfig().snapshot()
+        if topic.kind == TopicKind.root
+        else await pin_environment(db, project.id, topic.id)
+    )
     return partial(
         _start_executor,
         device_hub,
@@ -589,7 +599,7 @@ async def _restart_executor(db, row, lease):
         project_id=project.id,
         work_resource=work_resource,
         setup=_executor_env(
-            {},
+            {"CHEESE_ENVIRONMENT": json.dumps(environment)},
             api=api,
             token=token,
             project_id=project.id,

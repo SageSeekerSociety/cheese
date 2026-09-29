@@ -747,7 +747,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 v-bind="menuProps"
                 type="button"
                 class="rail-header__more"
-                :class="{ 'rail-header__more--active': isActive }"
+                :class="{ 'rail-header__more--active': isActive, 'tap-target': page }"
                 title="项目菜单"
                 aria-label="项目菜单"
               >
