@@ -36,7 +36,7 @@ covers:
 | `pending_gate` | 平台质量检查在跑（历史态） | 已无人写；退役前留下的行还在 |
 | `accepted` | 已采纳（合并成功） | `accept` / 轮询器看到外部合并 |
 | `rejected` | 人退回了 | `reject` |
-| `revoked` | 人工作废，或话题归档时被收敛 | `void` / `archive.py` |
+| `revoked` | 作废（人工，或 PR 在 GitHub 上关闭且没有合并时由平台自动），或话题归档时被收敛 | `void` / 轮询器 / `archive.py` |
 | `conflict` | 采纳时撞合并冲突，芝士被派去解，解完由人重试采纳 | `accept` 的冲突分支 |
 | `gate_failed` / `gate_blocked` | 检查红了 / 检查根本没跑成（历史态） | 已无人写；行还在，要照常渲染 |
 | `pr_open` | 已死的在途态，按先例保留 | 无 |
@@ -121,13 +121,14 @@ covers:
 
 ## 孤儿卡谁收 {#orphans}
 
-`pending_gate` 这个状态**没有任何出口**：accept / reject / revoke / reassign 四条对它全是拒绝，`create_card` 又因为它拒绝再建新卡——坏掉的不是一张卡，是**整个话题**再也递不出验收卡。两条自动收敛 + 一条人工出口：
+`pending_gate` 这个状态**没有任何出口**：accept / reject / revoke / reassign 四条对它全是拒绝，`create_card` 又因为它拒绝再建新卡——坏掉的不是一张卡，是**整个话题**再也递不出验收卡。三条自动收敛 + 一条人工出口：
 
 | 谁 | 什么时候 | 结果 |
 |---|---|---|
 | 话题归档（`archive.close_cards_for_archived_topic`） | 一进 archived | 全部非终态卡（`pending` / `pending_gate` / `conflict`）→ `revoked`，幂等 |
 | 扫底（`gate_sweep`） | 启动一次 + 周期一次 | 超龄的 `pending_gate` 判死 → `gate_failed` |
 | 人工作废（`AcceptService.void`） | 随时 | 卡 → `revoked`（**进终态，不是放行**） |
+| 轮询器（`_void_closed_pr_card`） | 看到卡的 PR 关闭且没有合并 | 卡 → `revoked`，note 和房间里写明 PR 已关闭；要继续交付就重新递卡 |
 
 归档时骑着**未合并 PR** 的卡另有一句：平台停止跟进，但**不替任何人去关那个 PR**。替别人关掉一个外部可见的 PR，方向是反的——PR 开着是惰性的，关掉却可能丢掉一段人本来打算手动合并的工作。所以选择是「停止一切自动跟进，把 PR 原样留在托管平台上，并留痕」：note 写清楚，房间里按结论 14 落一条 `accept_stopped`（卡的事落那张卡；为房间递的卡没有卡可落，落项目总览）。
 
