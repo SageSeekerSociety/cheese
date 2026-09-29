@@ -57,6 +57,9 @@ dev = [
     "anyio>=4.13.0",
     "httpx>=0.28.1",
     "httpx2>=2.13.1",
+    # Checks the import graph in backend/.importlinter: declaration + a frozen
+    # baseline, run by scripts/check_boundaries.py.
+    "import-linter>=2.15",
     # test_codex_runner_process builds a PNG to feed the runner.
     "pillow>=12.3.0",
     "pyright>=1.1.410",

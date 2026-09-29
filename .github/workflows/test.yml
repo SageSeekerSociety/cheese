@@ -70,6 +70,22 @@ jobs:
           uvx pre-commit run --all-files --show-diff-on-failure ruff-format
           uvx pre-commit run --all-files pyright
 
+      # A check that reports "clean" because it never ran is the failure this
+      # job exists to prevent, and this one is easy to break silently: it reads
+      # app/ into an import graph through backend/.importlinter, so if the
+      # config moved or stopped naming a contract it would find nothing wrong
+      # with anything. So it is asked to prove itself — this builds a throwaway
+      # package tree, plants a violation in it, and requires a non-zero exit.
+      - name: Module boundary check proves it still fires
+        run: uv run python scripts/check_boundaries.py --self-test
+
+      # The same hook a developer's commit runs, from the same file, and over
+      # all files rather than this diff: the import graph is a property of the
+      # tree, not of the commit that touched it.
+      - name: Module boundaries (import-linter + frozen baseline)
+        working-directory: ${{ github.workspace }}
+        run: uvx pre-commit run --all-files boundary-check
+
       - name: Independently collect every required backend case
         run: >-
           uv run python -m pytest tests/ --collect-only -q
