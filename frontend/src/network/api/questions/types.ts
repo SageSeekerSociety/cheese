@@ -1,10 +1,5 @@
 import type { AttitudeStats, Page, Question, QuestionInvitation, User } from '@/types'
 
-export type QuestionList = {
-  questions: Question[]
-  page: Page
-}
-
 export type AskQuestionResponse = {
   id: number
 }

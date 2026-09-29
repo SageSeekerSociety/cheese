@@ -71,7 +71,6 @@
 - **现状**：请求侧一律 snake_case。`answers.py:58-59`、`answers.py:163-164`、`comments.py:142-143`、`tags.py:38-39`、`questions.py:114-115`、`questions.py:181-182`、`questions.py:329-330`、`questions.py:463-464`、`questions.py:566-567` 全部是 `page_start`/`page_size`（或 `alias="page_start"`）；响应侧 `page` 对象是 camelCase（`answers/services.py:80-88`、`tags/services.py:56-60`、`discussion/services.py:146-152`、`questions/services.py:97`，并由 `backend/tests/integration/test_page_camel_case_keys.py` 钉住）。
 - **问题**：手写前端层发 camelCase，FastAPI 忽略未知 query 参数，于是 `pageStart` 被丢掉、永远按「从头开始」处理：
   - `frontend/src/network/api/answers/index.ts:17-18` 发 `pageStart`，消费方 `frontend/src/components/questions/AnswerList.vue:39` 用它翻页；后端 `answers/repositories.py:35-51` 收到 `cursor_id=None` 后恒返回第一批，而 `page.nextStart`（`answers/services.py:88`）每次都是同一个 id → `usePaging`（`frontend/src/utils/paging.ts:44-60`）把同一页反复追加，列表无限重复。
-  - `frontend/src/network/api/questions/index.ts:29` 发 `pageStart`，`frontend/src/views/searches/Index.vue:48-52` 的搜索页同样中招。
   - `frontend/src/network/api/questions/index.ts:87` 发 `pageStart`，`frontend/src/components/questions/InvitationList.vue:99` 同样中招。
   - 现有测试发的是 snake_case（`test_page_camel_case_keys.py:73` 的 `params={"page_size": 1}`），所以这个不一致在测试里露不出来。
 - **优化**：把分页参数收进一个共享依赖，请求侧同时认两种拼法（响应侧不动，仍是 camelCase）。新增 `backend/app/api/deps/paging.py`：
