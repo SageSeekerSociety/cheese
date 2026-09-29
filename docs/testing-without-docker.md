@@ -10,10 +10,11 @@ bash .claude/scripts/dev-db.sh stop --purge      # 停掉并删数据目录
 
 - **Redis 是必须的,不是可选**——登录限流、2FA 验证票据和会话状态都在里面,没有它 integration 套件直接报错。
 - Postgres 必须带 contrib 和 `pg_search`:迁移里有 `CREATE EXTENSION pg_trgm` 和 `CREATE EXTENSION pg_search`,缺哪个 `alembic upgrade head` 都会失败。`postgresql-binaries` 原样打包 theseus-rs 的发行包,contrib 齐全,主版本和 dev、生产一样是 17,但不带 `pg_search`。
-- `pg_search` 取自 ParadeDB 在 GitHub 发布的 0.24.0 Debian bookworm 包,版本和 SHA-256 都钉在脚本里。脚本不安装这个包,只取出 `pg_search.so` 和扩展的 SQL、control 文件,放进上面那个 Postgres 的目录,启动时用 `shared_preload_libraries=pg_search` 预加载(0.24.0 不预加载就不让建扩展)。只支持 Linux x86_64 和 aarch64,glibc 至少 2.34;其他系统上脚本直接报错退出,并说明缺的是什么。
+- `pg_search` 取自 ParadeDB 在 GitHub 发布的 0.24.0 Debian bookworm 包,版本和 SHA-256 都钉在脚本里。脚本不安装这个包,只取出 `pg_search.so` 和扩展的 SQL、control 文件,放进上面那个 Postgres 的目录,启动时用 `shared_preload_libraries=pg_search` 预加载(0.24.0 不预加载就不让建扩展)。Linux x86_64 和 aarch64(glibc 至少 2.34)用这个包;macOS arm64 用 ParadeDB 给 Homebrew PostgreSQL 17 出的安装包,同样只取这三个文件。其他系统上脚本直接报错退出,并说明缺的是什么。
 - 这两个 wheel **故意不是 backend 依赖**:它们是测试机上的工具,backend 不 import。`redislite` 的 wheel 只到 cp312,所以脚本自己钉住版本,把它们跑在一个一次性的 3.12 解释器上;测试本身仍跑在 3.13。
 - Claude Code 和 Codex 的版本从 backend 里的声明读出来,跟 CI 装的一样。不能靠 PATH 上现成的 `claude`:本机那个常常是别的版本,或者是一层包装脚本,远程执行和 runner 相关的测试会因此失败,跟代码无关。
 - 下载的东西放在 `${XDG_CACHE_HOME:-~/.cache}/cheesex-dev-db`,`stop --purge` 不删它。
+- 版本钉子一改(Postgres 大版本、`pg_search` 版本),`start` 会认出端口上那个由本脚本早先启动、钉子不同的 Postgres:没有客户端就停掉它、换成当前版本(旧大版本的数据目录一并删掉,反正是测试数据);有客户端就报错退出,说明有几个连接,留着它不动。不是本脚本起的服务器照旧拒绝、不碰。这段逻辑由 `.claude/scripts/test-dev-db.sh` 用假二进制测试,跑在 repo guards 里。
 - `tests/unit/` 完全不需要服务器（`conftest.py` 只给主动要的测试建 schema）。`tests/unit/` 以外的一律是 DB-backed。
 - `check.sh --no-tests`（质量闸门用的那条）完全跳过 pytest——要真正跑套件就用上面的方子。
 
