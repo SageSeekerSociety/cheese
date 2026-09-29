@@ -14,8 +14,27 @@ const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 const skills = execution.central_config + "/skills/";
 const projectSkills = execution.session_workspace + "/.claude/skills/";
 const shipped = new Set(execution.shipped_skills || []);
+// Skills the session names by an entry that is not the project's root skill of
+// that name — a subdirectory's, or one written without its `paths` — with where
+// the executor holds each and what Claude Code adds to its description. They
+// change while the session runs (`release.touch_skills`), so they are read
+// each time (`client.py` `skill_places` reads the same file).
+const sessionDir = (execution.target_file || "").replace(/[^/]*$/, "");
+const placesFile = sessionDir && sessionDir + "skill-places.json";
+// The one native Read this plugin lets through the session's PreToolUse guard
+// (`client.py` `probed`): its look at a file before the executor reads it.
+const probeFile = sessionDir && sessionDir + "read-probe.json";
 
-function skillPaths(text) {
+async function skillPlaces($) {
+  if (!placesFile) return { places: {}, scoped: false };
+  try {
+    return JSON.parse(await $.fs.read(placesFile, { as: "text" }));
+  } catch {
+    return { places: {}, scoped: false };
+  }
+}
+
+function skillPaths(text, places = {}) {
   let out = "";
   let at = 0;
   for (;;) {
@@ -26,6 +45,8 @@ function skillPaths(text) {
     out += text.slice(at, found);
     if (!name) {
       out += skills;
+    } else if (places[name[0]]) {
+      out += places[name[0]].place;
     } else if (shipped.has(name[0])) {
       out += execution.executor_config
         ? execution.executor_config + "/skills/" + name[0]
@@ -37,8 +58,15 @@ function skillPaths(text) {
   }
 }
 
-function remotePath(path) {
-  return path.startsWith(skills) ? skillPaths(path) : path;
+function remotePath(path, places) {
+  return path.startsWith(skills) ? skillPaths(path, places) : path;
+}
+
+// A name Claude Code qualifies with a directory (`apps/web:deploy`) is spelled
+// in the config dir with U+2215 for each "/" (`release.NAME_SLASH`).
+function skillEntry(name) {
+  const colon = name.lastIndexOf(":");
+  return colon < 0 ? name : name.slice(0, colon).replaceAll("/", "\u2215") + name.slice(colon);
 }
 
 // A Bash command's output is on this host, where the build wrote it: a
@@ -186,13 +214,30 @@ export function register(on) {
       }
     }
     if (tool === "Read" && ownOutput(args.file_path)) return next(e);
+    if (tool === "Skill" && typeof args.skill === "string" && args.skill.includes("/")) {
+      return next({ ...e, skill: skillEntry(args.skill) });
+    }
     if (native.has(tool)) {
       for (const field of ["file_path", "notebook_path"]) {
         const local = memoryPath(args[field]);
         if (local) return next({ ...e, [field]: local });
       }
+      const known = await skillPlaces($);
+      if (tool === "Read" && known.scoped) {
+        // The session's own Read, whose result is not used: before it opens
+        // the file it offers any skill whose `paths` names it, in this very
+        // result, as a native session does (Write and Edit cannot be looked
+        // at this way; `release.touch_skills` covers them). Bounded, since the
+        // file is looked up in the view, and the view asks the executor.
+        await $.fs.write(probeFile, JSON.stringify({ path: args.file_path }));
+        await Promise.race([
+          next(e).catch(() => undefined),
+          $.clock.sleep(5000),
+        ]);
+        await $.fs.write(probeFile, "{}");
+      }
       for (const field of ["file_path", "path", "notebook_path"]) {
-        if (typeof args[field] === "string") args[field] = remotePath(args[field]);
+        if (typeof args[field] === "string") args[field] = remotePath(args[field], known.places);
       }
       try {
         const response = await $.mcp.call("native", "invoke", {
@@ -241,6 +286,17 @@ export function register(on) {
 
   on("skill.prompt", async ($, e, next) => {
     const result = await next(e);
-    return { text: skillPaths(result.text) };
+    return { text: skillPaths(result.text, (await skillPlaces($)).places) };
+  });
+
+  // A subdirectory's skill is listed with the directory it applies to, as
+  // Claude Code lists it (`release.link_forwarded_user_context`).
+  on("prompt.attachment", async ($, e, next) => {
+    const result = await next(e);
+    if (e.type !== "skill_listing") return result;
+    const { places } = await skillPlaces($);
+    const text = result.text.replace(/^- ([^:\n]+(?::[^:\s]+)?): (.*)$/gm, (line, name, rest) =>
+      places[name]?.note ? `- ${name}: ${rest}${places[name].note}` : line);
+    return { text };
   });
 }
