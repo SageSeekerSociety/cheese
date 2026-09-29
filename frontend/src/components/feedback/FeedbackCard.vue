@@ -7,6 +7,7 @@ import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
 import { kindLabel } from './feedbackLabels'
 import FeedbackStatusChip from './FeedbackStatusChip.vue'
 
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 import { isClosed } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
@@ -88,10 +89,10 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
 
 <template>
   <div class="fb-card">
-    <router-link class="fb-card__body" :to="to">
+    <NavLink class="fb-card__body" :to="to">
       <span class="fb-card__title">{{ item.title }}</span>
       <p v-if="showSummary" class="fb-card__summary t-body-readable">{{ item.summary }}</p>
-    </router-link>
+    </NavLink>
 
     <!-- 底行在链接外面（支持按钮是一颗真按钮，理由见文件头）。左半边是「哪一类、谁提的、
          多少人参与」，右半边是「走到哪一步」和「我能做什么」。 -->
