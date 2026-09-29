@@ -10,7 +10,16 @@ import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, suffixOf
 import PreviewPages from './panels/preview/PreviewPages.vue'
 import PreviewSheet from './panels/preview/PreviewSheet.vue'
 
-const props = defineProps<{ projectId: string; artifactId: string; version: ArtifactVersion }>()
+const props = withDefaults(
+  defineProps<{
+    projectId: string
+    artifactId: string
+    version: ArtifactVersion
+    /** 没有标题栏、填满父级：产物页上那一块预览就是它自己，不是并排的两张卡之一。 */
+    bare?: boolean
+  }>(),
+  { bare: false }
+)
 const data = ref<ArrayBuffer | null>(null)
 const imageUrl = ref('')
 const text = ref<string | null>(null)
@@ -74,8 +83,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="version-preview">
-    <header class="pa-3">
+  <section class="version-preview" :class="{ 'version-preview--bare': bare }">
+    <header v-if="!bare" class="pa-3">
       <h3 class="t-title">{{ t('tasks.artifactComparison.version', { number: version.number }) }}</h3>
       <p class="t-body c-muted">{{ version.filename || version.subject }}</p>
     </header>
@@ -114,6 +123,19 @@ onBeforeUnmount(() => {
 .version-preview__body {
   max-height: 640px;
   overflow: auto;
+}
+.version-preview--bare {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.version-preview--bare .version-preview__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 .version-preview__body pre {
   white-space: pre-wrap;
