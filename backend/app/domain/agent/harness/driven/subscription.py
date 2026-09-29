@@ -10,6 +10,9 @@ It moves once per page, and where the room refused a record partway through
 one: a commit per record is a sync per record, and a backlog can run to a
 million records.
 
+A record that waited too long to be read is stepped over, not landed
+(``STALE_S``): the cursor moves past it and the room never hears it.
+
 What a harness supplies is what its protocol decides: how to pull from its
 runner, how to read its mirror, which records open and close a turn, what to do
 with a record produced before the first input, and — where the harness reports
@@ -27,6 +30,7 @@ awaited before the next is asked for.
 
 import asyncio
 import functools
+import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -75,6 +79,19 @@ SeatActivity = Callable[[uuid.UUID, Seat, uuid.UUID, bool], Awaitable[None]]
 #: looks wrong. A day answers that and keeps a busy room's mirror small.
 RETENTION_S = 24 * 3600
 RETENTION_EVERY_S = 3600
+
+#: How old an unlanded record may be and still reach the room, by the clock of
+#: the machine that recorded it. A record gets this old only while nothing read
+#: the journal: the backend was gone, the machine was, or every drain stopped at
+#: a record it could not take. By then the room has gone on without it — the
+#: turn was ended for it, its prompt re-sent or the person told — so landing it
+#: would answer, hours late, what has been answered since, and open the books
+#: again for turns the session started by itself. Two hours is the orphan
+#: sweep's own line between a deploy and an outage (``ORPHAN_STALE_S``): past
+#: it, the platform stops acting for the person on its own.
+STALE_S = 2 * 3600
+
+logger = logging.getLogger(__name__)
 
 
 def started(call: str) -> str:
@@ -181,13 +198,16 @@ class Subscription[B: Backlog]:
         async with self.lock:
             await self.receive()
             reader = await self.on_disk(self.reader)
-            delivered = 0
+            delivered = stale = 0
             # How far the room has taken whole things; landed once per page.
             whole: str | None = None
             try:
                 while page := await self.on_disk(reader.unread):
                     for entry in page:
-                        delivered += await self._deliver(entry, reader)
+                        if entry.age_s >= STALE_S:
+                            stale += 1
+                        else:
+                            delivered += await self._deliver(entry, reader)
                         if not reader.unfinished():
                             whole = entry.key
                     if whole is not None:
@@ -201,6 +221,16 @@ class Subscription[B: Backlog]:
                 if whole is not None:
                     await self.on_disk(reader.landed, through=whole)
                 raise
+            finally:
+                if stale:
+                    logger.warning(
+                        "stepped over %d journal records older than %ds "
+                        "topic=%s agent=%s",
+                        stale,
+                        STALE_S,
+                        self.session.topic_id,
+                        self.session.agent_handle,
+                    )
             if time.monotonic() - self.forgotten_at >= RETENTION_EVERY_S:
                 self.forgotten_at = time.monotonic()
                 await self.on_disk(reader.forget, older_than_s=RETENTION_S)
