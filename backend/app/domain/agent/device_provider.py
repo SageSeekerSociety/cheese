@@ -892,19 +892,17 @@ class DeviceChannel(Channel):
         Two roots, because the two writes belong to different things. The token
         is the SEAT's (`place.seat_dir`): its session is the one that reads it,
         and a roommate writing it here used to swap a running turn's credential
-        for its own. The release marker is also the seat's: shared helpers can
-        be current while that seat's plugin and settings still need a release."""
+        for its own. Release readiness is seat-local for plugins and settings."""
         hook_dir = f"{home_dir}/{session_platform_dirs()[0]}"
+        session_dir = f"{seat_dir(home_dir, agent_handle)}/remote-session"
         transfer = f'mkdir -p "{hook_dir}"'
         if release_state is not None:
-            session_dir = f"{seat_dir(home_dir, agent_handle)}/remote-session"
             transfer += (
                 f' && if [ -f "{session_dir}/release-ready" ]; then '
                 f'cat "{session_dir}/release-ready"; fi'
             )
         exec_env = None
         if execution_token is not None:
-            session_dir = f"{seat_dir(home_dir, agent_handle)}/remote-session"
             token_path = f"{session_dir}/execution.token"
             transfer += (
                 f' && mkdir -p "{session_dir}"'
