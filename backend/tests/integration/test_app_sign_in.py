@@ -154,3 +154,25 @@ def test_connecting_from_a_browser_stays_in_the_browser(client, monkeypatch):
 
     landing = urlsplit(_link_github(client, token, project, in_app=False))
     assert landing.path == f"/projects/{project}/settings"
+
+
+def test_a_feishu_authorization_from_the_app_shows_its_result_in_the_app(client):
+    back = client.get(
+        "/integrations/feishu/callback",
+        params={"code": "x", "state": "not-a-state.app"},
+        follow_redirects=False,
+    )
+    landing = urlsplit(back.headers["location"])
+    assert landing.path == "/account/to-app"
+    page = urlsplit(parse_qs(landing.query)["path"][0])
+    assert page.path == "/my/connections"
+    assert "feishu" in parse_qs(page.query)
+
+
+def test_a_feishu_authorization_from_a_browser_stays_there(client):
+    back = client.get(
+        "/integrations/feishu/callback",
+        params={"code": "x", "state": "not-a-state"},
+        follow_redirects=False,
+    )
+    assert urlsplit(back.headers["location"]).path == "/my/connections"

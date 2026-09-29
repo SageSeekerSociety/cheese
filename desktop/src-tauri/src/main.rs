@@ -236,6 +236,10 @@ fn main() {
             resident::tray::install(app.handle())?;
             tauri::async_runtime::spawn(keep_updated(app.handle().clone()));
             notices::resume(app.handle());
+            // The installer registers the scheme; registering again at each start
+            // mends an install that lost it. macOS reads it from the bundle instead.
+            #[cfg(windows)]
+            let _ = app.deep_link().register_all();
             let linked = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for link in event.urls() {
