@@ -94,6 +94,7 @@ class FakeMachineRepo:
 
 def make_machine(**overrides):
     base = dict(
+        id=uuid.uuid4(),
         topic_id=None,
         project_id=uuid.uuid4(),
         hostname="proj-abc123-1",
@@ -402,6 +403,9 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
         async def failed_topic_leases(self):
             return list(failed_leases)
 
+        async def unsettled_startups(self):
+            return []
+
     monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
     on_ready = AsyncMock()
     runner = MachineEnrollmentSweeper(Session, on_ready=on_ready)
@@ -674,6 +678,9 @@ async def test_sweep_hands_a_lease_microcloud_gave_up_on_to_the_room(monkeypatch
 
         async def failed_topic_leases(self):
             return [lease]
+
+        async def unsettled_startups(self):
+            return []
 
     monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
     on_ready, on_failed = AsyncMock(), AsyncMock()

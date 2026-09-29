@@ -180,6 +180,21 @@ class ProjectMachineRepository:
         )
         return [(topic_id, device_id) for topic_id, device_id in rows.all()]
 
+    async def list_session_startups(self, since: datetime) -> list[ProjectMachine]:
+        """Enrolled session allocations made since ``since`` that still hold
+        their room: the ones whose startup record may still be open."""
+        rows = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.session_id.is_not(None),
+                ProjectMachine.topic_id.is_not(None),
+                ProjectMachine.device_id.is_not(None),
+                ProjectMachine.released_at.is_(None),
+                ProjectMachine.superseded_at.is_(None),
+                ProjectMachine.created_at >= since,
+            )
+        )
+        return list(rows.scalars())
+
     async def list_failed_topic_leases(self) -> list[ProjectMachine]:
         """Active topic leases whose machine or AI channel MicroCloud reports as
         failed — the ones no sweep will ever hand to `list_ready_topic_devices`,
