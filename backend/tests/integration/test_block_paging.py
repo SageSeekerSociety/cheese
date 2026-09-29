@@ -262,3 +262,84 @@ def test_limit_must_be_positive(client):
     r = client.get(f"/topics/{tid}/blocks", params={"limit": 0})
 
     assert r.status_code == 400
+
+
+# --- opening the timeline in the middle (jump to a message) -------------------
+
+
+def test_around_opens_on_the_message_with_context_on_both_sides(client):
+    tid = _topic(client)
+    ids = [_say(client, tid, f"m{i}") for i in range(20)]
+
+    payload = _blocks(client, tid, limit=6, around=ids[10])
+
+    texts = _texts(payload)
+    assert "m10" in texts
+    assert texts == [f"m{i}" for i in range(7, 14)]
+    assert payload["has_more"] is True
+    assert payload["has_newer"] is True
+    assert payload["oldest_id"] == ids[7]
+    assert payload["newest_id"] == ids[13]
+
+
+def test_around_near_either_end_says_which_side_is_exhausted(client):
+    tid = _topic(client)
+    ids = [_say(client, tid, f"m{i}") for i in range(10)]
+
+    first = _blocks(client, tid, limit=6, around=ids[1])
+    assert _texts(first)[:2] == ["m0", "m1"]
+    assert first["has_more"] is False
+    assert first["has_newer"] is True
+
+    last = _blocks(client, tid, limit=6, around=ids[9])
+    assert _texts(last)[-1] == "m9"
+    assert last["has_more"] is True
+    assert last["has_newer"] is False
+
+
+def test_walking_after_from_the_middle_reaches_the_newest_exactly(client):
+    tid = _topic(client)
+    ids = [_say(client, tid, f"m{i}") for i in range(20)]
+
+    payload = _blocks(client, tid, limit=4, around=ids[5])
+    seen = _texts(payload)
+    while payload["has_newer"]:
+        payload = _blocks(client, tid, limit=4, after=payload["newest_id"])
+        seen += _texts(payload)
+
+    assert seen == [f"m{i}" for i in range(3, 20)]
+
+
+def test_the_newest_page_has_nothing_newer(client):
+    tid = _topic(client)
+    for i in range(8):
+        _say(client, tid, f"m{i}")
+
+    payload = _blocks(client, tid, limit=5)
+
+    assert payload["has_newer"] is False
+    assert payload["newest_id"] == payload["data"][-1]["id"]
+
+
+def test_around_a_message_of_another_topic_or_none_at_all_is_not_found(client):
+    a = _topic(client)
+    b = _topic(client)
+    _say(client, a, "a0")
+    foreign = _say(client, b, "b0")
+
+    for target in (foreign, str(uuid.uuid4())):
+        r = client.get(f"/topics/{a}/blocks", params={"limit": 5, "around": target})
+        assert r.status_code == 404, target
+
+
+def test_one_cursor_at_a_time_and_only_with_a_limit(client):
+    tid = _topic(client)
+    ids = [_say(client, tid, f"m{i}") for i in range(3)]
+
+    both = client.get(
+        f"/topics/{tid}/blocks",
+        params={"limit": 5, "before": ids[2], "after": ids[0]},
+    )
+    assert both.status_code == 422
+    unbounded = client.get(f"/topics/{tid}/blocks", params={"around": ids[1]})
+    assert unbounded.status_code == 422

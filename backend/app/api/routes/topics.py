@@ -532,6 +532,8 @@ async def list_topic_blocks(
     resolver: ActorResolverDep,
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
     before: uuid.UUID | None = None,
+    after: uuid.UUID | None = None,
+    around: uuid.UUID | None = None,
 ) -> dict:
     """The topic's conversation timeline, oldest-first.
 
@@ -544,41 +546,76 @@ async def list_topic_blocks(
     as it always has. That default is deliberate — agents read this endpoint to
     review history (`platform_request GET /topics/{id}/blocks`), and a default window
     would silently truncate them with no way to notice. Callers that DO page get
-    `has_more` + `oldest_id` and can walk backwards.
+    `has_more` / `oldest_id` (older blocks exist above) and `has_newer` /
+    `newest_id` (newer ones below), and can walk either way.
 
     - `?limit=N`                  → the newest N blocks (chat is bottom-anchored)
     - `?limit=N&before=<block_id>` → the N blocks immediately older than that one
+    - `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one
+    - `?limit=N&around=<block_id>` → that block with about N/2 on each side: a
+      conversation opened at one message (a search hit, a quoted reply)
     """
+    if sum(c is not None for c in (before, after, around)) > 1:
+        raise ValidationError("before、after、around 一次只能用一个")
+    if limit is None and (after is not None or around is not None):
+        raise ValidationError("after 和 around 要和 limit 一起用")
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
-    cursor: Block | None = None
-    if before is not None:
-        cursor = await repo.get(before)
+
+    async def cursor_of(block_id: uuid.UUID | None) -> Block | None:
+        if block_id is None:
+            return None
+        cursor = await repo.get(block_id)
         # An unknown cursor must not silently degrade into "newest N" — that
         # would hand the caller a duplicate page it can't distinguish. A cursor
         # from one of this room's CARDS is just as wrong as one from another
-        # room: the card's timeline is read through the card.
+        # room: the card's timeline is read through the card. A document node
+        # or margin comment is not on the timeline at all.
         if (
             cursor is None
             or cursor.topic_id != place.room_id
             or cursor.task_id is not None
+            or cursor.kind in BlockRepository.NON_TIMELINE
         ):
             raise NotFoundError("游标消息不存在")
+        return cursor
+
+    older_than = await cursor_of(before)
+    newer_than = await cursor_of(after)
+    centre = await cursor_of(around)
     if limit is None:
         blocks = await repo.list_for_topic(place.room_id)
-        if cursor is not None:
+        if older_than is not None:
             blocks = [
                 b
                 for b in blocks
-                if (b.created_at, b.id) < (cursor.created_at, cursor.id)
+                if (b.created_at, b.id) < (older_than.created_at, older_than.id)
             ]
-        has_more = False
+        has_more = has_newer = False
+    elif centre is not None:
+        above = await repo.page_for_topic(
+            place.room_id, limit=limit // 2, before=centre
+        )
+        below = await repo.page_for_topic(
+            place.room_id, limit=limit - limit // 2, after=centre
+        )
+        blocks = [*above.items, centre, *below.items]
+        has_more, has_newer = above.has_more, below.has_more
+    elif newer_than is not None:
+        page_result = await repo.page_for_topic(
+            place.room_id, limit=limit, after=newer_than
+        )
+        blocks = page_result.items
+        # Paging down from a block means that block is above this page.
+        has_more, has_newer = True, page_result.has_more
     else:
         page_result = await repo.page_for_topic(
-            place.room_id, limit=limit, before=cursor
+            place.room_id, limit=limit, before=older_than
         )
-        blocks, has_more = page_result.items, page_result.has_more
+        blocks = page_result.items
+        # Paging up from a block means that block is below this page.
+        has_more, has_newer = page_result.has_more, older_than is not None
     total = await repo.count_for_topic(topic_id)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
     # Scoped to THIS page's ids, so paging saves the database work too, not just
@@ -596,6 +633,9 @@ async def list_topic_blocks(
             "has_more": has_more,
             # Feed this back as `before` to fetch the next older page.
             "oldest_id": str(blocks[0].id) if blocks else None,
+            "has_newer": has_newer,
+            # Feed this back as `after` to fetch the next newer page.
+            "newest_id": str(blocks[-1].id) if blocks else None,
         }
     )
 
