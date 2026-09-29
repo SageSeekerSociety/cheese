@@ -1,0 +1,97 @@
+{
+  "page": {
+    "title": "Feature data",
+    "subtitle": "Each feature's own data page: one screen that says how it is doing",
+    "noNumbers": "This page lists features and carries no numbers at all — the numbers live on their own pages, so there is only one place to keep right.",
+    "empty": "No feature has a data page yet.",
+    "loadFailed": "Could not read the feature list.",
+    "retry": "Retry",
+    "notBuilt": "Not built yet",
+    "unknown": "This feature has no data page yet",
+    "unknownDesc": "{id} is not in the admin feature list: the address may be wrong, or the page may not be built yet.",
+    "window": "Window: {start} to {end} (both ends included, counted by UTC days)",
+    "windowAria": "Window"
+  },
+  "days": {
+    "7": "Last 7 days",
+    "30": "Last 30 days",
+    "90": "Last 90 days"
+  },
+  "features": {
+    "docsAssistant": {
+      "title": "Ask Cheese",
+      "summary": "The docs site's question-answering assistant: how many people read the docs, how many asked it something, and how well it answered"
+    }
+  },
+  "unit": {
+    "people": "people",
+    "times": "times",
+    "chars": "rows"
+  },
+  "kpi": {
+    "visitors": "Docs visitors",
+    "visitorsNote": "Counted per person per day: reading the docs three times in one day is one visitor, and the same browser on another day is another one.",
+    "loggedIn": "Signed in",
+    "loggedInNote": "Visitors carrying an account. The rest are anonymous readers, who keep only a random id generated at that moment — the platform does not know who they are.",
+    "loggedInShare": "{percent} of visitors",
+    "askers": "Asked Ask Cheese",
+    "askersNote": "People who asked at least once in the window. The denominator is signed-in visitors: asking requires signing in, and counting against everyone who read the docs would make this share fall whenever a signed-out reader arrived.",
+    "askersShare": "{percent} of signed-in visitors",
+    "questions": "Questions",
+    "questionsNote": "Every question received in the window; the same question asked three times counts three times.",
+    "perAsker": "{value} per person",
+    "answerRate": "Answer rate",
+    "answerRateNote": "Answered questions as a share of all of them. The rest split into \"no answer found\" and \"failed\", listed separately below.",
+    "answeredOf": "{answered} / {total}",
+    "cost": "Spend",
+    "costUnavailable": "Spend (cannot estimate)",
+    "costNote": "Estimated from the recorded tokens at the gateway's price list, **not a bill figure**: this virtual key cannot read spend for a window. {tokens} tokens carry no price there and are left out.",
+    "costUnknownNote": "The gateway's price list could not be read, so this figure is unknown — it is not drawn as 0, because 0 reads as \"free\".",
+    "perQuestion": "{value} per question"
+  },
+  "trend": {
+    "title": "Day by day",
+    "note": "Three lines, three questions: how many came, how many of them asked, and how many questions were asked. A day with nothing is drawn as 0 rather than a gap — a gap reads as \"not measured\".",
+    "visitors": "Visitors",
+    "askers": "Asked",
+    "questions": "Questions"
+  },
+  "tokens": {
+    "title": "Tokens per question",
+    "note": "Per question, not per day: a day's total is skewed by one long conversation. Only questions whose tokens were recorded are counted.",
+    "caption": "{n} questions"
+  },
+  "histogram": {
+    "title": "Token distribution",
+    "note": "Each bar is how many questions fall in that range. Two usages with the same average and different shapes (everyone asks 3,000 against nine in ten asking 300) are told apart here."
+  },
+  "latency": {
+    "title": "How long an answer takes",
+    "note": "From receiving the question to finishing the answer. The median is the usual speed; p90 is how slow it gets — that is the number readers complain about.",
+    "caption": "{n} answers"
+  },
+  "metric": {
+    "avg": "Average",
+    "median": "Median",
+    "p90": "p90",
+    "max": "Largest",
+    "min": "Smallest"
+  },
+  "outcomes": {
+    "title": "How answers ended",
+    "note": "The three add up to every question in the window. The two below \"answered\" are worth keeping apart: a missing answer is the docs' problem, a failure is the platform's.",
+    "answered": "Answered",
+    "noMatch": "No answer found",
+    "failed": "Failed"
+  },
+  "unanswered": {
+    "title": "Questions it could not answer",
+    "note": "Grouped by the question text, most-asked first, fifty rows at most. **There is no, and never will be, a \"who asked\" column**: this is a list for whoever writes the docs, not a user report.",
+    "empty": "Nothing went unanswered in this window.",
+    "column": {
+      "question": "Question",
+      "page": "Asked from",
+      "count": "Times"
+    }
+  }
+}

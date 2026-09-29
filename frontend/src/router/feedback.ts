@@ -87,6 +87,24 @@ export default [
         meta: { title: '看板', isFullPage: true },
       },
       {
+        // 「功能数据」的目录页（`/admin/feature-stats`）：有哪些功能的数据页。
+        // 它自己一个数字都不放，理由写在 `AdminFeatureStatsPage.vue` 的文件头。
+        path: 'feature-stats',
+        name: 'AdminFeatureStats',
+        component: () => import('@/views/admin/AdminFeatureStatsPage.vue'),
+        meta: { title: '功能数据', isFullPage: true },
+      },
+      {
+        // 各个功能自己的数据页：`:id` 由前端注册表（`views/admin/features/registry.ts`）
+        // 翻成组件，所以加一个功能不动这个文件 —— 加一条路由是那种「忘了只在点进去
+        // 那一刻才发现」的地方。
+        path: 'feature-stats/:id',
+        name: 'AdminFeature',
+        component: () => import('@/views/admin/AdminFeaturePage.vue'),
+        // 顶栏那行字对整块是同一个名字：从目录点进某一页时，它不该闪成另一句话。
+        meta: { title: '功能数据', isFullPage: true },
+      },
+      {
         // 网关模型管理那一页。和其它分区一样是壳里的一块，不是独立域名。
         path: 'models',
         name: 'AdminModels',

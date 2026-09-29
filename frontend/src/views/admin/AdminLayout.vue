@@ -64,6 +64,16 @@ const SECTIONS: { to: string; name: string; icon: string; label: () => string; b
     label: () => t('navigation.admin.dashboard'),
     badge: false,
   },
+  // 「功能数据」紧跟着看板：它和看板是同一种东西（看数，不是操作），只是看板的刻度是
+  // **平台**（用户、反馈、用量各一块），这一条的刻度是**一个功能**。名字说的是里面装
+  // 的是什么：每个功能自己的那页数。
+  {
+    to: '/admin/feature-stats',
+    name: 'AdminFeatureStats',
+    icon: 'mdi-chart-box-outline',
+    label: () => t('navigation.admin.featureStats'),
+    badge: false,
+  },
   // 「模型」放在看板后面：它和看板看的是同一条链（网关上的模型与它们花掉的钱），
   // 只是看板报量、这一块管钱和上架。入口名说的是里面装的是什么。
   {
@@ -126,6 +136,9 @@ function isCurrent(name: string): boolean {
   // `/admin/feedback` 是队列的旧地址（薄壳），导航项落在 `/admin/queue` 上，所以那一条
   //  路由也要算「在队列这一块里」—— 否则从老书签进来时旁边一条都不亮。
   if (name === 'AdminQueue') return route.name === 'AdminQueue' || route.name === 'AdminFeedback'
+  // 功能数据也一样是「目录 + 每一页」两个路由名，两个都算在这一条上 —— 不然从目录点进
+  // 某个功能之后，旁边那条就不亮了。
+  if (name === 'AdminFeatureStats') return route.name === 'AdminFeatureStats' || route.name === 'AdminFeature'
   return route.name === name
 }
 

@@ -34,7 +34,8 @@
     "dashboard": "Dashboard",
     "models": "Models",
     "spaces": "Space applications",
-    "members": "Members"
+    "members": "Members",
+    "featureStats": "Feature data"
   },
   "userMenu": {
     "profile": "Profile",
