@@ -179,6 +179,37 @@ class FakeHub:
         ]
 
 
+class ShellHub(FakeHub):
+    """A hub whose `sh -c` execs really run, with `$HOME` at ``home``.
+
+    The per-turn files are written by the machine's own shell — a `umask`, a
+    temp file and a rename — so a test about WHICH file a turn touches has to
+    let that shell run rather than answer it with a canned stdout.
+    """
+
+    def __init__(self, home):
+        super().__init__()
+        self.home = home
+
+    async def exec(self, device_id, argv, *, env=None, stdin=None, **kwargs):
+        if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_HOME"):
+            return await super().exec(device_id, argv, env=env, stdin=stdin, **kwargs)
+        self.execs.append((argv, stdin))
+        result = subprocess.run(
+            argv,
+            input=stdin,
+            text=True,
+            capture_output=True,
+            env={**os.environ, "HOME": str(self.home), **(env or {})},
+            timeout=10,
+        )
+        return {
+            "exit": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        }
+
+
 def _room(hub, **fixed):
     """One room on ``hub``: its channel, and a call that ensures its screen."""
     channel = DeviceChannel(hub=hub, public_base="http://cheese.test")
@@ -424,28 +455,7 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
     turn rewrites that file in place — as the machine's own shell runs it — and
     touches nothing of the harness's own config under the same home."""
 
-    class LocalHub(FakeHub):
-        async def exec(self, device_id, argv, *, env=None, stdin=None, **kwargs):
-            if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_HOME"):
-                return await super().exec(
-                    device_id, argv, env=env, stdin=stdin, **kwargs
-                )
-            self.execs.append((argv, stdin))
-            result = subprocess.run(
-                argv,
-                input=stdin,
-                text=True,
-                capture_output=True,
-                env={**os.environ, "HOME": str(tmp_path), **(env or {})},
-                timeout=10,
-            )
-            return {
-                "exit": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-
-    hub = LocalHub()
+    hub = ShellHub(tmp_path)
     hub.release["stage"] = {"changed": False}
     room = _room(
         hub, env={"CHEESE_EXECUTION_TARGET": json.dumps({"device_id": "executor"})}
@@ -474,6 +484,42 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
     assert token.read_text() == "rotated"
     assert token.stat().st_mode & 0o777 == 0o600
     assert settings_path.read_text() == '{"keep":true}'
+
+
+async def test_a_turn_rewrites_only_its_own_seat_s_execution_token(tmp_path):
+    """一个话题两个座位，各写各的凭据文件（docs/manual/dev/turn.md #seats-session）。
+
+    The file this replaces lived at the ROOM's level and was rewritten by every
+    turn of every teammate, so opening a second teammate's turn swapped the
+    token the first one's running session authenticated with: its next call was
+    refused with 「Execution credential does not own this session」, its runner
+    socket vanished and the turn it was in the middle of was declared dead
+    (2026-09-29 05:39).
+    """
+    hub = ShellHub(tmp_path)
+    hub.release["stage"] = {"changed": False}
+    room = _room(
+        hub, env={"CHEESE_EXECUTION_TARGET": json.dumps({"device_id": "executor"})}
+    )
+
+    mine_screen = await room.ensure(agent_handle="cheese-a", token="a1")
+    home = Path(
+        device_home_dir(
+            room.arguments["project_id"], room.arguments["topic_id"]
+        ).replace("$HOME", str(tmp_path))
+    )
+    mine = Path(seat_dir(str(home), "cheese-a")) / "remote-session/execution.token"
+    theirs = Path(seat_dir(str(home), "cheese-b")) / "remote-session/execution.token"
+    assert mine.read_text() == "a1" and not theirs.exists()
+
+    theirs_screen = await room.ensure(agent_handle="cheese-b", token="b1")
+    assert theirs_screen.sid != mine_screen.sid
+    assert theirs.read_text() == "b1"
+    assert mine.read_text() == "a1", "开第二位队友的轮次换掉了第一位正在用的凭据"
+
+    await room.ensure(agent_handle="cheese-a", token="a2")
+    assert mine.read_text() == "a2"
+    assert theirs.read_text() == "b1"
 
 
 @pytest.mark.parametrize(

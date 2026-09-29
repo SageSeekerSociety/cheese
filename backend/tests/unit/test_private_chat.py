@@ -178,6 +178,48 @@ def test_releasing_a_private_room_reaches_the_root_it_was_installed_in(
     ]
 
 
+@pytest.mark.parametrize("installed_in", [".cheese", ".claude"])
+def test_controlling_a_private_room_reaches_the_seat_that_prepared_it(
+    tmp_path, installed_in
+):
+    """The config the client derives its per-turn files from is a SEAT's now
+    (`place.seat_dir`), and this command is a shell test-and-exec on the machine
+    — a root it does not name is not an error there, it is silence, and the
+    room's control request is answered as 「no private executor is installed」."""
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    config = private_chat.scratch_target(project, resource, device_id="dev1")
+    home = config["home"].replace("$HOME", str(tmp_path))
+    directory = Path(home) / installed_in
+    (directory / "remote-execution").mkdir(parents=True)
+    session = directory / "seats/4b9f7d802648/remote-session"
+    session.mkdir(parents=True)
+    (session / "execution.json").write_text("{}")
+    (directory / "remote-execution/client.py").write_text(
+        "import json, sys\njson.dump(sys.argv[1:], sys.stdout)\n"
+    )
+    request = {"subtype": "read_file", "path": "/work/draft.md"}
+
+    class ShellHub:
+        async def exec(self, device_id, argv, *, stdin=None, timeout):
+            done = subprocess.run(
+                argv,
+                input=stdin,
+                env={**os.environ, "HOME": str(tmp_path)},
+                capture_output=True,
+                text=True,
+            )
+            return {
+                "exit": done.returncode,
+                "stdout": done.stdout,
+                "stderr": done.stderr,
+            }
+
+    assert asyncio.run(private_chat.control(config, request, hub=ShellHub())) == [
+        "control",
+        str(session / "execution.json"),
+    ]
+
+
 # What docker prints when the executor container cannot be created. Kept so
 # the session's startup record says which of these it was.
 _DOCKER_REFUSALS = {

@@ -348,41 +348,63 @@ def _bootstrap_passthrough(bindir: Path) -> None:
     client.chmod(0o755)
 
 
-def _run_prepare(tmp_path, *, api: str = "", system_prompt: str = "", curl=None):
-    """The prepare hole alone, in `sh`, as the launcher reaches it: with the
-    session home, the owner's home and the executor target already set."""
-    owner = tmp_path / "owner"
-    session = owner / ".cheese/home/room"
-    session.mkdir(parents=True)
-    bindir = tmp_path / "bin"
-    _bootstrap_passthrough(bindir)
-    if curl is not None:
-        (bindir / "curl").write_text(curl)
-        (bindir / "curl").chmod(0o755)
-    holes = device_launch.launch_holes(state=STATE, system_prompt=system_prompt)
+def _prepare_script(
+    session: Path, *, system_prompt: str = "", handle: str = ""
+) -> tuple[str, Path]:
+    """The prepare hole alone, as its own `sh` file, for one seat of ``session``.
+
+    A file rather than `sh -c`: the hole carries the runner archive, and Linux
+    caps one argument far below it.
+    """
+    holes = device_launch.launch_holes(
+        state=STATE, system_prompt=system_prompt, seat=place.seat_name(handle)
+    )
     # What `configure` has already done by the time `prepare` runs: the seat
     # exists, and the prompt this session was launched with is in it.
-    seat = seat_of(session)
-    seat.mkdir(parents=True)
+    seat = Path(place.seat_dir(str(session), handle))
+    seat.mkdir(parents=True, exist_ok=True)
     if system_prompt:
-        (session / ".claude").mkdir()
+        (session / ".claude").mkdir(exist_ok=True)
         (seat / "cheese-system-prompt.md").write_text(system_prompt)
     script = (
         "set -e\ncheese_launch_phase() { :; }\n"
         # What `configure` leaves behind for `prepare`: the seat this session's
         # own files go in. A real launch runs the two in one shell, so this
         # holds the hole's reader against the same name the writer uses.
-        + f'SEAT="{seat_of(session)}"\n'
+        + f'SEAT="{seat}"\n'
         + holes.prepare
         + 'printf "%s\\n" "$CHEESE_CLAUDE_COMMAND" > "$HOME/command"\n'
         + 'printf "%s\\n" "$CLAUDE_RUNNER" > "$HOME/runner"\n'
     )
+    return script, seat
+
+
+def _run_prepare(
+    tmp_path,
+    *,
+    api: str = "",
+    system_prompt: str = "",
+    curl=None,
+    handle: str = "",
+    target=None,
+):
+    """`_prepare_script` run the way the launcher runs it: with the session
+    home, the owner's home and the executor target already set."""
+    owner = tmp_path / "owner"
+    session = owner / ".cheese/home/room"
+    session.mkdir(parents=True, exist_ok=True)
+    bindir = tmp_path / "bin"
+    _bootstrap_passthrough(bindir)
+    if curl is not None:
+        (bindir / "curl").write_text(curl)
+        (bindir / "curl").chmod(0o755)
+    script, _seat = _prepare_script(session, system_prompt=system_prompt, handle=handle)
     env = {
         **_clean_environ(),
         "PATH": f"{bindir}:/usr/bin:/bin",
         "HOME": str(session),
         "REAL_HOME": str(owner),
-        "CHEESE_EXECUTION_TARGET": json.dumps({"kind": "deferred"}),
+        "CHEESE_EXECUTION_TARGET": json.dumps(target or {"kind": "deferred"}),
     }
     if api:
         env["CHEESE_API"] = api
@@ -430,9 +452,52 @@ def test_the_runner_is_handed_the_pinned_build_behind_the_executor_client(tmp_pa
     # None of the flags the terminal launch needed survives the move to `-p`.
     assert "--dangerously-skip-permissions" not in argv
     assert "--remote-control" not in argv
-    assert json.loads((seat / "remote-target.json").read_text()) == {
-        "kind": "deferred"
-    }
+    assert json.loads((seat / "remote-target.json").read_text()) == {"kind": "deferred"}
+
+
+def test_two_seats_of_a_room_keep_their_own_prompt_and_target(tmp_path):
+    """一个话题两个座位（docs/manual/dev/turn.md #seats-session）：系统提示和目标文件
+    各写在各的座位目录，谁的一轮都不碰对方的。
+
+    Both of these differ per teammate and both were written to one path the
+    whole room shared, so a room-mate's turn replaced them under the session
+    already running: its next executor call came back 「Execution credential
+    does not own this session」 and the turn it was in the middle of died with
+    it (2026-09-29 05:39).
+    """
+    _stand_in_claude(tmp_path / "owner/.local/bin/claude")
+    first_target = {"kind": "deferred", "who": "cheese-a"}
+    second_target = {"kind": "deferred", "who": "cheese-b"}
+
+    def prompt_file(command: str) -> str:
+        argv = _argv(command.strip(), cwd=tmp_path)
+        return argv[argv.index("--append-system-prompt-file") + 1]
+
+    _, session, first = _run_prepare(
+        tmp_path, system_prompt="你是甲。", handle="cheese-a", target=first_target
+    )
+    assert first.returncode == 0, first.stderr
+    first_command = (session / "command").read_text()
+    mine = Path(place.seat_dir(str(session), "cheese-a"))
+
+    _, _, second = _run_prepare(
+        tmp_path, system_prompt="你是乙。", handle="cheese-b", target=second_target
+    )
+    assert second.returncode == 0, second.stderr
+    second_command = (session / "command").read_text()
+    theirs = Path(place.seat_dir(str(session), "cheese-b"))
+    assert mine != theirs
+
+    # Each session reads its own prompt and is handed its own target.
+    assert prompt_file(first_command) == f"{mine}/cheese-system-prompt.md"
+    assert prompt_file(second_command) == f"{theirs}/cheese-system-prompt.md"
+    assert (mine / "cheese-system-prompt.md").read_text() == "你是甲。"
+    assert (theirs / "cheese-system-prompt.md").read_text() == "你是乙。"
+    assert json.loads((mine / "remote-target.json").read_text()) == first_target
+    assert json.loads((theirs / "remote-target.json").read_text()) == second_target
+    # And neither turn left anything of its own in a path the room shares.
+    assert not (session / ".cheese/remote-target.json").exists()
+    assert not (session / ".claude/cheese-system-prompt.md").exists()
 
 
 def test_an_empty_system_prompt_adds_no_flag(tmp_path):

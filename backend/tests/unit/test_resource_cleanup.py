@@ -555,6 +555,30 @@ def test_teardown_reads_the_current_root_when_a_room_has_moved(tmp_path):
     assert cleanup.session_target(home, resource)["topic"] == resource
 
 
+def test_teardown_reads_a_target_a_seat_kept_in_its_own_directory(tmp_path):
+    """A seat's target is written into the seat (`place.seat_dir`), so the
+    teardown has to read there too.
+
+    Reading only the room's own directory answers "this room never had an
+    executor" for a room whose every session installed one, and that answer is
+    acted on: the detached daemon is left running under a home that is then
+    deleted out from under it, and the private container it holds is never
+    released — the leak the room-level read exists to prevent.
+    """
+    resource = str(uuid.uuid4())
+    home = tmp_path / resource
+    seat = home / ".cheese/seats/4b9f7d802648"
+    (seat / "remote-execution").mkdir(parents=True)
+    (seat / "remote-target.json").write_text(
+        json.dumps({"kind": "device", "resource_id": resource})
+    )
+
+    target = cleanup.session_target(home, resource)
+    assert target is not None and target["kind"] == "device"
+    with pytest.raises(RuntimeError, match="another resource generation"):
+        cleanup.session_target(home, str(uuid.uuid4()))
+
+
 def test_unpublished_source_blocks_cleanup(tmp_path):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / "source.py").write_text("work in progress")
