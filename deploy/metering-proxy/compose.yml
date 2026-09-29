@@ -29,8 +29,10 @@
 #   CHEESE_CHATGPT_KEY      the Bearer the ChatGPT listener (:8445) demands:
 #                           the api_key of the gateway deployments pointed at
 #                           it. Empty refuses every request there.
-#   CHEESE_CODEX_CLIENT_VERSION  the `version` header sent to ChatGPT; empty
-#                           keeps the addon's default
+#
+# The Codex client version ChatGPT is told is not set here: it is a file beside
+# the ChatGPT accounts, changed without a restart (chatgpt-login.sh
+# client-version).
 #
 # The ChatGPT listener (:8445) is published nowhere. Its one caller, the
 # gateway's LiteLLM, reaches it as http://metering-proxy:8445 on
@@ -76,6 +78,12 @@ services:
     image: ${METERING_PROXY_IMAGE:?Use the Release metering proxy workflow}
     container_name: cheese-metering-proxy
     restart: unless-stopped
+    labels:
+      # A hash of this file and the .env the release started it with, so the
+      # next release can tell a configuration change from an unchanged proxy
+      # (release-metering-proxy.sh). Empty when started any other way, which
+      # the next release treats as changed.
+      cheese.metering-proxy.config-sha256: ${METERING_PROXY_CONFIG_SHA256:-}
     # Backstop, not the fix: the addon now streams both request and response
     # bodies (billing_addon.py) so per-flow memory is bounded and a long agent
     # turn no longer buffers its whole grown context. This cap only ensures that
@@ -118,7 +126,6 @@ services:
       CHEESE_CLAUDE_CREDENTIAL: /etc/cheese/claude-credential/credential
       CHEESE_CHATGPT_CREDENTIALS: /etc/cheese/chatgpt-credential
       CHEESE_CHATGPT_KEY: ${CHEESE_CHATGPT_KEY:-}
-      CHEESE_CODEX_CLIENT_VERSION: ${CHEESE_CODEX_CLIENT_VERSION:-}
     volumes:
       # The ledger. This MUST resolve to the same host directory the backend's
       # SUBSCRIPTION_USAGE_LOG points into — the proxy writes the rows and the

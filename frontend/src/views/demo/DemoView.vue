@@ -174,7 +174,9 @@ onBeforeUnmount(() => {
         </li>
       </ol>
       <div class="demo-stage">
-        <DemoRoom :scene="scene" :frame="frame" />
+        <!-- 换一个演示就换一间房：右边那几格挂上过就一直挂着（页签切来切去不重挂），
+             换了剧本不重挂的话，上一间房的改动、预览、现场都会留在格子里面。 -->
+        <DemoRoom :key="name" :scene="scene" :frame="frame" />
       </div>
     </template>
     <p v-else class="demo-missing">没有这个演示。</p>

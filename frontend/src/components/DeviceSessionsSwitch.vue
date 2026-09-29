@@ -11,7 +11,7 @@ import { t } from '../i18n'
 import { choiceKey, compactChoices } from '../lib/computeConfig'
 import { relTime } from '../lib/relTime'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<{
   projectId: string

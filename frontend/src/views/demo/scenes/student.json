@@ -54,6 +54,29 @@
       "label": "交付，交给你审阅",
       "focus": "card",
       "tag": "芝士交文件，卡上点「审阅」再「采纳」",
+      "panel": "changes",
+      "changes": {
+        "files": [
+          {
+            "path": "销售分析报告.md",
+            "status": "added",
+            "diff": [
+              "+# 销售分析报告",
+              "+",
+              "+三个月（7–9 月）销售额 42.6 万元，比前三个月增长 18%。",
+              "+",
+              "+## 变化",
+              "+",
+              "+- 8 月增长最快：暑期促销带来的新客占 62%。",
+              "+- 9 月回落 6%：开学季整体需求走低。",
+              "+",
+              "+## 结论",
+              "+",
+              "+秋季把促销集中在 7–8 月，9 月转向老客复购。"
+            ]
+          }
+        ]
+      },
       "events": [
         { "at": 300, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_accept_request", "arg": "feat(report): sales analysis", "platform": true },
         { "at": 600, "do": "checks", "checks": { "mergeable": true, "state": "open", "checks": [{ "name": "required-ci / lint", "status": "completed", "conclusion": "success" }] } },

@@ -21,7 +21,7 @@ import { useI18n } from 'vue-i18n'
 
 import { getEntity, getStringMetadata } from './NotificationRenderUtils'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()

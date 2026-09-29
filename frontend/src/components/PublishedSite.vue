@@ -18,7 +18,7 @@ import type { ProjectSiteInfo } from '@/cx_types'
 import { computed, ref, watch } from 'vue'
 
 import { ApiError, getProjectSite, publishProjectSite } from '@/api'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{ projectId: string }>()

@@ -27,7 +27,7 @@ order: 1
 
 ```demo-steps
 title: 交一件事给芝士，再验收它
-note: 画面用的是产品里真的消息行、现场和验收卡
+note: 画面用的是产品里真的消息行、工作面板（右边那四格）和验收卡
 embed: quickstart
 steps:
   - label: 说清要什么，交给芝士

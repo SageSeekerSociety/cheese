@@ -52,6 +52,23 @@
       "label": "这一轮结束：看本轮摘要",
       "focus": "chat",
       "tag": "改了哪些文件、增减多少行，点「查看改动」看细节",
+      "panel": "changes",
+      "changes": {
+        "files": [
+          {
+            "path": "README.md",
+            "status": "added",
+            "diff": [
+              "+# 课程资料",
+              "+",
+              "+这个项目放本课程的课件和作业。",
+              "+",
+              "+有不清楚的地方，在话题里问。",
+              "+目录里标了每一周的进度。"
+            ]
+          }
+        ]
+      },
       "events": [
         { "at": 200, "do": "act", "who": "cheese", "turn": "t1", "tool": "cheese_accept_request", "arg": "docs: add a welcome note", "platform": true },
         { "at": 700, "do": "checklist", "who": "cheese", "id": "todo1", "items": [
@@ -67,6 +84,7 @@
       "label": "验收卡出现：待你审阅",
       "focus": "card",
       "tag": "卡上写着待谁审阅、推荐理由和合并后的提交标题",
+      "panel": "changes",
       "events": [
         { "at": 200, "do": "notice", "text": "《项目仓库》已提交，待 王长鑫 审阅", "meta": { "event_type": "card_filed", "severity": "info", "who": "human", "detail": "docs: add a welcome note\n\n在仓库根目录加 README.md，一句话介绍这个项目。", "detail_label": "改动" } },
         { "at": 500, "do": "card", "open": true, "card": { "reviewer_handle": "王长鑫", "routing_reason": "你提的需求，由你验收", "change_subject": "docs: add a welcome note", "change_body": "在仓库根目录加 README.md，一句话介绍这个项目。", "pr_number": 1, "pr_url": "#", "forge": { "kind": "forgejo", "reports_checks": true, "hosts_proposals": true, "can_write_remote": true, "pushes_to_external_remote": false, "identity": "platform", "declaration": "" }, "deliverable": { "kind": "merge", "filename": null, "url": null } } },

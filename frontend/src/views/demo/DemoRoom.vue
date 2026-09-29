@@ -1,19 +1,27 @@
 <script setup lang="ts">
-// 演示里的那间房：对话栏是真的消息行（RoomMessage），右边「现场」是真的 PanelSite，
-// 喂的是剧本算出来的数据（demoScene.frameAt）。首页 LandingRoom 是同一个做法。
-// 外框（顶栏、机器、座位卡、页签）是演示自己画的：真页面上的这些要连后端才画得出来，
+// 演示里的那间房：对话栏是真的消息行（RoomMessage），右边是工作面板——页签条
+// （PanelTabs）加当前那一格的产品组件（总览 / 现场 / 改动 / 预览），喂的是剧本算
+// 出来的数据（demoScene.frameAt + demoPanels）。首页 LandingRoom 是同一个做法。
+// 外框（顶栏、机器、座位卡）是演示自己画的：真页面上的这些要连后端才画得出来，
 // 而演示要讲的恰恰是它们背后的机制，所以把机制写成看得见的几张卡。
+import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 import type { Block, Topic } from '@/cx_types'
-import type { Frame, Scene } from './demoScene'
+import type { Frame, PanelKey, Scene } from './demoScene'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 import { answer } from './demoBackend'
 import DemoBackstage from './DemoBackstage.vue'
+import { DEMO_PROJECT, DEMO_TOPIC, installPanelAnswers } from './demoPanels'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import DispatchedMarker from '@/components/DispatchedMarker.vue'
+import PanelChanges from '@/components/panels/PanelChanges.vue'
+import PanelOverview from '@/components/panels/PanelOverview.vue'
+import PanelPreview from '@/components/panels/PanelPreview.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
+import { panelTabs } from '@/components/panels/panelTabList'
+import PanelTabs from '@/components/panels/PanelTabs.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
@@ -28,7 +36,16 @@ const names = computed<Record<string, string>>(() =>
 const refs = computed(() => ({ mentionNames: names.value, topicTitles: {} }))
 const isAgent = (handle: string) => props.scene.people[handle]?.agent === true
 const defaultAgent = computed(() => props.scene.seats?.[0] ?? '')
-const topic = { id: 'demo' } as Topic
+// 和产品里同一个房间：房间 id 就是演示后端回答的那一个，标题跟着剧本走。
+const topic = computed<Topic>(
+  () =>
+    ({
+      id: DEMO_TOPIC,
+      project_id: DEMO_PROJECT,
+      title: props.scene.topic,
+      status: 'active',
+    }) as Topic
+)
 
 // 时间线的行和产品里一样由 collapseNotices 算：藏掉不露面的、折叠同类事件、把同一轮
 // 的动作行和改动摘要折成「本轮摘要」。分隔说明和已派出标记不是块，夹在中间原样放。
@@ -104,6 +121,79 @@ onMounted(() => {
   feed(fed)
 })
 
+// ---- 右侧那几格：页签条是产品的那条，格子里是产品的那四件 ----
+// 哪几格、什么名字、挂哪个图标，来自产品那张表（panelTabs）——桌面上的工作面板就是
+// 这四格（手机上对话自己是一格，这里对话在左边那一栏）。这一刻停在哪一格由剧本说
+// （`frame.panel`，不写就是现场），格子的内容也是剧本给的，画法是产品自己的。
+const PANEL_TABS = panelTabs(false)
+
+// 剧本里出现过内容的格子。一次都没出现过的格子字退淡一点——产品里这一格没东西就是
+// 这个样子（那是「还没有改动」，不是「没有这个功能」）。
+const filled = computed(() => {
+  const set = new Set<PanelKey>(['site'])
+  for (const s of props.scene.steps) {
+    if (s.overview !== undefined) set.add('overview')
+    if (s.changes !== undefined) set.add('changes')
+    if (s.preview !== undefined) set.add('preview')
+  }
+  return set
+})
+
+function signalOf(key: PanelKey): PanelTab['signal'] {
+  // 和产品同一套说法：现场是「正在发生」的呼吸点，改动是数字，预览是新内容。
+  if (key === 'site' && working.value) return { kind: 'pulse' }
+  if (key === 'changes' && props.frame.changes) return { kind: 'count', count: props.frame.changes.files.length }
+  if (key === 'preview' && props.frame.preview) return { kind: 'dot' }
+  if (key === 'overview' && props.frame.overview?.tasks?.length)
+    return { kind: 'count', count: props.frame.overview.tasks.length }
+  return undefined
+}
+
+/** hover / 读屏的说法，和产品里那几行一个意思。 */
+function tabTitle(key: PanelKey): string {
+  const label = PANEL_TABS.find((t) => t.key === key)?.label ?? key
+  if (key === 'site' && working.value) return `${label}（${workingNames.value}正在工作）`
+  if (key === 'changes' && props.frame.changes) return `${label}（${props.frame.changes.files.length} 个文件改了）`
+  if (key === 'preview' && props.frame.preview) return `${label}（${props.frame.preview.path}）`
+  if (key === 'overview' && props.frame.overview?.tasks?.length)
+    return `${label}（${props.frame.overview.tasks.length} 件任务）`
+  return label
+}
+
+const panelTabList = computed<PanelTab[]>(() =>
+  PANEL_TABS.map((tab) => {
+    const key = tab.key as PanelKey
+    return {
+      key: tab.key,
+      label: tab.label,
+      icon: tab.icon,
+      empty: !filled.value.has(key),
+      title: tabTitle(key),
+      signal: signalOf(key),
+    }
+  })
+)
+
+// 哪几格已经挂上过。产品里也是这样：一格第一次被看到才挂，之后一直挂着（切走是
+// `v-show` 藏起来）。挂上再卸掉会丢掉它取回来的东西和滚动位置，还会重新取一次数；
+// 现场更是要一直挂着——它是重放喂进去的，卸掉再挂就断了。
+const mounted = ref<Set<PanelKey>>(new Set<PanelKey>(['site']))
+watch(
+  () => props.frame.panel,
+  (key) => {
+    if (!mounted.value.has(key)) mounted.value = new Set([...mounted.value, key])
+  },
+  { immediate: true }
+)
+
+// 这几格自己去接口取数，演示页没有后端：每一帧它们该读到什么，在这里装到演示后端
+// 上（形状见 demoPanels）。盯的是剧本声明的那几样，不是整帧——帧每一动画帧都是新
+// 的，而这几样是剧本里的对象，剧本不动它们就不变，装一次就够。
+watch([() => props.frame.overview, () => props.frame.changes, () => props.frame.preview], () =>
+  installPanelAnswers(props.frame)
+)
+installPanelAnswers(props.frame)
+
 // 验收卡是真的 TopicAcceptCard，它自己去取数：剧本里的卡和检查交给演示后端
 // 回答，卡一变就换一张新的，让它重新取一次（它自己十五秒才刷一回）。
 const cardKey = computed(() => JSON.stringify([props.frame.card, props.frame.checks, props.frame.cardOpen]))
@@ -129,8 +219,6 @@ watch(
   },
   { immediate: true }
 )
-
-const TABS = ['总览', '现场', '改动', '预览']
 </script>
 
 <template>
@@ -215,17 +303,21 @@ const TABS = ['总览', '现场', '改动', '预览']
       </div>
 
       <aside class="demo-panel">
-        <nav class="demo-tabs" data-region="tabs">
-          <span v-for="tab in TABS" :key="tab" class="demo-tab" :class="{ 'demo-tab-on': tab === '现场' }">
-            {{ tab }}
-            <template v-if="tab === '现场' && working">
-              <i class="demo-tab-pulse" />
-              <small class="demo-tab-who">{{ workingNames }}正在工作</small>
-            </template>
-          </span>
-        </nav>
-        <div class="demo-site" data-region="site">
+        <PanelTabs data-region="tabs" :tabs="panelTabList" :active="frame.panel" />
+        <!-- 当前那一格。四格都在这里，切走的是藏起来的那几格（和产品一样），
+             它们的接口调用由各格自己在「轮到我上场」那一下发起。 -->
+        <div class="demo-tabbody" data-region="panel">
+          <PanelOverview
+            v-if="mounted.has('overview')"
+            v-show="frame.panel === 'overview'"
+            :topic="topic"
+            :activity-tick="frame.step"
+            :member-names="names"
+            :active="frame.panel === 'overview'"
+          />
           <PanelSite
+            v-if="mounted.has('site')"
+            v-show="frame.panel === 'site'"
             :key="siteKey"
             ref="site"
             :topic="topic"
@@ -233,6 +325,20 @@ const TABS = ['总览', '现场', '改动', '预览']
             :member-names="names"
             :working="working"
             :running-turns="frame.running"
+          />
+          <PanelChanges
+            v-if="mounted.has('changes')"
+            v-show="frame.panel === 'changes'"
+            :topic-id="DEMO_TOPIC"
+            :project-id="DEMO_PROJECT"
+            :active="frame.panel === 'changes'"
+          />
+          <PanelPreview
+            v-if="mounted.has('preview')"
+            v-show="frame.panel === 'preview'"
+            :topic-id="DEMO_TOPIC"
+            :project-id="DEMO_PROJECT"
+            :active="frame.panel === 'preview'"
           />
         </div>
         <DemoBackstage v-if="scene.backstage" :scene="scene" :frame="frame" class="demo-backstage" />
@@ -413,61 +519,23 @@ const TABS = ['总览', '现场', '改动', '预览']
   border-left: 1px solid var(--line);
 }
 
-.demo-tabs {
-  display: flex;
-  flex: none;
-  gap: 4px;
-  align-items: center;
-  height: 40px;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--line);
-}
-
-.demo-tab {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  padding: 4px 10px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  border-radius: var(--radius-sm);
-}
-
-.demo-tab-on {
-  color: var(--ink);
-  background: var(--fill);
-}
-
-.demo-tab-pulse {
-  width: 6px;
-  height: 6px;
-  background: var(--accent);
-  border-radius: 50%;
-  animation: demo-pulse 1.2s ease-in-out infinite;
-}
-
-.demo-tab-who {
-  font-size: 11px;
-  color: var(--muted);
-}
-
 .demo-backstage {
   flex: 1.2;
 }
 
-.demo-site {
+/* 当前那一格。四格都挂在这一个盒子里，各自 `flex: 1 1 auto`（见各面板自己的根
+   元素），所以它只负责给出高度。 */
+.demo-tabbody {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
-.demo-site :deep(.panel-site) {
-  height: 100%;
-}
-
 /* 会话详情那一条要连后端才有内容，演示里不摆一条「没有会话」出来。 */
-.demo-site :deep(.session-inspector) {
+.demo-tabbody :deep(.session-inspector) {
   display: none;
 }
 
@@ -479,7 +547,7 @@ const TABS = ['总览', '现场', '改动', '预览']
 .demo-room[data-focus='machine'] [data-region='machine'],
 .demo-room[data-focus='seats'] [data-region='seats'],
 .demo-room[data-focus='chat'] [data-region='chat'],
-.demo-room[data-focus='site'] [data-region='site'],
+.demo-room[data-focus='site'] [data-region='panel'],
 .demo-room[data-focus='tabs'] [data-region='tabs'],
 .demo-room[data-focus='title'] [data-region='title'],
 .demo-room[data-focus='backstage'] [data-region='backstage'],
@@ -523,21 +591,11 @@ const TABS = ['总览', '现场', '改动', '预览']
   opacity: 0;
 }
 
-@keyframes demo-pulse {
-  50% {
-    opacity: 0.3;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .demo-line-enter-active,
   .demo-swap-enter-active,
   .demo-swap-leave-active {
     transition: none;
-  }
-
-  .demo-tab-pulse {
-    animation: none;
   }
 }
 </style>

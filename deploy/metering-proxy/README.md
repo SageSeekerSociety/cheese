@@ -91,8 +91,18 @@ Set one without the other and every launch logs an error naming the missing one.
 
 The dev application deployment releases the metering image after updating the
 application, using the same full commit SHA and requiring its image build and
-Required CI to succeed. A healthy proxy already running that digest is left
-running, so an unchanged image does not interrupt active streams.
+Required CI to succeed. A healthy proxy already running that digest with the
+same configuration is left running, so a release that changes nothing does not
+interrupt active streams.
+
+The configuration is the compose file being released and the box-local `.env`.
+Each release labels the container it creates with a SHA-256 of the two
+(`cheese.metering-proxy.config-sha256`), and the next release exits early only
+when the image, health and that hash all match. A change to only the `.env` or
+the compose file is therefore applied by the next release, which recreates the
+proxy. Only the hash is stored; the `.env` itself is never printed or copied.
+A container created any other way, or one restored by a rollback, has no hash
+and is recreated by the next release.
 
 Use the **Release metering proxy** GitHub Actions workflow from `main`, with the
 full merged commit SHA. Its image build and Required CI must both have succeeded
@@ -200,9 +210,22 @@ before either release has run fails to start until
 `docker network create --internal cheese-meter-gateway` has been run.
 The proxy forwards `…/responses[/…]` and `…/models` to
 `https://chatgpt.com/backend-api/codex/…`, with the account's token,
-`ChatGPT-Account-Id`, `originator: cheese` and `version:
-$CHEESE_CODEX_CLIENT_VERSION`; anything else, an unknown account, or one with
-no usable login is answered with an error and not forwarded. A separate
+`ChatGPT-Account-Id`, `originator: cheese` and `version: <client version>`
+(below); anything else, an unknown account, or one with no usable login is
+answered with an error and not forwarded. A separate
 listener, so that no path on the Anthropic ones can reach an account; the key
 stays as a second line of defence behind the network. These responses are not
 metered here: the gateway records their spend.
+
+ChatGPT decides which models an account is offered from the Codex client
+version it is told, so that version is a setting and not part of a release. It
+is the file `<proxy home>/chatgpt-credential/client-version`, shared by every
+account and re-read on every request; with no file the proxy sends its built-in
+default (`DEFAULT_CODEX_CLIENT_VERSION` in `cheese_billing_core.py`). The model
+list is asked for the same version: the proxy sets `client_version` in its query
+to the header's value, replacing whatever the caller sent.
+
+- `chatgpt-login.sh client-version set <version>` sets it from the next
+  request, for example to the Codex release whose models the platform should see.
+- `chatgpt-login.sh client-version show` prints it.
+- `chatgpt-login.sh client-version clear` goes back to the built-in default.

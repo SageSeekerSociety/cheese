@@ -63,7 +63,7 @@ import RoomNotice from './room/RoomNotice.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
 // Message rendering (markdown / plain / reference chips) lives in

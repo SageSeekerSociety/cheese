@@ -36,7 +36,7 @@ import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } 
 import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import ActivityHeatmap from '@/components/profile/ActivityHeatmap.vue'
 import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'

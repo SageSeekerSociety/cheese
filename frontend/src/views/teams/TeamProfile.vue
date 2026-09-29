@@ -8,7 +8,7 @@ import { computed, ref } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{

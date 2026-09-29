@@ -10,7 +10,7 @@ import { onMounted, ref, watch } from 'vue'
 
 import { downloadRoomFileRevision, restoreRoomFileRevision, roomFileRevisions } from '../../../api'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<{ topicId: string; path: string; version?: string | null }>()
 const emit = defineEmits<{ (e: 'restored', revision: RoomFileRevision): void }>()

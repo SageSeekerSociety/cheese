@@ -305,7 +305,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { teamDataInjectionKey } from '@/keys'
 import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'

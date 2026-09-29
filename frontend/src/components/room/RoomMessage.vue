@@ -18,7 +18,7 @@ import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
-import UserRef from '../common/UserRef.vue'
+import UserRef from '../common/UserRefLink.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
 import MessageEditor from './MessageEditor.vue'
