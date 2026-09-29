@@ -56,6 +56,10 @@
     "close": "关闭",
     "more": "更多操作"
   },
+  "copy": {
+    "linkCopied": "已复制链接",
+    "failed": "无法复制"
+  },
   "palette": {
     "open": "搜索和跳转",
     "placeholder": "搜索或跳转",
@@ -80,6 +84,7 @@
     "library": "资料库",
     "comment": "评论",
     "decision": "决策",
+    "copyLink": "复制本页链接",
     "weekly": "周报"
   }
 }

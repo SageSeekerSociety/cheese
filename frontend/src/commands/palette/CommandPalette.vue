@@ -256,7 +256,7 @@ const optionId = (index: number) => `palette-option-${index}`
                 <span
                   v-if="row.badge"
                   class="palette__badge"
-                  :class="{ 'palette__badge--warn': row.badge.tone === 'warn' }"
+                  :class="row.badge.tone && `palette__badge--${row.badge.tone}`"
                 >
                   {{ row.badge.text }}
                 </span>
@@ -390,6 +390,10 @@ const optionId = (index: number) => `palette-option-${index}`
 .palette__badge--warn {
   background: var(--warn-wash);
   color: var(--warn-ink);
+}
+.palette__badge--ok {
+  background: var(--ok-wash);
+  color: var(--ok-ink);
 }
 .palette__empty {
   padding: 24px 10px;
