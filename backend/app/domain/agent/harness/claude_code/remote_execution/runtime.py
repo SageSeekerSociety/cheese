@@ -102,6 +102,17 @@ def portable():
     return runpy.run_path(str(Path(__file__).with_name("portable.py")))
 
 
+@functools.cache
+def project_hooks():
+    """The project's tool hooks, by the rules pi's runner follows too
+    (`app/domain/agent/project_hooks.py`). Shipped beside this file; read from
+    the source tree when this runs from a checkout."""
+    beside = Path(__file__).with_name("project_hooks.py")
+    if not beside.exists():
+        beside = Path(__file__).resolve().parents[3] / "project_hooks.py"
+    return runpy.run_path(str(beside))
+
+
 def lock(file, blocking=True):
     if sys.platform == "win32":
         portable()["lock"](file, blocking)
@@ -342,6 +353,10 @@ class Executor:
         self.commands_dir.mkdir(exist_ok=True)
         self.running = {}
         self.command_lock = threading.RLock()
+        # Foreground Bash calls still waiting on their command (call → command),
+        # and the ones told to stop waiting (`control` "background").
+        self.foreground = {}
+        self.backgrounded = set()
         # The shell working directory of this executor's own Bash tool, which
         # a `cd` changes for the next call, as the build's own Bash tool does.
         self.bash_cwd = self.root
@@ -524,67 +539,19 @@ class Executor:
         if self.config.get("private"):
             return args
         cwd = Path(cwd) if cwd and Path(cwd).is_dir() else self.bash_cwd
-        paths = [
-            self.root / ".claude/settings.json",
-            self.root / ".claude/settings.local.json",
-        ]
-        settings = [json.loads(path.read_text()) for path in paths if path.exists()]
-        settings.append(self.config.get("settings", {}))
-        for source in settings:
-            for group in source.get("hooks", {}).get(event, []):
-                matcher = group.get("matcher", "*")
-                if matcher not in ("", "*") and not re.fullmatch(matcher, tool):
-                    continue
-                for hook in group.get("hooks", []):
-                    if hook["type"] != "command":
-                        raise ValueError(
-                            "Remote execution currently requires command hooks"
-                        )
-                    payload = {
-                        "hook_event_name": event,
-                        "tool_name": tool,
-                        "tool_input": args,
-                        "tool_use_id": key,
-                        "cwd": str(cwd),
-                        "session_id": self.state.name,
-                    }
-                    if event == "PostToolUse":
-                        payload["tool_response"] = result
-                    # A repository writes these hooks for plain Claude Code,
-                    # which invokes them with the project root in
-                    # CLAUDE_PROJECT_DIR (its documented way to reach a script
-                    # the repository ships), blocks on exit 2 alone, and lets
-                    # the call go ahead on any other failing exit.
-                    response = subprocess.run(
-                        resolve_program(["bash", "-c", hook["command"]]),
-                        cwd=cwd,
-                        env=dict(self.env, CLAUDE_PROJECT_DIR=str(self.root)),
-                        input=json.dumps(payload),
-                        capture_output=True,
-                        text=True,
-                        timeout=hook.get("timeout", 60),
-                    )
-                    if response.returncode == 2:
-                        raise PermissionError(
-                            f"Remote {event} hook failed: {response.stderr}"
-                        )
-                    if response.returncode:
-                        continue
-                    output = (
-                        json.loads(response.stdout) if response.stdout.strip() else {}
-                    )
-                    specific = output.get("hookSpecificOutput", {})
-                    if (
-                        specific.get("permissionDecision") == "deny"
-                        or output.get("decision") == "block"
-                    ):
-                        raise PermissionError(
-                            specific.get("permissionDecisionReason")
-                            or output.get("reason", "Remote hook denied operation")
-                        )
-                    if event == "PreToolUse" and "updatedInput" in specific:
-                        args = specific["updatedInput"]
-        return args
+        return project_hooks()["run"](
+            event,
+            tool,
+            args,
+            call_id=key,
+            root=self.root,
+            cwd=cwd,
+            env=self.env,
+            session_id=self.state.name,
+            result=result,
+            extra=[self.config.get("settings", {})],
+            program=resolve_program,
+        )
 
     def tool_hooks(self, params):
         """The project's hooks for one event of a call this executor does not
@@ -615,7 +582,7 @@ class Executor:
         if tool not in NATIVE_TOOLS:
             raise ValueError(f"Unsupported remote tool: {tool}")
         if tool == "Bash":
-            return self.bash(args)
+            return self.bash(args, key)
         if tool == "TaskStop":
             record = self.stop_command(args["task_id"])
             return {
@@ -1063,7 +1030,7 @@ class Executor:
                 if meta.get("watched") and time.time() - last > COMMAND_ABANDONED_S:
                     shutil.rmtree(record, ignore_errors=True)
 
-    def bash(self, args):
+    def bash(self, args, key=None):
         """This executor's own Bash tool, for the callers that have no shell of
         their own here: the Codex harness and the platform's own commands.
 
@@ -1071,7 +1038,8 @@ class Executor:
         a `cd` holds for the next call and leaving the workspace returns to its
         root, a failure comes back as `Exit code N` followed by the output, a
         foreground command still running at its timeout goes on as a background
-        task, and `TaskStop` stops one.
+        task, and `TaskStop` stops one. So does one the caller moves to the
+        background while it runs (`background`), as Ctrl+B does to the build's.
         """
         command_id = "task-" + uuid.uuid4().hex[:16]
         record = self._record(command_id)
@@ -1094,16 +1062,29 @@ class Executor:
             "interrupted": False,
             "noOutputExpected": False,
             "backgroundTaskId": command_id,
+            # Where it goes on printing: a file on this machine, so the caller
+            # can read it with the same tools it reads the project with.
+            "outputFile": str(record / "out"),
         }
         if args.get("run_in_background"):
             return running
         deadline = (
             time.monotonic() + min(max(args.get("timeout", 120000), 1), 600000) / 1000
         )
-        while not (record / "exit").exists():
-            if time.monotonic() >= deadline:
-                return running
-            time.sleep(0.05)
+        with self.command_lock:
+            self.foreground[key] = command_id
+        try:
+            while not (record / "exit").exists():
+                with self.command_lock:
+                    yielded = key in self.backgrounded
+                    self.backgrounded.discard(key)
+                if yielded or time.monotonic() >= deadline:
+                    return running
+                time.sleep(0.05)
+        finally:
+            with self.command_lock:
+                self.foreground.pop(key, None)
+                self.backgrounded.discard(key)
         code = int((record / "exit").read_text())
         if code < 0:
             # Killed by signal n: the number a shell reports.
@@ -1140,6 +1121,14 @@ class Executor:
             )
         if kind == "shell":
             return self.shell(params)
+        if kind == "background":
+            # The named Bash call returns now, its command running on. Named by
+            # the call rather than by what is waiting: a call that is only
+            # starting has not registered yet, and must find the request when
+            # it does. Another session's calls on this machine are not touched.
+            with self.command_lock:
+                self.backgrounded.add(params["id"])
+                return {"background": self.foreground.get(params["id"])}
         if kind == "tool_hooks":
             return self.tool_hooks(params)
         if kind == "read_file":
@@ -1677,6 +1666,10 @@ class Executor:
             selected.add(root / ".claude")
         include(root / ".claude/skills")
         include(root / ".claude/workflows")
+        # Where Codex finds a repository's skills: a Codex room mirrors them
+        # from here (`codex/tools.py` `RemoteTools.sync_skills`).
+        include(root / ".agents/skills")
+        include(root / ".codex/skills")
 
         entries = {}
         for path in selected:
@@ -1865,6 +1858,9 @@ class Executor:
             return {
                 "pid": os.getpid(),
                 "workspace": str(self.root),
+                # Where the platform's skills are on this machine: the files a
+                # skill's text names beside it (`bootstrap.plant_native_skills`).
+                "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
                 "files": files,
                 "runtime_sha256": SOURCE_SHA256,
                 "protocol_version": PROTOCOL_VERSION,
@@ -2099,7 +2095,11 @@ def main():
                     if sys.platform == "win32"
                     else subprocess.Popen(argv, start_new_session=True, **options)
                 )
-            for _ in range(100):
+            # Started is the service answering a ping; failed is the process
+            # exiting. Nothing in between says which one is coming, so how long
+            # to wait is the caller's call: a fixed count here gave a loaded
+            # machine about five seconds and failed services that were only slow.
+            while True:
                 if process.poll() is not None:
                     raise RuntimeError("Executor startup failed; inspect service.log")
                 try:
@@ -2107,7 +2107,6 @@ def main():
                     return
                 except (OSError, RuntimeError):
                     time.sleep(0.05)
-            raise RuntimeError("Executor readiness timed out")
 
 
 if __name__ == "__main__":

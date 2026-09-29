@@ -15,7 +15,7 @@ def test_hmr_cleanup_ignores_a_peer_gone_during_close(monkeypatch):
     stream = Mock()
     stream.send = AsyncMock()
     stream.receive = AsyncMock(return_value=(wire.OP_WS_OK, wire.encode_meta({})))
-    monkeypatch.setattr(preview_hub, "open_stream", lambda _topic_id: stream)
+    monkeypatch.setattr(preview_hub, "open_stream", lambda _topic_id, _seat: stream)
     monkeypatch.setattr(
         app_preview,
         "_pump",
@@ -36,7 +36,7 @@ def test_hmr_cleanup_ignores_a_peer_gone_during_close(monkeypatch):
         receive,
         send,
     )
-    asyncio.run(app_preview.relay_ws(websocket, uuid.uuid4()))
+    asyncio.run(app_preview.relay_ws(websocket, uuid.uuid4(), "cheese-a"))
 
     assert sent == ["websocket.accept", "websocket.close"]
     stream.close.assert_called_once_with()

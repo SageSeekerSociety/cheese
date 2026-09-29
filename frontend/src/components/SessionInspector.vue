@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { getAgentControl, getRoomMcpServers, sendAgentControl } from '../api'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
@@ -86,9 +87,6 @@ watch(expanded, async (open) => {
   }
 })
 function mcpState(server: RoomMcpServer) {
-  if (server.status === 'connected' && server.authorized_by) {
-    return t('work.mcp.status.connectedBy', { name: server.authorized_by, when: relTime(server.authorized_at) })
-  }
   const keys: Record<RoomMcpServer['status'], string> = {
     connected: 'work.mcp.status.connected',
     ready: 'work.mcp.status.ready',
@@ -193,7 +191,18 @@ const formattedOutput = computed(() => {
         <ul>
           <li v-for="server in mcpServers" :key="server.name">
             <span class="c-ink">{{ server.name }}</span>
-            <span class="c-muted"> · {{ mcpState(server) }}</span>
+            <span class="c-muted">
+              ·
+              <i18n-t
+                v-if="server.status === 'connected' && server.authorized_by"
+                keypath="work.mcp.status.connectedBy"
+                tag="span"
+              >
+                <template #name><UserRef :handle="server.authorized_by" /></template>
+                <template #when>{{ relTime(server.authorized_at) }}</template>
+              </i18n-t>
+              <template v-else>{{ mcpState(server) }}</template>
+            </span>
           </li>
         </ul>
       </div>

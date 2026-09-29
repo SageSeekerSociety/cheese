@@ -35,6 +35,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import ActivityHeatmap from '@/components/profile/ActivityHeatmap.vue'
 import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
@@ -190,11 +191,6 @@ const topicsEmpty = computed(() => !weekPending.value && !topicsFailed.value && 
 
 function topicDot(status: string): string {
   return status === 'active' ? 'status-dot--ok' : 'status-dot--muted'
-}
-
-// ---- 芝士眼中的你 ----
-function noteSource(note: ProfileUnderstanding): string {
-  return [note.project_name, note.agent_name || note.agent_handle].filter(Boolean).join(' · ')
 }
 
 // 先从列表里拿掉，再去删；服务器不肯就放回原处。
@@ -422,7 +418,16 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                 <li v-for="note in profile.understanding" :key="note.id" class="profile__row profile__row--note">
                   <span class="profile__row-text">
                     <span class="t-body-readable">{{ note.content }}</span>
-                    <span v-if="noteSource(note)" class="t-meta-read">{{ noteSource(note) }}</span>
+                    <span v-if="note.project_name || note.agent_handle || note.agent_name" class="t-meta-read">
+                      <template v-if="note.project_name">{{ note.project_name }}</template>
+                      <template v-if="note.project_name && (note.agent_handle || note.agent_name)"> · </template>
+                      <UserRef
+                        v-if="note.agent_handle || note.agent_name"
+                        :handle="note.agent_handle"
+                        :name="note.agent_name"
+                        :project-id="note.project_id"
+                      />
+                    </span>
                   </span>
                   <v-btn
                     icon="mdi-close"

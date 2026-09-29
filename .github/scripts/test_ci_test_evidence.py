@@ -42,7 +42,7 @@ class PlaywrightEvidenceTests(unittest.TestCase):
                     sys.executable,
                     str(SCRIPT),
                     "--suite",
-                    "e2e",
+                    "e2e-1-of-2",
                     "--source",
                     str(source),
                     "--output",
@@ -73,7 +73,7 @@ class PlaywrightEvidenceTests(unittest.TestCase):
                     "run_attempt": 2,
                     "head_sha": "abc123",
                     "tested_sha": "merge456",
-                    "suite": "e2e",
+                    "suite": "e2e-1-of-2",
                     "clean": True,
                     "reason": "all required tests and steps passed without retries or skips",
                     "tests": 1,
@@ -81,6 +81,38 @@ class PlaywrightEvidenceTests(unittest.TestCase):
                     "skipped": 0,
                 },
             )
+
+    def test_an_unknown_suite_is_refused(self):
+        for suite in ("e2e", "e2e-0-of-2", "e2e-1", "backend"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as folder:
+                output = Path(folder) / "evidence.json"
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT),
+                        "--suite",
+                        suite,
+                        "--source",
+                        str(Path(folder) / "report.json"),
+                        "--output",
+                        str(output),
+                        "--run-id",
+                        "17",
+                        "--run-attempt",
+                        "1",
+                        "--head-sha",
+                        "abc123",
+                        "--tested-sha",
+                        "abc123",
+                        "--steps-json",
+                        "{}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unknown suite", result.stderr)
+                self.assertFalse(output.exists())
 
     def test_first_failure_then_retry_is_not_clean(self):
         report = {

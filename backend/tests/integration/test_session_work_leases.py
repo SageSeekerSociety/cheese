@@ -996,3 +996,119 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
     assert launch_env["CHEESE_PREVIEW_URL"] == (
         "wss://cheese.example.test/api/preview/tunnel"
     )
+
+
+async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
+    client, monkeypatch
+):
+    """A session re-checks the hands it holds at every command start and file
+    tool, while its other calls — parallel tools, subagents, a running command
+    being read — are in flight on them. Those calls reach the machine; they are
+    not refused as belonging to a generation that is no longer current."""
+    import asyncio
+    import hashlib
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.domain.agent.harness.claude_code import executor_launch
+    from app.domain.agent.harness.claude_code.remote_execution import runtime
+
+    project = post_project(
+        client, json={"name": "Session hands", "owner_handle": "alice"}
+    ).json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        topic = await db.get(Topic, topic_id)
+        resource = str(topic.resource_id or topic_id)
+        device = await devices.approve(
+            await devices.start("ada"),
+            owner_user_id=owner.id,
+            supply=Supply.self_hosted,
+            visibility=Visibility.host,
+        )
+        await devices.assign_to_project(
+            device.device_id, project_id, actor_user_id=owner.id
+        )
+        topic.compute_config = {
+            "name": "ada",
+            "profile": "device",
+            "device_id": device.device_id,
+        }
+        session = await AgentSessionService(db).ensure(
+            topic_id, "cheese", harness="claude-code"
+        )
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=agent.username,
+            ),
+            resource,
+            session_id=str(session.id),
+        )
+        session_id = session.id
+        await db.commit()
+
+    info = {"state": "/executor/state", "workspace": "/work", "mcp_servers": []}
+    hub = SimpleNamespace(
+        is_online=lambda _: True,
+        exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
+    )
+    monkeypatch.setattr(work_lease, "device_hub", hub)
+    checking, release = threading.Event(), threading.Event()
+    hold = {"next_ping": False}
+
+    async def execute(target, method, params, **kwargs):
+        if method == "ping":
+            if hold["next_ping"]:
+                hold["next_ping"] = False
+                checking.set()
+                while not release.is_set():
+                    await asyncio.sleep(0.01)
+            return {
+                "capabilities": ["prepare"],
+                "protocol_version": runtime.PROTOCOL_VERSION,
+                "files": {
+                    name: hashlib.sha256(value.encode()).hexdigest()
+                    for name, value in executor_launch.file_sources().items()
+                },
+            }
+        if method == "prepare":
+            return info
+        return {"ran": method}
+
+    monkeypatch.setattr(execution, "call", AsyncMock(side_effect=execute))
+    lease_path = f"/topics/{topic_id}/sessions/{session_id}/work-lease"
+    first = client.post(lease_path, headers={"X-Cheese-Token": token}, json={})
+    assert first.status_code == 200, first.text
+    execution_token = first.json()["data"]["token"]
+
+    hold["next_ping"] = True
+    with ThreadPoolExecutor(1) as pool:
+        recheck = pool.submit(
+            client.post, lease_path, headers={"X-Cheese-Token": token}, json={}
+        )
+        assert checking.wait(10), "the second acquire never re-checked the hands"
+        try:
+            during = client.post(
+                f"/topics/{topic_id}/execution/{resource}",
+                headers={"X-Cheese-Token": execution_token},
+                json={"method": "control", "params": {"subtype": "shell"}},
+            )
+        finally:
+            release.set()
+        assert recheck.result(10).status_code == 200
+    assert during.status_code == 200, during.text
+    assert during.json() == {"ran": "control"}

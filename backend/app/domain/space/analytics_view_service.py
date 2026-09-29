@@ -30,8 +30,8 @@ from app.domain.task.models import (
     TaskSubmissionReview,
 )
 from app.domain.task.submission_state import (
-    has_live_submission,
-    has_passed_submission,
+    has_a_live_submission,
+    has_a_passed_submission,
 )
 from app.domain.team.models import Team
 from app.domain.user.models import User, UserProfile, UserRealNameIdentity
@@ -545,14 +545,14 @@ class SpaceAnalyticsViewService:
         """
         claims = func.count(TaskMembership.id).label("claims")
         passed = func.sum(
-            case((has_passed_submission(TaskMembership.id), 1), else_=0)
+            case((has_a_passed_submission(TaskMembership.id), 1), else_=0)
         ).label("passed")
         submitted = func.sum(
             case(
                 (
                     and_(
-                        has_live_submission(TaskMembership.id),
-                        ~has_passed_submission(TaskMembership.id),
+                        has_a_live_submission(TaskMembership.id),
+                        ~has_a_passed_submission(TaskMembership.id),
                     ),
                     1,
                 ),
@@ -603,7 +603,7 @@ class SpaceAnalyticsViewService:
                 Task.deleted_at.is_(None),
                 TaskMembership.deleted_at.is_(None),
                 TaskMembership.created_at < threshold,
-                ~has_live_submission(TaskMembership.id),
+                ~has_a_live_submission(TaskMembership.id),
             )
             .order_by(TaskMembership.created_at.asc(), TaskMembership.id.asc())
         )

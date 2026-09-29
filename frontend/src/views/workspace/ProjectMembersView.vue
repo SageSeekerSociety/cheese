@@ -42,6 +42,7 @@ import {
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
 import { t } from '@/i18n'
@@ -407,7 +408,9 @@ async function submitInvite() {
                 <span class="t-title text-truncate">@{{ inv.invitee_handle }}</span>
                 <ExternalTag />
               </div>
-              <div class="t-meta c-muted">{{ t('work.members.pendingBy', { inviter: inv.inviter_handle }) }}</div>
+              <i18n-t keypath="work.members.pendingBy" tag="div" class="t-meta c-muted">
+                <template #inviter><UserRef :handle="inv.inviter_handle" /></template>
+              </i18n-t>
             </div>
             <v-spacer />
             <v-btn

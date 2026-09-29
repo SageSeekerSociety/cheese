@@ -23,7 +23,7 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../api', () => api)
 import { ApiError } from '../api'
-import { setLocale } from '../i18n'
+import i18n, { setLocale } from '../i18n'
 
 import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
@@ -61,7 +61,7 @@ async function open() {
       cloudAvailable: true,
       projectDefault: cloud,
     },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
   await fireEvent.click(screen.getByRole('button', { name: '查看并更换…' }))
   await screen.findByText('「旧工作站」上的 agent')
@@ -111,7 +111,11 @@ it('switches the selected agents one by one and says what happened to each', asy
   })
   const { emitted } = await open()
   expect(await dialog().findByText('定价')).toBeTruthy()
-  expect(dialog().getByText(/助手b · 最近活动 .* · 正在运行任务/)).toBeTruthy()
+  // 行里的队友是一颗 @chip，和对话里 @ 到它的那颗一样。
+  const metas = Array.from(document.querySelectorAll('.bs-meta')).map((el) =>
+    el.textContent?.replace(/\s+/g, ' ').trim()
+  )
+  expect(metas.some((m) => /^@助手b · 最近活动 .* · 正在运行任务$/.test(m ?? ''))).toBe(true)
   expect(dialog().getByText('另有 2 个 agent 在你打不开的房间里')).toBeTruthy()
   expect(dialog().getByRole('button', { name: '推送并更换' }).hasAttribute('disabled')).toBe(true)
 

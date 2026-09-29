@@ -74,6 +74,11 @@ class StillRunning(RuntimeError):
     """
 
 
+# How this script says `StillRunning` to the backend that ran it on a device:
+# waiting is not a failure, and the exit code is all that crosses the exec.
+STILL_RUNNING_EXIT = 75
+
+
 def platform_dir(home: Path) -> Path:
     """Where this room's platform files actually are.
 
@@ -154,7 +159,16 @@ def run_command(
     )
 
 
-def check_published(work: Path, *, canonical: bool = False) -> None:
+def check_published(
+    work: Path, *, canonical: bool = False, own_branch: bool = False
+) -> None:
+    """Refuse if `work` holds anything its remote does not.
+
+    `own_branch` limits the commit check to what this checkout has checked
+    out. A task checkout shares its repository with every other task of the
+    room, so the repository's branches are theirs too, and one of them not
+    yet pushed would otherwise keep every finished task on the disk.
+    """
     if not work.exists():
         return
     if not (work / ".git").exists():
@@ -167,15 +181,17 @@ def check_published(work: Path, *, canonical: bool = False) -> None:
     if dirty.returncode or dirty.stdout.strip():
         raise RuntimeError("checkout has unpublished working-tree changes")
     if not canonical:
-        check_published_commits(work, include_head=True)
+        check_published_commits(work, include_head=True, branches=not own_branch)
 
 
-def check_published_commits(repo: Path, *, include_head: bool = False) -> None:
+def check_published_commits(
+    repo: Path, *, include_head: bool = False, branches: bool = True
+) -> None:
     unpublished = run_command(
         [
             "git",
             "rev-list",
-            "--branches",
+            *(["--branches"] if branches else []),
             *(["HEAD"] if include_head else []),
             "--not",
             "--remotes=origin",
@@ -197,22 +213,33 @@ def check_no_writers(paths: list[Path]) -> None:
     directories in one call cost 2.07s, and the same five in five calls cost
     10.14s. A sweep over 102 rooms was therefore 3.4 minutes of lsof alone.
 
-    Nothing is given up by batching: the message never named which path it was,
+    Nothing is given up by batching: the message never names which path it was,
     because for every caller the answer is the same either way — do not delete.
+    It names the processes: they are what the room is waiting on.
     """
     present = [str(path) for path in paths if path.exists()]
     if not present:
         return
     if sys.platform == "win32":
-        if windows_holders([Path(path) for path in present]):
+        pids = windows_holders([Path(path) for path in present])
+        if pids:
             raise StillRunning(
-                "resource still has processes holding files or working directories"
+                "resource still has processes holding files or working "
+                "directories: " + ", ".join(str(pid) for pid in pids)
             )
         return
     result = run_command(["lsof", "-t", "+D", *present])
     if result.stdout.strip():
+        pids = sorted(set(result.stdout.split()), key=int)
+        listing = run_command(["ps", "-o", "pid=,args=", "-p", ",".join(pids)])
+        named = [
+            " ".join(line.split())[:160]
+            for line in listing.stdout.splitlines()
+            if line.strip()
+        ]
         raise StillRunning(
-            "resource still has processes holding files or working directories"
+            "resource still has processes holding files or working directories: "
+            + ("; ".join(named) or ", ".join(pids))
         )
     if result.returncode not in {0, 1} or result.stderr.strip():
         raise RuntimeError(
@@ -279,6 +306,55 @@ def check_resource_publication(home: Path, work: Path) -> None:
     repositories = home / ".cheese/repositories"
     for repo in repositories.glob("*.git"):
         check_published_commits(repo)
+
+
+def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
+    """Remove the checkouts of these closed tasks whose work is on the forge.
+
+    The platform names the tasks; this decides, per checkout, whether removing
+    it loses anything: what `check_published` refuses — files not committed,
+    commits not pushed — stays, and so does a checkout something still has
+    open. Each kept one comes back with the reason. A checkout that is not
+    there is already done, so the same list can be sent again and again.
+    """
+    root = home / FOOTPRINT_ROOT / "tasks"
+    if root.is_symlink():
+        raise RuntimeError("task storage is a symlink")
+    kept: dict[str, str] = {}
+    candidates: list[Path] = []
+    for task in tasks:
+        path = root / str(uuid.UUID(task))
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            kept[task] = "unrecognized entry in task storage"
+            continue
+        if not path.exists():
+            continue
+        try:
+            check_published(path, own_branch=True)
+        except RuntimeError as exc:
+            kept[task] = str(exc)
+            continue
+        candidates.append(path)
+    try:
+        check_no_writers(candidates)
+        free = candidates
+    except RuntimeError:
+        # One lsof for all of them is the cheap answer; only when it says
+        # something is inside does it pay to ask which ones.
+        free = []
+        for path in candidates:
+            try:
+                check_no_writers([path])
+                free.append(path)
+            except RuntimeError as exc:
+                kept[path.name] = str(exc)
+    for path in free:
+        remove_tree(path)
+    if free:
+        # The repositories still list the removed checkouts until pruned.
+        for repo in (home / FOOTPRINT_ROOT / "repositories").glob("*.git"):
+            run_command(["git", "worktree", "prune"], cwd=repo)
+    return {"removed": [path.name for path in free], "kept": kept}
 
 
 def remove_tree(path: Path) -> None:
@@ -577,7 +653,7 @@ def stop_executor(home: Path, resource: str) -> None:
 def main() -> None:
     # `room` names the room whose transcripts this device keeps, or is "-" on a
     # device that does not keep them.
-    action, project, resource, cleanup, room = sys.argv[1:]
+    action, project, resource, cleanup, room, *tasks = sys.argv[1:]
     home, work = resource_paths(Path.home(), project, resource)
     executor = session_target(home, resource)
     if action == "prepare":
@@ -639,6 +715,9 @@ def main() -> None:
             if path.exists():
                 remove_tree(path)
         print(json.dumps({"removed": True}))
+    elif action == "tasks":
+        # `tasks` are closed tasks of this room; `cleanup` and `room` are unused.
+        print(json.dumps(remove_task_checkouts(home, tasks)))
     elif action == "expire":
         expire_transcripts(retained_transcripts(Path.home(), project, room, resource))
         print(json.dumps({"expired": True}))
@@ -647,4 +726,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except StillRunning as waiting:
+        print(waiting, file=sys.stderr)
+        sys.exit(STILL_RUNNING_EXIT)

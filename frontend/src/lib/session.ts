@@ -1,9 +1,11 @@
 // The one place an access token is renewed.
 //
-// The server rotates the refresh cookie on every refresh and treats the
-// replaced cookie, presented again later, as stolen: it ends the sign-in. So
-// two refreshes that do not know about each other — in one tab or across tabs,
-// which share the cookie — sign the user out. Everything that needs a fresh
+// The server rotates the refresh cookie on every refresh. Two refreshes that
+// do not know about each other — in one tab or across tabs, which share the
+// cookie — present the same cookie; unless both reach the server within its
+// short grace window, each gets a successor of its own, the server takes the
+// earlier one for a copy, and whichever tab next refreshes with it ends the
+// sign-in (`backend/app/domain/user/sessions.py`). Everything that needs a fresh
 // token comes here, one refresh runs at a time per browser (`navigator.locks`),
 // and the tab that ran it tells the others (`BroadcastChannel`).
 //

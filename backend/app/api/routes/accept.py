@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
-from app.core.db import get_db
+from app.core.db import get_db, release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.platform_notices import (
@@ -261,6 +261,10 @@ async def list_accept_cards(
         await _task_actor(topic_id, task, db, resolver)
         cards = [card for card in cards if card.task_id == task]
         total = len(cards)
+    # 卡面上的合并态是一份快照，而采纳按钮按它亮不亮：界面每 15s 来读这条路，
+    # 读到的却可能是轮询器几分钟前写下的旧状态，于是「检查全绿、按钮点不动」。
+    # 这里把过期的那份补上（有地板，见 settings），而不是让读者自己去猜。
+    await svc.refresh_stale_pr_snapshots(cards)
     return ok(page([await svc.describe(c) for c in cards], total))
 
 
@@ -312,6 +316,11 @@ async def _pr_checks_payload(
     client = await proposal_client(topic.project_id, db)
     if client is None:
         return {"available": False}
+    # Every open card polls this, and the two forge calls below can take as
+    # long as the forge's timeout. Holding the request's connection across them
+    # pinned one pool slot per open card, so a slow forge alone could drain the
+    # pool and stall every other page.
+    await release_read_session(db)
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")

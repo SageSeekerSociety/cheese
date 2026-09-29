@@ -8,6 +8,8 @@ covers:
   - backend/app/domain/agent/device_provider.py
   - backend/app/domain/agent/cloud_provider.py
   - backend/app/domain/agent/central_provider.py
+  - backend/app/domain/agent/host_failure.py
+  - backend/app/domain/agent/dispatch_log.py
   - backend/app/domain/agent/place.py
 ---
 
@@ -53,9 +55,22 @@ steps:
 
 ## 连接 {#link}
 
+会话进程和干活的机器分开时，一次工具调用怎么落到机器上，见[执行通道](/dev/execution)；连接器的命令见 [cheese CLI 原理](/dev/cli#connector)。
+
 连接器登录后，和机器连接服务之间保持一条长连接（`DeviceHub`，`device_hub.py`）。服务器在这条连接上为某个房间打开一个「屏幕」，屏幕里运行骨架的 runner；runner 负责 agent 进程、记录它说的话，并在一个 socket 上应答。浏览器里看到的终端是屏幕原始字节的转发。
 
 机器连接服务单独常驻，发版不重启，所以主 API 发版时设备链接不断，见[部署拓扑](/dev/topology#planes)。
+
+一次工具调用走的路只有一条，但从哪一端看不一样：机器这一侧只到隧道助手，改写和记账都在主机上。下面这张图把它拆开——换场景可以看正常一轮、开跑前没应答、连续失败被隔离、结果未知各停在哪一站。
+
+```demo-arch
+title: 一次工具调用走哪几站，出错时停在哪
+note: 换场景，看点名、探测、隔离、结果未知各停在哪一站；被拦下的那一站在图上标出来
+kind: machines
+entries: tool
+scenes: ok, probe, quarantine, unknown
+blocks: tool/probe, tool/quarantine, tool/unknown
+```
 
 ## 机器上平台装了什么 {#footprint}
 
@@ -70,3 +85,5 @@ steps:
 一轮因为机器的原因失败时，失败记在设备上。同一台机器连续两次同类失败就被隔离一段冷却时间，调度会跳过它。话题不会被自动换到别的机器上，失败的原因会写清楚，由人决定怎么处理机器（`host_failure.py`）。
 
 租用的机器在开跑前最多被探测 15 秒，没应答就不往上面启动会话。
+
+带 id 的工具调用在发出去**之前**先记一行（`dispatch_log.py`）：机器中途没了，这一行读出来是「可能做过」，不是「确定没做」——所以平台不再自己重试，只请人去看那次改动落地没有。不带 id 的调用（探活、取上下文）问两遍和问一遍一样，不记。

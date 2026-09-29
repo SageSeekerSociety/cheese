@@ -4,6 +4,7 @@
   "mainNavigation": "主导航",
   "navProduct": "产品",
   "navSolutions": "方案",
+  "navDownload": "下载",
   "openWorkspace": "进入工作台",
   "getStarted": "开始使用",
   "slogan": "众智成事",
@@ -28,6 +29,9 @@
   "deviceTitle": "本地设备",
   "deviceBody": "连接自己的电脑，AI 在授权的目录中工作",
   "resourceTerms": "提供免费体验额度；企业与高校可按需开通模型与云端资源。",
+  "downloadTitle": "桌面应用",
+  "downloadLead": "在 Mac 或 Windows 上安装知是，登录后一键接入这台电脑，AI 就能在你授权的目录里工作。",
+  "downloadNote": "第一次打开若被系统拦下：Mac 到「系统设置 → 隐私与安全性」点「仍要打开」，Windows 点「更多信息 → 仍要运行」。",
   "peopleTitle": "以题会友",
   "peopleLead": "企业发布真实课题，教师引入课堂，学生组队攻关，AI 全程协助。",
   "students": "学生",
@@ -162,7 +166,7 @@
     "teamsTitle": "按团队管理",
     "teamsBody": "项目归属团队，由团队负责人管理成员、资源与额度。",
     "ctaTitle": "一起用真实项目培养人",
-    "ctaBody": "写信到 ops@okcheese.com，说说你们的场景。"
+    "ctaBody": "写信到 ops{'@'}okcheese.com，说说你们的场景。"
   },
   "visionLabel": "愿景 · 未来学习中心",
   "visionLead": "在真实课题中学习，在协作之中成长。",

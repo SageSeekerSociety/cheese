@@ -180,15 +180,10 @@ async function becomeOnThisPage(page: import("@playwright/test").Page, username:
   return session.accessToken;
 }
 
-// 串行：这一份要**现建空间**再当场审过，两个用例并发跑同一套栈时，后一个的
-// `POST /admin/spaces/{id}/review` 会拿到 404 —— 单独跑各自都绿。这不是本页的问题
-// （同一个空间在同一台栈上来回建，本来就该排队），所以这里显式串起来，
-// 不去和一个属于建空间那条路的现象缠斗。
-//
 // 时限放宽到 3 分钟：第一次进题目详情要让 vite **现编**那一大片依赖树
 // （tiptap / prism / 聊天），冷启动时可以慢到几十秒（见 playwright.config.ts
 // 里 timeout 那段注释），默认那 60 秒不够「冷编译一次 + 后面几步断言」。
-test.describe.configure({ mode: "serial", timeout: 180_000 });
+test.describe.configure({ timeout: 180_000 });
 
 test.describe("空间新界面（真路由）", () => {
   test("所有者打开 /spaces/:id/board，看到真数据", async ({ page }) => {
@@ -299,7 +294,7 @@ test.describe("空间新界面（真路由）", () => {
     // 行为，构建产物里没有优化器、真用户不会遇到；所以这里先走一遍把它付掉，再断言
     // 「点卡片进详情」这件事本身。
     await page.goto(`/spaces/${spaceId}/board/tasks/${taskId}`);
-    await expect(page.locator(".task-header-title", { hasText: taskName })).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator(".td__title", { hasText: taskName })).toBeVisible({ timeout: 60_000 });
 
     await page.goto(`/spaces/${spaceId}/board`);
     await page.locator(".tcard__title", { hasText: taskName }).click();
@@ -313,13 +308,14 @@ test.describe("空间新界面（真路由）", () => {
     await page.getByRole("link", { name: spaceName }).click();
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board$`));
 
-    // 题目本身真的画出来了（老组件复用，不是一层空壳）。
+    // 题目本身真的画出来了（第八批之后这一页是自己画的，不是套着老页面的一层壳）。
     //
     // 下面这两次 `goto` 各自等 60s：题目详情在**两棵树里是两个路由组件**，vite 各
     // 编译各的，上面暖过的那一次只暖了新外壳那一棵，老树那一棵第一次进来照样要编译。
-    // 编译完没画出来才算这条用例失败。
+    // 编译完没画出来才算这条用例失败 —— 两棵树的题目标题不是同一只钩子
+    // （新外壳 `.td__title`、老树 `.task-header-title`），下错钩子同样是红的。
     await page.goto(`/spaces/${spaceId}/board/tasks/${taskId}`);
-    await expect(page.locator(".task-header-title", { hasText: taskName })).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator(".td__title", { hasText: taskName })).toBeVisible({ timeout: 60_000 });
 
     // 老地址这一批一个字没动，照常在原处服务同一道题。
     await page.goto(`/spaces/${spaceId}/tasks/${taskId}`);
@@ -358,7 +354,8 @@ test.describe("空间新界面（真路由）", () => {
     // 讲解视频嵌成了播放器。
     await expect(page.locator('iframe[src*="player.bilibili.com"]')).toBeVisible();
 
-    // 领取就在屏幕上点：填一个联系方式即可，够得着那颗按钮就说明这条链在新树里是通的。
+    // 领取就在屏幕上点：这一页的那颗按钮（`.td__claim-btn`）发的是老树 `TaskHeader`
+    // 当年发的同一个事件，后面的对话框与请求全由老机器接住；填一个联系方式即可。
     //
     // 等的是**这次请求自己回来**，不是对话框关上。`TaskDialogs.vue` 的
     // `handleSubmitVerify` 是发出 `submit-verify` 就收弹窗（乐观关闭），请求还在
@@ -369,7 +366,7 @@ test.describe("空间新界面（真路由）", () => {
         response.url().includes(`/tasks/${taskId}/participations/user`) &&
         response.request().method() === "POST",
     );
-    await page.locator(".join-btn").click();
+    await page.locator(".td__claim-btn").click();
     await page.getByLabel("邮箱").fill("bobby@example.com");
     await page.getByRole("button", { name: "确认参与" }).click();
     expect((await joinResponse).status()).toBe(200);
@@ -382,16 +379,26 @@ test.describe("空间新界面（真路由）", () => {
     await expect(page.getByText("领取这道题之后才能下载")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "下载" })).toBeVisible();
 
-    // 「提交」那一格领取之后才有；点它进的也是新外壳那一棵。
-    await page.getByRole("tab", { name: "提交", exact: true }).click();
+    // 「提交作业」那颗按钮领取之后才有（老页面把它放在「提交」那一格里，这一页按原型
+    // 把它排在领取旁边）；点它进的也是新外壳那一棵。
+    await page.getByRole("link", { name: "提交作业" }).click();
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/tasks/${taskId}/submit$`));
     await page.getByLabel("作业说明").fill("我的作业正文（E2E）");
     await page.getByRole("button", { name: "提交", exact: true }).click();
 
     // 交完之后那一跳也走新外壳：老页面在自己那棵树里跳「提交记录」，
     // 名字是同一个、树是另一棵 —— 这里正好量到接缝有没有接错。
+    //
+    // 量接缝的那只钩子是**刚交上去的那一版正文**。这里原来断言的是「暂无提交记录」
+    // 不出现，那句话量不动接缝：它画在 `TaskSubmissionHistory` 里 `infinite-scroll`
+    // 的 `#empty` 槽上，开关写作 `:is-empty="submissions.length <= 1"` —— 只有一版
+    // 的时候，上面「最新提交」明明写着那一版，底下「历史提交」那一格里照样是
+    // 「暂无提交记录」。也就是说这句话在「数据到了」与「数据没到」两种情形下一样会
+    // 出现，量的只是这一格有没有画出来。老页面用同一个组件、同一个 `<= 1`（`Submissions.vue`
+    // 两边都传 `empty-text="暂无提交记录"`），所以这里改看那一版正文，才说得清这一跳
+    // 接住的是真数据。
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/tasks/${taskId}/submissions$`));
-    await expect(page.getByText("暂无提交记录")).toHaveCount(0);
+    await expect(page.getByText("我的作业正文（E2E）")).toBeVisible();
   });
 
   test("在新外壳里发题，发出去的题落到审核队列", async ({ page }) => {
@@ -403,8 +410,8 @@ test.describe("空间新界面（真路由）", () => {
     await page.getByRole("link", { name: "出题目" }).click();
     await expect(page).toHaveURL(new RegExp(`/spaces/${spaceId}/board/publish$`));
 
-    // 发题页三块都在：PDF 那条路、材料那张卡、以及给发布参数用的表单
-    // （PDF 解析出的草稿也要落到下面这张表单里填参数，所以两条路共用它）。
+    // 发题页三块都在：PDF 那条路、材料那张卡、以及给发布参数用的表单 —— 第十批之后
+    // 这三块都是**这一页自己画的**（底下不再有老发题页），契约点与断言一条没变。
     await expect(page.getByText("PDF 快速发布")).toBeVisible();
     await expect(page.getByText("附件（可选）")).toBeVisible();
     await expect(page.getByLabel("题目名称")).toBeVisible();
@@ -493,8 +500,8 @@ test.describe("空间新界面（真路由）", () => {
 
     await page.goto(`/spaces/${spaceId}/board/publish`);
 
-    // 默认那一颗是「手写一道」：老发题页原样在底下（它自己那张「PDF 快速发布」卡也
-    // 还在 —— 老页一个字不动是本批的约束）。
+    // 默认那一颗是「手写一道」：这一页自己那三块都在。其中那张「PDF 快速发布」卡
+    // 第十批起由这一页自己画（能力与老页那张一字不差：老页一个字没动，仍在老地址上）。
     //
     // 这一屏要等 60 秒：发题页是这套栈里最重的一屏（老页把 tiptap 那一整片拖进来），
     // vite 冷启动时现编它要几十秒，而**第一次**进它的就是这条用例 —— 别的用例都从
@@ -507,7 +514,7 @@ test.describe("空间新界面（真路由）", () => {
 
     await page.getByRole("button", { name: "从 PDF 生成" }).click();
     await expect(page.getByRole("heading", { name: "从 PDF 生成题目" })).toBeVisible();
-    // 换过去之后老页让位：屏幕上换成这一条路，老页那三块一块都不在。
+    // 换过去之后手写那一半整个让位：屏幕上换成这一条路，那三块一块都不在。
     await expect(page.getByText("PDF 快速发布")).toHaveCount(0);
     await expect(page.getByLabel("题目名称")).toHaveCount(0);
     // 三条上限写在页面上，不是只写在代码里。
@@ -663,10 +670,10 @@ test.describe("空间新界面（真路由）", () => {
     // 挂上了题这件事要到题目详情那一页去看：上板之后，「题目附件」里就是勾中的那两份。
     //
     // 这一屏要等 60 秒：这条路由在老树与新外壳里是两个组件，新外壳那一棵上面还没
-    // 暖过，vite 要现编。
+    // 暖过，vite 要现编（新外壳这一页自己的题目在 `.td__title` 上）。
     await approveTask(page, auth, createdTaskId);
     await page.goto(`/spaces/${spaceId}/board/tasks/${createdTaskId}`);
-    await expect(page.locator(".task-header-title", { hasText: edited })).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator(".td__title", { hasText: edited })).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText("题目附件")).toBeVisible();
     const materials = page.getByTestId("task-attachment");
     await expect(materials.filter({ hasText: "计算机系统基础-第五次作业.pdf" })).toBeVisible();

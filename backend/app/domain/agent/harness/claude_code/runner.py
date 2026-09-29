@@ -60,6 +60,9 @@ LINE_LIMIT = 64 * 1024 * 1024
 IDLE_EXIT_S = 600.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
+# How long a new turn waits to see the project's context as it is now before it
+# starts on what the session already has.
+CATCH_UP_TIMEOUT_S = 30.0
 TAIL_POLL_S = 0.5
 # How often the runner checks whether it has been idle long enough to let go.
 IDLE_CHECK_S = 5.0
@@ -81,6 +84,10 @@ LAST_WORDS = 1000
 # up opens with ``ended(launch)``, and a backend waiting on one launch reads
 # only what that launch left.
 LAUNCH = "CHEESE_RUNNER_LAUNCH"
+# Where the session's own helpers reach this runner. The same name as
+# `executor_transport.SESSION_SOCKET`, which reads it: that file ships to the
+# session host on its own and cannot import this one.
+SESSION_SOCKET = "CHEESE_SESSION_SOCKET"
 
 
 def ended(launch: str) -> str:
@@ -360,6 +367,9 @@ class Runner(runner.Runner[Journal]):
         self.read_at = time.monotonic()
         self.session_id: str | None = None
         self.config_dir: Path | None = None
+        # Where the session's execution target is, when it runs against an
+        # executor: the context `_catch_up` synchronizes before a turn.
+        self.execution: str | None = None
         self.helpers: list[asyncio.Task] = []
         self.proven = False
 
@@ -375,6 +385,7 @@ class Runner(runner.Runner[Journal]):
     ) -> str:
         self.claim()
         self.config_dir = Path(env["CLAUDE_CONFIG_DIR"])
+        self.execution = env.get("CHEESE_EXECUTION_CONFIG")
         end(sessions_on(self.config_dir))
         saved = self.journal.recall("session_id")
         failed = self.journal.recall("resume_failed")
@@ -414,7 +425,9 @@ class Runner(runner.Runner[Journal]):
             "sh",
             "-c",
             f"exec {command} {flag}",
-            env=env,
+            # The session's own helpers reach this runner here, to change the
+            # session while it runs (`executor_transport.register_project_hooks`).
+            env=self.agent_env({**env, SESSION_SOCKET: runner.socket_path(self.state)}),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=self.errors,
@@ -517,6 +530,11 @@ class Runner(runner.Runner[Journal]):
                 continue
             if kind == "keep_alive":
                 continue
+            if kind == "system" and record.get("subtype") == "thinking_tokens":
+                # The build's running estimate of how much it has thought, one
+                # line per streamed delta of a token or two. Nothing reads it,
+                # and journaled it was nineteen records in twenty.
+                continue
             self.observe(record)
 
     def observe(self, record: dict, *, from_file: bool = False) -> None:
@@ -591,6 +609,10 @@ class Runner(runner.Runner[Journal]):
             self.journal.remember("last_work", self.work)
         self.working, self.work, self.unsolicited = False, None, False
         self.interrupting = False
+        # A person's message the build has not taken yet opens the next turn,
+        # and it is that turn which owes the answer.
+        if self.owed not in self.sent:
+            self.reply_settled()
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -598,6 +620,11 @@ class Runner(runner.Runner[Journal]):
         subtype = record.get("subtype")
         if subtype == "task_started" and task:
             self.tasks[task] = str(record.get("task_type") or "")
+            # A command that was only starting when a person's message came in
+            # was not the build's to move yet, and the message would wait for
+            # it: move it too, as long as the message is still unread.
+            if self.owed is not None and self.owed in self.sent:
+                self.helpers.append(asyncio.create_task(self._yield_again()))
             if record.get("task_type") == "local_agent":
                 if str(record.get("tool_use_id")) not in self.main_calls:
                     self.tailing.setdefault(task, "agent")
@@ -789,6 +816,18 @@ class Runner(runner.Runner[Journal]):
                 await self.release()
                 return
 
+    async def yield_foreground(self) -> None:
+        """Ctrl+B, as the build takes it on stdin: every foreground Bash and
+        subagent returns to the model at once and goes on as a background task.
+        """
+        if self.working:
+            await self.control({"subtype": "background_tasks"})
+
+    async def _yield_again(self) -> None:
+        # A control the session did not answer changes nothing it was doing.
+        with contextlib.suppress(Exception):
+            await self.yield_foreground()
+
     async def release(self) -> None:
         """Let the session go the way it is meant to: close its stdin."""
         assert self.process is not None and self.process.stdin is not None
@@ -841,6 +880,7 @@ class Runner(runner.Runner[Journal]):
         images: list[dict] | None = None,
         work_id: str | None = None,
         steering: bool = False,
+        owes_reply: bool = False,
     ) -> dict:
         """A user message, or words said to a session that is working.
 
@@ -852,6 +892,8 @@ class Runner(runner.Runner[Journal]):
         how = "steer" if steering else "send"
 
         async def submit() -> dict:
+            if not steering and not self.working:
+                await self._catch_up()
             await self._put(identifier, work_id, text, images or [], how)
             return {"input_id": identifier}
 
@@ -859,7 +901,52 @@ class Runner(runner.Runner[Journal]):
             identifier,
             {"text": text, "images": images or [], "work_id": work_id, "how": how},
             submit,
+            owes_reply=owes_reply,
         )
+
+    async def _catch_up(self) -> None:
+        """A new turn starts on the project's skills as they are on the machine.
+
+        Plain Claude Code watches its skill directories and picks up a skill
+        added, edited or removed while it runs. A room's session reads the
+        project's through a view of the executor that no watcher sees change,
+        so before a turn the runner has the executor client synchronize the
+        session's context (`client.py catch-up`, which relinks what changed),
+        and when anything changed the session reloads its skills. Run from
+        here and not through the session's own context service: that one
+        listens inside the session's namespace, whose `/tmp` is its own. A
+        failure costs the turn nothing: it starts on what the session has.
+        """
+        if not self.execution:
+            return
+        try:
+            helper = json.loads(Path(self.execution).read_text())["helper"]
+            process = await asyncio.create_subprocess_exec(
+                *helper,
+                "catch-up",
+                self.execution,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                out, err = await asyncio.wait_for(
+                    process.communicate(), CATCH_UP_TIMEOUT_S
+                )
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+                raise
+            if process.returncode:
+                raise RuntimeError(err.decode(errors="replace")[-600:])
+            if json.loads(out or b"{}").get("changed"):
+                await self.command("/reload-skills")
+        except Exception as error:  # noqa: BLE001 — the turn goes on regardless
+            print(
+                f"project context not synchronized before the turn: {error!r}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     async def control(self, request: dict, timeout: float = CONTROL_TIMEOUT_S) -> dict:
         identifier = f"cheese-{uuid.uuid4().hex}"
@@ -905,6 +992,7 @@ class Runner(runner.Runner[Journal]):
                 images=params.get("images"),
                 work_id=params.get("work_id"),
                 steering=method == "steer",
+                owes_reply=bool(params.get("owes_reply")),
             )
         if method == "interrupt":
             self.interrupting = self.working
@@ -918,6 +1006,14 @@ class Runner(runner.Runner[Journal]):
             # 不是 accept 那种一次性输入：对账是幂等的（同样的三方合出同样的结
             # 果），重来一次不会多出一条记忆，所以不需要按 id 去重。
             return self.sync_memory(params)
+        if method == "reply_check":
+            # The session's Stop hook (`client.py reply`), as the turn is about
+            # to end. A message the build has not read yet opens a turn of its
+            # own, and is that turn's to answer.
+            if self.interrupting or (self.owed is not None and self.owed in self.sent):
+                return {}
+            reason = self.insist()
+            return {"reason": reason} if reason else {}
         if method == "ping":
             return {
                 "pid": os.getpid(),

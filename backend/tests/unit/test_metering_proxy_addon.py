@@ -778,6 +778,56 @@ def test_a_gateway_turn_never_carries_the_sessions_credential(
     assert leaked == {}, f"the session's credential reached the gateway: {leaked}"
 
 
+def test_a_gateway_session_stays_on_the_gateway_while_admission_is_down(
+    monkeypatch, tmp_path
+):
+    """A backend restart must not send a gateway session to Anthropic.
+
+    The session's body names its gateway model. Routed to the subscription on
+    a manufactured fail-open answer, that name comes back as a 404
+    model_not_found, which Claude Code does not retry: the turn or subagent
+    that happened to be mid-request died on every deploy.
+    """
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    backend_up = True
+
+    def post(url, bearer, timeout_s, **_):
+        if not backend_up:
+            raise OSError("backend restarting")
+        return _verdict(
+            pool="gateway",
+            key="sk-virtual-project-key",
+            model="deepseek-flash",
+            fail_open=False,
+        )
+
+    url = "http://control-plane.invalid/admission"
+    monkeypatch.setattr(mod, "ADMISSION_URL", url)
+    # No cache window: every request asks, as one past the window would.
+    monkeypatch.setattr(mod, "ADMISSION", mod.AdmissionGate(url, cache_s=0, post=post))
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+
+    def turn():
+        flow = _session_flow(conn="c1")
+        asyncio.run(mod.requestheaders(flow))
+        return flow
+
+    before = turn()
+    assert before.request.host == "litellm.invalid"
+
+    backend_up = False
+    during = turn()
+    assert during.response is None
+    assert during.request.host == "litellm.invalid"
+    assert during.request.headers["authorization"] == "Bearer sk-virtual-project-key"
+    out = during.request.stream(b'{"model":"deepseek-flash","messages":[]}')
+    assert json.loads(out)["model"] == "deepseek-flash"
+
+
 def _no_login_turn(
     monkeypatch, tmp_path, pool: str, *, answered=True, path="/v1/messages"
 ):

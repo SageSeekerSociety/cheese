@@ -15,6 +15,7 @@ const STUB_GATEWAY_URL = `http://127.0.0.1:${STUB_GATEWAY_PORT}`;
 
 export default defineConfig({
   testDir: './tests',
+  globalSetup: './global-setup.ts',
   // 60s (not 30s): the vite dev server compiles routes on-demand, and the first
   // navigation into a heavy route (the project workspace pulls in tiptap /
   // prosemirror / DocEditor) can take >30s to transform on a cold start.

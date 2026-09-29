@@ -9,13 +9,13 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import (
     Placement,
     ScreenSetupError,
+    mint_session_token,
     startup_refused,
 )
 from app.domain.agent.harness.codex.launch import script
@@ -79,13 +79,7 @@ class CodexChannel:
             )
             return metadata
 
-        token = mint_scoped_token(
-            project_id=str(session.project_id),
-            topic_id=str(session.topic_id),
-            ttl_s=30 * 24 * 3600,
-            access_scope="project",
-            agent_handle=agent,
-        )
+        token = mint_session_token(session.project_id, session.topic_id, agent)
         async with self.channel.prepare_session(
             session=session,
             token=token,

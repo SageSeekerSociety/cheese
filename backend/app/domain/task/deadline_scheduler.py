@@ -6,13 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.domain.task.models import TaskMembership
-from app.domain.task.submission_state import has_work_in_hand
+from app.domain.task.submission_state import (
+    COMPLETION_STATUS_FAILED,
+    COMPLETION_STATUS_NOT_SUBMITTED,
+    COMPLETION_STATUS_REJECTED_RESUBMITTABLE,
+    has_work_in_hand,
+)
 
 logger = logging.getLogger(__name__)
-
-COMPLETION_STATUS_REJECTED_RESUBMITTABLE = "REJECTED_RESUBMITTABLE"
-COMPLETION_STATUS_NOT_SUBMITTED = "NOT_SUBMITTED"
-COMPLETION_STATUS_FAILED = "FAILED"
 
 #: `PENDING_REVIEW` is deliberately NOT here. A deadline is the last moment to
 #: hand work in, and someone in that state handed it in; what has not happened
@@ -20,17 +21,14 @@ COMPLETION_STATUS_FAILED = "FAILED"
 #: queue they do not control, and `analytics_view_service` agrees about which
 #: side of the line that state is on: it counts `PENDING_REVIEW` among
 #: `SUBMITTED_STATUSES`, next to `SUCCESS` and `FAILED`, not among the ongoing
-#: ones. The two states below are the ones where nothing was handed in: never
-#: submitted, or sent back and not resubmitted.
-#:
-#: Those two states are what the status *means*, not what it currently says.
-#: Nothing but the claim path and this sweep writes `completion_status`, so a
-#: membership that handed work in still reads `NOT_SUBMITTED` whether its review
-#: is pending or already accepted — both fall in the set below and both would be
-#: failed for work they did. The status is therefore necessary but not
-#: sufficient: `has_work_in_hand` asks the submission tables the question the
-#: status was trusted to answer, and only a membership with nothing in hand is
-#: swept. See `app.domain.task.submission_state`.
+#: ones. `SUCCESS` is not here either — someone whose work passed is past this
+#: question. The two states below are the ones where nothing is in hand: never
+#: submitted, or sent back and not resubmitted — and they are exactly the two a
+#: membership without work in hand can carry
+#: (`app.domain.task.submission_state`). With the axis now driven by submissions
+#: and reviews, this set and `~has_work_in_hand` below say the same thing; the
+#: conjunction is kept because a wrong write fails a person for work they did,
+#: and a guard that only skips is the cheaper mistake.
 _SWEEPABLE_STATUSES = [
     COMPLETION_STATUS_REJECTED_RESUBMITTABLE,
     COMPLETION_STATUS_NOT_SUBMITTED,
@@ -43,6 +41,13 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
     """Check for task memberships with passed deadlines and mark them as FAILED.
 
     Returns the number of memberships that were marked as failed.
+
+    ``FAILED`` here is the same value ``submission_state`` derives for a
+    membership with nothing in hand past its deadline, so this sweep never
+    contradicts the axis: it only reaches the rows that would already read
+    ``FAILED`` if anyone had re-derived them. Everything with work in hand —
+    ``SUCCESS``, ``PENDING_REVIEW``, and a sent-back membership that handed in
+    again — is out of its reach twice over (the status set and the guard).
     """
     now = datetime.now(UTC)
     total_failed = 0

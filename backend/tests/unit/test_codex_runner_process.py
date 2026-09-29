@@ -247,7 +247,7 @@ async def test_standalone_owner_survives_client_disconnect(
             ] == [
                 replies[0].eid,
             ]
-            reopened.landed(through=reopened.unread()[-1].key)
+            reopened.landed(through=CodexBacklog(mirror).unread()[-1].key)
             assert not CodexBacklog(mirror).unread()
             consume, activity = AsyncMock(), AsyncMock()
             subscription = Subscription(

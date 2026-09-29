@@ -8,13 +8,37 @@ const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 
 // The session sees the project at the executor's own path (`client.py`
 // `enter`), so paths need no respelling. Its skills are the exception: the
-// build reads them from this host's config directory, and they are the
-// project's, on the executor.
+// build reads them all from this host's config directory. A project's are the
+// project's, on the executor; one the platform shipped is in the executor's
+// own config directory (`client.py` `skill_paths`, the same mapping).
 const skills = execution.central_config + "/skills/";
 const projectSkills = execution.session_workspace + "/.claude/skills/";
+const shipped = new Set(execution.shipped_skills || []);
+
+function skillPaths(text) {
+  let out = "";
+  let at = 0;
+  for (;;) {
+    const found = text.indexOf(skills, at);
+    if (found < 0) return out + text.slice(at);
+    const rest = text.slice(found + skills.length);
+    const name = /^[^/\s'"`]+/.exec(rest);
+    out += text.slice(at, found);
+    if (!name) {
+      out += skills;
+    } else if (shipped.has(name[0])) {
+      out += execution.executor_config
+        ? execution.executor_config + "/skills/" + name[0]
+        : skills + name[0];
+    } else {
+      out += projectSkills + name[0];
+    }
+    at = found + skills.length + (name ? name[0].length : 0);
+  }
+}
 
 function remotePath(path) {
-  return path.startsWith(skills) ? projectSkills + path.slice(skills.length) : path;
+  return path.startsWith(skills) ? skillPaths(path) : path;
 }
 
 // A Bash command's output is on this host, where the build wrote it: a
@@ -83,10 +107,45 @@ async function sendUserFile($, tool_use_id, args) {
   return JSON.parse(response.content[0].text);
 }
 
+// A person's message the session has not answered yet (`driven/runner.py`,
+// which decides what owes an answer, what answers it and what the refusal
+// says). The runner names the file in CHEESE_REPLY_OWED (spelled out at the
+// call: the loader takes only a literal variable name); its contents are all
+// this side needs, so the rule is not restated here.
+//
+// The debt this session has already answered. Kept here rather than in the
+// file: a reply and the next tool call can be in one assistant message, and
+// this process sees the reply's call before the sibling's — the runner would
+// only hear of it afterwards.
+let answered = null;
+
+async function owedReply($) {
+  const path = await $.env.get("CHEESE_REPLY_OWED");
+  if (!path || !(await $.fs.exists(path))) return null;
+  try {
+    const owed = JSON.parse(await $.fs.read(path, { as: "text" }));
+    return owed && owed.id && owed.id !== answered ? owed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     // agentId identifies the caller; native MCP tools reject it as an argument.
     const { tool, tool_use_id, agentId, ...args } = e;
+    // Only the session itself answers the room. A subagent reports to it and
+    // is never held back; ToolSearch is how a deferred chat_send is reached.
+    if (agentId === undefined && tool !== "ToolSearch") {
+      const owed = await owedReply($);
+      if (owed) {
+        const name = tool.startsWith("mcp__native__") ? tool.slice("mcp__native__".length) : tool;
+        if (!owed.answers.includes(name)) return { deny: owed.reason };
+        answered = owed.id;
+        // And where the runner reads it, to know the turn may end (`insist`).
+        await $.fs.write(owed.answered, owed.id);
+      }
+    }
     // The pinned executor's `mcp serve` does not expose these tools. Never
     // fall through to a search on the conversation host.
     if (tool === "Glob" || tool === "Grep") {
@@ -182,6 +241,6 @@ export function register(on) {
 
   on("skill.prompt", async ($, e, next) => {
     const result = await next(e);
-    return { text: result.text.split(skills).join(projectSkills) };
+    return { text: skillPaths(result.text) };
   });
 }

@@ -1089,6 +1089,10 @@ async def join_space(
     space = await service.join_space(
         code=payload.code.strip(), user_id=auth_user.user_id
     )
+    # Commit before answering: someone told they have joined opens the board on
+    # their next request, and the board is closed to non-members. Same reason as
+    # the commit in ``create_space``.
+    await db.commit()
     space_data = await _build_full_space_payload(space, service=service, db=db)
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
 

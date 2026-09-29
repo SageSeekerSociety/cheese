@@ -102,8 +102,8 @@ class ContractBacklog:
 
     def __init__(self, held: _Held):
         self._held = held
-        # A snapshot, as the protocol says: landing things during a pass must
-        # not change what this pass was handed.
+        # Taken when the pass starts, as the protocol says: landing things
+        # during a pass must not change what this pass is handed.
         self._entries = [
             HarnessEvent(
                 key=f"{index:019d}",
@@ -116,7 +116,9 @@ class ContractBacklog:
         ]
 
     def unread(self) -> Sequence[HarnessEvent]:
-        return list(self._entries)
+        # The whole tail is one page here; the next call has caught up.
+        page, self._entries = self._entries, []
+        return page
 
     def assemble(self, entry: HarnessEvent) -> Sequence[AgentEvent]:
         said = entry.record
@@ -175,6 +177,7 @@ class ContractHarness:
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
         images: list[dict] | None = None,
+        owes_reply: bool = False,
     ) -> bool | None:
         held = await self.ensure(session, opening)
         assert isinstance(held, _Held)
@@ -193,6 +196,7 @@ class ContractHarness:
         *,
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
+        owes_reply: bool = False,
     ) -> bool:
         held = self._held.get(topic_id)
         if held is None:

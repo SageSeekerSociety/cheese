@@ -386,9 +386,21 @@ def image_owner(options, root: Path, *, start_runtime=True):
                 "127.0.0.1::6379",
                 "mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9",
             )
+            # Ask over TCP, the way the migration connects. The image's
+            # entrypoint first runs a temporary server for its init scripts
+            # that listens only on the Unix socket, then stops it and starts
+            # the real one; a socket check passes during the first and lets the
+            # migration arrive while the second is still starting up.
             for _ in range(60):
                 if "accepting connections" in docker(
-                    "exec", database, "pg_isready", "-U", "postgres", check=False
+                    "exec",
+                    database,
+                    "pg_isready",
+                    "-h",
+                    "127.0.0.1",
+                    "-U",
+                    "postgres",
+                    check=False,
                 ):
                     break
                 time.sleep(0.5)

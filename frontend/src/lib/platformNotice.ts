@@ -143,6 +143,7 @@ export const AGENT_STATUS_EVENTS = new Set([
   'force_merged',
   'migration_collision',
   'api_retry',
+  'context_compact',
   'device_waiting',
   'doc_missing',
 ])

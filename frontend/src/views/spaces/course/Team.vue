@@ -53,7 +53,11 @@
             <v-list-item v-for="invitation in invitations" :key="invitation.id">
               <v-list-item-title>{{ invitation.team.name }}</v-list-item-title>
               <v-list-item-subtitle>
-                {{ t('spaces.course.team.invitedBy', { name: displayName(invitation.initiator) }) }}
+                <i18n-t keypath="spaces.course.team.invitedBy" tag="span">
+                  <template #name>
+                    <UserRef :handle="invitation.initiator.username" :name="displayName(invitation.initiator)" />
+                  </template>
+                </i18n-t>
               </v-list-item-subtitle>
               <template #append>
                 <div class="d-flex ga-2">
@@ -144,6 +148,7 @@ import { useRoute } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TeamsApi } from '@/network/api/teams'
 import { BusinessError } from '@/network/types/error'

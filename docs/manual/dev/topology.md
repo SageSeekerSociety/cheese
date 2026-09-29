@@ -45,6 +45,105 @@ covers:
 
 滚动发版时新旧两个主 API 进程会同时连着同一个数据库。「谁在跑哪些轮、监听哪些会话」这类只能由一个进程负责的工作，用 Postgres 的会话级 advisory lock 决定归属（`backend/app/core/ownership.py`）：旧进程退出时释放锁，新进程接过去。旧进程关闭前最多等 `HANDOVER_TIMEOUT_S`（20 秒）把还在路上的消息交完、等回执收齐，所以 compose 给主 API 留了 60 秒的停止宽限期。
 
+```demo-flow
+title: 滚动发版时正在跑的轮怎么办
+note: 同一时刻新旧两个进程连着同一个库。谁在跑哪些轮，由 Postgres 的一把会话级锁说了算。
+actors:
+  - key: old
+    label: 旧主 API 进程
+    sub: 要被换掉的
+  - key: new
+    label: 新主 API 进程
+    sub: 刚起来，还在等
+  - key: db
+    label: Postgres
+    sub: 归属锁、轮的区间
+  - key: sess
+    label: 会话
+    sub: 沙盒里的 agent
+routes:
+  - key: normal
+    label: 一次正常的交接
+    tone: ok
+    note: 话都说完了，锁交出去
+    result: 正在跑的轮一个没丢：旧进程只是不再等它，轮留给了新进程；空档里会话说的话，新进程重新订阅之后都补回来。
+  - key: timeout
+    label: 20 秒到了还有话没说完
+    tone: warn
+    note: prompt 一直没送到会话
+    result: 旧进程不再等，那几轮在新进程眼里等于没送到 —— 它重发一次。这正是 20 秒存在的理由：宁可重发，也不能让它悬着。
+  - key: crash
+    label: 旧进程直接崩了
+    tone: warn
+    note: 没来得及交接
+    result: 连接一断锁自己就没了，新进程下一次试探就拿到手 —— 不需要谁先发现旧进程死了。代价是它不知道哪些话已经送到，没收到回执的轮再发一次。
+steps:
+  - from: sess
+    to: old
+    label: 一轮正在跑
+    desc: agent 在沙盒里干活，进程在听这个会话的每一句话。
+  - from: new
+    to: db
+    label: 起来了，先要这把锁
+    desc: 新进程先试一次会话级 advisory lock；这把锁是一个进程在不在主的唯一凭据。
+    ref: OWNER_LOCK = 0x636865657365
+  - from: db
+    to: new
+    label: 锁在旧进程手里
+    desc: 没要着就每秒再试一次，不抢、不报错，等旧进程自己放。
+    routes: normal, timeout, crash
+  - from: old
+    to: db
+    label: 收到停止信号，先停手
+    desc: 不再接新的轮，也不再监听任何会话 —— 这两件事只能有一个进程做，从这一刻起都归新进程。
+    routes: normal, timeout
+  - from: old
+    to: db
+    label: 等还在路上的 prompt
+    desc: 已经发出去的话等它到、等回执收齐，最多 20 秒（handover_timeout_s）。
+    ref: settle_deliveries
+    routes: normal, timeout
+  - from: old
+    to: db
+    label: 交完，放掉锁
+    desc: 停止等的只是这个进程：agent 还在沙盒里跑，轮的区间留给下一个进程接手。然后锁释放。
+    ref: let_go
+    routes: normal
+  - from: old
+    to: db
+    label: 20 秒到了，还有轮没交完
+    desc: 不再等下去，日志里记下是哪几轮；它们会被新进程当成没送到。
+    ref: handover_timeout_s = 20.0
+    block: true
+    routes: timeout
+  - from: db
+    to: new
+    label: 旧进程的连接断了，锁自己回来了
+    desc: 进程死了连接跟着断，会话级锁随之释放 —— 没人要先发现它死了。
+    routes: crash
+  - from: db
+    to: new
+    label: 锁空了，新进程接管
+    desc: 这次试探成功，它成了唯一的主人，接着开始接活。
+  - from: new
+    to: sess
+    label: 重新订阅还在跑的会话
+    desc: 把自己那些还在跑的会话重新订阅回来，接着听它们说话 —— 新进程不知道有哪些会话在跑，只能从库里认。
+    ref: recover_sessions
+  - from: sess
+    to: new
+    label: 空档里说的话补上
+    desc: 交接这段时间会话里说的话，落库的都读回来；开过头的轮收掉（resume_orphans），消息收了却没开跑的轮补上（resume_lost_messages）。
+    link: /dev/turn#resume
+resident:
+  - label: 机器连接服务（release-device-connection.yml）
+  - label: 模型隧道与主机入口 nginx
+  - label: 计量代理与模型网关
+  - label: 事件中继
+```
+
+上面这一层跟着发版换，下面那条常驻带不动：机器连接服务、隧道入口、计量代理与网关、事件中继都单独发布，机器上的连接在发版期间一直连着。
+
 ## 日志 {#logs}
 
 所有容器的日志写到主机的 journald，而不是容器目录。发版删掉旧容器后，旧容器的日志仍能用 `journalctl CONTAINER_NAME=cheese-backend-1` 读到。

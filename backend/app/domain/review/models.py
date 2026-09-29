@@ -134,7 +134,7 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # `file`：这一版那一份的文件名。字节不在库里也不在这张表上 —— 成品是从源构建
     # 出来的，所以它既不该进 git，也不该等到有人要下载时再重建一次（半年后依赖变
     # 了，重建出来的和当时交出去的不是一份东西）。建卡那一刻落一份快照，位置由
-    # project_id + 卡 id 推出来 (workspace/service.py 的 artifact_snapshot_path)。
+    # project_id + 卡 id 推出来 (library/service.py 的 artifact_snapshot_path)。
     deliverable_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # `link`：交出去的是一个地址（网站、看板），只记指针。
     deliverable_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)

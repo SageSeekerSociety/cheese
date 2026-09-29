@@ -6,16 +6,25 @@ nobody else may. A Cloud machine left after a push stops counting against the
 team's quota.
 """
 
+import json
+import re
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from sqlalchemy import select
 
 from app.common.auth import create_access_token
-from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
+from app.core import sandbox_auth
+from app.core.sandbox_auth import (
+    bind_resource_token,
+    mint_scoped_token,
+    scoped_token_claims,
+)
 from app.domain.agent import execution
+from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -26,6 +35,8 @@ from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.machine.services import MachineService
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
+from app.main import app
+from tests.delivery import delivery_task
 from tests.integration.conftest import post_project
 from tests.unit.test_machine_service import FakeMicroCloud
 
@@ -69,7 +80,6 @@ async def _room(client, *, on_cloud=False):
         )
         generation = str(uuid.uuid4())
         if on_cloud:
-            old_device = "cloud-vm"
             choice = {"name": "Cloud", "profile": "cloud"}
         else:
             choice = {"name": "Old", "profile": "device", "device_id": old_device}
@@ -91,6 +101,12 @@ async def _room(client, *, on_cloud=False):
             "workspace": "/old/work",
             "mcp_servers": [],
         }
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        topic.compute_config = choice
         agent_token = bind_resource_token(
             mint_scoped_token(
                 project_id=str(project_id),
@@ -114,6 +130,7 @@ async def _room(client, *, on_cloud=False):
             lease=dict(session.work_lease),
             person=person,
             agent={"X-Cheese-Token": agent_token},
+            lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
             path=f"/topics/{topic_id}/compute-profile",
         )
 
@@ -189,6 +206,38 @@ async def test_a_failed_push_refuses_the_switch_and_says_why(client, monkeypatch
     session = await _session(client, room)
     assert session.work_lease == room.lease
     assert session.execution_request["choice"]["device_id"] == room.old_device
+
+
+async def test_a_failed_push_names_every_task_it_could_not_sync_and_why(
+    client, monkeypatch
+):
+    room = await _room(client)
+    refused_by_api = (
+        "[cheese] GET /projects/p/git/tasks/{task} 失败 HTTP 401: "
+        + '{"code":401,"message":"AuthenticationRequiredError: '
+        + "git access needs this project's token\"}"
+        + " " * 300
+    )
+    printed = "".join(
+        f"{refused_by_api.replace('{task}', task)}\n"
+        f"[cheese] 同步失败的通知未送达，任务 {task} 的 cheese-sync.log 保留了结果\n"
+        f"[cheese] 任务 {task} 同步失败：1\n"
+        for task in ("task-a", "task-b")
+    )
+    printed += "[cheese] 任务 task-c 同步失败：rejected non-fast-forward\n"
+    _machines(monkeypatch, push={"value": {"stdout": "Exit code 1\n" + printed}})
+
+    refused = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert refused.status_code == 409, refused.text
+    said = refused.json()["error"]["message"]
+    lines = said.splitlines()
+    assert lines[0].startswith("推送失败，没有更换")
+    for task in ("task-a", "task-b"):
+        [line] = [line for line in lines if f"任务 {task}" in line]
+        assert "HTTP 401" in line and "this project's token" in line
+    [line] = [line for line in lines if "任务 task-c" in line]
+    assert "rejected non-fast-forward" in line
 
 
 @pytest.mark.parametrize("how", ["offline", "no answer"])
@@ -293,3 +342,141 @@ async def test_a_cloud_machine_left_after_a_push_stops_counting_against_quota(
         assert left.released_at is None
         assert machine_id in {m.id for m in counted}
         assert session.execution_request["retained_leases"] == [room.lease]
+
+
+class _IdleMachine:
+    """An online machine on which the session's executor has exited: a call
+    to it finds no socket until the installation starts it again."""
+
+    def __init__(self, push=PUSHED, install_exit=0):
+        self.started = False
+        self.push = push
+        self.install_exit = install_exit
+        self.calls = []
+        self.installs = []
+
+    def is_online(self, device):
+        return True
+
+    async def call_executor(self, device_id, state, method, params, **kwargs):
+        self.calls.append((device_id, method, params))
+        if not self.started:
+            raise DeviceCallError(
+                "dial unix /tmp/cheese-execution-1000-x.sock: connect: "
+                "no such file or directory"
+            )
+        return {} if method == "ping" else self.push
+
+    async def exec(self, device_id, argv, *, stdin, timeout):
+        self.installs.append((device_id, stdin))
+        if self.install_exit:
+            return {"exit": self.install_exit, "stderr": "no python3"}
+        self.started = True
+        return {
+            "exit": 0,
+            "stdout": json.dumps(
+                {"state": "/old/state", "workspace": "/old/work", "mcp_servers": []}
+            ),
+        }
+
+
+async def test_an_idle_sessions_executor_is_started_to_push_before_a_switch(
+    client, monkeypatch
+):
+    room = await _room(client)
+    machine = _IdleMachine()
+    monkeypatch.setattr(work_lease, "device_hub", machine)
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    # Started on the machine being left, then pushed there.
+    [(device, script)] = machine.installs
+    assert device == room.old_device
+    device, method, params = machine.calls[-1]
+    assert device == room.old_device
+    assert method == "control" and params["subtype"] == "checkpoint"
+    # With a credential for this session that is good now.
+    [token] = re.findall(r'"CHEESE_TOKEN": "([^"]+)"', script)
+    claims = scoped_token_claims(token)
+    assert claims is not None
+    assert claims["session"] == str(room.session_id)
+    assert claims["t"] == str(room.topic_id)
+    session = await _session(client, room)
+    assert session.execution_request["choice"]["device_id"] == room.new_device
+
+
+async def test_a_machine_that_cannot_start_the_executor_is_unreachable(
+    client, monkeypatch
+):
+    room = await _room(client)
+    monkeypatch.setattr(work_lease, "device_hub", _IdleMachine(install_exit=1))
+
+    refused = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["name"] == "WorkComputerUnreachable"
+    session = await _session(client, room)
+    assert session.execution_request["choice"]["device_id"] == room.old_device
+
+
+class _PushingMachine(_IdleMachine):
+    """An idle session's machine whose push does what ``cheese sync`` does for
+    a task with commits not yet on its branch: ask the platform for that task's
+    branch, with the credential its executor was started with."""
+
+    def __init__(self, project_id, task_id):
+        super().__init__()
+        self.path = f"/projects/{project_id}/git/tasks/{task_id}"
+        self.task_id = task_id
+        self.finishes = False
+
+    async def call_executor(self, device_id, state, method, params, **kwargs):
+        if method != "control" or not self.started:
+            return await super().call_executor(
+                device_id, state, method, params, **kwargs
+            )
+        self.calls.append((device_id, method, params))
+        [token] = re.findall(r'"CHEESE_TOKEN": "([^"]+)"', self.installs[-1][1])
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as api:
+            asked = await api.get(self.path, headers={"X-Cheese-Token": token})
+        if asked.status_code != 200:
+            said = (
+                f"Exit code 1\n[cheese] GET {self.path} 失败 HTTP "
+                f"{asked.status_code}: {asked.text}\n"
+                f"[cheese] 任务 {self.task_id} 同步失败：1"
+            )
+            return {"value": {"stdout": said}}
+        if not self.finishes:
+            return {"value": {"stdout": "", "backgroundTaskId": "task-slow"}}
+        return PUSHED
+
+
+async def test_an_executor_started_for_a_push_can_still_push_hours_later(
+    client, monkeypatch
+):
+    """A switch starts an idle session's executor to push; that push outlasts
+    its two minutes and the switch is refused, leaving the executor running.
+    Hours later the switch is asked again: the executor is still up, so it is
+    not started again, and its push must still be let through by the git
+    routes, as the push of a session started by a turn would be."""
+    room = await _room(client)
+    task = delivery_task(client, room.topic_id, commit=False)
+    machine = _PushingMachine(room.project_id, task.id)
+    monkeypatch.setattr(work_lease, "device_hub", machine)
+
+    first = client.put(room.path, headers=room.person, json=_to_new(room))
+    assert first.status_code == 409, first.text
+    assert "两分钟" in first.json()["error"]["message"]
+
+    now = sandbox_auth.time.time
+    later = SimpleNamespace(time=lambda: now() + 3 * 3600)
+    monkeypatch.setattr(sandbox_auth, "time", later)
+    machine.finishes = True
+    again = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert again.status_code == 200, again.text
+    assert len(machine.installs) == 1
+    session = await _session(client, room)
+    assert session.execution_request["choice"]["device_id"] == room.new_device

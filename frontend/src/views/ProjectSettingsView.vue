@@ -94,6 +94,9 @@ const connectingGithubAccount = ref(false)
 // separate buttons, and a single shared notice rendered inside the 仓库 section
 // put 「已连接 GitHub 账号。」 under the 「连接 GitHub 仓库」 heading — the result
 // of one action announced above a different one.
+// A failed click lands in its section's notice too, never in the page-level
+// `error`: that one replaces the whole page with a banner, leaving no button
+// to try again and no hint of which action it belongs to.
 type CallbackNotice = { type: 'success' | 'error' | 'info'; text: string }
 const githubRepoNotice = ref<CallbackNotice | null>(null)
 const githubAccountNotice = ref<CallbackNotice | null>(null)
@@ -139,7 +142,7 @@ async function disconnectGithubAccount() {
     })
   } catch (e) {
     if (e instanceof SudoCancelledError) return
-    error.value = e instanceof Error ? e.message : '断开 GitHub 账号失败'
+    githubAccountNotice.value = { type: 'error', text: e instanceof Error ? e.message : '断开 GitHub 账号失败' }
   } finally {
     disconnectingGithubAccount.value = false
   }
@@ -280,7 +283,7 @@ async function saveUpstream() {
     const r = await setUpstream(props.projectId, upstreamUrl.value.trim())
     upstreamUrl.value = r.url ?? ''
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存上游仓库失败'
+    githubRepoNotice.value = { type: 'error', text: e instanceof Error ? e.message : '保存上游仓库失败' }
   } finally {
     savingUpstream.value = false
   }
@@ -305,10 +308,10 @@ async function connectGithubRepo() {
       window.location.href = res.install_url
       return
     }
-    error.value = '连接失败：后端没有返回安装链接'
+    githubRepoNotice.value = { type: 'error', text: '连接失败：后端没有返回安装链接' }
     connectingGithubRepo.value = false
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '连接 GitHub 仓库失败'
+    githubRepoNotice.value = { type: 'error', text: e instanceof Error ? e.message : '连接 GitHub 仓库失败' }
     connectingGithubRepo.value = false
   }
 }
@@ -321,7 +324,7 @@ async function connectGithubAccount() {
     const { url } = await getGithubAccountAuthorizeUrl(props.projectId)
     window.location.href = url
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '获取授权链接失败'
+    githubAccountNotice.value = { type: 'error', text: e instanceof Error ? e.message : '获取授权链接失败' }
     connectingGithubAccount.value = false
   }
 }
@@ -341,18 +344,25 @@ function consumeGithubCallbackNotice() {
   } else if (install === 'pending') {
     githubRepoNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准' }
   } else if (install === 'error') {
-    githubRepoNotice.value = { type: 'error', text: explainRepoInstallFailure(reason) }
+    githubRepoNotice.value = {
+      type: 'error',
+      text: explainRepoInstallFailure(reason, {
+        repo: route.query.repo as string | undefined,
+        holder: route.query.holder as string | undefined,
+      }),
+    }
   } else if (account === 'success') {
     githubAccountNotice.value = { type: 'success', text: '已连接 GitHub 账号' }
   } else if (account === 'error') {
     githubAccountNotice.value = { type: 'error', text: explainAccountLinkFailure(reason) }
   }
 
-  const { github_install, github_account, repo: _repo, reason: _reason, ...rest } = route.query
+  const { github_install, github_account, repo: _repo, reason: _reason, holder: _holder, ...rest } = route.query
   void github_install
   void github_account
   void _repo
   void _reason
+  void _holder
   router.replace({ query: rest })
 }
 

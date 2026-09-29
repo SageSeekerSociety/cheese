@@ -202,7 +202,6 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
         "/topics",
         json={"project_id": project_id, "title": "换进程", "created_by": "user-1"},
     ).json()["data"]["id"]
-    room = uuid.UUID(topic_id)
 
     before = WorkingScreen()
     app.dependency_overrides[get_chat_service] = lambda: ChatService(
@@ -218,7 +217,10 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
             if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):
                 break
 
-    client.portal.call(before.runtime._detach, room)
+    # The old process stops reading, as a replaced backend does. `_detach` takes
+    # a seat, not a room, so `_detach(room)` removed nothing and the old reader
+    # went on handling the session's records next to the new one.
+    client.portal.call(before.runtime.stop_listening)
     # The machine kept its runner; the new process has only the channel to it.
     after = StubChannel()
     after.root = before.root

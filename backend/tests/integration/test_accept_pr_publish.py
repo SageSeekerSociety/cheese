@@ -192,3 +192,39 @@ def test_prless_card_does_not_request_forge_checks(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["data"] == {"available": False}
     factory.assert_not_awaited()
+
+
+def test_pr_checks_holds_no_database_connection_while_the_forge_answers(
+    client, monkeypatch
+):
+    """Every open card polls this; a forge call made while holding a pooled
+    connection pins one slot per card for as long as the forge takes."""
+    from app.api.routes import accept
+    from app.core.db import pool_status
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid)
+    checked_out = []
+
+    def while_the_forge_answers():
+        status = pool_status(client.test_app_engine)
+        assert status is not None
+        checked_out.append(status["checked_out"])
+
+    class Provider:
+        async def pr_view(self, number):
+            while_the_forge_answers()
+            return {"state": "open", "head": {"sha": "abc123"}}
+
+        async def check_runs(self, ref):
+            while_the_forge_answers()
+            return []
+
+    monkeypatch.setattr(accept, "proposal_client", AsyncMock(return_value=Provider()))
+    response = client.get(f"/topics/{tid}/pr-checks")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["available"] is True
+    assert checked_out == [0, 0]
