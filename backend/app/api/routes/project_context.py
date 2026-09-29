@@ -1,16 +1,18 @@
 """Find what the project already knows, from where the caller stands.
 
-One literal query across the rooms the caller may read: room titles, messages
-and documents, decisions, tasks, library file names and the artifact list. Each
-hit names where it lives, so it can be cited; rooms the caller may not read are
-not searched and are only counted.
+One query across the rooms the caller may read: room titles, messages and
+documents, decisions, tasks, library file names and the artifact list. Every
+word of the query has to be found; each group lists its best matches first (see
+`app.domain.search.bm25`), library file names aside, which are matched as
+written. Each hit names where it lives, so it can be cited; rooms the caller may
+not read are not searched and are only counted.
 """
 
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -22,6 +24,7 @@ from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task
+from app.domain.search import bm25
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -40,17 +43,23 @@ SEARCHED_BLOCKS = (
 )
 
 
-def _pattern(q: str) -> str:
-    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
+# Written out rather than bound: the blocks index is partial on exactly these
+# kinds (migration 2d2fc3a8ce36), and Postgres only uses it when it can prove
+# the query's predicate implies the index's — which it cannot do against bind
+# parameters once a prepared statement goes generic.
+_SEARCHED_BLOCKS_SQL = text(
+    "blocks.kind IN (" + ", ".join(f"'{k.value}'" for k in SEARCHED_BLOCKS) + ")"
+)
 
 
-def _snippet(text: str, q: str, width: int = 160) -> str:
-    text = " ".join((text or "").split())
-    at = text.lower().find(q.lower())
-    start = max(at - width // 2, 0) if at >= 0 else 0
-    piece = text[start : start + width]
-    return ("…" if start else "") + piece + ("…" if start + width < len(text) else "")
+def _snippet(body: str, terms: list[str], width: int = 160) -> str:
+    body = " ".join((body or "").split())
+    lowered = body.lower()
+    found = [at for at in (lowered.find(t.lower()) for t in terms) if at >= 0]
+    at = min(found) if found else 0
+    start = max(at - width // 2, 0)
+    piece = body[start : start + width]
+    return ("…" if start else "") + piece + ("…" if start + width < len(body) else "")
 
 
 @router.get("/projects/{project_id}/context/search")
@@ -91,28 +100,44 @@ async def search_project_context(
         ):
             readable[room.id] = room
     skipped = len(rooms) - len(readable)
-    pattern = _pattern(q)
+    terms = bm25.words(q)
+    await bm25.serial_scans(db)
 
     def where(room_id: uuid.UUID) -> dict:
         room = readable[room_id]
         return {"room_id": str(room.id), "room_title": room.title}
 
-    hits: dict[str, list[dict]] = {}
-    hits["rooms"] = [
-        {**where(r.id), "status": str(r.status.value)}
-        for r in readable.values()
-        if q.lower() in (r.title or "").lower()
-    ][:limit]
-
+    hits: dict[str, list[dict]] = {"rooms": [], "records": [], "tasks": []}
     if readable:
+        in_readable = list(readable)
+        found_rooms = await db.scalars(
+            select(Topic)
+            .where(
+                bm25.match_all_words(
+                    Topic.id,
+                    terms,
+                    {"title": 1},
+                    filters=[bm25.any_of("id", in_readable)],
+                )
+            )
+            .order_by(func.paradedb.score(Topic.id).desc(), Topic.id)
+            .limit(limit)
+        )
+        hits["rooms"] = [
+            {**where(r.id), "status": str(r.status.value)} for r in found_rooms
+        ]
         blocks = await db.scalars(
             select(Block)
             .where(
-                Block.topic_id.in_(list(readable)),
-                Block.kind.in_(SEARCHED_BLOCKS),
-                Block.content.ilike(pattern, escape="\\"),
+                bm25.match_all_words(
+                    Block.id,
+                    terms,
+                    {"content": 1},
+                    filters=[bm25.any_of("topic_id", in_readable)],
+                ),
+                _SEARCHED_BLOCKS_SQL,
             )
-            .order_by(Block.created_at.desc())
+            .order_by(func.paradedb.score(Block.id).desc(), Block.id)
             .limit(limit)
         )
         hits["records"] = [
@@ -123,21 +148,21 @@ async def search_project_context(
                 "author": b.author,
                 "created_at": b.created_at.isoformat(),
                 "task_id": str(b.task_id) if b.task_id else None,
-                "snippet": _snippet(b.content, q),
+                "snippet": _snippet(b.content, terms),
             }
             for b in blocks
         ]
         tasks = await db.scalars(
             select(Task)
             .where(
-                Task.room_id.in_(list(readable)),
-                or_(
-                    Task.title.ilike(pattern, escape="\\"),
-                    Task.brief.ilike(pattern, escape="\\"),
-                    Task.conclusion.ilike(pattern, escape="\\"),
-                ),
+                bm25.match_all_words(
+                    Task.id,
+                    terms,
+                    {"title": 2, "brief": 1, "conclusion": 1},
+                    filters=[bm25.any_of("room_id", in_readable)],
+                )
             )
-            .order_by(Task.created_at.desc())
+            .order_by(func.paradedb.score(Task.id).desc(), Task.id)
             .limit(limit)
         )
         hits["tasks"] = [
@@ -148,14 +173,11 @@ async def search_project_context(
                 "status": str(t.status.value),
                 "closed_at": t.closed_at.isoformat() if t.closed_at else None,
                 "snippet": _snippet(
-                    " ".join(filter(None, (t.title, t.brief, t.conclusion))), q
+                    " ".join(filter(None, (t.title, t.brief, t.conclusion))), terms
                 ),
             }
             for t in tasks
         ]
-    else:
-        hits["records"] = []
-        hits["tasks"] = []
 
     hits["library"] = [
         {"path": f["path"], "bytes": f["bytes"], "modified": f["modified"]}
@@ -163,17 +185,21 @@ async def search_project_context(
         if q.lower() in f["path"].lower()
     ][:limit]
     artifacts = await db.scalars(
-        select(ProjectArtifact).where(
-            ProjectArtifact.project_id == project_id,
-            or_(
-                ProjectArtifact.name.ilike(pattern, escape="\\"),
-                ProjectArtifact.about.ilike(pattern, escape="\\"),
-            ),
+        select(ProjectArtifact)
+        .where(
+            bm25.match_all_words(
+                ProjectArtifact.id,
+                terms,
+                {"name": 2, "about": 1},
+                filters=[bm25.any_of("project_id", [project_id])],
+            )
         )
+        .order_by(func.paradedb.score(ProjectArtifact.id).desc(), ProjectArtifact.id)
+        .limit(limit)
     )
     hits["artifacts"] = [
         {"id": str(a.id), "name": a.name, "about": a.about} for a in artifacts
-    ][:limit]
+    ]
 
     return ok(
         {
