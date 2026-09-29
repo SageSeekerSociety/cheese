@@ -225,3 +225,44 @@ def test_a_waiting_message_is_not_held_back_by_another_teammates_turn(client):
         "the second teammate's message never got its turn",
     )
     assert _heard(channel, room, "看一下注册页") != _heard(channel, room, "跑一下测试")
+
+
+class NeverReady(StubChannel):
+    """A machine that never gets a session ready: every prompt is assembled,
+    and none of them is ever delivered."""
+
+    async def ensure(self, session, opening):
+        await asyncio.Event().wait()
+
+
+def test_two_teammates_prompts_that_never_arrived_are_both_sent_again(client):
+    """The backend changed hands while both teammates' prompts were still on
+    their way. The next backend sends each one again, to the teammate it was
+    for — not just the newer one, and not both into one conversation."""
+    room = _room_with_a_teammate(client)
+    _service(client, NeverReady())
+    _say(client, room, "@Second 编一下文档")
+    _say(client, room, "@芝士 跑一下测试")
+    _until(
+        lambda: (
+            len(_turns(client, room)) == 2
+            and all(turn.agent_handle for turn in _turns(client, room))
+        ),
+        "the two turns were never assembled",
+    )
+    assert not any(turn.delivered_at for turn in _turns(client, room))
+
+    runner = get_work_runner()
+    client.portal.call(runner.let_go)
+    after = StubChannel()
+    replaced = _service(client, after)
+    assert client.portal.call(runner.resume_orphans, replaced) == 2
+
+    _until(
+        lambda: (
+            _heard(after, room, "跑一下测试") is not None
+            and _heard(after, room, "编一下文档") is not None
+        ),
+        "a prompt that never arrived was not sent again",
+    )
+    assert _heard(after, room, "跑一下测试") != _heard(after, room, "编一下文档")

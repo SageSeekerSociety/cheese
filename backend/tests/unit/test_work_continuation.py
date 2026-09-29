@@ -68,7 +68,7 @@ def _wired(chat, factory):
 def _capture_resends(runner, monkeypatch) -> list[dict]:
     seen: list[dict] = []
 
-    def _fake(_chat, tid, after, content, *, continuation_id=None):
+    def _fake(_chat, tid, after, content, *, continuation_id=None, agent_handle=None):
         seen.append({"topic": tid, "continuation_id": continuation_id})
 
     monkeypatch.setattr(runner, "_schedule_resend", _fake)
