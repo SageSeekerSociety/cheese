@@ -4,7 +4,7 @@ fn main() {
     // command that has none.
     tauri_build::try_build(
         tauri_build::Attributes::new()
-            .app_manifest(tauri_build::AppManifest::new().commands(&["connect_this_machine", "cancel_connect", "this_device"])),
+            .app_manifest(tauri_build::AppManifest::new().commands(&["connect_this_machine", "cancel_connect", "this_device", "set_theme"])),
     )
     .expect("failed to run tauri-build");
 }

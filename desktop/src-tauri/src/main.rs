@@ -10,7 +10,7 @@ mod platform;
 use serde::Serialize;
 use tauri::ipc::{CapabilityBuilder, Channel};
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
-use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, State, Theme, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_window_state::StateFlags;
@@ -21,6 +21,9 @@ const ORIGIN: &str = match option_env!("CHEESE_ORIGIN") {
     Some(o) => o,
     None => "https://okcheese.com",
 };
+
+// macOS draws the window buttons over the page; elsewhere the system title bar stays.
+const TITLE_BAR: &str = if cfg!(target_os = "macos") { "overlay" } else { "native" };
 
 fn from_server(url: &Url) -> bool {
     url.origin().ascii_serialization() == ORIGIN
@@ -73,6 +76,41 @@ fn cancel_connect(running: State<'_, connect::Running>) {
     connect::cancel(&running);
 }
 
+/// The theme the person picked in the web app: "system", "light" or "dark".
+/// It colours the title bar now, and the app's own first page from the next launch.
+#[tauri::command]
+fn set_theme(app: tauri::AppHandle, window: tauri::WebviewWindow, preference: String) {
+    let Some(theme) = window_theme(&preference) else {
+        return;
+    };
+    let _ = window.set_theme(theme);
+    if let Ok(dir) = app.path().app_config_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join(THEME_FILE), &preference);
+    }
+}
+
+const THEME_FILE: &str = "theme";
+
+/// None for anything that is not a preference; Some(None) is "follow the system".
+fn window_theme(preference: &str) -> Option<Option<Theme>> {
+    match preference {
+        "system" => Some(None),
+        "light" => Some(Some(Theme::Light)),
+        "dark" => Some(Some(Theme::Dark)),
+        _ => None,
+    }
+}
+
+fn stored_theme(app: &tauri::App) -> String {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .and_then(|dir| std::fs::read_to_string(dir.join(THEME_FILE)).ok())
+        .filter(|p| window_theme(p).is_some())
+        .unwrap_or_else(|| "system".into())
+}
+
 // Replaces this app with the newest release (.github/workflows/desktop.yml
 // publishes it with latest.json beside it) and starts that. The page is the
 // server's own and always current; this is for the app around it. A
@@ -101,18 +139,21 @@ fn main() {
                 .build(),
         )
         .manage(connect::Running::default())
-        .invoke_handler(tauri::generate_handler![connect_this_machine, cancel_connect, this_device])
+        .invoke_handler(tauri::generate_handler![connect_this_machine, cancel_connect, this_device, set_theme])
         .setup(|app| {
             // A page from the server may call the commands above; by default
-            // a remote page reaches no IPC at all.
+            // a remote page reaches no IPC at all. The app's own page has the same.
+            // Dragging is how the window moves where no title bar is drawn.
             app.add_capability(
                 CapabilityBuilder::new("server")
                     .remote(format!("{ORIGIN}/*"))
                     .window("main")
                     .permission("core:default")
+                    .permission("core:window:allow-start-dragging")
                     .permission("allow-connect-this-machine")
                     .permission("allow-cancel-connect")
-                    .permission("allow-this-device"),
+                    .permission("allow-this-device")
+                    .permission("allow-set-theme"),
             )?;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -124,8 +165,16 @@ fn main() {
             let opener2 = app.handle().clone();
             // Anything that is not the server — docs, GitHub, a shared link — opens
             // in the user's browser, so the commands are only ever reachable from our pages.
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .initialization_script(format!("window.__CHEESE_ORIGIN__ = {ORIGIN:?};"))
+            let theme = stored_theme(app);
+            // What the pages need to know about this window (frontend/src/lib/desktopApp.ts
+            // and ../shell): where the server is, the theme last picked, and whether
+            // the title bar lies over the page.
+            let about = format!(
+                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?} }};"
+            );
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .initialization_script(about)
+                .theme(window_theme(&theme).flatten())
                 .title("Cheese")
                 // Shown once the app's own page has painted, so the window never
                 // opens as a blank white rectangle.
@@ -136,7 +185,8 @@ fn main() {
                     }
                 })
                 .inner_size(1280.0, 820.0)
-                .min_inner_size(900.0, 600.0)
+                // The web app switches to its phone layout below 960 wide (Vuetify's md).
+                .min_inner_size(960.0, 600.0)
                 .on_navigation(move |url| {
                     stays_in_app(url) || {
                         let _ = opener.opener().open_url(url.as_str(), None::<&str>);
@@ -146,8 +196,16 @@ fn main() {
                 .on_new_window(move |url, _| {
                     let _ = opener2.opener().open_url(url.as_str(), None::<&str>);
                     NewWindowResponse::Deny
-                })
-                .build()?;
+                });
+            // On macOS the window buttons sit in the web app's top bar, centred in
+            // its 32px height above the 64px rail; the bar leaves them that room
+            // (AppBar.vue) and the sign-in pages move their mark below them (Account.vue).
+            #[cfg(target_os = "macos")]
+            let window = window
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .traffic_light_position(tauri::LogicalPosition::new(12.0, 16.0));
+            window.build()?;
             Ok(())
         })
         .run(tauri::generate_context!())

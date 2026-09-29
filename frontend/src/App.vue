@@ -252,6 +252,7 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
 import { autoConnectThisComputer } from '@/lib/desktop'
+import { tellDesktopTheme } from '@/lib/desktopApp'
 import { landBootSplash } from '@/lib/desktopSplash'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { pageMotion } from '@/lib/pageMotion'
@@ -277,6 +278,8 @@ import { useAppTheme } from '@/theme'
 // logged-in user menu. Without this line a signed-out visitor sitting on the
 // login page would not follow their machine switching to dark at sunset.
 const appTheme = useAppTheme()
+// The desktop app paints its first page and its title bar in the same theme.
+watch(appTheme.preference, tellDesktopTheme, { immediate: true })
 
 // 软键盘盖住多少，写进 --keyboard-inset 供布局减掉 (style.css)。
 trackKeyboardInset()

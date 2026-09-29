@@ -1,8 +1,10 @@
 <template>
-  <div class="account-shell">
+  <div class="account-shell" :class="{ 'account-shell--title-bar': titleBarInset }">
     <!-- The brand scene belongs to the layout, not to a page, so moving between
-         sign-in, sign-up and recovery never draws it again. -->
-    <aside class="account-art">
+         sign-in, sign-up and recovery never draws it again. Where the desktop
+         app draws its title bar over the page, this pane and the bar above the
+         form are what move the window. -->
+    <aside class="account-art" :data-tauri-drag-region="titleBarInset ? 'deep' : undefined">
       <BrandScene :narrow="narrow" />
       <router-link to="/" class="account-brand account-art__brand" :aria-label="t('account.layout.home')">
         <span class="account-brand__mark" :style="{ maskImage: `url(${logo})` }" aria-hidden="true" />
@@ -13,7 +15,7 @@
     </aside>
 
     <div class="account-side">
-      <header class="account-bar">
+      <header class="account-bar" :data-tauri-drag-region="titleBarInset ? 'deep' : undefined">
         <LanguageToggle />
       </header>
 
@@ -40,9 +42,11 @@ import logo from '@/assets/logo-plain.svg?url'
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import i18n, { t } from '@/i18n'
+import { titleBarOverlay } from '@/lib/desktopApp'
 
 const locale = i18n.global.locale
 const year = new Date().getFullYear()
+const titleBarInset = titleBarOverlay()
 const { mdAndUp } = useDisplay()
 
 // Below the md breakpoint the scene is a short band above the form.
@@ -89,6 +93,11 @@ const defaults = {
   padding: 24px 32px;
   overflow: hidden;
   background: var(--canvas);
+}
+
+/* The macOS window buttons sit in the top-left corner; the mark goes below them. */
+.account-shell--title-bar .account-art {
+  padding-top: 48px;
 }
 
 .account-art__brand,
