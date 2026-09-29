@@ -217,11 +217,10 @@ import type { Project } from '@/cx_types'
 import type { Team } from '@/types/teams'
 import type { NavSources } from './components/common/Navigation/destinations'
 
-import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { useEventListener } from '@vueuse/core'
 
 import { avatarColor } from '@/utils/avatar'
 import { pendingSudo } from '@/utils/sudo'
@@ -240,6 +239,8 @@ import { DEFAULT_SHELL, shellFor } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
+import { defineCommands } from '@/commands'
+import { installShortcuts } from '@/commands/shortcuts'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
@@ -471,23 +472,20 @@ const navShell = computed(() => shellFor(railProjects.value, openProjectId.value
 
 const rail = computed(() => railItems(navSources.value, navShell.value))
 
-// rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。
-//
-// 这是从浏览器手里**抢**来的：⌘1–9 本来是切标签页，和 Slack 网页版一样的取舍。
-// 所以只在这个数字真的对上某一格时才拦下来，对不上的照旧交回给浏览器——项目只有
-// 三个的时候 ⌘7 仍然切你的第七个标签页。
-//
-// 认 `code` 不认 `key`：`key` 跟着键盘布局走，法语 AZERTY 上不按 Shift 的那一排
-// 根本不是数字，而人看着的是同一个物理键。
-useEventListener(window, 'keydown', (event: KeyboardEvent) => {
-  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
-  const digit = /^Digit([1-9])$/.exec(event.code)
-  if (!digit) return
-  const to = shortcutTarget(rail.value, Number(digit[1]))
-  if (!to) return
-  event.preventDefault()
-  void router.push(to)
-})
+// rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。只有真的对上
+// 某一格的数字才登记，对不上的照旧归浏览器——项目只有三个的时候 ⌘7 仍然切你的第
+// 七个标签页。
+defineCommands(() =>
+  [1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((digit) => {
+    const to = shortcutTarget(rail.value, digit)
+    const item = rail.value.find((it) => it.type === 'item' && it.to === to)
+    const title = item?.type === 'item' ? item.title : to
+    return to ? [{ id: `rail.${digit}`, title: title ?? to, shortcut: `mod+${digit}`, to }] : []
+  })
+)
+let stopShortcuts: (() => void) | undefined
+onMounted(() => (stopShortcuts = installShortcuts(router)))
+onBeforeUnmount(() => stopShortcuts?.())
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
@@ -591,19 +589,6 @@ async function confirmNewProject() {
     creatingProject.value = false
   }
 }
-
-// Discord-style ⌘N quick-switch: ⌘1 首页, ⌘2.. projects.
-function onRailShortcut(e: KeyboardEvent) {
-  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
-  const n = Number(e.key)
-  if (!n) return
-  const item = rail.value.find((it) => it.type === 'item' && it.shortcut === n)
-  if (item && item.type === 'item' && item.to) {
-    e.preventDefault()
-    router.push(item.to)
-  }
-}
-onMounted(() => window.addEventListener('keydown', onRailShortcut))
 
 // 项目格子：首字压在 avatarColor() 的底色上，和人的默认头像同一套取色——
 // 色相由名字散列而来，明度固定，所以每一种色相上的白字都过 4.5:1。白字写死是
