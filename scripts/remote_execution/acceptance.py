@@ -408,7 +408,9 @@ def case(folder, options):
             session = runner_fixture.Session.start(folder, command, env, home)
             if options.mode == "disconnect":
                 # Once `bootstrap` has prepared the session against it.
-                prepared = home / ".cheese/remote-session/launch.json"
+                prepared = (
+                    runner_fixture.session_dir(home) / "remote-session/launch.json"
+                )
                 deadline = time.monotonic() + 60
                 while not prepared.exists():
                     assert time.monotonic() < deadline, "bootstrap never prepared"
