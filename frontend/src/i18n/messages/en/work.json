@@ -31,9 +31,7 @@
     }
   },
   "allSpaces": "All spaces",
-  "awaiting": "{count} pending",
   "emptyTitle": "No {project} yet",
-  "groupTitle": "My {project}",
   "joinAction": "Join with a code",
   "joinBody": "The space's creator provides the invite code",
   "joinCancel": "Cancel",
@@ -41,11 +39,6 @@
   "joinLabel": "Invite code",
   "joinSubmit": "Join",
   "joinTitle": "Join a space",
-  "lastActivity": "Active {time}",
-  "loading": "Loading…",
-  "mySpaces": "Spaces I'm in",
-  "quiet": "No recent activity",
-  "running": "{count} running",
   "sessionMachine": {
     "machine": "Change to",
     "confirm": "Push and change",

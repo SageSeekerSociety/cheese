@@ -21,56 +21,15 @@
          登录与否都显示：没登录的人遇到的问题同样值得记下来（未读点那时画不出来，
          因为计数要登录）。 -->
     <HelpAndFeedbackMenu />
-    <div class="position-relative d-flex align-center justify-center">
-      <v-spacer></v-spacer>
-      <!-- 登录后语言在「我」的菜单里（和外观并排）；没登录的人没有那个菜单，语言留在这儿。 -->
-      <LanguageToggle v-if="!loggedIn" />
-      <v-menu
-        v-if="loggedIn"
-        v-model="notificationMenuOpen"
-        :close-on-content-click="false"
-        location="bottom"
-        :offset="16"
-        transition="scale-transition"
-      >
-        <template #activator="{ props }">
-          <v-btn
-            icon
-            position="relative"
-            v-bind="props"
-            color="on-surface-variant"
-            :size="28"
-            variant="text"
-            aria-label="通知"
-            title="通知"
-          >
-            <v-icon size="18">mdi-bell</v-icon>
-            <v-badge
-              v-if="unreadNotificationsCount > 0"
-              color="error"
-              :content="unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount.toString()"
-              floating
-              dot
-              :model-value="unreadNotificationsCount > 0"
-            ></v-badge>
-          </v-btn>
-        </template>
-        <notification-panel @update-count="updateUnreadCount" />
-      </v-menu>
-      <v-btn v-else icon :size="28" variant="text" color="on-surface-variant" aria-label="通知" disabled>
-        <v-icon size="18">mdi-bell</v-icon>
-      </v-btn>
-    </div>
+    <!-- 登录后语言在「我」的菜单里（和外观并排）；没登录的人没有那个菜单，语言留在这儿。 -->
+    <LanguageToggle v-if="!loggedIn" />
   </v-system-bar>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref, watch } from 'vue'
 
 import { usePageTitle } from '@/composables/usePageTitle'
-
-import NotificationPanel from '../Notification/NotificationPanel.vue'
 
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
@@ -78,18 +37,13 @@ import ParentBackButton from './ParentBackButton.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import { t } from '@/i18n'
 import { titleBarOverlay } from '@/lib/desktopApp'
-import { NotificationsApi } from '@/network/api/notifications'
 import AccountService from '@/services/account'
 import { usePageTitleStore } from '@/stores/title'
 
-const router = useRouter()
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 
 const titleBarInset = titleBarOverlay()
-const notificationMenuOpen = ref(false)
-const unreadNotificationsCount = ref(0)
-
 const currentTitle = ref(t('global.cheese'))
 
 const updateTitle = () => {
@@ -105,45 +59,7 @@ const updateTitle = () => {
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })
 
-watch(
-  () => router.currentRoute.value.fullPath,
-  () => {
-    notificationMenuOpen.value = false
-  }
-)
-
 const loggedIn = computed(() => AccountService._loggedIn.value)
-
-// 获取未读通知数量
-const fetchUnreadNotificationsCount = async () => {
-  if (!loggedIn.value) return
-
-  try {
-    const response = await NotificationsApi.getUnreadCount()
-    unreadNotificationsCount.value = response.data.count
-  } catch (error) {
-    console.error('获取未读通知数量失败:', error)
-  }
-}
-
-// 更新未读通知数量
-const updateUnreadCount = (count: number) => {
-  unreadNotificationsCount.value = count
-}
-
-watch(loggedIn, (newValue) => {
-  if (newValue) {
-    fetchUnreadNotificationsCount()
-  } else {
-    unreadNotificationsCount.value = 0
-  }
-})
-
-onMounted(() => {
-  if (loggedIn.value) {
-    fetchUnreadNotificationsCount()
-  }
-})
 </script>
 
 <style>

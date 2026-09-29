@@ -31,9 +31,7 @@
     }
   },
   "allSpaces": "全部空间",
-  "awaiting": "{count} 项待处理",
   "emptyTitle": "暂无{project}",
-  "groupTitle": "我的{project}",
   "joinAction": "用邀请码加入",
   "joinBody": "邀请码由空间的创建者提供",
   "joinCancel": "取消",
@@ -41,11 +39,6 @@
   "joinLabel": "邀请码",
   "joinSubmit": "加入",
   "joinTitle": "加入空间",
-  "lastActivity": "最近活动 {time}",
-  "loading": "正在加载…",
-  "mySpaces": "我加入的空间",
-  "quiet": "暂无近期活动",
-  "running": "{count} 个运行中",
   "sessionMachine": {
     "machine": "换到",
     "confirm": "推送并更换",

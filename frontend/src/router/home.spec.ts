@@ -4,19 +4,23 @@
 // 是回自己队里。落地页选错的代价是每天都要多点一下，而且第一屏看到的是一片
 // 和你无关的队伍。
 //
-// 根地址也一样：登录后落在**我的工作**上（自己手上的项目），而不是空间列表
-// ——空间是别人开的地方。空间列表没有消失，它降级成了那一页顶上的一排。
+// 根地址也一样：登录后回到上次待的那个项目——每天第一件事是接着干活。一个项目
+// 都没有的人落在待办上，那一页给他新建项目和用邀请码加入空间两条路。
 import { createRouter, createWebHistory } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AccountService from '@/services/account'
 
+const listProjects = vi.fn()
+vi.mock('@/api', () => ({ listProjects: () => listProjects() }))
+
 vi.mock('@/services/account', () => ({ default: { loggedIn: false, sessionRestored: Promise.resolve() } }))
 vi.mock('@/layouts/home/Home.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('@/components/home/HomeSidebar.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('@/views/home/HomeSidebar.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('@/views/home/HomeHub.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('@/views/InboxView.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/home/Landing.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/spaces/Index.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('@/views/home/MyWork.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/teams/Index.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/teams/Mine.vue', () => ({ default: { template: '<div />' } }))
 
@@ -30,6 +34,7 @@ function router() {
     routes: [
       home,
       { path: '/account/signin', name: 'SignIn', component: blank },
+      { path: '/projects/:projectId', name: 'workspace-project', component: blank },
       { path: '/:pathMatch(.*)*', name: 'catch-all', component: blank },
     ],
   })
@@ -37,6 +42,8 @@ function router() {
 
 describe('首页那一层', () => {
   beforeEach(() => {
+    localStorage.clear()
+    listProjects.mockReset().mockResolvedValue({ data: [{ id: 'p1' }, { id: 'p2' }] })
     AccountService.loggedIn = false
     AccountService.sessionRestored = Promise.resolve()
     delete (window as { __TAURI__?: unknown }).__TAURI__
@@ -56,21 +63,40 @@ describe('首页那一层', () => {
 
   // 推广页是给还没进来的人看的。**只给未登录的人**：`titleKey` 和标题都是一句
   // 推广词，回访的人不该在根地址上看见它。
-  it('未登录时根地址不落在我的工作上', async () => {
-    const r = router()
-    await r.push('/')
-    expect(r.currentRoute.value.name).not.toBe('HomeWork')
-  })
-
-  it('登录后根地址落在我的工作上', async () => {
+  it('登录后根地址回到上次待的那个项目', async () => {
+    localStorage.setItem('cheesex.layout', JSON.stringify({ lastProjectId: 'p2' }))
     AccountService.loggedIn = true
     const r = router()
     await r.push('/')
-    expect(r.currentRoute.value.name).toBe('HomeWork')
+    expect(r.currentRoute.value.name).toBe('workspace-project')
+    expect(r.currentRoute.value.params.projectId).toBe('p2')
   })
 
-  // 空间列表降级成了我的工作那一页顶上的一排，但没被删掉：`/spaces` 这个地址
-  // 照旧在（已经发出去的链接、顶栏那颗「←」都指着它）。
+  // 上次那个项目这个人已经不在里面了（或者存的是上一个登录者的）：不把他送去 403。
+  it('上次那个项目不在自己的清单里时，落在自己的第一个项目上', async () => {
+    localStorage.setItem('cheesex.layout', JSON.stringify({ lastProjectId: '别人的项目' }))
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.params.projectId).toBe('p1')
+  })
+
+  it('一个项目都没有的人登录后落在待办上', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.name).toBe('inbox')
+  })
+
+  it('项目清单读不到时落在待办上，而不是停在推广页', async () => {
+    listProjects.mockRejectedValue(new Error('offline'))
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.name).toBe('inbox')
+  })
+
   it('空间列表这个地址还在', async () => {
     AccountService.loggedIn = true
     const r = router()
@@ -78,12 +104,12 @@ describe('首页那一层', () => {
     expect(r.currentRoute.value.name).toBe('HomeSpaces')
   })
 
-  it('我的工作自己也能直接打开', async () => {
+  // 我的工作那一页已经拆了：地址不再有，走到未知地址上。
+  it('我的工作这一页不再存在', async () => {
     AccountService.loggedIn = true
     const r = router()
     await r.push('/work')
-    expect(r.currentRoute.value.name).toBe('HomeWork')
-    expect(r.currentRoute.value.meta.titleKey).toBe('navigation.myWork')
+    expect(r.currentRoute.value.name).toBe('catch-all')
   })
 
   // 离开超过 15 分钟再回来：访问令牌过期，恢复会话要先换一个新的。换回来之前
@@ -98,7 +124,7 @@ describe('首页那一层', () => {
     AccountService.loggedIn = true
     restored()
     await navigation
-    expect(r.currentRoute.value.name).toBe('HomeWork')
+    expect(r.currentRoute.value.name).toBe('workspace-project')
   })
 
   // 桌面 app 是已经装上的人在用：没登录就去登录，不看推广页。浏览器里照旧。
@@ -109,11 +135,11 @@ describe('首页那一层', () => {
     expect(r.currentRoute.value.name).toBe('SignIn')
   })
 
-  it('桌面 app 里登录后根地址仍落在我的工作上', async () => {
+  it('桌面 app 里登录后根地址同样回到项目', async () => {
     ;(window as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
     AccountService.loggedIn = true
     const r = router()
     await r.push('/')
-    expect(r.currentRoute.value.name).toBe('HomeWork')
+    expect(r.currentRoute.value.name).toBe('workspace-project')
   })
 })

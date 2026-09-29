@@ -53,8 +53,8 @@ describe('shellFor: 「还不知道」和「知道，就是 default」是两件�
 
 describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
   it('按壳给的顺序画', () => {
-    const shell = shellLike({ nav: { ...DEFAULT_SHELL.nav, tabs: ['inbox', 'spaces', 'workspace'] } })
-    expect(orderedNav(shell, 'tabs', ['spaces', 'workspace', 'inbox'])).toEqual(['inbox', 'spaces', 'workspace'])
+    const shell = shellLike({ nav: { ...DEFAULT_SHELL.nav, tabs: ['inbox', 'home', 'workspace'] } })
+    expect(orderedNav(shell, 'tabs', ['home', 'workspace', 'inbox'])).toEqual(['inbox', 'home', 'workspace'])
   })
 
   it('壳没列的格子不画', () => {
@@ -69,11 +69,7 @@ describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
 
   it('default 壳下三个面逐格就是今天的样子', () => {
     expect(orderedNav(DEFAULT_SHELL, 'rail', ['home', 'projects', 'add'])).toEqual(['home', 'projects', 'add'])
-    expect(orderedNav(DEFAULT_SHELL, 'tabs', ['spaces', 'workspace', 'inbox'])).toEqual([
-      'spaces',
-      'workspace',
-      'inbox',
-    ])
+    expect(orderedNav(DEFAULT_SHELL, 'tabs', ['home', 'workspace', 'inbox'])).toEqual(['home', 'workspace', 'inbox'])
     // 侧栏那一面：资料库和名册是常驻那两格，日历默认收进项目名旁边那个 ⋯ 菜单。
     // 看板不在里面——它就是首页，项目名那一行点下去就到。
     expect(orderedNav(DEFAULT_SHELL, 'project', KNOWN)).toEqual(['calendar', 'project-library', 'project-members'])

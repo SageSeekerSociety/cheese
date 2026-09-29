@@ -18,6 +18,8 @@ import { beforeAll, describe, expect, it } from 'vitest'
 
 import RailItem from './RailItem.vue'
 
+import { setLocale } from '@/i18n'
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [{ path: '/:pathMatch(.*)*', name: 'catch-all', component: { template: '<div />' } }],
@@ -29,6 +31,7 @@ function mount(item: NavGenericItem) {
 }
 
 beforeAll(() => {
+  setLocale('zh-CN')
   // Vuetify 的 overlay（v-tooltip）会摸这两个浏览器 API，happy-dom 没有。
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
@@ -82,38 +85,51 @@ describe('RailItem 的可访问名称', () => {
     expect(link!.getAttribute('aria-label')).toBe('首页')
   })
 
-  it('待办格子的件数角标画出来了，而且名字里也听得到', async () => {
+  it('首页那一格的件数角标画出来了，而且名字里也听得到', async () => {
     const { container } = mount({
-      key: 'Inbox',
+      key: 'Home',
       type: 'item',
-      title: '待办',
+      title: '首页',
       to: '/inbox',
-      icon: 'mdi-inbox-outline',
+      icon: 'cheese',
       badge: 3,
-      unnumbered: true,
     })
 
     const link = container.querySelector('a[href="/inbox"]') as HTMLAnchorElement | null
     expect(link).not.toBeNull()
     expect(link!.querySelector('.app-rail-item__badge')?.textContent).toBe('3')
     // 角标本身是 aria-hidden 的（画给眼睛），件数必须同时进可访问名称。
-    expect(link!.getAttribute('aria-label')).toBe('待办（3）')
+    expect(link!.getAttribute('aria-label')).toBe('首页（3）')
   })
 
-  it('没有待办时不画角标，名字里也不多那对括号', async () => {
+  it('没有件数、只有没读的动态时，名字里听得到「有新动态」', async () => {
     const { container } = mount({
-      key: 'Inbox',
+      key: 'Home',
       type: 'item',
-      title: '待办',
+      title: '首页',
       to: '/inbox',
-      icon: 'mdi-inbox-outline',
+      icon: 'cheese',
       badge: 0,
-      unnumbered: true,
+      dot: true,
     })
 
     const link = container.querySelector('a[href="/inbox"]') as HTMLAnchorElement | null
     expect(link!.querySelector('.app-rail-item__badge')).toBeNull()
-    expect(link!.getAttribute('aria-label')).toBe('待办')
+    expect(link!.getAttribute('aria-label')).toBe('首页（有新动态）')
+  })
+
+  it('什么都没有时名字里不多那对括号', async () => {
+    const { container } = mount({
+      key: 'Home',
+      type: 'item',
+      title: '首页',
+      to: '/inbox',
+      icon: 'cheese',
+      badge: 0,
+    })
+
+    const link = container.querySelector('a[href="/inbox"]') as HTMLAnchorElement | null
+    expect(link!.getAttribute('aria-label')).toBe('首页')
   })
 
   it('悬停浮层里带项目全名（读屏之外，鼠标用户靠它认项目）', async () => {

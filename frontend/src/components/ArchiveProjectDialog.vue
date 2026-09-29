@@ -43,7 +43,7 @@ async function submit() {
   }
   open.value = false
   archiving.value = false
-  // 项目已经不在清单里了：清单刷一遍，人回到「我的工作」。刷不成功不该把归档变成失败。
+  // 项目已经不在清单里了：清单刷一遍，人回到首页（落在另一个项目上，或者待办）。刷不成功不该把归档变成失败。
   await Promise.allSettled([store.refreshProjects()])
   await router.push('/')
 }

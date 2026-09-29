@@ -16,6 +16,8 @@ import AccountService from '@/services/account'
 
 vi.mock('@/services/account', () => ({ default: reactive({ loggedIn: false }) }))
 // The download page reads the published version and changelog; this site has none.
+// 登录后的根地址先问一遍项目清单：一个项目都没有，就落在待办上。
+vi.mock('@/api', () => ({ listProjects: async () => ({ data: [] }) }))
 vi.mock('@/lib/desktopChangelog', () => ({ fetchDesktopRelease: async () => ({ version: null, days: [] }) }))
 // happy-dom has no IntersectionObserver; the scroll-driven room simply stays on its first step.
 vi.stubGlobal(
@@ -170,7 +172,7 @@ describe('公开首页', () => {
     expect(links.length).toBeGreaterThan(0)
     for (const link of links) expect(link.getAttribute('href')).toBe('/')
     await view.router.push(links[0].getAttribute('href')!)
-    expect(view.router.currentRoute.value.name).toBe('HomeWork')
+    expect(view.router.currentRoute.value.name).toBe('inbox')
   })
 
   it('updates the entry links after session restoration without navigating away', async () => {
@@ -185,7 +187,7 @@ describe('公开首页', () => {
   it('shows the public homepage when a signed-out user returns from work', async () => {
     AccountService.loggedIn = true
     const view = await mount('/')
-    expect(view.router.currentRoute.value.name).toBe('HomeWork')
+    expect(view.router.currentRoute.value.name).toBe('inbox')
     AccountService.loggedIn = false
     await view.router.push('/')
     expect(view.router.currentRoute.value.path).toBe('/')
