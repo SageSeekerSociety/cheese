@@ -21,7 +21,8 @@ touch "$test_repo/backend/app/main.py" "$test_repo/backend/sandbox/cheese" \
   "$test_repo/deploy/office-render/server.py" \
   "$test_repo/deploy/browser-render/server.py" "$test_repo/deploy/gateway/Dockerfile" \
   "$test_repo/backend/sandbox/Dockerfile.private" \
-  "$test_repo/$executor_dir/runtime.py" "$test_repo/$executor_dir/private.py"
+  "$test_repo/$executor_dir/runtime.py" "$test_repo/$executor_dir/private.py" \
+  "$test_repo/$executor_dir/mcp_process.py"
 git -C "$test_repo" add .
 git -C "$test_repo" commit -qm base
 legacy_sha="$(git -C "$test_repo" rev-parse HEAD)"
@@ -93,7 +94,7 @@ git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/sandbox/Dockerfile.private
 assert_plan 'backend=true,sandbox=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
 
-for executor_file in runtime.py private.py; do
+for executor_file in runtime.py private.py mcp_process.py; do
   git -C "$test_repo" switch -q --detach "$base_sha"
   commit_path "$executor_dir/$executor_file"
   assert_plan 'backend=true,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"

@@ -92,7 +92,7 @@ With `--ssh`, executor calls retain the SSH transport; launcher uploads still cr
 
 ## Standalone SSH acceptance
 
-Copy `backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py` to the execution host. Start it with a JSON configuration file on standard input:
+Copy `runtime.py` and `mcp_process.py` from `backend/app/domain/agent/harness/claude_code/remote_execution/` into one directory on the execution host. Start it with a JSON configuration file on standard input:
 
 ```json
 {
