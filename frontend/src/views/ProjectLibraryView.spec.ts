@@ -98,6 +98,40 @@ describe('资料库', () => {
     await waitFor(() => expect(container.textContent).not.toContain('预算表(2).xlsx'))
   })
 
+  it('手机上：一行的操作从底部面板里选，删除照样先问一句', async () => {
+    const width = window.innerWidth
+    ;(window as unknown as { innerWidth: number }).innerWidth = 390
+    try {
+      const phone = createVuetify({ components, directives })
+      const { container, baseElement } = render(ProjectLibraryView, {
+        props: { projectId: 'p1' },
+        global: { plugins: [phone] },
+      })
+      await waitFor(() => expect(container.textContent).toContain('预算表.xlsx'))
+
+      const more = container.querySelectorAll('button[aria-haspopup="dialog"]')[1] as HTMLElement
+      await fireEvent.click(more)
+      const remove = await waitFor(() => {
+        const item = Array.from(baseElement.querySelectorAll('[role="menuitem"]')).find(
+          (b) => b.textContent?.trim() === '删除'
+        )
+        expect(item).toBeTruthy()
+        return item as HTMLElement
+      })
+      await fireEvent.click(remove)
+      await waitFor(() => expect(baseElement.textContent).toContain('删除后无法恢复'))
+      expect(deleteLibraryFile).not.toHaveBeenCalled()
+
+      const confirm = Array.from(baseElement.querySelectorAll('.v-card-actions button')).find(
+        (b) => b.textContent?.trim() === '删除'
+      )
+      await fireEvent.click(confirm!)
+      await waitFor(() => expect(deleteLibraryFile).toHaveBeenCalledWith('p1', '预算表.xlsx'))
+    } finally {
+      ;(window as unknown as { innerWidth: number }).innerWidth = width
+    }
+  })
+
   it('一份都还没有时说的是暂无资料，并且说清文件从哪儿来', async () => {
     vi.mocked(listProjectLibrary).mockResolvedValue({ data: [], total: 0 })
     const { container } = mount()

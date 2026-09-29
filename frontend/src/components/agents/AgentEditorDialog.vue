@@ -7,6 +7,7 @@ import { computed, ref, toRaw, watch } from 'vue'
 import { createProjectAgent, getProjectDefaultModel, updateProjectAgent } from '../../api'
 import { t } from '../../i18n'
 import { displayNameError, handleError } from '../../lib/projectAgents'
+import AdaptiveDialog from '../common/AdaptiveDialog.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -109,75 +110,58 @@ async function save() {
 </script>
 
 <template>
-  <v-dialog
+  <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
+  <AdaptiveDialog
     :model-value="modelValue"
-    max-width="720"
-    scrollable
+    :title="isNew ? '新建 AI 队友' : '修改 AI 队友'"
+    primary-label="保存"
+    :primary-loading="saving"
+    :max-width="720"
     @update:model-value="emit('update:modelValue', $event)"
+    @primary="save"
   >
-    <v-card>
-      <v-card-title class="d-flex align-center pa-5 pb-3">
-        <span class="t-title">{{ isNew ? '新建 AI 队友' : '修改 AI 队友' }}</span>
-        <v-spacer />
-        <v-btn variant="text" icon="mdi-close" size="small" aria-label="关闭" @click="close" />
-      </v-card-title>
-      <!-- pt-2, not pt-0: in a `scrollable` dialog THIS element is the scroller
-           (VDialog.sass: `.v-dialog--scrollable > ... > .v-card-text { overflow-y:
-           auto }`), and an outlined field's floating label is `translateY(-50%)`
-           on its own top border — ~8px of it sits above the field's box. At
-           padding-top 0 the scroller clipped the top half of 「名字」, and pt-2
-           lands the label exactly ON the clip edge, so it needs the next step
-           up rather than the exact 8px. -->
-      <v-card-text class="pa-5 pt-3">
-        <v-alert v-if="error" type="error" density="comfortable" class="mb-4">{{ error }}</v-alert>
-        <v-text-field
-          v-model="displayName"
-          autocomplete="off"
-          label="名字"
-          variant="outlined"
-          :error-messages="submitted && nameProblem ? [nameProblem] : []"
-        />
-        <v-text-field
-          v-if="isNew"
-          v-model="handle"
-          autocomplete="off"
-          label="标识（英文，可留空）"
-          variant="outlined"
-          :error-messages="submitted && handleProblem ? [handleProblem] : []"
-        />
-        <div v-else class="t-meta c-muted mb-4">标识 · {{ agent?.handle }}</div>
-        <v-select
-          v-if="isNew"
-          v-model="presetName"
-          autocomplete="off"
-          :items="presetItems"
-          label="从内置配置开始"
-          variant="outlined"
-          @update:model-value="applyPreset"
-        />
-        <v-textarea v-model="draft.body" autocomplete="off" label="角色设定（可留空）" rows="6" variant="outlined" />
-        <v-checkbox v-model="specifyModel" :label="t('work.models.assign')" hide-details />
-        <v-select
-          v-if="specifyModel"
-          v-model="draft.model"
-          :items="choices"
-          item-title="label"
-          item-value="id"
-          :label="t('work.models.agent')"
-          :loading="modelsLoading"
-          :disabled="modelsLoading || saving"
-          variant="outlined"
-          class="mt-4"
-          autocomplete="off"
-        />
-        <p v-else class="t-meta c-muted mb-4">{{ t('work.models.inheritHint') }}</p>
-        <p v-if="!isNew" class="t-meta c-muted">修改只影响这个队友，下次运行时生效，已有记忆保留</p>
-      </v-card-text>
-      <v-card-actions class="pa-5 pt-0">
-        <v-spacer />
-        <v-btn variant="text" @click="close">取消</v-btn>
-        <v-btn color="primary" variant="flat" :loading="saving" @click="save">保存</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <v-alert v-if="error" type="error" density="comfortable" class="mb-4">{{ error }}</v-alert>
+    <v-text-field
+      v-model="displayName"
+      autocomplete="off"
+      label="名字"
+      variant="outlined"
+      :error-messages="submitted && nameProblem ? [nameProblem] : []"
+    />
+    <v-text-field
+      v-if="isNew"
+      v-model="handle"
+      autocomplete="off"
+      label="标识（英文，可留空）"
+      variant="outlined"
+      :error-messages="submitted && handleProblem ? [handleProblem] : []"
+    />
+    <div v-else class="t-meta c-muted mb-4">标识 · {{ agent?.handle }}</div>
+    <v-select
+      v-if="isNew"
+      v-model="presetName"
+      autocomplete="off"
+      :items="presetItems"
+      label="从内置配置开始"
+      variant="outlined"
+      @update:model-value="applyPreset"
+    />
+    <v-textarea v-model="draft.body" autocomplete="off" label="角色设定（可留空）" rows="6" variant="outlined" />
+    <v-checkbox v-model="specifyModel" :label="t('work.models.assign')" hide-details />
+    <v-select
+      v-if="specifyModel"
+      v-model="draft.model"
+      :items="choices"
+      item-title="label"
+      item-value="id"
+      :label="t('work.models.agent')"
+      :loading="modelsLoading"
+      :disabled="modelsLoading || saving"
+      variant="outlined"
+      class="mt-4"
+      autocomplete="off"
+    />
+    <p v-else class="t-meta c-muted mb-4">{{ t('work.models.inheritHint') }}</p>
+    <p v-if="!isNew" class="t-meta c-muted">修改只影响这个队友，下次运行时生效，已有记忆保留</p>
+  </AdaptiveDialog>
 </template>

@@ -26,6 +26,7 @@ import { computed, ref, watch } from 'vue'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { listProjectMembers, lookupUser, setProjectOwner } from '@/api'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -152,6 +153,13 @@ function pickFound() {
       }
 }
 
+// 确认那一步里关掉等于「返回」：退回选人，不把整个弹窗收掉。
+function onDismiss(value: boolean) {
+  if (value) return
+  if (confirming.value) confirming.value = false
+  else open.value = false
+}
+
 function submit() {
   if (!picked.value) return
   if (movingOut.value) {
@@ -185,81 +193,76 @@ async function doTransfer() {
 </script>
 
 <template>
-  <v-dialog v-model="open" max-width="480">
-    <v-card>
-      <v-card-title class="t-dialog-title pt-4">转让项目</v-card-title>
-      <v-card-text class="t-body c-muted">
-        项目所有者不能直接退出。把项目转让给另一个人后，你就可以退出
-        <div v-if="candidates.length === 0" class="t-meta mt-3">暂无可以接手的成员</div>
-        <v-list v-else density="compact" nav class="mt-2 transfer-list">
-          <v-list-item
-            v-for="m in candidates"
-            :key="m.user_handle"
-            :active="picked?.handle === m.user_handle"
-            rounded="lg"
-            @click="pickRow(m)"
-          >
-            <template #prepend>
-              <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="28" class="me-3" />
-            </template>
-            <v-list-item-title class="t-body">{{ m.name || m.user_handle }}</v-list-item-title>
-            <v-list-item-subtitle class="t-meta">@{{ m.user_handle }}</v-list-item-subtitle>
-          </v-list-item>
-        </v-list>
+  <!-- 要找人、要选人，手机上是整页，转让在页头右边。团队外的人要再确认一次：主操作
+       换成「确认转让」，取消换成「返回」（返回、Esc、点遮罩都只退回上一步）。 -->
+  <AdaptiveDialog
+    :model-value="open"
+    title="转让项目"
+    :primary-label="confirming ? '确认转让' : '转让'"
+    :primary-loading="transferring"
+    :primary-disabled="!confirming && !picked"
+    :primary-danger="confirming"
+    :cancel-label="confirming ? '返回' : '取消'"
+    :max-width="480"
+    @update:model-value="onDismiss"
+    @primary="confirming ? doTransfer() : submit()"
+  >
+    <div class="t-body c-muted">
+      项目所有者不能直接退出。把项目转让给另一个人后，你就可以退出
+      <div v-if="candidates.length === 0" class="t-meta mt-3">暂无可以接手的成员</div>
+      <v-list v-else density="compact" nav class="mt-2 transfer-list">
+        <v-list-item
+          v-for="m in candidates"
+          :key="m.user_handle"
+          :active="picked?.handle === m.user_handle"
+          rounded="lg"
+          @click="pickRow(m)"
+        >
+          <template #prepend>
+            <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="28" class="me-3" />
+          </template>
+          <v-list-item-title class="t-body">{{ m.name || m.user_handle }}</v-list-item-title>
+          <v-list-item-subtitle class="t-meta">@{{ m.user_handle }}</v-list-item-subtitle>
+        </v-list-item>
+      </v-list>
 
-        <div class="t-meta mt-4">团队里没人可交？直接找一个人：</div>
-        <v-text-field
-          v-model="query"
-          autocomplete="off"
-          density="compact"
-          variant="outlined"
-          hide-details
-          clearable
-          class="mt-2"
-          label="用户名或邮箱（要写完整）"
-          :loading="lookingUp"
-        />
-        <v-alert v-if="lookupError" type="warning" density="comfortable" class="mt-2">
-          {{ lookupError }}
-        </v-alert>
-        <v-list v-if="found" density="compact" nav class="mt-2">
-          <v-list-item
-            :active="picked?.handle === found.handle"
-            rounded="lg"
-            :disabled="foundIsMe"
-            @click="pickFound()"
-          >
-            <template #prepend>
-              <UserAvatar :name="found.name || found.handle" :avatar="foundFace(found)" :size="28" class="me-3" />
-            </template>
-            <v-list-item-title class="t-body">{{ found.name || found.handle }}</v-list-item-title>
-            <v-list-item-subtitle class="t-meta">@{{ found.handle }}</v-list-item-subtitle>
-          </v-list-item>
-        </v-list>
+      <div class="t-meta mt-4">团队里没人可交？直接找一个人：</div>
+      <v-text-field
+        v-model="query"
+        autocomplete="off"
+        density="compact"
+        variant="outlined"
+        hide-details
+        clearable
+        class="mt-2"
+        label="用户名或邮箱（要写完整）"
+        :loading="lookingUp"
+      />
+      <v-alert v-if="lookupError" type="warning" density="comfortable" class="mt-2">
+        {{ lookupError }}
+      </v-alert>
+      <v-list v-if="found" density="compact" nav class="mt-2">
+        <v-list-item :active="picked?.handle === found.handle" rounded="lg" :disabled="foundIsMe" @click="pickFound()">
+          <template #prepend>
+            <UserAvatar :name="found.name || found.handle" :avatar="foundFace(found)" :size="28" class="me-3" />
+          </template>
+          <v-list-item-title class="t-body">{{ found.name || found.handle }}</v-list-item-title>
+          <v-list-item-subtitle class="t-meta">@{{ found.handle }}</v-list-item-subtitle>
+        </v-list-item>
+      </v-list>
 
-        <!-- 不在团队里 = 项目跟着 TA 走。这句话必须在按下按钮之前就说清楚，不能让人
-             以为只是换个人挂名字。 -->
-        <v-alert v-if="movingOut" type="warning" density="comfortable" class="mt-4">
-          @{{ picked?.handle }} 不在这个项目的团队里：转让会把项目整个搬到 TA 名下。转完你就不再是项目成员，
-          也看不到它的任何话题。（项目属于某个共享团队时只能转给团队里的人，后端会拒。）
-        </v-alert>
+      <!-- 不在团队里 = 项目跟着 TA 走。这句话必须在按下按钮之前就说清楚，不能让人
+         以为只是换个人挂名字。 -->
+      <v-alert v-if="movingOut" type="warning" density="comfortable" class="mt-4">
+        @{{ picked?.handle }} 不在这个项目的团队里：转让会把项目整个搬到 TA 名下。转完你就不再是项目成员，
+        也看不到它的任何话题。（项目属于某个共享团队时只能转给团队里的人，后端会拒。）
+      </v-alert>
 
-        <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
-          {{ error }}
-        </v-alert>
-      </v-card-text>
-      <v-card-actions v-if="confirming">
-        <v-spacer />
-        <v-btn variant="text" @click="confirming = false">返回</v-btn>
-        <v-btn color="error" variant="flat" :loading="transferring" @click="doTransfer">确认转让</v-btn>
-      </v-card-actions>
-      <v-card-actions v-else>
-        <v-spacer />
-        <v-btn variant="text" @click="open = false">取消</v-btn>
-        <v-btn color="primary" variant="flat" :loading="transferring" :disabled="!picked" @click="submit"> 转让 </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
+        {{ error }}
+      </v-alert>
+    </div>
+  </AdaptiveDialog>
 </template>
 
 <style scoped>

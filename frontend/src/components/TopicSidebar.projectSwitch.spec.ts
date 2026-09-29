@@ -12,7 +12,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -50,6 +50,8 @@ function makeRouter() {
     routes: [
       { path: '/projects/:projectId', name: 'workspace-project', component: Blank },
       { path: '/projects/:projectId/settings', name: 'project-settings', component: Blank },
+      { path: '/projects/:projectId/library', name: 'project-library', component: Blank },
+      { path: '/projects/:projectId/members', name: 'project-members', component: Blank },
       { path: '/:pathMatch(.*)*', name: 'catch-all', component: Blank },
     ],
   })
@@ -94,9 +96,12 @@ function mount(inner: Record<string, unknown> = {}) {
 async function openProjectMenu(container: Element, baseElement: Element): Promise<string[]> {
   const header = container.querySelector('[title="项目菜单"]') ?? baseElement.querySelector('[title="项目菜单"]')
   await fireEvent.click(header as Element)
-  return Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).map(
-    (el) => el.textContent?.replace(/\s+/g, '') ?? ''
-  )
+  return menuRows(baseElement).map((el) => el.textContent?.replace(/\s+/g, '') ?? '')
+}
+
+/** 菜单里能点的每一行：桌面是下拉菜单的行，手机是底部面板里的按钮。 */
+function menuRows(baseElement: Element): Element[] {
+  return Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item, .v-overlay button'))
 }
 
 beforeAll(() => {
@@ -144,9 +149,7 @@ describe('手机上的切换项目', () => {
   it('点一个项目就换到那个项目的地址上去', async () => {
     const { container, baseElement, router } = mount({ page: true })
     await openProjectMenu(container, baseElement)
-    const target = Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).find((el) =>
-      el.textContent?.includes('推荐算法')
-    )
+    const target = menuRows(baseElement).find((el) => el.textContent?.includes('推荐算法'))
     await fireEvent.click(target as Element)
     await router.isReady()
     expect(router.currentRoute.value.fullPath).toBe('/projects/p3')
@@ -228,5 +231,31 @@ describe('项目菜单里的「退出项目」', () => {
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes(leave))).toBe(false)
     expect(rows.some((r) => r.includes(transfer))).toBe(true)
+  })
+})
+
+// 手机上话题列表只留「全局」和话题：资料库、成员、项目文档收进项目菜单。它们得在那里
+// 点得到，「有人找你」的私聊未读也得跟着「成员」进去。
+describe('手机上项目的几页收进项目菜单', () => {
+  const library = t('navigation.project.library')
+  const members = t('navigation.project.members')
+
+  it('列表上不再有那几行，菜单里点「资料库」去资料库', async () => {
+    const { container, baseElement, router } = mount({ page: true })
+    const listed = Array.from(container.querySelectorAll('.v-list-item')).map((el) => el.textContent ?? '')
+    expect(listed.some((text) => text.includes(library))).toBe(false)
+
+    await openProjectMenu(container, baseElement)
+    const row = menuRows(baseElement).find((el) => el.textContent?.includes(library))
+    await fireEvent.click(row as Element)
+    await router.isReady()
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/projects/p1/library'))
+  })
+
+  it('私聊未读跟着「成员」进了菜单', async () => {
+    const { container, baseElement } = mount({ page: true, privateUnreadMap: { zhang: 2, li: 1 } })
+    await openProjectMenu(container, baseElement)
+    const row = menuRows(baseElement).find((el) => el.textContent?.includes(members))
+    expect(row?.textContent).toContain('3')
   })
 })

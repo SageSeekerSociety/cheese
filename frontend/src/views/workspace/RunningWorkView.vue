@@ -25,7 +25,7 @@ import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
-import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '@/lib/board'
+import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -165,22 +165,14 @@ function toggleMine() {
   void router.replace({ query })
 }
 
-/** 已归档的房间。
- *
- *  活不归档，房间归档：一个房间收了尾，里面没走完的活（已退回、待回答）后端照样
- *  按它自己的状态落在施工中 / 交付中 / 待处理里，一挂就是几周。可房间归档了，就
- *  没人会再去动它们——三列答的是「接下来谁要动什么」，它们不该在上面。
- *
- *  已完成不筛：那是交付过的东西，房间归档了也还是交付过。 */
+/** 已归档的房间：它们里面没走完的活不上板（见 lib/board.ts 的 liveBoardTasks）。 */
 const archivedRooms = computed(
   () => new Set((store.topics as Topic[]).filter((t) => t.status === 'archived').map((t) => t.id))
 )
 
-/** 板上真正要看的那些：去掉已归档房间里没走完的活。计数、统计、「只看我的」都从
- *  这一份出发，列里没有的活不能在数字里还算着。 */
-const boardRows = computed(() =>
-  rows.value.filter((r) => r.presentation.column === 'done' || !archivedRooms.value.has(r.room_id))
-)
+/** 板上真正要看的那些。计数、统计、「只看我的」都从这一份出发，列里没有的活不能
+ *  在数字里还算着。 */
+const boardRows = computed(() => liveBoardTasks(rows.value, archivedRooms.value))
 
 const visibleRows = computed(() =>
   mine.value && mineHandle.value ? boardRows.value.filter((r) => r.owner_handle === mineHandle.value) : boardRows.value
@@ -306,7 +298,7 @@ function openTask(task: RoomTask) {
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
          登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
     <template v-if="mineHandle" #actions>
-      <button type="button" class="board__mine t-meta" :aria-pressed="mine" @click="toggleMine">
+      <button type="button" class="board__mine t-meta tap-target" :aria-pressed="mine" @click="toggleMine">
         <span class="board__sw" aria-hidden="true" />
         只看我的
       </button>
@@ -479,7 +471,9 @@ function openTask(task: RoomTask) {
 }
 /* 「只看我的」。开着的时候整个开关加深、拨柄变实——板上的每个计数都因此换了含义，
    这个状态不能是要找才看得见的。过渡只写具体属性，不写 all。 */
+/* 相对定位给 .tap-target：这颗开关只有 28px 高，触屏上能点的范围撑到 44。 */
 .board__mine {
+  position: relative;
   flex: none;
   margin-left: auto;
   display: flex;
