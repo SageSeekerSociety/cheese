@@ -21,9 +21,11 @@ import {
   updateIntegration,
 } from '../api'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
-import PageAction from '../components/common/PageAction.vue'
 
+import { useCommands } from '@/commands'
+import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRef.vue'
+import { t } from '@/i18n'
 
 const route = useRoute()
 const integrations = ref<Integration[]>([])
@@ -214,16 +216,14 @@ async function save() {
 }
 
 onMounted(load)
+
+useCommands(() => [
+  { id: 'connections.refresh', title: '刷新', icon: 'mdi-refresh', loading: loading.value, header: {}, run: load },
+])
 </script>
 
 <template>
-  <div class="connections">
-    <!-- 手机上页名写在顶栏里，操作交给了顶栏（PageAction），这一条整条收起；
-         PageAction 仍要挂着才交得出去，所以是 d-none 不是 v-if。 -->
-    <header class="connections__head" :class="{ 'd-none': !$vuetify.display.mdAndUp }">
-      <h1 class="t-page-title">我的连接</h1>
-      <PageAction label="刷新" icon="mdi-refresh" variant="text" :loading="loading" @click="load" />
-    </header>
+  <AppPage :title="t('navigation.userMenu.connections')">
     <p class="t-body c-muted mb-6">
       接入你自己的邮箱或飞书，并勾选允许哪些项目的 AI
       队友使用。它们用的是你的账号：可以搜索和阅读邮件、把回复写进你的草稿箱、读写你有权限的飞书文档；
@@ -279,20 +279,12 @@ onMounted(load)
       <div class="connections__head">
         <h2 class="t-section">连接</h2>
         <div>
-          <PageAction
-            label="接入邮箱"
-            icon="mdi-email-plus-outline"
-            variant="text"
-            size="small"
-            @click="adding = 'mail'"
-          />
-          <PageAction
-            label="接入飞书"
-            icon="mdi-link-variant-plus"
-            variant="text"
-            size="small"
-            @click="adding = 'feishu'"
-          />
+          <v-btn prepend-icon="mdi-email-plus-outline" variant="text" size="small" @click="adding = 'mail'">
+            接入邮箱
+          </v-btn>
+          <v-btn prepend-icon="mdi-link-variant-plus" variant="text" size="small" @click="adding = 'feishu'">
+            接入飞书
+          </v-btn>
         </div>
       </div>
       <p v-if="!integrations.length && !loading" class="t-meta c-faint">还没有接入任何邮箱或飞书</p>
@@ -455,15 +447,10 @@ onMounted(load)
         <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
       </template>
     </AdaptiveDialog>
-  </div>
+  </AppPage>
 </template>
 
 <style scoped>
-.connections {
-  max-width: var(--page-w, 760px);
-  margin: 0 auto;
-  padding: 24px 16px 48px;
-}
 .connections__head {
   display: flex;
   align-items: center;
