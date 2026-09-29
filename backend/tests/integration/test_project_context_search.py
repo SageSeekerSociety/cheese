@@ -336,8 +336,8 @@ def test_counts_match_what_the_pages_hold(client):
     _seed(client, _say(project, room, "季度预算按此执行", kind=BlockKind.decision))
 
     r = client.get(
-        f"/projects/{project}/context/search/counts",
-        params={"q": "季度预算", "topic": room},
+        f"/projects/{project}/context/search",
+        params={"q": "季度预算", "topic": room, "with_counts": True},
     )
     assert r.status_code == 200, r.text
     counts = r.json()["data"]["counts"]
@@ -371,8 +371,8 @@ def test_counts_leave_out_rooms_the_caller_cannot_read(client):
     _seed(client, _say(project, here, "公开的年终奖"))
 
     counts = client.get(
-        f"/projects/{project}/context/search/counts",
-        params={"q": "年终奖", "topic": here},
+        f"/projects/{project}/context/search",
+        params={"q": "年终奖", "topic": here, "with_counts": True},
     ).json()["data"]["counts"]
     assert counts["message"] == 1
 
@@ -385,3 +385,44 @@ def test_an_unknown_kind_is_refused(client):
         params={"q": "什么", "topic": room, "only": "passwords"},
     )
     assert r.status_code == 422
+
+
+# 搜索前先要知道「这个人能看哪些房间」。房间多了，这一步不能跟着一间一间多问：
+# 5 个房间和 30 个房间，一次搜索发出的查询一样多。
+
+
+def _statements(client):
+    from sqlalchemy import event
+
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        statements.append(statement)
+
+    engine = client.test_request_factory.kw["bind"].sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    return statements, lambda: event.remove(engine, "before_cursor_execute", record)
+
+
+def _cost_of_one_search(client, rooms: int) -> int:
+    project = _project(client)
+    here = _room(client, project, "起点")
+    for i in range(rooms - 1):
+        _room(client, project, f"房间 {i}")
+    statements, stop = _statements(client)
+    try:
+        r = client.get(
+            f"/projects/{project}/context/search",
+            params={"q": "预算", "topic": here, "with_counts": True},
+            headers=session_auth_headers(OWNER),
+        )
+    finally:
+        stop()
+    assert r.status_code == 200, r.text
+    # 建项目时自带一个「全局」房间。
+    assert r.json()["data"]["searched_rooms"] == rooms + 1
+    return len(statements)
+
+
+def test_checking_which_rooms_to_search_does_not_grow_with_the_rooms(client):
+    assert _cost_of_one_search(client, 30) == _cost_of_one_search(client, 5)
