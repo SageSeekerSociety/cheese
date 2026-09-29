@@ -16,6 +16,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
 
+import { t } from '@/i18n'
+
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   listProjectAgents: vi.fn().mockResolvedValue({ data: [] }),
@@ -145,7 +147,7 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     const archived = { ...topic('old', 'root'), status: 'archived', can_archive: allowed } as Topic
     const { container, queryByText } = mount({ topics: [topic('root', null, 'root'), active, archived] })
     await fireEvent.click(rowFor(container, 'managed').querySelector('[title="更多操作"]') as HTMLElement)
-    await waitFor(() => expect(Boolean(queryByText('归档'))).toBe(allowed))
+    await waitFor(() => expect(Boolean(queryByText(t('work.room.menu.archive')))).toBe(allowed))
     await fireEvent.click(container.querySelector('.archived-toggle') as HTMLElement)
     expect(Boolean(rowFor(container, 'old').querySelector('[title="取消归档"]'))).toBe(allowed)
   })

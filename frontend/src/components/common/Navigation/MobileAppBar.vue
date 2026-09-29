@@ -104,8 +104,6 @@
 </template>
 
 <script setup lang="ts">
-import type { MenuAction } from '../menuAction'
-
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
@@ -119,7 +117,7 @@ import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
 import UserMenuCard from './UserMenuCard.vue'
 
-import { headerCommands } from '@/commands'
+import { headerCommands, menuActionOf } from '@/commands'
 import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageTitleStore } from '@/stores/title'
@@ -147,18 +145,8 @@ const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)
 
 // 顶栏右边只放得下一颗主操作；标了几个 primary 就只取第一个，其余和没标的一起进 ⋯。
-const topBarActions = computed<(MenuAction & { primary: boolean })[]>(() =>
-  headerCommands.value.map((command) => ({
-    key: command.id,
-    label: command.title,
-    icon: command.icon,
-    primary: !!command.header.primary,
-    danger: command.danger,
-    loading: command.loading,
-    disabled: command.disabled,
-    to: command.to,
-    onSelect: command.run,
-  }))
+const topBarActions = computed(() =>
+  headerCommands.value.map((command) => ({ ...menuActionOf(command), primary: !!command.header.primary }))
 )
 const primaryAction = computed(() => topBarActions.value.find((action) => action.primary) ?? null)
 const moreActions = computed(() => topBarActions.value.filter((action) => action !== primaryAction.value))

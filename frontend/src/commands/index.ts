@@ -14,6 +14,7 @@
 // 传进去的是一个函数，读表的人每次都重新调用它，所以标题、loading、disabled 都跟着
 // 组件里的状态走。组件挂上时登记，卸下时撤掉；被 keep-alive 收起来的页面停用时也撤。
 import type { RouteLocationRaw } from 'vue-router'
+import type { MenuAction } from '@/components/common/menuAction'
 
 import { computed, getCurrentInstance, onActivated, onBeforeUnmount, onDeactivated, shallowRef } from 'vue'
 
@@ -50,6 +51,23 @@ export interface HeaderPlacement {
 /** 上页头的命令必须有图标：手机顶栏上只画图标。 */
 export type Command = CommandBase & ({ header?: undefined } | { header: HeaderPlacement; icon: string })
 export type HeaderCommand = Extract<Command, { header: HeaderPlacement }>
+
+/** 能进菜单的命令：菜单和底部面板里每一行都有图标。 */
+export type MenuCommand = Command & { icon: string }
+
+/** 一条命令在菜单（AdaptiveMenu / MobileActionSheet）里的那一行。 */
+export function menuActionOf(command: MenuCommand): MenuAction {
+  return {
+    key: command.id,
+    label: command.title,
+    icon: command.icon,
+    danger: command.danger,
+    loading: command.loading,
+    disabled: command.disabled,
+    to: command.to,
+    onSelect: command.run,
+  }
+}
 
 // 模块级的一张表，不进 pinia：页面组件的单测不必为此装一个 store。
 //
