@@ -123,6 +123,14 @@ def inflight_count() -> int:
     return len(_INFLIGHT)
 
 
+class RunRecord(Protocol):
+    """Where a job's last run is kept; `app.core.job_runs.JobRuns` in the app."""
+
+    async def last_run(self, name: str) -> datetime | None: ...
+
+    async def record(self, name: str, at: datetime) -> None: ...
+
+
 class PeriodicRunner:
     """One maintenance job on a clock, held so it cannot be collected.
 
@@ -136,6 +144,12 @@ class PeriodicRunner:
     ``job`` returns whatever it likes; ``_worth_reporting`` decides whether the
     result is worth a line. A mapping speaks when any of its values does, so
     ``{"failed": 0, "errors": []}`` stays quiet and ``{"failed": 3}`` does not.
+
+    The clock survives the process. Each run's start is written to ``runs``, and
+    a process that takes the jobs over runs one as soon as it is overdue by that
+    record. Counting from the process start instead, an hourly job on a box that
+    redeploys every twenty minutes would never run. A job never recorded is
+    first due one interval after this start.
     """
 
     def __init__(
@@ -158,11 +172,11 @@ class PeriodicRunner:
         """Seconds between runs; 0 or less means this box does not run it."""
         return self._interval
 
-    def start(self) -> None:
+    def start(self, runs: "RunRecord") -> None:
         """Begin looping. A non-positive interval means this box does not run
         this job at all — the switch every deployment and every test uses."""
         if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop(), name=self._name)
+            self._task = asyncio.create_task(self._loop(runs), name=self._name)
             logger.info("%s started (every %ss)", self._name, self._interval)
 
     async def stop(self) -> None:
@@ -172,9 +186,27 @@ class PeriodicRunner:
                 await self._task
             self._task = None
 
-    async def _loop(self) -> None:
+    async def _first_wait(self, runs: "RunRecord") -> float:
+        now = datetime.now(UTC)
+        try:
+            last = await runs.last_run(self._name)
+            if last is None:
+                await runs.record(self._name, now)
+                return self._interval
+        except Exception:  # noqa: BLE001 — an unreadable record costs one early wait
+            logger.exception("%s: could not read its last run", self._name)
+            return self._interval
+        return max(0.0, self._interval - (now - last).total_seconds())
+
+    async def _loop(self, runs: "RunRecord") -> None:
+        wait = await self._first_wait(runs)
         while True:
-            await asyncio.sleep(self._interval)
+            await asyncio.sleep(wait)
+            wait = self._interval
+            try:
+                await runs.record(self._name, datetime.now(UTC))
+            except Exception:  # noqa: BLE001 — the run matters more than its record
+                logger.exception("%s: could not record its run", self._name)
             try:
                 result = await self._job()
             except asyncio.CancelledError:

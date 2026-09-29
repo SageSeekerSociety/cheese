@@ -145,6 +145,7 @@ async def lifespan(_: FastAPI):
 
     from app.api.deps import get_cloud_wakeup, get_ownership
     from app.core.db import async_session_factory
+    from app.core.job_runs import JobRuns
     from app.core.ownership import keep_holding
     from app.domain.machine.runner import MachineEnrollmentSweeper
     from app.domain.topic.retire import sweep_retired_storage
@@ -244,8 +245,9 @@ async def lifespan(_: FastAPI):
             ),
             sessions=async_session_factory,
         )
+        runs = JobRuns(async_session_factory)
         for job in jobs:
-            job.start()
+            job.start(runs)
         background.spawn(
             sweep_retired_storage(async_session_factory),
             name="cleanup startup recovery",

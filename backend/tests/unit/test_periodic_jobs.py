@@ -10,6 +10,7 @@
 """
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,54 @@ import pytest
 from app.core.background import PeriodicRunner
 
 pytestmark = pytest.mark.anyio
+
+
+class _Runs:
+    """The record a restarted process reads its jobs' last runs from."""
+
+    def __init__(self, **last_run: datetime) -> None:
+        self.last = dict(last_run)
+
+    async def last_run(self, name: str) -> datetime | None:
+        return self.last.get(name)
+
+    async def record(self, name: str, at: datetime) -> None:
+        self.last[name] = at
+
+
+async def _runs_within(seconds: float, runs: _Runs, interval: float) -> bool:
+    ran = asyncio.Event()
+
+    async def job():
+        ran.set()
+
+    runner = PeriodicRunner("hourly", interval, job)
+    runner.start(runs)
+    try:
+        await asyncio.wait_for(ran.wait(), timeout=seconds)
+        return True
+    except TimeoutError:
+        return False
+    finally:
+        await runner.stop()
+
+
+async def test_a_job_overdue_when_the_process_restarts_runs_at_once():
+    runs = _Runs(hourly=datetime.now(UTC) - timedelta(hours=2))
+    assert await _runs_within(1, runs, 3600)
+    assert datetime.now(UTC) - runs.last["hourly"] < timedelta(seconds=5)
+
+
+async def test_a_restart_does_not_run_a_job_before_it_is_due():
+    runs = _Runs(hourly=datetime.now(UTC) - timedelta(minutes=10))
+    assert not await _runs_within(0.2, runs, 3600)
+
+
+async def test_a_job_never_run_is_first_due_one_interval_after_start():
+    runs = _Runs()
+    assert not await _runs_within(0.2, runs, 3600)
+    # The start is kept, so a restart counts from it rather than from itself.
+    assert "hourly" in runs.last
 
 
 async def test_a_job_keeps_running_on_its_interval():
@@ -31,7 +80,7 @@ async def test_a_job_keeps_running_on_its_interval():
         return {"did": calls}
 
     runner = PeriodicRunner("test job", 0.01, job)
-    runner.start()
+    runner.start(_Runs())
     try:
         await asyncio.wait_for(ran.wait(), timeout=2)
     finally:
@@ -55,7 +104,7 @@ async def test_one_failing_cycle_does_not_end_the_loop():
         return None
 
     runner = PeriodicRunner("flaky job", 0.01, job)
-    runner.start()
+    runner.start(_Runs())
     try:
         await asyncio.wait_for(recovered.wait(), timeout=2)
     finally:
@@ -75,7 +124,7 @@ async def test_a_cancellation_raised_inside_a_job_does_not_end_the_loop():
             raise asyncio.CancelledError
 
     runner = PeriodicRunner(name="cancels-itself", interval_seconds=0.01, job=job)
-    runner.start()
+    runner.start(_Runs())
     for _ in range(200):
         await asyncio.sleep(0.01)
         if cycles >= 3:
@@ -93,7 +142,7 @@ async def test_interval_zero_means_this_box_does_not_run_it():
         ran = True
 
     runner = PeriodicRunner("disabled job", 0, job)
-    runner.start()
+    runner.start(_Runs())
     await asyncio.sleep(0.05)
     await runner.stop()
     assert not ran
@@ -107,7 +156,7 @@ async def test_stopping_ends_the_loop():
         calls += 1
 
     runner = PeriodicRunner("test job", 0.01, job)
-    runner.start()
+    runner.start(_Runs())
     await asyncio.sleep(0.05)
     await runner.stop()
 
