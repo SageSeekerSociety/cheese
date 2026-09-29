@@ -264,6 +264,54 @@ def verify_notice_token(token: str) -> tuple[int, uuid.UUID] | None:
         return None
 
 
+class AppSignInClaims(NamedTuple):
+    user_id: int
+    challenge: str
+    jti: str
+
+
+APP_SIGN_IN_TTL_S = 5 * 60
+
+
+def create_app_sign_in_code(user_id: int, challenge: str) -> str:
+    """A sign-in made in the browser, for the desktop app to take over.
+
+    Good once (the ``jti`` is reserved by the caller), for a few minutes, and
+    only to whoever holds the verifier ``challenge`` is the hash of: the code
+    travels through a ``cheese://`` link, which any program on the computer
+    could have registered for.
+    """
+    now = int(_utcnow().timestamp())
+    payload = {
+        "sub": str(user_id),
+        "type": "app_sign_in",
+        "chl": challenge,
+        "jti": uuid.uuid4().hex,
+        "iat": now,
+        "exp": now + APP_SIGN_IN_TTL_S,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def verify_app_sign_in_code(code: str) -> AppSignInClaims | None:
+    try:
+        decoded = jwt.decode(code, settings.jwt_secret, algorithms=["HS256"])
+    except jwt.PyJWTError:  # type: ignore[attr-defined]
+        return None
+    sub = decoded.get("sub")
+    challenge, jti = decoded.get("chl"), decoded.get("jti")
+    if (
+        decoded.get("type") != "app_sign_in"
+        or not isinstance(sub, str)
+        or not sub.isdigit()
+        or not isinstance(challenge, str)
+        or not isinstance(jti, str)
+        or not jti
+    ):
+        return None
+    return AppSignInClaims(int(sub), challenge, jti)
+
+
 def verify_access_token(token: str) -> AccessClaims | None:
     """What a valid, unexpired access token says, else None.
 

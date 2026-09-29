@@ -135,6 +135,46 @@ export default {
         titleKey: 'account.signIn.title',
       },
     },
+    // Signing in to the desktop app through a provider (lib/desktopApp.ts):
+    // started and handed back in the browser, finished in the app.
+    {
+      path: 'oauth/app',
+      name: 'AppSignInStart',
+      component: () => import('@/views/account/AppSignInStart.vue'),
+      meta: {
+        title: '登录',
+        titleKey: 'account.signIn.title',
+      },
+    },
+    {
+      path: 'oauth/to-app',
+      name: 'AppSignInHandOff',
+      component: () => import('@/views/account/BackToApp.vue'),
+      props: { signIn: true },
+      meta: {
+        title: '登录',
+        titleKey: 'account.signIn.title',
+      },
+    },
+    {
+      path: 'oauth/from-browser',
+      name: 'AppSignInFinish',
+      component: () => import('@/views/account/AppSignInFinish.vue'),
+      meta: {
+        title: '登录',
+        titleKey: 'account.signIn.title',
+      },
+    },
+    {
+      // The result of an authorization the desktop app sent to the browser
+      // (backend/app/api/app_return.py), shown in the app.
+      path: 'to-app',
+      name: 'BackToApp',
+      component: () => import('@/views/account/BackToApp.vue'),
+      meta: {
+        title: 'Cheese',
+      },
+    },
     {
       path: 'oauth/error',
       name: 'OAuthError',

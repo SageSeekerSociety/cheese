@@ -6,7 +6,7 @@
 import type { ThemePreference } from '@/theme'
 
 /** What an app can do beyond the window itself; an older app lists fewer. */
-export type DesktopAbility = 'notices' | 'badge' | 'autostart'
+export type DesktopAbility = 'notices' | 'badge' | 'autostart' | 'links'
 
 interface CheeseApp {
   /** 'overlay': the title bar is drawn over the page (macOS), so the page leaves room for its buttons. */
@@ -110,4 +110,66 @@ export async function desktopOpensAtLogin(): Promise<boolean> {
 export async function setDesktopOpensAtLogin(on: boolean): Promise<void> {
   if (!desktopCan('autostart')) return
   await tauri()?.core?.invoke('set_opens_at_login', { on })
+}
+
+// Authorizing with another site — signing in with GitHub or Google, connecting
+// GitHub, Feishu or an MCP server — happens in the person's browser, where
+// their accounts are signed in and where Google agrees to show its page. The
+// browser then hands the result back through a `cheese://` link
+// (desktop/src-tauri/src/links.rs). An app too old to take those links keeps
+// the old way.
+
+/** Sent with a request that starts an authorization, so its result comes back to the app (backend/app/api/app_return.py). */
+export function authorizeInAppHeaders(): Record<string, string> {
+  return desktopCan('links') ? { 'X-Cheese-App': '1' } : {}
+}
+
+/** Goes to `url` to authorize; in the app, in the browser. True when the page stays where it is. */
+export function goAuthorize(url: string): boolean {
+  if (desktopCan('links')) {
+    // The app opens every new window in the browser.
+    window.open(url, '_blank')
+    return true
+  }
+  window.location.href = url
+  return false
+}
+
+const SIGN_IN_VERIFIER_KEY = 'cheese.appSignIn'
+
+function base64url(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
+/**
+ * Signs in with `provider` in the browser. The app keeps a secret and gives
+ * the browser only its hash; the sign-in comes back as a code that is good
+ * only with that secret (views/account/AppSignInFinish.vue).
+ */
+export async function signInInBrowser(provider: string, target: string): Promise<void> {
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)))
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
+  localStorage.setItem(SIGN_IN_VERIFIER_KEY, JSON.stringify({ verifier, target }))
+  const query = new URLSearchParams({ provider, challenge: base64url(digest) })
+  window.open(`/account/oauth/app?${query}`, '_blank')
+}
+
+/** The secret of the sign-in started last, and where it was headed; each is used at most once. */
+export function takeSignInVerifier(): { verifier: string; target: string } | null {
+  const raw = localStorage.getItem(SIGN_IN_VERIFIER_KEY)
+  localStorage.removeItem(SIGN_IN_VERIFIER_KEY)
+  try {
+    const kept = raw ? JSON.parse(raw) : null
+    return typeof kept?.verifier === 'string' ? { verifier: kept.verifier, target: String(kept.target ?? '/') } : null
+  } catch {
+    return null
+  }
+}
+
+/** The `cheese://` link that opens the app on `page`, a path in this web app. */
+export function appLink(page: string): string {
+  return `cheese://open?${new URLSearchParams({ path: page })}`
 }

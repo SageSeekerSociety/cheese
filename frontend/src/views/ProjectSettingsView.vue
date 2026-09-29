@@ -49,6 +49,7 @@ import { SudoCancelledError, withSudo } from '../utils/sudo'
 import { useCommands } from '@/commands'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
+import { goAuthorize } from '@/lib/desktopApp'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // The project default never moves an agent that has already started working.
@@ -313,7 +314,8 @@ async function connectGithubRepo() {
       return
     }
     if (res.install_url) {
-      window.location.href = res.install_url
+      // In the app this goes to the browser, and the result comes back as a new visit to this page.
+      if (goAuthorize(res.install_url)) connectingGithubRepo.value = false
       return
     }
     githubRepoNotice.value = { type: 'error', text: '连接失败：后端没有返回安装链接' }
@@ -330,7 +332,7 @@ async function connectGithubAccount() {
   connectingGithubAccount.value = true
   try {
     const { url } = await getGithubAccountAuthorizeUrl(props.projectId)
-    window.location.href = url
+    if (goAuthorize(url)) connectingGithubAccount.value = false
   } catch (e) {
     githubAccountNotice.value = { type: 'error', text: e instanceof Error ? e.message : '获取授权链接失败' }
     connectingGithubAccount.value = false

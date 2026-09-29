@@ -31,6 +31,7 @@ from app.common.auth import (
     SudoPurpose,
     create_access_token,
     get_current_session_id,
+    verify_app_sign_in_code,
 )
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.email import is_placeholder_email
@@ -4064,6 +4065,85 @@ def _oauth_callback_error_redirect(provider_id: str, message: str) -> RedirectRe
         ),
         status_code=302,
     )
+
+
+# Signing in to the desktop app through a provider happens in the browser,
+# where the provider's page can be shown and the person's accounts are signed
+# in (RFC 8252). The app keeps a verifier and opens the browser with its hash;
+# once signed in there, the page asks for a code bound to that hash and sends
+# it back through a ``cheese://`` link; the app trades code and verifier for a
+# session of its own. A code intercepted on the way is useless without the
+# verifier, which never left the app.
+_APP_SIGN_IN_SCOPE = "app_sign_in"
+
+
+class AppSignInStart(BaseModel):
+    challenge: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class AppSignInFinish(BaseModel):
+    code: str = Field(min_length=1, max_length=2048)
+    verifier: str = Field(min_length=43, max_length=128)
+
+
+@router.post("/auth/app-sign-in", summary="Hand this sign-in to the desktop app")
+async def start_app_sign_in(
+    payload: AppSignInStart,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    from app.common.auth import APP_SIGN_IN_TTL_S, create_app_sign_in_code
+    from app.core.single_use_state import SingleUseUnavailableError, reserve
+
+    code = create_app_sign_in_code(auth_user.user_id, payload.challenge)
+    claims = verify_app_sign_in_code(code)
+    assert claims is not None
+    try:
+        await reserve(_APP_SIGN_IN_SCOPE, claims.jti, ttl_s=APP_SIGN_IN_TTL_S)
+    except SingleUseUnavailableError:
+        raise InternalServerError("暂时无法登录 Cheese app，请稍后重试") from None
+    return {"code": 200, "message": "OK", "data": {"code": code}}
+
+
+@router.post("/auth/app-sign-in/finish", summary="Take over a browser sign-in")
+async def finish_app_sign_in(
+    payload: AppSignInFinish,
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    import base64
+    import hashlib
+    import hmac
+
+    from app.core.single_use_state import SingleUseUnavailableError, claim
+
+    _require_same_origin(request)
+    refused = AuthenticationRequiredError("这次登录已失效，请在 Cheese app 里重新登录")
+    claims = verify_app_sign_in_code(payload.code)
+    if claims is None:
+        raise refused
+    digest = hashlib.sha256(payload.verifier.encode()).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    if not hmac.compare_digest(challenge, claims.challenge):
+        raise refused
+    try:
+        if not await claim(_APP_SIGN_IN_SCOPE, claims.jti):
+            raise refused
+    except SingleUseUnavailableError:
+        raise InternalServerError("暂时无法登录 Cheese app，请稍后重试") from None
+    user = await UserRepository(session=session).get_by_id(claims.user_id)
+    if user is None:
+        raise refused
+    await issue_session(
+        response,
+        request,
+        session,
+        user_id=user.id,
+        handle=user.username,
+        login_method="app_sign_in",
+    )
+    await session.commit()
+    return {"code": 200, "message": "OK", "data": None}
 
 
 @router.get(

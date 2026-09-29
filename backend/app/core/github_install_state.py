@@ -33,10 +33,18 @@ class InstallClaims(NamedTuple):
     user_id: int
     handle: str
     jti: str
+    # Started in the desktop app: the callback hands the result back to it
+    # (app/api/app_return.py).
+    in_app: bool = False
 
 
 def mint_install_state(
-    project_id: uuid.UUID, *, user_id: int, handle: str, ttl_s: int = _TTL_S
+    project_id: uuid.UUID,
+    *,
+    user_id: int,
+    handle: str,
+    in_app: bool = False,
+    ttl_s: int = _TTL_S,
 ) -> str:
     now = int(time.time())
     return jwt.encode(
@@ -45,6 +53,7 @@ def mint_install_state(
             "uid": user_id,
             "handle": handle,
             "jti": uuid.uuid4().hex,
+            "app": in_app,
             "type": _TYPE,
             "iat": now,
             "exp": now + ttl_s,
@@ -69,7 +78,11 @@ def verify_install_state(state: str) -> InstallClaims | None:
         ):
             return None
         return InstallClaims(
-            uuid.UUID(decoded["pid"]), int(decoded["uid"]), handle, jti
+            uuid.UUID(decoded["pid"]),
+            int(decoded["uid"]),
+            handle,
+            jti,
+            decoded.get("app") is True,
         )
     except (jwt.PyJWTError, KeyError, TypeError, ValueError):
         return None
@@ -97,6 +110,8 @@ class AccountLinkClaims(NamedTuple):
     # it; only this says nobody has spent it yet — see core.single_use_state
     # and #222.
     jti: str
+    # Started in the desktop app: the callback hands the result back to it.
+    in_app: bool = False
 
 
 class MintedAccountLinkState(NamedTuple):
@@ -108,6 +123,7 @@ def mint_account_link_state(
     user_id: int,
     *,
     return_project_id: uuid.UUID | None = None,
+    in_app: bool = False,
     ttl_s: int = _TTL_S,
 ) -> MintedAccountLinkState:
     """A state plus the ``jti`` the caller must reserve before handing it out.
@@ -122,6 +138,7 @@ def mint_account_link_state(
         "uid": user_id,
         "rpid": str(return_project_id) if return_project_id else None,
         "jti": jti,
+        "app": in_app,
         "type": _ACCOUNT_LINK_TYPE,
         "iat": now,
         "exp": now + ttl_s,
@@ -158,5 +175,8 @@ def verify_account_link_state(state: str) -> AccountLinkClaims | None:
     except ValueError:
         return_project_id = None
     return AccountLinkClaims(
-        user_id=user_id, return_project_id=return_project_id, jti=jti
+        user_id=user_id,
+        return_project_id=return_project_id,
+        jti=jti,
+        in_app=decoded.get("app") is True,
     )
