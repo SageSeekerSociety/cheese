@@ -67,6 +67,7 @@ from app.domain.task.services import (
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.visibility_service import TaskVisibilityService
+from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.team.summary import team_summary
@@ -845,11 +846,15 @@ def _membership_to_api_model(
     membership: TaskMembership,
     *,
     participant_info: dict | None = None,
+    team: Team | None = None,
 ) -> dict:
     """Minimal TaskMembership representation for participants list.
 
     NOTE: This is a simplified view that focuses on structure. More fields
     (real name info, team members, etc.) can be added as needed.
+
+    ``team`` 是这条报名背后的队（只由批量查过队名的调用者传）。传了才多出
+    ``team`` 字段；没传（单条、PATCH 那几条路由）返回体与以前一模一样。
     """
     created_at_ms = (
         int(membership.created_at.timestamp() * 1000)
@@ -868,7 +873,7 @@ def _membership_to_api_model(
     approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
     approved_str = approved_map.get(membership.approved, "NONE")
 
-    return {
+    model = {
         "id": membership.id,
         "taskId": membership.task_id,
         "memberId": membership.member_id,
@@ -882,6 +887,11 @@ def _membership_to_api_model(
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
+    if membership.is_team and team is not None:
+        # 队名：看板按它给「小队构成」分桶、在名册里写下是哪支队伍。个人领取没有
+        # 这个字段；团队领取但队已不在（查不到行）也没有 —— 前端据此退回「小队」。
+        model["team"] = {"id": team.id, "name": team.name}
+    return model
 
 
 def _map_submitter_type(value: str) -> int:
@@ -3006,7 +3016,12 @@ async def get_task_participants(
             m, user_map=user_map, profile_map=profile_map, team_map=team_map
         )
         participants.append(
-            _membership_to_api_model(m, participant_info=participant_info)
+            _membership_to_api_model(
+                m,
+                participant_info=participant_info,
+                # 同上那一批 team_map，不另查一次。
+                team=team_map.get(m.member_id) if m.is_team else None,
+            )
         )
 
     return {
