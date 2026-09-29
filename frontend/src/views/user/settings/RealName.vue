@@ -164,7 +164,7 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { UserIdentityAccessType } from '@/network/api/users/types'

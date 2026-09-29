@@ -24,7 +24,7 @@ import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
 import AdminSubscriptionImportDialog from '@/components/admin/AdminSubscriptionImportDialog.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
 import { fmtCost, fmtNum, fmtPercent, fmtSI } from '@/lib/usageFormat'
 

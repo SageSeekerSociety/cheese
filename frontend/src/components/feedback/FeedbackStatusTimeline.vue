@@ -5,7 +5,7 @@ import { computed } from 'vue'
 
 import { statusLabel } from './feedbackLabels'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'

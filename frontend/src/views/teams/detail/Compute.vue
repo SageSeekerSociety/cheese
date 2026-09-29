@@ -19,7 +19,7 @@ import {
   registerDeviceForTeam,
   unregisterDeviceFromTeam,
 } from '@/api'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 

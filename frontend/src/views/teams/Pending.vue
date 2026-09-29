@@ -196,7 +196,7 @@ import { toast } from 'vuetify-sonner'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { listMyInvitations, respondToInvitation } from '@/api'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { TeamsApi } from '@/network/api/teams'
 
 // 申请和邀请的状态

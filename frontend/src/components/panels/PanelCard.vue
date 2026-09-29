@@ -26,7 +26,7 @@ import TopicAcceptCard from '../TopicAcceptCard.vue'
 
 import TodoChecklist from './TodoChecklist.vue'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(

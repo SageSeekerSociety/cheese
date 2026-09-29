@@ -22,7 +22,7 @@ import SplitBar from '../components/SplitBar.vue'
 import TrendChart from '../components/TrendChart.vue'
 import { isManager, me } from '../store'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 

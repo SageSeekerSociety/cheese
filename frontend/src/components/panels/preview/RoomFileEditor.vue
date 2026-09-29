@@ -18,7 +18,7 @@ import { copyIntoRoom, openRoomFileEditor, roomFileRevisions } from '../../../ap
 
 import RoomFileHistory from './RoomFileHistory.vue'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<{ topicId: string; path: string }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'opened', path: string): void }>()

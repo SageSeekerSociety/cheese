@@ -25,7 +25,7 @@ import dayjs from 'dayjs'
 
 import { currentInviteCode, inviteCodeStatus } from '../model'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const props = defineProps<{ spaceId: number }>()

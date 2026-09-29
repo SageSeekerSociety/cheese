@@ -9,7 +9,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatus } from '../../lib/siteStatus'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
