@@ -69,6 +69,7 @@ from cheese_billing_core import (  # noqa: E402
     NO_LOGIN_PLACEHOLDER,
     AdmissionGate,
     ChatGPTAccounts,
+    CodexBody,
     Egress,
     Meter,
     ModelRewrite,
@@ -579,7 +580,19 @@ async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
     # egress the previous request on it was given.
     flow.server_conn.via = ("http", (egress.host, egress.port)) if egress else None
     flow.metadata["cheese_chatgpt_account"] = name
-    flow.request.stream = True
+    if flow.request.method == "POST" and upstream_path.startswith(
+        "/backend-api/codex/responses"
+    ):
+        # The body changes length, so it is re-framed as chunked, as
+        # `_write_bound_model` does. A request that is not streamed still fails
+        # upstream ("Stream must be set to true"); turning its answer back into
+        # one JSON document would mean buffering it.
+        body = CodexBody()
+        flow.request.headers.pop("content-length", None)
+        flow.request.headers["transfer-encoding"] = "chunked"
+        flow.request.stream = body.feed
+    else:
+        flow.request.stream = True
 
 
 def client_disconnected(client) -> None:
