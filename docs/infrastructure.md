@@ -584,6 +584,68 @@ property of the box, not of the
 code, so it can only be caught by asserting on the real box — or by never
 creating a database without naming the encoding, which is the rule above.
 
+## Public edge: okcheese.com through Hong Kong, hand-managed
+
+`okcheese.com`, `www.okcheese.com` and `hk.okcheese.com` resolve to the etrip
+box (8.217.1.152). Its Caddy owns public :443 with a layer4 router
+([`scripts/ops/Caddyfile`](../scripts/ops/Caddyfile)) that forwards those names,
+still encrypted, to `127.0.0.1:18443`. That port is the far end of a reverse
+SSH tunnel opened by the dev box, which lands on api-front's TLS listener
+`127.0.0.1:18443` on the dev box (set up by
+`deploy/llm-tunnel/configure-frontend.sh`). The dev box has no public
+inbound, so the site is up exactly while this tunnel is up.
+
+None of it is deployed by CI. The units below were installed by hand; change
+them by hand, keep a timestamped copy of every file you edit next to it, and
+note the rollback command before you start.
+
+The tunnel travels inside TLS on :443, not as SSH on :22:
+
+    dev box: ssh -R 127.0.0.1:18443:127.0.0.1:18443
+      -> tls-proxy.py (TLS, SNI relay.okcheese.com, pinned certificate)
+      -> etrip :443, Caddy layer4 route for SNI relay.okcheese.com
+      -> socat on 127.0.0.1:2222 (terminates that TLS)
+      -> sshd :22, user hkrelay
+
+Bare SSH from the dev box's egress to etrip :22 stalls in the key exchange for
+several minutes at a time, several times a day. The TCP connection and the
+server banner still get through, and other hosts reach the same sshd without
+trouble, so neither the host nor the tunnel's keepalive settings are the cause.
+TLS on :443 over the same egress keeps working through those periods.
+
+| Box | Path | What it is |
+|---|---|---|
+| dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | the tunnel (enabled) |
+| dev | `/usr/local/libexec/cheese-hk-relay/tls-proxy.py` | the tunnel's `ProxyCommand` |
+| dev | `/home/nictheboy/.ssh/id_hkrelay`, `relay-okcheese.crt` | login key; the certificate `tls-proxy.py` pins etrip to |
+| dev | `/etc/systemd/system/cheese-hk-relay-tls.service` | previous tunnel, bare SSH on :22; installed but disabled |
+| dev | `/etc/systemd/system/cheese-hk-relay.service` | plain relay to `127.0.0.1:18080`; nothing routes there; installed but disabled |
+| etrip | `/etc/systemd/system/cheese-ssh-relay-tls.service` | socat, TLS on 127.0.0.1:2222 to sshd |
+| etrip | `/etc/ssl/relay/relay.pem` | certificate and key for `relay.okcheese.com` |
+| etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080` and `127.0.0.1:18443` |
+| etrip | `/etc/ssh/sshd_config`, last block | `Match User hkrelay`: forwarding only, 10 s × 2 keepalive |
+
+The TLS client is `tls-proxy.py` rather than `openssl s_client`. Used as a
+`ProxyCommand`, `s_client` closes the connection within a second or two of a
+few hundred kilobytes flowing through it, which turns every page load into a
+reconnect.
+
+The unit restarts with a backoff from 3 s to 30 s. Every login that stalls
+holds one of etrip sshd's unauthenticated slots for up to two minutes, and once
+ten are held sshd starts refusing new connections, the tunnel's included.
+
+Rollback to the :22 tunnel, on the dev box:
+
+    sudo systemctl disable --now cheese-hk-relay-tls443 && sudo systemctl enable --now cheese-hk-relay-tls cheese-hk-relay
+
+If the new tunnel then logs `remote port forwarding failed for listen port
+18443`, etrip is still holding the port for a session whose connection died.
+It can hold it for many minutes. `sudo ss -ltnp | grep 18443` on etrip names the
+`sshd: hkrelay` process; killing that one process releases the port.
+
+To check the public path from anywhere, run
+[`scripts/ops/probe-okcheese.sh`](../scripts/ops/probe-okcheese.sh).
+
 ## Access
 
 - **ghg private net (dev/prod boxes)**: reachable via the OpenVPN split-tunnel
