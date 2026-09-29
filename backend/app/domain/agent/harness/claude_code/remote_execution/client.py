@@ -482,9 +482,8 @@ def prepare(
             "args": [*helper[1:], "transport", str(target_path)],
         }
     }
-    # The room machine's stdio servers, the teammate's type's, and the remote
-    # ones take the same bridge; `RemoteClient.call` sends each to where it is
-    # served, with the type's definition when it is the type's.
+    # The machine's stdio servers, the type's and the remote ones share one
+    # bridge; `RemoteClient.call` sends each where it is served.
     bridged = session_servers(target)
     for name in bridged:
         if name == "native":
@@ -1964,22 +1963,17 @@ def main():
 
         release(config)
     elif args.mode == "bridge":
-        client = RemoteClient(config)
-        # A type's server has no `.mcp.json` entry on the machine for the
-        # executor's own bridge to find; its definition travels with each call.
-        if (
-            config.get("kind") == "device"
-            or args.args[0] in client.remote_servers()
-            or args.args[0] in client.agent_servers()
-        ):
+        # Remote servers and a type's own, whose definition rides each call.
+        remote = set(session_servers(config)) - set(config.get("mcp_servers", []))
+        if config.get("kind") == "device" or args.args[0] in remote:
             if __package__:
                 from .runtime import bridge
             else:
                 from runtime import bridge
 
-            bridge(None, args.args[0], call=client.call)
+            bridge(None, args.args[0], call=RemoteClient(config).call)
         else:
-            command = client.command("bridge", args.args[0])
+            command = RemoteClient(config).command("bridge", args.args[0])
             os.execvp(command[0], command)
     elif args.mode == "checkpoint":
         import hashlib

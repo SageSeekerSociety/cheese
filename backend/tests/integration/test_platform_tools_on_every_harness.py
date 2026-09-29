@@ -34,8 +34,8 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import (
+    mcp_process,
     release,
-    runtime,
 )
 from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.pi import catalog
@@ -154,7 +154,7 @@ def harness(request, client, room, tmp_path, monkeypatch):
             )
         )
         log = (tmp_path / "central.log").open("w")
-        process = runtime.MCPProcess(
+        process = mcp_process.MCPProcess(
             [sys.executable, central.__file__, "transport", str(config)],
             str(tmp_path),
             {**os.environ, **env},

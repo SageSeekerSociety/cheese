@@ -1467,9 +1467,8 @@ class ChatService:
     async def _unconnected_mcp(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str | None
     ) -> tuple[str, ...]:
-        """The remote MCP servers ``agent_handle``'s session in this room cannot
-        use yet — the project's and its type's — each said once in the room:
-        「<name> 需要在项目设置里连接」."""
+        """The remote MCP servers this session cannot use yet, its type's too,
+        each said once in the room: 「<name> 需要在项目设置里连接」."""
         from sqlalchemy import select
 
         from app.domain.agent.runtime import get_broker
