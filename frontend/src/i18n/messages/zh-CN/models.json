@@ -182,7 +182,7 @@
       "upstreamModel": "上游模型",
       "upstreamModelHint": "例如 anthropic/glm-4.7",
       "apiBase": "上游地址",
-      "apiBaseHint": "以 https:// 开头；留空用上游默认端点",
+      "apiBaseHint": "以 https:// 开头（计量代理的 ChatGPT 入口 http://metering-proxy:8445/chatgpt/<账号> 除外）；留空用上游默认端点",
       "apiKey": "上游密钥",
       "apiKeyHint": "上游服务的密钥，保存在网关，页面上不回显。",
       "apiKeyKeep": "留空则沿用已保存的上游密钥。",

@@ -188,14 +188,21 @@ that account until someone logs it in again. Use `<proxy home>/chatgpt-login.sh`
   their requests rather than let one ride the other's tunnel.
 
 The gateway reaches the accounts on a third listener, `:8445`
-(`--mode reverse:https://chatgpt.com@8445`, published on the docker bridge
-like `:443`). A gateway deployment for an account has `api_base`
-`http://172.17.0.1:8445/chatgpt/<name>` and `api_key` `CHEESE_CHATGPT_KEY`.
+(`--mode reverse:https://chatgpt.com@8445`). It is published nowhere: the
+proxy and the gateway's LiteLLM share an internal docker network,
+`cheese-meter-gateway`, on which the proxy is `metering-proxy`, and no sandbox
+is on it. A gateway deployment for an account has `api_base`
+`http://metering-proxy:8445/chatgpt/<name>` and `api_key`
+`CHEESE_CHATGPT_KEY`; the backend accepts that one plain-http base and no
+other. Both stacks name the network external and each release creates it when
+it is missing, so either may be released first. A proxy brought up by hand
+before either release has run fails to start until
+`docker network create --internal cheese-meter-gateway` has been run.
 The proxy forwards `…/responses[/…]` and `…/models` to
 `https://chatgpt.com/backend-api/codex/…`, with the account's token,
 `ChatGPT-Account-Id`, `originator: cheese` and `version:
 $CHEESE_CODEX_CLIENT_VERSION`; anything else, an unknown account, or one with
 no usable login is answered with an error and not forwarded. A separate
-listener, so that no path on the Anthropic ones can reach an account; a key,
-because every sandbox on the box can reach the bridge too. These responses
-are not metered here: the gateway records their spend.
+listener, so that no path on the Anthropic ones can reach an account; the key
+stays as a second line of defence behind the network. These responses are not
+metered here: the gateway records their spend.

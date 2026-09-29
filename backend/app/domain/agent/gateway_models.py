@@ -55,7 +55,7 @@ from app.domain.agent.gateway_admin import (
     UsageWindow,
 )
 from app.domain.agent.models import GatewayAdminAudit
-from app.domain.agent.schemas import ModelCreate, ModelUpdate
+from app.domain.agent.schemas import ModelCreate, ModelUpdate, api_base_allowed
 from app.domain.project.services import ProjectService
 from app.domain.usage.services import UsageService
 
@@ -888,8 +888,11 @@ def _validate_name(name: str) -> None:
 def _validate_api_base(api_base: str | None) -> None:
     if api_base is None:
         return
-    if not api_base.startswith("https://"):
-        raise BadRequestError("上游 API 地址必须以 https:// 开头")
+    if not api_base_allowed(api_base):
+        raise BadRequestError(
+            "上游 API 地址必须以 https:// 开头（计量代理的 ChatGPT 入口 "
+            "http://metering-proxy:8445/chatgpt/<账号> 除外）"
+        )
 
 
 def _refuse_config_write(model: AdminModel, *, verb: str = "修改") -> None:
