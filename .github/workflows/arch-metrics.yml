@@ -1,0 +1,91 @@
+name: Architecture metrics
+
+# The board, not a gate: `.claude/scripts/arch-metrics.py` prints where the
+# architecture stands — the frontend's A/B/C/D component grades, the frozen
+# entries behind the three backend contracts, files over their size cap, and the
+# hotspots of the last 30 and 90 days — and how each number moved against the
+# revision 30 days back. Runs on main and weekly, never in a pull request: the
+# three checks in `.claude/rules/architecture.md` are what block a change, and
+# this exists so that "did the last month help" has an answer that is not an
+# argument.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1" # Mondays, 04:23 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# A board that supersedes another board is not a problem — the newest one is the
+# answer — so unlike the required suites this cancels its own predecessor and
+# keys on the ref rather than the sha.
+concurrency:
+  group: arch-metrics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  board:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The hotspots are read over 30 and 90 days of history, and the
+          # comparison needs a commit older than the window. A shallow checkout
+          # would report a quiet repository — the one wrong answer here that
+          # looks like good news.
+          fetch-depth: 0
+
+      # EVERY STEP IN THIS JOB IS continue-on-error, and that is the design of
+      # the job rather than a tolerance bolted onto it. It is not in Required CI
+      # and never runs on a pull request, so it could not fail one either way;
+      # what it must not do is fail the run it belongs to, because almost
+      # everything it reads is an input somebody else owns — a git ref that ages
+      # out of the checkout, a baseline file mid-migration, a 04:23 run on a
+      # runner having a bad night. A red X there would say "the architecture got
+      # worse", which is a claim this job is not entitled to make. The numbers
+      # land in the job summary and the JSON artifact; reading them is the check.
+      #
+      # Job-level continue-on-error is not used: GitHub documents it for matrix
+      # jobs, and a key that silently does nothing on the one job here is the
+      # kind of yes that means no.
+      - name: Self-test
+        continue-on-error: true
+        run: python3 .claude/scripts/arch-metrics.py --self-test
+
+      # The comparison target is the last commit before the 30-day window, so
+      # the delta always reads "this month". A checkout too young to have one
+      # gets the board without the delta rather than no board at all.
+      - name: Measure
+        continue-on-error: true
+        env:
+          OUT: ${{ runner.temp }}
+        run: |
+          set -uo pipefail
+          baseline="$(git rev-list -1 --before="$(date -u -d '30 days ago' +%Y-%m-%d)" HEAD || true)"
+          if [ -n "$baseline" ]; then
+            python3 .claude/scripts/arch-metrics.py --out "$OUT" --compare "$baseline" --quiet
+          else
+            echo "no commit older than 30 days in this checkout — reporting the board alone"
+            python3 .claude/scripts/arch-metrics.py --out "$OUT" --quiet
+          fi
+
+      - name: Job summary
+        continue-on-error: true
+        if: always()
+        env:
+          OUT: ${{ runner.temp }}
+        run: cat "$OUT/arch-metrics.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        continue-on-error: true
+        if: always()
+        with:
+          name: arch-metrics
+          path: ${{ runner.temp }}/arch-metrics.json
+          # A weekly board is kept to be compared with, so the artifact matters
+          # more than the retention default suggests — but not enough to fight
+          # the organization's storage policy over.
+          retention-days: 90
