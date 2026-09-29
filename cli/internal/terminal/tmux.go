@@ -468,13 +468,23 @@ func (s *Session) Close() error {
 		if err := exec.Command(s.m.bin, append(args, "kill-session", "-t", "="+session)...).Run(); err != nil {
 			return err
 		}
-		deadline := time.Now().Add(10 * time.Second)
-		for _, process := range processes {
-			for process.Signal(syscall.Signal(0)) == nil {
-				if time.Now().After(deadline) {
-					return fmt.Errorf("terminal: pane process %d did not stop", process.Pid)
-				}
-				time.Sleep(20 * time.Millisecond)
+		// The pane is given its own cleanup first — a launcher that traps the
+		// hangup to write state is why this wait exists at all. A pane still
+		// there afterwards is not finishing: kill-session's hangup is one a
+		// program can ignore, and a runner left running keeps the state's
+		// socket bound, so the replacement the caller is about to open finds it
+		// taken. That is why the room stops being able to start a session at
+		// all once one pane refuses to go, and why the second ask is one it
+		// cannot decline.
+		if alive := waitForPanes(processes, paneCleanupGrace); len(alive) != 0 {
+			for _, process := range alive {
+				killPane(process)
+			}
+			if alive = waitForPanes(alive, paneKillGrace); len(alive) != 0 {
+				return fmt.Errorf(
+					"terminal: pane process %d did not stop (still %s)",
+					alive[0].Pid, paneState(alive[0].Pid),
+				)
 			}
 		}
 		return nil
@@ -509,4 +519,70 @@ func (s *Session) Close() error {
 		close(s.stop)
 	}
 	return killAndWait(s.m.sock, s.name)
+}
+
+// How long a retired pane is given to finish what it does on the way out, and
+// then how long it is given to die once asked with a signal it cannot decline.
+// Both are waits, not deadlines for the session: what happens after them is in
+// `Close`. Variables rather than constants so a test can reach the same
+// behaviour in milliseconds instead of minutes.
+var (
+	paneCleanupGrace = 10 * time.Second
+	paneKillGrace    = 2 * time.Second
+)
+
+// waitForPanes waits up to grace for every pane process to stop, and answers
+// the ones that did not.
+func waitForPanes(processes []*os.Process, grace time.Duration) []*os.Process {
+	deadline := time.Now().Add(grace)
+	for {
+		var alive []*os.Process
+		for _, process := range processes {
+			if !paneGone(process) {
+				alive = append(alive, process)
+			}
+		}
+		if len(alive) == 0 || time.Now().After(deadline) {
+			return alive
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// paneGone reports whether a pane process has stopped.
+//
+// A process that has exited but not yet been reaped is a zombie, and a zombie
+// still answers signal 0 — the only question this used to ask. So a pane whose
+// parent never collects it read as alive for as long as it was left, and a
+// screen that could not be retired held its room.
+func paneGone(process *os.Process) bool {
+	return process.Signal(syscall.Signal(0)) != nil || paneState(process.Pid) == "Z"
+}
+
+// paneState is one letter from the process's own record of itself, or "" when
+// there is none to read — a platform without `/proc`, a process already
+// reaped, a pid never ours to look at.
+func paneState(pid int) string {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return ""
+	}
+	// The second field is the state, but the first is the executable's name in
+	// parentheses and may contain spaces and parentheses of its own, so the
+	// fields are counted from the last ')' in the line.
+	closing := bytes.LastIndexByte(data, ')')
+	if closing < 0 || closing+2 >= len(data) {
+		return ""
+	}
+	return string(data[closing+2])
+}
+
+// killPane stops a pane process and everything it started: the group first —
+// which reaches the launcher shell, the runner under it, and whatever the
+// runner started — then the pane itself. The screen is already rid of the pane
+// (`kill-session` took it out), so what this signal is for is the state socket
+// the runner still holds.
+func killPane(process *os.Process) {
+	killPaneGroup(process.Pid)
+	_ = process.Kill()
 }
