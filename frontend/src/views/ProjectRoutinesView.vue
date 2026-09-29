@@ -3,11 +3,13 @@
 //
 // 芝士起草的规则停在「待确认」，只有人在这里点「确认启用」才会开始跑：无人值守地
 // 动手，得先有人读过它要做什么、用哪些资料、结果放哪。
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Routine, RoutineInput, RoutineRun } from '../api'
 import type { Topic } from '../cx_types'
 
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import {
   createRoutine,
@@ -19,6 +21,8 @@ import {
   updateRoutine,
 } from '../api'
 
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import PageAction from '@/components/common/PageAction.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
@@ -37,6 +41,61 @@ const busy = ref('')
 const open = ref<string | null>(null)
 const runs = ref<Record<string, RoutineRun[]>>({})
 const confirmingDelete = ref<Routine | null>(null)
+
+// 手机上一行的操作收进行首的 ⋯（底部面板）：五颗文字按钮在窄屏上要折成两三行。
+// 等你确认的那一条，「确认启用」仍然摆在行里——那是这一行唯一要紧的事。
+const { mdAndUp } = useDisplay()
+function rowActions(r: Routine): MenuAction[] {
+  if (r.state === 'draft')
+    return [
+      { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(r) },
+      {
+        key: 'drop',
+        label: '不要了',
+        icon: 'mdi-delete-outline',
+        danger: true,
+        onSelect: () => (confirmingDelete.value = r),
+      },
+    ]
+  return [
+    r.state === 'active'
+      ? {
+          key: 'pause',
+          label: '暂停',
+          icon: 'mdi-pause',
+          loading: busy.value === `${r.id}:pause`,
+          onSelect: () => void act(r, 'pause'),
+        }
+      : {
+          key: 'resume',
+          label: '恢复',
+          icon: 'mdi-play',
+          loading: busy.value === `${r.id}:resume`,
+          onSelect: () => void act(r, 'resume'),
+        },
+    {
+      key: 'run',
+      label: '立即执行一次',
+      icon: 'mdi-play-circle-outline',
+      loading: busy.value === `${r.id}:run-now`,
+      onSelect: () => void act(r, 'run-now'),
+    },
+    { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(r) },
+    {
+      key: 'runs',
+      label: open.value === r.id ? '收起记录' : '执行记录',
+      icon: 'mdi-history',
+      onSelect: () => void toggle(r.id),
+    },
+    {
+      key: 'delete',
+      label: '删除',
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => (confirmingDelete.value = r),
+    },
+  ]
+}
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const TRIGGERS = [
@@ -144,6 +203,11 @@ async function remove(r: Routine) {
 
 // ── 新建 / 编辑 ────────────────────────────────────────────────────────────
 const editing = ref<Routine | 'new' | null>(null)
+// 关上的那一下 editing 已经是 null，标题还要照着刚才那一条画完收起的动画。
+const editingTitle = ref('')
+watch(editing, (value) => {
+  if (value) editingTitle.value = value === 'new' ? '新建规则' : `修改「${value.title}」`
+})
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({
@@ -282,6 +346,19 @@ watch(
                   <div class="t-meta c-faint">{{ r.trigger_text }} · {{ roomTitle(r.topic_id) }}</div>
                 </div>
                 <v-chip size="small" color="warning" variant="tonal">{{ STATE_LABEL[r.state] }}</v-chip>
+                <AdaptiveMenu v-if="!mdAndUp" :actions="rowActions(r)" :title="r.title">
+                  <template #activator="{ props: menuProps }">
+                    <v-btn
+                      v-bind="menuProps"
+                      icon="mdi-dots-horizontal"
+                      size="small"
+                      variant="text"
+                      color="on-surface-variant"
+                      class="tap-target"
+                      aria-label="更多操作"
+                    />
+                  </template>
+                </AdaptiveMenu>
               </div>
               <dl class="routine-row__spec t-meta">
                 <dt>工作内容</dt>
@@ -303,10 +380,12 @@ watch(
                 >
                   确认启用
                 </v-btn>
-                <v-btn size="small" variant="text" @click="startEdit(r)">修改</v-btn>
-                <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = r">
-                  不要了
-                </v-btn>
+                <template v-if="mdAndUp">
+                  <v-btn size="small" variant="text" @click="startEdit(r)">修改</v-btn>
+                  <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = r">
+                    不要了
+                  </v-btn>
+                </template>
               </div>
             </li>
           </ul>
@@ -327,8 +406,21 @@ watch(
               <v-chip size="small" :color="r.state === 'active' ? 'success' : undefined" variant="tonal">
                 {{ STATE_LABEL[r.state] }}
               </v-chip>
+              <AdaptiveMenu v-if="!mdAndUp" :actions="rowActions(r)" :title="r.title">
+                <template #activator="{ props: menuProps }">
+                  <v-btn
+                    v-bind="menuProps"
+                    icon="mdi-dots-horizontal"
+                    size="small"
+                    variant="text"
+                    color="on-surface-variant"
+                    class="tap-target"
+                    aria-label="更多操作"
+                  />
+                </template>
+              </AdaptiveMenu>
             </div>
-            <div class="routine-row__actions">
+            <div v-if="mdAndUp" class="routine-row__actions">
               <v-btn
                 v-if="r.state === 'active'"
                 size="small"
@@ -391,103 +483,102 @@ watch(
       </template>
     </div>
 
-    <v-dialog :model-value="!!editing" max-width="560" @update:model-value="editing = null">
-      <v-card v-if="editing">
-        <v-card-title class="t-dialog-title">{{
-          editing === 'new' ? '新建规则' : `修改「${editing.title}」`
-        }}</v-card-title>
-        <v-card-text>
-          <v-select
-            v-if="editing === 'new'"
-            v-model="form.room"
-            autocomplete="off"
-            :items="rooms"
-            item-title="title"
-            item-value="id"
-            label="在哪个房间执行"
-            hint="执行者是这个房间里的 AI 队友，结果也放在这个房间"
-            persistent-hint
-            class="mb-3"
-          />
-          <v-text-field v-model="form.title" autocomplete="off" label="名称" placeholder="例如：每周项目进展" />
-          <v-textarea
-            v-model="form.instructions"
-            autocomplete="off"
-            label="要做的工作"
-            rows="3"
-            auto-grow
-            placeholder="例如：汇总本周各房间完成的任务、进行中的事和阻碍，写成一页周报"
-          />
-          <v-text-field
-            v-model="form.context_scope"
-            autocomplete="off"
-            label="使用哪些资料"
-            placeholder="例如：本项目所有房间的任务和决策；只用资料库里的文件"
-          />
-          <v-text-field
-            v-model="form.output_dir"
-            autocomplete="off"
-            label="结果放在房间的哪个目录"
-            placeholder="例如：周报"
-          />
-          <v-select v-model="form.trigger" autocomplete="off" :items="TRIGGERS" label="什么时候开工" />
-          <template v-if="form.trigger === 'schedule'">
-            <div class="routine-form__row">
-              <v-select v-model="form.freq" autocomplete="off" :items="FREQS" label="频率" />
-              <v-text-field
-                v-if="form.freq !== 'hourly'"
-                v-model="form.time"
-                autocomplete="off"
-                type="time"
-                label="时间"
-              />
-              <v-text-field
-                v-else
-                v-model.number="form.minute"
-                autocomplete="off"
-                type="number"
-                min="0"
-                max="59"
-                label="第几分钟"
-              />
-              <v-text-field
-                v-if="form.freq === 'monthly'"
-                v-model.number="form.day"
-                autocomplete="off"
-                type="number"
-                min="1"
-                max="31"
-                label="几号"
-              />
-            </div>
-            <v-chip-group v-if="form.freq === 'weekly'" v-model="form.weekdays" multiple column class="mb-2">
-              <v-chip v-for="(d, i) in WEEKDAYS" :key="d" :value="i" filter size="small">{{ d }}</v-chip>
-            </v-chip-group>
-            <v-text-field v-model="form.timezone" autocomplete="off" label="时区" />
-          </template>
-          <v-select
-            v-else-if="form.trigger !== 'library_file_added'"
-            v-model="form.scope"
-            autocomplete="off"
-            :items="[
-              { value: 'room', title: '只看这个房间' },
-              { value: 'project', title: '整个项目' },
-            ]"
-            label="范围"
-          />
-          <p class="t-meta c-faint">
-            AI 队友的工作电脑在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，
-            两小时内没开始会记为失败并通知你
-          </p>
-          <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="editing = null">取消</v-btn>
-          <v-btn variant="text" color="primary" :loading="saving" @click="save">保存</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
+    <AdaptiveDialog
+      :model-value="!!editing"
+      :title="editingTitle"
+      primary-label="保存"
+      :primary-loading="saving"
+      :max-width="560"
+      @update:model-value="editing = null"
+      @primary="save"
+    >
+      <template v-if="editing">
+        <v-select
+          v-if="editing === 'new'"
+          v-model="form.room"
+          autocomplete="off"
+          :items="rooms"
+          item-title="title"
+          item-value="id"
+          label="在哪个房间执行"
+          hint="执行者是这个房间里的 AI 队友，结果也放在这个房间"
+          persistent-hint
+          class="mb-3"
+        />
+        <v-text-field v-model="form.title" autocomplete="off" label="名称" placeholder="例如：每周项目进展" />
+        <v-textarea
+          v-model="form.instructions"
+          autocomplete="off"
+          label="要做的工作"
+          rows="3"
+          auto-grow
+          placeholder="例如：汇总本周各房间完成的任务、进行中的事和阻碍，写成一页周报"
+        />
+        <v-text-field
+          v-model="form.context_scope"
+          autocomplete="off"
+          label="使用哪些资料"
+          placeholder="例如：本项目所有房间的任务和决策；只用资料库里的文件"
+        />
+        <v-text-field
+          v-model="form.output_dir"
+          autocomplete="off"
+          label="结果放在房间的哪个目录"
+          placeholder="例如：周报"
+        />
+        <v-select v-model="form.trigger" autocomplete="off" :items="TRIGGERS" label="什么时候开工" />
+        <template v-if="form.trigger === 'schedule'">
+          <div class="routine-form__row">
+            <v-select v-model="form.freq" autocomplete="off" :items="FREQS" label="频率" />
+            <v-text-field
+              v-if="form.freq !== 'hourly'"
+              v-model="form.time"
+              autocomplete="off"
+              type="time"
+              label="时间"
+            />
+            <v-text-field
+              v-else
+              v-model.number="form.minute"
+              autocomplete="off"
+              type="number"
+              min="0"
+              max="59"
+              label="第几分钟"
+            />
+            <v-text-field
+              v-if="form.freq === 'monthly'"
+              v-model.number="form.day"
+              autocomplete="off"
+              type="number"
+              min="1"
+              max="31"
+              label="几号"
+            />
+          </div>
+          <v-chip-group v-if="form.freq === 'weekly'" v-model="form.weekdays" multiple column class="mb-2">
+            <v-chip v-for="(d, i) in WEEKDAYS" :key="d" :value="i" filter size="small">{{ d }}</v-chip>
+          </v-chip-group>
+          <v-text-field v-model="form.timezone" autocomplete="off" label="时区" />
+        </template>
+        <v-select
+          v-else-if="form.trigger !== 'library_file_added'"
+          v-model="form.scope"
+          autocomplete="off"
+          :items="[
+            { value: 'room', title: '只看这个房间' },
+            { value: 'project', title: '整个项目' },
+          ]"
+          label="范围"
+        />
+        <p class="t-meta c-faint">
+          AI 队友的工作电脑在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，
+          两小时内没开始会记为失败并通知你
+        </p>
+        <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
+      </template>
+    </AdaptiveDialog>
 
     <v-dialog :model-value="!!confirmingDelete" max-width="420" @update:model-value="confirmingDelete = null">
       <v-card v-if="confirmingDelete">
@@ -579,5 +670,13 @@ watch(
 .routine-form__row {
   display: flex;
   gap: 8px;
+}
+/* 手机上三格并排每格只剩一百来像素，「频率」的下拉和时间都挤不下：竖着排。字段之间的
+   空隙由每一格底下的 details 行给。 */
+@media (max-width: 959.98px) {
+  .routine-form__row {
+    flex-direction: column;
+    gap: 0;
+  }
 }
 </style>

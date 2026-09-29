@@ -20,6 +20,7 @@
 // 换一颗「转让项目」（他一走项目就没人管，得先把手交出去）。团队成员退的也是**这个
 // 项目**：他还在小队里，小队别的项目照常，回来要人再请一次。
 import type { LookedUpUser } from '@/api'
+import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -40,6 +41,8 @@ import {
   revokeInvitation,
 } from '@/api'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import PageAction from '@/components/common/PageAction.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -190,6 +193,17 @@ function messageOf(e: unknown, fallback: string): string {
 
 // ---- 移出外部成员 ----
 const removeTarget = ref<ProjectMemberRow | null>(null)
+function memberActions(m: ProjectMemberRow): MenuAction[] {
+  return [
+    {
+      key: 'remove',
+      label: t('work.members.remove'),
+      icon: 'mdi-account-remove-outline',
+      danger: true,
+      onSelect: () => (removeTarget.value = m),
+    },
+  ]
+}
 async function confirmRemove() {
   const m = removeTarget.value
   if (!m) return
@@ -386,7 +400,8 @@ async function submitInvite() {
                 {{ countLabel(unreadWith(m.user_handle)) }}
               </span>
             </span>
-            <v-menu v-if="removable(m)" location="bottom end">
+            <!-- 桌面是下拉菜单，手机是底部面板（AdaptiveMenu）。 -->
+            <AdaptiveMenu v-if="removable(m)" :actions="memberActions(m)" :title="m.name || m.user_handle">
               <template #activator="{ props: menuProps }">
                 <v-btn
                   v-bind="menuProps"
@@ -394,17 +409,13 @@ async function submitInvite() {
                   color="on-surface-variant"
                   size="small"
                   icon="mdi-dots-horizontal"
+                  class="tap-target"
                   :aria-label="t('work.members.manage')"
                   :loading="busyHandle === m.user_handle"
                   @click.stop
                 />
               </template>
-              <v-list density="compact" nav>
-                <v-list-item @click="removeTarget = m">
-                  <v-list-item-title class="t-body c-danger">{{ t('work.members.remove') }}</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu>
+            </AdaptiveMenu>
           </div>
         </v-card>
       </div>
@@ -486,54 +497,47 @@ async function submitInvite() {
       </div>
     </div>
 
-    <v-dialog v-model="inviteOpen" max-width="440" @update:model-value="(v) => !v && resetInvite()">
-      <v-card>
-        <v-card-title class="t-dialog-title pt-4">{{ t('work.members.inviteTitle') }}</v-card-title>
-        <v-card-text>
-          <p class="t-body c-muted mb-5">{{ t('work.members.inviteHint') }}</p>
-          <v-text-field
-            v-model="inviteQuery"
-            autocomplete="off"
-            :label="t('work.members.inviteLabel')"
-            :placeholder="t('work.members.invitePlaceholder')"
-            density="comfortable"
-            variant="outlined"
-            autofocus
-            :loading="lookingUp"
-            :error-messages="lookupError ? [lookupError] : []"
-            class="mb-2"
-            @keyup.enter="submitInvite"
-          />
-          <div v-if="found" class="found-user mb-2" data-testid="found-user">
-            <UserAvatar
-              :name="found.name || found.handle"
-              :avatar="found.avatar_id == null ? '' : getAvatarUrl(found.avatar_id)"
-              :size="32"
-              class="mr-3"
-            />
-            <div class="min-w-0">
-              <div class="t-body found-user__name">{{ found.name || found.handle }}</div>
-              <div class="t-meta c-muted">@{{ found.handle }}</div>
-            </div>
-            <v-spacer />
-            <span v-if="alreadyIn" class="t-meta c-muted">{{ t('work.members.alreadyIn') }}</span>
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="resetInvite">{{ t('work.members.cancel') }}</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="inviting"
-            :disabled="!found || alreadyIn"
-            @click="submitInvite"
-          >
-            {{ t('work.members.send') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 邀请要打字：手机上是整页，发送在页头右边，键盘弹起来也够得着。 -->
+    <AdaptiveDialog
+      v-model="inviteOpen"
+      :title="t('work.members.inviteTitle')"
+      :primary-label="t('work.members.send')"
+      :primary-loading="inviting"
+      :primary-disabled="!found || alreadyIn"
+      :cancel-label="t('work.members.cancel')"
+      :max-width="440"
+      @update:model-value="(v: boolean) => !v && resetInvite()"
+      @primary="submitInvite"
+    >
+      <p class="t-body c-muted mb-5">{{ t('work.members.inviteHint') }}</p>
+      <v-text-field
+        v-model="inviteQuery"
+        autocomplete="off"
+        :label="t('work.members.inviteLabel')"
+        :placeholder="t('work.members.invitePlaceholder')"
+        density="comfortable"
+        variant="outlined"
+        autofocus
+        :loading="lookingUp"
+        :error-messages="lookupError ? [lookupError] : []"
+        class="mb-2"
+        @keyup.enter="submitInvite"
+      />
+      <div v-if="found" class="found-user mb-2" data-testid="found-user">
+        <UserAvatar
+          :name="found.name || found.handle"
+          :avatar="found.avatar_id == null ? '' : getAvatarUrl(found.avatar_id)"
+          :size="32"
+          class="mr-3"
+        />
+        <div class="min-w-0">
+          <div class="t-body found-user__name">{{ found.name || found.handle }}</div>
+          <div class="t-meta c-muted">@{{ found.handle }}</div>
+        </div>
+        <v-spacer />
+        <span v-if="alreadyIn" class="t-meta c-muted">{{ t('work.members.alreadyIn') }}</span>
+      </div>
+    </AdaptiveDialog>
 
     <LeaveProjectDialog v-model="leaveOpen" :project-id="props.projectId" />
     <TransferProjectDialog v-model="transferOpen" :project-id="props.projectId" />

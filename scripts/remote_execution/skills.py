@@ -18,7 +18,8 @@ the session happens to print: a room's session names a skill's directory in
 its own config dir, which its file tools and commands carry to the project's
 `.claude/skills` (`docs/remote-execution.md`). The room must observe what the
 reference observes. A difference is a bug in how a room carries skills, unless
-the observation is in EXPECTED with the reason the room differs.
+the observation is in EXPECTED with the reason the room differs, or in TIMING,
+where the room's answer depends on when the session happens to look.
 
 Needs Linux: the session's namespace, and FUSE for the view.
 
@@ -56,13 +57,17 @@ NOTICE_TURNS = 6
 NOTICE_PAUSE_S = 2.0
 
 # Observations where the room knowingly differs, and why.
+EXPECTED: dict[str, str] = {}
+# Observations where the room may or may not match, and why: neither answer is
+# a failure, and a match is not a sign the difference is gone.
 LINKED_ON_RETURN = (
     "plain Claude Code finds these in its own file tool, before the tool's "
     "result goes back; a room's file tools run on the executor, and the room "
-    "links what they reached when they return, which the session notices "
-    "within seconds or before the next turn (`release.touch_skills`)"
+    "links what they reached when they return, which the session's skill "
+    "watcher (polling every 2 s) notices before the next request or after it "
+    "(`release.touch_skills`); the next turn's catch-up offers them in any case"
 )
-EXPECTED: dict[str, str] = {
+TIMING: dict[str, str] = {
     "nested skill offered in the turn that read its directory": LINKED_ON_RETURN,
     "path-scoped skill offered in the turn that wrote a matching file": (
         LINKED_ON_RETURN
@@ -591,7 +596,8 @@ def main():
                     "reference": left,
                     "room": right,
                     "equal": left == right,
-                    "expected difference": EXPECTED.get(name),
+                    "expected difference": EXPECTED.get(name) or TIMING.get(name),
+                    "timing": name in TIMING,
                 }
             )
         rows.sort(key=lambda row: list(reference).index(row["observation"])
@@ -610,12 +616,14 @@ def main():
         stale = [
             row["observation"]
             for row in rows
-            if row["equal"] and row["expected difference"]
+            if row["equal"] and row["expected difference"] and not row["timing"]
         ]
         for row in rows:
             verdict = (
                 "PASS"
                 if row["equal"]
+                else "TIMING"
+                if row["timing"]
                 else "KNOWN"
                 if row["expected difference"]
                 else "FAIL"

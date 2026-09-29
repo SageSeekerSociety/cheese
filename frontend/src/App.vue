@@ -68,137 +68,131 @@
     <!-- 敏感操作前确认身份；withSudo 打开它 -->
     <SudoDialog v-if="sudoWanted" />
 
-    <!-- 新建项目 dialog (opened by the rail's "+" affordance) -->
-    <v-dialog v-model="newProjectDialog" max-width="420" persistent>
-      <v-card rounded="lg" class="pa-2">
-        <v-card-title class="t-dialog-title pb-1">{{
-          newProjectStep === 1 ? t('work.newProject.title') : t('work.teammate.title')
-        }}</v-card-title>
-        <v-card-text v-show="newProjectStep === 1" class="pb-2">
-          <p v-if="sourceTask" class="t-body c-muted mb-3">
-            {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
-          </p>
-          <ResourceLimitsNotice v-if="newProjectDialog" />
-          <v-text-field
-            v-model="newProjectName"
-            autocomplete="off"
-            :label="t('work.newProject.name')"
-            variant="outlined"
-            color="primary"
-            autofocus
-            hide-details
-            :disabled="creatingProject"
-            @keyup.enter="advanceNewProject"
-          />
-          <!-- 可选：答案会跟着项目进房间（见 ProjectService.create）。不填也能建，
-               所以这不是必填项，标签里就写着「可选」。 -->
-          <v-textarea
-            v-model="newProjectIntent"
-            autocomplete="off"
-            :label="t('work.newProject.intent')"
-            :placeholder="t('work.newProject.intentExample')"
-            variant="outlined"
-            color="primary"
-            rows="2"
-            auto-grow
-            hide-details
-            class="mt-3"
-            :disabled="creatingProject"
-          />
-          <v-select
-            v-model="newProjectTeamId"
-            autocomplete="off"
-            :items="newProjectTeams"
-            :item-title="teamLabel"
-            item-value="id"
-            :label="t('work.newProject.team')"
-            variant="outlined"
-            color="primary"
-            class="mt-3"
-            hide-details
-            :loading="loadingTeams"
-            :disabled="creatingProject || loadingTeams"
-          />
-          <v-select
-            v-model="newProjectForgeKind"
-            autocomplete="off"
-            :items="[
-              { title: t('work.newProject.forgeHosted'), value: 'forgejo' },
-              { title: t('work.newProject.forgeGithub'), value: 'github_app' },
-            ]"
-            :label="t('work.newProject.forge')"
-            variant="outlined"
-            color="primary"
-            class="mt-3"
-            hide-details
-            :disabled="creatingProject"
-          />
-          <div class="t-meta-read mt-2">
-            {{
-              newProjectForgeKind === 'forgejo' ? t('work.newProject.forgeHint') : t('work.newProject.forgeGithubHint')
-            }}
-          </div>
-          <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
-            {{ teamLoadError }}
-            <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">{{
-              t('work.newProject.retry')
-            }}</v-btn>
-          </v-alert>
-        </v-card-text>
-        <v-card-text v-if="newProjectStep === 2" class="pt-3 pb-2">
-          <p class="t-body mb-4">{{ t('work.teammate.intro', { project: newProjectName.trim() }) }}</p>
-          <v-text-field
-            v-model="newProjectAgentName"
-            :label="t('work.teammate.name')"
-            variant="outlined"
-            autocomplete="off"
-            maxlength="64"
-            :disabled="creatingProject"
-            @keyup.enter="confirmNewProject"
-          >
-            <template #append-inner>
-              <v-btn
-                variant="text"
-                icon="mdi-dice-multiple-outline"
-                size="small"
-                :aria-label="t('work.teammate.random')"
-                :title="t('work.teammate.random')"
-                :disabled="creatingProject"
-                @click="newProjectAgentName = randomTeammateName(newProjectAgentName)"
-              />
-            </template>
-          </v-text-field>
-          <p class="t-meta-read">{{ t('work.teammate.more') }}</p>
-        </v-card-text>
-        <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mx-4 my-3">
-          {{ newProjectError }}
+    <!-- 新建项目 (opened by the rail's "+" affordance)。要填好几项，手机上是整页：
+         下一步 / 创建在页头右边，键盘弹起来也够得着。 -->
+    <AdaptiveDialog
+      v-model="newProjectDialog"
+      :title="newProjectStep === 1 ? t('work.newProject.title') : t('work.teammate.title')"
+      :primary-label="newProjectStep === 1 ? t('work.teammate.next') : t('work.teammate.create')"
+      :primary-loading="creatingProject"
+      :primary-disabled="
+        !newProjectName.trim() ||
+        loadingTeams ||
+        newProjectTeamId === null ||
+        !!teamLoadError ||
+        (newProjectStep === 2 && !newProjectAgentName.trim())
+      "
+      :cancel-label="t('work.newProject.cancel')"
+      :close-disabled="creatingProject"
+      :max-width="420"
+      persistent
+      @primary="newProjectStep === 1 ? advanceNewProject() : confirmNewProject()"
+    >
+      <div v-show="newProjectStep === 1">
+        <p v-if="sourceTask" class="t-body c-muted mb-3">
+          {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
+        </p>
+        <ResourceLimitsNotice v-if="newProjectDialog" />
+        <v-text-field
+          v-model="newProjectName"
+          autocomplete="off"
+          :label="t('work.newProject.name')"
+          variant="outlined"
+          color="primary"
+          autofocus
+          hide-details
+          :disabled="creatingProject"
+          @keyup.enter="advanceNewProject"
+        />
+        <!-- 可选：答案会跟着项目进房间（见 ProjectService.create）。不填也能建，
+             所以这不是必填项，标签里就写着「可选」。 -->
+        <v-textarea
+          v-model="newProjectIntent"
+          autocomplete="off"
+          :label="t('work.newProject.intent')"
+          :placeholder="t('work.newProject.intentExample')"
+          variant="outlined"
+          color="primary"
+          rows="2"
+          auto-grow
+          hide-details
+          class="mt-3"
+          :disabled="creatingProject"
+        />
+        <v-select
+          v-model="newProjectTeamId"
+          autocomplete="off"
+          :items="newProjectTeams"
+          :item-title="teamLabel"
+          item-value="id"
+          :label="t('work.newProject.team')"
+          variant="outlined"
+          color="primary"
+          class="mt-3"
+          hide-details
+          :loading="loadingTeams"
+          :disabled="creatingProject || loadingTeams"
+        />
+        <v-select
+          v-model="newProjectForgeKind"
+          autocomplete="off"
+          :items="[
+            { title: t('work.newProject.forgeHosted'), value: 'forgejo' },
+            { title: t('work.newProject.forgeGithub'), value: 'github_app' },
+          ]"
+          :label="t('work.newProject.forge')"
+          variant="outlined"
+          color="primary"
+          class="mt-3"
+          hide-details
+          :disabled="creatingProject"
+        />
+        <div class="t-meta-read mt-2">
+          {{
+            newProjectForgeKind === 'forgejo' ? t('work.newProject.forgeHint') : t('work.newProject.forgeGithubHint')
+          }}
+        </div>
+        <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
+          {{ teamLoadError }}
+          <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">{{
+            t('work.newProject.retry')
+          }}</v-btn>
         </v-alert>
-        <v-card-actions class="px-4 pb-3">
-          <v-spacer />
-          <v-btn variant="text" :disabled="creatingProject" @click="newProjectDialog = false">{{
-            t('work.newProject.cancel')
-          }}</v-btn>
-          <v-btn v-if="newProjectStep === 2" variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
-            t('work.teammate.back')
-          }}</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="creatingProject"
-            :disabled="
-              !newProjectName.trim() ||
-              loadingTeams ||
-              newProjectTeamId === null ||
-              !!teamLoadError ||
-              (newProjectStep === 2 && !newProjectAgentName.trim())
-            "
-            @click="newProjectStep === 1 ? advanceNewProject() : confirmNewProject()"
-          >
-            {{ newProjectStep === 1 ? t('work.teammate.next') : t('work.teammate.create') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+      </div>
+      <div v-if="newProjectStep === 2">
+        <p class="t-body mb-4">{{ t('work.teammate.intro', { project: newProjectName.trim() }) }}</p>
+        <v-text-field
+          v-model="newProjectAgentName"
+          :label="t('work.teammate.name')"
+          variant="outlined"
+          autocomplete="off"
+          maxlength="64"
+          :disabled="creatingProject"
+          @keyup.enter="confirmNewProject"
+        >
+          <template #append-inner>
+            <v-btn
+              variant="text"
+              icon="mdi-dice-multiple-outline"
+              size="small"
+              :aria-label="t('work.teammate.random')"
+              :title="t('work.teammate.random')"
+              :disabled="creatingProject"
+              @click="newProjectAgentName = randomTeammateName(newProjectAgentName)"
+            />
+          </template>
+        </v-text-field>
+        <p class="t-meta-read">{{ t('work.teammate.more') }}</p>
+      </div>
+      <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mt-3">
+        {{ newProjectError }}
+      </v-alert>
+      <template v-if="newProjectStep === 2" #actions>
+        <v-btn variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
+          t('work.teammate.back')
+        }}</v-btn>
+      </template>
+    </AdaptiveDialog>
 
     <v-snackbar v-model="showProjectListWarning" color="warning" :timeout="8000">
       {{ projectListWarning }}
@@ -246,6 +240,7 @@ import { DEFAULT_SHELL, shellFor } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'

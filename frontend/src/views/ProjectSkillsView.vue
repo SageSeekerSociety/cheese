@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // 工作方法：这个项目存下来的做法。确认过的那一版会带进之后每个房间的 AI 队友，所以
 // 芝士整理出来、或者改过的，都要人在这里读一遍、点确认才算数。
+import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectSkill, ProjectSkillContent, ProjectSkillRevision } from '../api'
 import type { Topic } from '../cx_types'
 
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import {
   confirmProjectSkill,
@@ -18,6 +20,8 @@ import {
   updateProjectSkill,
 } from '../api'
 
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import PageAction from '@/components/common/PageAction.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
@@ -36,6 +40,47 @@ const busy = ref('')
 const history = ref<{ skill: ProjectSkill; revisions: ProjectSkillRevision[] } | null>(null)
 const viewing = ref<ProjectSkillRevision | null>(null)
 const confirmingDelete = ref<ProjectSkill | null>(null)
+
+// 手机上一行的操作收进行首的 ⋯（底部面板）。等你确认的那一条，「确认保存」仍然摆在
+// 行里——那是这一行唯一要紧的事。
+const { mdAndUp } = useDisplay()
+function draftActions(s: ProjectSkill): MenuAction[] {
+  const edit: MenuAction = { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(s) }
+  if (s.shipped_revision)
+    return [
+      edit,
+      {
+        key: 'discard',
+        label: '放弃改动',
+        icon: 'mdi-undo',
+        loading: busy.value === `${s.id}:discard`,
+        onSelect: () => void discard(s),
+      },
+    ]
+  return [
+    edit,
+    {
+      key: 'drop',
+      label: '不要了',
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => (confirmingDelete.value = s),
+    },
+  ]
+}
+function activeActions(s: ProjectSkill): MenuAction[] {
+  return [
+    { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(s) },
+    { key: 'history', label: '历史版本', icon: 'mdi-history', onSelect: () => void openHistory(s) },
+    {
+      key: 'delete',
+      label: '删除',
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => (confirmingDelete.value = s),
+    },
+  ]
+}
 
 const drafts = computed(() => skills.value.filter((s) => s.state === 'draft'))
 const active = computed(() => skills.value.filter((s) => s.state === 'active'))
@@ -136,6 +181,11 @@ async function remove(s: ProjectSkill) {
 
 // ── 新建 / 编辑 ────────────────────────────────────────────────────────────
 const editing = ref<ProjectSkill | 'new' | null>(null)
+// 关上的那一下 editing 已经是 null，标题还要照着刚才那一条画完收起的动画。
+const editingTitle = ref('')
+watch(editing, (value) => {
+  if (value) editingTitle.value = value === 'new' ? '新建工作方法' : `修改「${value.title}」`
+})
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({
@@ -253,6 +303,19 @@ watch(
                   </div>
                 </div>
                 <v-chip size="small" color="warning" variant="tonal">待确认</v-chip>
+                <AdaptiveMenu v-if="!mdAndUp" :actions="draftActions(s)" :title="s.title">
+                  <template #activator="{ props: menuProps }">
+                    <v-btn
+                      v-bind="menuProps"
+                      icon="mdi-dots-horizontal"
+                      size="small"
+                      variant="text"
+                      color="on-surface-variant"
+                      class="tap-target"
+                      aria-label="更多操作"
+                    />
+                  </template>
+                </AdaptiveMenu>
               </div>
               <dl class="skill-row__spec t-meta">
                 <dt>用途</dt>
@@ -278,9 +341,9 @@ watch(
                 >
                   确认保存
                 </v-btn>
-                <v-btn size="small" variant="text" @click="startEdit(s)">修改</v-btn>
+                <v-btn v-if="mdAndUp" size="small" variant="text" @click="startEdit(s)">修改</v-btn>
                 <v-btn
-                  v-if="s.shipped_revision"
+                  v-if="mdAndUp && s.shipped_revision"
                   size="small"
                   variant="text"
                   color="on-surface-variant"
@@ -290,7 +353,7 @@ watch(
                   放弃改动
                 </v-btn>
                 <v-btn
-                  v-if="!s.shipped_revision"
+                  v-if="mdAndUp && !s.shipped_revision"
                   size="small"
                   variant="text"
                   color="on-surface-variant"
@@ -314,8 +377,21 @@ watch(
                 </div>
                 <div class="t-meta c-muted mt-1">{{ s.description }}</div>
               </div>
+              <AdaptiveMenu v-if="!mdAndUp" :actions="activeActions(s)" :title="s.title">
+                <template #activator="{ props: menuProps }">
+                  <v-btn
+                    v-bind="menuProps"
+                    icon="mdi-dots-horizontal"
+                    size="small"
+                    variant="text"
+                    color="on-surface-variant"
+                    class="tap-target"
+                    aria-label="更多操作"
+                  />
+                </template>
+              </AdaptiveMenu>
             </div>
-            <div class="skill-row__actions">
+            <div v-if="mdAndUp" class="skill-row__actions">
               <v-btn size="small" variant="text" @click="startEdit(s)">修改</v-btn>
               <v-btn size="small" variant="text" @click="openHistory(s)">历史版本</v-btn>
               <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = s">删除</v-btn>
@@ -330,56 +406,48 @@ watch(
       </template>
     </div>
 
-    <v-dialog :model-value="!!editing" max-width="640" @update:model-value="editing = null">
-      <v-card v-if="editing">
-        <v-card-title class="t-dialog-title">
-          {{ editing === 'new' ? '新建工作方法' : `修改「${editing.title}」` }}
-        </v-card-title>
-        <v-card-text>
-          <template v-if="editing === 'new'">
-            <v-select
-              v-model="form.room"
-              autocomplete="off"
-              :items="rooms"
-              item-title="title"
-              item-value="id"
-              label="记在哪个房间名下"
-            />
-            <v-text-field
-              v-model="form.name"
-              autocomplete="off"
-              label="英文名（小写、连字符）"
-              placeholder="例如 weekly-report"
-            />
-          </template>
-          <v-text-field v-model="form.title" autocomplete="off" label="名称" placeholder="例如：项目周报" />
-          <v-textarea v-model="form.description" autocomplete="off" label="用途：什么时候用它" rows="2" auto-grow />
-          <v-textarea v-model="form.inputs" autocomplete="off" label="需要的输入" rows="2" auto-grow />
-          <v-textarea v-model="form.steps" autocomplete="off" label="步骤与规则" rows="5" auto-grow />
-          <v-textarea v-model="form.outputs" autocomplete="off" label="输出要求" rows="2" auto-grow />
-          <div class="t-meta c-muted mb-2">配套文件（脚本、模板说明等文本文件）</div>
-          <div v-for="(f, i) in form.files" :key="i" class="skill-file">
-            <v-text-field v-model="f.path" autocomplete="off" label="路径" placeholder="scripts/check.py" />
-            <v-textarea
-              v-model="f.content"
-              autocomplete="off"
-              label="内容"
-              rows="3"
-              auto-grow
-              class="skill-file__body"
-            />
-            <v-btn size="small" variant="text" color="on-surface-variant" @click="form.files.splice(i, 1)">移除</v-btn>
-          </div>
-          <v-btn size="small" variant="text" @click="form.files.push({ path: '', content: '' })">添加文件</v-btn>
-          <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="editing = null">取消</v-btn>
-          <v-btn variant="text" color="primary" :loading="saving" @click="save">保存</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
+    <AdaptiveDialog
+      :model-value="!!editing"
+      :title="editingTitle"
+      primary-label="保存"
+      :primary-loading="saving"
+      :max-width="640"
+      @update:model-value="editing = null"
+      @primary="save"
+    >
+      <template v-if="editing">
+        <template v-if="editing === 'new'">
+          <v-select
+            v-model="form.room"
+            autocomplete="off"
+            :items="rooms"
+            item-title="title"
+            item-value="id"
+            label="记在哪个房间名下"
+          />
+          <v-text-field
+            v-model="form.name"
+            autocomplete="off"
+            label="英文名（小写、连字符）"
+            placeholder="例如 weekly-report"
+          />
+        </template>
+        <v-text-field v-model="form.title" autocomplete="off" label="名称" placeholder="例如：项目周报" />
+        <v-textarea v-model="form.description" autocomplete="off" label="用途：什么时候用它" rows="2" auto-grow />
+        <v-textarea v-model="form.inputs" autocomplete="off" label="需要的输入" rows="2" auto-grow />
+        <v-textarea v-model="form.steps" autocomplete="off" label="步骤与规则" rows="5" auto-grow />
+        <v-textarea v-model="form.outputs" autocomplete="off" label="输出要求" rows="2" auto-grow />
+        <div class="t-meta c-muted mb-2">配套文件（脚本、模板说明等文本文件）</div>
+        <div v-for="(f, i) in form.files" :key="i" class="skill-file">
+          <v-text-field v-model="f.path" autocomplete="off" label="路径" placeholder="scripts/check.py" />
+          <v-textarea v-model="f.content" autocomplete="off" label="内容" rows="3" auto-grow class="skill-file__body" />
+          <v-btn size="small" variant="text" color="on-surface-variant" @click="form.files.splice(i, 1)">移除</v-btn>
+        </div>
+        <v-btn size="small" variant="text" @click="form.files.push({ path: '', content: '' })">添加文件</v-btn>
+        <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
+      </template>
+    </AdaptiveDialog>
 
     <v-dialog :model-value="!!history" max-width="640" @update:model-value="history = null">
       <v-card v-if="history">
