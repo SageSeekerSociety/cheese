@@ -203,9 +203,8 @@ PRs opened before the gate was installed need a new pull-request event to report
 ### Backend test execution
 
 The fixture-derived layers remain `pure`, `contract` and `integration`.
-`test.yml` runs pure and contract on separate hosted runners, integration on four
-deterministic hash partitions, and real Meilisearch integration tests on one
-serial runner with a dedicated service. Each runner uses its own PostgreSQL and
+`test.yml` runs pure and contract on separate hosted runners and integration on
+four deterministic hash partitions. Each runner uses its own PostgreSQL and
 Valkey containers.
 
 The required gate compares executed JUnit node IDs with an independently
@@ -219,7 +218,7 @@ tools as `test.yml`. Use a fresh output directory for each run:
 
 ```bash
 uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
-  -k 'not kotlin and not meilisearch_integration' -n 4 \
+  -k 'not kotlin' -n 4 \
   -p scripts.ci_shard --ci-shard 0/4 \
   --ci-selection-output=../tmp/ci-selection \
   --junitxml=../tmp/ci-selection/results.xml
