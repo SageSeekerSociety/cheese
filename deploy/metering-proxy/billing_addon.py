@@ -125,13 +125,15 @@ CHATGPT_ACCOUNTS = ChatGPTAccounts(
     Path(os.environ.get("CHEESE_CHATGPT_CREDENTIALS", "/etc/cheese/chatgpt-credential"))
 )
 # What a caller of the ChatGPT listener must present as its Bearer: the api_key
-# of the gateway's deployments that point here. The listener sits on the docker
-# bridge, which every sandbox on the box can reach too, and a request that gets
-# through spends a subscription. Unset refuses every request.
+# of the gateway's deployments that point here. The listener is on a private
+# network shared only with the gateway; the key is the second line of defence,
+# since a request that gets through spends a subscription. Unset refuses every
+# request.
 CHATGPT_KEY = os.environ.get("CHEESE_CHATGPT_KEY", "")
-# ChatGPT gates which models an account may use on this client version; the
-# default is the backend's codex_client_version.
-CODEX_CLIENT_VERSION = os.environ.get("CHEESE_CODEX_CLIENT_VERSION") or "0.153.4"
+# ChatGPT gates which models an account may use on this client version: 0.153.4
+# is not offered gpt-6-sol or gpt-6-luna, 0.158.0 is. Raise it with the Codex
+# release whose models the platform should see.
+CODEX_CLIENT_VERSION = os.environ.get("CHEESE_CODEX_CLIENT_VERSION") or "0.158.0"
 
 if not ADMISSION_URL:
     # Said once, loudly, at load: an unset env var produces no error anywhere
