@@ -2048,7 +2048,8 @@ async def publish_chat_message(
     )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
-    await _summon_the_named(chat, runner, place, payload, actor.handle)
+    if payload is not None:
+        await _summon_the_named(chat, runner, place, payload, actor.handle)
     return ok(payload)
 
 
