@@ -119,7 +119,7 @@
     "rejected": "Rejected"
   },
   "eligibility": {
-    "TASK_NOT_APPROVED": "This task is still under review and can be claimed once approved",
+    "TASK_NOT_APPROVED": "This task has not been approved yet; it can be claimed once approved",
     "REGISTRATION_NOT_STARTED": "Registration has not opened yet",
     "REGISTRATION_CLOSED": "Registration has closed",
     "PARTICIPANT_LIMIT_REACHED": "This task has no places left",

@@ -137,7 +137,7 @@
     "joined": "已报名"
   },
   "eligibility": {
-    "TASK_NOT_APPROVED": "这道题还在审核中，通过后才能领取",
+    "TASK_NOT_APPROVED": "这道题还没有通过审核，通过后才能领取",
     "REGISTRATION_NOT_STARTED": "还没到报名时间",
     "REGISTRATION_CLOSED": "报名已截止",
     "PARTICIPANT_LIMIT_REACHED": "这道题的名额已满",
