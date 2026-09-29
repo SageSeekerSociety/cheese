@@ -80,15 +80,19 @@ SeatActivity = Callable[[uuid.UUID, Seat, uuid.UUID, bool], Awaitable[None]]
 RETENTION_S = 24 * 3600
 RETENTION_EVERY_S = 3600
 
-#: How old an unlanded record may be and still reach the room, by the clock of
-#: the machine that recorded it. A record gets this old only while nothing read
-#: the journal: the backend was gone, the machine was, or every drain stopped at
-#: a record it could not take. By then the room has gone on without it — the
-#: turn was ended for it, its prompt re-sent or the person told — so landing it
-#: would answer, hours late, what has been answered since, and open the books
-#: again for turns the session started by itself. Two hours is the orphan
-#: sweep's own line between a deploy and an outage (``ORPHAN_STALE_S``): past
-#: it, the platform stops acting for the person on its own.
+#: How old an unlanded record may be and still reach the room. A record gets
+#: this old only while nothing read the journal: the backend was gone, the
+#: machine was, or every drain stopped at a record it could not take. By then
+#: the room has gone on without it — the turn was ended for it, its prompt
+#: re-sent or the person told — so landing it would answer, hours late, what has
+#: been answered since, and open the books again for turns the session started
+#: by itself. Two hours is the orphan sweep's own line between a deploy and an
+#: outage (``ORPHAN_STALE_S``): past it, the platform stops acting for the
+#: person on its own.
+#:
+#: Age is by the time the journal gives a record: when the session machine
+#: recorded it for Claude Code and Codex, when the backend mirrored it for pi.
+#: So for pi, output mirrored late after the backend itself was away is fresh.
 STALE_S = 2 * 3600
 
 logger = logging.getLogger(__name__)
