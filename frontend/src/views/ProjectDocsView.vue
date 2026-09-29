@@ -12,10 +12,10 @@ import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
-import PageAction from '@/components/common/PageAction.vue'
+import { useCommands } from '@/commands'
+import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { markdown, sanitizeRendered } from '@/lib/markdown'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 // 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集 / 记忆 — one address each
 // (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
@@ -170,35 +170,37 @@ function topicTo(topicId: string | null | undefined) {
   if (!topicId) return { name: 'workspace-project', params: { projectId: props.projectId } }
   return { name: 'workspace-topic', params: { projectId: props.projectId, topicId } }
 }
+// 章程的修改记录在项目房间里；周报是芝士在项目房间里写的，页头带人过去。
+useCommands(() => {
+  const room = rootTopicId.value
+  if (!room) return []
+  if (kind.value === 'charter')
+    return [
+      { id: 'docs.history', title: '修改记录', icon: 'mdi-history', header: { primary: true }, to: topicTo(room) },
+    ]
+  if (kind.value === 'weeklies' && weeklies.value.length > 0)
+    return [
+      {
+        id: 'docs.askInRoom',
+        title: '去项目房间请它写',
+        icon: 'mdi-message-arrow-right-outline',
+        header: { primary: true },
+        to: topicTo(room),
+      },
+    ]
+  return []
+})
 </script>
 
 <template>
-  <ProjectPage class="docs-page" :title="t('navigation.project.docs')">
-    <!-- 没有状态时不给这一格：手机上页头只为状态画（ProjectPage），空着也画会留一条白带。 -->
+  <AppPage class="docs-page" :title="t('navigation.project.docs')">
+    <!-- 没有状态时不给这一格：手机上页头只为状态画（AppPage），空着也画会留一条白带。 -->
     <template v-if="kind === 'charter' && (saving || savedAt || charterDirty)" #meta>
       <span v-if="saving">保存中…</span>
       <span v-else-if="savedAt" class="d-inline-flex align-center ga-1">
         <span class="status-dot status-dot--ok" />已保存
       </span>
       <span v-else-if="charterDirty">未保存</span>
-    </template>
-    <template v-if="rootTopicId && (kind === 'charter' || (kind === 'weeklies' && weeklies.length > 0))" #actions>
-      <PageAction
-        v-if="kind === 'charter'"
-        label="修改记录"
-        icon="mdi-history"
-        primary
-        :to="topicTo(rootTopicId)"
-        prepend-icon="mdi-history"
-      />
-      <PageAction
-        v-else
-        label="去项目房间请它写"
-        icon="mdi-message-arrow-right-outline"
-        primary
-        :to="topicTo(rootTopicId)"
-        append-icon="mdi-arrow-right"
-      />
     </template>
     <div class="mb-6">
       <v-tabs
@@ -355,7 +357,7 @@ function topicTo(topicId: string | null | undefined) {
         </div>
       </template>
     </template>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>

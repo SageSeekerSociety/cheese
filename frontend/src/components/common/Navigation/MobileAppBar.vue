@@ -24,8 +24,8 @@
       <!-- 渲染动态 actions 组件 -->
       <component :is="actionsComponent" v-if="actionsComponent" />
 
-      <!-- 这一页的操作（页面里的 PageAction 交上来的）：主操作一颗图标，其余进 ⋯。
-           手机上页面不再为几颗按钮单占一行。 -->
+      <!-- 这一页页头上的命令（页面用 useCommands 登记的）：标了 primary 的一颗图标，
+           其余进 ⋯。手机上页面不再为几颗按钮单占一行。 -->
       <v-btn
         v-if="primaryAction"
         icon
@@ -104,6 +104,8 @@
 </template>
 
 <script setup lang="ts">
+import type { MenuAction } from '../menuAction'
+
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
@@ -112,12 +114,12 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
 
 import AdaptiveMenu from '../AdaptiveMenu.vue'
-import { topBarActions } from '../topBarActions'
 
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
 import UserMenuCard from './UserMenuCard.vue'
 
+import { headerCommands } from '@/commands'
 import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageTitleStore } from '@/stores/title'
@@ -145,6 +147,19 @@ const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)
 
 // 顶栏右边只放得下一颗主操作；标了几个 primary 就只取第一个，其余和没标的一起进 ⋯。
+const topBarActions = computed<(MenuAction & { primary: boolean })[]>(() =>
+  headerCommands.value.map((command) => ({
+    key: command.id,
+    label: command.title,
+    icon: command.icon,
+    primary: !!command.header.primary,
+    danger: command.danger,
+    loading: command.loading,
+    disabled: command.disabled,
+    to: command.to,
+    onSelect: command.run,
+  }))
+)
 const primaryAction = computed(() => topBarActions.value.find((action) => action.primary) ?? null)
 const moreActions = computed(() => topBarActions.value.filter((action) => action !== primaryAction.value))
 

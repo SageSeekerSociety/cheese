@@ -45,9 +45,9 @@ import { relTime } from '../lib/relTime'
 import { myId } from '../me'
 import { SudoCancelledError, withSudo } from '../utils/sudo'
 
-import PageAction from '@/components/common/PageAction.vue'
+import { useCommands } from '@/commands'
+import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 // The project default never moves an agent that has already started working.
 const props = defineProps<{ projectId: string }>()
@@ -383,19 +383,19 @@ watch(
     loadBranchProtection()
   }
 )
+useCommands(() => [
+  {
+    id: 'settings.market',
+    title: '市场',
+    icon: 'mdi-storefront-outline',
+    header: { primary: true },
+    to: { name: 'market' },
+  },
+])
 </script>
 
 <template>
-  <ProjectPage class="settings-page" :title="t('navigation.project.settings')">
-    <template #actions>
-      <PageAction
-        label="市场"
-        icon="mdi-storefront-outline"
-        primary
-        append-icon="mdi-storefront-outline"
-        @click="router.push({ name: 'market' })"
-      />
-    </template>
+  <AppPage class="settings-page" :title="t('navigation.project.settings')">
     <div v-if="loading" class="d-flex justify-center py-10">
       <v-progress-circular indeterminate color="primary" />
     </div>
@@ -893,7 +893,7 @@ watch(
         <v-progress-circular indeterminate color="primary" />
       </div>
     </div>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>

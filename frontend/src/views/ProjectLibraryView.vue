@@ -14,10 +14,10 @@ import { useDisplay } from 'vuetify'
 
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
 
+import { useCommands } from '@/commands'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import PageAction from '@/components/common/PageAction.vue'
+import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -104,13 +104,20 @@ watch(
   },
   { immediate: true }
 )
+useCommands(() => [
+  {
+    id: 'library.refresh',
+    title: '刷新',
+    icon: 'mdi-refresh',
+    loading: loading.value,
+    header: { primary: true },
+    run: load,
+  },
+])
 </script>
 
 <template>
-  <ProjectPage :title="t('navigation.project.library')">
-    <template #actions>
-      <PageAction label="刷新" icon="mdi-refresh" primary :loading="loading" @click="load" />
-    </template>
+  <AppPage :title="t('navigation.project.library')">
     <div>
       <p class="t-body c-muted mb-6">你给这个项目的文件。每个对话都引用得到，芝士只读不改</p>
 
@@ -176,7 +183,7 @@ watch(
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>
