@@ -102,6 +102,19 @@ class Team(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    @property
+    def open_to_all(self) -> bool:
+        """Whether someone outside this team may see it: a public, shared team.
+
+        One predicate behind ``TeamService.visible_team``, the team search, and
+        every payload that names a team to a stranger. A personal team is one
+        person's; a stealth team is reached through its join link.
+        """
+        return (
+            self.personal_owner_user_id is None
+            and self.visibility == TeamVisibility.PUBLIC.value
+        )
+
 
 class TeamMemberRole:
     OWNER = 0
