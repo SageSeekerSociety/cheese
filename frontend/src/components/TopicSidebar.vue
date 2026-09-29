@@ -1378,10 +1378,18 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   font-weight: 650;
 }
 
-/* Topic / nav rows: title ink, quiet by default. */
+/* Topic / nav rows: title ink, quiet by default.
+
+   行盒必须跟着字号一起给。v-list 的 nav 变体把 .v-list-item-title 的行盒钉在
+   1rem（16px）上，与这里的字号无关；而 14px 的字身（PingFang 这类 CJK 字体约
+   1.4em ≈ 19.6px）比 16px 的行盒还高，标题又自带 overflow: hidden —— 高出来的
+   那 1.8px 上下各切一刀，g / y / p 这些下伸的字母下缘就被切平。汉字不下伸，
+   所以只有拉丁字母看得出来。行盒高度是字号阶梯的属性（docs/design-system.md
+   §3.2），这里照 --lh-14 取，和 .menu-list 里那条同名的规则一致。 */
 .topic-row :deep(.v-list-item-title),
 .nav-row :deep(.v-list-item-title) {
   font-size: 14px;
+  line-height: var(--lh-14);
   color: var(--text);
 }
 .topic-title {
