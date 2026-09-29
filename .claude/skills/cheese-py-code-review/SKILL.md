@@ -76,7 +76,6 @@ restate them; CLAUDE.md is the single source of truth.
 
 - **JWT timezone**: use `datetime.now(UTC)` aware — never `.replace(tzinfo=None)`.
 - `AsyncSession` lifecycle handled by FastAPI `Depends(get_db)`.
-- Meilisearch optional; fallback to PG FTS when `MEILISEARCH_URL` not set.
 
 ### 4. Reference Code Alignment
 

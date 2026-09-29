@@ -192,7 +192,7 @@ or cancelled selected suites, and unexpected skips fail `CI required`. Remote
 execution acceptance remains advisory pending the stability target in #1279; the
 MCP latest-version canary runs on schedule or manual dispatch.
 
-Queue settings: two concurrent merge-group builds, ALLGREEN, squash merge, one
+Queue settings: four concurrent merge-group builds, ALLGREEN, squash merge, one
 to five PRs per merge, no minimum-batch wait, and a 60-minute check-response timeout.
 That timeout bounds a stalled queue; the feedback-time targets remain those in
 #1279.
@@ -203,9 +203,8 @@ PRs opened before the gate was installed need a new pull-request event to report
 ### Backend test execution
 
 The fixture-derived layers remain `pure`, `contract` and `integration`.
-`test.yml` runs pure and contract on separate hosted runners, integration on four
-deterministic hash partitions, and real Meilisearch integration tests on one
-serial runner with a dedicated service. Each runner uses its own PostgreSQL and
+`test.yml` runs pure and contract on separate hosted runners and integration on
+four deterministic hash partitions. Each runner uses its own PostgreSQL and
 Valkey containers.
 
 The required gate compares executed JUnit node IDs with an independently
@@ -219,7 +218,7 @@ tools as `test.yml`. Use a fresh output directory for each run:
 
 ```bash
 uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
-  -k 'not kotlin and not meilisearch_integration' -n 4 \
+  -k 'not kotlin' -n 4 \
   -p scripts.ci_shard --ci-shard 0/4 \
   --ci-selection-output=../tmp/ci-selection \
   --junitxml=../tmp/ci-selection/results.xml
@@ -227,8 +226,12 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 ## CI runner pool (cheese-ci)
 
-Backend CI (`test.yml`) and E2E (`e2e.yml`, split into Playwright shards) run
-on GitHub-hosted Ubuntu runners. The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
+Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
+the CLI boot e2e and remote-execution acceptance. The organisation is on the
+Free plan, whose documented limit is 20 concurrent hosted jobs, but this public
+repository is not held to it: on 2026-09-28 Required CI alone had 41 hosted
+runners busy at once, and hosted jobs waited 1.2 minutes at the 90th percentile.
+The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
 keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
@@ -282,9 +285,7 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `RUNNER_TEMP` and therefore its own uv venv rather than a
   concurrent `uv sync` into one. Postgres and Valkey are resident on the machine
   (`deploy/ci-runner/resident-services.sh`, on 5442/6389) and shared by its
-  slots. The one pool job with service containers of its own, `private-chat`
-  in `remote-execution.yml`, publishes them on ephemeral host ports and gives
-  its Postgres a 1 GB tmpfs, so two slots do not collide over them. What keeps
+  slots. What keeps
   two concurrent runs apart is the slot each declares in its runner `.env` — see
   `backend/tests/isolation.py` for the names it scopes, and note that the test
   harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
@@ -427,10 +428,29 @@ sudo journalctl -t cheese-backend-1 --since "09:00" --until "09:30"
 only their own messages, and the command returns empty rather than refusing,
 which reads exactly like "there are no logs".
 
-Retention is journald's default, `SystemMaxUse` = min(10% of the filesystem,
-4 GB). Measured on dev, the backend writes ~61 MB/day, so 4 GB is on the order
-of two months; the journal also gives back space automatically when the disk
-runs low (`SystemKeepFree`), so it cannot be the thing that fills a box.
+Retention is set by `deploy/journald-cheese.conf`, which every deploy installs
+as `/etc/systemd/journald.conf.d/cheese.conf`: up to 40 GB and a month, and
+never below 40 GB free on the disk, whichever is tighter. At journald's own
+default (a tenth of the filesystem, at most 4 GB) dev kept about thirteen hours
+on 2026-09-29, and the evidence for a failure was gone before anyone looked.
+`sudo journalctl --disk-usage` and
+`sudo journalctl -t cheese-backend-1 -o short-iso | head -1` (the oldest line)
+say how far back a box reaches now.
+
+How long that is depends on what the app tier writes, so some lines are not
+written at all:
+
+- The HTTP clients' own request lines (`httpx`, `httpcore`) are logged only at
+  WARNING. The backend calls the device connection tens of times a second, and
+  those lines were nine in ten of its output.
+- The device connection's access log skips internal calls and health probes
+  that succeeded; a failed one is still logged.
+- The backend runs without uvicorn's access log, because its own `req` line
+  already records every request.
+
+The nginx access logs (`cheese-api-front`, `cheese-app-router`, the frontend)
+record the path and never the query string, because several URLs carry a
+credential in it (the room chat socket's `?token=`, `/llm/tunnel?token=`).
 
 The standing data-plane pair (`cheese-llm-tunnel`, `cheese-api-front`) is
 covered too. It is deployed by `deploy/llm-tunnel/up.sh` rather than

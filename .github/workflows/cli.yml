@@ -10,11 +10,6 @@ name: CLI Test (Go)
 # clean — build, vet, and the tests all passed on the first run — so it gates at
 # zero from day one with no baseline and no ratchet.
 #
-# On the cheese-ci pool: pure Go, but the org's Actions billing lapsed on
-# 2026-08-13 (every ubuntu-latest job is refused before it starts). The pool is
-# separate capacity from the dev box's single deploy slot, so this never queues
-# behind a deploy; Go comes from setup-go below, and `go test -race` finds the
-# gcc it needs in the pool's build-essential (deploy/ci-runner/deps.sh).
 # backend/tests/fixtures/wire is in the path filters because the Go side reads
 # it: cli/internal/link/frames_test.go is held to the same committed frames the
 # backend is, and a fixture edited to suit one language has to face the other in
@@ -25,9 +20,9 @@ permissions:
   contents: read
 
 concurrency:
-  # Cancel superseded runs on a PR, never on main: keying push runs by sha puts
-  # each merge in its own group, so a second merge cannot cancel the first one's
-  # result and leave main with no signal for that commit.
+  # Cancel superseded runs on a PR, never in the merge queue: keying queue runs
+  # by sha gives each queued commit its own group, so one entry cannot cancel
+  # another's result and leave the commit that lands on main with no signal.
   group: cli-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -47,7 +42,15 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: cli/go.mod
-          cache-dependency-path: cli/go.sum
+          cache: false
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cli/go.mod', 'cli/go.sum') }}
+          restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
 
       # thirdparty/crypto11 is a vendored upstream module with its own go.mod —
       # not ours to format. `./...` already excludes it (separate module); only
@@ -87,7 +90,7 @@ jobs:
   # proxy's head budget (e2e/control_table_e2e_test.go). Pinned npm version so
   # this leg only breaks when WE change something.
   boot-e2e:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -95,12 +98,16 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: cli/go.mod
-          # Go already keeps its module and build caches on this persistent runner.
-
           cache: false
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cli/go.mod', 'cli/go.sum') }}
+          restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
 
-      # node is NOT ambient on the ci pool (first run: `npm: command not
-      # found`) — it arrives via setup-node exactly as frontend.yml does.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -109,9 +116,8 @@ jobs:
       # the one production launches. Raising either one means raising both, in
       # the same PR.
       #
-      # NPM_CONFIG_PREFIX keeps the install inside the workspace: runners are
-      # shared, and a global install would fight concurrent jobs (and
-      # root-owned paths).
+      # NPM_CONFIG_PREFIX keeps the install inside the workspace rather than
+      # in the root-owned global prefix.
       - name: Install Claude Code (pinned)
         working-directory: .
         run: |
@@ -120,10 +126,10 @@ jobs:
           "$NPM_CONFIG_PREFIX/bin/claude" --version
 
       # The mock API's image, fetched before the suite so a registry hiccup is
-      # this step's failure and not a skipped test. Through mirror.gcr.io, as
-      # every other pull on the pool: Docker Hub's anonymous token endpoint is
-      # what refused the canary on 2026-09-17 and -18. Tagged under the name
-      # the harness runs, which then resolves locally.
+      # this step's failure and not a skipped test. Through mirror.gcr.io:
+      # Docker Hub's anonymous token endpoint is what refused the canary on
+      # 2026-09-17 and -18. Tagged under the name the harness runs, which then
+      # resolves locally.
       - name: Pull the mock API image
         run: |
           image=mockserver/mockserver:mockserver-7.5.0

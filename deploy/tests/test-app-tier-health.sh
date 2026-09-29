@@ -91,6 +91,32 @@ test_deploy_keeps_connection_owner_running() {
   echo "PASS: business deploy leaves the device connection owner running"
 }
 
+test_deploy_applies_journal_retention() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/journal-retention.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+
+  grep -F "sudo install -D -m 0644 $ROOT/deploy/journald-cheese.conf /etc/systemd/journald.conf.d/cheese.conf" "$docker_log" >/dev/null || {
+    rm -rf "$run_dir"
+    fail "deploy did not install the journal retention"
+  }
+  grep -Fx 'systemctl restart systemd-journald' "$docker_log" >/dev/null || {
+    rm -rf "$run_dir"
+    fail "deploy installed the journal retention without restarting journald"
+  }
+  rm -rf "$run_dir"
+  echo "PASS: deploy applies the journal retention"
+}
+
 test_local_deploy_installs_owner_from_verified_backend_image() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/connection-owner-local.XXXXXX")"
@@ -1200,6 +1226,7 @@ case "$CASE" in
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
   connection-owner) test_deploy_keeps_connection_owner_running ;;
   connection-owner-local) test_local_deploy_installs_owner_from_verified_backend_image ;;
+  journal-retention) test_deploy_applies_journal_retention ;;
   connection-route) test_rollout_installs_connection_route_without_recreating_api_front ;;
   cloud-control-release) test_cloud_control_has_an_independent_drained_release ;;
   runtime-images) test_deploy_keeps_agent_runtime_images ;;
@@ -1234,6 +1261,7 @@ case "$CASE" in
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
     test_deploy_keeps_connection_owner_running
+    test_deploy_applies_journal_retention
     test_local_deploy_installs_owner_from_verified_backend_image
     test_owner_release_reuses_box_config_and_stops_when_busy
     test_cloud_control_has_an_independent_drained_release

@@ -288,3 +288,37 @@ def test_a_refused_handshake_names_the_path(client, caplog):
         "no route matched" in r.getMessage() and "/topics/nope/chat" in r.getMessage()
         for r in caplog.records
     ), [r.getMessage() for r in caplog.records]
+
+
+def test_routine_calls_leave_no_line_and_failed_ones_still_do(capsys):
+    """The journal keeps weeks only if the lines nobody reads are not written.
+
+    Two sources were most of it: the device connection's access line for every
+    internal call that went through, and the HTTP client's line for every
+    request the backend made to it. A call that failed is what someone comes
+    looking for, so that one still has to be there.
+    """
+    configure_logging()
+    access = logging.getLogger("uvicorn.access")
+    line = '%s - "%s %s HTTP/%s" %d'
+    access.info(
+        line, "1.2.3.4:5", "POST", "/internal/device-connection/call/exec", "1.1", 200
+    )
+    access.info(line, "1.2.3.4:5", "GET", "/healthz", "1.1", 200)
+    access.info(
+        line, "1.2.3.4:5", "POST", "/internal/device-connection/call/ping", "1.1", 502
+    )
+    access.info(line, "1.2.3.4:5", "POST", "/topics/t/execution/session-t", "1.1", 200)
+    client = logging.getLogger("httpx")
+    client.info("HTTP Request: POST http://device-connection:8082/internal/x 200 OK")
+    client.warning("HTTP Request: POST http://device-connection:8082/internal/y failed")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+    written = capsys.readouterr().err
+    assert "/internal/device-connection/call/exec" not in written
+    assert "/healthz" not in written
+    assert "/internal/device-connection/call/ping" in written
+    assert "/topics/t/execution/session-t" in written
+    assert "/internal/x" not in written
+    assert "/internal/y failed" in written

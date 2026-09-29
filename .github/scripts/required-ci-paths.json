@@ -63,7 +63,6 @@
     ".github/scripts/ensure-apt.sh",
     ".github/scripts/ensure-claude-cli.sh",
     ".github/scripts/ci-test-evidence.py",
-    "deploy/ci-runner/prune-private-images.sh",
     ".github/workflows/remote-execution.yml"
   ],
   "mcp": [

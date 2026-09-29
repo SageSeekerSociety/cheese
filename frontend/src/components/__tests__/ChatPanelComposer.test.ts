@@ -453,9 +453,9 @@ describe('对话栏自己的输入栏', () => {
     expect(menu!.textContent).toContain('AI 队友')
   })
 
-  // 老话题的名册里可能没有芝士的座位（座位是后来才有的）。那种房间里，项目名册上
-  // 那行共用的芝士得顶上，否则这个话题永远叫不动它。
-  it('房间名册里没有芝士时，退回项目名册上那一行', async () => {
+  // 没坐在这间房里的 AI 队友不在 @ 候选里：在这里 @ 它什么也不会发生（后端点名只
+  // 认这间房的席位），列出来就是一个点了没反应的名字。
+  it('房间名册里没有 AI 队友时，@ 候选里也没有', async () => {
     const api = await import('../../api')
     vi.mocked(api.listTopicMembers).mockResolvedValueOnce({
       data: [{ id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false }],
@@ -469,7 +469,9 @@ describe('对话栏自己的输入栏', () => {
     box.focus()
     await fireEvent.update(box, '@')
     await flush()
-    expect(container.querySelector('.mention-menu')!.textContent).toContain('共用芝士')
+    const menu = container.querySelector('.mention-menu')!.textContent
+    expect(menu).toContain('Alice')
+    expect(menu).not.toContain('共用芝士')
   })
 
   // 「打一个 @ 然后回车」是这个输入框里最短的一条路，而它当时通向 @all——把整个
@@ -543,9 +545,9 @@ describe('对话栏自己的输入栏', () => {
       await fireEvent.keyDown(box, { key: 'Enter' })
       await flush()
 
-      // 走到第三项是群播 @all。这里钉的正是键盘导航本身：回车跟着高亮走，第一项
+      // 走到第三项是 @here。这里钉的正是键盘导航本身：回车跟着高亮走，第一项
       // （芝士）没被挑中——正文说了算。
-      expect(box.value).toBe('@all ')
+      expect(box.value).toBe('@here ')
       // 挑完就是接着打字的时刻，焦点不该被那次回车带走。
       expect(document.activeElement).toBe(box)
     })
@@ -560,7 +562,7 @@ describe('对话栏自己的输入栏', () => {
       expect(activeIndex(container)).toBe(3)
       await fireEvent.keyDown(box, { key: 'Enter' })
       await flush()
-      expect(box.value).toBe('@here ')
+      expect(box.value).toBe('@Alice ')
     })
 
     it('Esc 收起候选，再打字又打开；收起的时候回车是发送', async () => {

@@ -3,6 +3,7 @@ set -euo pipefail
 [ "${1:-}" != -n ] || shift
 # Host installation is outside this fake deployment's filesystem.
 if [ "${1:-}" = install ]; then
+  [ -z "${APP_TIER_DOCKER_LOG:-}" ] || echo "sudo $*" >> "$APP_TIER_DOCKER_LOG"
   exit 0
 fi
 exec "$@"

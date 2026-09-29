@@ -257,12 +257,15 @@ class TestTopicsSearchIntegration:
         assert data["data"]["page"]["nextStart"] == 0
 
     def test_search_invalid_page_start(self):
+        """A negative offset used to be reported as 404 "not found", which is
+        the wrong answer to a malformed parameter. It is now a 400."""
         response = self.client.get(
             "/tags",
             headers=self.headers,
             params={"q": "something", "page_start": -1},
         )
-        assert response.status_code == 404
+        assert response.status_code == 400
+        assert response.json()["error"]["name"] == "BadRequestError"
 
     def test_search_bad_page_start_format(self):
         response = self.client.get(

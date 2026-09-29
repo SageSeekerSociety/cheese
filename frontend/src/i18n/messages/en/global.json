@@ -28,5 +28,6 @@
     "macAppleSilicon": "Mac (Apple silicon)",
     "macIntel": "Mac (Intel)",
     "windows": "Windows"
-  }
+  },
+  "save": "Save"
 }

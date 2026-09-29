@@ -12,6 +12,7 @@
 // 资源 lands here too. It used to be the fifth drawer, re-fetching every 20
 // seconds for as long as it was open; usage numbers do not move that fast, and
 // nobody watches them. Now they load once, when the popover is opened.
+import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 import type { TopicPhase } from '@/lib/topicState'
 
@@ -19,11 +20,13 @@ import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { topicPhaseBadge, topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
+import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 
 const props = defineProps<{
   topic: Topic
@@ -42,6 +45,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
+  (e: 'rename', title: string): void
+  (e: 'archive'): void
+  (e: 'unarchive'): void
   // 这个话题换了 AI 队友。对话栏要重拉名册——它显示的 AI 名字来自那份名册。
 }>()
 
@@ -92,6 +98,52 @@ function toggleFocus() {
   usageOpen.value = false
   emit('toggle-focus')
 }
+
+// 手机上话题列表没有行尾那颗 ⋯，改名、归档原本只有长按那一行才找得到。⋯ 面板里
+// 放同一份，和侧栏那一行的操作一致：已归档的只有「取消归档」。
+const renaming = ref(false)
+const draftTitle = ref('')
+
+function startRename() {
+  draftTitle.value = props.topic.title
+  renaming.value = true
+}
+
+function saveRename() {
+  const next = normalizeTopicTitle(draftTitle.value, props.topic.title)
+  renaming.value = false
+  if (next) emit('rename', next)
+}
+
+const topicActions = computed<MenuAction[]>(() => {
+  if (!isWorkTopic.value) return []
+  const archived = props.topic.status === 'archived'
+  const actions: MenuAction[] = []
+  if (!archived)
+    actions.push({
+      key: 'rename',
+      label: t('work.room.menu.rename'),
+      icon: 'mdi-pencil-outline',
+      onSelect: startRename,
+    })
+  if (props.topic.can_archive)
+    actions.push(
+      archived
+        ? {
+            key: 'unarchive',
+            label: t('work.room.menu.unarchive'),
+            icon: 'mdi-archive-arrow-up-outline',
+            onSelect: () => emit('unarchive'),
+          }
+        : {
+            key: 'archive',
+            label: t('work.room.menu.archive'),
+            icon: 'mdi-archive-arrow-down-outline',
+            onSelect: () => emit('archive'),
+          }
+    )
+  return actions
+})
 </script>
 
 <template>
@@ -184,7 +236,7 @@ function toggleFocus() {
           :aria-label="t('work.room.menu.more')"
           @click="usageOpen = true"
         />
-        <MobileActionSheet v-model="usageOpen">
+        <MobileActionSheet v-model="usageOpen" :actions="topicActions">
           <TopicUsageSummary
             :loading="usageLoading"
             :topic-usage="topicUsage"
@@ -193,6 +245,23 @@ function toggleFocus() {
             :topic-id="topic.id"
           />
         </MobileActionSheet>
+        <AdaptiveDialog
+          v-model="renaming"
+          :title="t('work.room.menu.renameTitle')"
+          :primary-label="t('global.save')"
+          :primary-disabled="!draftTitle.trim()"
+          @primary="saveRename"
+        >
+          <v-text-field
+            v-model="draftTitle"
+            :label="t('work.room.menu.topicName')"
+            :maxlength="TOPIC_TITLE_MAX_LENGTH"
+            autocomplete="off"
+            autofocus
+            hide-details
+            @keyup.enter="saveRename"
+          />
+        </AdaptiveDialog>
       </template>
     </div>
   </Teleport>
