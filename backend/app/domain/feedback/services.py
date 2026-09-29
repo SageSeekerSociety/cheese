@@ -785,7 +785,12 @@ class FeedbackService:
         return row
 
     async def set_status(
-        self, feedback_id: uuid.UUID, status: FeedbackStatus, *, by_handle: str
+        self,
+        feedback_id: uuid.UUID,
+        status: FeedbackStatus,
+        *,
+        by_handle: str | None,
+        note: str | None = None,
     ) -> Feedback:
         """Move a report, writing the history entry with it.
 
@@ -802,7 +807,8 @@ class FeedbackService:
             # a second apart read as a bug in the history.
             return row
         await self._repo.set_status(row, status)
-        await self._repo.append_timeline(row.id, status, by_handle)
+        entry = await self._repo.append_timeline(row.id, status, by_handle)
+        entry.note = note
         return row
 
     async def patch_admin(
