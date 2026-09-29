@@ -490,7 +490,6 @@ class GatewayModelsService:
             label=data.get("label"),
             selectable=selectable,
             capabilities=data.get("capabilities") or {},
-            extra_headers=data.get("extra_headers"),
         )
         await self._after_write()
         return await self._read_back(name, data, model_id)
@@ -547,10 +546,6 @@ class GatewayModelsService:
             kwargs["prices"] = _prices_for_gateway(prices)
         if data.get("capabilities") is not None:
             kwargs["capabilities"] = data["capabilities"]
-        # PATCH 合并语义在客户端兑现：缺省 = 不动既有头，经表单改标签/价格时
-        # 不会把网关上已有的头弄丢。
-        if data.get("extra_headers"):
-            kwargs["extra_headers"] = data["extra_headers"]
 
         await self._admin.update_model(**kwargs)  # type: ignore[union-attr]
         await self._after_write()
@@ -961,8 +956,6 @@ def _model_snapshot(model: AdminModel) -> dict:
         "provider": model.provider,
         "prices": dict(model.prices),
         "capabilities": dict(model.capabilities),
-        # 非凭据，可进审计；api_key 一类的真凭据 `AdminModel` 本就从网关剥掉了。
-        "extra_headers": dict(model.extra_headers),
     }
 
 

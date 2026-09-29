@@ -276,7 +276,7 @@ def test_a_failed_write_is_recorded_too(client, as_admin, gateway):
     assert "config.yaml" in detail
 
 
-# --- extra_headers 的 PATCH 合并语义 与 审计读回 -------------------------------
+# --- 网关上已有的 extra_headers 与 审计读回 --------------------------------------
 
 
 @pytest.fixture
@@ -310,42 +310,20 @@ def _patches(calls: list[httpx.Request]) -> list[dict]:
     ]
 
 
-def test_a_patch_without_extra_headers_leaves_the_gateway_side_alone(
+def test_a_patch_leaves_extra_headers_already_on_the_gateway_alone(
     client, as_admin, runtime_gateway
 ):
-    """PATCH 合并语义在**客户端**兑现：表单不编辑 `extra_headers`，改标签的
-    PATCH 里不带它 —— 带了就是整组替换，会把网关上已有的头弄丢。"""
+    """网关上的模型行可能带着 `extra_headers`，这份 API 不读也不写它：请求体里
+    带了也不传给网关。网关按字段合并 PATCH，既有的头因此原样保留。"""
     r = client.patch(
         "/admin/gateway/models/runtime-x",
-        json={"label": "新标签"},
+        json={"label": "新标签", "extra_headers": {"chatgpt-account-id": "acct-2"}},
         headers=session_auth_headers(as_admin),
     )
     assert r.status_code == 200, r.text
     sent = _patches(runtime_gateway.calls)
     assert len(sent) == 1
-    # 标签只动 model_info：litellm_params 整个不出现（或出现了也不带头），
-    # 网关侧的既有头因此原样保留。
     assert "extra_headers" not in sent[0].get("litellm_params", {})
-
-
-def test_a_patch_with_extra_headers_replaces_the_whole_set(
-    client, as_admin, runtime_gateway
-):
-    """给了才整组替换。"""
-    headers = {
-        "chatgpt-account-id": "acct-2",
-        "originator": "codex_cli_rs",
-        "version": "0.154.0",
-    }
-    r = client.patch(
-        "/admin/gateway/models/runtime-x",
-        json={"extra_headers": headers},
-        headers=session_auth_headers(as_admin),
-    )
-    assert r.status_code == 200, r.text
-    sent = _patches(runtime_gateway.calls)
-    assert len(sent) == 1
-    assert sent[0]["litellm_params"]["extra_headers"] == headers
 
 
 def test_the_audit_endpoint_answers_what_changed(client, as_admin, gateway):
