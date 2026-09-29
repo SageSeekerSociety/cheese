@@ -41,6 +41,7 @@ import type {
   SpaceAnalyticsAlerts,
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
+  SpaceAnalyticsPeople,
   SpaceAnalyticsPublishers,
   SpaceCourseLink,
   SpaceEnrollment,
@@ -281,6 +282,13 @@ export namespace SpacesApi {
       url: `/spaces/${spaceId}/analytics/tasks`,
       method: 'GET',
       params,
+    })
+
+  // 逐人那一格 + 「领了没动」的名单。与其它整板分析接口同一个门：非管理员 403。
+  export const getAnalyticsPeople = (spaceId: number) =>
+    NewApiInstance.request<SpaceAnalyticsPeople>({
+      url: `/spaces/${spaceId}/analytics/people`,
+      method: 'GET',
     })
 
   export const getAnalyticsParticipants = (

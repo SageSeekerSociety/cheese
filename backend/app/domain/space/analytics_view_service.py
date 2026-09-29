@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.csv_export import csv_row
@@ -29,6 +29,11 @@ from app.domain.task.models import (
     TaskSubmission,
     TaskSubmissionReview,
 )
+from app.domain.task.submission_state import (
+    has_a_live_submission,
+    has_a_passed_submission,
+)
+from app.domain.team.models import Team
 from app.domain.user.models import User, UserProfile, UserRealNameIdentity
 from app.domain.user.realname_services import realname_dict
 from app.domain.user.repositories import UserProfileRepository, UserRepository
@@ -475,6 +480,177 @@ class SpaceAnalyticsViewService:
             "distributions": distributions,
             "trends": trends,
         }
+
+    async def get_people(self, *, space_id: int) -> dict:
+        """逐人一行，外加「领了没动」的逐条名单 —— 都只看这块板上未删除的题。
+
+        两处口径，页面上也照说一遍：
+
+        - **一条领取走到哪一步**由提交与评审算（``submission_state`` 里那两句
+          判据）：没有 live 提交＝在做，有 live 提交且其评审通过＝通过，有 live
+          提交但没通过（还在队列里、或被打回）＝已交。不看
+          ``task_membership.completion_status`` —— 那一列后端还没有人推进，
+          读了只会说谎。
+        - **领了没动**逐条给：领取时间早于 14 天、而且一版 live 提交都没有。14
+          天与 alerts 那一格的 ``STALLED_TASK_DAYS`` 同一个数，不是另定一个。
+
+        团队报名按**队**算一行（``is_team`` 那半就是队号），和它在领取表里的
+        粒度一致：一条领取是队领的，就没有「队里哪个人领的」这回事。
+
+        两条查询各自聚合，都在 SQL 里数完 —— 逐人那一格不做 N+1（人数 × 领取
+        数会跟着板的大小一起长）。
+        """
+        await self._ensure_space_exists(space_id)
+        now = datetime.now(UTC)
+        rows = await self._load_people_rows(space_id=space_id)
+        stalled_rows = await self._load_stalled_claims(space_id=space_id, now=now)
+
+        names = await self._load_member_names(
+            [(bool(r.is_team), int(r.member_id)) for r in rows]
+            + [(bool(r.is_team), int(r.member_id)) for r in stalled_rows]
+        )
+
+        people = [
+            {
+                "userId": int(row.member_id),
+                "name": names[(bool(row.is_team), int(row.member_id))],
+                "isTeam": bool(row.is_team),
+                "claims": int(row.claims),
+                "passed": int(row.passed),
+                "submitted": int(row.submitted),
+                # 在做 = 交了还没判的 + 一版都没交的。两条判据都在「有没有 live
+                # 提交」这一层，所以它是减出来的，不需要第三条 SQL。
+                "inProgress": int(row.claims) - int(row.passed) - int(row.submitted),
+            }
+            for row in rows
+        ]
+        stalled = [
+            {
+                "taskId": int(row.task_id),
+                "taskTitle": row.task_name,
+                "userId": int(row.member_id),
+                "name": names[(bool(row.is_team), int(row.member_id))],
+                "isTeam": bool(row.is_team),
+                "claimedAt": self._to_timestamp_ms(row.created_at),
+            }
+            for row in stalled_rows
+        ]
+        return {"people": people, "stalled": stalled}
+
+    async def _load_people_rows(self, *, space_id: int):
+        """逐人（逐队）一行：领了几条、其中通过几条、已交未通过几条。
+
+        行按领取数降序 —— 页面照它画，不重排。同数时按 (is_team, member_id)
+        定序，两次调用给同一个顺序。
+        """
+        claims = func.count(TaskMembership.id).label("claims")
+        passed = func.sum(
+            case((has_a_passed_submission(TaskMembership.id), 1), else_=0)
+        ).label("passed")
+        submitted = func.sum(
+            case(
+                (
+                    and_(
+                        has_a_live_submission(TaskMembership.id),
+                        ~has_a_passed_submission(TaskMembership.id),
+                    ),
+                    1,
+                ),
+                else_=0,
+            )
+        ).label("submitted")
+        stmt = (
+            select(
+                TaskMembership.is_team,
+                TaskMembership.member_id,
+                claims,
+                passed,
+                submitted,
+            )
+            .join(Task, Task.id == TaskMembership.task_id)
+            .where(
+                Task.space_id == space_id,
+                Task.deleted_at.is_(None),
+                TaskMembership.deleted_at.is_(None),
+            )
+            .group_by(TaskMembership.is_team, TaskMembership.member_id)
+            .order_by(
+                claims.desc(),
+                TaskMembership.is_team.asc(),
+                TaskMembership.member_id.asc(),
+            )
+        )
+        result = await self._session.execute(stmt)
+        return list(result.all())
+
+    async def _load_stalled_claims(self, *, space_id: int, now: datetime):
+        """领了没动的**逐条**领取：超过 14 天、且一版 live 提交都没有。
+
+        最老的排在最前 —— 这一格是「谁该被问一句」，放最久的先问。
+        """
+        threshold = now - timedelta(days=STALLED_TASK_DAYS)
+        stmt = (
+            select(
+                TaskMembership.member_id,
+                TaskMembership.is_team,
+                TaskMembership.created_at,
+                Task.id.label("task_id"),
+                Task.name.label("task_name"),
+            )
+            .join(Task, Task.id == TaskMembership.task_id)
+            .where(
+                Task.space_id == space_id,
+                Task.deleted_at.is_(None),
+                TaskMembership.deleted_at.is_(None),
+                TaskMembership.created_at < threshold,
+                ~has_a_live_submission(TaskMembership.id),
+            )
+            .order_by(TaskMembership.created_at.asc(), TaskMembership.id.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.all())
+
+    async def _load_member_names(
+        self, members: list[tuple[bool, int]]
+    ) -> dict[tuple[bool, int], str]:
+        """(is_team, member_id) → 显示名。个人取昵称 → 用户名，队取队名。
+
+        与 ``_resolve_user_display_name``（出题人那一格）同一套说法。查不到的
+        兜一个占位串而不是空字符串 —— 空名字在表里像少了一个人。
+        """
+        personal_ids = sorted({mid for is_team, mid in members if not is_team})
+        team_ids = sorted({mid for is_team, mid in members if is_team})
+        users = await self._user_repo.get_by_ids(personal_ids) if personal_ids else {}
+        profiles = (
+            await self._profile_repo.get_profiles_by_user_ids(personal_ids)
+            if personal_ids
+            else {}
+        )
+        teams_by_id = await self._load_teams_by_id(team_ids)
+
+        names: dict[tuple[bool, int], str] = {}
+        for user_id in personal_ids:
+            profile = profiles.get(user_id)
+            user = users.get(user_id)
+            if profile is not None and profile.nickname:
+                names[(False, user_id)] = profile.nickname
+            elif user is not None and user.username:
+                names[(False, user_id)] = user.username
+            else:
+                names[(False, user_id)] = f"User {user_id}"
+        for team_id in team_ids:
+            team = teams_by_id.get(team_id)
+            names[(True, team_id)] = (
+                team.name if team is not None else f"Team {team_id}"
+            )
+        return names
+
+    async def _load_teams_by_id(self, team_ids: list[int]) -> dict[int, Team]:
+        if not team_ids:
+            return {}
+        stmt = select(Team).where(Team.id.in_(team_ids), Team.deleted_at.is_(None))
+        result = await self._session.execute(stmt)
+        return {int(team.id): team for team in result.scalars().all()}
 
     async def export_participants_csv(
         self,
@@ -991,6 +1167,8 @@ class SpaceAnalyticsViewService:
             "approved": APPROVED_REVERSE_MAP.get(task.approved, "NONE"),
             "createdAt": self._to_timestamp_ms(task.created_at) or 0,
             "participantCount": participant_count,
+            # 没设上限的题这里是 None —— 前端据此不画「/ 上限」那一截。
+            "participantLimit": task.participant_limit,
             "pendingParticipantApprovalCount": pending_approval,
             "approvedParticipantCount": approved,
             "rejectedParticipantCount": rejected,

@@ -18,6 +18,7 @@ const getAnalyticsAlerts = vi.fn()
 const getAnalyticsTasks = vi.fn()
 const getAnalyticsPublishers = vi.fn()
 const getAnalyticsParticipants = vi.fn()
+const getAnalyticsPeople = vi.fn()
 
 vi.mock('@/network/api/spaces', () => ({
   SpacesApi: {
@@ -26,6 +27,7 @@ vi.mock('@/network/api/spaces', () => ({
     getAnalyticsTasks: (...a: unknown[]) => getAnalyticsTasks(...a),
     getAnalyticsPublishers: (...a: unknown[]) => getAnalyticsPublishers(...a),
     getAnalyticsParticipants: (...a: unknown[]) => getAnalyticsParticipants(...a),
+    getAnalyticsPeople: (...a: unknown[]) => getAnalyticsPeople(...a),
   },
 }))
 
@@ -50,6 +52,8 @@ function taskRows() {
     approvedParticipantCount: 0,
     rejectedParticipantCount: 0,
     pendingReviewCount: 0,
+    // 没设名额上限的题接口给的是 null（不是 0）—— 表里那一列只写一个数。
+    participantLimit: null as number | null,
     resubmittableCount: 0,
     successfulParticipantCount: 0,
     failedParticipantCount: 0,
@@ -203,6 +207,22 @@ const participantsResponse = () => ({
   },
 })
 
+/**
+ * 逐人那一格。默认识两个个人 + 一支小队：小队也占一行（`isTeam`），「在做的」是
+ * inProgress + submitted —— 交过没判的也算还在做。
+ */
+const peopleResponse = () => ({
+  data: {
+    people: [
+      { userId: 11, name: '顾云舟', isTeam: false, claims: 3, passed: 1, inProgress: 1, submitted: 1 },
+      { userId: 12, name: '陈砚秋', isTeam: false, claims: 1, passed: 1, inProgress: 0, submitted: 0 },
+      { userId: 31, name: '第七小队', isTeam: true, claims: 2, passed: 0, inProgress: 2, submitted: 0 },
+    ],
+    // 默认这一份没有陈账；要验那一格时再单独换一份带 stalled 的。
+    stalled: [],
+  },
+})
+
 const stub = { render: () => null }
 
 async function makeRouter() {
@@ -244,6 +264,22 @@ function kpis(): Record<string, string> {
     out[label] = card.querySelector('.metric__value')?.textContent?.trim() ?? ''
   }
   return out
+}
+
+/** 一张 KPI 卡（按标签点名）—— 有些断言读的是副行，不是那个数。 */
+function kpiCard(label: string): Element | undefined {
+  return Array.from(document.querySelectorAll('.metric')).find(
+    (card) => card.querySelector('.metric__label')?.textContent?.trim() === label
+  )
+}
+
+/** 走势卡上「累计 / 每天」那颗切换按钮。 */
+function dayToggle(): HTMLButtonElement {
+  const el = Array.from(panel('领取与提交')?.querySelectorAll('button') ?? []).find(
+    (b) => b.textContent?.trim() === '每天'
+  )
+  if (!el) throw new Error('找不到「每天」那颗切换按钮')
+  return el as HTMLButtonElement
 }
 
 /** 按标题找一块面板 —— 排行条有三处，不限定就分不清量的是哪一块。 */
@@ -309,6 +345,7 @@ describe('整板看板', () => {
     getAnalyticsTasks.mockImplementation(async () => ({ data: { tasks: taskRows() } }))
     getAnalyticsPublishers.mockImplementation(async () => publishersResponse())
     getAnalyticsParticipants.mockImplementation(async () => participantsResponse())
+    getAnalyticsPeople.mockImplementation(async () => peopleResponse())
   })
 
   afterEach(() => {
@@ -328,19 +365,45 @@ describe('整板看板', () => {
     })
   })
 
-  it('走势把稀疏的桶铺在它自己的那一天上', async () => {
+  it('走势把稀疏的桶铺在它自己的那一天上（累计是默认，「每天」是同一批桶的另一种画法）', async () => {
     await mount()
 
-    // 领取那一次在窗口的第 1 天（11 天前），提交那一次在今天。
+    // 默认累计：窗口第 1 天那 9 一直累到末尾，所以末值是 9 / 2。
+    expect(squash(document.querySelector('.trend__legend')?.textContent)).toContain('累计领取9')
+    expect(squash(document.querySelector('.trend__legend')?.textContent)).toContain('累计提交2')
+    expect(squash(panel('领取与提交')?.querySelector('.panel__sub')?.textContent)).toBe('最近12天·累计')
+
+    // 切到「每天」：领取那一次在窗口的第 1 天（11 天前），提交那一次在今天。
     // 「最后一天」的读数于是必须是 领取 0 / 提交 2：
     // - 把序列按末尾对齐（把 9 挤到最后一格）→ 领取 9，红；
     // - 把第 i 个点放到第 i 天（当它是稠密的）→ 提交 0，红。
+    await fireEvent.click(dayToggle())
+    await waitFor(() => expect(squash(document.querySelector('.trend__legend')?.textContent)).toContain('每天领取0'))
     const legend = squash(document.querySelector('.trend__legend')?.textContent)
     expect(legend).toContain('每天领取0')
     expect(legend).toContain('每天提交2')
+    expect(squash(panel('领取与提交')?.querySelector('.panel__sub')?.textContent)).toBe('最近12天·每天新增')
 
     // 有动静就不该给空态：这条与上面那条互为反面，少一边这张图都可能「看着有、其实空」。
     expect(document.body.textContent).not.toContain('最近 12 天没人领取或提交')
+  })
+
+  it('KPI 的「领取主体」带近 7 天 / 前 7 天的新增对比，比的是走势按天的桶', async () => {
+    const overview = overviewResponse()
+    overview.data.trends.participantsJoined = [
+      { bucket: utcToday() - 2 * DAY, count: 4 },
+      { bucket: utcToday() - 9 * DAY, count: 6 },
+    ]
+    getAnalyticsOverview.mockImplementation(async () => overview)
+
+    await mount()
+
+    // 近 7 天里只有那 4；9 天前那次落在前 7 天里。文案如实写「近 / 前」，不假装是「本周」。
+    const card = kpiCard('领取主体')
+    expect(squash(card?.querySelector('.metric__hint')?.textContent)).toBe('近7天新增4·前7天6')
+    // 这一周比上一周少，语气是提醒而不是夸奖。
+    expect(card?.querySelector('.metric__hint--warn')).toBeTruthy()
+    expect(squash(kpiCard('提交主体')?.querySelector('.metric__hint')?.textContent)).toBe('提交率75%')
   })
 
   it('题目构成、分类分布、最热的题、出题人排行，四块都来自接口那一份', async () => {
@@ -414,7 +477,31 @@ describe('整板看板', () => {
 
   // --- 三个新 tab 与「领了但没动的」那一格 ---------------------------------------
 
-  it('「领了但没动的」那一格在「待处理」里：数是 alerts 的题数，口径写两周，逐人名单如实说不返回', async () => {
+  it('「领了但没动的」那一格在「待处理」里：逐条领取（谁 / 哪道题 / 领了多久），口径两周', async () => {
+    getAnalyticsPeople.mockImplementation(async () => ({
+      data: {
+        people: peopleResponse().data.people,
+        stalled: [
+          {
+            taskId: 1,
+            taskTitle: '最热的一道题',
+            userId: 11,
+            name: '顾云舟',
+            isTeam: false,
+            claimedAt: Date.now() - 20 * DAY,
+          },
+          {
+            taskId: 7,
+            taskTitle: '第九章习题',
+            userId: 31,
+            name: '第七小队',
+            isTeam: true,
+            claimedAt: Date.now() - 15 * DAY,
+          },
+        ],
+      },
+    }))
+
     await mount()
 
     // 原型把它摆在待处理那一格（那一排 alert 之后），**不在总览** —— 摆错了这一条就红。
@@ -423,18 +510,52 @@ describe('整板看板', () => {
 
     const p = panel('领了但没动的')
     expect(p).toBeTruthy()
-    expect(squash(p?.querySelector('.panel__sub')?.textContent)).toBe('1道题上有已通过的领取者、两周没提交')
-    // 数就是 alerts 的 stalledTaskCount，不是另算的。
-    expect(squash(p?.querySelector('.stalled')?.textContent)).toBe('1道题')
+    expect(squash(p?.querySelector('.panel__sub')?.textContent)).toBe('2条领取两周没动·按领取时间排')
 
-    const text = squash(p?.textContent)
-    expect(text).toContain('两周')
-    expect(text).toContain('14天以前')
-    expect(text).toContain('逐人的名单接口不返回')
+    // 一行一条领取：人、题、领了多久（接口按领取时间升序给，最久的在最前）。
+    const rows = Array.from(p?.querySelectorAll('.mini li') ?? []).map((li) => squash(li.textContent))
+    expect(rows).toEqual(['顾云舟最热的一道题20天前领的', '第七小队第九章习题15天前领的'])
+    expect(squash(p?.textContent)).toContain('14天')
 
-    // 原型那一格列的是「某人在某道题上没动」—— 接口不给这一层，就不列名字、不画行。
+    // 题名链到新外壳的题目详情，不是老树那条地址。
+    expect(p?.querySelector('.mini__title')?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/board/tasks/1`)
+  })
+
+  it('「领了但没动的」在逐人名单读不到时只说明一句，不编名字', async () => {
+    getAnalyticsPeople.mockImplementation(async () => {
+      throw new Error('403')
+    })
+
+    await mount()
+    await openTab('待处理')
+
+    const p = panel('领了但没动的')
+    expect(squash(p?.querySelector('.panel__sub')?.textContent)).toBe('逐人的名单没读出来')
     expect(p?.querySelectorAll('.mini li')).toHaveLength(0)
-    expect(p?.querySelectorAll('tbody tr')).toHaveLength(0)
+    const text = squash(p?.textContent)
+    expect(text).toContain('逐人的名单没读出来')
+    expect(text).toContain('只对这块板的所有者和管理员开放')
+
+    // 只有这一格塌了：那四张 alert 卡的数来自别的接口，还在。
+    expect(squash(document.body.textContent)).toContain('1道题在等你审')
+  })
+
+  it('「上板后没人领的」每行带截止日', async () => {
+    const rows = taskRows()
+    rows[1] = { ...rows[1], deadline: utcToday() + 4 * DAY }
+    getAnalyticsTasks.mockImplementation(async () => ({ data: { tasks: rows } }))
+
+    await mount()
+    await openTab('待处理')
+
+    const listed = Array.from(panel('上板后没人领的')?.querySelectorAll('.mini li') ?? []).map((li) =>
+      squash(li.textContent)
+    )
+    // 截止日在响应里就有（`deadline`），零领取的题回看时先看还有多久；没设的写「不限」。
+    expect(listed).toEqual([
+      `没人领的一道题蔡松洋出题·${utcDay(utcToday() + 4 * DAY)}`,
+      '也没人领的一道题蔡松洋出题·不限',
+    ])
   })
 
   it('「题目」那一格：逐题一行，领取 / 提交 / 通过率 / 状态都来自接口那一份', async () => {
@@ -459,6 +580,19 @@ describe('整板看板', () => {
 
     // 题目名链到新外壳的题目详情，不是老树那条地址。
     expect(panel('全部题目')?.querySelector('tbody a')?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/board/tasks/1`)
+  })
+
+  it('领取那一列带名额上限；没设上限的题只有一个数', async () => {
+    const rows = taskRows()
+    // 头一题设了 5 个名额，其余的接口给 null。
+    rows[0] = { ...rows[0], participantLimit: 5 }
+    getAnalyticsTasks.mockImplementation(async () => ({ data: { tasks: rows } }))
+
+    await mount()
+    await openTab('题目')
+
+    expect(table('全部题目').rows[0][2]).toBe('3/5')
+    expect(table('全部题目').rows[1][2]).toBe('0')
   })
 
   it('题一多就走板里那根页码条：一页 20 条，翻页只切一刀', async () => {
@@ -486,15 +620,26 @@ describe('整板看板', () => {
     expect(table('全部题目').rows[0][0]).toBe('第21道题基础题')
   })
 
-  it('「参与者」那一格只画接口真有的聚合；逐人的那几列如实说不返回', async () => {
+  it('「参与者」那一格：逐人一行（领取 / 通过 / 在做的 / 状态），外加报名与完成的聚合', async () => {
     await mount()
     await openTab('参与者')
 
     const p = panel('参与者')
-    expect(squash(p?.querySelector('.panel__sub')?.textContent)).toBe('5个主体领过题·逐人的那一层接口不返回，排不了名')
+    expect(squash(p?.querySelector('.panel__sub')?.textContent)).toBe('3个主体领过题·按领取数排')
 
-    // 这六个数来自 /analytics/participants 的 entityMetrics —— overview 那三张卡
-    // 说的是「领取 / 提交 / 通过」，报名本身待审多少、被驳回多少它不说。
+    const t = table('参与者')
+    expect(t.head).toEqual(['成员', '领取', '通过', '在做的', '状态'])
+    // 「在做的」= 还在做 + 交了没判（原型那一列的口径）；只剩判完的题时 chip 写「都收尾了」。
+    // 小队也占一行，成员那一格底下标出来。
+    expect(t.rows).toEqual([
+      ['顾云舟', '3', '1', '2', '2道在做'],
+      ['陈砚秋', '1', '1', '0', '都收尾了'],
+      ['第七小队小队', '2', '0', '2', '2道在做'],
+    ])
+    expect(getAnalyticsPeople).toHaveBeenCalledWith(SPACE_ID)
+
+    // 报名与完成那六个数还在 —— 它来自 /analytics/participants，说的是另一件事
+    //（报名审批，不是领取后的状态），所以两张表并排画。
     expect(kpis()).toEqual({
       报名主体: '5',
       报名已通过: '4',
@@ -504,12 +649,30 @@ describe('整板看板', () => {
       成功主体: '2',
     })
     expect(getAnalyticsParticipants).toHaveBeenCalledWith(SPACE_ID)
+    expect(squash(p?.textContent)).toContain('报名与完成（只按主体汇总）')
+  })
 
-    // 原型那张「每人一行 + 活跃 chip」的表**没有**：接口不返回名单，就不画那一层。
+  it('「参与者」那一格读不到逐人名单时只说明一句，聚合照旧', async () => {
+    getAnalyticsPeople.mockImplementation(async () => {
+      throw new Error('403')
+    })
+
+    await mount()
+    await openTab('参与者')
+
+    const p = panel('参与者')
+    expect(squash(p?.querySelector('.panel__sub')?.textContent)).toBe('逐人的那一层没读出来')
     expect(p?.querySelectorAll('tbody tr')).toHaveLength(0)
-    const text = squash(p?.textContent)
-    expect(text).toContain('不返回成员名单')
-    expect(text).toContain('活跃')
+    expect(squash(p?.textContent)).toContain('不照原型编一张人表')
+    // 这一格塌了不该带走别的：报名与完成那六个数还在。
+    expect(kpis()).toEqual({
+      报名主体: '5',
+      报名已通过: '4',
+      报名待审: '1',
+      报名已驳回: '0',
+      提交主体: '3',
+      成功主体: '2',
+    })
   })
 
   it('「出题人」那一格：题目数 / 累计被领取 / 平均每道被领 / 出题通过率都来自接口', async () => {

@@ -14,6 +14,8 @@
 红绿是这么验的：把路由上那一行 `_ensure_space_visible` 去掉，第一个用例就红。
 """
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -30,6 +32,15 @@ def _auth(token: str) -> dict[str, str]:
 
 def _error_name(resp) -> str | None:
     return (resp.json().get("error") or {}).get("name")
+
+
+def _mentions_number(text: str, number: int) -> bool:
+    """``text`` 里有没有把这个数当成一个独立的数写出来。
+
+    不用 ``str(number) in text``：id 是 40 时那道 404 的正文里也有 "40"（"404"），
+    子串比法会把一次正确的 404 判成泄漏。
+    """
+    return re.search(rf"(?<!\d){number}(?!\d)", text) is not None
 
 
 @pytest.fixture
@@ -98,7 +109,9 @@ class TestALearningFilterBarIsInvisibleUntilYouAreIn:
         assert _error_name(resp) == "NotFoundError", resp.text
         # 分类名（和它的 id）一个字都不许出现在这一格里。
         assert board["marker"] not in resp.text
-        assert str(board["category_id"]) not in resp.text
+        # id 按「独立的一个数」比，不按子串比：这道题答的是 404，而 id 恰好是 40 时，
+        # 子串比法会撞在 "404" 上（2026-09-29 CI 上真的红过）。
+        assert not _mentions_number(resp.text, board["category_id"])
 
     def test_the_owner_still_reads_the_category_names(
         self, board: dict, api_client: TestClient
