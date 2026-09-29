@@ -48,17 +48,29 @@ pub async fn install_connector(origin: &str) -> Result<(), String> {
     let arch = if std::env::consts::ARCH == "aarch64" { "arm64" } else { "amd64" };
     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     let partial = path.with_extension("exe.part");
-    let out = Command::new("curl.exe")
-        .args(["-fsSL", "-o"])
-        .arg(&partial)
-        .arg(format!("{origin}/connector/latest/windows-{arch}/cheesehost.exe"))
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .await
-        .map_err(|e| format!("curl.exe: {e}"))?;
-    if !out.status.success() {
-        let _ = std::fs::remove_file(&partial);
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    let _ = std::fs::remove_file(&partial);
+    let url = format!("{origin}/connector/latest/windows-{arch}/cheesehost.exe");
+    // A download cut mid-transfer resumes (-C -) instead of failing the
+    // install, as the server's install.sh and install.ps1 do.
+    let mut attempt = 1;
+    loop {
+        let out = Command::new("curl.exe")
+            .args(["-fsSL", "-C", "-", "-o"])
+            .arg(&partial)
+            .arg(&url)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .await
+            .map_err(|e| format!("curl.exe: {e}"))?;
+        if out.status.success() {
+            break;
+        }
+        if attempt >= 5 {
+            let _ = std::fs::remove_file(&partial);
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        attempt += 1;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     std::fs::rename(&partial, &path).map_err(|e| e.to_string())
 }
