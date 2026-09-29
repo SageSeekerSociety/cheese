@@ -210,6 +210,25 @@ def test_days_outside_the_readable_window_is_refused(client, as_admin, gateway, 
     assert gateway.calls == []  # 参数不过关，一次网关都不该问
 
 
+def test_a_body_its_own_validator_refuses_is_a_400_that_says_why(
+    client, as_admin, gateway
+):
+    """请求体里的字段被 schema 自己的校验器拒掉（明文 http 的上游地址），答的是和
+    其它参数错误同一个 400 信封，并带上校验器那句话 —— 不是 500「服务器内部错误」。"""
+    r = client.post(
+        "/admin/gateway/models",
+        json={**_NEW_MODEL, "api_base": "http://open.bigmodel.cn/api/anthropic"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+    body = r.json()
+    assert body["code"] == 400
+    details = body["error"]["data"]["details"]
+    assert [d["loc"] for d in details] == [["body", "api_base"]]
+    assert "https://" in details[0]["msg"]
+    assert gateway.calls == []
+
+
 def test_an_unreachable_gateway_is_a_503_not_an_empty_board(
     client, as_admin, unreachable_gateway
 ):
