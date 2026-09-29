@@ -71,6 +71,14 @@
     "close": "Close",
     "theme": "Appearance: {mode}",
     "showTab": "Show {tab}",
-    "newTopic": "New topic"
+    "newTopic": "New topic",
+    "messages": "Messages",
+    "tasks": "Tasks",
+    "docs": "Documents",
+    "projectDocs": "Project documents",
+    "library": "Library",
+    "comment": "Comment",
+    "decision": "Decision",
+    "weekly": "Weekly report"
   }
 }
