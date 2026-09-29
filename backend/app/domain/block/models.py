@@ -124,6 +124,17 @@ PROMPTED_TURN_META_KEY = "prompted_turn"
 # 与 `consumed_turn` 成对：一个说「这是说给芝士的」，一个说「哪一轮已经读过了」。
 AGENT_NOTICE_META_KEY = "agent_notice"
 
+# When the author last edited this message (ISO-8601). Its presence is what the
+# room reads as 「已编辑」; see `app.domain.block.editing`.
+EDITED_AT_META_KEY = "edited_at"
+
+# This message is an agent's step checklist, the one `todo_write` keeps editing:
+# ``{"items": [{"id", "subject", "status"}], "result": str | None}``. The room
+# draws the list from it; the text says the same thing for every other reader.
+# Its presence is also how the next `todo_write` finds which of its author's
+# messages to edit.
+CHECKLIST_META_KEY = "checklist"
+
 
 def consumed_turn(block: "Block") -> str | None:
     """Which turn already read this block into a prompt (None = still pending)."""

@@ -12,27 +12,37 @@
 // 它的接口还没落地（见任务的分批说明）。邀请码不是了：改码与撤销的接口在第 3 批落地，
 // 那块内容现在就在这块下拉里（`InviteCodesDialog`），不再跳旧页。
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
+import AdminSettingsDialog from './components/AdminSettingsDialog.vue'
 import InviteCodesDialog from './components/InviteCodesDialog.vue'
 import { ROLE_LABEL } from './model'
-import { codes, failed, isManager, isOwner, loadBoard, loadCodes, me, role, space } from './store'
+import { currentCode, failed, isManager, isOwner, loadBoard, loadCodes, managers, me, role, space } from './store'
 
 const props = defineProps<{ spaceId: number }>()
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 
 const menuOpen = ref(false)
 const inviteOpen = ref(false)
+/** 「管理员设置」那块只读弹窗。只有所有者打得开（菜单项对别人是灰的）。 */
+const adminsOpen = ref(false)
 
 const spaceName = computed(() => space.value?.name ?? '空间')
 
-/** 下拉上那一行摘要：现在用的是哪个码、用了多少。 */
+/** 下拉上那一行摘要：现在用的是哪个码、用了多少。
+ *
+ *  「还用得上」只有一条判据（`currentInviteCode`，见 `model.ts`），成员页与邀请码
+ *  弹窗念的是同一条 —— 列表里第一张码可能早就用尽了，拿它当「当前码」写着，人照着
+ *  发给下一个人的时候才发现发不出去。
+ */
 const codeSummary = computed(() => {
-  const first = codes.value[0]
-  if (!first) return '还没有码'
-  return `${first.code} · ${first.useCount} / ${first.maxUses ?? '不限'} 人已用`
+  const current = currentCode.value
+  if (!current) return '没有可用的码'
+  return `${current.code} · ${current.useCount} / ${current.maxUses ?? '不限'} 人已用`
 })
 
 const NAV = computed(() =>
@@ -110,15 +120,22 @@ watch(
               @click="(menuOpen = false), router.push({ name: 'SpaceBoardMembers', params: { spaceId } })"
             />
             <v-divider class="my-1" />
+            <!-- 只有所有者能改别人的角色（`Action.ADMIN` 只挂在 OWNER 上），所以这一项
+                 对管理员是灰的，灰的同时把「为什么」写在副标题上 —— 与原型一致。 -->
             <v-list-item
               v-if="isOwner"
               prepend-icon="mdi-account-cog"
-              title="管理员设置"
-              subtitle="谁可以管理这个空间"
-              @click="(menuOpen = false), router.push({ name: 'SpacesDetail', params: { spaceId } })"
+              :title="t('spaces.adminSettings.title')"
+              :subtitle="t('spaces.adminSettings.menuOwnerSubtitle')"
+              @click="(menuOpen = false), (adminsOpen = true)"
             />
-            <v-list-item v-else prepend-icon="mdi-shield-account-outline" title="管理员设置" disabled>
-              <template #subtitle>只有所有者能改</template>
+            <v-list-item
+              v-else
+              prepend-icon="mdi-shield-account-outline"
+              :title="t('spaces.adminSettings.title')"
+              disabled
+            >
+              <template #subtitle>{{ t('spaces.adminSettings.menuLockedSubtitle') }}</template>
             </v-list-item>
           </v-list>
         </v-menu>
@@ -167,6 +184,10 @@ watch(
     <!-- 邀请码弹窗。只有管理员挂得上（那颗下拉本来就只有他们看得见），
          接口那一侧也是这个判据。 -->
     <InviteCodesDialog v-if="isManager" v-model="inviteOpen" :space-id="spaceId" />
+
+    <!-- 管理员设置：只读的一份名单，从 `Space.admins` 来。只有所有者打得开 —— 那颗
+         菜单项对别人是灰的，这里再挡一次是不让它在别人的树上白挂一个 overlay。 -->
+    <AdminSettingsDialog v-if="isOwner" v-model="adminsOpen" :managers="managers" />
   </div>
 </template>
 

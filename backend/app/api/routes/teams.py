@@ -917,8 +917,8 @@ async def add_team_member_entry(
 async def list_team_join_requests(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     status: str | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
-    pageSize: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int | None = Query(default=None, ge=1, le=100),
     auth_user: AuthUserInfo = require_permission(
         Action.READ, Resource.TEAM_REQUEST, "teamId"
     ),
@@ -970,8 +970,8 @@ async def list_team_join_requests(
 async def list_team_requests_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     status: str | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
-    pageSize: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int | None = Query(default=None, ge=1, le=100),
     auth_user: AuthUserInfo = require_permission(
         Action.READ, Resource.TEAM_REQUEST, "teamId"
     ),
@@ -996,8 +996,8 @@ async def list_team_requests_alias(
 async def list_team_invitations(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     status: str | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
-    pageSize: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int | None = Query(default=None, ge=1, le=100),
     auth_user: AuthUserInfo = require_permission(
         Action.READ, Resource.TEAM_INVITATION, "teamId"
     ),

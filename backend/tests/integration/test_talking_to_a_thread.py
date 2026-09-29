@@ -87,7 +87,7 @@ def test_writing_on_a_thread_wakes_the_room_to_relay_it(client, stub_hooks):
     # owns this worker before a human addresses it.
     emit = stub_hooks.emit_turn
 
-    def start_child(topic_id, prompt, reply):
+    def start_child(topic_id, prompt, reply, agent=None):
         stub_hooks.starts(topic_id)
         stub_hooks.acknowledges(topic_id, prompt)
         stub_hooks.spawns(topic_id, thread_label=thread["thread_label"])

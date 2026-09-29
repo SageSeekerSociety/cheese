@@ -21,6 +21,8 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.knowledge.services import KnowledgeService
+from app.domain.materials.services import MaterialService
 from app.domain.shell.catalog import is_course_shell
 from app.domain.space import course_modules
 from app.domain.space.analytics_service import SpaceAnalyticsService
@@ -247,6 +249,9 @@ class CreateSpaceInviteCodeRequest(BaseModel):
 
     max_uses: int | None = Field(default=None, alias="maxUses")
     expires_at: int | None = Field(default=None, alias="expiresAt")
+    # 这张码给谁 / 干什么用. Optional and free text; omitted or blank is stored
+    # as NULL, which the read side reports as "no note" rather than "".
+    note: str | None = Field(default=None, alias="note")
 
 
 class PatchSpaceInviteCodeRequest(BaseModel):
@@ -255,12 +260,15 @@ class PatchSpaceInviteCodeRequest(BaseModel):
     Both fields are nullable and both are optional, and the two mean different
     things: an absent ``expiresAt`` leaves the date alone, an explicit null
     clears it. The route reads ``model_fields_set`` to tell them apart.
+    ``note`` follows the same rule: absent leaves the 说明 alone, null (or a
+    blank string, which the service normalises to the same thing) clears it.
     """
 
     model_config = ConfigDict(populate_by_name=True)
 
     max_uses: int | None = Field(default=None, alias="maxUses")
     expires_at: int | None = Field(default=None, alias="expiresAt")
+    note: str | None = Field(default=None, alias="note")
 
 
 class AddSpaceManagerRequest(BaseModel):
@@ -366,6 +374,10 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
         domain_group_domain_repo=domain_group_domain_repo,
         member_repo=member_repo,
         invite_code_repo=invite_code_repo,
+        # The write side of `teaching`'s references: a 项目集 may only name
+        # 知识 its teacher could already read and 课件 that exist.
+        knowledge_service=KnowledgeService.for_lookup(db),
+        material_service=MaterialService.for_lookup(db),
     )
 
 
@@ -483,7 +495,17 @@ def _space_to_api_model(space: Space) -> dict:
     }
 
 
-def _invite_code_to_api_model(invite: SpaceInviteCode) -> dict:
+def _invite_code_to_api_model(
+    invite: SpaceInviteCode, created_by: dict | None = None
+) -> dict:
+    """One code as the 邀请码 screen reads it.
+
+    ``createdBy`` is the same hydrated person object a member row carries, and
+    is passed in rather than read off the row because turning a user id into a
+    name is a batched query the caller already runs for the whole list. It is
+    ``None`` when the row names nobody — the screen says 未知 rather than
+    rendering an empty name.
+    """
     created_at_ms = (
         int(invite.created_at.timestamp() * 1000) if invite.created_at else 0
     )
@@ -498,14 +520,59 @@ def _invite_code_to_api_model(invite: SpaceInviteCode) -> dict:
         "useCount": invite.use_count,
         "expiresAt": expires_at_ms,
         "createdAt": created_at_ms,
+        "note": invite.note,
+        "createdBy": created_by,
     }
 
 
-def _member_to_api_model(member: SpaceMember, user_info: dict | None = None) -> dict:
+async def _invite_codes_to_api_models(
+    invites: Sequence[SpaceInviteCode],
+    *,
+    user_repo: UserRepository,
+    profile_repo: UserProfileRepository,
+) -> list[dict]:
+    """The list form of the above, with its makers hydrated in one query.
+
+    Two queries for however many codes, the same shape ``_hydrate_members``
+    uses: a per-row lookup would grow with the number of codes on the board.
+    """
+    maker_ids = [c.created_by for c in invites if c.created_by is not None]
+    people = (
+        await _hydrate_people(maker_ids, user_repo=user_repo, profile_repo=profile_repo)
+        if maker_ids
+        else {}
+    )
+    return [
+        _invite_code_to_api_model(
+            invite, people.get(invite.created_by) if invite.created_by else None
+        )
+        for invite in invites
+    ]
+
+
+def _member_to_api_model(
+    member: SpaceMember,
+    user_info: dict | None = None,
+    invite_code: SpaceInviteCode | None = None,
+) -> dict:
+    """One member row of the 成员 page.
+
+    ``inviteCode`` is the 「加入方式」 column: the code this membership came in
+    on, or **null**, which is the answer for two cases the row cannot tell
+    apart — a member who predates the column (nobody recorded the code) and one
+    the owner added directly (no code was involved). The screen renders both as
+    未知: null means "not on record", and dressing it up as a blank or a 0
+    would claim something the row does not say.
+    """
     joined_at_ms = int(member.created_at.timestamp() * 1000) if member.created_at else 0
     result: dict = {"userId": member.user_id, "joinedAt": joined_at_ms}
     if user_info is not None:
         result["user"] = user_info
+    result["inviteCode"] = (
+        {"id": invite_code.id, "code": invite_code.code}
+        if invite_code is not None
+        else None
+    )
     return result
 
 
@@ -633,13 +700,33 @@ async def _hydrate_members(
     *,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
+    invite_code_repo: SpaceInviteCodeRepository,
 ) -> list[dict]:
+    """Roster rows, with the people and the codes they came in on.
+
+    Both lookups are batched for the same reason, and it is the same reason the
+    people half was batched before: a per-row lookup makes rendering a board
+    cost grow with the class. The codes are fetched through
+    ``get_by_ids``, which deliberately keeps soft-deleted codes — 加入方式 has
+    to keep naming the code that let someone in after it is revoked, and that
+    is precisely when somebody goes looking at this column.
+    """
     people = await _hydrate_people(
         [member.user_id for member in members],
         user_repo=user_repo,
         profile_repo=profile_repo,
     )
-    return [_member_to_api_model(member, people[member.user_id]) for member in members]
+    codes = await invite_code_repo.get_by_ids(
+        [m.invite_code_id for m in members if m.invite_code_id is not None]
+    )
+    return [
+        _member_to_api_model(
+            member,
+            people[member.user_id],
+            codes.get(member.invite_code_id) if member.invite_code_id else None,
+        )
+        for member in members
+    ]
 
 
 async def _build_course_roster_payload(
@@ -784,7 +871,7 @@ async def get_space(
 )
 async def get_spaces(
     queryMyRank: bool = Query(default=False),
-    pageStart: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
     pageSize: int = Query(default=20, ge=1, le=200),
     service: SpaceService = Depends(get_space_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -905,12 +992,21 @@ async def create_space(
     codes = await service.list_invite_codes(
         space_id=space.id, actor_user_id=auth_user.user_id
     )
+    # Same shape the 邀请码 screen reads, its maker hydrated and all: the
+    # creator is looking at this payload right after the board appears, and a
+    # code that arrives without the same fields the list gives it is how two
+    # views of one row drift apart.
+    items = await _invite_codes_to_api_models(
+        codes,
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
     return {
         "code": 201,
         "message": "Created",
         "data": {
             "space": space_data,
-            "inviteCode": _invite_code_to_api_model(codes[0]) if codes else None,
+            "inviteCode": items[0] if items else None,
         },
     }
 
@@ -993,6 +1089,10 @@ async def join_space(
     space = await service.join_space(
         code=payload.code.strip(), user_id=auth_user.user_id
     )
+    # Commit before answering: someone told they have joined opens the board on
+    # their next request, and the board is closed to non-members. Same reason as
+    # the commit in ``create_space``.
+    await db.commit()
     space_data = await _build_full_space_payload(space, service=service, db=db)
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
 
@@ -1209,6 +1309,7 @@ async def list_space_members(
         members,
         user_repo=UserRepository(session=db),
         profile_repo=UserProfileRepository(session=db),
+        invite_code_repo=SpaceInviteCodeRepository(session=db),
     )
     return {"code": 200, "message": "OK", "data": {"members": items}}
 
@@ -1311,6 +1412,7 @@ async def add_space_member(
         [member],
         user_repo=user_repo,
         profile_repo=UserProfileRepository(session=db),
+        invite_code_repo=SpaceInviteCodeRepository(session=db),
     )
     return {"code": 201, "message": "Created", "data": {"member": items[0]}}
 
@@ -1358,15 +1460,17 @@ async def list_space_invite_codes(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     codes = await service.list_invite_codes(
         space_id=space_id, actor_user_id=auth_user.user_id
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"inviteCodes": [_invite_code_to_api_model(c) for c in codes]},
-    }
+    items = await _invite_codes_to_api_models(
+        codes,
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+    return {"code": 200, "message": "OK", "data": {"inviteCodes": items}}
 
 
 @router.post(
@@ -1379,6 +1483,7 @@ async def create_space_invite_code(
     payload: CreateSpaceInviteCodeRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     expires_at = None
     if payload.expires_at is not None:
@@ -1388,12 +1493,14 @@ async def create_space_invite_code(
         actor_user_id=auth_user.user_id,
         max_uses=payload.max_uses,
         expires_at=expires_at,
+        note=payload.note,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"inviteCode": _invite_code_to_api_model(invite)},
-    }
+    items = await _invite_codes_to_api_models(
+        [invite],
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+    return {"code": 201, "message": "Created", "data": {"inviteCode": items[0]}}
 
 
 @router.patch(
@@ -1406,6 +1513,7 @@ async def patch_space_invite_code(
     payload: PatchSpaceInviteCodeRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     expires_at = None
     if payload.expires_at is not None:
@@ -1418,12 +1526,15 @@ async def patch_space_invite_code(
         max_uses_set="max_uses" in payload.model_fields_set,
         expires_at=expires_at,
         expires_at_set="expires_at" in payload.model_fields_set,
+        note=payload.note,
+        note_set="note" in payload.model_fields_set,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"inviteCode": _invite_code_to_api_model(invite)},
-    }
+    items = await _invite_codes_to_api_models(
+        [invite],
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+    return {"code": 200, "message": "OK", "data": {"inviteCode": items[0]}}
 
 
 @router.delete(
@@ -1677,6 +1788,23 @@ async def get_space_analytics_participants(
 
 
 @router.get(
+    "/{spaceId}/analytics/people",
+    summary="Get Space Analytics People",
+)
+async def get_space_analytics_people(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    db=Depends(get_db),
+) -> dict:
+    """Return per-person participation rows plus the claims that never moved."""
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    _ = auth_user
+    data = await service.get_people(space_id=space_id)
+    return {"code": 200, "message": "OK", "data": data}
+
+
+@router.get(
     "/{spaceId}/analytics/participants/export",
     summary="Export Space Analytics Participants",
 )
@@ -1763,10 +1891,14 @@ async def export_space_analytics_participants(
 # ── 学习: 成员怎么与 AI 协作、卡在哪 (issue #945 的管理员看板) ────────────────────
 #
 # 上面那一组读 赛题 与报名表，这一组读成员项目里的**对话**，所以门也不同: 课程页
-# 本身对所有人可见（`Role.GUEST` 就能读 Space），成员项目的对话不是。判定不写在
-# 这几条路由里 —— 它在 `app.auth.project_access`，由 `SpaceLearningService` 逐个
-# 项目过一次（`ActorResolver.authorize_project` 是同一个判据的请求内形态）。这里
-# 只负责「先登录」，和本文件其它路由同一个写法。
+# 本身对所有人可见（`Role.GUEST` 就能读 Space），成员项目的对话不是。行数据的判定
+# 不写在这几条路由里 —— 它在 `app.auth.project_access`，由 `SpaceLearningService`
+# 逐个项目过一次（`ActorResolver.authorize_project` 是同一个判据的请求内形态）。
+# 这两条只负责「先登录」，和本文件其它路由同一个写法。
+#
+# 唯一的例外是 `filters`：它除了行数据（成员、计数）还报课程级的分类名，那一项没有
+# 项目可逐条过，所以那条路由照本文件的空间路由挂了 `_ensure_space_visible` —— 见它
+# 自己的说明。
 #
 # 缺了哪些数据（review_flag、「再给一点提示」、知识点）写在 `SpaceLearningService`
 # 的模块说明里，接口如实把它们报成缺失，不拿别的信号顶替。
@@ -1795,8 +1927,8 @@ async def get_space_submissions(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     reviewed: bool | None = Query(default=None),
     taskId: int | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
-    pageSize: int = Query(default=20, ge=1, le=100),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int = Query(default=20, ge=1, le=200),
     sortBy: str = Query(default="createdAt"),
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -1873,9 +2005,19 @@ async def get_space_learning_filters(
     resolver: ActorResolverDep,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceLearningService = Depends(get_space_learning_service),
+    db=Depends(get_db),
 ) -> dict:
-    """这一格能筛的两维: 成员、知识点。时间那一维在前端的筛选栏里。"""
-    _ = auth_user
+    """这一格能筛的两维: 成员、知识点。时间那一维在前端的筛选栏里。
+
+    这里比同族其它三条多一道 `_ensure_space_visible`，因为返回的东西里有一项不
+    是行数据: `knowledgePoints` 报的是这个课程自己划的分类格子
+    (`space_categories`)，不是某个成员项目里的行。成员与计数走
+    `SpaceLearningService` 那道逐项目的 `may_read_project`，一个都读不到就是空
+    表；分类名没有项目可逐条过，只有课程级的一道门能挡 —— 少了它，一个不在这个
+    板里的人在 404 的 `GET /spaces/{id}` 旁边拿到 200，还能读出别人课程的设计。
+    门本身照抄本文件其它空间路由的那道 (非成员答 404，不确认板子存在)。
+    """
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     actor = await resolver.resolve(fallback_handle=None)
     data = await service.filters(space_id=space_id, handle=_learning_handle(actor))
     return {"code": 200, "message": "OK", "data": data}

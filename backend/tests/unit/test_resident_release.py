@@ -6,10 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from app.domain.agent import place
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution import release
+
+# Every release carries the platform tool table; `stage` reads it.
+CHEESE = release.sources()["cheese.py"]
 
 
 def test_staged_release_preserves_context_and_is_acknowledged_once(tmp_path):
@@ -61,6 +65,7 @@ def test_staged_release_preserves_context_and_is_acknowledged_once(tmp_path):
         "client.py": "new client",
         "executor_transport.py": "companion",
         "proxy.js": "const target = __EXECUTION_CONFIG__;",
+        "cheese.py": CHEESE,
     }
     staged = release.stage(str(tmp_path), sources)
     assert staged == {"changed": True, "version": release.digest(sources)}
@@ -72,8 +77,10 @@ def test_staged_release_preserves_context_and_is_acknowledged_once(tmp_path):
         current["hooks"]["PreToolUse"][0]["hooks"]
         == settings["hooks"]["PreToolUse"][0]["hooks"]
     )
-    assert "mcp__native__chat_send" in current["permissions"]["allow"]
-    assert "mcp__native__cheese_*" in current["permissions"]["allow"]
+    # Every platform tool is allowed by name, those without a `cheese_` prefix
+    # included.
+    for name in ("chat_send", "todo_write", "cheese_task", "platform_request"):
+        assert "mcp__native__" + name in current["permissions"]["allow"]
     # A policy hook is the build's to run, on every tool, as written.
     assert current["hooks"]["PreToolUse"] == settings["hooks"]["PreToolUse"]
     assert (
@@ -149,7 +156,9 @@ def test_staged_release_unmounts_only_the_forwarded_view_before_replacement(
         mounted.discard(Path(argv[-1]))
 
     monkeypatch.setattr(release.subprocess, "run", unmount)
-    release.stage(str(tmp_path), {"client.py": "new", "proxy.js": "new"})
+    release.stage(
+        str(tmp_path), {"client.py": "new", "proxy.js": "new", "cheese.py": CHEESE}
+    )
     # One plain unmount, and no lazy follow-up: the lazy flag detaches a mount a
     # reader may still hold, so it is only ever reached when the plain one failed.
     assert calls == [["/bin/fusermount3", "-u", str(forwarded)]]
@@ -176,7 +185,9 @@ def test_staged_release_keeps_a_forwarded_view_used_as_the_native_cwd(
         raise AssertionError("a native cwd mount cannot be normally unmounted")
 
     monkeypatch.setattr(release.subprocess, "run", unexpected)
-    result = release.stage(str(tmp_path), {"client.py": "new", "proxy.js": "new"})
+    result = release.stage(
+        str(tmp_path), {"client.py": "new", "proxy.js": "new", "cheese.py": CHEESE}
+    )
     assert result["changed"]
 
 
@@ -215,6 +226,7 @@ def test_staged_release_only_removes_the_managed_context_hook(tmp_path):
         "client.py": "new client",
         "executor_transport.py": "companion",
         "proxy.js": "const target = __EXECUTION_CONFIG__;",
+        "cheese.py": CHEESE,
     }
 
     release.stage(str(tmp_path), sources)
@@ -261,7 +273,11 @@ def test_active_turn_blocks_changes_until_completion(tmp_path):
     transcript.write_text(
         json.dumps({"type": "user", "message": {"content": "work"}}) + "\n"
     )
-    sources = {"client.py": "released", "proxy.js": "__EXECUTION_CONFIG__"}
+    sources = {
+        "client.py": "released",
+        "proxy.js": "__EXECUTION_CONFIG__",
+        "cheese.py": CHEESE,
+    }
     assert release.stage(str(tmp_path), sources) == {
         "changed": False,
         "busy": True,
@@ -334,13 +350,22 @@ def _released_home(tmp_path, monkeypatch):
     config = tmp_path / ".claude"
     config.mkdir(exist_ok=True)
     platform_dir = tmp_path / ".cheese"
-    (platform_dir / "remote-session").mkdir(parents=True)
-    (platform_dir / "remote-session/execution.json").write_text("{}")
+    # The screen's own seat, not the room: a release is that session's target
+    # and that session's plugin.
+    session = (
+        Path(place.seat_dir(str(tmp_path), SCREEN.agent_handle)) / "remote-session"
+    )
+    session.mkdir(parents=True)
+    (session / "execution.json").write_text("{}")
     (config / "settings.json").write_text("{}")
     monkeypatch.setattr(
         release,
         "sources",
-        lambda: {"client.py": "released", "proxy.js": "__EXECUTION_CONFIG__"},
+        lambda: {
+            "client.py": "released",
+            "proxy.js": "__EXECUTION_CONFIG__",
+            "cheese.py": CHEESE,
+        },
     )
     return platform_dir / "remote-execution/release-ready"
 

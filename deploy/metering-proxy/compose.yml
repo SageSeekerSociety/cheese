@@ -1,5 +1,7 @@
 # Subscription metering proxy — meters, caps and routes every Claude turn. It
-# holds no model credential: sessions carry their host's own Claude login.
+# holds the platform's only model credential: every session boots on
+# NO_LOGIN_PLACEHOLDER, which authenticates nothing, and the real credential is
+# put on the request here, on its way to Anthropic.
 #
 # Values come from a box-local .env next to this file (never committed):
 #   CHEESE_SCOPED_SECRET    = the backend's SANDBOX_TOKEN (rotate together)
@@ -24,6 +26,26 @@
 #   CHEESE_ALLOW_HEADER_ATTR  1 ONLY on bridge-only single-host deployments
 #   CONNECT_BIND_HOST       bind address for the CONNECT listener (see below);
 #                           0.0.0.0 on a box that serves MicroCloud machines
+#   CHEESE_CHATGPT_KEY      the Bearer the ChatGPT listener (:8445) demands:
+#                           the api_key of the gateway deployments pointed at
+#                           it. Empty refuses every request there.
+#
+# The Codex client version ChatGPT is told is not set here: it is a file beside
+# the ChatGPT accounts, changed without a restart (chatgpt-login.sh
+# client-version).
+#
+# The ChatGPT listener (:8445) is published nowhere. Its one caller, the
+# gateway's LiteLLM, reaches it as http://metering-proxy:8445 on
+# cheese-meter-gateway, an internal network only those two containers join;
+# no sandbox is on it. Plain HTTP is safe there because the hop never leaves
+# that network, and the Bearer it carries is the listener key, not an upstream
+# credential. CHEESE_CHATGPT_KEY stays as the second line of defence.
+#
+# The network is shared with the gateway stack, so neither stack owns it: both
+# compose files name it external, and each stack's release creates it when it
+# is missing. Brought up by hand before either release has run, this service
+# fails with "network cheese-meter-gateway declared as external, but could not
+# be found"; `docker network create --internal cheese-meter-gateway` fixes it.
 #
 # The reverse listener (:443) stays on the docker bridge (172.17.0.1): only
 # sandboxes on this box reach it, and they are steered there by --add-host.
@@ -56,6 +78,12 @@ services:
     image: ${METERING_PROXY_IMAGE:?Use the Release metering proxy workflow}
     container_name: cheese-metering-proxy
     restart: unless-stopped
+    labels:
+      # A hash of this file and the .env the release started it with, so the
+      # next release can tell a configuration change from an unchanged proxy
+      # (release-metering-proxy.sh). Empty when started any other way, which
+      # the next release treats as changed.
+      cheese.metering-proxy.config-sha256: ${METERING_PROXY_CONFIG_SHA256:-}
     # Backstop, not the fix: the addon now streams both request and response
     # bodies (billing_addon.py) so per-flow memory is bounded and a long agent
     # turn no longer buffers its whole grown context. This cap only ensures that
@@ -74,12 +102,20 @@ services:
       mitmdump --listen-host 0.0.0.0
       --mode reverse:https://api.anthropic.com@8443
       --mode regular@8444
+      --mode reverse:https://chatgpt.com@8445
       --ssl-insecure
       --set connection_strategy=lazy
       -s /addons/billing_addon.py
     ports:
       - "172.17.0.1:443:8443"
       - "${CONNECT_BIND_HOST:-172.17.0.1}:8444:8444"
+    networks:
+      # Listed because naming any network drops the implicit one: the
+      # published listeners and the way out to Anthropic stay on it.
+      default:
+      meter-gateway:
+        aliases:
+          - metering-proxy
     environment:
       CHEESE_USAGE_LOG: /var/log/cheese/usage.jsonl
       CHEESE_TOKEN_CAP: ${CHEESE_TOKEN_CAP:-0}
@@ -88,6 +124,8 @@ services:
       CHEESE_ADMISSION_URL: ${CHEESE_ADMISSION_URL:-}
       CHEESE_GATEWAY_BASE: ${CHEESE_GATEWAY_BASE:-}
       CHEESE_CLAUDE_CREDENTIAL: /etc/cheese/claude-credential/credential
+      CHEESE_CHATGPT_CREDENTIALS: /etc/cheese/chatgpt-credential
+      CHEESE_CHATGPT_KEY: ${CHEESE_CHATGPT_KEY:-}
     volumes:
       # The ledger. This MUST resolve to the same host directory the backend's
       # SUBSCRIPTION_USAGE_LOG points into — the proxy writes the rows and the
@@ -103,3 +141,11 @@ services:
       # (claude-login.sh). Writable, because a login's pair is refreshed here
       # and written back; a directory, so an atomic replace is seen at once.
       - ${CLAUDE_CREDENTIAL_DIR:-./claude-credential}:/etc/cheese/claude-credential
+      # The platform's ChatGPT accounts, one directory per name
+      # (chatgpt-login.sh), writable for the same reason as the Claude one.
+      - ${CHATGPT_CREDENTIAL_DIR:-./chatgpt-credential}:/etc/cheese/chatgpt-credential
+
+networks:
+  meter-gateway:
+    external: true
+    name: cheese-meter-gateway

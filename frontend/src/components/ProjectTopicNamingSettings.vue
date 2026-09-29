@@ -8,7 +8,7 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 import { getTopicNaming, setTopicNaming } from '../api'
 
 // 话题命名：平台自动给话题起名、方向变了再改（默认），还是全由人来起名。
-// 两档都不碰人定过的名字——那是每个话题自己的锁，在侧栏里「恢复自动命名」解开。
+// 两档都不碰人定过的名字——那是每个话题自己的锁，只能由人再改一次，解不开。
 // 行为见后端 topic/naming.py。选中即保存：两个选项、没有要一起提交的别的字段。
 const props = defineProps<{ projectId: string }>()
 
@@ -26,7 +26,7 @@ const OPTIONS: { value: TopicNamingMode; title: string; detail: string }[] = [
   {
     value: 'manual',
     title: '手动命名',
-    detail: '平台不再自动起名，新话题保持「新话题」，直到有人改名。侧栏的「智能重命名」仍可生成建议，确认后才生效。',
+    detail: '平台不再自动起名，新话题保持「新话题」，直到有人手动改名。',
   },
 ]
 

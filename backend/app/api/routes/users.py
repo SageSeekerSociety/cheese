@@ -901,8 +901,8 @@ async def decline_team_invitation(
 )
 async def list_my_team_requests(
     status: str | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
-    pageSize: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int | None = Query(default=None, ge=1, le=100),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
@@ -954,8 +954,8 @@ async def list_my_team_requests(
 )
 async def list_my_team_invitations(
     status: str | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
-    pageSize: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int | None = Query(default=None, ge=1, le=100),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
@@ -1007,7 +1007,7 @@ async def list_my_team_invitations(
 )
 async def get_user_followed_questions(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
@@ -1066,7 +1066,7 @@ async def get_user_followed_questions(
 )
 async def get_user_questions(
     user_id: Annotated[int, Path(alias="userId")],
-    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
@@ -1131,7 +1131,7 @@ async def get_user_questions(
 )
 async def get_user_answers(
     user_id: Annotated[int, Path(alias="userId")],
-    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
@@ -1315,14 +1315,32 @@ async def send_register_email_code(
     if not re.match(email_regex, email):
         raise UnprocessableEntityError("Invalid email address format")
 
-    user_repo = UserRepository(session=db)
-    if await user_repo.is_email_taken(email):
-        raise ConflictError("Email already registered")
-
+    client = resolved_client_address(request)
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
-        service = EmailVerificationService(redis)
-        await service.send_verification_code(email, resolved_client_address(request))
+        # The account lookup sits behind the same client budget that guessing
+        # mailed codes spends, for the reason the sign-in endpoint gives: one
+        # source asking "is this address taken?" is the same attacker whichever
+        # form it types into. Before this, the 409 below never touched Redis —
+        # it was free — so the question could be asked as fast as the socket
+        # allowed. A probe that finds a registered address now spends a slot
+        # and keeps it; a request that goes on to mail a code hands it back.
+        from app.domain.user.login_security import ClientFailureBudget
+
+        budget = ClientFailureBudget(redis, "email_code")
+        wait = await budget.spend(client)
+        if wait:
+            raise _too_many_from_client(wait)
+        mailed = False
+        try:
+            user_repo = UserRepository(session=db)
+            if await user_repo.is_email_taken(email):
+                raise ConflictError("Email already registered")
+            await EmailVerificationService(redis).send_verification_code(email, client)
+            mailed = True
+        finally:
+            if mailed:
+                await budget.refund(client)
     finally:
         await redis.aclose()
 
@@ -2651,7 +2669,7 @@ async def delete_user_identity(
 )
 async def get_user_identity_access_logs(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    pageStart: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
     pageSize: int = Query(default=20, ge=1, le=200),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     realname_service: UserRealNameService = Depends(get_user_realname_service),
@@ -2943,7 +2961,7 @@ async def change_password(
 )
 async def get_user_favorite_questions(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
@@ -3002,7 +3020,7 @@ async def get_user_favorite_questions(
 )
 async def get_user_favorite_answers(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
@@ -3104,7 +3122,7 @@ async def update_user_settings(
 )
 async def list_users(
     q: str | None = Query(default=None),
-    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),

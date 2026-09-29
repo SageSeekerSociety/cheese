@@ -133,6 +133,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
     // 这是整个壳层的验收条件：没声明壳的项目必须和今天逐屏一样。
     expect(items(railItems(sources(3, 'p1'), DEFAULT_SHELL)).map((i) => i.title)).toEqual([
       '首页',
+      '待办',
       '项目0',
       '项目1',
       '项目2',
@@ -171,6 +172,20 @@ describe('壳决定露出哪几格、什么顺序', () => {
     expect(shortcutTarget(rail, 3)).toBe('/')
   })
 
+  it('桌面也到得了待办，而且它不占 ⌘N', () => {
+    // 加这一格之前 ⌘2 是第一个项目；它钉在首页下面，不该把项目的编号往后挤。
+    const rail = railItems({ ...sources(2, 'p0'), awaitingCount: 3 }, DEFAULT_SHELL)
+    const inbox = items(rail).find((i) => i.to === '/inbox')
+    expect(inbox?.badge).toBe(3)
+    expect(inbox?.shortcut).toBeUndefined()
+    expect(shortcutTarget(rail, 2)).toBe('/projects/p0')
+  })
+
+  it('手机底栏的待办也带着件数：两端答的是同一个数', () => {
+    const tabs = tabItems({ ...sources(2, 'p0'), awaitingCount: 3 }, DEFAULT_SHELL)
+    expect(tabs.find((i) => i.to === '/inbox')?.badge).toBe(3)
+  })
+
   it('文案按词表切', () => {
     const add = items(railItems(sources(0), mine)).find((i) => i.add)
     expect(add?.title).toBe('新建工作')
@@ -179,7 +194,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
   it('default 壳把所有格子都列了出来', () => {
     // rail 和底栏没有「更多」——一格从清单里去掉就是真的到不了。壳在这里只能
     // 重排，不能删；要收起某个平台概念，走 hidden + 「更多」（项目侧栏那条路）。
-    expect(DEFAULT_SHELL.nav.rail).toEqual(['home', 'projects', 'add'])
+    expect(DEFAULT_SHELL.nav.rail).toEqual(['home', 'inbox', 'projects', 'add'])
     expect(DEFAULT_SHELL.nav.tabs).toEqual(['spaces', 'workspace', 'inbox'])
   })
 })

@@ -2,10 +2,11 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
-from sqlalchemy import Select, and_, delete, exists, func, or_, select
+from sqlalchemy import CTE, Select, and_, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.llm.models import AIConversation, AIMessage
+from app.domain.search import bm25
 from app.domain.tag.models import Tag
 from app.domain.task.models import (
     Task,
@@ -61,7 +62,7 @@ class TaskRepository:
         This is a simplified translation of Kotlin TaskService.enumerateTasks:
         - Always filters by space.
         - Optionally filters by category, approved status, and owner (creator_id).
-        - Optionally does a naive ILIKE search on name/intro for `keywords`.
+        - Optionally searches name/intro for `keywords`, ordered by relevance.
         - Supports sorting by createdAt/updatedAt/deadline + id tie-breaker.
         """
         stmt: Select[tuple[Task]] = select(Task).where(
@@ -75,14 +76,10 @@ class TaskRepository:
         if owner_id is not None:
             stmt = stmt.where(Task.creator_id == owner_id)  # type: ignore[attr-defined]
 
-        if keywords:
-            like = f"%{keywords.strip()}%"
-            stmt = stmt.where(
-                or_(  # type: ignore[name-defined]
-                    Task.name.ilike(like),
-                    Task.intro.ilike(like),
-                )
-            )
+        hits = self._keyword_hits(space_id=space_id, keywords=keywords)
+        if hits is not None:
+            await bm25.serial_scans(self._session)
+            stmt = stmt.join(hits, hits.c.id == Task.id)
 
         if topics:
             stmt = stmt.where(
@@ -146,6 +143,13 @@ class TaskRepository:
                 ),
             )
 
+        # A search is ordered by relevance; the requested sort applies to browsing.
+        if hits is not None:
+            stmt = stmt.order_by(hits.c.score.desc(), Task.id.asc())
+            stmt = stmt.limit(limit).offset(offset)
+            result = await self._session.execute(stmt)
+            return list(result.scalars().all())
+
         # Map sort_by to actual columns; default to updatedAt.
         if sort_by == "createdAt":
             sort_col = Task.created_at
@@ -153,12 +157,22 @@ class TaskRepository:
             sort_col = func.coalesce(Task.published_at, Task.created_at)
         elif sort_by == "deadline":
             sort_col = Task.deadline
+        elif sort_by == "reviewedAt":
+            sort_col = Task.reviewed_at
         else:
             sort_col = Task.updated_at
 
         desc = sort_order.lower() == "desc"
+        # reviewedAt 是后加的列，老题（以及这条迁移之前审过的题）它是 NULL。Postgres
+        # 的 DESC 默认把 NULL 排在最前，而那正是「最近处理过」最不想要的一头 ——
+        # 一屏全是不知道谁审过的旧题。这一列显式 NULLS LAST；其它列保持默认。
         if desc:
-            stmt = stmt.order_by(sort_col.desc(), Task.id.desc())
+            primary = (
+                sort_col.desc().nullslast()
+                if sort_by == "reviewedAt"
+                else sort_col.desc()
+            )
+            stmt = stmt.order_by(primary, Task.id.desc())
         else:
             stmt = stmt.order_by(sort_col.asc(), Task.id.asc())
 
@@ -196,14 +210,10 @@ class TaskRepository:
         if owner_id is not None:
             stmt = stmt.where(Task.creator_id == owner_id)  # type: ignore[attr-defined]
 
-        if keywords:
-            like = f"%{keywords.strip()}%"
-            stmt = stmt.where(
-                or_(
-                    Task.name.ilike(like),
-                    Task.intro.ilike(like),
-                )
-            )
+        hits = self._keyword_hits(space_id=space_id, keywords=keywords)
+        if hits is not None:
+            await bm25.serial_scans(self._session)
+            stmt = stmt.join(hits, hits.c.id == Task.id)
 
         if topics:
             stmt = stmt.where(
@@ -268,6 +278,29 @@ class TaskRepository:
 
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
+
+    @staticmethod
+    def _keyword_hits(*, space_id: int, keywords: str | None) -> CTE | None:
+        """The space's tasks matching every word of ``keywords``, with a score;
+        a name match weighs twice an intro match (see `app.domain.search.bm25`).
+
+        Scored in a MATERIALIZED CTE: the caller's other filters (lifecycle,
+        visibility, EXISTS subqueries) are not in the index, and on the same
+        scan they would turn the score NULL.
+        """
+        terms = bm25.words(keywords)
+        if not terms:
+            return None
+        return (
+            select(Task.id, func.paradedb.score(Task.id).label("score"))
+            .where(
+                bm25.match_all_words(Task.id, terms, {"name": 2, "intro": 1}),
+                Task.deleted_at.is_(None),
+                Task.space_id == space_id,
+            )
+            .cte("task_keyword_hits")
+            .prefix_with("MATERIALIZED")
+        )
 
     def _apply_lifecycle_filter(
         self,
@@ -676,6 +709,46 @@ class TaskSubmissionRepository:
         self._session.add(submission)
         await self._session.flush()
         return submission
+
+    async def list_review_verdicts_for_memberships(
+        self,
+        *,
+        membership_ids: Sequence[int],
+    ) -> dict[int, list[bool | None]]:
+        """这些领取名下**每条 live 提交**的判决，按领取分组。
+
+        判决三态照 ``app.domain.task.submission_state`` 的口径：``True`` = 判过、
+        ``False`` = 退回、``None`` = 还没判（没有 live 评审行）。两个「live」的条件
+        与那边一致：提交行与评审行各自 ``deleted_at IS NULL``。
+
+        一页题一次性问完：逐题各发一条就是 20 条查询，而这一条按领取去重后只跑一次
+        （`has_work_in_hand` 那边是相关的 EXISTS 谓词，用途不同，不通用）。
+        """
+        if not membership_ids:
+            return {}
+        stmt = (
+            select(TaskSubmission.membership_id, TaskSubmissionReview.accepted)
+            .select_from(TaskSubmission)
+            .outerjoin(
+                TaskSubmissionReview,
+                and_(
+                    TaskSubmissionReview.submission_id == TaskSubmission.id,
+                    TaskSubmissionReview.deleted_at.is_(None),
+                ),
+            )
+            .where(
+                TaskSubmission.membership_id.in_(membership_ids),
+                TaskSubmission.deleted_at.is_(None),
+            )
+            .order_by(TaskSubmission.id.asc())
+        )
+        result = await self._session.execute(stmt)
+        verdicts: dict[int, list[bool | None]] = {}
+        for membership_id, accepted in result.all():
+            verdicts.setdefault(int(membership_id), []).append(
+                None if accepted is None else bool(accepted)
+            )
+        return verdicts
 
     async def list_submissions(
         self,
@@ -1167,11 +1240,21 @@ class AIConversationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_for_task(self, task_id: int) -> list[AIConversation]:
+    async def list_for_task(
+        self, task_id: int, *, owner_id: int
+    ) -> list[AIConversation]:
+        """``owner_id`` 是查询的一部分，不是取回来之后再筛掉的东西。
+
+        会话属于提问的那个人（``create`` 一直写着 ``owner_id``），所以「这道题
+        有谁问过」不是一个该被回答的问题 —— 能回答的是「我在这道题上问过什么」。
+        过滤写在 WHERE 里：应用层筛完再丢，那些本不该看见的行仍然先被读了出来
+        （id 与 title 都经过了应用）。
+        """
         stmt = (
             select(AIConversation)
             .where(
                 AIConversation.context_id == task_id,
+                AIConversation.owner_id == owner_id,
                 AIConversation.module_type == "task_ai_advice",
                 AIConversation.deleted_at.is_(None),
             )
@@ -1278,6 +1361,30 @@ class TopicRepository:
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_by_task_ids(self, task_ids: Sequence[int]) -> dict[int, list[Tag]]:
+        """一次取回多道题的标签，按题目分组（组内仍按 ``Tag.id`` 排）。
+
+        列表接口一屏就要给一整页题配标签，逐题各发一条是 20 条查询；这条是它的
+        批量版本，条件与 ``list_by_task_id`` 逐字一致。没有标签的题不在结果里。
+        """
+        if not task_ids:
+            return {}
+        stmt: Select[tuple[int, Tag]] = (
+            select(TaskTagRelation.task_id, Tag)
+            .join(Tag, TaskTagRelation.tag_id == Tag.id)
+            .where(
+                TaskTagRelation.task_id.in_(task_ids),
+                TaskTagRelation.deleted_at.is_(None),
+                Tag.deleted_at.is_(None),
+            )
+            .order_by(TaskTagRelation.task_id.asc(), Tag.id.asc())
+        )
+        result = await self._session.execute(stmt)
+        grouped: dict[int, list[Tag]] = {}
+        for task_id, tag in result.all():
+            grouped.setdefault(int(task_id), []).append(tag)
+        return grouped
 
 
 class TaskSubmissionSchemaRepository:

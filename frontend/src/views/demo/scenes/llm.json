@@ -1,0 +1,116 @@
+{
+  "title": "一次模型请求经过哪几站",
+  "project": "知是",
+  "topic": "登录页改版",
+  "machine": "本话题运行在：本机沙盒容器",
+  "people": {
+    "wang": { "name": "王长鑫" },
+    "cheese": { "name": "芝士", "agent": true }
+  },
+  "backstage": "pipeline",
+  "stations": [
+    { "id": "session", "label": "会话（Claude Code）", "note": "要调一次模型" },
+    { "id": "proxy", "label": "计量代理", "note": "所有模型流量的唯一出口" },
+    { "id": "admission", "label": "准入 POST /llm/admission", "note": "能不能跑、走哪条路、用哪个模型名" },
+    { "id": "gateway", "label": "网关路（LiteLLM）", "note": "换上项目的虚拟 key，按 key 记账" },
+    { "id": "subscription", "label": "订阅路", "note": "换上平台的订阅凭证，正文不改" },
+    { "id": "model", "label": "模型厂商", "note": "流式返回" }
+  ],
+  "steps": [
+    {
+      "label": "一个出口：计量代理",
+      "focus": "backstage",
+      "tag": "沙盒走 :443 反代，裸进程走 :8444 CONNECT",
+      "events": [
+        { "at": 200, "do": "meter", "label": "项目额度", "value": "剩 62%" },
+        { "at": 300, "do": "say", "who": "wang", "text": "<@cheese> 登录页的错误提示改成红色" },
+        { "at": 900, "do": "turn", "who": "cheese", "turn": "t1" },
+        { "at": 1000, "do": "hop", "station": "session", "state": "on", "note": "POST /v1/messages" },
+        { "at": 1800, "do": "hop", "station": "session", "state": "ok", "note": "请求发出" },
+        { "at": 1900, "do": "hop", "station": "proxy", "state": "on", "note": "沙盒容器里改了域名解析，流量落到 :443" }
+      ]
+    },
+    {
+      "label": "每个请求先问准入",
+      "focus": "backstage",
+      "tag": "准入是唯一的控制点，每个请求现查",
+      "events": [
+        { "at": 200, "do": "hop", "station": "proxy", "state": "ok", "note": "转发之前先问准入" },
+        { "at": 300, "do": "hop", "station": "admission", "state": "on", "note": "用沙盒自己的短期令牌鉴权" },
+        { "at": 1400, "do": "hop", "station": "admission", "state": "ok", "note": "allow: true · pool: gateway · 模型名写进请求体" }
+      ]
+    },
+    {
+      "label": "走网关路，流式回来",
+      "focus": "backstage",
+      "tag": "上游 key 不出平台主机",
+      "events": [
+        { "at": 200, "do": "hop", "station": "gateway", "state": "on", "note": "换上项目虚拟 key" },
+        { "at": 900, "do": "hop", "station": "gateway", "state": "ok", "note": "按 key 记账，没超 max_budget" },
+        { "at": 1000, "do": "hop", "station": "model", "state": "on", "note": "流式返回中…" },
+        { "at": 1300, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "frontend/src/views/account/SignIn.vue" },
+        { "at": 2100, "do": "hop", "station": "model", "state": "ok", "note": "这次 3.1 万 token" },
+        { "at": 2200, "do": "meter", "label": "项目额度", "value": "剩 61%" },
+        { "at": 2600, "do": "say", "who": "cheese", "text": "错误提示改成红色了，截图在预览里。" },
+        { "at": 2800, "do": "end", "turn": "t1" }
+      ]
+    },
+    {
+      "label": "额度用完：拒绝并说一声",
+      "focus": "chat",
+      "tag": "reason_kind: budget，这一轮不执行",
+      "events": [
+        { "at": 0, "do": "clear" },
+        { "at": 100, "do": "meter", "label": "项目额度", "value": "剩 0%" },
+        { "at": 300, "do": "say", "who": "wang", "text": "<@cheese> 再把注册页也改一下" },
+        { "at": 900, "do": "hop", "station": "session", "state": "ok", "note": "POST /v1/messages" },
+        { "at": 1100, "do": "hop", "station": "proxy", "state": "ok", "note": "转发之前先问准入" },
+        { "at": 1400, "do": "hop", "station": "admission", "state": "deny", "note": "allow: false · reason_kind: budget" },
+        { "at": 2000, "do": "mark", "text": "平台提示：可用的 tokens 额度已用完，这轮没有执行" }
+      ]
+    },
+    {
+      "label": "绑定的模型解析不出来",
+      "focus": "backstage",
+      "tag": "拒绝，不会悄悄换到另一条路",
+      "events": [
+        { "at": 0, "do": "clear" },
+        { "at": 100, "do": "meter", "label": "项目额度", "value": "剩 40%" },
+        { "at": 300, "do": "hop", "station": "session", "state": "ok", "note": "POST /v1/messages" },
+        { "at": 500, "do": "hop", "station": "proxy", "state": "ok", "note": "转发之前先问准入" },
+        { "at": 900, "do": "hop", "station": "admission", "state": "deny", "note": "allow: false · reason_kind: binding（绑定的模型已下架）" },
+        { "at": 1300, "do": "hop", "station": "subscription", "state": "off", "note": "不会拿它顶替" }
+      ]
+    },
+    {
+      "label": "问不到主 API：软放行",
+      "focus": "backstage",
+      "tag": "退回订阅路，由它自己的滚动上限兜底",
+      "events": [
+        { "at": 0, "do": "clear" },
+        { "at": 300, "do": "hop", "station": "session", "state": "ok", "note": "POST /v1/messages" },
+        { "at": 500, "do": "hop", "station": "proxy", "state": "ok", "note": "转发之前先问准入" },
+        { "at": 900, "do": "hop", "station": "admission", "state": "off", "note": "主 API 在发版，问不到" },
+        { "at": 1500, "do": "hop", "station": "subscription", "state": "ok", "note": "放行，按滚动 token 上限兜底" },
+        { "at": 2000, "do": "hop", "station": "model", "state": "ok", "note": "流式返回" }
+      ]
+    },
+    {
+      "label": "分身指定模型",
+      "focus": "site",
+      "tag": "目录里没有、不在允许范围内就拒绝，并列出能用的",
+      "events": [
+        { "at": 0, "do": "clear" },
+        { "at": 300, "do": "say", "who": "wang", "text": "<@cheese> 让分身用小模型去扫一遍日志" },
+        { "at": 900, "do": "turn", "who": "cheese", "turn": "t2" },
+        { "at": 1300, "do": "act", "who": "cheese", "turn": "t2", "tool": "Agent", "arg": "扫日志 · model: haiku" },
+        { "at": 1500, "do": "hop", "station": "session", "state": "ok", "note": "分身请求头 x-cheese-child-model: haiku" },
+        { "at": 1700, "do": "hop", "station": "proxy", "state": "ok", "note": "和父会话不同：是显式指定" },
+        { "at": 2100, "do": "hop", "station": "admission", "state": "ok", "note": "haiku 在项目目录里，允许，就用它" },
+        { "at": 2600, "do": "hop", "station": "gateway", "state": "ok", "note": "项目虚拟 key" },
+        { "at": 2900, "do": "hop", "station": "model", "state": "ok", "note": "分身的回答只把总结带回主会话" },
+        { "at": 3300, "do": "end", "turn": "t2" }
+      ]
+    }
+  ]
+}

@@ -49,6 +49,8 @@ function publishedTask(over: Record<string, unknown> = {}) {
     endedAt: null,
     deadline: null,
     participantCount: 3,
+    // 真库用 0 表示不限，接口折成 null 给出来。
+    participantLimit: null,
     approvedParticipantCount: 3,
     pendingParticipantApprovalCount: 0,
     submittedParticipantCount: 2,
@@ -175,4 +177,32 @@ describe('「我的」那一排 KPI', () => {
 
     expect(labels()).toEqual(['我出的题', '累计被领取', '等审核', '平均完成率', '等我判'])
   })
+
+  it('设了上限的行写「3 / 5 人领取」和「60% 满」', async () => {
+    myPublishedTasks.mockImplementation(async () => ({
+      data: { tasks: [publishedTask({ participantCount: 3, participantLimit: 5 })] },
+    }))
+    await mount()
+
+    const meta = rowMeta()
+    expect(meta).toContain('3 / 5 人领取')
+    expect(meta).toContain('60% 满')
+  })
+
+  it('不限人数的行不画上限也不画百分比 —— 一个多出来的 0 都不要', async () => {
+    myPublishedTasks.mockImplementation(async () => ({
+      data: { tasks: [publishedTask({ participantCount: 3, participantLimit: null })] },
+    }))
+    await mount()
+
+    const meta = rowMeta()
+    expect(meta).toContain('3 人领取')
+    expect(meta).not.toContain(' / ')
+    expect(meta).not.toContain('% 满')
+  })
 })
+
+/** 「我发布的」那一行底下那排小字（分类 / 截止 / 人数 / 完成度 / 交了多少）。 */
+function rowMeta(): string {
+  return (document.querySelector('.pub-row__meta')?.textContent || '').replace(/\s+/g, ' ').trim()
+}

@@ -135,6 +135,15 @@ class Settings(BaseSettings):
     storage_type: str = "local"
     storage_local_path: str = "./uploads"
     storage_local_url: str = "/uploads"
+    # A single uploaded attachment's ceiling in bytes — every path that puts
+    # bytes into the attachment table goes through `AttachmentService.upload`,
+    # which reads this one value, and `GET /attachments/limits` reports that
+    # same value, so what the browser is told is what it will be refused for.
+    # The default is the deployment's existing ceiling: the frontend nginx
+    # `client_max_body_size 100M` on `/api/` (frontend/nginx.conf), so nothing
+    # a browser could already send starts being refused. That nginx line is a
+    # separate number in a separate file: raise one and raise the other.
+    attachment_max_bytes: int = 100 * 1024 * 1024
     redis_url: str = "redis://localhost:6379/0"
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
@@ -167,6 +176,17 @@ class Settings(BaseSettings):
     #: may be spoken to without TLS. Only for a local test mail server: on a
     #: deployment it would let anyone make the backend dial its own network.
     integration_allow_private_hosts: bool = False
+    #: Remote MCP servers a `.mcp.json` names may be plain HTTP and on a private
+    #: network. Only for a local test server: on a deployment it would let a
+    #: project member make the backend dial its own network.
+    remote_mcp_allow_private_hosts: bool = False
+    #: Clients registered in advance with an MCP authorization server that
+    #: supports neither Client ID Metadata Documents nor Dynamic Client
+    #: Registration, keyed by the authorization server's issuer:
+    #: {"https://as.example": {"client_id": …, "client_secret": …,
+    #: "token_endpoint_auth_method": "client_secret_basic"}}. The redirect URI
+    #: they were registered with is `{frontend_url}/api/mcp/oauth/callback`.
+    remote_mcp_oauth_clients: dict[str, dict[str, str]] = {}
     # Where a mail host's real address is looked up when the local resolver
     # only hands out a proxy's fake-ip placeholder (198.18.0.0/15).
     integration_doh_url: str = "https://dns.alidns.com/resolve"
@@ -190,9 +210,9 @@ class Settings(BaseSettings):
     # A sign-in nobody has refreshed for this long is over, however much of
     # its lifetime remains.
     refresh_idle_timeout_seconds: int = 60 * 60 * 24 * 14
-    # How long a refresh token that was just rotated away still answers.
-    # Two tabs refreshing at the same moment both present the old token; the
-    # slower one must not read as a stolen copy and sign the user out.
+    # How long a refresh token that was just rotated away is answered as a
+    # second tab refreshing at the same moment: with an access token and no new
+    # cookie, because the first tab's answer carries the successor.
     refresh_reuse_grace_seconds: int = 30
 
     # --- Agent (Claude Agent SDK) ---
@@ -298,6 +318,10 @@ class Settings(BaseSettings):
     # `llm_gateway_admin_base` and capped at this budget per 30 days.
     docs_assistant_model: str = "deepseek-flash"
     docs_assistant_budget_usd: float = 20.0
+    # Whether 问芝士 searches and reads the docs itself, over the three tools in
+    # `docs_site/tools.py`, instead of answering from one round of retrieval.
+    # False keeps the old path, for a deployment that wants the cheaper one.
+    docs_assistant_agentic: bool = True
     # Per signed-in user, and across one backend process.
     docs_assistant_hourly_limit: int = 20
     docs_assistant_daily_limit: int = 100
@@ -332,6 +356,12 @@ class Settings(BaseSettings):
     openai_oauth_base: str = "https://auth.openai.com"
     # The codex upstream is {base}/codex; the quota read is {base}/wham/usage.
     chatgpt_backend_base: str = "https://chatgpt.com/backend-api"
+    # The HTTP proxy this backend's OpenAI calls (OAuth, quota) leave through.
+    # A deployment that keeps a ChatGPT account on one exit IP sets this to that
+    # exit, and the gateway's model calls take the same exit
+    # (deploy/gateway/README.md).
+    # Unset: direct.
+    openai_subscription_proxy: str | None = None
     # The page a person opens to type the device code.
     openai_device_verification_uri: str = "https://auth.openai.com/codex/device"
     codex_originator: str = "codex_cli_rs"
@@ -785,10 +815,33 @@ class Settings(BaseSettings):
     # 0 disables the periodic sweep (the startup one still runs).
     gate_sweep_interval_s: int = 300
 
+    # --- 记忆整理 dream (2026-09-27) ---
+    # 多久问一次「有没有项目该整理记忆了」。这一档**不是**整理的周期：该不该跑由
+    # 项目自己的花销和上次整理的时刻决定（`domain/memory/dream.py`），这里只是那
+    # 台钟走多快。所以它可以跑得勤（问一次很便宜，不该整理的项目问完就返回），而
+    # 真正跑起来的整理是几分钟一轮的会话。0 关掉这个 job。
+    memory_dream_sweep_interval_s: int = 600
+
+    # --- 旧表迁移 (2026-09-27) ---
+    # dry-run 出来的报告要**人**点头才落笔（`domain/memory/migration.py`），而点头
+    # 的那个人是固定的一个：写在这里而不是每次调用带一个参数——「谁复核」是这次
+    # 迁移的决定，不是请求的属性，跟着请求走就等于谁都能给自己批。
+    memory_migration_reviewer: str = "wangchangxin"
+    # 问模型那一步的超时。一次问的是一批旧记忆（几十条、几万字），比一次普通对话
+    # 长得多，默认的几十秒会在长项目上直接超时。
+    memory_migration_timeout_s: float = 600.0
+    # 一次问模型的旧记忆条数（见 `migration.MIGRATION_CHUNK`）。
+    memory_migration_chunk: int = 60
+
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
     accept_pr_poll_interval_s: int = 300
+    # 卡面上的合并态是快照，而采纳按钮按它亮不亮。读卡这条路也会重算一次陈旧的
+    # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 来读一
+    # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是
+    # 必须的：读卡是热点，不能每个读者都替全平台去问一次 GitHub。
+    accept_pr_snapshot_floor_s: int = 60
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.
@@ -876,7 +929,7 @@ class Settings(BaseSettings):
     chat_ws_allow_anonymous: bool = False
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
-    # (task AI advice, rank checks, email/notifications, meilisearch, real-name
+    # (task AI advice, rank checks, email/notifications, real-name
     # encryption) read these off settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
@@ -965,9 +1018,6 @@ class Settings(BaseSettings):
         凭据。所以这两个字段一起判断，调用点不各自数一遍。
         """
         return bool(self.vapid_public_key and self.vapid_private_key)
-
-    meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")
-    meilisearch_api_key: str = Field(default="", alias="MEILISEARCH_API_KEY")
 
     enforce_task_participant_limit_check: bool = Field(
         default=False, alias="APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK"

@@ -35,7 +35,10 @@
             <div class="d-flex flex-wrap align-center justify-space-between mt-3">
               <div class="d-flex align-center text-caption text-medium-emphasis creator-info">
                 <v-avatar size="20" class="me-2" :image="getAvatarUrl(task.creator.avatarId)"></v-avatar>
-                <span>{{ task.creator.nickname }} {{ t('spaces.detail.auditTasks.published') }}</span>
+                <span
+                  ><UserRef :handle="task.creator.username" :name="task.creator.nickname" />
+                  {{ t('spaces.detail.auditTasks.published') }}</span
+                >
                 <v-icon size="12" class="mx-1">mdi-circle-small</v-icon>
                 <span>{{ dayjs(task.createdAt).format('MM-DD HH:mm') }}</span>
                 <v-icon v-if="task.category" size="12" class="ms-2 me-1" color="primary">mdi-folder</v-icon>
@@ -160,6 +163,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { createEmptyResult, usePaging } from '@/utils/paging'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { TasksApi } from '@/network/api/tasks'
 import { CancelError, useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'

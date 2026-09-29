@@ -3,8 +3,9 @@
 //
 // 一个项目的人只有三种来路，这一页就按来路分段：
 //   - 所有者：建这个项目的人；
-//   - 团队成员：项目所属团队里的每一个人，自动就在，去留在团队里定——这一页对他们
-//     不给任何管理动作，只指回团队；
+//   - 团队成员：项目所属团队里的每一个人，自动就在——这一页对他们不给任何**管理**
+//     动作（移出是给不到他们的，后端那边没有一条可删的名册行），但他们自己能退出这
+//     个项目（退的是这个项目，不是小队）；
 //   - 外部成员：团队以外、被点名邀请进这一个项目的人，名字旁边挂「外部」。只有他们
 //     能从这里被移出。
 // 没有项目自己的角色：管理外部成员的是项目所有者和团队的所有者、管理员，由后端在
@@ -14,10 +15,12 @@
 // 一行 = 一个人 = 两件事：找到他（点开是他的主页，右边是私聊），和——如果他是外部成员
 // 而你管得了——把他移出。
 //
-// 右上角是「自己和这个项目的关系怎么结束」：外部成员「退出项目」（后端
-// `DELETE /projects/{id}/membership` 认的恒是当前身份那个人），所有者「转让项目」
-// （他退不掉，得先把手交出去）。团队成员不在这里退：他在项目里是因为在团队里。
+// 右上角是「自己和这个项目的关系怎么结束」：谁都能「退出项目」（后端
+// `DELETE /projects/{id}/membership` 认的恒是当前身份那个人），只有所有者不行——他
+// 换一颗「转让项目」（他一走项目就没人管，得先把手交出去）。团队成员退的也是**这个
+// 项目**：他还在小队里，小队别的项目照常，回来要人再请一次。
 import type { LookedUpUser } from '@/api'
+import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -37,9 +40,14 @@ import {
   removeProjectMember,
   revokeInvitation,
 } from '@/api'
+import { useCommands } from '@/commands'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
 import { t } from '@/i18n'
@@ -47,7 +55,6 @@ import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 defineOptions({ name: 'ProjectMembersView' })
 
@@ -186,6 +193,17 @@ function messageOf(e: unknown, fallback: string): string {
 
 // ---- 移出外部成员 ----
 const removeTarget = ref<ProjectMemberRow | null>(null)
+function memberActions(m: ProjectMemberRow): MenuAction[] {
+  return [
+    {
+      key: 'remove',
+      label: t('work.members.remove'),
+      icon: 'mdi-account-remove-outline',
+      danger: true,
+      onSelect: () => (removeTarget.value = m),
+    },
+  ]
+}
 async function confirmRemove() {
   const m = removeTarget.value
   if (!m) return
@@ -216,15 +234,16 @@ async function takeBack(inv: ProjectInvitation) {
 }
 
 // ---- 退出项目 / 转让项目 ----
-// 「退出」只给外部成员：团队成员在这里是因为在团队里，退出项目对他无从谈起；所有者
-// 退不掉（他一走项目就没人管），他换一颗「转让项目」。名册行还没到时不给「退出」——
-// 不知道他是谁，就别递一颗可能必然失败的按钮。
+// 「退出」给名册上的每一个人，只除所有者：他一走项目就没人管，换一颗「转让项目」。
+// 团队成员也在这颗按钮底下——他退的是**这个项目**，不是小队（后端为它记下一条项目级
+// 事实，小队那一行不动）。名册行还没到时不给「退出」——不知道他是不是在项目里，就别
+// 递一颗可能必然失败的按钮（他刚在这里退过一次也是这种情况：名册上已经没有他了）。
 const leaveOpen = ref(false)
 const transferOpen = ref(false)
 const isOwner = computed(() => !!me.value && !!ownerHandle.value && me.value === ownerHandle.value)
 const canLeave = computed(() => {
   const row = store.members.find((m) => m.user_handle === me.value)
-  return !!row && isExternalMember(row) && !isOwner.value
+  return !!row && !isOwner.value
 })
 const canTransfer = computed(() => project.value !== null && (isOwner.value || canManage.value))
 
@@ -293,28 +312,46 @@ async function submitInvite() {
     inviting.value = false
   }
 }
+useCommands(() => [
+  ...(canLeave.value
+    ? [
+        {
+          id: 'members.leave',
+          title: t('work.members.leave'),
+          icon: 'mdi-exit-to-app',
+          danger: true,
+          header: {},
+          run: () => (leaveOpen.value = true),
+        },
+      ]
+    : []),
+  ...(canTransfer.value
+    ? [
+        {
+          id: 'members.transfer',
+          title: t('work.members.transfer'),
+          icon: 'mdi-account-arrow-right-outline',
+          header: {},
+          run: () => (transferOpen.value = true),
+        },
+      ]
+    : []),
+  ...(canManage.value
+    ? [
+        {
+          id: 'members.invite',
+          title: t('work.members.invite'),
+          icon: 'mdi-account-plus-outline',
+          header: { primary: true, accent: true },
+          run: () => (inviteOpen.value = true),
+        },
+      ]
+    : []),
+])
 </script>
 
 <template>
-  <ProjectPage :title="t('navigation.project.members')">
-    <template v-if="canLeave || canTransfer || canManage" #actions>
-      <v-btn v-if="canLeave" prepend-icon="mdi-exit-to-app" @click="leaveOpen = true">
-        {{ t('work.members.leave') }}
-      </v-btn>
-      <v-btn v-if="canTransfer" prepend-icon="mdi-account-arrow-right-outline" @click="transferOpen = true">
-        {{ t('work.members.transfer') }}
-      </v-btn>
-      <v-btn
-        v-if="canManage"
-        color="primary"
-        variant="flat"
-        prepend-icon="mdi-account-plus-outline"
-        @click="inviteOpen = true"
-      >
-        {{ t('work.members.invite') }}
-      </v-btn>
-    </template>
-
+  <AppPage :title="t('navigation.project.members')">
     <!-- 名册、队友、邀请三处各自到货；到齐之前整页藏在转圈后面，不然后到的名册会
          把先画出来的队友那一段往下推一整屏。见 useRevealGate。 -->
     <div class="reveal-gate" :class="{ 'reveal-gate--waiting': !revealed }">
@@ -371,7 +408,8 @@ async function submitInvite() {
                 {{ countLabel(unreadWith(m.user_handle)) }}
               </span>
             </span>
-            <v-menu v-if="removable(m)" location="bottom end">
+            <!-- 桌面是下拉菜单，手机是底部面板（AdaptiveMenu）。 -->
+            <AdaptiveMenu v-if="removable(m)" :actions="memberActions(m)" :title="m.name || m.user_handle">
               <template #activator="{ props: menuProps }">
                 <v-btn
                   v-bind="menuProps"
@@ -379,17 +417,13 @@ async function submitInvite() {
                   color="on-surface-variant"
                   size="small"
                   icon="mdi-dots-horizontal"
+                  class="tap-target"
                   :aria-label="t('work.members.manage')"
                   :loading="busyHandle === m.user_handle"
                   @click.stop
                 />
               </template>
-              <v-list density="compact" nav>
-                <v-list-item @click="removeTarget = m">
-                  <v-list-item-title class="t-body c-danger">{{ t('work.members.remove') }}</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu>
+            </AdaptiveMenu>
           </div>
         </v-card>
       </div>
@@ -404,7 +438,9 @@ async function submitInvite() {
                 <span class="t-title text-truncate">@{{ inv.invitee_handle }}</span>
                 <ExternalTag />
               </div>
-              <div class="t-meta c-muted">{{ t('work.members.pendingBy', { inviter: inv.inviter_handle }) }}</div>
+              <i18n-t keypath="work.members.pendingBy" tag="div" class="t-meta c-muted">
+                <template #inviter><UserRef :handle="inv.inviter_handle" /></template>
+              </i18n-t>
             </div>
             <v-spacer />
             <v-btn
@@ -469,54 +505,47 @@ async function submitInvite() {
       </div>
     </div>
 
-    <v-dialog v-model="inviteOpen" max-width="440" @update:model-value="(v) => !v && resetInvite()">
-      <v-card>
-        <v-card-title class="t-dialog-title pt-4">{{ t('work.members.inviteTitle') }}</v-card-title>
-        <v-card-text>
-          <p class="t-body c-muted mb-5">{{ t('work.members.inviteHint') }}</p>
-          <v-text-field
-            v-model="inviteQuery"
-            autocomplete="off"
-            :label="t('work.members.inviteLabel')"
-            :placeholder="t('work.members.invitePlaceholder')"
-            density="comfortable"
-            variant="outlined"
-            autofocus
-            :loading="lookingUp"
-            :error-messages="lookupError ? [lookupError] : []"
-            class="mb-2"
-            @keyup.enter="submitInvite"
-          />
-          <div v-if="found" class="found-user mb-2" data-testid="found-user">
-            <UserAvatar
-              :name="found.name || found.handle"
-              :avatar="found.avatar_id == null ? '' : getAvatarUrl(found.avatar_id)"
-              :size="32"
-              class="mr-3"
-            />
-            <div class="min-w-0">
-              <div class="t-body found-user__name">{{ found.name || found.handle }}</div>
-              <div class="t-meta c-muted">@{{ found.handle }}</div>
-            </div>
-            <v-spacer />
-            <span v-if="alreadyIn" class="t-meta c-muted">{{ t('work.members.alreadyIn') }}</span>
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="resetInvite">{{ t('work.members.cancel') }}</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="inviting"
-            :disabled="!found || alreadyIn"
-            @click="submitInvite"
-          >
-            {{ t('work.members.send') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 邀请要打字：手机上是整页，发送在页头右边，键盘弹起来也够得着。 -->
+    <AdaptiveDialog
+      v-model="inviteOpen"
+      :title="t('work.members.inviteTitle')"
+      :primary-label="t('work.members.send')"
+      :primary-loading="inviting"
+      :primary-disabled="!found || alreadyIn"
+      :cancel-label="t('work.members.cancel')"
+      :max-width="440"
+      @update:model-value="(v: boolean) => !v && resetInvite()"
+      @primary="submitInvite"
+    >
+      <p class="t-body c-muted mb-5">{{ t('work.members.inviteHint') }}</p>
+      <v-text-field
+        v-model="inviteQuery"
+        autocomplete="off"
+        :label="t('work.members.inviteLabel')"
+        :placeholder="t('work.members.invitePlaceholder')"
+        density="comfortable"
+        variant="outlined"
+        autofocus
+        :loading="lookingUp"
+        :error-messages="lookupError ? [lookupError] : []"
+        class="mb-2"
+        @keyup.enter="submitInvite"
+      />
+      <div v-if="found" class="found-user mb-2" data-testid="found-user">
+        <UserAvatar
+          :name="found.name || found.handle"
+          :avatar="found.avatar_id == null ? '' : getAvatarUrl(found.avatar_id)"
+          :size="32"
+          class="mr-3"
+        />
+        <div class="min-w-0">
+          <div class="t-body found-user__name">{{ found.name || found.handle }}</div>
+          <div class="t-meta c-muted">@{{ found.handle }}</div>
+        </div>
+        <v-spacer />
+        <span v-if="alreadyIn" class="t-meta c-muted">{{ t('work.members.alreadyIn') }}</span>
+      </div>
+    </AdaptiveDialog>
 
     <LeaveProjectDialog v-model="leaveOpen" :project-id="props.projectId" />
     <TransferProjectDialog v-model="transferOpen" :project-id="props.projectId" />
@@ -536,7 +565,7 @@ async function submitInvite() {
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>

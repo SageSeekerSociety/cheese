@@ -73,12 +73,35 @@ EventConsumer = Callable[
     Awaitable[None],
 ]
 
+
 # (project, topic, work id, active) — a session started or stopped working.
-ActivityConsumer = Callable[[uuid.UUID, uuid.UUID, uuid.UUID, bool], Awaitable[None]]
+# ``agent_handle`` names the seat that started or stopped: several seats work
+# side by side in one room, and the consumer's 「谁在干活」 frame is a guess
+# without it. Keyword-only so existing doubles keep ``active`` at args[-1].
+class ActivityConsumer(Protocol):
+    def __call__(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        work_id: uuid.UUID,
+        active: bool,
+        *,
+        agent_handle: str | None = None,
+    ) -> Awaitable[None]: ...
+
 
 # (topic, prompt text) — a session CONSUMED an input we injected. Late by
 # design: the write is delivery, this is the receipt.
 ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
+
+# (topic) — lay this room's memory tree down in its session, and take back what
+# the agent wrote into it. Asked at two moments, and both ask the same question:
+# just before an input goes in (so the session reads the platform's version)
+# and just after a turn ends (so what it wrote comes back in the turn it was
+# written in). It takes only the topic because everything else it needs — the
+# project, who is speaking, the reach to the session — lives on the side that
+# owns the room (`chat.ChatService`).
+MemoryConsumer = Callable[[uuid.UUID], Awaitable[None]]
 
 # (project, topic, work id, reachable, reason) — the machine an open turn runs on
 # went out of reach (False, with what the runtime saw) or came back (True). Not
@@ -173,9 +196,13 @@ class SessionRef:
 
     A room hosts as many conversations as it seats agents, so a topic id does
     not name one — ``(topic, agent_handle, harness)`` does, and it is the same
-    key ``agent_sessions`` is written under. Everything that resolves where a
-    session runs starts from this, which is why the machines are recorded per
-    session and never per room (结论 60).
+    key ``agent_sessions`` is written under. Everything that resolves a
+    conversation starts from this.
+
+    一个话题一个容器（2026-09-28 决定，推翻结论 60 的后半）：这个键仍然只认一条会
+    话，但**它跑在哪台机器上不再由它自己答**——一间房只有一条算力选择，房间里的每
+    一条会话都工作在那一项算出来的那台机器上（``machine/session_work._attempt``
+    从房间那一项解析），机器于是不再是「每条会话各记一份」的东西。
 
     ``agent_handle`` is :attr:`ResolvedAgent.handle`, the agent's key inside its
     project — not the seat it authors under. The two differ, and reading under
@@ -183,9 +210,7 @@ class SessionRef:
 
     It is left unset by the calls that address a PLACE rather than a
     conversation: a room's machine and the screens on it are one per room, so
-    reading them names no agent. Anything that resolves where a
-    session runs must fill it in — that resolution is per session and there is
-    nothing on the room left to fall back to.
+    reading them names no agent.
 
     ``harness`` has none of that leeway: it is keyword-only and has no default.
     跑的是哪个骨架由部署设置加项目设置答（结论 28），所以一个默认值就是第二个答
@@ -309,12 +334,16 @@ class AgentRuntime(Protocol):
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
         images: list[dict] | None = None,
+        owes_reply: bool = False,
     ) -> bool | None:
         """Put a message into the session. True = the transport took it.
 
         An ack, not an answer. What the agent does about it arrives through
         ``read`` — possibly minutes later, possibly to a different process than
         the one that sent this.
+
+        ``owes_reply``: a person wrote this, and the session answers them in
+        the room before it does anything else (`driven/runner.py`).
 
         ``work_id`` and ``on_mark`` do not belong to this contract and are
         declared anyway, because the only caller passes them and a signature
@@ -342,9 +371,14 @@ class AgentRuntime(Protocol):
         images: list[dict] | None = None,
         *,
         expected_work_id: uuid.UUID | None = None,
+        agent_handle: str | None = None,
+        owes_reply: bool = False,
     ) -> bool:
         """Put text into a session that is already working, with no turn opened
         for it. True = it landed; False = there is no live session here.
+
+        ``owes_reply`` as for ``send``: a person's message does, a platform
+        notice does not.
 
         The bare form of ``send``: no opening, no bookkeeping, nothing to start.
         It is how a person's mid-turn message reaches 芝士, and how the platform
@@ -354,7 +388,10 @@ class AgentRuntime(Protocol):
 
         Keyed by topic rather than by ``SessionRef`` because the caller is on the
         hot path with a person waiting and has no project id in hand — the same
-        reason ``close`` is topic-keyed underneath.
+        reason ``close`` is topic-keyed underneath. ``agent_handle`` names the
+        seat inside the room when the caller knows it: a room seats one session
+        per agent, and a delivery with no seat named lands only when the room
+        has just one working seat (or the expected work id names it).
         """
         ...
 
@@ -444,12 +481,44 @@ class AgentRuntime(Protocol):
         """Where 「这一轮在等它的设备」 goes."""
         ...
 
-    def holds(self, topic_id: uuid.UUID) -> bool:
+    def bind_memory(self, consumer: MemoryConsumer) -> None:
+        """Where 「记忆该对账了」 goes: before an input, and after a turn."""
+        ...
+
+    # 这个 harness 的会话会不会把记忆存成文件、并答得了对账（``memory()`` 有没有
+    # 真答事）。系统提示词里那一段「记忆」按它注不注入：写下来的文件永远同步不回
+    # 来的骨架，那份说明书只会让 agent 以为自己在写项目记忆。和 ``harness`` 一样
+    # 是事实，不是开关——每一条通道都答得出自己这一侧有没有这条回路。
+    keeps_memory: bool
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        """Relay one memory reconciliation to this room's session.
+
+        ``None`` is the answer of a runtime whose sessions keep no memory files
+        (and of a room with no live session): 「这事这里没有」, not a failure —
+        the caller has nothing to fall back to and writing memory twice would be
+        worse than not writing it at all.
+        """
+        ...
+
+    def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Is there a session here this runtime can still reach?
 
         This is what "the work survived" means after a backend restart: the
         coroutine waiting on the turn died with the process, the agent in the
         execution environment did not, and ``recover`` found it again.
+        ``agent_handle`` narrows the question to one seat of the room.
+        """
+        ...
+
+    def work_in_flight(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> uuid.UUID | None:
+        """The work this runtime's live seat in the room is running, if one is.
+
+        With the agent named the answer is exact; without it only a room with
+        exactly one working seat gets one — between two working teammates a
+        guess would aim the caller at the wrong conversation.
         """
         ...
 
@@ -482,21 +551,22 @@ class AgentRuntime(Protocol):
 
 @runtime_checkable
 class SessionControls(Protocol):
-    """A runtime whose live session takes the room's controls.
+    """A runtime whose live session answers what the room asks to see.
 
     Not one of the verbs: a harness with no control channel is still a
-    harness, and the room then simply shows no controls for it. Asked of the
-    runtime that holds a room (``ComputePool.session_controls``).
+    harness, and the room then simply shows less of it. Every control here
+    only reads; the room watches its session and never steers it. Asked of
+    the runtime that holds a room (``ComputePool.session_controls``).
     """
 
-    #: What the room may send a session, by subtype.
+    #: What the room may ask a session, by subtype.
     controls: tuple[str, ...]
     #: Which of those the room's executor answers rather than the session: the
     #: files and commands live on the executor.
     executor_controls: frozenset[str]
 
     async def control_state(self, topic_id: uuid.UUID) -> dict:
-        """What the room's controls show: the session, its tasks, its state."""
+        """What the room shows of the session: its id, its tasks, its state."""
         ...
 
     async def control(self, topic_id: uuid.UUID, request: dict) -> dict:
@@ -508,7 +578,7 @@ class SessionControls(Protocol):
 class Backlog(Protocol):
     """The unread tail of one session, as the platform needs to consume it.
 
-    Five calls, and the split between them is the point. ``unread`` and
+    Seven calls, and the split between them is the point. ``unread`` and
     ``assemble`` are the harness's — what did this agent say, and what does one
     log entry mean. Deciding what to DO about it (persist a block, broadcast a
     frame, skip a duplicate) is the platform's, and happens between the two.
@@ -522,8 +592,10 @@ class Backlog(Protocol):
     """
 
     def unread(self) -> Sequence[HarnessEvent]:
-        """Everything after the cursor, oldest first. A snapshot: landing
-        things during the pass does not change what this returned."""
+        """The next page after what this reader has handed out, oldest first,
+        starting at the landing cursor; empty once it has caught up. A page,
+        not the whole tail: a cursor that fell behind can have a million
+        records waiting, and a pass must not hold them all at once."""
         ...
 
     def assemble(self, entry: HarnessEvent) -> Sequence[AgentEvent]:
@@ -537,6 +609,16 @@ class Backlog(Protocol):
 
     def landed(self, *, through: str) -> None:
         """Everything up to and including this key reached the timeline."""
+        ...
+
+    def step_over_older(self, *, than_s: float) -> int:
+        """Land, unread, the run of entries at the cursor older than
+        ``than_s``; how many there were."""
+        ...
+
+    def refused(self, key: str, *, times: int, over_s: float) -> bool:
+        """Note one more refusal of the entry ``key``; True once it has been
+        refused ``times`` times over at least ``over_s`` seconds."""
         ...
 
     def forget(self, *, older_than_s: float) -> None:

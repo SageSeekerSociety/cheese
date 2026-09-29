@@ -32,7 +32,14 @@ class _Screen(StubChannel):
         self.resume_asked.append(opening.resume_token)
         return await super().ensure(session, opening)
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         self.starts(topic_id, session_id=self._sid)
         self.acknowledges(topic_id, prompt)
         self.says(topic_id, reply)

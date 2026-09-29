@@ -47,7 +47,7 @@ def test_is_valid_accepts_scoped_or_global():
 
 
 def test_token_payload_has_no_secret():
-    """项目、地点、谁在做、到期——名单是封闭的，而这四个里没有一个是卡。
+    """项目、地点、谁在做、何时签发、到期——名单是封闭的，而这五个里没有一个是卡。
 
     往里加一个卡的 id 是很自然的一步（「这样就能按卡拒绝单个请求了」），而结论 53
     放弃的正是那件事：账按项目记，拒绝本来就在项目额度这一层，卡上「这条活花了多
@@ -57,7 +57,7 @@ def test_token_payload_has_no_secret():
     tok = sa.mint_scoped_token(project_id="P", topic_id="T", agent_handle="cheese-1")
     body = tok.split(".", 1)[0]
     payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-    assert set(payload) == {"p", "t", "exp", "a"}
+    assert set(payload) == {"p", "t", "iat", "exp", "a"}
     assert sa.SANDBOX_TOKEN not in body  # the signing secret never ships in the token
 
 

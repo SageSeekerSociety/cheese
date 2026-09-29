@@ -27,7 +27,7 @@ async def get_bundle_service(db=Depends(get_db)) -> MaterialBundleService:
 )
 async def list_material_bundles(
     q: str | None = Query(default=None),
-    page_start: int | None = Query(default=None, alias="page_start"),
+    page_start: int | None = Query(default=None, ge=0, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     sort: str | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),

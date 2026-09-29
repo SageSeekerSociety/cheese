@@ -197,14 +197,26 @@ describe('成员页：谁能管外部成员', () => {
 })
 
 describe('成员页：退出与转让', () => {
-  it('外部成员能退出项目，团队成员不能——他在这里是因为在团队里', () => {
+  it('外部成员能退出项目', () => {
     meHandle = 'mentor1'
     projects = [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', can_manage_members: false }]
     expect(mount().queryByText('退出项目')).toBeTruthy()
   })
 
-  it('团队成员看不到退出项目', () => {
+  it('团队成员也能退出项目——他退的是这个项目，不是团队', async () => {
     meHandle = 'ligan'
+    projects = [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', can_manage_members: false }]
+    const { queryByText } = mount()
+    const leave = queryByText('退出项目')
+    expect(leave, '他在项目里是因为在团队里，但「不属于这个项目」是能自己按下去的一件事').toBeTruthy()
+
+    await fireEvent.click(leave as Element)
+    // 确认框必须说清楚退的是哪一样：只说「退出」，在团队里也读得通。
+    expect(await screen.findByText(/退出的是这个项目，不是团队/)).toBeTruthy()
+  })
+
+  it('不在名册上的人看不到退出项目——他已经不在这个项目里了', () => {
+    meHandle = 'stranger'
     projects = [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', can_manage_members: false }]
     expect(mount().queryByText('退出项目')).toBeNull()
   })

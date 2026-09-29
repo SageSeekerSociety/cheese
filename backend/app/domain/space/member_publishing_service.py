@@ -417,6 +417,12 @@ class SpaceMemberPublishingService:
             "publishedAt": self._to_timestamp_ms(getattr(task, "published_at", None)),
             "endedAt": self._to_timestamp_ms(getattr(task, "ended_at", None)),
             "deadline": self._to_timestamp_ms(task.deadline),
+            # 领取人数上限。**库里用 0 表示不限，这里一律折成 null** —— 「不限」与
+            # 「上限是 0」在界面上是两句话（前者不画上限，后者一个人也领不了），
+            # 而 0 这个值正好两种意思都说得通，交给客户端猜不如在这里说清。
+            "participantLimit": (
+                int(task.participant_limit) if task.participant_limit else None
+            ),
             "participantCount": participant_count,
             "approvedParticipantCount": approved_participant_count,
             "pendingParticipantApprovalCount": pending_participant_approval_count,

@@ -17,8 +17,22 @@ export interface RouteMetaTitle {
   disableBreadcrumbLink?: boolean
   isFullPage?: boolean
   backTo?: string
+  /** `backTo` 只在手机上算：这一页在桌面上是 rail 或头像菜单直接到的地方，不是谁的
+   *  下一层，桌面顶栏不画 ←。 */
+  backOnPhoneOnly?: boolean
   /** 「项目这个框」那条记录自己举的手——见 lib/projectEntry 的 projectFrameOf。 */
   projectFrame?: boolean
+  /**
+   * 这一页能从命令面板直接去。页面自己在路由上声明，面板不另记一份页面清单。带
+   * `:projectId` 的路由只在项目里出现，参数取当前项目。
+   */
+  palette?: {
+    /** i18n key；项目的壳换词（「项目」叫「工作」）时跟着换。 */
+    label: string
+    icon: string
+    /** 除 projectId 以外必填的路由参数，例如项目文档默认打开章程。 */
+    params?: Record<string, string>
+  }
 }
 
 export interface RouteHierarchyItem {

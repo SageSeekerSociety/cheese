@@ -24,6 +24,11 @@ team_seq = Sequence("team_seq")
 team_user_relation_seq = Sequence("team_user_relation_seq")
 team_membership_application_seq = Sequence("team_membership_application_seq")
 
+# Which rows hold a user's one personal team. ``uq_team_personal_owner`` is unique
+# over these, and the insert in ``TeamRepository.create_personal_team`` names the
+# same predicate so Postgres can match its ON CONFLICT to that index.
+PERSONAL_TEAM_ROW = text("personal_owner_user_id IS NOT NULL AND deleted_at IS NULL")
+
 
 class TeamVisibility(str, Enum):
     """Who can find a team without being in it.
@@ -42,6 +47,12 @@ class Team(Base):
     __table_args__ = (
         Index("ix_team_name", "name"),
         Index("uq_team_handle_lower", func.lower(text("handle")), unique=True),
+        Index(
+            "uq_team_personal_owner",
+            "personal_owner_user_id",
+            unique=True,
+            postgresql_where=PERSONAL_TEAM_ROW,
+        ),
         # A shared team is named by its own handle; a personal team is named by
         # its owner's username (see ``team_handle``), so it stores none.
         CheckConstraint(
@@ -90,6 +101,19 @@ class Team(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    @property
+    def open_to_all(self) -> bool:
+        """Whether someone outside this team may see it: a public, shared team.
+
+        One predicate behind ``TeamService.visible_team``, the team search, and
+        every payload that names a team to a stranger. A personal team is one
+        person's; a stealth team is reached through its join link.
+        """
+        return (
+            self.personal_owner_user_id is None
+            and self.visibility == TeamVisibility.PUBLIC.value
+        )
 
 
 class TeamMemberRole:

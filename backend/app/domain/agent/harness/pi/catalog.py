@@ -1,8 +1,8 @@
 """平台工具在 pi 这边的样子：一份工具目录，和一次调用。
 
-pi has no MCP, so a room's platform tools cannot arrive the way they do for the
-other harnesses. What CAN arrive is the file they are built out of: the platform
-file installed on this machine carries both the platform's tool table
+pi has no MCP client, so a room's platform tools cannot arrive the way they do
+for the other harnesses. What CAN arrive is the file they are built out of: the
+platform file installed on this machine carries both the platform's tool table
 (`PLATFORM_TOOLS`, run in-process against the backend) and the CLI's argparse
 tree for what must run here as a process (`cli_worker` turns that tree into
 tool schemas and a call back into argv). This module reads that file and asks

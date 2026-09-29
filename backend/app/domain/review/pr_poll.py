@@ -89,6 +89,7 @@ async def poll_uncarded_task_prs(
     )
     from app.domain.project.forge import proposal_client
     from app.domain.review.models import AcceptCard
+    from app.domain.room_task.checkouts import after_close
     from app.domain.room_task.models import Task, TaskStatus
     from app.domain.topic.models import Topic, TopicStatus
 
@@ -160,6 +161,7 @@ async def poll_uncarded_task_prs(
                 merged_at = status.merged_at or datetime.now(UTC)
                 task.status = TaskStatus.closed
                 task.closed_at = task.closed_at or merged_at
+                after_close(session, task.room_id)
                 task.accepted_at = task.accepted_at or merged_at
                 task.delivered_head = status.head_sha[:64]
                 await announce(

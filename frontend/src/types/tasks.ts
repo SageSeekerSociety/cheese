@@ -49,6 +49,13 @@ export interface TaskSubmissionSchemaEntry {
   type: TaskSubmissionEntryType
 }
 
+/** 我在一道题上走到哪一步：没交、交了等判、通过、退回可重交。
+ *
+ *  由后端按**提交与评审**算（`app/domain/task/submission_state.py`），不读
+ *  `TaskMembership.completion_status` —— 那一列除了领取与逾期两处没人写，交过作业
+ *  的人至今读作「没交」。 */
+export type TaskClaimStatus = 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED'
+
 export interface Task {
   id: number
   name: string
@@ -75,6 +82,10 @@ export interface Task {
   updatedAt: number
   publishedAt?: number | null
   endedAt?: number | null
+  /** 审核人（`user.id`）。这一列是后加的，老题与还没审过的题都是 null。 */
+  reviewedBy?: number | null
+  /** 审核那一刻的毫秒时间戳。**不是 `updatedAt`** —— 改标题这类编辑不写它。 */
+  reviewedAt?: number | null
   rank: number
   approved: 'APPROVED' | 'DISAPPROVED' | 'NONE'
   rejectReason?: string
@@ -90,6 +101,10 @@ export interface Task {
   userDeadline?: number
   participationEligibility?: ParticipationEligibility
   videoUrl?: string
+  /** 这道题挂着几份材料。列表接口一并给（只增不改的那个数，不带文件本体）。 */
+  attachmentCount?: number
+  /** 我这条领取的档位。`null`/缺省 = 我没领这道题。随 `queryJoined` 一族回来。 */
+  myClaimStatus?: TaskClaimStatus | null
 }
 
 export interface TaskSubmissionReview {
@@ -156,6 +171,10 @@ export interface TaskMembership {
   applyReason?: string
   personalAdvantage?: string
   remark?: string
+  /** 这条报名是不是一支团队领的（列表接口 `GET /tasks/{id}/participants` 给的）。 */
+  isTeam?: boolean
+  /** 这条报名背后的团队。查不到队（已解散 / 老数据）或按人领取时没有这个字段。 */
+  team?: { id: number; name: string }
   teamMembers?: TaskTeamParticipantMemberSummary[]
 }
 

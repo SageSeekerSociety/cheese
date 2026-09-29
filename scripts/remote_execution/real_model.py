@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import runner_fixture
 from acceptance import execution_release, run, setup
 from model_fixture import dump, log
 
@@ -25,13 +26,11 @@ def main():
     # No platform API here: nothing in this smoke reaches it.
     executor, target = setup(folder, options, "http://127.0.0.1:9")
     home = folder / "home"
-    center = home / ".cheese/remote-session/forwarded-project"
+    center = runner_fixture.session_dir(home) / "remote-session/forwarded-project"
     center.mkdir(parents=True)
     session = None
     center_fd = None
     try:
-        import runner_fixture
-
         # Written beneath the mount before there is one, and read back through
         # a descriptor held from before it, so a write that lands centrally
         # instead of on the executor shows.

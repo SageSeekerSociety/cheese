@@ -1,4 +1,8 @@
-"""First execution acquires one session's hands without changing its roommate."""
+"""First execution acquires the room's hands for the session asking.
+
+一个话题一个容器（2026-09-28，推翻结论 60）：房间里的每一条会话都落在房间那一项算
+出来的那台机器上；换机器是整个房间一起换。
+"""
 
 import json
 import uuid
@@ -26,7 +30,7 @@ pytestmark = pytest.mark.anyio
 
 @pytest.mark.parametrize("background_state", ["running", "unresponsive"])
 @pytest.mark.parametrize("old_online", [True, False])
-async def test_first_tool_acquires_the_addressed_sessions_device(
+async def test_every_session_in_a_room_acquires_the_rooms_device(
     client, monkeypatch, old_online, background_state
 ):
     project = post_project(
@@ -92,6 +96,13 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
             )
             identities.append((session.id, device.device_id, token))
             assert session.work_lease is None
+        # 房间的选择是第一台：两条会话各自那份 ``choice`` 指着不同的机器，也都落在这
+        # 一台上——会话行上那一份不是来源。
+        topic.compute_config = {
+            "name": "ada",
+            "profile": "device",
+            "device_id": identities[0][1],
+        }
         await db.commit()
 
     async def install(device, argv, **kwargs):
@@ -111,8 +122,10 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     )
     monkeypatch.setattr(work_lease, "device_hub", hub)
 
-    def executor_answer(target, method, *_args, **_kwargs):
+    def executor_answer(target, method, *args, **_kwargs):
         if method == "control":
+            if args and args[0].get("subtype") == "checkpoint":
+                return {"value": {"stdout": ""}}
             return {"tasks": []}
         if method == "ping":
             import hashlib
@@ -137,7 +150,9 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     remote = AsyncMock(side_effect=executor_answer)
     monkeypatch.setattr(execution, "call", remote)
     tokens = []
-    for session_id, device, token in identities:
+    room_device = identities[0][1]
+    for session_id, _own_choice, token in identities:
+        device = room_device
         response = client.post(
             f"/topics/{topic_id}/sessions/{session_id}/work-lease",
             headers={"X-Cheese-Token": token},
@@ -195,6 +210,16 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     assert hub.exec.await_count == 3
     assert upgraded.json()["data"]["target"]["device_id"] == identities[0][1]
     remote.side_effect = executor_answer
+    # Both sessions of the room hold hands on the one machine, each in a
+    # workspace of its own: one container per topic, one worktree per teammate.
+    async with client.test_factory() as db:
+        leases = [
+            (await AgentSessionService(db).by_id(sid)).work_lease
+            for sid, _, _ in identities
+        ]
+    assert [lease["device_id"] for lease in leases] == [room_device, room_device]
+    assert leases[0]["resource_id"] != leases[1]["resource_id"]
+    assert leases[0]["home"] != leases[1]["home"]
     wrong_session = client.post(
         f"/topics/{topic_id}/sessions/{identities[1][0]}/work-lease",
         headers={"X-Cheese-Token": identities[0][2]},
@@ -205,7 +230,7 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     owner_headers = session_auth_headers("alice")
     first_id, first_device, first_token = identities[0]
     second_id, second_device, _ = identities[1]
-    choice_path = f"/topics/{topic_id}/sessions/{first_id}/work-choice"
+    choice_path = f"/topics/{topic_id}/compute-profile"
     selection = {
         "choice": {
             "name": "Second machine",
@@ -213,15 +238,6 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
             "device_id": second_device,
         }
     }
-    # A session credential cannot change its roommate's destination.
-    assert (
-        client.put(
-            f"/topics/{topic_id}/sessions/{second_id}/work-choice",
-            headers={"X-Cheese-Token": first_token},
-            json=selection,
-        ).status_code
-        == 403
-    )
     from app.domain.agent_instance.models import AgentInstance
     from app.domain.room_task.models import Task
 
@@ -247,10 +263,6 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         await db.flush()
         child_id = child.id
         await db.commit()
-    bob_path = f"/topics/{topic_id}/sessions/{second_id}/work-choice"
-    bob_change = client.put(bob_path, headers=owner_headers, json=selection)
-    assert bob_change.status_code == 200, bob_change.text
-    assert "pending" not in bob_change.json()["data"]["session"]
     bob_tools = client.post(
         f"/topics/{topic_id}/sessions/{second_id}/work-lease",
         headers={"X-Cheese-Token": identities[1][2]},
@@ -274,7 +286,7 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         assert dispatch.outcome is None
     hub.is_online = lambda device: old_online or device != first_device
     listing = client.get(
-        f"/topics/{topic_id}/sessions/work-leases", headers=owner_headers
+        f"/topics/{topic_id}/compute-profile", headers=owner_headers
     ).json()["data"]["sessions"]
     assert (
         next(item for item in listing if item["id"] == str(first_id))["lease"]["online"]
@@ -302,8 +314,9 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
             )
         )
         await db.commit()
-    # An agent may change its own work destination, including away from an
-    # offline machine. No human approver or extra acknowledgement is required.
+    # An agent may change its own work destination once its work is pushed on
+    # the machine it leaves. Away from a machine that cannot be reached for
+    # that, only a person may switch, and says so explicitly.
     from app.domain.agent.models import AgentTurn
 
     async with client.test_factory() as db:
@@ -331,7 +344,8 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         if method == "control":
             if background_state == "unresponsive":
                 raise TimeoutError("old executor does not respond")
-            return {"tasks": [{"status": "running"}]}
+            assert params["subtype"] == "checkpoint"
+            return {"value": {"stdout": ""}}
         return {"device": target["device_id"]}
 
     remote.side_effect = finishing_call
@@ -361,16 +375,39 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
                 headers={"X-Cheese-Token": first_token},
                 json={"profile": "device", "device_id": second_device},
             )
-            assert response.status_code == 200, response.text
+            if old_online and background_state == "running":
+                assert response.status_code == 200, response.text
+            else:
+                assert response.status_code == 409, response.text
+                assert response.json()["error"]["name"] == "WorkComputerUnreachable"
+                response = client.put(
+                    choice_path,
+                    headers=owner_headers,
+                    json={**selection, "abandon_unpushed": True},
+                )
+                assert response.status_code == 200, response.text
         finally:
             release.set()
         finished = pending_call.result(timeout=10)
     assert finished.status_code == 200, finished.text
     assert finished.json()["device"] == first_device
-    assert not any(call.args[1] == "control" for call in remote.await_args_list)
+    # The only thing the switch asks of the old machine is the push; it does
+    # not wait for that machine's background work.
+    assert all(
+        call.args[2]["subtype"] == "checkpoint"
+        for call in remote.await_args_list
+        if call.args[1] == "control"
+    )
     async with client.test_factory() as db:
         assert (await db.get(Task, child_id)).conclusion is None
-    assert response.json()["data"]["session"]["lease"] is None
+    async with client.test_factory() as db:
+        # 整个房间一起搬：发起的这一条和房间里的另一条都把手交了出来。
+        for sid in (first_id, second_id):
+            moved = await AgentSessionService(db).by_id(sid)
+            assert moved.work_lease is None
+            assert moved.execution_request["choice"]["device_id"] == second_device
+        room_now = await db.get(Topic, topic_id)
+        assert room_now.compute_config["device_id"] == second_device
     old_call = client.post(
         f"/topics/{topic_id}/execution/{resource}",
         headers={"X-Cheese-Token": tokens[0]},
@@ -398,10 +435,9 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
         },
     )
     assert repeated.status_code == 200, repeated.text
-    assert (
-        repeated.json()["data"]["session"]["lease"]["generation"]
-        == current_target["generation"]
-    )
+    async with client.test_factory() as db:
+        kept = await AgentSessionService(db).by_id(first_id)
+        assert kept.work_lease["generation"] == current_target["generation"]
     assert (
         client.post(
             f"/topics/{topic_id}/execution/{resource}",
@@ -415,8 +451,6 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     )
     async with client.test_factory() as db:
         first = await AgentSessionService(db).by_id(first_id)
-        second = await AgentSessionService(db).by_id(second_id)
-        assert first.work_lease["resource_id"] != second.work_lease["resource_id"]
         assert (
             first.execution_request["retained_leases"][0]["device_id"] == first_device
         )
@@ -434,31 +468,13 @@ async def test_first_tool_acquires_the_addressed_sessions_device(
     )
     assert revoked.status_code == 403
 
-    # Choosing before the first tool records the destination without allocating.
+    # A session that joins the room later takes the room's choice with it.
     async with client.test_factory() as db:
         fresh = await AgentSessionService(db).ensure(
             topic_id, "first-tool-later", harness="claude-code"
         )
         fresh_id = fresh.id
         await db.commit()
-    proposed = client.put(
-        f"/topics/{topic_id}/sessions/{fresh_id}/work-choice",
-        headers=owner_headers,
-        json={
-            "choice": {
-                "name": "old machine",
-                "profile": "device",
-                "device_id": first_device,
-            }
-        },
-    )
-    assert proposed.status_code == 200, proposed.text
-    async with client.test_factory() as db:
-        fresh = await AgentSessionService(db).by_id(fresh_id)
-        assert fresh.execution_request["generation"]
-        assert fresh.execution_request["choice"]
-        assert fresh.execution_request["choice"]["device_id"] == first_device
-        assert "pending" not in fresh.execution_request
     fresh_token = bind_resource_token(
         mint_scoped_token(
             project_id=str(project_id),
@@ -764,15 +780,21 @@ async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
         (await db.get(Project, project_id)).team_id = team_id
         await db.commit()
     monkeypatch.setattr(compute_configs, "cloud_provisionable", lambda settings: True)
-    path = f"/topics/{topic_id}/sessions/{session_id}/work-choice"
+    # 房间那条路由也问池接没接入（``compute_selectable``）。
+    from app.domain.agent import market
+
+    monkeypatch.setattr(market, "cloud_provisionable", lambda settings: True)
+    # 会话凭据改的是房间（一个话题一个容器）。
+    path = f"/topics/{topic_id}/compute-profile"
     body = {"choice": {"name": "Cloud", "profile": "cloud"}}
     headers = {"X-Cheese-Token": token}
     selected = client.put(path, headers=headers, json=body)
     assert selected.status_code == 200, selected.text
-    assert selected.json()["data"]["session"]["choice"]["profile"] == "cloud"
-    assert selected.json()["data"]["session"]["lease"] is None
+    assert selected.json()["data"]["choice"]["profile"] == "cloud"
     async with client.test_factory() as db:
         row = await AgentSessionService(db).by_id(session_id)
+        assert row.execution_request["choice"]["profile"] == "cloud"
+        assert row.work_lease is None
         assert row.execution_request["authorized_by"]["via"] == "cheese"
         assert row.execution_request["authorized_by"]["handle"] == actor_handle
 
@@ -974,3 +996,119 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
     assert launch_env["CHEESE_PREVIEW_URL"] == (
         "wss://cheese.example.test/api/preview/tunnel"
     )
+
+
+async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
+    client, monkeypatch
+):
+    """A session re-checks the hands it holds at every command start and file
+    tool, while its other calls — parallel tools, subagents, a running command
+    being read — are in flight on them. Those calls reach the machine; they are
+    not refused as belonging to a generation that is no longer current."""
+    import asyncio
+    import hashlib
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.domain.agent.harness.claude_code import executor_launch
+    from app.domain.agent.harness.claude_code.remote_execution import runtime
+
+    project = post_project(
+        client, json={"name": "Session hands", "owner_handle": "alice"}
+    ).json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+    ).json()["data"]
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        owner = await db.scalar(select(User).where(User.username == "alice"))
+        agent = await IdentityService(db).ensure_room_agent_user(topic_id)
+        topic = await db.get(Topic, topic_id)
+        resource = str(topic.resource_id or topic_id)
+        device = await devices.approve(
+            await devices.start("ada"),
+            owner_user_id=owner.id,
+            supply=Supply.self_hosted,
+            visibility=Visibility.host,
+        )
+        await devices.assign_to_project(
+            device.device_id, project_id, actor_user_id=owner.id
+        )
+        topic.compute_config = {
+            "name": "ada",
+            "profile": "device",
+            "device_id": device.device_id,
+        }
+        session = await AgentSessionService(db).ensure(
+            topic_id, "cheese", harness="claude-code"
+        )
+        session.runtime_location = {
+            "device_id": "center",
+            "resource_id": resource,
+            "channel": "device",
+        }
+        token = bind_resource_token(
+            mint_scoped_token(
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                agent_handle=agent.username,
+            ),
+            resource,
+            session_id=str(session.id),
+        )
+        session_id = session.id
+        await db.commit()
+
+    info = {"state": "/executor/state", "workspace": "/work", "mcp_servers": []}
+    hub = SimpleNamespace(
+        is_online=lambda _: True,
+        exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
+    )
+    monkeypatch.setattr(work_lease, "device_hub", hub)
+    checking, release = threading.Event(), threading.Event()
+    hold = {"next_ping": False}
+
+    async def execute(target, method, params, **kwargs):
+        if method == "ping":
+            if hold["next_ping"]:
+                hold["next_ping"] = False
+                checking.set()
+                while not release.is_set():
+                    await asyncio.sleep(0.01)
+            return {
+                "capabilities": ["prepare"],
+                "protocol_version": runtime.PROTOCOL_VERSION,
+                "files": {
+                    name: hashlib.sha256(value.encode()).hexdigest()
+                    for name, value in executor_launch.file_sources().items()
+                },
+            }
+        if method == "prepare":
+            return info
+        return {"ran": method}
+
+    monkeypatch.setattr(execution, "call", AsyncMock(side_effect=execute))
+    lease_path = f"/topics/{topic_id}/sessions/{session_id}/work-lease"
+    first = client.post(lease_path, headers={"X-Cheese-Token": token}, json={})
+    assert first.status_code == 200, first.text
+    execution_token = first.json()["data"]["token"]
+
+    hold["next_ping"] = True
+    with ThreadPoolExecutor(1) as pool:
+        recheck = pool.submit(
+            client.post, lease_path, headers={"X-Cheese-Token": token}, json={}
+        )
+        assert checking.wait(10), "the second acquire never re-checked the hands"
+        try:
+            during = client.post(
+                f"/topics/{topic_id}/execution/{resource}",
+                headers={"X-Cheese-Token": execution_token},
+                json={"method": "control", "params": {"subtype": "shell"}},
+            )
+        finally:
+            release.set()
+        assert recheck.result(10).status_code == 200
+    assert during.status_code == 200, during.text
+    assert during.json() == {"ran": "control"}

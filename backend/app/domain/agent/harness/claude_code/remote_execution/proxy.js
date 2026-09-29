@@ -1,15 +1,72 @@
 const execution = __EXECUTION_CONFIG__;
+// The native server's platform tools: every row of `PLATFORM_TOOLS` in the
+// shipped cheese.py, written in with the config (`release.hook_module`).
+// Membership decides, never a name prefix: `todo_write` carries none, and a
+// call that misses this set reaches the server without its `id`.
+const platformTools = new Set(__PLATFORM_TOOLS__.map((name) => "mcp__native__" + name));
 const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 
 // The session sees the project at the executor's own path (`client.py`
 // `enter`), so paths need no respelling. Its skills are the exception: the
-// build reads them from this host's config directory, and they are the
-// project's, on the executor.
+// build reads them all from this host's config directory. A project's are the
+// project's, on the executor; one the platform shipped is in the executor's
+// own config directory (`client.py` `skill_paths`, the same mapping).
 const skills = execution.central_config + "/skills/";
 const projectSkills = execution.session_workspace + "/.claude/skills/";
+const shipped = new Set(execution.shipped_skills || []);
+// Skills the session names by an entry that is not the project's root skill of
+// that name — a subdirectory's, or one written without its `paths` — with where
+// the executor holds each and what Claude Code adds to its description. They
+// change while the session runs (`release.touch_skills`), so they are read
+// each time (`client.py` `skill_places` reads the same file).
+const sessionDir = (execution.target_file || "").replace(/[^/]*$/, "");
+const placesFile = sessionDir && sessionDir + "skill-places.json";
+// The one native Read this plugin lets through the session's PreToolUse guard
+// (`client.py` `probed`): its look at a file before the executor reads it.
+const probeFile = sessionDir && sessionDir + "read-probe.json";
 
-function remotePath(path) {
-  return path.startsWith(skills) ? projectSkills + path.slice(skills.length) : path;
+async function skillPlaces($) {
+  if (!placesFile) return { places: {}, scoped: false };
+  try {
+    return JSON.parse(await $.fs.read(placesFile, { as: "text" }));
+  } catch {
+    return { places: {}, scoped: false };
+  }
+}
+
+function skillPaths(text, places = {}) {
+  let out = "";
+  let at = 0;
+  for (;;) {
+    const found = text.indexOf(skills, at);
+    if (found < 0) return out + text.slice(at);
+    const rest = text.slice(found + skills.length);
+    const name = /^[^/\s'"`]+/.exec(rest);
+    out += text.slice(at, found);
+    if (!name) {
+      out += skills;
+    } else if (places[name[0]]) {
+      out += places[name[0]].place;
+    } else if (shipped.has(name[0])) {
+      out += execution.executor_config
+        ? execution.executor_config + "/skills/" + name[0]
+        : skills + name[0];
+    } else {
+      out += projectSkills + name[0];
+    }
+    at = found + skills.length + (name ? name[0].length : 0);
+  }
+}
+
+function remotePath(path, places) {
+  return path.startsWith(skills) ? skillPaths(path, places) : path;
+}
+
+// A name Claude Code qualifies with a directory (`apps/web:deploy`) is spelled
+// in the config dir with U+2215 for each "/" (`release.NAME_SLASH`).
+function skillEntry(name) {
+  const colon = name.lastIndexOf(":");
+  return colon < 0 ? name : name.slice(0, colon).replaceAll("/", "\u2215") + name.slice(colon);
 }
 
 // A Bash command's output is on this host, where the build wrote it: a
@@ -20,6 +77,20 @@ function ownOutput(path) {
   if (typeof path !== "string" || path.split("/").includes("..")) return false;
   return path.startsWith(execution.central_tmp + "/")
     || (path.startsWith(execution.central_config + "/projects/") && path.includes("/tool-results/"));
+}
+
+// The memory tree is the session's own, in its home on this host, where the
+// runner reconciles it with the platform (`client.py` `prepare`,
+// `central_memory`). A file tool on it runs here, however the agent spelled
+// the path: `~/.cheese/memory/...` as the prompt names it, or under the home
+// its shell reports, which is the executor's and holds no memory tree.
+const MEMORY_TAIL = /(?:^|\/)\.cheese\/memory\/(.+)$/;
+
+function memoryPath(path) {
+  if (!execution.central_memory || typeof path !== "string") return null;
+  const match = MEMORY_TAIL.exec(path);
+  if (!match || match[1].split("/").includes("..")) return null;
+  return execution.central_memory + "/" + match[1];
 }
 
 const SEND_USER_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -64,10 +135,45 @@ async function sendUserFile($, tool_use_id, args) {
   return JSON.parse(response.content[0].text);
 }
 
+// A person's message the session has not answered yet (`driven/runner.py`,
+// which decides what owes an answer, what answers it and what the refusal
+// says). The runner names the file in CHEESE_REPLY_OWED (spelled out at the
+// call: the loader takes only a literal variable name); its contents are all
+// this side needs, so the rule is not restated here.
+//
+// The debt this session has already answered. Kept here rather than in the
+// file: a reply and the next tool call can be in one assistant message, and
+// this process sees the reply's call before the sibling's — the runner would
+// only hear of it afterwards.
+let answered = null;
+
+async function owedReply($) {
+  const path = await $.env.get("CHEESE_REPLY_OWED");
+  if (!path || !(await $.fs.exists(path))) return null;
+  try {
+    const owed = JSON.parse(await $.fs.read(path, { as: "text" }));
+    return owed && owed.id && owed.id !== answered ? owed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     // agentId identifies the caller; native MCP tools reject it as an argument.
     const { tool, tool_use_id, agentId, ...args } = e;
+    // Only the session itself answers the room. A subagent reports to it and
+    // is never held back; ToolSearch is how a deferred chat_send is reached.
+    if (agentId === undefined && tool !== "ToolSearch") {
+      const owed = await owedReply($);
+      if (owed) {
+        const name = tool.startsWith("mcp__native__") ? tool.slice("mcp__native__".length) : tool;
+        if (!owed.answers.includes(name)) return { deny: owed.reason };
+        answered = owed.id;
+        // And where the runner reads it, to know the turn may end (`insist`).
+        await $.fs.write(owed.answered, owed.id);
+      }
+    }
     // The pinned executor's `mcp serve` does not expose these tools. Never
     // fall through to a search on the conversation host.
     if (tool === "Glob" || tool === "Grep") {
@@ -81,7 +187,7 @@ export function register(on) {
     if (tool === "Agent" && args.isolation) {
       return { deny: `Agent isolation "${args.isolation}" is unavailable here because the project lives on the work machine; omit isolation, since the subagent's file and shell tools already run there. Only when the work is itself a deliverable to track and review, create it with \`cheese_task\`, prepare its directory with \`cheese worktree <id>\`, and give the subagent that directory.` };
     }
-    if (tool === "mcp__native__chat_send" || tool === "mcp__native__platform_request" || tool.startsWith("mcp__native__cheese_")) {
+    if (tool === "mcp__native__platform_request" || platformTools.has(tool)) {
       try {
         const response = await $.mcp.call("native", tool.slice("mcp__native__".length), {
           ...args, id: tool_use_id, session_id: await $.session.id(),
@@ -108,9 +214,30 @@ export function register(on) {
       }
     }
     if (tool === "Read" && ownOutput(args.file_path)) return next(e);
+    if (tool === "Skill" && typeof args.skill === "string" && args.skill.includes("/")) {
+      return next({ ...e, skill: skillEntry(args.skill) });
+    }
     if (native.has(tool)) {
+      for (const field of ["file_path", "notebook_path"]) {
+        const local = memoryPath(args[field]);
+        if (local) return next({ ...e, [field]: local });
+      }
+      const known = await skillPlaces($);
+      if (tool === "Read" && known.scoped) {
+        // The session's own Read, whose result is not used: before it opens
+        // the file it offers any skill whose `paths` names it, in this very
+        // result, as a native session does (Write and Edit cannot be looked
+        // at this way; `release.touch_skills` covers them). Bounded, since the
+        // file is looked up in the view, and the view asks the executor.
+        await $.fs.write(probeFile, JSON.stringify({ path: args.file_path }));
+        await Promise.race([
+          next(e).catch(() => undefined),
+          $.clock.sleep(5000),
+        ]);
+        await $.fs.write(probeFile, "{}");
+      }
       for (const field of ["file_path", "path", "notebook_path"]) {
-        if (typeof args[field] === "string") args[field] = remotePath(args[field]);
+        if (typeof args[field] === "string") args[field] = remotePath(args[field], known.places);
       }
       try {
         const response = await $.mcp.call("native", "invoke", {
@@ -159,6 +286,17 @@ export function register(on) {
 
   on("skill.prompt", async ($, e, next) => {
     const result = await next(e);
-    return { text: result.text.split(skills).join(projectSkills) };
+    return { text: skillPaths(result.text, (await skillPlaces($)).places) };
+  });
+
+  // A subdirectory's skill is listed with the directory it applies to, as
+  // Claude Code lists it (`release.link_forwarded_user_context`).
+  on("prompt.attachment", async ($, e, next) => {
+    const result = await next(e);
+    if (e.type !== "skill_listing") return result;
+    const { places } = await skillPlaces($);
+    const text = result.text.replace(/^- ([^:\n]+(?::[^:\s]+)?): (.*)$/gm, (line, name, rest) =>
+      places[name]?.note ? `- ${name}: ${rest}${places[name].note}` : line);
+    return { text };
   });
 }

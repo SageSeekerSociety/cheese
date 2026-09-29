@@ -14,14 +14,23 @@ import { fileURLToPath } from 'node:url'
 import * as esbuild from 'esbuild'
 import { marked } from 'marked'
 import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS, WHO } from './src/structure.mjs'
-import { esc, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
+import { esc, docHref, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
+import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed, registerSource, registerArchFacts, ciSelections } from './src/demos.mjs'
 import { homePage } from './src/home.mjs'
+import { selectSuites } from './src/ci-scope.mjs'
+import { fitIndex, limitBreach, indexTextOf } from './src/memory-limits.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '../..')
 const MANUAL = path.join(REPO, 'docs/manual')
 const OUT = path.resolve(process.env.OUT || path.join(REPO, 'frontend/public/docs'))
 const SITE = 'https://okcheese.com'
+
+// The demo scenes a fence can embed (`embed: <name>`), by their step titles.
+const SCENES = path.join(REPO, 'frontend/src/views/demo/scenes')
+for (const f of fs.readdirSync(SCENES).filter((f) => f.endsWith('.json'))) {
+  registerEmbed(f.replace(/\.json$/, ''), JSON.parse(fs.readFileSync(path.join(SCENES, f), 'utf8')).steps.map((s) => s.label))
+}
 
 const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: 'Asia/Shanghai' } })
 const fail = (msg) => { console.error(`FAIL: ${msg}`); process.exit(1) }
@@ -67,6 +76,7 @@ const INFO = ic('info')
 function renderMarkdown(md, { file }) {
   const toc = []
   let auto = 0
+  let collecting = true
   const renderer = new marked.Renderer()
   renderer.heading = function ({ tokens, depth }) {
     let t = this.parser.parseInline(tokens), id = ''
@@ -74,15 +84,14 @@ function renderMarkdown(md, { file }) {
     // The page title is rendered by the template; keep its anchor so /page#page links still land.
     if (depth === 1) return id ? `<span id="${id}" class="page-anchor"></span>` : ''
     id ||= `s${auto++}`
-    if (depth <= 3) toc.push({ level: depth, id, text: plain(t) })
+    if (depth <= 3 && collecting) toc.push({ level: depth, id, text: plain(t) })
     return depth === 2
       ? `<h2 id="${id}">${t}<a class="anchor" href="#${id}" aria-label="本节链接">#</a></h2>`
       : `<h${depth} id="${id}">${t}</h${depth}>`
   }
   renderer.link = function ({ href, tokens }) {
     const t = this.parser.parseInline(tokens)
-    const m = /^\/((?:dev\/)?[\w-]+)(?:\.md)?(#[\w-]+)?$/.exec(href)
-    if (m) return `<a class="link" href="/docs/${m[1]}${m[2] || ''}">${t}</a>`
+    if (!href.startsWith('#') && docHref(href) !== href) return `<a class="link" href="${docHref(href)}">${t}</a>`
     if (href.startsWith('#')) return `<a class="link" href="${href}">${t}</a>`
     return `<a class="link" href="${esc(href)}" rel="noopener">${t}</a>`
   }
@@ -92,19 +101,36 @@ function renderMarkdown(md, { file }) {
     return `<figure><div class="shot"><img src="${esc(src)}" alt="${esc(text)}" loading="lazy"></div>${text ? `<figcaption>${esc(text)}</figcaption>` : ''}</figure>`
   }
   renderer.blockquote = function ({ tokens }) { return `<div class="callout note">${INFO}<div>${this.parser.parse(tokens)}</div></div>` }
-  renderer.code = ({ text, lang }) => `<div class="code"><div class="code-bar"><span class="code-tab on">${esc(lang || 'text')}</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><code>${esc(text)}</code></pre></div>`
+  let demos = 0
+  renderer.code = ({ text, lang }) => {
+    // A demo fence is expanded here and nowhere else: the prerendered component
+    // is what a browser gets, and the prose below is what a model gets.
+    if (DEMO_FENCES.includes(lang)) return renderDemo(lang, text, `${file}: demo ${++demos}`)
+    return `<div class="code"><div class="code-bar"><span class="code-tab on">${esc(lang || 'text')}</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><code>${esc(text)}</code></pre></div>`
+  }
   renderer.table = function (token) { return `<div class="table-wrap">${marked.Renderer.prototype.table.call(this, token)}</div>` }
   let html
   try { html = marked.parse(md, { renderer }) } catch (e) { fail(`${file}: ${e.message}`) }
+  const fences = countFences(md)
+  if (fences !== demos) fail(`${file}: ${fences} demo fences in the source but ${demos} expanded — the renderer only sees a fence at the top level`)
   let lede = ''
   // The first paragraph is the lede (after the title's anchor, which stays in place).
   html = html.replace(/^(\s*(?:<span [^>]*class="page-anchor"><\/span>)?\s*)<p>([\s\S]*?)<\/p>/, (_, anchor, p) => { lede = p; return anchor })
+
+  // The same page again, with each demo cut down to a short piece of prose: this
+  // is what the search and 问芝士 indexes are built from, so a model never pays
+  // for the component's markup. The headings are the same, with the same ids.
+  const text = replaceFences(md, (lang, body) => `\n${demoText(lang, body, { where: `${file}: demo` })}\n`)
+  collecting = false
+  auto = 0
+  let textHtml
+  try { textHtml = marked.parse(text, { renderer }) } catch (e) { fail(`${file}: ${e.message}`) }
   // one search chunk per h2 section
-  const chunks = html.split(/(?=<h2 id=")/).map((part) => {
+  const chunks = textHtml.split(/(?=<h2 id=")/).map((part) => {
     const h = /^<h2 id="([\w-]+)">([\s\S]*?)<a class="anchor"/.exec(part)
     return { id: h ? h[1] : '', heading: h ? plain(h[2]) : '', text: plain(part.replace(/^<h2[\s\S]*?<\/h2>/, '')).replace(/\s+/g, ' ').trim() }
   })
-  return { html, lede, toc, chunks }
+  return { html, lede, toc, chunks, text }
 }
 
 const lastChanged = (file) => git('log', '-1', '--date=format-local:%Y-%m-%d', '--format=%ad', '--', rel(file)).trim()
@@ -112,7 +138,7 @@ const lastChanged = (file) => git('log', '-1', '--date=format-local:%Y-%m-%d', '
 // ---------- pages ----------
 const pages = {} // slug (user) or dev/slug → page
 const userNav = {} // section key → [[group, [page]]]
-const KINDS = { 流程: 'flow', 参考: 'reference', 决策: 'decision', 操作: 'howto' }
+const KINDS = { 流程: 'flow', 概念: 'concept', 参考: 'reference', 决策: 'decision', 操作: 'howto' }
 
 for (const [key, label, , groups] of SECTIONS) {
   userNav[key] = groups.map(([group, slugs]) => [group, slugs.map((slug) => {
@@ -122,7 +148,7 @@ for (const [key, label, , groups] of SECTIONS) {
     const { data, body } = frontmatter(raw)
     if (!data.title) fail(`docs/manual/${slug}.md has no title`)
     const r = renderMarkdown(body, { file: rel(file) })
-    const page = { slug, section: key, sectionLabel: label, group, title: data.title, url: `/docs/${slug}`, mdUrl: `/docs/${slug}.md`, src: rel(file), updated: lastChanged(file), source: body, ...r, summary: data.summary || plain(r.lede) }
+    const page = { slug, section: key, sectionLabel: label, group, title: data.title, url: `/docs/${slug}`, mdUrl: `/docs/${slug}.md`, src: rel(file), updated: lastChanged(file), ...r, source: r.text, summary: data.summary || plain(r.lede) }
     pages[slug] = page
     return page
   })])
@@ -141,7 +167,7 @@ for (const f of fs.readdirSync(path.join(MANUAL, 'dev'))) {
   for (const k of ['title', 'kind', 'summary']) if (!data[k]) fail(`${where}: frontmatter needs "${k}"`)
   if (!KINDS[data.kind]) fail(`${where}: kind must be one of ${Object.keys(KINDS).join(' / ')}`)
   const covers = Array.isArray(data.covers) ? data.covers : []
-  if ((data.kind === '流程' || data.kind === '参考') && !covers.length) fail(`${where}: a ${data.kind} page must list the code it covers`)
+  if (data.kind !== '决策' && data.kind !== '操作' && !covers.length) fail(`${where}: a ${data.kind} page must list the code it covers`)
   for (const c of covers) if (!fs.existsSync(path.join(REPO, c))) fail(`${where}: covers ${c}, which does not exist — update the page or the path`)
   devFiles[f.slice(0, -3)] = { data: { ...data, covers }, body, file }
 }
@@ -264,8 +290,173 @@ ${p.constants.map((c) => {
 }
 
 // developer pages, generated from the code they describe
-const gen = (script) => JSON.parse(execFileSync('python3', [path.join(HERE, 'gen', script)], { encoding: 'utf8', maxBuffer: 16 << 20 }))
+const genCache = {}
+const gen = (script, input) => (genCache[script] ??= JSON.parse(execFileSync('python3', [path.join(HERE, 'gen', script)], { encoding: 'utf8', maxBuffer: 64 << 20, input })))
+// The blocks of the system prompt, in the order build_system_prompt adds them.
+// The context page's timeline is bound to this: the numbers it shows are the
+// character counts of the text that function really produced.
+registerDataset('prompt-blocks', gen('prompt.py').blocks.map((b) => ({ title: b.title, chars: b.chars })))
 const mdCell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n+/g, ' ')
+
+// ---------- what the interactive demos show ----------
+// A demo fence declares what it draws; the numbers behind it are read here, out
+// of the code the page is about. Two runners below check the browser's copy of
+// a rule against the real one and fail the build on any difference — a page
+// that drifts from the code it describes breaks the site instead of quietly
+// teaching the old rule.
+const CI_PATHS = '.github/scripts/required-ci-paths.json'
+const CI_WORKFLOW = '.github/workflows/required-ci.yml'
+
+// suite -> the reusable workflow that runs it, read off the job gated on
+// `needs.scope.outputs.<suite>`, plus that workflow's own name for the page.
+function ciSource() {
+  const patterns = JSON.parse(fs.readFileSync(path.join(REPO, CI_PATHS), 'utf8'))
+  const yml = fs.readFileSync(path.join(REPO, CI_WORKFLOW), 'utf8')
+  const marks = [...yml.matchAll(/^ {2}([a-z0-9_]+):$/gm)]
+  const jobs = new Map(marks.map((m, i) => [m[1], yml.slice(m.index, marks[i + 1]?.index ?? yml.length)]))
+  const declared = [...(jobs.get('scope') || '').matchAll(/^ {6}([a-z0-9_]+): \$\{\{ steps\.scope\.outputs\.\1 \}\}$/gm)].map((m) => m[1])
+  const runs = {}
+  for (const [job, body] of jobs) {
+    const gate = /^ {4}if: needs\.scope\.outputs\.([a-z0-9_]+) == 'true'$/m.exec(body)
+    const uses = /^ {4}uses: \.\/\.github\/workflows\/([\w.-]+)$/m.exec(body)
+    if (gate && uses) runs[gate[1]] = uses[1]
+  }
+  const suites = Object.entries(patterns).map(([key, pats]) => {
+    if (!declared.includes(key)) fail(`${CI_WORKFLOW}: the scope job has no «${key}» output, but ${CI_PATHS} calls it a suite`)
+    if (!runs[key]) fail(`${CI_WORKFLOW}: no job runs when the scope selects «${key}» — the demo would have no workflow to name`)
+    const name = ((/^name:\s*(.+)$/m.exec(fs.readFileSync(path.join(REPO, '.github/workflows', runs[key]), 'utf8')) || [])[1] || runs[key]).replace(/^['"]|['"]$/g, '')
+    return { key, patterns: pats, workflow: `.github/workflows/${runs[key]}`, desc: name }
+  })
+  for (const key of Object.keys(runs)) if (!(key in patterns)) fail(`${CI_WORKFLOW}: the «${key}» job has no entry in ${CI_PATHS}`)
+  return { origin: CI_PATHS, suites }
+}
+
+// Paths run through both the JavaScript port (src/ci-scope.mjs) and the real
+// `.github/scripts/required-ci.py`: the gate itself, a doc, a suite's own
+// workflow, a glob that stops at one level, a path in no list at all.
+const CI_SAMPLES = [
+  ['docs/manual/dev/ci.md'],
+  ['README.md'],
+  ['backend/app/main.py'],
+  ['frontend/src/views/Room.vue'],
+  ['deploy/deploy-docker.sh'],
+  ['cli/cheese'],
+  ['scripts/remote_execution/seed.py'],
+  ['backend/app/domain/agent/executor_transport.py'],
+  ['.pre-commit-config.yaml'],
+  ['.github/workflows/deploy.yml'],
+  ['backend/tests/fixtures/wire/x.json'],
+  ['docs/manual/dev/ci.md', 'backend/app/main.py'],
+  ['.github/scripts/required-ci.py'],
+  ['.github/scripts/test_required_ci.py'],
+  ['.github/workflows/required-ci.yml'],
+  ['backend/deploy/not-a-path'],
+]
+
+const ci = ciSource()
+registerSource('ci-scope', ci)
+const CI_PATTERNS = Object.fromEntries(ci.suites.map((s) => [s.key, s.patterns]))
+
+// Every one of these path sets is answered twice — by src/ci-scope.mjs in the
+// browser and by the real `.github/scripts/required-ci.py` here — and any
+// difference stops the build. This is the only guarantee that the demo a reader
+// clicks through picks the same suites the merge gate would.
+function checkCi(pathSets) {
+  const real = JSON.parse(execFileSync('python3', [path.join(HERE, 'gen', 'required_ci.py')], { encoding: 'utf8', maxBuffer: 64 << 20, input: JSON.stringify(pathSets) }))
+  pathSets.forEach((paths, i) => {
+    const mine = selectSuites(paths, CI_PATTERNS)
+    const got = real[i] || {}
+    for (const key of new Set([...Object.keys(mine), ...Object.keys(got)])) {
+      const what = `[${paths.join(', ') || '（空）'}]`
+      if (!(key in mine)) fail(`CI scope: for ${what} required-ci.py selects «${key}», which ${CI_PATHS} does not list — the page would not know that suite`)
+      if (mine[key].run !== got[key]) fail(`CI scope: for ${what} the page says «${key}» is ${mine[key].run ? 'selected' : 'not selected'}, required-ci.py says ${got[key] ? 'selected' : 'not selected'} — src/ci-scope.mjs must match select()`)
+    }
+  })
+}
+checkCi(CI_SAMPLES)
+
+// The memory limits, straight out of `backend/app/domain/memory/files.py`.
+const memory = gen('memory_limits.py')
+registerSource('memory-limits', {
+  origin: 'backend/app/domain/memory/files.py',
+  constants: memory.constants,
+  linePrefix: memory.linePrefix,
+})
+{
+  const limits = { ...memory.constants, linePrefix: memory.linePrefix }
+  for (const c of memory.indexCases) {
+    const mine = fitIndex(limits, indexTextOf(limits, c.lines, c.lineBytes))
+    for (const key of ['keptLines', 'keptBytes', 'truncated', 'oldLines', 'oldBytes']) {
+      if (mine[key] !== c[key]) fail(`Memory limits: an index of ${c.lines} lines × ${c.lineBytes} bytes — the page says ${key}=${mine[key]}, fit_index() says ${c[key]} (src/memory-limits.mjs)`)
+    }
+  }
+  const say = (what, mine, real) => { if (!!mine !== real) fail(`Memory limits: ${what} — the page says ${mine ? 'refused' : 'accepted'}, limit_breach() says ${real ? 'refused' : 'accepted'} (src/memory-limits.mjs)`) }
+  const indexName = memory.constants.INDEX_NAME || 'MEMORY.md'
+  for (const c of memory.lineCases) say(`an index line of ${c.chars} characters, ${c.alreadyInIndex ? 'already in the index' : 'new'},`, limitBreach(limits, { name: indexName, newLineChars: c.chars, alreadyInIndex: c.alreadyInIndex }), c.rejected)
+  for (const c of memory.bodyCases) say(`a body of ${c.chars} characters,`, limitBreach(limits, { name: 'a-thing.md', bodyChars: c.chars, indexName }), c.rejected)
+}
+
+// The 原理分解 figures' constants, grepped out of the code that enforces them by
+// `gen/arch_facts.py` and pinned here. Two checks, both of them load-bearing:
+//
+//   1. every value the generator read is written down below with the value the
+//      picture is drawn against — so a port renumbered or a status changed in
+//      the code fails the build instead of quietly redrawing the map;
+//   2. the exact source text each value came from must still be in its file —
+//      so a value that only survives in a comment or another page is not a fact.
+//      A fact assembled from two greps («the prefix» + «the route») carries one
+//      piece of source per grep, and every piece has to still be there.
+//
+// Every fact must be pinned: an unpinned one fails too, so a constant cannot
+// arrive in the figure without someone writing down here what it should be.
+// src/arch.mjs draws the stations from these; the walks name them by dotted key.
+const ARCH_SAMPLES = {
+  'paths.admission': '/llm/admission',
+  'paths.tunnel': '/llm/tunnel',
+  'paths.catch_all': '/llm/v1',
+  'ports.reverse': '443',
+  'ports.connect': '8444',
+  'budget.status': '429',
+  'budget.type': 'rate_limit_error',
+  'budget.prefix': 'cheese project budget: ',
+  'budget.allow_reason': '150.0000 of budget remaining',
+  'budget.refusal_reason': 'budget spent: 250.0000 of 250.0000',
+  'binding.status': '400',
+  'binding.type': 'invalid_request_error',
+  'connect_refusal': '407',
+  'placeholder_token': 'sk-ant-oat01-cheese-no-claude-login-on-this-host',
+  'sub_model.id': 'sonnet',
+  'sub_model.wire': 'claude-sonnet-5',
+  'admission.fail_open_reason': 'admission unreachable (fail-open)',
+  'probe_seconds': '15',
+  'failure_threshold': '2',
+  'quarantine_minutes': '30',
+  'footprint_root': '.cheese',
+  'dispatch_log': 'dispatch_log.py',
+}
+{
+  const arch = gen('arch_facts.py')
+  if (arch.error) fail(`Architecture facts: ${arch.error} (gen/arch_facts.py reads the code the figures are about)`)
+  const facts = arch.facts || {}
+  const sourceOf = new Map()
+  for (const [key, f] of Object.entries(facts)) {
+    if (!(key in ARCH_SAMPLES)) fail(`Architecture facts: ${key} = ${f.value} is not pinned in build.mjs' ARCH_SAMPLES — write down what the figure should say before it says it`)
+    if (String(f.value) !== ARCH_SAMPLES[key]) fail(`Architecture facts: the code says ${key} = ${f.value}, ARCH_SAMPLES says ${ARCH_SAMPLES[key]} (${f.file}) — the figure and the code have parted; update both`)
+    for (const piece of f.sources) {
+      if (!sourceOf.has(piece.file)) sourceOf.set(piece.file, fs.readFileSync(path.join(REPO, piece.file), 'utf8'))
+      if (!sourceOf.get(piece.file).includes(piece.text)) fail(`Architecture facts: ${key} was read from ${piece.file}, but «${piece.text.trim()}» is gone from it — gen/arch_facts.py is reading a stale copy`)
+    }
+  }
+  for (const key of Object.keys(ARCH_SAMPLES)) if (!(key in facts)) fail(`Architecture facts: ARCH_SAMPLES pins ${key}, and gen/arch_facts.py did not find it — the constant it names has moved or been renamed`)
+  const nested = {}
+  for (const [key, f] of Object.entries(facts)) {
+    const parts = key.split('.')
+    let at = nested
+    while (parts.length > 1) at = at[parts.shift()] ??= {}
+    at[parts[0]] = f.value
+  }
+  registerArchFacts(nested)
+}
 function referencePages() {
   const out = {}
   const cli = gen('cli.py')
@@ -374,10 +565,10 @@ ${Object.keys(byPath).sort().map((d) => `| \`${d}\` | ${byPath[d].map(([s, p]) =
     },
     'by-kind': {
       title: '按类型查文档', kind: '参考', covers: [],
-      summary: '开发文档分四类：流程讲一件事怎么走完，参考供查阅，决策讲为什么这样，操作是照着做的步骤。',
+      summary: '开发文档分五类：流程讲一件事怎么走完，概念讲背后的道理，参考供查阅，决策讲为什么这样，操作是照着做的步骤。',
       body: `# 按类型查文档 {#by-kind}
 
-开发文档分四类：流程讲一件事怎么走完，参考供查阅，决策讲为什么这样，操作是照着做的步骤。每页开头必须声明类型和一句话摘要，流程和参考还要列出涉及的代码；缺了构建不通过。
+开发文档分五类：流程讲一件事怎么走完，概念讲背后的道理，参考供查阅，决策讲为什么这样，操作是照着做的步骤。每页开头必须声明类型和一句话摘要，流程、概念和参考还要列出涉及的代码；缺了构建不通过。
 
 ${Object.keys(KINDS).filter((k) => byKind[k]).map((k) => `## ${k} {#${KINDS[k]}}\n\n${byKind[k].map(([s, p]) => `- [${p.title}](/dev/${s})：${p.summary}`).join('\n')}`).join('\n\n')}
 `,
@@ -397,12 +588,17 @@ const devNav = DEV.map(([group, slugs]) => [group, slugs.map((slug) => {
   const page = {
     slug, section: 'dev', sectionLabel: '开发文档', group, title: d.title, url: `/docs/dev/${slug}`, mdUrl: `/docs/dev/${slug}.md`,
     src: d.file ? rel(d.file) : '', updated: d.file ? lastChanged(d.file) : '', generated: !!d.generated,
-    kind: d.kind, kindKey: KINDS[d.kind], covers: d.covers, summary: d.summary, source: d.body, ...r,
+    kind: d.kind, kindKey: KINDS[d.kind], covers: d.covers, summary: d.summary, source: r.text, ...r,
   }
   pages[`dev/${slug}`] = page
   return page
 })])
 for (const slug of Object.keys(devFiles)) if (!pages[`dev/${slug}`]) fail(`docs/manual/dev/${slug}.md is not placed in src/structure.mjs`)
+
+// Every page is parsed by now, so the path sets the CI demo's own fences offer
+// a reader go through the real script too — the demo cannot drift from the gate
+// even by way of the data written into a page.
+checkCi(ciSelections())
 
 // ---------- diagrams (archify) ----------
 // diagrams/<slug>.<type>.json is the source; `npm run diagrams` renders <slug>.html.

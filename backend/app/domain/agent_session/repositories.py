@@ -138,6 +138,22 @@ class AgentSessionRepository:
         )
         return result.scalar_one_or_none()
 
+    async def ids_in_room(self, room_id: uuid.UUID) -> list[uuid.UUID]:
+        """Every session id in this room, whether or not it has a machine yet.
+
+        一个话题一个容器（2026-09-28 决定，推翻结论 60）：换工作电脑是**房间**的动
+        作，而写下去要逐条会话去写（每一条各自先推后搬），所以先要一张「这间房里
+        有哪几条」的清单。没开工的那条也算：它的选择是同一项，只是还没有手。
+
+        顺序（agent、id）只为了可复现：搬的先后不影响结果，每一条各自算自己的。
+        """
+        result = await self._session.execute(
+            select(AgentSession.id)
+            .where(AgentSession.topic_id == room_id)
+            .order_by(AgentSession.agent_handle, AgentSession.id)
+        )
+        return list(result.scalars())
+
     async def placed_in_room(self, room_id: uuid.UUID) -> list[AgentSession]:
         """Every session in this room that is sitting on a machine, newest first.
 
@@ -159,25 +175,26 @@ class AgentSessionRepository:
         return list(result.scalars())
 
     async def placed_everywhere(self) -> list[tuple[AgentSession, uuid.UUID]]:
-        """Each room's last-placed session with its project, for a cold start.
+        """Every placed session with its project, for a cold start.
 
         A channel re-adopts what outlived the backend, and to do that it needs
         the project each session belongs to; the room is the only thing that
         knows, so the join happens once here rather than one query per row.
 
-        One row per room, and the same rule ``placed_in_room`` and
-        ``harness_in_room`` already answer by: a room has one screen and it
-        belongs to whichever session last opened one. A room that switched
-        harness keeps both session rows — nothing clears the location of the
-        one that stopped — and only the last-placed one comes back here. The
-        harness that row names is handed on as it stands; recognising it is the
+        One row per (room, agent, harness) seat, not per room: a room seats as
+        many agents as it has, and each one's session is re-adopted on its own
+        seat. The「一间房一块屏」rule (which session owns the pane) is answered
+        by ``placed_in_room``/``harness_in_room`` ordering, not by dropping the
+        other seats here — a room that seats two teammates must get both back
+        after a restart. A room that switched harness keeps both session rows —
+        nothing clears the location of the one that stopped — and the harness
+        each row names is handed on as it stands; recognising it is the
         runtime's, not the channel's, since one channel carries several of them.
         """
         result = await self._session.execute(
             select(AgentSession, Topic.project_id)
             .join(Topic, Topic.id == AgentSession.topic_id)
             .where(AgentSession.runtime_location.is_not(None))
-            .distinct(AgentSession.topic_id)
             .order_by(
                 AgentSession.topic_id,
                 AgentSession.placed_at.desc(),

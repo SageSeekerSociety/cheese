@@ -1,13 +1,19 @@
 """The thin half of document preview: what gets sent, what comes back, and which
 failures are the deployment's rather than the file's."""
 
+import asyncio
+import hashlib
+import os
+
 import pytest
 
+from app.core.config import settings
 from app.domain.preview import office
 
 
 @pytest.fixture(autouse=True)
-def empty_cache():
+def empty_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
     office._cache.clear()
     office._cache_bytes = 0
     yield
@@ -136,3 +142,83 @@ async def test_the_cache_stays_bounded(client):
         await office.render_to_pdf(f"doc-{i}".encode(), "a.docx", "http://r:8901")
 
     assert len(office._cache) <= office._CACHE_MAX_ENTRIES
+
+
+def _forget_memory():
+    """What a deploy does to the in-process cache."""
+    office._cache.clear()
+    office._cache_bytes = 0
+
+
+async def test_a_conversion_survives_a_restart(client):
+    """dev, 2026-09-27: every deploy emptied the memory cache and the first open
+    of a Word file waited 3–3.6s for LibreOffice again."""
+    client.responses.append(_Response(200, b"%PDF-1.7 kept"))
+    await office.render_to_pdf(b"weekly", "w.docx", "http://r:8901")
+
+    _forget_memory()
+    again = await office.render_to_pdf(b"weekly", "w.docx", "http://r:8901")
+
+    assert again == b"%PDF-1.7 kept"
+    assert len(client.calls) == 1, (
+        "the restart sent the same bytes to LibreOffice again"
+    )
+
+
+async def test_the_disk_copy_stays_bounded_oldest_first(client, monkeypatch):
+    monkeypatch.setattr(office, "_DISK_MAX_BYTES", 40)
+    for i in range(3):
+        client.responses.append(
+            _Response(200, b"%PDF-1.7 " + b"x" * 10 + bytes([48 + i]))
+        )
+        await office.render_to_pdf(f"doc-{i}".encode(), "a.docx", "http://r:8901")
+        # Writes inside one clock tick share an mtime; give each a distinct age.
+        key = hashlib.sha256(f"doc-{i}".encode()).hexdigest()
+        written = office._disk_root() / f"{key}.pdf"
+        if written.exists():
+            os.utime(written, (1_000_000 + i * 10, 1_000_000 + i * 10))
+
+    kept = list(office._disk_root().glob("*.pdf"))
+    assert sum(f.stat().st_size for f in kept) <= 40
+    _forget_memory()
+    client.responses.append(_Response(200, b"%PDF-1.7 again"))
+    await office.render_to_pdf(b"doc-0", "a.docx", "http://r:8901")
+    assert len(client.calls) == 4, "the oldest was not the one let go"
+
+
+async def _settle():
+    await asyncio.gather(*office._warming)
+
+
+async def test_a_saved_word_file_is_converted_before_anyone_opens_it(
+    client, monkeypatch
+):
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://r:8901")
+    client.responses.append(_Response(200, b"%PDF-1.7 early"))
+
+    office.prewarm(b"fresh", "out/报告.docx")
+    await _settle()
+    opened = await office.render_to_pdf(b"fresh", "out/报告.docx", "http://r:8901")
+
+    assert opened == b"%PDF-1.7 early"
+    assert len(client.calls) == 1
+
+
+async def test_prewarm_leaves_other_files_and_failures_alone(client, monkeypatch):
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://r:8901")
+    office.prewarm(b"sheet", "data.xlsx")
+    office.prewarm(b"text", "notes.md")
+    await _settle()
+    assert client.calls == []
+
+    client.responses.append(_Response(500, payload={"error": "soffice crashed"}))
+    office.prewarm(b"broken", "bad.docx")
+    await _settle()  # swallowed: the save that triggered it is not affected
+    assert len(client.calls) == 1
+
+
+async def test_no_renderer_means_no_prewarm(client, monkeypatch):
+    monkeypatch.setattr(settings, "office_render_endpoint", None)
+    office.prewarm(b"fresh", "a.docx")
+    await _settle()
+    assert client.calls == []

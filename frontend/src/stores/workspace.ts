@@ -7,20 +7,20 @@ import {
   archiveTopic,
   createTopic,
   getPrivateUnread,
+  getProject,
   getTopic,
   getTopicUnread,
   listProjectMembers,
   listProjects,
   listTopics,
   markTopicRead,
-  restoreTopicAutoTitle,
   setTopicTitle,
-  suggestTopicTitle,
+  unarchiveProject,
   unarchiveTopic,
   undoTopicTitle,
   upgradeBlock,
 } from '@/api'
-import { ApiError } from '@/api'
+import { ApiError, isProjectArchivedError } from '@/api'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { externalHandles } from '@/lib/externalMembers'
 import { myHandle } from '@/me'
@@ -72,14 +72,36 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 名册还没到时才退回「芝士」。房间里有自己的 AI 席位时，对话里读的是房间名册
   // （`useRoomRoster`），这里给的是项目默认那一位，供拿不到房间名册的地方用。
   const agentName = computed(() => members.value.find((m) => m.agent && m.project_default)?.name || '芝士')
+  // 同一位的 handle：句子里提到它时画成可点的 @chip（UserRef），点了去它的成员页。
+  const agentHandle = computed(() => members.value.find((m) => m.agent && m.project_default)?.user_handle ?? null)
   const loadingTopics = ref(false)
   let projectEpoch = 0
   let topicRevision = 0
   const pendingReads = new Map<string, Promise<unknown>>()
-  function readOnce<T>(key: string, read: () => Promise<T>): Promise<T> {
+  const queuedReads = new Map<string, Promise<unknown>>()
+  // One read in flight per key, and at most one queued behind it.
+  //
+  // A caller asking while a read is in flight cannot take that read's answer:
+  // the request left before whatever the caller is reacting to (a room renamed
+  // by the platform, a new unread message) and can answer with things as they
+  // were. So it waits for that read and reads once more; everyone who asks in
+  // the meantime shares that second read.
+  function readLatest<T>(key: string, read: () => Promise<T>): Promise<T> {
     const scopedKey = `${projectEpoch}:${key}`
     const pending = pendingReads.get(scopedKey)
-    if (pending) return pending as Promise<T>
+    if (pending) {
+      let queued = queuedReads.get(scopedKey)
+      if (!queued) {
+        queued = pending
+          .catch(() => undefined)
+          .then(() => {
+            queuedReads.delete(scopedKey)
+            return readLatest(key, read)
+          })
+        queuedReads.set(scopedKey, queued)
+      }
+      return queued as Promise<T>
+    }
     const request = read().finally(() => pendingReads.delete(scopedKey))
     pendingReads.set(scopedKey, request)
     return request
@@ -128,6 +150,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   const error = ref<string | null>(null)
   function reportError(e: unknown, fallback: string) {
+    // 项目在这期间被所有者归档了：那不是一次失败，是这个项目换了状态，整块换成说明。
+    if (isProjectArchivedError(e)) {
+      accessDenied.value = 'archived'
+      return
+    }
     error.value = e instanceof Error ? e.message : fallback
   }
 
@@ -140,7 +167,21 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
    *
    * 两档分开，因为下一步动作不一样：没登录的人要去登录，登录了的人得去要权限。
    */
-  const accessDenied = ref<'unauthenticated' | 'forbidden' | null>(null)
+  const accessDenied = ref<'unauthenticated' | 'forbidden' | 'archived' | null>(null)
+
+  /**
+   * 正在打开的这个项目本身，只在它已归档时才去取：归档了的项目不在 `projects` 那份
+   * 清单里（清单只列在用的），名字和所有者得从这一份读。
+   */
+  const openedProject = ref<Project | null>(null)
+
+  /**
+   * 项目归档了没有，看它的总览房间：总览只会随项目一起归档（单独归档它会被后端拒），
+   * 所以这一位不用多发一个请求就读得出来。
+   */
+  function noteArchived(list: Topic[]) {
+    if (list.some((t) => t.kind === 'root' && t.status === 'archived')) accessDenied.value = 'archived'
+  }
   function noteAccess(e: unknown) {
     if (!(e instanceof ApiError)) return false
     if (e.status === 401) accessDenied.value = 'unauthenticated'
@@ -186,7 +227,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   function isResolvingPlace(placeId: string): boolean {
     return !!resolvingPlaces.value[placeId]
   }
-  const projectName = computed<string>(() => projects.value.find((p) => p.id === projectId.value)?.name ?? '')
+  const projectName = computed<string>(
+    () =>
+      projects.value.find((p) => p.id === projectId.value)?.name ??
+      (openedProject.value?.id === projectId.value ? openedProject.value.name : '')
+  )
 
   // 「清单问过了」——成功、失败、还是空清单，都算问过。它和 `projects.length > 0`
   // 是两件事：后者只知道「手上有货」，前者的意思是「不会再变了，可以据此做决定了」。
@@ -208,7 +253,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const epoch = projectEpoch
     if (!pid) return
     try {
-      const payload = await readOnce(`members:${pid}`, () => listProjectMembers(pid))
+      const payload = await readLatest(`members:${pid}`, () => listProjectMembers(pid))
       if (epoch === projectEpoch && projectId.value === pid) members.value = payload.data
     } catch {
       // Best-effort; the roster-driven menus just stay empty.
@@ -223,8 +268,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const epoch = projectEpoch
     if (!pid) return
     try {
-      const payload = await readOnce(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
-      if (epoch === projectEpoch && projectId.value === pid && revision === topicRevision) topics.value = payload.data
+      const payload = await readLatest(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
+      if (epoch === projectEpoch && projectId.value === pid && revision === topicRevision) {
+        topics.value = payload.data
+        noteArchived(payload.data)
+      }
     } catch {
       // Best-effort background refresh; ignore.
     }
@@ -257,12 +305,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     privateUnreadMap.value = {}
     loadingTopics.value = true
     accessDenied.value = null
+    openedProject.value = null
     void refreshMembers()
     if (projects.value.length === 0) void refreshProjects()
     try {
-      const payload = await readOnce(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
+      const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
       if (epoch !== projectEpoch || projectId.value !== id) return
       if (revision === topicRevision) topics.value = payload.data
+      noteArchived(payload.data)
     } catch (e) {
       // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是那条
       // 红条。分不开的话，一次网络抖动会被写成「你没有权限」。
@@ -274,6 +324,36 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     void refreshUnread()
   }
 
+  /** 已归档的项目本身（名字、所有者）。「项目已归档」那一屏打开时来取。 */
+  async function loadOpenedProject() {
+    const id = projectId.value
+    const epoch = projectEpoch
+    if (!id) return
+    try {
+      const project = await getProject(id)
+      if (epoch === projectEpoch && projectId.value === id) openedProject.value = project
+    } catch {
+      // 取不到就只少了名字和「取消归档」那颗按钮；「项目已归档」照样说得出。
+    }
+  }
+
+  /** 取消归档正开着的这个项目，然后当作第一次打开它，重新取一遍。 */
+  async function unarchiveOpenProject(): Promise<boolean> {
+    const id = projectId.value
+    if (!id) return false
+    try {
+      await unarchiveProject(id)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : '取消归档失败'
+      return false
+    }
+    // 回到清单里了；清单先刷，否则 openProject 会以为这是另一个项目。
+    await refreshProjects()
+    projectId.value = null
+    await openProject(id)
+    return true
+  }
+
   async function refreshUnread() {
     const pid = projectId.value
     const me = myHandle()
@@ -281,7 +361,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (!pid || !me) return
     void refreshPrivateUnread(pid, me)
     try {
-      const map = await readOnce(`unread:${pid}:${me}`, () => getTopicUnread(pid, me))
+      const map = await readLatest(`unread:${pid}:${me}`, () => getTopicUnread(pid, me))
       if (epoch !== projectEpoch || projectId.value !== pid) return
       // The open topic is being read right now — its badge never shows.
       if (activeTopicId.value) delete map[activeTopicId.value]
@@ -306,7 +386,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   async function refreshPrivateUnread(pid: string, me: string) {
     const epoch = projectEpoch
     try {
-      const map = await readOnce(`private-unread:${pid}:${me}`, () => getPrivateUnread(pid, me))
+      const map = await readLatest(`private-unread:${pid}:${me}`, () => getPrivateUnread(pid, me))
       if (epoch !== projectEpoch || projectId.value !== pid) return
       // The DM being read right now never shows a badge on itself.
       if (activeDmPeer.value) delete map[activeDmPeer.value]
@@ -365,21 +445,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   // 人起的名字：平台之后不会再自动改它（见后端 topic/naming.py）。
-  async function renameTopic(topicId: string, title: string, suggested = false) {
+  async function renameTopic(topicId: string, title: string) {
     try {
-      applyTopic(await setTopicTitle(topicId, title, suggested))
+      applyTopic(await setTopicTitle(topicId, title))
     } catch (e) {
       reportError(e, '重命名失败')
-    }
-  }
-
-  /** 智能重命名：只拿一个建议，不改任何东西；人确认后才走 renameTopic。 */
-  async function suggestTitle(topicId: string): Promise<string | null> {
-    try {
-      return (await suggestTopicTitle(topicId)).title
-    } catch (e) {
-      reportError(e, '没能生成标题，稍后再试')
-      return null
     }
   }
 
@@ -389,15 +459,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       applyTopic(await undoTopicTitle(topicId, eventId))
     } catch (e) {
       reportError(e, '撤销失败')
-    }
-  }
-
-  /** 恢复自动命名：把人定的名字交还给平台，方向变了它会再改。 */
-  async function restoreAutoTitle(topicId: string) {
-    try {
-      applyTopic(await restoreTopicAutoTitle(topicId))
-    } catch (e) {
-      reportError(e, '恢复自动命名失败')
     }
   }
 
@@ -473,9 +534,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     projects,
     projectsSettled,
     accessDenied,
+    openedProject,
     topics,
     members,
     agentName,
+    agentHandle,
     isExternal,
     loadingTopics,
     unreadMap,
@@ -499,12 +562,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     placeById,
     isResolvingPlace,
     openProject,
+    loadOpenedProject,
+    unarchiveOpenProject,
     markRead,
     markDmRead,
     renameTopic,
-    suggestTitle,
     undoAutoTitle,
-    restoreAutoTitle,
     archive,
     unarchive,
     create,

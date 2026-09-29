@@ -1,6 +1,11 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
+    <div class="text-subtitle-2 font-weight-medium">
+      <i18n-t v-if="mentioner" keypath="notifications.MENTION.title" tag="span">
+        <template #mentioner><UserRef :handle="mentioner.handle" :name="mentioner.name" :project-id="null" /></template>
+      </i18n-t>
+      <template v-else>{{ title }}</template>
+    </div>
     <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
     <div v-if="previewContent" class="text-body-2 text-medium-emphasis mt-2 preview-box">
       <v-icon icon="mdi-text-box-outline" size="14" class="me-1 text-medium-emphasis" />
@@ -16,6 +21,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getEntity, getStringMetadata } from './NotificationRenderUtils'
+
+import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()

@@ -43,7 +43,9 @@
 
 .brand {
   display: inline-flex;
+  flex: none;
   color: var(--ink);
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
 }
@@ -150,7 +152,8 @@
 
 .hero-title {
   font-family: var(--font-display);
-  font-size: clamp(96px, 13vw, 208px);
+  /* 72px is the floor at which four characters still fit one line on a 390px phone. */
+  font-size: clamp(72px, 13vw, 208px);
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.02em;
@@ -166,9 +169,10 @@
 
 .hero-actions {
   display: flex;
+  flex-wrap: wrap;
   margin-top: 16px;
   align-items: center;
-  gap: 32px;
+  gap: 12px 32px;
 }
 
 /* ---- Manifesto: clauses light up as they cross the viewport ---- */
@@ -277,6 +281,11 @@
   padding: 64px var(--gutter);
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 24px 32px;
+}
+
+/* The solutions page nests the three-up grid inside a section that already has the gutter. */
+.solutions > .resources {
+  padding: 0;
 }
 
 .resources-item {
@@ -812,6 +821,39 @@
   .site-foot {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+/* A phone is too narrow for the lockup and both buttons at their full padding.
+   The lockup keeps its shape (`.brand` never shrinks, so 知是 never stacks into a
+   column); the buttons and gaps give up the room instead. */
+@media (width <= 420px) {
+  .brand {
+    gap: 6px;
+  }
+
+  .site-actions {
+    gap: 8px;
+  }
+
+  .site-actions .language-toggle {
+    padding-inline: 8px;
+  }
+
+  .site-actions .v-btn {
+    padding-inline: 12px;
+  }
+}
+
+@media (width <= 374px) {
+  .brand-mark {
+    width: 22px;
+    height: 22px;
+  }
+
+  .brand-word {
+    font-size: 18px;
+    line-height: var(--lh-18);
   }
 }
 

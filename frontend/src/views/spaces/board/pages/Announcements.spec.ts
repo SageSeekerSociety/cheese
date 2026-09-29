@@ -36,11 +36,18 @@ vi.mock('@/network/api/tasks', () => ({
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-// 这一页只在读一条公告时碰 dialog、只在发公告时碰登录态，这一批两条都不走 ——
-// 给个够用的替身，免得把整个插件拖进来。
-vi.mock('@/plugins/dialog', () => ({
-  useDialog: () => ({ custom: vi.fn(), confirm: () => ({ wait: async () => false }) }),
-}))
+// 读弹窗的正文是 tiptap 富文本；这一批测的是它上面那行「谁 · 什么时候 · 改过没有」，
+// 所以把渲染器换成一个只画文本的替身 —— 编辑器本身不进 happy-dom。
+vi.mock('@/components/common/Editor/TipTapViewer.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    default: defineComponent({
+      name: 'TipTapViewer',
+      props: { value: { type: String, default: '' } },
+      setup: (props) => () => h('div', { class: 'ttv-stub' }, props.value),
+    }),
+  }
+})
 
 vi.mock('@/services/account', () => ({
   default: { _user: { value: { id: 4, username: 'caisongyang', nickname: '蔡松洋' } } },
@@ -49,6 +56,10 @@ vi.mock('@/services/account', () => ({
 import { loadBoard } from '../store'
 
 import Announcements from './Announcements.vue'
+
+import DialogContainer from '@/components/common/DialogContainer.vue'
+import { setLocale } from '@/i18n'
+import { dialogs } from '@/plugins/dialog'
 
 const SPACE_ID = 11
 const ROUTE = { name: 'SpaceBoardAnnouncements', params: { spaceId: String(SPACE_ID) } }
@@ -96,6 +107,10 @@ function signIn(handle: string) {
 
 const Blank = defineComponent({ render: () => h('div') })
 
+/** 对话框本身住在 App.vue（跨路由活着），这一份把这一页和它一起挂起来 —— 读一条公告
+ *  是真的弹那个框，`dialog.custom` 里那行「谁 · 什么时候 · 改过没有」于是才看得见。 */
+const Page = defineComponent({ render: () => h('div', [h(Announcements), h(DialogContainer)]) })
+
 async function mount() {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -105,7 +120,7 @@ async function mount() {
   await router.isReady()
 
   // 直接挂这一页（和外壳无关）：它自己从路由参数里读空间 id，所以路由得推到那一条上。
-  const utils = render(Announcements, {
+  const utils = render(Page, {
     global: { plugins: [createVuetify({ components, directives }), router, createPinia()] },
   })
   // 空间是这一页自己去取的（公告），角色是外壳装出来的（谁是管理员）—— 两条都得有。
@@ -134,6 +149,9 @@ describe('公告页的置顶', () => {
   })
 
   afterEach(() => {
+    // 浮层清单是插件里的模块级状态，跨用例活着：上一个用例没关掉的读弹窗会跟到下一
+    // 个用例里。
+    dialogs.splice(0, dialogs.length)
     cleanup()
     vi.clearAllMocks()
     localStorage.clear()
@@ -217,5 +235,125 @@ describe('公告页的置顶', () => {
     signIn('caisongyang')
     await mount()
     await waitFor(() => expect(pinButton(0)).not.toBeNull())
+  })
+})
+
+// 这一批补的两处：**列表上什么时候发的**（相对时间，超过一周退回日期），以及
+// **读一条时框里写着谁、什么时候、改过没有**。相对时间的词全靠「现在」才成立，
+// 所以这一组把 Date 钉死。**只假 Date** —— 连 setTimeout 一起假掉，`waitFor`
+// 就再也等不到下一拍。
+describe('公告页的时间与「已编辑」', () => {
+  const NOW = new Date('2026-09-28T12:00:00Z').getTime()
+  const DAY = 86_400_000
+
+  /** 三条各占一种：改过的、三天前发的、一周以上的。 */
+  const TIMED = [
+    {
+      title: '改过的一条',
+      content: '<p>正文</p>',
+      createdAt: NOW - 4 * DAY,
+      updatedAt: NOW - DAY,
+      publisher: '蔡松洋',
+    },
+    {
+      title: '三天前发的',
+      content: '<p>正文</p>',
+      createdAt: NOW - 3 * DAY,
+      updatedAt: NOW - 3 * DAY,
+      publisher: '马小雨',
+    },
+    {
+      title: '很久以前发的',
+      content: '<p>正文</p>',
+      createdAt: NOW - 40 * DAY,
+      updatedAt: NOW - 40 * DAY,
+      publisher: '蔡松洋',
+    },
+  ]
+
+  beforeEach(() => {
+    // Vuetify 的浮层（v-dialog）会去读 `visualViewport`，测试环境里没有这个对象，于是
+    // 弹窗根本不渲染 —— 断言会以为「读弹窗里什么都没有」。
+    if (!('visualViewport' in window)) {
+      Object.defineProperty(window, 'visualViewport', {
+        configurable: true,
+        value: {
+          height: 800,
+          width: 600,
+          offsetTop: 0,
+          offsetLeft: 0,
+          scale: 1,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        },
+      })
+    }
+    localStorage.clear()
+    setActivePinia(createPinia())
+    // 相对时间的词是按语言出的（「3 天前」/ "3 days ago"），这里钉死中文再断言。
+    setLocale('zh-CN')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW)
+    spaceDetail.mockImplementation(async () => ({ data: { space: space(TIMED) } }))
+    spaceUpdate.mockImplementation(async () => ({ data: { space: space(TIMED) } }))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    dialogs.splice(0, dialogs.length)
+    cleanup()
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  /** 卡片底部那一行：发布人 · 时间（· 已编辑）。 */
+  function foot(n: number): string {
+    return (card(n)?.querySelector('.acard__foot')?.textContent || '').trim()
+  }
+
+  /** 读弹窗里那行元信息。 */
+  function meta(): string {
+    return document.querySelector('[data-testid="announcement-meta"]')?.textContent || ''
+  }
+
+  it('卡片上的时间说「N 天前」，不说一串日期', async () => {
+    await mount()
+    await waitFor(() => expect(card(0)).not.toBeNull())
+
+    // 显示顺序（发布时间倒序）：三天前、四天前（改过的那条）、一周以上。
+    expect(foot(0)).toContain('3天前')
+    expect(foot(1)).toContain('4天前')
+  })
+
+  it('超过一周就退回日期，不再说「N 天前」', async () => {
+    await mount()
+    await waitFor(() => expect(card(2)).not.toBeNull())
+
+    expect(foot(2)).toMatch(/\d{2}-\d{2}/)
+    expect(foot(2)).not.toContain('天前')
+  })
+
+  it('读弹窗里写着发布人、发布时间，改过的还带「已编辑」', async () => {
+    await mount()
+    await waitFor(() => expect(card(1)).not.toBeNull())
+
+    await fireEvent.click(card(1)!)
+    await waitFor(() => expect(document.querySelector('[data-testid="announcement-meta"]')).not.toBeNull())
+
+    expect(meta()).toContain('蔡松洋')
+    expect(meta()).toContain('4天前')
+    expect(meta()).toContain('已编辑')
+  })
+
+  it('没改过的公告，读弹窗里不写「已编辑」', async () => {
+    await mount()
+    await waitFor(() => expect(card(0)).not.toBeNull())
+
+    await fireEvent.click(card(0)!)
+    await waitFor(() => expect(document.querySelector('[data-testid="announcement-meta"]')).not.toBeNull())
+
+    expect(meta()).toContain('马小雨')
+    expect(meta()).toContain('3天前')
+    expect(meta()).not.toContain('已编辑')
   })
 })

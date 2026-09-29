@@ -37,6 +37,8 @@ export interface ModelFormPayload {
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { apiBaseAllowed } from '@/utils/apiBase'
+
 // 新增 / 编辑一个**运行时**模型的表单（契约 §3.3）。
 //
 // 这一层只做三件事：收字、按服务端的同一套规则先自我校验、把结果 emit 出去。真正
@@ -46,7 +48,8 @@ import { useI18n } from 'vue-i18n'
 // 三条校验与服务端逐字同源，写在界面上是**为了省一次往返**，不是第二份判据：
 //
 //   * `name` 1..64、只含 `[A-Za-z0-9._-]`；
-//   * `api_base` 要么空，要么 `https://` 开头（空 = 用上游默认端点）；
+//   * `api_base` 要么空，要么 `https://` 开头（空 = 用上游默认端点），唯一例外是计量代理
+//     的 ChatGPT 入口 `http://metering-proxy:8445/chatgpt/<账号>`（`@/utils/apiBase`）；
 //   * `selectable`（上架）要求**输入与输出两个单价都 > 0** —— 无价模型会让项目的
 //     max_budget 这道刹车静默失效，所以这条闸门在界面上就把它拦住（开关直接灰掉），
 //     而不是等服务端 400。
@@ -163,10 +166,7 @@ watch(canSelect, (ok) => {
 
 const nameOk = computed(() => NAME_RE.test(name.value.trim()))
 const upstreamOk = computed(() => upstreamModel.value.trim() !== '')
-const apiBaseOk = computed(() => {
-  const v = apiBase.value.trim()
-  return v === '' || v.startsWith('https://')
-})
+const apiBaseOk = computed(() => apiBaseAllowed(apiBase.value))
 
 const valid = computed(() => upstreamOk.value && apiBaseOk.value && (props.mode === 'edit' || nameOk.value))
 
@@ -206,7 +206,7 @@ function submit() {
 <template>
   <v-dialog :model-value="modelValue" max-width="560" :persistent="saving" @update:model-value="!$event && close()">
     <v-card rounded="lg">
-      <v-card-title class="px-4 pt-4 pb-2">
+      <v-card-title class="t-dialog-title px-4 pt-4 pb-2">
         {{ mode === 'add' ? t('models.dialog.add.title') : t('models.dialog.edit.title') }}
       </v-card-title>
 

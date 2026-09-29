@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import jwt
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocket, WebSocketState
@@ -197,6 +197,13 @@ class PreviewHostMiddleware:
             response = await self.respond(request, topic_id)
         except (AppError, BaseError):
             response = Response("Preview unavailable", status_code=404)
+        except ClientDisconnect:
+            # The browser dropped the request before we read it: a dev server's
+            # page reloading cancels its in-flight module fetches. Nobody is
+            # left to answer, and nothing here failed. This middleware sits
+            # outside the platform's exception handlers, so without this the
+            # hang-up reaches the catch-all and pages as a server error.
+            return
         await _private(response)(scope, receive, send)
 
     def sessions(self):
@@ -308,7 +315,7 @@ class PreviewHostMiddleware:
         assert artifact is not None  # 上面那条已经为 None 的情形返回了。
         mime, entry = artifact.mime_type, artifact.content
         if mime == APP_MIME:
-            return await relay_http(topic_id, request)
+            return await relay_http(topic_id, artifact.author, request)
         if request.method not in {"GET", "HEAD"}:
             return Response(status_code=405)
         relative = request.url.path.lstrip("/") or PurePosixPath(entry).name
@@ -341,9 +348,10 @@ class PreviewHostMiddleware:
                 artifact = await BlockRepository(session).latest_artifact(place.room_id)
                 if artifact is None or artifact.mime_type != APP_MIME:
                     raise NotFoundError("Preview unavailable")
+                seat = artifact.author
             # No DB session or read transaction lives for the HMR connection.
             async with asyncio.timeout(max(0, claims["exp"] - time.time())):
-                await relay_ws(websocket, topic_id)
+                await relay_ws(websocket, topic_id, seat)
         except (AppError, BaseError, TimeoutError):
             if websocket.application_state != WebSocketState.DISCONNECTED:
                 await websocket.close(code=1008)

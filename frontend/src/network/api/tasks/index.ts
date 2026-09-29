@@ -165,7 +165,7 @@ export namespace TasksApi {
     owner?: number
     pageSize?: number
     pageStart?: string
-    sort_by: 'createdAt' | 'updatedAt' | 'deadline' | 'publishedAt'
+    sort_by: 'createdAt' | 'updatedAt' | 'deadline' | 'publishedAt' | 'reviewedAt'
     sort_order: 'asc' | 'desc'
     querySpace?: boolean
     queryJoinability?: boolean
@@ -181,6 +181,13 @@ export namespace TasksApi {
     categoryId?: number
     lifecycle?: 'ended' | 'recruiting' | 'notEnded'
     limitedView?: boolean
+    /** 让服务端在**同一个响应**里多带一个 `distinctParticipants`：这一页题目上去重
+     *  后的参与人数（一个人领三道题算一人）。逐题的 `participants.total` 只能求和当
+     *  「领取次数」，去重的人数在客户端拼不出来，所以只能问服务端要。
+     *
+     *  默认不问：服务端为它要多跑一次本题目的报名名单查询，首页那种「数字要和列表
+     *  一起上屏」的地方才值这一趟。 */
+    queryDistinctParticipants?: boolean
   }) => {
     const finalParams = new URLSearchParams()
     Object.entries(params).forEach(([key, value]) => {
@@ -192,7 +199,13 @@ export namespace TasksApi {
         }
       }
     })
-    return NewApiInstance.request<{ tasks: Task[]; page: EncodedCursorPage }>({
+    return NewApiInstance.request<{
+      tasks: Task[]
+      page: EncodedCursorPage
+      /** 只在 `queryDistinctParticipants` 为真时才有：这一页 `tasks` 上去重后的
+       *  参与人数。 */
+      distinctParticipants?: number
+    }>({
       url: '/tasks',
       method: 'GET',
       params: finalParams,

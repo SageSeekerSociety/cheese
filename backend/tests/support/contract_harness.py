@@ -102,8 +102,8 @@ class ContractBacklog:
 
     def __init__(self, held: _Held):
         self._held = held
-        # A snapshot, as the protocol says: landing things during a pass must
-        # not change what this pass was handed.
+        # Taken when the pass starts, as the protocol says: landing things
+        # during a pass must not change what this pass is handed.
         self._entries = [
             HarnessEvent(
                 key=f"{index:019d}",
@@ -116,7 +116,9 @@ class ContractBacklog:
         ]
 
     def unread(self) -> Sequence[HarnessEvent]:
-        return list(self._entries)
+        # The whole tail is one page here; the next call has caught up.
+        page, self._entries = self._entries, []
+        return page
 
     def assemble(self, entry: HarnessEvent) -> Sequence[AgentEvent]:
         said = entry.record
@@ -149,6 +151,9 @@ class ContractHarness:
     """An ``AgentRuntime`` that declares nothing and keeps the six verbs."""
 
     harness = "contract"
+    # 它的会话不存记忆文件（`memory()` 答 None），所以系统提示词里那一段记忆也
+    # 不该进来——这一条和 `harness` 一样是「这个骨架是什么」，不是可选声明。
+    keeps_memory = False
 
     def __init__(self) -> None:
         self._held: dict[uuid.UUID, _Held] = {}
@@ -172,6 +177,7 @@ class ContractHarness:
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
         images: list[dict] | None = None,
+        owes_reply: bool = False,
     ) -> bool | None:
         held = await self.ensure(session, opening)
         assert isinstance(held, _Held)
@@ -189,6 +195,8 @@ class ContractHarness:
         images: list[dict] | None = None,
         *,
         expected_work_id: uuid.UUID | None = None,
+        agent_handle: str | None = None,
+        owes_reply: bool = False,
     ) -> bool:
         held = self._held.get(topic_id)
         if held is None:
@@ -279,8 +287,24 @@ class ContractHarness:
     def bind_reachability(self, consumer: Any) -> None:
         return None
 
-    def holds(self, topic_id: uuid.UUID) -> bool:
-        return topic_id in self._held
+    def bind_memory(self, consumer: Any) -> None:
+        return None
+
+    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+        return None
+
+    def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
+        if agent_handle is None:
+            return topic_id in self._held
+        return any(
+            held.ref.topic_id == topic_id and held.ref.agent_handle == agent_handle
+            for held in self._held.values()
+        )
+
+    def work_in_flight(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> uuid.UUID | None:
+        return None
 
     async def recover(self, device_id: str | None = None) -> list[SessionRef]:
         return [held.ref for held in self._held.values()]

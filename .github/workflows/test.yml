@@ -18,14 +18,13 @@ defaults:
   run:
     working-directory: backend
 
-# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
-# each merge in its own group (see the long comment in build.yml): every main
-# push shares the one ref, so a ref-only key let a second merge cancel the
-# previous commit's still-running suite and left main with no result for that
-# commit. A cancelled run is not a red run — main would carry code this
-# workflow never finished checking, with nothing on the commit to say so.
-# Required CI selects this suite from each main push's changed paths and runs
-# it against the merged commit, including changes since the PR was tested.
+# Cancel superseded runs on a PR, never in the merge queue. Keying queue runs
+# by sha gives each queued commit its own group, so one entry cannot cancel
+# another's run and leave the commit that lands on main with no result — a
+# cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
+# to one PR still supersede each other.
+# Required CI selects this suite from the queued commit's changed paths
+# and runs it against that commit, including changes since the PR was tested.
 concurrency:
   group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -50,6 +49,8 @@ jobs:
           cache-dependency-glob: backend/uv.lock
           # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
           prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
@@ -68,6 +69,22 @@ jobs:
           uvx pre-commit run --all-files --show-diff-on-failure ruff
           uvx pre-commit run --all-files --show-diff-on-failure ruff-format
           uvx pre-commit run --all-files pyright
+
+      # A check that reports "clean" because it never ran is the failure this
+      # job exists to prevent, and this one is easy to break silently: it reads
+      # app/ into an import graph through backend/.importlinter, so if the
+      # config moved or stopped naming a contract it would find nothing wrong
+      # with anything. So it is asked to prove itself — this builds a throwaway
+      # package tree, plants a violation in it, and requires a non-zero exit.
+      - name: Module boundary check proves it still fires
+        run: uv run python scripts/check_boundaries.py --self-test
+
+      # The same hook a developer's commit runs, from the same file, and over
+      # all files rather than this diff: the import graph is a property of the
+      # tree, not of the commit that touched it.
+      - name: Module boundaries (import-linter + frozen baseline)
+        working-directory: ${{ github.workspace }}
+        run: uvx pre-commit run --all-files boundary-check
 
       - name: Independently collect every required backend case
         run: >-
@@ -127,6 +144,8 @@ jobs:
           cache-dependency-glob: backend/uv.lock
           # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
           prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
@@ -156,7 +175,6 @@ jobs:
           - {layer: integration, shard: '1/4', floor: 2400, timeout: 15}
           - {layer: integration, shard: '2/4', floor: 2400, timeout: 15}
           - {layer: integration, shard: '3/4', floor: 2400, timeout: 15}
-          - {layer: search, shard: '0/1', floor: 4, timeout: 5}
     # Floors apply to the complete layer before sharding, not each runner.
     env:
       REDIS_URL: redis://localhost:6389/0
@@ -169,14 +187,12 @@ jobs:
       # present (AgentProfile.available = bool(auth_token)); the market test
       # asserts availability. Dummy token — no real calls are made.
       ANTHROPIC_AUTH_TOKEN: test-token
-      CHEESEX_TEST_MEILISEARCH_URL: ${{ matrix.layer == 'search' && 'http://localhost:7700' || '' }}
-      CHEESEX_TEST_MEILISEARCH_API_KEY: cheese-ci-search-key
     services:
       # The same images the cheese-ci pool's resident pair run
       # (deploy/ci-runner/resident-services.sh), on the same host ports, so the
       # test settings need no translation between the two kinds of runner.
       postgres:
-        image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
+        image: mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: cheese_test
@@ -186,7 +202,7 @@ jobs:
         # Bound tmpfs to 4 GiB on 16 GiB runners; sample filesystem and RAM below.
         options: >-
           ${{ matrix.layer == 'integration' && '--tmpfs /var/lib/postgresql/data:rw,size=4g' || '' }}
-          --health-cmd "pg_isready -U postgres" --health-interval 10s
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 10s
           --health-timeout 5s --health-retries 5
       valkey:
         image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
@@ -195,13 +211,6 @@ jobs:
         options: >-
           --health-cmd "valkey-cli ping" --health-interval 10s
           --health-timeout 5s --health-retries 5
-      meilisearch:
-        image: ${{ matrix.layer == 'search' && 'mirror.gcr.io/getmeili/meilisearch:v1.54.0@sha256:0bf32debcbfa8ba4e418679025f4935884972171513c92f0584689ff994a61df' || '' }}
-        env:
-          MEILI_MASTER_KEY: cheese-ci-search-key
-          MEILI_NO_ANALYTICS: 'true'
-        ports:
-          - 7700:7700
     # Each runner has its own services and xdist workers. This ceiling detects
     # hangs; the artifact timings measure whether the feedback budget is met.
     timeout-minutes: 20
@@ -246,6 +255,8 @@ jobs:
           cache-dependency-glob: backend/uv.lock
           # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
           prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
@@ -278,10 +289,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            backend/app/domain/agent/harness/claude_code/remote_execution/client.py
-            backend/app/domain/agent/harness/codex/**
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
       - name: Install pinned harness binaries
         run: |
           packages="$(uv run python - <<'PY'
@@ -299,11 +311,27 @@ jobs:
           echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
           "$tools/claude" --version
           "$tools/codex" --version
-
-      - name: Wait for the search test service
-        if: matrix.layer == 'search'
-        timeout-minutes: 2
-        run: curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 --max-time 2 http://localhost:7700/health
+          # pi is not an npm package here: the build a room runs is the
+          # vendor's compiled release, fetched and checked by the same code the
+          # platform serves it with (`app.domain.machine.pi_dist`).
+          case "$(uname -m)" in
+            x86_64) pi_platform=linux-x64 ;;
+            aarch64 | arm64) pi_platform=linux-arm64 ;;
+          esac
+          archive="$(uv run python - "$RUNNER_TEMP/pi-dist" "$pi_platform" <<'PY'
+          import asyncio, sys
+          from pathlib import Path
+          from app.domain.agent.harness import PI
+          from app.domain.agent.capability.matrix import written
+          from app.domain.machine import pi_dist
+          version = written()[PI].pinned_version
+          print(asyncio.run(pi_dist.ensure_cached(Path(sys.argv[1]), version, sys.argv[2])))
+          PY
+          )"
+          mkdir -p "$RUNNER_TEMP/pi"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/pi"
+          echo "CHEESE_TEST_PI=$RUNNER_TEMP/pi/pi/pi" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/pi/pi/pi" --version
 
       - name: Verify integration PostgreSQL storage
         if: matrix.layer == 'integration'
@@ -329,20 +357,12 @@ jobs:
             export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
             export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
           fi
-          # Real search owns a separate serial runner and index. The four cases
-          # previously skipped without a service must pass there on every run.
-          if [ "$TEST_LAYER" = search ]; then
-            selection=(tests/integration/test_meilisearch_integration.py -m integration)
-            workers=0
-          else
-            selection=(tests/ -m "$TEST_LAYER" -k 'not kotlin and not meilisearch_integration')
-            workers="$CHEESE_CI_TEST_WORKERS"
-          fi
           observe=()
           if [ "$TEST_LAYER" = integration ]; then
             observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" --)
           fi
-          "${observe[@]}" uv run python -m pytest "${selection[@]}" --ignore=tests/forgejo -n "$workers" \
+          "${observe[@]}" uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+            --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
             --ci-selection-output="$RUNNER_TEMP/backend-results" \
             --dist worksteal --tb=short --durations=30 \

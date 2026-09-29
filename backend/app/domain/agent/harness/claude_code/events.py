@@ -1,10 +1,11 @@
 """Turn Claude Code's stream-json records into the room's event vocabulary.
 
-The records are what the runner journaled: every line Claude Code wrote to
-stdout, plus the transcript lines of agents only their own file reports on
-(``cheese_file``). One assistant record may carry several content blocks, so the
-events a record comes out as each get their own id: the record's ``uuid``
-(Claude Code's, stable across a re-read) plus the block's index.
+The records are what the runner journaled: the lines Claude Code wrote to
+stdout about what the session did, plus the transcript lines of agents only
+their own file reports on (``cheese_file``). One assistant record may carry
+several content blocks, so the events a record comes out as each get their own
+id: the record's ``uuid`` (Claude Code's, stable across a re-read) plus the
+block's index.
 
 Which card a sub-thread's work lands on is the contract's ``thread_label``
 (结论 43), and no field of a Claude Code record carries one. The agent writes it
@@ -29,6 +30,7 @@ from datetime import datetime
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.service import (
     STEP_ERROR_MAX,
+    AgentCompacting,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -83,6 +85,22 @@ def _count(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _authored(events: list[AgentEvent], record: dict) -> list[AgentEvent]:
+    """Name who wrote these, from the runner's stamp on the record.
+
+    Every record carries it, not just the init and the result. Read only there,
+    the words and calls in between were signed by whatever the backend holding
+    the turn remembered — and a backend that took the turn over during a deploy
+    remembers nothing, so it signed them as the room's default agent.
+    """
+    handle = (record.get("cheese") or {}).get("agent_handle")
+    if handle:
+        for event in events:
+            if isinstance(event, AgentMessage | AgentToolUse | AgentToolResult):
+                event.agent_handle = event.agent_handle or handle
+    return events
+
+
 def _retrying(record: dict, label: str | None) -> AgentRetrying:
     """``system/api_retry``, as the pinned build writes it: ``attempt``,
     ``max_retries``, ``retry_delay_ms``, ``error_status`` (null for a
@@ -95,6 +113,21 @@ def _retrying(record: dict, label: str | None) -> AgentRetrying:
         status=_count(record.get("error_status")),
         thread_label=label,
     )
+
+
+def _compacting(record: dict, label: str | None) -> list[AgentEvent]:
+    """``system/status``, as the pinned build writes it around a compaction:
+    ``status: "compacting"`` when it starts, then ``status: null`` with
+    ``compact_result`` (``"success"`` / ``"failed"``) and, on failure,
+    ``compact_error``. The same record also reports other status changes
+    (a permission mode), which carry neither and say nothing to the room."""
+    if record.get("status") == "compacting":
+        return [AgentCompacting(thread_label=label)]
+    result = record.get("compact_result")
+    if result not in ("success", "failed"):
+        return []
+    error = str(record.get("compact_error") or "failed") if result == "failed" else ""
+    return [AgentCompacting(done=True, error=error, thread_label=label)]
 
 
 def _message(record: dict) -> tuple[dict, str | None]:
@@ -215,9 +248,9 @@ class Assembler:
             return self._system(record)
         message, thread = _message(record)
         if message.get("type") == "assistant":
-            return self._assistant(message, thread)
+            return _authored(self._assistant(message, thread), record)
         if message.get("type") == "user" and not message.get("isReplay"):
-            return self._returned(message, thread)
+            return _authored(self._returned(message, thread), record)
         return []
 
     def _assistant(self, message: dict, thread: str | None) -> list[AgentEvent]:
@@ -252,6 +285,7 @@ class Assembler:
                         eid=eid,
                         call_id=str(block.get("id")),
                         thread_label=label,
+                        at=_at(message),
                     )
                 )
         return events
@@ -304,6 +338,8 @@ class Assembler:
         subtype = record.get("subtype")
         if subtype == "api_retry":
             return [_retrying(record, self._label(_message(record)[1]))]
+        if subtype == "status":
+            return _compacting(record, self._label(_message(record)[1]))
         task = str(record.get("task_id") or "")
         # Only an agent is a worker the room tracks: a background command or a
         # workflow reports its tasks here too.

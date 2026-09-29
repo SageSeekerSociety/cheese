@@ -2,7 +2,23 @@
   "preview": {
     "unavailable": "应用预览暂不可用",
     "appUnavailable": "预览连接正常，但应用没有响应。请让芝士检查应用是否正常运行。",
-    "connectionUnavailable": "预览连接尚未建立或已断开，不代表芝士已停止工作。请在现场查看运行状态；连接恢复后，此处会自动更新。"
+    "connectionUnavailable": "预览连接尚未建立或已断开，不代表芝士已停止工作。请在现场查看运行状态；连接恢复后，此处会自动更新。",
+    "roomOutputs": {
+      "title": "这个房间里的东西",
+      "expand": "展开",
+      "collapse": "收起",
+      "expandAll": "展开全部 {count} 项",
+      "openFile": "打开 {path}",
+      "newFromTemplate": "从模板新建",
+      "readingTemplates": "正在读取模板…",
+      "newFromTemplateLabel": "从「{name}」新建，存成",
+      "createAndOpen": "新建并打开",
+      "cancel": "取消",
+      "saveToLibrary": "保存到资料库",
+      "savedToLibrary": "已存进资料库：{name}",
+      "saveFailed": "未能存进资料库",
+      "createFailed": "新建失败"
+    }
   },
   "artifactComparison": {
     "title": "版本比较",
@@ -11,6 +27,7 @@
     "binary": "此格式不提供逐行差异，请并排预览或下载比较",
     "document": "比较的是文档正文，版式和修订记录不在其中",
     "unsupported": "此文件格式或大小不支持逐行比较",
+    "many": "改动的文件较多，此文件未展开逐行差异",
     "unavailable": "这两个版本的交付形式不同，或没有留存可比较的内容",
     "source": "比较两次交付时项目源文件的完整状态",
     "link": "这里只比较交付时记录的地址；未保存网页的历史内容",

@@ -10,11 +10,32 @@
  * `board` 不是它的子路径，所以不会被它接住，也就不会套上老侧栏。新界面有自己的
  * 外壳（`SpaceBoardShell.vue`）。
  *
- * **题目详情、发题、整板看板在第五批收进来了**：那三处背后是成熟功能（按
- * `submissionSchema` 出表单的提交、逐版评审、AI 建议、PDF 生成、九个看板页），
- * 所以老页面**一个字没改**，各由 `pages/` 下一层包着挂进这棵树 —— 每层文件顶部
- * 写明它补的是什么（provide 路由名、页头、pinia 的 space store）。老地址照常
- * 在原处服务，退场是下一批的事。
+ * **题目详情这一格不再是老树的副本**（第八批）：`/board/tasks/:taskId` 现在是这块板
+ * 自己的题目详情页（`pages/TaskDetail.vue`，按 `proto-board/pages/TaskDetail.vue` 的
+ * 形状重画：题目卡、B 站视频、带下载次数的材料、四种状态的领取按钮、出题人视角的
+ * 领取者名单、右栏的领取进度与走势）。老树那一页**一个字没改**，仍在
+ * `/spaces/:id/tasks/:taskId` 上原样服务（见 `router/spaces.ts` 文件头）。底下那四格
+ * （提交记录 / 参与者 / 交作业 / 启星研导）还是老页面，因为那背后是按 `submissionSchema`
+ * 出表单的提交与逐版评审这类成熟功能；默认那一格（老 `Overview.vue`）撤了 ——
+ * 它画的东西这一页的卡片里已经有了，见下面 `tasks/:taskId` 那一条的注释。
+ *
+ * **发题这一格不再是包着老页面**（第十批）：`/board/publish` 现在是这块板自己的发题页
+ * （`pages/TaskPublish.vue`，按 `proto-board/pages/Publish.vue` 的形状重画 —— 页头与那颗
+ * 「手写一道 / 从 PDF 生成」、两条路各几张卡、整页两栏网格）。底下那套成熟功能一件没丢：
+ * 表单与附件卡片（`components/tasks/TaskForm.vue`、`TaskAttachmentPicker.vue`）原样复用，
+ * 两条路走的是同一批真接口（`POST /tasks` 与
+ * `POST /tasks/publish/from-pdf/preview|confirm`）；空间、分类、模板那份装配 —— 老树里
+ * 由空间壳（`views/spaces/Detail.vue`）替老页装好 —— 现在由这一页自己保证（见那一页
+ * 文件头的「装完再挂」）。老树那一页**一个字没改**，仍在 `/spaces/:id/publish` 上原样
+ * 服务（见 `router/spaces.ts` 文件头）。
+ *
+ * **整板看板这一格不再是老树那九页的副本**（第七批）：`/board/analytics` 现在渲染这
+ * 块板自己的看板（`pages/Analytics.vue`：六个 KPI、领取与提交走势、题目构成、分类分布、
+ * 最热的题、出题人排行、待处理），数字来自老树那九页背后同一组 `/spaces/{id}/analytics/*`
+ * 接口。老树那九页**一页没删**，仍在 `/spaces/:id/analytics/*` 上原样服务（见
+ * `router/spaces.ts` 文件头）；新看板页脚留了一条走过去的路 —— 逐题、逐人、逐出题人
+ * 翻明细去那里。所以这里不再有 `SpaceBoardAnalytics*` 那六条子路由：它们只是把老页面
+ * 套进新外壳，留着就是一堆没人渲染的死路由。
  */
 import type { RouteLocationNormalized, RouteRecordRaw } from 'vue-router'
 
@@ -57,9 +78,15 @@ export const SpaceBoardRoutes: RouteRecordRaw = {
       meta: { backTo: 'SpaceBoardHome' },
     },
     {
-      // 题目详情这一条**带着五格**（概览 / 提交记录 / 参与者 / 交作业 / 启星研导），
-      // 和它底下那一页自己带的 `router-view` 对上：名字都在 `routeNames.ts` 里，
-      // 页面里跳转只认名字，所以老树那几条同名格子与这几条互不打架。
+      // 题目详情这一条**自己就是那一页**（第八批按原型重画，见 `pages/TaskDetail.vue`），
+      // 底下只剩四格子路由：提交记录 / 参与者 / 交作业 / 启星研导 —— 页面里一个
+      // `router-view` 与它们对上。名字都在 `routeNames.ts` 里，页面里跳转只认名字，
+      // 所以老树那几条同名格子与这几条互不打架。
+      //
+      // 原来还有第五格：默认子路由（`path: ''`）挂的是老树的 `Overview.vue`。这一批
+      // 撤了 —— 视频、附件、题目详情、领取现在都在这一页自己的卡片里，再挂一次老概览
+      // 就是同一段视频和同一份附件清单在一屏上出现两遍。`BOARD_TASK_ROUTE_NAMES.overview`
+      // 指回这一条路由本身，老页面里「返回概览」那颗按钮仍旧落在说得出去的地方。
       //
       // `backTo` 声明的是一块板上的上一层（题目板首页），顶栏那颗 ← 走的是它；
       // 老树里这一步是面包屑，新树没有面包屑（那几条路由没有 `meta.title`）。
@@ -68,11 +95,6 @@ export const SpaceBoardRoutes: RouteRecordRaw = {
       component: () => import('./pages/TaskDetail.vue'),
       meta: { backTo: 'SpaceBoardHome' },
       children: [
-        {
-          path: '',
-          name: 'SpaceBoardTaskOverview',
-          component: () => import('@/views/tasks/detail/Overview.vue'),
-        },
         {
           path: 'submissions',
           name: 'SpaceBoardTaskSubmissions',
@@ -87,7 +109,7 @@ export const SpaceBoardRoutes: RouteRecordRaw = {
           path: 'submit',
           name: 'SpaceBoardTaskSubmit',
           component: () => import('@/views/tasks/detail/Submit.vue'),
-          meta: { backTo: 'SpaceBoardTaskOverview' },
+          meta: { backTo: 'SpaceBoardTaskDetail' },
         },
         {
           path: 'ai-advice',
@@ -97,44 +119,11 @@ export const SpaceBoardRoutes: RouteRecordRaw = {
       ],
     },
     {
+      // 整板看板是管理员那一格，直接输地址也要挡住 —— 与「审核」「成员」同一道门槛。
       path: 'analytics',
       name: 'SpaceBoardAnalytics',
       component: () => import('./pages/Analytics.vue'),
-      redirect: { name: 'SpaceBoardAnalyticsOverview' },
-      // 整板看板是管理员那一格，直接输地址也要挡住 —— 与「审核」「成员」同一道门槛。
       beforeEnter: managerOnly,
-      children: [
-        {
-          path: '',
-          name: 'SpaceBoardAnalyticsOverview',
-          component: () => import('@/views/spaces/detail/analytics/Overview.vue'),
-        },
-        {
-          path: 'alerts',
-          name: 'SpaceBoardAnalyticsAlerts',
-          component: () => import('@/views/spaces/detail/analytics/Alerts.vue'),
-        },
-        {
-          path: 'publishers',
-          name: 'SpaceBoardAnalyticsPublishers',
-          component: () => import('@/views/spaces/detail/analytics/Publishers.vue'),
-        },
-        {
-          path: 'tasks',
-          name: 'SpaceBoardAnalyticsTasks',
-          component: () => import('@/views/spaces/detail/analytics/Tasks.vue'),
-        },
-        {
-          path: 'participants',
-          name: 'SpaceBoardAnalyticsParticipants',
-          component: () => import('@/views/spaces/detail/analytics/Participants.vue'),
-        },
-        {
-          path: 'learning',
-          name: 'SpaceBoardAnalyticsLearning',
-          component: () => import('@/views/spaces/detail/analytics/Learning.vue'),
-        },
-      ],
     },
     {
       path: 'insights/:taskId',

@@ -106,7 +106,7 @@ async def list_knowledge(
     type: str | None = Query(default=None),
     labels: list[str] | None = Query(default=None),
     query: str | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
     pageSize: int = Query(default=20, ge=1, le=200),
     sortBy: str = Query(default="createdAt"),
     sortOrder: str = Query(default="desc"),

@@ -1,6 +1,11 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
+    <div class="text-subtitle-2 font-weight-medium">
+      <i18n-t v-if="requester" keypath="notifications.TEAM_JOIN_REQUEST.title" tag="span">
+        <template #requester><UserRef :handle="requester.handle" :name="requester.name" :project-id="null" /></template>
+      </i18n-t>
+      <template v-else>{{ title }}</template>
+    </div>
     <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
     <div v-if="message" class="text-body-2 text-medium-emphasis mt-2 message-box">
       <v-icon icon="mdi-format-quote-open" size="12" class="me-1 text-primary-lighten-1" />
@@ -19,6 +24,7 @@ import { toast } from 'vuetify-sonner'
 
 import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
 
+import UserRef from '@/components/common/UserRefLink.vue'
 import { TeamsApi } from '@/network/api/teams'
 
 const props = defineProps<NotificationRenderProps>()

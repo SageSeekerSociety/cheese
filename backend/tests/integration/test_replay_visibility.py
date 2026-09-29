@@ -33,7 +33,14 @@ class SilentScreen(StubChannel):
         super().__init__(**policy)
         self.alive = False
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del topic_id, prompt, reply
 
 
@@ -74,11 +81,29 @@ def _say(client, topic_id: str, text: str) -> None:
     """Send one addressed message and let its turn finish (however it finishes).
 
     @ 放在句末，和人打字的顺序一样。放句首的话，下面那条状态行引用最早一条消息
-    时，截断的那几十个字全被席位 token 占掉，读的人认不出是哪一批。"""
+    时，截断的那几十个字全被席位 token 占掉，读的人认不出是哪一批。
+
+    等的是**自己这条消息**的那一轮，不是「随便哪一轮的收尾」。房间的频道带重放
+    缓冲（`InProcessBroker.subscribe(replay=True)`），而一条 socket 从订上到自己的
+    消息被提交进去之间有一个窗口：上一轮收尾的 `done` 正好落在这个窗口里，就在
+    「自己的消息还没进房间」的时候先到了手上。这一条 `done` 是不是自己那一轮的，
+    帧上没有任何标识（`{"type": "done"}`），只能靠先后认——所以先等自己那条消息
+    真的落进房间（它一定由自己的 `user_block` 带回，而且一定排在自己这一轮的帧
+    前面），再等收尾。等不到就继续等，不是把断言放宽。
+
+    这是 2026-09-27 CI 上两条随机红的成因之一（`-n auto` 并发下更常撞上）：先收到
+    上一轮的 `done` 就返回，紧接着读到的 `after.last_prompt` 还是上一轮的样子。"""
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         ws.send_json({"type": "message", "content": f"{text} @芝士"})
-        while ws.receive_json()["type"] != "done":
-            pass
+        landed = False
+        while True:
+            frame = ws.receive_json()
+            if frame["type"] == "user_block":
+                landed = landed or text in str(
+                    (frame.get("block") or {}).get("content")
+                )
+            elif landed and frame["type"] == "done":
+                break
 
 
 def _system_lines(client, topic_id: str) -> list[str]:
@@ -151,7 +176,14 @@ def test_the_notice_throttles_instead_of_burying_the_conversation(client, monkey
 class WorkingScreen(StubChannel):
     """A session that takes the prompt, starts on it, and is still working."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
@@ -170,7 +202,6 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
         "/topics",
         json={"project_id": project_id, "title": "换进程", "created_by": "user-1"},
     ).json()["data"]["id"]
-    room = uuid.UUID(topic_id)
 
     before = WorkingScreen()
     app.dependency_overrides[get_chat_service] = lambda: ChatService(
@@ -186,7 +217,10 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
             if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):
                 break
 
-    client.portal.call(before.runtime._detach, room)
+    # The old process stops reading, as a replaced backend does. `_detach` takes
+    # a seat, not a room, so `_detach(room)` removed nothing and the old reader
+    # went on handling the session's records next to the new one.
+    client.portal.call(before.runtime.stop_listening)
     # The machine kept its runner; the new process has only the channel to it.
     after = StubChannel()
     after.root = before.root
@@ -259,7 +293,14 @@ def test_a_batch_whose_session_fails_after_a_restart_is_still_replayed(
 class DiesOnceScreen(SilentScreen):
     """The first session dies on its prompt; the machine is healthy after."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         if self.alive:
             StubChannel.emit_turn(self, topic_id, prompt, reply)
 

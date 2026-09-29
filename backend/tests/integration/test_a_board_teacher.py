@@ -564,6 +564,7 @@ def test_the_analytics_surface_is_for_the_teacher(
         "/analytics/alerts",
         "/analytics/publishers",
         "/analytics/participants",
+        "/analytics/people",
         "/analytics/tasks",
         "/analytics/tasks/export",
         "/analytics/publishers/export",

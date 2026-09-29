@@ -36,14 +36,29 @@ from app.domain.agent.harness.claude_code.session_launch import (  # noqa: E402
 )
 from app.domain.agent.harness.driven.journal import PAGE  # noqa: E402
 from app.domain.agent.harness.driven.runner import socket_path  # noqa: E402
+from app.domain.agent.place import seat_dir  # noqa: E402
 
 
-def room_home(home, target):
+def session_dir(home, seat=""):
+    """Where one session's own files sit inside a room's home.
+
+    The launcher writes everything a turn owns that belongs to ONE teammate
+    into the seat that owns it (`place.seat_dir`): the execution target, the
+    config the client derives from it, the system prompt. The room's files —
+    the helpers, the config dir, the checkout — stay where they were, and the
+    fixture lays both out under the same names so a script can read them.
+    """
+    return Path(seat_dir(str(home), seat))
+
+
+def room_home(home, target, seat=""):
     """Lay out a session home as the device launcher does; return its environment.
 
     The helpers go where the launcher writes them (`.cheese/remote-execution`,
-    with the release marker it writes), the target beside them, and the room's
-    settings into the config dir, which `bootstrap` extends.
+    with the release marker it writes) and the room's settings into the config
+    dir, which `bootstrap` extends. The target is the SESSION's (`session_dir`),
+    as the launcher writes it, and the client prepares its own `remote-session/`
+    beside it from `CHEESE_EXECUTION_CONFIG`.
     """
     helpers = home / ".cheese/remote-execution"
     helpers.mkdir(parents=True, exist_ok=True)
@@ -51,25 +66,32 @@ def room_home(home, target):
     for name, source in sources.items():
         (helpers / name).write_text(source)
     (helpers / "release-ready").write_text(release.digest(sources))
-    (home / ".cheese/remote-target.json").write_text(json.dumps(target))
+    session = session_dir(home, seat)
+    (session / "remote-session").mkdir(parents=True, exist_ok=True)
+    (session / "remote-target.json").write_text(json.dumps(target))
     config = home / ".claude"
     config.mkdir(exist_ok=True)
     (config / "settings.json").write_text(json.dumps(session_settings()))
     return {
         "HOME": str(home),
         "CLAUDE_CONFIG_DIR": str(config),
-        "CHEESE_WORK": str(home / ".cheese/remote-session/workspace"),
+        "CHEESE_WORK": str(session / "remote-session/workspace"),
+        "CHEESE_EXECUTION_CONFIG": str(session / "remote-session/execution.json"),
     }
 
 
-def room_command(home, claude, extra_args=()):
-    """The command the launcher hands the runner, for a home `room_home` laid out."""
+def room_command(home, claude, extra_args=(), seat=""):
+    """The command the launcher hands the runner, for a home `room_home` laid out.
+
+    `seat` names the session whose target this is, the same name `room_home`
+    was given; the client it runs is the ROOM's, installed once for every seat.
+    """
     return shlex.join(
         [
             sys.executable,
             str(home / ".cheese/remote-execution/client.py"),
             "bootstrap",
-            str(home / ".cheese/remote-target.json"),
+            str(session_dir(home, seat) / "remote-target.json"),
             claude,
             *extra_args,
             *LAUNCH_ARGS,

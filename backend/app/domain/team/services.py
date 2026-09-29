@@ -53,14 +53,6 @@ async def check_team_locking_status(session, team_id: int) -> None:
         raise ForbiddenError(msg)
 
 
-def _open_to_all(team: Team) -> bool:
-    """Whether someone outside ``team`` may see it: a public, shared team."""
-    return (
-        team.personal_owner_user_id is None
-        and team.visibility == TeamVisibility.PUBLIC.value
-    )
-
-
 def team_service(session: AsyncSession) -> "TeamService":
     """接在这个 session 上的 ``TeamService`` —— 本领域的标准接线。
 
@@ -107,7 +99,7 @@ class TeamService:
         """
         team = await self._repo.get_by_id(team_id)
         if team is not None and (
-            await self._repo.is_team_member(team_id, user_id) or _open_to_all(team)
+            await self._repo.is_team_member(team_id, user_id) or team.open_to_all
         ):
             return team
         raise NotFoundError(
@@ -124,7 +116,7 @@ class TeamService:
             if viewer_id is not None
             else set()
         )
-        return [t for t in theirs if t.id in mine or _open_to_all(t)]
+        return [t for t in theirs if t.id in mine or t.open_to_all]
 
     async def _require_free_handle(self, handle: str) -> None:
         if not handle_is_available_shape(handle):
@@ -210,6 +202,12 @@ class TeamService:
         if existing is not None:
             return existing
         team = await self._repo.create_personal_team(user_id, name="个人")
+        if team is None:
+            # Another request created it after the lookup above and has committed
+            # by now (the insert waited for it), so this lookup finds it.
+            team = await self._repo.get_personal_team(user_id)
+            assert team is not None, user_id
+            return team
         await self._repo.add_member(team.id, user_id, TeamMemberRole.OWNER)
         return team
 

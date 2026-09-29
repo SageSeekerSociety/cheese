@@ -233,6 +233,10 @@ assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_
 export GH_TEST_MODE=failures
 assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup
 
+# The planner reports these failures as ::error:: workflow commands. Run under
+# Actions, that stderr would become error annotations on every build, green
+# ones included, and read as the real baseline lookup failing. The runs below
+# are expected to fail, so their stderr is discarded.
 # An API failure must never publish a plan, even if stdout contains a SHA.
 export GH_TEST_STATUS=1
 for GH_TEST_BASE in '' "$base_sha"; do
@@ -241,7 +245,7 @@ for GH_TEST_BASE in '' "$base_sha"; do
     cd "$test_repo"
     unset BASE_SHA
     CURRENT_SHA=HEAD EVENT_NAME=push REF_TYPE=branch \
-      GITHUB_OUTPUT="$test_repo/failed-output" bash "$planner"
+      GITHUB_OUTPUT="$test_repo/failed-output" bash "$planner" 2>/dev/null
   ); then
     echo 'FAIL: a failed GitHub lookup must fail planning' >&2
     exit 1
@@ -261,7 +265,7 @@ for GH_TEST_MODE in page_failure malformed missing_runs missing_record limit; do
     cd "$test_repo"
     unset BASE_SHA
     CURRENT_SHA=HEAD EVENT_NAME=push REF_TYPE=branch \
-      GITHUB_OUTPUT="$test_repo/failed-output" bash "$planner"
+      GITHUB_OUTPUT="$test_repo/failed-output" bash "$planner" 2>/dev/null
   ); then
     echo "FAIL: $GH_TEST_MODE must fail planning" >&2
     exit 1

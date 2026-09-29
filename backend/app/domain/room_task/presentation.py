@@ -411,6 +411,71 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
     return None
 
 
+def card_waits_on_reviewer(card: "AcceptCard") -> bool:
+    """这张卡此刻是不是真的在等验收人动手 —— 看板「待审阅」那一格。
+
+    只是 `pending` 不够：CI 挂了、合并冲突、平台在换基、合并态还没看过，这些时候
+    采纳按钮点不了，下一步在芝士或平台手上。侧栏的黄灯和「与我的相关性」都问它，
+    这样两边不会一边说「等你」、一边说「芝士在修」。
+    """
+    facts = facts_for_card(card)
+    return facts is not None and _card_presentation(facts) == _show(
+        NeedsYou.awaiting_review
+    )
+
+
+def card_needs_agent_fix(card: "AcceptCard") -> bool:
+    """这张卡是不是停在「检查红了 / 冲突了 / 被退回，要 AI 去修」上。
+
+    侧栏红灯的「检查报错没人处理」问它：卡还停在这里，这件事就还没了；检查重跑
+    绿了、冲突解了、卡被撤了，它自然不再成立 —— 不靠「AI 说没说过话」去猜。
+    """
+    return agent_fix_kind(card) is not None
+
+
+def agent_fix_kind(card: "AcceptCard") -> str | None:
+    """卡停在哪一种「要 AI 去修」上：`rejected`（被退回）、`gate`（闸门红 / 没跑
+    成）、`conflict`（合并冲突）、`check`（检查没过）；不是这几种就 None。
+
+    侧栏悬停按它说清楚是哪件事。
+    """
+    # 被验收人退回、被闸门判红 / 没跑成：卡已经结算了，但下一步明摆着是 AI 改完
+    # 重递。调用方只把「这个地方最新那张」传进来，所以一旦重递了新卡就不再是它。
+    status = str(card.status)
+    if status == "rejected":
+        return "rejected"
+    if status in _BOUNCED_TO_AGENT:
+        return "gate"
+    facts = facts_for_card(card)
+    if facts is None:
+        return None
+    shown = _card_presentation(facts)
+    if shown == _show(Delivering.resolving_conflict):
+        return "conflict"
+    if shown in (_show(Delivering.fixing_checks), _show(NeedsYou.checks_failed)):
+        return "check"
+    return None
+
+
+#: 结算了、但把球交回给 AI 的那几种卡：退回、闸门红、闸门没跑成。
+_BOUNCED_TO_AGENT = frozenset({"rejected", "gate_failed", "gate_blocked"})
+
+
+def card_is_merging(card: "AcceptCard") -> bool:
+    """人已经采纳（或布防了绿了自动合），这张卡在等检查 / 合并队列走完。
+
+    侧栏的绿灯常亮读它：没有人要动手，也没有 AI 在干活，只是在等合并落地。合并
+    完卡就结算了，灯随之熄灭。还没人采纳时在跑的检查不算 —— 那不是「在等合并」。
+    """
+    if not (card.decided_by or card.auto_merge_armed_by):
+        return False
+    facts = facts_for_card(card)
+    return facts is not None and _card_presentation(facts) in (
+        _show(Delivering.awaiting_checks),
+        _show(Delivering.updating_branch),
+    )
+
+
 # —— 一条活 ————————————————————————————————————————————————————
 
 
@@ -473,6 +538,14 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     if facts.has_conclusion:
         return _show(Building.returned)
     return _show(_parked(facts))
+
+
+def task_is_running(facts: TaskFacts, *, now: datetime) -> bool:
+    """这条活此刻在不在看板的「运行中」那一格 —— 给房间问「我名下有没有活在跑」用。
+
+    不另写一套判据：同一条活在侧栏和看板上必须是同一个说法。
+    """
+    return task_presentation(facts, now=now) == _show(Building.running)
 
 
 def _parked(facts: TaskFacts) -> Building:

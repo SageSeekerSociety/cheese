@@ -125,7 +125,8 @@ describe('分页文档的阅读视图', () => {
 
     // 坏的那一页不许把好的那一页也带走。
     await waitFor(() => expect(container.querySelectorAll('canvas')).toHaveLength(1))
-    expect(container.textContent).toContain('第 2 页无法显示')
+    // 好的那一页画出来时，坏的那一页的说明未必已经到了：两页各自异步渲染。
+    await waitFor(() => expect(container.textContent).toContain('第 2 页无法显示'))
     expect(container.textContent).toContain('页流损坏')
   })
 

@@ -61,7 +61,7 @@ PULL_BACKOFF_SECONDS="${DEPLOY_PULL_BACKOFF_SECONDS:-5 15}"
 # to no container once it ends — `docker image prune -af` below reclaims them
 # like anything else unused, so the next CI run re-pulls from scratch. Kept
 # in sync with those workflows' pinned digests; see retain_ci_service_images.
-CI_POSTGRES_IMAGE="${CI_POSTGRES_IMAGE:-mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2}"
+CI_POSTGRES_IMAGE="${CI_POSTGRES_IMAGE:-mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4}"
 CI_REDIS_IMAGE="${CI_REDIS_IMAGE:-mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9}"
 export IMAGE_TAG="$SHA"
 export SANDBOX_IMAGE="${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:$SHA}"
@@ -204,6 +204,20 @@ migrate_project_repositories() {
     --backup-root /data/apphome/forge-migration --apply --writers-stopped \
     || fail "repository migration failed; writers remain stopped; retry this release to resume from receipts"
   log "project repositories migrated; backups and migration.log are in the persistent app home under forge-migration"
+}
+
+ensure_journal_retention() {
+  local target=/etc/systemd/journald.conf.d/cheese.conf
+  sudo -n cmp -s "$HERE/journald-cheese.conf" "$target" 2>/dev/null && return 0
+  # A box whose deploy user cannot write the journal's config still gets its
+  # release: retention decides how far back logs reach, not whether the app
+  # runs. Said loudly, since the journal then keeps its default of hours.
+  if ! sudo -n install -D -m 0644 "$HERE/journald-cheese.conf" "$target" \
+    || ! sudo -n systemctl restart systemd-journald; then
+    log "WARNING: journal retention not applied; this box keeps journald's default"
+    return 0
+  fi
+  log "journal retention applied from journald-cheese.conf"
 }
 
 ensure_application_router() {
@@ -878,6 +892,7 @@ rollout_frontend() {
 # verified. Once running, ensure_device_connection_owner deliberately leaves it
 # untouched until the separate owner release operation.
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
+ensure_journal_retention
 ensure_device_connection_owner
 ensure_application_router
 check_session_base_survives_release

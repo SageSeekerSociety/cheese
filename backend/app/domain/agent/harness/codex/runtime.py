@@ -45,17 +45,18 @@ class CodexRuntime(DrivenRuntime[Handle]):
             self._consume,
             self._activity,
             pulse=self.pulse,
+            memory=self._memory_hook(handle.session.topic_id),
         )
 
     def backlog(self, session: SessionRef) -> CodexBacklog:
-        handle = self.live.get(session.topic_id)
+        handle = self.live.get(self._seat_of(session))
         return CodexBacklog(handle.mirror if handle else None)
 
     def working(self, status: dict) -> bool:
         return bool(status.get("turn_id"))
 
     async def interrupt(self, session: SessionRef) -> bool:
-        handle = self.live.get(session.topic_id)
+        handle = self.live.get(self._seat_of(session))
         if handle is None:
             return False
         return bool((await self.channel.call(handle, "interrupt", {}))["interrupted"])

@@ -62,10 +62,11 @@ class PiRuntime(DrivenRuntime[Handle]):
             self._activity,
             handle.session_id,
             pulse=self.pulse,
+            memory=self._memory_hook(handle.session.topic_id),
         )
 
     def backlog(self, session: SessionRef) -> PiBacklog:
-        handle = self.live.get(session.topic_id)
+        handle = self.live.get(self._seat_of(session))
         return PiBacklog(
             handle.mirror if handle else None,
             handle.session_id if handle else None,
@@ -75,7 +76,7 @@ class PiRuntime(DrivenRuntime[Handle]):
         return bool(status.get("working"))
 
     async def interrupt(self, session: SessionRef) -> bool:
-        handle = self.live.get(session.topic_id)
+        handle = self.live.get(self._seat_of(session))
         if handle is None:
             return False
         return bool((await self.channel.call(handle, "abort", {}))["aborted"])

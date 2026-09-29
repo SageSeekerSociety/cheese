@@ -12,9 +12,10 @@ import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
+import { useCommands } from '@/commands'
+import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { markdown, sanitizeRendered } from '@/lib/markdown'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 // 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集 / 记忆 — one address each
 // (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
@@ -169,20 +170,37 @@ function topicTo(topicId: string | null | undefined) {
   if (!topicId) return { name: 'workspace-project', params: { projectId: props.projectId } }
   return { name: 'workspace-topic', params: { projectId: props.projectId, topicId } }
 }
+// 章程的修改记录在项目房间里；周报是芝士在项目房间里写的，页头带人过去。
+useCommands(() => {
+  const room = rootTopicId.value
+  if (!room) return []
+  if (kind.value === 'charter')
+    return [
+      { id: 'docs.history', title: '修改记录', icon: 'mdi-history', header: { primary: true }, to: topicTo(room) },
+    ]
+  if (kind.value === 'weeklies' && weeklies.value.length > 0)
+    return [
+      {
+        id: 'docs.askInRoom',
+        title: '去项目房间请它写',
+        icon: 'mdi-message-arrow-right-outline',
+        header: { primary: true },
+        to: topicTo(room),
+      },
+    ]
+  return []
+})
 </script>
 
 <template>
-  <ProjectPage class="docs-page" :title="t('navigation.project.docs')">
-    <template v-if="kind === 'charter'" #meta>
+  <AppPage class="docs-page" :title="t('navigation.project.docs')">
+    <!-- 没有状态时不给这一格：手机上页头只为状态画（AppPage），空着也画会留一条白带。 -->
+    <template v-if="kind === 'charter' && (saving || savedAt || charterDirty)" #meta>
       <span v-if="saving">保存中…</span>
       <span v-else-if="savedAt" class="d-inline-flex align-center ga-1">
         <span class="status-dot status-dot--ok" />已保存
       </span>
       <span v-else-if="charterDirty">未保存</span>
-    </template>
-    <template v-if="rootTopicId && (kind === 'charter' || (kind === 'weeklies' && weeklies.length > 0))" #actions>
-      <v-btn v-if="kind === 'charter'" :to="topicTo(rootTopicId)" prepend-icon="mdi-history">修改记录</v-btn>
-      <v-btn v-else :to="topicTo(rootTopicId)" append-icon="mdi-arrow-right">去项目房间请它写</v-btn>
     </template>
     <div class="mb-6">
       <v-tabs
@@ -339,7 +357,7 @@ function topicTo(topicId: string | null | undefined) {
         </div>
       </template>
     </template>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>
@@ -354,8 +372,8 @@ function topicTo(topicId: string | null | undefined) {
   border-bottom: 1px solid var(--line);
 }
 
-/* 章程: 页面本身就是那张纸。左右不再补内边距 —— DocEditor 自带 56px 的左侧
-   拖拽手柄槽，再叠一层会把正文推得离页头更远。 */
+/* 章程: 页面本身就是那张纸。左右不再补内边距 —— DocEditor 在桌面上自带 56px 的
+   左侧拖拽手柄槽，再叠一层会把正文推得离页头更远。 */
 .charter-body {
   padding: 4px 0 40px;
 }
@@ -386,9 +404,16 @@ function topicTo(topicId: string | null | undefined) {
 }
 .memory-card__del {
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity var(--dur-quick) var(--ease-standard);
 }
 .memory-card:hover .memory-card__del {
   opacity: 1;
+}
+/* 没有 hover 的设备上（手机、平板）等不到它出现，所以常驻。按输入方式判断，不按
+   视口宽度，和话题侧栏的行操作同一个判断。 */
+@media (hover: none) {
+  .memory-card__del {
+    opacity: 1;
+  }
 }
 </style>

@@ -77,6 +77,26 @@ class Journal:
         with self.connection:
             self.advance("landed", through)
 
+    def older_run(self, after: int, before: str) -> tuple[int, int]:
+        """The records right after ``after`` that were all recorded before
+        ``before``: how many, and the sequence of the last of them.
+
+        The run ends at the first record recorded since, whatever comes after
+        it — the order of the sequence is arrival, and a clock is not trusted to
+        agree with it.
+        """
+        (first_since,) = self.connection.execute(
+            f"SELECT MIN(sequence) FROM {self.table} "
+            "WHERE sequence > ? AND recorded_at >= ?",
+            (after, before),
+        ).fetchone()
+        count, last = self.connection.execute(
+            f"SELECT COUNT(*), MAX(sequence) FROM {self.table} "
+            "WHERE sequence > ? AND sequence < ?",
+            (after, first_since if first_since is not None else 2**63 - 1),
+        ).fetchone()
+        return count, last or after
+
     def prune(self, before: str) -> None:
         with self.connection:
             self.connection.execute(

@@ -49,6 +49,64 @@
       "light": "Light",
       "dark": "Dark"
     },
-    "connections": "Connections"
+    "connections": "Connections",
+    "archivedProjects": "Archived projects"
+  },
+  "shell": {
+    "close": "Close",
+    "more": "More actions"
+  },
+  "copy": {
+    "done": "Copied",
+    "linkCopied": "Link copied",
+    "failed": "Couldn’t copy"
+  },
+  "search": {
+    "title": "Search",
+    "placeholder": "Search this project",
+    "all": "All",
+    "viewAll": "View all {n}",
+    "failed": "Search failed. Try again later.",
+    "loading": "Searching"
+  },
+  "palette": {
+    "open": "Search and jump",
+    "placeholder": "Search or jump to",
+    "empty": "No results",
+    "awaiting": "Waiting on you",
+    "archived": "Archived",
+    "recent": "Recent",
+    "best": "Best match",
+    "topics": "Topics",
+    "projects": "Projects",
+    "members": "Members",
+    "pages": "Pages",
+    "commands": "Actions",
+    "close": "Close",
+    "theme": "Appearance: {mode}",
+    "showTab": "Show {tab}",
+    "newTopic": "New topic",
+    "messages": "Messages",
+    "tasks": "Tasks",
+    "docs": "Documents",
+    "projectDocs": "Project documents",
+    "library": "Library",
+    "comment": "Comment",
+    "decision": "Decision",
+    "copyLink": "Copy link to this page",
+    "verbOpen": "Open",
+    "verbRun": "Run",
+    "verbLocate": "Show message",
+    "newTab": "Open in new tab",
+    "more": "More actions",
+    "save": "Save",
+    "back": "Back",
+    "dm": "Message",
+    "openRoom": "Open topic",
+    "copyHandle": "Copy {'@'}{handle}",
+    "searchIn": "Search in project",
+    "leaveScope": "Remove project scope and search names across projects",
+    "searchAll": "View all results",
+    "weekly": "Weekly report"
   }
 }

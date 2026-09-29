@@ -13,6 +13,7 @@ import json, os, pathlib, sys
 args = sys.argv[1:]
 with open(os.environ["CALLS"], "a") as f:
     f.write(json.dumps({"args":args,"image":os.environ.get("GATEWAY_IMAGE"),"config":os.environ.get("GATEWAY_CONFIG")}) + "\\n")
+if args[:2] == ["network", "inspect"] and os.environ.get("NO_NETWORK"): sys.exit(1)
 if args[0] == "inspect": print("sha256:previous")
 elif args[:2] == ["image", "inspect"]: print("a" * 40)
 elif args[0] == "create": print("candidate")
@@ -62,7 +63,9 @@ class GatewayReleaseTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(c["args"][0] == "compose" for c in calls))
 
-    def test_releases_only_gateway_after_saving_previous_config(self):
+    def test_releases_only_gateway_and_its_openai_exit_after_saving_previous_config(
+        self,
+    ):
         result, calls = self.run_release()
         self.assertEqual(result.returncode, 0, result.stderr)
         actions = [c["args"][0] for c in calls]
@@ -70,8 +73,17 @@ class GatewayReleaseTest(unittest.TestCase):
         rollout = [c for c in calls if c["args"][0] == "compose"]
         self.assertEqual(len(rollout), 1)
         self.assertEqual(
-            rollout[0]["args"][-7:],
-            ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "150", "litellm"],
+            rollout[0]["args"][-8:],
+            [
+                "up",
+                "-d",
+                "--no-deps",
+                "--wait",
+                "--wait-timeout",
+                "150",
+                "openai-egress",
+                "litellm",
+            ],
         )
 
     def test_unhealthy_release_restores_old_image_and_config(self):
@@ -81,6 +93,18 @@ class GatewayReleaseTest(unittest.TestCase):
         self.assertEqual(len(rollout), 2)
         self.assertEqual(rollout[-1]["image"], "sha256:previous")
         self.assertTrue(rollout[-1]["config"].endswith("/previous.yaml"))
+
+    def test_the_network_shared_with_the_metering_proxy_exists_before_rollout(self):
+        for missing in ("", "1"):
+            result, calls = self.run_release(NO_NETWORK=missing)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            args = [c["args"] for c in calls]
+            created = ["network", "create", "--internal", "cheese-meter-gateway"]
+            compose = next(i for i, a in enumerate(args) if a[0] == "compose")
+            if missing:
+                self.assertLess(args.index(created), compose)
+            else:
+                self.assertNotIn(created, args)
 
 
 if __name__ == "__main__":

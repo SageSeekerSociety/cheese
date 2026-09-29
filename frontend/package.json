@@ -15,6 +15,8 @@
     "lint:style": "node scripts/stylelint-ratchet.mjs",
     "lint:style:fix": "stylelint \"src/**/*.{vue,css,scss}\" --fix",
     "lint:style:update": "node scripts/stylelint-ratchet.mjs --update",
+    "lint:boundary": "node scripts/import-boundary-ratchet.mjs",
+    "lint:boundary:update": "node scripts/import-boundary-ratchet.mjs --update",
     "prettier": "prettier --write \"**/*.{vue,js,jsx,ts,tsx}\"",
     "test": "vitest",
     "postinstall": "husky install",

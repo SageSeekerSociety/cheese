@@ -9,16 +9,20 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 
 import ProjectAccessNotice from './ProjectAccessNotice.vue'
+
+import { useWorkspaceStore } from '@/stores/workspace'
 
 afterEach(cleanup)
 beforeEach(() => setActivePinia(createPinia()))
 
-function show(reason: 'unauthenticated' | 'forbidden') {
+function show(reason: 'unauthenticated' | 'forbidden' | 'archived') {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -63,5 +67,24 @@ describe('打不开这个项目的时候', () => {
       expect(container.textContent).not.toContain('管理员')
       cleanup()
     }
+  })
+})
+
+describe('项目已归档的时候', () => {
+  it('不是所有者：说它归档了，只给一条离开的路', () => {
+    useWorkspaceStore().openedProject = { id: 'p', name: 'P', created_at: '', owner_handle: 'bob' }
+    const { getByText, queryByRole, getByRole } = show('archived')
+    getByText('项目已归档')
+    expect(queryByRole('button', { name: '取消归档' })).toBeNull()
+    expect(getByRole('link', { name: '回到我的项目' }).getAttribute('href')).toBe('/')
+  })
+
+  it('所有者：主操作是取消归档', async () => {
+    const store = useWorkspaceStore()
+    store.openedProject = { id: 'p', name: 'P', created_at: '', owner_handle: 'alice' }
+    const restore = vi.spyOn(store, 'unarchiveOpenProject').mockResolvedValue(true)
+    const { getByRole } = show('archived')
+    await fireEvent.click(getByRole('button', { name: '取消归档' }))
+    expect(restore).toHaveBeenCalled()
   })
 })

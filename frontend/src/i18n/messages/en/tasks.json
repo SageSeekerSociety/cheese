@@ -2,7 +2,23 @@
   "preview": {
     "unavailable": "App preview unavailable",
     "appUnavailable": "The preview connection is active, but the app is not responding. Ask Cheese to check whether the app is running.",
-    "connectionUnavailable": "The preview connection has not been established or has disconnected. Cheese may still be working. Check its status in Live; this panel updates automatically when the connection returns."
+    "connectionUnavailable": "The preview connection has not been established or has disconnected. Cheese may still be working. Check its status in Live; this panel updates automatically when the connection returns.",
+    "roomOutputs": {
+      "title": "Files in this room",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "expandAll": "Show all {count}",
+      "openFile": "Open {path}",
+      "newFromTemplate": "New from template",
+      "readingTemplates": "Reading templates…",
+      "newFromTemplateLabel": "New from {name}, save as",
+      "createAndOpen": "Create and open",
+      "cancel": "Cancel",
+      "saveToLibrary": "Save to library",
+      "savedToLibrary": "Saved to library: {name}",
+      "saveFailed": "Could not save it to the library",
+      "createFailed": "Could not create the file"
+    }
   },
   "artifactComparison": {
     "title": "Compare versions",
@@ -11,6 +27,7 @@
     "binary": "This format has no line-by-line diff. Preview or download both versions to compare them",
     "document": "This compares the document text, not its layout or tracked changes",
     "unsupported": "This file format or size does not support line-by-line comparison",
+    "many": "Too many files changed to show a line-by-line diff for this one",
     "unavailable": "These versions use different delivery formats, or have no retained content to compare",
     "source": "Comparing the complete project source at the two deliveries",
     "link": "Only the recorded addresses are compared; historical page content was not retained",

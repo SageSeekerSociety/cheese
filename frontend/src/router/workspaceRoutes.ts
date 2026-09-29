@@ -71,7 +71,12 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'running',
       component: () => import('@/views/workspace/RunningWorkView.vue'),
       props: true,
-      meta: { title: '看板', hideTabs: true, backTo: 'workspace-project' },
+      meta: {
+        title: '看板',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
+      },
     },
     {
       name: 'workspace-dm',
@@ -87,7 +92,12 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'docs/:kind',
       component: () => import('@/views/ProjectDocsView.vue'),
       props: true,
-      meta: { title: '项目文档', hideTabs: true, backTo: 'workspace-project' },
+      meta: {
+        title: '项目文档',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.docs', icon: 'mdi-file-document-outline', params: { kind: 'charter' } },
+      },
     },
     {
       // 总览退役了：它答的每一个问题都有一处答得更准的地方——谁在等你、交出去了
@@ -101,7 +111,12 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'calendar',
       component: () => import('@/views/CalendarView.vue'),
       props: true,
-      meta: { title: '日历', hideTabs: true, backTo: 'workspace-project' },
+      meta: {
+        title: '日历',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
+      },
     },
     {
       // 资料库：用户给这个项目的文件。项目级，所以它在项目这个框里，不在某个话题
@@ -110,7 +125,20 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'library',
       component: () => import('@/views/ProjectLibraryView.vue'),
       props: true,
-      meta: { title: '资料库', hideTabs: true, backTo: 'workspace-project' },
+      meta: {
+        title: '资料库',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
+      },
+    },
+    {
+      // 搜索结果页：命令面板里内容只列前几条，「查看全部结果」进这里看全。词在地址上。
+      name: 'project-search',
+      path: 'search',
+      component: () => import('@/views/ProjectSearchView.vue'),
+      props: true,
+      meta: { title: '搜索', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       // 定时与触发：房间里的 AI 队友按时间或按项目事件自己开工的那些规则。项目级，
@@ -119,7 +147,12 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'routines',
       component: () => import('@/views/ProjectRoutinesView.vue'),
       props: true,
-      meta: { title: '定时与触发', hideTabs: true, backTo: 'workspace-project' },
+      meta: {
+        title: '定时与触发',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
+      },
     },
     {
       // 工作方法：这个项目存下来的做法。项目级，因为存下来就是给之后每个房间用的。
@@ -127,7 +160,12 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'skills',
       component: () => import('@/views/ProjectSkillsView.vue'),
       props: true,
-      meta: { title: '工作方法', hideTabs: true, backTo: 'workspace-project' },
+      meta: {
+        title: '工作方法',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.skills', icon: 'mdi-book-cog-outline' },
+      },
     },
     {
       // 清单上的一项产物。项目级，和资料库并列：交付它的那个房间可能已经归档，
@@ -149,7 +187,12 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'settings',
       component: () => import('@/views/ProjectSettingsView.vue'),
       props: true,
-      meta: { title: '项目设置', hideTabs: true, backTo: 'workspace-project' },
+      meta: {
+        title: '项目设置',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.settings', icon: 'mdi-cog-outline' },
+      },
     },
     {
       // 「导出与发布」退役了：它整页只有一块「发布网站」，而发布出去的地址就是这个
@@ -164,7 +207,12 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'members',
       component: () => import('@/views/workspace/ProjectMembersView.vue'),
       props: true,
-      meta: { title: '成员', hideTabs: true, backTo: 'workspace-project' },
+      meta: {
+        title: '成员',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
+      },
     },
     {
       // 同一个个人主页，从名册打开就留在项目这个框里，← 回名册。

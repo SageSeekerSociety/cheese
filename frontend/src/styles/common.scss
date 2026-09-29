@@ -64,7 +64,7 @@ body,
 .page-sidebar {
   .sidebar-header {
     border-top-left-radius: 12px;
-    transition: all 0.2s ease;
+    transition: background-color var(--dur-quick) var(--ease-standard);
   }
 
   /* 可点开的那一种（SpaceSidebar 的管理员菜单） */

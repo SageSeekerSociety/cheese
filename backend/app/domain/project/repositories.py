@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -13,6 +13,7 @@ from app.domain.project.models import (
     ProjectForge,
     ProjectGitInstallation,
     ProjectMember,
+    excluded_project_ids,
 )
 from app.domain.team.models import Team, TeamUserRelation
 from app.domain.user.models import User, UserProfile
@@ -60,7 +61,7 @@ class ProjectRepository:
         """The AI-workspace project for a 知是 Team (P4 native link), newest first."""
         stmt = (
             select(Project)
-            .where(Project.team_id == team_id)
+            .where(Project.team_id == team_id, Project.archived_at.is_(None))
             .order_by(Project.created_at.desc())
             .limit(1)
         )
@@ -326,6 +327,13 @@ class ProjectRepository:
 
         A claim is one of three things — you own it, you are on its roster, or it
         belongs to a team you are in. Anything else is not yours to see here.
+
+        The team claim carries one subtraction, and only that one: 退出项目 is a
+        project-level act (``ProjectMemberExclusion``), so a teammate who left
+        THIS project stops being listed here while their other projects of the
+        same team are untouched. The other two claims are not affected — owning
+        it outranks the exclusion, and a roster row is the explicit grant that
+        lifts it (``MemberRepository.add``).
         """
         from app.domain.team.models import TeamUserRelation
 
@@ -340,22 +348,47 @@ class ProjectRepository:
                 )
             )
         if user_id:
-            claims.append(
-                Project.team_id.in_(
-                    select(TeamUserRelation.team_id).where(
-                        TeamUserRelation.user_id == user_id,
-                        # Someone who left the team has left its projects.
-                        TeamUserRelation.deleted_at.is_(None),
-                    )
+            on_its_team = Project.team_id.in_(
+                select(TeamUserRelation.team_id).where(
+                    TeamUserRelation.user_id == user_id,
+                    # Someone who left the team has left its projects.
+                    TeamUserRelation.deleted_at.is_(None),
                 )
             )
+            if handle:
+                # 列出他进不去的那一行，点开就是 403 —— 列表和门必须答同一句话。
+                on_its_team = and_(
+                    on_its_team, Project.id.not_in(excluded_project_ids(handle))
+                )
+            claims.append(on_its_team)
         if not claims:
             # Nobody in particular is asking; that is not the same as everybody.
             return []
         result = await self._session.execute(
-            select(Project).where(or_(*claims)).order_by(Project.created_at)
+            select(Project)
+            # An archived project leaves every list; its owner finds it with
+            # `list_archived_owned_by`.
+            .where(or_(*claims), Project.archived_at.is_(None))
+            .order_by(Project.created_at)
         )
         return list(result.scalars())
+
+    async def list_archived_owned_by(self, handle: str) -> list[Project]:
+        stmt = (
+            select(Project)
+            .where(Project.owner_handle == handle, Project.archived_at.is_not(None))
+            .order_by(Project.archived_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+
+class RepositoryTakenError(ConflictError):
+    """The GitHub repo is already connected to another project."""
+
+    def __init__(self, repo: str, holder_project_id: uuid.UUID):
+        super().__init__(f"{repo} is already connected to another project")
+        self.repo = repo
+        self.holder_project_id = holder_project_id
 
 
 class ProjectGitInstallationRepository:
@@ -370,11 +403,9 @@ class ProjectGitInstallationRepository:
         )
         return (await self._session.scalars(stmt)).first()
 
-    async def get_by_installation(
-        self, installation_id: int
-    ) -> ProjectGitInstallation | None:
+    async def get_by_repo(self, repo: str) -> ProjectGitInstallation | None:
         stmt = select(ProjectGitInstallation).where(
-            ProjectGitInstallation.installation_id == installation_id
+            func.lower(ProjectGitInstallation.repo) == repo.lower()
         )
         return (await self._session.scalars(stmt)).first()
 
@@ -386,17 +417,17 @@ class ProjectGitInstallationRepository:
         repo: str,
         account: str,
     ) -> ProjectGitInstallation:
-        """Bind `installation_id` to `project_id` (replacing any prior repo the
-        project was connected to). Raises ConflictError if the installation is
-        already bound to a *different* project — a GitHub installation is never
-        shared, or a minted token would be ambiguous about whose git operations
-        it's for."""
-        by_installation = await self.get_by_installation(installation_id)
-        if by_installation is not None and by_installation.project_id != project_id:
-            raise ConflictError(
-                f"installation {installation_id} is already connected to "
-                f"another project"
-            )
+        """Bind `repo` (through `installation_id`) to `project_id`, replacing
+        any prior repo the project was connected to.
+
+        One installation may serve several projects — an org installs the App
+        once and it covers many repos, and every token is minted for the one
+        repo its project is bound to. What cannot be shared is the repo: raises
+        RepositoryTakenError if a *different* project is already connected
+        to it."""
+        holder = await self.get_by_repo(repo)
+        if holder is not None and holder.project_id != project_id:
+            raise RepositoryTakenError(repo, holder.project_id)
 
         existing = await self.get_by_project(project_id)
         forge = await self._session.scalar(

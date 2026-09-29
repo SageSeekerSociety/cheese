@@ -34,8 +34,13 @@ trap - EXIT
 docker run --rm --network none --entrypoint /app/.venv/bin/python \
   -e LITELLM_LOCAL_MODEL_COST_MAP=True "$GATEWAY_IMAGE" /opt/cheese-gateway/test_deepseek_images.py
 
+# Shared with the metering proxy, whose release may not have run yet; created
+# here if missing, and a concurrent creation by that release is not an error.
+docker network inspect cheese-meter-gateway >/dev/null 2>&1 \
+  || docker network create --internal cheese-meter-gateway >/dev/null \
+  || docker network inspect cheese-meter-gateway >/dev/null
 echo "Releasing gateway image=$GATEWAY_IMAGE revision=$revision; active streams may be interrupted."
-if "${compose[@]}" up -d --no-deps --wait --wait-timeout 150 litellm; then
+if "${compose[@]}" up -d --no-deps --wait --wait-timeout 150 openai-egress litellm; then
   echo "Gateway healthy: $GATEWAY_IMAGE"
 else
   echo 'Gateway failed health verification; restoring the previous image and configuration.' >&2

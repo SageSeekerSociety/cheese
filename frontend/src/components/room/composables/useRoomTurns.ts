@@ -1,0 +1,148 @@
+/**
+ * 这个房间里哪几轮在跑：谁在干、从什么时候开始、要不要显示「在处理」。
+ *
+ * 芝士不逐字流式输出，每条完整的消息作为一帧落下来。「在等回复」从召唤开始，到每一个
+ * 在跑的轮次都明确结束为止。轮次的生命周期帧（turn_active / turn_started /
+ * turn_finished）在房间壳的 handleFrame 里认出来，交给这里记账；这里不认识 socket，
+ * 也不往上报事件——报什么、什么时候报，是房间壳的事。
+ */
+
+import type { Ref } from 'vue'
+import type { Block } from '../../../cx_types'
+
+import { computed, ref } from 'vue'
+
+import { isAgentHandle } from '../../../lib/authorship'
+
+export function useRoomTurns(options: {
+  /** 时间线上此刻有的块：落下来的轮次是谁的，从块上认。 */
+  messages: Ref<Block[]>
+  /** 这个房间 AI 的名字：认不出是谁的轮次时用它。 */
+  agentName: Ref<string>
+  /** 一个队友座位的显示名；不认识的座位是 null。 */
+  agentNameOf: (handle: string) => string | null
+}) {
+  const awaitingReply = ref(false)
+  const activeTurnIds = ref<Set<string>>(new Set())
+
+  // 每个在跑的轮次从什么时候开始。中途连进来的，后端在 turn_active 上带着开始时间；
+  // 没带的（老后端）只能从连上的这一刻算。
+  const turnStarts = ref<Record<string, number>>({})
+
+  // 每个在跑的轮次在哪个座位上（块署名的那个 handle，从 turn_started /
+  // turn_active 帧学来）。一间房几个队友并行在干时，「谁在干活」靠它报名字；
+  // 帧不带 agent 的（老后端）这项空着，上面报 working-agents 就是空名单。
+  const turnAgents = ref<Record<string, string>>({})
+
+  function began(id: string, at = Date.now(), agent?: string) {
+    if (!(id in turnStarts.value)) turnStarts.value = { ...turnStarts.value, [id]: at }
+    if (agent && turnAgents.value[id] !== agent) turnAgents.value = { ...turnAgents.value, [id]: agent }
+  }
+
+  function ended(id: string) {
+    if (id in turnStarts.value) {
+      const next = { ...turnStarts.value }
+      delete next[id]
+      turnStarts.value = next
+    }
+    if (id in turnAgents.value) {
+      const next = { ...turnAgents.value }
+      delete next[id]
+      turnAgents.value = next
+    }
+  }
+
+  // 每一轮是哪个队友的。在跑的轮次，帧上说了（turnAgents）；落下来的轮次，块上也说：
+  // 那一轮里队友自己写的块署的就是它，人发的那条记着交给了谁、开的是哪一轮
+  // （`agent_recipient` 与 `consumed_turn` / `prompted_turn`）。平台替一轮写的通知
+  // （失败、重试、排队）署名是 system，靠这张表认回是哪位的那一轮。
+  const turnOwners = computed(() => {
+    const owners: Record<string, string> = {}
+    for (const m of options.messages.value) {
+      const recipient = (m.meta?.agent_recipient as { handle?: unknown } | undefined)?.handle
+      if (typeof recipient !== 'string') continue
+      for (const turn of [m.meta?.consumed_turn, m.meta?.prompted_turn]) {
+        if (typeof turn === 'string') owners[turn] = recipient
+      }
+    }
+    for (const m of options.messages.value) {
+      if (m.turn_id && isAgentHandle(m.author)) owners[m.turn_id] = m.author
+    }
+    return { ...owners, ...turnAgents.value }
+  })
+
+  /** 这一轮那位队友的名字；认不出是谁的轮次，才退回这个房间 AI 的名字。 */
+  function turnAgentName(turnId: string | null | undefined): string {
+    const owner = turnId ? turnOwners.value[turnId] : undefined
+    return (owner && options.agentNameOf(owner)) || options.agentName.value
+  }
+
+  /** 正在干活的队友们的名字。同名去重：同一个队友并行两轮只报一次。 */
+  const workingAgentNames = computed(() => {
+    const names: string[] = []
+    for (const id of activeTurnIds.value) {
+      if (!turnAgents.value[id]) continue
+      const name = turnAgentName(id)
+      if (!names.includes(name)) names.push(name)
+    }
+    return names
+  })
+
+  /** 连上时 broker 报的「此刻在跑的这几轮」。 */
+  function active(ids: string[], since?: Record<string, unknown>, agents?: Record<string, string>) {
+    if (ids.length) activeTurnIds.value = new Set(ids)
+    for (const id of ids) {
+      const at = since?.[id]
+      began(id, typeof at === 'number' ? at * 1000 : Date.now(), agents?.[id])
+    }
+    awaitingReply.value = true
+  }
+
+  function started(id: string, agent?: string) {
+    const next = new Set(activeTurnIds.value)
+    next.add(id)
+    activeTurnIds.value = next
+    began(id, Date.now(), agent)
+    awaitingReply.value = true
+  }
+
+  /** 一轮结束。返回是否已经没有在跑的轮次。 */
+  function finished(id: string): boolean {
+    const next = new Set(activeTurnIds.value)
+    next.delete(id)
+    activeTurnIds.value = next
+    ended(id)
+    awaitingReply.value = next.size > 0
+    return next.size === 0
+  }
+
+  /**
+   * 没有生命周期帧可依的时候（老后端、一条错误、一次 done）：没有在跑的轮次就不再
+   * 等了。返回是否因此停了下来。
+   */
+  function settleIfIdle(): boolean {
+    if (activeTurnIds.value.size > 0) return false
+    awaitingReply.value = false
+    return true
+  }
+
+  /** 换了房间：上一个房间的轮次和这里无关。 */
+  function reset() {
+    awaitingReply.value = false
+    activeTurnIds.value = new Set()
+    turnStarts.value = {}
+    turnAgents.value = {}
+  }
+
+  return {
+    awaitingReply,
+    turnStarts,
+    workingAgentNames,
+    turnAgentName,
+    active,
+    started,
+    finished,
+    settleIfIdle,
+    reset,
+  }
+}

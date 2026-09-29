@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError
+from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.answers.services import AnswersService
@@ -55,7 +55,7 @@ async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
 )
 async def list_answers(
     question_id: Annotated[int, Path(ge=0)],
-    page_start: int | None = Query(default=None, alias="page_start"),
+    page_start: int | None = Query(default=None, ge=0, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
@@ -106,7 +106,9 @@ async def vote_answer(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
-    _ = question_id
+    await service.ensure_answer_in_question(
+        answer_id=answer_id, question_id=question_id
+    )
     vote_type = payload.get("voteType", "UPVOTE")
     result = await service.vote_answer(
         answer_id=answer_id, user_id=auth_user.user_id, vote_type=vote_type
@@ -124,7 +126,9 @@ async def remove_answer_vote(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
-    _ = question_id
+    await service.ensure_answer_in_question(
+        answer_id=answer_id, question_id=question_id
+    )
     result = await service.remove_answer_vote(
         answer_id=answer_id, user_id=auth_user.user_id
     )
@@ -141,7 +145,9 @@ async def get_answer_votes(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
-    _ = question_id
+    await service.ensure_answer_in_question(
+        answer_id=answer_id, question_id=question_id
+    )
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
     result = await service.get_answer_votes(answer_id=answer_id, user_id=user_id)
     return {"code": 200, "message": "OK", "data": result}
@@ -154,14 +160,17 @@ async def get_answer_votes(
 async def list_answer_comments(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
-    page_start: int | None = Query(default=None, alias="page_start"),
+    page_start: int | None = Query(default=None, ge=0, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     sort_by: str = Query(default="createdAt"),
     sort_order: str = Query(default="asc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: AnswersService = Depends(get_answers_service),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
-    _ = question_id
+    await service.ensure_answer_in_question(
+        answer_id=answer_id, question_id=question_id
+    )
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
     items, page = await discussion_service.list_discussions(
         model_type=DiscussableModelType.ANSWER.value,
@@ -188,9 +197,12 @@ async def create_answer_comment(
     answer_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: AnswersService = Depends(get_answers_service),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
-    _ = question_id
+    await service.ensure_answer_in_question(
+        answer_id=answer_id, question_id=question_id
+    )
     content = payload.get("content", "")
     parent_id = payload.get("parentId")
     mentioned_user_ids = payload.get("mentionedUserIds", [])
@@ -214,15 +226,25 @@ async def delete_answer_comment(
     answer_id: Annotated[int, Path(ge=0)],
     comment_id: Annotated[int, Path(ge=0)],
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: AnswersService = Depends(get_answers_service),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
-    _ = question_id
-    _ = answer_id
     if auth_user.user_id == 0:
         from app.core.errors import ForbiddenError
 
         raise ForbiddenError("Authentication required")
+    # URL 里两道父级 id 都要绑：先认这个回答挂在哪道题上（`_ = question_id` 和
+    # `_ = answer_id` 以前两句一起丢，于是拿一道不存在的题、一个不存在的回答做
+    # 前缀都能把评论删掉），再认这条评论挂在这个回答上。
+    await service.ensure_answer_in_question(
+        answer_id=answer_id, question_id=question_id
+    )
     discussion = await discussion_service.get_discussion(comment_id, auth_user.user_id)
+    if (
+        discussion["modelType"] != DiscussableModelType.ANSWER.value
+        or discussion["modelId"] != answer_id
+    ):
+        raise NotFoundError("Comment not found for this answer")
     if discussion["sender"]["id"] != auth_user.user_id:
         from app.core.errors import ForbiddenError
 
@@ -324,7 +346,9 @@ async def favorite_answer(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
-    _ = question_id
+    await service.ensure_answer_in_question(
+        answer_id=answer_id, question_id=question_id
+    )
     result = await service.add_favorite(answer_id=answer_id, user_id=auth_user.user_id)
     return {"code": 200, "message": "OK", "data": result}
 
@@ -339,7 +363,9 @@ async def unfavorite_answer(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
-    _ = question_id
+    await service.ensure_answer_in_question(
+        answer_id=answer_id, question_id=question_id
+    )
     result = await service.remove_favorite(
         answer_id=answer_id, user_id=auth_user.user_id
     )
@@ -357,7 +383,9 @@ async def attitude_answer(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
-    _ = question_id
+    await service.ensure_answer_in_question(
+        answer_id=answer_id, question_id=question_id
+    )
     attitude_type = payload.get("attitude_type", "UNDEFINED")
     vote_type = attitude_type if attitude_type in ("POSITIVE", "NEGATIVE") else None
     if vote_type is None:

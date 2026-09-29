@@ -3,6 +3,8 @@
 import { build, stageFor, BUBBLE } from 'virtual:motion'
 import { ic } from './content.js'
 import { freshToken, signInUrl } from './session.js'
+import { mountDemos } from './demo-dom.mjs'
+import { stepOf, walkHtml } from './walk.mjs'
 
 const $ = (s, r = document) => r.querySelector(s)
 const $$ = (s, r = document) => [...r.querySelectorAll(s)]
@@ -205,7 +207,20 @@ async function ask(q) {
   }
   asking = new AbortController()
   $('#askSend').disabled = true
-  let text = '', sources = []
+  let text = '', sources = [], steps = [], answered = false, ended = false
+  // The answer, with the walk that found it above: the lines are open while the
+  // model is still working and folded into one line the moment it starts to
+  // answer. A reader who scrolled away and came back sees the finished shape.
+  const paint = () => {
+    const walk = walkHtml(steps, !answered, esc)
+    // Before anything arrives the dots say "working"; once there are lines to
+    // read, those say it instead.
+    let answer = ''
+    if (text) answer = renderAnswer(text, sources)
+    else if (!walk && !answered) answer = '<span class="typing"><i></i><i></i><i></i></span>'
+    body.innerHTML = walk + answer + (answered && !ended ? '<span class="stream-caret"></span>' : '')
+    chat.scrollTop = chat.scrollHeight
+  }
   try {
     const res = await fetch('/api/docs/ask', {
       method: 'POST',
@@ -233,11 +248,15 @@ async function ask(q) {
         if (!data) continue
         const d = JSON.parse(data)
         if (ev === 'sources') sources = d.sources || []
-        else if (ev === 'delta') { text += d.text; body.innerHTML = renderAnswer(text, sources) + '<span class="stream-caret"></span>'; chat.scrollTop = chat.scrollHeight }
-        else if (ev === 'error') { text = text || d.message; body.innerHTML = `<p>${esc(d.message)}</p>` }
+        else if (ev === 'tool') { steps.push(stepOf(d)); paint() }
+        else if (ev === 'delta') { answered = true; text += d.text; paint() }
+        else if (ev === 'error') { answered = true; text = text || d.message; paint() }
       }
     }
-    body.innerHTML = renderAnswer(text || '没有拿到回答，稍后再试。', sources) + (sources.length ? `<div class="cites">${sources.map(citeHtml).join('')}</div>` : '')
+    ended = true
+    if (!text) text = '没有拿到回答，稍后再试。'
+    paint()
+    if (sources.length) body.insertAdjacentHTML('beforeend', `<div class="cites">${sources.map(citeHtml).join('')}</div>`)
     history.push({ role: 'user', content: quoted ? `关于「${quoted.slice(0, 300)}」：${q}` : q }, { role: 'assistant', content: text.slice(0, 1200) })
   } catch (e) {
     if (e.name !== 'AbortError') body.innerHTML = '<p>网络出了点问题，稍后再试。</p>'
@@ -542,6 +561,7 @@ addEventListener('resize', () => { moveTabs(); moveFilter(); moveSidePill() })
 // ---------- start ----------
 splitChars()
 setupReveal(); setupSpot(); setupMagnetic(); setupToc()
+mountDemos()
 moveTabs(); moveSidePill(); moveFilter(); onScroll()
 document.fonts?.ready.then(() => { moveTabs(); moveSidePill() })
 loadDiagrams()

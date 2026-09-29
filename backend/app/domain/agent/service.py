@@ -66,6 +66,14 @@ class AgentToolUse:
     call_id: str | None = None
     # Which sub-thread did this; None for the session's own (AgentMessage).
     thread_label: str | None = None
+    # When the call was made, as the harness recorded it — same contract as
+    # AgentMessage.at. Without it a backlog read after a backend handover files
+    # every call at its read time, below the words 芝士 wrote after making it.
+    at: datetime | None = None
+    # Who made the call, as the harness stamped it. Wins over the turn's
+    # in-memory bookkeeping, which a backend that took the turn over mid-way
+    # does not have.
+    agent_handle: str | None = None
 
 
 #: 一条失败摘要在现场占多少。和分身结论同一个数（``_SUBAGENT_RESULT_MAX``），
@@ -134,6 +142,8 @@ class AgentToolResult:
     # may spawn its own, and the label on the record is always the thread the
     # tool call was made from.
     thread_label: str | None = None
+    # Who made the spawning call; same contract as AgentToolUse.agent_handle.
+    agent_handle: str | None = None
 
 
 @dataclass
@@ -184,6 +194,10 @@ class AgentResult:
     # re-derived: the alternative is reading back the sentence this same code
     # just wrote, which makes the copy unchangeable.
     failure_code: str | None = None
+    # What the failing process printed, when the platform has it (a session
+    # that died on its way up). 现场 shows it on the failure notice; the room's
+    # line is `text`.
+    log: str | None = None
     # Which sub-thread stopped, when the Stop came from one. None for the
     # session's own Stop — the one that ends a turn.
     thread_label: str | None = None
@@ -262,6 +276,23 @@ class AgentRetrying:
     thread_label: str | None = None
 
 
+@dataclass
+class AgentCompacting:
+    """The session is compacting its context, or has finished doing so.
+
+    A long conversation fills the model's context; the harness then summarises
+    it before it can take the next request. That can run for minutes, and the
+    session says nothing and answers nothing meanwhile — from outside it looks
+    exactly like a session that has hung. ``done`` is False when compaction
+    starts and True when it ends; ``error`` is the harness's reason when it
+    ended without compacting.
+    """
+
+    done: bool = False
+    error: str = ""
+    thread_label: str | None = None
+
+
 AgentEvent = (
     AgentMessage
     | AgentToolUse
@@ -273,6 +304,7 @@ AgentEvent = (
     | AgentSubagentStart
     | AgentSubagentStop
     | AgentRetrying
+    | AgentCompacting
 )
 
 

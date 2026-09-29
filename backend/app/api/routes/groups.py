@@ -42,7 +42,7 @@ async def get_groups_service(db=Depends(get_db)) -> GroupsService:
 )
 async def list_groups(
     q: str | None = Query(default=None),
-    page_start: int | None = Query(default=None, alias="page_start"),
+    page_start: int | None = Query(default=None, ge=0, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     joined: bool | None = Query(default=None),
     managed: bool | None = Query(default=None),
@@ -141,10 +141,12 @@ async def delete_group(
 )
 async def list_group_members(
     group_id: Annotated[int, Path(ge=0)],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, alias="page_size"),
+    page_start: int | None = Query(default=None, ge=0, alias="page_start"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
+    _ = auth_user
     members, page = await service.list_members(
         group_id=group_id,
         page_start=page_start,
@@ -208,10 +210,12 @@ async def get_question_service(db=Depends(get_db)) -> GroupQuestionService:
 )
 async def list_group_targets(
     group_id: Annotated[int, Path(ge=0)],
-    page_start: int | None = Query(default=None, alias="page_start"),
+    page_start: int | None = Query(default=None, ge=0, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> dict:
+    _ = auth_user
     targets, page = await service.list_targets(
         group_id=group_id,
         page_start=page_start,
@@ -266,8 +270,10 @@ async def create_group_target(
 async def get_group_target(
     group_id: Annotated[int, Path(ge=0)],
     target_id: Annotated[int, Path(ge=0)],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> dict:
+    _ = auth_user
     target = await service.get_target(group_id=group_id, target_id=target_id)
     return {"code": 200, "message": "OK", "data": {"target": target}}
 
@@ -331,10 +337,12 @@ async def delete_group_target(
 )
 async def list_group_questions(
     group_id: Annotated[int, Path(ge=0)],
-    page_start: int | None = Query(default=None, alias="page_start"),
+    page_start: int | None = Query(default=None, ge=0, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupQuestionService = Depends(get_question_service),
 ) -> dict:
+    _ = auth_user
     question_ids, page = await service.list_questions(
         group_id=group_id,
         page_start=page_start,

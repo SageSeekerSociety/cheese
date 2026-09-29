@@ -28,6 +28,7 @@ from app.domain.agent.harness.claude_code import ClaudeCodeChannel
 from app.domain.agent.harness.claude_code import channel as claude_channel
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.driven.runner import socket_path
+from app.domain.agent.harness.launch import MachinePlace
 
 PROJECT, TOPIC = uuid.uuid4(), uuid.uuid4()
 AGENT = "cheese-agent"
@@ -41,8 +42,10 @@ class Host:
     provisions_machine = False
     deferred_work = False
     _session_factory = None
-    # What the room was told when the session did not come up.
+    # What the room was told when the session did not come up, and the
+    # refusal itself (its `log` is what 现场 shows).
     refusal = ""
+    refused: ScreenSetupError | None = None
 
     def __init__(self, root: Path, command: str | None, *, before=None):
         self.home = root / "home"
@@ -58,14 +61,27 @@ class Host:
     def available(self) -> bool:
         return True
 
+    def place(self, state: str) -> MachinePlace:
+        return MachinePlace(
+            home=str(self.home),
+            workdir=str(self.home),
+            store=str(self.home),
+            state=state,
+            api_base="http://api.test",
+            project_id=str(PROJECT),
+            topic_id=str(TOPIC),
+            agent_handle=AGENT,
+        )
+
     def expand(self, state: str) -> Path:
         return Path(state.replace("$HOME", str(self.home)))
 
     async def precheck(self, session, *, needs_place):
         return Placement(DEVICE, 1, AGENT, rented=False)
 
-    async def ensure_ready(self, *, env, runtime_factory, **_):
-        state = self.expand(runtime_factory(TOPIC)["state"])
+    async def ensure_ready(self, *, env, runtime_factory, launch, **_):
+        placed = runtime_factory(TOPIC)["state"]
+        state = self.expand(placed)
         state.mkdir(parents=True, exist_ok=True)
         if self.before is not None:
             self.before(state)
@@ -87,6 +103,9 @@ class Host:
                             "CLAUDE_CONFIG_DIR": str(self.home / ".claude"),
                             "CHEESE_CLAUDE_COMMAND": self.command,
                             **(env or {}),
+                            # The launch's own environment, which a channel
+                            # merges into the one the runner starts with.
+                            **launch.on(self.place(placed)).env,
                         },
                         stdout=subprocess.DEVNULL,
                         stderr=log,
@@ -149,19 +168,61 @@ async def _start(host: Host) -> float:
             await channel.ensure(session, Opening(system_prompt=""))
     finally:
         host.stop()
+    host.refused = refused.value
     host.refusal = str(refused.value)
     return time.monotonic() - started
 
 
+# What the executor client's bootstrap printed on dev when the work lease
+# answered 504 to a relaunched session (2026-09-25), paths shortened.
+LEASE_504 = """Traceback (most recent call last):
+  File "/h/.cheese/remote-execution/client.py", line 170, in prepare
+    target = _take_leased_machine(target)
+  File "/h/.cheese/remote-execution/client.py", line 544, in _take_leased_machine
+    client.acquire(deadline=time.monotonic())
+  File "/h/.cheese/remote-execution/executor_transport.py", line 515, in acquire
+    raise PlatformHTTPError(response.status, body)
+executor_transport.PlatformHTTPError: Platform HTTP 504: {"code":504}"""
+
+
 @pytest.mark.anyio
 async def test_a_session_that_dies_on_its_way_up_is_reported_at_once(tmp_path):
-    reason = "PlatformHTTPError: Platform HTTP 504: 工作机器仍在准备"
-    host = Host(tmp_path, _dies(reason))
+    host = Host(tmp_path, _dies(LEASE_504))
 
     waited = await _start(host)
 
-    assert reason in host.refusal
     assert waited < 30, f"the room waited {waited:.0f}s for a runner already gone"
+    # The room gets one sentence; what the bootstrap printed goes with it for
+    # 现场, and none of it is in the sentence.
+    assert host.refusal == "Claude Code 启动失败：这个房间的工作电脑还在准备"
+    assert host.refused is not None and host.refused.log
+    assert "Platform HTTP 504" in host.refused.log
+    assert "status 1" in host.refused.log
+    assert "Traceback" not in host.refusal and "HTTP" not in host.refusal
+
+
+@pytest.mark.anyio
+async def test_a_missing_program_is_named_and_its_error_kept_for_the_site(
+    tmp_path,
+):
+    host = Host(tmp_path, "/nonexistent/bin/claude")
+
+    await _start(host)
+
+    assert host.refusal == "Claude Code 启动失败：机器上缺少 Claude Code"
+    assert host.refused is not None and "/nonexistent/bin/claude" in host.refused.log
+    assert "/nonexistent" not in host.refusal
+
+
+@pytest.mark.anyio
+async def test_a_cause_nobody_recognises_is_not_read_out_in_the_room(tmp_path):
+    reason = "ValueError: the flux capacitor is out of alignment"
+    host = Host(tmp_path, _dies(reason))
+
+    await _start(host)
+
+    assert host.refusal == "Claude Code 启动失败：原因没能识别，启动记录在现场"
+    assert host.refused is not None and reason in host.refused.log
 
 
 @pytest.mark.anyio
@@ -181,8 +242,9 @@ async def test_a_runner_that_fails_itself_is_reported_at_once(tmp_path):
         for lock in held:
             lock.close()
 
-    assert "BlockingIOError" in host.refusal
     assert waited < 30, f"the room waited {waited:.0f}s for a runner already gone"
+    assert host.refusal == "Claude Code 启动失败：这个房间上一个会话进程还没有退出"
+    assert host.refused is not None and "BlockingIOError" in host.refused.log
 
 
 @pytest.mark.anyio
@@ -200,3 +262,6 @@ async def test_an_earlier_launch_ending_does_not_end_this_wait(tmp_path, monkeyp
     waited = await _start(host)
 
     assert waited >= 3.0, "an earlier launch's ending was taken for this one's"
+    # Nothing ended this launch, so the room hears that it never came up in
+    # time, not the earlier launch's reason.
+    assert host.refusal == "Claude Code 启动失败：在等待时限内没有起来，启动记录在现场"

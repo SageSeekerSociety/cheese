@@ -3,7 +3,7 @@ import type { Block, Topic, WsServerFrame } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
@@ -13,17 +13,17 @@ vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
-    getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
     listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listTopicMembers: (...args: unknown[]) => listTopicMembers(...args),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
-    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     chatWsUrl: () => 'ws://test/chat',
   }
 })
 
 import ChatPanel from './ChatPanel.vue'
+
+import { setLocale } from '@/i18n'
 
 const topic: Topic = {
   id: 'session-activity-topic',
@@ -69,11 +69,29 @@ const assistantBlock: Block = {
   created_at: '2026-08-17T00:00:01Z',
 } as Block
 
+// 队友的步骤清单是它发在房间里的一条消息（`todo_write`），和它别的话一样。
+const checklist: Block = {
+  ...assistantBlock,
+  id: 'checklist-1',
+  content: '✓ Read the brief\n✱ Write the fix',
+  turn_id: 'one',
+  meta: {
+    checklist: {
+      items: [
+        { id: '1', subject: 'Read the brief', status: 'completed' },
+        { id: '2', subject: 'Write the fix', status: 'in_progress' },
+      ],
+      result: null,
+    },
+  },
+} as Block
+
 async function flush() {
   for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 beforeEach(() => {
+  setLocale('zh-CN')
   vi.clearAllMocks()
   FakeWebSocket.instances = []
   listBlocks.mockResolvedValue({ data: [], has_more: false })
@@ -82,7 +100,7 @@ beforeEach(() => {
 })
 
 describe('session activity', () => {
-  it('keeps the working indicator until every active work id finishes', async () => {
+  it('reports working until every active work id finishes', async () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic] },
@@ -96,15 +114,60 @@ describe('session activity', () => {
     socket.emit({ type: 'assistant_block', block: assistantBlock })
     socket.emit({ type: 'done' })
     await flush()
-    expect(view.getByText('芝士正在处理…')).toBeTruthy()
+    expect(view.emitted('working')?.at(-1)).toEqual([true])
 
     socket.emit({ type: 'turn_finished', turn_id: 'one' })
     await flush()
-    expect(view.getByText('芝士正在处理…')).toBeTruthy()
+    expect(view.emitted('working')?.at(-1)).toEqual([true])
 
     socket.emit({ type: 'turn_finished', turn_id: 'two' })
     await flush()
-    expect(view.queryByText('芝士正在处理…')).toBeNull()
+    expect(view.emitted('working')?.at(-1)).toEqual([false])
+  })
+
+  // 队友在房间里和别人一样：干活时对话里不另起一行「正在处理」，也没有一行跟着
+  // 这一轮来去的清单。它的清单是它发的一条消息，这一轮结束了还在原处。
+  it('a running turn adds no working line and no checklist row to the chat', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic] },
+      global: { plugins: [vuetify] },
+    })
+    await flush()
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({ type: 'turn_started', turn_id: 'one' })
+    socket.emit({ type: 'todo', items: [{ id: '1', subject: 'Transient step', status: 'in_progress' }] })
+    await flush()
+    expect(view.container.textContent).not.toMatch(/正在处理|正在交给/)
+    expect(view.queryByRole('button', { name: /停止/ })).toBeNull()
+    expect(view.queryByText('Transient step')).toBeNull()
+
+    socket.emit({ type: 'assistant_block', block: checklist })
+    await flush()
+    expect(view.getByText('Write the fix')).toBeTruthy()
+
+    socket.emit({
+      type: 'block_updated',
+      block: {
+        ...checklist,
+        content: '✓ Read the brief\n✓ Write the fix',
+        meta: {
+          edited_at: '2026-08-17T00:00:05Z',
+          checklist: {
+            items: [
+              { id: '1', subject: 'Read the brief', status: 'completed' },
+              { id: '2', subject: 'Write the fix', status: 'completed' },
+            ],
+            result: null,
+          },
+        },
+      } as Block,
+    })
+    socket.emit({ type: 'turn_finished', turn_id: 'one' })
+    await flush()
+    expect(view.getAllByText('Write the fix')).toHaveLength(1)
+    expect(view.getByText('已编辑')).toBeTruthy()
   })
 
   // 「现场」那一格靠这个事件在开工那一刻出现。以前它等的是第一个工具调用——而一个
@@ -129,8 +192,8 @@ describe('session activity', () => {
   })
 
   // 重连（掉线自动重连、切回这个话题）会重跑一次 loadTopic。上一轮早就结束了，
-  // 而房间里那句「正在处理…」是靠事件翻回去的——不报 false 的话，右边那格现场
-  // 会在一个没人干活的话题上一直亮着。
+  // 而 working 是靠事件翻回去的——不报 false 的话，右边那格现场会在一个没人干活的
+  // 话题上一直亮着。
   it('重新载入话题时把 working 报回 false', async () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
@@ -147,93 +210,81 @@ describe('session activity', () => {
     await flush()
     expect(view.emitted('working')?.at(-1)).toEqual([false])
   })
+})
 
-  // 一个房间坐着两位 AI：名册上先入座的是「芝士」，后 @ 进来的是「芝士Opus」。
-  // 干活的是哪位，「正在处理」就写哪位——不是名册上排第一的那位。
-  describe('房间里坐着几位队友', () => {
-    const seat = (handle: string, name: string) => ({
-      id: handle,
-      topic_id: topic.id,
-      member_handle: handle,
-      role: 'member',
-      agent: true,
-      name,
-      created_at: '2026-08-17T00:00:00Z',
-    })
-    beforeEach(() => {
-      listTopicMembers.mockResolvedValue({
-        data: [seat('cheese-first', '芝士'), seat('cheese-opus', '芝士Opus')],
-        total: 2,
-      })
-    })
+// 一间房几个座位并行在跑时，「现场」那一格的标签报的是「谁在干活」的名单。名单是
+// 对话栏按轮次帧上的座位（agent 字段）学来、照房间名册翻成名字报上去的。
+describe('谁在干活（多座位并行）', () => {
+  const roster = [
+    { member_handle: 'agent-aaaa11112222', name: '芝士K', agent: true },
+    { member_handle: 'agent-bbbb33334444', name: '芝士O', agent: true },
+  ]
 
-    async function mount() {
-      const vuetify = createVuetify({ components, directives })
-      const view = render(ChatPanel, {
-        props: { topic, topicList: [topic], showComposer: true },
-        global: { plugins: [vuetify] },
-      })
-      await flush()
-      return { view, socket: FakeWebSocket.instances.at(-1)! }
-    }
-
-    it('这一轮里署名的是哪位，就写哪位', async () => {
-      const { view, socket } = await mount()
-      socket.emit({ type: 'turn_started', turn_id: 'one' })
-      socket.emit({
-        type: 'event_block',
-        block: { ...assistantBlock, id: 'step-1', kind: 'event', author: 'cheese-opus', turn_id: 'one' } as Block,
-      })
-      await flush()
-      expect(view.getByText('芝士Opus正在处理…')).toBeTruthy()
-      expect(view.queryByText('芝士正在处理…')).toBeNull()
+  function mountPanel() {
+    const vuetify = createVuetify({ components, directives })
+    return render(ChatPanel, {
+      props: { topic, topicList: [topic] },
+      global: { plugins: [vuetify] },
     })
+  }
 
-    it('发出去点了哪位，还没动静时就说交给哪位', async () => {
-      const { view } = await mount()
-      const box = view.container.querySelector('textarea')!
-      box.focus()
-      await fireEvent.update(box, '<@cheese-opus> 看看这个')
-      await fireEvent.keyDown(box, { key: 'Enter' })
-      await flush()
-      expect(view.getByText('正在交给芝士Opus…')).toBeTruthy()
-    })
+  it('两个座位并行在干：working-agents 把两个名字都报上来，收工一个划掉一个', async () => {
+    listTopicMembers.mockResolvedValue({ data: roster, total: roster.length })
+    const view = mountPanel()
+    await flush()
 
-    it('👀 回执是谁落的，就是谁接了这一轮', async () => {
-      const { view, socket } = await mount()
-      socket.emit({ type: 'turn_started', turn_id: 'one' })
-      socket.emit({
-        type: 'reaction',
-        block_id: 'm1',
-        reactions: [{ emoji: '👀', count: 1, authors: ['cheese-opus'] }],
-      } as WsServerFrame)
-      await flush()
-      expect(view.getByText('芝士Opus正在处理…')).toBeTruthy()
-    })
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({ type: 'turn_started', turn_id: 'one', agent: 'agent-aaaa11112222' })
+    socket.emit({ type: 'turn_started', turn_id: 'two', agent: 'agent-bbbb33334444' })
+    await flush()
+    expect(view.emitted('working-agents')?.at(-1)).toEqual([['芝士K', '芝士O']])
 
-    it('一位干完、另一位接着干，名字跟着换', async () => {
-      const { view, socket } = await mount()
-      socket.emit({ type: 'turn_started', turn_id: 'one' })
-      socket.emit({
-        type: 'event_block',
-        block: { ...assistantBlock, id: 'step-1', kind: 'event', author: 'cheese-opus', turn_id: 'one' } as Block,
-      })
-      socket.emit({ type: 'turn_finished', turn_id: 'one' })
-      socket.emit({ type: 'turn_started', turn_id: 'two' })
-      socket.emit({
-        type: 'event_block',
-        block: { ...assistantBlock, id: 'step-2', kind: 'event', author: 'cheese-first', turn_id: 'two' } as Block,
-      })
-      await flush()
-      expect(view.getByText('芝士正在处理…')).toBeTruthy()
-      expect(view.queryByText('芝士Opus正在处理…')).toBeNull()
-    })
+    socket.emit({ type: 'turn_finished', turn_id: 'one' })
+    await flush()
+    expect(view.emitted('working-agents')?.at(-1)).toEqual([['芝士O']])
 
-    it('这一轮还说不出是谁时，退回房间的座位', async () => {
-      const { view, socket } = await mount()
-      socket.emit({ type: 'turn_started', turn_id: 'one' })
-      await flush()
-      expect(view.getByText('芝士正在处理…')).toBeTruthy()
+    socket.emit({ type: 'turn_finished', turn_id: 'two' })
+    await flush()
+    expect(view.emitted('working-agents')?.at(-1)).toEqual([[]])
+  })
+
+  // 中途进房间（或掉线重连）的人没有看到过那几帧 turn_started，它手上的名单全靠
+  // 连接时这一帧快照补齐——快照不带座位的话，并行干活的队友在它屏上全是默认名字。
+  it('重连时的 turn_active 快照带着每个轮次的座位', async () => {
+    listTopicMembers.mockResolvedValue({ data: roster, total: roster.length })
+    const view = mountPanel()
+    await flush()
+
+    FakeWebSocket.instances.at(-1)!.emit({
+      type: 'turn_active',
+      turn_ids: ['one', 'two'],
+      agents: { one: 'agent-aaaa11112222', two: 'agent-bbbb33334444' },
     })
+    await flush()
+    expect(view.emitted('working-agents')?.at(-1)).toEqual([['芝士K', '芝士O']])
+  })
+
+  // 老后端的帧没有 agent 字段：名单一直是空的，由工作面板退回 agentName 的单数
+  // 说法。working 本身不受影响——「有没有人在干」和「是谁在干」是两件事。
+  it('帧不带座位：名单空着，working 照报', async () => {
+    const view = mountPanel()
+    await flush()
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({ type: 'turn_started', turn_id: 'one' })
+    await flush()
+    expect(view.emitted('working')?.at(-1)).toEqual([true])
+    expect(view.emitted('working-agents')?.at(-1) ?? [[]]).toEqual([[]])
+  })
+
+  // 名册上翻不到这个座位（它已经被移出房间）：也不能把 agent-<hex> 摆上去，退回
+  // 这个房间 AI 的名字。
+  it('名册上翻不到的座位退回房间 AI 的名字', async () => {
+    const view = mountPanel()
+    await flush()
+
+    FakeWebSocket.instances.at(-1)!.emit({ type: 'turn_started', turn_id: 'one', agent: 'agent-aaaa11112222' })
+    await flush()
+    expect(view.emitted('working-agents')?.at(-1)).toEqual([['芝士']])
   })
 })

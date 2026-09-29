@@ -38,7 +38,7 @@ from app.domain.milestone.models import Milestone
 from app.domain.room_task.models import Task
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import post_project
+from tests.integration.conftest import join_project_team, post_project
 
 # One fixed continuation for every test here: it stands for "the interrupted
 # turn and the turn that resumed it", which is the whole point — two separate
@@ -59,7 +59,12 @@ def in_a_turn(monkeypatch):
 
 
 def _project(client) -> str:
-    return post_project(client, json={"name": "P"}).json()["data"]["id"]
+    pid = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
+    # (`_require_reviewer_in_room`)。这个文件里的卡（以及拆出来的子话题）都点名
+    # alice，就让她像真实参与者一样在项目里 —— 要检验的是重发去重，不是名册。
+    join_project_team(client, pid, "alice")
+    return pid
 
 
 def _topic(client, project_id: str, title: str = "母话题") -> str:
@@ -84,7 +89,14 @@ class _SameMessageTwice(StubChannel):
         super().__init__()
         self._text = text
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id, session_id="s1")
         self.acknowledges(topic_id, prompt)

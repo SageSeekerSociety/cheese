@@ -6,14 +6,18 @@
 // 一页时这两件事都只能在 @ 菜单里猜。
 //
 // 同名不覆盖，所以列表里会出现 `预算表(2).xlsx`：两次上传就是两份，各自留着。
+import type { MenuAction } from '@/components/common/menuAction'
 import type { LibraryFile } from '../api'
 
 import { ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
 
+import { useCommands } from '@/commands'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -23,6 +27,23 @@ const loadError = ref('')
 const actionError = ref('')
 const removing = ref('')
 const confirming = ref<LibraryFile | null>(null)
+
+// 手机上一行的两颗按钮收进行尾的 ⋯（底部面板）：长文件名本来就挤，再并排两颗字按钮
+// 名字只剩几个字。
+const { mdAndUp } = useDisplay()
+function fileActions(file: LibraryFile): MenuAction[] {
+  return [
+    { key: 'download', label: '下载', icon: 'mdi-download-outline', onSelect: () => void download(file) },
+    {
+      key: 'delete',
+      label: '删除',
+      icon: 'mdi-delete-outline',
+      danger: true,
+      loading: removing.value === file.path,
+      onSelect: () => (confirming.value = file),
+    },
+  ]
+}
 
 async function load() {
   const projectId = props.projectId
@@ -83,13 +104,21 @@ watch(
   },
   { immediate: true }
 )
+useCommands(() => [
+  {
+    id: 'library.refresh',
+    title: '刷新',
+    palette: false,
+    icon: 'mdi-refresh',
+    loading: loading.value,
+    header: { primary: true },
+    run: load,
+  },
+])
 </script>
 
 <template>
-  <ProjectPage :title="t('navigation.project.library')">
-    <template #actions>
-      <v-btn :loading="loading" @click="load">刷新</v-btn>
-    </template>
+  <AppPage :title="t('navigation.project.library')">
     <div>
       <p class="t-body c-muted mb-6">你给这个项目的文件。每个对话都引用得到，芝士只读不改</p>
 
@@ -107,8 +136,24 @@ watch(
             <div class="library-row__name t-body">{{ file.path }}</div>
             <div class="t-meta c-faint">{{ fmtBytes(file.bytes) }} · {{ fmtWhen(file.modified) }}</div>
           </div>
-          <v-btn size="small" variant="text" color="on-surface-variant" @click="download(file)">下载</v-btn>
+          <AdaptiveMenu v-if="!mdAndUp" :actions="fileActions(file)" :title="file.path">
+            <template #activator="{ props: menuProps }">
+              <v-btn
+                v-bind="menuProps"
+                icon="mdi-dots-horizontal"
+                size="small"
+                variant="text"
+                color="on-surface-variant"
+                class="tap-target"
+                aria-label="更多操作"
+              />
+            </template>
+          </AdaptiveMenu>
+          <v-btn v-if="mdAndUp" size="small" variant="text" color="on-surface-variant" @click="download(file)">
+            下载
+          </v-btn>
           <v-btn
+            v-if="mdAndUp"
             size="small"
             variant="text"
             color="on-surface-variant"
@@ -139,7 +184,7 @@ watch(
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>

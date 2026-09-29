@@ -19,7 +19,12 @@ from pathlib import Path
 import pytest
 
 from app.core.config import Settings
-from app.domain.agent.capability import BuiltIn, Declaration, Difference
+from app.domain.agent.capability import (
+    BuiltIn,
+    Declaration,
+    Difference,
+    Missing,
+)
 from app.domain.agent.capability import matrix as matrix_module
 from app.domain.agent.capability.matrix import (
     MatrixIncomplete,
@@ -88,7 +93,7 @@ def test_every_copy_of_a_pin_is_held_to_the_one_the_adapter_declares() -> None:
     assert private.IMAGE == f"cheese-private-executor:{claude}"
     assert Settings.model_fields["private_chat_executor_image"].default == private.IMAGE
     workflow = (REPO / ".github/workflows/remote-execution.yml").read_text()
-    assert f"-t {private.IMAGE} " in workflow
+    assert f"tags: {private.IMAGE}\n" in workflow
     # The agent image bakes the same build a device launches, so "the same turn"
     # means the same runtime on either side; and the connector's delivery e2e in
     # CI boots the build production launches.
@@ -186,7 +191,34 @@ def test_the_matrix_has_a_filled_cell_for_every_harness_and_concept() -> None:
     for name, row in table.items():
         assert set(row) == set(BuiltIn), name
         for concept, cell in row.items():
-            assert isinstance(cell, Difference) or cell.strip(), f"{name}/{concept}"
+            assert isinstance(cell, (Difference, Missing)) or cell.strip(), (
+                f"{name}/{concept}"
+            )
+
+
+def test_a_gap_expires_when_the_pin_moves(monkeypatch) -> None:
+    """暂缺带到期日，才不会变成一张永久居留证：pin 一动，这一格就得有人重核。"""
+    recorded = Declaration(
+        pinned_version="9.9.9",
+        built_ins=frozenset({BuiltIn.ASK}),
+        how_disabled={
+            **dict.fromkeys(BuiltIn, Difference.NOT_BUILT_IN),
+            BuiltIn.ASK: Missing(issue=1, until_pin="9.9.9"),
+        },
+        verified_against="9.9.9",
+    )
+    monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: recorded)
+    assert matrix()[CLAUDE_CODE][BuiltIn.ASK] == Missing(issue=1, until_pin="9.9.9")
+
+    bumped = Declaration(
+        pinned_version="10.0.0",
+        built_ins=recorded.built_ins,
+        how_disabled=recorded.how_disabled,
+        verified_against="10.0.0",
+    )
+    monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: bumped)
+    with pytest.raises(MatrixIncomplete):
+        matrix()
 
 
 def test_every_difference_code_is_one_some_declaration_fills_in() -> None:

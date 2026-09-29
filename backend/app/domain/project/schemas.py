@@ -46,6 +46,9 @@ class ProjectOut(BaseModel):
     intent: str = ""
     root_topic_id: uuid.UUID | None
     created_at: datetime
+    #: Set while the owner has the project archived; the client shows the
+    #: archived state instead of the workspace.
+    archived_at: datetime | None = None
     #: The 壳 in force for this project, already resolved (项目-level setting →
     #: 赛题 override → 项目集 → default). The frontend renders what it is told and
     #: keeps no copy of the catalog, so a 壳 added server-side reaches the

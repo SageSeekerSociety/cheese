@@ -98,6 +98,31 @@ class NotificationRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def pushable_after(
+        self, user_id: int, types: frozenset[NotificationType], after: int, limit: int
+    ) -> list[Notification]:
+        """我名下这几种、还没读、比 `after` 新的信里最新的 `limit` 条，旧的在前。
+
+        积压多了取最新的那几条，而不是最早的：人回来时要知道的是现在的事。
+        """
+        stmt = self._my_mail(select(Notification), user_id).where(
+            Notification.type.in_(types),
+            Notification.read.is_(False),
+            Notification.id > after,
+        )
+        rows = await self._session.scalars(
+            stmt.order_by(Notification.id.desc()).limit(limit)
+        )
+        return list(reversed(rows.all()))
+
+    async def latest_id_for_user(
+        self, user_id: int, types: frozenset[NotificationType]
+    ) -> int | None:
+        stmt = self._my_mail(select(func.max(Notification.id)), user_id).where(
+            Notification.type.in_(types)
+        )
+        return await self._session.scalar(stmt)
+
     async def mark_all_as_read_for_user(self, user_id: int) -> int:
         stmt = (
             self._my_mail(update(Notification), user_id)
@@ -349,3 +374,30 @@ class NotificationRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return {topic_id: bool(unread) for topic_id, unread in rows if topic_id}
+
+    async def decision_topic_ids(
+        self, topic_ids: list[uuid.UUID], recipient_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{topic_id: 这里向他要的决策还有没有没拍板的} —— 一次查完。
+
+        和验收卡同一个形状：**在不在 key 里**是「这房间找他拍过板」（拍完也还是
+        他的事），**value** 是「现在就等他」。没拍板的判据和收件箱同一条：
+        `resolved_at` 为空，读过不等于答过。
+        """
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(
+                Notification.topic_id,
+                func.bool_or(Notification.resolved_at.is_(None)),
+            )
+            .where(
+                Notification.topic_id.in_(topic_ids),
+                Notification.type == NotificationType.DECISION_REQUEST.value,
+                Notification.recipient_handle == recipient_handle,
+                Notification.deleted_at.is_(None),
+            )
+            .group_by(Notification.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: bool(open_) for topic_id, open_ in rows if topic_id}

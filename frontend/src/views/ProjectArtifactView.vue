@@ -14,8 +14,14 @@ import ArtifactVersionPreview from '../components/ArtifactVersionPreview.vue'
 import { t } from '../i18n'
 import { parseDiffLines } from '../lib/diff'
 import { relTime } from '../lib/relTime'
+import { usePageTitleStore } from '../stores/title'
+
+import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<{ projectId: string; artifactId: string }>()
+
+// 这一项的名字就是这一页的标题：手机上它只写在顶栏里（页内的 h1 在手机上不画）。
+const titles = usePageTitleStore()
 
 const artifact = ref<ProjectArtifactDetail | null>(null)
 const loading = ref(false)
@@ -38,6 +44,7 @@ function comparisonNote(note: string | null): string {
     binary: t('tasks.artifactComparison.binary'),
     document: t('tasks.artifactComparison.document'),
     unsupported: t('tasks.artifactComparison.unsupported'),
+    many: t('tasks.artifactComparison.many'),
     unavailable: t('tasks.artifactComparison.unavailable'),
     source: t('tasks.artifactComparison.source'),
     link: t('tasks.artifactComparison.link'),
@@ -83,6 +90,7 @@ async function load() {
     const found = await getProjectArtifact(projectId, artifactId)
     if (props.artifactId !== artifactId || props.projectId !== projectId) return
     artifact.value = found
+    titles.setDynamicTitle(found.name, 'project-artifact')
     before.value = found.versions.at(-2)?.card_id ?? ''
     after.value = found.versions.at(-1)?.card_id ?? ''
   } catch (e) {
@@ -135,7 +143,7 @@ watch(
       <template v-else-if="artifact">
         <header class="artifact-head">
           <div class="artifact-head__id">
-            <h1 class="t-page-title">{{ artifact.name }}</h1>
+            <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title">{{ artifact.name }}</h1>
             <p class="t-meta c-faint mt-1">
               <template v-if="artifact.version">
                 第 {{ artifact.version }} 版
@@ -235,7 +243,7 @@ watch(
               <div class="t-body version-row__subject">{{ version.subject || '这次交付没有留下说明' }}</div>
               <div class="t-meta c-faint">
                 <template v-if="when(version)">{{ when(version) }}</template>
-                <template v-if="version.decided_by"> · {{ version.decided_by }} 采纳</template>
+                <template v-if="version.decided_by"> · <UserRef :handle="version.decided_by" /> 采纳</template>
               </div>
             </div>
             <v-btn
@@ -274,18 +282,27 @@ watch(
 </template>
 
 <style scoped>
+/* 项目框架那一格是 overflow: hidden，这一页得自己滚：不给高度的话，比一屏长的版本
+   历史被裁在屏幕外面，拖不上来。 */
+.artifact-page {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+}
 .artifact-content {
   max-width: 1120px;
   margin: 0 auto;
 }
 .artifact-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
 .artifact-head__id {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .version-list {
   list-style: none;

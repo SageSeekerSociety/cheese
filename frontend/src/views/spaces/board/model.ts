@@ -33,16 +33,6 @@ export interface Claimant {
   status: 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED'
 }
 
-/** 题目的附件。真平台上题目还没有这一层（题目表没有附件字段），这一栏先留着空，
- *  等附件那一批落地再填 —— 界面按「有就列、没有就不显示」写，不假装它已经存在。 */
-export interface TaskFile {
-  name: string
-  /** 字节。 */
-  size: number
-  kind: 'pdf' | 'image' | 'code' | 'archive' | 'doc'
-  downloads: number
-}
-
 export interface BoardTask {
   id: string
   title: string
@@ -63,13 +53,45 @@ export interface BoardTask {
   maxTeamSize: number
   /** 讲解视频。真库 `Task.video_url`；详情页只把 B 站链接转成内嵌播放器。 */
   videoUrl?: string | null
-  /** 这道题是怎么来的。从 PDF 生成的那批会写「PDF · 第 2 页」，手写的没有这一项。 */
+  /** 这道题是怎么来的，例如「PDF · 第 2 页」。手写的题没有这一项。
+   *
+   *  它不是接口来的：后端没有出处这一列，从 PDF 发出去的那批把出处写进了简介开头，
+   *  `store.ts` 映射时用 `splitOrigin` 从 `intro` 里认出来，**正文里那串字同时被摘掉**。
+   *  所以这一格和 `summary` 是同一段文本的两半，不能各填各的。 */
   origin?: string
-  /** 发题时附上的材料。真平台还没有这一层，暂时是空数组。 */
-  files: TaskFile[]
+  /** 这道题挂着几份材料（`GET /tasks` 一并给的那个数）。卡片上只显示「附件 N」，
+   *  清单与下载走 `TasksApi.listAttachments` / 下载端点 —— 列表接口不带文件本体，
+   *  也不改变谁能下载。 */
+  attachmentCount: number
   claims: Claimant[]
   /** 领取人数（真接口给的是 `participants.total`，不是整份名单）。 */
   claimCount: number
+  /** 「我」这条领取现在是什么档位（`Claimant.status` 那四档之一）。`null` = 我没领
+   *  这道题 —— 领了没交是 `IN_PROGRESS`，与没领是两件事，卡片上「我的领取档位」
+   *  那一格只在非 `null` 时出现。
+   *
+   *  后端按**提交与评审**算（`app/domain/task/submission_state.py`），不读
+   *  `completion_status`：那一列除了领取与逾期没人推进，用它算出来的人永远停在
+   *  「进行中」。 */
+  myClaimStatus: Claimant['status'] | null
+}
+
+/** 「最近处理过」上的一行 —— 一次审核动作，不是一道题的当前状态。
+ *
+ *  和 `BoardTask` 分开是有理由的：这道题**现在**是什么状态、说的是**那一次**
+ *  是谁点的，两件事；一次驳回之后作者改完再过，这一行说的是「刚刚那次通过」。 */
+export interface ReviewedTask {
+  /** 真库主键（那道题）。 */
+  id: string
+  title: string
+  /** 那一次的结果。真接口按它分两次查（`approved=APPROVED` / `DISAPPROVED`）。 */
+  result: 'APPROVED' | 'DISAPPROVED'
+  /** 审核人。真接口只给 `user.id`，名字由 `store.ts` 从这块板的管理员名册里对
+   *  —— 审题这条路只有管理员走得通，所以名册里对不到就只剩下「不知道是谁」（人
+   *  被移出名册了），那时这里是 `null`。 */
+  reviewer: Person | null
+  /** ISO。审核那一刻，不是 `updatedAt`。 */
+  reviewedAt: string
 }
 
 export interface InviteCode {
@@ -79,9 +101,53 @@ export interface InviteCode {
   /** 可用人数上限；`null` = 不限（真库用 0 表示不限）。 */
   maxUses: number | null
   useCount: number
-  /** 有效期终点；`null` = 永不过期。 */
-  expiresAt: string | null
+  /** 有效期终点；`null` = 永不过期。**毫秒时间戳**，与真接口同形 —— `inviteCodeStatus`
+   *  那一组判据直接吃的就是这个形状，转成 ISO 反而不通用（板里没人按串读它）。 */
+  expiresAt: number | null
   createdAt: string
+  /** 这张码给谁 / 干什么用，建码人自己写的一句话。`null` = 没写（老码都没有）。 */
+  note: string | null
+}
+
+/** 一张邀请码现在的状态。库里只有次数与期限，两者都能让一张码失效。 */
+export interface InviteCodeStatus {
+  key: 'usable' | 'expired' | 'exhausted'
+  label: string
+  color: string
+}
+
+/**
+ * 一张码还算不算数 —— **「当前使用中的码」唯一的判据**。
+ *
+ * 弹窗顶部、头部下拉的摘要、成员页「让人进来」三处都念这一条。三处各写一个
+ * 版本的话，同一时刻屏幕上会同时出现三个不同的「当前码」，而这是最容易被当成
+ * bug 报上来的那种不一致。
+ *
+ * 收的是**真接口那一版的形状**（`maxUses` 是数字，0 = 不限），不是 `InviteCode`
+ * 映射过的那一版（`null` = 不限）：弹窗手里拿的就是前者，别为了复用先转一道。
+ */
+export function inviteCodeStatus(
+  code: { maxUses: number | null; useCount: number; expiresAt: number | null },
+  now: number = Date.now()
+): InviteCodeStatus {
+  if (code.expiresAt !== null && code.expiresAt <= now) {
+    return { key: 'expired', label: '已过期', color: 'warning' }
+  }
+  if (code.maxUses !== null && code.maxUses > 0 && code.useCount >= code.maxUses) {
+    return { key: 'exhausted', label: '已用尽', color: 'error' }
+  }
+  return { key: 'usable', label: '可用', color: 'success' }
+}
+
+/** 还能用的第一张；没有就是 `null`（不拿一张废码顶上）。列表按建码时间排，所以
+ *  这是**最早那张还开着的** —— 板子自己那张码通常在它发出去的码前面。
+ *
+ *  `now` 与 `inviteCodeStatus` 同一个意思，只为测试能钉住「过期的被跳过」这件事。 */
+export function currentInviteCode<T extends { maxUses: number | null; useCount: number; expiresAt: number | null }>(
+  codes: readonly T[],
+  now: number = Date.now()
+): T | null {
+  return codes.find((c) => inviteCodeStatus(c, now).key === 'usable') ?? null
 }
 
 export interface SpaceInfo {
@@ -96,6 +162,17 @@ export interface SpaceInfo {
    * 小组）在老树的 `SpacesCourse*` 上，没有这一格，课里的人从题目板就走不回去。
    */
   isCourse: boolean
+}
+
+/** 管理员名单上的一项。真接口 `Space.admins` 的每一项就是「人 + 角色」这一对
+ *  （`backend/app/api/routes/spaces.py` 的 `_build_admins_payload`）。
+ *
+ *  **所有者也在这一份名单里** —— 后端的 `list_admins` 把 `role=OWNER` 那一条一起
+ *  返回（`SpaceAdminRelation` 一张表装两种角色）。所以这份名单就是完整的「谁能管」，
+ *  不要再把 `SpaceInfo.owner` 拼进来，那会把所有者列两遍。 */
+export interface Manager {
+  person: Person
+  role: 'OWNER' | 'ADMIN'
 }
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -116,6 +193,41 @@ export const CLAIM_LABEL: Record<Claimant['status'], string> = {
   SUBMITTED: '已提交',
   PASSED: '已通过',
   REJECTED: '未通过',
+}
+
+// --- 出处 --------------------------------------------------------------------
+
+/**
+ * 出处前缀。真题目模型里**没有**「来源」这一列，也不给它加（见 `BoardTask.origin`
+ * 那一格的注释）：从 PDF 生成的那批题，出处是写进**简介开头**的一段字 ——
+ * `GET /tasks` 回来的就是一段带前缀的 `intro`，没有任何结构化字段。所以「这道题从
+ * 哪来」在真数据里不是读某一格，而是**认出正文开头那一小段**，摘掉它、单独给人看。
+ *
+ * 写这一段的是从 PDF 发题那条路（第八批 #1793）：`【PDF · 第 N 页】` **紧跟题干、
+ * 中间不换行**。所以这里也**不能要求那串之后有换行** —— 要求了，真从 PDF 发出来的
+ * 题一个都认不出来。页号是 1 起的整数（`draftPage(index) = index + 1`）。
+ */
+const ORIGIN_PREFIX = /^【PDF · 第 \d+ 页】/
+
+/**
+ * 把一段简介拆成「正文」与「出处」。
+ *
+ * 认不出来时只回正文 —— 手写的题走的都是这一支。
+ *
+ * **误判的边界，认了**：判据只有「开头是不是那一串」。手写的题如果简介恰好以
+ * `【PDF · 第 3 页】` 开头，就会被当成 PDF 来的：那串字从正文里消失、变成一枚标。
+ * 要消掉它就得有一个「这道题是 PDF 发的」的痕迹，而真库里没有（上面那段说的就是
+ * 这件事）—— 拿别的信号去猜只会猜错得更离谱。代价写在这里，不埋在代码里。
+ */
+export function splitOrigin(intro: string): { summary: string; origin?: string } {
+  const prefix = ORIGIN_PREFIX.exec(intro)?.[0]
+  if (!prefix) return { summary: intro }
+  return {
+    // 那对书名号是给机器认的，给人看的是里面那段（原型上也是「PDF · 第 2 页」）。
+    origin: prefix.slice(1, -1),
+    // 摘干净：前缀后面紧跟的就是题干，不留一个空格在开头。
+    summary: intro.slice(prefix.length).trimStart(),
+  }
 }
 
 /** 板上现在真正可领的题：审过了，且没到截止日。 */

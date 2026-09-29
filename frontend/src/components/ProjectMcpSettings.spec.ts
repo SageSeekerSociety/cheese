@@ -1,0 +1,103 @@
+/** 项目设置「MCP 服务器」：连接属于项目，谁授权的看得见，密钥只进不出。 */
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { createVuetify } from 'vuetify'
+import * as components from 'vuetify/components'
+import * as directives from 'vuetify/directives'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+const api = vi.hoisted(() => ({
+  getMcpServers: vi.fn(),
+  connectMcpServer: vi.fn(),
+  disconnectMcpServer: vi.fn(),
+  setMcpSecret: vi.fn(),
+  clearMcpSecret: vi.fn(),
+}))
+vi.mock('../api', () => api)
+
+import i18n, { setLocale } from '../i18n'
+
+import ProjectMcpSettings from './ProjectMcpSettings.vue'
+
+const tracker = {
+  name: 'tracker',
+  transport: 'http',
+  host: 'mcp.example.test',
+  auth: 'oauth',
+  status: 'disconnected',
+  authorized_by: null,
+  authorized_at: null,
+  variables: [],
+}
+const search = {
+  name: 'search',
+  transport: 'http',
+  host: 'search.example.test',
+  auth: 'headers',
+  status: 'missing_values',
+  authorized_by: null,
+  authorized_at: null,
+  variables: [{ name: 'SEARCH_KEY', set: false, updated_by: null, updated_at: null }],
+}
+
+beforeEach(() => {
+  setLocale('zh-CN')
+  vi.resetAllMocks()
+  api.getMcpServers.mockResolvedValue({ servers: [tracker, search], problem: null })
+})
+afterEach(() => cleanup())
+
+async function mount(url = '/projects/p/settings') {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/projects/:projectId/settings', component: { template: '<div />' } }],
+  })
+  await router.push(url)
+  const view = render(ProjectMcpSettings, {
+    props: { projectId: 'p' },
+    global: { plugins: [createVuetify({ components, directives }), router, i18n] },
+  })
+  return { view, router }
+}
+
+it('connecting sends the browser to the authorization server', async () => {
+  const assign = vi.fn()
+  vi.stubGlobal('location', { ...window.location, assign })
+  api.connectMcpServer.mockResolvedValue({ authorization_url: 'https://as.example.test/authorize?x=1' })
+  const { view } = await mount()
+  await fireEvent.click(await view.findByRole('button', { name: '连接' }))
+  await waitFor(() => expect(assign).toHaveBeenCalledWith('https://as.example.test/authorize?x=1'))
+  expect(api.connectMcpServer).toHaveBeenCalledWith('p', 'tracker')
+  vi.unstubAllGlobals()
+})
+
+it('a connected server says whose account it acts as, and any member can disconnect it', async () => {
+  api.getMcpServers.mockResolvedValue({
+    servers: [{ ...tracker, status: 'connected', authorized_by: 'alice', authorized_at: new Date().toISOString() }],
+    problem: null,
+  })
+  api.disconnectMcpServer.mockResolvedValue(null)
+  const { view } = await mount()
+  // 授权人是一颗 @chip：和对话里 @ 到他长得一样，点了去他的成员页。
+  await waitFor(() => expect(view.container.textContent).toMatch(/由\s*@alice\s*授权/))
+  expect(view.container.querySelector('.mcp-row__state .mention')?.getAttribute('data-handle')).toBe('alice')
+  await fireEvent.click(view.getByRole('button', { name: '断开' }))
+  await waitFor(() => expect(api.disconnectMcpServer).toHaveBeenCalledWith('p', 'tracker'))
+})
+
+it('a secret value is sent once and never shown again', async () => {
+  api.setMcpSecret.mockResolvedValue(null)
+  const { view } = await mount()
+  const field = (await view.findByLabelText('SEARCH_KEY')) as HTMLInputElement
+  expect(field.type).toBe('password')
+  await fireEvent.update(field, 'sk-123')
+  await fireEvent.click(view.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(api.setMcpSecret).toHaveBeenCalledWith('p', 'SEARCH_KEY', 'sk-123'))
+  await waitFor(() => expect(field.value).toBe(''))
+})
+
+it('the result of an authorization is said once and taken off the address', async () => {
+  const { view, router } = await mount('/projects/p/settings?mcp=tracker&mcp_error=access_denied')
+  expect(await view.findByText(/连接 tracker 失败：access_denied/)).toBeTruthy()
+  await waitFor(() => expect(router.currentRoute.value.query).toEqual({}))
+})

@@ -1,6 +1,7 @@
 """ComputePool: which machine a turn lands on (design §3 / review R2)."""
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,21 +15,57 @@ async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
     native = _FakeBackend("device")
     codex = _FakeBackend("device", "codex")
     calls = []
-    native.holds = lambda topic_id: True
-    codex.holds = lambda topic_id: True
+    native.holds = lambda topic_id, agent_handle=None: True
+    codex.holds = lambda topic_id, agent_handle=None: True
     native.interrupt = AsyncMock(side_effect=lambda ref: calls.append("interrupt"))
     native.close = AsyncMock(side_effect=lambda ref: calls.append("close"))
     native.deliver = AsyncMock(return_value=True)
     codex.deliver = AsyncMock(return_value=True)
     pool = ComputePool([native, codex], "device")
     session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
-    with pytest.raises(RuntimeError, match="multiple live harnesses"):
-        await pool.deliver(session.topic_id, "ambiguous")
     await pool.activate(session, codex)
     assert calls == ["interrupt", "close"]
     assert await pool.deliver(session.topic_id, "follow up")
     native.deliver.assert_not_awaited()
-    codex.deliver.assert_awaited_once_with(session.topic_id, "follow up")
+    codex.deliver.assert_awaited_once_with(
+        session.topic_id,
+        "follow up",
+        images=None,
+        expected_work_id=None,
+        agent_handle=None,
+        owes_reply=False,
+    )
+
+
+@pytest.mark.anyio
+async def test_activate_parks_only_the_same_seats_previous_harness():
+    """Another agent's session in the same room is a different conversation:
+    taking a seat must not evict the neighbour."""
+    native = _FakeBackend("device")
+    codex = _FakeBackend("device", "codex")
+    native.interrupt = AsyncMock()
+    native.close = AsyncMock()
+    # native holds agent-a's session in the room; agent-b's turn activates codex.
+    native.holds = lambda topic_id, agent_handle=None: (
+        agent_handle
+        in (
+            None,
+            "agent-a",
+        )
+    )
+    pool = ComputePool([native, codex], "device")
+    topic = uuid.uuid4()
+    await pool.activate(
+        SessionRef(uuid.uuid4(), topic, "agent-b", harness="claude-code"), codex
+    )
+    native.interrupt.assert_not_awaited()
+    native.close.assert_not_awaited()
+    # The same agent switching harness is still parked.
+    await pool.activate(
+        SessionRef(uuid.uuid4(), topic, "agent-a", harness="claude-code"), codex
+    )
+    native.interrupt.assert_awaited_once()
+    native.close.assert_awaited_once()
 
 
 class _EmptyBacklog:
@@ -64,6 +101,8 @@ class _FakeBackend:
 
     embeds_images = True
     provisions_machine = False
+    # 会话不存记忆文件（下面的 `memory()` 答 None），和它答的那条契约一致。
+    keeps_memory = False
 
     def __init__(self, name: str, harness: str = "claude-code"):
         self.name = name
@@ -75,13 +114,13 @@ class _FakeBackend:
     async def ensure(self, session, opening, *, work_id=None):
         return None
 
-    async def send(self, session, message, opening, *, work_id, on_mark, images=None):
+    async def send(self, session, message, opening, *, work_id, on_mark, **kwargs):
         return True
 
     def backlog(self, session):
         return _EmptyBacklog()
 
-    async def deliver(self, topic_id, text, images=None):
+    async def deliver(self, topic_id, text, images=None, **kwargs):
         return False
 
     async def interrupt(self, session):
@@ -108,8 +147,18 @@ class _FakeBackend:
     def bind_reachability(self, consumer) -> None:
         return None
 
-    def holds(self, topic_id: uuid.UUID) -> bool:
+    def bind_memory(self, consumer) -> None:
+        return None
+
+    async def memory(self, topic_id, request):
+        # 这个 double 的会话不存记忆文件：「这里没有」而不是「失败了」。
+        return None
+
+    def holds(self, topic_id: uuid.UUID, agent_handle=None) -> bool:
         return False
+
+    def work_in_flight(self, topic_id: uuid.UUID, agent_handle=None):
+        return None
 
     async def recover(self, device_id=None):
         return []
@@ -387,5 +436,9 @@ def test_resolve_compute_id_uses_room_then_explicit_project_default():
         default=ComputeChoice(name="Lab", profile="device", device_id="lab")
     )
     values = {"compute_configs": configs.model_dump()}
-    assert _resolve_compute_id(values, "cloud") == "cloud"
+    cloud = ComputeChoice(name="Cloud", profile="cloud")
+    room = SimpleNamespace(compute_config=cloud.model_dump())
+    fresh = SimpleNamespace(compute_config=None)
+    assert _resolve_compute_id(values, room) == "cloud"
+    assert _resolve_compute_id(values, fresh) == "device"
     assert _resolve_compute_id(values) == "device"

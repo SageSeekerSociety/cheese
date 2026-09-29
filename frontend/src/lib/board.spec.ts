@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { BOARD_COLUMNS, columnDotClass, columnDotStyle, columnLabel, compareTasks } from './board'
+import {
+  BOARD_COLUMNS,
+  boardColumnCounts,
+  columnDotClass,
+  columnDotStyle,
+  columnLabel,
+  compareTasks,
+  liveBoardTasks,
+} from './board'
 
 function task(over: Partial<Parameters<typeof compareTasks>[0]> = {}) {
   return { id: 'a', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...over }
@@ -95,5 +103,34 @@ describe('compareTasks', () => {
     const noUpdate = { id: 'a', created_at: '2026-08-01T00:00:00Z', updated_at: undefined }
     const newer = task({ id: 'b', updated_at: '2026-08-05T00:00:00Z' })
     expect(compareTasks(newer, noUpdate)).toBeLessThan(0)
+  })
+})
+
+describe('liveBoardTasks / boardColumnCounts', () => {
+  const on = (room_id: string, column: 'building' | 'delivering' | 'needs_you' | 'done') => ({
+    room_id,
+    presentation: { column },
+  })
+
+  it('已归档房间里没走完的活不上板，交付过的照算', () => {
+    const tasks = [on('live', 'building'), on('gone', 'needs_you'), on('gone', 'done')]
+    expect(liveBoardTasks(tasks, new Set(['gone']))).toEqual([on('live', 'building'), on('gone', 'done')])
+  })
+
+  it('摘要数的是板面三列：已完成不算，归档房间里没走完的也不算', () => {
+    const tasks = [
+      on('a', 'building'),
+      on('a', 'building'),
+      on('a', 'needs_you'),
+      on('a', 'done'),
+      on('gone', 'delivering'),
+    ]
+    const counts = boardColumnCounts(tasks, new Set(['gone']))
+    expect(Object.fromEntries(counts.map((c) => [c.key, c.count]))).toEqual({ needs_you: 1, building: 2 })
+  })
+
+  it('该你动的那一列打头', () => {
+    const tasks = [on('a', 'building'), on('a', 'delivering'), on('a', 'needs_you')]
+    expect(boardColumnCounts(tasks, new Set()).map((c) => c.key)).toEqual(['needs_you', 'building', 'delivering'])
   })
 })

@@ -51,6 +51,21 @@ convention; they are estimates, not a live exchange rate. The pinned adapter
 keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
 unsupported adaptive-thinking field.
 
+ChatGPT subscription traffic leaves through one fixed exit: an imported account
+can also be in use elsewhere through that exit, and this keeps it on one exit
+IP. The gateway reaches `chatgpt.com` through
+the `openai-egress` forwarder, which the release starts with the gateway; set the
+exit's HTTP proxy in `$HOME/gateway/compose/.env` as `OPENAI_EGRESS_HOST`,
+`OPENAI_EGRESS_PORT` and `OPENAI_EGRESS_AUTH` (`user:password`). The backend's own
+OpenAI calls (device login, token refresh, quota) take the same exit through
+`OPENAI_SUBSCRIPTION_PROXY=http://user:password@host:port` in `backend/.env`.
+There is no fallback: with the exit down, ChatGPT calls fail.
+
+The gateway also joins `cheese-meter-gateway`, an internal network shared only
+with the metering proxy, where the proxy's ChatGPT accounts answer at
+`http://metering-proxy:8445/chatgpt/<name>` (deploy/metering-proxy/README.md).
+The release creates the network if the proxy's release has not.
+
 The box's `backend/.env` must contain:
 
 ```

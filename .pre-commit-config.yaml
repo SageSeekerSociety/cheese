@@ -59,6 +59,22 @@ repos:
         pass_filenames: false
         files: ^backend/.*\.py$
 
+      # The import graph, not the diff: this walks every module under app/ and
+      # reports the ones that broke a declared boundary (api -> domain -> core,
+      # no route reaching another domain's models, no cycle between sibling
+      # domains). 260 pre-existing violations are frozen inside
+      # backend/.importlinter as exact `importer -> imported` pairs, so this
+      # blocks new ones and stays quiet about the old ones.
+      #
+      # `files:` includes .importlinter because editing the freeze is how
+      # somebody would make a violation go away without fixing it.
+      - id: boundary-check
+        name: module boundaries (import-linter + frozen baseline)
+        entry: bash -c 'cd backend && uv run python scripts/check_boundaries.py'
+        language: system
+        pass_filenames: false
+        files: ^backend/(.*\.py|\.importlinter)$
+
       # Two checks in one script: backend/alembic/HEAD must name the chain's
       # tip, and merging into main must not leave two heads. The second is only
       # visible against main — a tree with one head still forks if a sibling
@@ -94,6 +110,21 @@ repos:
         language: system
         pass_filenames: false
         files: ^frontend/
+
+      # Components must not reach the network layer: `@/api`, `@/services/*`,
+      # `@/network/*` and vue-router are off limits under src/components/**.
+      # 91 violations in 57 components are frozen in
+      # frontend/import-boundary-baseline.json, which is why this is a separate
+      # ESLint config (eslint.boundary.config.mjs) rather than a rule in the
+      # one `pnpm run lint` reads: as a plain rule it would have turned the
+      # whole tree red on day one, and a gate that red everywhere gets deleted.
+      # Same go-red-without-node_modules answer as eslint/stylelint above.
+      - id: boundary-check-frontend
+        name: component boundaries (eslint + ratchet)
+        entry: bash -c 'cd frontend && pnpm run lint:boundary'
+        language: system
+        pass_filenames: false
+        files: ^frontend/(src/components/|eslint\.boundary\.config\.mjs|import-boundary-baseline\.json|package\.json|scripts/import-boundary-ratchet)
 
       # --- heavy: never on commit, see the note at the top ---------------
       - id: pytest
@@ -146,3 +177,18 @@ repos:
         language: system
         pass_filenames: false
         files: ^docs/manual/
+
+      # A file-size ratchet, not a cliff: 35 files are already past their cap
+      # (frontend/src 1000 lines, backend/app 1500) and each is frozen at its
+      # size on the merge base. Only files that changed against origin/main are
+      # read, so an oversized file may shrink but not grow, and a new file must
+      # land under the cap. It needs a remote-tracking origin/main — CI fetches
+      # one; locally `git fetch origin main` is the fix if it is missing, which
+      # is why the failure for that case is a "cannot judge" (exit 2) naming
+      # the fetch rather than a pass.
+      - id: file-size
+        name: files have not grown past their size cap
+        entry: python3 .claude/scripts/check-file-sizes.py
+        language: system
+        pass_filenames: false
+        files: ^(backend/app/|frontend/src/|\.claude/scripts/check-file-sizes\.py)

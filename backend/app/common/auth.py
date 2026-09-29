@@ -228,6 +228,42 @@ class AccessClaims(NamedTuple):
     sid: uuid.UUID | None
 
 
+def create_notice_token(user_id: int, sid: uuid.UUID) -> str:
+    """The credential the desktop app keeps to hear about one person's notices.
+
+    It does nothing else: only the live notices connection
+    (``app/api/routes/notifications_live.py``) accepts it, and every other route
+    reads ``type == "access"``. It carries no expiry of its own; it is good for
+    as long as the sign-in session ``sid`` is, which that connection checks.
+    """
+    payload = {
+        "sub": str(user_id),
+        "type": "notices",
+        "sid": str(sid),
+        "iat": int(_utcnow().timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def verify_notice_token(token: str) -> tuple[int, uuid.UUID] | None:
+    """(user id, session id) a notices credential names, if its signature holds."""
+    try:
+        decoded = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    except jwt.PyJWTError:  # type: ignore[attr-defined]
+        return None
+    sub = decoded.get("sub")
+    if (
+        decoded.get("type") != "notices"
+        or not isinstance(sub, str)
+        or not sub.isdigit()
+    ):
+        return None
+    try:
+        return int(sub), uuid.UUID(decoded["sid"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def verify_access_token(token: str) -> AccessClaims | None:
     """What a valid, unexpired access token says, else None.
 

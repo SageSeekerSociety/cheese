@@ -109,3 +109,16 @@ def test_a_result_frame_carries_the_machines_own_words(fixture) -> None:
     # never sends the key, so neither does a double.
     assert wire.execution_result(parsed.id, error) == frame
     assert ("error" in frame) is bool(error)
+
+
+async def test_the_heartbeat_the_connector_writes_keeps_its_link_watched() -> None:
+    """The connector's heartbeat is what lets the hub tell a link that went
+    quiet from one that is merely idle; a frame the hub did not recognise as
+    one would leave a sleeping machine reading as online."""
+    from app.domain.agent.device_hub import LINK_SILENCE_S, DeviceHub
+
+    hub = DeviceHub()
+    await hub.attach_device("dev", wire.RecordingDevice())
+    assert hub.silence_allowed("dev") is None
+    await hub.on_device_message("dev", _only("heartbeat")["frame"])
+    assert hub.silence_allowed("dev") == LINK_SILENCE_S

@@ -1,0 +1,138 @@
+/**
+ * 对话栏此刻显示时间线的哪一段，以及这一段怎么变。
+ *
+ * 平常显示的是**最新的一段**：最新的一页，往上翻时一页页补上更早的（`hasMore` 说
+ * 上面还有没有）。从一条旧消息打开对话（搜索结果、被引用的那一条）时，显示的是
+ * **历史中间的一段**，下面还有更新的（`hasNewer`）。这时最新的那一段并没有丢：它
+ * 在背后照常收实时推来的块，所以「回到最新」不用再取一次，往下翻到和它接上时，两段
+ * 合成一段，又回到平常的样子。
+ *
+ * 块从哪来——打开房间时读的历史、socket 推来的一帧、自己改完的那一条——是房间壳的事；
+ * 这里只管它们怎么落进这两段：同一块不出现两次，改了的原地换掉，撤回的拿走。
+ *
+ * 取数、缓存、滚动都不在这里。
+ */
+
+import type { Block } from '../../../cx_types'
+import type { BlockWindow } from '../../../lib/blockPaging'
+
+import { ref } from 'vue'
+
+import { joinNewest, prependOlder } from '../../../lib/blockPaging'
+
+/** 新来的一块落在哪：显示出来了、收在背后的最新一段里、还是本来就有。 */
+export type Landing = 'shown' | 'held' | 'known'
+
+export function useTimeline() {
+  /** 显示着的块，从旧到新。 */
+  const messages = ref<Block[]>([])
+  /** 显示的这一段上面还有更早的块。 */
+  const hasMore = ref(false)
+  /** 显示的这一段停在历史中间，下面还有更新的块。 */
+  const hasNewer = ref(false)
+  /** 停在中间时，背后那段最新的。平常是 null：显示的就是它。 */
+  let newestHeld: BlockWindow | null = null
+
+  /** 整个换成这一段最新的。 */
+  function show(window: BlockWindow) {
+    newestHeld = null
+    hasNewer.value = false
+    messages.value = window.blocks
+    hasMore.value = window.hasMore
+  }
+
+  /** 此刻显示的这一段。 */
+  function current(): BlockWindow {
+    return { blocks: messages.value, hasMore: hasMore.value }
+  }
+
+  /** 最新的那一段，存进缓存用：停在中间时是背后那段，缓存里只放最新的。 */
+  function newest(): BlockWindow {
+    return newestHeld ?? current()
+  }
+
+  function find(id: string): Block | undefined {
+    return messages.value.find((m) => m.id === id)
+  }
+
+  /** 新来的一块接到最新一段的末尾。停在中间时它收在背后，不显示。 */
+  function append(block: Block): Landing {
+    if (newestHeld) {
+      if (newestHeld.blocks.some((m) => m.id === block.id)) return 'known'
+      newestHeld.blocks.push(block)
+      return 'held'
+    }
+    if (messages.value.some((m) => m.id === block.id)) return 'known'
+    messages.value.push(block)
+    return 'shown'
+  }
+
+  /** 一块变了：两段里有它的地方都原地换掉。 */
+  function replace(block: Block) {
+    const at = messages.value.findIndex((m) => m.id === block.id)
+    if (at >= 0) messages.value.splice(at, 1, block)
+    const held = newestHeld?.blocks.findIndex((m) => m.id === block.id) ?? -1
+    if (newestHeld && held >= 0) newestHeld.blocks.splice(held, 1, block)
+  }
+
+  function remove(id: string) {
+    messages.value = messages.value.filter((m) => m.id !== id)
+    if (newestHeld) newestHeld = { ...newestHeld, blocks: newestHeld.blocks.filter((m) => m.id !== id) }
+  }
+
+  /** 往上翻到的那一页拼到显示的这一段顶上。 */
+  function prepend(older: Block[], more: boolean) {
+    const next = prependOlder(current(), older, more)
+    messages.value = next.blocks
+    hasMore.value = next.hasMore
+  }
+
+  /**
+   * 换成历史中间的一段（`around` 一条消息取回来的那一页）。它要是已经和最新的一段
+   * 接上了，就直接合成一段最新的。
+   */
+  function showMiddle(middle: BlockWindow, reachedNewest: boolean) {
+    const held = newest()
+    const joined = joinNewest(middle, held, reachedNewest)
+    if (joined) {
+      show(joined)
+      return
+    }
+    newestHeld = held
+    messages.value = middle.blocks
+    hasMore.value = middle.hasMore
+    hasNewer.value = true
+  }
+
+  /** 往下翻到的那一页接到显示的这一段末尾；接上最新的一段就合成一段。 */
+  function appendNewer(page: Block[], reachedNewest: boolean) {
+    if (!newestHeld) return
+    const known = new Set(messages.value.map((m) => m.id))
+    const grown = { blocks: [...messages.value, ...page.filter((m) => !known.has(m.id))], hasMore: hasMore.value }
+    const joined = joinNewest(grown, newestHeld, reachedNewest)
+    if (joined) show(joined)
+    else messages.value = grown.blocks
+  }
+
+  /** 回到最新：背后那段直接换上来，不用再取。 */
+  function backToNewest() {
+    if (newestHeld) show(newestHeld)
+  }
+
+  return {
+    messages,
+    hasMore,
+    hasNewer,
+    show,
+    current,
+    newest,
+    find,
+    append,
+    replace,
+    remove,
+    prepend,
+    showMiddle,
+    appendNewer,
+    backToNewest,
+  }
+}

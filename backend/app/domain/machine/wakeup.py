@@ -29,7 +29,7 @@ WAKE_PROMPT = "Cloud machine is ready; continue the pending input."
 #: 房间里看得见的那一行 —— 送达这一轮的开场白，同时是这个房间的 Cloud 生命周期
 #: 转出「正在创建」的那条记录。一件事一条记录：由投递这一步写，写完才投递，所以
 #: 「这个房间已经叫醒过了」在下一次扫描到来之前就已经是库里的事实。
-WAKE_NOTICE = "Cloud 机器已接入，正在继续刚才的消息"
+WAKE_NOTICE = "云端工作电脑已接入，正在继续刚才的消息"
 
 ReadyLeases = Callable[[str], Awaitable[list[tuple[uuid.UUID, str]]]]
 WaitingTopics = Callable[[list[uuid.UUID]], Awaitable[list[uuid.UUID]]]
@@ -81,7 +81,7 @@ class CloudWakeup:
         for topic_id in await self._waiting_topics(list(by_topic)):
             lease = by_topic[topic_id]
             await self._announce_failure(
-                topic_id, f"Cloud 机器「{lease.hostname}」没有起来：{lease.reason}"
+                topic_id, f"云端工作电脑「{lease.hostname}」没有启动：{lease.reason}"
             )
             logger.warning(
                 "cloud topic %s told its machine %s failed: %s",

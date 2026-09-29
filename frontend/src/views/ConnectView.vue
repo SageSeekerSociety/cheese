@@ -61,8 +61,11 @@ async function approve() {
   <div class="connect-page fill-height overflow-y-auto">
     <v-container class="py-8" style="max-width: 560px">
       <div class="mb-6">
-        <div class="t-eyebrow mb-1">设备连接</div>
-        <h1 class="t-page-title">批准这台设备</h1>
+        <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
+        <template v-if="$vuetify.display.mdAndUp">
+          <div class="t-eyebrow mb-1">设备连接</div>
+          <h1 class="t-page-title">批准这台设备</h1>
+        </template>
         <div class="t-body c-muted mt-1">
           这台机器请求接入芝士，成为归你所有的设备。批准后，芝士就可以把任务派到它上面运行。
         </div>

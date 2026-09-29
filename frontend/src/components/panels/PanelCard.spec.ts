@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { Component } from 'vue'
-import type { AcceptCard, Block, MergeStateInfo, RoomTask } from '@/cx_types'
+import type { AcceptCard, Block, MergeStateInfo, RoomTask, WsServerFrame } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -19,19 +19,26 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ project: null, members: [] }) }))
+// 看这张卡的人是 alice：卡上那条默认的话就是她说的。
+vi.mock('@/me', () => ({ myHandle: () => 'alice', myId: () => '' }))
+vi.mock('../../me', () => ({ myHandle: () => 'alice', myId: () => '' }))
 
 const getRoomTask = vi.fn()
 const sayOnRoomTask = vi.fn()
 const getAcceptCards = vi.fn()
+const getProgress = vi.fn()
+const editMessage = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
     getAcceptCards: (...a: unknown[]) => getAcceptCards(...a),
+    getProgress: (...a: unknown[]) => getProgress(...a),
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
     getRoomTask: (...a: unknown[]) => getRoomTask(...a),
     sayOnRoomTask: (...a: unknown[]) => sayOnRoomTask(...a),
+    editMessage: (...a: unknown[]) => editMessage(...a),
   }
 })
 
@@ -72,6 +79,29 @@ function card(over: Partial<RoomTask & { blocks: Block[] }> = {}): RoomTask & { 
   } as RoomTask & { blocks: Block[] }
 }
 
+// 卡自己的那条频道。只要知道连的是哪个地址、能往里塞一帧。
+class FakeWebSocket {
+  static OPEN = 1
+  static instances: FakeWebSocket[] = []
+
+  readyState = FakeWebSocket.OPEN
+  onmessage: ((event: MessageEvent) => void) | null = null
+  onopen: (() => void) | null = null
+  onclose: (() => void) | null = null
+  onerror: (() => void) | null = null
+
+  constructor(readonly url: string) {
+    FakeWebSocket.instances.push(this)
+  }
+
+  close() {}
+  send() {}
+
+  emit(frame: WsServerFrame) {
+    this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent)
+  }
+}
+
 let vuetify: ReturnType<typeof createVuetify>
 
 beforeAll(() => {
@@ -100,6 +130,10 @@ beforeEach(() => {
   getRoomTask.mockReset()
   sayOnRoomTask.mockReset()
   getAcceptCards.mockReset()
+  getProgress.mockReset()
+  getProgress.mockResolvedValue({ items: [], updated_at: null })
+  FakeWebSocket.instances = []
+  vi.stubGlobal('WebSocket', FakeWebSocket)
   // 默认没有验收卡：绝大多数用例里的卡不值得验收，验收框那一块不出现。
   getAcceptCards.mockResolvedValue({ data: [], total: 0 })
   getRoomTask.mockResolvedValue(card())
@@ -135,6 +169,32 @@ describe('一张卡按卡渲染', () => {
   it('卡下的对话是这条活自己的', async () => {
     const { getByText } = mount()
     await waitFor(() => getByText('这条先别动 routes'))
+  })
+
+  it('简报里的点名换成名字，说话人显示名字而不是 handle', async () => {
+    getRoomTask.mockResolvedValue({
+      ...card({ brief: '## 决定（<@caisongyang> 拍板）' }),
+      blocks: [
+        block({ id: 'ai', author: 'cheese-c82aeb40555a', content: '开始改后端' }),
+        block({ id: 'human', author: 'caisongyang', content: '先别动 <@caisongyang> 的测试' }),
+      ],
+    })
+    const { container, getByText } = render(Panel, {
+      props: {
+        roomId: 'room-1',
+        cardId: 'task-1',
+        active: true,
+        memberNames: { caisongyang: '蔡松洋' },
+        agentName: '芝士',
+      },
+      global: { plugins: [vuetify] },
+    })
+    await waitFor(() => getByText('开始改后端'))
+    expect(container.textContent).not.toContain('<@caisongyang>')
+    expect(container.querySelector('.card-markdown h2 .mention')?.textContent).toBe('@蔡松洋')
+    const who = Array.from(container.querySelectorAll('.card-msg__who')).map((n) => n.textContent)
+    expect(who).toEqual(['芝士', '蔡松洋'])
+    expect(container.textContent).not.toContain('cheese-c82aeb40555a')
   })
 
   it('renders AI deliverables as safe Markdown and keeps human messages literal', async () => {
@@ -369,5 +429,146 @@ describe('卡上的「审阅」', () => {
     await waitFor(() => getByRole('button', { name: '审阅' }))
     await fireEvent.click(getByRole('button', { name: '审阅' }))
     expect(emitted().review).toBeTruthy()
+  })
+})
+
+// 分身干活时写下的步骤清单（`todo_write` 带着卡的 id）存在卡上、推在卡自己的频道上。
+// 房间那条频道收不到它，所以卡得自己读、自己订。
+describe('卡上的步骤清单', () => {
+  const PLAN = [
+    { id: '1', subject: '读分页的旧实现', status: 'completed' as const },
+    { id: '2', subject: '加 cursor 参数', status: 'in_progress' as const },
+    { id: '3', subject: '补测试', status: 'pending' as const },
+  ]
+
+  function cardSocket(): FakeWebSocket {
+    const socket = FakeWebSocket.instances.filter((s) => s.url.includes('/topics/task-1/chat')).at(-1)
+    if (!socket) throw new Error('卡的频道没连上')
+    return socket
+  }
+
+  it('打开卡就读这张卡存下的那份，读的是卡的，不是房间的', async () => {
+    getProgress.mockResolvedValue({ items: PLAN, updated_at: '2026-09-27T00:00:00Z' })
+    const { findByTestId } = mount()
+    const block = await findByTestId('card-progress')
+    expect(getProgress).toHaveBeenCalledWith('room-1', 'task-1')
+    expect(block.textContent).toContain('读分页的旧实现')
+    expect(block.textContent).toContain('补测试')
+    expect(block.textContent).toContain('完成 1/3')
+  })
+
+  it('分身改了清单，卡上跟着换成新的那一份', async () => {
+    getProgress.mockResolvedValue({ items: PLAN, updated_at: '2026-09-27T00:00:00Z' })
+    const { findByTestId } = mount()
+    await findByTestId('card-progress')
+
+    cardSocket().emit({
+      type: 'todo',
+      items: [
+        { id: '1', subject: '读分页的旧实现', status: 'completed' },
+        { id: '2', subject: '加 cursor 参数', status: 'completed' },
+        { id: '3', subject: '补测试', status: 'in_progress' },
+      ],
+    })
+    await waitFor(async () => expect((await findByTestId('card-progress')).textContent).toContain('完成 2/3'))
+  })
+
+  it('打开时还没有清单，分身第一次写下它就出现', async () => {
+    const { findByTestId, queryByTestId, findByText } = mount()
+    await findByText('这条先别动 routes')
+    expect(queryByTestId('card-progress')).toBeNull()
+
+    cardSocket().emit({ type: 'todo', items: PLAN })
+    expect((await findByTestId('card-progress')).textContent).toContain('加 cursor 参数')
+  })
+
+  it('没有清单就整段不画', async () => {
+    const { findByText, queryByTestId } = mount()
+    await findByText('这条先别动 routes')
+    await waitFor(() => expect(getProgress).toHaveBeenCalled())
+    expect(queryByTestId('card-progress')).toBeNull()
+  })
+
+  it('读回来得晚的旧清单不盖掉频道上已经到的新清单', async () => {
+    let answer: (v: unknown) => void = () => {}
+    getProgress.mockReturnValue(new Promise((resolve) => (answer = resolve)))
+    const { findByTestId } = mount()
+    await waitFor(() => expect(getProgress).toHaveBeenCalled())
+
+    cardSocket().emit({ type: 'todo', items: [{ id: '1', subject: '新的一步', status: 'in_progress' }] })
+    answer({ items: PLAN, updated_at: '2026-09-27T00:00:00Z' })
+
+    const block = await findByTestId('card-progress')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(block.textContent).toContain('新的一步')
+    expect(block.textContent).not.toContain('读分页的旧实现')
+  })
+})
+
+describe('改自己在卡上说过的话', () => {
+  it('自己的话有「编辑」，别人的没有', async () => {
+    getRoomTask.mockResolvedValue(card({ blocks: [block(), block({ id: 'b2', author: 'bob', content: '好的' })] }))
+    const view = mount()
+    await waitFor(() => view.getByText('好的'))
+    expect(view.getAllByRole('button', { name: '编辑' })).toHaveLength(1)
+  })
+
+  it('原地改，保存后换成新的正文并标「已编辑」', async () => {
+    editMessage.mockImplementation(async (id: string, content: string) =>
+      block({ id, content, meta: { edited_at: '2026-09-06T01:05:00Z' } })
+    )
+    const view = mount()
+    await waitFor(() => view.getByText('这条先别动 routes'))
+    await fireEvent.click(view.getByRole('button', { name: '编辑' }))
+    const box = view.getByRole('textbox', { name: '编辑' }) as HTMLTextAreaElement
+    expect(box.value).toBe('这条先别动 routes')
+    await fireEvent.update(box, 'routes 可以动了')
+    await fireEvent.click(view.getByRole('button', { name: '保存' }))
+    await waitFor(() => view.getByText('routes 可以动了'))
+    expect(editMessage).toHaveBeenCalledWith('b1', 'routes 可以动了')
+    expect(view.getByText('已编辑')).toBeTruthy()
+  })
+
+  it('别人改了卡上的话，卡的频道上一到就换掉', async () => {
+    const view = mount()
+    await waitFor(() => view.getByText('这条先别动 routes'))
+    const socket = FakeWebSocket.instances.find((s) => s.url.includes('task-1'))!
+    socket.emit({
+      type: 'block_updated',
+      block: block({ content: '改好了', meta: { edited_at: '2026-09-06T01:05:00Z' } }),
+    })
+    await waitFor(() => view.getByText('改好了'))
+    expect(view.queryByText('这条先别动 routes')).toBeNull()
+  })
+})
+
+describe('从一条消息打开这张卡', () => {
+  it('停在点名的那一条上：取卡时拉到它为止，打开后滚到那一行', async () => {
+    const scrolled: Element[] = []
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this)
+    }
+    getRoomTask.mockResolvedValue(
+      card({ blocks: [block({ id: 'old', content: '缓存方案定成两级' }), block({ id: 'new', content: '最新一条' })] })
+    )
+    render(Panel, {
+      props: { roomId: 'room-1', cardId: 'task-1', active: true, focusBlock: 'old' },
+      global: { plugins: [vuetify] },
+    })
+    await waitFor(() => expect(scrolled.some((el) => el.textContent?.includes('缓存方案定成两级'))).toBe(true))
+    expect(getRoomTask.mock.calls[0][2]).toMatchObject({ through: 'old' })
+  })
+
+  it('点名的那一条不在这张卡里：照常打开这张卡', async () => {
+    const { ApiError } = await vi.importActual<typeof import('@/api')>('@/api')
+    getRoomTask.mockImplementation(async (_room: string, _card: string, opts?: { through?: string }) => {
+      if (opts?.through) throw new ApiError(404, '这条消息不在这个任务里')
+      return card()
+    })
+    const { getByText } = render(Panel, {
+      props: { roomId: 'room-1', cardId: 'task-1', active: true, focusBlock: 'elsewhere' },
+      global: { plugins: [vuetify] },
+    })
+    await waitFor(() => expect(getByText('这条先别动 routes')).toBeTruthy())
   })
 })

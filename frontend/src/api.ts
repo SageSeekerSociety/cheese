@@ -11,7 +11,6 @@ import type {
   BranchProtectionPatch,
   BranchProtectionRules,
   ChatAttachment,
-  ComputeProfiles,
   DocumentRevision,
   EnvironmentConfig,
   EnvironmentStatus,
@@ -42,6 +41,7 @@ import type {
   MemberSummary,
   MilestoneFull,
   OAuthConnectionInfo,
+  OverviewAuto,
   PrChecks,
   PreviewInfo,
   ProfileTopic,
@@ -589,6 +589,26 @@ export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
 
+/** 归档项目：只有所有者能做。项目从所有人的列表里消失、不能再修改，里面的内容都保留。 */
+export function archiveProject(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/archive`, { method: 'POST' })
+}
+
+/** 取消归档：项目和随它一起归档的话题回来。 */
+export function unarchiveProject(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/unarchive`, { method: 'POST' })
+}
+
+/** 我归档过的项目 —— 它们只在这里列出来。 */
+export function listArchivedProjects(): Promise<ListPayload<Project>> {
+  return request<ListPayload<Project>>('/projects?archived=true')
+}
+
+/** 后端拒绝写入一个已归档项目时，错误名是这个。 */
+export function isProjectArchivedError(e: unknown): boolean {
+  return e instanceof ApiError && e.code === 'ProjectArchivedError'
+}
+
 export function getProjectSite(projectId: string): Promise<ProjectSiteInfo> {
   return request<ProjectSiteInfo>(`/projects/${encodeURIComponent(projectId)}/site`)
 }
@@ -685,6 +705,80 @@ export function listTopics(
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
+/** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */
+export interface TopicName {
+  id: string
+  project_id: string
+  title: string
+  kind: string
+  status: string
+}
+
+/** 我能看到的所有项目里的话题名，最近有动静的在前。私聊不在里面。 */
+export async function listTopicNames(): Promise<TopicName[]> {
+  return (await request<{ topics: TopicName[] }>('/topics/names')).topics
+}
+
+/** 项目里一次搜索的结果：只搜这个人能看的房间，每组最相关的在前。 */
+export interface ProjectSearchHits {
+  records: {
+    id: string
+    room_id: string
+    room_title: string
+    kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'decision' | 'weekly'
+    author: string
+    created_at: string
+    /** 说在某件活的卡片里，而不是房间自己的对话里。 */
+    task_id: string | null
+    snippet: string
+  }[]
+  tasks: { id: string; room_id: string; room_title: string; title: string; status: string; snippet: string }[]
+  library: { path: string; bytes: number; modified: string }[]
+}
+
+/**
+ * `only` 只搜这几类（`message`、`doc_node`…、`tasks`、`library`），并且可以用 `offset`
+ * 往后翻；不给 `only` 就是每类各取前 `limit` 条。
+ */
+export async function searchProject(
+  projectId: string,
+  q: string,
+  limit = 10,
+  page?: { only: string[]; offset: number }
+): Promise<ProjectSearchHits> {
+  return (await askProjectSearch(projectId, q, limit, page, false)).hits
+}
+
+/**
+ * 同一次搜索，再带上每一类各能搜到多少（`message`、`doc`、`doc_node`、`comment`、
+ * `decision`、`weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
+ */
+export async function searchProjectCounted(
+  projectId: string,
+  q: string,
+  limit: number,
+  page?: { only: string[]; offset: number }
+): Promise<{ hits: ProjectSearchHits; counts: Record<string, number> }> {
+  const body = await askProjectSearch(projectId, q, limit, page, true)
+  return { hits: body.hits, counts: body.counts ?? {} }
+}
+
+function askProjectSearch(
+  projectId: string,
+  q: string,
+  limit: number,
+  page: { only: string[]; offset: number } | undefined,
+  withCounts: boolean
+): Promise<{ hits: ProjectSearchHits; counts?: Record<string, number> }> {
+  const params = new URLSearchParams({ q, limit: String(limit) })
+  if (page) {
+    for (const kind of page.only) params.append('only', kind)
+    params.set('offset', String(page.offset))
+  }
+  if (withCounts) params.set('with_counts', 'true')
+  return request(`/projects/${encodeURIComponent(projectId)}/context/search?${params}`)
+}
+
 // 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
 // → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
 export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTask>> {
@@ -739,19 +833,11 @@ export function markTopicRead(topicId: string, handle: string): Promise<Record<s
   })
 }
 
-/** A person names the room. `suggested` = they confirmed a 智能重命名 suggestion
- *  (recorded as such). Either way the platform stops renaming it on its own. */
-export function setTopicTitle(topicId: string, title: string, suggested = false): Promise<Topic> {
+/** A person names the room. The platform stops renaming it on its own from then on. */
+export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title`, {
     method: 'POST',
-    body: JSON.stringify(suggested ? { title, suggested: true } : { title }),
-  })
-}
-
-/** 智能重命名: a title for the room as it is now, for a person to confirm. Writes nothing. */
-export function suggestTopicTitle(topicId: string): Promise<{ title: string }> {
-  return request<{ title: string }>(`/topics/${encodeURIComponent(topicId)}/title/suggest`, {
-    method: 'POST',
+    body: JSON.stringify({ title }),
   })
 }
 
@@ -761,11 +847,6 @@ export function undoTopicTitle(topicId: string, eventId: string): Promise<Topic>
     method: 'POST',
     body: JSON.stringify({ event_id: eventId }),
   })
-}
-
-/** 恢复自动命名: hand a title a person chose back to the platform. */
-export function restoreTopicAutoTitle(topicId: string): Promise<Topic> {
-  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title/auto`, { method: 'POST' })
 }
 
 export type TopicNamingMode = 'auto' | 'manual'
@@ -834,17 +915,6 @@ export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
 
-// 算力池: the project's current compute pool + the deployed ones it may select.
-export function getComputeProfiles(projectId: string): Promise<ComputeProfiles> {
-  return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/compute-profiles`)
-}
-export function setComputeProfile(projectId: string, profile: string): Promise<{ current: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/compute-profile`, {
-    method: 'PUT',
-    body: JSON.stringify({ profile }),
-  })
-}
-
 // MicroCloud machines are billed/audited through one project but enroll into that
 // project's team compute pool. The browser never receives provider credentials.
 export interface ResourceLimits {
@@ -892,16 +962,6 @@ export function listProjectMachines(
   return request(`/projects/${encodeURIComponent(projectId)}/machines`)
 }
 
-export function createProjectMachine(
-  projectId: string,
-  spec: import('./cx_types').ProjectMachineCreate
-): Promise<import('./cx_types').ProjectMachine> {
-  return request(`/projects/${encodeURIComponent(projectId)}/machines`, {
-    method: 'POST',
-    body: JSON.stringify(spec),
-  })
-}
-
 export function deleteProjectMachine(
   projectId: string,
   machineId: string
@@ -921,20 +981,18 @@ export function changeProjectMachinePower(
   })
 }
 
-// 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
+// 房间的工作电脑：房间这一项（还没开工的 AI 队友开工时用哪台），和每个会话在哪台上。
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
 }
 
-export function getSessionWorkLeases(topicId: string): Promise<{ sessions: import('./cx_types').SessionWorkLease[] }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/sessions/work-leases`)
-}
-
-export function setSessionWorkChoice(topicId: string, sessionId: string, choice: import('./cx_types').ComputeChoice) {
-  return request<{ session: import('./cx_types').SessionWorkLease }>(
-    `/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/work-choice`,
-    { method: 'PUT', body: JSON.stringify({ choice }) }
-  )
+// The project's agent sessions on one self-hosted device, for a project manager
+// to switch some elsewhere. Rooms the caller cannot open are only counted.
+export function listDeviceSessions(
+  projectId: string,
+  deviceId: string
+): Promise<{ sessions: import('./cx_types').DeviceSession[]; hidden: number }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/devices/${encodeURIComponent(deviceId)}/sessions`)
 }
 
 export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
@@ -943,8 +1001,8 @@ export function getProjectComputeConfigs(projectId: string): Promise<import('./c
 
 export function saveProjectComputeConfigs(
   projectId: string,
-  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>
-): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default' | 'favorites'>> {
+  configs: Pick<import('./cx_types').ProjectComputeConfigs, 'default'>
+): Promise<Pick<import('./cx_types').ProjectComputeConfigs, 'default'>> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`, {
     method: 'PUT',
     body: JSON.stringify(configs),
@@ -960,31 +1018,24 @@ export interface ComputeProposal {
   content: string
 }
 
+// 一个话题一个容器：改的是整个房间，房间里每一条会话都跟着搬。平台先在各自离开
+// 的那台上把改动推上去，推不上去就整个不换。`abandonUnpushed` 只在原来那台够不着
+// 时成立（`WorkComputerUnreachable`）；`ifIdle` 跳过正在干活的房间（409
+// SessionWorking）。
 export function setTopicComputeChoice(
   topicId: string,
-  choice: import('./cx_types').ComputeChoice
+  choice: import('./cx_types').ComputeChoice,
+  options: { abandonUnpushed?: boolean; ifIdle?: boolean } = {}
 ): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
-    body: JSON.stringify({ choice }),
+    body: JSON.stringify({
+      choice,
+      ...(options.abandonUnpushed ? { abandon_unpushed: true } : {}),
+      ...(options.ifIdle ? { if_idle: true } : {}),
+    }),
   })
 }
-export function setTopicComputeProfile(
-  topicId: string,
-  profile: string,
-  deviceId: string | null = null
-): Promise<{
-  current: string
-  device_id: string | null
-  locked: boolean
-  inherited: boolean
-}> {
-  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
-    method: 'PUT',
-    body: JSON.stringify(profile === 'device' ? { profile, device_id: deviceId } : { profile }),
-  })
-}
-
 // ---- AI 队友 (agent 类型与实例) ----
 //
 // 「不能停用最后一个」and the like are the backend's to enforce; these are plain
@@ -1086,6 +1137,59 @@ export function saveProjectEnvironment(
     method: 'PUT',
     body: JSON.stringify(config),
   })
+}
+// 项目的远程 MCP 服务器：来自默认分支的 .mcp.json；连接属于项目，任何成员都能连接或断开。
+// 后端从不返回令牌和密钥的值，这里的类型里也没有它们。
+export type McpServerStatus = 'connected' | 'disconnected' | 'needs_reconnect' | 'missing_values' | 'ready'
+export interface McpVariable {
+  name: string
+  set: boolean
+  updated_by: string | null
+  updated_at: string | null
+}
+export interface McpServer {
+  name: string
+  transport: 'http' | 'sse'
+  host: string
+  auth: 'oauth' | 'headers'
+  status: McpServerStatus
+  authorized_by: string | null
+  authorized_at: string | null
+  variables: McpVariable[]
+}
+export interface McpServerList {
+  servers: McpServer[]
+  /** 读不出清单时的原因：没有 .mcp.json、格式不对、仓库暂时读不到。 */
+  problem: 'missing' | 'invalid' | 'unreadable' | null
+}
+export type RoomMcpServer = Pick<McpServer, 'name' | 'host' | 'auth' | 'status' | 'authorized_by' | 'authorized_at'>
+
+export function getMcpServers(projectId: string): Promise<McpServerList> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers`)
+}
+export function connectMcpServer(projectId: string, name: string): Promise<{ authorization_url: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(name)}/connect`, {
+    method: 'POST',
+  })
+}
+export function disconnectMcpServer(projectId: string, name: string): Promise<null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(name)}/connection`, {
+    method: 'DELETE',
+  })
+}
+export function setMcpSecret(projectId: string, name: string, value: string): Promise<null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/secrets/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  })
+}
+export function clearMcpSecret(projectId: string, name: string): Promise<null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/secrets/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+}
+export function getRoomMcpServers(topicId: string): Promise<{ servers: RoomMcpServer[] }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/mcp/servers`)
 }
 export function getRoomEnvironment(projectId: string, roomId: string): Promise<EnvironmentStatus> {
   return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}`)
@@ -1206,15 +1310,25 @@ export function sendFeedback(alertId: number, feedback: 'up' | 'down'): Promise<
 // is 2.1 MB / 2226 rows on a long topic. The chat panel always passes a limit;
 // `has_more` + `oldest_id` walk backwards from there (a cursor, not an offset —
 // the tail keeps growing while you read history).
+//
+// A window can also open in the middle (`around` a message) and walk down towards
+// the newest with `after`; `has_newer` + `newest_id` are the cursor that way.
 export interface BlockPage extends ListPayload<Block> {
   has_more: boolean
   oldest_id: string | null
+  has_newer: boolean
+  newest_id: string | null
 }
 
-export function listBlocks(topicId: string, opts?: { limit?: number; before?: string }): Promise<BlockPage> {
+export function listBlocks(
+  topicId: string,
+  opts?: { limit?: number; before?: string; after?: string; around?: string }
+): Promise<BlockPage> {
   const q = new URLSearchParams()
   if (opts?.limit !== undefined) q.set('limit', String(opts.limit))
   if (opts?.before) q.set('before', opts.before)
+  if (opts?.after) q.set('after', opts.after)
+  if (opts?.around) q.set('around', opts.around)
   const qs = q.toString()
   const query = qs ? `?${qs}` : ''
   return request<BlockPage>(`/topics/${encodeURIComponent(topicId)}/blocks${query}`)
@@ -1232,6 +1346,15 @@ export function toggleReaction(
     `/blocks/${encodeURIComponent(blockId)}/reactions`,
     { method: 'POST', body: JSON.stringify({ emoji, author }) }
   )
+}
+
+// Edit a message you sent. Everyone in the room, you included, also gets the
+// edited block as a `block_updated` frame.
+export function editMessage(blockId: string, content: string): Promise<Block> {
+  return request<Block>(`/blocks/${encodeURIComponent(blockId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ content }),
+  })
 }
 
 // ---- 资料库 ----
@@ -1816,12 +1939,22 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
+// 项目总览的自动区 (#1889): the overview room's ②~⑤, structured so the doc
+// panel can render them below the body and make each line clickable. Only the
+// project's root topic has one — any other room answers 404 — and the caller
+// must be able to read the room, same as the doc itself.
+export function getOverviewAuto(topicId: string): Promise<OverviewAuto> {
+  return request<OverviewAuto>(`/topics/${encodeURIComponent(topicId)}/overview`)
+}
+
 // 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
 // Read on topic open — between turns there is no WS stream to carry it, and
 // "做到哪了" has to be visible without summoning anyone. `items` is [] for a
-// topic that never had a checklist.
-export function getProgress(topicId: string): Promise<TopicProgress> {
-  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
+// topic that never had a checklist. With `taskId`, that card's list — the one
+// its 分身 wrote — instead of the room's.
+export function getProgress(topicId: string, taskId?: string): Promise<TopicProgress> {
+  const q = taskId ? `?task=${encodeURIComponent(taskId)}` : ''
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
 }
 
 // PUT upserts the living doc and appends a "📝 编辑了文档" event to the
@@ -1917,14 +2050,20 @@ export function deleteMemory(entryId: string): Promise<{ deleted: string }> {
 // 现场 (施工现场): a topic's tool/event record (read-only), newest window first.
 // Paged: events are the most numerous kind of block (one per tool call), so an
 // unpaged 现场 is the largest request the app can make and it only grows.
+//
+// `author` narrows a page to one teammate's steps — a room can seat several, and
+// 现场 reads them one at a time. It narrows the query, not the page: the filter
+// runs inside the paging (same as the backend's `kinds`), so a page still holds
+// `limit` rows and `has_more` is about what is left for THAT teammate.
 export const SITE_PAGE_SIZE = 120
 export function getTranscript(
   topicId: string,
-  opts: { limit?: number; before?: string } = {}
+  opts: { limit?: number; before?: string; author?: string | null } = {}
 ): Promise<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }> {
   const q = new URLSearchParams()
   if (opts.limit != null) q.set('limit', String(opts.limit))
   if (opts.before) q.set('before', opts.before)
+  if (opts.author) q.set('author', opts.author)
   const qs = q.toString()
   return request<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }>(
     `/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`
@@ -2135,6 +2274,15 @@ export function rejectCard(cardId: string, decidedBy: string, note: string): Pro
   })
 }
 
+// 作废：结束一张未决的卡，不合并也不退回。作废人由后端从会话认定；验收人、
+// 项目所有者、团队管理员能作废（server-side）。
+export function voidCard(cardId: string, note: string): Promise<AcceptCard> {
+  return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/void`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}
+
 // 撤回采纳 (spec §6.3: 采纳可撤销). Revoke an accepted card → un-archives the
 // topic. Only the accepter / owner / lead may revoke (enforced server-side).
 export function revokeCard(cardId: string, decidedBy: string): Promise<AcceptCard> {
@@ -2315,10 +2463,11 @@ export function getTopic(topicId: string): Promise<Topic> {
 export function getRoomTask(
   roomId: string,
   taskId: string,
-  opts?: { limit?: number }
+  opts?: { limit?: number; through?: string }
 ): Promise<RoomTask & { blocks: Block[] }> {
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
+  if (opts?.through) q.set('through', opts.through)
   const query = q.toString() ? `?${q.toString()}` : ''
   return request<RoomTask & { blocks: Block[] }>(
     `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}${query}`

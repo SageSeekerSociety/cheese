@@ -143,7 +143,9 @@ export const AGENT_STATUS_EVENTS = new Set([
   'force_merged',
   'migration_collision',
   'api_retry',
+  'context_compact',
   'device_waiting',
+  'doc_missing',
 ])
 
 /** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
@@ -389,7 +391,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
     const state = str(meta(latest)?.state)
     return {
       mode: 'agent-status',
-      line: state === 'ready' ? '运行环境已就绪' : state === 'waiting' ? '正在准备运行环境' : latest.content,
+      line: state === 'ready' ? '工作电脑已就绪' : state === 'waiting' ? '正在准备工作电脑' : latest.content,
       updatedAt: latest.created_at,
       occurrences: run.map((item) => ({
         line: item.content,

@@ -15,13 +15,13 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import cli_worker, execution, executor_transport
+from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import runtime
 from app.domain.agent.harness.codex.tools import RemoteTools
 from tests.pinned_claude import claude_binary
-from tests.support import wire
+from tests.support import executor_release, wire
 
 
 def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch):
@@ -63,6 +63,69 @@ def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch)
     assert seen == ["first", "rotated"]
 
 
+def test_a_command_starting_while_another_takes_the_lease_has_the_token(
+    tmp_path, monkeypatch
+):
+    """A session that took its machine through a lease takes it again at every
+    command start, and keeps the token the lease hands it in the token file.
+    Commands start side by side (a background Bash and the PostToolUse hook
+    that follows it, parallel Bash calls): none may find the file empty while
+    another start is writing it."""
+    lease = {
+        "data": {
+            "target": {"kind": "device", "url": "http://executor.test"},
+            "token": "execution-only",
+        }
+    }
+    token = tmp_path / "execution.token"
+    token.write_text("execution-only")
+    config = {
+        "kind": "device",
+        "url": "http://executor.test",
+        "lease_path": "/lease",
+        "target_file": str(tmp_path / "execution.json"),
+        "token_file": str(token),
+    }
+
+    class Connection:
+        def request(self, method, path, *, body, headers):
+            pass
+
+        def getresponse(self):
+            return self
+
+        status = 200
+
+        def read(self):
+            return json.dumps(lease).encode()
+
+    def connection(self):
+        self.transport.headers = {}
+        return Connection(), ""
+
+    monkeypatch.setattr(executor_transport.RemoteClient, "connection", connection)
+    monkeypatch.setenv("CHEESE_API", "http://platform.test")
+    done = threading.Event()
+
+    def take_the_lease():
+        client = executor_transport.RemoteClient(dict(config))
+        for _ in range(3000):
+            client.acquire(deadline=0)
+        done.set()
+
+    taking = threading.Thread(target=take_the_lease)
+    taking.start()
+    failures = 0
+    starting = executor_transport.RemoteClient(dict(config))
+    while not done.is_set():
+        try:
+            starting.platform_request({"method": "POST", "path": "/lease"})
+        except RuntimeError:
+            failures += 1
+    taking.join()
+    assert failures == 0
+
+
 def test_platform_requests_read_the_rotated_room_token(tmp_path, monkeypatch):
     token = tmp_path / "execution.token"
     token.write_text("first")
@@ -97,14 +160,7 @@ def test_platform_requests_read_the_rotated_room_token(tmp_path, monkeypatch):
 @pytest.fixture
 def executor(tmp_path, request):
     home = tmp_path / "session home"
-    helper = home / ".cheese/remote-execution/runtime.py"
-    helper.parent.mkdir(parents=True)
-    shutil.copyfile(runtime.__file__, helper)
-    shutil.copyfile(cli_worker.__file__, helper.parent / "cli_worker.py")
-    shutil.copyfile(
-        Path(__file__).resolve().parents[2] / "sandbox/cheese",
-        home / ".cheese/cheese",
-    )
+    helper = executor_release.install(home / ".cheese")
     state = home / ".cheese/executor"
     work = tmp_path / "project"
     work.mkdir()
@@ -791,6 +847,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     copied_helper = helpers / source.name
     shutil.copyfile(source, copied_helper)
     shutil.copyfile(source.with_name("proxy.js"), helpers / "proxy.js")
+    shutil.copyfile(central.cheese_source(), helpers / "cheese.py")
     shutil.copyfile(executor_transport.__file__, helpers / "executor_transport.py")
     monkeypatch.setattr(central, "__file__", str(copied_helper))
     target = json.loads((tmp_path / "central.json").read_text())
@@ -1173,7 +1230,7 @@ class LeasingPlatform:
                             "token": "execution-only",
                         }
                         if platform.lease == "ready"
-                        else {"unavailable": "工作机器未连接；对话和平台工具仍可用。"}
+                        else {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
                     }
                 else:
                     platform.seen.append(body["method"])
@@ -1273,6 +1330,35 @@ def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
     assert platform.seen[before:] == ["lease", "invoke"]
 
 
+def test_a_session_back_on_its_machine_keeps_what_it_wrote_at_the_placeholder(
+    leased_session,
+):
+    """A conversation that already lived at the machine's path, resumed at the
+    placeholder and then relaunched onto the machine again: its subagent
+    transcripts and saved tool results from both stays end up in one place,
+    and the relaunch starts."""
+    _, work, launch = leased_session
+    config = work.parent / "session" / "config"
+    machine = central.project_dir(config, str(work))
+    placeholder = central.project_dir(config, "/unavailable-project")
+    (machine / "s/subagents").mkdir(parents=True)
+    (machine / "s.jsonl").write_text("conversation\n")
+    (machine / "s/subagents/agent-first.jsonl").write_text("first\n")
+    (placeholder / "s/subagents").mkdir(parents=True)
+    (placeholder / "s/tool-results").mkdir(parents=True)
+    (placeholder / "s/subagents/agent-second.jsonl").write_text("second\n")
+    (placeholder / "s/tool-results/result.txt").write_text("result\n")
+
+    started = launch()
+
+    assert started["workspace"] == str(work)
+    assert (machine / "s.jsonl").read_text() == "conversation\n"
+    assert (machine / "s/subagents/agent-first.jsonl").read_text() == "first\n"
+    assert (machine / "s/subagents/agent-second.jsonl").read_text() == "second\n"
+    assert (machine / "s/tool-results/result.txt").read_text() == "result\n"
+    assert not placeholder.exists()
+
+
 def test_a_session_never_starts_at_the_machines_path_without_the_machine(
     leased_session,
 ):
@@ -1282,7 +1368,7 @@ def test_a_session_never_starts_at_the_machines_path_without_the_machine(
     that machine would run."""
     platform, _, launch = leased_session
     platform.lease = "unavailable"
-    with pytest.raises(RuntimeError, match="工作机器未连接"):
+    with pytest.raises(RuntimeError, match="工作电脑未连接"):
         launch()
     assert platform.seen == ["lease"]
 
@@ -1308,7 +1394,7 @@ def test_a_tool_waits_while_its_machine_is_prepared_unless_it_is_cancelled(
                 seen.append("lease")
                 result = {
                     "data": {
-                        "unavailable": "Cloud 机器正在准备；对话和平台工具仍可用。",
+                        "unavailable": "云端工作电脑正在准备；对话和平台工具仍可用。",
                         "preparing": True,
                     }
                     if seen.count("lease") < 3

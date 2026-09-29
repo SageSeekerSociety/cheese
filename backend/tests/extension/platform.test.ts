@@ -21,8 +21,6 @@ import { after, describe, it } from "node:test";
 // drifted goes on passing.
 import {
   CATALOG,
-  FakePi,
-  NOTICE,
   cleanup,
   load,
   runner,
@@ -74,6 +72,168 @@ describe("平台工具", () => {
 
     const answer = await pi.call("cheese_doc_get", {});
     assert.match(answer.content[0].text, /没有这个话题/);
+    socket.close();
+  });
+});
+
+describe("项目的 MCP 服务器", () => {
+  const TRACKER = {
+    name: "mcp__tracker__whoami",
+    description: "Say which credential reached the server.",
+    inputSchema: { type: "object", properties: { note: { type: "string" } } },
+  };
+
+  it("runner 列出的每个工具都注册成 pi 的工具，调用送回 runner 的 mcp", async () => {
+    const socket = await runner(() => ({
+      result: { content: [{ type: "text", text: "reached" }], isError: false },
+    }));
+    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+
+    assert.deepEqual(pi.tools.get(TRACKER.name).parameters, TRACKER.inputSchema);
+    const answer = await pi.call(TRACKER.name, { note: "hi" });
+    assert.deepEqual(answer.content, [{ type: "text", text: "reached" }]);
+    assert.deepEqual(socket.asked, [
+      {
+        method: "mcp",
+        params: { id: "call-1", tool: TRACKER.name, arguments: { note: "hi" } },
+      },
+    ]);
+    socket.close();
+  });
+
+  it("服务器说失败的调用抛出去，pi 才会把它标成错误", async () => {
+    // pi 0.85.1 sets a tool result's error flag only when `execute` throws; a
+    // returned `isError` is ignored, and the model would read a failure as an
+    // answer.
+    const socket = await runner(() => ({
+      result: { content: [{ type: "text", text: "no such issue" }], isError: true },
+    }));
+    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+
+    await assert.rejects(pi.call(TRACKER.name, {}), /no such issue/);
+    socket.close();
+  });
+});
+
+describe("项目的 hooks 管着 pi 自己的工具", () => {
+  const TRACKER = {
+    name: "mcp__tracker__whoami",
+    description: "Say which credential reached the server.",
+    inputSchema: { type: "object", properties: {} },
+  };
+
+  it("PreToolUse 拒了的命令不会跑，模型读到的是 hook 给的理由", async () => {
+    const socket = await runner(() => ({ result: { denied: "PROJECT_POLICY: no" } }));
+    const { pi } = await load({ socket: socket.address });
+    const ran: any[] = [];
+
+    const answer = await pi.run("bash", { command: "rm -rf /" }, (input) => {
+      ran.push(input);
+      return { content: [{ type: "text", text: "gone" }] };
+    }, { cwd: "/work" });
+
+    assert.deepEqual(ran, [], "a denied call never reaches the tool");
+    assert.equal(answer.isError, true);
+    assert.equal(answer.content[0].text, "PROJECT_POLICY: no");
+    assert.deepEqual(socket.asked, [
+      {
+        method: "hooks",
+        params: {
+          event: "PreToolUse",
+          tool: "bash",
+          id: "call-1",
+          input: { command: "rm -rf /" },
+          cwd: "/work",
+        },
+      },
+    ]);
+    socket.close();
+  });
+
+  it("放行的调用跑 hook 改过的参数，跑完带着结果再问一次 PostToolUse", async () => {
+    const socket = await runner((request) =>
+      request.params.event === "PreToolUse"
+        ? { result: { input: { path: "notes.md" } } }
+        : { result: { input: request.params.input } },
+    );
+    const { pi } = await load({ socket: socket.address });
+    const ran: any[] = [];
+
+    const answer = await pi.run("read", { path: "old.md", limit: 5 }, (input) => {
+      ran.push({ ...input });
+      return { content: [{ type: "text", text: "the notes" }] };
+    });
+
+    assert.deepEqual(ran, [{ path: "notes.md" }], "the input the hook returned, whole");
+    assert.deepEqual(answer, { content: [{ type: "text", text: "the notes" }], isError: false });
+    assert.deepEqual(socket.asked[1].params, {
+      event: "PostToolUse",
+      tool: "read",
+      id: "call-1",
+      input: { path: "notes.md" },
+      result: { content: [{ type: "text", text: "the notes" }] },
+    });
+    socket.close();
+  });
+
+  it("PostToolUse 拒了，调用已经发生，理由加进结果里", async () => {
+    const socket = await runner((request) =>
+      request.params.event === "PreToolUse"
+        ? { result: { input: request.params.input } }
+        : { result: { denied: "PROJECT_POLICY: review this" } },
+    );
+    const { pi } = await load({ socket: socket.address });
+
+    const answer = await pi.run("write", { path: "a", content: "b" }, () => ({
+      content: [{ type: "text", text: "written" }],
+    }));
+
+    assert.deepEqual(answer.content, [
+      { type: "text", text: "written" },
+      { type: "text", text: "PostToolUse hook: PROJECT_POLICY: review this" },
+    ]);
+    socket.close();
+  });
+
+  it("问不到 runner 时调用不跑", async () => {
+    const { pi } = await load({ socket: "/nonexistent/runner.sock" });
+    const ran: any[] = [];
+
+    const answer = await pi.run("bash", { command: "echo hi" }, (input) => {
+      ran.push(input);
+      return { content: [] };
+    });
+
+    assert.deepEqual(ran, []);
+    assert.equal(answer.isError, true);
+  });
+
+  it("失败的调用不跑 PostToolUse", async () => {
+    const socket = await runner((request) => ({ result: { input: request.params.input } }));
+    const { pi } = await load({ socket: socket.address });
+
+    await pi.run("bash", { command: "false" }, () => {
+      throw new Error("exit 1");
+    });
+
+    assert.deepEqual(
+      socket.asked.map((request) => request.params.event),
+      ["PreToolUse"],
+    );
+    socket.close();
+  });
+
+  it("平台工具和 MCP 工具不在这里问：前者不跑 hooks，后者由 runner 在调用两边跑", async () => {
+    const socket = await runner(() => ({
+      result: { status: 0, stdout: "ok", stderr: "" },
+    }));
+    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+
+    for (const name of ["chat_send", TRACKER.name]) {
+      await pi.run(name, {}, () => ({ content: [{ type: "text", text: "ok" }] }));
+    }
+
+    assert.deepEqual(socket.asked, []);
     socket.close();
   });
 });
@@ -173,52 +333,21 @@ describe("仓库自己的说明", () => {
 });
 
 describe("连续工具调用", () => {
-  const quiet = async (pi: FakePi, count: number, name = "bash", isError = false) => {
-    await pi.emit("turn_end", {
-      toolResults: Array.from({ length: count }, () => ({ toolName: name, isError })),
-    });
-  };
-  const injected = async (pi: FakePi) => {
-    const answer = await pi.emit("context", { messages: [{ role: "user", content: [] }] });
-    if (!answer) return null;
-    return answer.messages.at(-1).content[0].text;
-  };
-
-  it("不到阈值不提醒", async () => {
+  it("多少次都不由 extension 插话：提醒房间的是平台", async () => {
+    // One reminder, sent by the platform to every harness alike. A second one
+    // produced here would reach pi rooms only, and reach them twice.
     const { pi } = await load();
-    await quiet(pi, 9);
-    assert.equal(await injected(pi), null, "ordinary work must not be interrupted");
-  });
-
-  it("到阈值提醒一次，用的是提示里那个工具名", async () => {
-    const { pi } = await load();
-    await quiet(pi, 10);
-
-    const said = await injected(pi);
-    assert.ok(said?.startsWith(NOTICE), "it has to read as a platform instruction");
-    assert.match(said, /chat_send/);
-    assert.doesNotMatch(said, /cheese_chat_send/);
-  });
-
-  it("成功发布之后重新数起", async () => {
-    const { pi } = await load();
-    await quiet(pi, 10);
-    assert.ok(await injected(pi));
-
-    await quiet(pi, 1, "chat_send");
-    assert.equal(await injected(pi), null, "the room has just been told what is going on");
-
-    await quiet(pi, 9);
-    assert.equal(await injected(pi), null);
-    await quiet(pi, 1);
-    assert.ok(await injected(pi), "silence since the last publish is what counts");
-  });
-
-  it("房间没有发布工具时不提这件事", async () => {
-    // A reminder naming a tool that is not registered is worse than silence.
-    const { pi } = await load({ tools: [CATALOG[1]] });
-    await quiet(pi, 30);
-    assert.equal(await injected(pi), null);
+    for (let turn = 0; turn < 5; turn++) {
+      await pi.emit("turn_end", {
+        toolResults: Array.from({ length: 10 }, () => ({
+          toolName: "bash",
+          isError: false,
+        })),
+      });
+    }
+    const messages = [{ role: "user", content: [] }];
+    const answer = await pi.emit("context", { messages });
+    assert.deepEqual(answer?.messages ?? messages, messages);
   });
 });
 
@@ -347,5 +476,83 @@ describe("后台任务起不来的时候", () => {
       () => pi.call("bash_write", { id: "job-1-over", text: "hello" }),
       /退出码 3/,
     );
+  });
+});
+
+describe("有人发来消息的时候", () => {
+  function owe(id: string) {
+    const file = process.env.CHEESE_REPLY_OWED as string;
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        id,
+        answers: ["chat_send", "cheese_ask"],
+        reason: "REPLY_FIRST",
+        answered: `${file}.answered`,
+      }),
+    );
+  }
+
+  function fresh() {
+    process.env.CHEESE_REPLY_OWED = path.join(scratch(), "reply-owed.json");
+  }
+
+  it("先回话，别的工具在那之前都被拒", async () => {
+    fresh();
+    const { pi } = await load();
+    owe("m1");
+
+    const refused = await pi.emit("tool_call", { toolName: "bash", input: {} });
+    assert.deepEqual(refused, { block: true, reason: "REPLY_FIRST" });
+    assert.equal(await pi.emit("tool_call", { toolName: "chat_send", input: {} }), undefined);
+    assert.equal(await pi.emit("tool_call", { toolName: "bash", input: {} }), undefined);
+    // Written down where the runner reads it, so the turn may end.
+    const answered = `${process.env.CHEESE_REPLY_OWED}.answered`;
+    assert.equal(fs.readFileSync(answered, "utf8"), "m1");
+  });
+
+  it("正在跑的命令转到后台，模型马上拿回控制，命令照样跑完", async () => {
+    fresh();
+    const { pi, jobs } = await load({ python: "python3", background: "/bg.py" });
+
+    const started = Date.now();
+    const call = pi.call("bash", { command: "echo EARLY; sleep 3; echo LATE" });
+    await new Promise((done) => setTimeout(done, 500));
+    owe("m1");
+    const answer = await call;
+
+    assert.ok(Date.now() - started < 2500, "the model waited for the command");
+    const said = answer.content[0].text;
+    assert.match(said, /EARLY/);
+    assert.match(said, /转到后台/);
+    const job = /任务 (job-[a-z0-9-]+)/.exec(said)?.[1] as string;
+    assert.match((await pi.call("bash_list", {})).content[0].text, /running/);
+
+    await new Promise((done) => setTimeout(done, 3500));
+    assert.match(fs.readFileSync(path.join(jobs, job, "output"), "utf8"), /LATE/);
+    assert.match((await pi.call("bash_list", {})).content[0].text, /exited 0/);
+  });
+
+  it("转到后台的命令用 bash_kill 停得掉", async () => {
+    fresh();
+    const { pi, jobs } = await load({ python: "python3", background: "/bg.py" });
+
+    const call = pi.call("bash", { command: "sleep 30" });
+    await new Promise((done) => setTimeout(done, 300));
+    owe("m1");
+    const job = /任务 (job-[a-z0-9-]+)/.exec((await call).content[0].text)?.[1] as string;
+
+    await pi.call("bash_kill", { id: job });
+    await new Promise((done) => setTimeout(done, 500));
+    assert.ok(fs.existsSync(path.join(jobs, job, "exit")), "the command is still running");
+  });
+
+  it("没有人说话，命令照常跑完再返回", async () => {
+    fresh();
+    const { pi } = await load({ python: "python3", background: "/bg.py" });
+
+    const answer = await pi.call("bash", { command: "sleep 1; echo DONE" });
+    assert.match(answer.content[0].text, /DONE/);
+    assert.doesNotMatch(answer.content[0].text, /转到后台/);
   });
 });

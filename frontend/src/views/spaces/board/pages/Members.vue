@@ -7,9 +7,12 @@
 // 写成了设计决策）。去掉隐喻之后，这一页要能回答三个问题：谁能管理、谁只是成员、
 // 以及**一个人怎么从成员变成管理员**。
 //
-// 与原型那一版的差别：**没有「加入方式」那一列**（是靠哪个邀请码进来的）。真接口
-// 的成员记录里不带这一项 —— `SpaceMember` 只有 userId / joinedAt / user，谁用了
-// 哪个码没有落库。要显示它得先有这个字段，那是另一件事，这里不编。
+// 「加入方式」那一列（是靠哪个邀请码进来的）现在有了：接口的成员行带 `inviteCode`，
+// 来源是 `space_member.invite_code_id`，只在核销那一刻写下。**它是「有记录」的证据，
+// 不是「没用过码」的证据** —— 加这一格之前进来的成员没有记录，所有者直接加进来的人
+// 也没有，两者在行上长得一模一样，所以没记录的一律显示「未知」，不拿板上现有的某张码
+// 顶上：那会把一条没记过的事实说成一条很确定的事实。**唯一的例外是所有者那一行** ——
+// 他是建板的人，这是定义而不是从记录里推断的，所以读「建板时就在」。
 import type { SpaceMember } from '@/types'
 
 import { computed, ref } from 'vue'
@@ -18,7 +21,7 @@ import { toast } from 'vuetify-sonner'
 
 import PanelCard from '../components/PanelCard.vue'
 import { type Person, type Role, ROLE_LABEL } from '../model'
-import { codes, isOwner, loadBoard, loadCodes, me, space } from '../store'
+import { currentCode, isOwner, loadBoard, loadCodes, me, space } from '../store'
 
 import { SpacesApi } from '@/network/api/spaces'
 
@@ -29,6 +32,10 @@ interface Row {
   person: Person
   role: Role
   userId: number
+  /** 加入方式：这张码的串，或 `null` = 没有记录（界面写「未知」）。 */
+  viaCode: string | null
+  /** 角色旁那一句旁注：所有者「建板的人」、管理员「由所有者授予」。成员没有。 */
+  note?: string
 }
 
 const members = ref<SpaceMember[]>([])
@@ -53,10 +60,16 @@ const rows = computed<Row[]>(() => {
   return members.value.map((m) => {
     const user = m.user
     const handle = user?.username ?? String(m.userId)
+    const role = roleByHandle.get(handle) ?? 'MEMBER'
     return {
       person: { handle, name: user?.nickname || handle },
-      role: roleByHandle.get(handle) ?? 'MEMBER',
+      role,
       userId: m.userId,
+      // 老接口不带这一格、库里没记过也是 `null` —— 两种都读成「没有记录」。
+      viaCode: m.inviteCode?.code ?? null,
+      // 角色旁那句旁注说的是**这个角色是什么意思**，不是这个人的别的事：所有者
+      // 是建板的人，管理员是被所有者授上去的。成员是缺省，不需要解释。
+      note: role === 'OWNER' ? '建板的人' : role === 'ADMIN' ? '由所有者授予' : undefined,
     }
   })
 })
@@ -71,7 +84,6 @@ const filtered = computed(() => {
 })
 
 const managerCount = computed(() => rows.value.filter((r) => r.role !== 'MEMBER').length)
-const activeCode = computed(() => codes.value[0])
 
 /** 改角色是**只有所有者**能做的事（`Action.ADMIN` 只挂在 OWNER 上）。 */
 async function setRole(row: Row, next: Role) {
@@ -135,6 +147,7 @@ async function setRole(row: Row, next: Role) {
           <tr>
             <th>成员</th>
             <th>角色</th>
+            <th>加入方式</th>
             <th class="num">操作</th>
           </tr>
         </thead>
@@ -161,6 +174,17 @@ async function setRole(row: Row, next: Role) {
               >
                 {{ ROLE_LABEL[row.role] }}
               </v-chip>
+              <span v-if="row.note" class="mem__note">{{ row.note }}</span>
+            </td>
+            <td>
+              <!-- 有记录就写那张码；没有就写「未知」——**不写空白，也不写「没用码」**：
+                   空白读起来像「还没查」，而「没记过」和「没用过」是两句话。 -->
+              <code v-if="row.viaCode" class="mem__code">{{ row.viaCode }}</code>
+              <!-- 所有者那一行不写「未知」：他是**建板的人**，压根不是靠哪张码进来的 ——
+                   这是定义，不是从记录里推断的，所以它读「建板时就在」。上面那条「不
+                   替没记录的人说话」管的是其余每一行，不适用于他。 -->
+              <span v-else-if="row.role === 'OWNER'" class="mem__note">建板时就在</span>
+              <span v-else class="mem__unknown">未知</span>
             </td>
             <td class="num">
               <v-btn
@@ -181,11 +205,14 @@ async function setRole(row: Row, next: Role) {
 
     <PanelCard title="让人进来" subtitle="发邀请码，对方用码加入">
       <div class="join">
-        <code class="join__code">{{ activeCode?.code ?? '暂无可用码' }}</code>
+        <code v-if="currentCode" class="join__code">{{ currentCode.code }}</code>
+        <span v-else class="join__none">没有可用的码</span>
         <span class="join__hint">
-          当前码：{{
-            activeCode ? `${activeCode.useCount} / ${activeCode.maxUses ?? '不限'} 人已用` : '去邀请码页新建一个'
-          }}。 可用人数与有效期在下拉窗口里随时可调。
+          <template v-if="currentCode">
+            当前码：{{ currentCode.useCount }} / {{ currentCode.maxUses ?? '不限' }} 人已用。
+          </template>
+          <template v-else>用尽或过期的码不会顶上来 —— 去下拉窗口里新建一个，否则没人能加入。</template>
+          可用人数与有效期在下拉窗口里随时可调。
         </span>
       </div>
       <p class="mem__foot">
@@ -287,6 +314,20 @@ async function setRole(row: Row, next: Role) {
   font-size: 0.74rem;
 }
 
+.mem__code {
+  padding: 3px 8px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  background: rgba(var(--v-theme-on-surface), 0.05);
+  border-radius: 6px;
+}
+
+.mem__unknown {
+  color: rgba(var(--v-theme-on-surface), 0.45);
+  font-size: 0.78rem;
+}
+
 .role-owner {
   color: rgb(var(--v-theme-primary));
 }
@@ -317,6 +358,11 @@ async function setRole(row: Row, next: Role) {
   letter-spacing: 0.06em;
   background: rgba(var(--v-theme-on-surface), 0.05);
   border-radius: 8px;
+}
+
+.join__none {
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  font-size: 0.85rem;
 }
 
 .join__hint {

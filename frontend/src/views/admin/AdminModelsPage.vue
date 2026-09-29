@@ -14,13 +14,17 @@ import {
 } from '@/api'
 import AdminAuditDiff from '@/components/admin/AdminAuditDiff.vue'
 import AdminBudgetDialog from '@/components/admin/AdminBudgetDialog.vue'
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminModelDetailDrawer from '@/components/admin/AdminModelDetailDrawer.vue'
 import AdminModelFormDialog, { type ModelFormPayload } from '@/components/admin/AdminModelFormDialog.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
+import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
 import AdminSubscriptionImportDialog from '@/components/admin/AdminSubscriptionImportDialog.vue'
+import AdminTabs from '@/components/admin/AdminTabs.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
 import { fmtCost, fmtNum, fmtPercent, fmtSI } from '@/lib/usageFormat'
 
@@ -195,6 +199,21 @@ const gatewayDown = computed(
   () => gateway.value !== null && (!gateway.value.reachable || !gateway.value.admin_configured)
 )
 
+/** 网关读不出来时那句解释。**两种原因是两种修法**（去把网关起起来 / 去配管理密钥），
+ *  所以分开说；页头的健康灯与表格里那条说明共用这一份判据，不各写一遍。 */
+const gatewayDetail = computed(() =>
+  gateway.value?.admin_configured ? t('models.page.gateway.unreachable') : t('models.page.gateway.unconfigured')
+)
+
+/** 表壳的三态（`rows` / `error`）。读不到时**不退化成空的表体**（空表说的是「还没有
+ *  模型」，而这里发生的是「没读到」），网关不可达也归到这一类：表里列的每一行都来自
+ *  网关，网关不答话就没有可读的东西 —— 画一张「暂无模型」是把这个事实说反了。 */
+const modelsState = computed<'rows' | 'error'>(() => (loadError.value || gatewayDown.value ? 'error' : 'rows'))
+
+/** 额度段同上一句：这一段的失败只由它自己那次读决定（网关挂了它照样会失败，
+ *  那时 `projectsError` 有值；网关挂了但这一段读到了，就该照画）。 */
+const projectsState = computed<'rows' | 'error'>(() => (projectsError.value ? 'error' : 'rows'))
+
 /** 页头的 readiness 健康灯：常在的一眼状态（`gatewayDown` 那条警告负责解释，
  *  灯负责让人不看警告也知道网关活没活）。初始未加载不画 —— 「还没读到」不是
  *  一种健康状态。 */
@@ -209,9 +228,10 @@ const health = computed<{ ok: boolean; text: string; title: string } | null>(() 
       title: g.detail ?? g.readiness,
     }
   }
-  const detail =
-    g.detail ?? (g.admin_configured ? t('models.page.gateway.unreachable') : t('models.page.gateway.unconfigured'))
-  return { ok: false, text: detail, title: detail }
+  // 灯上只留一句短的（「网关读不到」）：完整那句由表格里那条说明来说，两处写同一句
+  // 话会让人以为是两次失败。灯这一格把它挂在 title 上，指着看的人还是拿得到全文。
+  const detail = g.detail ?? gatewayDetail.value
+  return { ok: false, text: t('models.health.down'), title: detail }
 })
 
 /** 来源徽章的三态：配置文件 / 运行时新增 / **订阅**（有订阅 overlay 时盖过
@@ -249,6 +269,13 @@ function failRate(row: ModelRow): { text: string; title: string; tone: string } 
   return { text: rate, title: t('models.table.failRate', { rate }), tone }
 }
 
+/** 状态列在窄屏卡片里**整格收起来**的条件：这一行既没有订阅、这个窗口里又没有请求时，
+ *  那一格画的是一句「—」。卡片上多一行「状态 —」是没有信息的行，而真有事的那几行
+ *  照样画得出来（同成员页「异常才说话」那条）。 */
+function statusQuiet(row: ModelRow): boolean {
+  return !row.subscription && !row.usage.requests
+}
+
 const totals = computed<Usage | null>(() => models.value?.totals ?? null)
 
 const offeredCount = computed(() => (models.value?.models ?? []).filter((m) => m.offered).length)
@@ -275,6 +302,17 @@ const windowText = computed(() => {
   if (!w) return ''
   return `${w.start_date} – ${w.end_date}`
 })
+
+/** 页头那句说明：这一页管什么 + 当前窗口。窗口是三段共用的，所以在页头只说一次。 */
+const subLine = computed(() =>
+  windowText.value ? `${t('models.page.subtitle')} · ${windowText.value}` : t('models.page.subtitle')
+)
+
+/** 页头的窗口页签。值走字符串 —— `AdminTabs` 是 `T extends string` 的泛型；回到
+ *  `changeWindow` 里再收成数字，`days` 是发给接口的参数，别让它变成字符串。 */
+const windowOptions = computed(() =>
+  [7, 14, 30].map((n) => ({ value: String(n), label: t('models.page.days', { n }) }))
+)
 
 const projectTotalsText = computed(() => {
   const p = projects.value?.totals
@@ -489,382 +527,402 @@ onMounted(load)
 
 <template>
   <div class="amd">
-    <header class="amd__head">
-      <div class="amd__headtext">
-        <h1 class="t-console-title">{{ t('models.page.title') }}</h1>
-        <p class="amd__sub t-meta-read">
-          {{ t('models.page.subtitle') }}<template v-if="windowText"> · {{ windowText }}</template>
-        </p>
-      </div>
-      <div class="amd__headtools">
-        <!-- readiness 健康灯：常在的一眼状态，点与文字，完整 detail 挂 title。
-             触屏没有 hover —— detail 同时由 gatewayDown 警告条在页面上给出，
-             灯坏了的人不至于只能盯着一个小点猜。 -->
-        <span
-          v-if="health"
-          class="amd__health"
-          role="status"
-          :aria-label="t('models.health.label')"
-          :title="health.title"
-        >
-          <span class="amd__healthdot" :class="health.ok ? 'amd__dot--ok' : 'amd__dot--danger'" aria-hidden="true" />
-          <span class="amd__healthtext t-meta-read">{{ health.text }}</span>
-        </span>
-        <!-- 窗口是三段共用的，所以它摆在页头（页面级），不塞进某一段的工具条里。 -->
-        <v-btn-toggle
-          :model-value="days"
-          mandatory
-          density="comfortable"
-          variant="outlined"
-          divided
-          @update:model-value="changeWindow($event as number)"
-        >
-          <v-btn v-for="n in [7, 14, 30]" :key="n" :value="n" size="small">
-            {{ t('models.page.days', { n }) }}
-          </v-btn>
-        </v-btn-toggle>
-        <v-btn
-          icon="mdi-refresh"
-          variant="text"
-          size="small"
-          :aria-label="t('models.page.refresh')"
-          :loading="loading"
-          @click="load"
-        />
-      </div>
-    </header>
+    <div class="amd__inner">
+      <AdminPageHeader :title="t('models.page.title')" :sub="subLine">
+        <template #tools>
+          <!-- readiness 健康灯：常在的一眼状态，点与文字，完整 detail 挂 title。
+               触屏没有 hover —— 读不出来时表格里那条说明会给出原因（和这里的
+               `health` 同一份判据），灯坏了的人不至于只能盯着一个小点猜。 -->
+          <span
+            v-if="health"
+            class="amd__health"
+            role="status"
+            :aria-label="t('models.health.label')"
+            :title="health.title"
+          >
+            <span class="amd__healthdot" :class="health.ok ? 'amd__dot--ok' : 'amd__dot--danger'" aria-hidden="true" />
+            <span class="amd__healthtext t-meta-read">{{ health.text }}</span>
+          </span>
+          <!-- 窗口是三段共用的，所以它摆在页头（页面级），不塞进某一段的工具条里。 -->
+          <AdminTabs
+            size="sm"
+            :label="t('models.page.window')"
+            :model-value="String(days)"
+            :options="windowOptions"
+            @update:model-value="changeWindow(Number($event))"
+          />
+          <v-btn
+            icon="mdi-refresh"
+            variant="text"
+            size="small"
+            :aria-label="t('models.page.refresh')"
+            :loading="loading"
+            @click="load"
+          />
+        </template>
+      </AdminPageHeader>
 
-    <v-alert v-if="loadError" type="error" density="compact" variant="tonal" class="amd__alert" role="alert">
-      {{ loadError }}
-      <template #append>
-        <v-btn variant="text" size="small" @click="load">{{ t('models.page.retry') }}</v-btn>
-      </template>
-    </v-alert>
+      <div class="amd__body">
+        <!-- 写失败 / 提示：token 画的一条横条（`v-alert` 那套默认样在这一页像另一个
+             产品）。**读失败不在这里说** —— 那一条画在各自那一段的位置上（表的列头
+             下面、审计那张卡里），同一次失败说两遍，人会以为是两次。 -->
+        <div v-if="writeError" class="amd__flash amd__flash--bad" role="alert">
+          <v-icon icon="mdi-alert-circle-outline" size="16" class="amd__flashIcon" />
+          <span class="amd__flashText">{{ writeError }}</span>
+          <button
+            type="button"
+            class="amd__flashClose"
+            :aria-label="t('models.notice.dismiss')"
+            @click="writeError = null"
+          >
+            <v-icon icon="mdi-close" size="14" />
+          </button>
+        </div>
+        <div v-else-if="notice" class="amd__flash amd__flash--ok" role="status">
+          <v-icon icon="mdi-check-circle-outline" size="16" class="amd__flashIcon" />
+          <span class="amd__flashText">{{ notice }}</span>
+          <button type="button" class="amd__flashClose" :aria-label="t('models.notice.dismiss')" @click="notice = null">
+            <v-icon icon="mdi-close" size="14" />
+          </button>
+        </div>
 
-    <!-- 网关不可达 / 没配管理密钥：这是**基础设施**的失败，不是「一次操作没成」。
-         单独画一条，并在里面说清两份配置分别是什么。 -->
-    <v-alert v-else-if="gatewayDown" type="warning" density="compact" variant="tonal" class="amd__alert">
-      <template v-if="!gateway?.admin_configured">{{ t('models.page.gateway.unconfigured') }}</template>
-      <template v-else>{{ t('models.page.gateway.unreachable') }}</template>
-    </v-alert>
+        <div class="amd__kpis">
+          <AdminKpiCard v-for="kpi in kpis" :key="kpi.key" :label="kpi.label" :value="kpi.value" :loading="loading" />
+        </div>
 
-    <v-alert
-      v-if="writeError"
-      type="error"
-      density="compact"
-      variant="tonal"
-      class="amd__alert"
-      closable
-      role="alert"
-      @click:close="writeError = null"
-    >
-      {{ writeError }}
-    </v-alert>
-    <v-alert
-      v-else-if="notice"
-      type="success"
-      density="compact"
-      variant="tonal"
-      class="amd__alert"
-      closable
-      @click:close="notice = null"
-    >
-      {{ notice }}
-    </v-alert>
+        <!-- 模型段。页面上唯一的主操作（新增模型）在这一段，所以琥珀只出现在这里一处。 -->
+        <section class="amd__section">
+          <div class="amd__sectiontools">
+            <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.models') }}</h2>
+            <span class="amd__count t-meta-read">{{ num(models?.models.length) }}</span>
+            <div class="amd__spacer" />
+            <!-- 导入订阅是次操作（outlined）：这一组的琥珀是「新增模型」。 -->
+            <v-btn
+              variant="outlined"
+              size="small"
+              prepend-icon="mdi-link-variant"
+              :disabled="gatewayDown"
+              @click="importOpen = true"
+            >
+              {{ t('models.subscription.import') }}
+            </v-btn>
+            <v-btn color="primary" size="small" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">
+              {{ t('models.page.add') }}
+            </v-btn>
+          </div>
 
-    <div class="amd__kpis">
-      <AdminKpiCard v-for="kpi in kpis" :key="kpi.key" :label="kpi.label" :value="kpi.value" :loading="loading" />
-    </div>
+          <div class="amd__gridwrap">
+            <AdminGrid
+              :label="t('models.table.label')"
+              :cols="[null, '96px', '150px', '210px', '180px', '110px', '140px']"
+              :bone-widths="['64%', '54%', '70%', '58%', '62%', '50%', '46%']"
+              :loading="loading && !models"
+              :skeleton-rows="6"
+              :state="modelsState"
+              cards
+              :empty="models && !models.models.length ? t('models.table.empty') : null"
+            >
+              <template #head>
+                <tr>
+                  <th scope="col">{{ t('models.table.column.name') }}</th>
+                  <th scope="col">{{ t('models.table.column.origin') }}</th>
+                  <th scope="col">{{ t('models.table.column.price') }}</th>
+                  <th scope="col">{{ t('models.table.column.usage') }}</th>
+                  <th scope="col">{{ t('models.table.column.offered') }}</th>
+                  <th scope="col">{{ t('models.table.column.status') }}</th>
+                  <th scope="col" class="amd__num">{{ t('models.table.column.actions') }}</th>
+                </tr>
+              </template>
 
-    <!-- 模型段。页面上唯一的主操作（新增模型）在这一段，所以琥珀只出现在这里一处。 -->
-    <section class="amd__section">
-      <div class="amd__sectiontools">
-        <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.models') }}</h2>
-        <span class="amd__count t-meta-read">{{ num(models?.models.length) }}</span>
-        <div class="amd__spacer" />
-        <!-- 导入订阅是次操作（outlined）：这一组的琥珀是「新增模型」。 -->
-        <v-btn
-          variant="outlined"
-          size="small"
-          prepend-icon="mdi-link-variant"
-          :disabled="gatewayDown"
-          @click="importOpen = true"
-        >
-          {{ t('models.subscription.import') }}
-        </v-btn>
-        <v-btn color="primary" size="small" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">
-          {{ t('models.page.add') }}
-        </v-btn>
-      </div>
-
-      <div class="amd__gridwrap">
-        <AdminGrid
-          :label="t('models.table.label')"
-          :cols="[null, '96px', '150px', '210px', '180px', '110px', '140px']"
-          :bone-widths="['64%', '54%', '70%', '58%', '62%', '50%', '46%']"
-          :loading="loading && !models"
-          :skeleton-rows="6"
-          :empty="models && !models.models.length ? t('models.table.empty') : null"
-        >
-          <template #head>
-            <tr>
-              <th scope="col">{{ t('models.table.column.name') }}</th>
-              <th scope="col">{{ t('models.table.column.origin') }}</th>
-              <th scope="col">{{ t('models.table.column.price') }}</th>
-              <th scope="col">{{ t('models.table.column.usage') }}</th>
-              <th scope="col">{{ t('models.table.column.offered') }}</th>
-              <th scope="col">{{ t('models.table.column.status') }}</th>
-              <th scope="col" class="amd__num">{{ t('models.table.column.actions') }}</th>
-            </tr>
-          </template>
-
-          <tr v-for="row in models?.models ?? []" :key="row.name" class="amd__row">
-            <td class="amd__cell">
-              <!-- 名字本身是打开详情的入口：整行只有一个可聚焦的东西，读屏不会在一行里
-                   听两遍同一个目的地。 -->
-              <button type="button" class="amd__name" @click="openDetail(row)">
-                <span class="amd__nameMain">{{ displayName(row) }}</span>
-                <span v-if="row.label" class="amd__nameSlug t-meta-read">{{ row.name }}</span>
-              </button>
-            </td>
-            <td class="amd__cell">
-              <!-- 订阅徽章带状态点（active 绿 / 刷新失败琥珀 / 需重授权红）：它是第三种
-                   来源，也是一个活的凭据 —— 一眼要同时看出「从哪来」和「还活不活」。 -->
-              <span class="amd__tag">
-                <span
-                  v-if="row.subscription"
-                  class="amd__dot amd__dot--inline"
-                  :class="subscriptionDotClass(row.subscription.status)"
-                  aria-hidden="true"
-                />
-                {{ t(originKey(row)) }}
-              </span>
-            </td>
-            <td class="amd__cell">
-              <AdminModelPriceCell :priced="row.priced" :prices="row.prices" :reason="row.unpriced_reason" />
-              <span v-if="row.subscription" class="amd__estimate t-meta-read">{{
-                t('models.table.estimateNote')
-              }}</span>
-            </td>
-            <td class="amd__cell">
-              <span class="amd__usage">
-                <span class="amd__usageRow">
-                  <span class="t-num amd__usageMain">{{ fmtCost(row.usage.spend_usd) }}</span>
-                  <span class="t-meta-read amd__dim"
-                    >{{ fmtNum(row.usage.requests) }} {{ t('models.table.calls') }}</span
-                  >
-                </span>
-                <span class="amd__usageRow">
-                  <!-- 缩写是给人一眼看的，精确值挂在 title 上 —— 这是 fmtSI 那一条约定。 -->
-                  <span class="t-meta-read amd__dim" :title="fmtNum(row.usage.total_tokens)"
-                    >{{ fmtSI(row.usage.total_tokens) }} {{ t('models.usage.tokens') }}</span
-                  >
-                  <!-- 行内 sparkline：只承担「趋势长什么样」的一眼形状（aria-hidden）。
-                       逐日精确值的可访问形式是详情抽屉那张数据表（§2.7），不是给 17
-                       行各塞一个 <details> —— 同一列里就有精确总数的 title。 -->
-                  <span class="amd__spark" :title="t('models.table.sparklineHint')">
-                    <AdminSparkline :values="row.series ?? []" :height="20" />
-                  </span>
-                </span>
-              </span>
-            </td>
-            <td class="amd__cell">
-              <span class="amd__usage">
-                <span v-if="row.blocked" class="amd__tag amd__tag--off">{{ t('models.table.blocked') }}</span>
-                <span v-else-if="row.offered" class="amd__tag amd__tag--on">{{ t('models.table.offered.on') }}</span>
-                <span v-else class="amd__tag">{{ t('models.table.offered.off') }}</span>
-                <span
-                  v-if="!row.offered && row.blocked_reason"
-                  class="t-meta-read amd__dim amd__reason"
-                  :title="row.blocked_reason"
-                  >{{ row.blocked_reason }}</span
-                >
-              </span>
-            </td>
-            <td class="amd__cell">
-              <span class="amd__usage">
-                <span class="t-num" :class="failRate(row).tone" :title="failRate(row).title">{{
-                  failRate(row).text
-                }}</span>
-                <span v-if="row.subscription" class="t-meta-read amd__dim">{{
-                  subscriptionStatusText(row.subscription.status)
-                }}</span>
-              </span>
-            </td>
-            <td class="amd__cell amd__cell--actions">
-              <!-- config 模型只读：不给按钮，给一个**能点开改法**的入口（抽屉里有 config
-                   复制卡）。一句死「只读」是信息的终点，「查看改法」是起点。 -->
-              <button v-if="row.origin === 'config'" type="button" class="amd__textbtn" @click="openDetail(row)">
-                {{ t('models.table.howToEdit') }}
-              </button>
-              <template v-else>
-                <v-btn
-                  icon="mdi-pencil-outline"
-                  variant="text"
-                  size="small"
-                  :aria-label="t('models.table.action.edit')"
-                  @click="openEdit(row)"
-                />
-                <v-btn
-                  :icon="row.blocked ? 'mdi-play-circle-outline' : 'mdi-cancel'"
-                  variant="text"
-                  size="small"
-                  :aria-label="row.blocked ? t('models.table.action.unblock') : t('models.table.action.block')"
-                  @click="askBlock(row)"
-                />
-                <v-btn
-                  icon="mdi-trash-can-outline"
-                  variant="text"
-                  size="small"
-                  :aria-label="t('models.table.action.delete')"
-                  @click="askDelete(row)"
+              <!-- 读不到网关：一条平静的说明画在列头下面，重试就在旁边。接口失败和
+               「网关没配管理密钥」在这里合成**一处** —— 对读的人是同一个结果：
+               这张表读不出来。 -->
+              <template #error>
+                <AdminEmptyState
+                  compact
+                  tone="error"
+                  :title="loadError ?? gatewayDetail"
+                  :action="t('models.page.retry')"
+                  @action="load"
                 />
               </template>
-            </td>
-          </tr>
-        </AdminGrid>
-      </div>
-    </section>
 
-    <!-- 额度段。一眼要看出「剩余 / 已用 / 刹车值 / 是不是不限量」四件事。 -->
-    <section class="amd__section">
-      <div class="amd__sectiontools">
-        <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.budgets') }}</h2>
-        <span class="amd__count amd__summary t-meta-read">{{ projectTotalsText }}</span>
-      </div>
+              <template #empty>
+                <AdminEmptyState compact :title="t('models.table.empty')" />
+              </template>
 
-      <!-- 读失败照原话显示、并给重试；**不**退化成空表（空表说的是「还没有项目」）。 -->
-      <v-alert v-if="projectsError" type="error" density="compact" variant="tonal" class="amd__alert" role="alert">
-        {{ projectsError }}
-        <template #append>
-          <v-btn variant="text" size="small" @click="loadProjects">{{ t('models.page.retry') }}</v-btn>
-        </template>
-      </v-alert>
-
-      <div class="amd__gridwrap amd__gridwrap--short">
-        <AdminGrid
-          :label="t('models.budget.label')"
-          :cols="['240px', '132px', '170px', '186px', '150px', '96px']"
-          :bone-widths="['60%', '52%', '64%', '58%', '56%', '48%']"
-          :loading="projectsLoading && !projects"
-          :skeleton-rows="5"
-          :empty="!projectsError && projects && !projects.projects.length ? t('models.budget.empty') : null"
-        >
-          <template #head>
-            <tr>
-              <th scope="col">{{ t('models.budget.column.project') }}</th>
-              <th scope="col">{{ t('models.budget.column.spend') }}</th>
-              <th scope="col">{{ t('models.budget.column.usage') }}</th>
-              <th scope="col">{{ t('models.budget.column.credits') }}</th>
-              <th scope="col">{{ t('models.budget.column.brake') }}</th>
-              <th scope="col" class="amd__num">{{ t('models.table.column.actions') }}</th>
-            </tr>
-          </template>
-
-          <tr v-for="row in projects?.projects ?? []" :key="row.project_id" class="amd__row">
-            <td class="amd__cell">
-              <span class="amd__nameStatic" :title="row.name">{{ row.name }}</span>
-            </td>
-            <td class="amd__cell t-num">{{ fmtCost(row.gateway_spend_usd) }}</td>
-            <td class="amd__cell">
-              <span class="amd__usage">
-                <span class="t-num amd__usageMain">{{ fmtNum(row.usage.requests) }}</span>
-                <span class="t-meta-read amd__dim"
-                  >{{ fmtNum(row.usage.total_tokens) }} {{ t('models.usage.tokens') }}</span
+              <tr v-for="row in models?.models ?? []" :key="row.name" class="amd__row">
+                <td class="amd__cell" data-card="primary">
+                  <!-- 名字本身是打开详情的入口：整行只有一个可聚焦的东西，读屏不会在一行里
+                   听两遍同一个目的地。 -->
+                  <button type="button" class="amd__name" @click="openDetail(row)">
+                    <span class="amd__nameMain">{{ displayName(row) }}</span>
+                    <span v-if="row.label" class="amd__nameSlug t-meta-read">{{ row.name }}</span>
+                  </button>
+                </td>
+                <td class="amd__cell" :data-label="t('models.table.column.origin')">
+                  <!-- 订阅徽章带状态点（active 绿 / 刷新失败琥珀 / 需重授权红）：它是第三种
+                   来源，也是一个活的凭据 —— 一眼要同时看出「从哪来」和「还活不活」。 -->
+                  <span class="amd__tag">
+                    <span
+                      v-if="row.subscription"
+                      class="amd__dot amd__dot--inline"
+                      :class="subscriptionDotClass(row.subscription.status)"
+                      aria-hidden="true"
+                    />
+                    {{ t(originKey(row)) }}
+                  </span>
+                </td>
+                <td class="amd__cell" :data-label="t('models.table.column.price')">
+                  <AdminModelPriceCell :priced="row.priced" :prices="row.prices" :reason="row.unpriced_reason" />
+                  <span v-if="row.subscription" class="amd__estimate t-meta-read">{{
+                    t('models.table.estimateNote')
+                  }}</span>
+                </td>
+                <td class="amd__cell" :data-label="t('models.table.column.usage')">
+                  <span class="amd__usage">
+                    <span class="amd__usageRow">
+                      <span class="t-num amd__usageMain">{{ fmtCost(row.usage.spend_usd) }}</span>
+                      <span class="t-meta-read amd__dim"
+                        >{{ fmtNum(row.usage.requests) }} {{ t('models.table.calls') }}</span
+                      >
+                    </span>
+                    <span class="amd__usageRow">
+                      <!-- 缩写是给人一眼看的，精确值挂在 title 上 —— 这是 fmtSI 那一条约定。 -->
+                      <span class="t-meta-read amd__dim" :title="fmtNum(row.usage.total_tokens)"
+                        >{{ fmtSI(row.usage.total_tokens) }} {{ t('models.usage.tokens') }}</span
+                      >
+                      <!-- 行内 sparkline：只承担「趋势长什么样」的一眼形状（aria-hidden）。
+                       逐日精确值的可访问形式是详情抽屉那张数据表（§2.7），不是给 17
+                       行各塞一个 <details> —— 同一列里就有精确总数的 title。 -->
+                      <span class="amd__spark" :title="t('models.table.sparklineHint')">
+                        <AdminSparkline :values="row.series ?? []" :height="20" />
+                      </span>
+                    </span>
+                  </span>
+                </td>
+                <td class="amd__cell" :data-label="t('models.table.column.offered')">
+                  <span class="amd__usage">
+                    <span v-if="row.blocked" class="amd__tag amd__tag--off">{{ t('models.table.blocked') }}</span>
+                    <span v-else-if="row.offered" class="amd__tag amd__tag--on">{{
+                      t('models.table.offered.on')
+                    }}</span>
+                    <span v-else class="amd__tag">{{ t('models.table.offered.off') }}</span>
+                    <span
+                      v-if="!row.offered && row.blocked_reason"
+                      class="t-meta-read amd__dim amd__reason"
+                      :title="row.blocked_reason"
+                      >{{ row.blocked_reason }}</span
+                    >
+                  </span>
+                </td>
+                <td
+                  class="amd__cell"
+                  :data-card="statusQuiet(row) ? 'hide' : undefined"
+                  :data-label="t('models.table.column.status')"
                 >
-              </span>
-            </td>
-            <td class="amd__cell">
-              <!-- 不限量是一个**结论**，不是一个大数字，所以它先说，别让读者去比 total 和 used。 -->
-              <span v-if="row.credits.unlimited" class="amd__tag">{{ t('models.budget.unlimited') }}</span>
-              <span v-else class="amd__usage">
-                <span class="t-num amd__usageMain">{{ fmtNum(row.credits.remaining) }}</span>
-                <span class="t-meta-read amd__dim">
-                  {{
-                    t('models.budget.used', { used: fmtNum(row.credits.used), total: fmtNum(row.credits.total ?? 0) })
-                  }}
-                </span>
-              </span>
-            </td>
-            <td class="amd__cell">
-              <span v-if="row.max_budget_usd !== null" class="amd__usage">
-                <span class="t-num amd__usageMain">{{ fmtCost(row.max_budget_usd) }}</span>
-                <span v-if="row.budget_override_usd !== null" class="t-meta-read amd__dim">
-                  {{ t('models.budget.override') }}
-                </span>
-              </span>
-              <span v-else class="amd__usage">
-                <span class="amd__dim">{{ t('models.budget.none') }}</span>
-                <span v-if="row.budget_derived_usd !== null" class="t-meta-read amd__dim">
-                  {{ t('models.budget.derived', { value: fmtCost(row.budget_derived_usd) }) }}
-                </span>
-              </span>
-            </td>
-            <td class="amd__cell amd__cell--actions">
-              <v-btn variant="outlined" size="small" :disabled="!row.has_key" @click="openBudget(row)">
-                {{ t('models.budget.action.set') }}
-              </v-btn>
-            </td>
-          </tr>
-        </AdminGrid>
-      </div>
-    </section>
+                  <span class="amd__usage">
+                    <span class="t-num" :class="failRate(row).tone" :title="failRate(row).title">{{
+                      failRate(row).text
+                    }}</span>
+                    <span v-if="row.subscription" class="t-meta-read amd__dim">{{
+                      subscriptionStatusText(row.subscription.status)
+                    }}</span>
+                  </span>
+                </td>
+                <td class="amd__cell amd__cell--actions" :data-label="t('models.table.column.actions')">
+                  <!-- config 模型只读：不给按钮，给一个**能点开改法**的入口（抽屉里有 config
+                   复制卡）。一句死「只读」是信息的终点，「查看改法」是起点。 -->
+                  <button v-if="row.origin === 'config'" type="button" class="amd__textbtn" @click="openDetail(row)">
+                    {{ t('models.table.howToEdit') }}
+                  </button>
+                  <template v-else>
+                    <v-btn
+                      icon="mdi-pencil-outline"
+                      variant="text"
+                      size="small"
+                      :aria-label="t('models.table.action.edit')"
+                      @click="openEdit(row)"
+                    />
+                    <v-btn
+                      :icon="row.blocked ? 'mdi-play-circle-outline' : 'mdi-cancel'"
+                      variant="text"
+                      size="small"
+                      :aria-label="row.blocked ? t('models.table.action.unblock') : t('models.table.action.block')"
+                      @click="askBlock(row)"
+                    />
+                    <v-btn
+                      icon="mdi-trash-can-outline"
+                      variant="text"
+                      size="small"
+                      :aria-label="t('models.table.action.delete')"
+                      @click="askDelete(row)"
+                    />
+                  </template>
+                </td>
+              </tr>
+            </AdminGrid>
+          </div>
+        </section>
 
-    <!-- 最近操作段：写操作是危险动作，改完要留痕、要能回看。 -->
-    <section class="amd__section">
-      <div class="amd__sectiontools">
-        <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.audit') }}</h2>
-      </div>
+        <!-- 额度段。一眼要看出「剩余 / 已用 / 刹车值 / 是不是不限量」四件事。 -->
+        <section class="amd__section">
+          <div class="amd__sectiontools">
+            <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.budgets') }}</h2>
+            <span class="amd__count amd__summary t-meta-read">{{ projectTotalsText }}</span>
+          </div>
 
-      <!-- 读失败照原话显示、并给重试；**不**显示「暂无操作」（那是把「没读到」说成「没有」）。 -->
-      <v-alert v-if="auditError" type="error" density="compact" variant="tonal" class="amd__alert" role="alert">
-        {{ auditError }}
-        <template #append>
-          <v-btn variant="text" size="small" @click="loadAudit">{{ t('models.page.retry') }}</v-btn>
-        </template>
-      </v-alert>
+          <div class="amd__gridwrap amd__gridwrap--short">
+            <AdminGrid
+              :label="t('models.budget.label')"
+              :cols="['240px', '132px', '170px', '186px', '150px', '96px']"
+              :bone-widths="['60%', '52%', '64%', '58%', '56%', '48%']"
+              :loading="projectsLoading && !projects"
+              :skeleton-rows="5"
+              :state="projectsState"
+              cards
+              :empty="!projectsError && projects && !projects.projects.length ? t('models.budget.empty') : null"
+            >
+              <template #head>
+                <tr>
+                  <th scope="col">{{ t('models.budget.column.project') }}</th>
+                  <th scope="col">{{ t('models.budget.column.spend') }}</th>
+                  <th scope="col">{{ t('models.budget.column.usage') }}</th>
+                  <th scope="col">{{ t('models.budget.column.credits') }}</th>
+                  <th scope="col">{{ t('models.budget.column.brake') }}</th>
+                  <th scope="col" class="amd__num">{{ t('models.table.column.actions') }}</th>
+                </tr>
+              </template>
 
-      <div v-else class="amd__audit">
-        <div v-if="auditLoading && !audit.length" class="amd__auditSkeleton">
-          <v-skeleton-loader v-for="i in 4" :key="i" type="text" />
-        </div>
-        <p v-else-if="!audit.length" class="amd__auditEmpty t-meta-read">{{ t('models.audit.empty') }}</p>
-        <ol v-else class="amd__auditRows">
-          <li v-for="(item, i) in audit" :key="i" class="amd__auditRow">
-            <div class="amd__auditLine">
-              <span class="amd__auditTime t-meta-read t-num">{{ relTime(item.created_at) }}</span>
-              <span class="amd__auditWho t-body">{{ item.actor_handle }}</span>
-              <span class="amd__auditWhat t-body">
-                {{ auditActionLabel(item.action) }}
-                <span class="amd__auditTarget t-num">{{ item.target }}</span>
-              </span>
-              <span class="t-meta-read" :class="item.result === 'ok' ? 'amd__ok' : 'amd__fail'">
-                {{ item.result === 'ok' ? t('models.audit.result.ok') : t('models.audit.result.failed') }}
-              </span>
-              <span v-if="item.detail" class="amd__auditDetail t-meta-read" :title="item.detail">{{
-                item.detail
-              }}</span>
-              <!-- 「查看改动」只在有快照可 diff 时出现：before/after 都为空的那几项
-                   操作没有字段变化可看，按钮摆在那儿只会点出一句「没有变化」。 -->
-              <button
-                v-if="item.before || item.after"
-                type="button"
-                class="amd__textbtn amd__auditDiffBtn"
-                :aria-expanded="auditExpanded.has(i)"
-                @click="toggleAuditDiff(i)"
-              >
-                {{ auditExpanded.has(i) ? t('models.audit.diff.hide') : t('models.audit.diff.show') }}
-              </button>
-            </div>
-            <AdminAuditDiff
-              v-if="auditExpanded.has(i) && (item.before || item.after)"
-              :before="item.before"
-              :after="item.after"
+              <!-- 读失败照原话显示、并给重试；**不**退化成空表（空表说的是「还没有项目」）。
+               它和模型段各说自己的那一次失败，不由一个页面级的横幅代劳。 -->
+              <template #error>
+                <AdminEmptyState
+                  compact
+                  tone="error"
+                  :title="projectsError ?? ''"
+                  :action="t('models.page.retry')"
+                  @action="loadProjects"
+                />
+              </template>
+
+              <template #empty>
+                <AdminEmptyState compact :title="t('models.budget.empty')" />
+              </template>
+
+              <tr v-for="row in projects?.projects ?? []" :key="row.project_id" class="amd__row">
+                <td class="amd__cell" data-card="primary">
+                  <span class="amd__nameStatic" :title="row.name">{{ row.name }}</span>
+                </td>
+                <td class="amd__cell t-num" :data-label="t('models.budget.column.spend')">
+                  {{ fmtCost(row.gateway_spend_usd) }}
+                </td>
+                <td class="amd__cell" :data-label="t('models.budget.column.usage')">
+                  <span class="amd__usage">
+                    <span class="t-num amd__usageMain">{{ fmtNum(row.usage.requests) }}</span>
+                    <span class="t-meta-read amd__dim"
+                      >{{ fmtNum(row.usage.total_tokens) }} {{ t('models.usage.tokens') }}</span
+                    >
+                  </span>
+                </td>
+                <td class="amd__cell" :data-label="t('models.budget.column.credits')">
+                  <!-- 不限量是一个**结论**，不是一个大数字，所以它先说，别让读者去比 total 和 used。 -->
+                  <span v-if="row.credits.unlimited" class="amd__tag">{{ t('models.budget.unlimited') }}</span>
+                  <span v-else class="amd__usage">
+                    <span class="t-num amd__usageMain">{{ fmtNum(row.credits.remaining) }}</span>
+                    <span class="t-meta-read amd__dim">
+                      {{
+                        t('models.budget.used', {
+                          used: fmtNum(row.credits.used),
+                          total: fmtNum(row.credits.total ?? 0),
+                        })
+                      }}
+                    </span>
+                  </span>
+                </td>
+                <td class="amd__cell" :data-label="t('models.budget.column.brake')">
+                  <span v-if="row.max_budget_usd !== null" class="amd__usage">
+                    <span class="t-num amd__usageMain">{{ fmtCost(row.max_budget_usd) }}</span>
+                    <span v-if="row.budget_override_usd !== null" class="t-meta-read amd__dim">
+                      {{ t('models.budget.override') }}
+                    </span>
+                  </span>
+                  <span v-else class="amd__usage">
+                    <span class="amd__dim">{{ t('models.budget.none') }}</span>
+                    <span v-if="row.budget_derived_usd !== null" class="t-meta-read amd__dim">
+                      {{ t('models.budget.derived', { value: fmtCost(row.budget_derived_usd) }) }}
+                    </span>
+                  </span>
+                </td>
+                <td class="amd__cell amd__cell--actions" :data-label="t('models.table.column.actions')">
+                  <v-btn variant="outlined" size="small" :disabled="!row.has_key" @click="openBudget(row)">
+                    {{ t('models.budget.action.set') }}
+                  </v-btn>
+                </td>
+              </tr>
+            </AdminGrid>
+          </div>
+        </section>
+
+        <!-- 最近操作段：写操作是危险动作，改完要留痕、要能回看。 -->
+        <section class="amd__section">
+          <div class="amd__sectiontools">
+            <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.audit') }}</h2>
+          </div>
+
+          <div class="amd__audit">
+            <!-- 读失败照原话显示、并给重试；**不**显示「暂无操作」（那是把「没读到」说成
+             「没有」）。它说在这一段自己的卡里，而不是页顶那条横条上。 -->
+            <AdminEmptyState
+              v-if="auditError"
+              compact
+              tone="error"
+              :title="auditError"
+              :action="t('models.page.retry')"
+              @action="loadAudit"
             />
-          </li>
-        </ol>
+            <div v-else-if="auditLoading && !audit.length" class="amd__auditSkeleton">
+              <v-skeleton-loader v-for="i in 4" :key="i" type="text" />
+            </div>
+            <p v-else-if="!audit.length" class="amd__auditEmpty t-meta-read">{{ t('models.audit.empty') }}</p>
+            <ol v-else class="amd__auditRows">
+              <li v-for="(item, i) in audit" :key="i" class="amd__auditRow">
+                <div class="amd__auditLine">
+                  <span class="amd__auditTime t-meta-read t-num">{{ relTime(item.created_at) }}</span>
+                  <span class="amd__auditWho t-body"><UserRef :handle="item.actor_handle" /></span>
+                  <span class="amd__auditWhat t-body">
+                    {{ auditActionLabel(item.action) }}
+                    <span class="amd__auditTarget t-num">{{ item.target }}</span>
+                  </span>
+                  <span class="t-meta-read" :class="item.result === 'ok' ? 'amd__ok' : 'amd__fail'">
+                    {{ item.result === 'ok' ? t('models.audit.result.ok') : t('models.audit.result.failed') }}
+                  </span>
+                  <span v-if="item.detail" class="amd__auditDetail t-meta-read" :title="item.detail">{{
+                    item.detail
+                  }}</span>
+                  <!-- 「查看改动」只在有快照可 diff 时出现：before/after 都为空的那几项
+                   操作没有字段变化可看，按钮摆在那儿只会点出一句「没有变化」。 -->
+                  <button
+                    v-if="item.before || item.after"
+                    type="button"
+                    class="amd__textbtn amd__auditDiffBtn"
+                    :aria-expanded="auditExpanded.has(i)"
+                    @click="toggleAuditDiff(i)"
+                  >
+                    {{ auditExpanded.has(i) ? t('models.audit.diff.hide') : t('models.audit.diff.show') }}
+                  </button>
+                </div>
+                <AdminAuditDiff
+                  v-if="auditExpanded.has(i) && (item.before || item.after)"
+                  :before="item.before"
+                  :after="item.after"
+                />
+              </li>
+            </ol>
+          </div>
+        </section>
       </div>
-    </section>
+    </div>
 
     <AdminModelDetailDrawer v-model="drawerOpen" :name="drawerName" :days="days" @changed="load" />
 
@@ -895,7 +953,7 @@ onMounted(load)
       @update:model-value="deleteTarget = null"
     >
       <v-card rounded="lg">
-        <v-card-title class="px-4 pt-4 pb-2">{{ t('models.confirm.delete.title') }}</v-card-title>
+        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('models.confirm.delete.title') }}</v-card-title>
         <v-card-text class="px-4">
           {{ t('models.confirm.delete.body', { name: deleteTarget?.name ?? '' }) }}
         </v-card-text>
@@ -919,7 +977,7 @@ onMounted(load)
       @update:model-value="blockTarget = null"
     >
       <v-card rounded="lg">
-        <v-card-title class="px-4 pt-4 pb-2">
+        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">
           {{ blockTarget?.blocked ? t('models.confirm.unblock.title') : t('models.confirm.block.title') }}
         </v-card-title>
         <v-card-text class="px-4">
@@ -949,40 +1007,91 @@ onMounted(load)
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 16px 24px 24px;
   overflow-y: auto;
+  background: var(--canvas);
 }
 
-.amd__head {
+/* 宽度和队列页一样锁 `--page-w-admin` 并居中：这一页的右边没有东西，靠左会让不同
+   视口下的列宽差出一截（同 `.qpage__inner` 那条注）。`flex: 0 0 auto` 是给滚动
+   容器的：内容短时它不拉伸，长时它按内容长、由 `.amd` 滚。 */
+.amd__inner {
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 12px;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--page-w-admin);
+  margin: 0 auto;
 }
 
-.amd__headtext {
-  min-width: 0;
+/* 内容区的内边距在这里，不在 `.amd` 上 —— 页头（`AdminPageHeader`）自带 24px
+   内边距和底下那条发丝线，两边各写一份就会在两者之间多出一段谁都说不清是谁的空白。 */
+.amd__body {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 24px 24px;
 }
 
-.amd__sub {
-  margin: 2px 0 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.amd__headtools {
+/* 一条横条（写失败 / 提示）。**不是 `v-alert`**：那套默认样（大圆角、实色底、
+   整块染色）在这一页的表格旁边像另一个产品。这里只留一条：左侧一道 3px 的色标
+   说这是哪一类，其余全是这一页自己的底色与描边。 */
+.amd__flash {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
 }
 
-.amd__alert {
+.amd__flash--bad {
+  border-left-color: var(--danger);
+}
+
+.amd__flash--bad .amd__flashIcon {
+  color: var(--danger);
+}
+
+.amd__flash--ok {
+  border-left-color: var(--ok);
+}
+
+.amd__flash--ok .amd__flashIcon {
+  color: var(--ok);
+}
+
+.amd__flashText {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.amd__flashClose {
+  display: inline-flex;
   flex: 0 0 auto;
-  margin-bottom: 12px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.amd__flashClose:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+
+.amd__flashClose:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 .amd__kpis {
@@ -1006,19 +1115,23 @@ onMounted(load)
   }
 }
 
-/* 窄屏把页头和工具条**叠起来**。`.amd__headtext` 是 `min-width: 0`（宽屏下要它让位
-   给工具条），可在一行里它会被工具条挤到几乎没有宽度：实测 390px 的手机上「模型管理」
-   四个字变成一个字一行，而那一行的固定成员（三个窗口按钮 + 刷新）本来就有 230px 左右。
-   叠起来之后两者各自都读得出来，也和侧栏在那个宽度下自动收起是同一个判断。 */
+/* 窄屏的页头折行交给 `AdminPageHeader` 自己（它的工具槽是 `flex-wrap: wrap`），
+   这里只管内容区的内边距收一档 —— 两页的 24px 在 390px 上占掉了 48px 宽度。 */
 @media (max-width: 700px) {
-  .amd__head {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
+  .amd__body {
+    padding: 12px 16px 16px;
   }
 
-  .amd__headtools {
+  /* 时间窗口这一组比标题还宽（三段加起来 ~260px），而页头那一行是**一起缩**的：
+     不干预的话被挤掉的是标题 —— 390px 上「模型管理」会只剩「模型…」。让工具槽
+     自己占一整行，标题就还在一整行上。（`:deep` 只为了改页头那一行的折行，尺寸、
+     字号、内边距都还是 `AdminPageHeader` 自己的。） */
+  .amd__inner :deep(.aph__row) {
     flex-wrap: wrap;
+  }
+
+  .amd__inner :deep(.aph__tools) {
+    flex: 1 1 100%;
   }
 }
 
@@ -1365,6 +1478,31 @@ onMounted(load)
 
   .amd__auditDetail {
     grid-column: 3 / -1;
+  }
+}
+
+/* 手机（≤700）：网格换成折行的 flex。五列到了 390px 上，「改的是什么」那一格只剩
+   六十来像素 —— 而它是这一行的正文。让它独占一行，时间 / 谁 / 结果挤在上面那一行，
+   「谁在什么时候改了什么」还是按那个顺序读。 */
+@media (max-width: 700px) {
+  .amd__auditLine {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 8px;
+    align-items: baseline;
+  }
+
+  .amd__auditWhat {
+    flex: 1 1 100%;
+    white-space: normal;
+  }
+
+  .amd__auditDetail {
+    min-width: 0;
+  }
+
+  .amd__auditDiffBtn {
+    margin-left: auto;
   }
 }
 </style>

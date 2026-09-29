@@ -190,7 +190,11 @@ class OpenAICodexOAuth:
         self._transport = transport
 
     def _client(self, timeout: float) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=timeout, transport=self._transport)
+        return httpx.AsyncClient(
+            timeout=timeout,
+            transport=self._transport,
+            proxy=settings.openai_subscription_proxy,
+        )
 
     @staticmethod
     def _oauth_url(path: str) -> str:

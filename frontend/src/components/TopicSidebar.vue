@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import type { Project, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
+import type { MenuAction } from './common/menuAction'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { useLongPress } from '@/composables/useLongPress'
+
+import { replyStalled, stallReasonText } from '../lib/replyWait'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
 import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
@@ -24,8 +28,14 @@ import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+import LeaveProjectDialog from './LeaveProjectDialog.vue'
+import TransferProjectDialog from './TransferProjectDialog.vue'
 
+import { menuActionOf } from '@/commands'
+import { openPalette } from '@/commands/palette/state'
+import { topicActions } from '@/commands/topicActions'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -50,6 +60,9 @@ const props = defineProps<{
   privateUnreadMap?: Record<string, number>
   // 整页形态: 手机上话题列表是页面栈的一层，占满内容区，不是侧边抽屉。
   page?: boolean
+  // 两栏（平板）: 还是整页形态的那份列表，但它是左边一栏、顶栏只盖着右边的房间，
+  // 所以项目名那一行留在这一栏自己的顶上，不填进顶栏。
+  column?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -59,14 +72,11 @@ const emit = defineEmits<{
   (e: 'hover-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
-  // 归档去向: manual archive / unarchive from the row's ⋯ actions.
-  (e: 'archive-topic', id: string): void
+  // 已归档那一组里行尾的「取消归档」。
   (e: 'unarchive-topic', id: string): void
-  // Rename a topic's title from the row's ⋯ actions. `suggested` = the person
-  // kept a 智能重命名 suggestion as it was.
-  (e: 'rename-topic', payload: { id: string; title: string; suggested?: boolean }): void
-  // 恢复自动命名: hand a title a person chose back to the platform.
-  (e: 'restore-auto-title', id: string): void
+  // Rename a topic's title from the row's ⋯ actions. A name a person chose is
+  // final: the platform stops renaming that room from then on.
+  (e: 'rename-topic', payload: { id: string; title: string }): void
   // Open 项目文档 in the main area. The rail always asks for 章程 — the page
   // itself carries the tabs that reach the other three.
   (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
@@ -97,9 +107,10 @@ function startResize(e: MouseEvent) {
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
 //
-// 「退出项目 / 转让项目」只在成员页：那里有名册，知道我是所有者、负责人还是团队带进来
-// 的人，而这几种人能不能退、能不能转各不相同。这里只知道项目行上的所有者，按它判
-// 会把退出递给退不掉的人。
+// 「退出项目」只在成员页：那里有名册，知道我是所有者、负责人还是团队带进来的人，
+// 而这几种人能不能退各不相同。项目行上读不出这些，按它判会把退出递给退不掉的人。
+// 「转让项目」两处都有（这里一条，成员页那颗按钮保留）——它只需要「我是不是所有者
+// 或这个项目的团队管理员」，项目行自己就带着这个答案。
 const router = useRouter()
 const route = useRoute()
 
@@ -180,6 +191,78 @@ function hoverProjectPage(name: string) {
 function openProject(projectId: string) {
   if (projectId === props.selectedProjectId) return
   router.push({ name: 'workspace-project', params: { projectId } })
+}
+
+// 「转让项目」在这个菜单里也有一条（成员页那颗按钮保留，别删）。谁转得动，项目行
+// 自己就说得出：所有者，或者管得了这个项目的团队管理员（`can_manage_members`）——
+// 和成员页那颗按钮同一个判据，后端动手时按同一条规则再判一次。
+//
+// 「退出项目」这里也有一条（成员页那颗按钮保留，别删）——所有者换「转让项目」，其余
+// 的人换「退出项目」，两句是同一件事的两半。
+//
+// 判据只有「我不是所有者」这一条，项目行上读得出来。为什么够：退项目退的是项目成员
+// 身份，而因团队而在这里的人现在也能退（退的是这个项目，不是小队），剩下能拦的只有
+// owner 那一条，而 owner 看到的是「转让项目」。
+const transferOpen = ref(false)
+const leaveOpen = ref(false)
+const currentProject = computed(() => props.projects.find((p) => p.id === props.selectedProjectId) ?? null)
+const canTransfer = computed(
+  () =>
+    !!currentProject.value &&
+    (currentProject.value.owner_handle === myHandle() || currentProject.value.can_manage_members === true)
+)
+const canLeave = computed(() => !!currentProject.value && currentProject.value.owner_handle !== myHandle())
+
+// 手机上的项目菜单（整页形态）：侧栏上摆在话题上面的那几页、项目文档、平时收在 ⋯
+// 里的那几页、项目设置、转让或退出，一张面板全列出来。顺序照桌面：先是侧栏上那几
+// 行，再是菜单里那几项。
+const projectSheetOpen = ref(false)
+const projectSheetActions = computed<MenuAction[]>(() => {
+  if (!props.selectedProjectId) return []
+  const page = (key: string): MenuAction => ({
+    key,
+    label: t(pageOf(key).label, terms.value),
+    icon: pageOf(key).icon,
+    badge: key === 'project-members' && privateUnreadTotal.value > 0 ? countLabel(privateUnreadTotal.value) : undefined,
+    onSelect: () => openProjectPage(key),
+  })
+  const actions: MenuAction[] = [
+    ...plan.value.visible.map(page),
+    {
+      key: 'project-docs',
+      label: t('navigation.project.docs'),
+      icon: 'mdi-file-document-outline',
+      onSelect: () => emit('select-docs', 'charter'),
+    },
+    ...menuPages.value.map((p) => page(p.key)),
+    {
+      key: 'project-settings',
+      label: '项目设置',
+      icon: 'mdi-cog-outline',
+      onSelect: () => openProjectPage('project-settings'),
+    },
+  ]
+  if (canTransfer.value)
+    actions.push({
+      key: 'transfer',
+      label: t('work.members.transfer'),
+      icon: 'mdi-account-arrow-right-outline',
+      onSelect: () => (transferOpen.value = true),
+    })
+  if (canLeave.value)
+    actions.push({
+      key: 'leave',
+      label: t('work.members.leave'),
+      icon: 'mdi-exit-to-app',
+      danger: true,
+      onSelect: () => (leaveOpen.value = true),
+    })
+  return actions
+})
+
+function switchProjectFromSheet(projectId: string) {
+  projectSheetOpen.value = false
+  openProject(projectId)
 }
 
 // New topic: don't ask the human for a title — create an untitled one and open
@@ -361,11 +444,45 @@ const selectedPath = computed(() => ancestorPathIds(props.topics, props.selected
 // 状态查表：折叠聚合要按 id 问「这个话题在跑吗 / 在等人吗」，而拍平树里只留了
 // id。走一遍 props.topics 建索引，别在每一行上做线性查找。
 const topicById = computed(() => new Map(props.topics.map((t) => [t.id, t])))
+function mergingOf(id: string): boolean {
+  return topicById.value.get(id)?.merging === true
+}
 function runningOf(id: string): boolean {
   return topicById.value.get(id)?.running === true
 }
 function awaitsOf(id: string): boolean {
   return topicById.value.get(id)?.awaits_me === true
+}
+// 红灯要跟着钟亮：列表 30 秒才刷一次，而「等满五分钟」是时间自己走到的，不是
+// 数据变出来的。所以这里自己有一只慢钟，每 10 秒拨一下让判断重算。
+const clock = ref(Date.now())
+let clockTimer: number | undefined
+onMounted(() => {
+  clockTimer = window.setInterval(() => (clock.value = Date.now()), 10_000)
+})
+onUnmounted(() => {
+  if (clockTimer !== undefined) window.clearInterval(clockTimer)
+})
+// 红灯两个来源：最近一轮报错了（立刻亮），或有人 @ 了 AI 等满五分钟没回话。
+function failedOf(id: string): boolean {
+  return Boolean(topicById.value.get(id)?.turn_failed_at)
+}
+function stalledOf(id: string): boolean {
+  const topic = topicById.value.get(id)
+  return failedOf(id) || replyStalled(topic?.awaiting_reply_since, clock.value, topic?.reply_wait_reason)
+}
+function stalledTitle(id: string): string {
+  return failedOf(id)
+    ? `${store.agentName}最近一轮报错了`
+    : stallReasonText(
+        {
+          reason: topicById.value.get(id)?.reply_wait_reason,
+          since: topicById.value.get(id)?.awaiting_reply_since,
+          pr: topicById.value.get(id)?.reply_wait_pr,
+        },
+        store.agentName,
+        clock.value
+      )
 }
 
 // ---- 分组 (C2): 我参与的平铺，其他话题收进一个默认折叠的组 ----
@@ -382,7 +499,9 @@ function rowsOf(rows: readonly FlatRow<Topic>[]) {
     reveal: selectedPath.value,
     unreadOf,
     runningOf,
+    mergingOf,
     awaitsOf,
+    stalledOf,
   })
 }
 
@@ -437,16 +556,24 @@ const railSections = computed(() => [
 // 收起来的后代的」并成一个信号。收起来的父话题会把子话题的呼吸点整个藏掉是原
 // 先的一个 bug（只有未读会聚合，"在跑" 不聚合），合槽顺手修掉它。展开一层就能
 // 分清动静是本行的还是子话题的，扫侧栏时要的本来就是"这里面有动静"。
+function rowStalled(row: VisibleRow<Topic>): boolean {
+  return stalledOf(row.topic.id) || row.hiddenStalled
+}
 function rowAwaits(row: VisibleRow<Topic>): boolean {
   return row.topic.awaits_me === true || row.hiddenAwaits
 }
 function rowRunning(row: VisibleRow<Topic>): boolean {
   return row.topic.running === true || row.hiddenRunning
 }
+function rowMerging(row: VisibleRow<Topic>): boolean {
+  return row.topic.merging === true || row.hiddenMerging
+}
 function toggleTitle(row: VisibleRow<Topic>): string {
   if (!row.collapsed) return '收起'
+  if (row.hiddenStalled) return '展开：里面有话题出了故障'
   if (row.hiddenAwaits) return '展开：里面有待处理的事项'
   if (row.hiddenRunning) return `展开：${store.agentName}正在里面工作`
+  if (row.hiddenMerging) return '展开：里面有已采纳的改动在等合并'
   return '展开'
 }
 
@@ -479,36 +606,12 @@ function startRename(t: Topic) {
 
 function cancelRename() {
   renamingTopicId.value = null
-  suggestingTopicId.value = null
-  suggestion.value = null
 }
 
 function saveRename(t: Topic) {
-  if (suggestingTopicId.value === t.id) return // the suggestion is still coming
   const title = normalizeTopicTitle(draftTitle.value, t.title)
-  const suggested = suggestion.value !== null && title === suggestion.value
   renamingTopicId.value = null
-  suggestion.value = null
-  if (title) emit('rename-topic', { id: t.id, title, suggested })
-}
-
-// 智能重命名: the same inline field, prefilled with a name generated from what
-// the room is about now. Nothing changes until the person presses enter — the
-// suggestion is theirs to keep, edit or throw away (esc).
-const suggestingTopicId = ref<string | null>(null)
-const suggestion = ref<string | null>(null)
-
-async function startSuggest(t: Topic) {
-  startRename(t)
-  suggestingTopicId.value = t.id
-  suggestion.value = null
-  const title = await store.suggestTitle(t.id)
-  if (suggestingTopicId.value !== t.id) return
-  suggestingTopicId.value = null
-  if (title && renamingTopicId.value === t.id) {
-    suggestion.value = title
-    draftTitle.value = title
-  }
+  if (title) emit('rename-topic', { id: t.id, title })
 }
 
 // 行操作收进一颗 ⋯ (C5): hover 只浮出一个入口，不再是三颗并排的按钮盖住标题
@@ -518,6 +621,46 @@ const actionsMenuFor = ref<string | null>(null)
 function setActionsMenu(topicId: string, open: boolean) {
   actionsMenuFor.value = open ? topicId : null
 }
+
+// 触屏上的行操作：长按一行，从底部升起这一行的操作（重命名、归档……），相当于桌面上
+// 悬停出来的那颗 ⋯。整页形态（手机）没有那颗 ⋯：它常驻在行尾会盖住未读数。桌面宽度
+// 的触屏上 ⋯ 还在，长按是多给的一条路。
+//
+// 一个 useLongPress 挂在滚动的那一段上，按下去的是哪一行由 data-row-actions 说：
+// 每一行各挂一个的话，折叠、分组、归档那几段模板都得各接一遍。
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+const searchTitle = computed(() =>
+  props.page ? t('navigation.palette.open') : `${t('navigation.palette.open')}（${isMac ? '⌘K' : 'Ctrl K'}）`
+)
+
+const railScroll = ref<HTMLElement | null>(null)
+const rowSheetOpen = ref(false)
+const rowSheetTopicId = ref<string | null>(null)
+const rowSheetTopic = computed(() =>
+  rowSheetTopicId.value ? topicById.value.get(rowSheetTopicId.value) ?? null : null
+)
+
+useLongPress(
+  railScroll,
+  (event) => {
+    const row = (event.target as HTMLElement | null)?.closest?.('[data-row-actions]')
+    const id = row?.getAttribute('data-row-actions')
+    if (!id || !topicById.value.has(id)) return
+    rowSheetTopicId.value = id
+    if (rowSheetActions.value.length) rowSheetOpen.value = true
+  },
+  // 正在改名时手指按在输入框里是在选字，不是要这一行的操作。
+  { disabled: () => renamingTopicId.value !== null }
+)
+
+// 一行话题能做的事（悬停的 ⋯、长按的面板）：侧栏里重命名是就地改。
+function rowActions(topic: Topic) {
+  return topicActions(topic, router, { rename: () => startRename(topic) })
+}
+
+const rowSheetActions = computed<MenuAction[]>(() =>
+  rowSheetTopic.value ? rowActions(rowSheetTopic.value).map(menuActionOf) : []
+)
 
 // 项目文档 (C4): 章程 / 决策记录 / 周报集 / 记忆 在侧栏只占一行，点开进章程；
 // 四选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
@@ -554,15 +697,18 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
            各自可聚焦，键盘用户两样都够得着。 -->
       <!-- 整页形态（手机上的话题列表）下这一行不长在页面上，而是填进顶栏那一格：
            手机上只有一条顶栏，页面自己再画一条就是两条横条一上一下写同类的东西。 -->
-      <Teleport to="#app-bar-slot" :disabled="!page">
-        <div class="sidebar-header rail-header" :class="{ 'rail-header--bar': page }">
+      <Teleport to="#app-bar-slot" :disabled="!page || column">
+        <div
+          class="sidebar-header rail-header"
+          :class="{ 'rail-header--bar': page && !column, 'rail-header--column': column }"
+        >
           <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
           <!-- 名字前那个图标说的是「点下去是看板」：这一行长得像标题（它要和右边页头
                对齐成一条线，不能画成列表里的一行），光看名字猜不出它能点。 -->
           <button
             type="button"
             class="rail-header__home"
-            :class="{ 'rail-header__home--active': onHome }"
+            :class="{ 'rail-header__home--active': onHome, 'tap-target': page }"
             :title="currentProjectName"
             :aria-current="onHome ? 'page' : undefined"
             :disabled="!selectedProjectId"
@@ -574,13 +720,40 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
           <!-- 有人找你：私聊的未读原来挂在「成员」那一行上，而那一行进了菜单。
                它是主导航上唯一会亮的「有人在等你回话」，所以跟着菜单入口走。 -->
           <span v-if="privateUnreadTotal > 0" class="unread-badge me-1">{{ countLabel(privateUnreadTotal) }}</span>
-          <v-menu location="bottom end">
+          <!-- 命令面板的入口。桌面上 ⌘K / Ctrl K 也能叫出来，快捷键写在 title 里，不常驻
+               界面；手机上没有键盘快捷键，这颗就是唯一的入口。 -->
+          <button
+            type="button"
+            class="rail-header__more"
+            :class="{ 'tap-target': page }"
+            :title="searchTitle"
+            :aria-label="t('navigation.palette.open')"
+            aria-haspopup="dialog"
+            @click="openPalette()"
+          >
+            <v-icon class="rail-header__caret" size="18" icon="mdi-magnify" />
+          </button>
+          <!-- 整页形态（手机）：同一个入口从底部升起一张面板，见下面的 MobileActionSheet。 -->
+          <button
+            v-if="page"
+            type="button"
+            class="rail-header__more tap-target"
+            :class="{ 'rail-header__more--active': projectSheetOpen }"
+            title="项目菜单"
+            aria-label="项目菜单"
+            aria-haspopup="dialog"
+            :aria-expanded="projectSheetOpen ? 'true' : 'false'"
+            @click="projectSheetOpen = true"
+          >
+            <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
+          </button>
+          <v-menu v-else location="bottom end">
             <template #activator="{ isActive, props: menuProps }">
               <button
                 v-bind="menuProps"
                 type="button"
                 class="rail-header__more"
-                :class="{ 'rail-header__more--active': isActive }"
+                :class="{ 'rail-header__more--active': isActive, 'tap-target': page }"
                 title="项目菜单"
                 aria-label="项目菜单"
               >
@@ -588,30 +761,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               </button>
             </template>
             <v-list density="compact" nav max-height="60vh">
-              <!-- 整页形态下这个菜单是**唯一**能换项目的地方：一个项目一格的那条
-                 竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目，于是
-                 手机上进了一个项目就再也走不到别的项目去。桌面不列——rail 已经
-                 是那个入口，同一件事有两个入口只会让人猜哪个才算数。 -->
-              <template v-if="page && projects.length > 1">
-                <v-list-subheader class="t-eyebrow">切换项目</v-list-subheader>
-                <v-list-item
-                  v-for="p in projects"
-                  :key="p.id"
-                  :active="p.id === selectedProjectId"
-                  rounded="lg"
-                  @click="openProject(p.id)"
-                >
-                  <template #prepend>
-                    <span class="private-avatar-slot me-3">
-                      <span class="dm-avatar project-avatar" :style="{ backgroundColor: avatarColor(p.name) }">{{
-                        avatarInitial(p.name)
-                      }}</span>
-                    </span>
-                  </template>
-                  <v-list-item-title class="t-body">{{ p.name }}</v-list-item-title>
-                </v-list-item>
-                <v-divider class="my-1" />
-              </template>
               <v-list-item
                 v-for="p in menuPages"
                 :key="p.key"
@@ -629,17 +778,69 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 :disabled="!selectedProjectId"
                 @click="openProjectPage('project-settings')"
               />
+              <!-- 只有转得动的人看得见：必然被拒的按钮比不给更糟。 -->
+              <v-list-item
+                v-if="canTransfer"
+                prepend-icon="mdi-account-arrow-right-outline"
+                :title="t('work.members.transfer')"
+                :disabled="!selectedProjectId"
+                @click="transferOpen = true"
+              />
+              <!-- 另一半：我不是所有者时换「退出项目」。所有者看到的上一条就是它的替代
+                   ——所有者退不掉，只能先把项目交出去。 -->
+              <v-list-item
+                v-if="canLeave"
+                prepend-icon="mdi-exit-to-app"
+                :title="t('work.members.leave')"
+                :disabled="!selectedProjectId"
+                @click="leaveOpen = true"
+              />
             </v-list>
           </v-menu>
         </div>
       </Teleport>
 
+      <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
+      <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
+      <!-- 手机上的项目菜单。话题列表上面那几行（资料库、成员、项目文档）在手机上收进
+           这里：列表只留话题，打开项目先看到的是它们。换项目也只能在这里——一个项目
+           一格的那条竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目。 -->
+      <MobileActionSheet v-if="page" v-model="projectSheetOpen" :actions="projectSheetActions">
+        <div v-if="projects.length > 1" class="project-switch">
+          <div class="project-switch__head t-eyebrow">切换项目</div>
+          <button
+            v-for="p in projects"
+            :key="p.id"
+            type="button"
+            class="project-switch__item"
+            :aria-current="p.id === selectedProjectId ? 'true' : undefined"
+            @click="switchProjectFromSheet(p.id)"
+          >
+            <span
+              class="dm-avatar project-avatar project-switch__avatar"
+              :style="{ backgroundColor: avatarColor(p.name) }"
+              >{{ avatarInitial(p.name) }}</span
+            >
+            <span class="project-switch__name">{{ p.name }}</span>
+            <v-icon v-if="p.id === selectedProjectId" size="18" class="project-switch__check" icon="mdi-check" />
+          </button>
+          <div class="project-switch__rule" />
+        </div>
+      </MobileActionSheet>
+      <MobileActionSheet
+        v-model="rowSheetOpen"
+        :actions="rowSheetActions"
+        :title="rowSheetTopic ? topicTitle(rowSheetTopic) : undefined"
+      />
+
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
-      <div class="rail-scroll flex-grow-1 overflow-y-auto">
+      <div ref="railScroll" class="rail-scroll flex-grow-1 overflow-y-auto">
         <template v-if="!selectedProjectId">
           <div class="t-body c-muted pa-4">先选择一个项目</div>
         </template>
         <template v-else>
+          <!-- 列表顶上由外面填的一行（手机上是看板的摘要，见 ProjectSidebar）。 -->
+          <slot name="top" />
           <!-- 置顶行 (C1): 全局房间 + 总览 + 日历。和话题行同一种语法——同图标
                槽、同缩进基准、同选中态、同未读角标，所以「点它会发生什么」不用
                另学一遍。 -->
@@ -675,8 +876,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               </template>
             </v-list-item>
 
+            <!-- 手机上这几行收进了项目菜单（项目名旁边那颗 ⌄），列表只留话题。 -->
             <v-list-item
-              v-for="key in plan.visible"
+              v-for="key in page ? [] : plan.visible"
               :key="key"
               :active="route.name === key"
               rounded="lg"
@@ -705,6 +907,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                  个项目的一页，所以和它们排在一起，不压在话题列表底下——话题一多，
                  那个位置就被挤出了视野。 -->
             <v-list-item
+              v-if="!page"
               :active="onDocs"
               rounded="lg"
               class="nav-row pinned-row docs-row"
@@ -731,8 +934,10 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               variant="text"
               color="on-surface-variant"
               :title="creatingTopic ? '正在创建话题' : '新建话题'"
+              :aria-label="creatingTopic ? '正在创建话题' : '新建话题'"
               :loading="creatingTopic"
               :disabled="creatingTopic"
+              :class="{ 'tap-target': page }"
               @click="newTopic()"
             />
           </div>
@@ -780,10 +985,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     v-for="row in section.rows"
                     :key="row.topic.id"
                     :data-room-id="row.topic.id"
+                    :data-row-actions="row.topic.id"
                     :active="row.topic.id === selectedTopicId"
                     rounded="lg"
                     class="topic-row"
                     :class="{
+                      'topic-row--hover-actions': !page,
                       'is-active': row.topic.id === selectedTopicId,
                       'is-sub': row.depth > 0,
                       'is-menu-open': actionsMenuFor === row.topic.id,
@@ -806,8 +1013,11 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         type="button"
                         class="row-slot subtree-toggle"
                         :class="{
-                          'subtree-toggle--awaits': rowAwaits(row),
-                          'subtree-toggle--running': !rowAwaits(row) && rowRunning(row),
+                          'tap-target': page,
+                          'subtree-toggle--stalled': rowStalled(row),
+                          'subtree-toggle--awaits': !rowStalled(row) && rowAwaits(row),
+                          'subtree-toggle--running':
+                            !rowStalled(row) && !rowAwaits(row) && (rowRunning(row) || rowMerging(row)),
                         }"
                         :title="toggleTitle(row)"
                         :aria-expanded="!row.collapsed"
@@ -817,8 +1027,15 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                           {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
                         </v-icon>
                       </button>
-                      <!-- 等你处理：有点名给你的验收卡、@你 的未读，或芝士停在一道只有
-                         你能回答的问题上。排在"在跑"前面——芝士在忙是它的事，等你做
+                      <!-- 红灯：最近一轮报错了，或有人 @ 了芝士等了 5 分钟还没有一句
+                         回话——多半是卡住、排队太久或掉线了。排在最前面：它说的是
+                         「出故障了」，比等你拍板更该先看见。 -->
+                      <span v-else-if="stalledOf(row.topic.id)" class="row-slot">
+                        <span class="stalled-dot" :title="stalledTitle(row.topic.id)" />
+                      </span>
+                      <!-- 等你处理：有点名给你的验收卡、没答的决策请求，或芝士停在一道只有
+                         你能回答的问题上。未读的 @ 不点这颗灯——芝士汇报、递卡都 @人，
+                         算进来几乎每行都亮，灯就没意义了；未读有右边的数字。排在"在跑"前面——芝士在忙是它的事，等你做
                          事才是你的事。行首只有这一颗点：看板每一列的状态点不再画进
                          标题里，那一颗对每一行都有，于是哪一行都不显眼。 -->
                       <span v-else-if="row.topic.awaits_me" class="row-slot">
@@ -828,6 +1045,11 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                          任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->
                       <span v-else-if="row.topic.running" class="row-slot">
                         <span class="running-dot" :title="`${store.agentName}正在这个话题里工作`" />
+                      </span>
+                      <!-- 绿灯常亮：已采纳，在等检查 / 合并队列走完，此刻没有 AI 在干活。
+                         合并完就灭。空心圈：关掉动效时呼吸点也不动，靠形状分开。 -->
+                      <span v-else-if="row.topic.merging" class="row-slot">
+                        <span class="merging-dot" title="已采纳，在等合并" />
                       </span>
                       <span v-else class="row-slot" />
                     </template>
@@ -841,8 +1063,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         hide-details
                         autofocus
                         :maxlength="TOPIC_TITLE_MAX_LENGTH"
-                        :loading="suggestingTopicId === row.topic.id"
-                        :placeholder="suggestingTopicId === row.topic.id ? '正在生成标题…' : undefined"
                         class="rename-field"
                         @click.stop
                         @keyup.enter="saveRename(row.topic)"
@@ -882,8 +1102,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                         :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
                         >{{ countLabel(row.unreadTotal) }}</span
                       >
-                      <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度 -->
-                      <div class="row-actions" @click.stop>
+                      <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度。
+                           整页形态（手机）没有它：那里长按一行打开同一组操作。 -->
+                      <div v-if="!page" class="row-actions" @click.stop>
                         <v-menu
                           :model-value="actionsMenuFor === row.topic.id"
                           location="bottom end"
@@ -903,26 +1124,11 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                           </template>
                           <v-list density="compact" nav>
                             <v-list-item
-                              prepend-icon="mdi-pencil-outline"
-                              title="重命名"
-                              @click="startRename(row.topic)"
-                            />
-                            <v-list-item
-                              prepend-icon="mdi-auto-fix"
-                              title="智能重命名"
-                              @click="startSuggest(row.topic)"
-                            />
-                            <v-list-item
-                              v-if="row.topic.title_source === 'human'"
-                              prepend-icon="mdi-autorenew"
-                              title="恢复自动命名"
-                              @click="emit('restore-auto-title', row.topic.id)"
-                            />
-                            <v-list-item
-                              v-if="row.topic.can_archive"
-                              prepend-icon="mdi-archive-arrow-down-outline"
-                              title="归档"
-                              @click="emit('archive-topic', row.topic.id)"
+                              v-for="action in rowActions(row.topic)"
+                              :key="action.id"
+                              :prepend-icon="action.icon"
+                              :title="action.title"
+                              @click="action.run?.()"
                             />
                           </v-list>
                         </v-menu>
@@ -960,6 +1166,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 :key="t.id"
                 :active="t.id === selectedTopicId"
                 rounded="lg"
+                :data-row-actions="t.id"
                 class="topic-row topic-row--archived"
                 :class="{ 'is-active': t.id === selectedTopicId }"
                 @click="emit('select-topic', t.id)"
@@ -986,6 +1193,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     density="comfortable"
                     title="取消归档"
                     class="split-btn"
+                    :class="{ 'tap-target': page }"
                     @click.stop="emit('unarchive-topic', t.id)"
                   />
                 </template>
@@ -1079,6 +1287,27 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   border-block-end: 0;
   padding-inline: 0;
 }
+/* 顶栏里左边紧挨着 ←：往左探的那 4px 会压到 ← 能点的那一块上。两颗按钮都比手指
+   小，能点的范围由 .tap-target 撑到 44（相对定位给它用）。 */
+.rail-header--bar .rail-header__home {
+  position: relative;
+  margin-inline-start: 0;
+}
+/* 这里挨着两颗（搜索、项目菜单）：各自只有 26 宽、靠 .tap-target 撑到 44 的话，
+   两块撑出来的范围叠在一起，按在搜索右半边点到的是后面那颗。所以顶栏里它们本身
+   就是 44 见方。 */
+.rail-header--bar .rail-header__more {
+  position: relative;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+}
+/* 两栏（平板）时这一行留在左栏顶上，高度和底线照桌面那一条（手机外壳里是 56，和
+   右边的顶栏接成一条线）。两颗按钮一样由 .tap-target 撑到 44，所以一样要有定位。 */
+.rail-header--column .rail-header__home,
+.rail-header--column .rail-header__more {
+  position: relative;
+}
 /* 这一条里现在有两个按钮，所以描边长在按钮上，不长在整条上。 */
 .rail-header__home,
 .rail-header__more {
@@ -1151,10 +1380,18 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   font-weight: 650;
 }
 
-/* Topic / nav rows: title ink, quiet by default. */
+/* Topic / nav rows: title ink, quiet by default.
+
+   行盒必须跟着字号一起给。v-list 的 nav 变体把 .v-list-item-title 的行盒钉在
+   1rem（16px）上，与这里的字号无关；而 14px 的字身（PingFang 这类 CJK 字体约
+   1.4em ≈ 19.6px）比 16px 的行盒还高，标题又自带 overflow: hidden —— 高出来的
+   那 1.8px 上下各切一刀，g / y / p 这些下伸的字母下缘就被切平。汉字不下伸，
+   所以只有拉丁字母看得出来。行盒高度是字号阶梯的属性（docs/design-system.md
+   §3.2），这里照 --lh-14 取，和 .menu-list 里那条同名的规则一致。 */
 .topic-row :deep(.v-list-item-title),
 .nav-row :deep(.v-list-item-title) {
   font-size: 14px;
+  line-height: var(--lh-14);
   color: var(--text);
 }
 .topic-title {
@@ -1340,6 +1577,52 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   font-weight: 600;
   line-height: 1;
 }
+/* 手机项目菜单里的「切换项目」：一行的尺寸、字号和面板里的操作行一样（手指点得中），
+   头像换成项目自己的方头像。当前这个项目行尾一个勾，不用琥珀——它不是导航位置。 */
+.project-switch__head {
+  padding: 4px 20px;
+}
+.project-switch__item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 20px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: var(--lh-15);
+  text-align: start;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.project-switch__item:active {
+  background: var(--fill);
+}
+.project-switch__avatar {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+}
+.project-switch__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-switch__check {
+  flex: none;
+  color: var(--muted);
+}
+.project-switch__rule {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
 /* 项目头像：和人的头像同一个底子（.dm-avatar），只换形状——方头像，和桌面那条
    竖 rail 上一个项目一格的画法是同一种语言。人是靠方/圆区分「这是个项目」还是
    「这是个人」的，都画成圆的就混了。 */
@@ -1386,24 +1669,36 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 /* !important 是被逼的，不是偷懒：上面 .topic-row.is-active :deep(.v-icon) 为了
    压住 Vuetify 的琥珀 active overlay 用了 !important，选中的那一行会连带把这里
    的状态色刷成 --muted——正好是"这一行收起来了、里面有事等你"最该看见的时候。 */
+.subtree-toggle--stalled :deep(.v-icon),
+.subtree-toggle--stalled:hover :deep(.v-icon) {
+  color: var(--danger) !important;
+}
 .subtree-toggle--awaits :deep(.v-icon),
 .subtree-toggle--awaits:hover :deep(.v-icon) {
-  color: var(--warn) !important;
+  color: var(--signal-yellow) !important;
 }
 .subtree-toggle--running :deep(.v-icon),
 .subtree-toggle--running:hover :deep(.v-icon) {
   color: var(--ok) !important;
 }
 
-/* 等你处理：看板「待处理」那一列的同一颗点（`lib/board.ts` 的 needs_you：--warn
-   实心）——侧栏和看板说的是同一件事，就得是同一个样子。琥珀留给主操作和导航位置。
-   跟绿色呼吸点靠三个通道区分（颜色 / 大小 / 动不动），不是只靠颜色——红绿色觉障碍
-   下也分得开。 */
+/* 侧栏是一组红黄绿灯：红 = 有人等芝士回话太久，黄 = 有事等你拍板，绿呼吸 =
+   芝士在干活。黄不用琥珀/橙：右边的未读数字就是琥珀色，同色会让人把「有新消息」
+   和「等你拍板」读成一回事。红灯 = 最近一轮报错，或有人等芝士回话满五分钟。
+   只靠颜色分不开的，靠形状补：红灯外面多一圈淡红晕，黄灯是实心点，绿灯更小且会
+   呼吸——红绿、红黄色觉障碍下也分得开。 */
+.stalled-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-wash);
+}
 .await-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--warn);
+  background: var(--signal-yellow);
 }
 /* 收起来了收了几个——形态沿用「已归档」那颗计数丸。 */
 .subtree-count {
@@ -1436,6 +1731,13 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
     opacity: 0.45;
     transform: scale(0.7);
   }
+}
+/* 在等合并：常亮的空心绿圈。和呼吸点靠「动不动」「实心还是空心」两样分开。 */
+.merging-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--ok);
 }
 /* 关掉动效时是一颗常亮的绿点：和「等你」那颗靠颜色、大小两样还分得开。 */
 @media (prefers-reduced-motion: reduce) {
@@ -1537,9 +1839,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   background: var(--fill);
   color: var(--accent);
 }
-/* 触摸屏没有 hover，:focus-within 又要先聚焦——这两条规则加起来，⋯ 菜单在手机上
-   根本摸不到。所以在没有 hover 能力的设备上它常驻。按输入方式判断，不按视口宽度：
-   带触摸屏的笔记本两样都对。 */
+/* 触摸屏没有 hover，:focus-within 又要先聚焦——这两条规则加起来，⋯ 菜单在桌面宽度
+   的触屏上（平板横屏、带触摸屏的笔记本）根本摸不到。所以在没有 hover 能力的设备上
+   它常驻。整页形态（手机）不画这颗 ⋯，那里长按一行打开同一组操作。 */
 @media (hover: none) {
   .row-actions {
     opacity: 1;
@@ -1557,10 +1859,29 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   opacity: 1;
   pointer-events: auto;
 }
-/* While the actions are out, the count steps aside (they share the tail). */
-.topic-row:hover .unread-badge,
-.topic-row:focus-within .unread-badge,
+/* While the actions are out, the count steps aside (they share the tail). 只在有那颗
+   ⋯ 的行上：手机上点过一行之后 :hover 会一直粘着，未读数不能因此消失。 */
+.topic-row--hover-actions:hover .unread-badge,
+.topic-row--hover-actions:focus-within .unread-badge,
 .topic-row.is-menu-open .unread-badge {
   opacity: 0;
+}
+/* 整页形态：手指点的地方至少 44px 高；改名的输入框 16px，iOS 聚焦时才不会整页放大。 */
+.topic-rail--page .topic-row,
+.topic-rail--page .nav-row {
+  min-height: 44px;
+}
+.topic-rail--page .group-toggle {
+  min-height: 44px;
+}
+.topic-rail--page .subtree-toggle {
+  position: relative;
+}
+.topic-rail--page .rename-field {
+  max-width: none;
+}
+.topic-rail--page .rename-field :deep(.v-field__input) {
+  min-height: 36px;
+  font-size: 16px;
 }
 </style>

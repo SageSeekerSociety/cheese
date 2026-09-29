@@ -25,16 +25,22 @@ import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
 import type { TopicPhase } from '../lib/topicState'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
-import { fileIcon, previewCanShowInRoom } from '../lib/fileKind'
+import { previewCanShowInRoom } from '../lib/fileKind'
 
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
+// 别名：这个文件里 `panelTabs` 已经是「页签条要的那份数据」了。
+import { ALL_TABS, panelTabs as fixedTabs, type TabDef, type TabKey } from './panels/panelTabList'
+import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
+
+import { useCommands } from '@/commands'
+import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -45,7 +51,7 @@ const props = withDefaults(
     activityTick: number
     // 芝士 正在这个话题里干活 —— tab 栏据此给「现场」加一个跳动的点。
     working?: boolean
-    // 会话控制状态的最近一帧，一路透传给现场那格的控制条。
+    // 会话状态的最近一帧，一路透传给现场那格的会话详情。
     agentControl?: AgentControlState | null
     // 正在跑的轮次各自的开始时间（毫秒），一路透传给现场那格的状态条。
     siteTurns?: Record<string, number>
@@ -64,11 +70,16 @@ const props = withDefaults(
     withChat?: boolean
     // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
     openCardId?: string | null
+    // 地址里的 `?block=`，而且开着一张卡：卡打开时停在它里面的这一条。
+    cardFocusBlock?: string | null
     // 房间名册 handle → 名字。现场那一格用它给每一行署名。一路透传：漏掉它不
     // 报错，只是那一格里写的是 handle。
     memberNames?: Record<string, string>
     /** 项目 AI 队友的名字（项目可以给它改名），提示和空态里用它，不写死「芝士」。 */
     agentName?: string
+    // 正在干活的队友们的名字（几个座位并行在跑就几个），「现场」tab 的标签把
+    // 他们并列报出来。空着 = 帧没带座位（老后端），退回 agentName 的单数说法。
+    workingAgents?: string[]
   }>(),
   {
     working: false,
@@ -76,11 +87,13 @@ const props = withDefaults(
     siteTurns: () => ({}),
     topicList: () => [],
     openCardId: null,
+    cardFocusBlock: null,
     memberNames: () => ({}),
     tab: undefined,
     phase: undefined,
     withChat: false,
     agentName: '芝士',
+    workingAgents: () => [],
   }
 )
 
@@ -90,27 +103,15 @@ const emit = defineEmits<{
   /** 卡片面板里的「去验收」——同 `chatEvents.review`，切到「改动」那一格。 */
   (e: 'review'): void
   (e: 'mention-click', handle: string): void
+  /** 总览自动区里的一条决策 / 里程碑：去向是项目里的一页，交给 `TopicView`。 */
+  (e: 'open-resource', resource: 'decision' | 'milestone'): void
   (e: 'update:tab', key: string): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层。
   (e: 'locate', message: string): void
 }>()
 
-type TabKey = 'chat' | 'overview' | 'site' | 'changes' | 'preview'
-interface TabDef {
-  key: TabKey
-  label: string
-  icon: string
-}
-const ALL_TABS: TabDef[] = [
-  { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
-  // 文档 和 任务 合成了一格。它们回答的是同一个问题的两半——「这个房间在干什么」
-  // ——分成两格意味着看完一半得先想起来还有另一半，于是大多数人只看文档，房间里
-  // 有几条活在跑就没人知道。
-  { key: 'overview', label: '总览', icon: 'mdi-file-document-outline' },
-  { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
-  { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
-  { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
-]
+// 有哪几格、各叫什么、挂哪个图标在 `panels/panelTabList.ts`：文档里的演示照着
+// 同一份表画这条栏，一个名字只有一个出处。
 // 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
 // 的），桌面上对话就在旁边那一栏，所以是总览。
 const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'overview'))
@@ -123,9 +124,6 @@ const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview'
 const FILE_TAB = 'file:'
 function fileKey(path: string): string {
   return FILE_TAB + path
-}
-function fileName(path: string): string {
-  return path.split('/').pop() || path
 }
 const openFiles = ref<OpenFileTab[]>([])
 // 自由区属于房间：切去别的房间再回来，开着的那几份还在。只记在这一次会话里。
@@ -149,52 +147,8 @@ function ensureFileFromUrl(key: string | null) {
 
 // 窄屏上这条栏会横向滚动，所以「哪一格是选中的」和「你看得见哪一格」不再是同一
 // 件事：阶段自动选中的那一格（比如开工时的现场）可能整个在屏幕外，屏幕上什么都
-// 没发生。选中态一变就把它带回视野里。
-const tabbarRef = ref<HTMLElement | null>(null)
-watch(active, () => {
-  void nextTick(() => {
-    const on = tabbarRef.value?.querySelector('[aria-selected="true"]')
-    on?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  })
-})
-
-// 选中那一格下面的线是一条，换页签时从旧的那一格滑到新的那一格（§9.2：位置变了，
-// 就让人看见它是从哪儿挪过来的）。每一格各画一条的话，换页签是一条消失、另一条
-// 凭空出现，读不出「从这儿到那儿」。
-//
-// 量的是选中那一格自己的盒子，所以一格的宽度变了（计数出现、字体加载完）也得重量
-// 一次——盯着的就是那一格。第一次落位不演：打开房间时线本来就在那儿。
-const ink = ref<{ left: number; width: number } | null>(null)
-const inkMoves = ref(false)
-let inkWatch: ResizeObserver | null = null
-let inkTarget: Element | null = null
-function placeInk() {
-  const on = tabbarRef.value?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
-  if (!on) {
-    ink.value = null
-    return
-  }
-  // 页签在 `.tabbar__file` 里的时候 offsetLeft 量的也是到 `.tabbar` 的距离：那层
-  // 包装没有定位，偏移的基准一路落到定了位的 `.tabbar` 上。
-  ink.value = { left: on.offsetLeft, width: on.offsetWidth }
-  // 只在选中的换了一格时改盯的对象：`observe` 一挂上就先回调一次，回调里再
-  // `disconnect` + `observe` 同一格，就是每一帧都在重挂、每一帧都在报 ResizeObserver
-  // 循环。
-  if (on !== inkTarget && typeof ResizeObserver !== 'undefined') {
-    inkWatch?.disconnect()
-    inkWatch ??= new ResizeObserver(() => placeInk())
-    inkWatch.observe(on)
-    inkTarget = on
-  }
-  if (!inkMoves.value) requestAnimationFrame(() => (inkMoves.value = true))
-}
-watch([active, () => openFiles.value.length, tabbarRef], () => void nextTick(placeInk), { immediate: true })
-onBeforeUnmount(() => inkWatch?.disconnect())
-const inkStyle = computed(() =>
-  ink.value
-    ? { transform: `translateX(${ink.value.left + 8}px)`, width: `${Math.max(0, ink.value.width - 16)}px` }
-    : { display: 'none' }
-)
+// 没发生。把选中那一格带回视野、以及那条下边线的量法，都在 `PanelTabs` 里——它
+// 是这条栏的组件，产品页和文档里的演示共用它。
 
 // Every move the panel makes goes through here, so the address always says what
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
@@ -225,11 +179,12 @@ function tabForPhase(phase: TopicPhase): TabKey {
   return defaultTab.value
 }
 
-// Back / forward, or someone pasting a link into the open topic.
+// Back / forward, or someone pasting a link into the open topic. 手机上对话那一格
+// 的地址可以不带 `?tab=`（刚进房间时就是这样），退回到它时也得回到对话。
 watch(
   () => props.tab,
   () => {
-    const asked = tabFromUrl()
+    const asked = tabFromUrl() ?? (props.withChat ? defaultTab.value : null)
     ensureFileFromUrl(asked)
     if (asked && asked !== active.value) active.value = asked
   }
@@ -244,6 +199,25 @@ function show(k: string) {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 }
 watch(active, show)
+
+// ---- 手机上换页签时内容从哪边进来 ----
+// 一屏只有一格，换页签时新的那一格从它页签所在的方向挪进来（右边的页签从右边来），
+// 人看得出自己是往哪边走了。动的只是进来的那一格的外层：各格一直挂着（对话的滚动
+// 位置、键盘弹起时的贴底都在里面），不为了演一下重建。桌面上两栏并排，不演。
+const tabOrder = computed(() => [
+  ...tabs.value.map((t) => t.key as string),
+  ...openFiles.value.map((f) => fileKey(f.path)),
+])
+const entering = ref<{ key: string; from: 'left' | 'right' } | null>(null)
+watch(active, (now, before) => {
+  if (!props.withChat) return
+  const order = tabOrder.value
+  entering.value = { key: now, from: order.indexOf(now) < order.indexOf(before) ? 'left' : 'right' }
+})
+function enterClass(key: string) {
+  const e = entering.value
+  return e?.key === key ? `tabpane-in tabpane-in--${e.from}` : undefined
+}
 
 const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
@@ -377,11 +351,25 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-const tabs = computed(() => ALL_TABS.filter((t) => t.key !== 'chat' || props.withChat))
+const tabs = computed(() => fixedTabs(props.withChat))
+// 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
+useCommands(() =>
+  tabs.value.map((tab) => ({
+    id: `room.tab.${tab.key}`,
+    title: t('navigation.palette.showTab', { tab: tab.label }),
+    icon: tab.icon,
+    run: () => setTab(tab.key),
+  }))
+)
+
+// 「现场」tab 上「谁正在工作」的说法：几个队友并行在干就把名字并列报出来
+// （对话栏按轮次帧学来的名单）；名单空着 = 帧没带座位（老后端），退回默认
+// 队友的单数说法，和从前一样。
+const workingNames = computed(() => (props.workingAgents.length ? props.workingAgents.join('、') : props.agentName))
 
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(t: TabDef): string {
-  if (t.key === 'site' && props.working) return `${t.label}（${props.agentName}正在工作）`
+  if (t.key === 'site' && props.working) return `${t.label}（${workingNames.value}正在工作）`
   if (t.key === 'overview' && threads.value.total) {
     const { total, open } = threads.value
     return open ? `${t.label}（${total} 件任务，${open} 件进行中）` : `${t.label}（${total} 件任务）`
@@ -393,6 +381,29 @@ function tabTitle(t: TabDef): string {
   }
   return t.label
 }
+
+/** 挂在页签上的那个信号。哪一格挂什么属于工作面板的账，`PanelTabs` 只负责画。 */
+function signalFor(key: TabKey): PanelTab['signal'] {
+  if (key === 'site' && props.working) return { kind: 'pulse' }
+  if (key === 'preview' && previewHasNew.value) return { kind: 'dot' }
+  if (key === 'overview' && threads.value.total) return { kind: 'count', count: threads.value.total }
+  if (key === 'changes' && summary.value.changedFiles.length) {
+    return { kind: 'count', count: summary.value.changedFiles.length, fresh: changesHasNew.value }
+  }
+  return undefined
+}
+
+/** 交给 `PanelTabs` 的那四格（或五格）：文案、图标、有没有东西、信号。 */
+const panelTabs = computed<PanelTab[]>(() =>
+  tabs.value.map((tab) => ({
+    key: tab.key,
+    label: tab.label,
+    icon: tab.icon,
+    empty: !hasContent(tab.key),
+    title: tabTitle(tab),
+    signal: signalFor(tab.key),
+  }))
+)
 
 // Opening the topic: the address decides, 文档 when it says nothing. Baseline the
 // dot against whatever this topic already had, so opening a topic — including
@@ -424,6 +435,12 @@ watch(
   [() => props.phase, summaryLoaded],
   ([phase, loaded]) => {
     if (settled.value || !phase) return
+    // 手机上房间永远开在对话：输入框就在那一格里，自动跳去现场等于把它藏起来。
+    // 现场那一格上的呼吸点照样说着「正在工作」。
+    if (props.withChat) {
+      settled.value = true
+      return
+    }
     if ((phase === 'reviewing' || phase === 'delivering') && !loaded) return
     const want = tabForPhase(phase)
     if (want === active.value) settled.value = true
@@ -546,85 +563,29 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
     </div>
 
     <template v-else>
-      <div ref="tabbarRef" class="tabbar" role="tablist">
-        <button
-          v-for="t in tabs"
-          :key="t.key"
-          type="button"
-          role="tab"
-          class="tabbar__tab"
-          :class="{ 'tabbar__tab--on': active === t.key, 'tabbar__tab--empty': !hasContent(t.key) }"
-          :aria-selected="active === t.key"
-          :title="tabTitle(t)"
-          @click="setTab(t.key)"
-        >
-          <v-icon size="16">{{ t.icon }}</v-icon>
-          {{ t.label }}
-          <!-- 信号上 Tab，不抢占视图: 芝士 works for minutes at a time and the
-               reader is usually somewhere else while it does, so what it
-               produced has to be visible from the tab it produced it on. None
-               of these ever selects a tab for you. -->
-          <span v-if="t.key === 'site' && working" class="tabbar__pulse" />
-          <!-- A dot, not a count: there is only ever one current preview, so a
-               number would be noise. -->
-          <span v-if="t.key === 'preview' && previewHasNew" class="tabbar__dot" />
-          <!-- 有几件活在跑。和 改动 一样用数字而不是点：几件在跑本身就是要看的
-               那个信息。它不变色——派出去的活不是「你还没看过的东西」。 -->
-          <span v-if="t.key === 'overview' && threads.total" class="tabbar__count">{{ threads.total }}</span>
-          <!-- 改动 is the opposite: how much there is to review is the useful
-               part, so the count carries the signal and turns amber when it is
-               work you have not looked at yet. -->
-          <span
-            v-if="t.key === 'changes' && summary.changedFiles.length"
-            class="tabbar__count"
-            :class="{ 'tabbar__count--new': changesHasNew }"
-            >{{ summary.changedFiles.length }}</span
-          >
-        </button>
-        <!-- 自由区。关闭钮和页签是兄弟，不是它的孩子：按钮里套按钮不合法，读屏也会
-             把两者念成一个东西。 -->
-        <span v-if="openFiles.length" class="tabbar__sep" aria-hidden="true" />
-        <div
-          v-for="f in openFiles"
-          :key="fileKey(f.path)"
-          class="tabbar__file"
-          :class="{ 'tabbar__file--temp': !f.pinned }"
-        >
-          <button
-            type="button"
-            role="tab"
-            class="tabbar__tab"
-            :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
-            :aria-selected="active === fileKey(f.path)"
-            :title="f.pinned ? f.path : `${f.path}（双击固定这个页签）`"
-            @click="setTab(fileKey(f.path))"
-            @dblclick="pinFile(f.path)"
-          >
-            <v-icon size="16">{{ fileIcon(f.path) }}</v-icon>
-            <span class="tabbar__name">{{ fileName(f.path) }}</span>
-          </button>
-          <button
-            type="button"
-            class="tabbar__close"
-            :aria-label="`关闭 ${fileName(f.path)}`"
-            :title="`关闭 ${fileName(f.path)}`"
-            @click="closeFile(f.path)"
-          >
-            <v-icon size="14">mdi-close</v-icon>
-          </button>
-        </div>
-        <span class="tabbar__ink" :class="{ 'tabbar__ink--moves': inkMoves }" :style="inkStyle" aria-hidden="true" />
-      </div>
+      <!-- 这条栏是 `PanelTabs` 画的：产品页和文档里的动态演示共用同一个组件，演示
+           的四格于是永远和这里长得一样。信号（谁在干活、有几个文件改了）和「哪一
+           格此刻没东西」都由这里算好交给它。 -->
+      <PanelTabs
+        :tabs="panelTabs"
+        :active="active"
+        :files="openFiles"
+        :phone="withChat"
+        @select="setTab"
+        @close-file="closeFile"
+        @pin-file="pinFile"
+      />
 
-      <div class="tabbody">
+      <div class="tabbody" :class="{ 'tabbody--phone': withChat }">
         <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
              而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
-        <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat">
+        <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
           <slot name="chat" />
         </div>
         <PanelOverview
           v-show="active === 'overview'"
           ref="overviewRef"
+          :class="enterClass('overview')"
           :agent-name="agentName"
           :topic="topic"
           :activity-tick="activityTick"
@@ -632,16 +593,20 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           :active="active === 'overview'"
           :refresh-tick="refreshTick"
           :open-card-id="openCardId"
+          :card-focus-block="cardFocusBlock"
+          :member-names="memberNames"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
           @review="emit('review')"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
+          @open-resource="emit('open-resource', $event)"
         />
         <PanelSite
           v-if="mounted.has('site')"
           v-show="active === 'site'"
           ref="siteRef"
+          :class="enterClass('site')"
           :agent-name="agentName"
           :topic="topic"
           :active="active === 'site'"
@@ -658,6 +623,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           v-if="mounted.has('changes')"
           v-show="active === 'changes'"
           ref="changesRef"
+          :class="enterClass('changes')"
           :topic-id="topicId"
           :task-id="openCardId"
           :read-only="topic?.status === 'archived'"
@@ -668,6 +634,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
         <PanelPreview
           v-if="mounted.has('preview')"
           v-show="active === 'preview'"
+          :class="enterClass('preview')"
           :topic-id="topicId"
           :project-id="projectId"
           :active="active === 'preview'"
@@ -680,6 +647,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           <PanelPreview
             v-if="mounted.has(fileKey(f.path))"
             v-show="active === fileKey(f.path)"
+            :class="enterClass(fileKey(f.path))"
             :topic-id="topicId"
             :project-id="projectId"
             :path="f.path"
@@ -711,150 +679,25 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
   min-height: 0;
   height: 100%;
 }
-.tabbar {
-  position: relative;
-  display: flex;
-  flex: 0 0 auto;
-  align-items: stretch;
-  gap: 2px;
-  padding: 0 6px;
-  border-bottom: 1px solid var(--line);
-  /* 一屏放不下的时候横着滚，而不是把每一格压扁：挤压是没有边界的——tab 只会越
-     加越多，而窄屏上第一个被挤没的永远是文字，剩下一排认不出来的图标。滚动条不
-     画出来，因为这条栏本来就只有一行高，一条滚动条会占掉它三分之一。 */
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
+.tabpane-in {
+  animation: tabpane-in var(--dur-base) var(--ease-standard);
 }
-.tabbar::-webkit-scrollbar {
-  display: none;
+.tabpane-in--right {
+  --tabpane-from: 20px;
 }
-.tabbar__tab {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
-  padding: 8px 12px;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  white-space: nowrap;
-  cursor: pointer;
+.tabpane-in--left {
+  --tabpane-from: -20px;
 }
-.tabbar__tab:hover {
-  color: var(--ink);
-}
-/* 这一格此刻没东西：字退到 --faint，但照样能点，点进去是它自己的「暂无」。 */
-.tabbar__tab--empty:not(.tabbar__tab--on) {
-  color: var(--faint);
-}
-/* 固定区和自由区之间的那一道：前面几格永远在，后面几格是你自己开的。 */
-.tabbar__sep {
-  flex: 0 0 auto;
-  align-self: center;
-  width: 1px;
-  height: 16px;
-  margin: 0 4px;
-  background: var(--line);
-}
-.tabbar__file {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-}
-.tabbar__file .tabbar__tab {
-  padding-right: 4px;
-}
-.tabbar__name {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* 临时位：下一次打开会换掉它。斜体是编辑器里通行的说法；双击就不斜了。 */
-.tabbar__file--temp .tabbar__name {
-  font-style: italic;
-}
-.tabbar__close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin-right: 4px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-}
-.tabbar__close:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-/* 选中态: ink + 一条下边线。琥珀只留给唯一主操作、导航选中态和品牌标，工作面板的
-   tab 不是导航，所以用中性墨色。 */
-.tabbar__tab--on {
-  color: var(--ink);
-  font-weight: 600;
-}
-.tabbar__ink {
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  height: 2px;
-  background: var(--ink);
-  pointer-events: none;
-}
-.tabbar__ink--moves {
-  transition:
-    transform var(--dur-base) var(--ease-standard),
-    width var(--dur-base) var(--ease-standard);
-}
-/* 有新内容 —— 琥珀在这条 tab 栏里只给「有东西等你看」，不给选中态。 */
-.tabbar__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-/* 芝士正在这个 tab 后面干活。呼吸而不是常亮：常亮说的是「有个东西」，呼吸说的
-   是「正在发生」，而现场这一片的全部意义就是后者。 */
-.tabbar__pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ok);
-  animation: tabbar-breathe 1.6s ease-in-out infinite;
-}
-@keyframes tabbar-breathe {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
+@keyframes tabpane-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--tabpane-from));
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .tabbar__pulse {
+  .tabpane-in {
     animation: none;
   }
-}
-/* 改动的规模。默认是中性的事实，只有「你还没看过的那些」才配琥珀。 */
-.tabbar__count {
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--faint);
-}
-.tabbar__count--new {
-  color: var(--accent);
 }
 .tabbody {
   position: relative;
@@ -862,5 +705,9 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+}
+/* 挪进来的那 20px 不该撑出一条横向滚动。 */
+.tabbody--phone {
+  overflow: hidden;
 }
 </style>

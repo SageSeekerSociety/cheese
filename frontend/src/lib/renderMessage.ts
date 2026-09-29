@@ -8,6 +8,7 @@ import type { Block } from '../cx_types'
 
 import { isAgentBlock } from './authorship'
 import { markdown, sanitizeRendered } from './markdown'
+import { userRefHtml } from './userRef'
 
 export interface RefMaps {
   mentionNames: Record<string, string>
@@ -20,8 +21,7 @@ export function escapeHtml(s: string): string {
 
 function tokenChip(kind: string, id: string, maps: RefMaps): string {
   if (kind === '@') {
-    const name = maps.mentionNames[id] || id
-    return `<span class="mention" data-handle="${id}">@${escapeHtml(name)}</span>`
+    return userRefHtml(id, maps.mentionNames[id] || id)
   }
   if (kind === '&') {
     // 文件引用: <&backend/app/main.py> → 一枚文件图标 + main.py 的 chip，点开文件。
@@ -60,6 +60,15 @@ export function plainTokens(text: string, maps: RefMaps): string {
     if (k === '@') return `@${maps.mentionNames[id] || id}`
     return `#${maps.topicTitles[id] || '话题'}`
   })
+}
+
+// 改一条自己发过的消息时，输入框里放的字：点过名的人写回「@名字」，和当初在输入框
+// 里打的一样，保存时后端再把名字认回 token。话题和文件引用原样留着 —— 写成标题或
+// 文件名的话，保存时就认不回原来那一个了。
+const MENTION_TOKEN = /<@([\w-]+)>/g
+
+export function editableText(text: string, maps: RefMaps): string {
+  return text.replace(MENTION_TOKEN, (_m, handle) => `@${maps.mentionNames[handle] || handle}`)
 }
 
 // 芝士's markdown replies → safe HTML (spec §3: AI 必须说人话, 可读).

@@ -8,6 +8,7 @@ authenticated writes, ``authorize_topic(...)``.
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Annotated
 
@@ -39,10 +40,11 @@ from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import refuse_writes_if_archived
 from app.domain.task.repositories import TaskRepository
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
-from app.domain.topic.models import TopicRole
+from app.domain.topic.models import Topic, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -70,6 +72,11 @@ def _token_verifier(token: str) -> TokenIdentity | None:
     return TokenIdentity(handle=claims.handle, user_id=claims.user_id)
 
 
+def _private(topic: Topic | None) -> bool:
+    """Whether a room is a private chat — the one place this file reads it."""
+    return bool(topic and topic.is_private)
+
+
 class ActorResolver:
     """Per-request resolver. Reads the human bearer token + agent scoped token,
     then resolves/authorizes against the DB."""
@@ -81,8 +88,13 @@ class ActorResolver:
         bearer: str | None,
         cheese_token: str,
         screen_token: str = "",
+        writes: bool = False,
     ):
         self._session = session
+        # Whether this request changes something. A write that names a project,
+        # or a room of one, is refused while that project is archived — here,
+        # once, so that no write route can forget to ask (see ``resolve``).
+        self._writes = writes
         self._bearer = bearer
         self._cheese_token = cheese_token
         # A ``cheese`` call made from inside a self-hosted device screen carries that
@@ -91,17 +103,32 @@ class ActorResolver:
         self._screen_token = screen_token
         self._credentials = ProjectAgentCredentialService(session)
 
+    def credential_agent(self) -> str | None:
+        """The teammate the presented cheese credential itself names (its ``a``
+        claim), or None. Read off the credential rather than off the resolved
+        actor, for a caller that has to match what ANOTHER connection holding
+        the same credential presents — the preview tunnel is keyed by exactly
+        this claim."""
+        return token_agent_handle(self._cheese_token) if self._cheese_token else None
+
     async def resolve(
         self,
         *,
         fallback_handle: str | None,
         topic_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
+        read_only: bool = False,
     ) -> Actor:
         """Resolve the verified identity, rejecting invalid agent credentials.
 
         A missing credential may produce an anonymous actor; it grants no room
         or project access. Legacy authorship fallback does not authenticate.
+
+        On a write that names a project or a room, an archived project is
+        refused with ``ProjectArchivedError``: every project-scoped write route
+        resolves its caller against the project it acts on, so this is the one
+        place that covers them all, including the ones added later. A POST that
+        only reads (it mints a viewing grant) passes ``read_only``.
         """
 
         # A scoped token that is genuinely valid but minted for ANOTHER topic /
@@ -126,6 +153,9 @@ class ActorResolver:
                 await self.project_of_topic(topic_id) if topic_id else None
             )
             self._reject_out_of_scope_credential(credential_project)
+
+        if not read_only:
+            await self._refuse_archived_write(project_id=project_id, topic_id=topic_id)
 
         async def cheese_valid() -> bool:
             # Only a SCOPED per-turn token identifies "the agent is acting" and
@@ -195,6 +225,19 @@ class ActorResolver:
             and not is_global_sandbox_token(self._cheese_token)
             and (not actor.authenticated or actor.handle == UNRESOLVED_AGENT_HANDLE)
         ):
+            # A live scoped token is bound to a project, so a route that names
+            # neither a project nor a room gives it nothing to authenticate
+            # against. Saying "invalid or expired" there sends the agent off to
+            # distrust a credential that works everywhere it is meant to.
+            if (
+                topic_id is None
+                and project_id is None
+                and scoped_token_claims(self._cheese_token) is not None
+            ):
+                raise ForbiddenError(
+                    "This credential is restricted to one project; "
+                    "call a route that names the project or room"
+                )
             raise AuthenticationRequiredError("Agent credential is invalid or expired")
         actor = await self._recover_numeric_handle(actor)
         # An authenticated actor whose credential carried no int PK: look the
@@ -223,6 +266,20 @@ class ActorResolver:
         if actor.via == "handle" and actor.handle != "anonymous":
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
+
+    async def _refuse_archived_write(
+        self, *, project_id: uuid.UUID | None, topic_id: uuid.UUID | None
+    ) -> None:
+        """A write to an archived project stops here. Asked by ``resolve`` and
+        again by the two ``authorize_*`` doors, because a route may resolve its
+        caller without naming the project and only name it when it authorizes."""
+        if not self._writes:
+            return
+        target = project_id or (
+            await self.project_of_topic(topic_id) if topic_id else None
+        )
+        if target is not None:
+            await refuse_writes_if_archived(self._session, target)
 
     async def acting_agent(self, topic_id: uuid.UUID, handle: str | None) -> str:
         """Who a per-turn credential in this room acts as.
@@ -271,7 +328,11 @@ class ActorResolver:
           holds none of those rows.
         """
         wanted = (requested or "").strip() or None
-        actor = await self.resolve(fallback_handle=None, project_id=project_id)
+        # A mailbox is its owner's, not the project's: clearing what came from
+        # an archived project is still yours to do.
+        actor = await self.resolve(
+            fallback_handle=None, project_id=project_id, read_only=True
+        )
         if actor.authenticated:
             if wanted is not None and wanted != actor.handle:
                 raise ForbiddenError("不能查看或操作别人的通知")
@@ -446,6 +507,7 @@ class ActorResolver:
         enforce: bool = False,
     ) -> None:
         """Require a verified participant with access to this room."""
+        await self._refuse_archived_write(project_id=project_id, topic_id=topic_id)
         if not enforce and not settings.authz_enforce_topic_access:
             return
         self.reject_failed_credential(actor)
@@ -463,23 +525,89 @@ class ActorResolver:
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> bool:
         """Check actual membership even on isolated content hosts in dev mode."""
-        members = TopicMembershipRepository(self._session)
         topic = await TopicRepository(self._session).get(topic_id)
+        rooms = [(topic_id, _private(topic))]
+        return topic_id in await self._readable(actor, project_id, rooms)
+
+    async def readable_topic_ids(
+        self, actor: Actor, *, project_id: uuid.UUID, topics: Sequence[Topic]
+    ) -> set[uuid.UUID]:
+        """Which of these rooms of one project ``actor`` may read.
+
+        The same answer ``can_access_topic`` gives room by room, for a caller
+        that already holds the rooms: the roster is read once for all of them
+        and project membership, a fact about the person and not the room, is
+        asked once. Room by room it was a roster read plus up to six membership
+        reads per room, a thousand statements for a project of 170 rooms.
+        """
+        rooms = [(topic.id, _private(topic)) for topic in topics]
+        return await self._readable(actor, project_id, rooms)
+
+    async def _readable(
+        self,
+        actor: Actor,
+        project_id: uuid.UUID,
+        rooms: list[tuple[uuid.UUID, bool]],
+    ) -> set[uuid.UUID]:
+        """The rooms ``authorize_topic_access`` lets ``actor`` read, each given
+        as (id, private). The rule stays in the policy; this only answers its
+        two questions from one roster read and one membership check."""
+        if not rooms:
+            return set()
+        roles = (
+            await TopicMembershipRepository(self._session).roles_for_member(
+                [room_id for room_id, _ in rooms], actor.handle
+            )
+            if actor.authenticated
+            else {}
+        )
+        member: bool | None = None
 
         async def topic_role(tid: uuid.UUID, handle: str) -> TopicRole | None:
-            row = await members.get(topic_id=tid, member_handle=handle)
-            return row.role if row is not None else None
+            return roles.get(tid) if handle == actor.handle else None
 
         async def is_project_member(pid: uuid.UUID, handle: str) -> bool:
-            return await self._is_project_member(pid, handle)
+            nonlocal member
+            if member is None:
+                member = await self._is_project_member(pid, handle)
+            return member
 
-        return await authorize_topic_access(
-            actor,
-            project_id=project_id,
-            topic_id=topic_id,
-            topic_role=topic_role,
-            is_project_member=is_project_member,
-            is_private=bool(topic and topic.is_private),
+        return {
+            room_id
+            for room_id, private in rooms
+            if await authorize_topic_access(
+                actor,
+                project_id=project_id,
+                topic_id=room_id,
+                topic_role=topic_role,
+                is_project_member=is_project_member,
+                is_private=private,
+            )
+        }
+
+    async def topic_admits_handle(
+        self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID, handle: str
+    ) -> bool:
+        """Would this room admit ``handle``, whoever that is?
+
+        The caller is not always the person the request is about: a card names a
+        reviewer in its body, and whether the room will later let that reviewer
+        accept the card is exactly this question — asked at filing time so the
+        two ends cannot drift (`app/domain/review/services.py` lays a card only
+        to somebody this answers yes about).
+
+        The rule is not restated here. The handle is swapped on the actor and the
+        door's own method answers, which keeps ONE read of ``is_private`` in this
+        file (``tests/unit/test_is_private_read_points.py`` is a ratchet: a
+        second read point is a second declaration of the same fact, and two
+        declarations drift). What is taken as given is the credential half only —
+        a handle in a body presents nothing, and this asks whether the room would
+        admit them if it did.
+        """
+        if not actor.authenticated:
+            return False
+        return await self.can_access_topic(
+            replace(actor, handle=handle), project_id=project_id, topic_id=topic_id
         )
 
     async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
@@ -492,6 +620,7 @@ class ActorResolver:
         looking — membership first, so a member's own request pays no extra
         read.
         """
+        await self._refuse_archived_write(project_id=project_id, topic_id=None)
         if not settings.authz_enforce_topic_access:
             return
         self.reject_failed_credential(actor)
@@ -577,7 +706,8 @@ class ActorResolver:
 
     async def _is_project_member(self, project_id: uuid.UUID, handle: str) -> bool:
         """The one notion of 项目成员 both guards share: on the project's roster,
-        its owner, or a member of the team the project belongs to.
+        its owner, or a member of the team the project belongs to — unless they
+        have left THIS project (``ProjectMemberExclusion``).
 
         Those are exactly the three claims ``ProjectRepository.list_visible_to``
         lists a project under. Until 2026-09-04 the guards accepted only the
@@ -586,6 +716,11 @@ class ActorResolver:
         promised what the door refused. Measured on dev: a member who had
         accepted a team invitation minutes earlier got 200 on
         ``/projects/{id}`` and 403 on ``/topics?project_id=``.
+
+        This is the injection point for ``authorize_topic_access``'s
+        ``is_project_member``: ``can_access_topic`` hands that guard this very
+        method, so the room-seat path and the project path answer with one
+        judgment and no second declaration of "谁是项目成员" exists.
 
         The claim set itself now lives in ``app.auth.project_access`` so that
         every route reading a project's conversations asks the same question —
@@ -607,6 +742,7 @@ def get_actor_resolver(
         bearer=_bearer(request.headers.get("authorization")),
         cheese_token=request.headers.get("x-cheese-token") or "",
         screen_token=request.headers.get("x-cheese-screen") or "",
+        writes=request.method not in ("GET", "HEAD", "OPTIONS"),
     )
 
 

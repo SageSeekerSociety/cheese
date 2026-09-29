@@ -33,6 +33,9 @@ from __future__ import annotations
 
 from typing import Final
 
+from app.domain.block.models import AGENT_NOTICE_META_KEY
+from app.domain.memory.files import rejected_path
+
 # --- severity ---------------------------------------------------------------
 SEVERITY_INFO: Final = "info"
 SEVERITY_WARN: Final = "warn"
@@ -83,6 +86,10 @@ EVENT_ENVIRONMENT_RECOVERY_REQUEST: Final = "environment_recovery_request"
 EVENT_ENVIRONMENT_REPAIRED: Final = "environment_repaired"
 #: 这个房间的记忆在整理 —— 芝士自己的事，没有人在等它。
 EVENT_MEMORY_ORGANIZING: Final = "memory_organizing"
+#: 记忆树被改动了（新增/修改/删除，或会话里写的那一版被平台盖了回来）。同样是
+#: 芝士自己的事：一条记忆是 agent 写下的一份观察，没有人在等它，所以谁也不点。
+#: 改动本身收进 `detail`，按树的归属分别说进项目总览 / 本人的私聊。
+EVENT_MEMORY_CHANGED: Final = "memory_changed"
 #: A message expected to enter the live session had to return to the queue.
 EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
 #: 轮次失败（`classify_platform_failure()` 没命中的那些）。
@@ -159,9 +166,23 @@ EVENT_ROUTINE_PROPOSED: Final = "routine_proposed"
 #: AI 服务的一次请求失败了，会话正在按它自己的退避重试。重试期间房间里没有任何
 #: 输出，不说一声就和「在想」分不出来。同一段连续的重试只占一行，次数原地更新。
 EVENT_API_RETRY: Final = "api_retry"
+#: 会话在压缩上下文：对话太长，模型接下一句之前要先把前面的内容整理成摘要。这期间
+#: 房间里没有任何输出，也不回新消息，不说一声就和会话挂了分不出来。开始时落一行，
+#: 结束时同一行改成已完成或失败（`meta.state = "over"`）。
+EVENT_CONTEXT_COMPACT: Final = "context_compact"
 #: 这一轮开着，而跑它的机器够不着（离线、会话进程还没起来、连接在换）。平台在等
 #: 它回来；回来了同一行改成已恢复（`meta.state = "over"`）。
 EVENT_DEVICE_WAITING: Final = "device_waiting"
+#: 一间干过活的工作话题还没有实况文档，平台请刚才在这里干活的队友补第一版
+#: （`domain/topic/doc_nudge.py`）。每间房最多一次。
+EVENT_DOC_MISSING: Final = "doc_missing"
+#: 项目 `.mcp.json` 里的一个远程 MCP 服务器还没连接（或要重新连接、缺一个值），这
+#: 个房间的会话用不了它。每个房间每个服务器只说一次：要做的事在项目设置里，不在
+#: 这一轮里，说第二遍不会让它更快发生。`meta.server` 是服务器名。
+EVENT_MCP_NOT_CONNECTED: Final = "mcp_not_connected"
+#: AI 队友之间的点名在这间房一小时里到了上限，这一次没有叫醒被点名的队友
+#: （`delivery/mention.py` 的熔断）。说出来，是因为不说的话它和「点名没用」分不开。
+EVENT_MENTION_FUSED: Final = "mention_fused"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -185,6 +206,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ENVIRONMENT_RECOVERY_REQUEST,
         EVENT_ENVIRONMENT_REPAIRED,
         EVENT_MEMORY_ORGANIZING,
+        EVENT_MEMORY_CHANGED,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,
@@ -221,7 +243,11 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ROUTINE_RESULT,
         EVENT_ROUTINE_PROPOSED,
         EVENT_API_RETRY,
+        EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,
+        EVENT_DOC_MISSING,
+        EVENT_MCP_NOT_CONNECTED,
+        EVENT_MENTION_FUSED,
     }
 )
 
@@ -269,4 +295,81 @@ def delivery_fallback_notice() -> tuple[str, dict]:
             detail="消息已保存，平台会按队列继续处理，不需要重发。",
             detail_label="说明",
         ),
+    )
+
+
+def memory_changed_notice(
+    *,
+    where: str,
+    summary: str,
+    diff: str,
+    refused: tuple[str, ...],
+    rejected: dict[str, str] | None = None,
+) -> tuple[str, dict]:
+    """记忆树的一次改动：一行说改了哪一棵、改了几条，diff 收进 `detail`。
+
+    `where` 是那棵树的名字（「项目共享」/「你的私人」）。`refused` 非空是说会话里
+    写的那几版被平台这一份盖回来了 —— 它得重读再写，否则下一轮写的还是它刚才那
+    一版。这句话只说进那棵树自己的房间：同一句带 diff 的话说进总览，就是把一个人
+    的偏好广播给了整个项目。
+
+    **被盖回去这件事必须进 `agent_notice`**（`AGENT_NOTICE_META_KEY`）。那条灰字
+    事件是给人看的，agent 一个字的 prompt 都读不到它：写记忆的 agent 在会话机上，
+    它看到的世界就是那棵树，而它刚才写的那一版已经不在了。不说，它会以为写成功
+    了、下一轮再写一遍同一版，而每一轮都会被盖回去。
+    """
+    rejected = rejected or {}
+    parts = [f"{where}记忆：{summary}" if summary else f"{where}记忆"]
+    if refused:
+        parts.append("有改动被平台这一份盖回来了，重读再写")
+    if rejected:
+        parts.append(f"{len(rejected)} 条超出长度上限，没有写入")
+    meta = notice(
+        EVENT_MEMORY_CHANGED,
+        severity=SEVERITY_INFO,
+        who=WHO_PLATFORM,
+        detail=diff or None,
+        detail_label="改动",
+    )
+    for_agent = []
+    if refused:
+        for_agent.append(memory_conflict_notice(where=where, paths=refused))
+    if rejected:
+        for_agent.append(memory_rejected_notice(where=where, reasons=rejected))
+    if for_agent:
+        meta[AGENT_NOTICE_META_KEY] = "\n\n".join(for_agent)
+    return "　".join(parts), meta
+
+
+def memory_rejected_notice(*, where: str, reasons: dict[str, str]) -> str:
+    """说给 agent 的那句：哪几条因为太长没存下、为什么、它写的那一版在哪。"""
+    lines = "\n".join(
+        f"- `{path}`（你写的那一版在 `{rejected_path(path)}`）：{reason}"
+        for path, reason in sorted(reasons.items())
+    )
+    return (
+        f"{where}记忆里有几条超出长度上限，没有写入，记忆里还是原来那一版：\n"
+        f"{lines}\n"
+        "改短之后重新写入。"
+    )
+
+
+def memory_conflict_notice(*, where: str, paths: tuple[str, ...]) -> str:
+    """说给 agent 的那句：哪几条被平台版盖了、去哪儿找它刚写的那一版。
+
+    点名到条是为了让它下一步就能动手：一句「有改动被盖了」它得先猜是哪一条，而
+    猜错的那一次是把别的记忆又覆盖一遍。旁路文件名是 `runner.sync_memory` 写下来
+    的那个（`<文件名>.conflict.md`，同一个目录），两处说的是同一件事，所以这里把
+    完整路径写出来。
+    """
+    lines = "\n".join(
+        f"- `{path}`（你写的那一版在 `{path[:-3]}.conflict.md`）" for path in paths
+    )
+    return (
+        f"{where}记忆里有几条被平台的版本盖回去了——平台这一份也动过它们，"
+        "按规矩平台赢。下面每一条都是你刚才写的、现在不在树里了：\n"
+        f"{lines}\n"
+        "**重读它们，把你要写的东西重新写进去**（你写的那一版留在旁边那个 "
+        "`.conflict.md` 里，从那里取回你要写的内容，别整个文件照抄回去）。"
+        "这几条你手里的副本已经旧了，照旧的写只会再被盖一次。"
     )

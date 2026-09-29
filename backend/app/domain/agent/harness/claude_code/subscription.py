@@ -11,7 +11,6 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from app.domain.agent.harness import (
-    ActivityConsumer,
     EventConsumer,
     HarnessEvent,
     ReceiptConsumer,
@@ -41,15 +40,23 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         path: Path,
         call: Callable[[str, dict], Awaitable[dict]],
         consume: EventConsumer,
-        activity: ActivityConsumer,
+        activity: subscription.SeatActivity,
         *,
         session_id: str | None,
         announce: Callable[[], Awaitable[None]],
         receipts: ReceiptConsumer | None = None,
         pulse: subscription.Pulse | None = None,
+        memory: Callable[[], Awaitable[None]] | None = None,
     ):
         super().__init__(
-            session, path, call, consume, activity, receipts=receipts, pulse=pulse
+            session,
+            path,
+            call,
+            consume,
+            activity,
+            receipts=receipts,
+            pulse=pulse,
+            memory=memory,
         )
         self.session_id = session_id
         self.announce = announce
@@ -80,8 +87,14 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         marks = subscription.marks_of(events)
-        message = record.get("entry") if record.get("type") == "cheese_file" else record
-        content = ((message or {}).get("message") or {}).get("content")
+        message = (
+            record.get("entry") if record.get("type") == "cheese_file" else record
+        ) or {}
+        # A tool comes back in a user record. Other records carry a `message`
+        # of their own shape: a refused permission's is a plain string.
+        if message.get("type") != "user":
+            return marks
+        content = (message.get("message") or {}).get("content")
         for block in content if isinstance(content, list) else []:
             if isinstance(block, dict) and block.get("type") == "tool_result":
                 marks |= {

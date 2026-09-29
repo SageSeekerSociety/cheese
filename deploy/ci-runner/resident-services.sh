@@ -16,7 +16,7 @@
 # still in flight. The pair here answer on 5442/6389 instead.
 set -euo pipefail
 
-PG_IMAGE="mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2"
+PG_IMAGE="mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4"
 VALKEY_IMAGE="mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9"
 # Data in RAM: these VMs share one Proxmox disk with every other guest there, and
 # a Postgres at its defaults fsyncs every commit onto it — measured 2026-09-02, a

@@ -41,6 +41,7 @@ import type {
   SpaceAnalyticsAlerts,
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
+  SpaceAnalyticsPeople,
   SpaceAnalyticsPublishers,
   SpaceCourseLink,
   SpaceEnrollment,
@@ -73,11 +74,14 @@ export namespace SpacesApi {
       method: 'POST',
       data,
     })
-  export const reviews = (status: string, offset = 0) =>
+  // `limit` 是加出来的第三个参数（原先是写死的 50）：这条路由既不给总数也不给
+  // `has_more`，调用方想知道「后面还有没有」只能多要一条 —— 要 51 条，回来 51 条
+  // 就说明还有。默认值不变，老的调用点行为一字不差。
+  export const reviews = (status: string, offset = 0, limit = 50) =>
     NewApiInstance.request<{ items: import('./types').SpaceApplication[] }>({
       url: '/admin/spaces',
       method: 'GET',
-      params: { status, offset, limit: 50 },
+      params: { status, offset, limit },
     })
   export const review = (id: number, approved: boolean, reason = '') =>
     NewApiInstance.request({
@@ -278,6 +282,13 @@ export namespace SpacesApi {
       url: `/spaces/${spaceId}/analytics/tasks`,
       method: 'GET',
       params,
+    })
+
+  // 逐人那一格 + 「领了没动」的名单。与其它整板分析接口同一个门：非管理员 403。
+  export const getAnalyticsPeople = (spaceId: number) =>
+    NewApiInstance.request<SpaceAnalyticsPeople>({
+      url: `/spaces/${spaceId}/analytics/people`,
+      method: 'GET',
     })
 
   export const getAnalyticsParticipants = (

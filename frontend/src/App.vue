@@ -22,15 +22,20 @@
            页面跟着抖。 -->
       <mobile-app-bar v-if="!hideAppBar" />
 
-      <!-- 一级导航：桌面端左侧 Rail，移动端底部 -->
+      <!-- 一级导航：桌面端左侧 Rail，移动端底部。页面栈里的那几层（hideTabs）没有它；
+           它进出时 v-main 的下内边距跟着变，手机上这一下不做过渡（见 .app-main--phone）。 -->
       <keep-alive>
         <BottomAppBar v-if="!hideAppBar && !hideTabs" :items="tabs" />
       </keep-alive>
     </template>
 
-    <v-main ref="mainRef" class="bg-background h-100" :class="{ 'app-main--pending': firstRoutePending }">
+    <v-main
+      ref="mainRef"
+      class="bg-background h-100"
+      :class="{ 'app-main--pending': firstRoutePending, 'app-main--phone': !$vuetify.display.mdAndUp }"
+    >
       <div class="border-t-sm bg-background h-100 overflow-hidden">
-        <div id="app-scrollable" class="app-content h-100">
+        <div id="app-scrollable" ref="contentRef" class="app-content h-100" @animationend="endPageMotion">
           <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
                「上一个人是谁」一起留在内存里 —— 登录/注册/OAuth 回调/验证码那
                几页要是被留下来，退出后再登录会看到上一个账号的填写状态。所以
@@ -63,137 +68,131 @@
     <!-- 敏感操作前确认身份；withSudo 打开它 -->
     <SudoDialog v-if="sudoWanted" />
 
-    <!-- 新建项目 dialog (opened by the rail's "+" affordance) -->
-    <v-dialog v-model="newProjectDialog" max-width="420" persistent>
-      <v-card rounded="lg" class="pa-2">
-        <v-card-title class="t-dialog-title pb-1">{{
-          newProjectStep === 1 ? t('work.newProject.title') : t('work.teammate.title')
-        }}</v-card-title>
-        <v-card-text v-show="newProjectStep === 1" class="pb-2">
-          <p v-if="sourceTask" class="t-body c-muted mb-3">
-            {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
-          </p>
-          <ResourceLimitsNotice v-if="newProjectDialog" />
-          <v-text-field
-            v-model="newProjectName"
-            autocomplete="off"
-            :label="t('work.newProject.name')"
-            variant="outlined"
-            color="primary"
-            autofocus
-            hide-details
-            :disabled="creatingProject"
-            @keyup.enter="advanceNewProject"
-          />
-          <!-- 可选：答案会跟着项目进房间（见 ProjectService.create）。不填也能建，
-               所以这不是必填项，标签里就写着「可选」。 -->
-          <v-textarea
-            v-model="newProjectIntent"
-            autocomplete="off"
-            :label="t('work.newProject.intent')"
-            :placeholder="t('work.newProject.intentExample')"
-            variant="outlined"
-            color="primary"
-            rows="2"
-            auto-grow
-            hide-details
-            class="mt-3"
-            :disabled="creatingProject"
-          />
-          <v-select
-            v-model="newProjectTeamId"
-            autocomplete="off"
-            :items="newProjectTeams"
-            :item-title="teamLabel"
-            item-value="id"
-            :label="t('work.newProject.team')"
-            variant="outlined"
-            color="primary"
-            class="mt-3"
-            hide-details
-            :loading="loadingTeams"
-            :disabled="creatingProject || loadingTeams"
-          />
-          <v-select
-            v-model="newProjectForgeKind"
-            autocomplete="off"
-            :items="[
-              { title: t('work.newProject.forgeHosted'), value: 'forgejo' },
-              { title: t('work.newProject.forgeGithub'), value: 'github_app' },
-            ]"
-            :label="t('work.newProject.forge')"
-            variant="outlined"
-            color="primary"
-            class="mt-3"
-            hide-details
-            :disabled="creatingProject"
-          />
-          <div class="t-meta-read mt-2">
-            {{
-              newProjectForgeKind === 'forgejo' ? t('work.newProject.forgeHint') : t('work.newProject.forgeGithubHint')
-            }}
-          </div>
-          <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
-            {{ teamLoadError }}
-            <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">{{
-              t('work.newProject.retry')
-            }}</v-btn>
-          </v-alert>
-        </v-card-text>
-        <v-card-text v-if="newProjectStep === 2" class="pt-3 pb-2">
-          <p class="t-body mb-4">{{ t('work.teammate.intro', { project: newProjectName.trim() }) }}</p>
-          <v-text-field
-            v-model="newProjectAgentName"
-            :label="t('work.teammate.name')"
-            variant="outlined"
-            autocomplete="off"
-            maxlength="64"
-            :disabled="creatingProject"
-            @keyup.enter="confirmNewProject"
-          >
-            <template #append-inner>
-              <v-btn
-                variant="text"
-                icon="mdi-dice-multiple-outline"
-                size="small"
-                :aria-label="t('work.teammate.random')"
-                :title="t('work.teammate.random')"
-                :disabled="creatingProject"
-                @click="newProjectAgentName = randomTeammateName(newProjectAgentName)"
-              />
-            </template>
-          </v-text-field>
-          <p class="t-meta-read">{{ t('work.teammate.more') }}</p>
-        </v-card-text>
-        <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mx-4 my-3">
-          {{ newProjectError }}
+    <!-- 新建项目 (opened by the rail's "+" affordance)。要填好几项，手机上是整页：
+         下一步 / 创建在页头右边，键盘弹起来也够得着。 -->
+    <AdaptiveDialog
+      v-model="newProjectDialog"
+      :title="newProjectStep === 1 ? t('work.newProject.title') : t('work.teammate.title')"
+      :primary-label="newProjectStep === 1 ? t('work.teammate.next') : t('work.teammate.create')"
+      :primary-loading="creatingProject"
+      :primary-disabled="
+        !newProjectName.trim() ||
+        loadingTeams ||
+        newProjectTeamId === null ||
+        !!teamLoadError ||
+        (newProjectStep === 2 && !newProjectAgentName.trim())
+      "
+      :cancel-label="t('work.newProject.cancel')"
+      :close-disabled="creatingProject"
+      :max-width="420"
+      persistent
+      @primary="newProjectStep === 1 ? advanceNewProject() : confirmNewProject()"
+    >
+      <div v-show="newProjectStep === 1">
+        <p v-if="sourceTask" class="t-body c-muted mb-3">
+          {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
+        </p>
+        <ResourceLimitsNotice v-if="newProjectDialog" />
+        <v-text-field
+          v-model="newProjectName"
+          autocomplete="off"
+          :label="t('work.newProject.name')"
+          variant="outlined"
+          color="primary"
+          autofocus
+          hide-details
+          :disabled="creatingProject"
+          @keyup.enter="advanceNewProject"
+        />
+        <!-- 可选：答案会跟着项目进房间（见 ProjectService.create）。不填也能建，
+             所以这不是必填项，标签里就写着「可选」。 -->
+        <v-textarea
+          v-model="newProjectIntent"
+          autocomplete="off"
+          :label="t('work.newProject.intent')"
+          :placeholder="t('work.newProject.intentExample')"
+          variant="outlined"
+          color="primary"
+          rows="2"
+          auto-grow
+          hide-details
+          class="mt-3"
+          :disabled="creatingProject"
+        />
+        <v-select
+          v-model="newProjectTeamId"
+          autocomplete="off"
+          :items="newProjectTeams"
+          :item-title="teamLabel"
+          item-value="id"
+          :label="t('work.newProject.team')"
+          variant="outlined"
+          color="primary"
+          class="mt-3"
+          hide-details
+          :loading="loadingTeams"
+          :disabled="creatingProject || loadingTeams"
+        />
+        <v-select
+          v-model="newProjectForgeKind"
+          autocomplete="off"
+          :items="[
+            { title: t('work.newProject.forgeHosted'), value: 'forgejo' },
+            { title: t('work.newProject.forgeGithub'), value: 'github_app' },
+          ]"
+          :label="t('work.newProject.forge')"
+          variant="outlined"
+          color="primary"
+          class="mt-3"
+          hide-details
+          :disabled="creatingProject"
+        />
+        <div class="t-meta-read mt-2">
+          {{
+            newProjectForgeKind === 'forgejo' ? t('work.newProject.forgeHint') : t('work.newProject.forgeGithubHint')
+          }}
+        </div>
+        <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
+          {{ teamLoadError }}
+          <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">{{
+            t('work.newProject.retry')
+          }}</v-btn>
         </v-alert>
-        <v-card-actions class="px-4 pb-3">
-          <v-spacer />
-          <v-btn variant="text" :disabled="creatingProject" @click="newProjectDialog = false">{{
-            t('work.newProject.cancel')
-          }}</v-btn>
-          <v-btn v-if="newProjectStep === 2" variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
-            t('work.teammate.back')
-          }}</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="creatingProject"
-            :disabled="
-              !newProjectName.trim() ||
-              loadingTeams ||
-              newProjectTeamId === null ||
-              !!teamLoadError ||
-              (newProjectStep === 2 && !newProjectAgentName.trim())
-            "
-            @click="newProjectStep === 1 ? advanceNewProject() : confirmNewProject()"
-          >
-            {{ newProjectStep === 1 ? t('work.teammate.next') : t('work.teammate.create') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+      </div>
+      <div v-if="newProjectStep === 2">
+        <p class="t-body mb-4">{{ t('work.teammate.intro', { project: newProjectName.trim() }) }}</p>
+        <v-text-field
+          v-model="newProjectAgentName"
+          :label="t('work.teammate.name')"
+          variant="outlined"
+          autocomplete="off"
+          maxlength="64"
+          :disabled="creatingProject"
+          @keyup.enter="confirmNewProject"
+        >
+          <template #append-inner>
+            <v-btn
+              variant="text"
+              icon="mdi-dice-multiple-outline"
+              size="small"
+              :aria-label="t('work.teammate.random')"
+              :title="t('work.teammate.random')"
+              :disabled="creatingProject"
+              @click="newProjectAgentName = randomTeammateName(newProjectAgentName)"
+            />
+          </template>
+        </v-text-field>
+        <p class="t-meta-read">{{ t('work.teammate.more') }}</p>
+      </div>
+      <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mt-3">
+        {{ newProjectError }}
+      </v-alert>
+      <template v-if="newProjectStep === 2" #actions>
+        <v-btn variant="text" :disabled="creatingProject" @click="newProjectStep = 1">{{
+          t('work.teammate.back')
+        }}</v-btn>
+      </template>
+    </AdaptiveDialog>
 
     <v-snackbar v-model="showProjectListWarning" color="warning" :timeout="8000">
       {{ projectListWarning }}
@@ -210,6 +209,7 @@
 
     <!-- 有新版本: shows while a new service worker waits for the user to click. -->
     <UpdateBanner />
+    <CommandPalette />
   </my-app>
 </template>
 
@@ -218,26 +218,33 @@ import type { Project } from '@/cx_types'
 import type { Team } from '@/types/teams'
 import type { NavSources } from './components/common/Navigation/destinations'
 
-import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
-import { useEventListener } from '@vueuse/core'
+import { useDisplay } from 'vuetify'
 
 import { avatarColor } from '@/utils/avatar'
 import { pendingSudo } from '@/utils/sudo'
 
+import { useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import ConsentGate from './components/account/ConsentGate.vue'
 import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
 import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
-import { DEFAULT_SHELL, shellFor } from './lib/shell'
+import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
+import { defineCommands } from '@/commands'
+import { copyLink } from '@/commands/copy'
+import CommandPalette from '@/commands/palette/CommandPalette.vue'
+import { installShortcuts } from '@/commands/shortcuts'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
@@ -246,7 +253,16 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
 import { autoConnectThisComputer } from '@/lib/desktop'
+import {
+  desktopBadge,
+  desktopListenForNotices,
+  desktopStopNotices,
+  onDesktopOpenPage,
+  tellDesktopTheme,
+} from '@/lib/desktopApp'
+import { landBootSplash } from '@/lib/desktopSplash'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
+import { pageMotion } from '@/lib/pageMotion'
 import { randomTeammateName } from '@/lib/projectAgents'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import {
@@ -257,6 +273,7 @@ import {
   saveProjectOrder,
 } from '@/lib/projectOrder'
 import { myHandle } from '@/me'
+import { NotificationsApi } from '@/network/api/notifications'
 import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
@@ -268,7 +285,9 @@ import { useAppTheme } from '@/theme'
 // this composable — and the only other caller, ThemeToggle, sits inside the
 // logged-in user menu. Without this line a signed-out visitor sitting on the
 // login page would not follow their machine switching to dark at sunset.
-useAppTheme()
+const appTheme = useAppTheme()
+// The desktop app paints its first page and its title bar in the same theme.
+watch(appTheme.preference, tellDesktopTheme, { immediate: true })
 
 // 软键盘盖住多少，写进 --keyboard-inset 供布局减掉 (style.css)。
 trackKeyboardInset()
@@ -292,6 +311,36 @@ router.isReady().then(async () => {
   watch(titleManager.fullTitle, updateDocumentTitle)
   watch(() => store.separator, updateDocumentTitle)
 })
+
+// 手机上换页的那一下（桌面上没有）：新页从右边（往里走一层）或左边（退回一层）
+// 挪进来 24px 并淡入，平级切换（底栏换格）只淡入。方向由 lib/pageMotion 按路由声明的
+// 上一层（backTo）算，不按浏览器历史。
+//
+// 只演「进来」，旧页随这次渲染直接换掉：两页同时在场的整屏滑动要让离开的那页多活
+// 一段，它往顶栏里传送的标题会和新页的叠成两份，保活和滚动位置也要跟着绕。24px 的
+// 位移加淡入已经说清了方向。动的是装页面的那一层（#app-scrollable），顶栏和底栏不
+// 动：它们是框，不是页。减弱动效时不演（见样式）。
+const display = useDisplay()
+const workspaceLayout = useWorkspaceLayout()
+const contentRef = ref<HTMLElement | null>(null)
+const MOTION_CLASSES = ['page-enter--forward', 'page-enter--back', 'page-enter--fade']
+router.afterEach((to, from, failure) => {
+  if (failure || display.mdAndUp.value) return
+  const motion = pageMotion(to, from, router, workspaceLayout.value === 'split')
+  if (!motion) return
+  // 等新页画进 DOM（同一个微任务里、浏览器上屏之前）再起步，第一帧就是它的起点。
+  void nextTick(() => {
+    const el = contentRef.value
+    if (!el) return
+    el.classList.remove(...MOTION_CLASSES)
+    // 连着换两页时从头再演一次：先让浏览器认下「没有动画」，再加回去。
+    void el.offsetWidth
+    el.classList.add(`page-enter--${motion}`)
+  })
+})
+function endPageMotion(event: AnimationEvent) {
+  if (event.target === contentRef.value) contentRef.value?.classList.remove(...MOTION_CLASSES)
+}
 
 // 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
 // useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
@@ -363,6 +412,8 @@ onMounted(async () => {
   // 有重活（登录页的 WebGL 场景）的话，等下一帧会把整个内容区拖后几百毫秒。
   if (mainRef.value) void getComputedStyle(mainRef.value.$el).paddingLeft
   firstRoutePending.value = false
+  // The rail is laid out by the next frame; the desktop app's boot splash lands in it.
+  requestAnimationFrame(() => void landBootSplash())
 })
 
 // A project can appear from outside this dialog — made on a team page, or by
@@ -373,6 +424,18 @@ watch(
   () => workspace.projectId,
   (id) => {
     if (id && !cxProjects.value.some((p) => p.id === id)) void loadCxProjects()
+  }
+)
+
+// The workspace store reads the same list after something changed it from inside
+// a project — archived, unarchived, handed over. Take its answer instead of
+// showing the rail's older copy until the next reload.
+watch(
+  () => workspace.projects,
+  (list) => {
+    if (!workspace.projectsSettled) return
+    cxProjects.value = list
+    saveCachedProjects(myHandle(), list)
   }
 )
 
@@ -410,16 +473,40 @@ watch(
   { immediate: true }
 )
 
+// The desktop app calls the person back while its window is closed: once handed
+// a credential it keeps its own connection for this account's notices, and it
+// shows the count of things waiting on its icon. A clicked notification or the
+// tray menu opens its page here.
+watch(
+  () => AccountService.loggedIn && AccountService.user?.id,
+  (userId, previous) => {
+    if (typeof userId === 'number') {
+      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).data.token).catch(() => {})
+    } else if (typeof previous === 'number') {
+      desktopStopNotices()
+    }
+  },
+  { immediate: true }
+)
+const stopOpeningPages = onDesktopOpenPage((path) => void router.push(path))
+onBeforeUnmount(stopOpeningPages)
+
 // 上次开过的那个项目存在 workspace store 的布局里，所以冷启动也落得回去。
 const workspaceProjectId = computed<string | null>(() =>
   workspaceProject(railProjects.value, workspace.projectId, lastOpenedProjectId())
 )
+
+// 「待办」那一格的件数：桌面画在 rail 上，手机画在底栏上。
+const awaitingCount = useAwaitingCount(computed(() => AccountService._loggedIn.value))
+// The same number on the desktop app's icon, whenever this page has read it.
+watch(awaitingCount, desktopBadge)
 
 const navSources = computed<NavSources>(() => ({
   projects: railProjects.value,
   workspaceProjectId: workspaceProjectId.value,
   projectAvatar,
   createProject: createNewProject,
+  awaitingCount: awaitingCount.value,
 }))
 
 // 壳 (shell)：**地址里那个项目**的壳决定这份导航怎么画。不在项目里（首页、空间、
@@ -433,23 +520,22 @@ const navShell = computed(() => shellFor(railProjects.value, openProjectId.value
 
 const rail = computed(() => railItems(navSources.value, navShell.value))
 
-// rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。
-//
-// 这是从浏览器手里**抢**来的：⌘1–9 本来是切标签页，和 Slack 网页版一样的取舍。
-// 所以只在这个数字真的对上某一格时才拦下来，对不上的照旧交回给浏览器——项目只有
-// 三个的时候 ⌘7 仍然切你的第七个标签页。
-//
-// 认 `code` 不认 `key`：`key` 跟着键盘布局走，法语 AZERTY 上不按 Shift 的那一排
-// 根本不是数字，而人看着的是同一个物理键。
-useEventListener(window, 'keydown', (event: KeyboardEvent) => {
-  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
-  const digit = /^Digit([1-9])$/.exec(event.code)
-  if (!digit) return
-  const to = shortcutTarget(rail.value, Number(digit[1]))
-  if (!to) return
-  event.preventDefault()
-  void router.push(to)
-})
+// rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。只有真的对上
+// 某一格的数字才登记，对不上的照旧归浏览器——项目只有三个的时候 ⌘7 仍然切你的第
+// 七个标签页。
+defineCommands(() =>
+  [1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((digit) => {
+    const to = shortcutTarget(rail.value, digit)
+    const item = rail.value.find((it) => it.type === 'item' && it.to === to)
+    const title = item?.type === 'item' ? item.title : to
+    return to
+      ? [{ id: `rail.${digit}`, title: title ?? to, shortcut: `mod+${digit}`, to, palette: false as const }]
+      : []
+  })
+)
+let stopShortcuts: (() => void) | undefined
+onMounted(() => (stopShortcuts = installShortcuts(router)))
+onBeforeUnmount(() => stopShortcuts?.())
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
@@ -478,6 +564,32 @@ function createNewProject() {
   // From a team page, that team; elsewhere the dialog falls back to 个人.
   showNewProjectDialog(teamHandleInPath(currentRoute.path))
 }
+
+// 不属于哪一页、在哪都能做的事：命令面板的「操作」里有它们。
+defineCommands(() => [
+  {
+    id: 'project.new',
+    title: t('navigation.newProject', termParams(navShell.value)),
+    icon: 'mdi-plus',
+    run: createNewProject,
+  },
+  {
+    id: 'page.copyLink',
+    title: t('navigation.palette.copyLink'),
+    icon: 'mdi-link-variant',
+    run: () => void copyLink(window.location.href),
+  },
+  // 外观只列另外两种：当前这种不用选。
+  ...appTheme.options
+    .filter((mode) => mode !== appTheme.preference.value)
+    .map((mode) => ({
+      id: `theme.${mode}`,
+      title: t('navigation.palette.theme', { mode: t(`navigation.userMenu.theme.${mode}`) }),
+      icon:
+        mode === 'dark' ? 'mdi-weather-night' : mode === 'light' ? 'mdi-white-balance-sunny' : 'mdi-theme-light-dark',
+      run: () => appTheme.setPreference(mode),
+    })),
+])
 
 async function loadProjectTeams() {
   loadingTeams.value = true
@@ -554,19 +666,6 @@ async function confirmNewProject() {
   }
 }
 
-// Discord-style ⌘N quick-switch: ⌘1 首页, ⌘2.. projects.
-function onRailShortcut(e: KeyboardEvent) {
-  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
-  const n = Number(e.key)
-  if (!n) return
-  const item = rail.value.find((it) => it.type === 'item' && it.shortcut === n)
-  if (item && item.type === 'item' && item.to) {
-    e.preventDefault()
-    router.push(item.to)
-  }
-}
-onMounted(() => window.addEventListener('keydown', onRailShortcut))
-
 // 项目格子：首字压在 avatarColor() 的底色上，和人的默认头像同一套取色——
 // 色相由名字散列而来，明度固定，所以每一种色相上的白字都过 4.5:1。白字写死是
 // 对的：底色本身不随主题变，字也不能变。
@@ -590,6 +689,45 @@ function projectAvatar(name: string): string {
 .app-main--pending {
   visibility: hidden;
   transition: none;
+}
+/* 手机上 v-main 的内边距只随底栏的有无变（顶栏从不卸载）。Vuetify 给 .v-main 定了
+   .2s 的内边距过渡，于是每走进、退出一层页面栈，整页内容都要滑 56px——底栏已经
+   不在了，内容还在往下挪。这一下跟着换页一起完成，不单独演。 */
+.app-main--phone {
+  transition: none;
+}
+.page-enter--forward {
+  animation: page-enter-forward var(--dur-base) var(--ease-standard) backwards;
+}
+.page-enter--back {
+  animation: page-enter-back var(--dur-base) var(--ease-standard) backwards;
+}
+.page-enter--fade {
+  animation: page-enter-fade var(--dur-base) var(--ease-standard) backwards;
+}
+@keyframes page-enter-forward {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+@keyframes page-enter-back {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes page-enter-fade {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-enter--forward,
+  .page-enter--back,
+  .page-enter--fade {
+    animation: none;
+  }
 }
 .app-content {
   min-height: 0;

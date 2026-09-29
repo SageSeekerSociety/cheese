@@ -1,0 +1,162 @@
+"""The desktop app's live notices connection (`app/api/routes/notifications_live.py`).
+
+What the app relies on, stated from its side: it hears about a notice browser
+push would carry the moment it is committed, with the push's own words; it
+catches up after being away without seeing anything twice or anything from
+before it first connected; signing out ends it; and the credential it keeps
+opens nothing else.
+"""
+
+import asyncio
+import uuid
+
+import pytest
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from app.common.auth import create_access_token
+from app.domain.notification.handlers import (
+    InAppNotificationHandler,
+    NotificationDelivery,
+)
+from app.domain.notification.models import NotificationType
+from app.domain.user.repositories import UserRepository
+from app.domain.user.sessions import SessionService
+
+
+def _signed_in(client: TestClient, handle: str) -> tuple[int, uuid.UUID, str]:
+    """A person with a real sign-in session, and the page's access token for it."""
+    holder: dict = {}
+
+    async def seed() -> None:
+        async with client.test_factory() as db:  # type: ignore[attr-defined]
+            users = UserRepository(db)
+            user = await users.get_by_username(handle) or await users.create_user(
+                username=handle, email=f"{handle}@example.com"
+            )
+            started = await SessionService(db).start(
+                user.id, "password", ip="127.0.0.1", user_agent="test"
+            )
+            holder.update(user_id=user.id, sid=started.session_id)
+            await db.commit()
+
+    asyncio.run(seed())
+    token = create_access_token(holder["user_id"], handle, sid=holder["sid"])
+    return holder["user_id"], holder["sid"], token
+
+
+def _notices_token(client: TestClient, page_token: str) -> str:
+    resp = client.post(
+        "/notifications/live-token", headers={"Authorization": f"Bearer {page_token}"}
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["token"]
+
+
+def _deliver(client: TestClient, user_id: int, type_: NotificationType, payload: dict):
+    """What the delivery ledger does: write the inbox row, then commit. It runs on
+    the app's own loop, where the open connection is waiting."""
+
+    async def deliver() -> None:
+        async with client.test_request_factory() as db:  # type: ignore[attr-defined]
+            await InAppNotificationHandler(db).send_batch(
+                [
+                    NotificationDelivery(
+                        recipient_id=user_id,
+                        type=type_,
+                        payload=payload,
+                        delivery_key=f"test:{uuid.uuid4()}",
+                    )
+                ]
+            )
+            await db.commit()
+
+    assert client.portal is not None
+    client.portal.call(deliver)
+
+
+def _next(ws, kind: str) -> dict:
+    """The next frame of this kind; beats and counts in between are skipped."""
+    while True:
+        frame = ws.receive_json()
+        if frame["kind"] == kind:
+            return frame
+
+
+QUESTION = {
+    "question": "用哪个数据库？",
+    "topicTitle": "迁移",
+    "projectId": "p1",
+    "topicId": "t1",
+}
+
+
+def test_a_notice_reaches_the_open_connection_with_the_pushs_words(client):
+    user_id, _, page = _signed_in(client, "ada")
+    notices = _notices_token(client, page)
+    _deliver(client, user_id, NotificationType.ROOM_NOTICE, {"content": "装之前的事"})
+
+    with client.websocket_connect(
+        "/notifications/live", headers={"Authorization": f"Bearer {notices}"}
+    ) as ws:
+        ws.send_json({"after": None})
+        first = _next(ws, "notices")
+        # A first connection is shown nothing from before it.
+        assert first["items"] == []
+
+        _deliver(client, user_id, NotificationType.MENTION, {})  # never pushed
+        _deliver(client, user_id, NotificationType.CHEESE_QUESTION, QUESTION)
+        live = _next(ws, "notices")
+
+    assert [(i["title"], i["body"], i["url"]) for i in live["items"]] == [
+        ("用哪个数据库？", "在「迁移」", "/projects/p1/topics/t1")
+    ]
+
+
+def test_coming_back_hands_over_what_came_meanwhile_once(client):
+    user_id, _, page = _signed_in(client, "bea")
+    notices = _notices_token(client, page)
+    headers = {"Authorization": f"Bearer {notices}"}
+
+    with client.websocket_connect("/notifications/live", headers=headers) as ws:
+        ws.send_json({"after": None})
+        stopped_at = _next(ws, "notices")["latest"] or 0
+
+    _deliver(client, user_id, NotificationType.ROOM_NOTICE, {"content": "改动已就绪"})
+
+    with client.websocket_connect("/notifications/live", headers=headers) as ws:
+        ws.send_json({"after": stopped_at})
+        missed = _next(ws, "notices")
+    assert [i["title"] for i in missed["items"]] == ["改动已就绪"]
+
+    with client.websocket_connect("/notifications/live", headers=headers) as ws:
+        ws.send_json({"after": missed["latest"]})
+        assert _next(ws, "notices")["items"] == []
+
+
+def test_signing_out_ends_the_connection(client):
+    user_id, sid, page = _signed_in(client, "cai")
+    notices = _notices_token(client, page)
+
+    async def sign_out() -> None:
+        async with client.test_factory() as db:  # type: ignore[attr-defined]
+            await SessionService(db).revoke(user_id, sid)
+            await db.commit()
+
+    asyncio.run(sign_out())
+    with (
+        pytest.raises(WebSocketDisconnect),
+        client.websocket_connect(
+            "/notifications/live", headers={"Authorization": f"Bearer {notices}"}
+        ) as ws,
+    ):
+        ws.receive_json()
+
+
+def test_the_apps_credential_opens_nothing_else(client):
+    _, _, page = _signed_in(client, "dai")
+    notices = _notices_token(client, page)
+    resp = client.get(
+        "/notifications/unread-count", headers={"Authorization": f"Bearer {notices}"}
+    )
+    assert resp.status_code == 401

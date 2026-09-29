@@ -25,7 +25,6 @@ vi.mock('../../api', async () => {
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
     listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     // 芝士的座位在**话题**名册上，一个话题一个分身。项目名册上没有它——这正是
     // 「线上 @ 不出芝士」那次的成因，所以这里照真实形状摆：分身 handle 带话题
@@ -192,6 +191,8 @@ describe('对话栏自己的输入栏', () => {
       total: 1,
       has_more: false,
       oldest_id: 'm1',
+      has_newer: false,
+      newest_id: null,
     })
     const { rerender, queryByRole } = mountPanel({}, 'starter-talked')
     await rerender({ topic: { ...topic('starter-talked'), kind: 'root' } })
@@ -216,6 +217,8 @@ describe('对话栏自己的输入栏', () => {
       total: 1,
       has_more: false,
       oldest_id: 'm2',
+      has_newer: false,
+      newest_id: null,
     })
     const { rerender, queryByRole } = mountPanel({}, 'starter-answered')
     await rerender({ topic: { ...topic('starter-answered'), kind: 'root' } })
@@ -386,6 +389,8 @@ describe('对话栏自己的输入栏', () => {
       total: 1,
       has_more: false,
       oldest_id: 'doc-1',
+      has_newer: false,
+      newest_id: null,
     })
     const { container } = mountPanel({}, 'topic-download')
     await flush()
@@ -413,24 +418,6 @@ describe('对话栏自己的输入栏', () => {
     const chip = container.querySelector('.probe-chip')
     expect(chip, 'composer-chips 插槽没渲染').toBeTruthy()
     expect(chip!.closest('.composer'), 'chips 没落在输入栏那一行里').toBeTruthy()
-  })
-
-  // 「发出去」和「送到芝士手上」不是一件事：中间隔着一次投递，它可能失败退回队列，
-  // 冷启动时还可能一分多钟里根本没有会话。所以刚发完只说在送，说它在处理要等芝士的
-  // 👀 回执（后端 chat.confirm_prompt_receipt 落的，意思是会话已经把消息拿进去了）。
-  it('刚发出去时只说正在送，不说芝士在处理', async () => {
-    // 自己的话题 id：草稿是模块级的，用默认那个会把这条没发完的字留给下一条用例
-    const view = mountPanel({}, 'seen-indicator')
-    await flush()
-
-    const box = composerBox(view.container)!
-    box.focus()
-    await fireEvent.update(box, '@芝士 看看这个')
-    await fireEvent.keyDown(box, { key: 'Enter' })
-    await flush()
-
-    expect(view.getByText('正在交给芝士…')).toBeTruthy()
-    expect(view.queryByText('芝士正在处理…')).toBeNull()
   })
 
   // 帧上没有「叫不叫它」那一位：叫谁写在正文里，后端从正文解析。
@@ -472,9 +459,9 @@ describe('对话栏自己的输入栏', () => {
     expect(menu!.textContent).toContain('AI 队友')
   })
 
-  // 老话题的名册里可能没有芝士的座位（座位是后来才有的）。那种房间里，项目名册上
-  // 那行共用的芝士得顶上，否则这个话题永远叫不动它。
-  it('房间名册里没有芝士时，退回项目名册上那一行', async () => {
+  // 没坐在这间房里的 AI 队友不在 @ 候选里：在这里 @ 它什么也不会发生（后端点名只
+  // 认这间房的席位），列出来就是一个点了没反应的名字。
+  it('房间名册里没有 AI 队友时，@ 候选里也没有', async () => {
     const api = await import('../../api')
     vi.mocked(api.listTopicMembers).mockResolvedValueOnce({
       data: [{ id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false }],
@@ -488,7 +475,9 @@ describe('对话栏自己的输入栏', () => {
     box.focus()
     await fireEvent.update(box, '@')
     await flush()
-    expect(container.querySelector('.mention-menu')!.textContent).toContain('共用芝士')
+    const menu = container.querySelector('.mention-menu')!.textContent
+    expect(menu).toContain('Alice')
+    expect(menu).not.toContain('共用芝士')
   })
 
   // 「打一个 @ 然后回车」是这个输入框里最短的一条路，而它当时通向 @all——把整个
@@ -507,6 +496,99 @@ describe('对话栏自己的输入栏', () => {
     expect(box.value).toBe('@芝士 ')
     // 挑完人就是接着打字的时刻——焦点不该被那次回车带走。
     expect(document.activeElement).toBe(box)
+  })
+
+  /** @ 候选列表里的键盘导航。
+   *
+   * 这块菜单以前只能用鼠标点：上下键什么也不做，回车永远挑第一项。名单有七个的时
+   * 候，想 @ 第三个人就得把手从键盘上拿开——而这正是人在打字的时刻。键盘回来的同
+   * 时，鼠标那条路不能坏（划过仍然高亮、回车仍然挑中划过的那一项），所以两条路改的
+   * 是同一个下标。
+   */
+  describe('@ 候选菜单的键盘导航', () => {
+    function itemsOf(container: Element): HTMLElement[] {
+      return Array.from(container.querySelectorAll<HTMLElement>('.mention-menu-item'))
+    }
+    function activeIndex(container: Element): number {
+      return itemsOf(container).findIndex((el) => el.classList.contains('is-active'))
+    }
+    async function openMenu(topicId: string) {
+      const { container } = mountPanel({}, topicId)
+      await flush()
+      const box = composerBox(container)!
+      box.focus()
+      await fireEvent.update(box, '@')
+      await flush()
+      expect(container.querySelector('.mention-menu'), '@ 候选没弹出来').toBeTruthy()
+      return { container, box }
+    }
+
+    it('↑/↓ 换高亮，走到头绕回另一头', async () => {
+      const { container, box } = await openMenu('topic-keys-1')
+      const n = itemsOf(container).length
+      expect(n).toBeGreaterThan(2)
+      expect(activeIndex(container)).toBe(0)
+
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      expect(activeIndex(container)).toBe(1)
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      expect(activeIndex(container)).toBe(2)
+      await fireEvent.keyDown(box, { key: 'ArrowUp' })
+      expect(activeIndex(container)).toBe(1)
+
+      // 从第一项往上：绕到最后一项。名单短，两头都该走得到。
+      await fireEvent.keyDown(box, { key: 'ArrowUp' })
+      await fireEvent.keyDown(box, { key: 'ArrowUp' })
+      expect(activeIndex(container)).toBe(n - 1)
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      expect(activeIndex(container)).toBe(0)
+    })
+
+    it('回车挑的是高亮那一项，不是固定的第一项', async () => {
+      const { box } = await openMenu('topic-keys-2')
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      await fireEvent.keyDown(box, { key: 'Enter' })
+      await flush()
+
+      // 走到第三项是 @here。这里钉的正是键盘导航本身：回车跟着高亮走，第一项
+      // （芝士）没被挑中——正文说了算。
+      expect(box.value).toBe('@here ')
+      // 挑完就是接着打字的时刻，焦点不该被那次回车带走。
+      expect(document.activeElement).toBe(box)
+    })
+
+    it('鼠标划过和 ↑/↓ 是同一套高亮', async () => {
+      const { container, box } = await openMenu('topic-keys-3')
+      await fireEvent.mouseEnter(itemsOf(container)[2])
+      expect(activeIndex(container)).toBe(2)
+
+      // 划过之后接着按 ↓：从划过的那一项往下走，不是从第一项重来。
+      await fireEvent.keyDown(box, { key: 'ArrowDown' })
+      expect(activeIndex(container)).toBe(3)
+      await fireEvent.keyDown(box, { key: 'Enter' })
+      await flush()
+      expect(box.value).toBe('@Alice ')
+    })
+
+    it('Esc 收起候选，再打字又打开；收起的时候回车是发送', async () => {
+      const { container, box } = await openMenu('topic-keys-4')
+      await fireEvent.keyDown(box, { key: 'Escape' })
+      expect(container.querySelector('.mention-menu')).toBeNull()
+
+      // @ 是临时收起，不是从正文里拿掉：这时回车该把这条消息发出去。
+      await fireEvent.keyDown(box, { key: 'Enter' })
+      await flush()
+      const message = sent
+        .map((s) => JSON.parse(s.payload) as { content?: string })
+        .find((p) => typeof p.content === 'string')
+      expect(message?.content).toBe('@')
+
+      box.focus()
+      await fireEvent.update(box, '@a')
+      await flush()
+      expect(container.querySelector('.mention-menu')).toBeTruthy()
+    })
   })
 
   // 「交给芝士」这颗按钮唯一被允许做的事，就是替你打那五个字。它自己不存状态：

@@ -3,7 +3,9 @@ import type { FeedbackComment } from '@/cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
+import UserRef from '@/components/common/UserRefLink.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
+import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
 // 一条评论。顶层评论和楼内回复**共用这一个组件**，因为读法必须一致：谁写的、
@@ -105,10 +107,12 @@ function send() {
 
 /** 点赞按钮上的字。**文案本身是三个非颜色信号之一**，所以点过和没点过是两个词。
  *  计数单独一格，且只在有人赞过的时候出现 —— 「赞 0」里的 0 会被读成「有人踩过」。 */
-const likeLabel = computed(() => (props.comment.liked ? '已赞' : '赞'))
+const likeLabel = computed(() => (props.comment.liked ? t('feedback.comment.liked') : t('feedback.comment.like')))
 
 const removeQuestion = computed(() =>
-  props.replyCount > 0 ? `删掉这条评论，连同它下面的 ${props.replyCount} 条回复一起？` : '删掉这条评论？'
+  props.replyCount > 0
+    ? t('feedback.comment.deleteAskWithReplies', { n: props.replyCount })
+    : t('feedback.comment.deleteAsk')
 )
 
 /** 回复框的 id，给「回复」按钮的 `aria-controls` 用。 */
@@ -130,14 +134,16 @@ function confirmRemove() {
         :size="isReply ? 20 : 22"
       />
       <span class="fb-ci__author">{{ comment.author_handle }}</span>
-      <span v-if="comment.author_is_agent" class="chip-neutral">AI 队友</span>
-      <span class="t-meta">{{ relTime(comment.created_at) }}</span>
+      <span v-if="comment.author_is_agent" class="chip-neutral">{{ t('feedback.comment.agent') }}</span>
+      <span class="t-meta-read t-num">{{ relTime(comment.created_at) }}</span>
     </div>
 
     <!-- 回的是谁。单独一行而不是塞进正文前面：正文是用户写的多段文字（保留换行），
          把「回复 X」拼进去会让第一段被挤变形，也让人分不清这句是谁写的。 -->
     <div v-if="comment.reply_to_handle" class="fb-ci__re">
-      回复 <span class="fb-ci__re-name">{{ comment.reply_to_handle }}</span>
+      <i18n-t keypath="feedback.comment.replyTo" tag="span">
+        <template #handle><UserRef :handle="comment.reply_to_handle" /></template>
+      </i18n-t>
     </div>
 
     <p class="t-body fb-ci__body">{{ comment.body }}</p>
@@ -145,9 +151,11 @@ function confirmRemove() {
     <div v-if="confirming" class="fb-ci__actions">
       <span class="fb-ci__confirm-q">{{ removeQuestion }}</span>
       <button ref="confirmButton" type="button" class="fb-ci__act fb-ci__act--danger" @click="confirmRemove">
-        确认删除
+        {{ t('feedback.comment.confirm') }}
       </button>
-      <button type="button" class="fb-ci__act" @click="confirming = false">取消</button>
+      <button type="button" class="fb-ci__act" @click="confirming = false">
+        {{ t('feedback.comment.cancel') }}
+      </button>
     </div>
 
     <div v-else class="fb-ci__actions">
@@ -156,7 +164,7 @@ function confirmRemove() {
         class="fb-ci__act fb-ci__like"
         :class="{ 'is-on': comment.liked }"
         :aria-pressed="comment.liked"
-        :title="comment.liked ? '取消点赞' : '点赞这条评论'"
+        :title="comment.liked ? t('feedback.comment.unlikeAria') : t('feedback.comment.likeAria')"
         @click="emit('like', comment.id)"
       >
         <v-icon size="14">{{ comment.liked ? 'mdi-thumb-up' : 'mdi-thumb-up-outline' }}</v-icon>
@@ -173,7 +181,7 @@ function confirmRemove() {
         @click="emit('toggle-reply', comment.id)"
       >
         <v-icon size="14">mdi-reply-outline</v-icon>
-        {{ replying ? '收起' : '回复' }}
+        {{ replying ? t('feedback.comment.collapse') : t('feedback.comment.reply') }}
       </button>
 
       <button
@@ -183,7 +191,7 @@ function confirmRemove() {
         class="fb-ci__act fb-ci__act--danger"
         @click="confirming = true"
       >
-        删除
+        {{ t('feedback.comment.delete') }}
       </button>
     </div>
 
@@ -192,7 +200,7 @@ function confirmRemove() {
         ref="replyBox"
         v-model="draft"
         autocomplete="off"
-        :placeholder="`回复 ${comment.author_handle}`"
+        :placeholder="t('feedback.comment.replyPlaceholder', { handle: comment.author_handle })"
         rows="2"
         density="compact"
         hide-details
@@ -200,7 +208,9 @@ function confirmRemove() {
       <!-- 楼内回复用中性色，不用琥珀：这一页唯一的主操作是底部的「发表评论」，
            琥珀一次只能出现在一个地方（docs/design-system.md §1.6）。 -->
       <div class="fb-ci__form-actions">
-        <v-btn variant="text" color="secondary" size="x-small" @click="emit('toggle-reply', comment.id)"> 取消 </v-btn>
+        <v-btn variant="text" color="secondary" size="x-small" @click="emit('toggle-reply', comment.id)">
+          {{ t('feedback.comment.cancel') }}
+        </v-btn>
         <v-btn
           variant="tonal"
           color="secondary"
@@ -209,7 +219,7 @@ function confirmRemove() {
           :loading="sending"
           @click="send"
         >
-          回复
+          {{ t('feedback.comment.reply') }}
         </v-btn>
       </div>
     </div>
@@ -244,9 +254,8 @@ function confirmRemove() {
   line-height: var(--lh-12);
   color: var(--muted);
 }
-.fb-ci__re-name {
-  font-weight: 600;
-  color: var(--ink);
+.fb-ci__re {
+  /* 一个 60 个字符、中间不带空格的 handle 不会自己断行，于是把这一行撑出屏幕。 */
   min-width: 0;
   overflow-wrap: anywhere;
 }

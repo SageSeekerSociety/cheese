@@ -135,6 +135,30 @@ def test_archiving_a_card_riding_an_open_pr_revokes_it_and_leaves_the_pr(
     assert f"停止跟进 PR #{number}" not in room_text(room_line)
 
 
+def test_archiving_after_a_pr_was_closed_does_not_ask_anyone_to_close_it(
+    client, app_world
+):
+    """The PR was closed on GitHub without merging and the poller voided the card.
+    Archiving the room leaves that card as it is and does not tell the reviewer
+    the PR is still open and needs closing."""
+    fake = app_world["fake"]
+    _pid, tid, _cid, number, _head = _ready_card(client, app_world)
+    fake.close_unmerged(number)
+    _poll(client)
+    voided = _cards(client, tid)[0]
+
+    _archive(client, tid, by="bob")
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "revoked"
+    assert card["note"] == voided["note"]
+    assert "仍在 GitHub 上打开" not in card["note"]
+    card_line = client.get(
+        f"/topics/{tid}/history", params={"task_id": card["task_id"], "limit": 200}
+    ).json()["data"]["data"]
+    assert f"停止跟进 PR #{number}" not in room_text(card_line)
+
+
 def test_archiving_revokes_a_pending_card(client):
     """最常见的一种：卡还等着人点，话题先被归档了。"""
     pid = _make_project(client)

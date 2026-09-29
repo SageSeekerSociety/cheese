@@ -34,6 +34,7 @@ if __package__:
     from app.domain.agent.executor_transport import (
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
+        SESSION_SOCKET,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -48,6 +49,7 @@ else:
     from executor_transport import (
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
+        SESSION_SOCKET,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -57,6 +59,10 @@ else:
     )
 
 PINNED_VERSION = "2.1.282"
+# Where a session's execution target is written. The launcher names it, so the
+# runner that holds the session and `bootstrap` preparing it agree on the file
+# without either spelling the other's layout.
+EXECUTION_CONFIG = "CHEESE_EXECUTION_CONFIG"
 # The file tools the plugin runs on the executor. Bash is not one: the build
 # runs it itself, through the shell prefix (`shell`), so its tasks, their
 # controls and their notifications are the build's own.
@@ -141,6 +147,71 @@ def _ensure_sync_agents_hook(hooks: dict) -> None:
         )
 
 
+def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) -> Path:
+    """The plugin a room's session is started with: the function hook that runs
+    its tools where the project is (`proxy.js`), and the Stop hook that keeps a
+    turn from ending while a person in the room is unanswered (`reply`)."""
+    if __package__:
+        from .release import hook_module
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import hook_module
+
+    (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+    (plugin / "hooks").mkdir(exist_ok=True)
+    (plugin / ".claude-plugin/plugin.json").write_text(
+        json.dumps({"name": "cheese-remote-execution", "version": "0.1.0"})
+    )
+    stop = shlex.join(
+        [sys.executable, str(Path(__file__).resolve()), "reply", str(target_path)]
+    )
+    (plugin / "hooks/hooks.json").write_text(
+        json.dumps(
+            {
+                "modules": ["proxy.js"],
+                "hooks": {"Stop": [{"hooks": [{"type": "command", "command": stop}]}]},
+            }
+        )
+    )
+    (plugin / "hooks/proxy.js").write_text(
+        hook_module(
+            (Path(__file__).parent / "proxy.js").read_text(), target, platform_tools
+        )
+    )
+    return plugin
+
+
+def reply_hook(payload: dict) -> dict | None:
+    """The Stop hook: may this turn end? The runner decides (`driven/runner.py`
+    `insist`), reached on the socket it gave this session. A session with no
+    runner, or one that does not answer, ends as it would have."""
+    import socket
+
+    path = os.environ.get(SESSION_SOCKET)
+    if not path or payload.get("stop_hook_active"):
+        return None
+    try:
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(10)
+            connection.connect(path)
+            connection.sendall(
+                json.dumps({"method": "reply_check", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+    except (OSError, ValueError):
+        return None
+    reason = (answer.get("result") or {}).get("reason")
+    return {"decision": "block", "reason": reason} if reason else None
+
+
+def cheese_source() -> Path:
+    """The platform tool table: shipped beside this helper, or the checkout's."""
+    shipped = Path(__file__).with_name("cheese.py")
+    if shipped.is_file():
+        return shipped
+    return Path(__file__).resolve().parents[6] / "sandbox/cheese"
+
+
 def prepare(
     directory,
     target: dict[str, Any],
@@ -185,6 +256,16 @@ def prepare(
     home.mkdir(exist_ok=True)
     config = Path(config_override) if config_override else directory / "config"
     config.mkdir(exist_ok=True)
+    if __package__:
+        from .release import forget_touched_skills
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import forget_touched_skills
+
+    # What an earlier session process reached is not this one's: it starts
+    # offering a subdirectory's skills only once it reaches them itself, and
+    # the copies written for that are not skills the platform shipped.
+    forget_touched_skills(directory, config)
     # The build's own temporary files — a Bash command's output, the file its
     # shell reports its directory in — kept to this session.
     temporary = directory / "tmp"
@@ -206,9 +287,29 @@ def prepare(
         target,
         workspace=info["workspace"],
         session_workspace=seen,
+        # The session reads every skill from its config dir. The project's
+        # are links into the view, and are the project's on the executor; the
+        # rest the platform wrote there itself, and the executor holds its own
+        # copy in its own config dir. A file named beside a skill is sent to
+        # whichever of the two holds it (`skill_path`).
+        executor_config=session_path(info["config_dir"])
+        if info.get("config_dir")
+        else None,
+        shipped_skills=sorted(
+            entry.name
+            for entry in (config / "skills").iterdir()
+            if entry.is_dir() and not entry.is_symlink()
+        )
+        if (config / "skills").is_dir()
+        else [],
         central_workspace=str(workspace),
         central_config=str(config),
         central_tmp=str(temporary),
+        # The session's memory tree, in its own home on this host: the runner
+        # lays the platform's copy down and collects the agent's edits there
+        # (`runner.memory_root`, `memory.files.MEMORY_ROOT`), so its file tools
+        # reach it here and not on the executor (`proxy.js` `memoryPath`).
+        central_memory=str(home / ".cheese/memory"),
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -276,33 +377,26 @@ def prepare(
             Path(seen),
             {"entries": {}} if unavailable else context_tree,
             Path(__file__).parent,
+            view=workspace,
         )
-    plugin = directory / "plugin"
-    (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
-    (plugin / "hooks").mkdir(exist_ok=True)
-    (plugin / ".claude-plugin/plugin.json").write_text(
-        json.dumps({"name": "cheese-remote-execution", "version": "0.1.0"})
-    )
-    (plugin / "hooks/hooks.json").write_text('{"modules":["proxy.js"]}')
-    module = (Path(__file__).parent / "proxy.js").read_text()
-    module = module.replace("__EXECUTION_CONFIG__", json.dumps(target))
-    (plugin / "hooks/proxy.js").write_text(module)
+    if __package__:
+        from .release import allow_native_tools, platform_tool_names
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import allow_native_tools, platform_tool_names
+
+    platform_tools = platform_tool_names(cheese_source().read_text())
+    plugin = write_plugin(directory / "plugin", target, platform_tools, target_path)
     settings = json.loads(json.dumps(base_settings or {}))
     # The project's own tool hooks, which the build fires and the shell prefix
     # runs on the executor (never here: they are not in `central_hooks`).
-    for event, groups in ((context_tree or {}).get("hooks") or {}).items():
+    # Recorded beside the target, so a machine that attaches later replaces
+    # exactly these (`executor_transport.register_project_hooks`).
+    project_hooks = (context_tree or {}).get("hooks") or {}
+    for event, groups in project_hooks.items():
         settings.setdefault("hooks", {}).setdefault(event, []).extend(groups)
-    permissions = settings.setdefault("permissions", {})
-    allowed = permissions.setdefault("allow", [])
-    for tool in (
-        "invoke",
-        "chat_send",
-        "platform_request",
-        "project_tools",
-        "cheese_*",
-    ):
-        if f"mcp__native__{tool}" not in allowed:
-            allowed.append(f"mcp__native__{tool}")
+    (directory / "project-hooks.json").write_text(json.dumps(project_hooks))
+    allow_native_tools(settings, platform_tools)
     hooks = settings.setdefault("hooks", {})
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
@@ -383,7 +477,13 @@ def prepare(
             "args": [*helper[1:], "transport", str(target_path)],
         }
     }
-    for name in target.get("mcp_servers", []):
+    # The room machine's stdio servers and the project's remote ones take the
+    # same bridge; `RemoteClient.call` sends each to where it is served.
+    bridged = [
+        *target.get("mcp_servers", []),
+        *(target.get("remote_mcp") or {}).get("servers", []),
+    ]
+    for name in bridged:
         if name == "native":
             raise ValueError("MCP server name native is reserved for file operations")
         servers[name] = {
@@ -404,7 +504,7 @@ def prepare(
         # `defer_loading`. `auto` would switch deferral on only once a room's
         # MCP definitions pass 10% of the window, and then fail there.
         "ENABLE_TOOL_SEARCH": "false",
-        "CHEESE_EXECUTION_CONFIG": str(target_path),
+        EXECUTION_CONFIG: str(target_path),
         "CLAUDE_CODE_TMPDIR": str(temporary),
     }
     prefix = directory / "shell-prefix"
@@ -417,11 +517,10 @@ def prepare(
     }
     local_commands.update(
         shlex.join([*helper, mode, str(target_path)])
-        for mode in ("guard", "context", "checkpoint", "transport")
+        for mode in ("guard", "context", "checkpoint", "transport", "reply")
     )
     local_commands.update(
-        shlex.join([*helper, "bridge", str(target_path), name])
-        for name in target.get("mcp_servers", [])
+        shlex.join([*helper, "bridge", str(target_path), name]) for name in bridged
     )
     # Match complete trusted commands; appended shell syntax takes the usual route.
     dispatch = (
@@ -518,12 +617,23 @@ def _carry_transcripts(config, before, after):
     path's. So the conversations begun at `before` move to `after`'s, before a
     session relaunched there resumes one."""
     source = project_dir(config, before)
-    if not source.is_dir():
-        return
-    destination = project_dir(config, after)
+    if source.is_dir():
+        _move_into(source, project_dir(config, after))
+
+
+def _move_into(source, destination):
+    """`source`'s entries into `destination`, merging the directories both
+    have. A conversation that already lived at `after` and was resumed at
+    `before` keeps its transcript where it found it, but writes its subagents'
+    transcripts and saved tool results under `before`'s directory for that
+    conversation, which `after` has too."""
     destination.mkdir(parents=True, exist_ok=True)
     for entry in source.iterdir():
-        entry.replace(destination / entry.name)
+        target = destination / entry.name
+        if entry.is_dir() and not entry.is_symlink() and target.is_dir():
+            _move_into(entry, target)
+        else:
+            entry.replace(target)
     source.rmdir()
 
 
@@ -571,6 +681,24 @@ def sync_context(target_path, supplied_tree=None):
             temporary.write_text(json.dumps(tree))
             temporary.replace(tree_path)
             generation_path.write_text(tree["generation"])
+            if "session_workspace" in target:
+                # A session already running: the skills, commands, agents and
+                # rules the project has now are the ones linked into its
+                # config dir. (`prepare` links them itself, once mounted.)
+                if __package__:
+                    from .release import link_forwarded_user_context
+                else:
+                    sys.path.insert(0, str(Path(__file__).parent))
+                    from release import link_forwarded_user_context
+
+                link_forwarded_user_context(
+                    Path(target_path).parent,
+                    target["central_config"],
+                    Path(target["session_workspace"]),
+                    tree,
+                    Path(__file__).parent,
+                    view=target["central_workspace"],
+                )
         return tree
     workspace = Path(target["central_workspace"])
     manifest = Path(target_path).parent / "context-manifest.json"
@@ -672,7 +800,8 @@ def shell(target_path, command):
     if (
         len(words) >= 4
         and words[:2] == [sys.executable, helper]
-        and words[2] in ("bridge", "guard", "context", "checkpoint", "transport")
+        and words[2]
+        in ("bridge", "guard", "context", "checkpoint", "transport", "reply")
         and words[3] == str(target_path)
     ):
         os.execvp(words[0], words)
@@ -698,17 +827,48 @@ def shell(target_path, command):
     return run_on_the_machine(target, command)
 
 
+def skill_places(target):
+    """Where the executor holds each skill the session names by an entry that
+    is not the project's root skill of that name: a subdirectory's, and one
+    written without its `paths` (`release.SKILL_PLACES`)."""
+    path = Path(target.get("target_file", "")).parent / "skill-places.json"
+    try:
+        places = json.loads(path.read_text())["places"]
+    except (OSError, ValueError, KeyError):
+        return {}
+    return {name: place["place"] for name, place in places.items()}
+
+
+def skill_paths(target, text):
+    """`text` with each skill file named in the session's config dir named
+    where the executor holds it: a project skill in the project's
+    `.claude/skills`, one the platform shipped in the executor's config dir.
+    `proxy.js` `skillPath` is the same mapping, for the file tools."""
+    skills = target["central_config"] + "/skills/"
+    project = session_path(target["workspace"]) + "/.claude/skills/"
+    shipped = set(target.get("shipped_skills") or [])
+    executor = target.get("executor_config")
+    places = skill_places(target)
+
+    def place(match):
+        name = match.group(1)
+        if name in places:
+            return places[name]
+        if name in shipped:
+            return f"{executor}/skills/{name}" if executor else match.group(0)
+        return project + name
+
+    return re.sub(re.escape(skills) + r"([^/\s'\"`]+)", place, text)
+
+
 def run_on_the_machine(target, command):
     # The session sees the project at the executor's own path, so a command and
     # its directory need no respelling. Its skills are the one thing the build
     # reads from this host's config directory (`link_forwarded_user_context`),
     # where the executor has none: a command naming a skill's file names it in
     # the project.
-    skills = target["central_config"] + "/skills/"
-    project_skills = session_path(target["workspace"]) + "/.claude/skills/"
-
     def outward(text):
-        return text.replace(skills, project_skills)
+        return skill_paths(target, text)
 
     cwd = os.getcwd()
     head, tail = _SNAPSHOT.match(command), _CWD_FILE.search(command)
@@ -1340,6 +1500,32 @@ def deliver_send_user_file(client, config, payload, args, invoke):
     return {"value": result}
 
 
+def reached_skills(target_path, target, args):
+    """A file tool reached a file on the executor: the session offers what
+    Claude Code offers once one has (`release.touch_skills`). The tool's own
+    result stands whatever happens here."""
+    if __package__:
+        from .release import touch_skills
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import touch_skills
+
+    path = args.get("file_path") or args.get("notebook_path")
+    if not isinstance(path, str) or "session_workspace" not in target:
+        return
+    try:
+        touch_skills(
+            Path(target_path).parent,
+            target["central_config"],
+            target["session_workspace"],
+            Path(__file__).parent,
+            path,
+            view=target.get("central_workspace"),
+        )
+    except Exception as error:  # noqa: BLE001 — the call it followed succeeded
+        print(f"skills not updated after {path}: {error!r}", file=sys.stderr)
+
+
 def transport(config, target_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -1351,10 +1537,9 @@ def transport(config, target_path):
         from context_service import serve
 
     client = RemoteClient(config)
-    cheese_source = Path(__file__).with_name("cheese.py")
-    if not cheese_source.is_file():
-        cheese_source = Path(__file__).resolve().parents[6] / "sandbox/cheese"
-    cheese = SourceFileLoader("cheese_request_plans", str(cheese_source)).load_module()
+    cheese = SourceFileLoader(
+        "cheese_request_plans", str(cheese_source())
+    ).load_module()
     output_lock = threading.Lock()
     active = {}
     active_lock = threading.RLock()
@@ -1650,6 +1835,8 @@ def transport(config, target_path):
                     outcome = {"deny": receipt["error"]}
                 else:
                     outcome = {"result": receipt["value"]}
+                    if tool == "invoke":
+                        reached_skills(target_path, config, args)
                 image = outcome.get("result", {})
                 if isinstance(image, dict) and image.get("type") == "image":
                     # Base64 in text hits Claude Code's MCP text-output limit.
@@ -1730,6 +1917,33 @@ def own_output(config, call):
     )
 
 
+def probed(config, call):
+    """The session's own Read of a project file, which `proxy.js` lets through
+    to have the session offer the skills whose `paths` name it; the executor
+    answers the call. Only the path the plugin named for it is admitted."""
+    if call.get("tool_name") != "Read":
+        return False
+    try:
+        named = json.loads(
+            (Path(config["target_file"]).parent / "read-probe.json").read_text()
+        ).get("path")
+    except (OSError, ValueError, KeyError):
+        return False
+    return bool(named) and (call.get("tool_input") or {}).get("file_path") == named
+
+
+def own_memory(config, call):
+    """A file tool on the session's memory tree, which lives on this host
+    (`prepare`'s `central_memory`). The plugin has already spelled the path
+    out; anything that resolves outside the tree is not admitted."""
+    if call.get("tool_name") not in NATIVE_TOOLS or not config.get("central_memory"):
+        return False
+    tool_input = call.get("tool_input") or {}
+    path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+    memory = os.path.realpath(config["central_memory"]) + os.sep
+    return os.path.realpath(str(path)).startswith(memory)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1740,6 +1954,7 @@ def main():
             "bridge",
             "guard",
             "context",
+            "catch-up",
             "control",
             "shell",
             "bootstrap",
@@ -1747,6 +1962,7 @@ def main():
             "checkpoint",
             "release",
             "transport",
+            "reply",
         ],
     )
     parser.add_argument("config", type=Path)
@@ -1763,7 +1979,8 @@ def main():
 
         release(config)
     elif args.mode == "bridge":
-        if config.get("kind") == "device":
+        remote = (config.get("remote_mcp") or {}).get("servers", [])
+        if config.get("kind") == "device" or args.args[0] in remote:
             if __package__:
                 from .runtime import bridge
             else:
@@ -1791,9 +2008,13 @@ def main():
         )
         if "error" in result:
             raise RuntimeError(result["error"])
+    elif args.mode == "reply":
+        decision = reply_hook(json.load(sys.stdin))
+        if decision is not None:
+            print(json.dumps(decision))
     elif args.mode == "guard":
         call = json.load(sys.stdin)
-        if own_output(config, call):
+        if own_output(config, call) or own_memory(config, call) or probed(config, call):
             return
         print(
             json.dumps(
@@ -1812,13 +2033,12 @@ def main():
     elif args.mode == "enter":
         enter(args.config, args.args)
     elif args.mode == "bootstrap":
-        # The platform's own directory holds the target file and this client;
-        # the harness's config dir is the harness's, and is where `claude` reads
+        # The launcher names where the session's target goes; the harness's
+        # config dir is the harness's, and is where `claude` reads
         # the settings we are extending and writes everything it owns.
-        base_dir = args.config.parent
         config_dir = Path(os.environ["CLAUDE_CONFIG_DIR"])
         launch = prepare(
-            base_dir / "remote-session",
+            Path(os.environ[EXECUTION_CONFIG]).parent,
             config,
             claude=args.args[0],
             extra_args=args.args[1:],
@@ -1833,6 +2053,15 @@ def main():
         )
     elif args.mode == "context":
         sync_context(args.config)
+    elif args.mode == "catch-up":
+        # The runner, before a turn: whether the project's context changed,
+        # or a file tool reached skills the session did not offer before
+        # (`release.touch_skills`).
+        touched = Path(args.config).parent / "skills-changed"
+        reached = touched.exists()
+        touched.unlink(missing_ok=True)
+        tree = sync_context(args.config)
+        print(json.dumps({"changed": bool(tree.get("changed")) or reached}))
     elif args.mode == "control":
         print(json.dumps(RemoteClient(config).control(json.load(sys.stdin))))
     elif args.mode == "prepare":

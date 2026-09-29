@@ -59,7 +59,9 @@ def _say(client, room: str, content: str) -> None:
 
 
 def _sent_to_the_session(channel: StubChannel, room: str) -> list[str]:
-    session = channel.sessions.get(uuid.UUID(room))
+    session = next(
+        (s for (t, _), s in channel.sessions.items() if t == uuid.UUID(room)), None
+    )
     return [
         str(message["message"]["content"])
         for message in (session.written if session else [])

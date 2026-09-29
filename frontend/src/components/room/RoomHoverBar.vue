@@ -10,10 +10,9 @@ import type { Block } from '../../cx_types'
 
 import { onBeforeUnmount, ref, watch } from 'vue'
 
-import { t } from '@/i18n'
+import { copyMessage, QUICK_EMOJIS } from './messageActions'
 
-/** MVP 表情选择器里那八个：常用的就够了，多了是一面墙。 */
-const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
+import { t } from '@/i18n'
 
 const props = defineProps<{
   /** 停在哪条消息上。收起时还留着上一条，淡出的那一下里按钮不会先没了。 */
@@ -25,6 +24,8 @@ const props = defineProps<{
   jump: boolean
   isAgent: boolean
   pickerOpen: boolean
+  /** 这条是我自己发的消息：多一颗「编辑」。 */
+  editable: boolean
 }>()
 
 const emit = defineEmits<{
@@ -32,15 +33,8 @@ const emit = defineEmits<{
   (e: 'toggle-picker', blockId: string): void
   (e: 'reply', block: Block): void
   (e: 'upgrade', blockId: string): void
+  (e: 'edit', block: Block): void
 }>()
-
-// 整条消息复制成什么：芝士的回复复制 markdown 原文（代码块、列表贴到别处还是那个
-// 样子）；人说的话复制屏幕上读到的字（@ 的是名字，不是 handle）。
-function textOf(block: Block): string {
-  if (props.isAgent) return block.content
-  const shown = document.querySelector(`[data-mid="${block.id}"] .im-text--verbatim`)
-  return shown?.textContent ?? block.content
-}
 
 // 复制之后原地说一声「已复制」，一会儿再换回来；换了一条消息就不再说。
 const COPIED_MS = 1500
@@ -56,12 +50,7 @@ watch(
 onBeforeUnmount(() => clearTimeout(copiedTimer))
 
 async function copy() {
-  if (!props.block) return
-  try {
-    await navigator.clipboard.writeText(textOf(props.block))
-  } catch {
-    return
-  }
+  if (!props.block || !(await copyMessage(props.block, props.isAgent))) return
   copied.value = true
   clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => (copied.value = false), COPIED_MS)
@@ -87,6 +76,15 @@ async function copy() {
       </button>
       <button type="button" class="hover-bar__act" title="回复" @click="emit('reply', block)">
         <v-icon size="15">mdi-reply-outline</v-icon>
+      </button>
+      <button
+        v-if="editable"
+        type="button"
+        class="hover-bar__act"
+        :title="t('work.room.message.edit')"
+        @click="emit('edit', block)"
+      >
+        <v-icon size="15">mdi-pencil-outline</v-icon>
       </button>
       <button
         type="button"

@@ -8,7 +8,7 @@ import NodeBoard from '../components/NodeBoard.vue'
 
 // 市场 has two faces (spec §13 阶段 6 + design v3):
 //   题目匹配 — Spaces publish 题目 (Task Templates), teams apply with a project.
-//   算力资源 — the resource-pool catalog (AI models + compute) a project can
+//   模型与工作电脑 — the catalog (AI models + work computers) a project can
 //   select from in its 设置. The compute tab also hosts the 节点状态 board.
 const tab = ref<'tasks' | 'pools'>('tasks')
 
@@ -45,14 +45,15 @@ onMounted(load)
 <template>
   <div class="market-page fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 1080px">
-      <div class="mb-4">
+      <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
+      <div v-if="$vuetify.display.mdAndUp" class="mb-4">
         <div class="t-eyebrow mb-1">市场</div>
         <h1 class="t-page-title">匹配与资源</h1>
       </div>
 
       <v-tabs v-model="tab" density="comfortable" color="primary" class="mb-5">
         <v-tab value="tasks"> <v-icon size="18" class="me-2">mdi-handshake-outline</v-icon>题目匹配 </v-tab>
-        <v-tab value="pools"> <v-icon size="18" class="me-2">mdi-server</v-icon>算力资源 </v-tab>
+        <v-tab value="pools"> <v-icon size="18" class="me-2">mdi-server</v-icon>模型与工作电脑 </v-tab>
       </v-tabs>
 
       <v-window v-model="tab">
@@ -64,12 +65,11 @@ onMounted(load)
           </p>
         </v-window-item>
 
-        <!-- 算力资源: the original resource-pool catalog, moved verbatim. -->
+        <!-- 模型与工作电脑: the catalog of AI models and work computers. -->
         <v-window-item value="pools">
           <p class="t-body c-muted mb-5" style="max-width: 660px">
-            知是把 <strong>AI 模型</strong> 和 <strong>算力</strong> 都看作资源池。默认的资源池由平台补贴，
-            开箱即用；更强的模型、你自己的机器、带 GPU 的算力也在这里上架。在任意项目的
-            <strong>设置 → 资源池</strong> 里挑选要用的池。
+            这里列出项目可用的 <strong>AI 模型</strong> 和 <strong>工作电脑</strong>。默认项由平台补贴，开箱即用；
+            接入你自己的设备后，它也会列在这里。
           </p>
 
           <!-- 节点状态: live board of compute nodes (local + cheesed remote),
@@ -117,7 +117,7 @@ onMounted(load)
             <div class="market-group">
               <div class="market-group__head">
                 <v-icon size="20" class="me-2 c-muted">mdi-server</v-icon>
-                <h2 class="market-group__title">算力</h2>
+                <h2 class="market-group__title">工作电脑</h2>
                 <span class="market-group__hint c-faint">运行任务的机器</span>
               </div>
               <div class="market-grid">

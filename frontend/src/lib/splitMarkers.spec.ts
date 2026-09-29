@@ -148,6 +148,21 @@ describe('时间线是个窗口，标记不能站错位置', () => {
   })
 })
 
+describe('窗口停在历史中间时', () => {
+  const blocks = [block('m1', '2026-08-11T09:00:00Z'), block('m2', '2026-08-11T09:10:00Z')]
+
+  it('比窗口最新一条还晚派出的活先不显示：它真实的位置在窗口下面', () => {
+    const p = placeSplitMarkers([task('late', '2026-08-11T10:00:00Z')], { blocks, hasMore: false, hasNewer: true })
+    expect(p.tail).toEqual([])
+    expect(placed(p, blocks)).toEqual([])
+  })
+
+  it('落在窗口中间的活照常显示', () => {
+    const p = placeSplitMarkers([task('mid', '2026-08-11T09:05:00Z')], { blocks, hasMore: false, hasNewer: true })
+    expect(placed(p, blocks)).toEqual([['m2', 'mid']])
+  })
+})
+
 describe('哪些活该标', () => {
   const blocks = [block('b1', '2026-08-11T08:00:00Z'), block('b2', '2026-08-11T20:00:00Z')]
   const win = { blocks, hasMore: false }

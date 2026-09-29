@@ -10,6 +10,8 @@ import { onMounted, ref, watch } from 'vue'
 
 import { downloadRoomFileRevision, restoreRoomFileRevision, roomFileRevisions } from '../../../api'
 
+import UserRef from '@/components/common/UserRefLink.vue'
+
 const props = defineProps<{ topicId: string; path: string; version?: string | null }>()
 const emit = defineEmits<{ (e: 'restored', revision: RoomFileRevision): void }>()
 
@@ -87,8 +89,8 @@ defineExpose({ reload: load })
           <strong>第 {{ row.seq }} 版</strong>
           <v-chip v-if="i === 0" size="x-small" color="primary" variant="tonal">当前</v-chip>
           <span class="t-meta">{{ SOURCE_LABEL[row.source] ?? row.source }}</span>
-          <span v-if="row.author_kind === 'agent'" class="t-meta">· 芝士</span>
-          <span v-else-if="row.author" class="t-meta">· {{ row.author }}</span>
+          <span v-if="row.author" class="t-meta">· <UserRef :handle="row.author" /></span>
+          <span v-else-if="row.author_kind === 'agent'" class="t-meta">· 芝士</span>
         </div>
         <div class="t-meta">{{ when(row.created_at) }}</div>
         <div v-if="row.note" class="rh__note">{{ row.note }}</div>

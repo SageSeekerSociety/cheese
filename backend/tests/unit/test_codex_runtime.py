@@ -1,5 +1,6 @@
 """Room delivery survives a reader replacement without sending another turn."""
 
+import json
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import AgentRuntime, Opening, SessionRef
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.codex.channel import CodexChannel
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.runtime import CodexRuntime, Handle
@@ -107,7 +109,7 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
 
 @pytest.mark.anyio
 async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
-    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="codex")
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "agent", harness="codex")
     work = uuid.uuid4()
     handle = Handle(session, "center", "/state", "thread", "agent", tmp_path / "mirror")
     journal = Journal(tmp_path / "remote")
@@ -168,7 +170,7 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
             "steer",
         ]
         # Lose only the backend reader. The remote process completes on its own.
-        await runtime._detach(session.topic_id)
+        await runtime._detach(runtime._seat_of(session))
         for method, params in [
             (
                 "item/completed",
@@ -213,7 +215,56 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
         assert not replacement.work
         assert await replacement.interrupt(session)
     finally:
-        await runtime._detach(session.topic_id)
+        await runtime._detach(runtime._seat_of(session))
         if replacement:
-            await replacement._detach(session.topic_id)
+            await replacement._detach(replacement._seat_of(session))
         journal.close()
+
+
+@pytest.mark.anyio
+async def test_a_codex_that_did_not_start_says_one_sentence_and_keeps_its_stderr():
+    stderr = (
+        "Traceback (most recent call last):\n"
+        '  File "<stdin>", line 40, in <module>\n'
+        "FileNotFoundError: [Errno 2] No such file or directory: "
+        "'/h/.cheese/tools/codex/node_modules/.bin/codex'\n"
+        '  File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child\n'
+    )
+
+    @asynccontextmanager
+    async def prepare_session(*, runtime_factory, **_):
+        runtime_factory(uuid.uuid4())
+        yield SimpleNamespace(
+            device_id="center",
+            token="t",
+            env={
+                "CHEESE_EXECUTION_TARGET": json.dumps(
+                    {"kind": "device", "mcp_servers": []}
+                ),
+                "CHEESE_RESOURCE_ID": str(uuid.uuid4()),
+            },
+        )
+
+    async def precheck(session, *, needs_place):
+        return Placement("center", 1, "a", rented=False)
+
+    async def api_base(device_id):
+        return "http://backend"
+
+    source = Mock(spec=CentralChannel)
+    source.precheck = precheck
+    source.prepare_session = prepare_session
+    source._device_api_base = api_base
+    source._hub = Mock(
+        exec=AsyncMock(return_value={"exit": 1, "stdout": "", "stderr": stderr})
+    )
+    channel = CodexChannel(source, Mock(spec=ExecutorLaunch))
+
+    with pytest.raises(ScreenSetupError) as refused:
+        await channel.ensure(
+            SessionRef(uuid.uuid4(), uuid.uuid4(), "a", harness="codex"),
+            Opening(system_prompt=""),
+        )
+
+    assert str(refused.value) == "Codex 启动失败：机器上缺少 codex"
+    assert refused.value.log == stderr

@@ -170,7 +170,7 @@ FEEDBACK_DESCRIPTION = (
 MACHINE_PROFILES = ("cloud", "device")
 MACHINE_PROFILE_DESCRIPTION = (
     "只有两个值：cloud 是为这个会话开一台平台的云端机器；"
-    "device 是项目已授权的自托管设备，配合 device_id 指定哪一台，"
+    "device 是项目已授权的自有设备，配合 device_id 指定哪一台，"
     "不填 device_id 就自动选一台在线的。"
 )
 
@@ -220,12 +220,24 @@ PLATFORM_TOOLS = ToolTable(
             ["content"],
         ),
         _tool(
+            "chat_edit",
+            "改你自己在房间里发过的一条消息：整段替换成新的正文，房间里的人实时看到，"
+            "消息标上「已编辑」。只能改自己发的；message_id 是 chat_send 返回的 id。",
+            {
+                "message_id": _text("要改的消息 id"),
+                "content": {"type": "string"},
+            },
+            ["message_id", "content"],
+        ),
+        _tool(
             "todo_write",
-            "把这一轮的步骤清单整份写给房间：每次传完整的清单，不是增量，"
-            "上一份整份被替换。房间里正在进行的那条消息原地显示它。"
+            "把步骤清单整份写进房间：第一次调用发一条清单消息，之后每次调用改的是你"
+            "当前那条清单消息。还在做同一个请求就一直改这一条；有人提了新的请求，带上"
+            "new=true 另发一条。做完时再调用一次，所有项标 completed，并用 result "
+            "写一句落下了什么，它接在清单下面。每次传完整的清单，不是增量；"
             f"最多 {TODO_MAX_ITEMS} 项，每项 ≤{TODO_MAX_CHARS} 字；"
             "同一时刻只让一项 in_progress。你是替一条活干活的分身时带上那条活的 id，"
-            "清单记在那张卡上；不带就是房间自己的清单。",
+            "清单记在那张卡上，不发到房间里。",
             {
                 "todos": {
                     "type": "array",
@@ -244,6 +256,13 @@ PLATFORM_TOOLS = ToolTable(
                         "required": ["content", "status"],
                     },
                 },
+                "new": {
+                    "type": "boolean",
+                    "description": "有人提了新的请求时设为 true：另发一条清单消息",
+                },
+                "result": _text(
+                    f"做完时写一句结果（≤{TODO_MAX_CHARS} 字），显示在清单下面"
+                ),
                 "task": _text("你是分身时，你做的那条活的 id"),
             },
             ["todos"],
@@ -388,28 +407,6 @@ PLATFORM_TOOLS = ToolTable(
             ["text"],
         ),
         _tool(
-            "cheese_remember",
-            "记一条事实进你自己的项目记忆，只有你读得到，不会自动出现在上下文里，"
-            "要用 cheese_recall 查。只记跨话题成立、从代码和 git 历史读不出的；"
-            "相对时间换成绝对日期。",
-            {
-                "fact": _text("一条事实，一句话"),
-                "core": {
-                    "type": "boolean",
-                    "description": "核心记忆，每轮全量注入；只给永远成立的身份、"
-                    "规则和目标，预算很小",
-                },
-            },
-            ["fact"],
-        ),
-        _tool(
-            "cheese_recall",
-            "按关键词检索你自己的记忆，不是语义检索。自动注入的只有核心记忆，"
-            "其余只能从这里拿；一次没查到不等于没有，换个说法或只用一两个词再试。",
-            {"query": _text("关键词或问题")},
-            ["query"],
-        ),
-        _tool(
             "cheese_notify",
             "给人发通知，进通知面板；要人在对话里一键拍板用 cheese_ask。"
             "to 不填是发给这个房间名册上的人（不含芝士），不是项目里所有人。"
@@ -528,15 +525,16 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_machine",
-            "更换你自己的工作机器，后续文件和命令操作使用新机器。"
-            "只能选择项目授权的资源；旧机器保留，文件不会自动迁移。",
+            "更换你自己的工作电脑，后续文件和命令操作使用新电脑。"
+            "只能选择项目授权的资源。更换前平台先在原来那台上把改动推送到分支，"
+            "推送失败或原来那台连不上就不换；新电脑从分支拉代码。",
             {
                 "profile": {
                     "type": "string",
                     "enum": list(MACHINE_PROFILES),
                     "description": MACHINE_PROFILE_DESCRIPTION,
                 },
-                "device_id": _text("自托管设备的 id，只有 device 能指定"),
+                "device_id": _text("自有设备的 id，只有 device 能指定"),
             },
             ["profile"],
         ),
@@ -567,8 +565,6 @@ _NEEDS_PROJECT = frozenset(
     {
         "cheese_milestone",
         "cheese_notify",
-        "cheese_recall",
-        "cheese_remember",
         "cheese_library_ls",
     }
 )
@@ -610,11 +606,21 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             **_given(args, "reply_to"),
         }
         return {"method": "POST", "path": f"/topics/{topic}/messages", "body": body}
+    if tool == "chat_edit":
+        return {
+            "method": "PATCH",
+            "path": "/blocks/" + urllib.parse.quote(args["message_id"], safe=""),
+            "body": {"content": args["content"]},
+        }
     if tool == "todo_write":
         return {
             "method": "PUT",
             "path": f"/topics/{topic}/progress",
-            "body": {"todos": args["todos"], **_given(args, "task")},
+            "body": {
+                "todos": args["todos"],
+                **({"new": True} if args.get("new") is True else {}),
+                **_given(args, "task", "result"),
+            },
         }
     if tool == "cheese_doc_get":
         return {"method": "GET", "path": f"/topics/{topic}/doc"}
@@ -717,24 +723,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         if args.get("prompt"):
             body["prompt"] = args["prompt"]
         return {"method": "POST", "path": "/fetch", "body": body}
-    if tool in {"cheese_remember", "cheese_recall"}:
-        remember = tool == "cheese_remember"
-        body = {
-            "content" if remember else "query": args["fact" if remember else "query"],
-            "topic": topic,
-        }
-        if remember and args.get("core"):
-            body["layer"] = "core"
-        owner = env.get("CHEESE_OWNER", "")
-        if env.get("CHEESE_MEMORY_SCOPE", "project") == "personal" and owner:
-            # 私聊里记的是这个芝士对它主人的看法——池子按
-            # `<project>:<agent handle>:<person>` 分，属于这个项目里的这个实例。
-            body.update(scope="user", owner=owner)
-        return {
-            "method": "POST",
-            "path": f"/projects/{project}/memory{'' if remember else '/search'}",
-            "body": body,
-        }
     if tool == "cheese_ask":
         options = [value.strip() for value in args["option"] if value.strip()]
         if not 2 <= len(options) <= 4:
@@ -1167,24 +1155,6 @@ def _say_notify(args, data, env) -> str:
     return f"已发送通知给 {'、'.join(who)}。" if who else "已发送通知。"
 
 
-def _say_remember(args, data, env) -> str:
-    kind = "核心记忆（每轮都在场）" if args.get("core") else "记忆"
-    personal = env.get("CHEESE_MEMORY_SCOPE") == "personal" and env.get("CHEESE_OWNER")
-    return f"已记入{'个人' if personal else '项目'}{kind}。"
-
-
-def _say_recall(args, data, env) -> str:
-    hits = (data or {}).get("hits") or []
-    if not hits:
-        # 关键词检索没命中 ≠ 没有这条记忆。一次空结果当成「确认不存在」，就会一头
-        # 撞上那条记忆本来要拦住的坑。
-        return (
-            "没有找到相关记忆。（关键词检索，不是语义检索：换个说法、"
-            "或只用其中一两个关键词再试一次）"
-        )
-    return "\n".join(f"- {hit.get('abstract', '')}" for hit in hits)
-
-
 def _say_docs_search(args, data, env) -> str:
     hits = (data or {}).get("hits") or []
     if not hits:
@@ -1198,10 +1168,10 @@ def _say_docs_search(args, data, env) -> str:
         if hit.get("heading"):
             where += f" › {hit['heading']}"
         tag = "（开发文档）" if hit.get("dev") else ""
-        lines.append(f"{n}. {where}{tag}\n   {hit.get('url', '')}\n   {hit.get('excerpt', '')}")
-    lines.append(
-        "\n要看整页用 cheese_docs_read(page=链接)。回答用户时附上对应链接。"
-    )
+        lines.append(
+            f"{n}. {where}{tag}\n   {hit.get('url', '')}\n   {hit.get('excerpt', '')}"
+        )
+    lines.append("\n要看整页用 cheese_docs_read(page=链接)。回答用户时附上对应链接。")
     return "\n".join(lines)
 
 
@@ -1226,12 +1196,12 @@ def _say_machine(args, data, env) -> str:
     if data.get("session"):
         choice = data["session"]["choice"]
         return (
-            f"工作机器已设为 {choice['name']}，下次执行操作时使用。"
-            "旧机器保留，文件不会自动迁移。"
+            f"改动已推送到分支，工作电脑已设为 {choice['name']}，"
+            "下次执行操作时使用；在新电脑上从分支拉代码继续。"
         )
     if data.get("proposal"):
         return f"已提请 {data['proposal']['approver']} 点头，等他拍板。"
-    return f"这个房间的算力现在是 {data.get('current')}。"
+    return f"这个房间的工作电脑现在是 {data.get('current')}。"
 
 
 def _say_members(args, data, env) -> str:
@@ -1263,13 +1233,20 @@ def _say_chat_send(args, data, env) -> str:
 
 
 def _say_todo(args, data, env) -> str:
-    items = (data or {}).get("items") or []
+    data = data or {}
+    items = data.get("items") or []
     done = sum(1 for item in items if item.get("status") == "completed")
-    return f"清单已更新：{len(items)} 项，完成 {done} 项。"
+    counts = f"{len(items)} 项，完成 {done} 项"
+    if not data.get("message_id"):
+        return f"清单已记在卡上：{counts}。"
+    if data.get("posted"):
+        return f"已发出清单消息（id {data['message_id']}）：{counts}。"
+    return f"已改清单消息（id {data['message_id']}）：{counts}。"
 
 
 _SAY = {
     "chat_send": _say_chat_send,
+    "chat_edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
     "todo_write": _say_todo,
     "cheese_task": _say_task,
     "cheese_close_task": lambda a, d, e: (
@@ -1300,8 +1277,6 @@ _SAY = {
         else f"话题标题已设为：{a['text']}"
     ),
     "cheese_decision": lambda a, d, e: "已记入决策记录。",
-    "cheese_remember": _say_remember,
-    "cheese_recall": _say_recall,
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
     "cheese_docs_search": _say_docs_search,
@@ -1706,7 +1681,20 @@ def _task_worktree(task_id: str, *, allow_closed: bool = False) -> Path:
     return task_dir
 
 
-def _report_sync_failure(task_id: str, branch: str | None) -> None:
+class _BranchQueued(RuntimeError):
+    """The task's PR is in the merge queue, which locks its branch."""
+
+    def __init__(self, branch: str, pr: int):
+        super().__init__(
+            f"{branch} is locked: PR #{pr} is in the merge queue, so commits "
+            "made since it was accepted cannot join it"
+        )
+        self.pr = pr
+
+
+def _report_sync_failure(
+    task_id: str, branch: str | None, queued_pr: int | None = None
+) -> None:
     """Tell the room that a task's work did not reach its branch.
 
     Only the failure: a turn that ends with its work still on the machine looks
@@ -1718,11 +1706,19 @@ def _report_sync_failure(task_id: str, branch: str | None) -> None:
     if not (API and TOPIC and TOKEN):
         return  # A human using the CLI directly already receives its exit status.
     where = branch or f"任务 {task_id}"
+    content = (
+        f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
+        "看不到它。请重试本轮；若机器被回收，改动会丢失。"
+    )
+    if queued_pr:
+        # Retrying cannot help: the branch stays locked until the queue is done.
+        content = (
+            f"⚠️ {where} 上采纳之后的新提交进不了 PR #{queued_pr}——它已在合并"
+            "队列里，排队的分支不能再改。提交留在那台机器上并已备份；PR 合并后"
+            "在新任务里交付它们，或由验收人退回这张卡、PR 撤出队列后再推。"
+        )
     body = {
-        "content": (
-            f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
-            "看不到它。请重试本轮；若机器被回收，改动会丢失。"
-        ),
+        "content": content,
         "request_id": str(uuid.uuid4()),
     }
     req = urllib.request.Request(
@@ -1772,11 +1768,6 @@ def _sync_task(task_id: str) -> None:
             _git_task(worktree, "config", "credential.useHttpPath", "true")
             _git_task(worktree, "remote", "set-url", "origin", data["remote"])
             _configure_git_transport(worktree, data)
-            branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
-            if branch != data["branch"]:
-                raise RuntimeError(
-                    f"Expected task branch {data['branch']}, found {branch}"
-                )
             head = _git_task(worktree, "rev-parse", "HEAD")
             # Keep unfinished work off the PR. An alternate index preserves the
             # worker's staging choices while backing up its files at turn end.
@@ -1798,12 +1789,20 @@ def _sync_task(task_id: str) -> None:
             )
             _backup_task_snapshot(worktree, admin, data, head, snapshot)
             if data["closed"]:
+                # Kept, never delivered: what the checkout holds is in the
+                # backup, on whichever branch an agent went on to use it for.
                 record.write(
                     f"{datetime.now(UTC).isoformat()} archived snapshot={snapshot}; "
                     "delivery is closed\n"
                 )
                 return
-            _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+            branch = data["branch"]
+            found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+            if found != branch:
+                raise RuntimeError(f"Expected task branch {branch}, found {found}")
+            _deliver_task_branch(
+                worktree, branch, head, queued_pr=data.get("merge_queued_pr")
+            )
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
@@ -1812,8 +1811,76 @@ def _sync_task(task_id: str) -> None:
             record.write(
                 f"{datetime.now(UTC).isoformat()} failed {type(exc).__name__}: {exc}\n"
             )
-            _report_sync_failure(task_id, branch)
+            queued = exc.pr if isinstance(exc, _BranchQueued) else None
+            _report_sync_failure(task_id, branch, queued)
             raise
+
+
+def _deliver_task_branch(
+    worktree: Path, branch: str, head: str, *, queued_pr: int | None = None
+) -> None:
+    """Make the task's branch on the forge carry `head`.
+
+    The branch has more than one writer: every checkout of the task (a
+    teammate can work the same task from another), and whoever pushes to the
+    PR. So the forge's tip is read first, and:
+
+    - `head` already in it: this checkout has nothing the branch lacks.
+      Another checkout went further; pushing the older head is refused and
+      would say nothing true.
+    - the tip in `head`'s history: an ordinary push.
+    - neither, but the tip is a commit this checkout itself had on the branch
+      and then amended or rebased away: replace it, leased on that tip, so a
+      commit arriving meanwhile is refused and not overwritten. Tidying a
+      task's commits is part of the work (dropping a dependency asks for it).
+    - neither, and the tip carries commits this checkout never had: refuse.
+      Replacing them would delete someone else's work from the PR.
+
+    Anything to push while the PR is in the merge queue (`queued_pr`) is
+    refused up front: the forge locks a queued branch.
+    """
+    remote = f"refs/remotes/origin/{branch}"
+    if not _git_task(worktree, "ls-remote", "origin", f"refs/heads/{branch}"):
+        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+        return
+    _git_task(
+        worktree,
+        "fetch",
+        "--filter=blob:none",
+        "origin",
+        f"+refs/heads/{branch}:{remote}",
+    )
+    tip = _git_task(worktree, "rev-parse", remote)
+    if _is_ancestor(worktree, head, tip):
+        return
+    if queued_pr:
+        raise _BranchQueued(branch, queued_pr)
+    if _is_ancestor(worktree, tip, head):
+        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+        return
+    own = _git_task(
+        worktree, "reflog", "show", "--format=%H", f"refs/heads/{branch}"
+    ).split()
+    if tip not in own:
+        raise RuntimeError(
+            f"{branch} on the forge has commits this checkout never had "
+            f"(its tip is {tip[:12]}); merge or rebase onto {remote} and sync again"
+        )
+    _git_task(
+        worktree,
+        "push",
+        f"--force-with-lease=refs/heads/{branch}:{tip}",
+        "origin",
+        f"{head}:refs/heads/{branch}",
+    )
+
+
+def _is_ancestor(worktree: Path, commit: str, of: str) -> bool:
+    try:
+        _git_task(worktree, "merge-base", "--is-ancestor", commit, of)
+    except RuntimeError:
+        return False
+    return True
 
 
 def _backup_task_snapshot(worktree, admin, data, head, snapshot):
@@ -1824,26 +1891,28 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
         return  # Every object is already on the forge; there is no unfinished work.
     _git_task(worktree, "update-ref", ref, snapshot)
     bundle = admin / f"cheese-snapshot-{snapshot}.bundle"
-    if not bundle.exists():
+    try:
         _git_task(worktree, "bundle", "create", str(bundle), ref, f"^{base}")
-    digest = hashlib.sha256()
-    with bundle.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    path = f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{snapshot}"
-    with bundle.open("rb") as stream:
-        request = urllib.request.Request(f"{API}{path}", data=stream, method="PUT")
-        request.add_header("Content-Type", "application/x-git-bundle")
-        request.add_header("Content-Length", str(bundle.stat().st_size))
-        request.add_header("X-Cheese-Token", TOKEN)
-        request.add_header("X-Cheese-Head", head)
-        request.add_header("X-Content-SHA256", digest.hexdigest())
-        with urllib.request.urlopen(request, timeout=120) as response:
-            receipt = json.load(response)["data"]
-    if receipt["digest"] != digest.hexdigest():
-        raise RuntimeError("Task backup acknowledgement did not match the bundle")
-    # The immutable object-store copy is now the backup; failed uploads keep this file.
-    bundle.unlink()
+        digest = hashlib.sha256()
+        with bundle.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        path = f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{snapshot}"
+        with bundle.open("rb") as stream:
+            request = urllib.request.Request(f"{API}{path}", data=stream, method="PUT")
+            request.add_header("Content-Type", "application/x-git-bundle")
+            request.add_header("Content-Length", str(bundle.stat().st_size))
+            request.add_header("X-Cheese-Token", TOKEN)
+            request.add_header("X-Cheese-Head", head)
+            request.add_header("X-Content-SHA256", digest.hexdigest())
+            with urllib.request.urlopen(request, timeout=120) as response:
+                receipt = json.load(response)["data"]
+        if receipt["digest"] != digest.hexdigest():
+            raise RuntimeError("Task backup acknowledgement did not match the bundle")
+    finally:
+        # Built afresh on every try: the base moves on, and a bundle kept from
+        # a refused upload went out again unchanged, refused at every turn.
+        bundle.unlink(missing_ok=True)
 
 
 def _recover_task(task_id):
@@ -1901,6 +1970,31 @@ def _recover_task(task_id):
     print(f"已恢复到独立目录：{recovered}\n原工作目录和评审分支均未覆盖。")
 
 
+def _has_work_to_sync(worktree: Path) -> bool:
+    """Whether `_sync_task` would deliver or back up anything from this checkout.
+
+    Nothing, when its files are exactly its commit and that commit is already
+    its branch on the forge as this checkout last pushed or fetched it: the
+    push would be a no-op and the backup is the commit itself, already on the
+    forge. Answered from the checkout alone, with no network call, because
+    `sync --all` asks it of every task the room ever opened and a room keeps
+    them all (56 in one room on dev): pushing each one again made a switch's
+    push outlast its two minutes once a room was old enough. Anything this
+    cannot read goes to the full sync, which reports its own failures.
+    """
+    try:
+        # No index refresh: an agent may be using this checkout right now.
+        if _git_task(worktree, "--no-optional-locks", "status", "--porcelain"):
+            return True
+        branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+        pushed = _git_task(
+            worktree, "rev-parse", "--verify", f"refs/remotes/origin/{branch}"
+        )
+        return not _is_ancestor(worktree, "HEAD", pushed)
+    except RuntimeError:
+        return True
+
+
 def _sync_all_tasks() -> None:
     root = _task_root()
     if not root.exists():
@@ -1908,6 +2002,8 @@ def _sync_all_tasks() -> None:
     failed = []
     for worktree in sorted(root.iterdir()):
         if not (worktree / ".git").exists():
+            continue
+        if not _has_work_to_sync(worktree):
             continue
         try:
             _sync_task(worktree.name)
@@ -2216,11 +2312,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mailsub = pmail.add_subparsers(dest="mailcmd", required=True)
     pmatt = mailsub.add_parser("attachment", help="取一封邮件的第 N 个附件")
-    pmatt.add_argument("integration", help="连接 id(GET /projects/<项目>/integrations 查)")
+    pmatt.add_argument(
+        "integration", help="连接 id(GET /projects/<项目>/integrations 查)"
+    )
     pmatt.add_argument("uid", help="邮件 UID(搜索结果里的 uid)")
     pmatt.add_argument("index", type=int, help="第几个附件,从 0 开始(读邮件时列出)")
     pmatt.add_argument("--folder", default="INBOX", help="邮件所在文件夹,默认 INBOX")
-    pmatt.add_argument("--out", default=None, help="写到别处(默认 ~/attachments/mail/<名字>)")
+    pmatt.add_argument(
+        "--out", default=None, help="写到别处(默认 ~/attachments/mail/<名字>)"
+    )
 
     part = sub.add_parser(
         "show",
@@ -2481,7 +2581,10 @@ def main() -> None:
             message = _call("GET", base + where)["data"]
             names = [x["filename"] for x in message.get("attachments", [])]
             if not 0 <= a.index < len(names):
-                print(f"[cheese] 这封邮件只有 {len(names)} 个附件:{names}", file=sys.stderr)
+                print(
+                    f"[cheese] 这封邮件只有 {len(names)} 个附件:{names}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             name = os.path.basename(names[a.index]) or f"附件{a.index + 1}"
             out = a.out or str(Path.home() / STAGED_DIR / "mail" / a.uid / name)

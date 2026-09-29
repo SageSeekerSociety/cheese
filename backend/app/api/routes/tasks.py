@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from io import BytesIO
 from typing import Annotated
 from urllib.parse import quote
 
@@ -22,6 +23,7 @@ from app.core.errors import (
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.attachment.models import Attachment
+from app.domain.attachment.services import AttachmentService
 from app.domain.llm.repositories import AIUserQuotaRepository
 from app.domain.llm.services import AiAdviceService
 from app.domain.space.rank_service import SpaceRankService
@@ -29,11 +31,15 @@ from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
+    SpaceDomainGroupRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
 from app.domain.tag.repositories import TagRepository
-from app.domain.task.attachment_service import TaskAttachmentService
+from app.domain.task.attachment_service import (
+    TaskAttachmentRepository,
+    TaskAttachmentService,
+)
 from app.domain.task.models import (
     Task,
     TaskAttachment,
@@ -61,9 +67,11 @@ from app.domain.task.services import (
     TaskSubmissionReviewService,
     TaskSubmissionService,
 )
+from app.domain.task.submission_state import claim_state
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.visibility_service import TaskVisibilityService
+from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.team.summary import team_summary
@@ -108,6 +116,7 @@ async def get_task_submission_service(db=Depends(get_db)) -> TaskSubmissionServi
         entry_repo=entry_repo,
         review_repo=review_repo,
         membership_repo=membership_repo,
+        session=db,
     )
 
 
@@ -127,6 +136,7 @@ async def get_task_submission_review_service(
         membership_repo=membership_repo,
         task_repo=task_repo,
         rank_service=rank_service,
+        session=db,
     )
 
 
@@ -257,6 +267,27 @@ def _apply_pdf_task_options(
     return merged
 
 
+def _pdf_attachment_ids(task_options: dict) -> list[int]:
+    """``taskOptions.attachmentIds``：这一批题共用的材料，勾了才有。
+
+    与其它字段一样是自由 dict（``ConfirmTaskPublishFromPdfRequest`` 不看里面的结
+    构），所以形状自己看住：不是列表、或者元素不是整数，是请求写错了 —— 与「没带这
+    个键」（不勾任何附件）不是同一件事，不能都当成空。
+    """
+    raw = task_options.get("attachmentIds")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise BadRequestError("attachmentIds must be a list")
+    ids: list[int] = []
+    for item in raw:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError) as exc:
+            raise BadRequestError(f"Invalid attachmentIds entry: {item!r}") from exc
+    return ids
+
+
 class TaskParticipantRequest(BaseModel):
     """Body for joining a task (user or team). All fields optional."""
 
@@ -379,10 +410,17 @@ def _task_to_api_model(task: Task) -> dict:
     )
     published_at = getattr(task, "published_at", None)
     ended_at = getattr(task, "ended_at", None)
+    # 审核痕迹是后加的两列：老题（以及还没审过的题）没有它，一律回 null ——
+    # 界面上「没有审核人」与「不知道审核人」是同一件事，不做区分。
+    reviewed_by = getattr(task, "reviewed_by", None)
+    reviewed_at = getattr(task, "reviewed_at", None)
     published_at_ms = (
         int(published_at.timestamp() * 1000) if published_at is not None else None
     )
     ended_at_ms = int(ended_at.timestamp() * 1000) if ended_at is not None else None
+    reviewed_at_ms = (
+        int(reviewed_at.timestamp() * 1000) if reviewed_at is not None else None
+    )
     registration_start_ms = (
         int(task.registration_start_at.timestamp() * 1000)
         if task.registration_start_at is not None
@@ -421,6 +459,8 @@ def _task_to_api_model(task: Task) -> dict:
         "updatedAt": updated_at_ms,
         "publishedAt": published_at_ms,
         "endedAt": ended_at_ms,
+        "reviewedBy": reviewed_by,
+        "reviewedAt": reviewed_at_ms,
     }
 
 
@@ -449,6 +489,40 @@ async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
         task_model["submissionSchema"] = _submission_schema_to_api(
             grouped.get(model_id, [])
         )
+
+
+async def _count_distinct_participants(
+    db,
+    *,
+    space_id: int,
+    task_ids: list[int],
+) -> int:
+    """这些题上加起来**有多少个不同的人**领过。
+
+    逐题的 `participants.total` 是 `TaskMembership` 的行数 —— 一个人领三道题就是 3，
+    求和得到的是「领取次数」。首页那句「参与 N 人」要的是**跨题去重后的人**，而列表
+    接口不给报名名单（`_enrich_task_models` 把 `participants.examples` 写死成空数组，
+    且 `TaskParticipantSummary` 里没有 username），客户端拼不出来，只能在这一层算。
+
+    `task_ids` 就是同一个响应里返回的那几道题，所以这个数和逐题的 `participants.total`
+    **同一批题**：两个数字摆在同一行上，不能一个数的是这一页、另一个数的是全板。
+
+    只在 `queryDistinctParticipants` 为真时调用：它跑的 `list_memberships_for_space`
+    与 `_enrich_task_models` 里那次是同一条查询，不该让每个调 `/tasks` 的页面都付两遍。
+    """
+    if not task_ids:
+        return 0
+    wanted = set(task_ids)
+    memberships = await TaskMembershipRepository(session=db).list_memberships_for_space(
+        space_id
+    )
+    return len(
+        {
+            membership.member_id
+            for membership in memberships
+            if membership.task_id in wanted
+        }
+    )
 
 
 async def _enrich_task_models(
@@ -607,19 +681,58 @@ async def _enrich_task_models(
     return task_models
 
 
+async def _enrich_task_attachment_counts(db, task_models: list[dict]) -> None:
+    """把每道题挂着几个材料填进列表响应（就地改）。
+
+    只是**一个数**：不带文件本体、不带文件名，也不问谁能下载 —— 卡片上那格「附件
+    N」就靠它，而清单与下载各有自己的门（`GET /tasks/{id}/attachments`）。一个材料
+    都没有的题给 0，不是缺字段：卡片按「有就列、没有就不显示」写，而 0 与「不知道」
+    是两件事。
+
+    整页一次分组计数，不按题各发一条。
+    """
+    task_ids = [
+        task_model["id"]
+        for task_model in task_models
+        if isinstance(task_model.get("id"), int)
+    ]
+    if not task_ids:
+        return
+    counts = await TaskAttachmentRepository(session=db).count_live_by_task_ids(
+        task_ids=task_ids
+    )
+    for task_model in task_models:
+        model_id = task_model.get("id")
+        if not isinstance(model_id, int):
+            continue
+        task_model["attachmentCount"] = counts.get(model_id, 0)
+
+
 async def _enrich_task_topics(db, task_models: list[dict]) -> None:
     """Populate `task.topics: Topic[]` for the given task dicts in-place.
 
     Frontend `Task.topics` is an array of {id, name} objects, accessed via
     `task.topics.length` in TaskCard.vue, so we always return at least an
     empty array (not undefined).
+
+    整页一次取回，不按题各发一条 —— 卡片现在每道题都显示标签，逐题各查一次就是
+    一屏 20 条查询。
     """
     if not task_models:
         return
-    topic_repo = TopicRepository(session=db)
+    task_ids = [
+        task_model["id"]
+        for task_model in task_models
+        if isinstance(task_model.get("id"), int)
+    ]
+    grouped = await TopicRepository(session=db).list_by_task_ids(task_ids)
     for task_model in task_models:
-        topic_entities = await topic_repo.list_by_task_id(task_model["id"])
-        task_model["topics"] = [{"id": t.id, "name": t.name} for t in topic_entities]
+        model_id = task_model.get("id")
+        if not isinstance(model_id, int):
+            continue
+        task_model["topics"] = [
+            {"id": t.id, "name": t.name} for t in grouped.get(model_id, [])
+        ]
 
 
 async def _enrich_task_user_state(
@@ -646,6 +759,7 @@ async def _enrich_task_user_state(
             task_model.setdefault("submittableAsTeam", [])
             task_model.setdefault("userDeadline", None)
             task_model.setdefault("participationEligibility", None)
+            task_model.setdefault("myClaimStatus", None)
         return
 
     # Frontend Task.joinedTeams / submittableAsTeam are typed `Team[]`; the
@@ -683,6 +797,23 @@ async def _enrich_task_user_state(
 
     def _team_summary(team_id: int) -> dict:
         return team_summary(teams_map.get(team_id), fallback_id=team_id)
+
+    # 我在每道题上走到哪一步（卡片上那格「我的领取档位」）。只问我**本人**那条
+    # 领取：队友那条说的是小队走到哪了，不是这张卡要说的事。判决照
+    # `app.domain.task.submission_state` 的 `claim_state` 算 —— 它和
+    # `completion_status` 同一份优先级，但这一格不看截止时间，所以按判决直接翻，
+    # 而不是读那一列。整页一次查询，不按题各发一条。
+    my_membership_by_task_id = {
+        task_id: state["user_membership"].id
+        for task_id, state in pending.items()
+        if state["user_membership"] is not None
+        and state["user_membership"].approved != 1
+    }
+    verdicts_by_membership_id = await TaskSubmissionRepository(
+        session=db
+    ).list_review_verdicts_for_memberships(
+        membership_ids=list(my_membership_by_task_id.values())
+    )
 
     for task_model in task_models:
         task_id = task_model["id"]
@@ -726,6 +857,15 @@ async def _enrich_task_user_state(
                 )
             )
 
+        # 没领过的题给 null（卡片那一格整块不出现），领过的题给四档之一 ——
+        # 一条提交都没有的领取是 IN_PROGRESS，不是 null：领了没交和没领是两件事。
+        my_membership_id = my_membership_by_task_id.get(task_id)
+        my_claim_status: str | None = None
+        if my_membership_id is not None:
+            my_claim_status = claim_state(
+                verdicts_by_membership_id.get(my_membership_id, [])
+            )
+
         task_model.update(
             {
                 "joined": joined,
@@ -734,6 +874,7 @@ async def _enrich_task_user_state(
                 "submittableAsTeam": submittable_as_team,
                 "userDeadline": user_deadline_ms,
                 "participationEligibility": participation_eligibility,
+                "myClaimStatus": my_claim_status,
             }
         )
 
@@ -776,11 +917,15 @@ def _membership_to_api_model(
     membership: TaskMembership,
     *,
     participant_info: dict | None = None,
+    team: Team | None = None,
 ) -> dict:
     """Minimal TaskMembership representation for participants list.
 
     NOTE: This is a simplified view that focuses on structure. More fields
     (real name info, team members, etc.) can be added as needed.
+
+    ``team`` 是这条报名背后的队（只由批量查过队名的调用者传）。传了才多出
+    ``team`` 字段；没传（单条、PATCH 那几条路由）返回体与以前一模一样。
     """
     created_at_ms = (
         int(membership.created_at.timestamp() * 1000)
@@ -799,7 +944,7 @@ def _membership_to_api_model(
     approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
     approved_str = approved_map.get(membership.approved, "NONE")
 
-    return {
+    model = {
         "id": membership.id,
         "taskId": membership.task_id,
         "memberId": membership.member_id,
@@ -813,6 +958,11 @@ def _membership_to_api_model(
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
+    if membership.is_team and team is not None:
+        # 队名：看板按它给「小队构成」分桶、在名册里写下是哪支队伍。个人领取没有
+        # 这个字段；团队领取但队已不在（查不到行）也没有 —— 前端据此退回「小队」。
+        model["team"] = {"id": team.id, "name": team.name}
+    return model
 
 
 def _map_submitter_type(value: str) -> int:
@@ -877,6 +1027,28 @@ async def _validate_and_get_category_id(
     # Otherwise, fall back to space.default_category_id.
     default_cid = await _get_space_default_category_id()
     return await _load_and_validate_category(default_cid)
+
+
+async def _ensure_domain_groups_belong_to_space(
+    *,
+    db,
+    space_id: int,
+    group_ids: Sequence[int],
+) -> None:
+    """``accessDomainGroupIds`` 点名的每一个域组都得是**这块板**的。
+
+    这些组解析出来的域会并进可见性判据（``TaskVisibilityService`` 把
+    ``TaskAccessDomain.domain`` 直接并进读权限的 or 列表），所以拿别的板的组 id 发题，
+    等于把那位管理员圈定的名单原样搬到自己这道题上。同一个请求体里的 ``categoryId``
+    早就是这么收的（``_validate_and_get_category_id`` 问 ``get_by_id_and_space``，
+    不属于这块板就 404）；这里补上同一条，话也照抄那一句。
+    """
+    known = {
+        group.id
+        for group in await SpaceDomainGroupRepository(session=db).list_groups(space_id)
+    }
+    if any(group_id not in known for group_id in group_ids):
+        raise NotFoundError("Domain group not found or does not belong to space.")
 
 
 def _map_approve_type_to_int(value: str | None) -> int | None:
@@ -1164,6 +1336,9 @@ async def _create_task_entity(
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
     if access_control_enabled and access_domain_group_ids:
+        await _ensure_domain_groups_belong_to_space(
+            db=db, space_id=space_id, group_ids=access_domain_group_ids
+        )
         domain_repo = SpaceDomainGroupDomainRepository(session=db)
         groups_domains = await domain_repo.list_domains_for_groups(
             access_domain_group_ids
@@ -1230,9 +1405,9 @@ async def create_task(
 
     if payload.attachment_ids:
         # 材料是随题一起发出去的，所以挂在这里做：题目已经建好（``_create_task_entity``
-        # 里 flush 过），权限那道门也已经在同一个请求里过了一次。PDF 批量发布那条路
-        # 今天还没有 attachmentIds 这个概念 —— 它的原 PDF 与抽出插图都在服务端手上，
-        # 怎么落成附件是另一批的事。
+        # 里 flush 过），权限那道门也已经在同一个请求里过了一次。文件先由调用者经
+        # ``POST /attachments`` 传上来，这里只认 id —— PDF 批量发布那条路（附件在服务
+        # 端手上）走的是 ``attach_uploaded_to_tasks``，同一批校验，只是能挂到多道题上。
         await _task_attachment_service(db).attach_uploaded(
             task=task,
             user_id=auth_user.user_id,
@@ -1262,6 +1437,30 @@ async def create_task(
 
 def _task_attachment_service(db) -> TaskAttachmentService:
     return TaskAttachmentService(session=db, storage=get_storage_backend())
+
+
+def _attachment_service(db) -> AttachmentService:
+    """还没挂到题上的文件那一层（``POST /attachments`` 用的同一个服务）。
+
+    ``from_session`` 而不是自己造它的 repository：这里在题目这一域的地盘上，
+    摸附件那一域的 repository 正是 ``test_domain_import_guard.py`` 拦的那一条。
+    """
+    return AttachmentService.from_session(session=db, storage=get_storage_backend())
+
+
+def _uploaded_attachment_to_api(attachment: Attachment) -> dict:
+    """一个**还没挂到任何题上**的文件在预览响应里的样子。
+
+    与 ``_task_attachment_to_api`` 是同一套字段来源（名字、大小、类型都取自
+    ``meta``），只是没有那两样要有关联行才成立的东西：下载计数、挂上来的时间。同样
+    **不带 url** —— 存储给的是直链，发出去就等于绕开下载那道门。
+    """
+    return {
+        "id": attachment.id,
+        "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
+        "size": attachment.meta.get("size", 0),
+        "contentType": attachment.meta.get("contentType", "application/octet-stream"),
+    }
 
 
 async def _require_task(db, task_id: int) -> Task:
@@ -1340,8 +1539,10 @@ async def upload_task_attachment(
 ) -> dict:
     """传一个文件并挂到这道题上：出题人本人或板管理员。
 
-    大小不在这里判：前面那道 nginx 是 100M（``frontend/nginx.conf``），与素材库、
-    ``POST /attachments`` 同一个口径。真要有更细的限制，应该三处一起定。
+    大小不在这里判：这条路由与 ``POST /attachments`` 走的是同一个
+    ``AttachmentService.upload``，单份文件的上限在那一处判一次就够
+    （``settings.attachment_max_bytes``），报出去的也是那个数
+    （``GET /attachments/limits``）。
     """
     task = await _require_task(db, task_id)
     attachment, link = await _task_attachment_service(db).add(
@@ -1481,7 +1682,11 @@ async def preview_task_from_pdf(
         default_topic_ids.append(default_topic.id)
 
     template = draft_service.pick_template(space.task_templates or [], template_index)
-    drafts, token_used = await draft_service.generate_task_payloads_from_pdf(
+    (
+        drafts,
+        token_used,
+        illustrations,
+    ) = await draft_service.generate_task_payloads_from_pdf(
         pdf_bytes=pdf_bytes,
         template=template,
         space_id=space_id,
@@ -1492,6 +1697,34 @@ async def preview_task_from_pdf(
         max_tasks=max_tasks,
     )
 
+    # 解析出来的东西落成**发布者本人名下**的附件行，把 id 交回给前端去勾：原 PDF 与
+    # 那几张插图在服务端手上，只有这里能登记它们。挂在 ``meta.uploaderId`` 上的名字
+    # 必须是调用者 —— 确认发布那一步拿 ``TaskAttachmentService`` 挂文件，它有一道校
+    # 验是「只能挂自己上传的文件」（附件 id 是可猜的连续整数，不校验就等于把别人的
+    # 文件挂到自己的题上）。服务端自己建的行如果不署名，这一批文件会被自己挡住。
+    #
+    # 提前落库的代价是「解析了却没发布」时留下没人引用的文件，这与素材库、PDF 导入
+    # 抽图今天的处境一样（``TaskAttachmentService.attach_uploaded`` 里那段说明）。
+    attachments = _attachment_service(db)
+    pdf_attachment = await attachments.upload(
+        file=BytesIO(pdf_bytes),
+        filename=pdf_file.filename or "document.pdf",
+        content_type="application/pdf",
+        uploader_id=auth_user.user_id,
+    )
+    illustration_attachments = [
+        await attachments.register_stored(
+            filename=illustration.filename,
+            content_type=illustration.content_type,
+            storage_key=illustration.storage_key,
+            url=illustration.url,
+            size=illustration.size,
+            uploader_id=auth_user.user_id,
+            file_hash=illustration.file_hash,
+        )
+        for illustration in illustrations
+    ]
+
     return {
         "code": 200,
         "message": "Task drafts previewed from PDF successfully.",
@@ -1499,6 +1732,15 @@ async def preview_task_from_pdf(
             "drafts": drafts,
             "templateUsed": template,
             "tokenUsed": token_used,
+            # 可以勾的东西：原 PDF 一份，抽出的插图若干张。前端照这个画勾选框，
+            # 勾中的 id 由确认发布那条请求带回来。
+            "attachments": {
+                "pdf": _uploaded_attachment_to_api(pdf_attachment),
+                "images": [
+                    _uploaded_attachment_to_api(attachment)
+                    for attachment in illustration_attachments
+                ],
+            },
         },
     }
 
@@ -1519,6 +1761,19 @@ async def confirm_publish_task_from_pdf(
     if len(drafts) > 20:
         raise BadRequestError("At most 20 drafts can be published at once")
 
+    # 勾中的附件跟着**每一道**生成出来的题走（不是随机分给某一道）：预览那一步把原
+    # PDF 与抽出的插图报了回来，人在这里勾「原 PDF / 抽出的插图」，所以这一批题拿到
+    # 的是同一份材料。不勾就一个都不带 —— 默认行为与这条路今天的样子完全一样。
+    attachment_ids = _pdf_attachment_ids(task_options)
+    if attachment_ids:
+        # **先校验、后建题**：一个挂不上的 id（不存在的、别人的、已经在别的题上的）
+        # 让整条请求立刻失败，一道题都不建。异常时 ``get_db`` 会回滚整个请求，所以顺
+        # 序本身不改变结果；但「先把题造出来、再靠回滚收走」把一批没材料的题压在一个
+        # 请求级保证上，而这件事本来可以不做。
+        await _task_attachment_service(db).ensure_attachable(
+            user_id=auth_user.user_id, attachment_ids=attachment_ids
+        )
+
     created_tasks: list[Task] = []
     space_id: int | None = None
     for draft in drafts:
@@ -1534,6 +1789,22 @@ async def confirm_publish_task_from_pdf(
                 space_id = int(task_payload["space"])
             except (TypeError, ValueError):
                 pass
+
+    if attachment_ids:
+        # 一道题一次挂完再进下一道？不 —— 校验（存在 / 是我的 / 还没挂在别处）在这一
+        # 批**开始之前**判一次，理由见 ``attach_uploaded_to_tasks``。校验不过就整个请
+        # 求回滚（``get_db`` 在异常时 rollback），不会留下一半带材料、一半不带的题。
+        await _task_attachment_service(db).attach_uploaded_to_tasks(
+            tasks=created_tasks,
+            user_id=auth_user.user_id,
+            attachment_ids=attachment_ids,
+        )
+
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told the drafts are
+    # published could open the review queue on its next request and not find them.
+    # Same reason as the commit in ``create_task``.
+    await db.commit()
 
     task_models = [_task_to_api_model(task) for task in created_tasks]
     if space_id is not None:
@@ -1665,6 +1936,15 @@ async def create_task_participant(
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
     is_team = task.submitter_type == 1
+    if is_team and not await TeamRepository(session=db).is_team_member(
+        member, auth_user.user_id
+    ):
+        # 这条路由的 ``member`` 在 TEAM 题上是**队伍 id**，而没带它时默认成了调用者
+        # 自己的 **user id** —— 两张表各自自增，撞上就等于把别人的队伍报了上去。
+        # 与 ``join_task_as_team`` 同一句话：要把一支队伍报上去，你先得是那支队的人。
+        raise ForbiddenError(
+            "You must be a member of this team to register it for a task"
+        )
     # 新建报名默认审批状态：与 Kotlin 一致使用 ApproveType.NONE
     approved = 2
 
@@ -1744,8 +2024,13 @@ async def join_task_as_user(
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
-
-    return await _participation_response(db, task, membership, auth_user)
+    response = await _participation_response(db, task, membership, auth_user)
+    # Commit before answering (the claim and the project it opens). ``get_db``
+    # commits in its teardown, which FastAPI runs after the response has gone
+    # out, so the task owner listing the participants right after a claim could
+    # find no pending record yet. Same reason as the commit in ``create_task``.
+    await db.commit()
+    return response
 
 
 @router.post(
@@ -1813,6 +2098,9 @@ async def join_task_as_team(
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
+    # Commit before answering, as in ``join_task_as_user``: the publisher lists
+    # the pending claims on the next request.
+    await db.commit()
 
     return await _participation_response(db, task, membership, auth_user)
 
@@ -1866,6 +2154,10 @@ async def patch_task_participant(
     from app.domain.project.services import ProjectService
 
     await ProjectService(db).activate_participation(task=task, membership=updated)
+    # Commit before answering: the participant told they are approved can reload
+    # the task on their next request and must see it as theirs (download and
+    # submit). Same reason as the commit in ``create_task``.
+    await db.commit()
 
     return {
         "code": 200,
@@ -2181,6 +2473,11 @@ async def patch_task(
             task.approved = next_approved
         if payload.reject_reason is not None:
             task.reject_reason = payload.reject_reason
+        # 审核痕迹只在这里写：过了上面那道门才落，通过和驳回是同一次写入，落的是
+        # 审核人（不是出题人）与此刻。驳回后作者重新提交、再被审时覆盖成最新一次
+        # —— 「审没审过」看 approved，这两列说的是「上一次是谁、什么时候点的」。
+        task.reviewed_by = auth_user.user_id
+        task.reviewed_at = datetime.now(UTC)
 
     if "ended_at" in payload.model_fields_set or payload.has_ended_at is not None:
         if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
@@ -2236,6 +2533,11 @@ async def patch_task(
         access_domain_repo = TaskAccessDomainRepository(session=db)
 
         if task.access_control_enabled and payload.access_domain_group_ids:
+            await _ensure_domain_groups_belong_to_space(
+                db=db,
+                space_id=task.space_id,
+                group_ids=payload.access_domain_group_ids,
+            )
             groups_domains = await domain_repo.list_domains_for_groups(
                 payload.access_domain_group_ids
             )
@@ -2293,6 +2595,11 @@ async def patch_task(
 
     task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)
+    # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
+    # runs after the response has gone out, so a client told a task is approved
+    # could open the board on its next request and not find the task there yet.
+    # Same reason as the commit in ``create_task``.
+    await db.commit()
 
     # Fetch submissionSchema for response
     schema_repo = TaskSubmissionSchemaRepository(session=db)
@@ -2337,13 +2644,23 @@ async def get_tasks(
     queryUserDeadline: bool = Query(default=False),
     queryTopics: bool = Query(default=False),
     querySubmissionSchema: bool = Query(default=False),
+    # 让响应里多带一个 data.distinctParticipants（这一页题目上去重后的参与人数）。
+    # 默认不问：它要多跑一次本题目的报名名单查询，只有首页那种「数字要和列表一起
+    # 上屏」的地方才值这一趟。
+    queryDistinctParticipants: bool = Query(default=False),
     keywords: str | None = Query(default=None),
     db=Depends(get_db),
     service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     # 解析 sortBy / sortOrder，和 Kotlin 行为保持一致：非法值视为 400。
-    if sort_by not in {"createdAt", "updatedAt", "deadline", "publishedAt"}:
+    if sort_by not in {
+        "createdAt",
+        "updatedAt",
+        "deadline",
+        "publishedAt",
+        "reviewedAt",
+    }:
         raise BadRequestError(f"Invalid sortBy: {sort_by}")
     if sort_order not in {"asc", "desc"}:
         raise BadRequestError(f"Invalid sortOrder: {sort_order}")
@@ -2420,6 +2737,9 @@ async def get_tasks(
     )
     items = [_task_to_api_model(t) for t in tasks]
     items = await _enrich_task_models(db, items, space_id=space)
+    # 卡片上那格「附件 N」要的数。跟每次列表一起给：它是卡片的一部分，不是可选的
+    # 附加信息 —— 只有被点名才带的话，卡片就得为它多等一次请求。
+    await _enrich_task_attachment_counts(db, items)
 
     # 提交表单只在被点名时才带（审核页要显示「提交要求」，见函数注释）。
     if querySubmissionSchema:
@@ -2471,19 +2791,26 @@ async def get_tasks(
     returned = len(items)
     has_more = offset + returned < total
     next_start = str(offset + returned) if has_more and returned > 0 else None
+    data: dict = {
+        "tasks": items,
+        "page": {
+            "pageStart": pageStart or "",
+            "pageSize": returned,
+            "hasMore": has_more,
+            "nextStart": next_start,
+            "total": total,
+        },
+    }
+    if queryDistinctParticipants:
+        # 正是上面返回的那几道题（`items`），不是全板 —— 页面上的「领取次数」也是
+        # 这几道题的和，两个数字要对得上。
+        data["distinctParticipants"] = await _count_distinct_participants(
+            db, space_id=space, task_ids=[item["id"] for item in items]
+        )
     return {
         "code": 200,
         "message": "OK",
-        "data": {
-            "tasks": items,
-            "page": {
-                "pageStart": pageStart or "",
-                "pageSize": returned,
-                "hasMore": has_more,
-                "nextStart": next_start,
-                "total": total,
-            },
-        },
+        "data": data,
     }
 
 
@@ -2765,7 +3092,12 @@ async def get_task_participants(
             m, user_map=user_map, profile_map=profile_map, team_map=team_map
         )
         participants.append(
-            _membership_to_api_model(m, participant_info=participant_info)
+            _membership_to_api_model(
+                m,
+                participant_info=participant_info,
+                # 同上那一批 team_map，不另查一次。
+                team=team_map.get(m.member_id) if m.is_team else None,
+            )
         )
 
     return {
@@ -2898,7 +3230,7 @@ async def get_task_submissions(
     allVersions: bool = Query(default=False),
     queryReview: bool = Query(default=False),
     reviewed: bool | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
     pageSize: int = Query(default=20, ge=1, le=100),
     sortBy: str = Query(default="updatedAt"),
     sortOrder: str = Query(default="desc"),
@@ -2979,6 +3311,7 @@ async def post_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     contents: list[dict],
+    db=Depends(get_db),
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
@@ -3025,6 +3358,10 @@ async def post_task_submission(
         submitter_id=auth_user.user_id,
         contents=contents,
     )
+    # Commit before answering: the page that just submitted opens the submission
+    # history next, and must find what it handed in. Same reason as the commit in
+    # ``create_task``.
+    await db.commit()
     return {
         "code": 200,
         "message": "OK",
@@ -3424,7 +3761,11 @@ async def list_ai_advice_conversations_grouped(
     # Frontend `TasksApi.getGroupedConversations` types the response as
     # { conversations: ConversationGroupSummary[] }; "groups" was a Python-
     # side name that left data.conversations undefined and nothing rendered.
-    groups = await service.list_conversations_grouped(task_id=task_id)
+    # The sidebar it feeds is 「我的对话」 (新建/搜索/删除对话都在自己那一列上，
+    # 标题是提问的前 60 字)，so the list is the caller's own — see the service/repo.
+    groups = await service.list_conversations_grouped(
+        task_id=task_id, user_id=auth_user.user_id
+    )
     return {
         "code": 200,
         "message": "OK",
@@ -3454,7 +3795,7 @@ async def get_ai_advice_conversation(
     await _ensure_task_visible_for_advice(db=db, task_id=task_id, auth_user=auth_user)
     try:
         payload = await service.get_conversation(
-            task_id=task_id, conversation_id=conversation_id
+            task_id=task_id, conversation_id=conversation_id, user_id=auth_user.user_id
         )
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
@@ -3546,11 +3887,14 @@ async def delete_ai_advice_conversation(
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
     await _ensure_task_visible_for_advice(db=db, task_id=task_id, auth_user=auth_user)
+    # 删的就是读的那一个地址（题 + id + 主人），所以没有第二次判据：delete 自己
+    # 会用同一句话拒绝「不是你的」和「不存在」。
     try:
-        await service.get_conversation(task_id=task_id, conversation_id=conversation_id)
+        await service.delete_conversation(
+            task_id=task_id, conversation_id=conversation_id, user_id=auth_user.user_id
+        )
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
-    await service.delete_conversation(task_id=task_id, conversation_id=conversation_id)
     return {"code": 200, "message": "OK", "data": None}
 
 

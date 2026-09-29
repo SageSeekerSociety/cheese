@@ -1,23 +1,30 @@
-// 话题头这一行常驻的只有标题、状态、成员；算力和专注模式收在 ⋯ 里。
+// 话题头这一行常驻的只有标题、状态、成员；专注模式收在 ⋯ 里，工作电脑写在成员名册里。
 //
-// 收进去的东西里有一样不能跟着藏：房间能看到可访问整台设备。那是权限，不是设置——
-// 菜单合着的时候它也得在这一行上。
+// 名册里的东西有一样不能跟着藏：有 AI 队友能访问整台机器。那是权限，不是设置——
+// 名册合着的时候它也得在这一行上。
 import type { Component } from 'vue'
 import type { Topic, TopicComputeProfile } from '@/cx_types'
 
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getTopicComputeProfile = vi.fn()
+const archiveTopic = vi.fn(async (id: string) => ({ id, status: 'archived' }))
+const unarchiveTopic = vi.fn(async (id: string) => ({ id, status: 'active' }))
 
 vi.mock('@/api', () => ({
   getTopicComputeProfile: (...args: unknown[]) => getTopicComputeProfile(...args),
+  listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })),
   setTopicComputeChoice: vi.fn(),
   getTopicUsage: vi.fn(async () => null),
   getProjectUsage: vi.fn(async () => null),
+  archiveTopic: (...args: [string]) => archiveTopic(...args),
+  unarchiveTopic: (...args: [string]) => unarchiveTopic(...args),
 }))
 
 import TopicHeader from './TopicHeader.vue'
@@ -51,12 +58,10 @@ function profile(machineAccess: boolean): TopicComputeProfile {
   return {
     choice: cloud,
     project_default: cloud,
-    favorites: [],
     current: 'cloud',
     device_id: null,
     devices: [],
-    locked: true,
-    inherited: false,
+    sessions: [],
     profiles: [],
     visibility: {
       options: [],
@@ -67,12 +72,18 @@ function profile(machineAccess: boolean): TopicComputeProfile {
   } as TopicComputeProfile
 }
 
-function mountHeader(focus = false) {
+function mountHeader(focus = false, over: Partial<Topic> = {}) {
   return render(Header, {
-    props: { topic, members: [], me: 'me', connected: true, focus },
+    props: { topic: { ...topic, ...over }, members: [], me: 'me', connected: true, focus },
     global: {
-      plugins: [createVuetify({ components, directives })],
-      stubs: { TopicMembers: true },
+      plugins: [
+        createVuetify({ components, directives }),
+        createPinia(),
+        createRouter({
+          history: createMemoryHistory(),
+          routes: [{ path: '/:any(.*)*', component: { render: () => null } }],
+        }),
+      ],
     },
   })
 }
@@ -105,30 +116,31 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('话题头', () => {
-  it('房间能看到可访问整台设备时，菜单合着这一行上也写着', async () => {
+  it('有 AI 队友能访问整台机器时，名册合着这一行上也写着', async () => {
     getTopicComputeProfile.mockResolvedValue(profile(true))
     mountHeader()
 
-    await waitFor(() => expect(bar().textContent).toContain('可访问整台设备'))
+    await waitFor(() => expect(bar().textContent).toContain('能访问整台机器'))
     expect(bar().querySelector('[title="它能读写这台机器上的所有文件"]')).toBeTruthy()
   })
 
-  it('看不到可访问整台设备时这一行不提它', async () => {
+  it('看不到能访问整台机器时这一行不提它', async () => {
     getTopicComputeProfile.mockResolvedValue(profile(false))
     mountHeader()
 
     await waitFor(() => expect(getTopicComputeProfile).toHaveBeenCalled())
     await new Promise((r) => setTimeout(r, 0))
-    expect(bar().textContent).not.toContain('可访问整台设备')
+    expect(bar().textContent).not.toContain('能访问整台机器')
   })
 
-  it('运行环境不在这一行上，在 ⋯ 里', async () => {
+  it('⋯ 里没有工作电脑，它在成员名册里', async () => {
     getTopicComputeProfile.mockResolvedValue(profile(false))
     mountHeader()
 
-    await waitFor(() => expect(screen.getByText('运行环境')).toBeTruthy())
+    await fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    await screen.findByRole('button', { name: '专注模式' })
+    expect(document.body.textContent).not.toContain('工作电脑')
     expect(bar().textContent).not.toContain('云端 · 标准配置')
-    expect(bar().contains(screen.getByText('运行环境'))).toBe(false)
   })
 
   it('专注模式从 ⋯ 里进', async () => {
@@ -149,5 +161,78 @@ describe('话题头', () => {
     await fireEvent.click(bar().querySelector('[aria-label="退出专注模式"]') as HTMLElement)
 
     expect(emitted()['toggle-focus']).toHaveLength(1)
+  })
+})
+
+// 手机上话题列表的行尾没有 ⋯，改名、归档在房间顶栏的 ⋯ 里也得找得到。
+describe('手机上话题头的 ⋯', () => {
+  let slot: HTMLElement
+
+  beforeEach(() => {
+    window.innerWidth = 390
+    getTopicComputeProfile.mockResolvedValue(profile(false))
+    // 手机上这一行画进外壳顶栏里的那一格。
+    slot = document.createElement('div')
+    slot.id = 'app-bar-slot'
+    document.body.appendChild(slot)
+  })
+
+  afterEach(() => {
+    window.innerWidth = 1280
+    slot.remove()
+  })
+
+  async function openMore() {
+    await fireEvent.click(await screen.findByRole('button', { name: '更多' }))
+  }
+
+  it('改名：填上新名字保存，改的就是这个话题', async () => {
+    const { emitted } = mountHeader(false, { can_archive: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const field = await screen.findByLabelText('话题名称')
+    await fireEvent.update(field, '登录页改成浅色')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(emitted().rename).toEqual([['登录页改成浅色']])
+  })
+
+  it('名字没改就保存，不算改名', async () => {
+    const { emitted } = mountHeader(false, { can_archive: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    await screen.findByLabelText('话题名称')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(emitted().rename).toBeUndefined()
+  })
+
+  it('能归档的人可以从这里归档', async () => {
+    mountHeader(false, { can_archive: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '归档' }))
+
+    expect(archiveTopic).toHaveBeenCalledWith('topic-1', expect.anything())
+  })
+
+  it('不能归档的人看不到归档', async () => {
+    mountHeader(false, { can_archive: false })
+
+    await openMore()
+    await screen.findByRole('menuitem', { name: '重命名' })
+    expect(screen.queryByRole('menuitem', { name: '归档' })).toBeNull()
+  })
+
+  it('已归档的话题只能取消归档', async () => {
+    mountHeader(false, { status: 'archived', can_archive: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '取消归档' }))
+
+    expect(unarchiveTopic).toHaveBeenCalledWith('topic-1', expect.anything())
+    expect(screen.queryByRole('menuitem', { name: '重命名' })).toBeNull()
   })
 })

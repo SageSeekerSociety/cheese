@@ -32,6 +32,8 @@ from app.domain.tag.models import Tag
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.domain.knowledge.services import KnowledgeService
+    from app.domain.materials.services import MaterialService
     from app.domain.task.repositories import TaskRepository
 
 
@@ -54,6 +56,26 @@ def _validated_max_uses(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise BadRequestError("maxUses must be a positive integer")
     return value
+
+
+def _normalized_note(value: str | None) -> str | None:
+    """A 说明, or ``None`` for "this code says nothing about itself".
+
+    Shared by minting and by editing so a note cannot mean one thing when it
+    is written and another when it is corrected. A whitespace-only string is
+    the same as no note at all — storing ``"  "`` would put an invisible row
+    in the list and read as though something had been said.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _error_data_id(exc: NotFoundError) -> object | None:
+    """The id a not-found error named, so a form-field error can carry it on."""
+    data = exc.data
+    return data.get("id") if isinstance(data, dict) else None
 
 
 @dataclass(frozen=True)
@@ -96,6 +118,8 @@ class SpaceService:
         domain_group_domain_repo: SpaceDomainGroupDomainRepository | None = None,
         member_repo: SpaceMemberRepository | None = None,
         invite_code_repo: SpaceInviteCodeRepository | None = None,
+        knowledge_service: "KnowledgeService | None" = None,
+        material_service: "MaterialService | None" = None,
     ) -> None:
         self._repo = repo
         self._category_repo = category_repo
@@ -107,6 +131,8 @@ class SpaceService:
         self._domain_group_domain_repo = domain_group_domain_repo
         self._member_repo = member_repo
         self._invite_code_repo = invite_code_repo
+        self._knowledge_service = knowledge_service
+        self._material_service = material_service
 
     # ------------------------------------------------------------------
     # What a 题目板 is
@@ -369,6 +395,13 @@ class SpaceService:
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
 
+        if teaching is not None:
+            # Refused here, before a single field of the row is touched: a
+            # rejected PATCH must leave the stored 教学安排 exactly as it was.
+            await self._ensure_teaching_references(
+                teaching=teaching, actor_user_id=actor_user_id
+            )
+
         if name is not None:
             if not name.strip():
                 raise BadRequestError("Category name cannot be empty")
@@ -394,6 +427,47 @@ class SpaceService:
 
         category.updated_at = datetime.now(UTC)
         return await self._category_repo.save(category)
+
+    async def _ensure_teaching_references(
+        self, *, teaching: dict, actor_user_id: int | None
+    ) -> None:
+        """Every id a 教学安排 names must exist — and, for 知识, be readable.
+
+        The read side (`Teaching.from_json`, `KnowledgeService.get_many`) drops
+        what it cannot resolve, because a typo there would take down every 赛题
+        under the 项目集. Here a person is looking at the form and can be told
+        which field is wrong, so a bad reference is refused with the field's
+        name instead of being dropped.
+
+        `KnowledgeService.ensure_readable` is the very criterion
+        `GET /knowledge/{id}` uses — a teacher may point at 知识 they could
+        already open, nobody else's. A 课件 has no owning team to check (any
+        signed-in reader may fetch any material), so only existence is required
+        of `material_ids`.
+        """
+        knowledge_ids = teaching.get("knowledge_ids") or []
+        if knowledge_ids and self._knowledge_service is not None:
+            if actor_user_id is None:
+                raise ForbiddenError("Authentication required")
+            try:
+                await self._knowledge_service.ensure_readable(
+                    knowledge_ids=knowledge_ids, user_id=actor_user_id
+                )
+            except NotFoundError as exc:
+                raise BadRequestError(
+                    "teaching.knowledgeIds names a knowledge that does not exist",
+                    data={"field": "knowledgeIds", "id": _error_data_id(exc)},
+                ) from exc
+
+        material_ids = teaching.get("material_ids") or []
+        if material_ids and self._material_service is not None:
+            try:
+                await self._material_service.ensure_exist(material_ids=material_ids)
+            except NotFoundError as exc:
+                raise BadRequestError(
+                    "teaching.materialIds names a material that does not exist",
+                    data={"field": "materialIds", "id": _error_data_id(exc)},
+                ) from exc
 
     async def delete_category(
         self,
@@ -573,13 +647,30 @@ class SpaceService:
             if await self._admin_repo.get_relation(space.id, user_id) is not None:
                 return space
 
+        # Review gates every way in, the code included. `/spaces/join` names no
+        # ``spaceId``, so the router-level gate never saw it; this is where the
+        # code's board is actually known. After the early returns above, so
+        # people already in stay a no-op; raised as NotFound, not Forbidden, so
+        # the answer cannot confirm that an unreviewed board exists.
+        if space.review_status != "APPROVED":
+            raise NotFoundError("Space not found")
+
         # Membership first, use second, and the order is the point: the
         # membership write is idempotent and atomic (uq_space_member_active,
         # see `SpaceMemberRepository.add_member`), so its answer to "did I get
         # in" is the only one that two concurrent redemptions cannot both
         # claim. Consuming the use first, as this used to, spends one for the
         # loser of a double-tap: both read "not a member", both spend.
-        _, created = await member_repo.add_member(space_id=space.id, user_id=user_id)
+        #
+        # The code goes onto the row in the same write, and the two writes stay
+        # one decision: if `consume_use` below refuses (exhausted, or expired
+        # in the window), the raise rolls this membership back with it, so a
+        # row can never claim a code whose use was never spent. The 成员 page
+        # reads this column to answer「他怎么进来的」— see the model's comment
+        # for what NULL means.
+        _, created = await member_repo.add_member(
+            space_id=space.id, user_id=user_id, invite_code_id=invite.id
+        )
         if not created:
             # A concurrent redeem already let them in. No use spent, no error.
             return space
@@ -708,6 +799,7 @@ class SpaceService:
         actor_user_id: int | None,
         max_uses: int | None = None,
         expires_at: datetime | None = None,
+        note: str | None = None,
     ) -> SpaceInviteCode:
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         await self._get_space_or_error(space_id)
@@ -722,6 +814,12 @@ class SpaceService:
             max_uses=uses,
             expires_at=expires_at,
             created_by=actor_user_id,
+            # 说明 is optional and free text: a code that says nothing about
+            # itself is a normal code (every code minted before this field is
+            # exactly that), so an empty one is stored as NULL rather than "".
+            # Normalising here rather than at the route keeps "what counts as
+            # no note" in one place.
+            note=_normalized_note(note),
         )
 
     async def update_invite_code(
@@ -734,6 +832,8 @@ class SpaceService:
         max_uses_set: bool = False,
         expires_at: datetime | None = None,
         expires_at_set: bool = False,
+        note: str | None = None,
+        note_set: bool = False,
     ) -> SpaceInviteCode:
         """Adjust how many people a live code admits, or when it stops working.
 
@@ -742,6 +842,13 @@ class SpaceService:
         clears it (the code then never expires). Only the field count is
         validated away, so a code that was handed out with ``maxUses: 5`` can
         be widened later without touching the people already in.
+
+        ``note`` follows the same absent-vs-null rule, for the same reason:
+        correcting a 说明 must not be the same request as deleting it. Editing
+        one is not in the prototype's 调整 form, but a 说明 that can be typed
+        once and never fixed is worse than one that can — the only other way
+        to correct it would be revoke-and-mint, which invalidates a code that
+        is already in people's hands.
 
         Lowering ``maxUses`` below the code's use count is refused rather than
         clamped. The result of allowing it — a code that reads as usable but
@@ -763,6 +870,8 @@ class SpaceService:
             invite.max_uses = uses
         if expires_at_set:
             invite.expires_at = expires_at
+        if note_set:
+            invite.note = _normalized_note(note)
 
         return await self._require_invite_code_repo().save(invite)
 

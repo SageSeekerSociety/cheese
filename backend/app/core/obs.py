@@ -9,8 +9,10 @@
   stream holds everything, uniformly timestamped.
 """
 
+import asyncio
 import logging
 import re
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -123,6 +125,25 @@ class RedactSecrets(logging.Filter):
             else:
                 record.args = tuple(scrub_secrets(a) for a in record.args)
         return True
+
+
+class QuietRoutineAccess(logging.Filter):
+    """Drop the access lines for calls that went through and nobody reads.
+
+    The device connection is called by the backend tens of times a second on
+    ``/internal/``, and probed on its health route; those lines were most of
+    the journal, and it was keeping hours where it should keep weeks. A call
+    that failed is still logged, and every other route is untouched.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn.access: (client, method, path, http version, status).
+        args = record.args
+        if not isinstance(args, tuple) or len(args) != 5:
+            return True
+        path, status = str(args[2]), args[4]
+        routine = path.startswith("/internal/") or path in ("/healthz", "/health")
+        return not (routine and isinstance(status, int) and status < 400)
 
 
 _ANSWERED_LIMIT = 200
@@ -241,6 +262,34 @@ def _where_it_was_raised(exc: BaseException) -> list[str]:
     return [where, f"　　{last.line}"] if last.line else [where]
 
 
+# uvicorn's own words when a release outlasts --timeout-graceful-shutdown: it
+# logs "Cancel N running task(s), timeout graceful shutdown exceeded" and then
+# one "Exception in ASGI application" per request it cancelled, the
+# CancelledError carrying this text. Both at ERROR, both on every release that
+# catches a request still working (a work lease that waits on a machine runs
+# for a minute and more), so the channel got a page per deploy for the one
+# thing a deploy is supposed to do. The requests themselves are not lost from
+# view: ResponseIntegrityAudit logs each one it saw cut, with its path.
+_SHUTDOWN_CUT = "timeout graceful shutdown exceeded"
+
+
+def _cut_by_release(record: logging.LogRecord) -> bool:
+    """Whether this is uvicorn reporting the requests a shutdown cut short.
+
+    Only uvicorn's records, and only its shutdown text: a CancelledError from
+    anywhere else, or any other exception uvicorn reports, is still an alert.
+    """
+    if not record.name.startswith("uvicorn"):
+        return False
+    exc = record.exc_info[1] if record.exc_info else None
+    if exc is not None:
+        return isinstance(exc, asyncio.CancelledError) and _SHUTDOWN_CUT in str(exc)
+    try:
+        return _SHUTDOWN_CUT in record.getMessage()
+    except Exception:  # noqa: BLE001 — a bad format string is not our bug
+        return False
+
+
 class AlertOnError(logging.Handler):
     """Put what the backend logs as an error where a person will actually see it.
 
@@ -331,6 +380,8 @@ class AlertOnError(logging.Handler):
         if record.name.startswith("app.core.alerting"):
             return
         try:
+            if _cut_by_release(record):
+                return
             exc = record.exc_info[1] if record.exc_info else None
             if exc is not None and not _first_report_of(exc):
                 return
@@ -404,6 +455,12 @@ def configure_logging() -> None:
         lg = logging.getLogger(name)
         lg.handlers.clear()
         lg.propagate = True
+    logging.getLogger("uvicorn.access").addFilter(QuietRoutineAccess())
+    # HTTP clients log every request they make at INFO. The backend's calls to
+    # the device connection alone were nine lines in ten of its output; a
+    # request that fails raises, and its caller logs that.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str):  # noqa: ANN201 — structlog's own typing
@@ -480,8 +537,23 @@ class ResponseIntegrityAudit:
             await send(message)
 
         path = scope.get("path", "")
+        began = time.monotonic()
         try:
             await self.app(scope, receive, _send)
+        except asyncio.CancelledError as cut:
+            # The server gave up on this request — a release that outlasted
+            # the graceful-shutdown window. No `req` line is ever written for
+            # it (that one is logged when the handler returns), so without
+            # this the request would leave no trace but a dropped connection.
+            log.warning(
+                "request cut short",
+                method=scope.get("method"),
+                path=path,
+                ms=round((time.monotonic() - began) * 1000, 1),
+                started=started,
+                reason=str(cut),
+            )
+            raise
         except Exception:
             if started:
                 log.warning(

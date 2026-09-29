@@ -71,7 +71,7 @@ def _blocks(client, **where) -> list[Block]:
 def _written(stub: StubChannel, room: str) -> list[dict]:
     return [
         message
-        for message in stub.sessions[uuid.UUID(room)].written
+        for message in stub._session_for(uuid.UUID(room)).written
         if message.get("type") == "user"
     ]
 
@@ -80,7 +80,7 @@ def test_a_tool_that_failed_marks_its_step_with_what_it_said(client, stub_hooks)
     """A command that exited non-zero is a red step with the command's own words,
     not the build's ``Exit code`` header over them."""
 
-    def turn(topic, prompt, reply):
+    def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.uses(topic, "Bash", eid="toolu_pandoc", command="pandoc a.md")
@@ -127,8 +127,8 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
     chat._compute.bind_receipts(observe)
     taken: list[str] = []
 
-    def turn(topic, prompt, reply):
-        session = stub_hooks.sessions[topic]
+    def turn(topic, prompt, reply, agent=None):
+        session = stub_hooks._session_for(topic)
         identifier = next(
             m["uuid"] for m in reversed(session.written) if m.get("type") == "user"
         )
@@ -172,7 +172,7 @@ def test_a_long_command_gets_the_progress_reminder_written_to_the_session(
     the command's end."""
     chat = client.app.dependency_overrides[get_chat_service]()
 
-    def turn(topic, prompt, reply):
+    def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.uses(topic, "Bash", command="make test")
@@ -210,7 +210,7 @@ def test_a_sub_threads_work_lands_on_its_card(client, stub_hooks):
         headers=_bearer("alice"),
     ).json()["data"]
 
-    def turn(topic, prompt, reply):
+    def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.spawns(topic, thread_label=card["thread_label"], call="call-1")
@@ -288,7 +288,7 @@ def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
     """The process is gone while a command runs: the room gets a failed turn it
     can see, not a turn that is running forever."""
 
-    def turn(topic, prompt, reply):
+    def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
         stub_hooks.acknowledges(topic, prompt)
         stub_hooks.uses(topic, "Bash", command="make build")
@@ -308,7 +308,7 @@ def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
 
 
 class StillWorking(StubChannel):
-    def emit_turn(self, topic_id, prompt, reply):
+    def emit_turn(self, topic_id, prompt, reply, agent=None):
         del reply
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
@@ -342,7 +342,10 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
             ws,
             lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
         )
-    client.portal.call(before.runtime._detach, topic)
+    # The old process stops reading, as a replaced backend does. `_detach` takes
+    # a seat, not a room, so `_detach(room)` removed nothing and the old reader
+    # went on handling the session's records next to the new one.
+    client.portal.call(before.runtime.stop_listening)
 
     # The machine kept its runner; the new process has only the channel to it.
     after = StubChannel()
@@ -443,11 +446,12 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
 ):
     """A room's non-default teammate is mid-turn when the backend is replaced.
 
-    The new process must record the recovered turn as that teammate's. Recorded
-    under the project default instead, every later message to the teammate
-    waited in `wait_for_recipient` for 「another agent」 to finish — which was
-    the teammate's own turn — so nothing reached it until the turn ended
-    (dev, 2026-09-25, twice)."""
+    The new process must record the recovered turn as that teammate's seat.
+    Recorded under the project default instead, a later message to the
+    teammate finds no live turn of its own seat and starts a second turn
+    beside the teammate's own (before seats, the same misattribution made it
+    wait for 「another agent」 — which was the teammate itself; dev,
+    2026-09-25, twice)."""
     from app.domain.agent_instance.services import AgentInstanceService
     from app.domain.identity.handles import agent_instance_handle
     from app.domain.topic_membership.services import TopicMemberService
@@ -508,9 +512,20 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     (recovered,) = replaced._hook_work.values()
     assert recovered.agent_instance_handle == "opus"
 
-    async def waits_for_nobody() -> bool:
-        return await asyncio.wait_for(
-            replaced.wait_for_recipient(topic, "opus"), timeout=2
-        )
+    # A message to the teammate joins the recovered turn — it must not start
+    # a second turn beside the teammate's own.
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@Opus 接着睡"})
+        _until_done(ws)
 
-    assert client.portal.call(waits_for_nobody) is False
+    async def turns() -> int:
+        async with client.test_factory() as session:
+            return len(
+                list(
+                    await session.scalars(
+                        select(AgentTurn.id).where(AgentTurn.topic_id == topic)
+                    )
+                )
+            )
+
+    assert asyncio.run(turns()) == 1

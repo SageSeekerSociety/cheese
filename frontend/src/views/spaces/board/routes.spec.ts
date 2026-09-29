@@ -40,7 +40,9 @@ vi.mock('./pages/Announcements.vue', () => ({ default: blank }))
 vi.mock('./pages/Review.vue', () => ({ default: blank }))
 vi.mock('./pages/Members.vue', () => ({ default: blank }))
 vi.mock('./pages/TaskInsights.vue', () => ({ default: blank }))
-// 第五批收进来的三处（底下都是老页面，包一层挂上来）。
+// 三处子页的替身：详情、发题、看板都各自按原型重画过了（第八、第十、第七批），
+// 底下早已不再有老页面 —— 它们在这儿只剩一个理由：这一份测的是地址接没接住，
+// 不是页面长什么样。
 vi.mock('./pages/TaskDetail.vue', () => ({ default: blank }))
 vi.mock('./pages/TaskPublish.vue', () => ({ default: blank }))
 vi.mock('./pages/Analytics.vue', () => ({ default: blank }))
@@ -50,18 +52,15 @@ vi.mock('./pages/Analytics.vue', () => ({ default: blank }))
 // 知道的事（名字落在哪一格）跟编不编它们无关。
 //
 // 一条条写而不是循环：`vi.mock` 要能提上去，路径必须是字面量。
-vi.mock('@/views/tasks/detail/Overview.vue', () => ({ default: blank }))
+//
+// 这里原来还有一条 `@/views/tasks/detail/Overview.vue` —— 它是详情那一条的默认子路由，
+// 第八章重画那一页之后不再有人渲染它，替身也跟着删了。
 vi.mock('@/views/tasks/detail/Submissions.vue', () => ({ default: blank }))
 vi.mock('@/views/tasks/detail/Participants.vue', () => ({ default: blank }))
 vi.mock('@/views/tasks/detail/Submit.vue', () => ({ default: blank }))
 vi.mock('@/views/tasks/detail/AIAdvice.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Overview.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Alerts.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Publishers.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Tasks.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Participants.vue', () => ({ default: blank }))
-vi.mock('@/views/spaces/detail/analytics/Learning.vue', () => ({ default: blank }))
 
+import { BOARD_TASK_ROUTE_NAMES } from './routeNames'
 import { SpaceBoardRoutes } from './routes'
 
 function router() {
@@ -96,9 +95,11 @@ describe('空间新界面那一棵路由', () => {
     expect((await open('/spaces/7/board/members')).name).toBe('SpaceBoardMembers')
   })
 
-  it('详情那五格也在这棵树上，名字与外壳自己那一套对得上', async () => {
+  it('详情那几格也在这棵树上，名字与外壳自己那一套对得上', async () => {
     hoisted.manager = true
-    expect((await open('/spaces/7/board/tasks/42')).name).toBe('SpaceBoardTaskOverview')
+    // 题目详情这一条**自己就是那一页**（不经过默认子路由）：重画之后「概览」与「详情」
+    // 是同一页，所以裸地址落到的是详情自己，而不是原来那条默认子路由。
+    expect((await open('/spaces/7/board/tasks/42')).name).toBe('SpaceBoardTaskDetail')
     expect((await open('/spaces/7/board/tasks/42/submissions')).name).toBe('SpaceBoardTaskSubmissions')
     expect((await open('/spaces/7/board/tasks/42/participants')).name).toBe('SpaceBoardTaskParticipants')
     expect((await open('/spaces/7/board/tasks/42/submit')).name).toBe('SpaceBoardTaskSubmit')
@@ -106,19 +107,28 @@ describe('空间新界面那一棵路由', () => {
     expect((await open('/spaces/7/board/publish')).name).toBe('SpaceBoardTaskPublish')
   })
 
-  it('看板落进总览那一格，六格都在', async () => {
+  it('「概览」那一格指回详情自己 —— 老页面里「返回概览」的落点没变', async () => {
+    const r = router()
+    await r.push('/spaces/7/board')
+    // 名字对名字解析（不是对路径）：老页面里写的都是名字，所以要紧的是它解得开、
+    // 且落在题目详情那一条上。
+    const resolved = r.resolve({
+      name: BOARD_TASK_ROUTE_NAMES.overview,
+      params: { spaceId: '7', taskId: '42' },
+    })
+    expect(resolved.path).toBe('/spaces/7/board/tasks/42')
+  })
+
+  it('看板是它自己那一页，不再是老树那九页的副本', async () => {
     hoisted.manager = true
-    expect((await open('/spaces/7/board/analytics')).name).toBe('SpaceBoardAnalyticsOverview')
-    expect((await open('/spaces/7/board/analytics/alerts')).name).toBe('SpaceBoardAnalyticsAlerts')
-    expect((await open('/spaces/7/board/analytics/publishers')).name).toBe('SpaceBoardAnalyticsPublishers')
-    expect((await open('/spaces/7/board/analytics/tasks')).name).toBe('SpaceBoardAnalyticsTasks')
-    expect((await open('/spaces/7/board/analytics/participants')).name).toBe('SpaceBoardAnalyticsParticipants')
-    expect((await open('/spaces/7/board/analytics/learning')).name).toBe('SpaceBoardAnalyticsLearning')
+    expect((await open('/spaces/7/board/analytics')).name).toBe('SpaceBoardAnalytics')
+    // 那六条「把老分析页套进新外壳」的子路由没有了：留着也没人渲染。
+    // 老树那九页仍在 `/spaces/:id/analytics/*` 上原样服务（那一棵不在这一份里）。
+    expect((await open('/spaces/7/board/analytics/alerts')).name).toBe('catch-all')
   })
 
   it('看板对普通成员关上，直接输地址也进不去', async () => {
     expect((await open('/spaces/7/board/analytics')).name).toBe('SpaceBoardHome')
-    expect((await open('/spaces/7/board/analytics/alerts')).name).toBe('SpaceBoardHome')
   })
 
   it('换一个空间，路径里的 id 跟着换（不是写死的）', async () => {

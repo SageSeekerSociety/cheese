@@ -151,7 +151,7 @@ def main():
         )
         dump(folder / f"{name}-launch.json", {"command": command, "env": env})
         sessions.append(runner_fixture.Session.start(folder, command, env, home, name))
-        return home / ".cheese/remote-session"
+        return runner_fixture.session_dir(home) / "remote-session"
 
     homes = [folder / "home"]
     try:
@@ -293,8 +293,13 @@ def main():
             session.stop(folder / f"journal-{index}.jsonl")
         if room:
             for mountpoint in (
-                *(home / ".cheese/remote-session/forwarded-project" for home in homes),
-                room.home / ".cheese/remote-session/forwarded-project",
+                *(
+                    runner_fixture.session_dir(home)
+                    / "remote-session/forwarded-project"
+                    for home in homes
+                ),
+                runner_fixture.session_dir(room.home)
+                / "remote-session/forwarded-project",
             ):
                 # See acceptance.py: a dead mount is the one that has to go, and
                 # it is the one `os.path.ismount` reports as nothing at all.

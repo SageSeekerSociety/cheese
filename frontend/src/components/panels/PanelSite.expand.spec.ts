@@ -113,6 +113,36 @@ describe('挂了的一步', () => {
     expect(error?.textContent).toBe('bash: pandoc: command not found')
   })
 
+  it('一个没起来的会话：那一行是平台的一句话，点开错误行看到它启动时打印的全文', async () => {
+    const log = [
+      'cheese-runner 0f0f ended: Claude Code exited with status 1 before it started:',
+      'Traceback (most recent call last):',
+      'executor_transport.PlatformHTTPError: Platform HTTP 504',
+    ].join('\n')
+    const container = await openSite([
+      {
+        ...event({
+          event_type: 'platform_error',
+          code: 'session_start_work_machine_preparing',
+          title: '会话没有启动',
+          failed: true,
+          error: log,
+        }),
+        author_type: 'platform',
+        author: 'system',
+        content: 'Claude Code 启动失败：这个房间的工作电脑还在准备',
+      } as Block,
+    ])
+
+    expect(container.textContent).toContain('Claude Code 启动失败：这个房间的工作电脑还在准备')
+    const error = container.querySelector<HTMLElement>('[data-testid="site-act-error"]')!
+    expect(error.classList.contains('site-act__error--full')).toBe(false)
+
+    await fireEvent.click(error)
+    expect(error.classList.contains('site-act__error--full')).toBe(true)
+    expect(error.textContent?.trim()).toBe(log)
+  })
+
   it('成功的一步什么都不多说', async () => {
     const container = await openSite([event({ tool: 'bash', arg: 'make test' })])
 

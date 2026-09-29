@@ -112,7 +112,8 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
 
     asyncio.run(_seed())
     if stub_hooks is not None:
-        stub_hooks.runtime.live[uuid.UUID(ids["room"])] = "screen"  # type: ignore[assignment]
+        seat = (uuid.UUID(ids["room"]), "cheese")
+        stub_hooks.runtime.live[seat] = "screen"  # type: ignore[assignment]
     return ids
 
 
@@ -191,6 +192,40 @@ def test_a_room_carries_its_own_board_cell(client):
     listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
     rooms = {t["id"]: t["presentation"] for t in listed}
     assert rooms[ids["room"]] == header["presentation"]
+
+
+def test_a_room_is_running_while_a_thread_under_it_runs(client, stub_hooks):
+    """侧栏的绿点：房间自己那一轮早结束了，但它派出去的一条活还在跑 —— 那这个
+    房间就是有人在干活。只看房间自己那一轮的话，主 agent 一收尾绿点就灭了。
+
+    房间在看板上那一格不跟着变：活在看板上有自己的一格。"""
+    ids = _seeded(client, stub_hooks)
+
+    listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
+    row = next(t for t in listed if t["id"] == ids["room"])
+    assert row["running"] is True
+    assert client.get(f"/topics/{ids['room']}").json()["data"]["running"] is True
+    assert row["presentation"]["display_status"] == Building.idle
+
+
+def test_a_room_is_not_running_once_its_threads_have_stopped(client, stub_hooks):
+    """同一个房间，在跑的那两条活交回了结论 —— 剩下的是失联的、等验收的、做了
+    一半的，没有一条在跑，绿点就该灭。"""
+    ids = _seeded(client, stub_hooks)
+
+    async def _conclude() -> None:
+        async with client.test_factory() as s:
+            for key in ("running", "talking"):
+                task = await s.get(Task, uuid.UUID(ids[key]))
+                assert task is not None
+                task.conclusion = "做完了"
+            await s.commit()
+
+    asyncio.run(_conclude())
+    listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
+    row = next(t for t in listed if t["id"] == ids["room"])
+    assert row["running"] is False
+    assert client.get(f"/topics/{ids['room']}").json()["data"]["running"] is False
 
 
 def test_a_rooms_own_card_reaches_the_room(client):

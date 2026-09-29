@@ -1,11 +1,18 @@
 """Hand a mirrored journal to the room's persistence, and say when it is working.
 
 A drain pulls whatever the runner has that the mirror does not, then walks the
-unread tail in order. Every record the runner hands over is stamped with the
-work it was produced under — the stamp is the runner's because only it knows
-what was in flight when the record appeared, and a backend that came up after
-the fact would have to guess. The landing cursor moves only after the room took
-a record, so a drain that dies halfway re-reads rather than skips.
+unread tail in order, a page at a time. Every record the runner hands over is
+stamped with the work it was produced under — the stamp is the runner's because
+only it knows what was in flight when the record appeared, and a backend that
+came up after the fact would have to guess. The landing cursor moves only after
+the room took a record, so a drain that dies halfway re-reads rather than skips.
+It moves once per page, and where the room refused a record partway through
+one: a commit per record is a sync per record, and a backlog can run to a
+million records.
+
+A record that waited too long to be read is stepped over, not landed
+(``STALE_S``): the cursor moves past it and the room never hears it. So is one
+the room went on refusing (``REFUSED_TIMES``), with its id in the error log.
 
 What a harness supplies is what its protocol decides: how to pull from its
 runner, how to read its mirror, which records open and close a turn, what to do
@@ -14,8 +21,8 @@ it — which record says an input was read.
 
 The mirror is a sqlite file that commits synchronously, and every room on a
 backend shares one event loop, so no read or write of the mirror runs on that
-loop: a drain lands a record per transaction, and on a slow disk each of those
-syncs would stall every room this backend serves. They run on the mirror's own
+loop: every landing is a transaction, and on a slow disk each of those syncs
+would stall every room this backend serves. They run on the mirror's own
 thread (``on_disk``) instead. One thread per mirror is what keeps the mirror's
 semantics: sqlite connections stay on the thread that opened them, and the
 writes happen one at a time, in the order the drain asked for them, each
@@ -24,14 +31,15 @@ awaited before the next is asked for.
 
 import asyncio
 import functools
+import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any, cast
 
 from app.domain.agent.harness import (
-    ActivityConsumer,
     Backlog,
     EventConsumer,
     HarnessEvent,
@@ -54,7 +62,17 @@ from app.domain.agent.service import (
 OUTPUT, PROGRESS = "output", "progress"
 TOOL_STARTED, TOOL_RETURNED = "tool_started:", "tool_returned:"
 
-Pulse = Callable[[uuid.UUID, frozenset[str]], None]
+#: 一间房里的一个座位：(topic, agent_handle)。一间房坐着几个 agent，就有几
+#: 条会话；runtime 那侧的会话、订阅、在跑的活和它的钟都按座位键住，不再按房间
+#: —— ``SessionRef`` 的文档一直说 (topic, agent_handle, harness) 才命名一条会话，
+#: 这里兑现它。
+Seat = tuple[uuid.UUID, str]
+
+Pulse = Callable[[Seat, frozenset[str]], None]
+
+#: 一轮开/关的回报，按座位而不是按房间：同一间房里另一个 agent 的一轮开开关关，
+#: 不碰这个座位的「在跑的活」和它的钟。
+SeatActivity = Callable[[uuid.UUID, Seat, uuid.UUID, bool], Awaitable[None]]
 
 #: How long a landed record stays in the mirror, and how often that is looked
 #: at. The mirror is not only the queue a room is fed from: it is the raw record
@@ -62,6 +80,32 @@ Pulse = Callable[[uuid.UUID, frozenset[str]], None]
 #: looks wrong. A day answers that and keeps a busy room's mirror small.
 RETENTION_S = 24 * 3600
 RETENTION_EVERY_S = 3600
+
+#: How old an unlanded record may be and still reach the room. A record gets
+#: this old only while nothing read the journal: the backend was gone, the
+#: machine was, or every drain stopped at a record it could not take. By then
+#: the room has gone on without it — the turn was ended for it, its prompt
+#: re-sent or the person told — so landing it would answer, hours late, what has
+#: been answered since, and open the books again for turns the session started
+#: by itself. Two hours is the orphan sweep's own line between a deploy and an
+#: outage (``ORPHAN_STALE_S``): past it, the platform stops acting for the
+#: person on its own.
+#:
+#: Age is by the time the journal gives a record: when the session machine
+#: recorded it for Claude Code and Codex, when the backend mirrored it for pi.
+#: So for pi, output mirrored late after the backend itself was away is fresh.
+STALE_S = 2 * 3600
+
+#: When a record the room keeps refusing is stepped over: after this many
+#: drains refused it, the first at least this long ago. Every drain starts at
+#: the record that failed, so one the room can never take stops the session's
+#: output reaching the room for good, while the session goes on working and its
+#: journal grows behind it. Both bounds, because a record refused only while
+#: the database was away is one the room takes once it is back.
+REFUSED_TIMES = 3
+REFUSED_OVER_S = 10 * 60
+
+logger = logging.getLogger(__name__)
 
 
 def started(call: str) -> str:
@@ -96,19 +140,28 @@ class Subscription[B: Backlog]:
         path: Path,
         call: Callable[[str, dict], Awaitable[dict]],
         consume: EventConsumer,
-        activity: ActivityConsumer,
+        activity: SeatActivity,
         *,
         receipts: ReceiptConsumer | None = None,
         pulse: Pulse | None = None,
+        memory: Callable[[], Awaitable[None]] | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
         self.receipts, self.pulse = receipts, pulse
+        # 一轮结束时问一次记忆（见 `MemoryConsumer`）：agent 该写的记忆按规矩写
+        # 在回复之前，所以一轮读完就是它写完的时刻。
+        self.memory = memory
         self.lock = asyncio.Lock()
         self.forgotten_at = 0.0
         self.disk = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix=f"mirror {session.topic_id}"
         )
+
+    @property
+    def seat(self) -> Seat:
+        """This subscription's own seat: (topic, agent) of the session it reads."""
+        return (self.session.topic_id, self.session.agent_handle)
 
     async def on_disk[T](self, work: Callable[..., T], /, *args, **kwargs) -> T:
         """Run ``work`` on the mirror's thread, after whatever was asked before."""
@@ -159,57 +212,130 @@ class Subscription[B: Backlog]:
         async with self.lock:
             await self.receive()
             reader = await self.on_disk(self.reader)
-            delivered = 0
-            for entry in reader.unread():
-                assert isinstance(entry.record, dict)
-                record = entry.record
-                stamp = record.get("cheese") or {}
-                work = stamp.get("work_id")
-                if work is None:
-                    self.unowned(entry, reader)
-                else:
-                    work_id = uuid.UUID(work)
-                    events = reader.assemble(entry)
-                    if self.starts_turn(record, reader):
-                        await self.activity(
-                            self.session.project_id,
-                            self.session.topic_id,
-                            work_id,
-                            True,
-                        )
-                    if self.pulse is not None:
-                        self.pulse(
-                            self.session.topic_id,
-                            frozenset(self.marks(record, list(events))),
-                        )
-                    text = self.receipt(record)
-                    if text is not None and self.receipts is not None:
-                        await self.receipts(self.session.topic_id, text)
-                    for event in events:
-                        await self.consume(
-                            self.session.project_id,
-                            self.session.topic_id,
-                            work_id,
-                            event,
-                            getattr(event, "eid", None) or entry.eid,
-                            # The closing text was already landed as its own
-                            # message; the result must not publish it twice.
-                            isinstance(event, AgentResult) and not event.is_error,
-                            # A turn the session started for itself, which the
-                            # room has to open the books for when it speaks.
-                            bool(stamp.get("unsolicited")),
-                        )
-                        delivered += 1
-                    if self.ends_turn(record, reader):
-                        await self.activity(
-                            self.session.project_id,
-                            self.session.topic_id,
-                            work_id,
-                            False,
-                        )
-                if not reader.unfinished():
-                    await self.on_disk(reader.landed, through=entry.key)
+            delivered = stale = 0
+            # A backlog nobody read for hours is mostly records too old to
+            # land. The run of them at the cursor is stepped over in one move:
+            # read a page at a time, a day of a busy session's journal took
+            # longer than the backend it was recovered by stayed up.
+            if not reader.unfinished():
+                stale = await self.on_disk(reader.step_over_older, than_s=STALE_S)
+            # How far the room has taken whole things; landed once per page.
+            whole: str | None = None
+            try:
+                while page := await self.on_disk(reader.unread):
+                    for entry in page:
+                        if entry.age_s >= STALE_S:
+                            stale += 1
+                        else:
+                            try:
+                                delivered += await self._deliver(entry, reader)
+                            except Exception:
+                                if not await self.on_disk(
+                                    reader.refused,
+                                    entry.key,
+                                    times=REFUSED_TIMES,
+                                    over_s=REFUSED_OVER_S,
+                                ):
+                                    raise
+                                logger.exception(
+                                    "stepped over journal record %s the room "
+                                    "refused %d times over %ds topic=%s agent=%s",
+                                    entry.eid,
+                                    REFUSED_TIMES,
+                                    REFUSED_OVER_S,
+                                    self.session.topic_id,
+                                    self.session.agent_handle,
+                                )
+                        if not reader.unfinished():
+                            whole = entry.key
+                    if whole is not None:
+                        await self.on_disk(reader.landed, through=whole)
+                        whole = None
+            except Exception:
+                # The room refused a record partway through a page: what it
+                # took before that stays taken, and the next drain starts at
+                # the refusal. A cancelled drain does not wait on its disk for
+                # this; the next one re-reads the page and the ids absorb it.
+                if whole is not None:
+                    await self.on_disk(reader.landed, through=whole)
+                raise
+            finally:
+                if stale:
+                    logger.warning(
+                        "stepped over %d journal records older than %ds "
+                        "topic=%s agent=%s",
+                        stale,
+                        STALE_S,
+                        self.session.topic_id,
+                        self.session.agent_handle,
+                    )
             if time.monotonic() - self.forgotten_at >= RETENTION_EVERY_S:
                 self.forgotten_at = time.monotonic()
                 await self.on_disk(reader.forget, older_than_s=RETENTION_S)
             return delivered
+
+    async def _deliver(self, entry: HarnessEvent, reader: B) -> int:
+        """Hand one record to the room; how many events it came out as."""
+        assert isinstance(entry.record, dict)
+        delivered = 0
+        record = entry.record
+        stamp = record.get("cheese") or {}
+        work = stamp.get("work_id")
+        if work is None:
+            self.unowned(entry, reader)
+        else:
+            work_id = uuid.UUID(work)
+            events = reader.assemble(entry)
+            if self.starts_turn(record, reader):
+                await self.activity(
+                    self.session.project_id,
+                    self.seat,
+                    work_id,
+                    True,
+                )
+            if self.pulse is not None:
+                self.pulse(
+                    self.seat,
+                    frozenset(self.marks(record, list(events))),
+                )
+            text = self.receipt(record)
+            if text is not None and self.receipts is not None:
+                await self.receipts(self.session.topic_id, text)
+            for event in events:
+                # Which seat's session produced this event. Events that
+                # declare the field keep what the record said (the
+                # runner's stamp is authoritative); the rest carry this
+                # subscription's own seat, so a consumer opening the
+                # books for a self-started turn attributes it to the
+                # right agent when several seats share one room — the
+                # room-keyed fallback cannot tell them apart.
+                fields = getattr(type(event), "__dataclass_fields__", None)
+                if fields is not None and "agent_handle" not in fields:
+                    # Dynamic by design: the stamp lands on events whose
+                    # dataclass never heard of it, which is exactly what
+                    # the check above proved.
+                    cast(Any, event).agent_handle = self.session.agent_handle
+                await self.consume(
+                    self.session.project_id,
+                    self.session.topic_id,
+                    work_id,
+                    event,
+                    getattr(event, "eid", None) or entry.eid,
+                    # The closing text was already landed as its own
+                    # message; the result must not publish it twice.
+                    isinstance(event, AgentResult) and not event.is_error,
+                    # A turn the session started for itself, which the
+                    # room has to open the books for when it speaks.
+                    bool(stamp.get("unsolicited")),
+                )
+                delivered += 1
+            if self.ends_turn(record, reader):
+                await self.activity(
+                    self.session.project_id,
+                    self.seat,
+                    work_id,
+                    False,
+                )
+                if self.memory is not None:
+                    await self.memory()
+        return delivered

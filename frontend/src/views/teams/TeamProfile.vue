@@ -8,6 +8,7 @@ import { computed, ref } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -49,7 +50,12 @@ async function submit() {
         <h1 class="t-page-title">{{ team.name }}</h1>
         <p class="t-meta c-muted">@{{ team.handle }}</p>
         <div class="t-meta c-muted mt-1">
-          <span v-if="team.owner">{{ t('work.teamProfile.owner', { name: team.owner.nickname }) }} · </span>
+          <span v-if="team.owner">
+            <i18n-t keypath="work.teamProfile.owner" tag="span">
+              <template #name><UserRef :handle="team.owner.username" :name="team.owner.nickname" /></template>
+            </i18n-t>
+            ·
+          </span>
           {{ t('work.teamProfile.memberCount', { count: memberCount }) }}
         </div>
       </div>

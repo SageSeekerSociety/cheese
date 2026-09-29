@@ -5,7 +5,9 @@ import { createVuetify } from 'vuetify'
 import { VBtn, VIcon } from 'vuetify/components'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { topBarBack } from '../topBarBack'
 
 import ParentBackButton from './ParentBackButton.vue'
 
@@ -257,5 +259,58 @@ describe('走的是小队页上那条真实链接（带重定向）', () => {
     widthIs(PHONE)
     const view = await walk('/teams/12', '/project/project-a')
     expect(back(view)?.getAttribute('href')).toBe('/teams/12')
+  })
+})
+
+// 设备、连接这几页：手机上是从头像菜单推进来的一层，← 回首页；桌面上 rail 一直在，
+// 它们不是谁的下一层，顶栏不画 ←。
+describe('只在手机上是一层的页面', () => {
+  function withPersonalPage() {
+    const router = makeRouter()
+    router.addRoute({
+      name: 'my-devices',
+      path: '/my/devices',
+      component: { template: '<div />' },
+      meta: { title: '我的设备', hideTabs: true, backTo: 'HomeWork', backOnPhoneOnly: true },
+    })
+    return router
+  }
+
+  it('手机上 ← 回首页', async () => {
+    widthIs(PHONE)
+    const router = withPersonalPage()
+    await router.push('/my/devices')
+    const view = await mount(router)
+    expect(back(view)?.getAttribute('href')).toBe('/work')
+  })
+
+  it('桌面上不画 ←', async () => {
+    const router = withPersonalPage()
+    await router.push('/my/devices')
+    const view = await mount(router)
+    expect(back(view)).toBeNull()
+  })
+})
+
+// 页面里还有一层比路由更近的「上一步」时（手机上话题里从别的页签回到对话），页面
+// 接管这颗 ←；桌面上没有这一层，照旧回路由声明的上一层。
+describe('页面接管 ←', () => {
+  afterEach(() => (topBarBack.value = null))
+
+  it('手机上点 ← 走页面给的那一步，不离开这一页', async () => {
+    widthIs(PHONE)
+    const onBack = vi.fn()
+    topBarBack.value = { label: '返回对话', onBack }
+    const { router, getByRole } = await open('/projects/project-a/topics/topic-b')
+    await fireEvent.click(getByRole('button', { name: '返回对话' }))
+    expect(onBack).toHaveBeenCalledOnce()
+    expect(router.currentRoute.value.path).toBe('/projects/project-a/topics/topic-b')
+  })
+
+  it('桌面上照旧回上一层', async () => {
+    const onBack = vi.fn()
+    topBarBack.value = { label: '返回对话', onBack }
+    const view = await open('/projects/project-a/topics/topic-b')
+    expect(back(view)?.getAttribute('href')).toBe('/projects/project-a')
   })
 })

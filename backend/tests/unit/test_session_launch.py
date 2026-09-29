@@ -7,6 +7,7 @@ which tool no user here can answer — and none is about a transport.
 
 import os
 import subprocess
+from pathlib import Path
 
 from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.session_launch import (
@@ -14,9 +15,19 @@ from app.domain.agent.harness.claude_code.session_launch import (
     session_settings,
 )
 from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.place import seat_dir
 from app.domain.agent.skills import native_skill_files
 
 STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
+
+
+def _seat(home) -> Path:
+    """How these tests reach the seat the launch writes into.
+
+    Nothing here names a teammate — `launch_holes` with no `seat` — so it is
+    the seat an empty handle names.
+    """
+    return Path(seat_dir(str(home)))
 
 
 def _configure(home, system_prompt: str) -> None:
@@ -32,8 +43,10 @@ def _configure(home, system_prompt: str) -> None:
 
 
 def test_the_launch_writes_the_files_claude_reads_before_it_starts(tmp_path):
-    """Each is read exactly once, at exec: the settings, the system prompt, the
-    WebFetch transport it preloads, and the platform's own skills."""
+    """Each is read exactly once, at exec: the settings, the WebFetch transport
+    it preloads, and the platform's own skills — all in the config dir the
+    ROOM holds — plus the system prompt, in the seat that owns this session,
+    because one teammate's prompt is not another's."""
     _configure(tmp_path, "你是芝士。")
 
     config = tmp_path / ".claude"
@@ -47,11 +60,10 @@ def test_the_launch_writes_the_files_claude_reads_before_it_starts(tmp_path):
     # building.
     assert planted == {
         "settings.json",
-        "cheese-system-prompt.md",
         "webfetch_transport.cjs",
         *native_skill_files(),
     }
-    assert (config / "cheese-system-prompt.md").read_text() == "你是芝士。\n"
+    assert (_seat(tmp_path) / "cheese-system-prompt.md").read_text() == "你是芝士。\n"
     for name, content in native_skill_files().items():
         assert (config / name).read_text() == content, name
 
@@ -63,7 +75,7 @@ def test_a_withdrawn_system_prompt_leaves_no_stale_one_behind(tmp_path):
     _configure(tmp_path, "old prompt")
     _configure(tmp_path, "")
 
-    assert (tmp_path / ".claude/cheese-system-prompt.md").read_text() == ""
+    assert (_seat(tmp_path) / "cheese-system-prompt.md").read_text() == ""
     prepare = device_launch.launch_holes(state=STATE).prepare
     assert '[ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file' in (
         prepare

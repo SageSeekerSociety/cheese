@@ -16,18 +16,26 @@ FAKE = r"""#!/usr/bin/env python3
 import json, os, pathlib, sys
 args = sys.argv[1:]
 home = pathlib.Path(os.environ["METERING_PROXY_HOME"])
-record = {"args": args, "image": os.environ.get("METERING_PROXY_IMAGE")}
+record = {
+    "args": args,
+    "image": os.environ.get("METERING_PROXY_IMAGE"),
+    "config": os.environ.get("METERING_PROXY_CONFIG_SHA256"),
+}
 if args[0] == "compose":
     files = [args[i+1] for i, arg in enumerate(args) if arg == "-f"]
     record["configs"] = [pathlib.Path(f).read_text() for f in files]
     record["saved_image"] = list(home.glob("releases/*/previous-image"))[0].read_text().strip()
 with open(os.environ["CALLS"], "a") as log:
     log.write(json.dumps(record) + "\n")
+if args[:2] == ["network", "inspect"] and os.environ.get("NO_NETWORK"):
+    sys.exit(1)
 if args[:2] == ["image", "inspect"]:
     print(os.environ.get("FAKE_DIGEST", "ghcr.io/sageseekersociety/cheese/metering-proxy@sha256:" + "b"*64))
 elif args[0] == "inspect":
     field = args[-1]
-    if "config_files" in field: print(os.environ["COMPOSE_FILES"])
+    # The label the previous release left on the running container.
+    if "config-sha256" in field: print(os.environ.get("FAKE_CONFIG", ""))
+    elif "config_files" in field: print(os.environ["COMPOSE_FILES"])
     elif "working_dir" in field: print(home)
     elif "compose.project" in field: print(os.environ.get("FAKE_PROJECT", "metering-proxy"))
     elif ".Config.Image" in field: print(os.environ.get("FAKE_CURRENT_IMAGE", "mitmproxy/mitmproxy:12.1.2"))
@@ -38,13 +46,14 @@ elif args[0] == "compose" and os.environ.get("FAIL_RELEASE") and record["image"]
 """
 
 
+ENV_TEXT = "METERING_PROXY_IMAGE=old-env-image\nTEST_SECRET=private-test-value\n"
+
+
 class MeteringReleaseTest(unittest.TestCase):
-    def run_release(self, multiple=False, **overrides):
+    def run_release(self, multiple=False, env_text=ENV_TEXT, **overrides):
         with tempfile.TemporaryDirectory() as folder:
             home = Path(folder)
-            (home / ".env").write_text(
-                "METERING_PROXY_IMAGE=old-env-image\nTEST_SECRET=private-test-value\n"
-            )
+            (home / ".env").write_text(env_text)
             old = home / "compose.yml"
             old.write_text(
                 "services:\n  metering-proxy:\n    image: mitmproxy/mitmproxy:12.1.2\n    volumes:\n      - .:/addons:ro\n      - ./certs:/home/mitmproxy/.mitmproxy\n      - /ledger:/var/log/cheese\n"
@@ -80,13 +89,19 @@ class MeteringReleaseTest(unittest.TestCase):
                 if (home / "calls").exists()
                 else []
             )
-            login = home / "claude-login.sh"
-            self.installed_login = login.is_file() and os.access(login, os.X_OK)
-            self.assertNotIn("private-test-value", result.stdout + result.stderr)
-            self.assertEqual(
-                (home / ".env").read_text(),
-                "METERING_PROXY_IMAGE=old-env-image\nTEST_SECRET=private-test-value\n",
+            self.installed_login = all(
+                (home / name).is_file() and os.access(home / name, os.X_OK)
+                for name in ("claude-login.sh", "chatgpt-login.sh")
             )
+            self.assertNotIn("private-test-value", result.stdout + result.stderr)
+            # Nothing the release keeps or labels the container with holds a
+            # secret from the .env.
+            for kept in (home / "releases").rglob("*"):
+                if kept.is_file():
+                    self.assertNotIn("private-test-value", kept.read_text(), kept)
+            for call in calls:
+                self.assertNotIn("private-test-value", call["config"] or "")
+            self.assertEqual((home / ".env").read_text(), env_text)
             for call in calls:
                 if call["args"][0] == "compose":
                     self.assertEqual(
@@ -104,7 +119,9 @@ class MeteringReleaseTest(unittest.TestCase):
             home = Path(folder)
             env_file = home / ".env"
             env_file.write_text("METERING_PROXY_IMAGE=stale-env-image\n")
-            env = dict(os.environ, METERING_PROXY_IMAGE=DIGEST)
+            env = dict(
+                os.environ, METERING_PROXY_IMAGE=DIGEST, METERING_PROXY_CONFIG_SHA256="c" * 64
+            )
             result = subprocess.run(
                 [
                     "docker",
@@ -126,13 +143,31 @@ class MeteringReleaseTest(unittest.TestCase):
             )
             service = json.loads(result.stdout)["services"]["metering-proxy"]
             self.assertEqual(service["image"], DIGEST)
+            self.assertEqual(
+                service["labels"]["cheese.metering-proxy.config-sha256"], "c" * 64
+            )
             mounts = {m["target"]: m["source"] for m in service["volumes"]}
             self.assertNotIn("/addons", mounts)
             self.assertEqual(mounts["/var/log/cheese"], str(home / "logs"))
             self.assertEqual(
                 mounts["/etc/cheese/claude-credential"], str(home / "claude-credential")
             )
+            self.assertEqual(
+                mounts["/etc/cheese/chatgpt-credential"],
+                str(home / "chatgpt-credential"),
+            )
             self.assertEqual(mounts["/home/mitmproxy/.mitmproxy"], str(home / "certs"))
+            # The ChatGPT listener is published nowhere; the gateway reaches it
+            # on the private network, by the alias it puts in api_base.
+            published = [p["target"] for p in service["ports"]]
+            self.assertEqual(sorted(published), [8443, 8444])
+            self.assertEqual(
+                service["networks"]["meter-gateway"]["aliases"], ["metering-proxy"]
+            )
+            self.assertIn("default", service["networks"])
+            network = json.loads(result.stdout)["networks"]["meter-gateway"]
+            self.assertEqual(network["name"], "cheese-meter-gateway")
+            self.assertTrue(network["external"])
 
     def test_requires_explicit_interruption_acknowledgement(self):
         result, calls = self.run_release(METERING_ALLOW_INTERRUPT="0")
@@ -165,18 +200,71 @@ class MeteringReleaseTest(unittest.TestCase):
             ],
         )
 
-    def test_healthy_same_digest_preserves_running_streams(self):
-        result, calls = self.run_release(FAKE_CURRENT_IMAGE=DIGEST)
+    def released_config(self, env_text=ENV_TEXT):
+        """The configuration label a release puts on the container it starts
+        from this .env."""
+        result, calls = self.run_release(env_text=env_text)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        label = next(c["config"] for c in calls if c["args"][0] == "compose")
+        self.assertTrue(label)
+        return label
+
+    def test_healthy_same_digest_and_configuration_preserves_running_streams(self):
+        result, calls = self.run_release(
+            FAKE_CURRENT_IMAGE=DIGEST, FAKE_CONFIG=self.released_config()
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("no restart needed", result.stdout)
         self.assertFalse(any(c["args"][0] == "compose" for c in calls))
         # The login tool still arrives when the image does not change.
         self.assertTrue(self.installed_login)
 
+    def test_a_changed_env_is_applied_though_the_digest_is_unchanged(self):
+        before = self.released_config()
+        changed = ENV_TEXT + "CHEESE_TOKEN_CAP=5000\n"
+        result, calls = self.run_release(
+            env_text=changed, FAKE_CURRENT_IMAGE=DIGEST, FAKE_CONFIG=before
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("no restart needed", result.stdout)
+        release = [c for c in calls if c["args"][0] == "compose"]
+        self.assertEqual(len(release), 1)
+        self.assertIn("--force-recreate", release[0]["args"])
+        self.assertEqual(release[0]["image"], DIGEST)
+        # The recreated container carries the new configuration's label, so the
+        # release after it leaves it running.
+        self.assertEqual(release[0]["config"], self.released_config(changed))
+        self.assertNotEqual(release[0]["config"], before)
+
+    def test_a_container_no_release_labelled_is_recreated(self):
+        result, calls = self.run_release(FAKE_CURRENT_IMAGE=DIGEST, FAKE_CONFIG="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sum(c["args"][0] == "compose" for c in calls), 1)
+
+    def test_a_changed_digest_is_recreated_though_the_configuration_is_not(self):
+        result, calls = self.run_release(FAKE_CONFIG=self.released_config())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        release = [c for c in calls if c["args"][0] == "compose"]
+        self.assertEqual(len(release), 1)
+        self.assertEqual(release[0]["image"], DIGEST)
+        self.assertIn("--force-recreate", release[0]["args"])
+
     def test_a_release_installs_the_login_tool_beside_the_credential(self):
         result, _calls = self.run_release()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.installed_login)
+
+    def test_a_release_creates_the_gateway_network_when_it_is_missing(self):
+        for missing in ("", "1"):
+            result, calls = self.run_release(NO_NETWORK=missing)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            args = [c["args"] for c in calls]
+            created = ["network", "create", "--internal", "cheese-meter-gateway"]
+            compose = next(i for i, a in enumerate(args) if a[0] == "compose")
+            if missing:
+                self.assertLess(args.index(created), compose)
+            else:
+                self.assertNotIn(created, args)
 
     def test_unhealthy_same_digest_is_recreated(self):
         result, calls = self.run_release(
@@ -214,6 +302,14 @@ class MeteringReleaseTest(unittest.TestCase):
         self.assertIn("./certs:", release[-1]["configs"][0])
         self.assertIn("/ledger:", release[-1]["configs"][0])
         self.assertIn('image: "sha256:previous"', release[-1]["configs"][-1])
+        # The restored container does not run the configuration that failed, so
+        # it must not carry that configuration's label: the next release with
+        # the same image and .env has to try again rather than exit early.
+        rollback = yaml.safe_load(release[-1]["configs"][-1])["services"]
+        self.assertEqual(
+            rollback["metering-proxy"]["labels"],
+            {"cheese.metering-proxy.config-sha256": ""},
+        )
         self.assertEqual(
             calls[-1]["args"], ["exec", "-i", "cheese-metering-proxy", "python", "-"]
         )

@@ -33,7 +33,10 @@ export default {
         // 当成生人：先给他看推广页，恢复完再跳走——或者恢复得比推广页挂载
         // 还快，那一跳就没人接，页面就停在推广页上。
         await AccountService.sessionRestored
-        return AccountService.loggedIn ? { name: 'HomeWork' } : true
+        if (AccountService.loggedIn) return { name: 'HomeWork' }
+        // 桌面 app 是已经装上的人在用，推广页对他没有意义：没登录就直接去登录。
+        const { inDesktopApp } = await import('@/lib/desktopApp')
+        return inDesktopApp() ? { name: 'SignIn' } : true
       },
     },
     {
@@ -45,6 +48,17 @@ export default {
         publicLanding: true,
       },
       component: () => import('@/views/home/Landing.vue'),
+    },
+    {
+      // 写给把知是引进来的一方：学校、企业、科研团队。首页写给做项目的人。
+      path: 'solutions',
+      name: 'Solutions',
+      meta: {
+        title: '方案',
+        titleKey: 'publicSite.solutionsPage.title',
+        publicLanding: true,
+      },
+      component: () => import('@/views/home/Solutions.vue'),
     },
     {
       // 我的工作：登录后的首页（`/` 把已登录的人送到这儿）。不进任何项目就能看见

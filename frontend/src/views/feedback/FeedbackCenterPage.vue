@@ -4,10 +4,14 @@ import type { FeedbackTab as TabName } from '@/stores/feedback'
 
 import { computed, onMounted, ref, watch } from 'vue'
 
-import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import AdminTabs from '@/components/admin/AdminTabs.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
+import FeedbackErrorBanner from '@/components/feedback/FeedbackErrorBanner.vue'
+import { kindLabel, statusLabel } from '@/components/feedback/feedbackLabels'
+import FeedbackList from '@/components/feedback/FeedbackList.vue'
+import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import { t } from '@/i18n'
-import { KIND_LABEL, STATUS_META } from '@/lib/feedbackMeta'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 反馈中心首页 (/feedback)。
@@ -15,16 +19,35 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 它是一个**独立完整页面**：不套工作区那套左侧话题导航，也不进任何项目上下文。
 // 反馈说的是平台本身，跟「我现在在哪个项目里」没有关系。
 //
-// 页面结构是三层（标题行 / Tab / 列表）**加上一排筛选**。
+// 版面是四层：页头（标题 + 动作）/ 栏位页签 / 筛选条 / 列表。这四层现在**由三个共用件
+// 拼出来**，不再各画一遍：
 //
-// 那一排是后加的，而加它之前这里写着一句「刻意只有三层」—— 当时的理由是「筛选条会让
-// 『我要找的那条在哪』变成要读三处才能回答的问题」。那句话在列表还短的时候是对的，
-// 现在不成立了：**只靠搜索找不到东西的时候，缺的不是更多字符，是另一个问题** ——
-// 谁提的、哪一类、什么时候。四个筛选各自答的是这些，而它们和搜索一样是**服务端**的
-// 筛选（本地再筛一遍就是第二份实现）。
+//   * `FeedbackPageShell` —— 滚动容器、页边距、内容宽度、页头。四个反馈页以前各自
+//     逐字抄了一份 `.fb-page` / `.fb-head`，抄错一处的表现是「那一页有一截内容永远
+//     够不着」，而屏幕上没有任何东西看起来坏了。
+//   * `AdminTabs` —— 栏位。它是管理控制台同一排页签（下划线 + 计数），两个地方说的
+//     是同一件事（换一栏看），不该长得不一样。
+//   * `FeedbackList` + `AdminEmptyState` —— 一张面 + 头发丝分隔的行，四种「没有」共用
+//     一副骨架。
 //
-// 它们默认都不生效（全部「不限」），所以这一页第一眼的样子没变 —— 多出来的是一排
-// 控件，不是一层常态的过滤。
+// ## 筛选条为什么是这一排药丸
+//
+// 上一版是四个 `v-select` / `v-text-field` 横排：outlined 的输入框在 1440 下四个各自
+// 撑满一格、字比列表还大，而它们要回答的三个问题（谁提的、哪一类、什么时候）各自
+// 只有三五个取值 —— 值得一次点开下拉的只有「作者」那一栏，而它是打字。所以现在：
+//
+//   * 取值离散的三栏（类型 / 状态 / 时间）就地排成**一排药丸**，选中哪一颗一眼看得见，
+//     一次点击就换（下拉要点两下）。默认那颗是「不限」，也就是「这一栏没加条件」。
+//   * 「作者」留一个**手画的输入框**（和搜索框同一副骨架），带一颗清除的叉。
+//
+// 分组、药丸、搜索框都写在本文件里，但配色和尺寸走令牌，和管理控制台的工具栏是同一套
+// （`--fill` 的药丸、`--surface` + `--line` 的输入框、`--focus-ring` 的焦点环）。
+//
+// ## 筛选在服务端
+//
+// 四个筛选和搜索一样是**服务端**的筛选（本地再筛一遍就是第二份实现）—— `setFilter`
+// 会重新拉一页。它们默认都不生效（全部「不限」），所以这一页第一眼的样子没变：多出来的
+// 是一排控件，不是一层常态的过滤。
 //
 // 上一轮这里有一个「原型身份」开关（user / admin），那是给人看两套界面的道具。现在
 // 权限在服务端：`store.isAdmin` 读 `GET /feedback/meta`，管理后台的入口跟着它出现
@@ -33,46 +56,68 @@ defineOptions({ name: 'FeedbackCenterPage' })
 
 const store = useFeedbackStore()
 
+/* ---- 搜索 ----
+ *
+ * 绑法照旧：**store 才是那一份**（`setQuery` 会防抖之后重新拉一页）。输入框自己不留
+ * 一格状态，否则「清除筛选」把 store 里那句清掉之后，框里还留着上一次打进去的词。 */
+function onSearch(event: Event) {
+  store.setQuery((event.target as HTMLInputElement).value)
+}
+
 /* ---- 四个筛选 ---------------------------------------------------------------
  *
  * 控件的值各自有一格本地状态，**store 才是发请求那一份**：`setFilter` 会重新拉一页，
  * 因为筛选在服务端（本地筛是第二份实现，两份漂开的表现是「翻页之后筛选悄悄失效」）。
- *
- * 选项里的名词一律来自共享的表（`KIND_LABEL`、`STATUS_META`、`store.statusLadder`）：
- * 这一页再写一遍「Bug / 建议 / 其他」就是同一个事实的第二份拷贝，而它的漂开方式是
- * 「列表里叫建议、筛选框里叫功能请求」。
  */
 const kind = ref<FeedbackKind | null>(store.filterKind)
 const status = ref<FeedbackStatus | null>(store.filterStatus)
 const days = ref<number | null>(store.filterDays)
 const author = ref(store.filterAuthor)
 
+/** 三个离散栏位的取值。**「不限」不是一个值，是「这一栏没加条件」**，所以它的 value
+ *  是 null —— 服务端收到 null 就是不按这一栏筛。 */
 const kindOptions = computed(() => [
-  { value: null, title: '不限' },
+  { value: null, title: t('feedback.center.filter.any') },
   ...(store.meta?.kinds ?? ['bug', 'suggestion', 'other']).map((value) => ({
     value,
-    title: KIND_LABEL[value],
+    title: kindLabel(value),
   })),
 ])
 const statusOptions = computed(() => [
-  { value: null, title: '不限' },
-  ...store.statusLadder.map((value) => ({ value, title: STATUS_META[value].label })),
+  { value: null, title: t('feedback.center.filter.any') },
+  ...store.statusLadder.map((value) => ({ value, title: statusLabel(value) })),
 ])
-const dayOptions = [
-  { value: null, title: '不限' },
-  { value: 1, title: '24 小时' },
-  { value: 7, title: '7 天' },
-  { value: 30, title: '30 天' },
-]
+const dayOptions = computed(() => [
+  { value: null, title: t('feedback.center.filter.any') },
+  { value: 1, title: t('feedback.center.filter.days24') },
+  { value: 7, title: t('feedback.center.filter.days7') },
+  { value: 30, title: t('feedback.center.filter.days30') },
+])
+
+function setKind(value: FeedbackKind | null) {
+  kind.value = value
+  store.setFilter({ kind: value })
+}
+
+function setStatus(value: FeedbackStatus | null) {
+  status.value = value
+  store.setFilter({ status: value })
+}
+
+function setDays(value: number | null) {
+  days.value = value
+  store.setFilter({ days: value })
+}
 
 /** 作者那一栏是打字，按防抖提交 —— 每敲一个字发一次请求，和搜索框一样的毛病。
- *  下拉是离散的一次选择，那三个不防抖。 */
+ *  药丸是离散的一次选择，那三个不防抖。 */
 let authorTimer: ReturnType<typeof setTimeout> | null = null
 watch(author, (value) => {
-  // **`?? ''` 不是防御性编程，是这一栏真的会变成 null**：`v-text-field` 的
-  // `clearable` 那颗 × 走的是 Vuetify 的 `onClear`，它把 model 置成 `null` 而不是
-  // 空串（`VTextField.js` 的 `model.value = null`）。少了这一句，点一下 × 就在
-  // watch 里抛 `Cannot read properties of null`，而**筛选清不掉**、界面还停在原样。
+  // **`?? ''` 留着的理由和以前不一样了**：手画的输入框只会给出字符串，但这一格还会
+  // 被别处写（`clearFilters` 和「清除作者」那颗叉），而它当初是从 `v-text-field` 的
+  // `clearable` 那里学到的教训 —— 清除按钮把 model 置成 `null` 而不是空串。少一句
+  // 判空，清一次就在 watch 里抛 `Cannot read properties of null`，而**筛选清不掉**、
+  // 界面还停在原样。
   const text = value ?? ''
   if (authorTimer) clearTimeout(authorTimer)
   authorTimer = setTimeout(() => {
@@ -80,19 +125,21 @@ watch(author, (value) => {
   }, 300)
 })
 
-/** 栏位的中文名。**有哪些栏位**来自服务端（`meta.tabs`），这里只负责把它们叫成
- *  人话；服务端多出一个栏位时标成它自己的名字，而不是不显示（少一个 Tab 比多一个
- *  写着生词的好，因为少的那一个没有任何地方提示它存在过）。 */
+/** 栏位的名字来自词表。**键写成字面量的表**，不拼字符串：i18n 的闸门
+ *  （`src/i18n/catalog.spec.ts`）照源码里的字面量认「这个键有人用」，拼出来的键既不算
+ *  一次调用、那四个叶子又会被判成「没有任何文件引用」。 */
 // 「已完成」而不是某一级状态的名字：这一栏装的是**收尾的两级**（已修复 + 已上线），
 // 只写其中任一个，另一级都会在点进去之前看起来像丢了。`active` 反过来是
 // 精确的 —— 那一栏现在只剩「处理中」，「已收录」还没人接手，不算活跃。
-const TAB_LABELS: Record<string, string> = {
-  all: '全部',
-  hot: '热门',
-  active: '处理中',
-  resolved: '已完成',
+const TAB_KEYS: Record<string, string> = {
+  all: 'feedback.center.tab.all',
+  hot: 'feedback.center.tab.hot',
+  active: 'feedback.center.tab.active',
+  resolved: 'feedback.center.tab.resolved',
 }
-const labelOf = (tab: string) => TAB_LABELS[tab] ?? tab
+/** 服务端多出一个栏位时标成它自己的名字，而不是不显示（少一个 Tab 比多一个写着生词
+ *  的好，因为少的那一个没有任何地方提示它存在过）。 */
+const labelOf = (tab: string) => (TAB_KEYS[tab] ? t(TAB_KEYS[tab]) : tab)
 
 const tabs = computed(() =>
   (store.meta?.tabs ?? ['all', 'hot', 'active', 'resolved']).map((value) => ({
@@ -111,26 +158,38 @@ onMounted(() => {
 
 /** 空列表有四种，说的话不一样：「没拉到」「搜索没结果」「筛选之后没有」「一条都没有」。
  *  把它们合成一句「暂无反馈」的话，前三种都会看着像平台真的没有反馈 —— 而「没有」正是
- *  这条渠道最不该说错的一句话。 */
+ *  这条渠道最不该说错的一句话。
+ *
+ *  四选一的判据是「为什么会空」，不是「有没有筛选」：拉挂了的时候筛选是一个还不成立
+ *  的前提，所以失败排在最前。⚠️ 三句「没有」**必须分开**（§9.4）：搜索只覆盖标题、
+ *  摘要、正文、提交人四个字段，用户在标签里找一条查不到时，缺的正是「我搜的东西本来就
+ *  不在里面」这句话；而按类型筛空的人需要的是「换一个筛选条件」，不是「换一个关键词」。 */
 const hasQuery = computed(() => !!store.query.trim())
 /** 栏位或那四个筛选收窄了。**问 store 的 `hasFilters()`，不在这里再数一遍** ——
  *  那四个筛选的定义在 store 里（就是发请求的那一份），在这里重写一份等于同一件事有
  *  两个答案，而漂开的样子是「筛选明明生效了、空态却说平台一条反馈都没有」。 */
 const hasNarrowing = computed(() => store.tab !== 'all' || store.hasFilters())
 
-/** 四选一。文案本身在 i18n 目录里（两种语言逐条对齐），这里只做**选择** ——
- *  判据是「为什么会空」，不是「有没有筛选」：拉挂了的时候筛选是一个还不成立的前提，
- *  所以失败排在最前。
- *  ⚠️ 三句「没有」**必须分开**（§9.4）：搜索只覆盖标题、摘要、正文、提交人四个字段，
- *  用户在标签里找一条查不到时，缺的正是「我搜的东西本来就不在里面」这句话；而按类型
- *  筛空的人需要的是「换一个筛选条件」，不是「换一个关键词」—— 搜索无果那句 desc 说的
- *  是搜索覆盖哪几个字段，对着筛选条念它等于答非所问。 */
-const emptyState = computed(() => {
+type EmptyState = {
+  icon: string
+  title: string
+  desc: string
+  tone?: 'neutral' | 'error'
+  action?: string
+  /** 空态里那颗按钮要按的是哪一件事。文案和动作分开写，是因为同一颗位置上有两件
+   *  不同的事（重试 / 清除筛选），而它们各自对应哪一句在下面那四支里已经定死了。 */
+  act?: 'retry' | 'clear'
+}
+
+const emptyState = computed<EmptyState>(() => {
   if (store.error) {
     return {
       icon: 'mdi-alert-circle-outline',
+      tone: 'error',
       title: t('feedback.center.error.title'),
       desc: t('feedback.center.error.desc'),
+      action: t('feedback.center.error.retry'),
+      act: 'retry',
     }
   }
   if (hasQuery.value) {
@@ -145,6 +204,8 @@ const emptyState = computed(() => {
       icon: 'mdi-filter-variant-remove',
       title: t('feedback.center.filtered.title'),
       desc: t('feedback.center.filtered.desc'),
+      action: t('feedback.center.filtered.clear'),
+      act: 'clear',
     }
   }
   return {
@@ -154,6 +215,14 @@ const emptyState = computed(() => {
   }
 })
 
+function onEmptyAction() {
+  if (emptyState.value.act === 'retry') {
+    void store.loadList()
+    return
+  }
+  clearFilters()
+}
+
 /** 一次清干净：栏位、搜索词、以及那四个筛选。
  *
  *  **空态那颗按钮和筛选条那颗调的是同一个** —— 分两个的话，被筛选筛空的人按
@@ -161,7 +230,7 @@ const emptyState = computed(() => {
  *  控件说另一套。
  *
  *  控件那几格也要一起回默认值：`store.clearFilters()` 清的是**发请求的那一份**，
- *  而控件绑的是本地 ref —— 只清 store 的话，数字还显示着上一次的选择。
+ *  而控件绑的是本地 ref —— 只清 store 的话，药丸还停在选中的那一颗上。
  */
 function clearFilters() {
   kind.value = null
@@ -173,347 +242,388 @@ function clearFilters() {
 </script>
 
 <template>
-  <!-- `fill-height overflow-y-auto` 不是装饰，是这一页能不能滚的全部。common.scss
-       把 html/body/#app 定成固定高度 + `overflow: hidden`，滚动由每一页自己领
-       （CalendarView / ProfileView / MarketView 都是这么写的）。少了这两个类，内容
-       一旦比窗口高，下半截就被外面那层 `overflow-hidden` 裁掉，而且**没有任何元素
-       可滚** —— 1280×600 的窗口里反馈中心少 117px，列表最后几条再也够不着。 -->
-  <div class="fb-page fill-height overflow-y-auto">
-    <div class="fb-page__inner page-container">
-      <header class="fb-head">
-        <h1 class="t-page-title">反馈中心</h1>
-        <v-spacer />
-        <!-- 这里原先还有一个「数据与架构」的入口，通向 /design/feedback。删了：那是
-             给人核对实现用的页面，挂在产品里用户会当成功能点进去；两张图现在在
-             docs/topics/feedback-前端原型.md 里。 -->
-        <!-- 「我的反馈」对**所有人**都在（包括没登录的访客，他去了会看到空列表）。
-             它不发请求问「我是谁」：清单的边界在服务端，这一页只是那一摞的门。 -->
-        <v-btn variant="text" color="secondary" size="small" to="/feedback/mine"> 我的反馈 </v-btn>
-        <!-- 管理后台的入口**只在服务端说我是管理员时出现**。上一轮这里是一个可以拨的
-             开关；现在拨不动了，因为拨的其实是「我能不能看见别人的私密反馈」这件事，
-             而那件事只能由服务端答。 -->
-        <v-btn v-if="store.isAdmin" variant="outlined" color="secondary" size="small" to="/admin/feedback">
-          管理后台
-        </v-btn>
-      </header>
+  <FeedbackPageShell :title="t('feedback.center.title')">
+    <template #actions>
+      <!-- 这里原先还有一个「数据与架构」的入口，通向 /design/feedback。删了：那是
+           给人核对实现用的页面，挂在产品里用户会当成功能点进去；两张图现在在
+           docs/topics/feedback-前端原型.md 里。 -->
+      <!-- 「我的反馈」对**所有人**都在（包括没登录的访客，他去了会看到空列表）。
+           它不发请求问「我是谁」：清单的边界在服务端，这一页只是那一摞的门。 -->
+      <v-btn variant="text" color="secondary" size="small" to="/feedback/mine">
+        {{ t('feedback.center.mine') }}
+      </v-btn>
+      <!-- 管理后台的入口**只在服务端说我是管理员时出现**。上一轮这里是一个可以拨的
+           开关；现在拨不动了，因为拨的其实是「我能不能看见别人的私密反馈」这件事，
+           而那件事只能由服务端答。 -->
+      <v-btn v-if="store.isAdmin" variant="outlined" color="secondary" size="small" to="/admin/feedback">
+        {{ t('feedback.center.admin') }}
+      </v-btn>
+      <!-- 提交走**独立页面**（`/feedback/new`），不是就地开一个浮层。这一颗只是那一页
+           的门：草稿由那一页自己准备（`SubmitFeedbackForm` 挂载时调 `openSubmit`），
+           这里不再调一次 —— 两处都调的话，第二次会把刚捞回来的草稿重判一遍。 -->
+      <v-btn color="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">
+        {{ t('feedback.center.submit') }}
+      </v-btn>
+    </template>
 
-      <div class="fb-toolbar">
-        <v-text-field
-          :model-value="store.query"
+    <!-- 栏位切换走一个 action，不直接绑 `store.tab`：栏位是**服务端**的筛选，改了的
+         下一件事必然是重新拉一页，绑赋值就把那一步留在模板外面了。 -->
+    <AdminTabs
+      :model-value="store.tab"
+      :options="tabs"
+      :label="t('feedback.center.tab.label')"
+      class="fb-tabs"
+      @update:model-value="store.setTab($event as TabName)"
+    />
+
+    <!-- 筛选条。默认全部「不限」，所以这一页第一眼的样子没变；那一排药丸说的是
+         「这一栏里哪些」，栏位页签说的是「哪一栏」。 -->
+    <div class="fb-tools">
+      <div class="fb-search">
+        <v-icon icon="mdi-magnify" size="16" class="fb-search__icon" aria-hidden="true" />
+        <input
+          :value="store.query"
+          type="text"
+          class="fb-search__input"
+          :placeholder="t('feedback.center.search.placeholder')"
+          :aria-label="t('feedback.center.search.placeholder')"
           autocomplete="off"
-          placeholder="搜索反馈"
-          prepend-inner-icon="mdi-magnify"
-          variant="outlined"
-          density="compact"
-          hide-details
-          clearable
-          class="fb-search"
-          @update:model-value="(v: string) => store.setQuery(v ?? '')"
+          spellcheck="false"
+          @input="onSearch"
         />
-        <!-- 提交走**独立页面**（`/feedback/new`），不是就地开一个浮层。这一颗只是那一页
-             的门：草稿由那一页自己准备（`SubmitFeedbackForm` 挂载时调 `openSubmit`），
-             这里不再调一次 —— 两处都调的话，第二次会把刚捞回来的草稿重判一遍。 -->
-        <v-btn color="primary" prepend-icon="mdi-plus" :to="{ name: 'FeedbackSubmit' }">提交反馈</v-btn>
       </div>
 
-      <!-- Tab 的切换走一个 action，不直接绑 `store.tab`：栏位是**服务端**的筛选，
-          改了的下一件事必然是重新拉一页，绑赋值就把那一步留在模板外面了。 -->
-      <v-tabs
-        :model-value="store.tab"
-        density="comfortable"
-        color="on-surface"
-        slider-color="primary"
-        class="fb-tabs"
-        @update:model-value="store.setTab($event as TabName)"
-      >
-        <v-tab v-for="tab in tabs" :key="tab.value" :value="tab.value">
-          {{ tab.label }}
-          <span class="fb-tab-count">{{ tab.count }}</span>
-        </v-tab>
-      </v-tabs>
-
-      <!-- 四个筛选。**默认全部「不限」**，所以这一页第一眼的样子没变。它们加在栏位
-           之上（栏位说「哪一栏」，这四个说「那一栏里哪些」），而且和搜索一样在服务端
-           执行 —— 本地再筛一遍就是第二份实现。 -->
-      <div class="fb-filters">
-        <v-select
-          v-model="kind"
-          :items="kindOptions"
-          density="compact"
-          variant="outlined"
-          hide-details
-          class="fb-filter"
-          autocomplete="off"
-          aria-label="类型"
-          @update:model-value="store.setFilter({ kind })"
-        />
-        <v-select
-          v-model="status"
-          :items="statusOptions"
-          density="compact"
-          variant="outlined"
-          hide-details
-          class="fb-filter"
-          autocomplete="off"
-          aria-label="状态"
-          @update:model-value="store.setFilter({ status })"
-        />
-        <v-text-field
-          v-model="author"
-          placeholder="作者"
-          density="compact"
-          variant="outlined"
-          hide-details
-          autocomplete="off"
-          class="fb-filter"
-          aria-label="作者"
-          clearable
-        />
-        <v-select
-          v-model="days"
-          :items="dayOptions"
-          density="compact"
-          variant="outlined"
-          hide-details
-          class="fb-filter"
-          autocomplete="off"
-          aria-label="时间"
-          @update:model-value="store.setFilter({ days })"
-        />
-        <!-- 「清除筛选」只在真有筛选时出现：常驻的话它是一颗平时没有任何作用的
-             按钮，而这一排里已经有四个控件了。 -->
-        <v-btn
-          v-if="store.hasFilters()"
-          variant="text"
-          color="secondary"
-          size="small"
-          class="fb-filters__clear"
-          @click="clearFilters"
+      <div class="fb-fgroup" role="radiogroup" :aria-label="t('feedback.center.filter.kind')">
+        <span class="fb-fgroup__label">{{ t('feedback.center.filter.kind') }}</span>
+        <button
+          v-for="option in kindOptions"
+          :key="String(option.value)"
+          type="button"
+          class="fb-pill"
+          :class="{ 'fb-pill--on': kind === option.value }"
+          role="radio"
+          :aria-checked="kind === option.value"
+          @click="setKind(option.value)"
         >
-          清除筛选
-        </v-btn>
+          {{ option.title }}
+        </button>
       </div>
 
-      <!-- 「热门」凭什么这么排，是这一页唯一一处读者猜不出来的规则：它看着像按支持数
-           排，其实是按「支持数按半衰期折过的分数」排 —— 一条二十个支持的老反馈排在一条
-           今天刚爆的上面，不解释一句就只是「这个排序坏了」。
-           三个数都由服务端随 `meta` 发下来，这里只负责把它们说成人话：前端自己再算一遍
-           的话（哪怕只是把 2 写死在这句话里），改阈值就要改两处，而两处漂开的表现是
-           「说明和实际排序对不上」，页面上看不出任何异常。
-           加载中不藏它：这句话说的是这一栏的规则，不是这一栏的结果，跟着骨架一起闪一下
-           反倒是多一次闪动。 -->
-      <p v-if="store.tab === 'hot'" class="t-meta fb-hot-note">
-        按支持数算，但越新的越算数：今天 2 个支持，和
-        {{ store.hotHalfLifeDays }} 天前的 4 个一样重。够 {{ store.hotThreshold }} 分、又还没办完的 进这一栏；够线的不足
-        {{ store.hotMinItems }} 条时按分数补齐，所以刚开板也不会空着。
-      </p>
+      <div class="fb-fgroup" role="radiogroup" :aria-label="t('feedback.center.filter.status')">
+        <span class="fb-fgroup__label">{{ t('feedback.center.filter.status') }}</span>
+        <button
+          v-for="option in statusOptions"
+          :key="String(option.value)"
+          type="button"
+          class="fb-pill"
+          :class="{ 'fb-pill--on': status === option.value }"
+          role="radio"
+          :aria-checked="status === option.value"
+          @click="setStatus(option.value)"
+        >
+          {{ option.title }}
+        </button>
+      </div>
 
-      <!-- 骨架**不放进 .fb-list**：那一层是 gap 8 的 flex 列，而骨架的行自带 8px
-           下边距（它得能单独用在任何地方），两处一叠就是 16px，到货那一刻列表会
-           往上收一截 —— 骨架存在的意义正是不让这件事发生。 -->
-      <!-- 列表**非空**时的失败也要画出来。以前 error 只在下面那块「一条也没有」里
-           渲染，于是从卡片上点「支持」失败（已办完的条目回 412）时页面上什么都不动：
-           按钮按得下去、数字不变、一句话也没有 —— 和「这个按钮坏了」长得一模一样。
-           列表为空时下面那块画同一句话（并且带重试），这里不重复画。 -->
-      <v-alert
-        v-if="store.error && store.items.length"
-        type="warning"
-        variant="tonal"
-        density="compact"
-        closable
-        class="mb-3"
-        @click:close="store.clearError()"
-      >
-        {{ store.error }}
-      </v-alert>
+      <div class="fb-fgroup" role="radiogroup" :aria-label="t('feedback.center.filter.days')">
+        <span class="fb-fgroup__label">{{ t('feedback.center.filter.days') }}</span>
+        <button
+          v-for="option in dayOptions"
+          :key="String(option.value)"
+          type="button"
+          class="fb-pill"
+          :class="{ 'fb-pill--on': days === option.value }"
+          role="radio"
+          :aria-checked="days === option.value"
+          @click="setDays(option.value)"
+        >
+          {{ option.title }}
+        </button>
+      </div>
 
-      <!-- 骨架画 3 张卡（§9.4），不是 6 行：这一页的「一行」是一张 132px 的卡，
-           6 张会把首屏占满、下面一半全是灰块，而第一屏真正该看见的是内容。 -->
-      <LoadingSkeleton v-if="store.loading" variant="feedback" :rows="3" />
+      <!-- 「作者」是这一排里唯一要打字的：它的取值不是三五个，是一个 handle。
+           清除的叉**只在框里有字时出现** —— 常驻的话它是一颗平时没有任何作用的按钮。 -->
+      <div class="fb-fgroup">
+        <label class="fb-fgroup__label" for="fb-author">{{ t('feedback.center.filter.author') }}</label>
+        <div class="fb-author">
+          <input
+            id="fb-author"
+            v-model="author"
+            type="text"
+            class="fb-author__input"
+            :placeholder="t('feedback.center.filter.authorPlaceholder')"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button
+            v-if="author"
+            type="button"
+            class="fb-author__x"
+            :aria-label="t('feedback.center.filter.clear')"
+            @click="author = ''"
+          >
+            <v-icon size="12" aria-hidden="true">mdi-close</v-icon>
+          </button>
+        </div>
+      </div>
 
-      <div v-else class="fb-list">
-        <!-- 打开详情那条链接在卡片自己身上（`router-link`），这里不再接一个
-             `@open` 去 push —— 那就又回到「只有鼠标够得着」了，见 FeedbackCard.vue。 -->
-        <FeedbackCard v-for="item in store.items" :key="item.id" :item="item" />
-        <div v-if="!store.items.length" class="fb-empty">
-          <v-icon size="28" class="fb-empty__icon">{{ emptyState.icon }}</v-icon>
-          <div class="fb-empty__title">{{ emptyState.title }}</div>
-          <p class="fb-empty__desc">{{ emptyState.desc }}</p>
+      <!-- 「清除筛选」只在真有筛选时出现：常驻的话它是一颗平时没有任何作用的按钮，
+           而这一排里已经有五组控件了。 -->
+      <button v-if="store.hasFilters()" type="button" class="fb-clear" @click="clearFilters">
+        {{ t('feedback.center.filter.clear') }}
+      </button>
+    </div>
+
+    <!-- 「热门」凭什么这么排，是这一页唯一一处读者猜不出来的规则：它看着像按支持数
+         排，其实是按「支持数按半衰期折过的分数」排 —— 一条二十个支持的老反馈排在一条
+         今天刚爆的上面，不解释一句就只是「这个排序坏了」。
+         三个数都由服务端随 `meta` 发下来，这里只负责把它们说成人话：前端自己再算一遍
+         的话（哪怕只是把 2 写死在这句话里），改阈值就要改两处，而两处漂开的表现是
+         「说明和实际排序对不上」，页面上看不出任何异常。
+         加载中不藏它：这句话说的是这一栏的规则，不是这一栏的结果，跟着骨架一起闪一下
+         反倒是多一次闪动。 -->
+    <p v-if="store.tab === 'hot'" class="t-meta-read t-num fb-hot-note">
+      {{
+        t('feedback.center.hot.note', {
+          halfLife: store.hotHalfLifeDays,
+          threshold: store.hotThreshold,
+          minItems: store.hotMinItems,
+        })
+      }}
+    </p>
+
+    <!-- 列表**非空**时的失败也要画出来。以前 error 只在下面那块「一条也没有」里
+         渲染，于是从卡片上点「支持」失败（已办完的条目回 412）时页面上什么都不动：
+         按钮按得下去、数字不变、一句话也没有 —— 和「这个按钮坏了」长得一模一样。
+         列表为空时下面那块画同一句话（并且带重试），这里不重复画。 -->
+    <FeedbackErrorBanner
+      v-if="store.error && store.items.length"
+      :message="store.error"
+      @dismiss="store.clearError()"
+    />
+
+    <!-- 列表：一张面 + 头发丝分隔的行（`FeedbackList`）。骨架行数由它自己定（§9.4），
+         这一页的「一行」是一条 60 来像素的反馈行，不是 132px 的卡。 -->
+    <FeedbackList
+      :loading="store.loading"
+      :count="store.items.length"
+      :has-more="store.listHasMore"
+      :loading-more="store.loadingMore"
+      :shown="store.items.length"
+      :total="store.total"
+      @more="store.loadMoreList()"
+    >
+      <!-- 打开详情那条链接在行自己身上（`router-link`），这里不再接一个 `@open`
+           去 push —— 那就又回到「只有鼠标够得着」了，见 FeedbackCard.vue。 -->
+      <FeedbackCard v-for="item in store.items" :key="item.id" :item="item" />
+
+      <template #empty>
+        <AdminEmptyState
+          :title="emptyState.title"
+          :desc="emptyState.desc"
+          :icon="emptyState.icon"
+          :tone="emptyState.tone"
+          :action="emptyState.action"
+          @action="onEmptyAction"
+        >
           <!-- 服务端那句话照直画出来：上面那句说的是「这类事现在是什么样」，
                这一句说的是「这一次为什么没成」—— 两句不是一回事，少一句就只剩
                「检查网络后重试」，而失败可能压根不是网络（比如没有权限）。 -->
           <p v-if="store.error" class="fb-empty__raw t-meta-read">{{ store.error }}</p>
-          <v-btn
-            v-if="store.error"
-            variant="text"
-            color="secondary"
-            size="small"
-            class="fb-empty__action"
-            @click="store.loadList()"
-          >
-            重试
-          </v-btn>
-          <v-btn
-            v-else-if="hasQuery || hasNarrowing"
-            variant="text"
-            color="secondary"
-            size="small"
-            class="fb-empty__action"
-            @click="clearFilters"
-          >
-            {{ t('feedback.center.filtered.clear') }}
-          </v-btn>
-        </div>
+        </AdminEmptyState>
+      </template>
 
-        <!-- 翻页那一行只在**真的还有下一页**时出现（`listHasMore` 比的是手上条数和
-             服务端报的总数）。到底了不画「已到底」：那一行字只是在告诉读者「这个按钮
-             你按不了了」，而没按过的人看到它只会以为自己漏看了什么。 -->
-        <div v-if="store.listHasMore" class="fb-more">
-          <v-btn
-            variant="outlined"
-            color="secondary"
-            size="small"
-            :loading="store.loadingMore"
-            @click="store.loadMoreList()"
-          >
-            加载更多
-          </v-btn>
-          <span class="t-meta"> 已显示 {{ store.items.length }} / 共 {{ store.total }} 条 </span>
-        </div>
-      </div>
-
-      <!-- 页脚在加载时先不画：它是「读完了、下面是空的」这句话的一部分，
-           跟着骨架一起出现等于提前说了还没到的话。
-           这句话说的是**在这个页面上提交**会发生什么，而这条路提出来的反馈没有房间来源
+      <!-- 页脚说的是**在这个页面上提交**会发生什么，而这条路提出来的反馈没有房间来源
            （`topic_id` 只有 accept 端点解得出），所以不提房间那一档——详情页和卡片上的
            那句说的是一条已经存在的行，它可能有房间，两处不一样是对的。 -->
-      <p v-if="!store.loading" class="t-meta fb-foot">
-        公开反馈所有人可见；提交时选「私密」的只有你和平台管理员能看到，别人搜不到、也拿不到链接
-      </p>
-    </div>
-  </div>
+      <template #foot>{{ t('feedback.center.foot') }}</template>
+    </FeedbackList>
+  </FeedbackPageShell>
 </template>
 
 <style scoped>
-.fb-page {
-  /* 左右 16 是窄屏的页边距：容器本身居中且有 max-width，宽屏上真正撑开版面的是
-     page-container，不是这 16px。 */
-  padding: 24px 16px 48px;
+/* 栏位页签下面那条底线由 `AdminTabs` 自己画（选中项的 2px 琥珀下划线），这里只给它
+   和下面一排控件之间的距离。 */
+.fb-tabs {
+  margin-bottom: 4px;
 }
-.fb-page__inner {
-  margin: 0 auto;
-}
-.fb-head {
+/* 筛选条：一组一组排，放不下就整组折行。组**自己不折行**（一颗药丸不该和它的同伴
+   分开），所以窄屏上是一组一行。 */
+.fb-tools {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px 16px;
   margin-bottom: 16px;
 }
-.fb-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
+/* 搜索框：和管理控制台那把是同一副骨架（32px、`--surface` + `--line`、焦点换边框色
+   而不是再套一圈 outline）。宽度收在 240 —— 再宽它也只是这一排里的一格。 */
 .fb-search {
-  max-width: 360px;
-}
-/* 四个筛选一排。窄屏折行 —— 四个控件加清除按钮在 360px 上放不下，硬挤会变成每个
-   都窄到读不出值。 */
-.fb-filters {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 0 240px;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
 }
-
-/* 每个下拉一个固定宽度：`v-select` 默认会撑满，四个撑满会把这一行挤成四行。 */
-.fb-filter {
-  flex: 0 0 140px;
-  max-width: 140px;
+.fb-search:focus-within {
+  border-color: var(--focus-ring);
 }
-
-.fb-filters__clear {
-  flex: 0 0 auto;
-}
-
-.fb-tabs {
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--line);
-}
-.fb-tab-count {
-  margin-left: 6px;
-  font-family: var(--font-mono);
-  font-size: 12px;
+.fb-search__icon {
   color: var(--faint);
 }
-.fb-list {
-  display: flex;
-  flex-direction: column;
-  /* 卡片之间 16px（§4.3）：8px 的时候相邻两张卡的下沿和上沿只差一线之隔，
-     而这两张卡的描边本来就一样重，一屏十几张看上去像一整块被横线划开的表 ——
-     卡片是「一条一条」的，行距得让这件事看得见。 */
-  gap: 16px;
-}
-.fb-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  max-width: 320px;
-  margin: 0 auto;
-  padding: 48px 0;
-  gap: 8px;
-}
-/* 空态那一块的字号分两档（§9.2）：主文案 15/--lh-15/600/--ink 是「现在这样」，
-   副文案 13/--lh-13/--muted 是「接下来怎么办」。别把两句话并成一句 —— 并了之后
-   要么主文案被副文案拖成一条说明，要么副文案被抬成标题，两种都读不出主次。
-   这一块整体不用 --faint：它是要人读的（AA 4.5:1），--faint 在浅色主题下
-   四种底色上都到不了 3:1（见 style.css 的 .t-meta-read）。 */
-.fb-empty__icon {
-  color: var(--muted);
-}
-.fb-empty__title {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
+.fb-search__input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
   color: var(--ink);
-  text-align: center;
-}
-.fb-empty__desc {
-  margin: 0;
+  font-family: inherit;
   font-size: 13px;
   line-height: var(--lh-13);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.fb-search__input::placeholder {
+  color: var(--faint);
+}
+/* 一组筛选：一个 12px 的栏名 + 一排药丸。栏名是**说明**（它说的是右边那几颗是什么），
+   自己不参与点选，所以用 --muted 而不是 --ink。 */
+.fb-fgroup {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.fb-fgroup__label {
+  margin-right: 2px;
   color: var(--muted);
-  text-align: center;
+  font-size: 12px;
+  line-height: var(--lh-12);
 }
-.fb-empty__raw {
-  margin: 0;
-  text-align: center;
+/* 药丸：`--fill` 底、选中那颗抬到 `--surface` + 一圈描边（和管理端的「栏位」同一个
+   控件、同一套颜色）。高 24 —— 它是这一排里最小的可点目标，再小就不好按了。 */
+.fb-pill {
+  height: 24px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+  background: var(--fill);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
-.fb-empty__action {
-  margin-top: 4px;
+.fb-pill:hover {
+  color: var(--text);
 }
-/* 热门那一栏的规则说明：Tab 那条底线之后 12px，往下和列表也是 12px。
+.fb-pill--on {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line-2);
+}
+/* 作者那一栏：一个 32px 的输入框，和搜索框同高同框（两者都是打字）。 */
+.fb-author {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.fb-author:focus-within {
+  border-color: var(--focus-ring);
+}
+.fb-author__input {
+  flex: 0 1 120px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.fb-author__input::placeholder {
+  color: var(--faint);
+}
+.fb-author__x {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--faint);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.fb-author__x:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+/* 「清除筛选」是一条文字按钮，不是药丸：它清的是**这一排全部**，比任何一颗药丸都大
+   一档，画成同样的形状会让人以为它只清旁边那一组。 */
+.fb-clear {
+  height: 24px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.fb-clear:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+/* 热门那一栏的规则说明：页签之后 12px，往下和列表也是 12px。
    不给底色、不加图标 —— 它是这一栏的注脚，不是警告，抬成一块提示框会让人以为
    热门这一栏出了什么问题。 */
 .fb-hot-note {
   margin: 0 0 12px;
   line-height: var(--lh-14-loose);
 }
-/* 翻页那一行：按钮和计数在同一条中线上，两者之间 12px。 */
-.fb-more {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding-top: 4px;
+/* 空态里那句服务端的原话。空态那副骨架（`AdminEmptyState`）把动作放在这一句上面，
+   所以这里只补一点上边距。 */
+.fb-empty__raw {
+  margin: 8px 0 0;
 }
-.fb-foot {
-  margin: 24px 0 0;
-  /* 用 token 而不是 1.7：这一档的领值只有 --lh-* 这一份来源，手写的倍数在两个
-     主题、两种语言里都不会跟着别处一起调。 */
-  line-height: var(--lh-14-loose);
+/* 窄屏：搜索框占满一整行（它在这一排里是最常用的那一格），其余每组各占一行。
+   药丸组自己在窄屏上折行 —— 英文的栏名和取值（"In progress" 那一档）比中文长一倍，
+   不折的话 390 上会横向溢出去。 */
+@media (max-width: 599.98px) {
+  .fb-search {
+    flex: 1 1 100%;
+  }
+  .fb-fgroup {
+    flex: 1 1 100%;
+  }
+  .fb-author__input {
+    flex: 1 1 auto;
+  }
 }
 </style>

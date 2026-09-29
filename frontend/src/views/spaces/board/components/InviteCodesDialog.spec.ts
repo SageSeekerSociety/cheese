@@ -58,12 +58,14 @@ function code(over: Record<string, unknown> = {}) {
   }
 }
 
-async function mount() {
+/** 挂起来并等到某一串出现在屏幕上 —— 用例各自关心的那串不一样，
+ *  钉不住「加载完了」就只在等一个超时。 */
+async function mount(expectText = 'ABCD2345EF') {
   const utils = render(InviteCodesDialog, {
     props: { spaceId: SPACE_ID, modelValue: true },
     global: { plugins: [createVuetify({ components, directives })] },
   })
-  await waitFor(() => expect(document.body.textContent).toContain('ABCD2345EF'))
+  await waitFor(() => expect(document.body.textContent).toContain(expectText))
   return utils
 }
 
@@ -93,7 +95,12 @@ describe('邀请码弹窗', () => {
     await fireEvent.click(screen.getByText('保存'))
 
     await waitFor(() => expect(updateInviteCode).toHaveBeenCalledTimes(1))
-    expect(updateInviteCode).toHaveBeenCalledWith(SPACE_ID, 7, { maxUses: 3, expiresAt: null })
+    // 说明这一格没人碰过 —— 表单带着它原来的值（这里是没有），所以发出去的是 null。
+    expect(updateInviteCode).toHaveBeenCalledWith(SPACE_ID, 7, {
+      maxUses: 3,
+      expiresAt: null,
+      note: null,
+    })
 
     // 重画是拿回来的那份，不是本地改出来的数字：状态也跟着从「已用尽」变回「可用」。
     await waitFor(() => expect(document.body.textContent).toContain('1 / 3 人已用'))
@@ -118,7 +125,7 @@ describe('邀请码弹窗', () => {
 
     await waitFor(() => expect(updateInviteCode).toHaveBeenCalledTimes(1))
     // 「不发」在后端读作「别动这一项」，所以清空必须真的发一个 null 出去。
-    expect(updateInviteCode.mock.calls[0][2]).toEqual({ maxUses: 1, expiresAt: null })
+    expect(updateInviteCode.mock.calls[0][2]).toEqual({ maxUses: 1, expiresAt: null, note: null })
     await waitFor(() => expect(document.body.textContent).toContain('永不过期'))
   })
 
@@ -163,5 +170,168 @@ describe('邀请码弹窗', () => {
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('可用人数不能少于已经用掉的 3 人'))
     expect(updateInviteCode).not.toHaveBeenCalled()
+  })
+})
+
+describe('这一张码是谁的、给谁用的', () => {
+  beforeEach(() => {
+    listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [code()] } }))
+    updateInviteCode.mockImplementation(async () => ({ data: { inviteCode: code() } }))
+    createInviteCode.mockImplementation(async () => ({ data: { inviteCode: code({ id: 8 }) } }))
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('建码人与说明都摆出来，不藏在只有点开才看得到的地方', async () => {
+    listInviteCodes.mockImplementation(async () => ({
+      data: {
+        inviteCodes: [
+          code({
+            createdBy: { id: 3, username: 'lin', nickname: '林' },
+            note: '给新来的设计师',
+          }),
+        ],
+      },
+    }))
+    await mount()
+
+    expect(document.body.textContent).toMatch(/建码人\s*@林/)
+    expect(document.body.textContent).toContain('给新来的设计师')
+    // 昵称为空时退到用户名，这是后端 `createdBy` 里两个都可能缺的那一格的兜底。
+    expect(document.body.textContent).not.toContain('未知')
+  })
+
+  it('两处都缺的时候写「未知」「没写说明」，不留白', async () => {
+    // 老码两样都没有：`created_by` 空、`note` 空，这在库里都是一条真话，不是坏掉。
+    await mount()
+
+    expect(document.body.textContent).toContain('建码人 未知')
+    expect(document.body.textContent).toContain('没写说明')
+  })
+
+  it('调整时预填着原来的说明，保存原样发回去', async () => {
+    listInviteCodes.mockImplementation(async () => ({
+      data: { inviteCodes: [code({ note: '给新来的设计师' })] },
+    }))
+    await mount()
+
+    await fireEvent.click(screen.getByText('调整'))
+    const field = screen.getByLabelText('说明（留空 = 清掉）') as HTMLInputElement
+    expect(field.value).toBe('给新来的设计师')
+
+    await fireEvent.update(field, '给新来的设计师（小周）')
+    await fireEvent.click(screen.getByText('保存'))
+
+    await waitFor(() => expect(updateInviteCode).toHaveBeenCalledTimes(1))
+    expect(updateInviteCode.mock.calls[0][2]).toMatchObject({ note: '给新来的设计师（小周）' })
+  })
+
+  it('把说明清空 = 真的清掉，发的是显式的 null', async () => {
+    listInviteCodes.mockImplementation(async () => ({
+      data: { inviteCodes: [code({ note: '给新来的设计师' })] },
+    }))
+    await mount()
+
+    await fireEvent.click(screen.getByText('调整'))
+    await fireEvent.update(screen.getByLabelText('说明（留空 = 清掉）'), '   ')
+    // 清掉之后服务端再报回来的就是一份没有说明的码。
+    listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [code()] } }))
+    await fireEvent.click(screen.getByText('保存'))
+
+    await waitFor(() => expect(updateInviteCode).toHaveBeenCalledTimes(1))
+    expect(updateInviteCode.mock.calls[0][2]).toMatchObject({ note: null })
+    await waitFor(() => expect(document.body.textContent).toContain('没写说明'))
+  })
+
+  it('新建时写的说明跟着建码请求一起发；全是空白 = 没有说明', async () => {
+    await mount()
+
+    await fireEvent.click(screen.getByText('新建'))
+    await fireEvent.update(screen.getByLabelText('说明（这张码给谁 / 干什么用，可不填）'), '  发 布 会  ')
+    await fireEvent.click(screen.getByText('生成'))
+
+    await waitFor(() => expect(createInviteCode).toHaveBeenCalledTimes(1))
+    expect(createInviteCode.mock.calls[0][1]).toMatchObject({ note: '发 布 会' })
+  })
+
+  it('一张什么都不填的新码发出去的是 null，不是一个空串', async () => {
+    await mount()
+
+    await fireEvent.click(screen.getByText('新建'))
+    await fireEvent.click(screen.getByText('生成'))
+
+    await waitFor(() => expect(createInviteCode).toHaveBeenCalledTimes(1))
+    expect(createInviteCode.mock.calls[0][1]).toMatchObject({ note: null })
+  })
+})
+
+describe('当前使用中的码', () => {
+  beforeEach(() => {
+    updateInviteCode.mockImplementation(async () => ({ data: { inviteCode: code() } }))
+    revokeInviteCode.mockImplementation(async () => ({ data: {} }))
+    createInviteCode.mockImplementation(async () => ({ data: { inviteCode: code({ id: 8 }) } }))
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  /** 当前码那一块单独取出来看 —— 列表里也有同样的码串，只看整页文本会看串。 */
+  function currentBlock(): HTMLElement {
+    const el = document.querySelector('.current')
+    if (!el) throw new Error('当前使用中的码那一块没渲染出来')
+    return el as HTMLElement
+  }
+
+  it('拿的是还能用的那一张，不是列表第一格', async () => {
+    listInviteCodes.mockImplementation(async () => ({
+      data: {
+        inviteCodes: [
+          // 第一格就是用尽的 —— 照着第一格发给下一个人是发不出去的。
+          code({ id: 7, code: 'USED1111AA', maxUses: 1, useCount: 1 }),
+          code({ id: 8, code: 'LIVE2222BB', maxUses: 5, useCount: 0 }),
+        ],
+      },
+    }))
+    await mount('LIVE2222BB')
+
+    expect(currentBlock().querySelector('.current__code')?.textContent).toContain('LIVE2222BB')
+    expect(currentBlock().textContent).toContain('0 / 5 人已用')
+  })
+
+  it('全是用尽或过期的，就说没有可用的码，并说清楚该怎么办', async () => {
+    listInviteCodes.mockImplementation(async () => ({
+      data: {
+        inviteCodes: [
+          code({ id: 7, code: 'USED1111AA', maxUses: 1, useCount: 1 }),
+          code({
+            id: 8,
+            code: 'DEAD2222BB',
+            maxUses: 5,
+            useCount: 0,
+            expiresAt: Date.now() - 1000,
+          }),
+        ],
+      },
+    }))
+    await mount('DEAD2222BB')
+
+    expect(currentBlock().querySelector('.current__code')).toBeNull()
+    expect(currentBlock().textContent).toContain('没有可用的码')
+    expect(currentBlock().textContent).toContain('新建一个')
+  })
+
+  it('一张码都没有时也不留白', async () => {
+    listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [] } }))
+    render(InviteCodesDialog, {
+      props: { spaceId: SPACE_ID, modelValue: true },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await waitFor(() => expect(document.body.textContent).toContain('没有可用的码'))
+    expect(currentBlock().textContent).toContain('新建一个')
   })
 })

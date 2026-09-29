@@ -192,7 +192,7 @@ or cancelled selected suites, and unexpected skips fail `CI required`. Remote
 execution acceptance remains advisory pending the stability target in #1279; the
 MCP latest-version canary runs on schedule or manual dispatch.
 
-Queue settings: two concurrent merge-group builds, ALLGREEN, squash merge, one
+Queue settings: four concurrent merge-group builds, ALLGREEN, squash merge, one
 to five PRs per merge, no minimum-batch wait, and a 60-minute check-response timeout.
 That timeout bounds a stalled queue; the feedback-time targets remain those in
 #1279.
@@ -203,9 +203,8 @@ PRs opened before the gate was installed need a new pull-request event to report
 ### Backend test execution
 
 The fixture-derived layers remain `pure`, `contract` and `integration`.
-`test.yml` runs pure and contract on separate hosted runners, integration on four
-deterministic hash partitions, and real Meilisearch integration tests on one
-serial runner with a dedicated service. Each runner uses its own PostgreSQL and
+`test.yml` runs pure and contract on separate hosted runners and integration on
+four deterministic hash partitions. Each runner uses its own PostgreSQL and
 Valkey containers.
 
 The required gate compares executed JUnit node IDs with an independently
@@ -219,7 +218,7 @@ tools as `test.yml`. Use a fresh output directory for each run:
 
 ```bash
 uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
-  -k 'not kotlin and not meilisearch_integration' -n 4 \
+  -k 'not kotlin' -n 4 \
   -p scripts.ci_shard --ci-shard 0/4 \
   --ci-selection-output=../tmp/ci-selection \
   --junitxml=../tmp/ci-selection/results.xml
@@ -227,8 +226,12 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 ## CI runner pool (cheese-ci)
 
-Backend CI (`test.yml`) runs on GitHub-hosted Ubuntu runners. E2E runs on the
-**cheese-ci** label — a pool of MicroCloud VMs (prod tenant, customer
+Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
+the CLI boot e2e and remote-execution acceptance. The organisation is on the
+Free plan, whose documented limit is 20 concurrent hosted jobs, but this public
+repository is not held to it: on 2026-09-28 Required CI alone had 41 hosted
+runners busy at once, and hosted jobs waited 1.2 minutes at the 90th percentile.
+The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
 keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
@@ -271,8 +274,8 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   4 KB `oflag=dsync` write took 3.5 ms on runner-3, IO stall 23% of the time,
   #668 needed five attempts to finish inside the 20-minute timeout while #667
   had taken 7 minutes on a quiet host). Since #670 the Postgres data directory
-  of the `test` and `e2e` service containers is a 3 GB tmpfs: no disk in the
-  path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
+  of the `test` job's integration service container is a tmpfs (its size is
+  set in `test.yml`): no disk in the path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
   host). A full run writes about 1 GB including WAL, measured locally; if the
   suite ever outgrows the tmpfs, Postgres fails with ENOSPC and the size in the
   workflow is the knob. The unit-test third never touched the disk and runs at
@@ -282,9 +285,8 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `RUNNER_TEMP` and therefore its own uv venv rather than a
   concurrent `uv sync` into one. Postgres and Valkey are resident on the machine
   (`deploy/ci-runner/resident-services.sh`, on 5442/6389) and shared by its
-  slots: a job's own service containers bind 5432/6379 and bring a 3 GB tmpfs
-  each, which is what held a machine to one job. What keeps two concurrent runs
-  apart is the slot each declares in its runner `.env` — see
+  slots. What keeps
+  two concurrent runs apart is the slot each declares in its runner `.env` — see
   `backend/tests/isolation.py` for the names it scopes, and note that the test
   harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
   runs handed one name delete each other's data mid-test.
@@ -426,10 +428,29 @@ sudo journalctl -t cheese-backend-1 --since "09:00" --until "09:30"
 only their own messages, and the command returns empty rather than refusing,
 which reads exactly like "there are no logs".
 
-Retention is journald's default, `SystemMaxUse` = min(10% of the filesystem,
-4 GB). Measured on dev, the backend writes ~61 MB/day, so 4 GB is on the order
-of two months; the journal also gives back space automatically when the disk
-runs low (`SystemKeepFree`), so it cannot be the thing that fills a box.
+Retention is set by `deploy/journald-cheese.conf`, which every deploy installs
+as `/etc/systemd/journald.conf.d/cheese.conf`: up to 40 GB and a month, and
+never below 40 GB free on the disk, whichever is tighter. At journald's own
+default (a tenth of the filesystem, at most 4 GB) dev kept about thirteen hours
+on 2026-09-29, and the evidence for a failure was gone before anyone looked.
+`sudo journalctl --disk-usage` and
+`sudo journalctl -t cheese-backend-1 -o short-iso | head -1` (the oldest line)
+say how far back a box reaches now.
+
+How long that is depends on what the app tier writes, so some lines are not
+written at all:
+
+- The HTTP clients' own request lines (`httpx`, `httpcore`) are logged only at
+  WARNING. The backend calls the device connection tens of times a second, and
+  those lines were nine in ten of its output.
+- The device connection's access log skips internal calls and health probes
+  that succeeded; a failed one is still logged.
+- The backend runs without uvicorn's access log, because its own `req` line
+  already records every request.
+
+The nginx access logs (`cheese-api-front`, `cheese-app-router`, the frontend)
+record the path and never the query string, because several URLs carry a
+credential in it (the room chat socket's `?token=`, `/llm/tunnel?token=`).
 
 The standing data-plane pair (`cheese-llm-tunnel`, `cheese-api-front`) is
 covered too. It is deployed by `deploy/llm-tunnel/up.sh` rather than
@@ -562,6 +583,71 @@ nothing about the encoding of the box you deploy to. Server encoding is a
 property of the box, not of the
 code, so it can only be caught by asserting on the real box — or by never
 creating a database without naming the encoding, which is the rule above.
+
+## Public edge: okcheese.com through Hong Kong, hand-managed
+
+`okcheese.com`, `www.okcheese.com` and `hk.okcheese.com` resolve to the etrip
+box (8.217.1.152). Its Caddy owns public :443 with a layer4 router
+([`scripts/ops/Caddyfile`](../scripts/ops/Caddyfile)) that forwards those names,
+still encrypted, to `127.0.0.1:18443`. That port is the far end of a reverse
+SSH tunnel opened by the dev box, which lands on api-front's TLS listener
+`127.0.0.1:18443` on the dev box (set up by
+`deploy/llm-tunnel/configure-frontend.sh`). The dev box has no public
+inbound, so the site is up exactly while this tunnel is up.
+
+None of it is deployed by CI. The units below were installed by hand; change
+them by hand, keep a timestamped copy of every file you edit next to it, and
+note the rollback command before you start.
+
+The tunnel travels inside TLS on :443, not as SSH on :22:
+
+    dev box: ssh -R 127.0.0.1:18443:127.0.0.1:18443
+      -> tls-proxy.py (TLS, SNI relay.okcheese.com, pinned certificate)
+      -> etrip :443, Caddy layer4 route for SNI relay.okcheese.com
+      -> socat on 127.0.0.1:2222 (terminates that TLS)
+      -> sshd :22, user hkrelay
+
+Bare SSH from the dev box's egress to etrip :22 stalls in the key exchange for
+several minutes at a time, several times a day. The TCP connection and the
+server banner still get through, and other hosts reach the same sshd without
+trouble, so neither the host nor the tunnel's keepalive settings are the cause.
+TLS on :443 over the same egress keeps working through those periods.
+
+| Box | Path | What it is |
+|---|---|---|
+| dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | the tunnel (enabled) |
+| dev | `/usr/local/libexec/cheese-hk-relay/tls-proxy.py` | the tunnel's `ProxyCommand` |
+| dev | `/home/nictheboy/.ssh/id_hkrelay`, `relay-okcheese.crt` | login key; the certificate `tls-proxy.py` pins etrip to |
+| dev | `/etc/systemd/system/cheese-hk-relay-tls.service` | previous tunnel, bare SSH on :22; installed but disabled |
+| dev | `/etc/systemd/system/cheese-hk-relay.service` | plain relay to `127.0.0.1:18080`; nothing routes there; installed but disabled |
+| etrip | `/etc/systemd/system/cheese-ssh-relay-tls.service` | socat, TLS on 127.0.0.1:2222 to sshd |
+| etrip | `/etc/ssl/relay/relay.pem` | certificate and key for `relay.okcheese.com` |
+| etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080` and `127.0.0.1:18443` |
+| etrip | `/etc/ssh/sshd_config`, last block | `Match User hkrelay`: forwarding only, 10 s × 2 keepalive |
+
+The TLS client is `tls-proxy.py` rather than `openssl s_client`. Used as a
+`ProxyCommand`, `s_client` closes the connection within a second or two of a
+few hundred kilobytes flowing through it, which turns every page load into a
+reconnect.
+
+The unit restarts after 5 s, with no growing backoff: systemd never resets its
+restart-step counter after a healthy run, so a backoff would add its maximum
+to every later reconnect. Every login that stalls holds one of etrip sshd's
+unauthenticated slots for up to two minutes, and once ten are held sshd starts
+refusing new connections, the tunnel's included. One attempt every 25 s or so
+stays under that.
+
+Rollback to the :22 tunnel, on the dev box:
+
+    sudo systemctl disable --now cheese-hk-relay-tls443 && sudo systemctl enable --now cheese-hk-relay-tls cheese-hk-relay
+
+If the new tunnel then logs `remote port forwarding failed for listen port
+18443`, etrip is still holding the port for a session whose connection died.
+It can hold it for many minutes. `sudo ss -ltnp | grep 18443` on etrip names the
+`sshd: hkrelay` process; killing that one process releases the port.
+
+To check the public path from anywhere, run
+[`scripts/ops/probe-okcheese.sh`](../scripts/ops/probe-okcheese.sh).
 
 ## Access
 

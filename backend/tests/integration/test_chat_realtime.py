@@ -7,10 +7,18 @@ import asyncio
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.compute_configs import (
+    ComputeChoice,
+    ProjectComputeConfigs,
+    room_choice,
+    standard_choice,
+)
 from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -37,7 +45,8 @@ def _said(message: dict) -> str:
 
 class SlowScreen(StubChannel):
     """A session that works for minutes: it takes the prompt and answers only
-    once released."""
+    once released. Several seats answer side by side: being busy holds back
+    only a SECOND write to the same seat's session, never another seat's."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -45,31 +54,43 @@ class SlowScreen(StubChannel):
         self.release = asyncio.Event()
         self.runs = 0
         self.delivered: list[str] = []
-        self._answering: set[asyncio.Task] = set()
+        self.prompts: dict[str, str] = {}
+        self._answering: dict[str, asyncio.Task] = {}
 
-    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+    def arrive(
+        self, topic_id: uuid.UUID, message: dict, *, agent: str | None = None
+    ) -> None:
         prompt = _said(message)
-        if self._answering:
+        seat = agent or ""
+        if seat in self._answering:
             # A write into a session that is already working: it reads it at
             # its next tool boundary, and echoes it only then.
             self.delivered.append(prompt)
             return
         self.runs += 1
         self.last_prompt = prompt
-        self.acknowledges(topic_id, prompt)
+        self.prompts[seat] = prompt
+        self.acknowledges(topic_id, prompt, agent=agent)
         self.started.set()
-        task = asyncio.get_running_loop().create_task(self._answer(topic_id))
-        self._answering.add(task)
-        task.add_done_callback(self._answering.discard)
+        task = asyncio.get_running_loop().create_task(self._answer(topic_id, agent))
+        self._answering[seat] = task
+        task.add_done_callback(lambda _t, s=seat: self._answering.pop(s, None))
 
-    async def _answer(self, topic_id: uuid.UUID) -> None:
+    async def _answer(self, topic_id: uuid.UUID, agent: str | None) -> None:
         await self.release.wait()
-        self.says(topic_id, "done")
-        self.stops(topic_id, "done", session_id="s1")
+        self.says(topic_id, "done", agent=agent)
+        self.stops(topic_id, "done", agent=agent)
 
 
 class InstantScreen(StubChannel):
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del reply
         self.starts(topic_id, session_id="s-affinity")
         self.acknowledges(topic_id, prompt)
@@ -253,7 +274,14 @@ async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tm
 class ProcessNotesScreen(StubChannel):
     """A turn that narrates as it works: two assistant messages, then the end."""
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
         self.says(topic_id, "Read workspace files.")
@@ -422,9 +450,14 @@ async def test_backend_mention_starts_when_browser_did_not_summon(
 
 
 @pytest.mark.anyio
-async def test_other_teammate_message_waits_for_live_turn(
-    business_db_factory, tmp_path, monkeypatch
+async def test_other_teammate_message_runs_beside_the_live_turn(
+    business_db_factory, tmp_path
 ):
+    """点名另一位队友的消息不排队等当前这轮：那位队友的轮次当场并行起跑。
+
+    一轮锁的只是自己那一席 —— 默认 agent 的轮次被捏住不放时，@Second 的
+    消息起 Second 自己的一轮，两条会话同时在跑。
+    """
     from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
     from app.domain.agent_instance.services import AgentInstanceService
 
@@ -448,6 +481,90 @@ async def test_other_teammate_message_waits_for_live_turn(
             type_name=None,
             display_name="Second",
         )
+        second_seat = agent_instance_handle(second.id)
+        await TopicMemberService(session).ensure_agent_seat(topic.id, second_seat)
+        topic_id = topic.id
+        await session.commit()
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="First task", summon=True
+    ):
+        pass
+    await screen.started.wait()
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    runner.subscribe_messages()
+    # 点名由服务端从正文算（I13）：`@Second` 落库时展开成它的席位，那一位队友的
+    # handle 是 `second`，不以 `cheese` 开头 —— 寻址认席位才起得了这一轮。
+    await broker.receive_message(
+        svc, topic_id, author="u", content="@Second Second task"
+    )
+    # The default agent's turn is still held — Second's runs beside it: its
+    # own session takes the prompt, and nothing is written mid-turn into the
+    # default one's (merge_into_running_turn only delivers to the seat the
+    # message named).
+    async with asyncio.timeout(HANG_S):
+        while screen.runs < 2:
+            await asyncio.sleep(0.01)
+    assert "Second task" in (screen.prompts.get(second_seat) or "")
+    assert screen.delivered == []
+    screen.release.set()
+    # The turn ends when it ends. A deadline here raced it and cancelled it
+    # mid-turn when a loaded runner was slower than the deadline.
+    await runner.drain(timeout_s=60)
+    await finish_turn(svc, topic_id)
+    assert screen.runs == 2
+
+
+class StillWorking(StubChannel):
+    """Every seat takes its prompt and starts a long command, then says nothing."""
+
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
+        del reply
+        self.starts(topic_id, agent=agent)
+        self.acknowledges(topic_id, prompt, agent=agent)
+        self.uses(topic_id, "Bash", agent=agent, command="sleep 600")
+
+
+@pytest.mark.anyio
+async def test_every_working_teammate_keeps_landing_after_a_restart(
+    business_db_factory, tmp_path
+):
+    """两位队友在同一间房里各跑各的一轮，后端这时被换掉：新进程接回来以后，
+    两位后来说的话都当场落进房间，不必等谁再被点名一次。"""
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    factory = business_db_factory
+
+    def service(channel: StubChannel) -> ChatService:
+        return ChatService(
+            session_factory=factory,
+            compute=stub_compute(channel),
+            base_system_prompt="You are Cheese.",
+            workspace_root=str(tmp_path / "ws"),
+        )
+
+    before = StillWorking()
+    svc = service(before)
+    async with factory() as session:
+        await registered(session, "u")
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        second = await AgentInstanceService(session).create(
+            project_id=project.id,
+            handle="second",
+            type_name=None,
+            display_name="Second",
+        )
         await TopicMemberService(session).ensure_agent_seat(
             topic.id, agent_instance_handle(second.id)
         )
@@ -457,33 +574,47 @@ async def test_other_teammate_message_waits_for_live_turn(
         topic_id=topic_id, author="u", content="First task", summon=True
     ):
         pass
-    await screen.started.wait()
-    waiting = asyncio.Event()
-    wait = svc.wait_for_recipient
-
-    async def observed_wait(*args):
-        waiting.set()
-        return await wait(*args)
-
-    monkeypatch.setattr(svc, "wait_for_recipient", observed_wait)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     runner.subscribe_messages()
-    # 点名由服务端从正文算（I13）：`@Second` 落库时展开成它的席位，那一位队友的
-    # handle 是 `second`，不以 `cheese` 开头 —— 寻址认席位才起得了这一轮。
     await broker.receive_message(
         svc, topic_id, author="u", content="@Second Second task"
     )
-    await asyncio.wait_for(waiting.wait(), HANG_S)
-    assert screen.delivered == []
-    assert screen.runs == 1
-    screen.release.set()
-    # The turn ends when it ends. A deadline here raced it and cancelled it
-    # mid-turn when a loaded runner was slower than the deadline.
-    await runner.drain(timeout_s=60)
-    await finish_turn(svc, topic_id)
-    assert "Second task" in screen.last_prompt
-    assert screen.runs == 2
+    async with asyncio.timeout(HANG_S):
+        while len(before.sessions) < 2 or len(before.runtime.work) < 2:
+            await asyncio.sleep(0.01)
+
+    # The old process stops reading; both sessions go on working on the machine.
+    await before.runtime.stop_listening()
+    after = StubChannel()
+    after.root = before.root
+    after.sessions = before.sessions
+    for session_runner in after.sessions.values():
+        session_runner.channel = after
+    replaced = service(after)
+    assert await replaced.recover_sessions() == 2
+
+    seats = [session_runner.actor for session_runner in after.sessions.values()]
+    for seat in seats:
+        after.says(topic_id, f"still here: {seat}", agent=seat)
+
+    # Nothing here drains a reader by hand: what lands is what the recovered
+    # process reads on its own.
+    expected = {f"still here: {seat}" for seat in seats}
+    async with asyncio.timeout(HANG_S):
+        while True:
+            async with factory() as session:
+                said = {
+                    block.content
+                    for block in await BlockRepository(session).list_for_topic(topic_id)
+                }
+            if expected <= said:
+                break
+            await asyncio.sleep(0.05)
+
+    for seat in seats:
+        after.stops(topic_id, "done", agent=seat)
+    await finish_turn(replaced, topic_id)
 
 
 @pytest.mark.anyio
@@ -537,14 +668,15 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         workspace_root=str(tmp_path / "ws"),
     )
 
+    started_on = ComputeChoice(name="Eight cores", profile="cloud", cores=8)
     async with factory() as session:
         await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
-        project.settings = {"compute_profile": "local-docker"}
+        project.settings = _default_compute(started_on)
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )
-        topic_id = topic.id
+        project_id, topic_id = project.id, topic.id
         await session.commit()
 
     async for _ in svc.converse(
@@ -554,15 +686,91 @@ async def test_first_turn_materializes_inherited_compute_before_running(
     await finish_turn(svc, topic_id)
 
     async with factory() as session:
+        project = await ProjectService(session).get_or_404(project_id)
+        project.settings = _default_compute(standard_choice("cloud"))
         topic = await TopicRepository(session).get(topic_id)
         assert topic is not None
-        assert topic.compute_profile == InstantScreen.name
+        assert room_choice(topic, project.settings) == started_on
         # The room's own Cheese: its conversation is kept under the agent,
         # whichever seat the session authored under.
         resumes_by = await AgentSessionService(session).resume_token(
             topic_id, CHEESE_HANDLE, harness=deployment_harness()
         )
     assert resumes_by == "s-affinity"
+
+
+def _default_compute(choice: ComputeChoice) -> dict:
+    return {"compute_configs": ProjectComputeConfigs(default=choice).model_dump()}
+
+
+class DeferredScreen(InstantScreen):
+    """A session whose hands are leased later, per session — the central path."""
+
+    deferred_work = True
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "default",
+    [
+        ComputeChoice(name="Eight cores", profile="cloud", cores=8, memory_mb=16384),
+        ComputeChoice(name="Lab workstation", profile="device", device_id="lab-box"),
+    ],
+    ids=["cloud-spec", "named-device"],
+)
+async def test_a_teammate_joining_later_starts_on_the_rooms_choice(
+    business_db_factory, tmp_path, default
+):
+    """结论 60: the room's setting is the default for its new sessions, and it is
+    what the room started with — the whole choice, not the pool it belongs to."""
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    factory = business_db_factory  # type: ignore[attr-defined]
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(DeferredScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        await registered(session, "u")
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project.settings = _default_compute(default)
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        later = await AgentInstanceService(session).create(
+            project_id=project.id,
+            handle="later",
+            type_name=None,
+            display_name="Later",
+        )
+        await TopicMemberService(session).ensure_agent_seat(
+            topic.id, agent_instance_handle(later.id)
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="start", summon=True
+    ):
+        pass
+    await finish_turn(svc, topic_id)
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="@Later join in", summon=True
+    ):
+        pass
+    await finish_turn(svc, topic_id)
+
+    async with factory() as session:
+        rows = list(
+            await session.scalars(
+                select(AgentSession).where(AgentSession.topic_id == topic_id)
+            )
+        )
+    choices = {row.agent_handle: row.execution_request["choice"] for row in rows}
+    assert set(choices) == {CHEESE_HANDLE, "later"}
+    assert choices["later"] == choices[CHEESE_HANDLE] == default.model_dump()
 
 
 @pytest.mark.anyio
@@ -974,13 +1182,13 @@ async def test_midturn_delivery_holds_no_topic_lock(
     in_flight = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow_deliver(tid, text, images=None):
+    async def slow_deliver(tid, text, images=None, agent_handle=None, owes_reply=False):
         in_flight.set()
         await release.wait()
         return True
 
     monkeypatch.setattr(svc._compute, "deliver", slow_deliver)
-    svc._active_turn_ids[topic_id] = uuid.uuid4()
+    svc._active_turn_ids[topic_id] = {uuid.uuid4()}
     merge = asyncio.create_task(
         svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
     )
@@ -1028,20 +1236,24 @@ async def test_midturn_message_stays_pending_until_its_receipt(
     )
 
     delivered_texts: list[str] = []
+    owed: list[bool] = []
 
-    async def fake_deliver(tid, text, images=None):
+    async def fake_deliver(tid, text, images=None, agent_handle=None, owes_reply=False):
         delivered_texts.append(text)
+        owed.append(owes_reply)
         return True
 
     monkeypatch.setattr(svc._compute, "deliver", fake_deliver)
     turn_id = uuid.uuid4()
-    svc._active_turn_ids[topic_id] = turn_id
+    svc._active_turn_ids[topic_id] = {turn_id}
 
     assert (
         await svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
         is True
     )
     assert len(delivered_texts) == 1
+    # A person's message: the session answers it before it does anything else.
+    assert owed == [True]
 
     async def _consumed() -> bool:
         async with factory() as session:
@@ -1057,3 +1269,106 @@ async def test_midturn_message_stays_pending_until_its_receipt(
     # The matching receipt stamps it.
     await svc.confirm_prompt_receipt(topic_id, delivered_texts[0])
     assert await _consumed() is True
+
+
+class SlowToReplay(StubChannel):
+    """A machine whose sessions in one room answer for their journal only once
+    ``replayed`` is set: a backlog that takes a long time to hand over."""
+
+    def __init__(self, slow: uuid.UUID) -> None:
+        super().__init__()
+        self.slow = slow
+        self.replayed = asyncio.Event()
+
+    async def call(self, handle, method: str, params: dict) -> dict:
+        if method == "events" and handle.session.topic_id == self.slow:
+            await self.replayed.wait()
+        return await super().call(handle, method, params)
+
+
+@pytest.mark.anyio
+async def test_a_room_still_replaying_holds_only_its_own_turns(
+    business_db_factory, tmp_path
+):
+    """后端换人时，一间房的会话积压很长、要回放很久：别的房间照常起轮次，这间房
+    里点名芝士的那条等回放完再开跑，等得久了房间里会说一声。"""
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+
+    factory = business_db_factory
+
+    def service(channel: StubChannel) -> ChatService:
+        return ChatService(
+            session_factory=factory,
+            compute=stub_compute(channel),
+            base_system_prompt="You are Cheese.",
+            workspace_root=str(tmp_path / "ws"),
+        )
+
+    before = StubChannel()
+    svc = service(before)
+    async with factory() as session:
+        await registered(session, "u")
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        rooms = [
+            (
+                await TopicService(session).create(
+                    project_id=project.id, title=title, created_by="u"
+                )
+            ).id
+            for title in ("Slow", "Quick")
+        ]
+        await session.commit()
+    slow, quick = rooms
+    for room in rooms:
+        async for _ in svc.converse(
+            topic_id=room, author="u", content="First task", summon=True
+        ):
+            pass
+        await finish_turn(svc, room)
+
+    await before.runtime.stop_listening()
+    after = SlowToReplay(slow)
+    after.root = before.root
+    after.sessions = before.sessions
+    for session_runner in after.sessions.values():
+        session_runner.channel = after
+    replaced = service(after)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    runner.REPLAY_NOTICE_S = 0.2
+    runner.subscribe_messages()
+
+    # Taking the sessions over does not wait for the slow room's backlog.
+    async with asyncio.timeout(HANG_S):
+        assert await replaced.recover_sessions() == 2
+
+    await broker.receive_message(
+        replaced, quick, author="u", content="@芝士 quick room task"
+    )
+    async with asyncio.timeout(HANG_S):
+        while "quick room task" not in (after.last_prompt or ""):
+            await asyncio.sleep(0.05)
+
+    await broker.receive_message(
+        replaced, slow, author="u", content="@芝士 slow room task"
+    )
+
+    async def notices() -> list[str]:
+        async with factory() as session:
+            return [
+                block.content or ""
+                for block in await BlockRepository(session).list_for_topic(slow)
+            ]
+
+    async with asyncio.timeout(HANG_S):
+        while not any("断线期间" in text for text in await notices()):
+            await asyncio.sleep(0.05)
+    assert "slow room task" not in (after.last_prompt or "")
+
+    after.replayed.set()
+    async with asyncio.timeout(HANG_S):
+        while "slow room task" not in (after.last_prompt or ""):
+            await asyncio.sleep(0.05)
+    await runner.drain(timeout_s=60)
+    for room in rooms:
+        await finish_turn(replaced, room)

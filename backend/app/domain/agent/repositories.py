@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
@@ -30,6 +31,8 @@ class TurnRecord:
     resendable: bool
     started_at: datetime
     delivered_at: datetime | None
+    # The seat this turn ran in, None when it was never assembled.
+    agent_handle: str | None = None
 
     @property
     def delivered(self) -> bool:
@@ -57,10 +60,33 @@ class AgentTurnRepository:
         resendable: bool,
         started_at: datetime,
         delivered_at: datetime | None = None,
+        agent_handle: str | None = None,
+        exists_ok: bool = False,
     ) -> None:
         # `delivered_at` is for a turn that has no 投喂 phase to stamp later — it
         # is born delivered or it is born unclosable. Everything the platform
         # feeds leaves it None and stamps it when the transport accepts.
+        if exists_ok:
+            # A session's own work keeps its id across backend processes: the
+            # row an earlier process opened for it is this row, and stays as
+            # that process wrote it.
+            await self._session.execute(
+                insert(AgentTurn)
+                .values(
+                    id=turn_id,
+                    topic_id=topic_id,
+                    continuation_id=continuation_id,
+                    author=author,
+                    content=content,
+                    is_resume=is_resume,
+                    resendable=resendable,
+                    started_at=started_at,
+                    delivered_at=delivered_at,
+                    agent_handle=agent_handle,
+                )
+                .on_conflict_do_nothing(index_elements=[AgentTurn.id])
+            )
+            return
         self._session.add(
             AgentTurn(
                 id=turn_id,
@@ -72,6 +98,7 @@ class AgentTurnRepository:
                 resendable=resendable,
                 started_at=started_at,
                 delivered_at=delivered_at,
+                agent_handle=agent_handle,
             )
         )
 
@@ -100,13 +127,19 @@ class AgentTurnRepository:
         return set(rows)
 
     async def note_context(
-        self, turn_id: uuid.UUID, *, route: str, reply_to: uuid.UUID | None
+        self,
+        turn_id: uuid.UUID,
+        *,
+        route: str,
+        reply_to: uuid.UUID | None,
+        agent_handle: str,
     ) -> None:
-        """Record what ending this turn needs, for whichever backend ends it."""
+        """Record what ending this turn needs, for whichever backend ends it,
+        and whose conversation it runs in."""
         await self._session.execute(
             update(AgentTurn)
             .where(AgentTurn.id == turn_id)
-            .values(route=route, reply_to=reply_to)
+            .values(route=route, reply_to=reply_to, agent_handle=agent_handle)
         )
 
     async def get(self, turn_id: uuid.UUID) -> AgentTurn | None:
@@ -254,6 +287,7 @@ class AgentTurnRepository:
                 delivered_at=(
                     None if row.delivered_at is None else _aware(row.delivered_at)
                 ),
+                agent_handle=row.agent_handle,
             )
             for row in rows
         ]

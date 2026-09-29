@@ -4,9 +4,14 @@ import type { AdminCandidate, PlatformAdminRow, PlatformAdminsPayload } from '@/
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { getAvatarUrl } from '@/utils/materials'
+
 import { addPlatformAdmin, listPlatformAdmins, removePlatformAdmin, searchAdminCandidates } from '@/api'
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
-import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
+import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
 
 // 管理后台的「成员管理」（`/admin/members`）：平台管理员的名单，页面上加与删。
@@ -35,6 +40,13 @@ import { relTime } from '@/lib/relTime'
 //      那几行 —— 但判据按行画、不按组画：数据哪天从别处混进 added，这里照样画得出。
 //   4. **刷新有 busy 态**：手上已有名单时再取数只把旧名单压暗（AdminGrid 既有能力，
 //      这页以前没用），不闪骨架。
+//
+// 这一版换的是**壳**，不是做法：页头改用 `AdminPageHeader`（五个后台页各写一份页头，
+// 字号和内边距各不相同，切分区时页头会跳）、错误与提示改用 token 画的一条横条（`v-alert`
+// 的默认样和这一页的表格不是一套）、头像从 `components/feedback/FeedbackAuthorAvatar`
+// 换成 `components/common/UserAvatar`（后台不该依赖反馈那个目录；这里只用到「有 id 就
+// 拼 URL、没有就彩色首字母」那一半），窄屏交给 `AdminGrid` 的卡片模式（390px 下六列
+// 定宽合计 772px，横着滚的表在手机上是读不到右边那几列的）。
 //
 // 确认框正文是全仓第一处 `<i18n-t>`：「把 {handle} 移出名单？…」要回显 handle 加粗，
 // 而英文语序和中文不同 —— 句子碎片键被 i18n.md §3 禁掉，插槽是唯一合规的写法。
@@ -96,6 +108,17 @@ interface AddedRowView extends RowView {
   addedBy: string
   createdAt: string
 }
+
+/** 头像 URL。`avatar_id` 为 null 时给**空串**而不是 `getAvatarUrl(null)`：后者回的是
+ *  `/avatars/default`，也就是所有没挑过头像的人共用同一张脸 —— 那比按 handle 派生的
+ *  彩色首字母更难把人分辨开，而分辨人正是头像唯一的活（`UserAvatar` 的约定）。 */
+function avatarUrl(avatarId: number | null): string {
+  return avatarId == null ? '' : getAvatarUrl(avatarId)
+}
+
+/** 表体画真行还是画「读不到」。名单本身**没有整表空态**：根那两组的分组行永远在，
+ *  组里空着的时候由组内那一行说明（`members.empty.*`）。 */
+const gridState = computed<'rows' | 'error'>(() => (error.value && !roster.value ? 'error' : 'rows'))
 
 function toRowView(row: PlatformAdminRow): RowView {
   // `nickname` 为 null（平台上没有这个账号 / 没 profile 行）或本来就等于 handle 时，
@@ -254,71 +277,75 @@ onMounted(load)
 
 <template>
   <div class="am">
-    <header class="am__head">
-      <h1 class="t-page-title">{{ t('members.header.title') }}</h1>
-      <!-- **屏幕上一行、完整那句放 `title`**：它上一版占两行，两行说明后面跟着三行
-           数据，读起来像文档不像后台。`PLATFORM_ADMIN_HANDLES` 这个变量名也只住
-           `title` —— 它对我们有用，对「想知道这些人是谁、能不能删」的人没用
-           （§8.2：界面上不写实现细节）。 -->
-      <p class="am__sub t-meta" :title="t('members.header.subtitleTitle')">{{ t('members.header.subtitle') }}</p>
-    </header>
-
-    <div class="am__tools">
-      <span class="t-meta">{{ countLine }}</span>
-      <div class="am__spacer" />
-      <v-btn
-        icon="mdi-refresh"
-        variant="text"
-        size="small"
-        :aria-label="t('members.toolbar.refresh')"
-        :loading="loading"
-        @click="load"
-      />
-      <!-- 全页唯一一块琥珀：这一页确实有一个主操作，而它就是这个。 -->
-      <v-btn color="primary" size="small" prepend-icon="mdi-account-plus-outline" @click="openDialog">
-        {{ t('members.toolbar.add') }}
-      </v-btn>
-    </div>
-
-    <v-alert v-if="error" type="error" density="compact" variant="tonal" class="am__alert">
-      {{ error }}
-      <template #append>
-        <v-btn variant="text" size="small" @click="load">{{ t('members.error.retry') }}</v-btn>
-      </template>
-    </v-alert>
-    <v-alert
-      v-else-if="notice"
-      type="success"
-      density="compact"
-      variant="tonal"
-      class="am__alert"
-      closable
-      @click:close="notice = null"
-    >
-      {{ notice }}
-    </v-alert>
-
-    <div class="am__gridwrap">
-      <AdminGrid
-        :label="t('members.table.label')"
-        :cols="COLS"
-        :bone-widths="BONE_WIDTHS"
-        :loading="loading && !roster"
-        :busy="loading && roster !== null"
-        :skeleton-rows="4"
-      >
-        <template #head>
-          <tr>
-            <th scope="col">{{ t('members.table.colMember') }}</th>
-            <th scope="col">{{ t('members.table.colStatus') }}</th>
-            <th scope="col">{{ t('members.table.colRegistered') }}</th>
-            <th scope="col">{{ t('members.table.colSource') }}</th>
-            <th scope="col">{{ t('members.table.colAddedInfo') }}</th>
-            <th scope="col" class="am__num">{{ t('members.table.colActions') }}</th>
-          </tr>
+    <div class="am__inner">
+      <AdminPageHeader :title="t('members.header.title')" :sub="t('members.header.subtitle')">
+        <template #tools>
+          <span class="t-meta-read t-num am__count">{{ countLine }}</span>
+          <v-btn
+            icon="mdi-refresh"
+            variant="text"
+            size="small"
+            :aria-label="t('members.toolbar.refresh')"
+            :loading="loading"
+            @click="load"
+          />
+          <!-- 全页唯一一块琥珀：这一页确实有一个主操作，而它就是这个。 -->
+          <v-btn color="primary" size="small" prepend-icon="mdi-account-plus-outline" @click="openDialog">
+            {{ t('members.toolbar.add') }}
+          </v-btn>
         </template>
+      </AdminPageHeader>
 
-        <!-- 组头行。**名字和人数是两个元素**，不是一个字符串拼出来的：它们是两种
+      <div class="am__body">
+        <!-- 读不到名单时**不在这里说话**：那一条画在表格自己的位置上（列头下面、
+             重试按钮就在旁边）。两处说同一件事，人会以为是两次失败。 -->
+        <div v-if="error && roster" class="am__flash am__flash--bad" role="alert">
+          <v-icon icon="mdi-alert-circle-outline" size="16" class="am__flashIcon" />
+          <span class="am__flashText">{{ error }}</span>
+        </div>
+        <div v-else-if="notice" class="am__flash am__flash--ok" role="status">
+          <v-icon icon="mdi-check-circle-outline" size="16" class="am__flashIcon" />
+          <span class="am__flashText">{{ notice }}</span>
+          <button type="button" class="am__flashClose" :aria-label="t('members.notice.dismiss')" @click="notice = null">
+            <v-icon icon="mdi-close" size="14" />
+          </button>
+        </div>
+
+        <div class="am__gridwrap">
+          <AdminGrid
+            :label="t('members.table.label')"
+            :cols="COLS"
+            :bone-widths="BONE_WIDTHS"
+            :loading="loading && !roster"
+            :busy="loading && roster !== null"
+            :state="gridState"
+            :skeleton-rows="4"
+            cards
+          >
+            <template #head>
+              <tr>
+                <th scope="col">{{ t('members.table.colMember') }}</th>
+                <th scope="col">{{ t('members.table.colStatus') }}</th>
+                <th scope="col">{{ t('members.table.colRegistered') }}</th>
+                <th scope="col">{{ t('members.table.colSource') }}</th>
+                <th scope="col">{{ t('members.table.colAddedInfo') }}</th>
+                <th scope="col" class="am__num">{{ t('members.table.colActions') }}</th>
+              </tr>
+            </template>
+
+            <!-- 读失败那一条就画在列头下面：位置说明「这张表没读出来」，而重试按钮
+                 就在原因旁边。 -->
+            <template #error>
+              <AdminEmptyState
+                compact
+                tone="error"
+                :title="error ?? ''"
+                :action="t('members.error.retry')"
+                @action="load"
+              />
+            </template>
+
+            <!-- 组头行。**名字和人数是两个元素**，不是一个字符串拼出来的：它们是两种
              东西（这一组叫什么 / 有几个人），拼在一起会让读屏把它们念成一串数字
              加名字，也让人没法单独抓那个数。
              `role="rowheader"` 让读屏把这一格当成表头，而不是一个普通单元格。人数后面
@@ -326,119 +353,150 @@ onMounted(load)
              看得出来是什么的数；读屏顺着格子念时却只剩一个光秃秃的数字。
              **不改 `<th>`**：表壳只给 `tbody td` 内边距，换元素就得在这里把表壳那份
              几何抄一遍，而抄一份就会和表壳飘开。 -->
-        <tr class="am__group">
-          <td colspan="6" class="am__groupcell" role="rowheader">
-            <span class="am__grouplabel">{{ t('members.group.root') }}</span>
-            <span class="am__groupcount">
-              {{ rootRows.length }}<span class="visually-hidden">{{ t('members.group.personUnit') }}</span>
-            </span>
-          </td>
-        </tr>
+            <tr class="am__group" data-card="flat">
+              <td colspan="6" class="am__groupcell" role="rowheader">
+                <span class="am__grouplabel">{{ t('members.group.root') }}</span>
+                <span class="am__groupcount">
+                  {{ rootRows.length }}<span class="visually-hidden">{{ t('members.group.personUnit') }}</span>
+                </span>
+              </td>
+            </tr>
 
-        <tr v-for="row in rootRows" :key="row.handle" class="am__row">
-          <td class="am__cell" :title="row.label">
-            <span class="am__who">
-              <!-- **装饰**：名字就在旁边，头像只是让眼睛在一列里更快找到人。包一层
-                   `aria-hidden` 而不是把属性透传给 FeedbackAuthorAvatar —— 它的根是
-                   组件，属性不保证落到底层的 `<img>`/`<div>` 上。 -->
-              <span class="am__pfp" aria-hidden="true">
-                <FeedbackAuthorAvatar :handle="row.handle" :avatar-id="row.avatarId" :size="20" />
-              </span>
-              <span class="am__name-main">{{ row.primary }}</span>
-              <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>
-              <!-- agent 徽章跟在名字后面：它说的不是状态（状态列在右边），是「这个人
+            <tr v-for="row in rootRows" :key="row.handle" class="am__row">
+              <td class="am__cell" data-card="primary" :title="row.label">
+                <span class="am__who">
+                  <!-- **装饰**：名字就在旁边，头像只是让眼睛在一列里更快找到人。包一层
+                   `aria-hidden` 而不是把属性透传给 `UserAvatar` —— 它的根是组件，
+                   属性不保证落到底层的 `<img>`/`<div>` 上。 -->
+                  <span class="am__pfp" aria-hidden="true">
+                    <UserAvatar class="am__avatar" :name="row.handle" :avatar="avatarUrl(row.avatarId)" :size="20" />
+                  </span>
+                  <span class="am__name-main">{{ row.primary }}</span>
+                  <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>
+                  <!-- agent 徽章跟在名字后面：它说的不是状态（状态列在右边），是「这个人
                    是什么」。flex 子项的 min-width:auto 保住它不被长昵称挤没。 -->
-              <span v-if="row.isAgent" class="chip-neutral" :title="t('members.row.agentBadgeTitle')">
-                {{ t('members.row.agentBadge') }}
-              </span>
-            </span>
-          </td>
-          <!-- 状态列「异常才说话」：正常行画 `—`，不把整列刷成一片「正常」的噪音。 -->
-          <td class="am__cell">
-            <span v-if="row.hasAccount" class="am__dim">—</span>
-            <span v-else class="am__warn" :title="t('members.row.noAccountTitle')">{{
-              t('members.row.noAccount')
-            }}</span>
-          </td>
-          <td v-if="row.registeredAt" class="am__cell" :title="relTime(row.registeredAt)">
-            <span class="am__dim">{{ relTime(row.registeredAt) }}</span>
-          </td>
-          <td v-else class="am__cell"><span class="am__dim">—</span></td>
-          <td class="am__cell">
-            <span class="am__dim">{{ t('members.row.sourceRoot') }}</span>
-          </td>
-          <td class="am__cell"><span class="am__dim">—</span></td>
-          <!-- 这一格上一版是空的，人要读完上面那段说明才知道「不是漏画了按钮」。
+                  <span v-if="row.isAgent" class="chip-neutral" :title="t('members.row.agentBadgeTitle')">
+                    {{ t('members.row.agentBadge') }}
+                  </span>
+                </span>
+              </td>
+              <!-- 状态列「异常才说话」：正常行画 `—`，不把整列刷成一片「正常」的噪音。
+               窄屏卡片里那一格**整格收起来**（`data-card="hide"`）：卡片上多一行
+               「账号状态 —」是没有信息的行，而异常那一行照样画得出来。 -->
+              <td
+                class="am__cell"
+                :data-card="row.hasAccount ? 'hide' : undefined"
+                :data-label="t('members.table.colStatus')"
+              >
+                <span v-if="row.hasAccount" class="am__dim">—</span>
+                <span v-else class="am__warn" :title="t('members.row.noAccountTitle')">{{
+                  t('members.row.noAccount')
+                }}</span>
+              </td>
+              <td
+                v-if="row.registeredAt"
+                class="am__cell"
+                :data-label="t('members.table.colRegistered')"
+                :title="relTime(row.registeredAt)"
+              >
+                <span class="am__dim">{{ relTime(row.registeredAt) }}</span>
+              </td>
+              <td v-else class="am__cell" data-card="hide"><span class="am__dim">—</span></td>
+              <!-- 来源那一列在卡片里收起来：这一组的组头刚说过「部署配置里的根管理员」，
+               卡片上再写一遍是同一句话说两次。 -->
+              <td class="am__cell" data-card="hide">
+                <span class="am__dim">{{ t('members.row.sourceRoot') }}</span>
+              </td>
+              <td class="am__cell" data-card="hide"><span class="am__dim">—</span></td>
+              <!-- 这一格上一版是空的，人要读完上面那段说明才知道「不是漏画了按钮」。
                写出来比留白省一次阅读。 -->
-          <td class="am__cell am__cell--actions">
-            <span class="am__dim">{{ t('members.row.notRemovable') }}</span>
-          </td>
-        </tr>
-        <tr v-if="!rootRows.length" class="am__row">
-          <td colspan="6" class="am__cell am__none">{{ t('members.empty.root') }}</td>
-        </tr>
+              <td class="am__cell am__cell--actions" :data-label="t('members.table.colActions')">
+                <span class="am__dim">{{ t('members.row.notRemovable') }}</span>
+              </td>
+            </tr>
+            <tr v-if="!rootRows.length" class="am__row" data-card="flat">
+              <td colspan="6" class="am__cell am__none">{{ t('members.empty.root') }}</td>
+            </tr>
 
-        <tr class="am__group">
-          <td colspan="6" class="am__groupcell" role="rowheader">
-            <span class="am__grouplabel">{{ t('members.group.added') }}</span>
-            <span class="am__groupcount">
-              {{ addedRows.length }}<span class="visually-hidden">{{ t('members.group.personUnit') }}</span>
-            </span>
-          </td>
-        </tr>
+            <tr class="am__group" data-card="flat">
+              <td colspan="6" class="am__groupcell" role="rowheader">
+                <span class="am__grouplabel">{{ t('members.group.added') }}</span>
+                <span class="am__groupcount">
+                  {{ addedRows.length }}<span class="visually-hidden">{{ t('members.group.personUnit') }}</span>
+                </span>
+              </td>
+            </tr>
 
-        <tr v-for="row in addedRows" :key="row.handle" class="am__row">
-          <td class="am__cell" :title="row.label">
-            <span class="am__who">
-              <span class="am__pfp" aria-hidden="true">
-                <FeedbackAuthorAvatar :handle="row.handle" :avatar-id="row.avatarId" :size="20" />
-              </span>
-              <span class="am__name-main">{{ row.primary }}</span>
-              <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>
-              <span v-if="row.isAgent" class="chip-neutral" :title="t('members.row.agentBadgeTitle')">
-                {{ t('members.row.agentBadge') }}
-              </span>
-            </span>
-          </td>
-          <td class="am__cell">
-            <span v-if="row.hasAccount" class="am__dim">—</span>
-            <span v-else class="am__warn" :title="t('members.row.noAccountTitle')">{{
-              t('members.row.noAccount')
-            }}</span>
-          </td>
-          <td v-if="row.registeredAt" class="am__cell" :title="relTime(row.registeredAt)">
-            <span class="am__dim">{{ relTime(row.registeredAt) }}</span>
-          </td>
-          <td v-else class="am__cell"><span class="am__dim">—</span></td>
-          <td class="am__cell">
-            <span class="am__dim">{{ t('members.row.sourceAdded') }}</span>
-          </td>
-          <td class="am__cell" :title="t('members.row.addedBy', { by: row.addedBy, time: relTime(row.createdAt) })">
-            <span class="am__dim">{{
-              t('members.row.addedBy', { by: row.addedBy, time: relTime(row.createdAt) })
-            }}</span>
-          </td>
-          <td class="am__cell am__cell--actions">
-            <!-- 描边（不是实心、不是文字按钮）：这个动作改的是「谁能看别人的私密
+            <tr v-for="row in addedRows" :key="row.handle" class="am__row">
+              <td class="am__cell" data-card="primary" :title="row.label">
+                <span class="am__who">
+                  <span class="am__pfp" aria-hidden="true">
+                    <UserAvatar class="am__avatar" :name="row.handle" :avatar="avatarUrl(row.avatarId)" :size="20" />
+                  </span>
+                  <span class="am__name-main">{{ row.primary }}</span>
+                  <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>
+                  <span v-if="row.isAgent" class="chip-neutral" :title="t('members.row.agentBadgeTitle')">
+                    {{ t('members.row.agentBadge') }}
+                  </span>
+                </span>
+              </td>
+              <td
+                class="am__cell"
+                :data-card="row.hasAccount ? 'hide' : undefined"
+                :data-label="t('members.table.colStatus')"
+              >
+                <span v-if="row.hasAccount" class="am__dim">—</span>
+                <span v-else class="am__warn" :title="t('members.row.noAccountTitle')">{{
+                  t('members.row.noAccount')
+                }}</span>
+              </td>
+              <td
+                v-if="row.registeredAt"
+                class="am__cell"
+                :data-label="t('members.table.colRegistered')"
+                :title="relTime(row.registeredAt)"
+              >
+                <span class="am__dim">{{ relTime(row.registeredAt) }}</span>
+              </td>
+              <td v-else class="am__cell" data-card="hide"><span class="am__dim">—</span></td>
+              <td class="am__cell" data-card="hide">
+                <span class="am__dim">{{ t('members.row.sourceAdded') }}</span>
+              </td>
+              <!-- 添加信息在卡片里**留着**：它是这一行唯一回答「谁加的、什么时候」的地方，
+               而这一组里每一行都不一样。 -->
+              <td
+                class="am__cell"
+                :data-label="t('members.table.colAddedInfo')"
+                :title="t('members.row.addedBy', { by: row.addedBy, time: relTime(row.createdAt) })"
+              >
+                <i18n-t keypath="members.row.addedBy" tag="span" class="am__dim">
+                  <template #by><UserRef :handle="row.addedBy" /></template>
+                  <template #time>{{ relTime(row.createdAt) }}</template>
+                </i18n-t>
+              </td>
+              <td class="am__cell am__cell--actions" :data-label="t('members.table.colActions')">
+                <!-- 描边（不是实心、不是文字按钮）：这个动作改的是「谁能看别人的私密
                  反馈」，它得看得出来是一个真正界内的按钮，而不是一行可以随手划过的
                  文字。确认在同名的对话框里。（**没有 `aria-label`** —— 加了会把可及
                  名字覆盖掉，读屏念的就不再是「移出」这两个字了。）
                  颜色**留中性**（不写 `color`）：每行一颗红按钮会把这张表变吵，而这一页
                  的琥珀是「添加管理员」；破坏性那一颗的红留给确认框里那一颗。 -->
-            <v-btn
-              variant="outlined"
-              size="small"
-              :loading="removing === row.handle"
-              @click="askRemove($event, row.handle)"
-            >
-              {{ t('members.row.remove') }}
-            </v-btn>
-          </td>
-        </tr>
-        <tr v-if="!added.length" class="am__row">
-          <td colspan="6" class="am__cell am__none">{{ t('members.empty.added') }}</td>
-        </tr>
-      </AdminGrid>
+                <v-btn
+                  variant="outlined"
+                  size="small"
+                  :loading="removing === row.handle"
+                  @click="askRemove($event, row.handle)"
+                >
+                  {{ t('members.row.remove') }}
+                </v-btn>
+              </td>
+            </tr>
+            <tr v-if="!added.length" class="am__row" data-card="flat">
+              <td colspan="6" class="am__cell am__none">{{ t('members.empty.added') }}</td>
+            </tr>
+          </AdminGrid>
+        </div>
+      </div>
     </div>
 
     <!-- 加人的框照「成员页面邀请」那一套：按钮 → 对话框 → 可搜的多选 + 添加。
@@ -453,7 +511,7 @@ onMounted(load)
          服务端用例三处各自看都对。 -->
     <v-dialog v-model="dialogOpen" max-width="520" persistent>
       <v-card rounded="lg">
-        <v-card-title class="px-4 pt-4 pb-2">{{ t('members.addDialog.title') }}</v-card-title>
+        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('members.addDialog.title') }}</v-card-title>
         <v-card-text class="px-4">
           <v-autocomplete
             v-model="selected"
@@ -477,7 +535,7 @@ onMounted(load)
             <template #item="{ item, props }">
               <v-list-item v-bind="props" :disabled="item.raw.already_admin">
                 <template #prepend>
-                  <FeedbackAuthorAvatar :handle="item.raw.handle" :avatar-id="item.raw.avatar_id" :size="30" />
+                  <UserAvatar :name="item.raw.handle" :avatar="avatarUrl(item.raw.avatar_id)" :size="30" />
                 </template>
                 <v-list-item-title>{{ item.raw.nickname }}</v-list-item-title>
                 <v-list-item-subtitle>{{ item.raw.handle }}</v-list-item-subtitle>
@@ -505,7 +563,7 @@ onMounted(load)
          名字旁边，点错了没有任何东西拦着。 -->
     <v-dialog :model-value="!!confirmHandle" max-width="420" @update:model-value="confirmHandle = null">
       <v-card rounded="lg">
-        <v-card-title class="px-4 pt-4 pb-2">{{ t('members.confirm.title') }}</v-card-title>
+        <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('members.confirm.title') }}</v-card-title>
         <v-card-text class="px-4">
           <!-- 正文是全仓第一处 `<i18n-t>`：handle 回显**加粗**（按按钮的人要看得见
                删的是谁），而英文语序和中文不同 —— 句子碎片键被 i18n.md §3 禁掉，
@@ -531,49 +589,103 @@ onMounted(load)
 </template>
 
 <style scoped>
-/* 和反馈管理同一套页头 / 工具条 / 表格三段式，`padding` 也逐字相同 —— 两块是同一个
-   后台的两个分区，切换时页头不该跳一下。 */
+/* 三段式和反馈管理同一套：页头（`AdminPageHeader`）自带 24px 内边距和底下那条
+   发丝线，内容区接着往下排。宽度和队列页一样锁 `--page-w-admin` 并居中 —— 这一页
+   的右边没有东西，靠左会让不同视口下的列宽差出一截（同 `.qpage__inner` 那条注）。 */
 .am {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 16px 24px 0;
+  background: var(--canvas);
 }
 
-.am__head {
-  flex: 0 0 auto;
-  padding-bottom: 8px;
+.am__inner {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--page-w-admin);
+  min-height: 0;
+  margin: 0 auto;
 }
 
-/* 一行说完。`min-height` 是给「名单还没回来」那一帧留位，否则数字到货时页头会长一行。
-   宽度套 `--page-w-read`：这是说明性文字栏，规范里给「说明性文字」的档就是这一档
-   （以前的 680px 是自造数字，折回 660）；页面本体是全幅工作台，不套容器。 */
-.am__sub {
-  overflow: hidden;
+.am__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 24px 24px;
+}
+
+/* 人数：页头工具槽里的一格元信息。`min-height` 是给「名单还没回来」那一帧留位，
+   否则数字到货时工具槽会长一行、页头跟着跳一下。 */
+.am__count {
   min-height: var(--lh-12);
-  margin-top: 2px;
-  max-width: var(--page-w-read);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  margin-right: 4px;
 }
 
-.am__tools {
+/* 一条横条（错误 / 提示）。**不是 `v-alert`**：那套默认样（大圆角、实色底、整块
+   染色）在这一页的表格旁边像另一个产品。这里只留一条：左侧一道 3px 的色标说这是
+   哪一类，其余全是这一页自己的底色与描边。 */
+.am__flash {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  height: 40px;
-  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
 }
 
-.am__spacer {
+.am__flash--bad {
+  border-left-color: var(--danger);
+}
+
+.am__flash--bad .am__flashIcon {
+  color: var(--danger);
+}
+
+.am__flash--ok {
+  border-left-color: var(--ok);
+}
+
+.am__flash--ok .am__flashIcon {
+  color: var(--ok);
+}
+
+.am__flashText {
   flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
-.am__alert {
+.am__flashClose {
+  display: inline-flex;
   flex: 0 0 auto;
-  margin-top: 12px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.am__flashClose:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+
+.am__flashClose:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 /* 名单只有几行，所以这一张卡**贴着内容**，不撑满剩下的高度（反馈那一页相反：它一屏
@@ -583,7 +695,6 @@ onMounted(load)
   display: flex;
   flex: 0 1 auto;
   min-height: 0;
-  margin-top: 12px;
 }
 
 .am__group {
@@ -593,10 +704,11 @@ onMounted(load)
 /* 组头那一格的**内边距和行高都不另写**：表壳给 8px 上下 × 12px 左右，行高也由它
    钉成和数据行一样。原来这里写的是 `padding: 0 12px` + `height: 32px` —— 表壳的
    规则压得过它，那两条从来没生效过，留着只会误导。 */
+/* **这一格不能写 `display: flex`**：`<td>` 一旦不是 table-cell，`colspan="6"` 就
+   作废，浏览器把它当普通块级盒子，宽度退回第一列 —— 组头那条底色于是只剩表格左边
+   一小段（1440px 上看着像半条带子）。名字和人数本来就是行内元素，写不写都在一行上。 */
 .am__groupcell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  white-space: nowrap;
 }
 
 .am__grouplabel {
@@ -607,6 +719,7 @@ onMounted(load)
 }
 
 .am__groupcount {
+  margin-left: 6px;
   color: var(--faint);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -686,7 +799,22 @@ onMounted(load)
   text-align: center;
 }
 
-.am__num {
+/* 带上 `.v-table`：Vuetify 给列头写的 `text-align: start` 选择器更长，光一个类名压
+   不住它，「操作」列头会靠左、底下的按钮靠右。 */
+.v-table .am__num {
   text-align: right;
+}
+
+/* 窄屏：内容内边距收到 16px —— 页头那一层自己也是这么收的（`AdminPageHeader` 的
+   700px 断点），两处一起收页头下那条线才不会歪。 */
+@media (max-width: 700px) {
+  .am__body {
+    padding: 12px 16px 16px;
+  }
+
+  /* 卡片里没有「一列宽」这回事，说明性文字（组头那句长 handle 说明）让它折行。 */
+  .am__grouplabel {
+    white-space: normal;
+  }
 }
 </style>

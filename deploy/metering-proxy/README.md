@@ -83,14 +83,26 @@ Set one without the other and every launch logs an error naming the missing one.
   quietly works. `CHEESE_ALLOW_HEADER_ATTR=1` stays the one explicit opt-out.
 - **Fail-open admission**: an unreachable backend logs and allows. A brake that
   can take the platform down is worse than the overspend it prevents; the token
-  cap stays as the deployment-wide backstop.
+  cap stays as the deployment-wide backstop. A session the backend answered for
+  within the last hour keeps that answer's pool, key and model while it is
+  unreachable; only a session with no answer on record goes to the subscription.
 
 ## Release on the dev box
 
 The dev application deployment releases the metering image after updating the
 application, using the same full commit SHA and requiring its image build and
-Required CI to succeed. A healthy proxy already running that digest is left
-running, so an unchanged image does not interrupt active streams.
+Required CI to succeed. A healthy proxy already running that digest with the
+same configuration is left running, so a release that changes nothing does not
+interrupt active streams.
+
+The configuration is the compose file being released and the box-local `.env`.
+Each release labels the container it creates with a SHA-256 of the two
+(`cheese.metering-proxy.config-sha256`), and the next release exits early only
+when the image, health and that hash all match. A change to only the `.env` or
+the compose file is therefore applied by the next release, which recreates the
+proxy. Only the hash is stored; the `.env` itself is never printed or copied.
+A container created any other way, or one restored by a rollback, has no hash
+and is recreated by the next release.
 
 Use the **Release metering proxy** GitHub Actions workflow from `main`, with the
 full merged commit SHA. Its image build and Required CI must both have succeeded
@@ -161,3 +173,59 @@ a real account can answer (`NO_LOGIN_ANSWERS`) are answered here. A request
 admission places on the subscription is refused with a 400 naming the missing
 login, which the client does not retry; one admission could not place gets a
 503 and is retried.
+
+## The ChatGPT accounts
+
+The proxy also holds the platform's ChatGPT subscription accounts, one per
+name, each in `<proxy home>/chatgpt-credential/<name>/credential` (JSON:
+`access_token`, `refresh_token`, `id_token`, `expires_at` in epoch seconds,
+`account_id`). As with Claude it is each pair's only holder: it renews the
+access token within ten minutes of expiry and writes the new pair back, and a
+refresh token OpenAI calls expired, reused or invalidated (or a 401/403) stops
+that account until someone logs it in again. Use `<proxy home>/chatgpt-login.sh`
+(every release installs it there):
+
+- `chatgpt-login.sh login <name>` runs OpenAI's device login: it prints a code
+  to enter at `https://auth.openai.com/codex/device`, then stores the pair.
+- `chatgpt-login.sh import <name> <file>` stores a pair held somewhere else,
+  as the JSON above; without `expires_at` it takes the access token's `exp`.
+  Stop using the copy it came from: the next refresh rotates the pair.
+- `chatgpt-login.sh status [name]`, `ls`, and `logout <name>`.
+- `chatgpt-login.sh egress set|clear|test <name> …` gives one account an HTTP
+  egress, exactly like the Claude one; its login, refreshes and requests all
+  leave through it. Two accounts may share an egress only with the same login
+  on it: mitmproxy keeps one tunnel per proxy address, so the proxy refuses
+  their requests rather than let one ride the other's tunnel.
+
+The gateway reaches the accounts on a third listener, `:8445`
+(`--mode reverse:https://chatgpt.com@8445`). It is published nowhere: the
+proxy and the gateway's LiteLLM share an internal docker network,
+`cheese-meter-gateway`, on which the proxy is `metering-proxy`, and no sandbox
+is on it. A gateway deployment for an account has `api_base`
+`http://metering-proxy:8445/chatgpt/<name>` and `api_key`
+`CHEESE_CHATGPT_KEY`; the backend accepts that one plain-http base and no
+other. Both stacks name the network external and each release creates it when
+it is missing, so either may be released first. A proxy brought up by hand
+before either release has run fails to start until
+`docker network create --internal cheese-meter-gateway` has been run.
+The proxy forwards `…/responses[/…]` and `…/models` to
+`https://chatgpt.com/backend-api/codex/…`, with the account's token,
+`ChatGPT-Account-Id`, `originator: cheese` and `version: <client version>`
+(below); anything else, an unknown account, or one with no usable login is
+answered with an error and not forwarded. A separate
+listener, so that no path on the Anthropic ones can reach an account; the key
+stays as a second line of defence behind the network. These responses are not
+metered here: the gateway records their spend.
+
+ChatGPT decides which models an account is offered from the Codex client
+version it is told, so that version is a setting and not part of a release. It
+is the file `<proxy home>/chatgpt-credential/client-version`, shared by every
+account and re-read on every request; with no file the proxy sends its built-in
+default (`DEFAULT_CODEX_CLIENT_VERSION` in `cheese_billing_core.py`). The model
+list is asked for the same version: the proxy sets `client_version` in its query
+to the header's value, replacing whatever the caller sent.
+
+- `chatgpt-login.sh client-version set <version>` sets it from the next
+  request, for example to the Codex release whose models the platform should see.
+- `chatgpt-login.sh client-version show` prints it.
+- `chatgpt-login.sh client-version clear` goes back to the built-in default.

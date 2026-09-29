@@ -8,6 +8,7 @@ from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.block.models import BlockKind, consumed_turn, prompt_attempts
 from app.domain.block.repositories import BlockRepository
@@ -28,7 +29,7 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
     async def _select_cloud() -> None:
         async with client.test_factory() as session:
             topic = await TopicRepository(session).get(uuid.UUID(topic_id))
-            topic.compute_profile = "cloud"
+            topic.compute_config = standard_choice("cloud").model_dump()
             await session.commit()
 
     asyncio.run(_select_cloud())

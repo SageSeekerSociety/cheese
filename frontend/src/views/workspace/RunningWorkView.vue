@@ -22,14 +22,14 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { listProjectTasks } from '@/api'
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
+import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
-import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '@/lib/board'
+import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -165,8 +165,17 @@ function toggleMine() {
   void router.replace({ query })
 }
 
+/** 已归档的房间：它们里面没走完的活不上板（见 lib/board.ts 的 liveBoardTasks）。 */
+const archivedRooms = computed(
+  () => new Set((store.topics as Topic[]).filter((t) => t.status === 'archived').map((t) => t.id))
+)
+
+/** 板上真正要看的那些。计数、统计、「只看我的」都从这一份出发，列里没有的活不能
+ *  在数字里还算着。 */
+const boardRows = computed(() => liveBoardTasks(rows.value, archivedRooms.value))
+
 const visibleRows = computed(() =>
-  mine.value && mineHandle.value ? rows.value.filter((r) => r.owner_handle === mineHandle.value) : rows.value
+  mine.value && mineHandle.value ? boardRows.value.filter((r) => r.owner_handle === mineHandle.value) : boardRows.value
 )
 
 function bucket(list: RoomTask[]): Map<BoardColumn, RoomTask[]> {
@@ -182,7 +191,7 @@ function bucket(list: RoomTask[]): Map<BoardColumn, RoomTask[]> {
 }
 
 const byColumn = computed(() => bucket(visibleRows.value))
-const totalByColumn = computed(() => bucket(rows.value))
+const totalByColumn = computed(() => bucket(boardRows.value))
 
 function inColumn(column: BoardColumn): RoomTask[] {
   return byColumn.value.get(column) ?? []
@@ -235,7 +244,7 @@ function openHomeRoom() {
  *  在开关一开的时候把「房间满员」凭空数没。 */
 const runningPerRoom = computed(() => {
   const n = new Map<string, number>()
-  for (const r of rows.value) {
+  for (const r of boardRows.value) {
     if (isRunning(r)) n.set(r.room_id, (n.get(r.room_id) ?? 0) + 1)
   }
   return n
@@ -273,7 +282,7 @@ function openTask(task: RoomTask) {
 <template>
   <!-- 这一页是项目的落点，页头写的是它是什么（看板），项目名在侧栏顶上那一行——那一
        行点下去就回到这里。统计和「只看我的」归在页头上：它们说的是整块板。 -->
-  <ProjectPage :title="t('navigation.project.board')" width="full">
+  <AppPage :title="t('navigation.project.board')" width="full">
     <template #meta>
       <span class="board__tally">
         <template v-if="tally.length">
@@ -288,8 +297,8 @@ function openTask(task: RoomTask) {
     </template>
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
          登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
-    <template v-if="mineHandle" #actions>
-      <button type="button" class="board__mine t-meta" :aria-pressed="mine" @click="toggleMine">
+    <template v-if="mineHandle" #controls>
+      <button type="button" class="board__mine t-meta tap-target" :aria-pressed="mine" @click="toggleMine">
         <span class="board__sw" aria-hidden="true" />
         只看我的
       </button>
@@ -432,7 +441,7 @@ function openTask(task: RoomTask) {
         </div>
       </template>
     </div>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>
@@ -462,7 +471,9 @@ function openTask(task: RoomTask) {
 }
 /* 「只看我的」。开着的时候整个开关加深、拨柄变实——板上的每个计数都因此换了含义，
    这个状态不能是要找才看得见的。过渡只写具体属性，不写 all。 */
+/* 相对定位给 .tap-target：这颗开关只有 28px 高，触屏上能点的范围撑到 44。 */
 .board__mine {
+  position: relative;
   flex: none;
   margin-left: auto;
   display: flex;
@@ -517,8 +528,9 @@ function openTask(task: RoomTask) {
    minmax(260px, …) 的话 260px 是个下限，网格在一个更窄的容器里也照守，于是板横着
    溢出而不是重排 —— main 上 #658 就是修的这个。
    窄的时候（这一格 < 1000px）：三列任务照旧自动换行，而「做出了什么」跨满整行、
-   排到最上面，高度封在 132px（列头 + 三行）以内自己滚。它在窄屏上只能摞在上面，
-   但摞的是一个**常数**高度，不是「有几项就多高」。 */
+   排到最上面，只列前三项，其余的收着（ArtifactManifest 里的「展开其余 N 项」）。
+   它在窄屏上只能摞在上面，但摞的是一个**有上限**的高度，不是「有几项就多高」；
+   里面不再套一层滚动，三项都完整露出来。 */
 .board__cols {
   flex: 1 1 auto;
   min-height: 0;
@@ -533,7 +545,26 @@ function openTask(task: RoomTask) {
 .board__cols > .board-col--made {
   order: -1;
   grid-column: 1 / -1;
-  max-height: 132px;
+}
+/* 800–1000 这一档板仍然钉在这一格的高度里：人把产物全展开时，这一块封在半屏以内
+   自己滚，板不至于被挤没。更窄时整页一起滚，不用封。 */
+@container (800px <= width < 1000px) {
+  .board__cols > .board-col--made {
+    max-height: 50vh;
+  }
+}
+/* 三列任务排不下一行（< 800 = 3×260 + 2×10）时，列会折成两行、三行。上面那两条
+   行轨只管得了前两行：第二行吃掉剩下的全部高度，下一列被推到一屏空白之后。这时
+   不再把板钉在这一格的高度里各列自己滚，而是每列有多高画多高，整页一起滚。 */
+@container (width < 800px) {
+  .board__cols {
+    flex: none;
+    grid-template-rows: none;
+    padding-bottom: 12px;
+  }
+  .board-col {
+    max-height: none;
+  }
 }
 /* 够宽就并排成四列。三列任务各 240 起，产物那一列只放名字和第几版，220 够用：
    240×3 + 220 + 10×3 = 970，所以 1000 是这条线该划的地方。 */

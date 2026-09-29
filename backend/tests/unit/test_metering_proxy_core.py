@@ -330,11 +330,12 @@ def test_one_topics_bound_model_is_never_served_to_another():
 
 def test_the_verdict_cache_does_not_grow_for_every_topic_ever_served():
     """One entry per topic ever served would be a slow leak in a proxy that runs
-    for weeks and has already been OOM-killed once. An entry past its window is
-    no longer an answer to anything, so it goes."""
+    for weeks and has already been OOM-killed once. An entry too old to route
+    by is no longer an answer to anything, so it goes."""
     gate = core.AdmissionGate(
         "http://backend/llm/admission",
         cache_s=0.01,
+        stale_s=0.01,
         post=lambda url, bearer, timeout_s: core.Verdict(True, "ok"),
     )
     for i in range(50):
@@ -345,6 +346,48 @@ def test_the_verdict_cache_does_not_grow_for_every_topic_ever_served():
     gate.check("p1", "t-last", "tok")
 
     assert len(gate._cache) == 1, "expired verdicts were kept"
+
+
+def test_an_unreachable_backend_keeps_the_last_answers_route():
+    """Fail-open still allows, but a session the backend already placed keeps
+    the pool, key and model it was given; only a session with no answer on
+    record, or one too old to route by, gets the subscription default."""
+    clock = [1000.0]
+    up = [True]
+
+    def post(url, bearer, timeout_s):
+        if not up[0]:
+            raise OSError("backend down")
+        return core.Verdict(
+            False,
+            "budget spent",
+            pool=core.GATEWAY,
+            key="sk-virt-1",
+            model="deepseek-flash",
+            fail_open=False,
+        )
+
+    gate = core.AdmissionGate(
+        "http://backend/llm/admission", cache_s=30, stale_s=3600, post=post
+    )
+    with mock.patch.object(core.time, "time", lambda: clock[0]):
+        assert gate.check("p1", "t1", "tok").allow is False
+        up[0] = False
+        clock[0] += 60
+        kept = gate.check("p1", "t1", "tok")
+        assert kept.allow is True and "fail-open" in kept.reason
+        assert (kept.pool, kept.key, kept.model) == (
+            core.GATEWAY,
+            "sk-virt-1",
+            "deepseek-flash",
+        )
+
+        unseen = gate.check("p1", "t2", "tok")
+        assert unseen.allow is True and unseen.pool == core.SUBSCRIPTION
+
+        clock[0] += 3600
+        expired = gate.check("p1", "t1", "tok")
+        assert expired.pool == core.SUBSCRIPTION and expired.key is None
 
 
 def test_a_requested_subagent_model_rides_the_admission_call():
@@ -761,3 +804,427 @@ def test_the_refresh_goes_through_the_egress_unchanged_inside_the_tunnel():
         + raw
     )
     assert (status, answer) == (200, {"access_token": "new"})
+
+
+# --- the platform's ChatGPT accounts -----------------------------------------
+
+
+def _jwt(claims: dict) -> str:
+    def part(value: dict) -> str:
+        raw = json.dumps(value).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    return f"{part({'alg': 'none'})}.{part(claims)}.sig"
+
+
+def _chatgpt_account(tmp_path, name="work", *, expires_in_s, now, **extra):
+    directory = tmp_path / name
+    directory.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "access_token": "chatgpt-at-OLD",
+        "refresh_token": "chatgpt-rt-OLD",
+        "id_token": _jwt({"sub": "u", "chatgpt_account_id": "acct-OLD"}),
+        "expires_at": int(now + expires_in_s),
+        "account_id": "acct-OLD",
+        **extra,
+    }
+    (directory / "credential").write_text(json.dumps(doc))
+    return directory
+
+
+def _chatgpt_granting(calls, **answer):
+    def post(url, fields, timeout):
+        calls.append((url, fields))
+        return 200, {
+            "access_token": "chatgpt-at-NEW",
+            "refresh_token": "chatgpt-rt-NEW",
+            "id_token": _jwt(
+                {
+                    "sub": "u",
+                    "https://api.openai.com/auth": {"chatgpt_account_id": "acct-NEW"},
+                }
+            ),
+            "expires_in": 864000,
+            **answer,
+        }
+
+    return post
+
+
+def test_a_fresh_chatgpt_account_serves_its_token_without_asking_anyone(tmp_path):
+    clock = _Clock(1_000_000.0)
+    _chatgpt_account(tmp_path, expires_in_s=86400, now=clock.t)
+    calls = []
+    accounts = core.ChatGPTAccounts(tmp_path, post=_chatgpt_granting(calls), now=clock)
+
+    account = accounts.get("work")
+    assert account is not None
+    assert account.token() == ("chatgpt-at-OLD", "acct-OLD", "")
+    assert account.refresh_due() is False
+    account.refresh_if_due()
+    assert calls == []
+
+
+def test_a_chatgpt_account_near_expiry_is_refreshed_the_way_the_backend_does(
+    tmp_path,
+):
+    clock = _Clock(1_000_000.0)
+    directory = _chatgpt_account(tmp_path, expires_in_s=300, now=clock.t)
+    calls = []
+    account = core.ChatGPTAccounts(
+        tmp_path, post=_chatgpt_granting(calls), now=clock
+    ).get("work")
+
+    assert account.refresh_due() is True
+    account.refresh_if_due()
+
+    assert calls == [
+        (
+            "https://auth.openai.com/oauth/token",
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": "chatgpt-rt-OLD",
+                "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+                "scope": "openid profile email",
+            },
+        )
+    ]
+    assert account.token() == ("chatgpt-at-NEW", "acct-NEW", "")
+    written = json.loads((directory / "credential").read_text())
+    assert written["refresh_token"] == "chatgpt-rt-NEW"
+    assert written["expires_at"] == int(clock.t) + 864000
+    assert ((directory / "credential").stat().st_mode & 0o777) == 0o600
+    assert account.refresh_due() is False
+
+
+def test_a_refresh_without_a_lifetime_takes_it_from_the_access_token(tmp_path):
+    clock = _Clock(1_000_000.0)
+    directory = _chatgpt_account(tmp_path, expires_in_s=60, now=clock.t)
+    new_token = _jwt({"exp": 1_500_000})
+    account = core.ChatGPTAccounts(
+        tmp_path,
+        post=lambda url, fields, timeout: (
+            200,
+            {"access_token": new_token},
+        ),
+        now=clock,
+    ).get("work")
+
+    account.refresh_if_due()
+
+    written = json.loads((directory / "credential").read_text())
+    assert written["expires_at"] == 1_500_000
+    # A refresh that returns no new refresh token keeps the one it used.
+    assert written["refresh_token"] == "chatgpt-rt-OLD"
+    assert account.token() == (new_token, "acct-OLD", "")
+
+
+def test_a_dead_chatgpt_refresh_token_asks_for_a_new_login_and_stops_trying(
+    tmp_path,
+):
+    for status, answer in (
+        (401, {}),
+        (403, {}),
+        (400, {"error": {"code": "refresh_token_expired"}}),
+        (400, {"error": "refresh_token_reused"}),
+        (400, {"code": "REFRESH_TOKEN_INVALIDATED"}),
+    ):
+        clock = _Clock(1_000_000.0)
+        root = tmp_path / str(len(list(tmp_path.iterdir())))
+        _chatgpt_account(root, expires_in_s=60, now=clock.t)
+        calls = []
+
+        def refuse(url, fields, timeout, status=status, answer=answer, calls=calls):
+            calls.append(fields)
+            return status, answer
+
+        account = core.ChatGPTAccounts(root, post=refuse, now=clock).get("work")
+        account.refresh_if_due()
+        clock.t += 3600
+        account.refresh_if_due()
+
+        assert len(calls) == 1, (status, answer)
+        assert account.token() == ("", "", "login_required"), (status, answer)
+
+
+def test_a_new_chatgpt_login_replaces_a_dead_one_without_a_restart(tmp_path):
+    clock = _Clock(1_000_000.0)
+    _chatgpt_account(tmp_path, expires_in_s=60, now=clock.t)
+    account = core.ChatGPTAccounts(
+        tmp_path, post=lambda url, fields, timeout: (401, {}), now=clock
+    ).get("work")
+    account.refresh_if_due()
+    assert account.token()[2] == "login_required"
+
+    _chatgpt_account(
+        tmp_path, expires_in_s=86400, now=clock.t, refresh_token="chatgpt-rt-2"
+    )
+
+    assert account.token() == ("chatgpt-at-OLD", "acct-OLD", "")
+
+
+def test_a_chatgpt_refresh_that_can_heal_keeps_the_valid_token_and_backs_off(
+    tmp_path,
+):
+    for failure in (
+        (503, {}),
+        (400, {"error": {"code": "something_else"}}),
+        OSError("connection reset"),
+    ):
+        clock = _Clock(1_000_000.0)
+        root = tmp_path / str(len(list(tmp_path.iterdir())))
+        _chatgpt_account(root, expires_in_s=300, now=clock.t)
+        calls = []
+
+        def fail(url, fields, timeout, failure=failure, calls=calls):
+            calls.append(fields)
+            if isinstance(failure, Exception):
+                raise failure
+            return failure
+
+        account = core.ChatGPTAccounts(root, post=fail, now=clock).get("work")
+        account.refresh_if_due()
+        clock.t += 10
+        account.refresh_if_due()
+        assert len(calls) == 1, failure
+        assert account.token() == ("chatgpt-at-OLD", "acct-OLD", ""), failure
+
+        clock.t += 60
+        account.refresh_if_due()
+        assert len(calls) == 2, failure
+
+
+def test_a_chatgpt_token_past_expiry_is_not_used(tmp_path):
+    clock = _Clock(1_000_000.0)
+    _chatgpt_account(tmp_path, expires_in_s=-1, now=clock.t)
+
+    def down(url, fields, timeout):
+        raise OSError("down")
+
+    account = core.ChatGPTAccounts(tmp_path, post=down, now=clock).get("work")
+    account.refresh_if_due()
+
+    assert account.token() == ("", "", "expired")
+
+
+def test_concurrent_requests_refresh_a_chatgpt_account_once(tmp_path):
+    clock = _Clock(1_000_000.0)
+    _chatgpt_account(tmp_path, expires_in_s=60, now=clock.t)
+    calls = []
+    granted = _chatgpt_granting(calls)
+    gate = _threading.Event()
+
+    def slow_post(url, fields, timeout):
+        gate.wait(5)
+        return granted(url, fields, timeout)
+
+    accounts = core.ChatGPTAccounts(tmp_path, post=slow_post, now=clock)
+    workers = [
+        _threading.Thread(target=lambda: accounts.get("work").refresh_if_due())
+        for _ in range(8)
+    ]
+    for w in workers:
+        w.start()
+    gate.set()
+    for w in workers:
+        w.join(5)
+
+    assert len(calls) == 1
+    assert accounts.get("work").token()[0] == "chatgpt-at-NEW"
+
+
+def test_chatgpt_accounts_are_separate_and_only_what_is_on_disk(tmp_path):
+    clock = _Clock(1_000_000.0)
+    _chatgpt_account(tmp_path, "work", expires_in_s=86400, now=clock.t)
+    _chatgpt_account(
+        tmp_path,
+        "spare",
+        expires_in_s=86400,
+        now=clock.t,
+        access_token="chatgpt-at-SPARE",
+        account_id="acct-SPARE",
+    )
+    (tmp_path / "loggedout").mkdir()
+    accounts = core.ChatGPTAccounts(tmp_path, now=clock)
+
+    assert accounts.get("work").token()[:2] == ("chatgpt-at-OLD", "acct-OLD")
+    assert accounts.get("spare").token()[:2] == ("chatgpt-at-SPARE", "acct-SPARE")
+    assert accounts.get("loggedout").token() == ("", "", "none")
+    for unknown in ("nobody", "..", ".", "../work", "work/..", "", ".hidden"):
+        assert accounts.get(unknown) is None, unknown
+
+
+def test_a_chatgpt_account_reads_its_egress_from_beside_it(tmp_path):
+    directory = _chatgpt_account(tmp_path, expires_in_s=86400, now=1_000_000.0)
+    account = core.ChatGPTAccounts(tmp_path).get("work")
+    assert account.egress() is None
+    (directory / "egress").write_text("http://me:pw@proxy.example:3128\n")
+    assert account.egress() == core.Egress.parse("http://me:pw@proxy.example:3128")
+
+
+def test_two_accounts_on_one_proxy_with_different_logins_conflict(tmp_path):
+    """One upstream connection per proxy address: two logins on the same
+    address would share a tunnel, and an exit chosen by login would be lost."""
+    for name, url in (
+        ("work", "http://a:1@proxy.example:3128"),
+        ("spare", "http://b:2@proxy.example:3128"),
+        ("same", "http://a:1@proxy.example:3128"),
+        ("elsewhere", "http://b:2@other.example:3128"),
+    ):
+        directory = _chatgpt_account(tmp_path, name, expires_in_s=86400, now=0)
+        (directory / "egress").write_text(url)
+    accounts = core.ChatGPTAccounts(tmp_path)
+
+    assert accounts.egress_conflict("work", accounts.get("work").egress()) == "spare"
+    assert accounts.egress_conflict("spare", accounts.get("spare").egress()) in (
+        "same",
+        "work",
+    )
+    elsewhere = accounts.get("elsewhere").egress()
+    assert accounts.egress_conflict("elsewhere", elsewhere) == ""
+
+
+def test_only_the_responses_and_model_paths_are_routes():
+    assert core.chatgpt_route("/chatgpt/work/responses") == (
+        "work",
+        "/backend-api/codex/responses",
+    )
+    assert core.chatgpt_route("/chatgpt/work/responses/compact?x=1") == (
+        "work",
+        "/backend-api/codex/responses/compact?x=1",
+    )
+    assert core.chatgpt_route("/chatgpt/work/models?client_version=1.2.3") == (
+        "work",
+        "/backend-api/codex/models?client_version=1.2.3",
+    )
+    for other in (
+        "/chatgpt/work/wham/usage",
+        "/chatgpt/work/responsesX",
+        "/chatgpt/work/",
+        "/chatgpt/work/../wham/usage",
+        "/chatgpt/work/responses/../../wham/usage",
+        "/chatgpt/work/responses/%2e%2e/%2e%2e/wham/usage",
+        "/chatgpt/work/responses//x",
+    ):
+        assert core.chatgpt_route(other) == ("work", ""), other
+    for not_a_route in ("/v1/messages", "/chatgpt/", "/chatgpt//responses", "/"):
+        assert core.chatgpt_route(not_a_route) is None, not_a_route
+
+
+def test_a_chatgpt_refresh_goes_through_the_egress_as_a_form():
+    import http.client
+    import socket
+    import urllib.parse
+
+    received = bytearray()
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    fields = {
+        "grant_type": "refresh_token",
+        "refresh_token": "chatgpt-rt-X",
+        "client_id": core.OPENAI_CLIENT_ID,
+        "scope": "openid profile email",
+    }
+    length = len(urllib.parse.urlencode(fields))
+
+    def serve():
+        conn, _ = listener.accept()
+        with conn:
+            while b"\r\n\r\n" not in received:
+                received.extend(conn.recv(65536))
+            conn.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            tunnel_end = bytes(received).index(b"\r\n\r\n") + 4
+            while True:
+                inside = bytes(received[tunnel_end:])
+                head, sep, body = inside.partition(b"\r\n\r\n")
+                if sep and len(body) >= length:
+                    break
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                received.extend(chunk)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                b"Content-Length: 22\r\nConnection: close\r\n\r\n"
+                b'{"access_token":"new"}'
+            )
+
+    server = _threading.Thread(target=serve)
+    server.start()
+    egress = core.Egress.parse(f"http://me:pw@127.0.0.1:{port}")
+
+    status, answer = core._post_form(
+        core.OPENAI_TOKEN_URL,
+        fields,
+        5,
+        egress=egress,
+        connect=http.client.HTTPConnection,
+    )
+    server.join(5)
+    listener.close()
+
+    tunnel, _, inside = bytes(received).partition(b"\r\n\r\n")
+    assert tunnel.startswith(b"CONNECT auth.openai.com:443 HTTP/")
+    assert b"Proxy-Authorization: Basic " + base64.b64encode(b"me:pw") in tunnel
+    head, _, body = inside.partition(b"\r\n\r\n")
+    assert head.startswith(b"POST /oauth/token HTTP/1.1\r\n")
+    assert b"Content-Type: application/x-www-form-urlencoded" in head
+    assert dict(urllib.parse.parse_qsl(body.decode())) == fields
+    assert (status, answer) == (200, {"access_token": "new"})
+
+
+# --- ChatGPT: the body Codex takes -------------------------------------------
+
+
+def _codex(*chunks: bytes) -> bytes:
+    body = core.CodexBody()
+    # An empty chunk is the end of the body, so only the non-empty pieces are fed.
+    return b"".join(body.feed(c) for c in chunks if c) + body.feed(b"")
+
+
+# What the gateway's Messages translation sends, with the awkward bytes a real
+# conversation carries inside its strings.
+_TRANSLATED = (
+    b'{"input":[{"role":"user","content":[{"type":"input_text",'
+    b'"text":"a } b ] c , d \\" e \\\\ \\"max_output_tokens\\": 9"}]}],'
+    b' "max_output_tokens" : 64,"model":"gpt-6-astra",'
+    b'"tools":[{"name":"t","parameters":{"store":true,"max_output_tokens":1}}],'
+    b'"stream":true}'
+)
+
+
+def test_a_translated_body_goes_out_the_way_codex_takes_it():
+    sent = json.loads(_codex(_TRANSLATED))
+    original = json.loads(_TRANSLATED)
+    del original["max_output_tokens"]
+    assert sent == {"store": False, **original}
+
+
+def test_the_reshaped_body_is_the_same_however_it_arrives():
+    whole = _codex(_TRANSLATED)
+    for cut in range(1, len(_TRANSLATED)):
+        assert _codex(_TRANSLATED[:cut], _TRANSLATED[cut:]) == whole, cut
+    assert _codex(*[_TRANSLATED[i : i + 1] for i in range(len(_TRANSLATED))]) == whole
+
+
+def test_store_is_false_whatever_the_body_said():
+    assert json.loads(_codex(b'{"store":true,"model":"m"}')) == {
+        "store": False,
+        "model": "m",
+    }
+    assert json.loads(_codex(b'{"model":"m","store":true}')) == {
+        "store": False,
+        "model": "m",
+    }
+
+
+def test_a_dropped_member_may_be_the_only_one():
+    assert json.loads(_codex(b'{ "max_output_tokens": 5 }')) == {"store": False}
+    assert json.loads(_codex(b"{ }")) == {"store": False}
+
+
+def test_a_body_that_is_not_an_object_passes_untouched():
+    assert _codex(b"[1,2]") == b"[1,2]"
+    assert _codex(b"") == b""

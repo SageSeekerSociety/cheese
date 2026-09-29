@@ -13,6 +13,7 @@ import type { Block, ProjectMemberRow, Topic, TopicMemberRow } from '../../../cx
 import { computed, ref, watch } from 'vue'
 
 import { listTopicMembers } from '../../../api'
+import { agentNames } from '../../../lib/agentNames'
 import { isAgentBlock } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
 import { getAvatarUrl } from '../../../utils/materials'
@@ -104,7 +105,7 @@ export function useRoomRoster(options: {
   /** 界面上称呼它用的名字。名册没到时谁也不猜，就写「芝士」。 */
   const agentName = computed(() => agentSeat.value?.label || '芝士')
 
-  /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
+  /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的**人**。 */
   const mentionPool = computed(() => {
     // 名册没到（切话题的那一瞬间）房间那半就是空的：宁可少一行，也不能把**上一个
     // 房间**的座位留在名单里——那一位的名字也写着「芝士」，@ 出来却是个不在这儿的
@@ -116,13 +117,12 @@ export function useRoomRoster(options: {
       external: isExternal(m.member_handle),
     }))
     const inRoom = new Set(room.map((r) => r.handle))
-    // 项目名册上的 AI 队友也 @ 得到：它坐的是自己的那个 handle（房间席位用的是同一
-    // 个），所以上面按 handle 去重就够了——@ 一位还没进这间房的队友，和 @ 一个还没
-    // 进来的人是同一件事。已停用的不列：停用就是为了挡住新的活，补全菜单是派活的
-    // 入口。房间那一半不过这道滤——已经在这间房里的它照常 @ 得到。
+    // 不在这间房里的 AI 队友不列：它只在自己坐着的房间里被 @ 叫得动，在这里 @ 它
+    // 什么也不会发生（后端点名只认这间房的席位），列出来就是一个点了没反应的名字。
+    // 已停用的也不列：停用就是为了挡住新的活，补全菜单是派活的入口。
     const rest = options
       .members()
-      .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
+      .filter((m) => !inRoom.has(m.user_handle) && !m.agent && m.active !== false)
       .map((m) => ({
         handle: m.user_handle,
         label: m.name || m.user_handle,
@@ -157,12 +157,18 @@ export function useRoomRoster(options: {
   // AI 的一条和人的一条是同一个规矩：署它的作者，不署「这个房间的那位」。一个房
   // 间可以先后交给两个队友，两个人的话都还在记录里，各自署各自的名。名册还没到
   // 时写「芝士」——那一刻界面上任何一处说出的名字都可能是上一个房间那位。
-  // 名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是人和
-  // 人的私聊里平台自己写的）。那也不能把 `cheese-<hex>` 摆到屏幕上：那是管道，读
-  // 的人只会当成乱码。身份分叉，显示不分叉。
+  // 房间名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是
+  // 人和人的私聊里平台自己写的），项目名册上还有它的名字；轮次帧、收件人写的是队友
+  // 自己的 handle，也在项目名册上认。都认不出也不能把 `cheese-<hex>` 摆到屏幕上：那
+  // 是管道，读的人只会当成乱码。身份分叉，显示不分叉。
+  const agentNameMap = computed(() => agentNames(rosterLoaded.value ? roomMembers.value : [], options.members()))
+  /** 这个 AI handle 的名字；认不出（或名册还没到）时是 null，兜底由调用方定。 */
+  function agentNameOf(handle: string): string | null {
+    if (!rosterLoaded.value) return null
+    return agentNameMap.value.get(handle) ?? null
+  }
   function agentDisplayName(handle: string): string {
-    if (!rosterLoaded.value) return '芝士'
-    return seatByHandle.value.get(handle)?.name || '芝士'
+    return agentNameOf(handle) || '芝士'
   }
   function displayName(m: Block): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)
@@ -191,6 +197,7 @@ export function useRoomRoster(options: {
     mentionPool,
     memberByHandle,
     seatByHandle,
+    agentNameOf,
     agentDisplayName,
     displayName,
     isExternal,

@@ -481,13 +481,18 @@ async def _fire_schedules(session: AsyncSession) -> int:
     rows = list(
         await session.scalars(
             select(Routine)
+            .join(Topic, Topic.id == Routine.topic_id)
             .where(
                 Routine.state == RoutineState.active.value,
                 Routine.trigger == RoutineTrigger.schedule.value,
                 Routine.next_run_at.is_not(None),
                 Routine.next_run_at <= stamp,
+                # An archived room (every room of an archived project is one)
+                # runs nothing: its deliveries would only fail. When it comes
+                # back, the missed occurrence is recorded as skipped.
+                Topic.status != TopicStatus.archived,
             )
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=Routine, skip_locked=True)
         )
     )
     fired = 0
@@ -594,11 +599,13 @@ async def _fire_events(session: AsyncSession) -> int:
     rows = list(
         await session.scalars(
             select(Routine)
+            .join(Topic, Topic.id == Routine.topic_id)
             .where(
                 Routine.state == RoutineState.active.value,
                 Routine.trigger.in_([t.value for t in EVENT_TRIGGERS]),
+                Topic.status != TopicStatus.archived,
             )
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=Routine, skip_locked=True)
         )
     )
     fired = 0

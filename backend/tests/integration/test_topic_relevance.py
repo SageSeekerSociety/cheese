@@ -8,8 +8,10 @@ topics table at all.
 
 Two booleans, deliberately not one enum: `i_participate` (roster / creator /
 routed reviewer / @'d) is what the fold keys off, and `awaits_me` (a pending
-card routed to me, an unread @ at me) is what OVERRIDES the fold, so a topic
-waiting on you never ends up hidden inside 「其他话题」.
+card routed to me, an unanswered decision request, a question only I can
+answer) is what OVERRIDES the fold, so a topic waiting on you never ends up
+hidden inside 「其他话题」. An unread @ is NOT a way of being awaited: it lit
+almost every row of the sidebar orange, and unread has its own badge.
 
 Everything below asserts on the endpoint's payload — the point is what a
 browser receives, not which query produced it. The one exception is the last
@@ -152,18 +154,19 @@ def test_an_uninvolved_project_member_relates_to_nothing(client):
 # ---- @ 提及: participation and the unread override ------------------------
 
 
-def test_an_unread_at_awaits_you_and_a_read_one_still_counts(client):
+def test_an_at_makes_the_topic_yours_but_does_not_await_you(client):
     """Being @'d makes the topic yours, and stays that way after you read it.
 
-    Read-state moves `awaits_me` only. Otherwise opening the notification would
-    make the topic vanish from 「我参与的」 — the same @ that put it there."""
+    It never lights `awaits_me`, read or not: 芝士 @s people on every report
+    and card, so counting unread @ turned the sidebar's orange dot on for
+    nearly every row — a dot that is always on says nothing."""
     pid = _project(client)
     tid = _topic(client, pid, "T", created_by="alice")
     _say(client, tid, "alice", "<@bob> 看一下这个")
 
     row = _seen_by(client, pid, "bob")["T"]
     assert row["i_participate"] is True
-    assert row["awaits_me"] is True
+    assert row["awaits_me"] is False
 
     alerts = client.get(
         f"/projects/{pid}/alerts", headers=session_auth_headers("bob")
@@ -181,7 +184,159 @@ def test_an_unread_at_awaits_you_and_a_read_one_still_counts(client):
     assert after["awaits_me"] is False
 
 
+def test_an_unanswered_decision_request_awaits_you_until_you_decide(client):
+    """A decision request in the room is on your desk until you pick an option.
+
+    Reading it is not deciding it — the same rule the inbox uses."""
+    pid = _project(client)
+    tid = _topic(client, pid, "T", created_by="alice")
+    r = client.post(
+        f"/projects/{pid}/alerts",
+        json={
+            "level": "strong",
+            "kind": "decision_request",
+            "title": "选哪个",
+            "target_handle": "bob",
+            "topic_id": tid,
+            "payload": {"options": ["A", "B"]},
+        },
+    )
+    assert r.status_code == 200, r.text
+    decision = r.json()["data"]["data"][0]
+
+    row = _seen_by(client, pid, "bob")["T"]
+    assert row["i_participate"] is True
+    assert row["awaits_me"] is True
+    # It waits on bob, not on everyone who can see the room.
+    assert _seen_by(client, pid, "alice")["T"]["awaits_me"] is False
+
+    bob = session_auth_headers("bob")
+    client.post(f"/alerts/{decision['id']}/read", headers=bob)
+    assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is True
+
+    r = client.post(
+        f"/alerts/{decision['id']}/resolve", json={"chosen": "A"}, headers=bob
+    )
+    assert r.status_code == 200, r.text
+    after = _seen_by(client, pid, "bob")["T"]
+    assert after["awaits_me"] is False
+    assert after["i_participate"] is True
+
+
+def _set_card(client, card_id: str, **fields) -> None:
+    import asyncio
+
+    from app.domain.review.models import AcceptCard
+
+    async def _run() -> None:
+        async with client.test_factory() as s:
+            card = await s.get(AcceptCard, uuid.UUID(card_id))
+            assert card is not None
+            for key, value in fields.items():
+                setattr(card, key, value)
+            await s.commit()
+
+    asyncio.run(_run())
+
+
+def test_a_card_whose_checks_failed_is_not_on_the_reviewers_desk(client):
+    """CI 挂了，采纳按钮点不了：下一步是芝士去修，不是验收人去点。"""
+    pid = _project(client)
+    tid = _topic(client, pid, "T", created_by="alice")
+    card = _card(client, tid, reviewer="carol")
+    _set_card(
+        client,
+        card,
+        note_code="checks_failed",
+        merge_state={"state": "blocked", "who": "agent", "reasons": []},
+    )
+
+    row = _seen_by(client, pid, "carol")["T"]
+    assert row["i_participate"] is True
+    assert row["awaits_me"] is False
+
+
+def test_a_card_already_approved_and_waiting_to_merge_is_off_the_desk(client):
+    """点过采纳、在等合并队列的检查：该点的已经点了，黄灯要灭。"""
+    pid = _project(client)
+    tid = _topic(client, pid, "T", created_by="alice")
+    card = _card(client, tid, reviewer="carol")
+    assert _seen_by(client, pid, "carol")["T"]["awaits_me"] is True
+
+    _set_card(
+        client,
+        card,
+        decided_by="carol",
+        note_code="waiting_merge_queue",
+        merge_state={"state": "blocked", "who": "ci", "reasons": []},
+    )
+    assert _seen_by(client, pid, "carol")["T"]["awaits_me"] is False
+
+
 # ---- the fields are per-caller, and per-topic ----------------------------
+
+
+def _summon(client, tid: str, author: str) -> None:
+    """``author`` 点了芝士的名 —— 直接落一条带 `agent_recipient.mentioned` 的消息，
+    不经过会叫起一轮的那条路。"""
+    import asyncio
+
+    from app.domain.block.models import AuthorType, Block, BlockKind
+    from app.domain.topic.models import Topic
+
+    async def _run() -> None:
+        async with client.test_factory() as s:
+            topic = await s.get(Topic, uuid.UUID(tid))
+            assert topic is not None
+            s.add(
+                Block(
+                    project_id=topic.project_id,
+                    topic_id=topic.id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author=author,
+                    content="看一下",
+                    meta={"agent_recipient": {"handle": "cheese", "mentioned": True}},
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_run())
+
+
+def test_a_question_with_no_open_turn_waits_on_whoever_summoned_the_agent(client):
+    """没有开着的轮次可问时，题等的是最近点芝士名的那个人 —— 不能谁都不等。"""
+    pid = _project(client)
+    tid = _topic(client, pid, "问答", created_by="alice")
+    _summon(client, tid, "bob")
+    r = client.post(
+        f"/topics/{tid}/ask",
+        json={"question": "按哪个口径", "options": ["按部门", "按项目"]},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is True
+    assert _seen_by(client, pid, "carol")["问答"]["awaits_me"] is False
+
+
+def test_replying_in_words_instead_of_a_button_ends_the_wait(client):
+    """没点选项、直接回了一句话，也是回应过了；别人说话不算他回应。"""
+    pid = _project(client)
+    tid = _topic(client, pid, "问答", created_by="alice")
+    _summon(client, tid, "bob")
+    r = client.post(
+        f"/topics/{tid}/ask",
+        json={"question": "按哪个口径", "options": ["按部门", "按项目"]},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    _say(client, tid, "carol", "我路过")
+    assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is True
+
+    _say(client, tid, "bob", "都行，你先按部门")
+    assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is False
 
 
 def test_a_question_awaits_only_whoever_started_the_turn(client):
@@ -292,12 +447,13 @@ def _reads(statements: list[str], table: str) -> int:
     return sum(1 for s in statements if f"FROM {table}" in s)
 
 
-def test_relevance_costs_three_queries_whatever_the_project_size(client, sql_log):
+def test_relevance_costs_constant_queries_whatever_the_project_size(client, sql_log):
     """The hard requirement: the extra cost is CONSTANT, not per topic.
 
     A project's whole tree comes back in one list call, so a per-topic probe
-    would be a hundred round trips to draw one sidebar. Three queries — roster,
-    accept cards, @-notifications — answer it for every topic at once, and
+    would be a hundred round trips to draw one sidebar. Four queries — roster,
+    accept cards, @-notifications, open decision requests — answer it for
+    every topic at once, and
     「我建的」 is free because `created_by` already rides the rows the endpoint
     fetched anyway.
 
@@ -319,9 +475,11 @@ def test_relevance_costs_three_queries_whatever_the_project_size(client, sql_log
     assert len(_seen_by(client, big, "alice")) == 13
     big_log = list(sql_log)
 
+    # `notification` is read twice: unread-or-read @s (participation) and
+    # unanswered decision requests (awaiting). Constant either way.
     for table in ("notification",):
-        assert _reads(small_log, table) == 1, table
-        assert _reads(big_log, table) == 1, table
+        assert _reads(small_log, table) == 2, table
+        assert _reads(big_log, table) == 2, table
     # Archive permission is a separate owner/admin-filtered roster query.
     # Both lookups are batched; adding rooms must not add round trips.
     assert _reads(small_log, "topic_memberships") == 2
@@ -332,7 +490,7 @@ def test_relevance_costs_three_queries_whatever_the_project_size(client, sql_log
     #     every status, because being named is a lasting relationship
     #     (`reviewer_topic_ids`);
     #   - the board wants "the undecided card on this room" — every reviewer,
-    #     only live statuses (`_live_room_cards`).
+    #     only live statuses (`_live_cards`).
     # Folding them into one scan means dropping both filters and pulling every
     # card on every listed topic back into Python, which is MORE rows, not
     # fewer round trips. Two is still constant — which is the requirement this

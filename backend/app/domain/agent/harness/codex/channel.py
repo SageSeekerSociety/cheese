@@ -9,16 +9,21 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import Placement, ScreenSetupError
+from app.domain.agent.harness.channel import (
+    Placement,
+    ScreenSetupError,
+    mint_session_token,
+    startup_refused,
+)
 from app.domain.agent.harness.codex.launch import script
 from app.domain.agent.harness.codex.runtime import Handle
 from app.domain.agent.harness.launch import ExecutorLaunch
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.library import service as library
+from app.domain.project_skill.service import session_skill_files
 
 logger = logging.getLogger(__name__)
 
@@ -75,13 +80,7 @@ class CodexChannel:
             )
             return metadata
 
-        token = mint_scoped_token(
-            project_id=str(session.project_id),
-            topic_id=str(session.topic_id),
-            ttl_s=30 * 24 * 3600,
-            access_scope="project",
-            agent_handle=agent,
-        )
+        token = mint_session_token(session.project_id, session.topic_id, agent)
         async with self.channel.prepare_session(
             session=session,
             token=token,
@@ -107,7 +106,15 @@ class CodexChannel:
                 "binary": "~/.cheese/tools/codex/node_modules/.bin/codex",
                 "opening": {**asdict(opening), "env": None, "agent_handle": agent},
                 "execution_target": target,
-                "mcp_servers": target["mcp_servers"],
+                # The platform's own skills, as content: the runner writes them
+                # where the session's Codex reads them (`tools.ship_skills`).
+                "skills": session_skill_files(session.project_id),
+                # The machine's stdio servers and the project's remote ones;
+                # `RemoteClient.call` sends each to where it is served.
+                "mcp_servers": [
+                    *target["mcp_servers"],
+                    *(target.get("remote_mcp") or {}).get("servers", []),
+                ],
             }
             if target["kind"] == "private":
                 result = await self.channel._hub.exec(
@@ -117,8 +124,9 @@ class CodexChannel:
                     timeout=120,
                 )
                 if result.get("exit") != 0 or result.get("truncated"):
-                    raise ScreenSetupError(
-                        result.get("stderr") or "Private executor startup failed"
+                    raise startup_refused(
+                        result.get("stderr") or "Private executor startup failed",
+                        harness="Codex",
                     )
             codex_config = (
                 'model_provider = "cheese"\n'
@@ -136,7 +144,9 @@ class CodexChannel:
                 timeout=120,
             )
             if result.get("exit") != 0 or result.get("truncated"):
-                raise ScreenSetupError(result.get("stderr") or "Codex startup failed")
+                raise startup_refused(
+                    result.get("stderr") or "Codex startup failed", harness="Codex"
+                )
             status = json.loads(result["stdout"])
             return Handle(
                 session,

@@ -18,6 +18,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.domain.agent.compute_configs import standard_choice
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 from app.domain.machine.microcloud import MicroCloudError
@@ -293,6 +294,7 @@ async def test_provision_rejects_an_unsupported_spec_without_buying_a_machine():
     service = build_service(client)
     with pytest.raises(ValidationError, match="超出当前供应范围"):
         await service.provision(
+            topic_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             requested_by="andy",
             cores=64,
@@ -307,7 +309,9 @@ async def test_provision_bills_the_project_not_the_person():
     service = build_service(client)
     project_id = uuid.uuid4()
 
-    await service.provision(project_id=project_id, requested_by="andy")
+    await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     assert customer_ref(project_id) in client.customers
     assert client.topups, "a fresh account must be funded before it is charged"
@@ -356,8 +360,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         id=uuid.uuid4(),
         project_id=uuid.uuid4(),
         created_by="owner",
-        compute_profile="cloud",
-        compute_config=None,
+        compute_config=standard_choice("cloud").model_dump(),
         status=TopicStatus.active,
     )
 
@@ -414,7 +417,9 @@ async def test_suspend_preserves_identity_and_refuses_active_work():
 
     cloud = FakeMicroCloud()
     service = build_service(cloud)
-    machine = await service.provision(project_id=uuid.uuid4(), requested_by="owner")
+    machine = await service.provision(
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="owner"
+    )
     cloud.machines[machine.machine_id].update(status="running", ip="10.0.0.7")
     await service.refresh(machine)
     before = (machine.id, machine.machine_id, machine.ip, machine.account_id)
@@ -478,8 +483,7 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
             id=topic_id,
             project_id=project_id,
             status=TopicStatus.active,
-            compute_profile="cloud",
-            compute_config=None,
+            compute_config=standard_choice("cloud").model_dump(),
         )
         for topic_id in (uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
     }
@@ -524,10 +528,14 @@ async def test_provision_reuses_the_projects_existing_account():
     service = build_service(client)
     project_id = uuid.uuid4()
 
-    await service.provision(project_id=project_id, requested_by="andy")
+    await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+    )
     first_topups = len(client.topups)
     client.accounts[(7, "compute")]["balance"] = 10_000
-    await service.provision(project_id=project_id, requested_by="andy")
+    await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     assert len(client.customers) == 1
     assert len(client.topups) == first_topups, (
@@ -540,14 +548,22 @@ async def test_provision_uses_updated_limit_without_rebuilding_service(runtime_l
     project_id = uuid.uuid4()
     runtime_limit.return_value = 50
     for _ in range(50):
-        await service.provision(project_id=project_id, requested_by="owner")
+        await service.provision(
+            project_id=project_id, topic_id=uuid.uuid4(), requested_by="owner"
+        )
     with pytest.raises(ValidationError):
-        await service.provision(project_id=project_id, requested_by="owner")
+        await service.provision(
+            project_id=project_id, topic_id=uuid.uuid4(), requested_by="owner"
+        )
     runtime_limit.return_value = 51
-    await service.provision(project_id=project_id, requested_by="owner")
+    await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="owner"
+    )
     runtime_limit.return_value = 49
     with pytest.raises(ValidationError):
-        await service.provision(project_id=project_id, requested_by="owner")
+        await service.provision(
+            project_id=project_id, topic_id=uuid.uuid4(), requested_by="owner"
+        )
     assert len(service._client.created) == 51
     assert service._client.deleted == []
 
@@ -559,22 +575,30 @@ async def test_provision_refuses_past_the_team_ceiling():
     project_id = uuid.uuid4()
 
     for _ in range(2):
-        await service.provision(project_id=project_id, requested_by="andy")
+        await service.provision(
+            project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+        )
 
     with pytest.raises(ValidationError):
-        await service.provision(project_id=project_id, requested_by="andy")
+        await service.provision(
+            project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+        )
 
 
 async def test_provision_rejects_an_unknown_project():
     service = build_service(project=None)
     with pytest.raises(NotFoundError):
-        await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+        await service.provision(
+            project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="andy"
+        )
 
 
 async def test_provision_explains_a_tenant_with_no_offering():
     service = build_service(FakeMicroCloud(offerings=[]))
     with pytest.raises(ValidationError):
-        await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+        await service.provision(
+            project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="andy"
+        )
 
 
 async def test_unreachable_provider_reports_unknown_not_error():
@@ -584,7 +608,9 @@ async def test_unreachable_provider_reports_unknown_not_error():
 
     client = Down()
     service = build_service(client)
-    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+    machine = await service.provision(
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     refreshed = await service.refresh(machine)
     assert refreshed.status == MachineStatus.unknown, (
@@ -595,32 +621,13 @@ async def test_unreachable_provider_reports_unknown_not_error():
 async def test_a_machine_that_vanished_upstream_reads_as_deleted():
     client = FakeMicroCloud()
     service = build_service(client)
-    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+    machine = await service.provision(
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     client.machines.clear()
     refreshed = await service.refresh(machine)
     assert refreshed.status == MachineStatus.deleted
-
-
-async def test_the_platform_key_never_displaces_the_humans():
-    """Enrolling a machine must not cost the person their way into it.
-
-    MicroCloud takes a single sshPubkey field, so the platform's bootstrap key
-    and the human's key go in together — authorized_keys is one key per line.
-    """
-    client = FakeMicroCloud()
-    service = build_service(client)
-
-    await service.provision(
-        project_id=uuid.uuid4(),
-        requested_by="andy",
-        ssh_pubkey="  ssh-ed25519 HUMANKEY andy@laptop  ",
-    )
-
-    authorized = client.created[0]["sshPubkey"].splitlines()
-    assert "ssh-ed25519 HUMANKEY andy@laptop" in authorized
-    assert any("cheese-bootstrap" in line for line in authorized)
-    assert len(authorized) == 2
 
 
 async def test_the_operators_key_rides_on_every_machine_the_platform_opens(
@@ -637,15 +644,13 @@ async def test_the_operators_key_rides_on_every_machine_the_platform_opens(
     service = build_service(client)
 
     await service.provision(
-        project_id=uuid.uuid4(),
-        requested_by="andy",
-        ssh_pubkey="ssh-ed25519 HUMANKEY andy@laptop",
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="andy"
     )
 
     authorized = client.created[0]["sshPubkey"].splitlines()
     assert "ssh-ed25519 OPSKEY ops@box" in authorized
-    assert "ssh-ed25519 HUMANKEY andy@laptop" in authorized
-    assert len(authorized) == 3
+    assert any("cheese-bootstrap" in line for line in authorized)
+    assert len(authorized) == 2
 
 
 async def test_a_machine_asked_for_without_a_key_still_gets_the_platforms():
@@ -654,7 +659,9 @@ async def test_a_machine_asked_for_without_a_key_still_gets_the_platforms():
     client = FakeMicroCloud()
     service = build_service(client)
 
-    await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+    await service.provision(
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="andy"
+    )
     assert "cheese-bootstrap" in client.created[0]["sshPubkey"]
 
 
@@ -662,7 +669,9 @@ async def test_reading_a_project_picks_up_progress_made_while_nobody_looked():
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
-    machine = await service.provision(project_id=project_id, requested_by="andy")
+    machine = await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     client.machines[machine.machine_id].update(
         status="running", ip="10.0.0.5", aiStatus="ready"
@@ -678,7 +687,9 @@ async def test_a_known_ip_is_never_blanked_by_a_later_read():
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
-    machine = await service.provision(project_id=project_id, requested_by="andy")
+    machine = await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     client.machines[machine.machine_id].update(status="running", ip="10.0.0.5")
     await service.refresh(machine)
@@ -709,7 +720,9 @@ async def test_a_running_machine_with_ai_still_provisioning_keeps_being_polled()
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
-    machine = await service.provision(project_id=project_id, requested_by="andy")
+    machine = await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     client.machines[machine.machine_id].update(status="running", ip="10.0.0.5")
     await service.list_for_project(project_id)
@@ -734,7 +747,9 @@ async def test_polling_stops_once_both_lifecycles_settle():
     client = Counting()
     service = build_service(client)
     project_id = uuid.uuid4()
-    machine = await service.provision(project_id=project_id, requested_by="andy")
+    machine = await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     client.machines[machine.machine_id].update(
         status="running", ip="10.0.0.5", aiStatus="ready"
@@ -757,7 +772,9 @@ async def test_polling_stops_once_both_lifecycles_settle():
 async def test_an_ai_state_we_do_not_know_yet_reads_as_unknown():
     client = FakeMicroCloud()
     service = build_service(client)
-    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+    machine = await service.provision(
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     client.machines[machine.machine_id]["aiStatus"] = "some-future-state"
     await service.refresh(machine)
@@ -771,7 +788,9 @@ async def test_an_unreachable_provider_does_not_claim_the_agent_is_ready():
 
     client = Down()
     service = build_service(client)
-    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+    machine = await service.provision(
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="andy"
+    )
     machine.ai_status = AiStatus.ready
 
     await service.refresh(machine)
@@ -793,16 +812,24 @@ async def test_a_destroyed_machine_stops_occupying_the_projects_slot():
 
     made = []
     for _ in range(2):
-        made.append(await service.provision(project_id=project_id, requested_by="andy"))
+        made.append(
+            await service.provision(
+                project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+            )
+        )
 
     with pytest.raises(ValidationError):
-        await service.provision(project_id=project_id, requested_by="andy")
+        await service.provision(
+            project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+        )
 
     # Destroy one for real: MicroCloud forgets it, and the next read notices.
     await service.destroy(made[0])
     await service.list_for_project(project_id)
 
-    replacement = await service.provision(project_id=project_id, requested_by="andy")
+    replacement = await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+    )
     assert replacement is not None
 
 
@@ -810,7 +837,9 @@ async def test_a_forgotten_machine_disappears_from_the_listing():
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
-    machine = await service.provision(project_id=project_id, requested_by="andy")
+    machine = await service.provision(
+        project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     client.machines.clear()  # MicroCloud no longer knows it
     remaining = await service.list_for_project(project_id)
@@ -824,7 +853,10 @@ async def test_forgetting_an_enrolled_machine_removes_its_device():
     service = build_service(client)
     project_id = uuid.uuid4()
     machine = await service.provision(
-        project_id=project_id, requested_by="andy", owner_user_id=42
+        topic_id=uuid.uuid4(),
+        project_id=project_id,
+        requested_by="andy",
+        owner_user_id=42,
     )
     machine.device_id = "cloud-device"
     service._devices.devices[machine.device_id] = SimpleNamespace(
@@ -843,7 +875,10 @@ async def test_forgetting_never_deletes_a_device_owned_by_somebody_else():
     service = build_service(client)
     project_id = uuid.uuid4()
     machine = await service.provision(
-        project_id=project_id, requested_by="andy", owner_user_id=42
+        topic_id=uuid.uuid4(),
+        project_id=project_id,
+        requested_by="andy",
+        owner_user_id=42,
     )
     machine.device_id = "reassigned-device"
     service._devices.devices[machine.device_id] = SimpleNamespace(
@@ -869,7 +904,10 @@ async def test_forgetting_never_destroys_a_machine_the_platform_did_not_open(cap
     service = build_service(client)
     project_id = uuid.uuid4()
     machine = await service.provision(
-        project_id=project_id, requested_by="andy", owner_user_id=42
+        topic_id=uuid.uuid4(),
+        project_id=project_id,
+        requested_by="andy",
+        owner_user_id=42,
     )
     machine.device_id = "someones-own-box"
     service._devices.devices[machine.device_id] = SimpleNamespace(
@@ -891,7 +929,9 @@ async def test_provision_asks_for_a_machine_without_an_ai_channel():
     client = FakeMicroCloud()
     service = build_service(client)
 
-    await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+    await service.provision(
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="andy"
+    )
 
     assert client.created[0]["aiMode"] == "none"
 
@@ -921,12 +961,16 @@ async def test_a_reservation_counts_against_quota_before_the_provider_answers(
     client.create_machine = slow_create
     project_id = uuid.uuid4()
     first = asyncio.create_task(
-        service.provision(project_id=project_id, requested_by="a")
+        service.provision(
+            project_id=project_id, topic_id=uuid.uuid4(), requested_by="a"
+        )
     )
     await asyncio.wait_for(in_flight.wait(), timeout=5)
     assert [m.machine_id for m in service._repo.rows] == [None]
     with pytest.raises(ValidationError, match="1 / 1"):
-        await service.provision(project_id=project_id, requested_by="b")
+        await service.provision(
+            project_id=project_id, topic_id=uuid.uuid4(), requested_by="b"
+        )
     release.set()
     machine = await asyncio.wait_for(first, timeout=5)
     assert machine.machine_id == 101 and machine.status == MachineStatus.provisioning
@@ -942,7 +986,9 @@ async def test_a_failed_create_gives_the_slot_back():
 
     client.create_machine = refused
     with pytest.raises(MicroCloudError):
-        await service.provision(project_id=uuid.uuid4(), requested_by="a")
+        await service.provision(
+            project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="a"
+        )
     assert service._repo.rows == []
 
 

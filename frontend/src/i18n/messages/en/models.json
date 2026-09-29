@@ -6,6 +6,7 @@
     "retry": "Retry",
     "add": "Add a model",
     "days": "Last {n} days",
+    "window": "Time window",
     "loadFailed": "Could not load. Try again.",
     "saveFailed": "Could not save. Try again.",
     "deleteFailed": "Could not delete. Try again.",
@@ -30,7 +31,8 @@
     "failed": "Failed requests"
   },
   "health": {
-    "label": "Gateway"
+    "label": "Gateway",
+    "down": "Gateway unreadable"
   },
   "table": {
     "label": "Models",
@@ -180,7 +182,7 @@
       "upstreamModel": "Upstream model",
       "upstreamModelHint": "For example anthropic/glm-4.7",
       "apiBase": "Upstream host",
-      "apiBaseHint": "Must start with https://; leave empty for the upstream default endpoint",
+      "apiBaseHint": "Must start with https:// (except the metering proxy's ChatGPT entry, http://metering-proxy:8445/chatgpt/<account>); leave empty for the upstream default endpoint",
       "apiKey": "Upstream key",
       "apiKeyHint": "The upstream service's key, stored on the gateway and never shown here.",
       "apiKeyKeep": "Leave empty to keep the saved upstream key.",
@@ -199,7 +201,8 @@
     "deleted": "Deleted “{name}”",
     "blocked": "Blocked “{name}”",
     "unblocked": "Unblocked “{name}”",
-    "budgetSet": "Updated the limit for “{name}”"
+    "budgetSet": "Updated the limit for “{name}”",
+    "dismiss": "Dismiss this notice"
   },
   "confirm": {
     "delete": {
@@ -231,7 +234,7 @@
       "project": "Project",
       "spend": "Spend in window",
       "usage": "Usage in window",
-      "credits": "Compute credits",
+      "credits": "Credits",
       "brake": "Brake"
     },
     "action": {
@@ -240,7 +243,7 @@
     "dialog": {
       "title": "Set the budget cap",
       "field": "Cap (USD)",
-      "hint": "The default brake is derived from compute credits ({derived}); entering a number overrides it on the gateway at once, and leaving it empty clears the override.",
+      "hint": "The default brake is derived from credits ({derived}); entering a number overrides it on the gateway at once, and leaving it empty clears the override.",
       "clear": "Clear override"
     }
   },

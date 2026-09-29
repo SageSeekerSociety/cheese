@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Landing from './Landing.vue'
+import Solutions from './Solutions.vue'
 
 import i18n, { resolveInitialLocale, setLocale } from '@/i18n'
 import HomeRoutes from '@/router/home'
@@ -36,7 +37,12 @@ async function mount(path = '/') {
       name: route.name,
       meta: route.meta,
       beforeEnter: route.beforeEnter,
-      component: route.meta?.publicLanding ? Landing : { template: '<div>Workspace</div>' },
+      component:
+        route.name === 'Solutions'
+          ? Solutions
+          : route.meta?.publicLanding
+            ? Landing
+            : { template: '<div>Workspace</div>' },
     })),
   })
   await router.push(path)
@@ -49,7 +55,7 @@ async function mount(path = '/') {
 
 describe('公开首页', () => {
   it('switches to English without losing the chosen solution, and remembers the language', async () => {
-    const view = await mount('/about')
+    const view = await mount('/solutions')
     await fireEvent.click(view.getByRole('tab', { name: '企业' }))
     await fireEvent.click(view.getByRole('button', { name: 'Switch to English' }))
     expect(document.documentElement.lang).toBe('en')
@@ -63,7 +69,7 @@ describe('公开首页', () => {
   })
 
   it('moves between solutions with the arrow keys, and the panel follows the selected tab', async () => {
-    const view = await mount()
+    const view = await mount('/solutions')
     const first = view.getByRole('tab', { name: '高校与机构' })
     expect(first.getAttribute('aria-selected')).toBe('true')
     await fireEvent.keyDown(first, { key: 'ArrowRight' })
@@ -77,6 +83,32 @@ describe('公开首页', () => {
     expect(view.getByRole('tab', { name: '科研与创新团队' }).getAttribute('aria-selected')).toBe('true')
     await fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' })
     expect(first.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('sends organisations to the solutions page, where the way in is a conversation', async () => {
+    const home = await mount()
+    expect(home.queryByRole('tab')).toBeNull()
+    for (const link of home.getAllByRole('link', { name: /查看方案/ })) {
+      expect(link.getAttribute('href')).toBe('/solutions')
+    }
+    expect(home.getByRole('link', { name: '方案' }).getAttribute('href')).toBe('/solutions')
+    cleanup()
+
+    const solutions = await mount('/solutions')
+    const contacts = solutions.getAllByRole('link', { name: /预约交流/ })
+    expect(contacts.length).toBeGreaterThan(0)
+    for (const link of contacts) expect(link.getAttribute('href')).toBe('mailto:ops@okcheese.com')
+    expect(solutions.getByRole('link', { name: '方案' }).getAttribute('aria-current')).toBe('page')
+  })
+
+  it('offers the desktop app from this site, not from GitHub', async () => {
+    const view = await mount()
+    expect(view.getByRole('link', { name: '下载' }).getAttribute('href')).toBe('#download')
+    const mac = view.getByRole('link', { name: /Mac（Apple 芯片）/ })
+    expect(mac.getAttribute('href')).toBe('/downloads/desktop/Cheese-arm64.dmg')
+    expect(view.getByRole('link', { name: /Windows/ }).getAttribute('href')).toBe(
+      '/downloads/desktop/Cheese-Setup-x64.exe'
+    )
   })
 
   it('keeps the introduction open to signed-in users and links back to work', async () => {

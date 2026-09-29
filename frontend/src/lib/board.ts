@@ -82,3 +82,34 @@ export function compareTasks(a: SortableTask, b: SortableTask): number {
   if (byTime !== 0) return byTime
   return a.id.localeCompare(b.id)
 }
+
+/** 板上真正要看的那些活：去掉已归档房间里没走完的活。
+ *
+ *  活不归档，房间归档：一个房间收了尾，里面没走完的活（已退回、待回答）后端照样
+ *  按它自己的状态落在施工中 / 交付中 / 待处理里，一挂就是几周。可房间归档了，就
+ *  没人会再去动它们——三列答的是「接下来谁要动什么」，它们不该在上面。已完成不筛：
+ *  那是交付过的东西，房间归档了也还是交付过。
+ *
+ *  看板和话题列表顶上那一行摘要都从这一份出发：两处数字对不上，看的人就不知道信
+ *  哪个。 */
+export function liveBoardTasks<T extends { room_id: string; presentation: { column: BoardColumn } }>(
+  tasks: readonly T[],
+  archivedRoomIds: ReadonlySet<string>
+): T[] {
+  return tasks.filter((task) => task.presentation.column === 'done' || !archivedRoomIds.has(task.room_id))
+}
+
+/** 板面三列各有几件，按「该你动」的那一列打头：摘要里第一眼要看到的是它。数为零
+ *  的列不列。 */
+export function boardColumnCounts(
+  tasks: readonly { room_id: string; presentation: { column: BoardColumn } }[],
+  archivedRoomIds: ReadonlySet<string>
+): { key: BoardColumn; label: string; count: number }[] {
+  const counts = new Map<BoardColumn, number>()
+  for (const task of liveBoardTasks(tasks, archivedRoomIds)) {
+    counts.set(task.presentation.column, (counts.get(task.presentation.column) ?? 0) + 1)
+  }
+  return (['needs_you', 'building', 'delivering'] as const)
+    .map((key) => ({ key, label: COLUMN_LABEL[key], count: counts.get(key) ?? 0 }))
+    .filter((column) => column.count > 0)
+}

@@ -3,13 +3,18 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError, getFeedback } from '@/api'
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import FeedbackCommentsThread from '@/components/feedback/FeedbackCommentsThread.vue'
+import FeedbackErrorBanner from '@/components/feedback/FeedbackErrorBanner.vue'
+import { kindLabel, sourceLabel } from '@/components/feedback/feedbackLabels'
+import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import FeedbackStatusChip from '@/components/feedback/FeedbackStatusChip.vue'
 import FeedbackStatusTimeline from '@/components/feedback/FeedbackStatusTimeline.vue'
 import { t } from '@/i18n'
-import { isClosed, KIND_LABEL, SOURCE_LABEL } from '@/lib/feedbackMeta'
+import { isClosed } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -201,35 +206,37 @@ async function share() {
 </script>
 
 <template>
-  <!-- 滚动归这一页自己领，理由见 FeedbackCenterPage 顶部那段注释。 -->
-  <div class="fb-page fill-height overflow-y-auto">
-    <!-- 还没问出结果之前也画骨架：先画「暂无这条反馈」再换成内容，等于先说错一句
-         话再收回去，而这两帧之间在读的人眼里是有先后的。
-         容器宽度也要跟到底下那一版（--wide）：骨架是两栏，内容是一栏的话，两块
-         正文在到达那一刻会各挪一次位置。 -->
-    <div v-if="store.detailLoading" class="fb-page__inner page-container--wide">
-      <LoadingSkeleton variant="detail" :rows="3" />
-    </div>
-
-    <div v-else-if="!item" class="fb-page__inner page-container">
-      <div class="fb-state">
-        <v-icon size="28" class="fb-state__icon">{{ missingState.icon }}</v-icon>
-        <div class="fb-state__title">{{ missingState.title }}</div>
-        <p class="fb-state__desc">{{ missingState.desc }}</p>
-        <!-- 服务端那句话照直画出来，但「这条不存在」那一态不画：那句话说的是「这一次
-             为什么没拉到」，而在 404 这一态它只会把上面那句换个说法再说一遍。 -->
-        <p v-if="!gone" class="fb-state__raw t-meta-read">{{ store.error }}</p>
-        <v-btn variant="text" color="secondary" size="small" class="fb-state__action" @click="router.push('/feedback')">
-          回到反馈中心
-        </v-btn>
-      </div>
-    </div>
-
-    <div v-else class="fb-page__inner page-container--wide">
+  <!-- 滚动归这一页自己领（`FeedbackPageShell` 里那一层），理由见 FeedbackCenterPage
+       顶部那段注释。这一页用**宽档**（两栏）、底边留白交给页内的黏底元素
+       （操作栏和评论框），壳不再自己加。 -->
+  <FeedbackPageShell wide flush-bottom>
+    <!-- 返回那一条**只在真的有一条反馈时画**：加载中和「这条不存在」两态没有可返回
+         的「上一页」这回事（这一页就是它们的落点）。 -->
+    <template v-if="item" #head>
       <button class="fb-back" @click="router.push('/feedback')">
-        <v-icon size="15">mdi-chevron-left</v-icon>反馈中心
+        <v-icon size="15" aria-hidden="true">mdi-chevron-left</v-icon>{{ t('feedback.detail.back') }}
       </button>
+    </template>
 
+    <!-- 还没问出结果之前也画骨架：先画「暂无这条反馈」再换成内容，等于先说错一句
+         话再收回去，而这两帧之间在读的人眼里是有先后的。 -->
+    <LoadingSkeleton v-if="store.detailLoading" variant="detail" :rows="3" />
+
+    <AdminEmptyState
+      v-else-if="!item"
+      :title="missingState.title"
+      :desc="missingState.desc"
+      :icon="missingState.icon"
+      :tone="gone ? 'neutral' : 'error'"
+      :action="t('feedback.detail.missingBack')"
+      @action="router.push('/feedback')"
+    >
+      <!-- 服务端那句话照直画出来，但「这条不存在」那一态不画：那句话说的是「这一次
+           为什么没拉到」，而在 404 这一态它只会把上面那句换个说法再说一遍。 -->
+      <p v-if="!gone" class="fb-state__raw t-meta-read">{{ store.error }}</p>
+    </AdminEmptyState>
+
+    <template v-else>
       <!-- 断点走 CSS 媒体查询（≥1280 双栏），不再经 `useDisplay()`：同一档宽度在
            JS 和 CSS 里各写一遍，两边迟早会分家，而这一页的版式本来就全靠 CSS。 -->
       <div class="fb-layout">
@@ -251,7 +258,7 @@ async function share() {
               </v-btn>
             </template>
             <template v-else>
-              <span class="fb-del__ask t-meta">{{ deleteAsk }}</span>
+              <span class="fb-del__ask t-meta-read">{{ deleteAsk }}</span>
               <v-btn variant="text" color="error" size="small" :loading="deletingDelete" @click="doDelete">
                 {{ t('feedback.detail.delete.confirm') }}
               </v-btn>
@@ -264,21 +271,17 @@ async function share() {
 
           <div class="d-flex align-center flex-wrap ga-2 mb-2">
             <FeedbackStatusChip :status="item.status" />
-            <span class="chip-neutral">{{ KIND_LABEL[item.kind] }}</span>
+            <span class="chip-neutral">{{ kindLabel(item.kind) }}</span>
             <!-- 私密在详情页比在列表里更要说清楚：读的人可能正是从别处点进来的，
                  他需要一眼知道这条没有公开。中性色，和卡片上同一个呈现。 -->
-            <span
-              v-if="isPrivate"
-              class="chip-neutral"
-              title="私密反馈：只有你、平台管理员、以及提出它时在那个房间里的人能看到，其他人看不到它"
-            >
-              <v-icon size="12">mdi-lock-outline</v-icon>私密
+            <span v-if="isPrivate" class="chip-neutral" :title="t('feedback.privateHint')">
+              <v-icon size="12">mdi-lock-outline</v-icon>{{ t('feedback.private') }}
             </span>
             <span v-if="item.security" class="chip-neutral">
-              <v-icon size="12">mdi-shield-alert-outline</v-icon>安全
+              <v-icon size="12">mdi-shield-alert-outline</v-icon>{{ t('feedback.security') }}
             </span>
             <span v-if="item.author_is_agent" class="chip-neutral">
-              <v-icon size="12">mdi-robot-outline</v-icon>{{ SOURCE_LABEL.agent }}
+              <v-icon size="12">mdi-robot-outline</v-icon>{{ sourceLabel('agent') }}
             </span>
             <span v-for="tag in item.tags" :key="tag" class="chip-neutral">{{ tag }}</span>
           </div>
@@ -286,33 +289,40 @@ async function share() {
                才是「什么时候提的」。挤在一行会让编号看着像作者名的一部分。
                头像是这一页最大的一处（28px）：详情页是唯一一处读者真的会停下来看
                「这是谁提的」的地方，列表里那个 18px 的在这里就太小了。 -->
-          <div class="t-meta mb-1 d-flex align-center ga-2">
+          <div class="t-meta-read t-num mb-1 d-flex align-center ga-2">
             <FeedbackAuthorAvatar
               :handle="item.author_handle"
               :is-agent="item.author_is_agent"
               :avatar-id="item.author_avatar_id"
               :size="28"
             />
-            <span>{{ item.display_id }} · {{ item.author_handle }} · {{ relTime(item.created_at) }}</span>
+            <span
+              ><span class="fb-id">{{ item.display_id }}</span> · {{ item.author_handle }} ·
+              {{ relTime(item.created_at) }}</span
+            >
           </div>
           <!-- 提案卡发出来的那条有两个名字：agent 找出来的、人发出去的。两个都写，
                因为「这是谁提的」在这条路径上有两个都对但不同的答案。 -->
-          <div v-if="item.submitted_by_handle" class="t-meta">由 {{ item.submitted_by_handle }} 提交</div>
+          <div v-if="item.submitted_by_handle" class="t-meta-read t-num">
+            <i18n-t keypath="feedback.detail.submittedBy" tag="span">
+              <template #handle><UserRef :handle="item.submitted_by_handle" /></template>
+            </i18n-t>
+          </div>
         </div>
 
         <main class="fb-main">
           <section v-if="item.problem" class="fb-section">
-            <div class="t-eyebrow mb-1">问题描述</div>
+            <div class="t-eyebrow mb-1">{{ t('feedback.detail.problem') }}</div>
             <p class="t-reading fb-text">{{ item.problem }}</p>
           </section>
 
           <section v-if="item.why" class="fb-section">
-            <div class="t-eyebrow mb-1">为什么需要</div>
+            <div class="t-eyebrow mb-1">{{ t('feedback.detail.why') }}</div>
             <p class="t-reading fb-text">{{ item.why }}</p>
           </section>
 
           <section v-if="item.expectation" class="fb-section">
-            <div class="t-eyebrow mb-1">期望方案</div>
+            <div class="t-eyebrow mb-1">{{ t('feedback.detail.expectation') }}</div>
             <p class="t-reading fb-text">{{ item.expectation }}</p>
           </section>
 
@@ -320,22 +330,22 @@ async function share() {
                三段的小标题写中文，和界面其余部分一致：「REPRO」对第一次看的人来说
                不是一个词（docs/design-system.md §8.0）。 -->
           <section v-if="item.what_happened || item.repro || item.evidence" class="fb-section">
-            <div class="t-eyebrow mb-2">现场</div>
+            <div class="t-eyebrow mb-2">{{ t('feedback.detail.context') }}</div>
             <div class="fb-evidence">
               <div v-if="item.what_happened" class="fb-evidence__block">
-                <div class="t-eyebrow mb-1">发生了什么</div>
+                <div class="t-eyebrow mb-1">{{ t('feedback.detail.whatHappened') }}</div>
                 <p class="t-reading fb-text">{{ item.what_happened }}</p>
               </div>
               <div v-if="item.repro" class="fb-evidence__block">
-                <div class="t-eyebrow mb-1">复现步骤</div>
+                <div class="t-eyebrow mb-1">{{ t('feedback.detail.repro') }}</div>
                 <pre class="fb-pre">{{ item.repro }}</pre>
               </div>
               <div v-if="item.evidence" class="fb-evidence__block">
-                <div class="t-eyebrow mb-1">证据</div>
+                <div class="t-eyebrow mb-1">{{ t('feedback.detail.evidence') }}</div>
                 <p class="t-reading fb-text">{{ item.evidence }}</p>
               </div>
               <div v-if="item.session_id || item.environment" class="t-meta fb-evidence__block">
-                <template v-if="item.session_id">会话 {{ item.session_id }}</template>
+                <template v-if="item.session_id">{{ t('feedback.sessionLine', { id: item.session_id }) }}</template>
                 <template v-if="item.session_id && item.environment"> · </template>
                 <template v-if="item.environment">{{ item.environment }}</template>
               </div>
@@ -344,7 +354,7 @@ async function share() {
 
           <section class="fb-section">
             <div class="fb-comments-head">
-              <div class="t-eyebrow">评论 {{ item.comments }}</div>
+              <div class="t-eyebrow">{{ t('feedback.detail.commentsLabel', { n: item.comments }) }}</div>
             </div>
 
             <!-- 所有动作都走 store，和页面其余部分一样（评论条自己不发请求）。
@@ -379,7 +389,7 @@ async function share() {
                 class="fb-composer__open"
                 @click="openComposer"
               >
-                写下你的评论…
+                {{ t('feedback.detail.composer.open') }}
               </button>
               <template v-else>
                 <!-- max-rows：autoGrow 是全局默认，而这个框挂在视口底下 ——
@@ -388,7 +398,7 @@ async function share() {
                   ref="composerInput"
                   v-model="commentDraft"
                   autocomplete="off"
-                  placeholder="补充你遇到的情况，或者说明为什么这个改动对你重要"
+                  :placeholder="t('feedback.detail.composer.placeholder')"
                   rows="3"
                   max-rows="8"
                   hide-details
@@ -403,7 +413,7 @@ async function share() {
                     :loading="posting"
                     @click="postComment"
                   >
-                    发表评论
+                    {{ t('feedback.detail.composer.submit') }}
                   </v-btn>
                 </div>
               </template>
@@ -413,7 +423,7 @@ async function share() {
 
         <aside class="fb-aside">
           <div class="fb-aside__card">
-            <div class="t-eyebrow mb-3">进展</div>
+            <div class="t-eyebrow mb-3">{{ t('feedback.detail.aside.progress') }}</div>
             <FeedbackStatusTimeline :timeline="item.timeline" :status="item.status" :ladder="store.statusLadder" />
           </div>
 
@@ -421,18 +431,20 @@ async function share() {
             <!-- 私密反馈没有「支持人数」这一格：它恒为 0，摆在那里只会让人以为
                  「还没人支持」，而不是「这件事对私密反馈不成立」。 -->
             <div v-if="!restricted" class="fb-aside__stat">
-              <span class="t-meta">支持人数</span><span class="fb-aside__num">{{ item.supports }}</span>
+              <span class="t-meta-read t-num">{{ t('feedback.detail.aside.supports') }}</span
+              ><span class="fb-aside__num">{{ item.supports }}</span>
             </div>
             <div class="fb-aside__stat">
-              <span class="t-meta">评论数</span><span class="fb-aside__num">{{ item.comments }}</span>
+              <span class="t-meta-read t-num">{{ t('feedback.detail.aside.comments') }}</span
+              ><span class="fb-aside__num">{{ item.comments }}</span>
             </div>
           </div>
 
           <!-- 这条反馈是从哪个话题来的。没有话题的那种（harness 在沙箱里撞的墙）
                就没有这一格 —— 那正是它要报的那类问题。 -->
           <div v-if="item.topic_id" class="fb-aside__card">
-            <div class="t-eyebrow mb-2">来源</div>
-            <div class="t-meta">由某个话题里的对话发现</div>
+            <div class="t-eyebrow mb-2">{{ t('feedback.detail.aside.source') }}</div>
+            <div class="t-meta-read t-num">{{ t('feedback.detail.aside.topic') }}</div>
           </div>
         </aside>
       </div>
@@ -441,17 +453,7 @@ async function share() {
            可关：这一页上的失败大多是可重试的一次性失败（评论没发出去、下一页没
            取到），一句话挂在页面底部陪着你看完剩下三条评论，读的人只会以为页面
            坏了。关掉它不影响任何状态 —— 没成的操作本来就没改任何东西。 -->
-      <v-alert
-        v-if="store.error"
-        type="error"
-        density="compact"
-        variant="tonal"
-        closable
-        class="mt-4"
-        @click:close="store.clearError()"
-      >
-        {{ store.error }}
-      </v-alert>
+      <FeedbackErrorBanner v-if="store.error" class="mt-4" :message="store.error" @dismiss="store.clearError()" />
 
       <!-- 64px 粘底操作栏（§4.4）。用户侧这一栏里的主操作是**支持**，这一栏的
            琥珀。它原先是漂在正文中间的一颗按钮，滚过两屏就够不着了，而它是
@@ -467,38 +469,23 @@ async function share() {
           :variant="item.supported ? 'tonal' : undefined"
           :prepend-icon="item.supported ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
           :disabled="!supportable"
-          :title="supportable ? '' : '已办完，无需再支持'"
+          :title="supportable ? '' : t('feedback.closedHint')"
           @click="store.toggleSupport(item.id)"
         >
-          {{ item.supported ? '已支持' : '支持这个反馈' }}
+          {{ item.supported ? t('feedback.detail.action.supported') : t('feedback.detail.action.support') }}
           <span class="fb-support-count">{{ item.supports }}</span>
         </v-btn>
         <v-btn variant="outlined" color="secondary" prepend-icon="mdi-share-variant-outline" @click="share">
-          分享
+          {{ t('feedback.detail.action.share') }}
         </v-btn>
       </div>
-    </div>
+    </template>
+  </FeedbackPageShell>
 
-    <v-snackbar v-model="showCopied" :timeout="2500">链接已复制</v-snackbar>
-  </div>
+  <v-snackbar v-model="showCopied" :timeout="2500">{{ t('feedback.detail.copied') }}</v-snackbar>
 </template>
 
 <style scoped>
-.fb-page {
-  /* 底内边距是 0，**别再往回加**：这一页最后两样东西都黏在底边上（评论框、操作栏），
-     而 `sticky` 量的是滚动容器**内容盒**的下沿，不是它的边框盒 —— 多出来的
-     底内边距会变成它们下面的一条带子，评论从那里往上滚、从框底下露出来（实测
-     48px 的底内边距就是 48px 高的一条，半行评论卡在输入框下面）。评论框那一段
-     的留白由它自己的下内边距给（见 `.fb-composer`），所以「黏住时」和「滚到底时」
-     长得一模一样，不会到最后突然往下挪一截。
-     列表那几页没有黏住的东西，它们的 48px 照旧。 */
-  padding: 16px 16px 0;
-}
-.fb-page__inner {
-  margin: 0 auto;
-}
-/* 负的左边距配自己的内边距：hover 时有块可点的底色，但字仍然和下面的标题左对齐
-   （不加负边距的话，这行会比整页内容右缩 8px）。 */
 .fb-back {
   display: inline-flex;
   align-items: center;
@@ -517,39 +504,10 @@ async function share() {
 /* 拉不到时那一块（§9.2 的内容块）：宽 320、水平居中，主文案 15/--lh-15/600/--ink，
    副文案 13/--lh-13/--muted，主副之间 8px。整块不用 --faint：这两句话是要人读的
    （AA 4.5:1），而 --faint 在浅色主题下四种底色上都到不了 3:1。 */
-.fb-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  max-width: 320px;
-  margin: 0 auto;
-  padding: 64px 0;
-  gap: 8px;
-}
-.fb-state__icon {
-  color: var(--muted);
-}
-.fb-state__title {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
-  color: var(--ink);
-  text-align: center;
-}
-.fb-state__desc {
-  margin: 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  text-align: center;
-}
 .fb-state__raw {
   margin: 0;
   text-align: center;
   word-break: break-word;
-}
-.fb-state__action {
-  margin-top: 4px;
 }
 /* 一栏是默认，两栏是 ≥1280 那一档（§4.4 的第一个断点）。 */
 .fb-layout {
@@ -640,6 +598,9 @@ async function share() {
 }
 .fb-support-count {
   margin-left: 8px;
+}
+/* 编号是这一行里唯一的标识符，只有它用等宽。 */
+.fb-id {
   font-family: var(--font-mono);
 }
 /* 用户写的正文是**多段**的（换行要保留），不是一句一句拼接的 —— 不写这个，
@@ -753,7 +714,7 @@ async function share() {
   padding: 4px 0;
 }
 .fb-aside__num {
-  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 14px;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
@@ -778,7 +739,18 @@ async function share() {
      没有这个变量时 `0px` 是空操作。 */
   padding-bottom: env(safe-area-inset-bottom, 0);
   gap: 8px;
+  /* 只占正文那一栏的宽：它装的是「读完这条之后」的动作，跟着正文走。横跨两栏时，
+     短页面上它是一条悬在页面中段、把右栏底下也划掉的白条。一栏那一档正文锁 660
+     居中，这里同一个上限、同样居中；两栏那一档左对齐到正文列。 */
+  width: 100%;
+  max-width: var(--page-w-read);
+  margin: 0 auto;
   background: var(--surface);
   border-top: 1px solid var(--line);
+}
+@media (min-width: 1280px) {
+  .fb-actionbar {
+    margin-left: 0;
+  }
 }
 </style>

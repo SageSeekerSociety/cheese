@@ -1,9 +1,9 @@
 """Block data access."""
 
 import uuid
-from collections.abc import Collection
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Text, and_, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
@@ -13,7 +13,9 @@ from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
+    CHECKLIST_META_KEY,
     CONSUMED_TURN_META_KEY,
+    EDITED_AT_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
     PROMPTED_TURN_META_KEY,
     AuthorType,
@@ -31,6 +33,31 @@ class BlockPage:
 
     items: list[Block]
     has_more: bool
+
+
+@dataclass(frozen=True)
+class ReplyWait:
+    """一个房间在等 AI：从什么时候开始等，以及为什么多半还没回。
+
+    `reason`：`mention`（有人点了 AI 的名）；卡停在要 AI 修的那几种上时是
+    `check` / `conflict` / `rejected` / `gate`（见 `presentation.agent_fix_kind`）；
+    或者等待期间最近一条机器/环境事件的类型（`MACHINE_EVENTS`）。`source` 说这段
+    等待本来是从哪来的（`mention` / `card`），机器事件只改 `reason` 不改它。
+    `pr` 是那张卡的 PR 号，悬停时写出来。
+    """
+
+    since: datetime
+    reason: str
+    source: str = "mention"
+    pr: int | None = None
+
+
+@dataclass(frozen=True)
+class StuckCard:
+    """一个房间里停在「要 AI 去修」上的那张卡：哪一种，PR 号几。"""
+
+    kind: str
+    pr: int | None
 
 
 class BlockRepository:
@@ -207,6 +234,29 @@ class BlockRepository:
             .limit(1)
         )
         return await self._session.scalar(stmt) is not None
+
+    async def last_said_in_turn(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> str | None:
+        """The words the agent last kept in 现场 during this turn, if any.
+
+        Read from the rows, not from the turn's in-memory bookkeeping: a turn
+        closed by a backend that took it over mid-way (a deploy's handover)
+        has none, and the room is what actually knows what was said."""
+        stmt = (
+            select(Block.content, Block.meta)
+            .where(
+                Block.topic_id == topic_id,
+                Block.turn_id == turn_id,
+                Block.kind == BlockKind.event,
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(50)
+        )
+        for content, meta in (await self._session.execute(stmt)).all():
+            if isinstance(meta, dict) and meta.get("progress"):
+                return content
+        return None
 
     async def has_action(
         self, topic_id: uuid.UUID, turn_id: uuid.UUID, action: str
@@ -389,6 +439,39 @@ class BlockRepository:
         await self._session.flush()
         return block
 
+    async def replace_content(
+        self, block: Block, content: str, *, checklist: dict | None = None
+    ) -> Block:
+        """Replace a message's text and stamp when that happened. The checklist
+        it carries is replaced along with it, or dropped: text written some
+        other way no longer says what the old list said."""
+        meta = {
+            key: value
+            for key, value in (block.meta or {}).items()
+            if key != CHECKLIST_META_KEY
+        }
+        if checklist is not None:
+            meta[CHECKLIST_META_KEY] = checklist
+        block.content = content
+        block.meta = {**meta, EDITED_AT_META_KEY: datetime.now(UTC).isoformat()}
+        await self._session.flush()
+        return block
+
+    async def current_checklist(self, room_id: uuid.UUID, author: str) -> Block | None:
+        """The newest checklist message ``author`` posted on the room's own line."""
+        stmt = (
+            select(Block)
+            .where(
+                *self._in_place(room_id, None),
+                Block.kind == BlockKind.message,
+                Block.author == author,
+                Block.meta[CHECKLIST_META_KEY].as_string().is_not(None),
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(1)
+        )
+        return (await self._session.scalars(stmt)).first()
+
     async def update_node(
         self, block: Block, *, node_type: str, struct_order: float
     ) -> Block:
@@ -418,7 +501,7 @@ class BlockRepository:
     async def doc_roots(self, topic_ids: list[uuid.UUID]) -> dict[uuid.UUID, Block]:
         """Several rooms' living docs at once, keyed by room id.
 
-        总览要列每个活跃话题的「当前结论」：一间房一次往返，而这是每一轮都要拼
+        总览要列每个活跃话题的「现状」：一间房一次往返，而这是每一轮都要拼
         的东西，170 间房就是 170 次。只取房间自己那一份（``task_id`` 为空）——
         线程的文档是那张卡的东西，不是房间的状态。
         """
@@ -454,7 +537,7 @@ class BlockRepository:
     # (`cheese show`) IS: 芝士 putting something in front of the room is something
     # it said, and the chat renders it as a card the reader can open. Left out, it
     # reached people only as the preview tab, which shows the last one alone.
-    _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment)
+    NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment)
 
     async def ai_turn_ids(self, turn_ids: list[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these turns produced at least one block signed by 芝士.
@@ -503,13 +586,218 @@ class BlockRepository:
             Block.topic_id, topic_ids, Block.task_id.is_(None)
         )
 
+    #: 只往回看这么久。红灯报的是「现在有人在干等」，一条一周前没人接的消息已经
+    #: 不是这件事了；而不设界的话，这条查询要扫整个项目全部历史消息。
+    REPLY_LOOKBACK = timedelta(days=7)
+
+    #: 机器 / 环境这一侧的平台事件。AI 没回话时，如果等待期间最近一条是它们，
+    #: 那 AI 多半不是卡住，而是脚下的机器还没好——侧栏据此换阈值和说法。
+    MACHINE_EVENTS = (
+        "machine_provisioning",
+        "device_waiting",
+        "sandbox_rebuilt",
+        "environment_repaired",
+    )
+
+    async def rooms_awaiting_a_reply(
+        self,
+        topic_ids: list[uuid.UUID],
+        *,
+        now: datetime,
+        stuck_rooms: Mapping[uuid.UUID, StuckCard] | None = None,
+    ) -> dict[uuid.UUID, ReplyWait]:
+        """{房间: 从什么时候开始有人在等 AI 回话} —— 一次查完，只看房间自己那条线。
+
+        「在等」有两种：一个人发了一条**点了 AI 名**的消息（`agent_recipient.
+        mentioned`，也就是会叫起一轮的那种），而这之后房间里还没有任何 AI 说过话；
+        或者房间（连同名下的活）有一张卡停在「检查红了 / 冲突了，要 AI 去修」上
+        （`stuck_rooms`，调用方按看板判据算好传进来），从最近一次检查报错算起，见
+        `_checks_awaiting_an_agent`。人和人之间
+        聊天叫不起 AI，也就谈不上等它。值是这批没人接的消息里**最早**那一条的时间：
+        等得最久的那个人决定灯什么时候亮。
+
+        平台自己写的事件（排队提示、额度提醒）不算回话 —— 它们不是 AI 在回应人。
+        """
+        if not topic_ids:
+            return {}
+        since = now - self.REPLY_LOOKBACK
+        room_line = (
+            Block.topic_id.in_(topic_ids),
+            Block.task_id.is_(None),
+            Block.kind == BlockKind.message,
+            Block.created_at >= since,
+        )
+        last_reply = (
+            select(Block.topic_id, func.max(Block.created_at).label("at"))
+            .where(*room_line, participant_blocks(), agent_handle_column(Block.author))
+            .group_by(Block.topic_id)
+            .subquery()
+        )
+        stmt = (
+            select(Block.topic_id, func.min(Block.created_at))
+            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            .where(
+                *room_line,
+                participant_blocks(),
+                ~agent_handle_column(Block.author),
+                Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+                # 读进过一轮、而那一轮跑完了，就算接到了 —— 哪怕 AI 选择不说话
+                # （「不用管，我只是想知道原因」本来就不期待回复）。这一位只由
+                # 跑完的轮次盖上，死掉的轮次不盖，所以它不会把卡住的情况吞掉。
+                Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
+                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
+            )
+            .group_by(Block.topic_id)
+        )
+        waiting = {
+            topic_id: ReplyWait(since=at, reason="mention")
+            for topic_id, at in (await self._session.execute(stmt)).all()
+        }
+        stuck_rooms = stuck_rooms or {}
+        stuck = [t for t in topic_ids if t in stuck_rooms]
+        for topic_id, at in await self._checks_awaiting_an_agent(stuck, since):
+            if topic_id not in waiting or at < waiting[topic_id].since:
+                card = stuck_rooms[topic_id]
+                waiting[topic_id] = ReplyWait(
+                    since=at, reason=card.kind, source="card", pr=card.pr
+                )
+        if waiting:
+            machine = await self._machine_events_since_last_reply(list(waiting), since)
+            for topic_id, (event, at) in machine.items():
+                wait = waiting[topic_id]
+                # 只认等待开始之后的：等之前机器早就好了，那这次没回话跟它无关。
+                if at >= wait.since:
+                    waiting[topic_id] = replace(wait, reason=event)
+        return waiting
+
+    async def _machine_events_since_last_reply(
+        self, topic_ids: list[uuid.UUID], since: datetime
+    ) -> dict[uuid.UUID, tuple[str, datetime]]:
+        """{房间: (最近一条机器/环境事件, 时间)} —— 只算最后一次 AI 说话之后的。"""
+        under_room = (Block.topic_id.in_(topic_ids), Block.created_at >= since)
+        last_reply = (
+            select(Block.topic_id, func.max(Block.created_at).label("at"))
+            .where(
+                *under_room,
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+            )
+            .group_by(Block.topic_id)
+            .subquery()
+        )
+        event = Block.meta["event_type"].as_string()
+        stmt = (
+            select(Block.topic_id, event, Block.created_at)
+            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            .where(
+                *under_room,
+                ~participant_blocks(),
+                event.in_(self.MACHINE_EVENTS),
+                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
+            )
+            .order_by(Block.topic_id, Block.created_at.desc())
+            .distinct(Block.topic_id)
+        )
+        return {
+            topic_id: (kind, at)
+            for topic_id, kind, at in (await self._session.execute(stmt)).all()
+        }
+
+    #: 要 AI 去接手的平台事件：PR 上有评审意见、检查没过、合不进去。这些落地时就
+    #: 已经轮到芝士了（`platform_notices` 里各自写着「芝士要去改」）。
+    CHECKS_FOR_THE_AGENT = (
+        "pr_review",
+        "pr_conflict",
+        "ci_failed",
+        "gate_failed",
+        "gate_blocked",
+        "gate_abandoned",
+        "merge_refused",
+        "accept_conflict",
+        "upstream_conflict",
+        "migration_collision",
+        # 验收人把改动退回了：下一步是 AI 改完重递。
+        "card_rejected",
+    )
+
+    async def _checks_awaiting_an_agent(
+        self, topic_ids: list[uuid.UUID], since: datetime
+    ) -> list[tuple[uuid.UUID, datetime]]:
+        """[(房间, 最近一次要 AI 接手的检查事件的时间)] —— 只问卡还停着的房间。
+
+        「有没有人接」不看 AI 说没说过话（回一句不相干的话也会被当成接了），而看
+        卡本身：调用方只把卡还停在检查红 / 冲突上的房间传进来。取**最近**一条事件：
+        AI 推了修复、检查又红了，时钟从这次重新算。事件多半落在某条活的卡上，所以
+        连同名下的活一起看。
+        """
+        if not topic_ids:
+            return []
+        stmt = (
+            select(Block.topic_id, func.max(Block.created_at))
+            .where(
+                Block.topic_id.in_(topic_ids),
+                Block.created_at >= since,
+                ~participant_blocks(),
+                Block.meta["event_type"].as_string().in_(self.CHECKS_FOR_THE_AGENT),
+            )
+            .group_by(Block.topic_id)
+        )
+        return [(t, at) for t, at in (await self._session.execute(stmt)).all()]
+
+    #: 「这一轮坏了」的那几种平台提示：没分类的失败（HTTP 502/404、异常原话）和
+    #: 分类过的平台故障。超时、部署打断这些是 warn —— 平台会自己接着跑，不算坏。
+    FAILED_TURN_EVENTS = ("turn_failed", "platform_error")
+
+    async def rooms_with_a_failed_turn(
+        self, topic_ids: list[uuid.UUID], *, now: datetime
+    ) -> dict[uuid.UUID, datetime]:
+        """{房间: 最近一次轮次报错的时间} —— 只算报错之后还没有 AI 说过话的。
+
+        一轮以「本轮未完成：…」收场，这个房间就是坏着的，不用等五分钟；之后 AI
+        开口说话了（重试成功、或下一轮正常回话），就不再算。只看房间自己那条线。
+        """
+        if not topic_ids:
+            return {}
+        since = now - self.REPLY_LOOKBACK
+        room_line = (
+            Block.topic_id.in_(topic_ids),
+            Block.task_id.is_(None),
+            Block.created_at >= since,
+        )
+        last_reply = (
+            select(Block.topic_id, func.max(Block.created_at).label("at"))
+            .where(
+                *room_line,
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+            )
+            .group_by(Block.topic_id)
+            .subquery()
+        )
+        stmt = (
+            select(Block.topic_id, func.max(Block.created_at))
+            .outerjoin(last_reply, last_reply.c.topic_id == Block.topic_id)
+            .where(
+                *room_line,
+                ~participant_blocks(),
+                Block.meta["event_type"].as_string().in_(self.FAILED_TURN_EVENTS),
+                Block.meta["severity"].as_string() == "error",
+                or_(last_reply.c.at.is_(None), Block.created_at > last_reply.c.at),
+            )
+            .group_by(Block.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: at for topic_id, at in rows}
+
     async def _awaiting_an_answer(
         self, place_column, place_ids: list[uuid.UUID], *extra
     ) -> dict[uuid.UUID, str | None]:
         if not place_ids:
             return {}
         stmt = (
-            select(place_column, Block.meta)
+            select(place_column, Block.meta, Block.created_at)
             .where(
                 place_column.in_(place_ids),
                 Block.kind == BlockKind.message,
@@ -521,12 +809,63 @@ class BlockRepository:
             .order_by(place_column, Block.created_at.desc())
             .distinct(place_column)
         )
-        rows = (await self._session.execute(stmt)).all()
-        return {
-            place_id: (meta or {}).get("asked")
-            for place_id, meta in rows
+        rows = [
+            (place_id, meta or {}, at)
+            for place_id, meta, at in (await self._session.execute(stmt)).all()
             if place_id is not None and not (meta or {}).get("answered")
-        }
+        ]
+        if not rows:
+            return {}
+        # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
+        # （题上没记是谁，就任何一个人）在这里说过话，这道题就不再挂在他身上。
+        spoke = (
+            select(place_column, Block.author, func.max(Block.created_at))
+            .where(
+                place_column.in_([place_id for place_id, _, _ in rows]),
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                ~agent_handle_column(Block.author),
+                *extra,
+            )
+            .group_by(place_column, Block.author)
+        )
+        last_said: dict[uuid.UUID, dict[str, datetime]] = {}
+        for place_id, author, at in (await self._session.execute(spoke)).all():
+            last_said.setdefault(place_id, {})[author] = at
+        waiting: dict[uuid.UUID, str | None] = {}
+        for place_id, meta, asked_at in rows:
+            asked = meta.get("asked")
+            said = last_said.get(place_id, {})
+            if asked:
+                times = [said[asked]] if asked in said else []
+            else:
+                times = list(said.values())
+            if any(at > asked_at for at in times):
+                continue
+            waiting[place_id] = asked
+        return waiting
+
+    async def last_summoner(self, room_id: uuid.UUID) -> str | None:
+        """房间自己那条线上，最近一个点了 AI 名的人。
+
+        `cheese_ask` 要记下「这道题在等谁」，本该问开着的那一轮是谁发起的；轮次
+        没记下来的时候（有些执行路径不开轮次区间），退到这一条：芝士此刻在回应的，
+        就是最近叫它的那个人。
+        """
+        stmt = (
+            select(Block.author)
+            .where(
+                Block.topic_id == room_id,
+                Block.task_id.is_(None),
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                ~agent_handle_column(Block.author),
+                Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+            )
+            .order_by(Block.created_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_topic(
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
@@ -544,7 +883,7 @@ class BlockRepository:
             select(Block)
             .where(
                 *self._in_place(topic_id, task_id),
-                Block.kind.not_in(self._NON_TIMELINE),
+                Block.kind.not_in(self.NON_TIMELINE),
             )
             .order_by(Block.created_at, Block.id)
         )
@@ -575,7 +914,7 @@ class BlockRepository:
             select(Block.id)
             .where(
                 *place,
-                Block.kind.not_in(self._NON_TIMELINE),
+                Block.kind.not_in(self.NON_TIMELINE),
                 Block.meta["event_type"].as_string() == "cloud_provisioning",
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
@@ -629,7 +968,7 @@ class BlockRepository:
             select(Block)
             .where(
                 *self._in_place(topic_id, task_id),
-                Block.kind.not_in(self._NON_TIMELINE),
+                Block.kind.not_in(self.NON_TIMELINE),
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
             .limit(1)
@@ -672,7 +1011,7 @@ class BlockRepository:
         if kinds is not None:
             stmt = stmt.where(Block.kind.in_(list(kinds)))
         else:
-            stmt = stmt.where(Block.kind.not_in(self._NON_TIMELINE))
+            stmt = stmt.where(Block.kind.not_in(self.NON_TIMELINE))
         if query:
             # Literal matching: a pasted log containing % or _ is not SQL syntax.
             pattern = (
@@ -728,7 +1067,7 @@ class BlockRepository:
             .select_from(Block)
             .where(
                 *self._in_place(topic_id, task_id),
-                Block.kind.not_in(self._NON_TIMELINE),
+                Block.kind.not_in(self.NON_TIMELINE),
             )
         )
         return int((await self._session.scalar(stmt)) or 0)

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
-from app.core.db import get_db
+from app.core.db import get_db, release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.platform_notices import (
@@ -38,10 +38,11 @@ from app.domain.review.schemas import (
     RejectDecision,
     VoidDecision,
 )
-from app.domain.review.services import AcceptService
+from app.domain.review.services import AcceptService, ReviewerAdmission
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic import naming
+from app.domain.topic.models import Topic
 
 logger = logging.getLogger("cheesex.accept")
 
@@ -92,6 +93,22 @@ async def _task_actor(
     return actor
 
 
+def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdmission:
+    """「这个房间会放卡上那个人进来吗」——递给 `AcceptService` 的那道判据。
+
+    服务层拿不到这条规则（它要问 `ActorResolver` 手上那些读点：房间名册、项目名册、
+    房间是不是私聊），所以是这边注入。**问的是目标人**：调用者的身份不变，把 handle
+    换掉再问同一句话（`ActorResolver.topic_admits_handle`），规则与读点都只有一份。
+    """
+
+    async def admits(topic: Topic, handle: str) -> bool:
+        return await resolver.topic_admits_handle(
+            actor, project_id=topic.project_id, topic_id=topic.id, handle=handle
+        )
+
+    return admits
+
+
 @router.post("/topics/{topic_id}/tasks/{task_id}/accept-card")
 async def create_accept_card(
     topic_id: uuid.UUID,
@@ -101,9 +118,12 @@ async def create_accept_card(
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    await _task_actor(topic_id, task_id, db, resolver)
+    actor = await _task_actor(topic_id, task_id, db, resolver)
     svc = AcceptService(db)
     card = await svc.create_card(
+        # 一张卡只递给这道门会放进来的人：判据是采纳时那道门自己（同一份规则、同一
+        # 个读点），问的是卡上那个人而不是调用者。见 `_require_reviewer_in_room`。
+        admits_reviewer=_reviewer_admission(actor, resolver),
         topic_id=topic_id,
         reviewer_handle=body.reviewer_handle,
         routing_reason=body.routing_reason,
@@ -241,6 +261,10 @@ async def list_accept_cards(
         await _task_actor(topic_id, task, db, resolver)
         cards = [card for card in cards if card.task_id == task]
         total = len(cards)
+    # 卡面上的合并态是一份快照，而采纳按钮按它亮不亮：界面每 15s 来读这条路，
+    # 读到的却可能是轮询器几分钟前写下的旧状态，于是「检查全绿、按钮点不动」。
+    # 这里把过期的那份补上（有地板，见 settings），而不是让读者自己去猜。
+    await svc.refresh_stale_pr_snapshots(cards)
     return ok(page([await svc.describe(c) for c in cards], total))
 
 
@@ -292,6 +316,11 @@ async def _pr_checks_payload(
     client = await proposal_client(topic.project_id, db)
     if client is None:
         return {"available": False}
+    # Every open card polls this, and the two forge calls below can take as
+    # long as the forge's timeout. Holding the request's connection across them
+    # pinned one pool slot per open card, so a slow forge alone could drain the
+    # pool and stall every other page.
+    await release_read_session(db)
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")
@@ -353,6 +382,7 @@ async def reassign_card(
         raise AuthenticationRequiredError("需要登录才能改由他人审阅")
     svc = AcceptService(db)
     card = await svc.reassign(
+        admits_reviewer=_reviewer_admission(actor, resolver),
         card_id=card_id,
         reviewer_handle=body.reviewer_handle,
         reason=body.routing_reason,

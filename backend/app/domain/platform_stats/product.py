@@ -19,7 +19,7 @@ token 曲线里猜产品好坏。
 等埋点有了再加，比先放一个空壳卡片更诚实。
 
 **一条会撒谎的状态值**：`AcceptStatus.revoked` 盖着三件互不相干的事（采纳后撤销 /
-人工作废 / 归档扫尾）。它在响应里被拆成 `revoked_after_accept` / `voided` /
+作废 / 归档扫尾）。它在响应里被拆成 `revoked_after_accept` / `voided` /
 `revoked_other`，因为一个叫「作废率」的数把三件事加起来，等于把「人反悔了」和
 「人清理了」说成同一件事。
 """
@@ -168,7 +168,7 @@ class ProductHealthRepository:
                     buckets_out["revoked_other"] += 0
 
         filed = sum(buckets_out.values())
-        # 「打回」= 人驳回 + 闸门红/没跑成 + 冲突 + 人工作废。撤销（真反悔）不算打回
+        # 「打回」= 人驳回 + 闸门红/没跑成 + 冲突 + 作废。撤销（真反悔）不算打回
         # —— 它是另一种失败，混进来会让打回率变成「一切不成功的比例」。
         returned = (
             buckets_out["rejected"]

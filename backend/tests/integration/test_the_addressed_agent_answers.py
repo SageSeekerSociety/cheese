@@ -74,3 +74,43 @@ def test_addressing_the_second_teammate_addresses_the_second_teammate(client):
 
     to_first = client.portal.call(recipient_of, f"@{first['display_name']} 你来")
     assert to_first["handle"] == first["handle"], to_first
+
+
+def test_an_at_for_a_teammate_not_in_the_room_is_plain_words(client):
+    """@ 一位没坐在这间房里的 AI 队友不是点名：什么都不起，字面也不变成一个
+    点得动的名字。坐在房间里的那位照常被点到。"""
+    project = _project(client, "One seated, one not")
+    seated = _agent(client, project, "planner", "规划师")
+    elsewhere = _agent(client, project, "reviewer", "审稿人")
+    topic = client.post(
+        "/topics",
+        json={"project_id": project, "title": "Room", "created_by": "alice"},
+    ).json()["data"]["id"]
+    _seat(client, topic, agent_instance_handle(seated["id"]))
+
+    async def sent(content: str) -> dict:
+        from app.api.deps import get_chat_service
+        from app.domain.agent.chat import ChatService
+
+        chat = client.app.dependency_overrides[get_chat_service]()
+        assert isinstance(chat, ChatService)
+        payloads, *_ = await chat.post_user_message(
+            uuid.UUID(topic),
+            author="alice",
+            content=content,
+            turn_id=None,
+            reply_to=None,
+        )
+        return payloads[0]
+
+    outside = client.portal.call(sent, f"@{elsewhere['display_name']} 看一下")
+    assert outside["content"] == f"@{elsewhere['display_name']} 看一下"
+    assert not ((outside.get("meta") or {}).get("agent_recipient") or {}).get(
+        "mentioned"
+    )
+
+    inside = client.portal.call(sent, f"@{seated['display_name']} 你来")
+    assert f"<@{agent_instance_handle(seated['id'])}>" in inside["content"]
+    recipient = (inside.get("meta") or {}).get("agent_recipient") or {}
+    assert recipient["mentioned"] is True
+    assert recipient["handle"] == seated["handle"], recipient

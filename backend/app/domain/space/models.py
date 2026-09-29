@@ -313,6 +313,23 @@ class SpaceMember(Base):
     id: Mapped[int] = mapped_column(BigInteger, space_member_seq, primary_key=True)
     space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # 这个人是怎么进来的: the ``space_invite_code`` row this membership came from,
+    # or NULL for "no code is on record". Two different situations share that
+    # NULL and this column cannot tell them apart, so nothing downstream should
+    # try to:
+    #
+    # * rows written before this column existed — nobody recorded which code
+    #   was taken, and the migration deliberately backfills nothing (naming a
+    #   code for an old member would be inventing history);
+    # * someone the owner put in directly (``SpaceService.add_member``), where
+    #   the truth is "no code was involved".
+    #
+    # Both read as 未知, which is not the same claim as "no code", and is the
+    # only honest thing to say for the first group.
+    #
+    # No FK, like every other id in this module; and the code it names stays
+    # readable after a revoke, because revoking is a soft delete.
+    invite_code_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -349,7 +366,14 @@ class SpaceInviteCode(Base):
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Who minted it. Nullable because a row written before the field was read
+    # back — or by a caller that had no actor — may hold nobody; the roster
+    # renders that as 未知 rather than as an empty name.
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # 这张码给谁 / 干什么用, in the maker's own words ("十月这批同学"). Optional:
+    # a code that says nothing about itself is a normal code, and every code
+    # minted before this column is exactly that.
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

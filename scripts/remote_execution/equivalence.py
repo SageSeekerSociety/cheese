@@ -63,6 +63,7 @@ import os
 import re
 import shutil
 import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
@@ -101,6 +102,12 @@ NORMALIZATIONS = {
     "user message (environment, git status, skill list, date) describe the "
     "session it runs in, which stays on the session host by design; they are "
     "not produced by any command, so this check leaves them out.",
+    "date change": "The notice the build appends to a tool result when the "
+    "local date has changed since the session last said it: a run that "
+    "crosses midnight gets it and one that does not never does. It is read "
+    "off the clock, not produced by any command; the pinned build takes no "
+    "setting that fixes its date (CLAUDE_CODE_OVERRIDE_DATE leaves it "
+    "unchanged), so exactly that notice is removed.",
     "environment: session-host process": "CLAUDE_PID, "
     "CLAUDE_CODE_MESSAGING_SOCKET and CLAUDE_CODE_MESSAGING_TOKEN name the "
     "session host's Claude Code process: a pid, and a Unix socket with its "
@@ -116,6 +123,11 @@ HOST_PROCESS_ENV = {
 # Lines of an environment listing the normalizations above remove.
 UNLISTED = re.compile(
     r"^(" + "|".join(sorted(HOST_PROCESS_ENV)) + r")=.*(\n|$)", re.MULTILINE
+)
+DATE_CHANGED = re.compile(
+    r"\n\n<system-reminder>\nThe date has changed\. Today's date is now "
+    r"\d{4}-\d{2}-\d{2}\. No need to announce the new date \u2014 the user's "
+    r"own clock shows it\.\n</system-reminder>"
 )
 DROPPED = {
     "uuid",
@@ -260,6 +272,10 @@ def project(path):
         "user.name=fixture",
         "-c",
         "user.email=f@example.invalid",
+        # The commit would otherwise start `git maintenance` in the background,
+        # whose lock file can vanish while `rebuild` copies this directory.
+        "-c",
+        "maintenance.auto=false",
     ]
     env = dict(
         os.environ,
@@ -425,6 +441,7 @@ class Run:
             for old, new in pairs:
                 string = string.replace(old, new)
             string = UNLISTED.sub("", string)
+            string = DATE_CHANGED.sub("", string)
             return re.sub(
                 r"tool-results/[A-Za-z0-9_-]+\.txt", "tool-results/<FILE>", string
             )
@@ -479,6 +496,36 @@ def reference(binary, layout, port):
     return Run("reference", session, layout, env)
 
 
+class RunnerSocket:
+    """The runner's socket, standing in: the one request the session's own
+    helpers make of it, `control`, passed to the session on its stdin as the
+    runner passes it (`claude_code.runner.Runner.dispatch`)."""
+
+    def __init__(self, path):
+        self.path = str(path)
+        self.session = None
+        owner = self
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                request = json.loads(self.rfile.readline())
+                if request.get("method") != "control" or owner.session is None:
+                    answer = {"error": "Unknown Claude Code session operation"}
+                else:
+                    answer = {
+                        "result": owner.session.control(request["params"]["request"])
+                    }
+                self.wfile.write(json.dumps(answer).encode() + b"\n")
+
+        self.server = socketserver.ThreadingUnixStreamServer(self.path, Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        Path(self.path).unlink(missing_ok=True)
+
+
 class Room:
     """What a room's session runs against: the executor serving the machine's
     project, the relay standing in for the platform, and the session host's own
@@ -488,13 +535,16 @@ class Room:
         layout.rebuild()
         self.binary, self.layout, self.port = binary, layout, port
         programs = layout.programs
-        shutil.copyfile(SOURCE / "runtime.py", programs / "runtime.py")
-        shutil.copyfile(SOURCE / "portable.py", programs / "portable.py")
+        # Started where it is, as `test_native_shell` starts it, so nothing is
+        # copied. A release would also bring the platform CLI's preload
+        # worker, whose socket (CHEESE_CLI_SOCKET) every command it runs
+        # sees: the platform's own addition, outside what this check compares.
+        self.runtime = SOURCE / "runtime.py"
         self.state = programs / "state"
         subprocess.run(
             [
                 sys.executable,
-                str(programs / "runtime.py"),
+                str(self.runtime),
                 "start",
                 "--state",
                 str(self.state),
@@ -514,6 +564,7 @@ class Room:
             cwd=str(programs),
         )
         self.relay = Relay(self.state, str(layout.project))
+        self.runner = RunnerSocket(layout.session / "runner.sock")
         client.PINNED_VERSION = subprocess.run(
             [binary, "--version"], capture_output=True, text=True
         ).stdout.split()[0]
@@ -547,7 +598,7 @@ class Room:
         return self.launched
 
     def session(self, name, launch):
-        return Session(
+        session = Session(
             self.binary,
             self.layout.harness,
             name,
@@ -562,8 +613,11 @@ class Room:
                 "SHELL": "/bin/bash",
                 "CENTRAL_SECRET": "central-only-secret",
                 "CHEESE_API": self.relay.base,
+                "CHEESE_SESSION_SOCKET": self.runner.path,
             },
         )
+        self.runner.session = session
+        return session
 
     def run(self, name, session):
         run = Run(name, session, self.layout, self.layout.env(self.port))
@@ -581,7 +635,7 @@ class Room:
             subprocess.run(
                 [
                     sys.executable,
-                    str(self.layout.programs / "runtime.py"),
+                    str(self.runtime),
                     "stop",
                     "--state",
                     str(self.state),
@@ -590,6 +644,7 @@ class Room:
                 timeout=30,
             )
             self.relay.close()
+            self.runner.close()
             execution_release.release_mount(self.launched["cwd"])
 
         run.drop = drop
@@ -688,7 +743,13 @@ def window(run):
     """The first turn of a room's session. A session started before its machine
     is rented spends it at the placeholder: its first command takes the lease,
     and runs on the machine at the machine's path; the directory it ends in,
-    and the one the build resets to, are named at the placeholder."""
+    and the one the build resets to, are named at the placeholder.
+
+    That first command is refused there, unrun: it passed its PreToolUse before
+    the project's hooks were known, and the build takes them up when the
+    machine attaches. So it comes first and changes nothing, and every command
+    after it fires the project's hooks (`WINDOW_AFTER_THE_LEASE`)."""
+    turn(run, bash("echo takes the lease"))
     turn(run, bash('mkdir -p "window here" && cd "window here" && pwd'))
     turn(run, bash("cd /tmp && pwd"))
     turn(run, bash("pwd"))
@@ -863,48 +924,6 @@ def step_transient(run):
     return {"notified": note is not None}
 
 
-def step_move(run):
-    mark = run.session.user(bash("sleep 4; echo MOVED_DONE", timeout=120000))
-    _, started = run.session.wait(is_("system", "task_started"), 60, mark)
-    if not started:
-        return {"started": False}
-    time.sleep(1.5)
-    answer = run.session.control(
-        {"subtype": "background_tasks", "tool_use_id": started["tool_use_id"]}
-    )
-    running_after_move = alive("sleep 4")
-    _, note = run.session.wait(
-        is_("system", "task_notification", task_id=started["task_id"]), 60, mark
-    )
-    if note:
-        run.session.wait(is_("result"), 60, run.session.events.index(note) + 1)
-    return {
-        "answer": (answer.get("response") or {}),
-        "still running after the move": running_after_move,
-    }
-
-
-def step_stop_task(run):
-    mark = run.session.user(
-        do("Bash", command="sleep 301", run_in_background=True, description="s")
-    )
-    _, started = run.session.wait(is_("system", "task_started"), 60, mark)
-    run.session.wait(is_("result"), 60, mark)
-    before = settle(lambda: alive("sleep 301"))
-    answer = run.session.control(
-        {"subtype": "stop_task", "task_id": started["task_id"]}
-    )
-    run.session.wait(
-        is_("system", "task_notification", task_id=started["task_id"]), 30, mark
-    )
-    gone = settle(lambda: not alive("sleep 301"))
-    return {
-        "running before": before,
-        "gone after": gone,
-        "answer": answer.get("subtype"),
-    }
-
-
 def step_task_stop_tool(run):
     mark = run.session.user(
         do("Bash", command="sleep 302", run_in_background=True, description="s")
@@ -988,8 +1007,6 @@ STEPS = {
     "composition": step_composition,
     "background": step_background,
     "transient": step_transient,
-    "move": step_move,
-    "stop_task": step_stop_task,
     "task_stop_tool": step_task_stop_tool,
     "interrupt": step_interrupt,
     "timeout": step_timeout,
@@ -998,7 +1015,6 @@ STEPS = {
     "stdin_close": step_stdin_close,
 }
 LEFTOVERS = (
-    "sleep 301",
     "sleep 302",
     "sleep 303",
     "sleep 304",
@@ -1006,7 +1022,6 @@ LEFTOVERS = (
     "sleep 306",
     "sleep 307",
     "sleep 309",
-    "sleep 4",
 )
 
 # --- the generic record ------------------------------------------------------
@@ -1153,6 +1168,12 @@ def free_port():
 
 
 RUNS = {"remote": remote, "relaunched": relaunched}
+# The window's commands after the one that takes the lease (`window`).
+WINDOW_AFTER_THE_LEASE = (
+    'mkdir -p "window here" && cd "window here" && pwd',
+    "cd /tmp && pwd",
+    "pwd",
+)
 # What `relaunched` is not held to: its first turn is at the placeholder.
 WINDOW = ("window", "window hooks")
 
@@ -1168,6 +1189,23 @@ def play_run(build, binary, layout, port, names):
             name: [run.normalize(entry) for entry in entries]
             for name, entries in hook_logs(layout).items()
         }
+        if run.relaunch:
+            # Started before its machine: once the machine attached, the
+            # project's hooks hold for the rest of the window, as they do for
+            # a session started on it.
+            fired = {
+                name: [entry["tool_input"]["command"] for entry in entries]
+                for name, entries in record["window hooks"].items()
+                if name.startswith("project ")
+            }
+            expected = {
+                f"project project-{event}": list(WINDOW_AFTER_THE_LEASE)
+                for event in ("PreToolUse", "PostToolUse")
+            }
+            if fired != expected:
+                raise AssertionError(
+                    f"project hooks in the window: {fired}, expected {expected}"
+                )
         for directory in (layout.hook_log, layout.platform_log):
             for path in directory.glob("*.jsonl"):
                 path.unlink()

@@ -13,7 +13,7 @@ export function platformErrorPresentation(block: Block): PlatformErrorPresentati
   if (!meta || meta.event_type !== 'platform_error') return null
 
   const code = typeof meta.code === 'string' && meta.code ? meta.code : 'platform_error'
-  const title = typeof meta.title === 'string' && meta.title ? meta.title : '运行环境暂时不可用'
+  const title = typeof meta.title === 'string' && meta.title ? meta.title : '工作电脑暂时不可用'
   const retryable = meta.retryable === true
 
   return {

@@ -196,7 +196,7 @@ def test_publish_during_work_keeps_the_turn_open(client, stub_hooks, monkeypatch
     topic, headers = room(client)
     raw_text = "Internal investigation detail"
 
-    def begin(topic_id, prompt, reply):
+    def begin(topic_id, prompt, reply, agent=None):
         stub_hooks.starts(topic_id)
         stub_hooks.acknowledges(topic_id, prompt)
         stub_hooks.says(topic_id, raw_text)
@@ -283,7 +283,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
     system_event = AsyncMock(wraps=chat.post_system_event)
     monkeypatch.setattr(chat, "post_system_event", system_event)
 
-    def begin(topic_id, prompt, reply):
+    def begin(topic_id, prompt, reply, agent=None):
         stub_hooks.starts(topic_id)
         stub_hooks.acknowledges(topic_id, prompt)
         stub_hooks.says(topic_id, "Internal output")
@@ -353,3 +353,166 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         clock += timedelta(seconds=threshold)
         assert client.portal.call(chat.remind_silent_turns) == 0
         assert len(notices) == 3
+
+
+def test_publication_from_a_remote_executor_still_counts_as_speaking(
+    client, stub_hooks, monkeypatch
+):
+    """The publish endpoint attributes a publication through the runner's live
+    work, which only knows turns THIS process executes. A remote executor's
+    turn publishes over HTTP with turn_id=None — yet its turn is exactly the
+    one the silence sweep is tracking (`_active_turn_ids`). The publication
+    must still refresh `last_chat_at`, or the sweep keeps "reminding" a turn
+    that just spoke, counting the silence from turn start."""
+    from app.api.deps import get_work_runner
+    from app.domain.agent import chat as chat_module
+
+    topic, headers = room(client)
+    chat = client.app.dependency_overrides[get_chat_service]()
+    clock = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock
+
+    monkeypatch.setattr(chat_module, "datetime", Clock)
+    threshold = 90
+    monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
+
+    def begin(topic_id, prompt, reply, agent=None):
+        stub_hooks.starts(topic_id)
+        stub_hooks.acknowledges(topic_id, prompt)
+        stub_hooks.says(topic_id, "Internal output")
+
+    monkeypatch.setattr(stub_hooks, "emit_turn", begin)
+    notices = []
+
+    async def record_notice(topic_id, notice):
+        notices.append(notice)
+        return True
+
+    monkeypatch.setattr(chat, "notify_running_turn", record_notice)
+    # The executor is remote: this process runs no work for the topic, so the
+    # endpoint's runner lookup attributes nothing.
+    monkeypatch.setattr(get_work_runner(), "live_work_for_topic", lambda _t: None)
+    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
+        while True:
+            frame = ws.receive_json()
+            if (
+                frame["type"] == "event_block"
+                and frame["block"]["content"] == "Internal output"
+            ):
+                break
+        # A second agent's turn is live in the same room, and IT is the one
+        # holding the topic's active slot. Attribution must still land on the
+        # PUBLISHER's own turn — crediting this publication to the other
+        # agent's turn would silence ITS reminder while this room stays dark.
+        import dataclasses
+
+        clock += timedelta(seconds=threshold)
+        own = next(s for (t, _), s in chat._hook_work.items() if t == uuid.UUID(topic))
+        rival_id = uuid.uuid4()
+        rival = dataclasses.replace(
+            own, work_id=rival_id, acting_agent="cheese-other", started_at=clock
+        )
+        chat._hook_work[(uuid.UUID(topic), rival_id)] = rival
+        chat._active_turn_ids[uuid.UUID(topic)] = {rival_id}
+
+        sent = publish(client, topic, headers).json()["data"]
+        assert next_block(ws)["id"] == sent["id"]
+        assert sent["turn_id"] is None  # the endpoint could not attribute it
+        # The publication still counts as the publisher's turn speaking: no
+        # reminder right after it, and none inside a fresh interval either.
+        assert own.last_chat_at == clock
+        assert rival.last_chat_at is None  # never credited across agents
+        assert client.portal.call(chat.remind_silent_turns) == 0
+        clock += timedelta(seconds=threshold - 1)
+        assert client.portal.call(chat.remind_silent_turns) == 0
+        assert notices == []
+
+
+def test_publication_attribution_never_guesses_between_agents():
+    """Two live turns, neither the publisher's: attribute nothing.
+
+    The fallback exists so a remote executor's publication refreshes ITS
+    turn. Between two agents whose turns are both live in one room, a
+    publication from a third party matches nobody, and a wrong credit is
+    worse than none: it silences the reminder of a turn that never spoke.
+    """
+    from types import SimpleNamespace
+
+    from app.domain.agent.chat import ChatService
+
+    topic = uuid.uuid4()
+    a, b = uuid.uuid4(), uuid.uuid4()
+    svc = SimpleNamespace(
+        _hook_work={
+            (topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a"),
+            (topic, b): SimpleNamespace(work_id=b, acting_agent="cheese-b"),
+        },
+        _active_turn_ids={topic: {a}},
+    )
+    attribute = ChatService._attributed_work_id
+    # A third party publishes: two live turns, neither theirs — no guess.
+    assert attribute(svc, topic, "cheese-c") is None
+    # The publisher's own turn wins even when it is not the active one.
+    assert attribute(svc, topic, "cheese-b") == b
+    # Both live turns are the publisher's: the active one breaks the tie.
+    svc._hook_work[(topic, b)] = SimpleNamespace(work_id=b, acting_agent="cheese-a")
+    assert attribute(svc, topic, "cheese-a") == a
+    # One live turn only: unambiguous whoever publishes (a token naming no
+    # agent seat resolves to the room's roster, which may differ).
+    svc._hook_work = {(topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a")}
+    assert attribute(svc, topic, "cheese-c") == a
+    # Nothing live: nothing to attribute.
+    svc._hook_work = {}
+    assert attribute(svc, topic, "cheese-a") is None
+
+
+def test_consuming_work_id_only_delivers_when_unambiguous():
+    """An inbound message goes to exactly one live turn, never a guess.
+
+    Today the active set holds at most one id and this reduces to the old
+    single-slot behavior, including its tolerance of a missing hook state.
+    With several turns live (parallel agents in one room), delivery needs
+    exactly one recipient match — zero or two both hold the message.
+    """
+    from types import SimpleNamespace
+
+    from app.domain.agent.chat import ChatService
+
+    topic = uuid.uuid4()
+    a, b = uuid.uuid4(), uuid.uuid4()
+    svc = SimpleNamespace(
+        _hook_work={
+            (topic, a): SimpleNamespace(work_id=a, agent_instance_handle="inst-a"),
+            (topic, b): SimpleNamespace(work_id=b, agent_instance_handle="inst-b"),
+        },
+        _active_turn_ids={topic: {a, b}},
+    )
+    consume = ChatService._consuming_work_id
+    to = lambda handle: lambda s: s.agent_instance_handle == handle  # noqa: E731
+    # Exactly one match: delivered there.
+    assert consume(svc, topic, to("inst-a")) == a
+    assert consume(svc, topic, to("inst-b")) == b
+    # No match, or both match: held rather than guessed.
+    assert consume(svc, topic, to("inst-c")) is None
+    assert consume(svc, topic, lambda s: True) is None
+    # No matcher and several live: held.
+    assert consume(svc, topic) is None
+    # A live id without hook state is tolerated (single-slot compatibility)…
+    svc._active_turn_ids = {topic: {a, b}}
+    del svc._hook_work[(topic, b)]
+    assert consume(svc, topic, to("inst-a")) is None  # b still could be it
+    # …unless the caller is strict: then a missing state cannot receive.
+    svc._active_turn_ids = {topic: {b}}
+    assert consume(svc, topic, to("inst-b"), strict=True) is None
+    assert consume(svc, topic, to("inst-b"), strict=False) == b
+    # One live turn with its state: the everyday case.
+    svc._hook_work[(topic, b)] = SimpleNamespace(
+        work_id=b, agent_instance_handle="inst-b"
+    )
+    assert consume(svc, topic, to("inst-b")) == b
+    assert consume(svc, topic) == b

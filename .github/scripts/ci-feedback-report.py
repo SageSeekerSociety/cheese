@@ -22,6 +22,10 @@ from urllib.parse import quote
 
 FAILURES = {"failure", "timed_out", "action_required", "startup_failure"}
 
+# `e2e / e2e` is the one job runs recorded before the suite was sharded;
+# `e2e / e2e (1/2)` is one shard, whose evidence is suite `e2e-1-of-2`.
+E2E_JOB = re.compile(r"e2e / e2e(?: \((\d+)/(\d+)\))?")
+
 
 def evidence_suites(record: dict) -> list[str]:
     if record["workflow"] == "e2e.yml":
@@ -30,7 +34,11 @@ def evidence_suites(record: dict) -> list[str]:
         return ["remote-acceptance", "private-chat"]
     if record["workflow"] == "required-ci.yml":
         names = record["executed_job_names"]
-        suites = ["e2e"] if "e2e / e2e" in names else []
+        suites = []
+        for name in names:
+            if match := E2E_JOB.fullmatch(name):
+                index, total = match.groups()
+                suites.append("e2e" if index is None else f"e2e-{index}-of-{total}")
         if any(
             name in names for name in ("remote / acceptance", "remote / private-chat")
         ):

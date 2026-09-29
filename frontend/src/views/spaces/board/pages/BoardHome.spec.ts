@@ -10,6 +10,9 @@
 //    因为「你是不是这块板的人」而不出现，而那件事轮不到首页判。
 // 5. **公告横幅挂的是置顶那条，不是最新那条**，一条公告都没有时整块不出现。
 //    这一条和公告页共用一个排序判据，所以它同时也在钉「两处不会各排各的」。
+// 6. **「参与 N 人」是去重后的人数**，它和同一行上的「领取次数」一起从列表那次
+//    响应里来（不是另打一次请求），服务端没给那一格时整块不出现 —— 「参与 0 人」
+//    会把「没读到」说成「没人参与」。
 import type { Component } from 'vue'
 
 import { defineComponent, h } from 'vue'
@@ -17,7 +20,7 @@ import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -133,6 +136,11 @@ function notice(): Element | null {
   return document.querySelector('.home__notice')
 }
 
+/** 顶上那一行数字（板上 N 道题 / 共 N 次领取 / 参与 N 人）。 */
+function stats(): string {
+  return document.querySelector('.home__stats')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+}
+
 describe('空间首页', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -198,6 +206,33 @@ describe('空间首页', () => {
     expect(notice()?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/board/announcements`)
   })
 
+  it('「参与 N 人」用的是服务端去重后的那个数，不是领取次数', async () => {
+    signIn('someone-else')
+    // 两道题各 3 次领取 = 6 次；跨题去重后是 5 人。两个数字不一样，所以「拿领取
+    // 次数冒充人数」这条错法在这条用例下会红。
+    listTasks.mockImplementation(async (params: { approved?: string }) =>
+      params?.approved === 'NONE'
+        ? { data: { tasks: [PENDING], page: {} } }
+        : { data: { tasks: [PUBLISHED, PENDING], page: {}, distinctParticipants: 5 } }
+    )
+    await mount()
+    await waitFor(() => expect(stats()).toContain('参与'))
+
+    expect(stats()).toContain('共 6 次领取')
+    expect(stats()).toContain('参与 5 人')
+    // 顺带钉住「同一次加载」：它是跟着列表那次请求要的，不是另开一次。
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ queryDistinctParticipants: true }))
+  })
+
+  it('服务端没给这个数时不画「参与 0 人」—— 那一格整块不出现', async () => {
+    signIn('someone-else')
+    await mount()
+    await waitFor(() => expect(stats()).toContain('共'))
+
+    expect(stats()).toContain('共 6 次领取')
+    expect(stats()).not.toContain('参与')
+  })
+
   it('一条公告都没有时，横幅整块不出现', async () => {
     signIn('someone-else')
     await mount()
@@ -218,4 +253,64 @@ describe('空间首页', () => {
     expect(notice()?.textContent).toContain('最新的公告')
     expect(notice()?.textContent).toContain('最新')
   })
+
+  it('我领过的题写的是我的**档位**，不是笼统的「已领取」', async () => {
+    signIn('someone-else')
+    // 两张都领过（`joined`），差别只在那格档位：服务端说走到哪一步，卡片就该说
+    // 哪一步。只写「已领取」等于把这四个阶段抹成一个。
+    const passed = task({ id: 3, name: '我通过了的题', joined: true, myClaimStatus: 'PASSED' })
+    const rejected = task({ id: 4, name: '我被打回来的题', joined: true, myClaimStatus: 'REJECTED' })
+    listTasks.mockImplementation(async (params: { approved?: string }) =>
+      params?.approved === 'NONE'
+        ? { data: { tasks: [PENDING], page: {} } }
+        : { data: { tasks: [passed, rejected], page: {} } }
+    )
+    await mount()
+    await waitFor(() => expect(document.body.textContent).toContain('我通过了的题'))
+
+    expect(mineOf('我通过了的题')).toBe('已通过')
+    expect(mineOf('我被打回来的题')).toBe('未通过')
+  })
+
+  it('拿不到档位时才退回「已领取」—— 我领了这件事不能因为那一格缺失而消失', async () => {
+    signIn('someone-else')
+    // 小队提交的题就是这一支：接手的是小队那条领取，服务端给不出我个人的档位。
+    const teamTask = task({ id: 5, name: '小队替我领的题', joined: true, myClaimStatus: null })
+    listTasks.mockImplementation(async (params: { approved?: string }) =>
+      params?.approved === 'NONE' ? { data: { tasks: [PENDING], page: {} } } : { data: { tasks: [teamTask], page: {} } }
+    )
+    await mount()
+    await waitFor(() => expect(document.body.textContent).toContain('小队替我领的题'))
+
+    expect(mineOf('小队替我领的题')).toBe('已领取')
+  })
+
+  it('首页搜索也匹配标签 —— 卡片上摆着的 #名字 得搜得到', async () => {
+    signIn('someone-else')
+    const tagged = task({ id: 6, name: '缓存那道题', topics: [{ id: 1, name: '并发编程' }] })
+    const other = task({ id: 7, name: '另一道题' })
+    listTasks.mockImplementation(async (params: { approved?: string }) =>
+      params?.approved === 'NONE'
+        ? { data: { tasks: [PENDING], page: {} } }
+        : { data: { tasks: [tagged, other], page: {} } }
+    )
+    await mount()
+    await waitFor(() => expect(document.body.textContent).toContain('缓存那道题'))
+
+    const input = document.querySelector('.home__search input') as HTMLInputElement
+    expect(input).toBeTruthy()
+    await fireEvent.update(input, '并发编程')
+
+    // 「缓存那道题」四个字里没有「并发编程」，它是因为**标签**才留下来的。
+    await waitFor(() => expect(document.body.textContent).not.toContain('另一道题'))
+    expect(document.body.textContent).toContain('缓存那道题')
+  })
 })
+
+/** 某张卡片右上角「我的档位」那一格画的字。卡片按标题认。 */
+function mineOf(title: string): string {
+  const card = Array.from(document.querySelectorAll('.tcard')).find(
+    (el) => (el.querySelector('.tcard__title')?.textContent || '').trim() === title
+  )
+  return (card?.querySelector('.tcard__mine')?.textContent || '').replace(/\s+/g, '').trim()
+}

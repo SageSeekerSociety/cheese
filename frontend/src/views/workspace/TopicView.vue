@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, Topic } from '@/cx_types'
+import type { AgentControlState, Block, Topic, TopicMemberRow } from '@/cx_types'
 import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
@@ -7,13 +7,19 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicMemory } from '@/composables/useTopicMemory'
 
 import { listTopicMembers } from '@/api'
+import { useCommands } from '@/commands'
+import { useTopBarBack } from '@/components/common/topBarBack'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
+import { t } from '@/i18n'
+import { agentNames } from '@/lib/agentNames'
 import { topicPhase, topicTitle } from '@/lib/topicState'
+import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
@@ -39,12 +45,17 @@ const panelTab = computed(() => {
   const q = route.query.tab
   return typeof q === 'string' ? q : undefined
 })
+// 页签和浏览器历史怎么对应（桌面 replace；手机上 Back 先回到对话）见 useRoomTabHistory。
+const phone = computed(() => !mdAndUp.value)
+const tabHistory = useRoomTabHistory(phone)
 function onPanelTab(key: string) {
-  if (panelTab.value === key) return
-  // replace, not push: a tab is where you are looking, not somewhere you went.
-  // Pushing would make Back walk the tabs instead of leaving the topic.
-  void router.replace({ query: { ...route.query, tab: key } })
+  tabHistory.goTab(key)
 }
+// 手机上不在对话那一格时，顶栏的 ← 和 Back 一样先回到对话。
+useTopBarBack(() =>
+  phone.value && !tabHistory.onChat.value ? { label: t('work.room.backToChat'), onBack: tabHistory.toChat } : null
+)
+void tabHistory.ensureChatBehind()
 
 // 看板上点开的那张卡。**一件活不是地点**：做它的分身住在这个房间的会话里，所以
 // 打开一张卡不离开房间，只是总览那一格往下钻一层——地址里记的就是这一层，于是
@@ -60,11 +71,19 @@ function onReview() {
   onPanelTab('changes')
 }
 
+// 地址点名的一条消息（搜索结果、别人发来的链接）：对话栏打开时停在它上面。
+const focusBlock = computed(() => {
+  const q = route.query.block
+  return typeof q === 'string' && q ? q : null
+})
+// 同时开着一张卡时，点名的是卡里的那一条（卡里的对话不在房间的对话里）。
+const chatFocusBlock = computed(() => (openCardId.value ? null : focusBlock.value))
+const cardFocusBlock = computed(() => (openCardId.value ? focusBlock.value : null))
+
 function onOpenCard(taskId: string | null) {
   if (openCardId.value === taskId) return
-  // push，不是 replace：往下钻一层是「去了一个地方」，浏览器的返回该退回看板。
-  const query = { ...route.query, tab: 'overview', card: taskId ?? undefined }
-  void router.push({ query })
+  // 桌面上是 push：往下钻一层是「去了一个地方」，浏览器的返回该退回看板。
+  tabHistory.openCard(taskId)
 }
 
 const AUTHOR = myHandle()
@@ -102,6 +121,19 @@ function openTopic(topicId: string) {
 // one of its own (`cheesex.toolWidth`), plus a 钉住 toggle that decided whether
 // the doc made room for it at all.
 const { focusMode } = useTopicMemory() // 专注模式 (spec §7.1): session-only, a transient mode
+// 专注模式只在桌面上有：手机上本来就只有一栏。
+useCommands(() =>
+  mdAndUp.value
+    ? [
+        {
+          id: 'room.focus',
+          title: focusMode.value ? t('work.room.menu.exitFocus') : t('work.room.menu.focus'),
+          icon: focusMode.value ? 'mdi-arrow-collapse' : 'mdi-arrow-expand',
+          run: () => (focusMode.value = !focusMode.value),
+        },
+      ]
+    : []
+)
 // 收起 / 拉开的那一下里，栏在变窄变宽，里面的东西不跟着变：几百条消息每一帧按新
 // 宽度重新折行，既费又难看。把里面钉在这一栏落定时的宽度上，栏只是把它裁开、露出。
 function freezeChatWidth(el: Element) {
@@ -118,6 +150,7 @@ const panelRef = ref<{
 const chatColumn = ref<{
   connected: boolean
   reloadAccept: (silent?: boolean) => void
+  reloadFeedback: () => void
   say: (content: string) => boolean
 } | null>(null)
 
@@ -159,6 +192,7 @@ function onLocate(message: string) {
 const chatEvents = {
   'turn-done': handleTurnDone,
   working: handleWorking,
+  'working-agents': (names: string[]) => (workingAgents.value = names),
   'agent-control': (state: AgentControlState) => (agentControl.value = state),
   'site-block': (block: Block) => panelRef.value?.siteBlock?.(block),
   'site-turns': (turns: Record<string, number>) => (siteTurns.value = turns),
@@ -175,7 +209,10 @@ const chatEvents = {
 
 // 芝士 是不是正在这个话题里干活 —— 话题头上的状态词和工作面板的 tab 都读它。
 const working = ref(false)
-// 会话控制状态的最近一帧，对话栏从 socket 上收到，现场那格的控制条读它。
+// 正在干活的队友们的名字（一间房几个座位并行在跑就几个），对话栏按轮次帧报
+// 上来；空名单 = 帧没带座位（老后端），工作面板退回 agentName 的单数说法。
+const workingAgents = ref<string[]>([])
+// 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
 const agentControl = ref<AgentControlState | null>(null)
 // 正在跑的轮次各自从什么时候开始，对话栏从 socket 上算出来，现场的状态条读它。
 const siteTurns = ref<Record<string, number>>({})
@@ -220,6 +257,8 @@ function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
   // silent：卡是这一刻递上来的，框里原有的留在屏幕上换新，不先清空再长出来。
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
+  // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
+  else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
   else activityTick.value += 1 // doc / decision / milestone / notify → reload
 }
 
@@ -253,7 +292,7 @@ async function handleOpenResource(resource: string, turnId?: string) {
 
 // A clicked <@handle> mention chip → open that teammate's member page.
 function handleMentionClick(handle: string) {
-  void router.push({ name: 'member', params: { projectId: props.projectId, handle } })
+  void router.push(userRefRoute(handle, props.projectId))
 }
 
 // ⤴ 升级 from a message bubble (eval A1). 房间里的消息变成这个房间的一张卡，
@@ -271,12 +310,16 @@ const unreadOnOpen = store.unreadMap[props.topicId] ?? 0
 
 // 这个房间名册上每个 handle 叫什么。「现场」那一格给每一行署名用它，人和 AI 队
 // 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
-// 那一格自己不拉名册，所以在这里拉一次传下去。
-const memberNames = ref<Record<string, string>>({})
+// 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
+// （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
+const roomMembers = ref<TopicMemberRow[]>([])
+const memberNames = computed<Record<string, string>>(() => ({
+  ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, m.name || m.member_handle])),
+  ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
+}))
 async function loadMemberNames() {
   try {
-    const payload = await listTopicMembers(props.topicId)
-    memberNames.value = Object.fromEntries(payload.data.map((m) => [m.member_handle, m.name || m.member_handle]))
+    roomMembers.value = (await listTopicMembers(props.topicId)).data
   } catch {
     // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。
   }
@@ -314,6 +357,7 @@ void openPlace()
         :focus="focusMode"
         @toggle-focus="focusMode = !focusMode"
         @open-topic="openTopic"
+        @rename="(title) => store.renameTopic(topicId, title)"
       />
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
@@ -336,6 +380,7 @@ void openPlace()
             :members="store.members"
             :topic-list="store.topics"
             :unread-on-open="unreadOnOpen"
+            :focus-block="chatFocusBlock"
             v-on="chatEvents"
           />
         </Transition>
@@ -349,6 +394,7 @@ void openPlace()
         <WorkPanel
           ref="panelRef"
           :agent-name="store.agentName"
+          :working-agents="workingAgents"
           class="col col-doc"
           :style="{ flex: '1 1 0', minWidth: 0 }"
           :topic="selectedTopic"
@@ -361,11 +407,13 @@ void openPlace()
           :phase="phase"
           :with-chat="!mdAndUp"
           :open-card-id="openCardId"
+          :card-focus-block="cardFocusBlock"
           :member-names="memberNames"
           @open-topic="openTopic"
           @open-card="onOpenCard"
           @review="onReview"
           @mention-click="handleMentionClick"
+          @open-resource="handleOpenResource"
           @update:tab="onPanelTab"
           @locate="onLocate"
         >
@@ -378,6 +426,7 @@ void openPlace()
               :members="store.members"
               :topic-list="store.topics"
               :unread-on-open="unreadOnOpen"
+              :focus-block="chatFocusBlock"
               v-on="chatEvents"
             />
           </template>

@@ -4,23 +4,39 @@
 // drawer showing every member with their role; an owner/admin can add project
 // members, remove them, or change roles. 芝士 (the AI member) wears an Agent
 // badge, mirroring the @-mention menu.
-import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
+//
+// 名册底下一行写这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻
+// 结论 60）：房间里的 AI 队友都在这一台上，所以不再每个队友各写一行。
+import type { ProjectMemberRow, TopicComputeProfile, TopicMemberRow } from '../cx_types'
 
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
+import {
+  addTopicMember,
+  getTopicComputeProfile,
+  listTopicMembers,
+  removeTopicMember,
+  updateTopicMemberRole,
+} from '../api'
 import { t } from '../i18n'
+import { choiceKey } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
 import ExternalTag from './common/ExternalTag.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import TopicComputePicker from './TopicComputePicker.vue'
 
 const props = defineProps<{
   topicId: string
   projectMembers: ProjectMemberRow[]
   me: string
+}>()
+const emit = defineEmits<{
+  // 有 AI 队友能访问整台机器。这是权限，不是设置，名册合着的时候页头也要写着——
+  // 挂它的地方据此常驻一个标记。null = 没有，或者还不知道。
+  (e: 'machine-access', notice: string | null): void
 }>()
 
 const members = ref<TopicMemberRow[]>([])
@@ -47,6 +63,37 @@ async function load() {
 }
 
 void load()
+
+// 工作电脑：一次读回房间这一项和每个会话在哪台机器上。
+const machines = ref<TopicComputeProfile | null>(null)
+const machinesError = ref('')
+async function loadMachines() {
+  if (!props.topicId) return
+  machinesError.value = ''
+  try {
+    machines.value = await getTopicComputeProfile(props.topicId)
+  } catch (e) {
+    machinesError.value = e instanceof Error ? e.message : t('work.roomMachine.loadFailed')
+  }
+}
+onMounted(() => {
+  void loadMachines()
+  window.addEventListener('project-compute-updated', loadMachines)
+})
+onBeforeUnmount(() => window.removeEventListener('project-compute-updated', loadMachines))
+watch(open, (value) => {
+  if (value) void loadMachines()
+})
+watch(
+  () => (machines.value?.visibility.machine_access ? machines.value.visibility.notice || '' : null),
+  (notice) => emit('machine-access', notice),
+  { immediate: true }
+)
+
+// 「项目默认」只挂在还没开工的选择上：只有这时它才真的跟着项目走。
+const roomChoiceIsProjectDefault = computed(
+  () => !!machines.value && choiceKey(machines.value.choice) === choiceKey(machines.value.project_default)
+)
 
 // 一份名册：AI 队友就是上面的一行，不在人数外面再挂一个。列表本来就是这样渲染
 // 的（`members` 全量），只有这颗按钮上的头像堆和人数把它挑出去单独摆，读起来像
@@ -141,7 +188,7 @@ async function onSetRole(handle: string, role: string) {
       <button
         v-bind="act"
         type="button"
-        class="members-mini"
+        class="members-mini tap-target"
         :class="{ 'members-mini--open': open }"
         :title="`话题成员 · ${countLabel}`"
       >
@@ -241,6 +288,19 @@ async function onSetRole(handle: string, role: string) {
         </li>
       </ul>
 
+      <div v-if="machines" class="roster__future" data-testid="future-machine">
+        <span class="roster__machine-text">{{ t('work.roomMachine.here', { name: machines.choice.name }) }}</span>
+        <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{ t('work.roomMachine.projectDefault') }}</span>
+        <span v-if="machines.visibility.machine_access" class="roster__notice" :title="machines.visibility.notice">
+          <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
+        </span>
+        <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
+      </div>
+      <div v-else-if="machinesError" class="roster__hint">
+        {{ t('work.roomMachine.loadFailed') }}
+        <button type="button" class="roster__retry" @click="loadMachines">{{ t('work.roomMachine.retry') }}</button>
+      </div>
+
       <!-- Add a project member (owner/admin only). -->
       <div v-if="canManage" class="roster__add">
         <v-select
@@ -273,7 +333,9 @@ async function onSetRole(handle: string, role: string) {
 <style scoped>
 /* Compact roster indicator: an avatar stack + count, no full-width bar.
    Sits at the top-right of the topic/chat header row (fusion-design §3). */
+/* 相对定位给 .tap-target：这一颗只有 28px 高，手机顶栏里手指要点得中。 */
 .members-mini {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -338,7 +400,7 @@ async function onSetRole(handle: string, role: string) {
 }
 
 .roster {
-  width: 320px;
+  width: 360px;
   max-width: 88vw;
   background: var(--surface);
   border: 1px solid var(--line-2);
@@ -383,9 +445,51 @@ async function onSetRole(handle: string, role: string) {
 }
 .roster__item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
   padding: 6px 14px;
+}
+/* 房间那一行：这个话题在哪台工作电脑上跑。 */
+.roster__future {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+.roster__future {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-2);
+}
+.roster__machine-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.roster__tag {
+  flex: none;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  color: var(--muted);
+}
+.roster__notice {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+}
+.roster__retry {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-decoration: underline;
+  cursor: pointer;
 }
 .roster__item:hover {
   background: var(--fill);

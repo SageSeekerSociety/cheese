@@ -1,0 +1,9 @@
+{
+  "type": "heartbeat",
+  "origin": "device",
+  "why": "The connector says it is still there, every 15 seconds; a link the backend stops hearing it on is taken offline.",
+  "frame": {
+    "t": "heartbeat"
+  },
+  "meaning": {}
+}

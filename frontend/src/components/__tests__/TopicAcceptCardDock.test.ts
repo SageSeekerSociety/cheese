@@ -104,6 +104,36 @@ describe('贴底的时候', () => {
     expect(container.textContent).not.toContain('chore: do a thing')
   })
 
+  it('交一次合并时，横条上写的是这次改动的标题，不是「《仓库》第 N 版」', async () => {
+    const { container } = await mountWith(
+      [
+        card({
+          change_subject: 'fix(auth): close the role-list leak',
+          artifact: { id: 'a1', name: '平台代码', version: 7 },
+          deliverable: { kind: 'merge', filename: null, url: null },
+        }),
+      ],
+      true
+    )
+    const bar = container.querySelector('.accept-bar')!.textContent
+    expect(bar).toContain('fix(auth): close the role-list leak')
+    expect(bar).not.toContain('第 7 版')
+  })
+
+  it('交一份文件时，横条上写的是产物和第几版', async () => {
+    const { container } = await mountWith(
+      [
+        card({
+          change_subject: 'docs: second draft',
+          artifact: { id: 'a2', name: '调研报告', version: 2 },
+          deliverable: { kind: 'file', filename: 'report.pdf', url: null },
+        }),
+      ],
+      true
+    )
+    expect(container.querySelector('.accept-bar')!.textContent).toContain('《调研报告》第 2 版')
+  })
+
   it('等的是自己的时候说「待你审阅」', async () => {
     const { container } = await mountWith([card({ reviewer_handle: 'alice' })], true)
     expect(container.querySelector('.accept-bar')!.textContent).toContain('待你审阅')

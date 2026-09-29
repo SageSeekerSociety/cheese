@@ -18,13 +18,17 @@ gateway, off the agent's turn, at three moments —
   by. Throttled, and the model is asked *whether* to change first: a title is
   how people find a room again, so keeping it is the default.
 
-A title a person chose (``TitleSource.human``) is never overwritten, and an
-automatic rename is written only against the version it was computed from, so
-someone renaming while a name is being generated always wins. A project can
-turn automatic naming off altogether (``settings.topic_naming = "manual"``).
+A title a person chose (``TitleSource.human``) is final: never overwritten, and
+nothing hands the room back to the platform. An automatic rename is written
+only against the version it was computed from, so someone renaming while a name
+is being generated always wins. A project can turn automatic naming off
+altogether (``settings.topic_naming = "manual"``).
 
 Everything here fails quietly: no gateway, no key, a timeout or an unusable
-answer means the room keeps its title until the next trigger.
+answer means the room keeps its title until the next trigger. Quiet is not the
+same as traceless, though — every trigger that asks the model nothing says so
+in one line, with a word for why (``_unasked``), because a room that is never
+named is otherwise a question with no answer anywhere.
 """
 
 import asyncio
@@ -77,14 +81,19 @@ _TASKS = 8
 TITLE_MAX_CHARS = 24
 # The opening line has to say something before it is worth naming a room by:
 # 「在吗」「@芝士」 wait for the next message or the end of the first turn.
+# What counts is what `_said` has left, so an `@` inside a sentence is not
+# mistaken for a mention and does not read as an empty opener.
 _SUBSTANTIVE_CHARS = 5
 _CALIBRATE_AFTER_PEOPLE = 3
-# Room for the model to think before it writes. The gateway counts that
-# thinking against this cap while a title itself is a few tokens: measured
-# 2026-09-27 on deepseek-flash, thirty naming calls on one prompt spent 62–688
-# tokens (median 135), and at 120 six of ten calls came back empty with the
-# title never written — the room stayed 「新话题」. The cap sits above the
-# largest answer seen; the call's own timeout bounds the rest.
+# What the model may write in one answer. It is asked not to think (`_ask`),
+# so an answer is a title and a JSON wrapper, fifteen to twenty tokens;
+# measured 2026-09-27 on deepseek-flash over two real rooms' material, call by
+# call: a 1612-character room spent 91–727 tokens an answer, while a
+# 2406-character one ran into this cap in six of eight calls and came back
+# empty — and raising the cap to 4096 still lost five of twenty, each of those
+# taking 17–19 seconds, past this call's own timeout. Room to write was never
+# the cure the room needed; this cap stays as a backstop far above what an
+# answer costs.
 _ANSWER_TOKENS = 1024
 
 SYSTEM_PROMPT = "\n".join(
@@ -122,7 +131,6 @@ _STAGE_ASK = {
         "（换了系统、换了问题、从一件事转到另一件事）才换（keep=false）。"
         "措辞更好、更完整都不是换的理由。"
     ),
-    "suggest": "给这个话题起一个最能概括它现在内容的名字。keep 填 false。",
 }
 
 
@@ -200,7 +208,13 @@ def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-_MENTION = re.compile(r"<@[^>]+>|@\S+")
+# A mention is the platform's own markup (`<@handle>`, what chat.py resolves a
+# mention from) or a bare `@handle` typed by hand. Only the handle goes: the
+# rest of the sentence is what the person said. `@\S+` used to take everything
+# up to the next whitespace, which in Chinese is the whole line — the opener of
+# room b031c720 (71 characters, 「当我打开@的时候…」) was read as four, counted
+# as an empty opener, and the room was never named (2026-09-27).
+_MENTION = re.compile(r"<@[\w-]+>|@[\w-]+")
 
 
 def _said(text: str) -> str:
@@ -366,6 +380,16 @@ async def _ask(
                     "max_tokens": _ANSWER_TOKENS,
                     "temperature": 0.2,
                     "response_format": {"type": "json_object"},
+                    # Naming is a small judgement, and this model thinks itself
+                    # past the answer cap when it is allowed to (see above). Off:
+                    # measured 2026-09-27 on the material of two real rooms, the
+                    # hard one answered twelve times out of twelve in 0.7s with
+                    # the same title it produced when it did think, where with
+                    # thinking on six of eight calls at 1024 and five of twenty
+                    # at 4096 came back empty. `reasoning_effort` (minimal, low)
+                    # and a `thinking.budget_tokens` were measured too: neither
+                    # held the model back.
+                    "thinking": {"type": "disabled"},
                 },
             )
             r.raise_for_status()
@@ -373,7 +397,7 @@ async def _ask(
             content = choice["message"]["content"] or ""
             truncated = choice.get("finish_reason") == "length"
     except Exception:  # noqa: BLE001 — see the module docstring
-        logger.info("topic naming call failed", exc_info=True)
+        logger.warning("topic naming call failed", exc_info=True)
         return Answer(verdict=None)
     return Answer(verdict=parse_verdict(content), truncated=truncated)
 
@@ -423,28 +447,38 @@ def _nameable(room: Topic) -> bool:
     )
 
 
-async def _stage(session: AsyncSession, room: Topic, reason: Reason) -> Stage | None:
+@dataclass(frozen=True)
+class Asked:
+    """What a trigger calls for: a stage to judge, or nothing and a short word
+    for why. ``run`` logs that word — a room that keeps its title is otherwise
+    silent, and 「为什么这个房间没改名」 then has no answer anywhere."""
+
+    stage: Stage | None = None
+    why: str = ""
+
+
+async def _stage(session: AsyncSession, room: Topic, reason: Reason) -> Asked:
     """Which judgement, if any, this trigger calls for."""
     if room.title_source == TitleSource.placeholder:
         lines = await _conversation(session, room.id)
         people = [line for line in lines if line.person]
         if not people:
-            return None
+            return Asked(why="no_person_in_the_room_yet")
         if (
             reason == "turn"
             or len(people) > 1
             or any(len(_said(line.text)) >= _SUBSTANTIVE_CHARS for line in people)
         ):
-            return "name"
-        return None
+            return Asked(stage="name")
+        return Asked(why="opener_says_too_little")
 
     if not room.title_calibrated:
         if reason == "turn":
-            return "calibrate"
+            return Asked(stage="calibrate")
         lines = await _conversation(session, room.id)
         if sum(line.person for line in lines) >= _CALIBRATE_AFTER_PEOPLE:
-            return "calibrate"
-        return None
+            return Asked(stage="calibrate")
+        return Asked(why="few_people_since_it_opened")
 
     redis = get_redis_client()
     pending = reason == "signal" or (
@@ -454,18 +488,19 @@ async def _stage(session: AsyncSession, room: Topic, reason: Reason) -> Stage | 
     if not pending:
         since = await _messages_since(session, room.id, room.title_checked_at)
         if since < settings.topic_naming_follow_messages:
-            return None
+            return Asked(why="nothing_new_since_last_check")
     if room.title_checked_at is not None and _now() - room.title_checked_at < timedelta(
         seconds=settings.topic_naming_follow_interval_seconds
     ):
-        return None  # too soon; a pending signal waits for a later trigger
+        # Too soon; a pending signal waits for a later trigger.
+        return Asked(why="checked_not_long_ago")
     if redis is not None:
         day = _redis_key(f"day:{_now():%Y%m%d}", room.id)
         count = await _redis_call(redis.incr, day)
         await _redis_call(redis.expire, day, 2 * 86400)
         if isinstance(count, int) and count > settings.topic_naming_follow_daily_limit:
-            return None
-    return "follow"
+            return Asked(why="daily_limit")
+    return Asked(stage="follow")
 
 
 # ---------- writing ----------
@@ -589,6 +624,18 @@ def _default_factory() -> SessionFactory:
     return async_session_factory
 
 
+def _unasked(room_id: uuid.UUID, reason: Reason, why: str) -> None:
+    """One line for a trigger that asked the model nothing, and why.
+
+    A room that keeps its title is the quiet outcome by design, and quiet used
+    to mean traceless: room b031c720 was reported for never being named, and
+    nothing anywhere said why (2026-09-27). This line is where that answer
+    lives."""
+    logger.info(
+        "topic naming: nothing asked room=%s reason=%s why=%s", room_id, reason, why
+    )
+
+
 async def run(
     room_id: uuid.UUID,
     reason: Reason,
@@ -608,6 +655,7 @@ async def run(
     if redis is not None and await _redis_call(
         redis.exists, _redis_key("backoff", room_id)
     ):
+        _unasked(room_id, reason, "backing_off")
         return None
     if redis is not None:
         # SET NX answers None when someone else holds the lock — and so does a
@@ -615,6 +663,7 @@ async def run(
         # `_write` is protection enough and naming goes ahead.
         taken = await _redis_call(redis.set, lock, "1", nx=True, ex=90)
         if not taken and await _redis_call(redis.exists, lock):
+            _unasked(room_id, reason, "another_trigger_is_running")
             return None
     factory = session_factory or _default_factory()
     renamed: Renamed | None = None
@@ -622,18 +671,26 @@ async def run(
         async with factory() as session:
             room = await session.get(Topic, room_id)
             if room is None or not _nameable(room):
+                # A private chat, an archived room, a title a person chose:
+                # naming has nothing to say here, and says nothing rather than
+                # one line per message in every private chat on the platform.
                 return None
             project = await session.get(Project, room.project_id)
             if naming_mode(project.settings if project else None) != "auto":
+                _unasked(room_id, reason, "the_project_names_itself_manually")
                 return None
-            stage = await _stage(session, room, reason)
-            if stage is None:
+            asked = await _stage(session, room, reason)
+            if asked.stage is None:
+                _unasked(room_id, reason, asked.why)
                 return None
+            stage = asked.stage
             material = await _material(session, room, stage)
             if material is None:
+                _unasked(room_id, reason, "nothing_to_read")
                 return None
             key = await service_key(session, _key_spec(), transport)
             if key is None:
+                _unasked(room_id, reason, "no_gateway_key")
                 return None
             answer = await _ask(key, material, transport)
             if answer.verdict is None:
@@ -645,6 +702,11 @@ async def run(
                     await _redis_call(
                         redis.set, _redis_key("backoff", room_id), "1", ex=120
                     )
+                _unasked(
+                    room_id,
+                    reason,
+                    "the_answer_was_cut_off" if answer.truncated else "the_call_failed",
+                )
                 return None
             renamed = await _write(session, room, stage=stage, verdict=answer.verdict)
             if stage == "follow" and redis is not None:
@@ -689,8 +751,8 @@ async def _run_quietly(room_id: uuid.UUID, reason: Reason) -> None:
 async def rename_by_person(
     session: AsyncSession, room: Topic, title: str, *, by: str | None, reason: str
 ) -> None:
-    """A person chose this title (typed it, asked 芝士 for it, confirmed a
-    suggestion). From now on the platform leaves it alone."""
+    """A person chose this title (typed it, or asked 芝士 for it). From now on
+    the platform leaves it alone, and nothing hands it back."""
     room.title = title
     room.title_source = TitleSource.human
     room.title_version = room.title_version + 1
@@ -720,42 +782,3 @@ async def undo(
     if not isinstance(previous, str) or not previous:
         raise ValidationError("这条记录没有原标题")
     await rename_by_person(session, room, previous, by=by, reason="undo")
-
-
-async def restore_auto(session: AsyncSession, room: Topic, *, by: str | None) -> None:
-    """Hand a room a person named back to the platform. It is judged again on
-    the next trigger, as a follow-up."""
-    if room.title_source != TitleSource.human:
-        return
-    unnamed = room.title == PLACEHOLDER_TITLE
-    room.title_source = TitleSource.placeholder if unnamed else TitleSource.auto
-    room.title_calibrated = not unnamed
-    room.title_checked_at = None
-    room.title_version = room.title_version + 1
-    session.add(
-        TopicTitle(
-            topic_id=room.id,
-            title=room.title,
-            source=room.title_source,
-            reason="restore",
-            by=by,
-        )
-    )
-
-
-async def suggest(
-    session: AsyncSession,
-    room: Topic,
-    transport: httpx.AsyncBaseTransport | None = None,
-) -> str | None:
-    """A title for a person to confirm or edit; nothing is written."""
-    if not available():
-        return None
-    material = await _material(session, room, "suggest")
-    if material is None:
-        return None
-    key = await service_key(session, _key_spec(), transport)
-    if key is None:
-        return None
-    answer = await _ask(key, material, transport)
-    return answer.verdict.title if answer.verdict is not None else None

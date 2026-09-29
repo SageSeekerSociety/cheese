@@ -31,6 +31,14 @@ tasks:
     sources:
       - app/**/*.py
       - pyproject.toml
+  # The import graph: declared boundaries in .importlinter, with the 260
+  # pre-existing violations frozen inside the same file as exact
+  # `importer -> imported` pairs. Refreshing the freeze is
+  # `uv run python scripts/boundary_baseline.py --update` (shrink-only).
+  boundaries:
+    desc: Check declared module boundaries (import-linter + frozen baseline)
+    cmds:
+      - uv run python scripts/check_boundaries.py
   test:
     desc: Run tests (incremental via testmon)
     cmds:
@@ -44,16 +52,18 @@ tasks:
     cmds:
       - uv run pytest tests/ --lf -n {{.PYTEST_WORKERS}} -q
   check:
-    desc: Run all checks (ruff + pyright + pytest)
+    desc: Run all checks (ruff + pyright + boundaries + pytest)
     cmds:
       - task: lint
       - task: typecheck
+      - task: boundaries
       - task: test
   check:full:
     desc: Run all checks with full test suite
     cmds:
       - task: lint
       - task: typecheck
+      - task: boundaries
       - task: test:full
   db:migrate:
     desc: Run alembic migrations

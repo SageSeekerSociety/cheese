@@ -174,6 +174,11 @@ class CandidateCI(unittest.TestCase):
                 "head_repository": {"full_name": "example/app"}, "event": "push",
                 "status": "completed", "conclusion": "success", **changes}
 
+    def queue_record(self, **changes):
+        """Required CI as the merge queue reports it for the commit it lands."""
+        return self.run_record(**{"event": "merge_group",
+                                  "head_branch": f"gh-readonly-queue/main/pr-7-{'b' * 40}", **changes})
+
     def ready(self, build, ci):
         def workflow_runs(_repository, workflow, _candidate):
             return build if workflow == "build.yml" else ci
@@ -200,9 +205,11 @@ class CandidateCI(unittest.TestCase):
     def test_both_completion_orders_require_both_successes(self):
         done = [self.run_record()]
         pending = [self.run_record(status="in_progress", conclusion=None)]
-        self.assertFalse(self.ready(done, pending))
-        self.assertFalse(self.ready(pending, done))
-        self.assertTrue(self.ready(done, done))
+        queued = [self.queue_record()]
+        queue_pending = [self.queue_record(status="in_progress", conclusion=None)]
+        self.assertFalse(self.ready(done, queue_pending))
+        self.assertFalse(self.ready(pending, queued))
+        self.assertTrue(self.ready(done, queued))
 
     def test_missing_ci_never_deploys(self):
         self.assertFalse(self.ready([self.run_record()], []))
@@ -210,26 +217,28 @@ class CandidateCI(unittest.TestCase):
     def test_failed_cancelled_and_skipped_ci_never_deploy(self):
         for conclusion in ("failure", "cancelled", "skipped", "timed_out", "neutral"):
             with self.subTest(conclusion=conclusion):
-                self.assertFalse(self.ready([self.run_record()], [self.run_record(conclusion=conclusion)]))
+                self.assertFalse(self.ready([self.run_record()], [self.queue_record(conclusion=conclusion)]))
 
     def test_a_previous_green_run_cannot_hide_a_new_attempt(self):
-        old = self.run_record(id=9)
+        old = self.queue_record(id=9)
         for status, conclusion in (("in_progress", None), ("completed", "failure")):
-            self.assertFalse(self.ready([old], [self.run_record(status=status, conclusion=conclusion), old]))
+            self.assertFalse(self.ready([self.run_record()], [self.queue_record(status=status, conclusion=conclusion), old]))
 
     def test_other_sha_branch_fork_or_pr_success_cannot_authorize_release(self):
         for changes in ({"head_sha": "b" * 40}, {"head_branch": "feature"},
-                        {"head_repository": {"full_name": "fork/app"}}, {"event": "pull_request"}):
+                        {"head_branch": f"gh-readonly-queue/release/pr-7-{'b' * 40}"},
+                        {"head_repository": {"full_name": "fork/app"}}, {"event": "pull_request"},
+                        {"event": "push", "head_branch": "main"}):
             with self.subTest(changes=changes):
-                self.assertFalse(self.ready([self.run_record()], [self.run_record(**changes)]))
+                self.assertFalse(self.ready([self.run_record()], [self.queue_record(**changes)]))
 
     def test_rerunning_an_older_run_cannot_hide_its_failure_behind_a_newer_id(self):
         rerun = self.run_record(id=9, updated_at="2026-09-22T13:00:00Z", conclusion="failure")
-        self.assertFalse(self.ready([self.run_record(), rerun], [self.run_record()]))
+        self.assertFalse(self.ready([self.run_record(), rerun], [self.queue_record()]))
 
     def test_another_in_progress_attempt_blocks_a_completed_success(self):
         pending = self.run_record(id=9, updated_at="2026-09-22T11:00:00Z", status="in_progress", conclusion=None)
-        self.assertFalse(self.ready([self.run_record(), pending], [self.run_record()]))
+        self.assertFalse(self.ready([self.run_record(), pending], [self.queue_record()]))
 
     def test_api_failure_stops_eligibility(self):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "workflow_runs", side_effect=OSError("API unavailable")):
@@ -240,13 +249,17 @@ class CandidateCI(unittest.TestCase):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
         self.assertEqual(workflow["jobs"]["deploy"]["needs"], "eligibility")
         self.assertEqual(workflow["jobs"]["deploy"]["if"].strip(), "needs.eligibility.outputs.ready == 'true'")
-        self.assertEqual(workflow["jobs"]["eligibility"]["runs-on"], ["self-hosted", "cheese-ci"])
+        self.assertNotIn("cheese-dev", workflow["jobs"]["eligibility"]["runs-on"])
         self.assertNotIn("concurrency", workflow)
         self.assertEqual(workflow["jobs"]["deploy"]["concurrency"]["group"], "deploy-dev")
         triggers = workflow.get("on", workflow.get(True))
-        self.assertEqual(set(triggers["workflow_run"]["workflows"]), {"Build and Push Docker Image", "Required CI"})
+        self.assertEqual(set(triggers["workflow_run"]["workflows"]), {"Build and Push Docker Image"})
+
+    def test_required_ci_runs_once_per_commit_in_the_merge_queue(self):
         required = yaml.safe_load((ROOT / ".github/workflows/required-ci.yml").read_text())
-        self.assertEqual(required.get("on", required.get(True))["push"]["branches"], ["main"])
+        triggers = required.get("on", required.get(True))
+        self.assertNotIn("push", triggers)
+        self.assertIn("merge_group", triggers)
 
     def test_ci_rerun_while_waiting_for_deploy_runner_prevents_release(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -289,7 +302,6 @@ class CandidateCI(unittest.TestCase):
     def test_main_runs_selected_suites_only_through_required_ci(self):
         workflows = ROOT / ".github/workflows"
         parent = yaml.safe_load((workflows / "required-ci.yml").read_text())
-        self.assertEqual(parent.get("on", parent.get(True))["push"]["branches"], ["main"])
         for job in parent["jobs"].values():
             if "uses" not in job:
                 continue

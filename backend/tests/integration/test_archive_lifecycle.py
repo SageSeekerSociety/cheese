@@ -588,3 +588,42 @@ async def test_a_device_other_than_the_session_host_keeps_no_transcripts(
     assert not room.archive.exists()
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, room.cleanup_id)).state == "complete"
+
+
+async def test_a_process_still_in_a_claimed_room_is_waited_out_and_named(
+    client, session_host_room, caplog
+):
+    """A process can still be inside a room after the cleanup claimed it. The
+    sweep waits for it to leave: the room stays, the wait names the process,
+    it is reported when it starts and not again every pass, and nothing reads
+    it as a failure. Once the process is gone the room is cleaned up."""
+    room = session_host_room
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, room.cleanup_id)
+        operation.state = "claimed"
+        operation.resources = [
+            {
+                "kind": "device",
+                "device_id": "center",
+                "resource_id": str(operation.resource_id),
+            }
+        ]
+        await session.commit()
+    holder = subprocess.Popen(["sleep", "300"], cwd=room.home)
+    try:
+        with caplog.at_level("DEBUG", logger="cheesex.topic.retire"):
+            assert _sweep(client) == {"completed": 0, "pending": 1}
+            assert _sweep(client) == {"completed": 0, "pending": 1}
+        assert room.home.exists()
+        async with client.test_factory() as session:
+            operation = await session.get(RoomCleanup, room.cleanup_id)
+            assert operation.state == "claimed"
+            assert "sleep 300" in operation.last_error
+        records = [r for r in caplog.records if r.name == "cheesex.topic.retire"]
+        assert not [r for r in records if r.levelname == "ERROR"]
+        assert len([r for r in records if r.levelname == "WARNING"]) == 1
+    finally:
+        holder.kill()
+        holder.wait()
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+    assert not room.home.exists()

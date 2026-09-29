@@ -54,19 +54,25 @@ async def _spend(factory, project_id: str, room_id: str, tokens: int) -> None:
 
 
 async def _event(
-    factory, project_id: str, room_id: str, text: str, task_id: str | None = None
+    factory,
+    project_id: str,
+    room_id: str,
+    text: str,
+    task_id: str | None = None,
+    author: str = "cheese",
 ) -> None:
     """一条 event —— 「现场」那一格看的就是这个（工具动作，不是消息）。
 
     地点是房间，`task_id` 才说这一步是哪个分身干的：这正是平台按 `agent_id` 给
-    事件归属时写下的那一对。
+    事件归属时写下的那一对。`author` 是署名 —— 一个房间坐得下几个队友，`现场`
+    按它一次看一个。
     """
     async with factory() as session:
         await BlockRepository(session).add(
             project_id=uuid.UUID(project_id),
             topic_id=uuid.UUID(room_id),
             task_id=uuid.UUID(task_id) if task_id else None,
-            author="cheese",
+            author=author,
             author_type=AuthorType.participant,
             content=text,
             kind=BlockKind.event,
@@ -179,3 +185,60 @@ async def test_a_cards_timeline_can_be_cut_to_its_newest(client):
 
     whole = client.get(f"/topics/{room}/tasks/{thread}").json()["data"]
     assert [b["content"] for b in whole["blocks"]] == ["第 0 步", "第 1 步", "第 2 步"]
+
+
+@pytest.mark.anyio
+async def test_a_rooms_site_can_be_read_one_teammate_at_a_time(client):
+    """一个房间坐得下几个队友，现场要能只看其中一个 —— 而且和「全部」一样是翻页
+    的：只读最近一页、往上再要一页。
+
+    过滤必须发生在分页里面（和 `kinds` 一个位置）。先把一页滤完再交出来的实现会在
+    这里露馅：`limit=2` 只给回一条（另一半是别人的），`has_more` 也是照着错的集合
+    算的，调用方于是从一个个洞里翻页。
+    """
+    pid, room = _room(client)
+    for i in range(3):
+        client.portal.call(
+            lambda i=i: _event(
+                client.test_request_factory,
+                pid,
+                room,
+                f"甲的 {i} 步",
+                author="cheese-a1",
+            )
+        )
+        client.portal.call(
+            lambda i=i: _event(
+                client.test_request_factory,
+                pid,
+                room,
+                f"乙的 {i} 步",
+                author="cheese-b2",
+            )
+        )
+
+    # 最新的一窗：只要一个队友的，还是满满一页。
+    mine = client.get(
+        f"/topics/{room}/transcript", params={"limit": 2, "author": "cheese-a1"}
+    ).json()["data"]
+    assert len(mine["data"]) == 2, "只滤出别人的行，说明过滤发生在分页之后"
+    assert {b["author"] for b in mine["data"]} == {"cheese-a1"}
+    assert mine["has_more"] is True
+
+    # 往上再要一页：游标 + 同一个 author。
+    older = client.get(
+        f"/topics/{room}/transcript",
+        params={"limit": 2, "before": mine["oldest_id"], "author": "cheese-a1"},
+    ).json()["data"]
+    assert older["has_more"] is False
+    assert {b["author"] for b in older["data"]} == {"cheese-a1"}
+    # 两窗接起来正好是甲的三步，不多不少 —— 也不混进乙的。
+    assert [b["content"] for b in older["data"] + mine["data"]] == [
+        "甲的 0 步",
+        "甲的 1 步",
+        "甲的 2 步",
+    ]
+
+    # 不带 author 的「全部」照旧：两个队友的行都在，一个都没被过滤掉。
+    everything = client.get(f"/topics/{room}/transcript").json()["data"]["data"]
+    assert {"cheese-a1", "cheese-b2"} <= {b["author"] for b in everything}

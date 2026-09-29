@@ -7,8 +7,8 @@ import { useCachedResource } from '@/composables/useCachedResource'
 
 import { getCalendar, listMilestones } from '../api'
 
+import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 // 时间维度 (spec §7.2): a clean deadline list with countdowns, plus the done
 // milestones shown faded.
@@ -65,7 +65,7 @@ function countdownDotClass(d: string | null): string {
 </script>
 
 <template>
-  <ProjectPage :title="t('navigation.project.calendar')">
+  <AppPage :title="t('navigation.project.calendar')">
     <div v-if="loading" class="d-flex justify-center py-10">
       <v-progress-circular indeterminate color="primary" />
     </div>
@@ -127,7 +127,7 @@ function countdownDotClass(d: string | null): string {
         </v-card-text>
       </v-card>
     </template>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>

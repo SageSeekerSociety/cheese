@@ -23,10 +23,12 @@ import pytest
 
 if __package__:
     from tests.pinned_claude import claude_binary
+    from tests.support import executor_release
 else:
     # The acceptance suite runs this file as a script, from outside the package.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from pinned_claude import claude_binary
+    from support import executor_release
 
 RUNTIME = (
     Path(__file__).resolve().parents[2]
@@ -53,21 +55,26 @@ def test_only_a_running_command_holds_an_idle_upgrade(tmp_path, running):
     assert executor.upgrading is not running
 
 
+_release_spec = importlib.util.spec_from_file_location(
+    "execution_release", RUNTIME.with_name("release.py")
+)
+release = importlib.util.module_from_spec(_release_spec)
+_release_spec.loader.exec_module(release)
+
+
 def _proxy_source() -> str:
-    return (
-        (RUNTIME.parent / "proxy.js")
-        .read_text()
-        .replace(
-            "__EXECUTION_CONFIG__",
-            json.dumps(
-                {
-                    "central_config": "/config",
-                    "central_workspace": "/view",
-                    "workspace": "/work",
-                    "session_workspace": "/work",
-                }
-            ),
-        )
+    """proxy.js as the plugin loads it: config and the platform tool table in."""
+    return release.hook_module(
+        (RUNTIME.parent / "proxy.js").read_text(),
+        {
+            "central_config": "/config",
+            "central_workspace": "/view",
+            "workspace": "/work",
+            "session_workspace": "/work",
+        },
+        release.platform_tool_names(
+            (RUNTIME.parents[6] / "sandbox/cheese").read_text()
+        ),
     )
 
 
@@ -93,8 +100,9 @@ def test_unavailable_search_tools_do_not_search_the_session_host():
         const {register} = await import(url);
         const handlers = {};
         register((event, handler) => {handlers[event] = handler});
+        const $ = {env: {get: async () => undefined}};
         for (const tool of ['Glob', 'Grep']) {
-          const result = await handlers['tool.call']({}, {
+          const result = await handlers['tool.call']($, {
             tool, tool_use_id: 'search', path: '/work', pattern: 'private',
           }, () => {throw new Error('searched session host')});
           assert.match(result.deny, /use Bash/);
@@ -109,15 +117,16 @@ def test_isolated_subagents_are_refused_with_the_way_that_works():
         const {register} = await import(url);
         const handlers = {};
         register((event, handler) => {handlers[event] = handler});
+        const $ = {env: {get: async () => undefined}};
         for (const isolation of ['worktree', 'remote']) {
-          const result = await handlers['tool.call']({}, {
+          const result = await handlers['tool.call']($, {
             tool: 'Agent', tool_use_id: 'spawn', description: 'look',
             prompt: 'list files', isolation,
           }, () => {throw new Error('spawned on the session host')});
           assert.match(result.deny, /omit isolation/);
           assert.match(result.deny, /cheese_task/);
         }
-        const spawned = await handlers['tool.call']({}, {
+        const spawned = await handlers['tool.call']($, {
           tool: 'Agent', tool_use_id: 'spawn', description: 'look',
           prompt: 'list files',
         }, (event) => ({spawned: event.tool}));
@@ -157,6 +166,7 @@ def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
         let called;
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           mcp: {call: async (server, tool, args) => {
             called = {server, tool, args};
             const text = JSON.stringify({result: {ok: true}});
@@ -200,6 +210,7 @@ def test_a_platform_receipt_never_becomes_an_empty_text_block():
         const receipt = {result: {stdout: body, stderr: ''}};
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           mcp: {call: async () => ({
             content: [{type: 'text', text: JSON.stringify(receipt)}],
           })},
@@ -229,6 +240,7 @@ def test_large_platform_receipt_reaches_the_caller_as_json():
         const receipt = {result: {stdout: body, stderr: ''}};
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           mcp: {call: async () => ({content: [{type: 'text', text:
             JSON.stringify({receipt_path: '/config/tool-results/large.json'})}]})},
           fs: {read: async (path, {as}) => {
@@ -256,6 +268,7 @@ def test_large_edit_receipt_reaches_the_caller_without_replaying_the_edit():
         let calls = 0;
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           mcp: {call: async () => {
             calls++;
             return {content: [{type: 'text', text: JSON.stringify({
@@ -300,6 +313,7 @@ def test_the_build_runs_bash_and_its_own_tasks_and_its_words_reach_the_model():
         const forwarded = [];
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           mcp: {call: async (server, tool, args) => {
             forwarded.push(args.tool);
             const text = JSON.stringify({result: {ok: true}});
@@ -360,6 +374,7 @@ def test_send_user_file_is_delivered_to_the_room_never_to_the_anthropic_upload()
         const bytes = Buffer.from('hello');
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           fs: {
             stat: async (path, {resolve}) => {
               assert.equal(typeof resolve, 'boolean');
@@ -425,6 +440,7 @@ def test_send_user_file_reads_the_path_the_model_named():
         let sent;
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           fs: {
             stat: async (path) => {
               asked.push(path);
@@ -465,6 +481,7 @@ def test_send_user_file_a_file_this_host_cannot_read_still_reaches_the_transport
         let called;
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           fs: {
             stat: async () => ({kind: 'file', size: 3, mtimeMs: 0, isLink: false}),
             read: async () => {
@@ -503,6 +520,7 @@ def test_send_user_file_an_oversize_file_is_refused_before_it_is_read():
         let read = false;
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           fs: {
             stat: async () => ({
               kind: 'file', size: 11 * 1024 * 1024, mtimeMs: 0, isLink: false,
@@ -543,6 +561,7 @@ def test_send_user_file_names_the_object_form_it_cannot_take():
         let delivered = false;
         const api = {
           session: {id: async () => 'session'},
+          env: {get: async () => undefined},
           fs: {
             stat: async () => {throw new Error('must not stat');},
             read: async () => {throw new Error('must not read');},
@@ -781,10 +800,9 @@ def _room_prepared_under_the_previous_root(tmp_path, monkeypatch):
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     previous = home / ".claude"
-    (previous / "remote-execution").mkdir(parents=True)
     # Its OWN runtime, the one that started it: the protocol a running executor
     # answers is the one it was installed with, not the one being installed now.
-    shutil.copyfile(RUNTIME, previous / "remote-execution/runtime.py")
+    executor_release.install(previous)
     work = home / "room"
     work.mkdir(parents=True)
     program = script(
@@ -1037,6 +1055,37 @@ def test_stop_with_no_state_remains_a_no_op(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert not state.exists()
+
+
+def test_start_waits_for_a_service_that_is_slow_to_come_up(tmp_path):
+    """A loaded machine can take several seconds just to start Python."""
+    slow = tmp_path / "slow"
+    slow.mkdir()
+    # The service process, and only it, takes seven seconds before running.
+    (slow / "sitecustomize.py").write_text(
+        "import sys, time\nif 'serve' in sys.argv:\n    time.sleep(7)\n"
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state = tmp_path / "state"
+    path = os.pathsep.join(filter(None, [str(slow), os.environ.get("PYTHONPATH")]))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(RUNTIME), "start", "--state", str(state)],
+            input=json.dumps({"workspace": str(workspace), "env": {}}),
+            env={**os.environ, "PYTHONPATH": path},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert runtime.request(state, "ping")["pid"] == json.loads(result.stdout)["pid"]
+    finally:
+        subprocess.run(
+            [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+            capture_output=True,
+            timeout=30,
+        )
 
 
 @pytest.mark.parametrize("update_kind", ["runtime", "binary", "helper"])
@@ -1650,6 +1699,34 @@ class RemoteExecutionTests(unittest.TestCase):
                 {"operation": "create", "path": ".claude/workflows/outside/leak"},
             )
         assert not (self.root / "leak").exists()
+
+    def test_context_fs_carries_subdirectory_skills_and_what_scopes_a_skill(self):
+        subprocess.run(["git", "init", "-q", str(self.workspace)], check=True)
+        (self.workspace / ".gitignore").write_text("vendored/\n")
+        for place in ("pkg", "vendored/dep"):
+            skill = self.workspace / place / ".claude/skills/one"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("---\nname: one\n---\nbody\n")
+        listed = self.workspace / ".claude/skills/listed"
+        listed.mkdir(parents=True)
+        (listed / "SKILL.md").write_text(
+            '---\nname: listed\npaths:\n  - "src/**"\n  - docs/*.md\n---\nbody\n'
+        )
+        inline = self.workspace / ".claude/skills/inline"
+        inline.mkdir(parents=True)
+        (inline / "SKILL.md").write_text("---\nname: inline\npaths: lib/**\n---\nb\n")
+
+        tree = runtime.request(self.state, "context_fs", {"operation": "tree"})
+        entries = tree["entries"]
+
+        self.assertIn("pkg/.claude/skills/one/SKILL.md", entries)
+        # Claude Code does not offer a gitignored directory's skills.
+        self.assertNotIn("vendored/dep/.claude/skills/one/SKILL.md", entries)
+        self.assertEqual(
+            entries[".claude/skills/listed/SKILL.md"]["paths"], ["src/**", "docs/*.md"]
+        )
+        self.assertEqual(entries[".claude/skills/inline/SKILL.md"]["paths"], ["lib/**"])
+        self.assertNotIn("paths", entries["pkg/.claude/skills/one/SKILL.md"])
 
     def test_context_fs_reports_imports_outside_project_boundary(self):
         absolute_project_import = str(self.workspace / "inside.md")

@@ -2,7 +2,14 @@
   <!-- `background` (not a fixed grey): the title bar frames every page, so a
        Material palette name like grey-lighten-5 would pin it to #FAFAFA in dark
        theme while the text inside follows --v-theme-on-surface → unreadable. -->
-  <v-system-bar window color="background" absolute class="app-system-bar">
+  <v-system-bar
+    window
+    color="background"
+    absolute
+    class="app-system-bar"
+    :class="{ 'app-system-bar--window-buttons': titleBarInset }"
+    :data-tauri-drag-region="titleBarInset ? 'deep' : undefined"
+  >
     <ParentBackButton />
     <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
@@ -70,6 +77,7 @@ import ParentBackButton from './ParentBackButton.vue'
 
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import { t } from '@/i18n'
+import { titleBarOverlay } from '@/lib/desktopApp'
 import { NotificationsApi } from '@/network/api/notifications'
 import AccountService from '@/services/account'
 import { usePageTitleStore } from '@/stores/title'
@@ -78,6 +86,7 @@ const router = useRouter()
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 
+const titleBarInset = titleBarOverlay()
 const notificationMenuOpen = ref(false)
 const unreadNotificationsCount = ref(0)
 
@@ -156,6 +165,13 @@ onMounted(() => {
 .app-system-bar.app-system-bar {
   opacity: 1;
   color: rgb(var(--v-theme-on-surface-variant));
+}
+
+/* In the desktop app on macOS the window buttons sit at this bar's left end,
+   above the rail (desktop/src-tauri/src/main.rs places them); the bar's own
+   content starts after the rail's width. */
+.app-system-bar.app-system-bar--window-buttons {
+  padding-inline-start: 64px;
 }
 
 /* 右上这一簇是同一种形状：高 28、无边、悬停出底色。语言开关自己的样式是给页头

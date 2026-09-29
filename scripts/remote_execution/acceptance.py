@@ -24,13 +24,11 @@ from model_fixture import Handler, Server, dump, log
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
-# The CLI preload worker is not the adapter's — it knows the platform CLI and
-# nothing about any harness, so it lives beside the other platform-side machine
-# helpers. Only the path it is FETCHED from moved; where it lands on the machine
-# is what `runtime.py` looks for, and that is unchanged.
-AGENT = ROOT / "backend/app/domain/agent"
 sys.path.insert(0, str(SOURCE))
 import release as execution_release  # noqa: E402 — from the source tree above
+
+sys.path.insert(0, str(ROOT / "backend"))
+from tests.support import executor_release  # noqa: E402 — standard library only
 
 spec = importlib.util.spec_from_file_location("execution_client", SOURCE / "client.py")
 client = importlib.util.module_from_spec(spec)
@@ -61,13 +59,17 @@ def setup(folder, options, api):
         else str(folder / "execution")
     )
     run(remote_command(options, ["mkdir", "-p", remote + "/remote-execution"]))
-    sources = (
-        (SOURCE / "runtime.py", "runtime.py"),
-        (AGENT / "cli_worker.py", "remote-execution/cli_worker.py"),
-        (ROOT / "backend/sandbox/cheese", "cheese"),
+    # The executor as a machine's bootstrap installs it; over ssh, installed
+    # here and copied across file by file under the names it was installed as.
+    installed = Path(remote) if not options.ssh else folder / "executor-release"
+    executor_release.install(installed)
+    sources = [
         (Path(__file__).parent / "custom_mcp.py", "custom_mcp.py"),
         (Path(__file__).parent / "seed.py", "seed.py"),
-    )
+    ]
+    if options.ssh:
+        names = json.loads((installed / "executor-files.json").read_text())
+        sources += [(installed / name, name) for name in names]
     for source, destination in sources:
         if options.ssh:
             run(
@@ -102,7 +104,7 @@ def setup(folder, options, api):
         },
     }
     target = {
-        "command": [python, remote + "/runtime.py"],
+        "command": [python, remote + "/remote-execution/runtime.py"],
         "state": remote + "/state",
         "mcp_servers": ["custom"],
     }
@@ -201,15 +203,18 @@ def case(folder, options):
         executor, target = setup(
             folder, options, f"http://127.0.0.1:{server.server_port}"
         )
-        # The session home, laid out as a room's is: the helpers and the target
-        # under `.cheese`, and `bootstrap` preparing `.cheese/remote-session`.
+        # The session home, laid out as a room's is: the helpers under
+        # `.cheese`, the target and everything the client prepares from it in
+        # the SEAT that owns this session (`place.seat_dir`, `runner_fixture`),
+        # and the config dir the room shares.
         home = folder / ("device-home" if options.launcher == "device" else "home")
-        center = home / ".cheese/remote-session/forwarded-project"
+        session = runner_fixture.session_dir(home)
+        center = session / "remote-session/forwarded-project"
         center.mkdir(parents=True)
         # Held open from before the mount, so the directory beneath it can be
         # checked for writes that went there instead of to the executor.
         center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
-        execution_file = home / ".cheese/remote-session/execution.json"
+        execution_file = session / "remote-session/execution.json"
         # Where the session sees the project: at the executor's own path
         # (`client.py enter`); `center` is this host's view of it.
         seen = Path(executor.call("ping")["workspace"])
@@ -403,7 +408,9 @@ def case(folder, options):
             session = runner_fixture.Session.start(folder, command, env, home)
             if options.mode == "disconnect":
                 # Once `bootstrap` has prepared the session against it.
-                prepared = home / ".cheese/remote-session/launch.json"
+                prepared = (
+                    runner_fixture.session_dir(home) / "remote-session/launch.json"
+                )
                 deadline = time.monotonic() + 60
                 while not prepared.exists():
                     assert time.monotonic() < deadline, "bootstrap never prepared"
@@ -533,6 +540,13 @@ def case(folder, options):
         if session is not None:
             session.stop(folder / "journal.jsonl")
         for mountpoint in (
+            *(
+                runner_fixture.session_dir(folder / name)
+                / "remote-session/forwarded-project"
+                for name in ("home", "device-home")
+            ),
+            # The room-level pair a run under the layout before seats mounted,
+            # so a machine that still carries one of those is cleared too.
             folder / "home/.cheese/remote-session/forwarded-project",
             folder / "device-home/.cheese/remote-session/forwarded-project",
         ):

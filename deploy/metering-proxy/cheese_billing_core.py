@@ -35,7 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 # The only names the proxy serves. api.anthropic.com carries the metered
@@ -380,9 +380,15 @@ class AdmissionGate:
     for ``cache_s`` so a chatty session asks once, not per request.
 
     The same answer also carries the SUPPLY decision (#243): which pool serves
-    this project. Fail-open therefore has a direction — an unreachable control
-    plane falls back to the subscription, the destination this proxy has always
-    had, rather than to a gateway whose per-project key it would not have.
+    this project and which model goes into the body. Fail-open therefore has a
+    direction. A session the backend has answered for within ``stale_s`` keeps
+    the pool, key and model of that last answer: a session bound to a gateway
+    model carries that model's name in its body, and sending it to the
+    subscription instead gets a 404 model_not_found, which Claude Code does not
+    retry, so every backend restart killed the gateway turns and subagents that
+    were mid-request. A session with no answer on record falls back to the
+    subscription, the destination this proxy has always had, rather than to a
+    gateway whose per-project key it would not have.
 
     Cached per (project, topic), not per project. The budget half of the answer
     is the project's, but the model it binds comes from the topic's card, and a
@@ -397,9 +403,11 @@ class AdmissionGate:
         cache_s: float = 30.0,
         timeout_s: float = 3.0,
         post=_post_admission,
+        stale_s: float = 3600.0,
     ) -> None:
         self._url = url
         self._cache_s = cache_s
+        self._stale_s = stale_s
         self._timeout = timeout_s
         self._post = post  # test seam
         self._lock = threading.Lock()
@@ -453,15 +461,22 @@ class AdmissionGate:
                 else self._post(self._url, bearer, self._timeout)
             )
         except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
+            if hit and now - hit[0] < self._stale_s:
+                # Still fail-open: allowed whatever the last answer said about
+                # the budget, but routed where the backend last routed it.
+                return replace(
+                    hit[1], allow=True, reason="admission unreachable (fail-open)"
+                )
             return Verdict(True, "admission unreachable (fail-open)")
         with self._lock:
-            # Drop what has expired instead of letting it pile up. Keyed by
-            # project alone this was one entry per project and effectively
-            # bounded; keyed by topic it is one per topic ever served, which on a
-            # box carrying hundreds of them is a slow leak — in a process that
-            # has already been OOM-killed once (#654). The sweep is O(entries
-            # still inside the window) and only runs on a miss.
-            cutoff = now - self._cache_s
+            # Drop what is too old to route by instead of letting it pile up.
+            # Keyed by project alone this was one entry per project and
+            # effectively bounded; keyed by topic it is one per topic ever
+            # served, which on a box carrying hundreds of them is a slow leak —
+            # in a process that has already been OOM-killed once (#654). The
+            # sweep is O(entries still inside the horizon) and only runs on a
+            # miss.
+            cutoff = now - self._stale_s
             self._cache = {k: v for k, v in self._cache.items() if v[0] >= cutoff}
             self._cache[key] = (now, verdict)
         return verdict
@@ -568,6 +583,134 @@ def _fill(value, project: str, topic: str):
     return value
 
 
+_CODEX_STRING_END = re.compile(rb'["\\]')
+_CODEX_STRUCTURE = re.compile(rb'["{}\[\],]')
+
+
+class CodexBody:
+    """Reshape a streamed Responses body into what ChatGPT's Codex backend takes.
+
+    The backend refuses a request that does not say ``store: false`` ("Store
+    must be set to false") and one that carries ``max_output_tokens``
+    ("Unsupported parameter"), and the gateway's translation from Anthropic's
+    Messages writes the second and never the first. So the body goes out
+    opening with ``"store":false``, and any top-level ``store`` or
+    ``max_output_tokens`` member of its own is left out.
+
+    Streamed, never buffered (see `_write_bound_model` for why that matters):
+    only a member's key is held, while the member it opens is decided on; its
+    value, however large, passes through as it arrives. A body that does not
+    start with an object passes untouched.
+    """
+
+    DROPPED = frozenset({"store", "max_output_tokens"})
+    _OPENING = b'{"store":false'
+
+    def __init__(self) -> None:
+        # before: ahead of the opening brace. key: between members, or inside a
+        # member's key. value: inside a member's value. done: past the object.
+        self._state = "before"
+        self._key = b""  # the key being read, quotes included
+        self._keep = True
+        self._depth = 0  # nesting inside the current value
+        self._in_string = False
+        self._escaped = False
+
+    def feed(self, chunk: bytes) -> bytes:
+        """The next piece of the body; ``b""`` marks its end."""
+        if self._state == "done":
+            return chunk
+        out = bytearray()
+        i, n = 0, len(chunk)
+        while i < n:
+            if self._state == "before":
+                while i < n and chunk[i : i + 1].isspace():
+                    out += chunk[i : i + 1]
+                    i += 1
+                if i == n:
+                    break
+                if chunk[i : i + 1] != b"{":
+                    self._state = "done"
+                    return bytes(out) + chunk[i:]
+                out += self._OPENING
+                i += 1
+                self._state = "key"
+            elif self._state == "key":
+                if self._key:  # inside the key's string
+                    j = self._string_end(chunk, i)
+                    self._key += chunk[i:j]
+                    i = j
+                    if self._in_string:
+                        continue
+                    name = json.loads(self._key)
+                    self._keep = name not in self.DROPPED
+                    if self._keep:
+                        out += b"," + self._key
+                    self._key = b""
+                    self._state = "value"
+                    self._depth = 0
+                    continue
+                c = chunk[i : i + 1]
+                i += 1
+                if c == b'"':
+                    self._key = c
+                    self._in_string = True
+                elif c == b"}":
+                    out += b"}"
+                    self._state = "done"
+                    return bytes(out) + chunk[i:]
+                # whitespace and the comma between members are rewritten, not kept
+            else:  # value
+                if self._in_string:
+                    j = self._string_end(chunk, i)
+                else:
+                    m = _CODEX_STRUCTURE.search(chunk, i)
+                    j = m.start() if m else n
+                if self._keep:
+                    out += chunk[i:j]
+                i = j
+                if i == n or self._in_string:
+                    continue
+                c = chunk[i : i + 1]
+                i += 1
+                if c == b'"':
+                    self._in_string = True
+                elif c in b"{[":
+                    self._depth += 1
+                elif c in b"}]":
+                    if self._depth == 0:  # the object's own closing brace
+                        out += b"}"
+                        self._state = "done"
+                        return bytes(out) + chunk[i:]
+                    self._depth -= 1
+                elif c == b"," and self._depth == 0:
+                    self._state = "key"
+                    continue
+                if self._keep:
+                    out += c
+        return bytes(out)
+
+    def _string_end(self, chunk: bytes, i: int) -> int:
+        """Advance through a string's bytes; clears `_in_string` at its close
+        and returns the index just past what was consumed."""
+        n = len(chunk)
+        while i < n:
+            if self._escaped:
+                self._escaped = False
+                i += 1
+                continue
+            m = _CODEX_STRING_END.search(chunk, i)
+            if not m:
+                return n
+            i = m.start() + 1
+            if chunk[m.start() : i] == b"\\":
+                self._escaped = True
+            else:
+                self._in_string = False
+                return i
+        return n
+
+
 class ModelRewrite:
     """Write the admitted model name into a streamed ``/v1/messages`` body.
 
@@ -618,13 +761,6 @@ class ModelRewrite:
         # the model the card is bound to, and the exits are refuse or wait, not
         # run it on something else (I27). The caller reports the reason.
         self.missed = False
-        # 被替换前体里原样的 model 值（keep_haiku 放过的也算）——主对话这一
-        # 路读它，就能认出分身请求体里 CC 回显的父会话模型：CC 写的是它启动
-        # 时拿到的模型名，准入会把它当成一次显式指定（2026-09-23 的事故）。
-        # ``replaced`` 为 False 时这个值
-        # 是 haiku 放行，不是父会话的工作模型。
-        self.original: str | None = None
-        self.replaced = False
 
     def feed(self, chunk: bytes) -> bytes:
         """One chunk in, the chunk to forward out. ``b""`` ends the stream."""
@@ -643,10 +779,6 @@ class ModelRewrite:
         span = top_level_model_span(self._buf)
         if span is not None:
             start, end = span
-            try:
-                self.original = json.loads(self._buf[start:end])
-            except ValueError:
-                self.original = None
             if self._keep_haiku and _is_haiku(self._buf[start:end]):
                 out = self._buf
             else:
@@ -655,7 +787,6 @@ class ModelRewrite:
                     + json.dumps(self._model).encode()
                     + self._buf[end:]
                 )
-                self.replaced = True
             self._done = True
             self._buf = b""
             return out
@@ -1099,3 +1230,374 @@ class PlatformCredential:
                     "claude login expires in %.1f days; log in again",
                     left_s / 86400,
                 )
+
+
+# --- the platform's ChatGPT subscription accounts ----------------------------
+#
+# Held here the way the Claude credential is: this proxy is the only holder of
+# each pair and renews it itself. Unlike Claude there can be several, one per
+# name, each in `<root>/<name>/credential` with an optional `<name>/egress`
+# beside it (the same `http://[user:pass@]host:port` as the Claude one). The
+# credential is JSON: access_token, refresh_token, id_token, expires_at (epoch
+# seconds) and account_id. chatgpt-login.sh writes it; the proxy re-reads it on
+# every request and writes the renewed pair back.
+#
+# Endpoints, client id, form fields and the failure classes are the backend's
+# (backend/app/domain/subscription/openai_codex.py), ported rather than
+# imported: this file is stdlib only and ships alone in the proxy image.
+OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token"
+OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+# The backend's subscription_refresh_margin_s.
+CHATGPT_REFRESH_MARGIN_S = 600
+# Refresh answers that mean the pair is dead and someone has to log in again.
+# Anything else that is not a 200 (5xx, an unrecognised 4xx, no answer) is
+# worth retrying after REFRESH_BACKOFF_S.
+_CHATGPT_DEAD_CODES = frozenset(
+    {"refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated"}
+)
+# Where a ChatGPT account's requests go, and the only paths under it that are
+# forwarded: the Responses API and the model list. Nothing else a caller names
+# is reachable on an account's token — plain segments only, so no `..` or
+# encoded one walks out of /codex to the rest of the ChatGPT backend.
+CHATGPT_UPSTREAM = ("chatgpt.com", 443)
+CHATGPT_BACKEND_PATH = "/backend-api/codex"
+_CHATGPT_PATH_RE = re.compile(r"models|responses(/[A-Za-z0-9_-]+)*")
+# An account name is one path segment on the route and one directory on disk,
+# so nothing that could climb out of either.
+_ACCOUNT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+# ChatGPT gates which models an account is offered on the Codex client version
+# it is told: 0.153.4 is not offered gpt-6-sol or gpt-6-luna, 0.158.0 is. So the
+# version is an operator's setting, a file beside the accounts that is read on
+# every request (`chatgpt-login.sh client-version`), and this is only what is
+# sent while there is none. A plain file among the account directories is not
+# an account: an account is a directory.
+DEFAULT_CODEX_CLIENT_VERSION = "0.158.0"
+CLIENT_VERSION_FILE = "client-version"
+# What may go into the header and the query; chatgpt-login.sh refuses the rest
+# on the way in, and a file edited by hand into anything else is not sent.
+_CLIENT_VERSION_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+-]{0,63}")
+
+
+def chatgpt_route(path: str) -> tuple[str, str] | None:
+    """(account name, upstream path) for `/chatgpt/<name>/<rest>`, else None.
+
+    The upstream path is "" when <rest> is not one this proxy forwards."""
+    prefix, sep, rest = path.partition("?")
+    parts = prefix.split("/", 3)
+    if len(parts) < 4 or parts[0] or parts[1] != "chatgpt" or not parts[2]:
+        return None
+    name, tail = parts[2], parts[3]
+    if not _CHATGPT_PATH_RE.fullmatch(tail):
+        return name, ""
+    return name, f"{CHATGPT_BACKEND_PATH}/{tail}{sep}{rest}"
+
+
+def with_client_version(upstream_path: str, version: str) -> str:
+    """The model list's path asking for `version`'s models; any other path as is.
+
+    The model list takes the client version as `client_version` in its query
+    as well as in the `version` header. The caller's own query value is
+    replaced, not kept: one request naming two versions would list one
+    version's models while the requests that follow are gated on the other."""
+    prefix, _, query = upstream_path.partition("?")
+    if prefix != f"{CHATGPT_BACKEND_PATH}/models":
+        return upstream_path
+    pairs = [
+        (key, value)
+        for key, value in urllib.parse.parse_qsl(query, keep_blank_values=True)
+        if key != "client_version"
+    ]
+    pairs.append(("client_version", version))
+    return f"{prefix}?{urllib.parse.urlencode(pairs)}"
+
+
+def jwt_claims(token: str) -> dict:
+    """A JWT's payload, unverified: read for metadata (expiry, account id), never
+    as proof of anything — the token came straight from OpenAI over TLS."""
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {}
+    try:
+        claims = json.loads(
+            base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4))
+        )
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return claims if isinstance(claims, dict) else {}
+
+
+def chatgpt_account_id(id_token: str) -> str:
+    """The ChatGPT account id an id_token names, at the top level or under the
+    `https://api.openai.com/auth` namespace (OpenAI has used both)."""
+    claims = jwt_claims(id_token)
+    value = claims.get("chatgpt_account_id")
+    if not isinstance(value, str) or not value:
+        nested = claims.get("https://api.openai.com/auth")
+        value = nested.get("chatgpt_account_id") if isinstance(nested, dict) else ""
+    return value if isinstance(value, str) else ""
+
+
+def _post_form(
+    url: str,
+    fields: dict,
+    timeout_s: float,
+    *,
+    egress: Egress | None = None,
+    connect=http.client.HTTPSConnection,
+) -> tuple[int, dict]:
+    """POST a form to OpenAI's token endpoint, through the account's egress when
+    it has one. Returns (status, parsed body); raises OSError on transport
+    problems."""
+    parts = urllib.parse.urlsplit(url)
+    raw = urllib.parse.urlencode(fields).encode()
+    if egress is None:
+        conn = connect(parts.hostname, parts.port, timeout=timeout_s)
+    else:
+        conn = connect(egress.host, egress.port, timeout=timeout_s)
+        tunnel_headers = (
+            {"Proxy-Authorization": egress.authorization}
+            if egress.authorization
+            else {}
+        )
+        conn.set_tunnel(parts.hostname, parts.port or 443, headers=tunnel_headers)
+    try:
+        conn.request(
+            "POST",
+            parts.path,
+            raw,
+            {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+        )
+        resp = conn.getresponse()
+        data = resp.read()
+        status = resp.status
+    except http.client.HTTPException as err:
+        raise OSError(str(err)) from err
+    finally:
+        conn.close()
+    try:
+        parsed = json.loads(data or b"{}")
+    except ValueError:
+        parsed = {}
+    return status, parsed if isinstance(parsed, dict) else {}
+
+
+def _refresh_error_code(answer: dict) -> str:
+    """The error code of a refused refresh: `error` as an object's `code` or as
+    a string, then a top-level `code`."""
+    error = answer.get("error")
+    code = error.get("code") if isinstance(error, dict) else error
+    if not isinstance(code, str):
+        code = answer.get("code")
+    return code.lower() if isinstance(code, str) else ""
+
+
+class ChatGPTCredential:
+    """One ChatGPT account's pair in `<directory>/credential`, refreshed here."""
+
+    def __init__(self, directory: Path, *, post=_post_form, now=time.time) -> None:
+        self.name = directory.name
+        self.path = directory / "credential"
+        self.egress_path = directory / "egress"
+        self._post = post
+        self._now = now
+        self._lock = threading.Lock()
+        self._dead_refresh_tokens: set[str] = set()
+        self._last_failure = 0.0
+
+    def _read(self) -> dict | None:
+        try:
+            doc = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return None
+        if not isinstance(doc, dict) or not isinstance(doc.get("access_token"), str):
+            return None
+        return doc if doc["access_token"] else None
+
+    def egress(self) -> Egress | None:
+        """Where this account's requests leave from; None is direct."""
+        try:
+            return Egress.parse(self.egress_path.read_text())
+        except OSError:
+            return None
+
+    def token(self) -> tuple[str, str, str]:
+        """(access token, account id, "") or ("", "", why there is none)."""
+        doc = self._read()
+        if doc is None:
+            return "", "", NO_CREDENTIAL
+        if doc.get("refresh_token") in self._dead_refresh_tokens:
+            return "", "", LOGIN_REQUIRED
+        expires_at = doc.get("expires_at")
+        if isinstance(expires_at, int | float) and expires_at <= self._now():
+            return "", "", EXPIRED
+        account_id = doc.get("account_id")
+        return (
+            doc["access_token"],
+            account_id if isinstance(account_id, str) else "",
+            "",
+        )
+
+    def refresh_due(self) -> bool:
+        """Cheap check, safe on every request: is a refresh worth attempting?"""
+        doc = self._read()
+        return doc is not None and self._due(doc)
+
+    def _due(self, doc: dict) -> bool:
+        refresh_token = doc.get("refresh_token")
+        if not isinstance(refresh_token, str) or not refresh_token:
+            return False
+        if refresh_token in self._dead_refresh_tokens:
+            return False
+        if self._now() - self._last_failure < REFRESH_BACKOFF_S:
+            return False
+        expires_at = doc.get("expires_at")
+        if not isinstance(expires_at, int | float):
+            return True
+        return expires_at - self._now() <= CHATGPT_REFRESH_MARGIN_S
+
+    def refresh_if_due(self) -> None:
+        """Refresh the pair once, however many requests found it due at once.
+
+        Blocking; the addon runs it off the event loop.
+        """
+        with self._lock:
+            doc = self._read()
+            if doc is None or not self._due(doc):
+                return
+            refresh_token = doc["refresh_token"]
+            fields = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": OPENAI_CLIENT_ID,
+                "scope": "openid profile email",
+            }
+            try:
+                egress = self.egress()
+                status, answer = self._post(
+                    OPENAI_TOKEN_URL,
+                    fields,
+                    30.0,
+                    **({"egress": egress} if egress else {}),
+                )
+            except OSError as err:
+                self._last_failure = self._now()
+                _credential_log.warning(
+                    "chatgpt account %s refresh failed: %s", self.name, err
+                )
+                return
+            access_token = answer.get("access_token")
+            if status == 200 and isinstance(access_token, str) and access_token:
+                self._write(doc, answer)
+                return
+            self._last_failure = self._now()
+            if (
+                status in (401, 403)
+                or _refresh_error_code(answer) in _CHATGPT_DEAD_CODES
+            ):
+                self._dead_refresh_tokens.add(refresh_token)
+                _credential_log.error(
+                    "chatgpt account %s refresh token refused (HTTP %s): log in "
+                    "again with chatgpt-login.sh login %s",
+                    self.name,
+                    status,
+                    self.name,
+                )
+                return
+            _credential_log.warning(
+                "chatgpt account %s refresh answered %s", self.name, status
+            )
+
+    def _write(self, doc: dict, answer: dict) -> None:
+        access_token = answer["access_token"]
+        refreshed = {**doc, "access_token": access_token}
+        for key in ("refresh_token", "id_token"):
+            if isinstance(answer.get(key), str) and answer[key]:
+                refreshed[key] = answer[key]
+        account_id = chatgpt_account_id(refreshed.get("id_token") or "")
+        if account_id:
+            refreshed["account_id"] = account_id
+        expires_in = answer.get("expires_in")
+        exp = jwt_claims(access_token).get("exp")
+        if isinstance(expires_in, int | float) and expires_in > 0:
+            refreshed["expires_at"] = int(self._now() + expires_in)
+        elif isinstance(exp, int | float):
+            refreshed["expires_at"] = int(exp)
+        else:
+            refreshed["expires_at"] = None
+        tmp = self.path.with_name(f".{self.path.name}.tmp")
+        owner = os.stat(self.path)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # The proxy runs as root in its container; the file stays the host
+        # operator's, so the login script can still read and replace it.
+        try:
+            os.fchown(fd, owner.st_uid, owner.st_gid)
+        except PermissionError:
+            pass
+        with os.fdopen(fd, "w") as fh:
+            json.dump(refreshed, fh, separators=(",", ":"))
+        os.replace(tmp, self.path)
+
+
+class ChatGPTAccounts:
+    """The ChatGPT accounts under one directory, one subdirectory per name.
+
+    An account exists when its directory does; a directory without a usable
+    credential is an account that is logged out. Each account's object is kept,
+    because its lock and the refresh tokens it has seen refused live on it.
+    """
+
+    def __init__(self, root: Path, *, post=_post_form, now=time.time) -> None:
+        self.root = root
+        self._post = post
+        self._now = now
+        self._lock = threading.Lock()
+        self._accounts: dict[str, ChatGPTCredential] = {}
+
+    def get(self, name: str) -> ChatGPTCredential | None:
+        if not _ACCOUNT_NAME_RE.fullmatch(name) or not (self.root / name).is_dir():
+            return None
+        with self._lock:
+            account = self._accounts.get(name)
+            if account is None:
+                account = ChatGPTCredential(
+                    self.root / name, post=self._post, now=self._now
+                )
+                self._accounts[name] = account
+            return account
+
+    def client_version(self) -> str:
+        """The Codex client version ChatGPT is told, from the file beside the
+        accounts; the built-in default while it is absent or unusable. Read on
+        every request, so a change reaches the next one without a restart."""
+        try:
+            value = (self.root / CLIENT_VERSION_FILE).read_text().strip()
+        except OSError:
+            return DEFAULT_CODEX_CLIENT_VERSION
+        if not _CLIENT_VERSION_RE.fullmatch(value):
+            return DEFAULT_CODEX_CLIENT_VERSION
+        return value
+
+    def egress_conflict(self, name: str, egress: Egress) -> str:
+        """Another account whose egress is the same proxy with other credentials.
+
+        mitmproxy keeps one upstream connection per proxy address, not per
+        proxy login, so two such accounts would share whichever tunnel opened
+        first — and a proxy that picks its exit by login would put both on one
+        exit. The caller refuses instead."""
+        try:
+            others = sorted(p.name for p in self.root.iterdir() if p.name != name)
+        except OSError:
+            return ""
+        for other in others:
+            account = self.get(other)
+            theirs = account.egress() if account else None
+            if (
+                theirs is not None
+                and (theirs.host, theirs.port) == (egress.host, egress.port)
+                and theirs.authorization != egress.authorization
+            ):
+                return other
+        return ""

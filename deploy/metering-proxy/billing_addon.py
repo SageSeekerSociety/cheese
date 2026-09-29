@@ -33,12 +33,20 @@ listener demands the scoped token as Proxy-Authorization before it relays
 anything and MITMs only the Anthropic names; either way every request that
 reaches the `requestheaders` hook below is handled identically.
 
+A third, `--mode reverse:https://chatgpt.com@8445`, is not for sessions: it is
+where the API-key pool (LiteLLM) sends a ChatGPT subscription request, on
+`/chatgpt/<account>/…`, to have one of the platform's ChatGPT accounts put on
+it. See `_forward_to_chatgpt`.
+
 Config (env): CHEESE_USAGE_LOG, CHEESE_TOKEN_CAP, CHEESE_CAP_WINDOW_S,
 CHEESE_SCOPED_SECRET, CHEESE_ALLOW_HEADER_ATTR, CHEESE_ADMISSION_URL,
-CHEESE_ADMISSION_CACHE_S, CHEESE_GATEWAY_BASE.
+CHEESE_ADMISSION_CACHE_S, CHEESE_GATEWAY_BASE, CHEESE_CHATGPT_CREDENTIALS,
+CHEESE_CHATGPT_KEY. The Codex client version sent to ChatGPT is not env: it
+is a file beside the ChatGPT accounts (ChatGPTAccounts.client_version).
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -54,23 +62,28 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
     BINDING,
+    CHATGPT_UPSTREAM,
     EXPIRED,
     GATEWAY,
     MODEL_REWRITE_LIMIT,
     NO_CREDENTIAL,
     NO_LOGIN_PLACEHOLDER,
     AdmissionGate,
+    ChatGPTAccounts,
+    CodexBody,
     Egress,
     Meter,
     ModelRewrite,
     PlatformCredential,
     StreamingUsageExtractor,
+    chatgpt_route,
     control_answer,
     is_haiku_name,
     no_login_answer,
     proxy_basic_password,
     requested_model_of,
     verify_scoped_token,
+    with_client_version,
 )
 
 logger = logging.getLogger("cheese.metering")
@@ -110,6 +123,17 @@ CREDENTIAL = PlatformCredential(
 )
 ADMISSION = AdmissionGate(ADMISSION_URL, cache_s=ADMISSION_CACHE_S)
 
+# The platform's ChatGPT accounts, one directory per name. See ChatGPTAccounts.
+CHATGPT_ACCOUNTS = ChatGPTAccounts(
+    Path(os.environ.get("CHEESE_CHATGPT_CREDENTIALS", "/etc/cheese/chatgpt-credential"))
+)
+# What a caller of the ChatGPT listener must present as its Bearer: the api_key
+# of the gateway's deployments that point here. The listener is on a private
+# network shared only with the gateway; the key is the second line of defence,
+# since a request that gets through spends a subscription. Unset refuses every
+# request.
+CHATGPT_KEY = os.environ.get("CHEESE_CHATGPT_KEY", "")
+
 if not ADMISSION_URL:
     # Said once, loudly, at load: an unset env var produces no error anywhere
     # downstream, and what it switches off is invisible from outside — the
@@ -120,12 +144,6 @@ if not ADMISSION_URL:
         "(only the rolling token cap), and every request goes to the "
         "subscription."
     )
-
-# 每个 (project, topic) 的主对话最近一次被改写前体里的 model —— CC 给这个
-# 会话起分身时回显的就是它。推迟路径拿它认「继承」（见 `_write_bound_model`
-# 和 `request`）。一个房间一条主会话，条目数以房间数计；只防极端失控。
-PARENT_MODEL: dict[tuple[str, str], str] = {}
-_PARENT_MODEL_CAP = 10000
 
 # What each client connection PROVED at CONNECT time: (scoped token, claims).
 # The request's Bearer is the caller's Claude credential, so attribution cannot
@@ -260,10 +278,6 @@ def _write_bound_model(
     rewrite = ModelRewrite(model, keep_haiku=keep_haiku)
     flow.request.headers.pop("content-length", None)
     flow.request.headers["transfer-encoding"] = "chunked"
-    attr = flow.metadata.get("cheese_attr")
-    # keep_haiku 不挡记录：haiku 放行时 rewrite.replaced 是 False，记不下
-    # 东西；订阅池主对话的真模型该记照记。
-    is_main = attr is not None and not flow.metadata.get("cheese_subagent")
 
     def write(chunk: bytes) -> bytes:
         out = rewrite.feed(chunk)
@@ -276,20 +290,6 @@ def _write_bound_model(
                 MODEL_REWRITE_LIMIT,
                 model,
             )
-        if (
-            is_main
-            and rewrite.replaced
-            and isinstance(rewrite.original, str)
-            and not is_haiku_name(rewrite.original)
-        ):
-            # 主对话刚被改写前体里的 model，就是 CC 给这个会话起分身时会回显
-            # 的那个名字。记住它，推迟路径拿它认「继承」，不认就是 2026-09-23
-            # 那个事故：准入拿席位配置去比 CC 的内建默认，永远不等，gateway
-            # 项目的普通分身全被当成范围外指定拒掉。haiku 类是 CLI 自己的后
-            # 台请求（会话标题、路径建议），不是父会话的工作模型，不记。
-            if len(PARENT_MODEL) >= _PARENT_MODEL_CAP:
-                PARENT_MODEL.clear()
-            PARENT_MODEL[attr] = rewrite.original
         return out
 
     flow.request.stream = write
@@ -436,9 +436,164 @@ _EGRESS_AUTH_BY_CLIENT: dict[str, str] = {}
 
 def http_connect_upstream(flow: http.HTTPFlow) -> None:
     """Authenticate the CONNECT to a credential's egress."""
+    if flow.request.host == CHATGPT_UPSTREAM[0]:
+        # One client connection (the gateway's) carries many accounts, so a
+        # ChatGPT account's egress login is found by the egress this CONNECT
+        # is sent to (the flow's server); ChatGPTAccounts.egress_conflict keeps
+        # that unambiguous.
+        address = getattr(flow.server_conn, "address", None)
+        authorization = _CHATGPT_EGRESS_AUTH.get(tuple(address)) if address else ""
+        if authorization:
+            flow.request.headers["Proxy-Authorization"] = authorization
+        return
     authorization = _EGRESS_AUTH_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
     if authorization:
         flow.request.headers["Proxy-Authorization"] = authorization
+
+
+# The Proxy-Authorization each ChatGPT account egress wants, by its address.
+_CHATGPT_EGRESS_AUTH: dict[tuple[str, int], str] = {}
+
+# What the gateway sends that must not reach ChatGPT: its own key for this
+# listener, anything that would stand in for the account's credential or
+# identity, and proxy headers meant for this hop.
+_CHATGPT_STRIPPED = (
+    "authorization",
+    "chatgpt-account-id",
+    "cookie",
+    "openai-organization",
+    "openai-project",
+    "originator",
+    "proxy-authorization",
+    "proxy-connection",
+    "version",
+    "x-api-key",
+)
+
+
+def _on_chatgpt_listener(flow: http.HTTPFlow) -> bool:
+    mode = getattr(flow.client_conn, "proxy_mode", None)
+    return getattr(mode, "type_name", "") == "reverse" and tuple(
+        getattr(mode, "address", ()) or ()
+    ) == tuple(CHATGPT_UPSTREAM)
+
+
+async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
+    """Put one of the platform's ChatGPT accounts on a gateway request.
+
+    `/chatgpt/<account>/responses…` and `/chatgpt/<account>/models` go to
+    `https://chatgpt.com/backend-api/codex/…` on that account's token and
+    egress; every other path, an unknown account, and an account with no
+    usable login are answered here and never forwarded. The request is
+    otherwise passed as it came, body streamed.
+
+    Plain HTTP and TLS are both accepted: the hop is the box's own docker
+    bridge, and mitmproxy's reverse mode takes either on one port.
+
+    Not metered: the gateway records its own spend for these, and the ledger's
+    usage reader understands Anthropic's SSE, not the Responses API's.
+    """
+    flow.metadata["cheese_chatgpt"] = True
+    presented = _caller_bearer(flow)
+    if not CHATGPT_KEY or not hmac.compare_digest(
+        presented.encode(), CHATGPT_KEY.encode()
+    ):
+        _refuse(
+            flow,
+            401,
+            "authentication_error",
+            "cheese: this listener needs CHEESE_CHATGPT_KEY as the Bearer"
+            if CHATGPT_KEY
+            else "cheese: CHEESE_CHATGPT_KEY is not configured on this proxy",
+        )
+        return
+    route = chatgpt_route(flow.request.path)
+    if route is None or not route[1]:
+        _refuse(
+            flow,
+            404,
+            "not_found_error",
+            "cheese: only /chatgpt/<account>/responses and "
+            "/chatgpt/<account>/models are forwarded",
+        )
+        return
+    name, upstream_path = route
+    account = CHATGPT_ACCOUNTS.get(name)
+    if account is None:
+        _refuse(
+            flow,
+            404,
+            "not_found_error",
+            f"cheese: no ChatGPT account named {name!r} on this proxy",
+        )
+        return
+    if account.refresh_due():
+        await asyncio.to_thread(account.refresh_if_due)
+    token, account_id, missing = account.token()
+    if not token:
+        if missing == EXPIRED:
+            _refuse(
+                flow,
+                503,
+                "api_error",
+                f"cheese: ChatGPT account {name!r} has expired and is being "
+                "renewed; retry shortly",
+            )
+        else:
+            _refuse(
+                flow,
+                401,
+                "authentication_error",
+                f"cheese: ChatGPT account {name!r} has no usable login; an "
+                f"operator has to run chatgpt-login.sh login {name}",
+            )
+        return
+    egress = account.egress()
+    if egress is not None:
+        other = CHATGPT_ACCOUNTS.egress_conflict(name, egress)
+        if other:
+            _refuse(
+                flow,
+                503,
+                "api_error",
+                f"cheese: ChatGPT accounts {name!r} and {other!r} use the egress "
+                f"{egress.host}:{egress.port} with different logins; give "
+                "them the same one or different proxies",
+            )
+            return
+        _CHATGPT_EGRESS_AUTH[(egress.host, egress.port)] = egress.authorization
+    for header in _CHATGPT_STRIPPED:
+        flow.request.headers.pop(header, None)
+    # Read once per request so the header and the model list's query name the
+    # same version even while the file is being changed.
+    version = CHATGPT_ACCOUNTS.client_version()
+    flow.request.scheme = "https"
+    flow.request.host, flow.request.port = CHATGPT_UPSTREAM
+    flow.request.path = with_client_version(upstream_path, version)
+    flow.request.headers["host"] = CHATGPT_UPSTREAM[0]
+    flow.request.headers["authorization"] = f"Bearer {token}"
+    if account_id:
+        flow.request.headers["chatgpt-account-id"] = account_id
+    flow.request.headers["originator"] = "cheese"
+    flow.request.headers["version"] = version
+    # Set for a direct account too: the gateway sends every account down one
+    # client connection, and the flow's server connection carries whatever
+    # egress the previous request on it was given.
+    flow.server_conn.via = ("http", (egress.host, egress.port)) if egress else None
+    flow.metadata["cheese_chatgpt_account"] = name
+    if flow.request.method == "POST" and upstream_path.startswith(
+        "/backend-api/codex/responses"
+    ):
+        # The body changes length, so it is re-framed as chunked, as
+        # `_write_bound_model` does. A request that is not streamed still fails
+        # upstream ("Stream must be set to true"); turning its answer back into
+        # one JSON document would mean buffering it.
+        body = CodexBody()
+        flow.request.headers.pop("content-length", None)
+        flow.request.headers["transfer-encoding"] = "chunked"
+        flow.request.stream = body.feed
+    else:
+        flow.request.stream = True
 
 
 def client_disconnected(client) -> None:
@@ -552,6 +707,10 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # refusal and a streamed body cannot both stand, and that is where the flag
     # is taken back.
 
+    if _on_chatgpt_listener(flow):
+        await _forward_to_chatgpt(flow)
+        return
+
     # Multi-host by SNI: api.anthropic.com AND the login hosts
     # (console.anthropic.com, platform.claude.com) are served here. Reverse
     # mode would pin every
@@ -607,16 +766,9 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         "subagent",
         "workflow",
     }
-    flow.metadata["cheese_subagent"] = is_subagent
 
     selected_model = flow.request.headers.pop("x-cheese-child-model", "")
     child_model = selected_model if is_subagent else ""
-    if child_model and child_model == PARENT_MODEL.get((project_id, topic_id)):
-        # CC 的 hint 头对每个分身都打上它解析出的分身模型:没指定时那个值就
-        # 是父会话(被改写前的)模型 —— 是「继承」不是「指定」。快路把它当显式
-        # 送准入,gateway 项目的普通分身全灭(2026-09-24 实测,昨晚事故换了个
-        # 头)。认出回显,按未指定走,与推迟路的体回显同一个判据。
-        child_model = ""
 
     # A subagent's /v1/messages defers everything from here to the `request`
     # hook: admission honours the model the parent named for this subagent,
@@ -720,12 +872,6 @@ async def request(flow: http.HTTPFlow) -> None:
     if requested and is_haiku_name(requested):
         # CLI 自己的后台请求类(会话标题、路径建议),不是主 agent 的指定:照
         # 旧路走 —— 准入按未指定绑定,改写把它盖成分身默认,与今天逐字节一致。
-        requested = ""
-    if requested and requested == PARENT_MODEL.get((project_id, topic_id)):
-        # 体里的模型 == 主对话被改写前的那个值:这是 CC 的「继承」长相,不是
-        # 主 agent 的指定 —— fork 和不带 model 定义的分身都长这样。CC 回显
-        # 的是它启动时拿到的模型名,送上去会被准入当成一次显式指定(2026-09-23,
-        # gateway 项目普通分身全灭 30 分钟)。按未指定处理。
         requested = ""
     verdict = None
     if project_id and ADMISSION_URL:
@@ -914,6 +1060,9 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     the simple way. Everything else just streams straight through."""
     resp = flow.response
     if resp is None:
+        return
+    if flow.metadata.get("cheese_chatgpt"):
+        resp.stream = True
         return
     if flow.metadata.get("cheese_model_missed"):
         # Left buffered on purpose: response() replaces it wholesale with the
@@ -1134,6 +1283,16 @@ def _answer_a_missed_binding(flow: http.HTTPFlow) -> bool:
 def error(flow: http.HTTPFlow) -> None:
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
+    chatgpt_account = flow.metadata.get("cheese_chatgpt_account")
+    via = getattr(flow.server_conn, "via", None)
+    if chatgpt_account and via:
+        logger.warning(
+            "request for ChatGPT account %s through its egress %s:%s failed: %s",
+            chatgpt_account,
+            via[1][0],
+            via[1][1],
+            flow.error,
+        )
     egress = flow.metadata.get("cheese_egress")
     if egress is not None:
         if "407" in str(flow.error):

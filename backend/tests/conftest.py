@@ -26,7 +26,7 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -42,6 +42,22 @@ from sqlalchemy.pool import NullPool, QueuePool
 # MAIN repo — green when run directly, red only under the hook. Clear them so tests
 # always get a clean, cwd-driven git context.
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
+    del os.environ[_k]
+
+# Strip an inherited room session, for the same reason. An agent working on this
+# repository runs the suite on the machine its room was launched on, so pytest
+# starts with that room's CHEESE_API (the live deployment) and a real token.
+# Every launcher test that builds its screen from os.environ then runs the real
+# launcher against the real platform, and a launcher that sees a platform
+# installs from it: the document toolchain and the harness binaries, ~110MB per
+# test, into a throwaway tmp home, detached so it outlives the test. Tests that
+# need a platform stand up their own. CHEESE_CI_* / CHEESE_TEST_* configure the
+# suite itself and stay.
+for _k in [
+    k
+    for k in os.environ
+    if k.startswith("CHEESE_") and not k.startswith(("CHEESE_CI_", "CHEESE_TEST_"))
+]:
     del os.environ[_k]
 
 # Client construction validates credentials before the mocked transport is used.
@@ -145,7 +161,7 @@ def _topics_with_pending_records() -> set[str]:
     """
     pending = set()
     for channel in list(_CHANNELS):
-        for topic_id, session in list(channel.sessions.items()):
+        for (topic_id, _), session in list(channel.sessions.items()):
             if channel.unlanded(topic_id, session):
                 pending.add(str(topic_id))
     return pending
@@ -192,8 +208,11 @@ def retire_topic(client: TestClient, topic_id) -> None:
 
     async def retire() -> None:
         for channel in list(_CHANNELS):
-            channel.sessions.pop(topic, None)
-            await channel.runtime._detach(topic)
+            for key in [seat for seat in channel.sessions if seat[0] == topic]:
+                channel.sessions.pop(key, None)
+            for seat in list(channel.runtime.subscriptions):
+                if seat[0] == topic:
+                    await channel.runtime._detach(seat)
 
     client.portal.call(retire)
 
@@ -212,12 +231,20 @@ class ScriptedSession(Runner):
         self, state: Path, channel: "StubChannel", topic_id, session_id, agent
     ):
         super().__init__(state, idle_exit_s=0)
+        # A real runner is its own process on the session machine, so the fsync
+        # behind each journal commit holds nobody else up. This one runs on the
+        # backend's own event loop, where every commit's fsync stops the whole
+        # room: on a CI disk busy with the other workers' writes, one of them
+        # held the loop for 5 s and a turn missed its test's wait. Durability
+        # across a power cut is not what any test here asks of this journal.
+        self.journal.connection.execute("PRAGMA synchronous=OFF")
         # The loop that owns this runner, and the thread it runs on: a test
         # scripting a record from its own thread has it played there.
         self.loop = asyncio.get_running_loop()
         self.thread = threading.get_ident()
         self.channel, self.topic_id = channel, topic_id
         self.session_id = session_id
+        self.actor = agent
         self.journal.remember("session_id", session_id)
         self.journal.remember(
             "owner", json.dumps({"harness": CLAUDE_CODE, "agent_handle": agent})
@@ -255,7 +282,7 @@ class ScriptedSession(Runner):
         # test times out, with the traceback lost in the loop's log. The turn
         # fails instead, naming what broke.
         try:
-            self.channel.arrive(self.topic_id, message)
+            self.channel.arrive(self.topic_id, message, agent=self.actor)
         except Exception as exc:  # noqa: BLE001 — surfaced as the turn's failure
             logging.getLogger(__name__).exception("the scripted session raised")
             if not self.working:
@@ -321,7 +348,10 @@ class StubChannel:
         # does not have to wait the production half hour for it.
         self.runtime = ClaudeCodeRuntime(self, **policy)
         self.root = Path(tempfile.mkdtemp(prefix="stub-sessions-"))
-        self.sessions: dict[uuid.UUID, ScriptedSession] = {}
+        # One runner per SEAT: a room with several agents seated runs their
+        # sessions side by side, each with its own journal and mirror — the
+        # single-agent suite never notices because its rooms have one seat.
+        self.sessions: dict[tuple[uuid.UUID, str], ScriptedSession] = {}
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
         self.last_prompt: str | None = None
@@ -345,10 +375,11 @@ class StubChannel:
         self.last_system_prompt = opening.system_prompt
         self.last_resume_session_id = opening.resume_token
         agent = opening.agent_handle or session.agent_handle or "cheese"
-        runner = self.sessions.get(session.topic_id)
+        key = (session.topic_id, agent)
+        runner = self.sessions.get(key)
         if runner is None:
             runner = ScriptedSession(
-                self.root / str(session.topic_id) / "runner",
+                self.root / str(session.topic_id) / agent / "runner",
                 self,
                 session.topic_id,
                 opening.resume_token or self.new_session_id,
@@ -357,18 +388,44 @@ class StubChannel:
             runner.project_id = session.project_id
             runner.session_agent = session.agent_handle
             runner.actor = agent
-            self.sessions[session.topic_id] = runner
+            self.sessions[key] = runner
         return Handle(
             session,
             "stub-device",
             str(session.topic_id),
             runner.session_id,
             agent,
-            self.root / str(session.topic_id) / "mirror.sqlite",
+            self.root / str(session.topic_id) / agent / "mirror.sqlite",
         )
 
+    def _session_for(
+        self, topic_id: uuid.UUID, agent: str | None = None
+    ) -> "ScriptedSession":
+        """The runner a scripted record belongs to. Single-seat rooms (the
+        whole suite but the parallel-turn tests) leave ``agent`` out and get
+        the only runner there is; a room with several seats must say which."""
+        if agent is not None:
+            return self.sessions[(topic_id, agent)]
+        mine = [
+            session
+            for (topic, _), session in self.sessions.items()
+            if topic == topic_id
+        ]
+        if len(mine) != 1:
+            raise KeyError(
+                f"{len(mine)} stub sessions for topic {topic_id}; name the agent"
+            )
+        return mine[0]
+
+    def drop_session(
+        self, topic_id: uuid.UUID, agent: str | None = None
+    ) -> "ScriptedSession":
+        """Remove a seat's runner (a host that vanished) and hand it back."""
+        session = self._session_for(topic_id, agent)
+        return self.sessions.pop((topic_id, session.actor))
+
     async def call(self, handle: Handle, method: str, params: dict) -> dict:
-        runner = self.sessions.get(handle.session.topic_id)
+        runner = self.sessions.get((handle.session.topic_id, handle.agent_handle))
         if runner is None:
             raise DeviceCallError(f"no session for {handle.session.topic_id}")
         return await runner.dispatch(method, params)
@@ -387,9 +444,9 @@ class StubChannel:
                 str(topic_id),
                 session.session_id,
                 session.actor,
-                self.root / str(topic_id) / "mirror.sqlite",
+                self.root / str(topic_id) / session.actor / "mirror.sqlite",
             )
-            for topic_id, session in self.sessions.items()
+            for (topic_id, _), session in self.sessions.items()
             if self.alive
         ]
 
@@ -415,7 +472,7 @@ class StubChannel:
             journal.close()
         if not written:
             return False
-        mirror = self.root / str(topic_id) / "mirror.sqlite"
+        mirror = self.root / str(topic_id) / session.actor / "mirror.sqlite"
         if not mirror.exists():
             return True
         journal = ClaudeJournal(mirror)
@@ -426,7 +483,9 @@ class StubChannel:
 
     # --- what the session prints ------------------------------------------
 
-    def arrive(self, topic_id: uuid.UUID, message: dict) -> None:
+    def arrive(
+        self, topic_id: uuid.UUID, message: dict, *, agent: str | None = None
+    ) -> None:
         """The session read an input: it is queued, then the turn runs."""
         content = message["message"]["content"]
         text = content if isinstance(content, str) else content[0]["text"]
@@ -435,13 +494,16 @@ class StubChannel:
             self.on_start()
         self.record(
             topic_id,
+            agent=agent,
             type="command_lifecycle",
             command_uuid=message["uuid"],
             state="queued",
         )
-        self.emit_turn(topic_id, text, self.reply)
+        self.emit_turn(topic_id, text, self.reply, agent=agent)
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self, topic_id: uuid.UUID, prompt: str, reply: str, *, agent: str | None = None
+    ) -> None:
         """The records a session prints for one input it answered.
 
         Override this to script a different turn — a tool call between two
@@ -449,27 +511,29 @@ class StubChannel:
         session takes the input, and ends. ``stops`` in particular is not
         optional: it is what closes the turn and publishes ``done``.
         """
-        self.starts(topic_id)
-        self.acknowledges(topic_id, prompt)
-        self.says(topic_id, reply)
-        self.stops(topic_id, reply)
+        self.starts(topic_id, agent=agent)
+        self.acknowledges(topic_id, prompt, agent=agent)
+        self.says(topic_id, reply, agent=agent)
+        self.stops(topic_id, reply, agent=agent)
 
     # --- the records, one method each --------------------------------------
 
-    def record(self, topic_id: uuid.UUID, **record: object) -> None:
+    def record(
+        self, topic_id: uuid.UUID, *, agent: str | None = None, **record: object
+    ) -> None:
         """One stream-json record, as the session printed it.
 
         Played on the runner's own loop, whichever thread the test scripts it
         from — the runner's journal belongs to that loop's thread, and the
         reader waiting there is woken so it lands without being asked.
         """
-        session = self.sessions[topic_id]
+        session = self._session_for(topic_id, agent)
         record.setdefault("uuid", str(uuid.uuid4()))
         record.setdefault("session_id", session.session_id)
 
         def play() -> None:
             session.observe(dict(record))
-            self.runtime._wake(topic_id)
+            self.runtime._wake((topic_id, session.session_agent))
 
         if threading.get_ident() == session.thread:
             play()
@@ -480,17 +544,25 @@ class StubChannel:
 
         asyncio.run_coroutine_threadsafe(played(), session.loop).result(timeout=10)
 
-    def starts(self, topic_id: uuid.UUID, session_id: str | None = None) -> None:
+    def starts(
+        self,
+        topic_id: uuid.UUID,
+        session_id: str | None = None,
+        *,
+        agent: str | None = None,
+    ) -> None:
         extra = {"session_id": session_id} if session_id else {}
-        self.record(topic_id, type="system", subtype="init", **extra)
+        self.record(topic_id, agent=agent, type="system", subtype="init", **extra)
 
-    def acknowledges(self, topic_id: uuid.UUID, prompt: str) -> None:
+    def acknowledges(
+        self, topic_id: uuid.UUID, prompt: str, *, agent: str | None = None
+    ) -> None:
         """The session takes the input: its turn starts and it echoes it back.
 
         The echo is the receipt that stamps an injected message consumed. A
         session that never echoes leaves every mid-turn delivery pending, and
         pending messages are replayed (宁可重复不可丢失)."""
-        session = self.sessions[topic_id]
+        session = self._session_for(topic_id, agent)
         identifier = next(
             (
                 message["uuid"]
@@ -505,12 +577,14 @@ class StubChannel:
             return
         self.record(
             topic_id,
+            agent=agent,
             type="command_lifecycle",
             command_uuid=identifier,
             state="started",
         )
         self.record(
             topic_id,
+            agent=agent,
             type="user",
             uuid=identifier,
             isReplay=True,
@@ -518,9 +592,17 @@ class StubChannel:
             message={"role": "user", "content": prompt},
         )
 
-    def says(self, topic_id: uuid.UUID, text: str, **extra: object) -> None:
+    def says(
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        *,
+        agent: str | None = None,
+        **extra: object,
+    ) -> None:
         self.record(
             topic_id,
+            agent=agent,
             type="assistant",
             parent_tool_use_id=None,
             message={"role": "assistant", "content": [{"type": "text", "text": text}]},
@@ -534,6 +616,7 @@ class StubChannel:
         *,
         eid: str | None = None,
         parent: str | None = None,
+        agent: str | None = None,
         **tool_input: object,
     ) -> str:
         """A tool call; returns its id, which is what a result names."""
@@ -541,6 +624,7 @@ class StubChannel:
         self.calls[name] = call
         self.record(
             topic_id,
+            agent=agent,
             type="assistant",
             parent_tool_use_id=parent,
             message={
@@ -566,11 +650,13 @@ class StubChannel:
         error: bool = False,
         call: str | None = None,
         parent: str | None = None,
+        agent: str | None = None,
     ) -> None:
         """The result of the last call to ``name`` (or of ``call``)."""
         text = response if isinstance(response, str) else json.dumps(response)
         self.record(
             topic_id,
+            agent=agent,
             type="user",
             parent_tool_use_id=parent,
             message={
@@ -594,6 +680,7 @@ class StubChannel:
         thread_label: str,
         agent_id: str = "worker-1",
         call: str = "call-1",
+        agent: str | None = None,
     ) -> None:
         """房间起一个分身去做某张卡：派它的那次 Agent 调用，和它开始的那条记录。
 
@@ -605,12 +692,14 @@ class StubChannel:
             topic_id,
             "Agent",
             eid=call,
+            agent=agent,
             description="去做这条活",
             prompt=f"简报见下。线程标识：{thread_label}",
             subagent_type="general-purpose",
         )
         self.record(
             topic_id,
+            agent=agent,
             type="system",
             subtype="task_started",
             task_id=agent_id,
@@ -624,10 +713,13 @@ class StubChannel:
         topic_id: uuid.UUID,
         text: str,
         session_id: str | None = None,
+        *,
+        agent: str | None = None,
         **extra: object,
     ) -> None:
         self.record(
             topic_id,
+            agent=agent,
             type="result",
             subtype="success",
             is_error=False,
@@ -655,9 +747,9 @@ async def drain_hooks(screen: StubChannel, topic_id: uuid.UUID) -> None:
     to end: it asks whether what the session already said has landed, not
     whether the session is done saying things.
     """
-    subscription = screen.runtime.subscriptions.get(topic_id)
-    if subscription is not None:
-        await subscription.drain()
+    for seat, subscription in screen.runtime.subscriptions.items():
+        if seat[0] == topic_id:
+            await subscription.drain()
 
 
 async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
@@ -670,9 +762,9 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
     """
     for _ in range(tries):
         for runtime in service._compute._runtimes():
-            subscription = getattr(runtime, "subscriptions", {}).get(topic_id)
-            if subscription is not None:
-                await subscription.drain()
+            for seat, subscription in getattr(runtime, "subscriptions", {}).items():
+                if seat[0] == topic_id:
+                    await subscription.drain()
         if not any(t == topic_id for t, _ in service._hook_work) and not any(
             str(topic_id) == pending for pending in _topics_with_pending_records()
         ):
@@ -686,8 +778,9 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
 async def close_topic_subscriptions(service, topic_id) -> None:
     """Explicitly stop the runtimes' readers at a test boundary."""
     for runtime in service._compute._runtimes():
-        if topic_id in getattr(runtime, "subscriptions", {}):
-            await runtime._detach(topic_id)
+        for seat in list(getattr(runtime, "subscriptions", {})):
+            if seat[0] == topic_id:
+                await runtime._detach(seat)
 
 
 async def finish_turn(service, topic_id) -> None:
@@ -747,6 +840,16 @@ def _metering_proxy_ca(monkeypatch, tmp_path_factory) -> None:
     ca = tmp_path_factory.mktemp("meter-ca") / "proxy-ca.pem"
     ca.write_text("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n")
     monkeypatch.setattr(settings, "subscription_ca_backend_path", str(ca))
+
+
+@pytest.fixture(autouse=True)
+def _no_background_doc_nudge(monkeypatch) -> None:
+    """轮末的文档提醒（`topic/doc_nudge.py`）在后台睡几秒再起一轮：测试里它要么
+    赶上一个已经关掉的事件循环，要么真的替某个测试房间起一轮没人要的 agent 轮次。
+    默认关掉；`test_doc_nudge.py` 直接驱动 `check`。"""
+    from app.domain.topic import doc_nudge
+
+    monkeypatch.setattr(doc_nudge, "nudge", lambda *a, **k: None)
 
 
 @pytest.fixture(autouse=True)
@@ -1176,13 +1279,105 @@ async def _clone_db(db_name: str, template: str) -> None:
         await conn.execute(f'CREATE DATABASE "{db_name}" TEMPLATE "{template}"')
     finally:
         await conn.close()
+    # Recorded only after the copy is actually made: "I have just used this
+    # template" is what keeps another run's cleanup from taking it (see
+    # _templates_to_drop), and a copy that failed did not use it.
+    _touch_template_use(template)
+
+
+_TEMPLATE_PREFIX = "cheesex_tpl_"
+# How long a template nothing has copied from is still somebody's. See
+# _templates_to_drop for why this number.
+_TEMPLATE_GRACE_S = 600.0
+
+
+def _template_marker_path(template: str) -> Path:
+    """Where a run records the last time it took a copy of a template.
+
+    A sibling of the build lock, in the temp dir — the same place that lock
+    already assumes every run on this machine can see. Postgres keeps no
+    "last used" for a database, and it cannot be kept inside the template
+    itself: a template with a session connected to it cannot be copied from.
+    """
+    return Path(tempfile.gettempdir()) / f"{template}.used"
+
+
+def _touch_template_use(template: str) -> None:
+    """Best effort — a template that cannot be stamped is one another run could
+    decide is stale, which is the failure this section exists to end, but not
+    something worth failing a session over."""
+    try:
+        _template_marker_path(template).touch()
+    except OSError:
+        pass
+
+
+def _template_last_used(template: str) -> float | None:
+    """When this run last copied this template, or None if it never saw one."""
+    try:
+        return _template_marker_path(template).stat().st_mtime
+    except OSError:
+        return None
+
+
+def _templates_to_drop(
+    existing: Iterable[str],
+    own: str,
+    last_used: Mapping[str, float | None],
+    now: float,
+    grace_s: float = _TEMPLATE_GRACE_S,
+) -> list[str]:
+    """Which `cheesex_tpl_*` databases a run that just built its own may DROP.
+
+    Pure, and that is the point: this rule *is* the bug it fixes, and while it
+    lived inline in an async function talking to a live server the only way to
+    test it was to race that server. The caller hands over what it saw — the
+    names, and when each was last copied from — and gets back a sorted list to
+    act on.
+
+    Three rules, in order:
+
+    * Never ``own``: this run is about to copy from it.
+    * Never a template copied from within ``grace_s``. The old rule was "every
+      template but mine", which is only correct while one migration history
+      exists. With two — two worktrees, one on a branch with a new migration —
+      neither is "superseded", and each was deleting the other's, so the next
+      session found it missing and rebuilt it, back and forth, and a copy that
+      landed on a template the other run had just dropped died in setup with
+      ``template database "cheesex_tpl_<hash>" does not exist``.
+    * Everything else is stale. A name with no recorded use counts as stale:
+      nothing this version builds goes unstamped, so it was built by an older
+      one and cannot be placed in time. Being wrong here is the recoverable
+      direction — an old-version run that still wanted it rebuilds it (see
+      ``_create_and_migrate``), while keeping a template we cannot date is how
+      a 3 GB tmpfs fills with abandoned copies of a 90-table schema.
+
+    ``grace_s`` is ten minutes, which is not a tuned number but is well clear
+    of what it has to cover: a pytest session copies the template once per
+    worker at session start, all within seconds of each other, and the longest
+    integration round here is minutes — so a template in active use is stamped
+    far more recently than the grace, and only one truly idle outlives it.
+    """
+    doomed = []
+    for name in existing:
+        if name == own or not name.startswith(_TEMPLATE_PREFIX):
+            continue
+        used = last_used.get(name)
+        if used is not None and now - used < grace_s:
+            continue
+        doomed.append(name)
+    return sorted(doomed)
 
 
 async def _drop_superseded_templates() -> None:
-    """Remove every `cheesex_tpl_*` but this migration history's own.
+    """Remove the `cheesex_tpl_*` databases ``_templates_to_drop`` hands back.
 
-    Never raises: a template that cannot be dropped (another run is cloning from
-    it this second) is not this run's problem, and the next build tries again.
+    Which those are is that function's rule; this one is only the I/O around
+    it: read the names the server has, read each one's last use off its marker,
+    drop what the rule names.
+
+    Never raises on a template that will not drop: one another run is copying
+    from this second is not this run's problem, and the next build tries again.
     """
     import asyncpg
 
@@ -1190,13 +1385,19 @@ async def _drop_superseded_templates() -> None:
     conn = await asyncpg.connect(dsn)
     try:
         stale = await conn.fetch(
-            "SELECT datname FROM pg_database"
-            " WHERE datname LIKE 'cheesex_tpl_%' AND datname <> $1",
-            _TEMPLATE_DB,
+            "SELECT datname FROM pg_database WHERE starts_with(datname, $1)",
+            _TEMPLATE_PREFIX,
         )
-        for row in stale:
+        names = [row["datname"] for row in stale]
+        doomed = _templates_to_drop(
+            names,
+            _TEMPLATE_DB,
+            {name: _template_last_used(name) for name in names},
+            time.time(),
+        )
+        for name in doomed:
             try:
-                await conn.execute(f'DROP DATABASE IF EXISTS "{row["datname"]}"')
+                await conn.execute(f'DROP DATABASE IF EXISTS "{name}"')
             except Exception:  # noqa: BLE001, PERF203 — in use is not an error here
                 continue
     finally:
@@ -1232,10 +1433,13 @@ def _ensure_template() -> bool:
     existence means "complete" — a run killed mid-migration leaves the failed
     build behind, not a half-migrated template that later runs would trust.
 
-    Building a new one also drops the templates of migration histories that are
-    no longer current. That used to take care of itself, because the server was a
+    Building a new one also drops templates of migration histories that are no
+    longer current. That used to take care of itself, because the server was a
     container thrown away with the job; on a CI machine's resident Postgres they
-    would accumulate instead, and its data directory is a 3 GB tmpfs.
+    would accumulate instead, and its data directory is a 3 GB tmpfs. What
+    "no longer current" means is ``_templates_to_drop``'s rule — deliberately
+    not "every template but mine", which assumed one history per machine and
+    had two concurrent runs deleting each other's template mid-clone.
     """
     import fcntl
     import tempfile
@@ -1250,6 +1454,7 @@ def _ensure_template() -> bool:
             building = f"{_TEMPLATE_DB}_building"
             _migrate_fresh_db(building, f"{_PG_BASE}/{building}")
             asyncio.run(_rename_db(building, _TEMPLATE_DB))
+            _touch_template_use(_TEMPLATE_DB)
             asyncio.run(_drop_superseded_templates())
             return True
     except Exception:  # noqa: BLE001 — fall back to the slow path, never block
@@ -1288,10 +1493,34 @@ def _migrate_fresh_db(db_name: str, db_url: str) -> None:
 
 def _create_and_migrate(db_name: str, db_url: str) -> None:
     """This worker's database, at head — cloned from the shared template when
-    one could be built, migrated directly otherwise."""
+    one could be built, migrated directly otherwise.
+
+    A template can also go away between the moment a clone's existence check
+    passes and the moment the copy is made: another run on this machine that
+    finished its own build is entitled to drop templates it finds stale, and
+    the drop can land inside ``CREATE DATABASE ... TEMPLATE``. That is the
+    setup error this used to hand to the test — ``template database
+    "cheesex_tpl_<hash>" does not exist`` — so a failed copy rebuilds the
+    template (under its lock) and tries once more. If the second copy fails
+    too, the slow path is still correct, just slow.
+
+    What is deliberately NOT here is ``DROP DATABASE ... WITH (FORCE)`` on the
+    template to settle the race: forcing a copy out from under a run that is
+    mid-clone breaks that run harder than the occasional rebuild does.
+    """
+    global _TEMPLATE_READY
     if _TEMPLATE_READY:
-        asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
-        return
+        try:
+            asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
+            return
+        except Exception:  # noqa: BLE001 — the slow path below is still correct
+            _TEMPLATE_READY = _ensure_template()
+            if _TEMPLATE_READY:
+                try:
+                    asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
+                    return
+                except Exception:  # noqa: BLE001 — same reason
+                    _TEMPLATE_READY = False
     _migrate_fresh_db(db_name, db_url)
 
 

@@ -9,6 +9,7 @@ per-turn files, the tunnel probe, the release — is an ``exec`` on the machine.
 import asyncio
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -19,14 +20,14 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.domain.agent import device_provider
+from app.domain.agent import device_provider, machine_launcher
 from app.domain.agent.device_hub import DeviceCallError, HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
     device_home_dir,
     device_store_dir,
 )
-from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S, ScreenSetupError
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.harness.claude_code.remote_execution import (
@@ -34,6 +35,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.pi.device_launch import PiLaunch
+from app.domain.agent.place import seat_dir
 
 
 @pytest.fixture(autouse=True)
@@ -175,6 +177,37 @@ class FakeHub:
             for method, params in self.asked
             if method == "control"
         ]
+
+
+class ShellHub(FakeHub):
+    """A hub whose `sh -c` execs really run, with `$HOME` at ``home``.
+
+    The per-turn files are written by the machine's own shell — a `umask`, a
+    temp file and a rename — so a test about WHICH file a turn touches has to
+    let that shell run rather than answer it with a canned stdout.
+    """
+
+    def __init__(self, home):
+        super().__init__()
+        self.home = home
+
+    async def exec(self, device_id, argv, *, env=None, stdin=None, **kwargs):
+        if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_HOME"):
+            return await super().exec(device_id, argv, env=env, stdin=stdin, **kwargs)
+        self.execs.append((argv, stdin))
+        result = subprocess.run(
+            argv,
+            input=stdin,
+            text=True,
+            capture_output=True,
+            env={**os.environ, "HOME": str(self.home), **(env or {})},
+            timeout=10,
+        )
+        return {
+            "exit": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        }
 
 
 def _room(hub, **fixed):
@@ -395,7 +428,6 @@ async def test_a_live_screen_is_not_sent_the_launcher_again():
     before it is reopened."""
     hub = FakeHub()
     room = _room(hub, launch=ClaudeLaunch(system_prompt="a prompt the launcher embeds"))
-    topic = room.arguments["topic_id"]
 
     def shipped(execs):
         return [stdin for _argv, stdin in execs if stdin is not None]
@@ -403,14 +435,12 @@ async def test_a_live_screen_is_not_sent_the_launcher_again():
     screen = await room.ensure()
     assert len(shipped(hub.execs)) == 1
     assert "a prompt the launcher embeds" in shipped(hub.execs)[0]
+    written = re.search(r'cat > "([^"]+)"', hub.execs[0][0][-1]).group(1)
     reused = await room.ensure()
     assert reused is screen
     assert len(shipped(hub.execs)) == 1
-    assert screen.command == [
-        "bash",
-        "-lc",
-        f'exec bash "$HOME/.cheese/launch/{topic}.sh"',
-    ]
+    # The adopt points the screen at the file the first turn wrote.
+    assert screen.command == ["bash", "-lc", f'exec bash "{written}"']
 
     hub.ping = {"alive": False}
     replacement = await room.ensure()
@@ -425,28 +455,7 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
     turn rewrites that file in place — as the machine's own shell runs it — and
     touches nothing of the harness's own config under the same home."""
 
-    class LocalHub(FakeHub):
-        async def exec(self, device_id, argv, *, env=None, stdin=None, **kwargs):
-            if argv[:2] != ["sh", "-c"] or (env or {}).get("CHEESE_TUNNEL_PROBE_HOME"):
-                return await super().exec(
-                    device_id, argv, env=env, stdin=stdin, **kwargs
-                )
-            self.execs.append((argv, stdin))
-            result = subprocess.run(
-                argv,
-                input=stdin,
-                text=True,
-                capture_output=True,
-                env={**os.environ, "HOME": str(tmp_path), **(env or {})},
-                timeout=10,
-            )
-            return {
-                "exit": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-
-    hub = LocalHub()
+    hub = ShellHub(tmp_path)
     hub.release["stage"] = {"changed": False}
     room = _room(
         hub, env={"CHEESE_EXECUTION_TARGET": json.dumps({"device_id": "executor"})}
@@ -457,7 +466,12 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
             room.arguments["project_id"], room.arguments["topic_id"]
         ).replace("$HOME", str(tmp_path))
     )
-    token = home / ".cheese/remote-session/execution.token"
+    # The token lives in THIS seat's directory, the room's other teammates
+    # having one of their own (`place.seat_dir`).
+    token = (
+        Path(seat_dir(str(home), room.arguments["agent_handle"]))
+        / "remote-session/execution.token"
+    )
     assert token.read_text() == "first"
     settings_path = home / ".claude/settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -470,6 +484,42 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
     assert token.read_text() == "rotated"
     assert token.stat().st_mode & 0o777 == 0o600
     assert settings_path.read_text() == '{"keep":true}'
+
+
+async def test_a_turn_rewrites_only_its_own_seat_s_execution_token(tmp_path):
+    """一个话题两个座位，各写各的凭据文件（docs/manual/dev/turn.md #seats-session）。
+
+    The file this replaces lived at the ROOM's level and was rewritten by every
+    turn of every teammate, so opening a second teammate's turn swapped the
+    token the first one's running session authenticated with: its next call was
+    refused with 「Execution credential does not own this session」, its runner
+    socket vanished and the turn it was in the middle of was declared dead
+    (2026-09-29 05:39).
+    """
+    hub = ShellHub(tmp_path)
+    hub.release["stage"] = {"changed": False}
+    room = _room(
+        hub, env={"CHEESE_EXECUTION_TARGET": json.dumps({"device_id": "executor"})}
+    )
+
+    mine_screen = await room.ensure(agent_handle="cheese-a", token="a1")
+    home = Path(
+        device_home_dir(
+            room.arguments["project_id"], room.arguments["topic_id"]
+        ).replace("$HOME", str(tmp_path))
+    )
+    mine = Path(seat_dir(str(home), "cheese-a")) / "remote-session/execution.token"
+    theirs = Path(seat_dir(str(home), "cheese-b")) / "remote-session/execution.token"
+    assert mine.read_text() == "a1" and not theirs.exists()
+
+    theirs_screen = await room.ensure(agent_handle="cheese-b", token="b1")
+    assert theirs_screen.sid != mine_screen.sid
+    assert theirs.read_text() == "b1"
+    assert mine.read_text() == "a1", "开第二位队友的轮次换掉了第一位正在用的凭据"
+
+    await room.ensure(agent_handle="cheese-a", token="a2")
+    assert mine.read_text() == "a2"
+    assert theirs.read_text() == "b1"
 
 
 @pytest.mark.parametrize(
@@ -891,10 +941,10 @@ async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     await room.ensure()
 
     (argv, stdin) = next((a, s) for a, s in hub.execs if s and "x" * 1000 in s)
-    assert f"$HOME/.cheese/launch/{topic_id}.sh" in argv[-1]
+    assert f"$HOME/.cheese/launch/{topic_id}" in argv[-1]
     command = hub.opened[0].command
     assert sum(len(part) for part in command) < 1024
-    assert f"$HOME/.cheese/launch/{topic_id}.sh" in command[-1]
+    assert f"$HOME/.cheese/launch/{topic_id}" in command[-1]
 
 
 async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
@@ -924,6 +974,10 @@ async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
     provider = DeviceChannel(hub=hub)
     topic = uuid.uuid4()
     home = tmp_path / "room-home"
+    # The token is the SEAT's (`place.seat_dir`): the session that reads it is
+    # one teammate's, and a room-mate writing here is what used to swap a
+    # running turn's credential for its own.
+    seat = Path(seat_dir(str(home), "cheese"))
     for value in ("first", "rotated"):
         await provider._ship_launcher(
             "device",
@@ -931,8 +985,9 @@ async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
             ["bash", "-lc", "printf launcher"],
             str(home),
             execution_token=value,
+            agent_handle="cheese",
         )
-        token = home / ".cheese/remote-session/execution.token"
+        token = seat / "remote-session/execution.token"
         assert token.read_text() == value
         assert token.stat().st_mode & 0o777 == 0o600
     assert hub.calls == 2
@@ -1662,3 +1717,215 @@ async def test_a_launch_only_change_waits_for_a_background_command(monkeypatch):
     hub.ping = {"alive": True, "working": False, "tasks": {}}
     assert (await room.ensure()).sid != first.sid
     assert hub.closed == [first.sid]
+
+
+# --- seats: a room's teammates have one session each -------------------------
+
+
+class _MachineHub(FakeHub):
+    """A machine whose screens run the launcher file each of them names.
+
+    The one thing ``FakeHub`` does not model: a screen runs the file at the path
+    its command names, ONCE, at birth — and that file says which state directory
+    its runner keeps (``CLAUDE_STATE``). So a call addressed to a state no living
+    screen runs is refused the way a connector refuses it: the socket is not
+    there. That is what a turn whose handle points at another seat's state gets,
+    and it is why this model is what the seat tests below need.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.scripts: dict[str, str] = {}
+        self.running: dict[str, str] = {}
+        self.screen_state: dict[str, str] = {}
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ) -> dict:
+        result = await super().exec(
+            device_id, argv, cwd=cwd, env=env, timeout=timeout, stdin=stdin
+        )
+        if stdin:
+            for path in re.findall(r'cat > "([^"]+)"', " ".join(argv)):
+                self.scripts[path] = stdin
+        return result
+
+    async def open_screen(self, device_id, command, **kw) -> HubScreen:
+        screen = await super().open_screen(device_id, command, **kw)
+        state = _launcher_state(self.scripts.get(_launched_file(command), ""))
+        if state:
+            self.running[state] = screen.sid
+            self.screen_state[screen.sid] = state
+        return screen
+
+    async def close_screen(self, device_id, sid) -> bool:
+        self.running = {
+            state: holder for state, holder in self.running.items() if holder != sid
+        }
+        self.screen_state.pop(sid, None)
+        return await super().close_screen(device_id, sid)
+
+    async def call_executor(self, device_id, state, method, params, timeout=None):
+        if state not in self.running:
+            raise DeviceCallError(
+                "dial unix /tmp/cheese-execution-1000-"
+                f"{uuid.uuid4().hex[:24]}.sock: connect: no such file or directory"
+            )
+        return await super().call_executor(device_id, state, method, params, timeout)
+
+
+def _launched_file(command: list[str]) -> str:
+    """Which launcher file a screen runs: what its command execs."""
+    return command[2].split('"')[1]
+
+
+def _launcher_state(script: str) -> str:
+    """Where the runner a launcher starts keeps its state."""
+    found = re.search(r"^CLAUDE_STATE=(.*)$", script, re.MULTILINE)
+    return found.group(1).strip().strip("'") if found else ""
+
+
+def _seat_state(room, seat: str) -> str:
+    """The state directory this seat's runner keeps, as the connector resolves it."""
+    return machine_launcher.state_dir(
+        room.arguments["project_id"], room.arguments["topic_id"], CLAUDE_CODE, seat
+    )
+
+
+async def test_a_room_mate_starting_a_turn_leaves_the_other_session_running():
+    """一个话题一个容器，会话按座位分开（docs/manual/dev/turn.md #seats-session）：
+    两位队友在同一台机器上各有一个会话，开一位的不会停掉另一位正在跑的。
+
+    What this looks like when it is wrong is the other teammate: its turn dies
+    with 「Claude Code session process exited」, and the turn that closed it holds
+    a handle to its OWN state, where no runner was ever started — so every call
+    it makes is refused with `no such file or directory`.
+    """
+    machine = _MachineHub()
+    room = _room(machine, agent_handle="cheese-a")
+
+    first = await room.ensure()
+    second = await room.ensure(agent_handle="cheese-b")
+
+    assert machine.closed == [], "开第二位队友的会话时关掉了第一位正在跑的会话"
+    assert (first.agent_handle, second.agent_handle) == ("cheese-a", "cheese-b")
+    assert first.sid != second.sid
+    for seat, screen in (("cheese-a", first), ("cheese-b", second)):
+        state = _seat_state(room, seat)
+        # This seat's session runs on its own state, and that is the socket its
+        # next call — the one that answers the turn — is dialled at.
+        assert machine.screen_state[screen.sid] == state
+        assert await room.channel._runner("dev1", state, "ping") is not None
+
+
+async def test_a_teammate_reuses_its_own_screen_and_not_the_room_mates():
+    """第二位队友的下一轮续的是自己的会话，不是同房间另一位的那块屏幕。"""
+    machine = _MachineHub()
+    room = _room(machine, agent_handle="cheese-a")
+
+    mine = await room.ensure()
+    theirs = await room.ensure(agent_handle="cheese-b")
+
+    again = await room.ensure(agent_handle="cheese-b")
+
+    assert again.sid == theirs.sid, "第二位队友的下一轮又开了一个会话"
+    assert machine.reasserted[-1] == theirs.sid
+    assert mine.sid not in machine.closed
+    assert len(machine.opened) == 2
+
+
+async def test_recovery_adopts_each_seat_s_screen_as_its_own(monkeypatch):
+    """后端重启后每个座位接回自己那个会话（#seats-session）：机器上活着的两块屏幕
+    各按自己的座位认领——认成同一个座位，两位队友就会去抢对方那块。"""
+    from unittest.mock import AsyncMock, patch
+
+    from app.domain.agent.central_provider import CentralChannel
+    from app.domain.agent.device_hub import DeviceHub
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.identity.services import IdentityService
+
+    project_id, topic_id, resource_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    room = SimpleNamespace(id=topic_id, project_id=project_id, resource_id=resource_id)
+    placed = [
+        (
+            project_id,
+            topic_id,
+            seat,
+            "claude-code",
+            SimpleNamespace(
+                machine="center",
+                channel="device",
+                resource_id=str(resource_id),
+                runtime={},
+                lease=None,
+            ),
+        )
+        for seat in ("cheese-a", "cheese-b")
+    ]
+    metadata = {
+        "sid": "seat-a",
+        "screen": "token-a",
+        "command": ["claude"],
+        "env": {
+            "CHEESE_PROJECT": str(project_id),
+            "CHEESE_TOPIC": str(topic_id),
+            "CHEESE_RESOURCE_ID": str(resource_id),
+            "CHEESE_AUTHOR": "cheese-a",
+        },
+    }
+    other = {
+        **metadata,
+        "sid": "seat-b",
+        "screen": "token-b",
+        "env": {**metadata["env"], "CHEESE_AUTHOR": "cheese-b"},
+    }
+    hub = DeviceHub()
+    sent = []
+
+    class Transport:
+        async def send_json(self, msg):
+            sent.append(msg)
+            if msg["t"] == "session.list":
+                await hub.on_device_message(
+                    "center",
+                    {
+                        "t": "session.result",
+                        "id": msg["id"],
+                        "value": [metadata, other],
+                    },
+                )
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def commit(self):
+            pass
+
+    async def room_agent(self, topic):
+        # The roster's default seat answers for the room; the room-mate is the
+        # one the adoption has to tell apart from it.
+        return SimpleNamespace(id=1, username="cheese-a")
+
+    async def user(session, handle):
+        return SimpleNamespace(id=2, username=handle)
+
+    monkeypatch.setattr(IdentityService, "ensure_room_agent_user", room_agent)
+    monkeypatch.setattr(device_provider, "user_by_handle", user)
+    monkeypatch.setattr(
+        "app.domain.topic.services.TopicService.get", AsyncMock(return_value=room)
+    )
+    await hub.attach_device("center", Transport())
+    channel = DeviceChannel(hub=hub, session_factory=Session)
+    central = CentralChannel(channel)
+    with patch.object(AgentSessionService, "placed_sessions", return_value=placed):
+        await central.restore("center")
+
+    adopted = {screen.sid: screen for screen in hub.all_online_screens()}
+    assert set(adopted) == {"seat-a", "seat-b"}
+    assert adopted["seat-a"].agent_handle == "cheese-a"
+    assert adopted["seat-b"].agent_handle == "cheese-b"
+    assert adopted["seat-b"].agent_user_id == 2

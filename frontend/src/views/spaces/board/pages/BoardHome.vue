@@ -56,7 +56,14 @@ const visible = computed(() => {
   if (onlyOpen.value) list = list.filter((t) => isOpen(t))
   const kw = keyword.value.trim().toLowerCase()
   if (kw) {
-    list = list.filter((t) => t.title.toLowerCase().includes(kw) || t.summary.toLowerCase().includes(kw))
+    // 标题、简介、标签三处都匹配：标签是题目的 topics，卡片上就摆在那里
+    // （`#名字`），搜不到它等于卡片上那几枚标只是装饰。
+    list = list.filter(
+      (t) =>
+        t.title.toLowerCase().includes(kw) ||
+        t.summary.toLowerCase().includes(kw) ||
+        t.tags.some((tag) => tag.toLowerCase().includes(kw))
+    )
   }
   if (sort.value === 'hot') list.sort((a, b) => b.claimCount - a.claimCount)
   if (sort.value === 'new')
@@ -190,6 +197,12 @@ function noticeWhen(ms: number): string {
       >
       <span
         >共 <b>{{ kpis.claims }}</b> 次领取</span
+      >
+      <!-- 人，不是次数：跨题去重后的人数，与上面那行「领取次数」同一批题、同一次
+           加载（见 `store.ts` 的 `Kpis.participants`）。服务端没给这一格时整块
+           不出现 —— 「参与 0 人」会把「没读到」说成「没人参与」。 -->
+      <span v-if="kpis.participants !== null"
+        >参与 <b>{{ kpis.participants }}</b> 人</span
       >
       <span v-if="closingSoon.length" class="home__stats-warn">{{ closingSoon.length }} 道即将截止</span>
     </div>

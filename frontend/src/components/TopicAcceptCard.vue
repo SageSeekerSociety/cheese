@@ -39,7 +39,9 @@ import {
   rejectCard,
   revokeCard,
   setAutoMerge,
+  voidCard,
 } from '@/api'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { columnDotStyle } from '@/lib/board'
 import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
@@ -73,6 +75,10 @@ const animate = ref(false)
 const acceptBusy = ref(false)
 const rejectNote = ref('')
 const showRejectInput = ref(false)
+// 作废：卡停在一个没人能推进的地方（GitHub 拒绝合并、冲突卡等）时的出口。
+// 它不是退回——不叫芝士改，只结束这次审阅，所以同样要先展开、再确认。
+const voidNote = ref('')
+const showVoidInput = ref(false)
 // 人工放行 (#718): 明知合并态不是 clean 仍合并。默认拒绝、显式放行，所以
 // 它藏在一个要先展开、再填理由的小表单后面——不是一个可以顺手点到的按钮。
 const showForceMergeInput = ref(false)
@@ -190,10 +196,16 @@ const bar = computed<{ icon: string; color: string; title: string; sub: string }
     return {
       icon: 'mdi-source-merge',
       color: 'success',
-      // 被审阅的东西按它实际是什么说：一份产物就写它的名字和第几版，否则是一段改动。
-      title: pending.artifact
-        ? t('work.room.accept.artifact', { name: pending.artifact.name, version: pending.artifact.version })
-        : t('work.room.accept.change'),
+      // 被审阅的东西按它实际是什么说。交一次合并时，产物是整个代码仓库，每张卡都是
+      // 「《同一个名字》第 N 版」，一行里说不出这次改了什么 —— 那就用这次改动自己的
+      // 标题；产物和第几版在展开的「这次交付」里。交文件、交地址时，产物的名字和第几版
+      // 就是这次交的东西。
+      title:
+        pending.deliverable?.kind === 'merge' && pending.change_subject
+          ? pending.change_subject
+          : pending.artifact
+            ? t('work.room.accept.artifact', { name: pending.artifact.name, version: pending.artifact.version })
+            : t('work.room.accept.change'),
       sub:
         pending.reviewer_handle === AUTHOR
           ? t('work.room.accept.waitingOnYou')
@@ -437,6 +449,22 @@ async function onRejectCard() {
   }
 }
 
+async function onVoidCard() {
+  const card = pendingCard.value
+  if (!card) return
+  acceptBusy.value = true
+  try {
+    await voidCard(card.id, voidNote.value)
+    showVoidInput.value = false
+    voidNote.value = ''
+    await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
+  } catch (e) {
+    store.reportError(e, '作废失败')
+  } finally {
+    acceptBusy.value = false
+  }
+}
+
 watch(
   () => [props.topicId, props.taskId],
   () => void loadAcceptCard(),
@@ -489,7 +517,10 @@ defineExpose({ reload: loadAcceptCard })
                   <v-card v-if="gateCard && gateCard.status === 'gate_failed'" variant="outlined" class="merge-box">
                     <div class="pa-3">
                       <div class="text-caption text-medium-emphasis mb-2">
-                        检查未通过，未提交审阅。{{ store.agentName }}修复后会重新提交
+                        检查未通过，未提交审阅。<UserRef
+                          :handle="store.agentHandle"
+                          :name="store.agentName"
+                        />修复后会重新提交
                       </div>
                       <v-btn
                         size="small"
@@ -512,7 +543,10 @@ defineExpose({ reload: loadAcceptCard })
                   >
                     <div class="pa-3">
                       <div class="text-caption text-medium-emphasis mb-2">
-                        检查未能运行，未提交审阅。{{ store.agentName }}修复检查环境后会重新提交，多次失败时需要手动处理
+                        检查未能运行，未提交审阅。<UserRef
+                          :handle="store.agentHandle"
+                          :name="store.agentName"
+                        />修复检查环境后会重新提交，多次失败时需要手动处理
                       </div>
                       <v-btn
                         size="small"
@@ -530,7 +564,7 @@ defineExpose({ reload: loadAcceptCard })
                     <div class="pa-3">
                       <div v-if="pendingCard.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
                         {{ pendingCard.note || '与主分支冲突，未能合并' }}
-                        {{ store.agentName }}正在处理，完成后可以重新采纳
+                        <UserRef :handle="store.agentHandle" :name="store.agentName" />正在处理，完成后可以重新采纳
                       </div>
                       <!-- 合并态 (#718): 状态词 + 「谁的活」的圈。词和 who 都是后端算好下发的，
                圈用看板「该谁动」的点语言（同一个问题在整套界面里只有一种颜色）。
@@ -572,7 +606,7 @@ defineExpose({ reload: loadAcceptCard })
                       </div>
                       <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
                         <span>待</span>
-                        <strong>@{{ pendingCard.reviewer_handle }}</strong>
+                        <UserRef :handle="pendingCard.reviewer_handle" />
                         <span>审阅</span>
                         <!-- 改验收人 (spec §4.4): 任何成员都可以改推荐/加人 -->
                         <v-menu>
@@ -741,7 +775,9 @@ defineExpose({ reload: loadAcceptCard })
                           已批准
                         </v-chip>
                         <span v-if="pendingCard.approvals.length" class="text-caption text-medium-emphasis">
-                          {{ pendingCard.approvals.map((h) => '@' + h).join('、') }}
+                          <template v-for="(h, i) in pendingCard.approvals" :key="h"
+                            >{{ i ? '、' : '' }}<UserRef :handle="h"
+                          /></template>
                         </span>
                         <v-btn
                           v-if="!pendingCard.approvals.includes(AUTHOR)"
@@ -758,7 +794,7 @@ defineExpose({ reload: loadAcceptCard })
                           <v-icon size="14">mdi-check</v-icon>你已批准
                         </span>
                       </div>
-                      <div class="d-flex align-center ga-2">
+                      <div class="d-flex align-center flex-wrap ga-2">
                         <!-- 决策在聊天，审查在面板。贴底的时候这一颗在横条上，这里不再放一颗。 -->
                         <v-btn
                           v-if="!docked"
@@ -792,6 +828,15 @@ defineExpose({ reload: loadAcceptCard })
                         >
                           退回
                         </v-btn>
+                        <v-btn
+                          variant="text"
+                          class="text-medium-emphasis"
+                          :disabled="acceptBusy"
+                          prepend-icon="mdi-close-circle-outline"
+                          @click="showVoidInput = !showVoidInput"
+                        >
+                          作废
+                        </v-btn>
                       </div>
                       <!-- 绿了自动合 (#718)：项目允许、规则还没满足时才有；布防人由后端认定。 -->
                       <div v-if="autoMergeVisible" class="d-flex align-center flex-wrap ga-2 mt-2">
@@ -805,7 +850,7 @@ defineExpose({ reload: loadAcceptCard })
                           @update:model-value="onToggleAutoMerge"
                         />
                         <span v-if="autoMergeArmedBy" class="text-caption text-medium-emphasis">
-                          由 @{{ autoMergeArmedBy }} 开启
+                          由 <UserRef :handle="autoMergeArmedBy" /> 开启
                         </span>
                       </div>
                       <!--
@@ -882,6 +927,25 @@ defineExpose({ reload: loadAcceptCard })
                           确认退回
                         </v-btn>
                       </div>
+                      <div v-if="showVoidInput" class="mt-3">
+                        <div class="text-caption text-medium-emphasis mb-1">
+                          作废会结束这次审阅：不合并，也不退回修改。之后可以重新提交审阅
+                        </div>
+                        <div class="d-flex align-end ga-2">
+                          <v-text-field
+                            v-model="voidNote"
+                            autocomplete="off"
+                            variant="outlined"
+                            density="compact"
+                            hide-details
+                            placeholder="作废理由（可选）"
+                            class="flex-grow-1"
+                          />
+                          <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onVoidCard">
+                            确认作废
+                          </v-btn>
+                        </div>
+                      </div>
                     </div>
                   </v-card>
 
@@ -891,7 +955,7 @@ defineExpose({ reload: loadAcceptCard })
                   <v-card v-else-if="deliveringCard" variant="outlined" class="merge-box">
                     <div class="pa-3">
                       <div class="text-caption text-medium-emphasis mb-2">
-                        <strong>@{{ deliveringCard.decided_by }}</strong> 已采纳，但合并未完成，需要手动处理
+                        <UserRef :handle="deliveringCard.decided_by" /> 已采纳，但合并未完成，需要手动处理
                       </div>
                       <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。轻重由后端下发的
                note_level 决定，不是从文案开头那个字符猜的 —— 所以这里画一个真的图
@@ -964,9 +1028,7 @@ defineExpose({ reload: loadAcceptCard })
                   <!-- Accepted topic: 采纳可撤销 (spec §6.3). -->
                   <v-card v-else-if="acceptedCard" variant="outlined" class="merge-box">
                     <div class="pa-3">
-                      <div class="text-body-2 c-muted mb-3">
-                        <strong>@{{ acceptedCard.decided_by }}</strong> 已采纳
-                      </div>
+                      <div class="text-body-2 c-muted mb-3"><UserRef :handle="acceptedCard.decided_by" /> 已采纳</div>
                       <v-btn
                         variant="outlined"
                         class="btn-secondary"
@@ -1061,7 +1123,8 @@ defineExpose({ reload: loadAcceptCard })
   background: var(--surface);
 }
 .accept-dock--docked .accept-dock__detail {
-  max-height: 50vh;
+  /* 按看得见的那一截算：手机上键盘弹起来时，50vh 会把输入框顶到屏幕外。 */
+  max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.5);
   overflow-y: auto;
   border-bottom: 1px solid var(--line);
 }
@@ -1093,14 +1156,21 @@ defineExpose({ reload: loadAcceptCard })
 .accept-bar__toggle:hover {
   background: var(--fill);
 }
+/* 标题可以是一次改动的整句标题（最长 72 字），窄屏上一行放不下，所以它也跟着截断；
+   「等谁」那半句更短，先让标题让位。 */
 .accept-bar__title {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--ink);
   font-size: 14px;
   font-weight: 600;
   line-height: var(--lh-14);
 }
 .accept-bar__sub {
+  flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);

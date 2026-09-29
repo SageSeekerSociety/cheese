@@ -141,7 +141,7 @@ Release-based deployment with approval gate. See [`deploy/`](deploy/) for produc
 |-------|-----------|
 | Backend | Python 3.11+, FastAPI, SQLAlchemy 2.x (async), Pydantic v2 |
 | Frontend | Vue 3, TypeScript, Vuetify, Vite |
-| Database | PostgreSQL 16 (ParadeDB), Valkey (Redis); search via Meilisearch (optional, PG FTS fallback) |
+| Database | PostgreSQL 17 (ParadeDB), Valkey (Redis) |
 | Auth | JWT + bcrypt passwords + WebAuthn (Passkey) + TOTP 2FA |
 | Package mgmt | uv (Python), pnpm (JS) |
 | Task runner | [Taskfile](https://taskfile.dev/) |
@@ -151,5 +151,5 @@ Release-based deployment with approval gate. See [`deploy/`](deploy/) for produc
 
 1. Create a feature branch from `main`
 2. Make changes, run `task check`
-3. Open a PR — Claude will auto-review
+3. Open a PR — CI runs on it
 4. All PRs require review before merge; never commit directly to `main`

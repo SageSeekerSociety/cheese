@@ -6,6 +6,7 @@
     "retry": "重试",
     "add": "新增模型",
     "days": "过去 {n} 天",
+    "window": "时间窗口",
     "loadFailed": "加载失败，请重试。",
     "saveFailed": "没保存上，请重试。",
     "deleteFailed": "没删掉，请重试。",
@@ -30,7 +31,8 @@
     "failed": "失败请求"
   },
   "health": {
-    "label": "网关状态"
+    "label": "网关状态",
+    "down": "网关读不到"
   },
   "table": {
     "label": "模型",
@@ -180,7 +182,7 @@
       "upstreamModel": "上游模型",
       "upstreamModelHint": "例如 anthropic/glm-4.7",
       "apiBase": "上游地址",
-      "apiBaseHint": "以 https:// 开头；留空用上游默认端点",
+      "apiBaseHint": "以 https:// 开头（计量代理的 ChatGPT 入口 http://metering-proxy:8445/chatgpt/<账号> 除外）；留空用上游默认端点",
       "apiKey": "上游密钥",
       "apiKeyHint": "上游服务的密钥，保存在网关，页面上不回显。",
       "apiKeyKeep": "留空则沿用已保存的上游密钥。",
@@ -199,7 +201,8 @@
     "deleted": "已删除「{name}」",
     "blocked": "已停用「{name}」",
     "unblocked": "已启用「{name}」",
-    "budgetSet": "已更新「{name}」的额度"
+    "budgetSet": "已更新「{name}」的额度",
+    "dismiss": "关闭这条提示"
   },
   "confirm": {
     "delete": {
@@ -231,7 +234,7 @@
       "project": "项目",
       "spend": "窗口内花费",
       "usage": "窗口内用量",
-      "credits": "算力额度",
+      "credits": "额度",
       "brake": "刹车值"
     },
     "action": {
@@ -240,7 +243,7 @@
     "dialog": {
       "title": "设额度上限",
       "field": "上限（美元）",
-      "hint": "默认刹车值由算力额度折出（{derived}）；填一个数会立刻覆盖它并落到网关，留空则清除覆盖。",
+      "hint": "默认刹车值由额度折出（{derived}）；填一个数会立刻覆盖它并落到网关，留空则清除覆盖。",
       "clear": "清除覆盖"
     }
   },

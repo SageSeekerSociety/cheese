@@ -24,7 +24,11 @@ from app.domain.block.models import Block
 from app.main import app
 from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_accept_pr import app_world as app_world
 
 
@@ -154,6 +158,59 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
     assert _stale(frames, rid) == ["accept"]
 
 
+def _propose_feedback(client, pid: str, rid: str) -> str:
+    r = client.post(
+        f"/topics/{rid}/feedback-proposals",
+        json={
+            "title": "沙箱里 make 装不上依赖",
+            "what_happened": "make 停在 could not resolve host",
+            "user_said": "用户没有就这个问题说过话，以上是芝士自己观察到的",
+        },
+        headers=_agent(pid, rid),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["block_id"]
+
+
+def test_a_proposed_feedback_card_reaches_the_open_room(client, frames):
+    pid, rid = _room(client)
+    block_id = _propose_feedback(client, pid, rid)
+    assert _stale(frames, rid) == ["feedback"]
+    # The card's own line on the timeline arrives too, the same way a question
+    # the agent asks does — not only after a reload.
+    assert any(
+        channel == rid
+        and frame.get("type") == "assistant_block"
+        and frame["block"]["id"] == block_id
+        for channel, frame in frames
+    )
+
+
+def test_sending_a_feedback_card_refreshes_the_room(client, frames):
+    pid, rid = _room(client)
+    block_id = _propose_feedback(client, pid, rid)
+    frames.clear()
+    sent = client.post(
+        f"/topics/{rid}/feedback-proposals/{block_id}/accept",
+        json={"title": "沙箱里 make 装不上依赖", "what_happened": "解析不了域名"},
+        headers=session_auth_headers("alice"),
+    )
+    assert sent.status_code == 200, sent.text
+    assert _stale(frames, rid) == ["feedback"]
+
+
+def test_dismissing_a_feedback_card_refreshes_the_room(client, frames):
+    pid, rid = _room(client)
+    block_id = _propose_feedback(client, pid, rid)
+    frames.clear()
+    r = client.post(
+        f"/topics/{rid}/feedback-proposals/{block_id}/dismiss",
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    assert _stale(frames, rid) == ["feedback"]
+
+
 class _CallsATool(StubChannel):
     """A turn that makes one platform tool call and stops. The call never
     reaches the platform: this stub runs nothing, which is the point."""
@@ -161,7 +218,14 @@ class _CallsATool(StubChannel):
     tool = "mcp__native__cheese_doc_set"
     arguments: dict = {"path": "/tmp/x.md"}
 
-    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
         del prompt
         self.starts(topic_id)
         self.uses(topic_id, self.tool, eid="e-tool", **self.arguments)
@@ -235,7 +299,14 @@ def _is_decision_card(frame: dict) -> bool:
 
 def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path):
     class _DecidesAndKeepsGoing(StubChannel):
-        def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        def emit_turn(
+            self,
+            topic_id: uuid.UUID,
+            prompt: str,
+            reply: str,
+            *,
+            agent: str | None = None,
+        ) -> None:
             del prompt, reply
             self.starts(topic_id)
             self.uses(
@@ -271,7 +342,14 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
 
 def test_a_turn_announces_each_kind_of_action_once(client, tmp_path):
     class _DecidesTwice(StubChannel):
-        def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        def emit_turn(
+            self,
+            topic_id: uuid.UUID,
+            prompt: str,
+            reply: str,
+            *,
+            agent: str | None = None,
+        ) -> None:
             del prompt
             self.starts(topic_id)
             self.uses(

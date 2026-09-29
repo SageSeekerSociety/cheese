@@ -159,3 +159,62 @@ def test_a_stray_worker_report_opens_nothing(client, stub_hooks):
         client.get(f"/topics/{room_id}")
         time.sleep(0.02)
     assert {row.id for row in _turns(client, room_id)} == before
+
+
+def test_a_teammates_own_turn_stays_the_teammates(client, stub_hooks):
+    """一位不是项目默认的队友，它的会话自己开了一轮：那一轮是它的，不是默认队友的。
+    这时有人点它的名插一句话，话当场进它正在跑的会话，不用排队。"""
+    from app.domain.agent.platform_notices import EVENT_DELIVERY_FALLBACK
+    from app.domain.block.models import Block
+    from app.domain.identity.handles import agent_instance_handle
+    from tests.integration.conftest import session_auth_headers
+
+    project = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    reviewer = client.post(
+        f"/projects/{project}/agents",
+        json={"handle": "reviewer", "display_name": "审稿人"},
+    ).json()["data"]
+    room_id = client.post(
+        "/topics",
+        json={"project_id": project, "title": "房间", "created_by": "alice"},
+    ).json()["data"]["id"]
+    seat = agent_instance_handle(reviewer["id"])
+    seated = client.post(
+        f"/topics/{room_id}/members",
+        json={"handle": seat, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert seated.status_code == 200, seated.text
+
+    def say(content: str) -> None:
+        with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
+            ws.send_json({"type": "message", "content": content})
+            while ws.receive_json()["type"] not in ("done", "error"):
+                pass
+        _wait_work_idle()
+
+    say("@审稿人 看一下")
+    before = {row.id for row in _turns(client, room_id)}
+
+    stub_hooks.uses(uuid.UUID(room_id), "Bash", agent=seat, command="ls")
+    assert _wait_for(
+        client,
+        room_id,
+        lambda: [r for r in _turns(client, room_id) if r.id not in before],
+    ), "审稿人的会话自己干起活来，这一轮却没开出来"
+
+    say("@审稿人 顺便看看这个")
+
+    async def _queued() -> list[str]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(Block).where(Block.topic_id == uuid.UUID(room_id))
+            )
+            return [
+                block.content or ""
+                for block in rows
+                if (block.meta or {}).get("event_type") == EVENT_DELIVERY_FALLBACK
+            ]
+
+    assert asyncio.run(_queued()) == [], "点名它的话没进它正在跑的会话，排了队"
+    stub_hooks.stops(uuid.UUID(room_id), "看完了", agent=seat)

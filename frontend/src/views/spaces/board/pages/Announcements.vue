@@ -21,6 +21,7 @@ import { storeToRefs } from 'pinia'
 import { compareAnnouncements } from '../model'
 import { isManager } from '../store'
 
+import { relTime } from '@/lib/relTime'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import { useSpaceStore } from '@/stores/space'
@@ -62,8 +63,35 @@ function openEdit(index: number) {
   editing.value = true
 }
 
+/** 一条公告上的时间：**说相对时间，不摆一串日期**。口径借 `lib/relTime.ts` —— 它给的
+ *  正是这一屏要的「刚刚 / N 分钟前 / 昨天 / N 天前」，超过一周退回日期。公告的
+ *  `createdAt` / `updatedAt` 是 epoch 毫秒，那个工具吃的是 ISO 串。 */
+function whenText(at: number): string {
+  return relTime(new Date(at).toISOString())
+}
+
+/** 「已编辑」只对**改过**的公告显示：`updatedAt` 与 `createdAt` 是同一个时刻就是没动过，
+ *  老公告缺 `updatedAt` 也当没动过 —— 与卡片上那句同一个判据。 */
+function isEdited(a: SpaceAnnouncement): boolean {
+  return Boolean(a.updatedAt) && a.updatedAt !== a.createdAt
+}
+
 function read(announcement: SpaceAnnouncement) {
-  dialog.custom(announcement.title, () => <TipTapViewer value={announcement.content} />, { showCancel: false })
+  // 读一条时要答「这是谁、什么时候发的、改过没有」—— 弹窗里跟卡片上那句同一口径，
+  // 只是这里补上了发布人（卡片正文那一行没有它的位置）。
+  dialog.custom(
+    announcement.title,
+    () => (
+      <div>
+        <p class="t-body c-muted mb-3" data-testid="announcement-meta">
+          {announcement.publisher} · {whenText(announcement.createdAt)}
+          {isEdited(announcement) ? ' · 已编辑' : ''}
+        </p>
+        <TipTapViewer value={announcement.content} />
+      </div>
+    ),
+    { showCancel: false }
+  )
 }
 
 async function remove(index: number) {
@@ -153,8 +181,8 @@ const sorted = computed(() =>
         <p class="acard__preview">{{ preview(a.content) }}</p>
         <div class="acard__foot">
           <span>{{ a.publisher }}</span>
-          <span>{{ new Date(a.createdAt).toLocaleDateString() }}</span>
-          <span v-if="a.updatedAt && a.updatedAt !== a.createdAt" class="acard__edited">已编辑</span>
+          <span>{{ whenText(a.createdAt) }}</span>
+          <span v-if="isEdited(a)" class="acard__edited">已编辑</span>
           <v-spacer />
           <template v-if="isManager">
             <!-- 置顶是**单独一个动作**，不藏在编辑弹窗里：弹窗里的东西是一起提交的，

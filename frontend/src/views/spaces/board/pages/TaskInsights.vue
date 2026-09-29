@@ -22,6 +22,7 @@ import SplitBar from '../components/SplitBar.vue'
 import TrendChart from '../components/TrendChart.vue'
 import { isManager, me } from '../store'
 
+import UserRef from '@/components/common/UserRefLink.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 
@@ -119,10 +120,21 @@ const stalled = computed(() =>
   )
 )
 
+/** 这条报名是不是一支团队领的。接口一直回 `isTeam`；老数据没有时才看名册那一列。 */
+function isTeamClaim(r: TaskMembership): boolean {
+  return r.isTeam ?? Boolean(r.teamMembers?.length)
+}
+
+/** 团队标上写什么：有队名写队名，是团队但拿不到队名（队不在了 / 老数据）写「小队」。 */
+function teamLabel(r: TaskMembership): string {
+  return r.team?.name?.trim() || (isTeamClaim(r) ? '小队' : '')
+}
+
+/** 「小队构成」按队名分桶 —— 出题人要的是「哪几支队伍来了」，不是「有几支队伍」。 */
 const teamRows = computed(() => {
   const map = new Map<string, number>()
   for (const r of claimedRoster.value) {
-    const key = r.teamMembers?.length ? '小队' : '单人'
+    const key = r.team?.name?.trim() || (isTeamClaim(r) ? '小队' : '单人')
     map.set(key, (map.get(key) ?? 0) + 1)
   }
   return [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value)
@@ -179,7 +191,7 @@ function mineTo() {
       <div>
         <h1>{{ task.name }}</h1>
         <p>
-          {{ task.creator?.nickname || task.creator?.username }} 出题
+          <UserRef :handle="task.creator?.username" :name="task.creator?.nickname" /> 出题
           <template v-if="task.category?.name"> · {{ task.category.name }}</template>
           · {{ deadlineText(task) }} · {{ task.participantLimit ? `领取上限 ${task.participantLimit}` : '领取不限' }} ·
           {{
@@ -245,7 +257,7 @@ function mineTo() {
           <li v-for="m in ROSTER" :key="m.id">
             <v-avatar size="26" class="roster__avatar">{{ (m.member?.name || '?').slice(0, 1) }}</v-avatar>
             <span class="roster__name">{{ m.member?.name }}</span>
-            <span v-if="m.teamMembers?.length" class="roster__team">小队 {{ m.teamMembers.length }} 人</span>
+            <span v-if="teamLabel(m)" class="roster__team">{{ teamLabel(m) }}</span>
             <v-spacer />
             <span class="roster__at">{{ daysAgo(m.createdAt) }}领</span>
             <v-chip size="x-small" label variant="tonal" :class="`claim-${statusById.get(m.id)?.toLowerCase()}`">

@@ -40,7 +40,7 @@ onBeforeUnmount(() => {
     <div class="node-board__head">
       <v-icon size="20" class="me-2 c-muted">mdi-lan</v-icon>
       <h2 class="node-board__title">机器状态</h2>
-      <span class="node-board__hint c-faint">算力池背后的机器，以及现在能不能跑</span>
+      <span class="node-board__hint c-faint">工作电脑现在是否可用</span>
       <v-spacer />
       <span v-if="board" class="node-board__total c-faint"> 全平台进行中 {{ board.active_turns_total }} 轮 </span>
     </div>
@@ -57,7 +57,7 @@ onBeforeUnmount(() => {
         <div class="node-card__top">
           <span class="node-dot" :class="n.online ? 'node-dot--on' : 'node-dot--off'" />
           <span class="node-card__status">{{ n.online ? '在线' : '离线' }}</span>
-          <span class="node-card__kind">{{ n.kind === 'device' ? '自托管' : '云端' }}</span>
+          <span class="node-card__kind">{{ n.kind === 'device' ? '自有设备' : '云端' }}</span>
           <span v-if="n.current" class="node-card__current">没有选择时落在这里</span>
         </div>
         <h3 class="node-card__title">{{ n.label }}</h3>

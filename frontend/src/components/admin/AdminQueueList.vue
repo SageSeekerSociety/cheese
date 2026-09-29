@@ -109,10 +109,8 @@ function onKeydown(e: KeyboardEvent) {
       data-owns-arrow-keys
       @keydown="onKeydown"
     >
-      <!-- 列头。右侧那三格跟着行的同一套宽度走，但**不逐列对齐**：按钮是
-           `max-content`（§5.2），它一宽一窄会带动它左边的三列整体平移，所以任何固定
-           的列头宽度都只能对上其中一部分行。这几格落在自己那一列的范围里，读的时候
-           够用了 —— 想把它们钉死，得先把按钮改成定宽，那是改规格不是改这里。 -->
+      <!-- 列头。右侧三格和行用同一套定宽（116 / 88 / 104，见 AdminQueueRow），
+           所以逐列对齐；改其中一处就得三处（行、列头、骨架）一起改。 -->
       <div class="qlist__head" role="row">
         <span class="qlist__head-title" role="columnheader">{{ t('feedback.queue.col.title') }}</span>
         <span class="qlist__head-assignee" role="columnheader">{{ t('feedback.queue.col.assignee') }}</span>
@@ -233,8 +231,9 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .qlist__head-next {
-  flex: 0 0 auto;
+  flex: 0 0 104px;
   margin-left: 16px;
+  text-align: right;
 }
 
 .qlist__foot {
@@ -292,7 +291,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .qskel__action {
-  flex: 0 0 auto;
+  flex: 0 0 104px;
   margin-left: 16px;
 }
 
@@ -328,16 +327,17 @@ function onKeydown(e: KeyboardEvent) {
   height: 24px;
 }
 
-/* 空态。形状和总表的空态一样（宽 320px 居中、主副两行、间距 8px），两处说的是同一件
-   事 —— 「还没有人提交反馈」在两个视图里长得不一样的话，人就得分别去认。顶部留 96px
-   是总表的数字（§9.2），这里跟着走，队列自己没有第二个数。 */
+/* 空态。形状和总表的空态一样（宽 320px 居中、主副两行），两处说的是同一件事 ——
+   「还没有人提交反馈」在两个视图里长得不一样的话，人就得分别去认。
+   顶距 32 + `AdminEmptyState` 自己的 64 = 96，和换组件之前一样（§9.2 那个数）。 */
 .qlist__none {
   flex: 0 0 auto;
-  padding-top: 96px;
+  padding-top: 32px;
 }
 
+/* 宽不再钉死 320：块自己带着 `max-width` 和左右内边距，这里只要一个上界即可。 */
 .qlist__none-box {
-  width: 320px;
+  max-width: 320px;
   margin: 0 auto;
 }
 
@@ -354,5 +354,52 @@ function onKeydown(e: KeyboardEvent) {
   color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);
+}
+
+/* 窄屏（≤700，和 `AdminQueueRow` 那条同一条线）：列头撤掉、骨架改成同一张卡片的
+   形状。列头说的是「哪一列是什么」，可卡片里没有列了 —— 留着它只会让人对着四个
+   名字找一个不存在的表格。骨架必须跟着真行一起变，否则数据到货那一刻整条队列
+   重排一次，而骨架的全部意义就是那个不重排。 */
+@media (max-width: 700px) {
+  .qlist__head {
+    display: none;
+  }
+
+  .qskel {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 61px;
+    padding: 12px 16px;
+    row-gap: 6px;
+    column-gap: 12px;
+  }
+
+  .qskel__main {
+    flex: 1 1 240px;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .qskel__assignee {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .qskel__updated {
+    flex: 0 0 auto;
+    margin-left: 0;
+  }
+
+  .qskel__action {
+    margin-left: 0;
+  }
+
+  /* 390 - 32（页面内边距）- 2（卡片描边）= 356，比 320 宽一点；再窄的屏（320）上
+     这一格按屏宽收，不撑出横向滚动。 */
+  .qlist__none-box {
+    width: auto;
+    max-width: 320px;
+    padding: 0 16px;
+  }
 }
 </style>

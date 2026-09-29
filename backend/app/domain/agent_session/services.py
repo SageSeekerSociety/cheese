@@ -59,6 +59,10 @@ class AgentSessionService:
         row = await self._repo.get(topic_id, agent_handle, harness)
         return row.place() if row is not None else None
 
+    async def ids_in_room(self, room_id: uuid.UUID) -> list[uuid.UUID]:
+        """Every session id in this room, started or not, in a stable order."""
+        return await self._repo.ids_in_room(room_id)
+
     async def remember_place(
         self,
         *,
@@ -97,13 +101,13 @@ class AgentSessionService:
     async def placed_sessions(
         self,
     ) -> list[tuple[uuid.UUID, uuid.UUID, str, str, SessionPlace]]:
-        """``(project_id, room_id, agent_handle, harness, place)`` for each
-        room's last-placed session — what a channel re-adopts after a restart.
+        """``(project_id, room_id, agent_handle, harness, place)`` for every
+        placed session — what a channel re-adopts after a restart.
 
-        One per room, because a room has one screen. Every channel reads this
-        same list and keeps the rows whose harness is its own, so a room that
-        appeared once per harness it has ever run would be claimed by each of
-        them in turn.
+        One per (room, agent, harness) seat, because a room seats as many
+        agents as it has and each one's session comes back on its own seat.
+        Every channel reads this same list and keeps the rows whose harness is
+        its own.
         """
         found = []
         for row, project_id in await self._repo.placed_everywhere():

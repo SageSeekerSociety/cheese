@@ -1,19 +1,39 @@
 // Plugins
+import os from 'node:os'
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 // Utilities
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import { prismjsPlugin } from 'vite-plugin-prismjs'
 import { VitePWA } from 'vite-plugin-pwa'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
 
+// 每个 fork 常驻约 3–5 GB（happy-dom 加上各自编一遍 Vuetify/SCSS），所以按内存算上限：每 6 GB 一个、封顶 16，VITEST_MAX_FORKS 可覆盖。
+const envMaxForks = Number.parseInt(process.env.VITEST_MAX_FORKS ?? '', 10)
+const maxForks = envMaxForks > 0 ? envMaxForks : Math.max(1, Math.min(16, Math.floor(os.totalmem() / 6 / 1024 ** 3)))
+
 // https://vitejs.dev/config/
+// /demo/<名字> 是演示页（demo.html），不是应用。线上由 nginx.conf 那条 location 分开，
+// 开发服务器上由这里分开：不然它落到应用的兜底 index.html 上，打开的是整个平台。
+function demoPages(): Plugin {
+  return {
+    name: 'cheese-demo-pages',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url && /^\/demo(\/|\?|$)/.test(req.url)) req.url = '/demo.html'
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
+    demoPages(),
     vue({
       template: { transformAssetUrls },
     }),
@@ -366,6 +386,11 @@ export default defineConfig({
     },
     sourcemap: false,
     rollupOptions: {
+      // 两个页面：应用本体，和文档里嵌的动态演示（demo.html，见 src/demo-main.ts）。
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        demo: fileURLToPath(new URL('./demo.html', import.meta.url)),
+      },
       output: {
         manualChunks(id) {
           // Vite's dynamic-import helper (`\0vite/preload-helper.js`) is a
@@ -473,7 +498,7 @@ export default defineConfig({
     // 24.5 秒，而 collect 累计是 142 / 257 / 461 / 1908 秒。过了 16 再加只换回来
     // 几秒墙上时间，代价是成倍的总开销，不限则会超时。
     poolOptions: {
-      forks: { minForks: 1, maxForks: 16 },
+      forks: { minForks: 1, maxForks },
       threads: { minThreads: 1, maxThreads: 16 },
     },
   },
@@ -499,39 +524,58 @@ export default defineConfig({
       'vuetify/components/VAutocomplete',
       'vuetify/components/VAvatar',
       'vuetify/components/VBadge',
+      'vuetify/components/VBanner',
       'vuetify/components/VBottomNavigation',
       'vuetify/components/VBtn',
+      'vuetify/components/VBtnGroup',
       'vuetify/components/VBtnToggle',
       'vuetify/components/VCard',
       'vuetify/components/VCheckbox',
       'vuetify/components/VChip',
+      'vuetify/components/VChipGroup',
+      'vuetify/components/VColorPicker',
       'vuetify/components/VCombobox',
+      'vuetify/components/VDataTable',
+      'vuetify/components/VDatePicker',
       'vuetify/components/VDefaultsProvider',
       'vuetify/components/VDialog',
       'vuetify/components/VDivider',
       'vuetify/components/VEmptyState',
+      'vuetify/components/VExpansionPanel',
+      'vuetify/components/VFab',
       'vuetify/components/VFileInput',
       'vuetify/components/VForm',
       'vuetify/components/VGrid',
+      'vuetify/components/VHover',
       'vuetify/components/VIcon',
       'vuetify/components/VImg',
+      'vuetify/components/VLazy',
       'vuetify/components/VList',
       'vuetify/components/VMain',
       'vuetify/components/VMenu',
       'vuetify/components/VNavigationDrawer',
+      'vuetify/components/VOtpInput',
+      'vuetify/components/VOverlay',
       'vuetify/components/VProgressCircular',
       'vuetify/components/VProgressLinear',
       'vuetify/components/VRadio',
       'vuetify/components/VRadioGroup',
+      'vuetify/components/VRating',
       'vuetify/components/VSelect',
       'vuetify/components/VSheet',
+      'vuetify/components/VSkeletonLoader',
+      'vuetify/components/VSlider',
       'vuetify/components/VSnackbar',
       'vuetify/components/VSwitch',
       'vuetify/components/VSystemBar',
+      'vuetify/components/VTable',
       'vuetify/components/VTabs',
       'vuetify/components/VTextField',
       'vuetify/components/VTextarea',
+      'vuetify/components/VTimeline',
+      'vuetify/components/VToolbar',
       'vuetify/components/VTooltip',
+      'vuetify/components/VWindow',
       'vuetify/components/transitions',
       // 目录入口（插件也会引它们）与 labs：
       'vuetify',

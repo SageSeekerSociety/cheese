@@ -14,15 +14,18 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.routes.teams import get_team_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.common.auth import get_optional_user_id
 from app.core.errors import BadRequestError
 from app.db.session import get_db
 from app.domain.team.models import RecruitmentStatus, TeamRecruitmentPost
 from app.domain.team.recruitment_repositories import RecruitmentRepository
 from app.domain.team.recruitment_services import RecruitmentService
 from app.domain.team.repositories import TeamRepository
-from app.domain.team.summary import team_summary
+from app.domain.team.services import TeamService
+from app.domain.team.summary import team_summary, team_summary_seen_by
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 # ── Request Models ────────────────────────────────────────────────────────────
@@ -123,6 +126,44 @@ async def _load_maps_for_posts(
     return teams_map, users_map, profiles_map
 
 
+def _post_to_api_seen_by(
+    post: TeamRecruitmentPost,
+    *,
+    teams_map: dict,
+    users_map: dict,
+    profiles_map: dict,
+    viewer_team_ids: set[int],
+    contact_visible: bool,
+) -> dict:
+    """一条广场帖按「谁在看」裁过再交出去。
+
+    广场是公开的，但公开的是帖子，不是它背后那支队伍：隐身 / 个人队的
+    name、handle、intro、avatar 对外人不点名（判据与 ``TeamService.visible_team``
+    逐字同一条）。联系方式是帖子自己写下的招人渠道，但它是唯一一个能直接联系到
+    真人的字段，所以只给登录的人 —— 和团队作用域那条列表的注释同一句理由
+    （「帖子可以带联系方式」正是它要过可见性门的原因）。
+    """
+    item = _post_to_api(
+        post, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map
+    )
+    item["team"] = team_summary_seen_by(
+        teams_map.get(post.team_id),
+        fallback_id=post.team_id,
+        viewer_team_ids=viewer_team_ids,
+    )
+    if not contact_visible:
+        item["contact"] = None
+    return item
+
+
+async def _viewer_team_ids(db, viewer_id: int | None) -> set[int]:
+    """看客自己所在的队 —— 一次查完，不按帖子逐条问。"""
+    if viewer_id is None:
+        return set()
+    teams = await TeamRepository(session=db).list_teams_of_user(user_id=viewer_id)
+    return {t.id for t in teams}
+
+
 # ---------------------------------------------------------------------------
 # Global recruitment plaza
 # ---------------------------------------------------------------------------
@@ -131,18 +172,27 @@ async def _load_maps_for_posts(
 @router.get("/recruitment", summary="Browse Recruitment Plaza")
 async def list_recruitment_posts(
     keyword: str | None = Query(default=None),
-    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    viewer_id: int | None = Depends(get_optional_user_id),
     service: RecruitmentService = Depends(_get_recruitment_service),
     db=Depends(get_db),
 ) -> dict:
+    # 广场对所有人开放（含未登录），只列 OPEN 帖 —— 这条口径不动。要裁的是
+    # 每条帖子吐出去的那两处：隐身队的团队身份，和能直接联系到真人的联系方式。
     posts, has_more, next_start = await service.list_open(
         page_size=page_size, page_start=page_start, keyword=keyword
     )
     teams_map, users_map, profiles_map = await _load_maps_for_posts(db, posts)
+    viewer_team_ids = await _viewer_team_ids(db, viewer_id)
     items = [
-        _post_to_api(
-            p, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map
+        _post_to_api_seen_by(
+            p,
+            teams_map=teams_map,
+            users_map=users_map,
+            profiles_map=profiles_map,
+            viewer_team_ids=viewer_team_ids,
+            contact_visible=viewer_id is not None,
         )
         for p in posts
     ]
@@ -285,8 +335,15 @@ async def create_recruitment_post(
 async def list_team_recruitment_posts(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: RecruitmentService = Depends(_get_recruitment_service),
+    team_service: TeamService = Depends(get_team_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
+    # 团队作用域的招募列表不比它挂着的那支队伍更公开（帖子可以带联系方式），
+    # 所以先过这里的那道门，和 ``GET /teams/{teamId}`` 逐字同一句话：成员看得见
+    # 自己的队，公开共享队谁都看得见，隐身 / 个人队对外人答 404 —— 不确认它存在。
+    # 复用 ``TeamService.visible_team``，不在这里另写一套可见性判据。
+    await team_service.visible_team(team_id, auth_user.user_id)
     posts = await service.list_by_team(team_id)
     teams_map, users_map, profiles_map = await _load_maps_for_posts(db, posts)
     items = [

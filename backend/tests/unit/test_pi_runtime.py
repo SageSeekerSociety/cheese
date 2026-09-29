@@ -12,12 +12,15 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import AgentRuntime, Opening, SessionRef
+from app.domain.agent.harness.driven import runtime as driven_runtime
 from app.domain.agent.harness.pi.runtime import Handle, PiRuntime
 from app.domain.agent.service import AgentResult, AgentSessionInfo, AgentToolUse
+from tests.support.hang import HANG_S
 
 ENTRIES = json.loads((Path(__file__).parent / "fixtures/pi-entries.json").read_text())[
     "entries"
@@ -37,9 +40,11 @@ class Runner:
         self.work_id: str | None = None
         # The device's link is down: every call to it raises, as the hub does.
         self.offline = False
+        self.refused = 0
 
     async def call(self, handle, method, params):
         if self.offline:
+            self.refused += 1
             raise DeviceOffline("device")
         if method == "entries":
             self.reads += 1
@@ -67,7 +72,7 @@ class Runner:
 
 
 def wire(tmp_path):
-    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="pi")
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "teammate", harness="pi")
     handle = Handle(
         session,
         "device",
@@ -228,15 +233,13 @@ async def test_interrupt_takes_the_work_without_taking_the_session(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_a_quiet_room_reads_slower_and_a_new_turn_is_read_at_once(tmp_path):
+async def test_a_quiet_room_reads_slower(tmp_path):
     """Reading an entry log is a call to the room's device, and a room nobody
     is talking to answers it with an empty page. At a fixed 100ms that is ten
-    calls a second per room for nothing, so a quiet log has to cost less — and
-    the room still has to answer the moment someone sends into it.
+    calls a second per room for nothing, so a quiet log has to cost less.
     """
     session, runtime, runner = wire(tmp_path)
-    consumer = AsyncMock()
-    runtime.bind_events(consumer)
+    runtime.bind_events(AsyncMock())
     runtime.bind_activity(AsyncMock())
     runtime.bind_receipts(AsyncMock())
 
@@ -247,22 +250,42 @@ async def test_a_quiet_room_reads_slower_and_a_new_turn_is_read_at_once(tmp_path
     quiet = runner.reads
     assert quiet <= 10, f"a quiet room was read {quiet} times in 2.5s"
 
-    consumer.reset_mock()
-    work = uuid.uuid4()
+    await runtime.close(session)
+
+
+@pytest.mark.anyio
+async def test_a_new_turn_is_read_at_once_in_a_quiet_room(tmp_path, monkeypatch):
+    """The room still has to answer the moment someone sends into it, however
+    far its reads have backed off.
+
+    Both read intervals are an hour here, so the reader's next read on its own
+    is an hour away: a turn's entries can only land within the wait below if
+    sending cut that interval short. A deadline shorter than the interval would
+    measure how fast the machine running the suite is instead.
+    """
+    monkeypatch.setattr(driven_runtime, "READ_FLOOR_S", 3600.0)
+    monkeypatch.setattr(driven_runtime, "READ_CEILING_S", 3600.0)
+    session, runtime, runner = wire(tmp_path)
+    consumer = AsyncMock()
+    runtime.bind_events(consumer)
+    runtime.bind_activity(AsyncMock())
+    runtime.bind_receipts(AsyncMock())
+
+    await runtime.recover("device")
+    await runtime.replay(session, known_texts=set())
+    # The reader has read the empty log once and is now waiting out its interval.
+    with anyio.fail_after(HANG_S):
+        while runner.reads == 0:
+            await asyncio.sleep(0.01)
+
     assert await runtime.send(
-        session, "开始", Opening("system"), work_id=work, on_mark=lambda _: None
+        session, "开始", Opening("system"), work_id=uuid.uuid4(), on_mark=lambda _: None
     )
-    # The room was reading at its slowest when the message arrived; the entries
-    # it produces must not wait that interval out. The deadline is well under
-    # the slowest read, and generous enough that a slow drain is not read as a
-    # wait nobody cut short.
     landed: list = []
-    for _ in range(12):
-        await asyncio.sleep(0.05)
-        landed = [call.args[3] for call in consumer.await_args_list]
-        if any(isinstance(event, AgentToolUse) for event in landed):
-            break
-    assert any(isinstance(event, AgentToolUse) for event in landed), landed
+    with anyio.fail_after(HANG_S):
+        while not any(isinstance(event, AgentToolUse) for event in landed):
+            await asyncio.sleep(0.01)
+            landed = [call.args[3] for call in consumer.await_args_list]
 
     await runtime.close(session)
 
@@ -294,9 +317,11 @@ async def test_a_device_that_went_offline_is_not_reported_as_a_read_failure(
     with caplog.at_level(logging.DEBUG, logger="app.domain.agent.harness.pi.runtime"):
         caplog.clear()
         runner.offline = True
-        # Long enough for the poller's 2s retry wait to come round again, which
+        # The poller has come round to the absent device a second time, which
         # is what would repeat the line.
-        await asyncio.sleep(2.4)
+        with anyio.fail_after(HANG_S):
+            while runner.refused < 2:
+                await asyncio.sleep(0.01)
 
         errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
         assert errors == []
@@ -305,14 +330,19 @@ async def test_a_device_that_went_offline_is_not_reported_as_a_read_failure(
         assert "waiting for the device" in waits[0].getMessage()
 
         runner.offline = False
-        # The retry wait above is 2s, so the loop can be mid-sleep when the
-        # device comes back; the resume lands on its next pass, not at once.
-        await asyncio.sleep(2.4)
-        resumed = [
-            r
-            for r in caplog.records
-            if r.levelno == logging.INFO and "resumed" in r.getMessage()
-        ]
-        assert len(resumed) == 1, [r.getMessage() for r in caplog.records]
+
+        def resumed() -> list[logging.LogRecord]:
+            return [
+                r
+                for r in caplog.records
+                if r.levelno == logging.INFO and "resumed" in r.getMessage()
+            ]
+
+        # The loop can be mid-way through its retry wait when the device comes
+        # back; the resume lands on its next pass, not at once.
+        with anyio.fail_after(HANG_S):
+            while not resumed():
+                await asyncio.sleep(0.01)
+        assert len(resumed()) == 1, [r.getMessage() for r in caplog.records]
 
     await runtime.close(session)

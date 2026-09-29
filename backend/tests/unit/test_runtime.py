@@ -57,6 +57,9 @@ class _FakeChat:
         self.events.append(text)
         return None
 
+    def replaying(self, topic_id):
+        return None
+
     async def converse(self, **kwargs):
         self.ran = True
         self.kwargs = kwargs
@@ -276,6 +279,9 @@ async def test_wedged_turn_times_out_and_is_cancelled(db_factory):
     class _Hang:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "user_block"}
             try:
@@ -322,6 +328,9 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout(db_factory):
     class _LongTmuxTurn:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 10.0}
             # Where the declared ceiling takes effect: both clocks have a real
@@ -355,6 +364,9 @@ async def test_topic_turn_reports_the_rescheduled_ceiling(db_factory):
     class _Turn:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 123.0}
             yield {"type": "done"}
@@ -383,6 +395,9 @@ async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
 
     class _SlowTurn:
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             await asyncio.sleep(0.2)
@@ -423,6 +438,9 @@ async def test_runner_publishes_friendly_error_on_failure(db_factory):
     class _Boom:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             raise RuntimeError("kaboom")
             yield  # pragma: no cover — makes this an async generator
@@ -454,6 +472,9 @@ async def test_turn_failure_lands_in_the_timeline(db_factory):
         def __init__(self) -> None:
             self.posted: str | None = None
             self.posted_meta: dict | None = None
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             raise RuntimeError("kaboom")
@@ -508,6 +529,9 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
         def __init__(self) -> None:
             self.meta: dict | None = None
             self.converse_calls = 0
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             self.converse_calls += 1
@@ -567,6 +591,9 @@ async def test_failed_turn_fails_loud_and_does_not_resume(db_factory):
             self.calls: list[dict] = []
             self.events: list[tuple[str, dict]] = []
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **kw):
             self.calls.append(kw)
             raise RuntimeError("boom")
@@ -614,6 +641,9 @@ async def test_a_resent_turn_that_crashes_also_fails_loud(db_factory):
         def __init__(self) -> None:
             self.calls = 0
             self.events: list[tuple[str, dict]] = []
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             self.calls += 1
@@ -693,7 +723,7 @@ async def test_orphan_turns_resume_after_restart(db_factory, monkeypatch):
             self.retryable.append(bool((meta or {}).get("retryable")))
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -754,7 +784,7 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -827,7 +857,7 @@ async def test_stale_orphan_is_dropped_loudly(db_factory, monkeypatch):
             self.retryable.append(bool((meta or {}).get("retryable")))
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -982,7 +1012,7 @@ class _SweepChat:
         self._live_screen = live_screen
         self.texts: list[str] = []
 
-    def has_live_screen(self, topic_id):
+    def has_live_screen(self, topic_id, agent_handle=None):
         del topic_id
         return self._live_screen
 
@@ -1009,7 +1039,11 @@ async def test_a_self_started_turn_opens_an_interval_nothing_will_re_send(db_fac
     turn_id = uuid.uuid4()
     runner = AgentWorkRunner(InProcessBroker())
     await runner.open_turn_the_session_started(
-        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+        _SweepChat(db_factory),
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
     )
 
     row = await turn_row(db_factory, turn_id)
@@ -1023,6 +1057,37 @@ async def test_a_self_started_turn_opens_an_interval_nothing_will_re_send(db_fac
     # 没有协程在跑它，所以它不进 `_live`；收尸判安静靠的是帧戳。
     assert str(turn_id) not in runner._live
     assert str(turn_id) in runner._last_frame_at
+
+
+@pytest.mark.anyio
+async def test_a_self_started_turn_outlives_the_backend_that_opened_it(db_factory):
+    """会话自己开的一轮不随后端重启而结束：新进程收到它的下一段产出时，这一轮
+    已经有一行了。那一行就是它的，照旧由它的 Stop 关、由收尸判安静 —— 而不是
+    每来一段产出就撞一次主键，这一轮在新进程里没有任何记账。"""
+    topic = await a_topic(db_factory)
+    turn_id = uuid.uuid4()
+    await AgentWorkRunner(InProcessBroker()).open_turn_the_session_started(
+        _SweepChat(db_factory),
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
+    )
+    first = await turn_row(db_factory, turn_id)
+
+    replacement = AgentWorkRunner(InProcessBroker())
+    await replacement.open_turn_the_session_started(
+        _SweepChat(db_factory),
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
+    )
+
+    row = await turn_row(db_factory, turn_id)
+    assert row.started_at == first.started_at, "这一轮从它真正开始的时候算起"
+    assert await open_turn_ids(db_factory) == {turn_id}
+    assert str(turn_id) in replacement._last_frame_at, "新进程的收尸看不见它"
 
 
 @pytest.mark.anyio
@@ -1041,7 +1106,7 @@ async def test_a_self_started_turn_that_went_quiet_is_swept_but_not_re_sent(db_f
     # 屏幕还活着 —— 这正是老路放过它的原因。
     chat = _SweepChat(db_factory, live_screen=True)
     await runner.open_turn_the_session_started(
-        chat, topic, turn_id, author=_SESSION_SEAT
+        chat, topic, turn_id, author=_SESSION_SEAT, agent_handle="cheese"
     )
     runner._last_frame_at[str(turn_id)] = time.monotonic() - 3 * 3600
 
@@ -1070,7 +1135,7 @@ async def test_a_self_started_turn_still_working_is_left_alone(db_factory):
     runner = AgentWorkRunner(InProcessBroker())
     chat = _SweepChat(db_factory, live_screen=True)
     await runner.open_turn_the_session_started(
-        chat, topic, turn_id, author=_SESSION_SEAT
+        chat, topic, turn_id, author=_SESSION_SEAT, agent_handle="cheese"
     )
     runner._last_frame_at[str(turn_id)] = time.monotonic() - 5
 
@@ -1092,7 +1157,11 @@ async def test_closing_a_self_started_turn_drops_the_marks_it_left(db_factory):
     turn_id = uuid.uuid4()
     runner = AgentWorkRunner(InProcessBroker())
     await runner.open_turn_the_session_started(
-        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+        _SweepChat(db_factory),
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
     )
     assert runner.live_work_for_topic(topic) is None, "没有协程在跑它，别说成在跑"
 
@@ -1235,6 +1304,9 @@ async def test_live_turn_for_topic_tracks_a_running_turn(db_factory):
     class _Slow:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "user_block"}
             streaming.set()
@@ -1287,6 +1359,9 @@ async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
         """A turn whose sandbox died mid-stream: frames stop, the task lives."""
 
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             yield {"type": "user_block"}
@@ -1369,7 +1444,7 @@ async def test_a_deploy_the_platform_handles_itself_says_nothing(
             metas.append(meta or {})
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -1396,6 +1471,9 @@ async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(db_fact
         """Yields the delivery frame, then holds the turn open."""
 
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **kwargs):
             yield {"type": "prompt_delivered"}
@@ -1466,7 +1544,7 @@ async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
             metas.append(meta or {})
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -1508,7 +1586,7 @@ async def test_a_deploy_that_loses_a_message_for_good_still_warns(
             metas.append(meta or {})
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -1541,6 +1619,9 @@ async def test_unclassified_failure_hands_to_a_human_without_retrying(db_factory
         def __init__(self) -> None:
             self.calls: list[dict] = []
             self.events: list[tuple[str, dict]] = []
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **kw):
             self.calls.append(kw)
@@ -1590,6 +1671,9 @@ async def test_a_timeout_hands_to_a_human_without_retrying(db_factory):
         def __init__(self) -> None:
             self.calls: list[dict] = []
             self.events: list[tuple[str, dict]] = []
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **kw):
             self.calls.append(kw)
@@ -1644,6 +1728,9 @@ async def test_a_slow_setup_does_not_spend_the_ceiling_before_the_turn_starts(
     class _SlowSetup:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 0.3}
             # Setup: everything before the prompt reaches the session, and here
@@ -1684,6 +1771,9 @@ async def test_a_turn_cut_by_the_fuse_still_ends_its_stream(db_factory):
     class _NeverFinishes:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "prompt_delivered"}
             await asyncio.sleep(5)
@@ -1716,6 +1806,9 @@ async def test_a_turn_that_keeps_calling_tools_outlives_its_ceiling(db_factory):
 
     class _KeepsWorking:
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 0.3}
@@ -1752,6 +1845,9 @@ async def test_crossing_the_ceiling_is_recorded_and_ends_nothing(db_factory, cap
 
     class _TalksPastTheCeiling:
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 0.1}

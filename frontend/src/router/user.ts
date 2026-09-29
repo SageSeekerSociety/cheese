@@ -14,6 +14,10 @@ export default {
         default: () => import('@/layouts/user/Settings.vue'),
         sidebar: () => import('@/views/user/settings/SettingsSidebar.vue'),
       },
+      meta: {
+        titleKey: 'navigation.userMenu.settings',
+        palette: { label: 'navigation.userMenu.settings', icon: 'mdi-account-cog-outline' },
+      },
       redirect: { name: 'UserSettingsProfile' },
       children: [
         {
@@ -30,6 +34,16 @@ export default {
           path: 'realname',
           name: 'UserSettingsRealName',
           component: () => import('@/views/user/settings/RealName.vue'),
+        },
+        {
+          // 「通用」：这台电脑上的桌面 app 自己的设置。浏览器里没有这一块。
+          path: 'general',
+          name: 'UserSettingsGeneral',
+          component: () => import('@/views/user/settings/General.vue'),
+          beforeEnter: async () => {
+            const { desktopCan } = await import('@/lib/desktopApp')
+            return desktopCan('autostart') ? true : { name: 'UserSettingsProfile' }
+          },
         },
         {
           // 「安装到手机」：装到主屏幕的说明 + 一次 beforeinstallprompt 机会。

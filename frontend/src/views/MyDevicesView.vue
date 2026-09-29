@@ -2,11 +2,14 @@
 // 「我的设备 / Agent」(P3 Phase B item 4): the machines the signed-in human enrolled
 // via the device flow. List them with liveness, rename/unbind, and open the 现场 of any
 // agent (screen) currently running on them — a read-only real terminal in the browser.
+import type { MenuAction } from '../components/common/menuAction'
 import type { DeviceScreen, MyDevice, MyTeam } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
+import AdaptiveMenu from '../components/common/AdaptiveMenu.vue'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
 import {
   connectThisComputer,
@@ -17,6 +20,9 @@ import {
   thisComputer,
 } from '../lib/desktop'
 
+import { useCommands } from '@/commands'
+import AppPage from '@/components/common/AppPage.vue'
+import { t } from '@/i18n'
 import accountService from '@/services/account'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
@@ -38,7 +44,7 @@ const error = ref<string | null>(null)
 
 // This page is the 认证 (enrollment) layer: enroll / rename / forget machines, and
 // see at a glance which teams each machine serves. 归属 (加机器/移出) lives on each
-// team's 「算力」 page — the chips here are read-only links into those pages.
+// team's 「工作电脑」 page — the chips here are read-only links into those pages.
 const myTeams = ref<MyTeam[]>([])
 function teamName(id: number): string {
   return myTeams.value.find((t) => t.id === id)?.name ?? `团队 #${id}`
@@ -159,6 +165,16 @@ async function saveRename(d: MyDevice) {
 const unbindTarget = ref<MyDevice | null>(null)
 const unbinding = ref(false)
 
+// 手机上一台设备的操作（改名、解绑）收进行尾的 ⋯（底部面板）：名字旁那颗小铅笔和
+// 行尾的「解绑」都比手指小，挨着「在线」两个字也容易按错。
+const { mdAndUp } = useDisplay()
+function deviceActions(d: MyDevice): MenuAction[] {
+  return [
+    { key: 'rename', label: '重命名', icon: 'mdi-pencil-outline', onSelect: () => startRename(d) },
+    { key: 'unbind', label: '解绑', icon: 'mdi-link-variant-off', danger: true, onSelect: () => askUnbind(d) },
+  ]
+}
+
 function askUnbind(d: MyDevice) {
   unbindTarget.value = d
 }
@@ -181,154 +197,184 @@ async function confirmUnbind() {
 }
 
 onMounted(load)
+
+useCommands(() => [
+  {
+    id: 'devices.refresh',
+    title: '刷新',
+    palette: false,
+    icon: 'mdi-refresh',
+    loading: loading.value,
+    header: { iconOnly: true },
+    run: () => void load(),
+  },
+  ...(isLoggedIn.value
+    ? [
+        {
+          id: 'devices.add',
+          title: '添加设备',
+          icon: 'mdi-plus',
+          header: { primary: true, accent: true },
+          run: () => (addDeviceOpen.value = true),
+        },
+      ]
+    : []),
+])
 </script>
 
 <template>
-  <div class="devices-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 900px">
-      <div class="mb-6 d-flex align-center">
-        <div>
-          <div class="t-eyebrow mb-1">设备</div>
-          <h1 class="t-page-title">我的设备</h1>
-        </div>
-        <v-spacer />
-        <v-btn variant="text" icon="mdi-refresh" class="mr-1" :loading="loading" @click="load" />
-        <v-btn v-if="isLoggedIn" color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true">
-          添加设备
-        </v-btn>
-      </div>
+  <AppPage :title="t('navigation.userMenu.devices')">
+    <v-alert v-if="!isLoggedIn" type="info" density="comfortable" class="mb-4"> 登录后即可管理已接入的设备 </v-alert>
 
-      <v-alert v-if="!isLoggedIn" type="info" density="comfortable" class="mb-4"> 登录后即可管理已接入的设备 </v-alert>
+    <template v-else>
+      <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
+        {{ error }}
+      </v-alert>
 
-      <template v-else>
-        <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
-          {{ error }}
-        </v-alert>
-
-        <!-- Big spinner only on the FIRST load (list still empty). A refresh with data
+      <!-- Big spinner only on the FIRST load (list still empty). A refresh with data
            already on screen keeps the list mounted — the refresh button spins instead
            — so re-fetching never tears the list down and flashes. -->
-        <div v-if="loading && devices.length === 0" class="d-flex justify-center py-10">
-          <v-progress-circular indeterminate color="primary" />
+      <div v-if="loading && devices.length === 0" class="d-flex justify-center py-10">
+        <v-progress-circular indeterminate color="primary" />
+      </div>
+
+      <div v-else-if="devices.length === 0 && desktop" class="empty-state text-center py-10">
+        <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
+        <div class="t-body c-muted mb-1">暂无已连接的设备</div>
+        <div class="t-caption c-muted mb-5">接入后，AI 队友可以在这台电脑上运行任务</div>
+        <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine"
+          >接入这台电脑</v-btn
+        >
+        <div v-if="thisComputer.connecting" class="t-caption c-muted mt-3">{{ thisComputer.step }}</div>
+        <div v-if="thisComputer.error" class="t-caption c-danger mt-3">{{ thisComputer.error }}</div>
+      </div>
+
+      <div v-else-if="devices.length === 0" class="empty-state text-center py-10">
+        <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
+        <div class="t-body c-muted mb-1">暂无已连接的设备</div>
+        <div class="t-caption c-muted mb-5">
+          Mac 和 Windows 电脑可以在「添加设备」里下载桌面端一键接入；其他机器运行下面对应系统的命令，再运行
+          <code>cheesehost link connect</code> 按提示批准
         </div>
 
-        <div v-else-if="devices.length === 0 && desktop" class="empty-state text-center py-10">
-          <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
-          <div class="t-body c-muted mb-1">暂无已连接的设备</div>
-          <div class="t-caption c-muted mb-5">接入后，AI 队友可以在这台电脑上运行任务</div>
-          <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine"
-            >接入这台电脑</v-btn
-          >
-          <div v-if="thisComputer.connecting" class="t-caption c-muted mt-3">{{ thisComputer.step }}</div>
-          <div v-if="thisComputer.error" class="t-caption c-danger mt-3">{{ thisComputer.error }}</div>
-        </div>
-
-        <div v-else-if="devices.length === 0" class="empty-state text-center py-10">
-          <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
-          <div class="t-body c-muted mb-1">暂无已连接的设备</div>
-          <div class="t-caption c-muted mb-5">
-            Mac 和 Windows 电脑可以在「添加设备」里下载桌面端一键接入；其他机器运行下面对应系统的命令，再运行
-            <code>cheesehost link connect</code> 按提示批准
-          </div>
-
-          <!-- Copyable install one-liner, right in the empty-state so the user can
+        <!-- Copyable install one-liner, right in the empty-state so the user can
              act without hunting for a dialog. -->
-          <div v-for="c in installCommands" :key="c.command" class="mx-auto mb-3" style="max-width: 480px">
-            <div class="t-caption c-muted text-left mb-1">{{ c.os }}</div>
-            <div class="install-cmd">
-              <code class="install-cmd__code">{{ c.command }}</code>
-              <v-btn
-                :color="copied === c.command ? 'success' : 'primary'"
-                variant="text"
-                size="small"
-                :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-                @click="copyInstall(c.command)"
-              >
-                {{ copied === c.command ? '已复制' : '复制' }}
-              </v-btn>
-            </div>
+        <div v-for="c in installCommands" :key="c.command" class="mx-auto mb-3" style="max-width: 480px">
+          <div class="t-caption c-muted text-left mb-1">{{ c.os }}</div>
+          <div class="install-cmd">
+            <code class="install-cmd__code">{{ c.command }}</code>
+            <v-btn
+              :color="copied === c.command ? 'success' : 'primary'"
+              variant="text"
+              size="small"
+              :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
+              @click="copyInstall(c.command)"
+            >
+              {{ copied === c.command ? '已复制' : '复制' }}
+            </v-btn>
           </div>
-
-          <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true"> 添加设备 </v-btn>
         </div>
 
-        <v-card v-for="d in devices" :key="d.device_id" class="mb-3 pa-4" variant="outlined">
-          <div class="d-flex align-center">
-            <v-icon :color="d.online ? 'success' : 'grey'" size="12" class="mr-2"> mdi-circle </v-icon>
+        <!-- 顶上已经有一颗琥珀的「添加设备」，空状态里这一颗是指路的，用中性的。 -->
+        <v-btn variant="tonal" prepend-icon="mdi-plus" @click="addDeviceOpen = true"> 添加设备 </v-btn>
+      </div>
 
-            <template v-if="renaming === d.device_id">
-              <v-text-field
-                v-model="draftName"
-                autocomplete="off"
-                density="compact"
-                variant="outlined"
-                hide-details
-                autofocus
-                style="max-width: 260px"
-                @keyup.enter="saveRename(d)"
-                @blur="saveRename(d)"
+      <v-card v-for="d in devices" :key="d.device_id" class="mb-3 pa-4" variant="outlined">
+        <div class="d-flex align-center">
+          <v-icon :color="d.online ? 'success' : 'grey'" size="12" class="mr-2"> mdi-circle </v-icon>
+
+          <template v-if="renaming === d.device_id">
+            <v-text-field
+              v-model="draftName"
+              autocomplete="off"
+              density="compact"
+              variant="outlined"
+              hide-details
+              autofocus
+              style="max-width: 260px"
+              @keyup.enter="saveRename(d)"
+              @blur="saveRename(d)"
+            />
+          </template>
+          <template v-else>
+            <span class="t-title">{{ d.name }}</span>
+            <v-btn
+              v-if="mdAndUp"
+              variant="text"
+              size="x-small"
+              icon="mdi-pencil"
+              class="ml-1"
+              @click="startRename(d)"
+            />
+          </template>
+
+          <v-spacer />
+          <span class="t-caption mr-3" :class="d.online ? 'text-success font-weight-medium' : 'c-muted'">
+            {{ d.online ? '在线' : '离线' }}
+          </span>
+          <v-btn v-if="mdAndUp" variant="text" size="small" color="error" @click="askUnbind(d)"> 解绑 </v-btn>
+          <AdaptiveMenu v-else :actions="deviceActions(d)" :title="d.name">
+            <template #activator="{ props: menuProps }">
+              <v-btn
+                v-bind="menuProps"
+                icon="mdi-dots-horizontal"
+                size="small"
+                variant="text"
+                color="on-surface-variant"
+                class="tap-target"
+                aria-label="更多操作"
               />
             </template>
-            <template v-else>
-              <span class="t-title">{{ d.name }}</span>
-              <v-btn variant="text" size="x-small" icon="mdi-pencil" class="ml-1" @click="startRename(d)" />
-            </template>
+          </AdaptiveMenu>
+        </div>
 
-            <v-spacer />
-            <span class="t-caption mr-3" :class="d.online ? 'text-success font-weight-medium' : 'c-muted'">
-              {{ d.online ? '在线' : '离线' }}
-            </span>
-            <v-btn variant="text" size="small" color="error" @click="askUnbind(d)"> 解绑 </v-btn>
-          </div>
-
-          <!-- A device is pure compute (算力节点), not an agent. Which agents run on it
+        <!-- A device is pure compute (算力节点), not an agent. Which agents run on it
              are the 现场 chips below — each screen carries its own agent identity. -->
-          <div class="t-caption c-muted mt-1">
-            设备 ID · <span style="font-family: monospace">{{ d.device_id }}</span>
-          </div>
+        <div class="t-caption c-muted mt-1">
+          设备 ID · <span style="font-family: monospace">{{ d.device_id }}</span>
+        </div>
 
-          <!-- Read-only 归属 overview: which teams this machine serves (personal team
-             included). Registering/removing happens on each team's 「算力」 page —
+        <!-- Read-only 归属 overview: which teams this machine serves (personal team
+             included). Registering/removing happens on each team's 「工作电脑」 page —
              each chip links straight there. -->
-          <div class="mt-3">
-            <div class="t-caption c-muted mb-1">正在为这些团队提供算力</div>
-            <div class="d-flex flex-wrap align-center ga-2">
-              <v-chip
-                v-for="tid in d.team_ids"
-                :key="tid"
-                size="small"
-                variant="tonal"
-                color="primary"
-                :to="teamRoute(tid)"
-              >
-                <v-icon start size="14">mdi-account-group</v-icon>
-                {{ teamName(tid) }}
-              </v-chip>
-              <span v-if="!d.team_ids.length" class="t-caption c-muted">
-                暂无团队在用，可在团队页面的「算力」里添加
-              </span>
-            </div>
+        <div class="mt-3">
+          <div class="t-caption c-muted mb-1">正在为这些团队提供工作电脑</div>
+          <div class="d-flex flex-wrap align-center ga-2">
+            <v-chip
+              v-for="tid in d.team_ids"
+              :key="tid"
+              size="small"
+              variant="tonal"
+              color="primary"
+              :to="teamRoute(tid)"
+            >
+              <v-icon start size="14">mdi-account-group</v-icon>
+              {{ teamName(tid) }}
+            </v-chip>
+            <span v-if="!d.team_ids.length" class="t-caption c-muted">
+              暂无团队在用，可在团队页面的「工作电脑」里添加
+            </span>
           </div>
+        </div>
 
-          <div v-if="d.screens.length" class="mt-3">
-            <div class="t-caption c-muted mb-1">运行中的现场</div>
-            <div class="d-flex flex-wrap ga-2">
-              <v-chip
-                v-for="s in d.screens"
-                :key="s.sid"
-                color="primary"
-                variant="tonal"
-                size="small"
-                @click="liveScreen = s"
-              >
-                <v-icon start size="14">mdi-monitor-eye</v-icon>
-                看现场 · @{{ s.agent_handle }}
-              </v-chip>
-            </div>
+        <div v-if="d.screens.length" class="mt-3">
+          <div class="t-caption c-muted mb-1">运行中的现场</div>
+          <div class="d-flex flex-wrap ga-2">
+            <v-chip
+              v-for="s in d.screens"
+              :key="s.sid"
+              color="primary"
+              variant="tonal"
+              size="small"
+              @click="liveScreen = s"
+            >
+              <v-icon start size="14">mdi-monitor-eye</v-icon>
+              看现场 · @{{ s.agent_handle }}
+            </v-chip>
           </div>
-        </v-card>
-      </template>
-    </v-container>
+        </div>
+      </v-card>
+    </template>
 
     <!-- 添加设备: how to enroll this-or-another machine via the device flow. -->
     <v-dialog v-model="addDeviceOpen" max-width="560">
@@ -363,7 +409,7 @@ onMounted(load)
               prepend-icon="mdi-download"
               :href="d.href"
             >
-              {{ d.label }}
+              {{ t(d.labelKey) }}
             </v-btn>
           </div>
           <div class="t-caption c-muted mt-2">
@@ -440,7 +486,7 @@ onMounted(load)
         </div>
       </v-card>
     </v-dialog>
-  </div>
+  </AppPage>
 </template>
 
 <style scoped>

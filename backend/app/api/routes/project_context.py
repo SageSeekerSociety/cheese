@@ -1,19 +1,26 @@
 """Find what the project already knows, from where the caller stands.
 
-One literal query across the rooms the caller may read: room titles, messages
-and documents, decisions, tasks, library file names and the artifact list. Each
-hit names where it lives, so it can be cited; rooms the caller may not read are
-not searched and are only counted.
+One query across the rooms the caller may read: room titles, messages and
+documents, decisions, tasks, library file names and the artifact list. Every
+word of the query has to be found; each group lists its best matches first (see
+`app.domain.search.bm25`), library file names aside, which are matched as
+written. `limit` caps each group, and each kind of record (message, decision…)
+within its group. Each hit names where it lives, so it can be cited; rooms the
+caller may not read are not searched and are only counted.
+
+`only` narrows the search to some groups and pages through them with `offset`:
+the search results page reads one kind at a time, a page at a time, and
+`with_counts` adds how many of each kind there are.
 """
 
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
@@ -22,6 +29,7 @@ from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task
+from app.domain.search import bm25
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -40,31 +48,67 @@ SEARCHED_BLOCKS = (
 )
 
 
-def _pattern(q: str) -> str:
-    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
+# Written out rather than bound: the blocks index is partial on exactly these
+# kinds (migration 2d2fc3a8ce36), and Postgres only uses it when it can prove
+# the query's predicate implies the index's — which it cannot do against bind
+# parameters once a prepared statement goes generic.
+_SEARCHED_BLOCKS_SQL = text(
+    "blocks.kind IN (" + ", ".join(f"'{k.value}'" for k in SEARCHED_BLOCKS) + ")"
+)
 
 
-def _snippet(text: str, q: str, width: int = 160) -> str:
-    text = " ".join((text or "").split())
-    at = text.lower().find(q.lower())
-    start = max(at - width // 2, 0) if at >= 0 else 0
-    piece = text[start : start + width]
-    return ("…" if start else "") + piece + ("…" if start + width < len(text) else "")
+#: What `only` may name: a kind of block, or one of the two groups that are not
+#: blocks.
+ONLY_VALUES = {k.value for k in SEARCHED_BLOCKS} | {"tasks", "library"}
 
 
-@router.get("/projects/{project_id}/context/search")
-async def search_project_context(
+def _snippet(body: str, terms: list[str], width: int = 160) -> str:
+    body = " ".join((body or "").split())
+    lowered = body.lower()
+    found = [at for at in (lowered.find(t.lower()) for t in terms) if at >= 0]
+    at = min(found) if found else 0
+    start = max(at - width // 2, 0)
+    piece = body[start : start + width]
+    return ("…" if start else "") + piece + ("…" if start + width < len(body) else "")
+
+
+def _blocks_matching(
+    terms: list[str], in_readable: list[uuid.UUID], kinds: list[str]
+) -> ColumnElement[bool]:
+    return bm25.match_all_words(
+        Block.id,
+        terms,
+        {"content": 1},
+        filters=[bm25.any_of("topic_id", in_readable), bm25.any_of("kind", kinds)],
+    )
+
+
+def _tasks_matching(
+    terms: list[str], in_readable: list[uuid.UUID]
+) -> ColumnElement[bool]:
+    return bm25.match_all_words(
+        Task.id,
+        terms,
+        {"title": 2, "brief": 1, "conclusion": 1},
+        filters=[bm25.any_of("room_id", in_readable)],
+    )
+
+
+def _library_matching(project_id: uuid.UUID, q: str) -> list[dict]:
+    return [
+        {"path": f["path"], "bytes": f["bytes"], "modified": f["modified"]}
+        for f in library.list_library_files(project_id)
+        if q.lower() in f["path"].lower()
+    ]
+
+
+async def _readable_rooms(
+    db: AsyncSession,
+    resolver: ActorResolver,
     project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    q: Annotated[str, Query(min_length=1, max_length=200)],
-    topic: uuid.UUID | None = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 20,
-) -> dict:
-    q = q.strip()
-    if not q:
-        raise ValidationError("要搜的关键词不能是空的")
+    topic: uuid.UUID | None,
+) -> tuple[dict[uuid.UUID, Topic], int]:
+    """The rooms this caller may read, and how many others were left out."""
     if topic is not None:
         place = await TopicService(db).place_or_404(topic)
         if place.project_id != project_id:
@@ -84,103 +128,235 @@ async def search_project_context(
         await resolver.authorize_project(actor, project_id=project_id)
 
     rooms = list(await db.scalars(select(Topic).where(Topic.project_id == project_id)))
-    readable: dict[uuid.UUID, Topic] = {}
-    for room in rooms:
-        if await resolver.can_access_topic(
-            actor, project_id=project_id, topic_id=room.id
-        ):
-            readable[room.id] = room
-    skipped = len(rooms) - len(readable)
-    pattern = _pattern(q)
+    ids = await resolver.readable_topic_ids(actor, project_id=project_id, topics=rooms)
+    readable = {room.id: room for room in rooms if room.id in ids}
+    return readable, len(rooms) - len(readable)
 
+
+def _query(q: str) -> str:
+    q = q.strip()
+    if not q:
+        raise ValidationError("要搜的关键词不能是空的")
+    return q
+
+
+def _only(only: list[str] | None) -> set[str] | None:
+    if only is None:
+        return None
+    unknown = set(only) - ONLY_VALUES
+    if unknown:
+        raise ValidationError(f"不能按这些类别搜：{', '.join(sorted(unknown))}")
+    return set(only)
+
+
+@router.get("/projects/{project_id}/context/search")
+async def search_project_context(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    q: Annotated[str, Query(min_length=1, max_length=200)],
+    topic: uuid.UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    only: Annotated[list[str] | None, Query()] = None,
+    offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
+    with_counts: bool = False,
+) -> dict:
+    q = _query(q)
+    groups = _only(only)
+    readable, skipped = await _readable_rooms(db, resolver, project_id, topic)
+    terms = bm25.words(q)
+    await bm25.serial_scans(db)
+    hits = (
+        await _everything(db, project_id, q, terms, readable, limit)
+        if groups is None
+        else await _page(db, project_id, q, terms, readable, groups, limit, offset)
+    )
+    body: dict = {
+        "query": q,
+        "searched_rooms": len(readable),
+        "skipped_rooms": skipped,
+        "hits": hits,
+        "total": sum(len(v) for v in hits.values()),
+    }
+    if with_counts:
+        # The results page asks for its first page and the per-kind counts
+        # together: one room check instead of two.
+        body["counts"] = await _counts(db, project_id, q, terms, list(readable))
+    return ok(body)
+
+
+async def _page(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    q: str,
+    terms: list[str],
+    readable: dict[uuid.UUID, Topic],
+    groups: set[str],
+    limit: int,
+    offset: int,
+) -> dict[str, list[dict]]:
+    hits: dict[str, list[dict]] = {"records": [], "tasks": [], "library": []}
+    in_readable = list(readable)
+    kinds = sorted(groups - {"tasks", "library"})
+    # One ranked list across the kinds asked for, not a slice of each: a page
+    # of 文档 is the best document paragraphs and comments together.
+    if kinds and in_readable:
+        blocks = await db.scalars(
+            select(Block)
+            .where(_blocks_matching(terms, in_readable, kinds), _SEARCHED_BLOCKS_SQL)
+            .order_by(func.paradedb.score(Block.id).desc(), Block.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        hits["records"] = [_record(b, readable, terms) for b in blocks]
+    if "tasks" in groups and in_readable:
+        tasks = await db.scalars(
+            select(Task)
+            .where(_tasks_matching(terms, in_readable))
+            .order_by(func.paradedb.score(Task.id).desc(), Task.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        hits["tasks"] = [_task(t, readable, terms) for t in tasks]
+    if "library" in groups:
+        hits["library"] = _library_matching(project_id, q)[offset : offset + limit]
+    return hits
+
+
+async def _counts(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    q: str,
+    terms: list[str],
+    in_readable: list[uuid.UUID],
+) -> dict[str, int]:
+    """How many of each kind the search finds, named as `only` names them."""
+    counts: dict[str, int] = dict.fromkeys(ONLY_VALUES, 0)
+    if in_readable:
+        rows = await db.execute(
+            select(Block.kind, func.count())
+            .where(
+                _blocks_matching(
+                    terms, in_readable, [k.value for k in SEARCHED_BLOCKS]
+                ),
+                _SEARCHED_BLOCKS_SQL,
+            )
+            .group_by(Block.kind)
+        )
+        for kind, n in rows:
+            counts[str(kind.value)] = n
+        counts["tasks"] = (
+            await db.scalar(
+                select(func.count())
+                .select_from(Task)
+                .where(_tasks_matching(terms, in_readable))
+            )
+            or 0
+        )
+    counts["library"] = len(_library_matching(project_id, q))
+    return counts
+
+
+def _record(b: Block, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
+    room = readable[b.topic_id]
+    return {
+        "room_id": str(room.id),
+        "room_title": room.title,
+        "id": str(b.id),
+        "kind": str(b.kind.value),
+        "author": b.author,
+        "created_at": b.created_at.isoformat(),
+        "task_id": str(b.task_id) if b.task_id else None,
+        "snippet": _snippet(b.content, terms),
+    }
+
+
+def _task(t: Task, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
+    room = readable[t.room_id]
+    return {
+        "room_id": str(room.id),
+        "room_title": room.title,
+        "id": str(t.id),
+        "title": t.title,
+        "status": str(t.status.value),
+        "closed_at": t.closed_at.isoformat() if t.closed_at else None,
+        "snippet": _snippet(
+            " ".join(filter(None, (t.title, t.brief, t.conclusion))), terms
+        ),
+    }
+
+
+async def _everything(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    q: str,
+    terms: list[str],
+    readable: dict[uuid.UUID, Topic],
+    limit: int,
+) -> dict[str, list[dict]]:
     def where(room_id: uuid.UUID) -> dict:
         room = readable[room_id]
         return {"room_id": str(room.id), "room_title": room.title}
 
-    hits: dict[str, list[dict]] = {}
-    hits["rooms"] = [
-        {**where(r.id), "status": str(r.status.value)}
-        for r in readable.values()
-        if q.lower() in (r.title or "").lower()
-    ][:limit]
-
+    hits: dict[str, list[dict]] = {"rooms": [], "records": [], "tasks": []}
     if readable:
-        blocks = await db.scalars(
-            select(Block)
+        in_readable = list(readable)
+        found_rooms = await db.scalars(
+            select(Topic)
             .where(
-                Block.topic_id.in_(list(readable)),
-                Block.kind.in_(SEARCHED_BLOCKS),
-                Block.content.ilike(pattern, escape="\\"),
+                bm25.match_all_words(
+                    Topic.id,
+                    terms,
+                    {"title": 1},
+                    filters=[bm25.any_of("id", in_readable)],
+                )
             )
-            .order_by(Block.created_at.desc())
+            .order_by(func.paradedb.score(Topic.id).desc(), Topic.id)
             .limit(limit)
         )
-        hits["records"] = [
-            {
-                **where(b.topic_id),
-                "id": str(b.id),
-                "kind": str(b.kind.value),
-                "author": b.author,
-                "created_at": b.created_at.isoformat(),
-                "task_id": str(b.task_id) if b.task_id else None,
-                "snippet": _snippet(b.content, q),
-            }
-            for b in blocks
+        hits["rooms"] = [
+            {**where(r.id), "status": str(r.status.value)} for r in found_rooms
         ]
+        # Each kind gets its own `limit`: a busy conversation would otherwise
+        # fill every slot, and the decision or document paragraph that also
+        # matches would never be listed.
+        blocks = [
+            block
+            for kind in SEARCHED_BLOCKS
+            for block in await db.scalars(
+                select(Block)
+                .where(
+                    _blocks_matching(terms, in_readable, [kind.value]),
+                    _SEARCHED_BLOCKS_SQL,
+                )
+                .order_by(func.paradedb.score(Block.id).desc(), Block.id)
+                .limit(limit)
+            )
+        ]
+        hits["records"] = [_record(b, readable, terms) for b in blocks]
         tasks = await db.scalars(
             select(Task)
-            .where(
-                Task.room_id.in_(list(readable)),
-                or_(
-                    Task.title.ilike(pattern, escape="\\"),
-                    Task.brief.ilike(pattern, escape="\\"),
-                    Task.conclusion.ilike(pattern, escape="\\"),
-                ),
-            )
-            .order_by(Task.created_at.desc())
+            .where(_tasks_matching(terms, in_readable))
+            .order_by(func.paradedb.score(Task.id).desc(), Task.id)
             .limit(limit)
         )
-        hits["tasks"] = [
-            {
-                **where(t.room_id),
-                "id": str(t.id),
-                "title": t.title,
-                "status": str(t.status.value),
-                "closed_at": t.closed_at.isoformat() if t.closed_at else None,
-                "snippet": _snippet(
-                    " ".join(filter(None, (t.title, t.brief, t.conclusion))), q
-                ),
-            }
-            for t in tasks
-        ]
-    else:
-        hits["records"] = []
-        hits["tasks"] = []
+        hits["tasks"] = [_task(t, readable, terms) for t in tasks]
 
-    hits["library"] = [
-        {"path": f["path"], "bytes": f["bytes"], "modified": f["modified"]}
-        for f in library.list_library_files(project_id)
-        if q.lower() in f["path"].lower()
-    ][:limit]
+    hits["library"] = _library_matching(project_id, q)[:limit]
     artifacts = await db.scalars(
-        select(ProjectArtifact).where(
-            ProjectArtifact.project_id == project_id,
-            or_(
-                ProjectArtifact.name.ilike(pattern, escape="\\"),
-                ProjectArtifact.about.ilike(pattern, escape="\\"),
-            ),
+        select(ProjectArtifact)
+        .where(
+            bm25.match_all_words(
+                ProjectArtifact.id,
+                terms,
+                {"name": 2, "about": 1},
+                filters=[bm25.any_of("project_id", [project_id])],
+            )
         )
+        .order_by(func.paradedb.score(ProjectArtifact.id).desc(), ProjectArtifact.id)
+        .limit(limit)
     )
     hits["artifacts"] = [
         {"id": str(a.id), "name": a.name, "about": a.about} for a in artifacts
-    ][:limit]
-
-    return ok(
-        {
-            "query": q,
-            "searched_rooms": len(readable),
-            "skipped_rooms": skipped,
-            "hits": hits,
-            "total": sum(len(v) for v in hits.values()),
-        }
-    )
+    ]
+    return hits

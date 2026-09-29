@@ -12,11 +12,13 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
+
+import { t } from '@/i18n'
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -48,6 +50,8 @@ function makeRouter() {
     routes: [
       { path: '/projects/:projectId', name: 'workspace-project', component: Blank },
       { path: '/projects/:projectId/settings', name: 'project-settings', component: Blank },
+      { path: '/projects/:projectId/library', name: 'project-library', component: Blank },
+      { path: '/projects/:projectId/members', name: 'project-members', component: Blank },
       { path: '/:pathMatch(.*)*', name: 'catch-all', component: Blank },
     ],
   })
@@ -92,9 +96,12 @@ function mount(inner: Record<string, unknown> = {}) {
 async function openProjectMenu(container: Element, baseElement: Element): Promise<string[]> {
   const header = container.querySelector('[title="项目菜单"]') ?? baseElement.querySelector('[title="项目菜单"]')
   await fireEvent.click(header as Element)
-  return Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).map(
-    (el) => el.textContent?.replace(/\s+/g, '') ?? ''
-  )
+  return menuRows(baseElement).map((el) => el.textContent?.replace(/\s+/g, '') ?? '')
+}
+
+/** 菜单里能点的每一行：桌面是下拉菜单的行，手机是底部面板里的按钮。 */
+function menuRows(baseElement: Element): Element[] {
+  return Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item, .v-overlay button'))
 }
 
 beforeAll(() => {
@@ -142,9 +149,7 @@ describe('手机上的切换项目', () => {
   it('点一个项目就换到那个项目的地址上去', async () => {
     const { container, baseElement, router } = mount({ page: true })
     await openProjectMenu(container, baseElement)
-    const target = Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).find((el) =>
-      el.textContent?.includes('推荐算法')
-    )
+    const target = menuRows(baseElement).find((el) => el.textContent?.includes('推荐算法'))
     await fireEvent.click(target as Element)
     await router.isReady()
     expect(router.currentRoute.value.fullPath).toBe('/projects/p3')
@@ -163,5 +168,94 @@ describe('手机上的切换项目', () => {
     // 菜单里仍然有那几页（日历、成员、项目设置），但没有一行是项目 —— 没得换。
     expect(rows).not.toContain('P1')
     expect(rows).toContain('项目设置')
+  })
+})
+
+// 「转让项目」现在也在这个菜单里（成员页那颗按钮保留）。谁能转，项目行自己说得出：
+// 所有者本人，或者管得了成员的团队管理员。判据读不出来的人（比如只是团队成员）
+// 不该看到这一行 —— 递到退不掉/转不动的人手里，就是把人骗进一个会被拒的弹窗。
+describe('项目菜单里的「转让项目」', () => {
+  const current = (extra: Record<string, unknown>) => [{ ...projects[0], ...extra }, ...projects.slice(1)]
+  // 菜单行按当前语言渲染，别把中文写进断言里（测试环境的语言跟着 navigator 走）；
+  // `openProjectMenu` 把行文字里的空白都压掉了，比对的那一份也要一样压。
+  const label = t('work.members.transfer').replace(/\s+/g, '')
+
+  // 「我是谁」读的是登录后落下的那一份账号（`myHandle()`），照 DmView.spec.ts 那样种上。
+  beforeEach(() => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
+  })
+
+  it('我自己的项目：看得到', async () => {
+    const { container, baseElement } = mount({ page: false, projects: current({ owner_handle: 'me' }) })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(label))).toBe(true)
+  })
+
+  it('不是我、也管不了成员：看不到', async () => {
+    const { container, baseElement } = mount({ page: false, projects })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(label))).toBe(false)
+  })
+
+  it('管得了成员的团队管理员：看得到', async () => {
+    const { container, baseElement } = mount({
+      page: false,
+      projects: current({ owner_handle: 'someone-else', can_manage_members: true }),
+    })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(label))).toBe(true)
+  })
+})
+
+// 另一半：「退出项目」也在这个菜单里（成员页那颗按钮保留）。判据只有「我不是所有
+// 者」——所有者看到的上一条就是它的替代，他退不掉，只能先把项目交出去；其余的人
+// 都能退，退的是这个项目的成员身份，不是小队。
+describe('项目菜单里的「退出项目」', () => {
+  const current = (extra: Record<string, unknown>) => [{ ...projects[0], ...extra }, ...projects.slice(1)]
+  const leave = t('work.members.leave').replace(/\s+/g, '')
+  const transfer = t('work.members.transfer').replace(/\s+/g, '')
+
+  beforeEach(() => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
+  })
+
+  it('不是我自己的项目：看得到', async () => {
+    const { container, baseElement } = mount({ page: false, projects: current({ owner_handle: 'alice' }) })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(leave))).toBe(true)
+    expect(rows.some((r) => r.includes(transfer))).toBe(false)
+  })
+
+  it('我自己的项目：看不到——换给我是「转让项目」，不是「退出项目」', async () => {
+    const { container, baseElement } = mount({ page: false, projects: current({ owner_handle: 'me' }) })
+    const rows = await openProjectMenu(container, baseElement)
+    expect(rows.some((r) => r.includes(leave))).toBe(false)
+    expect(rows.some((r) => r.includes(transfer))).toBe(true)
+  })
+})
+
+// 手机上话题列表只留「全局」和话题：资料库、成员、项目文档收进项目菜单。它们得在那里
+// 点得到，「有人找你」的私聊未读也得跟着「成员」进去。
+describe('手机上项目的几页收进项目菜单', () => {
+  const library = t('navigation.project.library')
+  const members = t('navigation.project.members')
+
+  it('列表上不再有那几行，菜单里点「资料库」去资料库', async () => {
+    const { container, baseElement, router } = mount({ page: true })
+    const listed = Array.from(container.querySelectorAll('.v-list-item')).map((el) => el.textContent ?? '')
+    expect(listed.some((text) => text.includes(library))).toBe(false)
+
+    await openProjectMenu(container, baseElement)
+    const row = menuRows(baseElement).find((el) => el.textContent?.includes(library))
+    await fireEvent.click(row as Element)
+    await router.isReady()
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/projects/p1/library'))
+  })
+
+  it('私聊未读跟着「成员」进了菜单', async () => {
+    const { container, baseElement } = mount({ page: true, privateUnreadMap: { zhang: 2, li: 1 } })
+    await openProjectMenu(container, baseElement)
+    const row = menuRows(baseElement).find((el) => el.textContent?.includes(members))
+    expect(row?.textContent).toContain('3')
   })
 })

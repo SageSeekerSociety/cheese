@@ -162,7 +162,7 @@ onBeforeUnmount(() => {
         />
         <details class="t-body c-muted mb-3">
           <summary>运行说明</summary>
-          <p>Cloud、Hosted Machine 使用相同配置方式；Hosted Sandbox 暂未开放。机器需要支持脚本中的命令。</p>
+          <p>云端和自有设备使用同一份脚本，机器需要支持脚本中的命令。</p>
           初始化脚本在房间目录运行，启动脚本在任务代码目录运行。两者使用 Bash，每段最多 30
           分钟；使用机器当前权限。环境变量同时传给两个脚本和 AI 进程，脚本里的 export 不会传给下一步。 工具可安装到
           $HOME/.local/bin。
@@ -173,7 +173,7 @@ onBeforeUnmount(() => {
         </details>
         <p class="t-body mb-2">环境变量</p>
         <p class="t-body c-muted mb-3">这些值对项目成员和芝士可见。请不要在这里保存密码或 API 密钥。</p>
-        <div v-for="(row, index) in variables" :key="index" class="d-flex align-start ga-2 mb-2">
+        <div v-for="(row, index) in variables" :key="index" class="env-var mb-2">
           <v-text-field
             v-model="row.key"
             autocomplete="off"
@@ -198,6 +198,7 @@ onBeforeUnmount(() => {
             variant="text"
             size="small"
             aria-label="删除环境变量"
+            class="env-var__remove"
             @click="variables.splice(index, 1)"
           />
         </div>
@@ -275,6 +276,23 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 名称、值、删除排成一行；内容列窄到两格都放不下名字时，名称和值上下叠起来，删除
+   留在右边，两个输入框都拿到整行的宽度。 */
+.env-var {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+@container (width < 480px) {
+  .env-var {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .env-var__remove {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+  }
+}
 .environment-log {
   max-height: 320px;
   overflow: auto;

@@ -6,7 +6,6 @@ import type {
   ProjectMemberRow,
   ReactionAgg,
   RoomTask,
-  TodoItem,
   Topic,
   WsServerFrame,
 } from '../cx_types'
@@ -20,25 +19,30 @@ import {
   ApiError,
   attachmentRawUrl,
   downloadFile,
+  editMessage,
   ensureFreshToken,
-  getAgentControl,
-  getProgress,
   isRetryableGetFailure,
   listBlocks,
   listRoomTasks,
-  sendAgentControl,
   summonAgent,
   toggleReaction as apiToggleReaction,
   undoTopicTitle,
 } from '../api'
+import { useLongPress } from '../composables/useLongPress'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { replySnippet } from '../lib/blockDisplay'
-import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
+import {
+  mergeRefreshedTail,
+  PAGE_SIZE,
+  scrollTopAfterPrepend,
+  shouldLoadNewer,
+  shouldLoadOlder,
+} from '../lib/blockPaging'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { AGENT_STATUS_EVENTS, collapseNotices, mailOutcomes, type PlatformNotice } from '../lib/platformNotice'
-import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
+import { coalesceSplitFencedCodeBlocks, editableText } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { topicShortId, topicStateBadge } from '../lib/topicState'
 import { myHandle } from '../me'
@@ -48,15 +52,18 @@ import { useChatScroll } from './room/composables/useChatScroll'
 import { useOutbox } from './room/composables/useOutbox'
 import { useRoomRoster } from './room/composables/useRoomRoster'
 import { useRoomSocket } from './room/composables/useRoomSocket'
+import { useRoomTurns } from './room/composables/useRoomTurns'
+import { useTimeline } from './room/composables/useTimeline'
 import RollingNumber from './room/RollingNumber.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomHoverBar from './room/RoomHoverBar.vue'
 import RoomMessage from './room/RoomMessage.vue'
+import RoomMessageSheet from './room/RoomMessageSheet.vue'
 import RoomNotice from './room/RoomNotice.vue'
-import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
 
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
 // Message rendering (markdown / plain / reference chips) lives in
@@ -98,6 +105,8 @@ const props = withDefaults(
     // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
     // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
     unreadOnOpen?: number
+    // 打开时停在这一条（搜索结果、链接里的 `?block=`）。null = 停在平常的位置。
+    focusBlock?: string | null
   }>(),
   {
     alwaysSummon: false,
@@ -127,7 +136,10 @@ const emit = defineEmits<{
   // 走：干出来的东西是干活的**证据**，不是干活的**开始**，而右边那格「现场」得
   // 在开工那一刻就在那儿——它就是用来看它在干什么的。
   (e: 'working', working: boolean): void
-  // 会话控制状态（任务、模型）动了：socket 上的这一帧转给现场那格的控制条。
+  // 正在干活的队友们的名字：一间房几个座位并行在跑就几个名字。帧不带座位的
+  // （老后端）这项是空的，界面退回 agentName 的单数说法。
+  (e: 'working-agents', names: string[]): void
+  // 会话状态（任务、模型）动了：socket 上的这一帧转给现场那格的会话详情。
   (e: 'agent-control', state: AgentControlState): void
   // 现场那格的时间线上多了一行，或者已有的一行变了（挂了、重试次数涨了）。socket
   // 在这一栏，现场自己听不到。
@@ -162,6 +174,7 @@ const {
   mentionPool,
   memberByHandle,
   seatByHandle,
+  agentNameOf,
   agentDisplayName,
   displayName,
   isExternal,
@@ -199,95 +212,21 @@ watch(
   { immediate: true, deep: true }
 )
 
-const messages = ref<Block[]>([])
+// 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline。
+const timeline = useTimeline()
+const { messages, hasMore, hasNewer } = timeline
 const loadingHistory = ref(false)
 
-// Slack-style discrete messages: 芝士 doesn't stream tokens — each complete
-// message lands as an `assistant_block` frame. `awaitingReply` drives the
-// 正在看… indicator from summon until every active turn explicitly finishes.
-const awaitingReply = ref(false)
-// 这一轮的消息到没到芝士手上。平台收下和会话读到是两件事，中间隔着一次投递：
-// 它可能失败退回队列，冷启动时还可能一分多钟里根本没有会话。所以这条指示分两
-// 段说，翻页的那一下就是芝士的 👀 回执。
-const reachedAgent = ref(false)
-const activeTurnIds = ref<Set<string>>(new Set())
+// 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
+// 往上报（working / site-turns / working-agents）是这里的事。
+const turns = useRoomTurns({ messages, agentName, agentNameOf })
+const { awaitingReply, turnAgentName } = turns
 watch(awaitingReply, (v) => emit('working', v))
-
-// 这一轮是哪位队友在干活。房间里可以坐好几位 AI，「正在处理」说的得是被叫到、
-// 正在干的那一位——拿名册上排第一的那位顶替，另一位干活时界面就写着别人的名字。
-// 认的依次是：这一轮里它署名的记录、它落下的 👀 回执、发出去那句话点的名；一样都
-// 还没有时退回房间的座位。
-const workingHandle = ref<string | null>(null)
-function noteWorker(handle: string | null | undefined) {
-  if (handle && seatByHandle.value.get(handle)?.agent) workingHandle.value = handle
-}
-function noteTurnBlock(b: Block) {
-  if (b.turn_id && activeTurnIds.value.has(b.turn_id)) noteWorker(b.author)
-}
-const workingName = computed(() => (workingHandle.value ? agentDisplayName(workingHandle.value) : agentName.value))
-watch(awaitingReply, (v) => {
-  if (!v) workingHandle.value = null
-})
-
-// 停止就放在「正在处理…」旁边：人想叫停的时候眼睛就在这里。卡住的会话恰好是那个
-// 听不见话的——在对话里说「停」只会排到它后面去——所以这里走会话控制，平台直接
-// 把这次运行结束掉，不等会话答应。结束以后「正在处理…」跟着 turn_finished 消失。
-const stopping = ref(false)
-async function stopRun() {
-  const topicId = props.topic?.id
-  if (!topicId || stopping.value) return
-  stopping.value = true
-  try {
-    const state = await getAgentControl(topicId)
-    if (!state.id) throw new Error(t('work.room.stop.notStarted', { name: agentName.value }))
-    const result = await sendAgentControl(topicId, state.id, { subtype: 'interrupt' })
-    const response = result.result?.response
-    if (response?.subtype === 'error') throw new Error(response.error ?? '')
-    if (response?.response?.stopped === false) {
-      throw new Error(t('work.room.stop.notStarted', { name: agentName.value }))
-    }
-  } catch (e) {
-    errorMsg.value = t('work.room.stop.failed', { reason: e instanceof Error ? e.message : String(e) })
-  } finally {
-    stopping.value = false
-  }
-}
-// 每个在跑的轮次从什么时候开始。中途连进来的，后端在 turn_active 上带着开始时间；
-// 没带的（老后端）只能从连上的这一刻算。
-const turnStarts = ref<Record<string, number>>({})
-watch(turnStarts, (v) => emit('site-turns', v))
-function turnBegan(id: string, at = Date.now()) {
-  if (!(id in turnStarts.value)) turnStarts.value = { ...turnStarts.value, [id]: at }
-}
-function turnEnded(id: string) {
-  if (!(id in turnStarts.value)) return
-  const next = { ...turnStarts.value }
-  delete next[id]
-  turnStarts.value = next
-}
+watch(turns.turnStarts, (v) => emit('site-turns', v))
+watch(turns.workingAgentNames, (v) => emit('working-agents', v))
 // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
 function toSite(b: Block) {
   if (b.kind === 'event' && !b.task_id) emit('site-block', b)
-}
-
-// Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
-// Working-log todo (the agent's `todo_write`). Live during a turn (§3.1.1); between
-// turns it holds the topic's stored 进度层 (#187) instead of being wiped, so
-// "做到哪了" is visible in the room without summoning anyone.
-const todoItems = ref<TodoItem[]>([])
-// The list on screen is a previous turn's leftovers, not this turn's live
-// progress — labelled differently so nobody reads a stale half-circle as
-// "running now".
-const todoRestored = ref(false)
-// 对话里只画正在跑的这一轮的清单；上一轮留下的在总览里（PanelProgress）。
-const liveTodo = computed(() => todoItems.value.length > 0 && !todoRestored.value)
-// 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
-// 在 13px 上 ◐ 和 ○ 几乎分不开。三个 mdi 图标按「填充程度」递进，一眼可分——
-// 空心圈 = 还没做，半填充 = 正在做，实心圈里带勾 = 做完了。
-function todoIcon(status: string): string {
-  if (status === 'completed') return 'mdi-check-circle'
-  if (status === 'in_progress') return 'mdi-circle-slice-4'
-  return 'mdi-circle-outline'
 }
 
 // ---- 选项问题 (cheese_ask): buttons under the message; one click answers
@@ -298,9 +237,8 @@ async function pickOption(m: Block, option: string) {
   askBusy.value = m.id
   try {
     const updated = await answerOptions(m.id, option, AUTHOR)
-    const bi = messages.value.findIndex((x) => x.id === m.id)
-    if (bi >= 0) {
-      messages.value.splice(bi, 1, updated)
+    if (timeline.find(m.id)) {
+      timeline.replace(updated)
       historyChanges?.set(updated.id, updated)
     }
   } catch (e) {
@@ -317,7 +255,7 @@ const reactionPickerFor = ref<string | null>(null)
 
 function applyReactions(blockId: string, reactions: ReactionAgg[]) {
   historyReactions?.set(blockId, reactions)
-  const m = messages.value.find((x) => x.id === blockId)
+  const m = timeline.find(blockId)
   if (m) m.reactions = reactions
 }
 
@@ -344,6 +282,7 @@ function onMessagesClick(e: MouseEvent) {
   if (reactionPickerFor.value && !target?.closest('.rx-picker, .rx-toggle')) {
     reactionPickerFor.value = null
   }
+  if (touchOnly.value && target) toggleTime(target)
   const el = target?.closest('.mention') as HTMLElement | null
   if (!el) return
   if (el.dataset.handle) emit('mention-click', el.dataset.handle)
@@ -370,14 +309,40 @@ const {
   noteFrame,
   rememberScroll,
   restoreScroll,
-} = useChatScroll()
+} = useChatScroll({ showingNewest: () => !hasNewer.value })
+
+// ---- 触屏：长按一条消息打开它的操作面板（见 room/RoomMessageSheet）。 ----
+// 按输入方式判断，不按视口宽度：带触摸屏的笔记本两样都对，有鼠标就有悬停条。
+const touchQuery = typeof window !== 'undefined' ? window.matchMedia?.('(hover: none)') : undefined
+const touchOnly = ref(!!touchQuery?.matches)
+useEventListener(touchQuery, 'change', (e: MediaQueryListEvent) => (touchOnly.value = e.matches))
+
+const sheet = reactive({ id: null as string | null, open: false })
+const sheetBlock = computed(() => (sheet.id ? timeline.find(sheet.id) ?? null : null))
+// 长按是在整列上听的，按在哪一条上由落点算：一条一条挂监听，几百条消息就是几百组。
+// 只认带操作的那几行（还没送出去的那条自己带着重试和编辑），正在改的那条不算。
+useLongPress(scrollRef, (e) => {
+  const row = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-mid][data-actions]')
+  const id = row?.dataset.mid
+  if (!id || id === editingId.value) return
+  sheet.id = id
+  sheet.open = true
+})
+
+// 续话的时间平时藏着，桌面上悬停才出现；触屏上点一下这一条把它亮出来，再点收起。
+const timeShownId = ref<string | null>(null)
+function toggleTime(target: HTMLElement) {
+  if (target.closest('a, button, input, textarea, img, .mention, .md-pre')) return
+  const id = target.closest<HTMLElement>('.im-row--cont[data-mid]')?.dataset.mid ?? null
+  timeShownId.value = id && id !== timeShownId.value ? id : null
+}
 
 // ---- 悬停条：整列一个，跟着指针在消息之间滑（见 room/RoomHoverBar）。 ----
 // 指针落在一条消息上就移过去；落在行与行之间的空隙里就留在原地（从一行滑到下一行
-// 的路上不该让它一闪一闪）；落在别的行上（事件、标记、「正在处理」）或移出整列
+// 的路上不该让它一闪一闪）；落在别的行上（事件、标记）或移出整列
 // 就收起。表情选择条开着的时候钉在那一行上，不跟指针走。
 const bar = reactive({ id: null as string | null, shown: false, top: 0, jump: false })
-const barBlock = computed(() => (bar.id ? messages.value.find((m) => m.id === bar.id) ?? null : null))
+const barBlock = computed(() => (bar.id ? timeline.find(bar.id) ?? null : null))
 
 function rowTop(row: HTMLElement): number | null {
   const content = contentRef.value
@@ -405,6 +370,9 @@ function hideBar() {
 }
 
 function onTimelinePointer(e: MouseEvent) {
+  // 触屏上没有悬停：浏览器照样补发 mouseover，悬停条出来了就再也收不回去。这些操作
+  // 在触屏上是长按一条消息打开的面板（见下面 touchOnly）。
+  if (touchOnly.value) return
   const target = e.target as HTMLElement | null
   if (!target || target.closest('.hover-bar')) return
   const row = target.closest<HTMLElement>('[data-mid], .notice-row, .room-happening, .dispatched, .tl-mark, .im-row')
@@ -418,13 +386,14 @@ function onTimelineScroll() {
   rememberScroll(props.topic?.id)
   const el = scrollRef.value
   if (el && shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value })) void loadOlder()
+  const fromBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight : Infinity
+  if (shouldLoadNewer(fromBottom, { hasNewer: hasNewer.value, loading: loadingNewer.value })) void loadNewer()
 }
 
 // --- paging back through history --------------------------------------------
 // The panel holds a WINDOW of the timeline (newest PAGE_SIZE blocks), not the
 // whole thing: a long topic was 2.1 MB / 2226 rows in one response, and the
 // browser choked on all three of transfer, JSON parse, and 2226 live DOM nodes.
-const hasMore = ref(false)
 const loadingOlder = ref(false)
 
 // A page of very short messages can be shorter than the pane. Then there is
@@ -454,17 +423,15 @@ async function loadOlder() {
     const payload = await listBlocks(topic.id, { limit: PAGE_SIZE, before: oldest.id })
     // The user may have switched topics while this was in flight.
     if (props.topic?.id !== topic.id) return
-    const next = prependOlder({ blocks: messages.value, hasMore: hasMore.value }, payload.data, payload.has_more)
-    messages.value = next.blocks
-    hasMore.value = next.hasMore
-    setCachedWindow(topic.id, next)
+    timeline.prepend(payload.data, payload.has_more)
+    if (!hasNewer.value) setCachedWindow(topic.id, timeline.newest())
     for (const b of payload.data) older.add(b.id)
     await nextTick()
     const sc = scrollRef.value
     if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
   } catch (e) {
     failed = true
-    errorMsg.value = e instanceof Error ? e.message : '加载消息失败'
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
   } finally {
     // Unconditional: a topic switch mid-flight must not leave the flag stuck,
     // or the new topic could never page back.
@@ -475,6 +442,72 @@ async function loadOlder() {
   // a broken request in a tight loop.
   if (!failed) await fillViewportIfNeeded()
 }
+
+// --- a window opened in the middle of the history ---------------------------
+// 从一条旧消息打开对话时，显示的是它前后的一段，下面还有更新的（hasNewer）。往下
+// 翻时一页页接上，接到最新的那一段就合成一段（见 room/composables/useTimeline）。
+const loadingNewer = ref(false)
+
+async function loadNewer() {
+  const topic = props.topic
+  const last = messages.value.at(-1)
+  if (!topic || !last || loadingNewer.value || !hasNewer.value) return
+  loadingNewer.value = true
+  try {
+    const payload = await listBlocks(topic.id, { limit: PAGE_SIZE, after: last.id })
+    if (props.topic?.id !== topic.id) return
+    timeline.appendNewer(payload.data, !payload.has_newer)
+    if (!hasNewer.value) setCachedWindow(topic.id, timeline.newest())
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
+  } finally {
+    loadingNewer.value = false
+  }
+}
+
+/**
+ * 停到这一条上，并让它闪一下。已经在显示的这一段里就直接滚过去；不在就取它前后
+ * 的一段换上来——离最新不远的话，这一段会和最新的接上，那就还是平常的样子。
+ */
+async function openAt(id: string) {
+  // 落到一条上之后，这一栏不该再被「新消息来了就钉到底部」拽走。
+  atBottom.value = false
+  await nextTick()
+  if (timeline.find(id)) {
+    scrollToMessage(id)
+    return
+  }
+  const topic = props.topic
+  if (!topic) return
+  try {
+    const payload = await listBlocks(topic.id, { limit: PAGE_SIZE, around: id })
+    if (props.topic?.id !== topic.id) return
+    unseen.value = []
+    timeline.showMiddle({ blocks: payload.data, hasMore: payload.has_more }, !payload.has_newer)
+    if (!hasNewer.value) setCachedWindow(topic.id, timeline.newest())
+    await nextTick()
+    // 整段换过，没有「从哪滑过去」可言：直接落到那一行。
+    scrollToMessage(id, 'auto')
+    void fillViewportIfNeeded()
+  } catch (e) {
+    errorMsg.value = e instanceof ApiError && e.status === 404 ? t('work.room.messageGone') : t('work.room.loadFailed')
+  }
+}
+
+/** 回到最新：背后一直在收新消息的那一段直接换上来，不用再取。 */
+function backToNewest() {
+  if (!hasNewer.value) return
+  timeline.backToNewest()
+  scrollToBottom()
+}
+
+// 同一个房间里，地址换了点名的那一条（又从面板跳了一次）就落过去；点名去掉了（浏览
+// 器后退到跳之前）就回到最新。换房间不归这里：loadTopic 打开新房间时自己看点名。
+watch([() => props.topic?.id, () => props.focusBlock ?? null], ([topicId, id], [wasTopic, wasId]) => {
+  if (topicId !== wasTopic || id === wasId || loadingHistory.value) return
+  if (id) void openAt(id)
+  else backToNewest()
+})
 
 // 这条房间 socket 的连接、重连退避、心跳、换掉假活的那条 —— 见
 // room/composables/useRoomSocket。它不认识帧的含义：帧交给下面的 handleFrame。
@@ -554,26 +587,24 @@ const older = reactive(new Set<string>())
 
 function pushBlock(b: Block) {
   historyChanges?.set(b.id, b)
-  if (!messages.value.some((m) => m.id === b.id)) {
-    if (historyChanges === null && b.author !== AUTHOR) {
-      arrived.add(b.id)
-      if (!atBottom.value && b.kind !== 'event') unseen.value.push(b.id)
-    }
-    messages.value.push(b)
-  }
+  const landing = timeline.append(b)
+  if (landing === 'known' || historyChanges !== null || b.author === AUTHOR) return
+  if (landing === 'shown') arrived.add(b.id)
+  if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
 }
 
 // 往上翻着的时候别人又说了话：底部浮出一颗提示，写着来了几条。点它回到最新，并让
 // 来的第一条闪一下——人要找的是「新的从哪开始」，不只是「到底了」。回到底部（不管
-// 是点它还是自己滚下去）它就收起。
+// 是点它还是自己滚下去）它就收起。停在历史中间时它一直在，写「回到最新」：那时底部
+// 只是这一段的底部，不是最新。
 const unseen = ref<string[]>([])
 watch(atBottom, (bottom) => {
-  if (bottom) unseen.value = []
+  if (bottom && !hasNewer.value) unseen.value = []
 })
 function jumpToUnseen() {
   const first = unseen.value[0]
-  const el = scrollRef.value
-  if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  if (hasNewer.value) backToNewest()
+  else scrollRef.value?.scrollTo({ top: scrollRef.value.scrollHeight, behavior: 'smooth' })
   unseen.value = []
   if (first) flash(first)
 }
@@ -638,28 +669,9 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'reaction':
-      // 芝士的 👀 是平台落的回执：会话已经把这条消息拿进去了（后端
-      // chat.confirm_prompt_receipt）。认「作者不是我自己」而不是去比对队友的
-      // handle，因为名册可能还没到，那时比对不上会把指示永远卡在「正在送给」。
-      // 代价是房间里有人手点 👀 会让它提早翻一下，下一轮就自己纠正。
-      for (const r of frame.reactions ?? []) {
-        if (r.emoji !== '👀') continue
-        const by = r.authors.find((a) => a !== AUTHOR)
-        if (by === undefined) continue
-        reachedAgent.value = true
-        if (awaitingReply.value) noteWorker(by)
-      }
       // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
       // row in place (the frame carries the block's full fresh aggregate).
       applyReactions(frame.block_id, frame.reactions)
-      break
-    case 'todo':
-      // Working-log checklist, updated in place. `restored` marks the replay of
-      // a previous turn's list at turn start (进度层) — the first live frame of
-      // this turn clears the flag.
-      todoItems.value = frame.items
-      todoRestored.value = frame.restored === true
-      autoScroll()
       break
     case 'state':
       // A platform resource changed → parent refreshes that panel live.
@@ -669,14 +681,12 @@ function handleFrame(frame: WsServerFrame) {
     case 'event_block':
       // A persisted, clickable action card (decision/doc/...) for this turn.
       pushBlock(frame.block)
-      noteTurnBlock(frame.block)
       toSite(frame.block)
       autoScroll()
       break
     case 'block_updated': {
       // 已经在时间线上的一行变了：原地换掉，不追加第二行。
-      const at = messages.value.findIndex((m) => m.id === frame.block.id)
-      if (at >= 0) messages.value.splice(at, 1, frame.block)
+      timeline.replace(frame.block)
       historyChanges?.set(frame.block.id, frame.block)
       toSite(frame.block)
       break
@@ -684,15 +694,14 @@ function handleFrame(frame: WsServerFrame) {
     case 'assistant_block':
       // One complete 芝士 message (Slack-style) — a turn may land several.
       pushBlock(frame.block)
-      noteTurnBlock(frame.block)
       // Compatibility with an older backend that has no lifecycle markers.
-      if (activeTurnIds.value.size === 0) awaitingReply.value = false
+      turns.settleIfIdle()
       autoScroll()
       break
     case 'error':
       if (frame.client_id) {
         if (failOutgoing(frame.client_id, frame.message)) {
-          if (activeTurnIds.value.size === 0) awaitingReply.value = false
+          turns.settleIfIdle()
         } else {
           errorMsg.value = frame.message
         }
@@ -709,57 +718,29 @@ function handleFrame(frame: WsServerFrame) {
       // A persisted turn failure is already in the timeline as an event block
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
-      if (activeTurnIds.value.size === 0) awaitingReply.value = false
-      // A failed turn is exactly when the checklist matters most — it is what
-      // whoever picks this up next (person or new machine) works from. Keep it.
-      todoRestored.value = true
+      turns.settleIfIdle()
       break
     case 'done':
       // Mid-session messages fold into the existing Claude run and emit no
       // separate completion frame. Lifecycle markers own the running indicator.
-      if (activeTurnIds.value.size === 0) {
-        awaitingReply.value = false
-        todoRestored.value = true
-        emit('turn-done')
-      }
+      if (turns.settleIfIdle()) emit('turn-done')
       autoScroll()
       break
     case 'retract_block':
       historyChanges?.set(frame.block_id, null)
-      messages.value = messages.value.filter((m) => m.id !== frame.block_id)
+      timeline.remove(frame.block_id)
       break
     case 'agent_control':
       emit('agent-control', frame.state)
       break
     case 'turn_active':
-      if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
-      for (const id of frame.turn_ids ?? []) {
-        const since = frame.since?.[id]
-        turnBegan(id, typeof since === 'number' ? since * 1000 : Date.now())
-      }
-      awaitingReply.value = true
-      // 中途连进来的：这一轮里已经落下的记录说得出是谁在干。
-      for (const m of messages.value) noteTurnBlock(m)
-      // 这个话题上有活在跑，就说明消息早到它手上了。回执是精确的那一路，这是
-      // 兜底的一路：重连进来、或者会话自己开的一轮，本来就不该说「正在送给」。
-      reachedAgent.value = true
+      turns.active(frame.turn_ids ?? [], frame.since, frame.agents)
       break
-    case 'turn_started': {
-      const next = new Set(activeTurnIds.value)
-      next.add(frame.turn_id)
-      activeTurnIds.value = next
-      turnBegan(frame.turn_id)
-      awaitingReply.value = true
-      reachedAgent.value = true
+    case 'turn_started':
+      turns.started(frame.turn_id, frame.agent)
       break
-    }
     case 'turn_finished': {
-      const next = new Set(activeTurnIds.value)
-      next.delete(frame.turn_id)
-      activeTurnIds.value = next
-      turnEnded(frame.turn_id)
-      awaitingReply.value = next.size > 0
-      todoRestored.value = true
+      turns.finished(frame.turn_id)
       emit('turn-done')
       autoScroll()
       break
@@ -789,29 +770,11 @@ async function loadTopic(topic: Topic, entering = false) {
   const reactions = new Map<string, ReactionAgg[]>()
   historyReactions = reactions
   const stillHere = () => !disposed && generation === historyGeneration && props.topic?.id === topic.id
+  // 地址点名了一条消息：落到它上面，而不是上次停的地方。
+  const focus = props.focusBlock ?? null
   errorMsg.value = null
   connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
-  awaitingReply.value = false
-  activeTurnIds.value = new Set()
-  turnStarts.value = {}
-  todoItems.value = []
-  todoRestored.value = false
-  // 进度层 (#187): the checklist the last turn left behind. Fire-and-forget and
-  // guarded on the topic still being active — it is context, never a reason to
-  // hold up (or fail) opening the conversation.
-  void getProgress(topic.id)
-    .then((p) => {
-      if (props.topic?.id !== topic.id || todoItems.value.length) return
-      // `?? []` 不是防御性洁癖：这个 ref 只要被写成 undefined，模板里的
-      // `todoItems.length` 就抛，整个 ChatPanel 渲染失败——房间变成白板。而下面
-      // 那句 `.catch(() => {})` 只吞掉报错，撤不回已经写进去的 undefined，所以
-      // 屏幕上不会有任何东西说明发生了什么。今天的后端始终带 items，够不到这里；
-      // 前后端版本错开一次就够得到，代价是整个房间。
-      const items = p.items ?? []
-      todoItems.value = items
-      todoRestored.value = items.length > 0
-    })
-    .catch(() => {})
+  turns.reset()
   reactionPickerFor.value = null
   // 悬停条是绝对定位的：收起只是透明，它仍停在上一个话题那一行的 translateY 上，
   // 仍算进这一栏的可滚动高度。从一个翻到很深的长话题切到短话题，它把滚动区撑高，
@@ -828,18 +791,17 @@ async function loadTopic(topic: Topic, entering = false) {
   sentNow.clear()
   delivered.clear()
   editing.clear()
+  editingId.value = null
   unseen.value = []
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
   loadingOlder.value = false
   const cached = cachedWindow(topic.id)
   if (cached) {
-    messages.value = cached.blocks
-    hasMore.value = cached.hasMore
-    restoreScroll(topic.id)
+    timeline.show(cached)
+    if (!focus) restoreScroll(topic.id)
   } else {
-    messages.value = []
-    hasMore.value = false
+    timeline.show({ blocks: [], hasMore: false })
     loadingHistory.value = true
   }
   try {
@@ -861,10 +823,9 @@ async function loadTopic(topic: Topic, entering = false) {
       const warmed = cachedWindow(topic.id)
       if (!warmed) return
       shownEarly = warmed
-      messages.value = warmed.blocks
-      hasMore.value = warmed.hasMore
+      timeline.show(warmed)
       loadingHistory.value = false
-      restoreScroll(topic.id)
+      if (!focus) restoreScroll(topic.id)
     })
     // One screenful, not the whole timeline — older blocks arrive when the
     // user scrolls up to them (loadOlder).
@@ -895,22 +856,22 @@ async function loadTopic(topic: Topic, entering = false) {
       if (block) blocks.set(id, { ...block, reactions: updated })
     }
     merged.blocks = [...blocks.values()]
-    messages.value = merged.blocks
+    timeline.show(merged)
     // A reconnect starts with durable history. Settle sends that landed while
     // their echo was lost before opening the new socket; only absent client ids
     // remain queued for an idempotent resend.
     for (const block of merged.blocks) settleOutbox(block)
-    hasMore.value = merged.hasMore
     setCachedWindow(topic.id, merged)
     placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
-    if (!shown) restoreScroll(topic.id)
+    if (focus) void openAt(focus)
+    else if (!shown) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
     if (!parallelSocket && !connectRefused.value) connectSocket(topic.id)
     void fillViewportIfNeeded()
   } catch (e) {
     if (!stillHere()) return
     if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
-    errorMsg.value = e instanceof Error ? e.message : '加载消息失败'
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
     // A failed history fetch must not terminate socket recovery during an outage.
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
       retryLater(topic.id)
@@ -935,6 +896,35 @@ function setReply(m: Block) {
 function clearReply() {
   replyTarget.value = null
 }
+
+// ---- 改自己发过的消息：正文原地换成输入框，保存之后房间里每个人看到新的正文。 ----
+// 只有自己在房间里说的话：卡上的对话、别人的、芝士的都不在此列。
+const editingId = ref<string | null>(null)
+const editSaving = ref(false)
+function canEdit(m: Block): boolean {
+  return isMine(m) && m.kind === 'message' && !m.task_id
+}
+function startEdit(m: Block) {
+  editingId.value = m.id
+}
+async function saveEdit(m: Block, text: string) {
+  const content = text.trim()
+  if (editSaving.value || !content) return
+  if (content === editableText(m.content, refMaps).trim()) {
+    editingId.value = null
+    return
+  }
+  editSaving.value = true
+  try {
+    const updated = await editMessage(m.id, content)
+    timeline.replace(updated)
+    if (editingId.value === m.id) editingId.value = null
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.message.saveFailed')
+  } finally {
+    editSaving.value = false
+  }
+}
 // 输入框里那枚回复标签上写的：回复的是谁、那条说了什么。
 const replyLabel = computed(() =>
   replyTarget.value
@@ -945,7 +935,7 @@ const replyLabel = computed(() =>
     : null
 )
 function parentOf(m: Block): Block | undefined {
-  return m.reply_to ? messages.value.find((x) => x.id === m.reply_to) : undefined
+  return m.reply_to ? timeline.find(m.reply_to) : undefined
 }
 function showReplyCue(m: Block): boolean {
   // Only a person's replies are explicit threads. An AI message's reply_to is
@@ -967,10 +957,10 @@ async function downloadAttachment(m: Block) {
     errorMsg.value = e instanceof Error ? e.message : '下载失败'
   }
 }
-function scrollToMessage(id: string) {
-  const el = document.querySelector(`[data-mid="${id}"]`)
+function scrollToMessage(id: string, behavior: 'smooth' | 'auto' = 'smooth') {
+  const el = scrollRef.value?.querySelector(`[data-mid="${id}"]`)
   if (!el) return
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  el.scrollIntoView({ behavior, block: 'center' })
   flash(id)
 }
 
@@ -994,25 +984,13 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   // An image-only send (no text) is a valid message (图片输入).
   if (!trimmed && !atts) return false
   errorMsg.value = null
+  // 停在历史中间时发出去的这条要看得见：先回到最新。
+  backToNewest()
   sentNow.add(enqueue({ content: trimmed, replyTo: replyTarget.value?.id ?? undefined, atts }))
   replyTarget.value = null
-  // Only show the "awaiting reply" indicator when 芝士 was summoned — an
-  // instant local ack, before anything has been delivered anywhere yet.
-  if (summon) {
-    awaitingReply.value = true
-    reachedAgent.value = false
-    // 点了哪位就是交给哪位；没点名的交给房间的座位。
-    workingHandle.value = null
-    for (const [, handle] of trimmed.matchAll(/<@([^>\s]+)>/g)) {
-      if (seatByHandle.value.get(handle)?.agent) {
-        workingHandle.value = handle
-        break
-      }
-    }
-  }
-  // The stored checklist stays on screen until this turn's first live frame
-  // replaces it — blanking it here would hide 进度 during the cold start, which
-  // is precisely when someone is wondering where the work got to.
+  // Only a summon starts awaiting a reply — an instant local ack, before
+  // anything has been delivered anywhere yet.
+  if (summon) awaitingReply.value = true
   scrollToBottom()
   return true
 }
@@ -1143,6 +1121,7 @@ const splitMarkers = computed(() =>
   placeSplitMarkers(roomTasks.value, {
     blocks: visible.value,
     hasMore: hasMore.value,
+    hasNewer: hasNewer.value,
   })
 )
 
@@ -1151,18 +1130,19 @@ function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
   // This event contains the worker's actual result, rather than a status notice.
   if (block.meta?.event_type === 'subagent_stop') return null
   if (isPersonBlock(block)) return null
-  // 平台替某个参与者写下的一条（「XX 编辑了文档」就是这样）：档位说「平台」，
-  // 署名说是谁 —— 所以这里问的是署名，名册在手时以名册为准。
+  // 关于某位 AI 队友那件事的通知，以那位队友的身份出现（头像和名字），不另署「平
+  // 台」。是哪位：署名是队友就是它，否则是这一轮的那位（turnAgentName）。不属于任
+  // 何一位队友那一轮的平台通知（人编辑了文档之类）照旧不署队友。
   if (isAgentHandle(block.author) || seatByHandle.value.get(block.author)?.agent) {
     return agentDisplayName(block.author)
   }
   if (seatByHandle.value.has(block.author) || memberByHandle.value.has(block.author)) return null
-  if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return agentName.value
+  if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return turnAgentName(block.turn_id)
   if (block.author === 'system' && (notice.mode === 'action' || notice.mode === 'turn-summary')) {
-    return agentName.value
+    return turnAgentName(block.turn_id)
   }
   if (block.turn_id && (block.author === 'system' || notice.mode === 'action' || notice.mode === 'turn-summary')) {
-    return agentName.value
+    return turnAgentName(block.turn_id)
   }
   return null
 }
@@ -1186,7 +1166,7 @@ function editSend(item: Outgoing) {
   editing.add(item.clientId)
   dropSend(item.clientId)
   draft.value = draft.value.trim() ? `${item.content}\n${draft.value}` : item.content
-  const parent = item.replyTo ? messages.value.find((m) => m.id === item.replyTo) : undefined
+  const parent = item.replyTo ? timeline.find(item.replyTo) : undefined
   if (parent) replyTarget.value = parent
   if (item.atts?.length) pendingAtts.value = [...item.atts, ...pendingAtts.value]
   composerRef.value?.focus()
@@ -1454,7 +1434,7 @@ watch(
       void loadTopic(props.topic, true)
       restoreComposer(id)
     } else {
-      messages.value = []
+      timeline.show({ blocks: [], hasMore: false })
       closeSocket()
     }
   },
@@ -1546,10 +1526,12 @@ onBeforeUnmount(() => {
             :jump="bar.jump"
             :is-agent="!!barBlock && isAgentBlock(barBlock)"
             :picker-open="!!barBlock && reactionPickerFor === barBlock.id"
+            :editable="!!barBlock && canEdit(barBlock)"
             @react="onReact"
             @toggle-picker="reactionPickerFor = reactionPickerFor === $event ? null : $event"
             @reply="setReply"
             @upgrade="emit('upgrade-message', $event)"
+            @edit="startEdit"
           />
           <!-- 骨架和真的那几行同形同高：到货时骨架淡出，不推动下面的东西。 -->
           <Transition name="tl-skel">
@@ -1558,7 +1540,9 @@ onBeforeUnmount(() => {
 
           <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
             <h2 class="t-title mb-2">从一件具体的事开始</h2>
-            <p class="t-body c-muted mb-4">{{ agentName }}可以查找资料、起草文档，或和你一起拆分任务</p>
+            <p class="t-body c-muted mb-4">
+              <UserRef :handle="agentSeat?.handle" :name="agentName" />可以查找资料、起草文档，或和你一起拆分任务
+            </p>
             <div class="d-flex flex-wrap ga-2">
               <v-btn
                 v-for="prompt in starterPrompts"
@@ -1633,6 +1617,7 @@ onBeforeUnmount(() => {
                 'tl-older': older.has(m.id),
                 'tl-flash': flashId === m.id,
                 'tl-delivered': delivered.has(m.id),
+                'im-row--time': timeShownId === m.id,
               }"
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
@@ -1650,6 +1635,9 @@ onBeforeUnmount(() => {
               :viewer="AUTHOR"
               :active="bar.shown && bar.id === m.id"
               :ask-busy="askBusy === m.id"
+              :editing="editingId === m.id"
+              :edit-text="editingId === m.id ? editableText(m.content, refMaps) : undefined"
+              :saving="editSaving"
               @animationend="settleArrival($event, m.id)"
               @open-file="(path, taskId) => emit('open-file', path, taskId)"
               @open-topic="emit('open-topic', $event)"
@@ -1657,8 +1645,10 @@ onBeforeUnmount(() => {
               @react="onReact"
               @answer="pickOption"
               @download="downloadAttachment"
-              @jump="scrollToMessage"
+              @jump="openAt"
               @avatar-error="onAvatarError"
+              @save-edit="saveEdit(m, $event)"
+              @cancel-edit="editingId = null"
             />
           </template>
 
@@ -1703,65 +1693,6 @@ onBeforeUnmount(() => {
             />
           </TransitionGroup>
 
-          <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
-             from summon until every explicitly active turn finishes; the live
-             working-log checklist stays visible for the whole turn. -->
-          <!-- 进场上浮淡入；芝士的回复落地、这一轮结束时，它淡出，回复就在它原来的
-             位置上接着往下读。 -->
-          <Transition name="tl-working" @leave="collapseLeave">
-            <div v-if="awaitingReply || liveTodo" class="im-row">
-              <div class="im-gutter">
-                <CheeseAvatar :size="28" :name="workingName" />
-              </div>
-              <div class="im-main">
-                <div class="im-meta">
-                  <span class="im-name">{{ workingName }}</span>
-                </div>
-
-                <!-- Working-log checklist (`todo_write`, §3.1.1), only while a turn is
-                   live. Between turns the stored 进度层 (#187) lives in the panel's
-                   总览: parked at the end of the conversation it sat under every new
-                   message, pushing the talk up. 新的一项依次浮上来；状态变了图标原地
-                   换、删除线淡进来。 -->
-                <TransitionGroup v-if="liveTodo" tag="ul" name="todo" class="todo-list">
-                  <li
-                    v-for="(item, ti) in todoItems"
-                    :key="item.id"
-                    class="todo-item"
-                    :class="'todo-' + item.status"
-                    :style="{ '--i': ti }"
-                  >
-                    <Transition name="todo-mark" mode="out-in">
-                      <v-icon :key="item.status" class="todo-mark" size="14">{{ todoIcon(item.status) }}</v-icon>
-                    </Transition>
-                    <span class="todo-text">{{ item.subject }}</span>
-                  </li>
-                </TransitionGroup>
-
-                <!-- Instant ack before the first message / during cold start. 「正在交给」
-                   换成「正在处理」时交叉淡变，不跳。 -->
-                <div v-if="awaitingReply" class="im-text">
-                  <Transition name="tl-swap" mode="out-in">
-                    <span :key="reachedAgent ? 'working' : 'handing'" class="text-medium-emphasis">{{
-                      reachedAgent ? `${workingName}正在处理…` : `正在交给${workingName}…`
-                    }}</span>
-                  </Transition>
-                  <span class="caret" />
-                  <v-btn
-                    size="small"
-                    variant="text"
-                    class="im-stop"
-                    prepend-icon="mdi-stop"
-                    :title="t('work.room.stop.title', { name: workingName })"
-                    :loading="stopping"
-                    @click="stopRun"
-                    >{{ t('work.room.stop.action') }}</v-btn
-                  >
-                </div>
-              </div>
-            </div>
-          </Transition>
-
           <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
           <div class="px-4">
             <slot name="timeline-end" />
@@ -1769,13 +1700,27 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <RoomMessageSheet
+        v-model="sheet.open"
+        :block="sheetBlock"
+        :is-agent="!!sheetBlock && isAgentBlock(sheetBlock)"
+        :editable="!!sheetBlock && canEdit(sheetBlock)"
+        @react="onReact"
+        @reply="setReply"
+        @upgrade="emit('upgrade-message', $event)"
+        @edit="startEdit"
+      />
+
       <!-- 往上翻着的时候来了新消息。 -->
       <div class="new-pill-anchor">
         <Transition name="new-pill">
-          <button v-if="unseen.length" type="button" class="new-pill" @click="jumpToUnseen">
+          <button v-if="unseen.length || hasNewer" type="button" class="new-pill" @click="jumpToUnseen">
             <v-icon size="14">mdi-arrow-down</v-icon>
-            <RollingNumber :value="unseen.length" />
-            <span>{{ t('work.room.newMessages') }}</span>
+            <template v-if="unseen.length">
+              <RollingNumber :value="unseen.length" />
+              <span>{{ t('work.room.newMessages') }}</span>
+            </template>
+            <span v-else>{{ t('work.room.backToLatest') }}</span>
           </button>
         </Transition>
       </div>
@@ -1866,82 +1811,6 @@ onBeforeUnmount(() => {
 .toast-leave-to {
   opacity: 0;
 }
-/* Working-log checklist (§3.1.1) — process, sits above the streaming text.
-   Between turns the same list shows the stored 进度层 (#187) under a label. */
-/* 任务清单块：一块中性底色把它和正文分开，不靠左竖条（左条纹只留给引用块和结构
-   线），也不上琥珀（它是进度，不是要人去按的东西）。 */
-.todo-list {
-  list-style: none;
-  margin: 4px 0 6px;
-  padding: 6px 10px;
-  background: var(--fill);
-  border-radius: var(--radius-sm);
-}
-.todo-item {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-/* 图标盒子没有文字基线，所以整行改成顶对齐，再把图标压到第一行文字的中线上
-   ((13.6px × 1.5 − 14px) / 2 ≈ 3px)——否则多行标题会把图标顶到最后一行。 */
-.todo-mark {
-  flex: none;
-  margin-top: 3px;
-}
-.todo-pending {
-  color: var(--faint);
-}
-.todo-in_progress {
-  color: var(--ink);
-  font-weight: 600;
-}
-.todo-completed {
-  color: var(--faint);
-}
-/* 删除线一直在，只是透明的：做完的那一刻它淡进来，不是突然出现。 */
-.todo-text {
-  text-decoration-line: line-through;
-  text-decoration-color: transparent;
-  transition:
-    text-decoration-color var(--dur-base) var(--ease-standard),
-    opacity var(--dur-base) var(--ease-standard);
-}
-.todo-item {
-  transition: color var(--dur-base) var(--ease-standard);
-}
-.todo-completed .todo-text {
-  text-decoration-color: currentcolor;
-  opacity: 0.7;
-}
-/* 新的一项依次浮上来，一项晚 30ms。 */
-.todo-enter-active {
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
-  /* 一组不超过 300ms（§9.7）：第十项之后不再往后排。 */
-  transition-delay: calc(min(var(--i, 0), 9) * 30ms);
-}
-.todo-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
-}
-.todo-mark-enter-active {
-  transition:
-    opacity var(--dur-quick) var(--ease-out),
-    transform var(--dur-quick) var(--ease-out);
-}
-.todo-mark-leave-active {
-  transition:
-    opacity var(--dur-press) var(--ease-in),
-    transform var(--dur-press) var(--ease-in);
-}
-.todo-mark-enter-from,
-.todo-mark-leave-to {
-  opacity: 0;
-  transform: scale(0.6);
-}
 .messages {
   background: var(--surface);
   /* A flex child's implicit min-height is its content — without this, a long
@@ -1993,28 +1862,20 @@ onBeforeUnmount(() => {
   font-weight: 500;
   color: var(--muted);
 }
-.im-stop {
-  margin-left: 8px;
-  color: var(--muted);
-}
-
-.caret {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  vertical-align: text-bottom;
-  margin-left: 1px;
-  background: var(--ink);
-  animation: blink 1s step-end infinite;
-}
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
-}
 /* 骨架到货时淡出。离场时它脱离文档流，下面已经排好的真行不会被它推一下。 */
 .tl-content {
   position: relative;
+}
+/* 手机外壳里对话不铺满整屏：平板竖屏上一行会排到六十多个字。时间线和输入框收成同
+   一栏居中（贴在输入框上的那一条由放它进来的那一栏收，见 TopicChatColumn）；滚动的
+   还是整块，手指在两边空白处照样滚得动。 */
+@media (max-width: 959.98px) {
+  .tl-content,
+  .composer {
+    width: 100%;
+    max-width: var(--page-w);
+    margin-inline: auto;
+  }
 }
 .tl-skel-leave-active {
   position: absolute;
@@ -2022,36 +1883,6 @@ onBeforeUnmount(() => {
   transition: opacity var(--dur-quick) var(--ease-in);
 }
 .tl-skel-leave-to {
-  opacity: 0;
-}
-/* 「芝士正在处理」那一行：进来上浮淡入，这一轮结束时淡出。 */
-.tl-working-enter-active {
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
-}
-.tl-working-leave-active {
-  transition:
-    height var(--dur-quick) var(--ease-in),
-    margin-top var(--dur-quick) var(--ease-in),
-    padding var(--dur-quick) var(--ease-in),
-    opacity var(--dur-quick) var(--ease-in);
-}
-.tl-working-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
-}
-.tl-working-leave-to {
-  opacity: 0;
-}
-.tl-swap-enter-active {
-  transition: opacity var(--dur-base) var(--ease-out);
-}
-.tl-swap-leave-active {
-  transition: opacity var(--dur-quick) var(--ease-in);
-}
-.tl-swap-enter-from,
-.tl-swap-leave-to {
   opacity: 0;
 }
 /* 新消息提示：浮在时间线底部正中，从下面升上来。 */
@@ -2077,6 +1908,18 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-2);
   transform: translateX(-50%);
   cursor: pointer;
+}
+/* 触屏上手指点得中：药丸画出来还是 28px 高，能点的范围撑到 44px（已有定位）。 */
+@media (pointer: coarse) {
+  .new-pill::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
 }
 .new-pill-enter-active {
   transition:
@@ -2143,12 +1986,6 @@ onBeforeUnmount(() => {
   from,
   25% {
     background-color: var(--accent-wash);
-  }
-}
-/* 关掉动效时光标常亮：它说的「还在往下写」靠的是在不在，不是闪不闪。 */
-@media (prefers-reduced-motion: reduce) {
-  .caret {
-    animation: none;
   }
 }
 </style>

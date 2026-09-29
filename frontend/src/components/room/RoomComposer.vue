@@ -250,6 +250,45 @@ function pickMention(item: MentionItem) {
   void nextTick(() => composerInput.value?.focus?.())
 }
 
+// @ 菜单里的键盘导航。鼠标划过和 ↑/↓ 改的是同一个下标——回车挑的就是它。分开存
+// 只会得到「鼠标指着第三个人、回车却挑了第一个」，而两条路谁也看不见对方存了什么。
+const mentionIndex = ref(0)
+// Esc 收起候选（@ 还留在正文里，那只是一次临时收起）。再打一个字它就重新打开。
+const mentionClosed = ref(false)
+const mentionMenuEl = ref<HTMLElement | null>(null)
+const mentionMenuOpen = computed(() => mentionMatches.value.length > 0 && !mentionClosed.value)
+// 读的时候夹一下：候选会自己变短（名册更新、资料库到货），下标不该指着一条已经不在
+// 列表里的项——那样回车一条也挑不动。
+const mentionActiveIndex = computed(() => Math.min(mentionIndex.value, Math.max(0, mentionMatches.value.length - 1)))
+// 查询词变了、或者进出一趟资料库，高亮都回到第一项：眼前是一份刚过滤出来的新名单，
+// 旧下标指的是另一个人。收起状态也跟着这两件事复位——打字就是在重新打开它。
+watch(mentionQuery, () => {
+  mentionIndex.value = 0
+  mentionClosed.value = false
+})
+watch(mentionLevel, () => {
+  mentionIndex.value = 0
+})
+
+function moveMention(delta: number) {
+  const n = mentionMatches.value.length
+  if (!n) return
+  mentionIndex.value = (mentionActiveIndex.value + delta + n) % n
+  void nextTick(scrollMentionIntoView)
+}
+// 菜单自己有高度上限、自己滚（见 .mention-menu）：不把高亮项滚进视野，按 ↓ 走到
+// 底之后高亮就跑到看不见的地方去了——那时键盘看起来又坏了。
+function scrollMentionIntoView() {
+  mentionMenuEl.value?.querySelector('.mention-menu-item.is-active')?.scrollIntoView?.({ block: 'nearest' })
+}
+// 回车挑的是高亮那一项；菜单收起了（Esc）返回 false，把这次回车还给「发送」。
+function pickActiveMention(): boolean {
+  const item = mentionMenuOpen.value ? mentionMatches.value[mentionActiveIndex.value] : undefined
+  if (!item) return false
+  pickMention(item)
+  return true
+}
+
 // Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
 // token (<@handle> / <#topicId>) at send time. The rules live in the shared
 // module so this stays identical to the backend's backstop.
@@ -278,7 +317,7 @@ function expandMentions(text: string): string {
 //
 // 名册到了之后，@ 名单上别的 AI 队友也算叫：一个话题可以 @ 好几位，@ 到的那位
 // 就是开这一轮的那位（不在房间里的会被请进来）。只认座位那一位时，@ 第二位队友
-// 发出去，界面上既不说「正在交给」，那颗按钮也不亮，看起来就像只有芝士叫得动。
+// 发出去，那颗按钮不亮，看起来就像只有芝士叫得动。
 function mentionsAgent(expanded: string): boolean {
   if (mentionsHandle(expanded, props.agentSeat?.handle)) return true
   if (props.agentSeat === null) return false
@@ -356,6 +395,20 @@ function onComposerKey(e: KeyboardEvent) {
     mentionLevel.value = 'root'
     return
   }
+  // 菜单开着时上下键换高亮。输入法正在选字时这两个键是给输入法的（翻候选词），
+  // 所以那会儿让过去。菜单收起了就不拦——上下键该去挪光标，而不是隔着一个看不见
+  // 的菜单选人。
+  const arrow = e.key === 'ArrowDown' || e.key === 'ArrowUp'
+  if (arrow && mentionMenuOpen.value && !isImeKey(e)) {
+    e.preventDefault()
+    moveMention(e.key === 'ArrowDown' ? 1 : -1)
+    return
+  }
+  if (e.key === 'Escape' && mentionMenuOpen.value) {
+    e.preventDefault()
+    mentionClosed.value = true
+    return
+  }
   if (e.key !== 'Enter' || e.shiftKey) return
   // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
   if (isImeKey(e)) return
@@ -369,10 +422,9 @@ function onComposerKey(e: KeyboardEvent) {
     sendDraft({ summon: true })
     return
   }
-  // While the @-menu is open, Enter picks the first match instead of sending.
-  if (mentionMatches.value.length) {
+  // While the @-menu is open, Enter picks the highlighted match instead of sending.
+  if (pickActiveMention()) {
     e.preventDefault()
-    pickMention(mentionMatches.value[0])
     return
   }
   if (!enterSends.value) return
@@ -425,7 +477,7 @@ defineExpose({
   >
     <!-- @-autocomplete: 没打字是「人 / 群播 / 资料库」这一级，打了字就是搜索。 -->
     <Transition name="menu-rise">
-      <div v-if="mentionMatches.length || mentionLevel === 'library'" class="mention-menu">
+      <div v-if="mentionMenuOpen || mentionLevel === 'library'" ref="mentionMenuEl" class="mention-menu">
         <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
         <Transition :name="mentionLevel === 'library' ? 'level-in' : 'level-out'" mode="out-in">
           <div :key="mentionLevel" class="mention-menu-level">
@@ -437,7 +489,13 @@ defineExpose({
               <div v-if="mm.group && mm.group !== mentionMatches[i - 1]?.group" class="mention-menu-group">
                 {{ mm.group }}
               </div>
-              <button type="button" class="mention-menu-item" @click="pickMention(mm)">
+              <button
+                type="button"
+                class="mention-menu-item"
+                :class="{ 'is-active': i === mentionActiveIndex }"
+                @click="pickMention(mm)"
+                @mouseenter="mentionIndex = i"
+              >
                 <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                   <v-icon size="13">mdi-bullhorn-outline</v-icon>
                 </span>
@@ -464,7 +522,7 @@ defineExpose({
                 <ExternalTag v-else-if="mm.external" />
                 <span class="mention-menu-sub">{{ mm.sub }}</span>
                 <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
-                <span v-else-if="i === 0" class="mention-menu-hint">Enter</span>
+                <span v-else-if="i === mentionActiveIndex && enterSends" class="mention-menu-hint">Enter</span>
               </button>
             </template>
             <div v-if="mentionLevel === 'library' && !mentionMatches.length" class="mention-menu-group">
@@ -532,7 +590,7 @@ defineExpose({
       />
       <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
              唯一的实心按钮，其余一律是安静的图标。 -->
-      <div class="composer-actions d-flex align-center ga-1">
+      <div class="composer-actions d-flex align-center" :class="enterSends ? 'ga-1' : 'ga-4'">
         <!-- 这两个 input 是藏起来的，但**不能**用 display:none / visibility:hidden：
                  iOS Safari 拒绝用脚本打开一个被隐藏掉的文件选择框，按钮点下去
                  毫无反应。所以按 .visually-hidden 的老办法藏——留在布局里、只是
@@ -735,6 +793,36 @@ defineExpose({
   }
 }
 
+/* 触屏上手指点得中（设计系统 §10.1）：几颗按钮画出来的样子不变，能点的范围撑到
+   44×44（同 style.css 的 .tap-target）。撑开的范围不能互相盖住，所以按钮之间拉开到
+   16px（模板里按输入方式换 ga-4）；这一行也长到 44px，不让它伸进上面的输入框。 */
+@media (pointer: coarse) {
+  .composer-actions {
+    min-height: 44px;
+  }
+  .summon-btn {
+    position: relative;
+  }
+  .composer-icon::before,
+  .composer-send::before,
+  .summon-btn::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+  .mention-menu-item {
+    min-height: 44px;
+  }
+  /* 回复、附件那一行横着滚，滚动的盒子会裁掉 ✕ 撑出去的范围：上下各留 8px。 */
+  .composer .chip-list {
+    padding-block: 8px;
+  }
+}
+
 /* @-autocomplete popup — mirrors TopicView's composer picker. */
 /* 浮在输入区上方，不占位置。它原来是输入区里的一个普通块：菜单一出现输入区就长高，
    贴在输入框上面的验收横条被整条顶上去，菜单一收又掉回来。浮层本来就该带投影、
@@ -757,8 +845,10 @@ defineExpose({
   /* 菜单最多 7 项（`mentionMatches` 里 slice(0, 7)），每项 min-height 36px，展开
      就是 254px；而 `.composer` 是 `.chat`（flex column）里不肯收缩的那一项。面板
      一矮（尤其手机上），多出来的部分连同输入框一起从 `.chat` 底部溢出、被外壳裁
-     掉，还没有滚动条。给个上限让它自己滚——40vh 与 `.panel-card__block-body` 同例。 */
-  max-height: 40vh;
+     掉，还没有滚动条。给个上限让它自己滚，量的是看得见的那一截：手机上键盘弹起来
+     时 40vh 还是按整屏算，菜单会伸到顶栏底下（--app-height / --keyboard-inset 见
+     lib/keyboardInset.ts）。 */
+  max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.4);
   background: var(--surface);
   box-shadow: var(--shadow-2);
 }
@@ -772,7 +862,10 @@ defineExpose({
   font-size: 13px;
   cursor: pointer;
 }
-.mention-menu-item:hover {
+/* 高亮只有一套：鼠标划过（`@mouseenter` 把下标挪过去）和 ↑/↓ 改的是同一个下标。
+   两边各画一次的话，指针停在第三行、键盘走到第四行时屏幕上会同时亮着两行，
+   而回车只会挑其中一行。 */
+.mention-menu-item.is-active {
   background: var(--fill);
 }
 .mention-avatar {

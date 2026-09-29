@@ -59,12 +59,20 @@ export type PostSpaceInviteCodeRequestData = {
   maxUses?: number
   /** Epoch milliseconds; omit for a code that never expires. */
   expiresAt?: number | null
+  /** 说明 —— 这张码给谁、干什么用. Omitted or blank stores no note. */
+  note?: string | null
 }
 
 export type PatchSpaceInviteCodeRequestData = {
   maxUses?: number
   /** Absent leaves the date alone; an explicit null makes the code never expire. */
   expiresAt?: number | null
+  /**
+   * Absent leaves the 说明 alone; null (or a blank string) clears it. The two
+   * are deliberately different requests — correcting a note must not be the
+   * same thing as deleting it.
+   */
+  note?: string | null
 }
 
 export type PatchSpaceRequestData = {
@@ -244,6 +252,8 @@ export type SpaceAnalyticsTask = {
   createdAt: number
   deadline?: number
   participantCount: number
+  // 没设上限的题是 null；这里不画「/ 上限」那一截，别当成 0。
+  participantLimit: number | null
   pendingParticipantApprovalCount: number
   approvedParticipantCount: number
   rejectedParticipantCount: number
@@ -258,6 +268,33 @@ export type SpaceAnalyticsTask = {
 
 export type SpaceTaskAnalytics = {
   tasks: SpaceAnalyticsTask[]
+}
+
+// 逐人那一格：「谁领了几道、走到哪一步」，以及**谁**在哪道题上领了两周没动。
+// 一条领取的状态由提交与评审算出来（passed / submitted / inProgress），不看
+// completion_status。团队领取按队一行，isTeam 标出来。
+export type SpaceAnalyticsPerson = {
+  userId: number
+  name: string
+  isTeam: boolean
+  claims: number
+  passed: number
+  submitted: number
+  inProgress: number
+}
+
+export type SpaceAnalyticsStalledClaim = {
+  taskId: number
+  taskTitle: string
+  userId: number
+  name: string
+  isTeam: boolean
+  claimedAt: number
+}
+
+export type SpaceAnalyticsPeople = {
+  people: SpaceAnalyticsPerson[]
+  stalled: SpaceAnalyticsStalledClaim[]
 }
 
 export type SpaceAnalyticsParticipants = {
@@ -372,6 +409,8 @@ export type SpaceMyPublishedTask = {
   publishedAt?: number | null
   endedAt?: number | null
   deadline?: number | null
+  /** 领取人数上限；`null` = 不限（真库用 0 表示不限，接口一律折成 null）。 */
+  participantLimit: number | null
   participantCount: number
   approvedParticipantCount: number
   pendingParticipantApprovalCount: number

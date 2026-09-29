@@ -4,6 +4,8 @@ kind: 参考
 summary: 芝士每一轮的系统提示词由哪些块组成，每块的出现条件、预算和原文，以及各流程阶段注入哪一段说明——在构建时从代码生成，不跟着代码漂移。
 covers:
   - backend/app/domain/agent/harness/prompt.py
+  - backend/app/domain/memory/instructions.py
+  - backend/app/domain/memory/files_store.py
   - backend/app/domain/agent/stages.py
   - backend/app/domain/agent/skills.py
   - backend/app/domain/agent/skill_library/

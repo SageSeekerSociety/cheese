@@ -1,11 +1,15 @@
 import errno
 
+import pytest
+
 from app.domain.agent.platform_failures import (
+    HOST_SCOPED_CODES,
     RUNTIME_IMAGE_MISSING_CODE,
     STORAGE_EXHAUSTED_CODE,
     WORKSPACE_VCS_PERMS,
     WORKSPACE_VCS_PERMS_CODE,
     classify_platform_failure,
+    classify_session_start,
     is_storage_exhausted,
 )
 from app.domain.repository.service import WorkspacePermissionError
@@ -209,3 +213,143 @@ def test_a_setup_failure_the_platform_cannot_name_stays_unnamed():
     from app.domain.agent.platform_failures import classify_platform_failure
 
     assert classify_platform_failure(ScreenSetupError("说不清的失败")) is None
+
+
+# What sessions that died on their way up left in their runner's log. The first
+# three are from dev's session host (2026-09-25), paths shortened; the rest are
+# the shapes the same programs print for the other known causes.
+_RECORD = (
+    "cheese-runner 0f0f ended: Claude Code exited with status 1 before it started:\n"
+)
+_LEASE = (
+    _RECORD + "Traceback (most recent call last):\n"
+    '  File "/h/client.py", line 544, in _take_leased_machine\n'
+    "    client.acquire(deadline=time.monotonic())\n"
+    '  File "/h/executor_transport.py", line 515, in acquire\n'
+)
+_START_LOGS = {
+    "lease answered 504": (
+        _LEASE + "executor_transport.PlatformHTTPError: Platform HTTP 504: "
+        '{"code":504,"message":"GatewayTimeoutError"}',
+        "Claude Code 启动失败：这个房间的工作电脑还在准备",
+    ),
+    "lease found no machine": (
+        _LEASE + 'raise RuntimeError(result["unavailable"])\n'
+        "RuntimeError: 工作电脑未连接；对话和平台工具仍可用。",
+        "Claude Code 启动失败：这个房间的工作电脑没有连接",
+    ),
+    "lease found the room's machine unbound": (
+        _LEASE + 'raise RuntimeError(result["unavailable"])\n'
+        "RuntimeError: 这个房间选的工作电脑已经解绑，需要重新选择工作电脑；"
+        "对话和平台工具仍可用。",
+        "Claude Code 启动失败：这个房间选的工作电脑已经解绑，需要重新选择",
+    ),
+    "lease refused otherwise": (
+        _LEASE + "executor_transport.PlatformHTTPError: Platform HTTP 403: "
+        '{"message":"Device is not hosted"}',
+        "Claude Code 启动失败：没能取得这个房间的工作电脑",
+    ),
+    "docker run exit 125": (
+        _RECORD + "subprocess.CalledProcessError: Command '['docker', 'run', "
+        "'--detach', 'cheese-private-executor:2.1.282']' returned non-zero exit "
+        "status 125.",
+        "Claude Code 启动失败：执行容器没能创建",
+    ),
+    "executor image missing": (
+        _RECORD + "Unable to find image 'cheese-private-executor:2.1.282' locally\n"
+        "docker: Error response from daemon: pull access denied for "
+        "cheese-private-executor",
+        "Claude Code 启动失败：机器上缺少执行容器的镜像",
+    ),
+    "another runner holds the lock": (
+        "cheese-runner 0f0f ended: the runner failed\n"
+        "Traceback (most recent call last):\n"
+        '  File "/h/runner.pyz/app/domain/agent/harness/driven/runner.py", '
+        "line 52, in start\n"
+        "    fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+        "BlockingIOError: [Errno 11] Resource temporarily unavailable",
+        "Claude Code 启动失败：这个房间上一个会话进程还没有退出",
+    ),
+    "binary missing (dash)": (
+        _RECORD + "sh: 1: exec: /opt/cheese/claude/versions/2.1.282: not found",
+        "Claude Code 启动失败：机器上缺少 Claude Code",
+    ),
+    "binary missing (bash)": (
+        _RECORD + "sh: line 1: /usr/local/bin/node: No such file or directory",
+        "Claude Code 启动失败：机器上缺少 node",
+    ),
+    "a wrapper's program missing": (
+        _RECORD + "/h/.local/bin/claude: line 6: exec: /h/.local/bin/claude-switchboard"
+        ": cannot execute: No such file or directory",
+        "Claude Code 启动失败：机器上缺少 claude-switchboard",
+    ),
+    "a spawned program missing": (
+        _RECORD + '  File "/usr/lib/python3.12/subprocess.py", line 1955, in '
+        "_execute_child\n"
+        "FileNotFoundError: [Errno 2] No such file or directory: 'docker'",
+        "Claude Code 启动失败：机器上缺少 docker",
+    ),
+    "binary for another platform": (
+        _RECORD + "OSError: [Errno 8] Exec format error: '/h/.cheese/bin/claude'",
+        "Claude Code 启动失败：机器上的 Claude Code 无法运行，可能已损坏或平台不符",
+    ),
+    "model login gone": (
+        _RECORD + "Please run /login · API Error: 401 OAuth access token has been "
+        "revoked",
+        "Claude Code 启动失败：模型服务的登录已失效，需要管理员重新登录",
+    ),
+    "platform refused the session's credential": (
+        _RECORD + "executor_transport.PlatformHTTPError: Platform HTTP 401: "
+        '{"message":"credential expired"}',
+        "Claude Code 启动失败：平台没有接受这个会话的凭证",
+    ),
+    "platform failed": (
+        _RECORD + "executor_transport.PlatformHTTPError: Platform HTTP 500: "
+        '{"message":"Internal Server Error"}',
+        "Claude Code 启动失败：启动时平台返回了错误",
+    ),
+    "a file some code expected": (
+        _RECORD + "FileNotFoundError: [Errno 2] No such file or directory: "
+        "'/h/.cheese/remote-execution/target.json'",
+        "Claude Code 启动失败：原因没能识别，启动记录在现场",
+    ),
+    "nothing recognisable": (
+        _RECORD + '[claude-code:unrecognized_model] {"model":"x"}\nKeyError: \'mode\'',
+        "Claude Code 启动失败：原因没能识别，启动记录在现场",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_START_LOGS))
+def test_a_session_that_did_not_start_gets_one_sentence(case):
+    log, sentence = _START_LOGS[case]
+
+    failure = classify_session_start(log)
+
+    assert failure.content == sentence
+    assert "\n" not in failure.content
+    # Carried as a code, the classification is found again on the other side
+    # of the turn boundary, and none of these indicts the machine.
+    assert classify_platform_failure("", code=failure.code) is not None
+    assert failure.code not in HOST_SCOPED_CODES
+
+
+def test_the_sentence_names_the_harness_that_was_starting():
+    log, _ = _START_LOGS["lease answered 504"]
+
+    assert (
+        classify_session_start(log, harness="Codex").content
+        == "Codex 启动失败：这个房间的工作电脑还在准备"
+    )
+
+
+def test_a_session_that_never_ended_nor_came_up_says_it_ran_out_of_time():
+    failure = classify_session_start(
+        "dial unix /tmp/cheese-execution-1000-x.sock: connect: no such file or "
+        "directory",
+        timed_out=True,
+    )
+
+    assert (
+        failure.content == "Claude Code 启动失败：在等待时限内没有起来，启动记录在现场"
+    )

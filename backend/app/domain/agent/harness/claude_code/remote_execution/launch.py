@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 from app.domain.agent import (
-    cli_worker,
     environment_runner,
     forge_cli,
     machine_tunnel,
@@ -27,7 +26,7 @@ from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetch
 from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):
-# every task checkout backed up and pushed.
+# every task checkout with something unpushed backed up and pushed.
 CHEESE_SYNC_SCRIPT = """#!/bin/sh
 exec cheese sync --all
 """
@@ -46,14 +45,12 @@ def can_prepare(info):
     )
 
 
+BACKEND = Path(__file__).resolve().parents[6]
+
+
 def file_sources():
     return {
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
-        "remote-execution/runtime.py": Path(runtime.__file__).read_text(),
-        "remote-execution/cli_worker.py": Path(cli_worker.__file__).read_text(),
-        "remote-execution/portable.py": (
-            Path(runtime.__file__).with_name("portable.py").read_text()
-        ),
         "remote-execution/bin/cheese": Path(cli_client.__file__).read_text(),
         "remote-execution/bin/gh": Path(forge_cli.__file__).read_text(),
         "remote-execution/bin/fj": Path(forge_cli.__file__).read_text(),
@@ -63,7 +60,10 @@ def file_sources():
         "cheese-preview.py": Path(preview_tunnel.__file__).read_text(),
         "cheese-preview-up": CHEESE_PREVIEW_UP,
         "cheese-sync": CHEESE_SYNC_SCRIPT,
-        "cheese": (Path(__file__).resolve().parents[6] / "sandbox/cheese").read_text(),
+        **{
+            name: (BACKEND / source).read_text()
+            for name, source in runtime.RELEASE_FILES.items()
+        },
     }
 
 

@@ -12,10 +12,13 @@
 import type { RoomFileEditorSession, RoomFileRevision } from '../../../api'
 
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import { copyIntoRoom, openRoomFileEditor, roomFileRevisions } from '../../../api'
 
 import RoomFileHistory from './RoomFileHistory.vue'
+
+import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<{ topicId: string; path: string }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'opened', path: string): void }>()
@@ -31,6 +34,9 @@ const showHistory = ref(false)
 const changedBy = ref<RoomFileRevision | null>(null)
 const savedSeq = ref<number | null>(null)
 const copyName = ref('')
+// 手机上放不下编辑器旁边再并排一栏 320px 的历史：历史打开时盖满编辑器那一块，
+// 再点一下「历史」收起。
+const { mdAndUp } = useDisplay()
 const hostId = `room-file-editor-${Math.random().toString(36).slice(2)}`
 
 let instance: DocEditor | null = null
@@ -141,7 +147,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="rfe" data-testid="room-file-editor">
+  <div class="rfe" :class="{ 'rfe--phone': !mdAndUp }" data-testid="room-file-editor">
     <div class="rfe__bar">
       <v-icon size="18">mdi-file-edit-outline</v-icon>
       <span class="rfe__name">{{ path }}</span>
@@ -155,7 +161,8 @@ onBeforeUnmount(() => {
 
     <v-alert v-if="changedBy" type="info" density="compact" class="ma-2" data-testid="changed-by">
       <div>
-        {{ changedBy.author_kind === 'agent' ? '芝士' : changedBy.author || '有人' }}
+        <UserRef v-if="changedBy.author" :handle="changedBy.author" />
+        <template v-else>{{ changedBy.author_kind === 'agent' ? '芝士' : '有人' }}</template>
         刚刚保存了这份文件（第 {{ changedBy.seq }} 版）<template v-if="changedBy.note">：{{ changedBy.note }}</template>
       </div>
       <div class="t-meta">
@@ -242,5 +249,16 @@ onBeforeUnmount(() => {
   width: 320px;
   border-left: 1px solid var(--line);
   overflow: auto;
+}
+.rfe--phone .rfe__main {
+  position: relative;
+}
+.rfe--phone .rfe__side {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: auto;
+  border-left: 0;
+  background: var(--surface);
 }
 </style>

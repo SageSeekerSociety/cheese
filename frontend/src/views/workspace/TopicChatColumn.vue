@@ -22,6 +22,8 @@ const props = defineProps<{
   // 开这个话题的那一刻还有多少条没读——对话栏用它画「以下是新消息」那条线。
   // 必须一路透传：漏掉它不会报错，只是那条线再也不出现。
   unreadOnOpen?: number
+  /** 打开时停在这一条（地址里的 `?block=`）。 */
+  focusBlock?: string | null
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
@@ -30,7 +32,7 @@ const emit = defineEmits<{
   (e: 'turn-done'): void
   // 芝士 开工 / 收工。必须一路透传：右边那格「现场」靠它在开工那一刻出现。
   (e: 'working', working: boolean): void
-  // 会话控制状态的那一帧。同样一路透传给现场那格的控制条。
+  // 会话状态的那一帧。同样一路透传给现场那格的会话详情。
   (e: 'agent-control', state: AgentControlState): void
   // 现场时间线上新到或变了的一行、在跑的轮次各自的开始时间：一路透传给现场那格。
   // 漏掉不报错，只是现场又回到「打开才刷新」。
@@ -56,12 +58,14 @@ const chatRef = ref<{
   send: (content: string, summon: boolean) => boolean
 } | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
+const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 
 const connected = computed(() => !!chatRef.value?.connected)
 
 defineExpose({
   connected,
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
+  reloadFeedback: () => feedbackRef.value?.reload(),
   // 预览面板里「指出位置」发出来的那一句。带 summon：读者指着文档说了一处要改，
   // 等下一轮顺路捎上等于没说。
   say: (content: string) => chatRef.value?.send(content, true) ?? false,
@@ -78,6 +82,7 @@ defineExpose({
       :members="members"
       :topic-list="topicList"
       :unread-on-open="unreadOnOpen"
+      :focus-block="focusBlock"
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
       @agent-control="emit('agent-control', $event)"
@@ -96,6 +101,7 @@ defineExpose({
       <template #above-composer>
         <TopicAcceptCard
           ref="acceptRef"
+          class="chat-dock"
           docked
           :topic-id="topic.id"
           :topic-status="topic.status"
@@ -110,12 +116,11 @@ defineExpose({
              （`GET /topics/{id}/feedback-proposals`），一张都没有就什么都不画。
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
              换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
-        <AgentFeedbackCard :topic-id="topic.id" />
+        <AgentFeedbackCard ref="feedbackRef" :topic-id="topic.id" />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
-         （AI 队友）和在哪跑（算力）都是话题级的设置，发第一条消息之后就不再变，
-         摆在输入区上纯是占位置：队友进了成员名册（它本来就是这个房间的成员），
-         算力在话题头的 ⋯ 里。 -->
+         （AI 队友）和在哪跑（工作电脑）都不是某条消息的动作，摆在输入区上纯是占
+         位置：队友进了成员名册（它本来就是这个房间的成员），工作电脑在话题头的 ⋯ 里。 -->
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">
           <span class="status-dot status-dot--muted" />已归档
@@ -128,6 +133,15 @@ defineExpose({
 <style scoped>
 .archived-chip {
   font-size: 12px;
+}
+/* 和对话同一栏：ChatPanel 在手机外壳里把时间线和输入框收到 --page-w 居中，贴在输
+   入框上的这一条跟着收，不然它比上下两块都宽。 */
+@media (max-width: 959.98px) {
+  .chat-dock {
+    width: 100%;
+    max-width: var(--page-w);
+    margin-inline: auto;
+  }
 }
 .chat-col {
   /* 对话栏那条错误提示（ChatPanel 的 .chat-error-toast）是 absolute，定位的就是

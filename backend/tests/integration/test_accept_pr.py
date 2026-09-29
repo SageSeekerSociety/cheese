@@ -15,7 +15,7 @@ import subprocess
 import time
 import uuid
 import uuid as _uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -1956,7 +1956,7 @@ def test_poll_ignores_settled_and_prless_cards(client, app_world):
     assert result["errors"] == []
 
 
-def test_a_closed_unmerged_pr_notes_once_and_the_poller_idles(client, app_world):
+def test_a_pr_closed_without_merging_voids_its_card(client, app_world):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     fake.close_unmerged(number)
@@ -1964,13 +1964,31 @@ def test_a_closed_unmerged_pr_notes_once_and_the_poller_idles(client, app_world)
     result = _poll(client)
     assert result["errors"] == []
     card = _cards(client, tid)[0]
-    assert card["status"] == "pending"
-    assert "关闭" in card["note"] and "没有合并" in card["note"]
+    assert card["status"] == "revoked"
+    assert f"PR #{number} 已在 GitHub 关闭且没有合并" in card["note"]
+    assert "作废" in card["note"]
     assert fake.merge_calls == []
 
-    note = card["note"]
-    _poll(client)  # 60s 轮询：说一次就够
-    assert _cards(client, tid)[0]["note"] == note
+    fake.status_calls.clear()
+    assert _poll(client)["cards_checked"] == 0
+    assert fake.status_calls == []  # a voided card is not followed any more
+    assert _cards(client, tid)[0]["note"] == card["note"]
+
+
+def test_a_task_can_be_submitted_again_after_its_pr_was_closed(client, app_world):
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.close_unmerged(number)
+    _poll(client)
+
+    response = _make_card_response(client, tid)
+
+    assert response.status_code == 200, response.text
+    fresh = response.json()["data"]
+    assert fresh["id"] != cid
+    assert fresh["status"] == "pending"
+    statuses = {card["id"]: card["status"] for card in _cards(client, tid)}
+    assert statuses == {cid: "revoked", fresh["id"]: "pending"}
 
 
 def test_poll_settles_an_externally_merged_pr(client, app_world):
@@ -2103,6 +2121,132 @@ def test_poll_steady_state_costs_one_pr_read_per_tick(client, app_world):
 
     assert fake.status_calls == [number, number]
     assert fake.head_sha_calls == []
+
+
+# ==================== 读卡顺手补上过期的合并态快照 ===========================
+#
+# 卡面上的 `merge_state` 是一份快照，而前端那颗「采纳」按钮按它亮不亮
+# (`TopicAcceptCard.vue` 的 `acceptBlockedTitle`)。界面每 15s 来读一次这条
+# 路，读到的却可能是轮询器几分钟前写下的旧状态 —— 于是「检查都通过了，采纳
+# 按钮点不动」。实测：CI 11:28Z 就全绿，卡到 11:49Z 才写进 `clean`；另一次卡
+# 在 12:06Z 被写成 `unknown`（GitHub 那一刻还没算完 mergeable），而 `/pr-checks`
+# 早已 `mergeable: true`，那份快照又冻了五分钟。**界面的 15s 轮询自己收敛不了**
+# —— 它每次读回来的都是同一份旧快照。所以读卡这条路自己把过期的补上，这一节
+# 测的就是它，以及它必须停在哪。
+
+
+def _stale_mirror_iso(
+    client, card_id: str, *, minutes: int = 10, state: str = "unknown"
+):
+    """把卡面上的快照做成「几分钟前算的、当时还没结论」的样子（GitHub 还没算完
+    mergeable 时 `merge_state._passthrough` 写下的就是这一份），返回它那个时刻。"""
+    from app.domain.review.repositories import AcceptCardRepository
+
+    checked_at = (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat()
+
+    async def _do() -> None:
+        async with client.test_factory() as s:
+            card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
+            assert card is not None
+            card.merge_state = {
+                **(card.merge_state or {}),
+                "state": state,
+                "who": "platform",
+                "head_sha": card.pr_head_sha,
+                "checked_at": checked_at,
+                "since": checked_at,
+            }
+            await s.commit()
+
+    asyncio.run(_do())
+    return checked_at
+
+
+def _archive_topic(client, topic_id: str) -> None:
+    from app.domain.topic.models import TopicStatus
+    from app.domain.topic.repositories import TopicRepository
+
+    async def _do() -> None:
+        async with client.test_factory() as s:
+            topic = await TopicRepository(s).get(_uuid.UUID(topic_id))
+            assert topic is not None
+            topic.status = TopicStatus.archived
+            await s.commit()
+
+    asyncio.run(_do())
+
+
+def test_reading_a_card_refreshes_a_stale_merge_snapshot(client, app_world):
+    """复现并锁死「检查全绿、按钮点不动」：库里那份是过期的 `unknown`，读一次
+    卡就该把它补成此刻的 `clean` —— 界面拿到的正是这个 payload。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    stale_at = _stale_mirror_iso(client, cid)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")  # GitHub 那边早就绿了
+
+    mirror = _cards(client, tid)[0]["merge_state"]
+
+    assert mirror["state"] == "clean"
+    assert mirror["who"] == "human"
+    assert mirror["checked_at"] > stale_at
+    assert fake.status_calls == [number]
+
+
+def test_reading_a_card_leaves_a_fresh_snapshot_alone(client, app_world):
+    """地板：读卡是热点，不能每个读者都替全平台去问一次 GitHub。一份刚算过的
+    快照，读多少次都不会再多一次外呼。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("pending", "还在跑")
+
+    _poll(client)  # 轮询器写下新的一份，`checked_at` 就是此刻
+    assert fake.status_calls == [number]
+
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    assert _cards(client, tid)[0]["merge_state"]["state"] == "unstable"
+
+    assert fake.status_calls == [number]  # 读卡没有再加一次
+
+
+def test_reading_never_moves_the_head_of_a_card_that_moved_on(client, app_world):
+    """head 动了是**轮询器**的状态迁移（`_poll_pr_card` → `dismiss_stale_accept`
+    会撤掉别人给的批准、发通知），不是一次读卡该顺手干的事：浏览器每 15s 读一
+    次，读的人可能根本不在乎这张卡。读只补过期的那一份，不动 head。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _stale_mirror_iso(client, cid)
+    fake.push_new_commit(number)
+
+    card = _cards(client, tid)[0]
+
+    assert card["pr_head_sha"] == head_sha  # 没跟着 GitHub 往前跑
+    assert card["merge_state"]["state"] == "unknown"  # 快照原样留着，等轮询器
+    assert fake.status_calls == [number]  # 问过一次才知道 head 动了
+
+
+def test_reading_an_archived_topics_card_never_polls_github(client, app_world):
+    """归档的房间不会再有人采纳这张卡 —— 不为它花一次外呼。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _stale_mirror_iso(client, cid)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    _archive_topic(client, tid)
+
+    assert _cards(client, tid)[0]["merge_state"]["state"] == "unknown"
+    assert fake.status_calls == []
+
+
+def test_a_github_hiccup_on_a_read_never_breaks_the_card_list(client, app_world):
+    """读卡不能因为 GitHub 抖一下就 500：陈旧的那份照样发出去，下一次再补。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _stale_mirror_iso(client, cid)
+    fake.status_error = RuntimeError("github is down")
+
+    r = client.get(f"/topics/{tid}/accept-card")
+
+    assert r.status_code == 200
+    assert r.json()["data"]["data"][0]["merge_state"]["state"] == "unknown"
 
 
 # ============================ 绿了自动合 =====================================
@@ -2560,6 +2704,30 @@ def test_a_batch_with_nothing_on_its_branch_gets_no_pr(client, sweeping):
     counts = _sweep(client)
 
     assert counts["opened"] == 0
+    assert sweeping["opened"] == []
+
+
+def test_a_batch_left_open_in_an_archived_room_gets_no_pr(client, sweeping):
+    """Rooms archived before archiving closed their work still hold open tasks.
+
+    Nobody works there any more, so the sweep must not spend a GitHub request
+    per tick on each of them, let alone open a PR for one.
+    """
+    from app.domain.topic.models import Topic, TopicStatus
+
+    _pid, tid = _room_with_work(client)
+
+    async def archive_without_closing() -> None:
+        async with client.test_factory() as session:
+            topic = await session.get(Topic, _uuid.UUID(tid))
+            topic.status = TopicStatus.archived
+            await session.commit()
+
+    asyncio.run(archive_without_closing())
+
+    counts = _sweep(client)
+
+    assert counts == {"opened": 0, "skipped": 0, "failed": 0}
     assert sweeping["opened"] == []
 
 

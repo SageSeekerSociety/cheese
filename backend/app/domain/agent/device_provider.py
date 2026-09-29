@@ -56,6 +56,7 @@ from app.domain.agent.harness.launch import ExecutorPlan, MachinePlace, MachineP
 from app.domain.agent.place import (
     CHECKOUT_DIR,
     footprint_root,
+    seat_dir,
     session_platform_dirs,
 )
 from app.domain.agent.platform_failures import (
@@ -107,12 +108,11 @@ class EnvironmentPreparationError(ScreenSetupError):
 DEVICE_ISOLATED_UNSUPPORTED_MESSAGE = (
     "话题与机器的绑定登记为『沙盒』档（visibility=isolated），但按房间隔离的容器传输"
     "尚未实现（#358 第二步）；平台拒绝以裸跑代替——那等于静默把整台机器暴露给这个"
-    "房间。请把这台机器改登记为『整台机器（Hosted Machine）』后再继续。"
+    "房间。把这台机器改登记为「整台机器」后再继续。"
 )
 
 DEVICE_NOT_HOSTED_MESSAGE = (
-    "话题当前绑定的是云端连接器，不是 Hosted 机器；Hosted 解析器拒绝把云端端点"
-    "当作人的机器运行。"
+    "话题当前绑定的是云端工作电脑，不是自有设备；平台不会把云端机器当作自有设备运行。"
 )
 
 
@@ -430,9 +430,19 @@ def device_store_dir(project_id: uuid.UUID) -> str:
     return f"{DEVICE_STORE_ROOT}/{project_id}"
 
 
-def launcher_path(topic_id: uuid.UUID) -> str:
-    """The launcher file a screen runs, where `_ship_launcher` writes it."""
-    return f"{DEVICE_ROOT}/launch/{topic_id}.sh"
+def launcher_path(topic_id: uuid.UUID, agent_handle: str = "") -> str:
+    """The launcher file a screen runs, where `_ship_launcher` writes it.
+
+    One per SEAT, not one per room. The file says where that seat's runner
+    keeps its state (``CLAUDE_STATE``), and a room's two teammates keep two of
+    those; a screen reads this file exactly once, at birth, and a second
+    teammate's turn writing it in between leaves the first one coming up on the
+    wrong state — its own socket, the one every later call dials, never bound.
+    ``agent_handle`` empty is the room's own file: a caller that has no seat
+    (recovery of a screen from before seats) asks for the room's.
+    """
+    who = hashlib.sha256(agent_handle.encode()).hexdigest()[:12]
+    return f"{DEVICE_ROOT}/launch/{topic_id}-{who}.sh"
 
 
 # Where a place's environment runner may have been left, relative to that
@@ -481,6 +491,14 @@ async def environment_status(
             "sh",
             "-c",
             f'export HOME="{home}"; '
+            # The runner finds the room's status under `Path.home()`, which on
+            # Windows is USERPROFILE and not HOME. Exported as HOME alone, a
+            # Windows room read the device owner's own profile and stayed
+            # `pending` for good while its environment was ready. `cygpath`
+            # (Git Bash's shell) spells the home the way Windows Python reads
+            # it; elsewhere nothing reads USERPROFILE.
+            'USERPROFILE="$(cygpath -w "$HOME" 2>/dev/null || '
+            'printf %s "$HOME")"; export USERPROFILE; '
             f"for candidate in {candidates}; do "
             'if [ -f "$candidate" ]; then '
             f"CHEESE_STATUS_WAIT={int(wait_ready)} "
@@ -496,9 +514,9 @@ async def environment_status(
     return json.loads(result.get("stdout") or '{"state":"pending"}')
 
 
-def _launcher_command(topic_id: uuid.UUID) -> list[str]:
-    """What a screen runs: the launcher file `_ship_launcher` wrote for this topic."""
-    return ["bash", "-lc", f'exec bash "{launcher_path(topic_id)}"']
+def _launcher_command(topic_id: uuid.UUID, agent_handle: str = "") -> list[str]:
+    """What a screen runs: the launcher file `_ship_launcher` wrote for this seat."""
+    return ["bash", "-lc", f'exec bash "{launcher_path(topic_id, agent_handle)}"']
 
 
 class DeviceChannel(Channel):
@@ -545,7 +563,11 @@ class DeviceChannel(Channel):
     async def restore_screens(
         self, scopes: list[tuple[uuid.UUID, uuid.UUID, str]]
     ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
-        """Rebuild screen identities for the rooms this channel owns in the DB."""
+        """Rebuild screen identities for the rooms this channel owns in the DB.
+
+        Every screen the machine still runs for the room is adopted, each under
+        the SEAT it was born as (``CHEESE_AUTHOR``): a room seats several
+        teammates on one machine, and they have one screen each."""
         inventories = {}
         for device_id in {scope[2] for scope in scopes}:
             try:
@@ -569,7 +591,7 @@ class DeviceChannel(Channel):
         # every room of a reconnecting device kept a pool connection for as long
         # as the whole device took (dev, 2026-09-19).
         rooms: list[
-            tuple[uuid.UUID, uuid.UUID, str, uuid.UUID | None, list, tuple]
+            tuple[uuid.UUID, uuid.UUID, str, uuid.UUID | None, list[tuple[dict, tuple]]]
         ] = []
         async with factory() as session:
             for project_id, topic_id, device_id in scopes:
@@ -590,14 +612,29 @@ class DeviceChannel(Channel):
                         topic_id
                     )
                     identity = (agent.id, agent.username)
+                # Each entry is one SEAT's screen (``CHEESE_AUTHOR`` is the handle
+                # the launcher was born with), and a room seats several: adopting
+                # them all under the room's identity gave every seat's screen the
+                # same handle, so after a restart two seats matched each other's
+                # screen again — the same collision a live turn has (see
+                # ``_existing_screen``). Resolved here, inside the transaction the
+                # adoptions below deliberately run without.
+                seated: list[tuple[dict, tuple]] = []
+                for entry in entries:
+                    seat = entry.get("env", {}).get("CHEESE_AUTHOR")
+                    entry_identity = identity
+                    if seat and seat != identity[1]:
+                        user = await user_by_handle(session, seat)
+                        if user is not None:
+                            entry_identity = (user.id, user.username)
+                    seated.append((entry, entry_identity))
                 rooms.append(
                     (
                         project_id,
                         topic_id,
                         device_id,
                         current_resource,
-                        entries,
-                        identity,
+                        seated,
                     )
                 )
             await session.commit()
@@ -606,11 +643,10 @@ class DeviceChannel(Channel):
             topic_id,
             device_id,
             current_resource,
-            entries,
-            identity,
+            seated,
         ) in rooms:
             screen = None
-            for entry in entries:
+            for entry, identity in seated:
                 env = entry.get("env", {})
                 expiry = env.get("CHEESE_TOKEN_EXPIRES")
                 target = env.get("CHEESE_EXECUTION_TARGET")
@@ -709,8 +745,24 @@ class DeviceChannel(Channel):
         await self._hub.close_screen(screen.device_id, screen.sid)
 
     def _existing_screen(
-        self, device_id: str, topic_id: uuid.UUID, resource_id: uuid.UUID | None = None
+        self,
+        device_id: str,
+        topic_id: uuid.UUID,
+        resource_id: uuid.UUID | None = None,
+        agent_handle: str | None = None,
     ) -> HubScreen | None:
+        """The screen this SEAT is already running on this machine, if any.
+
+        A screen is an agent (``一个 agent 是一个屏幕``, fusion-design §5), and a
+        room seats one per teammate on one machine (#seats-machine), so the seat
+        is part of what identifies a screen here. Matched on the machine and the
+        room alone, the second teammate's turn found the first teammate's live
+        session, asked its OWN state whether that process was alive — it never
+        was, that seat had no runner yet — read the answer as a dead session,
+        and closed the room-mate's running turn to open its own. ``agent_handle``
+        empty is the room asking (a screen from before seats, whose seat the
+        registry does not carry).
+        """
         for screen in self._hub.all_online_screens():
             if (
                 screen.device_id == device_id
@@ -719,6 +771,7 @@ class DeviceChannel(Channel):
                     resource_id is None
                     or (screen.resource_id or topic_id) == resource_id
                 )
+                and (agent_handle is None or screen.agent_handle == agent_handle)
             ):
                 return screen
         return None
@@ -761,6 +814,7 @@ class DeviceChannel(Channel):
         home_dir: str,
         release_state: dict | None = None,
         execution_token: str | None = None,
+        agent_handle: str = "",
     ) -> list[str]:
         """Write the launch script to a FILE on the device (over the link's one-shot
         ``exec``, script on stdin) and return a short command that runs it.
@@ -771,14 +825,17 @@ class DeviceChannel(Channel):
         long``. Since #308 embedded the assembled system prompt in the script, every
         real launch is tens of KB, so argv delivery broke every device spawn (and
         the failure was invisible: session.error is fire-and-forget and the prompt
-        just timed out). The file path is per-topic and written whenever a screen
-        is created; a live screen is refreshed by ``_refresh_screen_files``
-        instead, since it never runs its launcher again."""
+        just timed out). The file path is per-topic AND per-seat (``launcher_path``)
+        and written whenever a screen is created; a live screen is refreshed by
+        ``_refresh_screen_files`` instead, since it never runs its launcher again."""
         assert command[:2] == ["bash", "-lc"] and len(command) == 3
         script = command[2]
-        path = launcher_path(topic_id)
+        path = launcher_path(topic_id, agent_handle)
         transfer, exec_env = self._screen_file_refresh(
-            home_dir, release_state=release_state, execution_token=execution_token
+            home_dir,
+            release_state=release_state,
+            execution_token=execution_token,
+            agent_handle=agent_handle,
         )
         transfer = f'mkdir -p "{DEVICE_ROOT}/launch" && cat > "{path}" && ' + transfer
         started = time.monotonic()
@@ -817,7 +874,7 @@ class DeviceChannel(Channel):
             )
         if release_state is not None:
             release_state["version"] = result.get("stdout", "").strip()
-        return _launcher_command(topic_id)
+        return _launcher_command(topic_id, agent_handle)
 
     @staticmethod
     def _screen_file_refresh(
@@ -825,11 +882,18 @@ class DeviceChannel(Channel):
         *,
         release_state: dict | None,
         execution_token: str | None,
+        agent_handle: str = "",
     ) -> tuple[str, dict[str, str] | None]:
         """The shell that brings a screen's per-turn files up to date: the
         forwarded-fs token (rotated every turn), and a read of the release
         marker when the caller tracks one. Shared by the launcher ship and the
-        live-screen refresh, so both paths write the same files the same way."""
+        live-screen refresh, so both paths write the same files the same way.
+
+        Two roots, because the two writes belong to different things. The token
+        is the SEAT's (`place.seat_dir`): its session is the one that reads it,
+        and a roommate writing it here used to swap a running turn's credential
+        for its own. The release marker is the ROOM's: the helpers it names are
+        installed once per room on the machine."""
         hook_dir = f"{home_dir}/{session_platform_dirs()[0]}"
         transfer = f'mkdir -p "{hook_dir}"'
         if release_state is not None:
@@ -839,9 +903,10 @@ class DeviceChannel(Channel):
             )
         exec_env = None
         if execution_token is not None:
-            token_path = f"{hook_dir}/remote-session/execution.token"
+            session_dir = f"{seat_dir(home_dir, agent_handle)}/remote-session"
+            token_path = f"{session_dir}/execution.token"
             transfer += (
-                f' && mkdir -p "{hook_dir}/remote-session"'
+                f' && mkdir -p "{session_dir}"'
                 f' && umask 077 && printf %s "$CHEESE_FORWARDED_TOKEN"'
                 f' > "{token_path}.next.$$"'
                 f' && mv "{token_path}.next.$$" "{token_path}"'
@@ -855,6 +920,7 @@ class DeviceChannel(Channel):
         home_dir: str,
         release_state: dict | None = None,
         execution_token: str | None = None,
+        agent_handle: str = "",
     ) -> None:
         """A live screen keeps the session it was born with and never runs its
         launcher again, so a reused turn ships only what that process will
@@ -862,7 +928,10 @@ class DeviceChannel(Channel):
         itself is 450 KB of embedded helper sources plus the prompt, and
         sending it here bought nothing but 46 ms on every turn."""
         transfer, exec_env = self._screen_file_refresh(
-            home_dir, release_state=release_state, execution_token=execution_token
+            home_dir,
+            release_state=release_state,
+            execution_token=execution_token,
+            agent_handle=agent_handle,
         )
         try:
             result = await self._hub.exec(
@@ -927,7 +996,11 @@ class DeviceChannel(Channel):
         reload: `/reload-plugins` for the plugin that routes its tools to the
         executor, and a reconnect of the MCP server that carries them. The
         session keeps its conversation throughout.
-        """
+
+        The session's directory is the SEAT's, and it is the screen's own seat
+        that names it: what is being released is that session's target and that
+        session's plugin, and a room's other teammate keeps its own."""
+        seat = seat_dir(home_dir, screen.agent_handle)
         sources = resident_release.sources()
         version = resident_release.digest(sources)
         if release.get("version") == version:
@@ -946,7 +1019,7 @@ class DeviceChannel(Channel):
                 )
             return json.loads(result["stdout"])
 
-        staged = await execute("stage", home_dir, sources)
+        staged = await execute("stage", home_dir, sources, seat)
         if staged.get("busy"):
             # Helpers are not replaced under a conversation that is still
             # running. This turn runs on the release it has; the marker stays
@@ -1122,7 +1195,7 @@ class DeviceChannel(Channel):
             )
 
         resource_id = uuid.UUID((env or {}).get("CHEESE_RESOURCE_ID", str(topic_id)))
-        existing = self._existing_screen(device_id, topic_id, resource_id)
+        existing = self._existing_screen(device_id, topic_id, resource_id, agent_handle)
         execution_target = None
         if (env or {}).get("CHEESE_EXECUTION_TARGET"):
             execution_target = json.loads((env or {})["CHEESE_EXECUTION_TARGET"])
@@ -1339,6 +1412,7 @@ class DeviceChannel(Channel):
                 execution_token=(
                     screen_env["CHEESE_TOKEN"] if execution_target is not None else None
                 ),
+                agent_handle=agent_handle,
             )
         else:
             # These device requests are independent. Finish all three before
@@ -1354,6 +1428,7 @@ class DeviceChannel(Channel):
                     home_dir,
                     release_state=release_state,
                     execution_token=execution_token,
+                    agent_handle=agent_handle,
                 ),
             )
             retire_reason = None
@@ -1398,13 +1473,14 @@ class DeviceChannel(Channel):
                     command,
                     home_dir,
                     execution_token=execution_token,
+                    agent_handle=agent_handle,
                 )
             else:
                 # The adopt-create below re-runs the launcher only for a session
                 # the connector lost; the file the previous turn wrote is still
                 # there for that, and the reuse gate retires a process born from
                 # an expired credential on the next turn.
-                command = _launcher_command(resource_id)
+                command = _launcher_command(resource_id, agent_handle)
         mark("device_checks_complete")
         if existing is not None:
             # A reassert keeps the CURRENTLY-RUNNING session, which still holds the
@@ -1580,12 +1656,10 @@ class DeviceChannel(Channel):
         device_id = precheck.machine
         agent_user_id, agent_handle = precheck.agent_user_id, precheck.agent_handle
         rented = precheck.rented
-        # 记忆算谁的，只决定记忆算谁的。这一轮开在哪个工作区是 ``rented`` 的事，
-        # 下面那一句说；两个事实各说各的，其中一个换了另一个不跟着动。
-        if memory_scope == "personal":
-            env = dict(env or {}, CHEESE_MEMORY_SCOPE="personal")
-            if owner:
-                env["CHEESE_OWNER"] = owner
+        # 记忆算谁的（``memory_scope`` / ``owner``）到这一层就为止了。它曾经从这里
+        # 塞进 ``CHEESE_MEMORY_SCOPE``/``CHEESE_OWNER`` 给 ``cheese remember`` 用，
+        # 而那个工具已经撤掉（记忆现在直接写文件），两个变量没有读取方了。这一轮开
+        # 在哪个工作区是 ``rented`` 的事，下面那一句说。
         prepares_environment = (
             bool((env or {}).get("CHEESE_ENVIRONMENT"))
             and rented
@@ -1631,7 +1705,9 @@ class DeviceChannel(Channel):
                 if prepares_environment
                 else {}
             )
-            prior_screen = self._existing_screen(device_id, topic_id, resource_id)
+            prior_screen = self._existing_screen(
+                device_id, topic_id, resource_id, agent_handle
+            )
             screen = await self._ensure_screen(
                 device_id=device_id,
                 agent_user_id=agent_user_id,
