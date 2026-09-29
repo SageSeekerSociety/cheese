@@ -371,6 +371,47 @@ class ChatGPTLoginTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, bad)
             self.assertEqual(self.credential().read_text(), before)
 
+    def test_the_client_version_is_set_shown_and_cleared(self):
+        version = self.home / "chatgpt-credential" / "client-version"
+        self.assertIn("none set", self.run_script("client-version", "show").stdout)
+
+        result = self.run_script("client-version", "set", "0.160.1")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(version.read_text().strip(), "0.160.1")
+        self.assertEqual(version.stat().st_mode & 0o777, 0o600)
+        self.assertIn("0.160.1", self.run_script("client-version", "show").stdout)
+
+        self.run_script("client-version", "set", "0.161.0")
+        self.assertEqual(version.read_text().strip(), "0.161.0")
+
+        result = self.run_script("client-version", "clear")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(version.exists())
+        self.assertIn("none set", self.run_script("client-version", "show").stdout)
+
+    def test_a_client_version_no_header_should_carry_is_refused(self):
+        self.run_script("client-version", "set", "0.160.1")
+        for bad in ("", "0.1 0", "1.0\nx-injected: yes", "../1"):
+            result = self.run_script("client-version", "set", bad)
+            self.assertNotEqual(result.returncode, 0, bad)
+        version = self.home / "chatgpt-credential" / "client-version"
+        self.assertEqual(version.read_text().strip(), "0.160.1")
+
+    def test_the_client_version_is_not_listed_or_usable_as_an_account(self):
+        self.run_script("login", "work")
+        self.run_script("client-version", "set", "0.160.1")
+
+        listed = self.run_script("ls").stdout
+        status = self.run_script("status").stdout
+
+        self.assertNotIn("client-version", listed + status)
+        self.assertIn("work: logged in", listed)
+        result = self.run_script("egress", "set", "client-version", "http://10.0.0.5:3128")
+        self.assertNotEqual(result.returncode, 0)
+        version = self.home / "chatgpt-credential" / "client-version"
+        self.assertEqual(version.read_text().strip(), "0.160.1")
+
 
 if __name__ == "__main__":
     unittest.main()
