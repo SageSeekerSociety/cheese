@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -104,6 +105,7 @@ from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
 from app.domain.team.services import team_service
 from app.domain.topic import naming
+from app.domain.topic.models import Topic
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -624,10 +626,24 @@ async def read_artifact(
     一版就是一张采纳了的卡，所以这里没有「版本表」——历史是数出来的，撤回一次采
     纳，它后面几版的号自己往前挪。"""
     await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
+    actor = await project_reader(db, resolver, project_id, topic)
     row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
     listed = await artifacts.summary(db, row.id)
     history = await artifacts.versions(db, row.id)
+    # 每一版出自哪个房间，能点回去。读不了的房间（别人的私聊）只说不出名字：连
+    # 它叫什么都不该从这里漏出去。
+    rooms = list(
+        await db.scalars(
+            select(Topic).where(
+                Topic.project_id == project_id,
+                Topic.id.in_({v.room_id for v in history}),
+            )
+        )
+    )
+    readable = await resolver.readable_topic_ids(
+        actor, project_id=project_id, topics=rooms
+    )
+    titles = {room.id: room.title for room in rooms if room.id in readable}
     return ok(
         {
             "id": str(row.id),
@@ -651,11 +667,30 @@ async def read_artifact(
                     "kind": v.kind,
                     "filename": v.filename,
                     "url": v.url,
+                    "bytes": _snapshot_bytes(project_id, v),
+                    "room": (
+                        {"id": str(v.room_id), "title": titles[v.room_id]}
+                        if v.room_id in titles
+                        else None
+                    ),
                 }
                 for v in history
             ],
         }
     )
+
+
+def _snapshot_bytes(project_id: uuid.UUID, version: artifacts.ArtifactVersion):
+    """这一版留存的那一份有多大；不是文件、或者没有留存，给 None。"""
+    if version.kind != "file" or not version.filename:
+        return None
+    try:
+        path = library.artifact_snapshot_path(
+            project_id, version.card_id, version.filename
+        )
+        return path.stat().st_size
+    except (OSError, ValidationError):
+        return None
 
 
 @router.get("/{project_id}/artifacts/{artifact_id}/compare")

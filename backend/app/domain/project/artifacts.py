@@ -457,6 +457,8 @@ class ArtifactVersion:
     filename: str | None
     url: str | None
     revision: str | None
+    #: 递这张卡的房间：这一版是在哪一次对话里做出来的。
+    room_id: uuid.UUID
 
 
 async def versions(
@@ -482,6 +484,7 @@ async def versions(
             filename=card.deliverable_name,
             url=card.deliverable_url,
             revision=card.pr_head_sha,
+            room_id=card.topic_id,
         )
         for number, card in enumerate(found.scalars().all(), start=1)
     ]
