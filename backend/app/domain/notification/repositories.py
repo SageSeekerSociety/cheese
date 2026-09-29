@@ -98,6 +98,31 @@ class NotificationRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def pushable_after(
+        self, user_id: int, types: frozenset[NotificationType], after: int, limit: int
+    ) -> list[Notification]:
+        """我名下这几种、还没读、比 `after` 新的信里最新的 `limit` 条，旧的在前。
+
+        积压多了取最新的那几条，而不是最早的：人回来时要知道的是现在的事。
+        """
+        stmt = self._my_mail(select(Notification), user_id).where(
+            Notification.type.in_(types),
+            Notification.read.is_(False),
+            Notification.id > after,
+        )
+        rows = await self._session.scalars(
+            stmt.order_by(Notification.id.desc()).limit(limit)
+        )
+        return list(reversed(rows.all()))
+
+    async def latest_id_for_user(
+        self, user_id: int, types: frozenset[NotificationType]
+    ) -> int | None:
+        stmt = self._my_mail(select(func.max(Notification.id)), user_id).where(
+            Notification.type.in_(types)
+        )
+        return await self._session.scalar(stmt)
+
     async def mark_all_as_read_for_user(self, user_id: int) -> int:
         stmt = (
             self._my_mail(update(Notification), user_id)

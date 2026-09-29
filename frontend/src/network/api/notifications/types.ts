@@ -75,3 +75,7 @@ export interface MarkAllAsReadResponse {
 export interface UnreadCountResponse {
   count: number
 }
+
+export interface LiveTokenResponse {
+  token: string
+}

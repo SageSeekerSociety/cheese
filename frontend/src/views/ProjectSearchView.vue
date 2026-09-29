@@ -11,7 +11,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { countProjectHits, searchProject } from '@/api'
+import { searchProject, searchProjectCounted } from '@/api'
 import { firstWord } from '@/commands/palette/results'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
@@ -85,12 +85,10 @@ async function load() {
   if (!query.value) return
   loading.value = true
   try {
-    const [found, hits] = await Promise.all([
-      countProjectHits(props.projectId, query.value),
-      kind.value
-        ? searchProject(props.projectId, query.value, PAGE, { only: kind.value.only, offset: 0 })
-        : searchProject(props.projectId, query.value, PREVIEW),
-    ])
+    // 第一页和每一类的条数一次问完。
+    const { hits, counts: found } = kind.value
+      ? await searchProjectCounted(props.projectId, query.value, PAGE, { only: kind.value.only, offset: 0 })
+      : await searchProjectCounted(props.projectId, query.value, PREVIEW)
     if (ask !== asked) return
     counts.value = found
     if (kind.value) {

@@ -13,8 +13,8 @@ import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const searchProject = vi.hoisted(() => vi.fn())
-const countProjectHits = vi.hoisted(() => vi.fn())
-vi.mock('@/api', async (original) => ({ ...(await original<object>()), searchProject, countProjectHits }))
+const searchProjectCounted = vi.hoisted(() => vi.fn())
+vi.mock('@/api', async (original) => ({ ...(await original<object>()), searchProject, searchProjectCounted }))
 
 import ProjectSearchView from './ProjectSearchView.vue'
 
@@ -71,11 +71,18 @@ const rows = () => screen.queryAllByRole('link').map((el) => el.textContent ?? '
 beforeEach(() => {
   vi.stubGlobal('IntersectionObserver', FakeObserver)
   searchProject.mockReset()
-  countProjectHits.mockReset()
-  countProjectHits.mockResolvedValue({ message: ALL.length, decision: 0, tasks: 0, library: 0 })
+  searchProjectCounted.mockReset()
+  const slice = (limit: number, paging?: { only: string[]; offset: number }) =>
+    page({ records: ALL.slice(paging?.offset ?? 0, (paging?.offset ?? 0) + limit) })
   searchProject.mockImplementation(
     async (_project: string, _q: string, limit: number, paging?: { only: string[]; offset: number }) =>
-      page({ records: ALL.slice(paging?.offset ?? 0, (paging?.offset ?? 0) + limit) })
+      slice(limit, paging)
+  )
+  searchProjectCounted.mockImplementation(
+    async (_project: string, _q: string, limit: number, paging?: { only: string[]; offset: number }) => ({
+      hits: slice(limit, paging),
+      counts: { message: ALL.length, decision: 0, tasks: 0, library: 0 },
+    })
   )
 })
 
@@ -105,9 +112,9 @@ describe('搜索结果页', () => {
 
   it('改了词，地址跟着变，按新词搜', async () => {
     const { router } = await mount('/projects/p1/search?q=深色')
-    await waitFor(() => expect(searchProject).toHaveBeenCalled())
+    await waitFor(() => expect(searchProjectCounted).toHaveBeenCalled())
     await fireEvent.update(screen.getByRole('searchbox'), '浅色')
     await waitFor(() => expect(router.currentRoute.value.query.q).toBe('浅色'), { timeout: 2000 })
-    await waitFor(() => expect(searchProject).toHaveBeenLastCalledWith('p1', '浅色', expect.anything()))
+    await waitFor(() => expect(searchProjectCounted).toHaveBeenLastCalledWith('p1', '浅色', expect.anything()))
   })
 })

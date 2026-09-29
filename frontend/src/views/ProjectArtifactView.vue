@@ -44,6 +44,7 @@ function comparisonNote(note: string | null): string {
     binary: t('tasks.artifactComparison.binary'),
     document: t('tasks.artifactComparison.document'),
     unsupported: t('tasks.artifactComparison.unsupported'),
+    many: t('tasks.artifactComparison.many'),
     unavailable: t('tasks.artifactComparison.unavailable'),
     source: t('tasks.artifactComparison.source'),
     link: t('tasks.artifactComparison.link'),

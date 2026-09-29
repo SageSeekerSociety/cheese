@@ -7,7 +7,9 @@ from typing import Any, Protocol
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.notification.live import wake_after_commit
 from app.domain.notification.models import Notification, NotificationType
+from app.domain.notification.push import PUSHABLE
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,11 @@ class InAppNotificationHandler:
             .on_conflict_do_nothing(index_elements=["delivery_key"])
         )
         await self._session.flush()
+        # The desktop app shows these as system notifications (`live.py`).
+        wake_after_commit(
+            self._session,
+            {d.recipient_id for d in deliveries if d.type in PUSHABLE},
+        )
 
 
 class NotificationEventHandler:

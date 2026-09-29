@@ -181,12 +181,10 @@ async def create_archive(
     ):
         raise ForbiddenError("Project export requires project access")
     topics = list(await db.scalars(select(Topic).where(Topic.project_id == project_id)))
-    visible = []
-    for topic in topics:
-        if await resolver.can_access_topic(
-            actor, project_id=project_id, topic_id=topic.id
-        ):
-            visible.append(topic.id)
+    readable = await resolver.readable_topic_ids(
+        actor, project_id=project_id, topics=topics
+    )
+    visible = [topic.id for topic in topics if topic.id in readable]
     binding = await forge.binding_for_project(project_id, db)
     minter = await forge.tokens_for_project(project_id, db) if binding else None
     repo = (
