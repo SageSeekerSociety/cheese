@@ -272,7 +272,7 @@ function roomRead<T>(path: string): Promise<T> {
   return started
 }
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
+export function request<T>(path: string, init?: RequestInit): Promise<T> {
   if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
   return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
 }
