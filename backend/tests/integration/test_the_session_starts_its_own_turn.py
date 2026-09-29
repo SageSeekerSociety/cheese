@@ -218,3 +218,55 @@ def test_a_teammates_own_turn_stays_the_teammates(client, stub_hooks):
 
     assert asyncio.run(_queued()) == [], "点名它的话没进它正在跑的会话，排了队"
     stub_hooks.stops(uuid.UUID(room_id), "看完了", agent=seat)
+
+
+def test_a_turn_the_platform_starts_runs_as_the_teammate_it_names(client, stub_hooks):
+    """平台自己起的一轮（文档提醒、检查变红）点的是一个席位。房间里坐着的只有一位
+    不是项目默认的队友时，这一轮是那位队友的会话，不会给项目默认的芝士另开一条。"""
+    from app.api.deps import get_chat_service
+    from app.domain.agent_session.models import AgentSession
+    from app.domain.identity.handles import agent_instance_handle
+    from app.domain.topic.doc_nudge import runner_submit
+    from tests.integration.conftest import session_auth_headers
+
+    project = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    reviewer = client.post(
+        f"/projects/{project}/agents",
+        json={"handle": "reviewer", "display_name": "审稿人"},
+    ).json()["data"]
+    room_id = client.post(
+        "/topics",
+        json={"project_id": project, "title": "房间", "created_by": "alice"},
+    ).json()["data"]["id"]
+    default_seat = room_agent_seat(client, room_id)
+    seat = agent_instance_handle(reviewer["id"])
+    headers = session_auth_headers("alice")
+    seated = client.post(
+        f"/topics/{room_id}/members",
+        json={"handle": seat, "role": "member", "actor": "alice"},
+        headers=headers,
+    )
+    assert seated.status_code == 200, seated.text
+    left = client.delete(f"/topics/{room_id}/members/{default_seat}", headers=headers)
+    assert left.status_code == 200, left.text
+    assert room_agent_seat(client, room_id) == seat
+
+    chat = client.app.dependency_overrides[get_chat_service]()
+
+    async def remind() -> None:
+        runner_submit(chat)(uuid.UUID(room_id), seat, "把文档补上", "提醒补文档", {})
+
+    client.portal.call(remind)
+    assert _wait_for(client, room_id, lambda: _turns(client, room_id)), "这一轮没起来"
+    _wait_work_idle()
+
+    async def _sessions() -> set[str]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(AgentSession.agent_handle).where(
+                    AgentSession.topic_id == uuid.UUID(room_id)
+                )
+            )
+            return set(rows)
+
+    assert asyncio.run(_sessions()) == {reviewer["handle"]}
