@@ -166,6 +166,25 @@ async def task_workspace(
 
     if who.author:
         await ensure_author_email(project_id, db, who.author.email)
+    from app.domain.review.models import AcceptStatus
+    from app.domain.review.notes import NoteCode
+    from app.domain.review.repositories import AcceptCardRepository
+
+    # A queued PR's branch is locked by the forge until the queue merges or
+    # drops it; a machine that pushes to it is refused. It is told here so it
+    # can say that, instead of reporting a failed push to be retried.
+    cards = await AcceptCardRepository(db).list_live_for_places(
+        [task.id], statuses=(AcceptStatus.pending,)
+    )
+    queued = next(
+        (
+            card.pr_number
+            for card in cards
+            if card.task_id == task.id
+            and card.note_code == NoteCode.waiting_merge_queue
+        ),
+        None,
+    )
     return ok(
         {
             "task_id": str(task.id),
@@ -173,6 +192,7 @@ async def task_workspace(
             "branch": task.branch_name,
             "base": task.base_branch,
             "closed": task.status == "closed",
+            "merge_queued_pr": queued,
             "remote": binding.url,
             "forge_kind": binding.kind,
             "forge_repo": binding.repo,
