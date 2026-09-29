@@ -11,7 +11,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
 
 // 管理后台的「成员管理」（`/admin/members`）：平台管理员的名单，页面上加与删。

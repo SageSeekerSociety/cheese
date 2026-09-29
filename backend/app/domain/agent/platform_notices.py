@@ -119,6 +119,8 @@ EVENT_CONCLUSION_SETTLED: Final = "conclusion_settled"
 EVENT_MACHINE_PROVISIONING: Final = "machine_provisioning"
 #: 话题绑定的机器连着失败，平台暂停向它派活；话题留在原机器上等人处理。
 EVENT_HOST_FAILURE: Final = "host_failure"
+#: 房间换了工作电脑，但有已结束任务的文件没能备份，只留在原来那台（它保留文件）上。
+EVENT_WORK_LEFT_ON_MACHINE: Final = "work_left_on_machine"
 #: 结论结算了，但这个话题的归档欠着 —— 它还挂着一张没决议的验收卡。
 EVENT_ARCHIVE_DEFERRED: Final = "archive_deferred"
 #: 这次交付完成了。
@@ -218,6 +220,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_CONCLUSION_SETTLED,
         EVENT_MACHINE_PROVISIONING,
         EVENT_HOST_FAILURE,
+        EVENT_WORK_LEFT_ON_MACHINE,
         EVENT_ACCEPT_DONE,
         EVENT_ACCEPT_STOPPED,
         EVENT_ACCEPT_READY,

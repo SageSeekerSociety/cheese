@@ -16,7 +16,7 @@ import { parseDiffLines } from '../lib/diff'
 import { relTime } from '../lib/relTime'
 import { usePageTitleStore } from '../stores/title'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 
 const props = defineProps<{ projectId: string; artifactId: string }>()
 

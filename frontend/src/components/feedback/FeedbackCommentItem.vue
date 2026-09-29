@@ -3,7 +3,7 @@ import type { FeedbackComment } from '@/cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'

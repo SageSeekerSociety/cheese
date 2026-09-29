@@ -91,6 +91,23 @@ covers:
 
 支持是 `FeedbackSupport`，唯一约束 `(feedback_id, author_handle)` 让重复点是空操作；已办完的（`CLOSED_STATUSES` = resolved + deployed）不再接受支持，回 412 而不是 403（客户端该做的是重新读一遍这条，不是别问了）。
 
+## 修复上线时自动改成「已上线」 {#shipped}
+
+修一条反馈的提交，在提交信息里单独写一行：
+
+```text
+Fixes-feedback: FB-12, FB-15
+```
+
+`FB-` 前缀不能省：在 GitHub 上 `#12` 是第 12 号 issue 或 PR，`Fixes #12` 还会把那个 issue 关掉。行首的键大小写都认，同一行可以列多条。**写在提交信息里，不写在 PR 描述里**：main 是 squash 合并，squash 提交的正文是这个 PR 里各个提交的信息拼起来的，PR 描述进不了 main 的历史。
+
+测试环境的部署（`deploy-dev.yml`）在部署前记下正在跑的版本，最后一步（前面每一步都成功之后）用 GitHub 的 compare 取出「被替换的版本 → 这次的版本」之间的提交，交给正在跑的后端容器里的 `scripts/ship_feedback.py`。它按上面那行找到每条反馈（`shipping.py`），通过 `set_status` 推到 `deployed`——和管理员按按钮是同一条路，所以时间线照写、提交者的未读数照涨。这一步没有推它的人（`by_handle` 为 NULL），时间线那一步的 `note` 写「已由 PR #N 修复并上线」加 PR 链接，PR 号取自 squash 标题末尾的 `(#N)`，没有就链到提交。
+
+- 只读这次新增的提交：一条后来被重新打开的反馈，不会被一次不相干的部署改回去。下一个写了它编号的修复上线时，它会再被推一次。
+- 已经是 `deployed` 的不动（不写第二条时间线）；编号不存在或已删除的跳过，照样打一行日志。
+- 这一步没有新增端点，也没有新增凭据：部署本来就在那台机器上用 `docker exec` / `docker compose run` 跑后端脚本，这里是同一种做法。
+- 只有测试环境（`okcheese.com`）这样做。生产环境是另一份数据库，同一个编号在那里指的是另一条反馈。
+
 ## 栏位是过滤器，不是分区 {#tabs}
 
 公开侧四个栏位 `all` / `hot` / `active` / `resolved`，定义只写在 `_tab_where` 一处，列表和计数共用：

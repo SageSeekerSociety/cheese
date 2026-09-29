@@ -24,6 +24,7 @@ import time
 import types
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -111,7 +112,6 @@ def _load_addon(
     monkeypatch.setenv("CHEESE_CLAUDE_CREDENTIAL", str(credential_file))
     monkeypatch.setenv("CHEESE_CHATGPT_CREDENTIALS", str(tmp_path / "chatgpt"))
     monkeypatch.setenv("CHEESE_CHATGPT_KEY", chatgpt_key)
-    monkeypatch.delenv("CHEESE_CODEX_CLIENT_VERSION", raising=False)
 
     _ADDON_LOADS += 1
     name = f"billing_addon_{_ADDON_LOADS}"
@@ -1935,32 +1935,67 @@ def test_a_gateway_request_goes_to_chatgpt_on_the_accounts_credential(
     assert json.loads(sent) == {"store": False, "input": [], "model": "gpt-6-astra"}
 
 
-def test_the_model_list_is_forwarded_with_its_query(monkeypatch, tmp_path):
+def test_the_model_list_asks_for_the_version_the_header_names(monkeypatch, tmp_path):
     mod = _chatgpt_proxy(monkeypatch, tmp_path)
     _chatgpt_account_on_disk(tmp_path)
-    flow = _gateway_request("/chatgpt/work/models?client_version=0.153.4")
+    (tmp_path / "chatgpt" / "client-version").write_text("0.160.1\n")
+    flow = _gateway_request(
+        "/chatgpt/work/models?client_version=0.153.4&limit=5", method="GET"
+    )
 
     asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None
-    assert flow.request.path == "/backend-api/codex/models?client_version=0.153.4"
+    assert flow.request.headers["version"] == "0.160.1"
+    path, _, query = flow.request.path.partition("?")
+    assert path == "/backend-api/codex/models"
+    assert parse_qs(query) == {"client_version": ["0.160.1"], "limit": ["5"]}
 
 
-def test_the_client_version_sent_to_chatgpt_is_configurable(monkeypatch, tmp_path):
-    monkeypatch.setenv("CHEESE_CODEX_CLIENT_VERSION", "9.9.9")
-    _install_mitmproxy_stub(monkeypatch)
-    spec = importlib.util.spec_from_file_location("billing_addon_version", ADDON)
-    mod = importlib.util.module_from_spec(spec)
-    monkeypatch.setenv("CHEESE_CHATGPT_KEY", GATEWAY_KEY)
-    monkeypatch.setenv("CHEESE_CHATGPT_CREDENTIALS", str(tmp_path / "chatgpt"))
-    monkeypatch.setenv("CHEESE_USAGE_LOG", str(tmp_path / "usage.jsonl"))
-    spec.loader.exec_module(mod)
+def test_a_model_list_request_without_a_version_is_given_one(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
     _chatgpt_account_on_disk(tmp_path)
-    flow = _gateway_request()
+    flow = _gateway_request("/chatgpt/work/models", method="GET")
 
     asyncio.run(mod.requestheaders(flow))
 
-    assert flow.request.headers["version"] == "9.9.9"
+    assert flow.request.path == "/backend-api/codex/models?client_version=0.158.0"
+    assert flow.request.headers["version"] == "0.158.0"
+
+
+def test_the_client_version_follows_its_file_without_a_restart(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    version_file = tmp_path / "chatgpt" / "client-version"
+
+    def sent() -> str:
+        flow = _gateway_request()
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response is None
+        return flow.request.headers["version"]
+
+    assert sent() == "0.158.0"
+    version_file.write_text("9.9.9\n")
+    assert sent() == "9.9.9"
+    version_file.write_text("9.10.0")
+    assert sent() == "9.10.0"
+    # Cleared: back to the built-in default.
+    version_file.unlink()
+    assert sent() == "0.158.0"
+    # A file edited by hand into something no header should carry is not sent.
+    version_file.write_text("1.0\r\nx-injected: yes")
+    assert sent() == "0.158.0"
+
+
+def test_the_client_version_file_is_not_an_account(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    (tmp_path / "chatgpt" / "client-version").write_text("9.9.9\n")
+    flow = _gateway_request("/chatgpt/client-version/responses")
+
+    asyncio.run(mod.requestheaders(flow))
+
+    _refused(flow, 404, b"no ChatGPT account")
 
 
 def test_each_account_name_puts_its_own_account_on_the_request(monkeypatch, tmp_path):

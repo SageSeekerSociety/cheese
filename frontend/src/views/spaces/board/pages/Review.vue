@@ -17,7 +17,7 @@ import { type BoardTask, type ReviewedTask } from '../model'
 import { deadlineText } from '../model'
 import { loadPending, loadRecentReviews, me, reviewTask, space } from '../store'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 
 /** 一页 20 道，与空间首页同一口径。队列积压时（开放发题之后就一定会积压）才翻页。 */
 const PAGE_SIZE = 20

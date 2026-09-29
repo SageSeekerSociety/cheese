@@ -41,7 +41,8 @@ it. See `_forward_to_chatgpt`.
 Config (env): CHEESE_USAGE_LOG, CHEESE_TOKEN_CAP, CHEESE_CAP_WINDOW_S,
 CHEESE_SCOPED_SECRET, CHEESE_ALLOW_HEADER_ATTR, CHEESE_ADMISSION_URL,
 CHEESE_ADMISSION_CACHE_S, CHEESE_GATEWAY_BASE, CHEESE_CHATGPT_CREDENTIALS,
-CHEESE_CHATGPT_KEY, CHEESE_CODEX_CLIENT_VERSION.
+CHEESE_CHATGPT_KEY. The Codex client version sent to ChatGPT is not env: it
+is a file beside the ChatGPT accounts (ChatGPTAccounts.client_version).
 """
 
 import asyncio
@@ -82,6 +83,7 @@ from cheese_billing_core import (  # noqa: E402
     proxy_basic_password,
     requested_model_of,
     verify_scoped_token,
+    with_client_version,
 )
 
 logger = logging.getLogger("cheese.metering")
@@ -131,10 +133,6 @@ CHATGPT_ACCOUNTS = ChatGPTAccounts(
 # since a request that gets through spends a subscription. Unset refuses every
 # request.
 CHATGPT_KEY = os.environ.get("CHEESE_CHATGPT_KEY", "")
-# ChatGPT gates which models an account may use on this client version: 0.153.4
-# is not offered gpt-6-sol or gpt-6-luna, 0.158.0 is. Raise it with the Codex
-# release whose models the platform should see.
-CODEX_CLIENT_VERSION = os.environ.get("CHEESE_CODEX_CLIENT_VERSION") or "0.158.0"
 
 if not ADMISSION_URL:
     # Said once, loudly, at load: an unset env var produces no error anywhere
@@ -566,15 +564,18 @@ async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
         _CHATGPT_EGRESS_AUTH[(egress.host, egress.port)] = egress.authorization
     for header in _CHATGPT_STRIPPED:
         flow.request.headers.pop(header, None)
+    # Read once per request so the header and the model list's query name the
+    # same version even while the file is being changed.
+    version = CHATGPT_ACCOUNTS.client_version()
     flow.request.scheme = "https"
     flow.request.host, flow.request.port = CHATGPT_UPSTREAM
-    flow.request.path = upstream_path
+    flow.request.path = with_client_version(upstream_path, version)
     flow.request.headers["host"] = CHATGPT_UPSTREAM[0]
     flow.request.headers["authorization"] = f"Bearer {token}"
     if account_id:
         flow.request.headers["chatgpt-account-id"] = account_id
     flow.request.headers["originator"] = "cheese"
-    flow.request.headers["version"] = CODEX_CLIENT_VERSION
+    flow.request.headers["version"] = version
     # Set for a direct account too: the gateway sends every account down one
     # client connection, and the flow's server connection carries whatever
     # egress the previous request on it was given.

@@ -1752,11 +1752,13 @@ def _sync_task(task_id: str) -> None:
         record.write(f"{datetime.now(UTC).isoformat()} start task={task_id}\n")
         record.flush()
         branch = None
+        closed = False
         try:
             project = _need("CHEESE_PROJECT", PROJECT)
             data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
             if data["room_id"] != TOPIC:
                 raise RuntimeError("Task belongs to another room")
+            closed = data["closed"]
             _git_task(worktree, "config", "--replace-all", "credential.helper", "")
             _git_task(
                 worktree,
@@ -1787,8 +1789,10 @@ def _sync_task(task_id: str) -> None:
                     input_text=f"Work in progress for task {task_id}\n",
                 )
             )
-            _backup_task_snapshot(worktree, admin, data, head, snapshot)
-            if data["closed"]:
+            _once_more_if_transient(
+                lambda: _backup_task_snapshot(worktree, admin, data, head, snapshot)
+            )
+            if closed:
                 # Kept, never delivered: what the checkout holds is in the
                 # backup, on whichever branch an agent went on to use it for.
                 record.write(
@@ -1800,8 +1804,10 @@ def _sync_task(task_id: str) -> None:
             found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
                 raise RuntimeError(f"Expected task branch {branch}, found {found}")
-            _deliver_task_branch(
-                worktree, branch, head, queued_pr=data.get("merge_queued_pr")
+            _once_more_if_transient(
+                lambda: _deliver_task_branch(
+                    worktree, branch, head, queued_pr=data.get("merge_queued_pr")
+                )
             )
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
@@ -1813,7 +1819,58 @@ def _sync_task(task_id: str) -> None:
             )
             queued = exc.pr if isinstance(exc, _BranchQueued) else None
             _report_sync_failure(task_id, branch, queued)
+            if closed and isinstance(exc, Exception):
+                raise _ClosedTaskNotBackedUp(str(exc)) from exc
             raise
+
+
+class _ClosedTaskNotBackedUp(RuntimeError):
+    """A closed task's leftover work could not be backed up.
+
+    Told apart from an open task's failed sync because the platform weighs it
+    differently when a room moves off this machine: a machine that keeps its
+    files still holds this work, a Cloud machine about to be deleted does not.
+    """
+
+
+# Words git prints when the connection, not the forge, failed.
+_TRANSIENT_GIT = (
+    "connection reset",
+    "timed out",
+    "the remote end hung up unexpectedly",
+    "early eof",
+)
+
+
+def _transient(exc: BaseException) -> bool:
+    """A reset or timed-out connection: the same request may well go through."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return False  # The platform answered; asking again gets the same answer.
+    if isinstance(exc, urllib.error.URLError):
+        exc = exc.reason if isinstance(exc.reason, BaseException) else exc
+    if isinstance(
+        exc,
+        (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError),
+    ):
+        return True
+    return isinstance(exc, RuntimeError) and any(
+        words in str(exc).lower() for words in _TRANSIENT_GIT
+    )
+
+
+def _once_more_if_transient(action):
+    """Run `action`, and once more if the network dropped it.
+
+    One retry, not a loop: a single reset is the network, a second one in a
+    row is usually something about the request (its size, a proxy's limit),
+    and every retry lengthens the push a room switch waits two minutes for.
+    """
+    try:
+        return action()
+    except Exception as exc:
+        if not _transient(exc):
+            raise
+    return action()
 
 
 def _deliver_task_branch(
@@ -1887,12 +1944,20 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
     task_id = data["task_id"]
     ref = f"refs/cheese/snapshots/{task_id}"
     base = f"refs/remotes/origin/{data['base']}"
-    if _git_task(worktree, "rev-list", "--count", snapshot, f"^{base}") == "0":
+    try:
+        _git_task(worktree, "rev-parse", "--verify", "--quiet", base)
+        known = [f"^{base}"]
+    except RuntimeError:
+        # A task stacked on another task's branch outlives that branch: it is
+        # deleted once merged, and a fetch with --prune drops it here too. What
+        # the backup holds is then what no branch of the forge was seen with.
+        known = ["--not", "--remotes=origin"]
+    if _git_task(worktree, "rev-list", "--count", snapshot, *known) == "0":
         return  # Every object is already on the forge; there is no unfinished work.
     _git_task(worktree, "update-ref", ref, snapshot)
     bundle = admin / f"cheese-snapshot-{snapshot}.bundle"
     try:
-        _git_task(worktree, "bundle", "create", str(bundle), ref, f"^{base}")
+        _git_task(worktree, "bundle", "create", str(bundle), ref, *known)
         digest = hashlib.sha256()
         with bundle.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -2009,7 +2074,10 @@ def _sync_all_tasks() -> None:
             _sync_task(worktree.name)
         except (Exception, SystemExit) as exc:
             failed.append(worktree.name)
-            print(f"[cheese] 任务 {worktree.name} 同步失败：{exc}", file=sys.stderr)
+            # The platform reads these lines (`session_work._failed_tasks`).
+            closed = isinstance(exc, _ClosedTaskNotBackedUp)
+            which = "已结束的任务" if closed else "任务"
+            print(f"[cheese] {which} {worktree.name} 同步失败：{exc}", file=sys.stderr)
     if failed:
         raise SystemExit(1)
 

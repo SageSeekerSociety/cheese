@@ -1391,9 +1391,9 @@ export interface FeedbackCard {
 
 export interface FeedbackTimelineEntry {
   status: FeedbackStatus
-  /** 谁推的。人推是 handle，agent 发现的那条是 null。 */
-  by_handle: string | null
+  by_handle: string | null // 谁推的；部署管线推的那一步没有人，是 null
   at: string
+  note?: string | null // 部署管线那一步写「由 PR #N 修复并上线」和链接；人推的没有
 }
 
 /** 一条评论。`parent_id` 只指向**顶层**评论 —— 回复的回复由服务端折上来，所以

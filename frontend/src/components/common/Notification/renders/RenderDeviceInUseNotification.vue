@@ -20,7 +20,7 @@ import { useI18n } from 'vue-i18n'
 
 import { getMetadata, getStringMetadata } from './NotificationRenderUtils'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 
 /**
  * 一个 agent 开始在你登记的设备上工作（#1900 第 5 步）。只是告知：哪个项目、哪个

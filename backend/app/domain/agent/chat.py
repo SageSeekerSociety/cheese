@@ -11,14 +11,12 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
-import codecs
 import hashlib
 import json
 import logging
 import re
 import time
 import uuid
-from collections import Counter
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -34,6 +32,23 @@ from app.core.text import markdown_preview
 from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
+
+# 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
+# 这里重新导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面
+# 带 noqa 的那个常量本文件不用，只是给外部（测试）留的导入路径。
+from app.domain.agent.event_lines import (
+    _CHANGE_FILES_LISTED,  # noqa: F401 — 搬走的常量，这里仍然导得出来
+    _change_summary_meta,
+    _Changeset,
+    _diff_file_stats,
+    _format_change_summary,
+    _format_tool_event,
+    _is_platform_tool,
+    _short_tool_name,
+    _subagent_event_text,
+    _subagent_result_meta,
+    _tool_event_meta,
+)
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import (
     Opening,
@@ -65,7 +80,6 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_API_RETRY,
-    EVENT_CONTEXT_COMPACT,
     EVENT_DEVICE_WAITING,
     EVENT_MCP_NOT_CONNECTED,
     EVENT_MEMORY_CHANGED,
@@ -82,6 +96,30 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.profiles import ProfileRegistry
+
+# 兼容门面：提示词/上下文渲染搬去了 `prompt.py`（那里有直接的单测）。这里重新
+# 导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面带 noqa 的
+# 几个本文件不用，只是给外部（测试）留的导入路径。
+from app.domain.agent.prompt import (
+    _PROGRESS_MARK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
+    _REPLAY_NOTICE_AT,  # noqa: F401
+    _REPLAY_NOTICE_EVERY,  # noqa: F401
+    PLACEHOLDER_TITLE,
+    _addressed_to,
+    _compaction_notice,
+    _is_pending_input,  # noqa: F401
+    _pending_input_blocks,
+    _pending_platform_notices,
+    _platform_preamble,
+    _progress_lines,  # noqa: F401
+    _prompt_topic_refs,  # noqa: F401
+    _replay_notice,
+    _resume_notice,
+    _sandbox_limits,
+    _session_opening_lines,
+    _topic_ref_lists,
+    project_overview,
+)
 from app.domain.agent.service import (
     AgentCompacting,
     AgentEvent,
@@ -103,9 +141,6 @@ from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent.step_output import output_tail, without_output
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent.tool_preview import (
-    SHELL_TOOLS,
-    ToolPreview,
-    cheese_subcommand,
     tool_detail,
     tool_preview,
     work_subpath,
@@ -117,14 +152,10 @@ from app.domain.agent_instance.services import (
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.about import EventAbout, landing
-from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
-    CONSUMED_TURN_META_KEY,
     AuthorType,
     Block,
     BlockKind,
-    agent_notice,
-    consumed_turn,
     prompted_turn,
 )
 from app.domain.block.repositories import BlockRepository
@@ -170,11 +201,7 @@ from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic import doc_nudge, naming
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
-from app.domain.topic.overview import (
-    project_brief,
-    render_overview,
-    render_overview_auto,
-)
+from app.domain.topic.overview import project_brief
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
@@ -342,291 +369,10 @@ class _Proposed:
     landed: dict | None
 
 
-# 施工现场: render each tool call like a Claude Code action line — a Chinese verb
-# plus a short preview of its most telling argument. Stored in the event block as
-# "verb\npreview" (preview omitted when empty).
-_TOOL_VERB = {
-    "update_doc": "更新文档",
-    "remember": "记入项目记忆",
-    "notify": "发送通知",
-    "request_accept": "提交审阅",
-    "pin_milestone": "添加里程碑",
-    "write_file": "写入文件",
-    "record_decision": "记录决策",
-}
-
-
-# Native Claude Code tools (sandbox mode) → 现场 labels. Systematic: every tool
-# the agent can invoke has a Chinese verb + its most telling argument as the
-# preview; an unmapped (future) tool falls back to its raw name, which is the
-# signal to extend this table.
-_TOOL_VERB.update(
-    {
-        "Bash": "执行命令",
-        "Write": "写入文件",
-        "Edit": "修改文件",
-        "Read": "读取文件",
-        "Glob": "查找文件",
-        "Grep": "搜索内容",
-        "WebSearch": "搜索网页",
-        "WebFetch": "读取网页",
-        "Agent": "派出分身",
-        "Task": "派出分身",  # older CLI name for Agent
-        "NotebookEdit": "修改笔记本",
-        "TodoWrite": "更新任务清单",
-        "BashOutput": "查看命令输出",
-        "KillShell": "终止命令",
-        "KillBash": "终止命令",
-        "ExitPlanMode": "提交方案待确认",
-        "AskUserQuestion": "向用户提问",
-        "Skill": "调用技能",
-        "ToolSearch": "查找工具",
-    }
-)
-
-# pi 原生工具。同样的动词，另一套名字 —— 两个 harness 的工具名没有一个重合，所以
-# 少了这几行，一个 pi 房间的现场从头到尾只有 bash / read / write 这些英文原名。
-_TOOL_VERB.update(
-    {
-        "bash": "执行命令",
-        "read": "读取文件",
-        "write": "写入文件",
-        "edit": "修改文件",
-        "ls": "列出目录",
-        "find": "查找文件",
-        "grep": "搜索内容",
-    }
-)
-
-
-def _format_tool_event(name: str, preview: ToolPreview) -> str:
-    """Human-readable FALLBACK text for an event block (old clients / old rows).
-
-    The UI renders from the structured meta (see _tool_event_meta); this baked
-    string only shows when meta is absent. Both are built from the SAME
-    ToolPreview, so the baked line and the rendered one cannot describe the
-    call differently."""
-    verb = _TOOL_VERB.get(preview.action or name, name)
-    return f"{verb}\n{preview.text}" if preview.text else verb
-
-
-# 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).
-# Deterministic by construction — tool-name prefix, or the `cheese` CLI at the
-# head of the command segment 现场 displays. NEVER inferred from natural
-# language, and never from the word appearing somewhere else in the command:
-# the dot and the text on that line have to be about the same thing.
-#: 平台动作在各个 harness 里叫什么。同一件事三种拼法，因为把工具交给模型的机制
-#: 各不相同：MCP 服务器自己加前缀，pi 那边的目录是从 CLI 的命令树生成的，而
-#: `chat_send` 是系统提示每一轮都在点名、于是 extension 额外注册的那个别名。
-#: MCP 那个前缀（`mcp__<服务器>__<工具>`）也要认。claude_code 的服务器注册名是
-#: `native`（见 `harness/claude_code/remote_execution/client.py` 写 mcp.json 时的
-#: `servers = {"native": ...}`），所以真实名字长这样：
-#: `mcp__native__cheese_feedback_propose`；
-#: `mcp__cheese__` 是这套东西还叫 cheese 时的拼法，仍然认（历史行还躺在库里）。
-#: 只认后者会让整件事**静默失效**：前缀认不出来 → 这一格既不算平台动作、中文标签也
-#: 查不到，于是时间线上原样渲染 `mcp__native__…` 配一个中性点，而它看着完全正常。
-_PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
-#: ……但 `mcp__native__` 底下**不都是平台动作**：`invoke` 是这个 harness 搬运读写与
-#: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
-#: 色的点 —— 而那只是读了一个文件。
-_NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
-#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send`、`chat_edit` 和 `todo_write`
-#: 的名字照模型已经认得的说法起；另外两个是平台自己的 MCP 工具。
-_PLATFORM_ALIASES = frozenset(
-    {"chat_send", "chat_edit", "todo_write", "platform_request", "send_user_file"}
-)
-
-#: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
-#: 服务器改名那一天这里会静态地失效，而失效的样子和时间线正常的样子一模一样。
-_MCP_PREFIX = re.compile(r"^mcp__[a-z0-9_]+__")
-
-
-def _short_tool_name(raw_name: str) -> str:
-    """把 MCP 工具名归一成模型看到的那个（`mcp__native__chat_send` → `chat_send`）。"""
-    return _MCP_PREFIX.sub("", raw_name)
-
-
-def _is_platform_tool(raw_name: str, args: dict) -> bool:
-    """True when the tool call is a platform action: a cheese tool under any of
-    the names a harness publishes it as, or a shell command that invokes the
-    machine's `cheese` CLI."""
-    if raw_name in _NOT_A_PLATFORM_TOOL:
-        return False
-    if raw_name.startswith(_PLATFORM_PREFIXES):
-        return True
-    if _short_tool_name(raw_name) in _PLATFORM_ALIASES:
-        return True
-    if raw_name in SHELL_TOOLS and isinstance(args, dict):
-        return bool(cheese_subcommand(str(args.get("command", ""))))
-    return False
-
-
-def _tool_event_meta(
-    name: str, preview: ToolPreview, *, platform: bool, detail: str = ""
-) -> dict:
-    """Structured payload persisted on an event block: the UI translates the
-    tool name and colors the dot from these fields at DISPLAY time, so a verb
-    missing from today's table is never baked in untranslated forever.
-
-    ``as_tool`` rides alongside ``tool`` rather than replacing it: ``tool`` says
-    what actually ran, ``as_tool`` says whose label reads better (a Bash
-    `cat foo.py` is still a Bash call, but 「读取文件」 is what it did). NOT named
-    ``action`` — that key already means "which platform resource this card points
-    at" (see the frontend's platformNotice), and one name answering two questions
-    is how a card ends up pointing at a resource called "Read".
-
-    ``detail`` is the argument as it was actually written, for the reader who
-    opens the line. It is stored NEXT TO ``arg`` rather than replacing it
-    because the two want opposite things: ``arg`` is rewritten and cut to stay
-    scannable on one line, and what the opener came for is exactly what that
-    rewriting removed. Only the preview is ever computed from it, so a line
-    with nothing more to say carries no second copy."""
-    meta: dict = {"tool": name, "platform": platform}
-    if preview.text:
-        meta["arg"] = preview.text
-    if preview.action:
-        meta["as_tool"] = preview.action
-    if detail:
-        meta["detail"] = detail
-    return meta
-
-
-# 分身回吐 (§9 可见性): a subagent reports to whoever spawned it and nothing else,
-# so the room used to see 「派出分身 X」 and never the answer. Its conclusion
-# lands as its own 现场 event — CAPPED, because the room is a place people read:
-# a subagent can return thousands of words and pasting them here would bury the
-# conversation instead of informing it. The full text is in the transcript; what
-# the room needs is enough to tell "it answered the question" from "it went off
-# the rails", which is the whole point of making it visible.
-_SUBAGENT_RESULT_MAX = 500
-
-
-def _subagent_event_text(description: str, result: str) -> str:
-    """现场 line for a returning subagent: "分身查完了：<问题>\\n<结论摘要>".
-
-    NOTE the deliberate absence of ``meta.tool`` on the block this text goes on
-    (see _subagent_result_meta): the UI translates meta.tool through its own verb
-    table, and a name that table doesn't know renders raw. Leaving it off routes
-    this block down the content-text path, which reads correctly with no frontend
-    change — while the structured fields ride along for when there is one.
-    """
-    summary = " ".join(result.split())
-    if len(summary) > _SUBAGENT_RESULT_MAX:
-        summary = summary[:_SUBAGENT_RESULT_MAX] + "…"
-    head = " ".join(description.split())[:80]
-    verb = f"分身查完了：{head}" if head else "分身查完了"
-    return f"{verb}\n{summary}" if summary else verb
-
-
-def _subagent_result_meta(name: str, description: str, result: str) -> dict:
-    """Structured payload for a subagent conclusion.
-
-    ``truncated`` is what tells a future UI that an 「展开」 affordance has
-    something behind it, instead of it having to compare lengths against a
-    constant that lives on the other side of the wire.
-    """
-    summary = " ".join(result.split())
-    return {
-        "platform": False,  # the agent's own work, not a platform action
-        "subagent": {
-            "tool": name,
-            "description": " ".join(description.split())[:120],
-            "summary": summary[:_SUBAGENT_RESULT_MAX],
-            "truncated": len(summary) > _SUBAGENT_RESULT_MAX,
-        },
-    }
-
-
-# 一轮的改动汇总 (§8.4 commit 可视化): what this turn did to the topic branch, as
-# ONE event at turn end. Bounded on purpose — the ask was "改了几个文件、大致
-# 增删量，能点开看 diff", NOT the diff body: a 2000-line diff pasted into the
-# timeline is the definition of 刷屏, and the diff panel already renders it well.
-_CHANGE_FILES_LISTED = 12  # paths named in the event's text and in meta.files
-_CHANGE_COMMIT_WALK = 30  # how far back we look for commits new to this turn
-
-# "diff --git a/<old> b/<new>", with git's quoting when a path needs it. The
-# b-side is the path AFTER the change, which is where a rename should be filed.
-_DIFF_HEADER_RE = re.compile(r'^diff --git "?a/.+?"? "?b/(?P<path>.+?)"?$')
-
-
-@dataclass
-class _Changeset:
-    """What one turn did to the topic branch."""
-
-    commits: list[str]  # newest first; commits[0] is what a UI opens
-    files: list[dict]
-
-
-def _diff_file_stats(diff: str) -> list[dict]:
-    """Per-file added/removed line counts parsed out of a unified diff.
-
-    Counted from the diff text rather than asked of git with ``--numstat``
-    because the only workspace readers available here return diff bodies; the
-    parse is the cheaper half of that trade (the body is already in memory).
-
-    Content lines are counted only INSIDE a hunk. Skipping "+++"/"---" by prefix
-    instead would silently drop a deleted line whose own text starts with "--".
-    """
-    stats: list[dict] = []
-    current: dict | None = None
-    in_hunk = False
-    for line in diff.splitlines():
-        header = _DIFF_HEADER_RE.match(line)
-        if header is not None:
-            path = header.group("path")
-            if line.endswith('"'):
-                # Git quotes UTF-8 bytes with C-style octal escapes.
-                path = codecs.escape_decode(path.encode())[0].decode()
-            current = {"path": path, "added": 0, "removed": 0}
-            stats.append(current)
-            in_hunk = False
-            continue
-        if current is None:
-            continue
-        if line.startswith("@@"):
-            in_hunk = True
-            continue
-        if not in_hunk:
-            continue  # index / mode / rename / ---+++ headers
-        if line.startswith("+"):
-            current["added"] += 1
-        elif line.startswith("-"):
-            current["removed"] += 1
-    return stats
-
-
-def _format_change_summary(files: list[dict]) -> str:
-    """现场 line for a turn's changes: a headline plus the paths it touched."""
-    added = sum(f["added"] for f in files)
-    removed = sum(f["removed"] for f in files)
-    head = f"这一轮改了 {len(files)} 个文件（+{added} -{removed}）"
-    listed = [f["path"] for f in files[:_CHANGE_FILES_LISTED]]
-    rest = len(files) - len(listed)
-    if rest > 0:
-        listed.append(f"…另 {rest} 个")
-    return f"{head}\n{' · '.join(listed)}" if listed else head
-
-
-def _change_summary_meta(changeset: _Changeset) -> dict:
-    """Structured payload for a turn's change summary.
-
-    ``commit`` is the newest of the turn's commits and the ref a UI should open:
-    ``GET /api/projects/{project}/git/diff?ref=<commit>`` already serves exactly
-    that diff, so 「点开看 diff」 needs no new endpoint.
-    """
-    files = changeset.files
-    return {
-        "platform": True,  # the platform's own bookkeeping, not something 芝士 did
-        "changeset": {
-            "commit": changeset.commits[0] if changeset.commits else None,
-            "commits": changeset.commits,
-            "files_total": len(files),
-            "added": sum(f["added"] for f in files),
-            "removed": sum(f["removed"] for f in files),
-            "files": files[:_CHANGE_FILES_LISTED],
-            "files_omitted": max(0, len(files) - _CHANGE_FILES_LISTED),
-        },
-    }
+#: How far back a turn's change summary walks the topic branch's history.
+#: Rendering the diff is `event_lines.py`'s job; how far back to look is this
+#: side's (the git half is environment, that half is the contract).
+_CHANGE_COMMIT_WALK = 30
 
 
 #: How many sessions' supply routes to remember. Well past the number of screens
@@ -869,141 +615,6 @@ _OPEN_CARD_STATUSES = (
     AcceptStatus.conflict,
 )
 
-_PROGRESS_MARK = {"completed": "x", "in_progress": "~", "pending": " "}
-
-
-def _progress_lines(items: list[dict]) -> list[str]:
-    """进度层 (#187): the checklist this topic's work left behind, as prompt text.
-
-    This is the one thing a fresh machine cannot reconstruct from the repo. Code
-    survives in git, conclusions survive in the doc and the decision log, but
-    "which of the five things am I on" only ever lived in the dead turn's stream.
-    So it is stated here as a fact about the topic, not as memory — see
-    TopicProgress's docstring for why the two must not be merged.
-
-    The instruction to re-list finished items when building a new checklist is
-    load-bearing: `todo_write` replaces the stored row whole, so a plan that
-    silently drops what is already done would erase it.
-    """
-    if not items:
-        return []
-    lines = ["- 上次的任务清单（跨轮、跨机器保留下来的进度，不是这一轮新建的）："]
-    for item in items:
-        mark = _PROGRESS_MARK.get(str(item.get("status", "")), " ")
-        subject = str(item.get("subject", "")).strip() or "（任务）"
-        lines.append(f"    - [{mark}] {subject}")
-    lines.append(
-        "  已完成的别重做，接着没做完的往下干。**用 `todo_write` 重新写清单时把已完成"
-        "的也列进去并标成 completed**——清单会整份覆盖上面这份，只列剩下的等于把做过"
-        "的抹掉。"
-    )
-    return lines
-
-
-def _sandbox_limits(provider: object) -> tuple[int, int] | None:
-    """(memory_mb, cores) for backends that know their own size, else None.
-
-    Read off the provider rather than looked up in the machine tables on
-    purpose: #282 决定 2 keeps the agent layer out of the machine domain, and
-    check-repo-rules enforces it. A backend that does not set these attributes
-    genuinely does not know — an enrolled machine belongs to someone else and we
-    do not set its limits — and None then means the prompt says nothing at all.
-    Inventing a number would be worse than silence: the agent would skip work it
-    could have done.
-    """
-    memory_mb = getattr(provider, "sandbox_memory_mb", None)
-    cores = getattr(provider, "sandbox_cores", None)
-    if isinstance(memory_mb, int) and isinstance(cores, int) and memory_mb > 0:
-        return (memory_mb, cores)
-    return None
-
-
-def _session_opening_lines(
-    *,
-    progress: list[dict] | None = None,
-    sandbox: tuple[int, int] | None = None,
-    earlier_messages: int = 0,
-    unconnected_mcp: tuple[str, ...] = (),
-) -> list[str]:
-    """盲飞防护: what a session cannot find out for itself, at the moment it opens.
-
-    Each survives being written once. The machine's size does not change under
-    a session; the checklist answers 「我做到哪了」 and the pointer to the chat
-    answers 「之前说了什么」 for a session that was not there — once one is
-    running, its own history answers both.
-
-    This is what is left of a per-turn header that came from #175, where the
-    complaint was 29 turns timing out against a 900s ceiling nobody had been
-    told about. Two things happened to it. The ceiling went away (there is no
-    countdown; saying there was one made the agent rush — dev, 2026-08-08), and
-    `cheese_status` — added in that same commit, for that same complaint — took
-    over the rest: cards, gate output and disk are all one call away, and the
-    header was restating them every turn, from a snapshot that stopped being
-    true after the first one. What is left is the part no call and no turn can
-    reconstruct.
-    """
-    lines: list[str] = []
-    # 机器有多大: the agent cannot read its own cgroup limit, and the failure it
-    # produces without knowing — a build the kernel OOM-kills — looks like a
-    # broken toolchain rather than a small box. Only the FACT goes here; what to
-    # do about it (try it once anyway, never retune --max-old-space-size, say
-    # plainly that you did not run it) is a principle and lives in the cheese
-    # skill. None means this backend does not know its own size, and then we say
-    # nothing at all rather than invent a number.
-    if sandbox is not None:
-        mem_mb, cores = sandbox
-        gb = mem_mb / 1024
-        shown = f"{gb:.0f}" if gb == int(gb) else f"{gb:.1f}"
-        lines.append(
-            f"- 这台机器：内存 {shown}GB、{cores} 核。吃内存的命令"
-            "（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉——那不是代码"
-            "有问题，也不是工具链坏了。"
-        )
-    lines.extend(_progress_lines(progress or []))
-    # A server the project's .mcp.json names but nobody has connected yet: the
-    # agent would otherwise go looking for tools that are not there, or take
-    # their absence for a broken setup. What to do about it is a person's.
-    if unconnected_mcp:
-        lines.append(
-            "- 项目的远程 MCP 服务器 "
-            + "、".join(unconnected_mcp)
-            + " 需要项目成员在项目设置里连接，这个会话里用不了它们的工具。"
-        )
-    # A session that opens in a room with history has read none of it, while
-    # the people in the room assume it has. The living docs, memory and the
-    # checklist reach it as conclusions; what was said is only in the chat.
-    if earlier_messages:
-        lines.append(
-            f"- 这个房间里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
-            "动手之前先用 `cheese chat list` 读最近的记录；"
-            "要找某句原话或某个决定，用 `cheese chat search <关键词>`。"
-        )
-    return lines
-
-
-def _platform_preamble(notices: list[Block]) -> str:
-    """What moved under the session, as the frame the rest of the prompt is read
-    in — so it goes first: a request to revise the 验收标准 means something else
-    once you know that section moved ten minutes ago.
-
-    One marker over all of them. The marker is the one thing in a prompt that
-    claims institutional authority, and repeating it per line spends that.
-
-    Neutralized exactly as the live push neutralizes it: a notice quotes what
-    people typed — a document's own headings — so the marker must not be
-    forgeable from the content side.
-    """
-    said = "\n".join(str(agent_notice(b)) for b in notices)
-    return platform_prompt(strip_platform_notice(said)) if said else ""
-
-
-def _resume_notice() -> str:
-    """The one thing that is true of a turn rather than of its session."""
-    return (
-        "本轮接着上一轮跑：上一轮中途断了，这是同一件事的继续。"
-        "先确认上一轮做到哪了再继续（翻消息记录、git status），别凭印象重做。"
-    )
-
 
 # Mentions are an ENCODED token, not guessed-from-prose: 芝士 (and the composer)
 # emit `<@handle>`, which the platform resolves deterministically and the UI
@@ -1020,52 +631,6 @@ _SPECIAL_MENTIONS = frozenset({MENTION_ALL, MENTION_HERE})
 
 
 _TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
-
-# A topic created from the rail's + has no human-typed title ("新话题"); 芝士 names
-# it via `cheese_title` (titles are AI-generated, never deterministically derived
-# from human input or the agent's output — see CLAUDE.md).
-PLACEHOLDER_TITLE = "新话题"
-
-
-def _topic_ref_lists(
-    topics: list[Topic], *, exclude_id: uuid.UUID
-) -> tuple[list[dict], list[dict]]:
-    """一次推导出两份话题列表：`(全量解析表, 渲染进 prompt 的子集)`。
-
-    故意成对返回：这两份**必须**从同一批话题推导，且**必须**保持不同。全量那份
-    喂给 `expand_mention_names`（`@标题` → `<#id>` 的解析表，含已归档话题）；子集
-    那份只喂给 `build_system_prompt`。合成一份就会把"少注入"变成"少了引用能力"
-    ——用户自己打 `@某个已归档话题` 会不再变成链接。
-    """
-    visible = [t for t in topics if t.id != exclude_id and t.kind != TopicKind.root]
-    return [{"id": str(t.id), "title": t.title} for t in visible], _prompt_topic_refs(
-        visible
-    )
-
-
-def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
-    """渐进式披露：从全量话题里挑出**值得渲染进 system prompt** 的那一小撮。
-
-    只影响 prompt 里列出来的那一段；`expand_mention_names` 拿到的仍是全量列表，
-    所以过滤掉的话题（含已归档的）用 `@标题` 照样解析得出 <#id> 链接——少注入是
-    纯赚的，不损失任何引用能力。
-
-    剔除三类：
-    - 已归档：本项目实测占注入量的 74%，而引用一个几周前归档的话题几乎没有价值；
-      需要时 agent 自己查（prompt 那段里给了查法）。
-    - 未命名（标题就是占位符）：按标题根本引用不了。
-    - 同名：`expand_mention_names` 对同名标题只解析第一个（mentions.py 的 `seen`
-      去重），其余会**静默指向错的那一个**。所以同名的**全部剔除**而不是留一个
-      ——留一个等于在 prompt 里推荐一个会指错的引用；全部不列，它们仍可通过查询
-      拿到 id 后用 <#id> 精确引用。
-    """
-    live = [
-        t
-        for t in topics
-        if t.status != TopicStatus.archived and t.title != PLACEHOLDER_TITLE
-    ]
-    titles = Counter(t.title for t in live)
-    return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
 
 
 def _topic_refs(text: str) -> list[str]:
@@ -1112,111 +677,6 @@ def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
 
 
-def _pending_input_blocks(history: list[Block]) -> list[Block]:
-    """The messages/attachments no turn has read into a prompt yet.
-
-    轮次边界按**归属**划，不按位置划：一条在轮次运行中到达的人类消息，created_at
-    排在那轮 AI 回复之前，所以"最后一条 AI 消息之后"这个窗口会把它切掉 —— 而且
-    切掉就再也捡不回来了（那个下标只会往前走）。这里改成挑「没被任何一轮盖过
-    consumed 戳」的块，戳由干净收尾的轮次盖上（BlockRepository.mark_consumed）。
-
-    New inputs carry an explicit ``consumed_turn: null`` marker while pending.
-    That presence matters: a newer mid-turn input can be receipted before an
-    older queued attachment, so no consumed block may act as a positional
-    watermark over another tracked input. Legacy blocks have no marker and keep
-    the old "after the latest AI message" fallback.
-
-    `history` 已按 created_at 升序。
-    """
-    legacy_watermark = -1
-    for i, b in enumerate(history):
-        if looks_like_agent_handle(b.author) and b.kind == BlockKind.message:
-            legacy_watermark = i
-    return [
-        b
-        for i, b in enumerate(history)
-        if _is_pending_input(b)
-        and consumed_turn(b) is None
-        and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
-    ]
-
-
-def _addressed_to(block: Block, handle: str) -> bool:
-    """Is this input for the agent `handle`? One without a recipient is for
-    whichever agent the room resolves to, which the caller passes in."""
-    return (block.meta or {}).get("agent_recipient", {}).get("handle", handle) == handle
-
-
-def _pending_platform_notices(history: list[Block]) -> list[Block]:
-    """What the platform has to say to 芝士 and has not managed to say yet.
-
-    A turn is built on a snapshot taken when the SESSION started — the document,
-    the roster, the cards — and the session outlives many turns. Everything that
-    can invalidate that snapshot is something the platform did, so the code that
-    did it leaves a sentence on the block it was already writing, and this reads
-    whatever nobody has read yet.
-
-    No watermark and no legacy fallback, unlike the human window above: a notice
-    is pending exactly while it has something to say and no turn has stamped it,
-    and blocks written before this existed say nothing to 芝士 at all.
-    """
-    return [b for b in history if agent_notice(b) and consumed_turn(b) is None]
-
-
-# 重放可见 (#416). The first notice fires on the third attempt: one retry is
-# ordinary (a transient provider error, an auto-resume), two is bad luck, three
-# is a pattern worth a line in the room. After that the state is known, so the
-# reminder throttles hard — a topic retrying every 5 minutes for an hour must
-# not bury the conversation under its own status.
-_REPLAY_NOTICE_AT = 3
-_REPLAY_NOTICE_EVERY = 10
-
-
-def _replay_notice(attempt: int, pending: list[Block]) -> str | None:
-    """The 现场 line for a batch of messages that keeps being re-sent.
-
-    Returns None when there is nothing worth saying yet — the common case.
-
-    ONE line, and it stays one line at any batch size. It names the count and
-    the OLDEST message — the one stuck longest, and the one that identifies the
-    batch. "这个话题重试了 5 次" leaves the reader exactly where they started;
-    dumping all N messages back into the room turns a status line into a second
-    copy of the conversation. The messages are already in the timeline right
-    above; the notice only has to point at them.
-    """
-    if attempt < _REPLAY_NOTICE_AT:
-        return None
-    if attempt > _REPLAY_NOTICE_AT and attempt % _REPLAY_NOTICE_EVERY != 0:
-        return None
-    first = pending[0] if pending else None
-    if first is None:
-        head = ""
-    elif first.kind == BlockKind.attachment:
-        head = f"，最早的一条是 [{first.author}] 发的图片"
-    else:
-        text = " ".join((first.content or "").split())
-        clipped = f"{text[:24]}…" if len(text) > 24 else text
-        head = f"，最早的一条是 [{first.author}]「{clipped}」"
-    return (
-        f"这 {len(pending)} 条消息已经是第 {attempt} 次送进轮次，"
-        f"前面几次都没跑完{head}。"
-    )
-
-
-def _is_pending_input(b: Block) -> bool:
-    """A block carrying something a participant said into the room.
-
-    「参与者」而不是「人」：一个 AI 队友在房间里说的一句话，对坐在同一个房间里
-    的另一个参与者同样是这一轮要读的输入（结论 1）。挡住「芝士自己这一轮的产
-    出」的不是这里，而是写入端 —— agent 署名**且**落在某一轮里的块根本不盖
-    pending 标记（`BlockRepository.add`）。
-    """
-    return is_participant(b.author_type) and b.kind in (
-        BlockKind.message,
-        BlockKind.attachment,
-    )
-
-
 # What an exhausted relay balance looks like coming back from newapi. It arrives
 # as HTTP 429, the same status as a rate limit, but the two need opposite advice:
 # a rate limit clears on its own, a spent balance never does.
@@ -1259,34 +719,6 @@ def _is_dm(topic: Topic) -> bool:
     谁」，退路是项目默认的芝士；答错「这间房有没有名册」，正文就出了房间。
     """
     return topic.is_private
-
-
-def _compaction_notice(event: AgentCompacting) -> tuple[str, dict]:
-    """The room's line for a compaction: while it runs, and once it is over.
-
-    One line per compaction, restated in place: it says why the session is
-    silent while it runs, and whether it came back once it has ended."""
-    if not event.done:
-        content = "对话太长，正在整理上下文；整理完会接着处理，期间不会回复"
-        severity, detail = SEVERITY_INFO, None
-    elif event.error:
-        content = "上下文整理没有完成"
-        severity, detail = SEVERITY_WARN, event.error
-    else:
-        content = "上下文已整理，接着处理"
-        severity, detail = SEVERITY_INFO, None
-    meta = {
-        **notice(
-            EVENT_CONTEXT_COMPACT,
-            severity=severity,
-            who=WHO_PLATFORM,
-            detail=detail,
-            detail_label="原因" if detail else None,
-        ),
-        "state": "over" if event.done else "running",
-        "at": datetime.now(UTC).isoformat(),
-    }
-    return content, meta
 
 
 class ChatService:
@@ -5551,26 +4983,20 @@ class ChatService:
         all_topics: list[Topic],
         roster: list[dict],
     ) -> str:
-        """注入用的项目总览：① 从总览文档来，②~⑤ 从结构化数据现拼（#1889）。
+        """一行委托：拼总览的那段是纯的，住在 `agent/prompt.py` 的 project_overview。
 
-        在总览房间（项目根话题）里，总览就是本房间的实况文档，五块都拼给它；别的
-        房间只注入 ① —— 它们读到「这个项目是什么」就够了，其余四块要哪一块就自己
-        去查哪一块，不必每轮往每间房塞一份项目快照。
+        留这个方法当接缝：它唯一的调用点（`_assemble_turn`）和驱动这个服务的测试
+        都照原来的样子读，搬动只换了实现住在哪个文件。
         """
-        in_overview_room = project.root_topic_id == room_id
-        source = room_doc if in_overview_room else overview_doc
-        auto = ""
-        if in_overview_room:
-            from app.domain.topic.services import TopicService
-
-            # ②~⑤ 的取数在 topic 领域，和前端那一条
-            # （`TopicService.overview_auto`）是同一份：两个读者，一份来源。
-            auto = render_overview_auto(
-                **await TopicService(session).overview_auto_data(
-                    project.id, all_topics=all_topics, roster=roster
-                )
-            )
-        return render_overview(brief=project_brief(source or ""), auto=auto)
+        return await project_overview(
+            session,
+            project=project,
+            room_id=room_id,
+            room_doc=room_doc,
+            overview_doc=overview_doc,
+            all_topics=all_topics,
+            roster=roster,
+        )
 
     async def _assemble_turn(
         self,

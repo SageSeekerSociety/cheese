@@ -218,3 +218,51 @@ def test_a_teammates_own_turn_stays_the_teammates(client, stub_hooks):
 
     assert asyncio.run(_queued()) == [], "点名它的话没进它正在跑的会话，排了队"
     stub_hooks.stops(uuid.UUID(room_id), "看完了", agent=seat)
+
+
+def test_a_room_nobody_addressed_answers_as_the_teammate_it_seats(client):
+    """没人点名的一轮（文档提醒、检查变红，房间里又没有等着答的话）由房间名册上
+    坐着的那位来答。只坐着一位不是项目默认的队友时，答的是它，不是没坐在这儿的项目
+    默认芝士：后者会借那位队友的席位、在它的会话机器上跑一轮。"""
+    from app.domain.agent_instance.services import AgentInstanceService
+    from app.domain.identity.handles import agent_instance_handle
+    from app.domain.project.models import Project
+    from app.domain.topic.models import Topic
+    from tests.integration.conftest import session_auth_headers
+
+    project_id = post_project(client, json={"name": "P"}).json()["data"]["id"]
+    reviewer = client.post(
+        f"/projects/{project_id}/agents",
+        json={"handle": "reviewer", "display_name": "审稿人"},
+    ).json()["data"]
+    room_id = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "房间", "created_by": "alice"},
+    ).json()["data"]["id"]
+
+    async def answers() -> str:
+        async with client.test_factory() as session:
+            topic = await session.get(Topic, uuid.UUID(room_id))
+            project = await session.get(Project, uuid.UUID(project_id))
+            agent = await AgentInstanceService(session).for_topic(topic, project)
+            return agent.handle
+
+    default = asyncio.run(answers())
+    default_seat = room_agent_seat(client, room_id)
+    headers = session_auth_headers("alice")
+    seated = client.post(
+        f"/topics/{room_id}/members",
+        json={
+            "handle": agent_instance_handle(reviewer["id"]),
+            "role": "member",
+            "actor": "alice",
+        },
+        headers=headers,
+    )
+    assert seated.status_code == 200, seated.text
+    # Both seated: the project's default answers, as it always has.
+    assert asyncio.run(answers()) == default
+
+    left = client.delete(f"/topics/{room_id}/members/{default_seat}", headers=headers)
+    assert left.status_code == 200, left.text
+    assert asyncio.run(answers()) == reviewer["handle"]

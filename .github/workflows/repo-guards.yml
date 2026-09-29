@@ -65,6 +65,7 @@ jobs:
           bash .claude/scripts/check-repo-rules.sh --self-test
           bash .claude/scripts/check-action-pins.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
+          python3 .claude/scripts/check-file-sizes.py --self-test
 
       - name: CI helper tests
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
@@ -94,3 +95,10 @@ jobs:
 
       - name: Alembic chain would not fork on merge
         run: uvx pre-commit run --all-files migration-fork
+
+      # Runs here rather than in the backend lane because it needs the ref
+      # above: the comparison is against main, and a file is frozen at the size
+      # it had there. No database, no uv venv, no network — it reads the changed
+      # files and counts lines.
+      - name: No file grew past its size cap
+        run: uvx pre-commit run --all-files file-size

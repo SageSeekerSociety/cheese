@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { getAgentControl, getRoomMcpServers, sendAgentControl } from '../api'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
