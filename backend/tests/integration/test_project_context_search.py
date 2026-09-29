@@ -1,10 +1,13 @@
 """From one room, find what the rest of the project already says — only in the
-rooms the caller may read, and never in another project."""
+rooms the caller may read, and never in another project. Every word asked for
+has to be found, part of a word counts, and the best match comes first."""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.repositories import TopicRepository
 from tests.integration.conftest import post_project, session_auth_headers
@@ -103,7 +106,7 @@ def test_a_private_room_and_another_project_stay_out(client):
 
     async def private_room(db):
         room = await TopicRepository(db).add(
-            project_id=uuid.UUID(project), title="某人的私人房间"
+            project_id=uuid.UUID(project), title="私人预算房间"
         )
         room.is_private = True
         await db.flush()
@@ -117,6 +120,15 @@ def test_a_private_room_and_another_project_stay_out(client):
                 content="私下说的预算 77 万",
             )
         )
+        db.add(
+            Task(
+                id=uuid.uuid4(),
+                project_id=uuid.UUID(project),
+                room_id=room.id,
+                title="私下的预算任务",
+                status=TaskStatus.open,
+            )
+        )
 
     _seed(client, private_room)
 
@@ -124,6 +136,8 @@ def test_a_private_room_and_another_project_stay_out(client):
     snippets = " ".join(h["snippet"] for h in data["hits"]["records"])
     assert "99 万" not in snippets, "another project's room was searched"
     assert "77 万" not in snippets, "a private room the caller is not in was searched"
+    assert "私下的预算任务" not in [t["title"] for t in data["hits"]["tasks"]]
+    assert "私人预算房间" not in [r["room_title"] for r in data["hits"]["rooms"]]
     assert data["skipped_rooms"] >= 1
 
 
@@ -140,3 +154,90 @@ def test_nothing_found_is_an_answer_not_an_error(client):
     data = _search(client, project, here, "根本不存在的词").json()["data"]
     assert data["total"] == 0
     assert data["searched_rooms"] >= 1
+
+
+def _task(project: str, room: str, *, key: str, title: str, conclusion: str, at):
+    async def go(db):
+        db.add(
+            Task(
+                id=uuid.UUID(key),
+                project_id=uuid.UUID(project),
+                room_id=uuid.UUID(room),
+                title=title,
+                status=TaskStatus.closed,
+                conclusion=conclusion,
+                created_at=at,
+            )
+        )
+
+    return go
+
+
+def test_a_task_named_after_the_words_comes_before_one_that_mentions_them(client):
+    project = _project(client)
+    here = _room(client, project, "周报")
+    now = datetime.now(UTC)
+    # Older, and later in id order: neither time nor id puts it first.
+    _seed(
+        client,
+        _task(
+            project,
+            here,
+            key="ffffffff-0000-4000-8000-000000000000",
+            title="供应商合同续签",
+            conclusion="已签",
+            at=now - timedelta(days=2),
+        ),
+    )
+    _seed(
+        client,
+        _task(
+            project,
+            here,
+            key="00000000-0000-4000-8000-000000000000",
+            title="季度复盘",
+            conclusion="顺带提到供应商合同的付款节点",
+            at=now,
+        ),
+    )
+
+    tasks = _search(client, project, here, "供应商合同").json()["data"]["hits"]["tasks"]
+    assert [t["title"] for t in tasks] == ["供应商合同续签", "季度复盘"]
+
+
+def test_part_of_a_word_and_every_word_are_found(client):
+    project = _project(client)
+    here = _room(client, project, "周报")
+    _seed(client, _say(project, here, "季度财务报表整理好了，导出给客户"))
+    _seed(client, _say(project, here, "财务报表还差审计"))
+
+    def found(q):
+        data = _search(client, project, here, q).json()["data"]
+        return sorted(h["snippet"] for h in data["hits"]["records"])
+
+    # 「务报」 straddles two words of 「财务报表」.
+    assert found("务报") == ["季度财务报表整理好了，导出给客户", "财务报表还差审计"]
+    assert found("财务报表 导出") == ["季度财务报表整理好了，导出给客户"]
+    assert found("财务报表 天气") == []
+
+
+def test_artifacts_rank_by_name_and_stay_in_their_project(client):
+    project = _project(client)
+    here = _room(client, project, "周报")
+    other = _project(client)
+
+    async def artifacts(db):
+        db.add(
+            ProjectArtifact(project_id=uuid.UUID(project), name="年度报告", about="")
+        )
+        db.add(
+            ProjectArtifact(
+                project_id=uuid.UUID(project), name="附件汇编", about="年度报告的附录"
+            )
+        )
+        db.add(ProjectArtifact(project_id=uuid.UUID(other), name="年度报告", about=""))
+
+    _seed(client, artifacts)
+
+    found = _search(client, project, here, "年度报告").json()["data"]["hits"]
+    assert [a["name"] for a in found["artifacts"]] == ["年度报告", "附件汇编"]
