@@ -322,3 +322,27 @@ def test_routine_calls_leave_no_line_and_failed_ones_still_do(capsys):
     assert "/topics/t/execution/session-t" in written
     assert "/internal/x" not in written
     assert "/internal/y failed" in written
+
+
+def test_the_tunnel_process_does_not_log_the_token_a_machine_dials_with(capsys):
+    """The tunnel runs as its own process, so the backend's logging setup is
+    not its own unless it installs it. uvicorn logs every accepted WebSocket
+    with its whole path, and a machine dials `/llm/tunnel?token=…`."""
+    import importlib
+
+    import app.llm_tunnel_app as tunnel
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    importlib.reload(tunnel)
+    logging.getLogger("uvicorn.error").info(
+        '%s - "WebSocket %s" [accepted]',
+        "1.2.3.4:5",
+        "/llm/tunnel?token=LIVE-MACHINE-TOKEN",
+    )
+    for handler in root.handlers:
+        handler.flush()
+
+    written = capsys.readouterr().err
+    assert "/llm/tunnel" in written
+    assert "LIVE-MACHINE-TOKEN" not in written
