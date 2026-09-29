@@ -343,6 +343,12 @@ class Settings(BaseSettings):
     openai_oauth_base: str = "https://auth.openai.com"
     # The codex upstream is {base}/codex; the quota read is {base}/wham/usage.
     chatgpt_backend_base: str = "https://chatgpt.com/backend-api"
+    # The HTTP proxy this backend's OpenAI calls (OAuth, quota) leave through.
+    # A deployment that keeps a ChatGPT account on one exit IP sets this to that
+    # exit, and the gateway's model calls take the same exit
+    # (deploy/gateway/README.md).
+    # Unset: direct.
+    openai_subscription_proxy: str | None = None
     # The page a person opens to type the device code.
     openai_device_verification_uri: str = "https://auth.openai.com/codex/device"
     codex_originator: str = "codex_cli_rs"
