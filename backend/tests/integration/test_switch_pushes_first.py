@@ -12,10 +12,12 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from sqlalchemy import select
 
 from app.common.auth import create_access_token
+from app.core import sandbox_auth
 from app.core.sandbox_auth import (
     bind_resource_token,
     mint_scoped_token,
@@ -33,6 +35,8 @@ from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.machine.services import MachineService
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
+from app.main import app
+from tests.delivery import delivery_task
 from tests.integration.conftest import post_project
 from tests.unit.test_machine_service import FakeMicroCloud
 
@@ -202,6 +206,38 @@ async def test_a_failed_push_refuses_the_switch_and_says_why(client, monkeypatch
     session = await _session(client, room)
     assert session.work_lease == room.lease
     assert session.execution_request["choice"]["device_id"] == room.old_device
+
+
+async def test_a_failed_push_names_every_task_it_could_not_sync_and_why(
+    client, monkeypatch
+):
+    room = await _room(client)
+    refused_by_api = (
+        "[cheese] GET /projects/p/git/tasks/{task} 失败 HTTP 401: "
+        + '{"code":401,"message":"AuthenticationRequiredError: '
+        + "git access needs this project's token\"}"
+        + " " * 300
+    )
+    printed = "".join(
+        f"{refused_by_api.replace('{task}', task)}\n"
+        f"[cheese] 同步失败的通知未送达，任务 {task} 的 cheese-sync.log 保留了结果\n"
+        f"[cheese] 任务 {task} 同步失败：1\n"
+        for task in ("task-a", "task-b")
+    )
+    printed += "[cheese] 任务 task-c 同步失败：rejected non-fast-forward\n"
+    _machines(monkeypatch, push={"value": {"stdout": "Exit code 1\n" + printed}})
+
+    refused = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert refused.status_code == 409, refused.text
+    said = refused.json()["error"]["message"]
+    lines = said.splitlines()
+    assert lines[0].startswith("推送失败，没有更换")
+    for task in ("task-a", "task-b"):
+        [line] = [line for line in lines if f"任务 {task}" in line]
+        assert "HTTP 401" in line and "this project's token" in line
+    [line] = [line for line in lines if "任务 task-c" in line]
+    assert "rejected non-fast-forward" in line
 
 
 @pytest.mark.parametrize("how", ["offline", "no answer"])
@@ -382,3 +418,65 @@ async def test_a_machine_that_cannot_start_the_executor_is_unreachable(
     assert refused.json()["error"]["name"] == "WorkComputerUnreachable"
     session = await _session(client, room)
     assert session.execution_request["choice"]["device_id"] == room.old_device
+
+
+class _PushingMachine(_IdleMachine):
+    """An idle session's machine whose push does what ``cheese sync`` does for
+    a task with commits not yet on its branch: ask the platform for that task's
+    branch, with the credential its executor was started with."""
+
+    def __init__(self, project_id, task_id):
+        super().__init__()
+        self.path = f"/projects/{project_id}/git/tasks/{task_id}"
+        self.task_id = task_id
+        self.finishes = False
+
+    async def call_executor(self, device_id, state, method, params, **kwargs):
+        if method != "control" or not self.started:
+            return await super().call_executor(
+                device_id, state, method, params, **kwargs
+            )
+        self.calls.append((device_id, method, params))
+        [token] = re.findall(r'"CHEESE_TOKEN": "([^"]+)"', self.installs[-1][1])
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as api:
+            asked = await api.get(self.path, headers={"X-Cheese-Token": token})
+        if asked.status_code != 200:
+            said = (
+                f"Exit code 1\n[cheese] GET {self.path} 失败 HTTP "
+                f"{asked.status_code}: {asked.text}\n"
+                f"[cheese] 任务 {self.task_id} 同步失败：1"
+            )
+            return {"value": {"stdout": said}}
+        if not self.finishes:
+            return {"value": {"stdout": "", "backgroundTaskId": "task-slow"}}
+        return PUSHED
+
+
+async def test_an_executor_started_for_a_push_can_still_push_hours_later(
+    client, monkeypatch
+):
+    """A switch starts an idle session's executor to push; that push outlasts
+    its two minutes and the switch is refused, leaving the executor running.
+    Hours later the switch is asked again: the executor is still up, so it is
+    not started again, and its push must still be let through by the git
+    routes, as the push of a session started by a turn would be."""
+    room = await _room(client)
+    task = delivery_task(client, room.topic_id, commit=False)
+    machine = _PushingMachine(room.project_id, task.id)
+    monkeypatch.setattr(work_lease, "device_hub", machine)
+
+    first = client.put(room.path, headers=room.person, json=_to_new(room))
+    assert first.status_code == 409, first.text
+    assert "两分钟" in first.json()["error"]["message"]
+
+    now = sandbox_auth.time.time
+    later = SimpleNamespace(time=lambda: now() + 3 * 3600)
+    monkeypatch.setattr(sandbox_auth, "time", later)
+    machine.finishes = True
+    again = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert again.status_code == 200, again.text
+    assert len(machine.installs) == 1
+    session = await _session(client, room)
+    assert session.execution_request["choice"]["device_id"] == room.new_device
