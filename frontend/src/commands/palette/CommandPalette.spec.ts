@@ -37,6 +37,7 @@ const MESSAGE = {
   kind: 'message' as const,
   author: 'alice',
   created_at: '2026-09-01T00:00:00Z',
+  task_id: null,
   snippet: '重试以后队列就不卡了',
 }
 
@@ -283,6 +284,18 @@ describe('命令面板', () => {
     await fireEvent.click(row)
     await waitFor(() => expect(router.currentRoute.value.fullPath).toContain('/projects/p1/topics/t2'))
     expect(router.currentRoute.value.query.card).toBe('k9')
+  })
+
+  it('说在一件活卡片里的消息，选中就打开那张卡', async () => {
+    searchProject.mockResolvedValue(hits({ records: [{ ...MESSAGE, snippet: '卡片里说过的缓存方案', task_id: 'k2' }] }))
+    const { router } = await mount()
+    await open()
+    await type('缓存方案')
+    await waitFor(() => expect(options().some((text) => text.includes('卡片里说过的缓存方案'))).toBe(true))
+    const row = screen.getAllByRole('option').find((el) => el.textContent?.includes('卡片里说过的缓存方案'))!
+    await fireEvent.click(row)
+    await waitFor(() => expect(router.currentRoute.value.query.card).toBe('k2'))
+    expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3')
   })
 
   it('? 只看内容，话题名对上了也不列', async () => {

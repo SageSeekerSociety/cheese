@@ -714,6 +714,8 @@ export interface ProjectSearchHits {
     kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'decision' | 'weekly'
     author: string
     created_at: string
+    /** 说在某件活的卡片里，而不是房间自己的对话里。 */
+    task_id: string | null
     snippet: string
   }[]
   tasks: { id: string; room_id: string; room_title: string; title: string; status: string; snippet: string }[]
