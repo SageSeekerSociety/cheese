@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import binascii
-import re
 import shutil
 import uuid
 from collections.abc import Mapping
@@ -98,6 +97,7 @@ from app.domain.documents.spreadsheet import (
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
+from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
@@ -3760,9 +3760,7 @@ async def upload_attachment(
             raise ValidationError("空文件")
         if len(data) > MAX_ATTACHMENT_BYTES:
             raise ValidationError("文件太大（上限 10MB）")
-        name = (file.filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
-        name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
-        name = name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
+        name = library.clean_upload_name(file.filename)
         if ext and not name.lower().endswith(ext):
             name += ext
         if origin == "clipboard":
@@ -3770,7 +3768,14 @@ async def upload_attachment(
             library.write_room_file(topic.project_id, topic_id, path, data)
             return ok({"path": path, "mime": mime, "bytes": len(data)})
         # 名字就是身份，所以撞名不覆盖：拿下一个 `(n)`。
-        name = library.write_library_file(topic.project_id, name, data)
+        name = await library_records.add(
+            db,
+            project_id=topic.project_id,
+            filename=name,
+            data=data,
+            added_by=actor.handle,
+            room_id=topic_id,
+        )
     return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})
 
 

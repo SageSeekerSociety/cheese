@@ -354,3 +354,157 @@ def test_the_library_is_the_project_members_only(client):
         ).status_code
         == 403
     )
+
+
+def test_each_file_says_who_gave_it_and_in_which_room(client):
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "数据分析")
+    _upload(client, topic_id, "问卷.xlsx", b"rows")
+
+    [row] = _library(client, project_id)
+    assert row["added_by"] == "user-1"
+    assert row["room"] == {"id": topic_id, "title": "数据分析"}
+    assert row["added_at"]
+
+
+def test_a_private_room_is_not_named_to_someone_outside_it(client):
+    import asyncio
+    import uuid
+
+    from app.domain.topic.models import Topic
+    from tests.integration.conftest import join_project_team
+
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "私下的房间")
+    _upload(client, topic_id, "问卷.xlsx", b"rows")
+    join_project_team(client, project_id, "bob")
+
+    async def make_private():
+        async with client.test_factory() as session:
+            room = await session.get(Topic, uuid.UUID(topic_id))
+            room.is_private = True
+            await session.commit()
+
+    asyncio.run(make_private())
+    r = client.get(
+        f"/projects/{project_id}/library", headers=session_auth_headers("bob")
+    )
+    assert r.status_code == 200, r.text
+    [row] = r.json()["data"]["data"]
+    assert row["room"] is None, "a private room's name reached a non-member"
+
+
+def test_the_library_page_takes_a_file_directly(client):
+    project_id = _project(client)
+
+    def put_in(name: str, content: bytes) -> str:
+        r = client.post(
+            f"/projects/{project_id}/library",
+            files={"file": (name, content, "application/octet-stream")},
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["path"]
+
+    assert put_in("预算表.xlsx", b"one") == "预算表.xlsx"
+    assert put_in("预算表.xlsx", b"two") == "预算表(2).xlsx"
+    rows = {row["path"]: row for row in _library(client, project_id)}
+    assert rows["预算表.xlsx"]["added_by"] == "user-1"
+    assert rows["预算表.xlsx"]["room"] is None
+    raw = client.get(
+        f"/projects/{project_id}/library/raw", params={"path": "预算表(2).xlsx"}
+    )
+    assert raw.content == b"two"
+
+
+def test_replacing_a_file_is_what_every_reference_now_reads(client):
+    """「替换为新版本」：同一个名字，新的字节；引用它的消息读到的是新的一份。"""
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+    att = _upload(client, topic_id, "说明.md", b"old")
+
+    r = client.put(
+        f"/projects/{project_id}/library",
+        params={"path": "说明.md"},
+        files={"file": ("说明-新.md", b"new", "application/octet-stream")},
+    )
+    assert r.status_code == 200, r.text
+
+    [row] = _library(client, project_id)
+    assert row["path"] == "说明.md", "a replacement keeps the name, not the new file's"
+    assert row["replaced"] == 1
+    raw = client.get(
+        f"/topics/{topic_id}/attachments/raw",
+        params={"path": att["path"], "download": "true"},
+    )
+    assert raw.content == b"new"
+
+    # 替换过的一份照样删得掉，删掉后名字可以再用。
+    assert (
+        client.delete(
+            f"/projects/{project_id}/library", params={"path": "说明.md"}
+        ).status_code
+        == 200
+    )
+    assert _upload(client, topic_id, "说明.md", b"again")["path"] == "library/说明.md"
+    [row] = _library(client, project_id)
+    assert row["replaced"] == 0
+
+
+def test_a_file_from_before_the_records_takes_its_source_from_the_message(client):
+    """记录表之前就在资料库里的文件：谁、在哪给的，看第一条带上它的消息。"""
+    import asyncio
+    import uuid
+
+    from app.domain.block.models import AuthorType, Block, BlockKind
+    from app.domain.library import service as library
+
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "需求讨论")
+    library.write_library_file(uuid.UUID(project_id), "旧合同.docx", b"PK")
+
+    async def sent():
+        async with client.test_factory() as session:
+            session.add(
+                Block(
+                    project_id=uuid.UUID(project_id),
+                    topic_id=uuid.UUID(topic_id),
+                    kind=BlockKind.attachment,
+                    author_type=AuthorType.participant,
+                    author="user-1",
+                    content="library/旧合同.docx",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(sent())
+    [row] = _library(client, project_id)
+    assert row["added_by"] == "user-1"
+    assert row["room"] == {"id": topic_id, "title": "需求讨论"}
+    assert row["references"] == 1
+
+
+def test_the_agent_cannot_put_in_or_replace_a_file(client):
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+    _upload(client, topic_id, "预算表.xlsx", b"budget")
+
+    client.headers.pop("Authorization", None)
+    client.cookies.clear()
+    agent = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project_id, topic_id=topic_id, ttl_s=3600
+        )
+    }
+    upload = client.post(
+        f"/projects/{project_id}/library",
+        files={"file": ("新.txt", b"x", "text/plain")},
+        headers=agent,
+    )
+    assert upload.status_code == 403
+    replace = client.put(
+        f"/projects/{project_id}/library",
+        params={"path": "预算表.xlsx"},
+        files={"file": ("预算表.xlsx", b"x", "text/plain")},
+        headers=agent,
+    )
+    assert replace.status_code == 403
