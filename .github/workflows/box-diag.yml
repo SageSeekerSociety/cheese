@@ -156,6 +156,12 @@ jobs:
             | grep -v 'uvicorn.access\|\[http\][[:space:]]*bytes=' \
             | grep -v 'device-connection:8082.*"HTTP/1.1 200 OK"' \
             | tail -600 || true
+      - name: Parallel session failure window
+        # Read only. Fixed UTC window and topic, without a tail that can drop the event.
+        run: |
+          docker logs --since '2026-09-29T11:48:20Z' --until '2026-09-29T11:49:10Z' --timestamps cheese-backend-1 2>&1 \
+            | grep -E '115ee22f-ffba-4d69-a579-0ce6033c8e84|device_screen_retired|device_screen_timing|session_not_alive|tunnel_helper_down|orphan' \
+            || true
       - name: Device connection log tail
         # The owner of the DeviceHub is a SEPARATE process on a separate release
         # boundary (deploy/release-device-connection.sh), and every executor call,
