@@ -43,7 +43,7 @@ async def get_groups_service(db=Depends(get_db)) -> GroupsService:
 async def list_groups(
     q: str | None = Query(default=None),
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     joined: bool | None = Query(default=None),
     managed: bool | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -142,7 +142,7 @@ async def delete_group(
 async def list_group_members(
     group_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
@@ -211,7 +211,7 @@ async def get_question_service(db=Depends(get_db)) -> GroupQuestionService:
 async def list_group_targets(
     group_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> dict:
@@ -338,7 +338,7 @@ async def delete_group_target(
 async def list_group_questions(
     group_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupQuestionService = Depends(get_question_service),
 ) -> dict:

@@ -140,7 +140,7 @@ async def get_comments(
     commentableType: str,
     commentableId: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0),
-    page_size: int = Query(default=20, ge=1, le=200),
+    page_size: int = Query(default=20, ge=1, le=100),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: CommentService = Depends(get_comment_service),
 ) -> dict:

@@ -156,7 +156,7 @@ async def get_unread_count(user: AuthUser, db: DbSession) -> dict:
 async def list_notifications(
     user: AuthUser,
     db: DbSession,
-    pageSize: Annotated[int, Query(ge=1, le=200)] = 20,
+    pageSize: Annotated[int, Query(ge=1, le=100)] = 20,
     pageStart: str | None = None,
     type: str | None = None,
     read: bool | None = None,
