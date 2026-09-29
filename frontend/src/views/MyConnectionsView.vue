@@ -232,7 +232,7 @@ useCommands(() => [
 </script>
 
 <template>
-  <AppPage :title="t('navigation.userMenu.connections')">
+  <AppPage :title="t('account.settings.connections')">
     <p class="t-body c-muted mb-6">
       接入你自己的邮箱或飞书，并勾选允许哪些项目的 AI
       队友使用。它们用的是你的账号：可以搜索和阅读邮件、把回复写进你的草稿箱、读写你有权限的飞书文档；

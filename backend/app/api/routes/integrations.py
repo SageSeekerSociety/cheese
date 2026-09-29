@@ -305,7 +305,7 @@ async def feishu_callback(
 async def _finish_feishu(
     db: AsyncSession, code: str, state: str, error: str
 ) -> RedirectResponse:
-    back = f"{settings.frontend_url}/my/connections"
+    back = f"{settings.frontend_url}/users/settings/connections"
     try:
         raw_id, kid, digest = state.split(".")
         integration_id = uuid.UUID(raw_id)

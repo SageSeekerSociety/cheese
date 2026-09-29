@@ -1,6 +1,6 @@
 /**
  * 「我」的菜单（`UserMenuCard`）。桌面左栏与手机顶栏共用这一份，此前两处各写一遍，
- * 手机那份就漏了「我的设备」—— 这里钉住菜单里每个人都该找得到的几样。
+ * 手机那份就漏了一项 —— 这里钉住菜单里每个人都该找得到的几样。
  */
 import { computed, ref } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
@@ -35,8 +35,7 @@ async function mount(intro = '') {
     routes: [
       { path: '/', component: stub },
       { path: '/users/:handle', name: 'UserPage', component: stub },
-      { path: '/devices', name: 'my-devices', component: stub },
-      { path: '/connections', name: 'my-connections', component: stub },
+      { path: '/download', name: 'Download', component: stub },
       { path: '/archived-projects', name: 'my-archived-projects', component: stub },
       { path: '/users/settings/profile', name: 'UserSettingsProfile', component: stub },
     ],
@@ -52,13 +51,13 @@ describe('「我」的菜单', () => {
   // 初始语言跟着浏览器（happy-dom 报 en-US），断言写的是中文，所以每条先定成中文。
   beforeEach(() => setLocale('zh-CN'))
 
-  it('个人主页、个人设置、我的设备都在，并且能退出登录', async () => {
+  it('个人主页、设置、下载客户端都在，并且能退出登录', async () => {
     const view = await mount()
     // 主页按 handle 找人，和 @提及、成员名册同一种地址。
     expect(view.getByText('个人主页').closest('a')?.getAttribute('href')).toBe('#/users/alice')
     // 上传头像的地方：以前菜单里没有这一项，得先进个人主页再点资料卡上的编辑。
-    expect(view.getByText('个人设置').closest('a')?.getAttribute('href')).toBe('#/users/settings/profile')
-    expect(view.getByText('我的设备').closest('a')?.getAttribute('href')).toBe('#/devices')
+    expect(view.getByText('设置').closest('a')?.getAttribute('href')).toBe('#/users/settings/profile')
+    expect(view.getByText('下载客户端').closest('a')?.getAttribute('href')).toBe('#/download')
     // 归档了的项目不在任何列表里，这里是所有者找回它们的地方。
     expect(view.getByText('已归档的项目').closest('a')?.getAttribute('href')).toBe('#/archived-projects')
     expect(view.getByText('退出登录')).toBeTruthy()

@@ -1,6 +1,6 @@
 <template>
   <!-- 「我」的菜单。桌面（左栏底部头像）和手机（顶栏头像）共用这一份：两处各写
-       一遍的时候，手机那份就漏掉了「我的设备」。
+       一遍的时候，手机那份就漏掉了一项。
        四段：我是谁 / 我的东西 / 我的偏好 / 退出。「了解知是」讲的是产品而不是我，
        住在「帮助与反馈」菜单里。 -->
   <v-card class="user-menu-card pa-0" rounded="lg" width="280">
@@ -37,14 +37,11 @@
       <v-list-item :to="{ name: 'UserSettingsProfile' }">
         <v-list-item-title>{{ t('navigation.userMenu.settings') }}</v-list-item-title>
       </v-list-item>
-      <v-list-item :to="{ name: 'my-devices' }">
-        <v-list-item-title>{{ t('navigation.userMenu.devices') }}</v-list-item-title>
-      </v-list-item>
-      <v-list-item :to="{ name: 'my-connections' }">
-        <v-list-item-title>{{ t('navigation.userMenu.connections') }}</v-list-item-title>
-      </v-list-item>
       <v-list-item :to="{ name: 'my-archived-projects' }">
         <v-list-item-title>{{ t('navigation.userMenu.archivedProjects') }}</v-list-item-title>
+      </v-list-item>
+      <v-list-item :to="{ name: 'Download' }">
+        <v-list-item-title>{{ t('navigation.userMenu.download') }}</v-list-item-title>
       </v-list-item>
     </v-list>
 

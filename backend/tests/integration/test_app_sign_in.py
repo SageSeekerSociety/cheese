@@ -165,7 +165,7 @@ def test_a_feishu_authorization_from_the_app_shows_its_result_in_the_app(client)
     landing = urlsplit(back.headers["location"])
     assert landing.path == "/account/to-app"
     page = urlsplit(parse_qs(landing.query)["path"][0])
-    assert page.path == "/my/connections"
+    assert page.path == "/users/settings/connections"
     assert "feishu" in parse_qs(page.query)
 
 
@@ -175,4 +175,4 @@ def test_a_feishu_authorization_from_a_browser_stays_there(client):
         params={"code": "x", "state": "not-a-state"},
         follow_redirects=False,
     )
-    assert urlsplit(back.headers["location"]).path == "/my/connections"
+    assert urlsplit(back.headers["location"]).path == "/users/settings/connections"
