@@ -178,6 +178,10 @@ def test_the_timed_delivery_alarm_is_scheduled():
     assert any(job.name == "timed deliveries" for job in _jobs())
 
 
+def test_forge_accounts_left_by_failed_creations_are_swept():
+    assert any(job.name == "forge orphan account sweep" for job in _jobs())
+
+
 def test_every_job_is_named_once():
     names = [job.name for job in _jobs()]
     assert len(names) == len(set(names)), f"duplicate job names: {names}"

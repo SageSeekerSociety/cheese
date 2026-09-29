@@ -560,11 +560,13 @@ export function createProject(
   externalTaskId?: number,
   forgeKind?: 'forgejo' | 'github_app',
   intent?: string,
-  agentName?: string
+  agentName?: string,
+  id?: string
 ): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
     body: JSON.stringify({
+      id,
       name,
       owner_handle: ownerHandle,
       team_id: teamId,
@@ -1271,12 +1273,6 @@ export function deleteOAuthConnection(userId: string, connectionId: number, sudo
     method: 'DELETE',
     body: JSON.stringify({ sudoTicket }),
   })
-}
-
-// The AI-workspace project for a 知是 Team (fusion P4). Null when the team has no
-// project yet — the team page uses this to show/hide its 「AI 工作台」 entry.
-export function getProjectForTeam(teamId: number): Promise<Project | null> {
-  return request<Project | null>(`/projects/by-team/${teamId}`)
 }
 
 export function getInbox(projectId: string, targetHandle: string): Promise<ListPayload<InboxItem>> {

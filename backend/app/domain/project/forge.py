@@ -4,8 +4,10 @@ import hashlib
 import hmac
 import logging
 import math
+import re
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from urllib.parse import quote
 
@@ -210,12 +212,45 @@ async def default_branch(project_id: uuid.UUID, session: AsyncSession) -> str:
     return binding.default_branch
 
 
+_ACCOUNT_PREFIX = "cheese-"
+_PROJECT_ACCOUNT = re.compile(r"cheese-([0-9a-f]{32})")
+# Longer than any creation can still be running: its project row is invisible
+# to other sessions until it commits, after the forge calls return or time out.
+_ORPHAN_GRACE = timedelta(hours=1)
+
+
+class ForgeUnreachableError(GatewayUnavailableError):
+    """The project forge did not answer in time, or could not be reached.
+
+    A slow forge is a state that passes; the same request succeeds later.
+    """
+
+    retryable = True
+
+
 async def provision_repository(
     project_id: uuid.UUID,
     session: AsyncSession,
     *,
     initialize: bool = True,
     transport: httpx.AsyncBaseTransport | None = None,
+) -> ProjectForge:
+    try:
+        return await _provision_repository(
+            project_id, session, initialize=initialize, transport=transport
+        )
+    except httpx.TimeoutException as exc:
+        raise ForgeUnreachableError("代码仓库服务响应超时，请稍后重试") from exc
+    except httpx.RequestError as exc:
+        raise ForgeUnreachableError("暂时无法连接代码仓库服务，请稍后重试") from exc
+
+
+async def _provision_repository(
+    project_id: uuid.UUID,
+    session: AsyncSession,
+    *,
+    initialize: bool,
+    transport: httpx.AsyncBaseTransport | None,
 ) -> ProjectForge:
     existing = await binding_for_project(project_id, session)
     if existing is not None:
@@ -228,8 +263,10 @@ async def provision_repository(
         raise GatewayUnavailableError("此部署尚未配置项目代码托管服务")
     public = settings.forgejo_url.rstrip("/")
     api = (settings.forgejo_api_url or public + "/api/v1").rstrip("/")
-    username = "cheese-" + project_id.hex
-    # A retried creation must recover the same account after a DB rollback.
+    username = _ACCOUNT_PREFIX + project_id.hex
+    # Derived from the project id, so a creation retried with the same id (the
+    # client keeps it across retries) adopts the account and repository an
+    # earlier attempt left behind when its transaction rolled back.
     password = (
         hmac.new(
             settings.jwt_secret.encode(),
@@ -257,7 +294,8 @@ async def provision_repository(
             )
         # Authenticate as that account, even after 422; never adopt an unknown owner.
         auth = (username, password)
-        response = await client.get(api + f"/repos/{username}/project", auth=auth)
+        repo_url = api + f"/repos/{username}/project"
+        response = await client.get(repo_url, auth=auth)
         if response.status_code == 404:
             response = await client.post(
                 api + "/user/repos",
@@ -269,6 +307,9 @@ async def provision_repository(
                     "default_branch": "main",
                 },
             )
+            if response.status_code == 409:
+                # An earlier attempt's creation finished between the two calls.
+                response = await client.get(repo_url, auth=auth)
         if response.status_code not in (200, 201):
             raise GatewayUnavailableError(
                 f"Forgejo 项目仓库创建失败（HTTP {response.status_code}）"
@@ -287,6 +328,72 @@ async def provision_repository(
     await session.flush()
     await ensure_repository_webhook(binding, transport=transport)
     return binding
+
+
+async def sweep_orphan_accounts(
+    sessions: SessionFactory, *, transport: httpx.AsyncBaseTransport | None = None
+) -> dict[str, int]:
+    """Delete forge accounts whose project creation never committed.
+
+    A creation that fails after Forgejo made the account rolls back its project
+    row, and nothing else refers to the account; one the person never retried
+    stays behind with its repository. Accounts the platform does not name after
+    a project (the platform's own, for one) are never touched.
+    """
+    counts = {"deleted": 0, "failed": 0}
+    if not settings.forgejo_url or not settings.forgejo_admin_token:
+        return counts
+    api = (
+        settings.forgejo_api_url or settings.forgejo_url.rstrip("/") + "/api/v1"
+    ).rstrip("/")
+    headers = {"Authorization": "token " + settings.forgejo_admin_token}
+    cutoff = datetime.now(UTC) - _ORPHAN_GRACE
+    async with httpx.AsyncClient(
+        transport=transport, timeout=30, headers=headers
+    ) as client:
+        candidates: dict[uuid.UUID, str] = {}
+        page = 1
+        while True:
+            response = await client.get(
+                api + "/admin/users", params={"page": page, "limit": 50}
+            )
+            response.raise_for_status()
+            accounts = response.json()
+            for account in accounts:
+                match = _PROJECT_ACCOUNT.fullmatch(account["login"])
+                created = datetime.fromisoformat(account["created"])
+                if match and created < cutoff:
+                    candidates[uuid.UUID(match[1])] = account["login"]
+            if len(accounts) < 50:
+                break
+            page += 1
+        if not candidates:
+            return counts
+        async with sessions() as session:
+            live = set(
+                await session.scalars(
+                    select(Project.id).where(Project.id.in_(candidates))
+                )
+            )
+        for project_id, login in candidates.items():
+            if project_id in live:
+                continue
+            response = await client.delete(
+                api + f"/admin/users/{login}", params={"purge": "true"}
+            )
+            if response.status_code in (204, 404):
+                counts["deleted"] += 1
+                logging.getLogger(__name__).info(
+                    "Deleted forge account %s: its project was never created", login
+                )
+            else:
+                counts["failed"] += 1
+                logging.getLogger(__name__).warning(
+                    "Could not delete forge account %s (HTTP %s)",
+                    login,
+                    response.status_code,
+                )
+    return counts
 
 
 async def ensure_repository_webhook(
