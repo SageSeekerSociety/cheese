@@ -2,7 +2,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
-from sqlalchemy import Select, and_, delete, exists, func, or_, select
+from sqlalchemy import CTE, Select, and_, delete, exists, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.llm.models import AIConversation, AIMessage
@@ -61,7 +62,7 @@ class TaskRepository:
         This is a simplified translation of Kotlin TaskService.enumerateTasks:
         - Always filters by space.
         - Optionally filters by category, approved status, and owner (creator_id).
-        - Optionally does a naive ILIKE search on name/intro for `keywords`.
+        - Optionally searches name/intro for `keywords`, ordered by relevance.
         - Supports sorting by createdAt/updatedAt/deadline + id tie-breaker.
         """
         stmt: Select[tuple[Task]] = select(Task).where(
@@ -75,14 +76,9 @@ class TaskRepository:
         if owner_id is not None:
             stmt = stmt.where(Task.creator_id == owner_id)  # type: ignore[attr-defined]
 
-        if keywords:
-            like = f"%{keywords.strip()}%"
-            stmt = stmt.where(
-                or_(  # type: ignore[name-defined]
-                    Task.name.ilike(like),
-                    Task.intro.ilike(like),
-                )
-            )
+        hits = self._keyword_hits(space_id=space_id, keywords=keywords)
+        if hits is not None:
+            stmt = stmt.join(hits, hits.c.id == Task.id)
 
         if topics:
             stmt = stmt.where(
@@ -146,6 +142,13 @@ class TaskRepository:
                 ),
             )
 
+        # A search is ordered by relevance; the requested sort applies to browsing.
+        if hits is not None:
+            stmt = stmt.order_by(hits.c.score.desc(), Task.id.asc())
+            stmt = stmt.limit(limit).offset(offset)
+            result = await self._session.execute(stmt)
+            return list(result.scalars().all())
+
         # Map sort_by to actual columns; default to updatedAt.
         if sort_by == "createdAt":
             sort_col = Task.created_at
@@ -206,14 +209,9 @@ class TaskRepository:
         if owner_id is not None:
             stmt = stmt.where(Task.creator_id == owner_id)  # type: ignore[attr-defined]
 
-        if keywords:
-            like = f"%{keywords.strip()}%"
-            stmt = stmt.where(
-                or_(
-                    Task.name.ilike(like),
-                    Task.intro.ilike(like),
-                )
-            )
+        hits = self._keyword_hits(space_id=space_id, keywords=keywords)
+        if hits is not None:
+            stmt = stmt.join(hits, hits.c.id == Task.id)
 
         if topics:
             stmt = stmt.where(
@@ -278,6 +276,60 @@ class TaskRepository:
 
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
+
+    @staticmethod
+    def _keyword_hits(*, space_id: int, keywords: str | None) -> CTE | None:
+        """The space's tasks matching every word of ``keywords``, with a score.
+
+        Each word must match name or intro, either as a jieba word or through
+        the ngram copy that finds the middle of a word (see migration
+        19fe29bcb352); a name match weighs twice an intro match. Words are split
+        here because jieba also emits whitespace as a token, so a phrase sent
+        whole would require, and match, the whitespace itself.
+
+        `match` treats its value as literal text, not query syntax.
+
+        Scored in a MATERIALIZED CTE on purpose: ParadeDB only computes
+        `paradedb.score` when it evaluates every predicate on the scan itself,
+        and returns NULL otherwise. The caller's other filters (lifecycle,
+        visibility, EXISTS subqueries) are not in the index, so they stay
+        outside, where the planner cannot fold them into this scan.
+        """
+        words = (keywords or "").split()
+        if not words:
+            return None
+
+        def field(name: str, word: str, boost: float) -> dict:
+            match = {"match": {"field": name, "value": word, "conjunction_mode": True}}
+            return {"boost": {"factor": boost, "query": match}} if boost != 1 else match
+
+        query = {
+            "boolean": {
+                "must": [
+                    {
+                        "boolean": {
+                            "should": [
+                                field("name", word, 2),
+                                field("intro", word, 1),
+                                field("name_ngram", word, 2),
+                                field("intro_ngram", word, 1),
+                            ]
+                        }
+                    }
+                    for word in words
+                ]
+            }
+        }
+        return (
+            select(Task.id, func.paradedb.score(Task.id).label("score"))
+            .where(
+                Task.id.op("@@@")(literal(query, JSONB)),
+                Task.deleted_at.is_(None),
+                Task.space_id == space_id,
+            )
+            .cte("task_keyword_hits")
+            .prefix_with("MATERIALIZED")
+        )
 
     def _apply_lifecycle_filter(
         self,
