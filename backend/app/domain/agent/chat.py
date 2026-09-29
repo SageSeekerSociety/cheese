@@ -4007,6 +4007,22 @@ class ChatService:
                     user_block.turn_id = attribution_id
                 # Resolve <@handle> mentions in the human message → strong notify.
                 await announce_mentions(session, topic, user_block, author, roster)
+                if len(agent_handles) > 1:
+                    # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
+                    # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
+                    from app.domain.delivery.mention import record_mentions
+
+                    await record_mentions(
+                        session,
+                        project_id=topic.project_id,
+                        room_id=place.room_id,
+                        block_id=user_block.id,
+                        author=author,
+                        content=content,
+                        by_agent=False,
+                        occurred_at=datetime.now(UTC),
+                        skip=frozenset({addressed} if addressed else ()),
+                    )
                 anchor_id = user_block.id
                 created_blocks.append(user_block)
             # 图片输入: each image = an attachment block. content = the worktree

@@ -177,6 +177,9 @@ EVENT_DOC_MISSING: Final = "doc_missing"
 #: 个房间的会话用不了它。每个房间每个服务器只说一次：要做的事在项目设置里，不在
 #: 这一轮里，说第二遍不会让它更快发生。`meta.server` 是服务器名。
 EVENT_MCP_NOT_CONNECTED: Final = "mcp_not_connected"
+#: AI 队友之间的点名在这间房一小时里到了上限，这一次没有叫醒被点名的队友
+#: （`delivery/mention.py` 的熔断）。说出来，是因为不说的话它和「点名没用」分不开。
+EVENT_MENTION_FUSED: Final = "mention_fused"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -240,6 +243,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_DEVICE_WAITING,
         EVENT_DOC_MISSING,
         EVENT_MCP_NOT_CONNECTED,
+        EVENT_MENTION_FUSED,
     }
 )
 

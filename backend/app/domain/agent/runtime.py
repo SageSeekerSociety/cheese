@@ -878,6 +878,21 @@ class AgentWorkRunner:
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        from app.domain.delivery.mention import mentioned_handles
+
+        if len(mentioned_handles(message.get("content") or "")) > 1:
+            # 点到的第二位起是账本里的投递（`delivery/mention.py`），已经随消息一起
+            # 提交了。现在就派，不等定时扫描那 30 秒：同一条消息点到的几位该一起醒。
+            from app.domain.delivery.agent import dispatch_pending
+
+            dispatch = asyncio.create_task(
+                dispatch_pending(
+                    chat_service.session_factory, chat=chat_service, runner=self
+                ),
+                name=f"mentions:{turn_id}",
+            )
+            self._tasks.add(dispatch)
+            dispatch.add_done_callback(self._tasks.discard)
 
     async def _consume_message(
         self, chat_service, topic_id, turn_id, **message
