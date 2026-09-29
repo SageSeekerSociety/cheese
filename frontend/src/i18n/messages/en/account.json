@@ -368,7 +368,8 @@
   },
   "settings": {
     "realName": "Real-name information",
-    "install": "Install on your phone"
+    "install": "Install on your phone",
+    "general": "General"
   },
   "emailCode": {
     "title": "Sign in with an email code",
@@ -420,5 +421,11 @@
       "more": "Load more",
       "loadFailed": "Could not load the access history"
     }
+  },
+  "general": {
+    "lede": "These settings apply to this computer only",
+    "openAtLogin": "Open at login",
+    "openAtLoginHint": "Runs in the background after you log in, so it can let you know when something needs you",
+    "saveFailed": "Couldn't save"
   }
 }

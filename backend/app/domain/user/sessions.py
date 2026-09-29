@@ -36,7 +36,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.user.models import UserSession
+from app.domain.user.models import User, UserSession
 
 
 class RevokeReason(StrEnum):
@@ -272,6 +272,15 @@ class SessionService:
             )
         )
         return found is not None
+
+    async def live_handle(self, user_id: int, session_id: uuid.UUID) -> str | None:
+        """Whose sign-in this is, by handle, while it can still refresh: not
+        ended, revoked, expired or idle. None once it cannot."""
+        row = await self._db.get(UserSession, session_id)
+        if row is None or row.user_id != user_id or not _is_live(row, _now()):
+            return None
+        user = await self._db.get(User, user_id)
+        return user.username if user is not None else None
 
     async def live(self, user_id: int) -> list[UserSession]:
         """The user's sessions that can still refresh, most recent first."""
