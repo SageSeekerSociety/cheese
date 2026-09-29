@@ -25,6 +25,7 @@ from typing import Any
 
 from sqlalchemy import ColumnElement, literal
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import InstrumentedAttribute
 
 
 def words(q: str | None) -> list[str]:
@@ -38,7 +39,7 @@ def any_of(field: str, values: Iterable[uuid.UUID | str]) -> dict[str, Any]:
 
 
 def match_all_words(
-    key: ColumnElement[Any],
+    key: ColumnElement[Any] | InstrumentedAttribute[Any],
     terms: list[str],
     fields: Mapping[str, float],
     *,
