@@ -325,9 +325,12 @@ class ComputePool:
         }
         return works.pop() if len(works) == 1 else None
 
-    def holds(self, topic_id: uuid.UUID) -> bool:
-        """Does any backend still hold a live session for this topic?"""
-        return any(runtime.holds(topic_id) for runtime in self._runtimes())
+    def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
+        """Does any backend still hold a live session for this topic — for
+        this agent's seat in it, when one is named?"""
+        return any(
+            runtime.holds(topic_id, agent_handle) for runtime in self._runtimes()
+        )
 
     async def recover_sessions(
         self, device_id: str | None = None

@@ -589,6 +589,26 @@ export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
 
+/** 归档项目：只有所有者能做。项目从所有人的列表里消失、不能再修改，里面的内容都保留。 */
+export function archiveProject(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/archive`, { method: 'POST' })
+}
+
+/** 取消归档：项目和随它一起归档的话题回来。 */
+export function unarchiveProject(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/unarchive`, { method: 'POST' })
+}
+
+/** 我归档过的项目 —— 它们只在这里列出来。 */
+export function listArchivedProjects(): Promise<ListPayload<Project>> {
+  return request<ListPayload<Project>>('/projects?archived=true')
+}
+
+/** 后端拒绝写入一个已归档项目时，错误名是这个。 */
+export function isProjectArchivedError(e: unknown): boolean {
+  return e instanceof ApiError && e.code === 'ProjectArchivedError'
+}
+
 export function getProjectSite(projectId: string): Promise<ProjectSiteInfo> {
   return request<ProjectSiteInfo>(`/projects/${encodeURIComponent(projectId)}/site`)
 }
@@ -1969,14 +1989,20 @@ export function deleteMemory(entryId: string): Promise<{ deleted: string }> {
 // 现场 (施工现场): a topic's tool/event record (read-only), newest window first.
 // Paged: events are the most numerous kind of block (one per tool call), so an
 // unpaged 现场 is the largest request the app can make and it only grows.
+//
+// `author` narrows a page to one teammate's steps — a room can seat several, and
+// 现场 reads them one at a time. It narrows the query, not the page: the filter
+// runs inside the paging (same as the backend's `kinds`), so a page still holds
+// `limit` rows and `has_more` is about what is left for THAT teammate.
 export const SITE_PAGE_SIZE = 120
 export function getTranscript(
   topicId: string,
-  opts: { limit?: number; before?: string } = {}
+  opts: { limit?: number; before?: string; author?: string | null } = {}
 ): Promise<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }> {
   const q = new URLSearchParams()
   if (opts.limit != null) q.set('limit', String(opts.limit))
   if (opts.before) q.set('before', opts.before)
+  if (opts.author) q.set('author', opts.author)
   const qs = q.toString()
   return request<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }>(
     `/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`

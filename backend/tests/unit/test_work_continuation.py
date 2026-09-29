@@ -36,7 +36,7 @@ class _Quiet:
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         return {"id": "b1", "content": text}
 
-    def has_live_screen(self, topic_id):
+    def has_live_screen(self, topic_id, agent_handle=None):
         return False
 
     async def turns_that_produced_something(self, turn_ids):
@@ -68,7 +68,7 @@ def _wired(chat, factory):
 def _capture_resends(runner, monkeypatch) -> list[dict]:
     seen: list[dict] = []
 
-    def _fake(_chat, tid, after, content, *, continuation_id=None):
+    def _fake(_chat, tid, after, content, *, continuation_id=None, agent_handle=None):
         seen.append({"topic": tid, "continuation_id": continuation_id})
 
     monkeypatch.setattr(runner, "_schedule_resend", _fake)

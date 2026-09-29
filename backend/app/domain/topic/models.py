@@ -188,6 +188,12 @@ class Topic(UuidPk, Timestamps, Base):
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Archived because its project was, not by itself. Unarchiving the project
+    # brings back exactly these rooms and leaves the ones a person had already
+    # archived where they were.
+    archived_with_project: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
+    )
     cleanup_due_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )

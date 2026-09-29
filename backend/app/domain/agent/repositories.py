@@ -31,6 +31,8 @@ class TurnRecord:
     resendable: bool
     started_at: datetime
     delivered_at: datetime | None
+    # The seat this turn ran in, None when it was never assembled.
+    agent_handle: str | None = None
 
     @property
     def delivered(self) -> bool:
@@ -58,6 +60,7 @@ class AgentTurnRepository:
         resendable: bool,
         started_at: datetime,
         delivered_at: datetime | None = None,
+        agent_handle: str | None = None,
         exists_ok: bool = False,
     ) -> None:
         # `delivered_at` is for a turn that has no 投喂 phase to stamp later — it
@@ -79,6 +82,7 @@ class AgentTurnRepository:
                     resendable=resendable,
                     started_at=started_at,
                     delivered_at=delivered_at,
+                    agent_handle=agent_handle,
                 )
                 .on_conflict_do_nothing(index_elements=[AgentTurn.id])
             )
@@ -94,6 +98,7 @@ class AgentTurnRepository:
                 resendable=resendable,
                 started_at=started_at,
                 delivered_at=delivered_at,
+                agent_handle=agent_handle,
             )
         )
 
@@ -122,13 +127,19 @@ class AgentTurnRepository:
         return set(rows)
 
     async def note_context(
-        self, turn_id: uuid.UUID, *, route: str, reply_to: uuid.UUID | None
+        self,
+        turn_id: uuid.UUID,
+        *,
+        route: str,
+        reply_to: uuid.UUID | None,
+        agent_handle: str,
     ) -> None:
-        """Record what ending this turn needs, for whichever backend ends it."""
+        """Record what ending this turn needs, for whichever backend ends it,
+        and whose conversation it runs in."""
         await self._session.execute(
             update(AgentTurn)
             .where(AgentTurn.id == turn_id)
-            .values(route=route, reply_to=reply_to)
+            .values(route=route, reply_to=reply_to, agent_handle=agent_handle)
         )
 
     async def get(self, turn_id: uuid.UUID) -> AgentTurn | None:
@@ -276,6 +287,7 @@ class AgentTurnRepository:
                 delivered_at=(
                     None if row.delivered_at is None else _aware(row.delivered_at)
                 ),
+                agent_handle=row.agent_handle,
             )
             for row in rows
         ]

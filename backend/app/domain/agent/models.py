@@ -115,6 +115,12 @@ class AgentTurn(Base):
     # NULL on a turn nobody assembled — one a session started by itself.
     route: Mapped[str | None] = mapped_column(String(32), default=None)
     reply_to: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)
+    # Whose conversation this turn ran in: the agent's handle in its project,
+    # the same key its session is kept under. A room seats several teammates
+    # side by side, so the room alone does not say whether this turn's session
+    # is the one still answering. NULL until the turn is assembled — before
+    # then no agent has been chosen.
+    agent_handle: Mapped[str | None] = mapped_column(String(64), default=None)
 
 
 class GatewayAdminAudit(UuidPk, Timestamps, Base):

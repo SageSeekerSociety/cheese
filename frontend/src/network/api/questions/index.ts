@@ -7,7 +7,6 @@ import type {
   QuestionDetailResponse,
   QuestionInvitationRecommendResponse,
   QuestionInviteUserResponse,
-  QuestionList,
 } from './types'
 
 import ApiInstance from '../index'
@@ -21,13 +20,6 @@ export namespace QuestionApi {
     group_id?: number
     bounty: number
   }
-
-  export const search = (query: string, pageStart?: number, pageSize: number = 20) =>
-    ApiInstance.request<QuestionList>({
-      url: '/questions',
-      method: 'GET',
-      params: { q: query, pageStart: pageStart, pageSize: pageSize },
-    })
 
   export const ask = (data: AskQuestionRequest) =>
     ApiInstance.request<AskQuestionResponse>({

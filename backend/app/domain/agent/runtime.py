@@ -106,6 +106,26 @@ async def _open_turns(session_factory) -> dict[uuid.UUID, TurnRecord]:
     return {record.turn_id: record for record in rows}
 
 
+async def _instance_of(
+    session_factory, place_id: uuid.UUID, agent_handle: str
+) -> uuid.UUID | None:
+    """The agent instance *agent_handle* names in the project *place_id* is in,
+    or None when no instance carries it."""
+    from app.domain.agent_instance.models import AgentInstance
+    from app.domain.room_task.place import PlaceResolver
+
+    async with session_factory() as session:
+        place = await PlaceResolver(session).resolve(place_id)
+        if place is None:
+            return None
+        return await session.scalar(
+            select(AgentInstance.id).where(
+                AgentInstance.project_id == place.project_id,
+                AgentInstance.handle == agent_handle,
+            )
+        )
+
+
 async def _open_turn(session_factory, **fields) -> None:
     async with session_factory() as session:
         await AgentTurnRepository(session).open(**fields)
@@ -980,6 +1000,7 @@ class AgentWorkRunner:
         turn_id: uuid.UUID,
         *,
         author: str,
+        agent_handle: str,
     ) -> None:
         """Register an interval for work the SESSION started on its own.
 
@@ -1046,6 +1067,7 @@ class AgentWorkRunner:
             # its output can reach a process that never opened this turn after
             # one that did. That turn has its row already.
             exists_ok=True,
+            agent_handle=agent_handle,
         )
 
     def close_turn_the_session_started(self, turn_id: uuid.UUID) -> None:
@@ -1109,7 +1131,11 @@ class AgentWorkRunner:
         if record.turn_id in wedged or not record.delivered:
             return False
         try:
-            return bool(chat_service.has_live_screen(record.topic_id))
+            # This turn's own seat: another teammate's session answering in the
+            # same room is not this turn's work going on.
+            return bool(
+                chat_service.has_live_screen(record.topic_id, record.agent_handle)
+            )
         except Exception:  # noqa: BLE001 — an unanswerable probe is not a yes
             logger.exception("live-screen probe failed for %s", record.topic_id)
             return False
@@ -1197,7 +1223,7 @@ class AgentWorkRunner:
 
     async def resume_lost_messages(self, chat_service) -> int:
         """Start the turns a previous owner accepted a message for and never
-        began. Returns how many rooms it started one in.
+        began. Returns how many turns it started.
 
         Between a message being stored and its turn opening, the turn exists
         only in the memory of the process that accepted it: waiting for this
@@ -1207,9 +1233,11 @@ class AgentWorkRunner:
 
         What counts: a message that named an agent, has not been read into any
         prompt, is recent, and has nothing about its turn in the room — no
-        interval, no reply, no refusal. Its room must have no turn running, or
-        the message is that turn's to pick up. One turn per room: it carries
-        every message the room has waiting, the way any turn does.
+        interval, no reply, no refusal. The agent it named must have no turn
+        running, or the message is that turn's to pick up. One turn per agent
+        in a room: it carries every message waiting for that agent, the way any
+        turn does, and teammates in one room run side by side, so another
+        agent's turn neither picks this message up nor holds it back.
         """
         from app.domain.agent.models import AgentTurn
         from app.domain.block.models import (
@@ -1243,11 +1271,15 @@ class AgentWorkRunner:
             begun = set(
                 await session.scalars(select(AgentTurn.id).where(AgentTurn.id.in_(ids)))
             )
-            busy = set(
-                await session.scalars(
-                    select(AgentTurn.topic_id).where(AgentTurn.stopped_at.is_(None))
+            # Whose turns are running, by room. A turn not yet assembled has
+            # no agent (None) and may still turn out to be anybody's.
+            busy: dict[uuid.UUID, set[str | None]] = {}
+            for topic_id, agent_handle in await session.execute(
+                select(AgentTurn.topic_id, AgentTurn.agent_handle).where(
+                    AgentTurn.stopped_at.is_(None)
                 )
-            )
+            ):
+                busy.setdefault(topic_id, set()).add(agent_handle)
             answered = {
                 block.turn_id
                 for block in await session.scalars(
@@ -1255,7 +1287,7 @@ class AgentWorkRunner:
                 )
                 if (block.meta or {}).get("event_type") not in _WAITING
             }
-        rooms: dict[uuid.UUID, Block] = {}
+        seats: dict[tuple[uuid.UUID, str | None], Block] = {}
         for block in mentioned:
             if block.id in begun or block.id in answered:
                 continue
@@ -1263,10 +1295,16 @@ class AgentWorkRunner:
             # already on its way here, and a second one would race it.
             if self.turn_pending(block.id):
                 continue
-            if block.topic_id in busy or chat_service.has_running_turn(block.topic_id):
+            seat = ((block.meta or {}).get("agent_recipient") or {}).get("handle")
+            running = busy.get(block.topic_id, set())
+            if (
+                None in running
+                or seat in running
+                or chat_service.has_running_turn(block.topic_id, seat)
+            ):
                 continue
-            rooms.setdefault(block.topic_id, block)
-        for topic_id, block in rooms.items():
+            seats.setdefault((block.topic_id, seat), block)
+        for (topic_id, _), block in seats.items():
             recipient = (block.meta or {}).get("agent_recipient") or {}
             logger.info(
                 "starting the turn a previous backend never began topic=%s block=%s",
@@ -1289,7 +1327,7 @@ class AgentWorkRunner:
                 live_delivery_expected=False,
                 recipient_handle=recipient.get("handle"),
             )
-        return len(rooms)
+        return len(seats)
 
     async def sweep_orphans(
         self,
@@ -1355,7 +1393,7 @@ class AgentWorkRunner:
           not do it on its own. A person looks, then re-@s 芝士, which reconnects
           to the `--resume`d session that still holds the conversation.
         - STRANDED (no screen, or a screen that never heard the prompt): the
-          task never reached anyone. One re-send per topic, and it is the
+          task never reached anyone. One re-send per agent in the topic, and it is the
           ORIGINAL text (the pending-message mechanism re-hands it verbatim),
           never a "接着干" nudge a task-less claude cannot act on. Too old, or
           itself a re-send, and the topic is handed to a person instead.
@@ -1453,8 +1491,9 @@ class AgentWorkRunner:
             # wedged turn is cancelled and announced but never re-run — the same
             # zero the stale-wedged drop always returned.
         # --- what is left after adoption: no screen answers for this topic, or
-        # one does and never heard the prompt. Decide per TOPIC, because a
-        # remedy is a prompt into a room and one room takes one.
+        # one does and never heard the prompt. Gathered per TOPIC, because the
+        # dispatch record and the room's notice are the room's; the re-sends
+        # inside are per seat (`_settle_restart_orphans`).
         # 每一个孤儿话题都要走一趟下面那个函数，**卡死的那些也要** —— 它是读平台侧
         # 执行记录的地方，而机器整台死掉正是那份记录存在的旗舰场景（6.5「突然损
         # 坏」）：那一轮会在 `SILENT_TURN_S` 之后被判卡死，如果卡死的话题就此不再往下
@@ -1501,7 +1540,7 @@ class AgentWorkRunner:
     ) -> int:
         """One topic's remedy for turns that reached nobody.
 
-        Returns how many remedial prompts were scheduled (0 or 1). Everything
+        Returns how many remedial prompts were scheduled. Everything
         that got through has already been excluded upstream by `_adopted` — what
         arrives here is a topic whose screen is gone, or whose screen never
         heard the prompt.
@@ -1510,10 +1549,15 @@ class AgentWorkRunner:
         这个话题照样要来一趟，因为平台侧执行记录是在这里读的（见下）。那一趟
         `allow_actions` 是假的，除了那份记录之外什么也不做。
 
-        A re-send is for the newest re-sendable turn (see `_execute` for what
-        that means): the pending-message mechanism re-hands its ORIGINAL text
-        (an interrupted turn never stamps its inputs consumed), and the rest are
-        folded into the same prompt.
+        A re-send is for the newest re-sendable turn of each seat (see
+        `_execute` for what re-sendable means): the pending-message mechanism
+        re-hands its ORIGINAL text (an interrupted turn never stamps its inputs
+        consumed), and that seat's others are folded into the same prompt.
+        Teammates in one room each run their own conversation and a turn reads
+        only what was addressed to its own agent, so one teammate's re-send
+        cannot carry another's. A turn whose agent was never recorded could be
+        anybody's; while one is among them the room gets a single re-send, as
+        one conversation would.
 
         One narrow exception to "nobody heard it": a process can die between the
         transport accepting the write and the record of it, leaving a turn that
@@ -1570,7 +1614,8 @@ class AgentWorkRunner:
             logger.exception("orphan block probe failed for %s", topic_id)
         attach = bool(delivered) or not probe_ok
 
-        resend: TurnRecord | None = None
+        # Each re-send and the agent it goes back to (None: the room decides).
+        resends: dict[str | None, TurnRecord] = {}
         if allow_actions and probe_ok and not unknown:
             candidates = [
                 record
@@ -1581,8 +1626,12 @@ class AgentWorkRunner:
                 and record.resendable
                 and record.age_s(now) <= self.ORPHAN_STALE_S
             ]
-            if candidates:
-                resend = max(candidates, key=lambda record: record.started_at)
+            for record in candidates:
+                seat = record.agent_handle
+                if seat not in resends or record.started_at > resends[seat].started_at:
+                    resends[seat] = record
+            if None in resends:
+                resends = {None: max(candidates, key=lambda record: record.started_at)}
 
         # 一次部署把这个话题的轮次打断了，接下来会发生什么，决定要不要说话。
         #
@@ -1641,7 +1690,7 @@ class AgentWorkRunner:
                     )
                 await ledger.commit()
         stranded = (
-            allow_actions and probe_ok and not attach and resend is None and not unknown
+            allow_actions and probe_ok and not attach and not resends and not unknown
         )
         if stranded and entries:
             newest = max(entries, key=lambda record: record.started_at)
@@ -1688,17 +1737,17 @@ class AgentWorkRunner:
                 topic_id,
                 len(delivered),
             )
-        if resend is not None:
+        for seat, resend in resends.items():
             self._schedule_resend(
                 chat_service,
                 topic_id,
                 3.0,
                 resend.content,
                 continuation_id=resend.continuation_id,
+                agent_handle=seat,
             )
             logger.info("orphan turn %s scheduled for re-send", resend.turn_id)
-            return 1
-        return 0
+        return len(resends)
 
     async def _post_orphan_event(
         self,
@@ -1774,6 +1823,7 @@ class AgentWorkRunner:
         content: str,
         *,
         continuation_id: uuid.UUID | None = None,
+        agent_handle: str | None = None,
     ):
         """One bounded re-delivery of a prompt with NO evidence of arrival.
 
@@ -1784,10 +1834,21 @@ class AgentWorkRunner:
         not a "pick up where you left off" nudge, which would be meaningless to
         a claude that never heard the task. `is_resume=True` keeps it from ever
         chaining further automatic turns, and the inherited continuation keeps
-        any side effect that somehow DID land from being repeated."""
+        any side effect that somehow DID land from being repeated.
+
+        ``agent_handle`` is whose conversation the interrupted turn ran in; the
+        re-send goes back to that agent. Without it the room decides, as for
+        any turn nobody named an agent for."""
 
         async def _later() -> None:
             await asyncio.sleep(after_s)
+            recipient = (
+                None
+                if agent_handle is None
+                else await _instance_of(
+                    chat_service.session_factory, topic_id, agent_handle
+                )
+            )
             self.submit(
                 chat_service,
                 topic_id,
@@ -1799,6 +1860,7 @@ class AgentWorkRunner:
                 is_resume=True,
                 resume_reason=self.RESEND_REASON,
                 continuation_id=continuation_id,
+                recipient_instance_id=recipient,
             )
 
         hold(

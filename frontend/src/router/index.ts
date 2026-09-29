@@ -91,6 +91,12 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
+    name: 'my-archived-projects',
+    path: '/my/archived-projects',
+    component: () => import('@/views/MyArchivedProjectsView.vue'),
+    meta: { title: '已归档的项目', isFullPage: true, ...PERSONAL_PAGE },
+  },
+  {
     name: 'my-devices',
     path: '/my/devices',
     component: () => import('@/views/MyDevicesView.vue'),
@@ -123,14 +129,6 @@ const routes: RouteRecordRaw[] = [
     path: '/market',
     component: () => import('@/views/MarketView.vue'),
     meta: { title: '市场', isFullPage: true },
-  },
-  {
-    name: 'Search',
-    path: '/search',
-    component: () => import('@/views/searches/Index.vue'),
-    meta: {
-      title: '搜索',
-    },
   },
   {
     name: 'NotFound',

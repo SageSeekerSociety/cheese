@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import urllib.error
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
@@ -84,6 +85,12 @@ def device(tmp_path, monkeypatch):
         def do_PUT(self):
             task, _, snapshot = self.path.rsplit("/", 3)[1:]
             payload = self.rfile.read(int(self.headers["Content-Length"]))
+            limit = home / "upload-limit"
+            if limit.exists() and len(payload) > int(limit.read_text()):
+                # The body limit of whatever sits between machine and platform.
+                self.send_response(413)
+                self.end_headers()
+                return
             digest = hashlib.sha256(payload).hexdigest()
             assert digest == self.headers["X-Content-SHA256"]
             backups = home / "backups" / task
@@ -437,3 +444,148 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     assert task_status["state"] == "complete"
     assert (home / "setup-count").read_text() == "setup\n"
     assert (first_work / "draft.txt").read_text() == "unfinished work"
+
+
+def test_a_closed_task_checkout_moved_off_its_branch_is_backed_up_not_reported(
+    device,
+):
+    """After a task closes, its checkout is only backed up, never pushed, so the
+    branch it has checked out is no longer the task's business: an agent that
+    reused the checkout on another branch left work to keep, not a failed push
+    to warn the room about at every turn."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    tasks[task]["closed"] = True
+    git(work, "checkout", "-q", "--detach")
+    (work / "leftover.txt").write_text("written after the task closed\n")
+
+    cli._sync_all_tasks()
+
+    assert not (home / "posted.jsonl").exists()
+    (bundle,) = (home / "backups" / task).glob("*.bundle")
+    recovered = home / "recovered"
+    git(home, "clone", str(remote), str(recovered))
+    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
+    assert (
+        git(recovered, "show", "FETCH_HEAD:leftover.txt")
+        == "written after the task closed"
+    )
+
+
+def test_a_backup_refused_once_is_rebuilt_against_the_base_it_has_now(device):
+    """A backup holds only what the task's base lacks. When one is refused for
+    its size and the large commit then lands on the base, the next try must
+    send what is missing now, not the refused backup again at every turn."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (home / "upload-limit").write_text(str(256 * 1024))
+    (work / "large.bin").write_bytes(os.urandom(512 * 1024))
+    git(work, "add", "large.bin")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "large file")
+    large = git(work, "rev-parse", "HEAD")
+    (work / "small.txt").write_text("small\n")
+    git(work, "add", "small.txt")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "small file")
+
+    with pytest.raises(urllib.error.HTTPError):
+        cli._sync_task(task)
+
+    # The large commit reaches the base another way, and the checkout sees it.
+    git(work, "push", "-q", "origin", f"{large}:refs/heads/main")
+    git(work, "fetch", "-q", "origin", "main:refs/remotes/origin/main")
+
+    cli._sync_task(task)
+
+    head = git(work, "rev-parse", "HEAD")
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    (bundle,) = (home / "backups" / task).glob("*.bundle")
+    recovered = home / "recovered"
+    git(home, "clone", "-q", str(remote), str(recovered))
+    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
+    assert git(recovered, "rev-parse", "FETCH_HEAD") == head
+
+
+def _commit(work, name, text, *extra):
+    (work / name).write_text(text)
+    git(work, "add", name)
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", *extra, "-m", f"edit {name}")
+    return git(work, "rev-parse", "HEAD")
+
+
+def _push_from_elsewhere(home, remote, branch, name):
+    """Someone other than this checkout adds a commit to the task's branch:
+    a teammate working the same task from another checkout, or a person."""
+    other = home / f"elsewhere-{name}"
+    git(home, "clone", "-q", "-b", branch, str(remote), str(other))
+    (other / name).write_text("theirs\n")
+    git(other, "add", name)
+    git(
+        other,
+        "-c",
+        "user.name=o",
+        "-c",
+        "user.email=o@example.com",
+        "commit",
+        "-m",
+        f"their {name}",
+    )
+    git(other, "push", "-q", "origin", branch)
+    return git(other, "rev-parse", "HEAD")
+
+
+def test_rewriting_the_commits_this_checkout_pushed_replaces_them_on_the_branch(
+    device,
+):
+    """Amending or rebasing what this checkout already pushed is how a task's
+    commits get tidied (dropping a dependency asks for exactly that); the
+    branch then carries the rewritten commits instead of refusing them."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    branch = tasks[task]["branch"]
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "first\n")
+    cli._sync_task(task)
+    rewritten = _commit(work, "a.txt", "first, amended\n", "--amend")
+
+    cli._sync_task(task)
+
+    assert git(remote, "rev-parse", branch) == rewritten
+    assert not (home / "posted.jsonl").exists()
+
+
+def test_a_rewrite_never_drops_commits_this_checkout_never_had(device):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    branch = tasks[task]["branch"]
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "first\n")
+    cli._sync_task(task)
+    theirs = _push_from_elsewhere(home, remote, branch, "b.txt")
+    _commit(work, "a.txt", "first, amended\n", "--amend")
+
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+
+    assert git(remote, "rev-parse", branch) == theirs
+    assert (home / "posted.jsonl").exists()
+
+
+def test_a_checkout_behind_its_branch_has_nothing_to_push(device):
+    """Another checkout of the same task went on and pushed more; this one,
+    with nothing of its own since, has nothing undelivered to report."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    branch = tasks[task]["branch"]
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "first\n")
+    cli._sync_task(task)
+    theirs = _push_from_elsewhere(home, remote, branch, "b.txt")
+    git(work, "fetch", "-q", "origin")  # as agents do, to look at the branch
+
+    cli._sync_all_tasks()
+    cli._sync_all_tasks()
+
+    assert git(remote, "rev-parse", branch) == theirs
+    assert not (home / "posted.jsonl").exists()

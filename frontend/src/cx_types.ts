@@ -23,6 +23,8 @@ export interface Project {
    * 所属团队的所有者、管理员。后端按同一条规则再判一次，这里只决定给不给按钮。
    */
   can_manage_members?: boolean
+  /** 所有者归档这个项目的时间；没归档是 null。 */
+  archived_at?: string | null
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null

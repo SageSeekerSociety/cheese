@@ -1051,6 +1051,7 @@ async def topic_transcript(
     resolver: ActorResolverDep,
     limit: int | None = Query(None, ge=1, le=200),
     before: uuid.UUID | None = None,
+    author: str | None = Query(None, min_length=1, max_length=120),
 ) -> dict:
     """施工现场 (spec §7.1): the topic's AI session record — tool/event actions,
     read-only, newest window first.
@@ -1060,6 +1061,12 @@ async def topic_transcript(
     this the largest response the app can ask for, and it only ever grows.
     `limit=None` keeps the whole-history behaviour for callers that still want
     it.
+
+    `author` narrows it to one teammate's steps (一个人/一个队友的 handle). A room
+    can seat several of them, and 现场 can be read one of them at a time; that
+    filter belongs INSIDE the paging, exactly like `kinds` — filtering a page
+    after the fact returns fewer rows than asked for and reports `has_more`
+    against the wrong set, so the caller pages through holes.
 
     The room's own line. What one of its 分身 did is on that card, and is read
     through it (`GET /topics/{room}/tasks/{card}`) — interleaving every card's
@@ -1084,7 +1091,11 @@ async def topic_transcript(
         ):
             raise NotFoundError("游标事件不存在")
     if limit is None:
-        site = [b for b in await repo.list_for_topic(place.room_id) if b.kind in kinds]
+        site = [
+            b
+            for b in await repo.list_for_topic(place.room_id)
+            if b.kind in kinds and (author is None or b.author == author)
+        ]
         has_more = False
     else:
         result = await repo.page_for_topic(
@@ -1092,6 +1103,7 @@ async def topic_transcript(
             limit=limit,
             before=cursor,
             kinds=kinds,
+            author=author,
         )
         site, has_more = result.items, result.has_more
     # What a step printed stays behind: a page of 120 steps would otherwise
