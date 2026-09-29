@@ -3707,6 +3707,21 @@ class AcceptService:
         except Exception:  # noqa: BLE001
             logger.exception("could not record the PR-open failure on card %s", card_id)
 
+    async def merge_queued_pr(self, task_id: uuid.UUID) -> int | None:
+        """The task's PR number while its card waits in the merge queue."""
+        cards = await self._repo.list_live_for_places(
+            [task_id], statuses=(AcceptStatus.pending,)
+        )
+        return next(
+            (
+                card.pr_number
+                for card in cards
+                if card.task_id == task_id
+                and card.note_code == notes.NoteCode.waiting_merge_queue
+            ),
+            None,
+        )
+
     async def _cancel_queued_accept(self, card: AcceptCard) -> None:
         if card.note_code != notes.NoteCode.waiting_merge_queue:
             return

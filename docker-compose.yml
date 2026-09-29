@@ -1,7 +1,7 @@
 services:
   # PostgreSQL with pgvector extension
   postgres:
-    image: paradedb/paradedb:v0.18.8-pg16
+    image: paradedb/paradedb:v0.24.0-pg17
     command: ["-c", "shared_preload_libraries=pg_cron,pg_search"]
     container_name: cheese_py_postgres
     environment:
@@ -19,10 +19,10 @@ services:
     networks:
       - cheese_py_network
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres17_data:/var/lib/postgresql/data
 
   postgres_test:
-    image: paradedb/paradedb:v0.18.8-pg16
+    image: paradedb/paradedb:v0.24.0-pg17
     command: ["-c", "shared_preload_libraries=pg_cron,pg_search"]
     container_name: cheese_py_postgres_test
     environment:
@@ -40,7 +40,7 @@ services:
     networks:
       - cheese_py_network
     volumes:
-      - postgres_data_test:/var/lib/postgresql/data
+      - postgres17_data_test:/var/lib/postgresql/data
 
   # Redis (Valkey) for caching and sessions
   valkey:
@@ -76,5 +76,5 @@ networks:
     name: cheese_py_network
 
 volumes:
-  postgres_data:
-  postgres_data_test:
+  postgres17_data:
+  postgres17_data_test:

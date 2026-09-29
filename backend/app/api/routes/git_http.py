@@ -166,6 +166,12 @@ async def task_workspace(
 
     if who.author:
         await ensure_author_email(project_id, db, who.author.email)
+    from app.domain.review.services import AcceptService
+
+    # A queued PR's branch is locked by the forge until the queue merges or
+    # drops it; a machine that pushes to it is refused. It is told here so it
+    # can say that, instead of reporting a failed push to be retried.
+    queued = await AcceptService(db).merge_queued_pr(task.id)
     return ok(
         {
             "task_id": str(task.id),
@@ -173,6 +179,7 @@ async def task_workspace(
             "branch": task.branch_name,
             "base": task.base_branch,
             "closed": task.status == "closed",
+            "merge_queued_pr": queued,
             "remote": binding.url,
             "forge_kind": binding.kind,
             "forge_repo": binding.repo,

@@ -2,11 +2,11 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
-from sqlalchemy import CTE, Select, and_, delete, exists, func, literal, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import CTE, Select, and_, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.llm.models import AIConversation, AIMessage
+from app.domain.search import bm25
 from app.domain.tag.models import Tag
 from app.domain.task.models import (
     Task,
@@ -78,6 +78,7 @@ class TaskRepository:
 
         hits = self._keyword_hits(space_id=space_id, keywords=keywords)
         if hits is not None:
+            await bm25.serial_scans(self._session)
             stmt = stmt.join(hits, hits.c.id == Task.id)
 
         if topics:
@@ -211,6 +212,7 @@ class TaskRepository:
 
         hits = self._keyword_hits(space_id=space_id, keywords=keywords)
         if hits is not None:
+            await bm25.serial_scans(self._session)
             stmt = stmt.join(hits, hits.c.id == Task.id)
 
         if topics:
@@ -279,51 +281,20 @@ class TaskRepository:
 
     @staticmethod
     def _keyword_hits(*, space_id: int, keywords: str | None) -> CTE | None:
-        """The space's tasks matching every word of ``keywords``, with a score.
+        """The space's tasks matching every word of ``keywords``, with a score;
+        a name match weighs twice an intro match (see `app.domain.search.bm25`).
 
-        Each word must match name or intro, either as a jieba word or through
-        the ngram copy that finds the middle of a word (see migration
-        19fe29bcb352); a name match weighs twice an intro match. Words are split
-        here because jieba also emits whitespace as a token, so a phrase sent
-        whole would require, and match, the whitespace itself.
-
-        `match` treats its value as literal text, not query syntax.
-
-        Scored in a MATERIALIZED CTE on purpose: ParadeDB only computes
-        `paradedb.score` when it evaluates every predicate on the scan itself,
-        and returns NULL otherwise. The caller's other filters (lifecycle,
-        visibility, EXISTS subqueries) are not in the index, so they stay
-        outside, where the planner cannot fold them into this scan.
+        Scored in a MATERIALIZED CTE: the caller's other filters (lifecycle,
+        visibility, EXISTS subqueries) are not in the index, and on the same
+        scan they would turn the score NULL.
         """
-        words = (keywords or "").split()
-        if not words:
+        terms = bm25.words(keywords)
+        if not terms:
             return None
-
-        def field(name: str, word: str, boost: float) -> dict:
-            match = {"match": {"field": name, "value": word, "conjunction_mode": True}}
-            return {"boost": {"factor": boost, "query": match}} if boost != 1 else match
-
-        query = {
-            "boolean": {
-                "must": [
-                    {
-                        "boolean": {
-                            "should": [
-                                field("name", word, 2),
-                                field("intro", word, 1),
-                                field("name_ngram", word, 2),
-                                field("intro_ngram", word, 1),
-                            ]
-                        }
-                    }
-                    for word in words
-                ]
-            }
-        }
         return (
             select(Task.id, func.paradedb.score(Task.id).label("score"))
             .where(
-                Task.id.op("@@@")(literal(query, JSONB)),
+                bm25.match_all_words(Task.id, terms, {"name": 2, "intro": 1}),
                 Task.deleted_at.is_(None),
                 Task.space_id == space_id,
             )
