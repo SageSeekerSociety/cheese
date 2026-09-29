@@ -537,7 +537,7 @@ class BlockRepository:
     # (`cheese show`) IS: 芝士 putting something in front of the room is something
     # it said, and the chat renders it as a card the reader can open. Left out, it
     # reached people only as the preview tab, which shows the last one alone.
-    _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment)
+    NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment)
 
     async def ai_turn_ids(self, turn_ids: list[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these turns produced at least one block signed by 芝士.
@@ -883,7 +883,7 @@ class BlockRepository:
             select(Block)
             .where(
                 *self._in_place(topic_id, task_id),
-                Block.kind.not_in(self._NON_TIMELINE),
+                Block.kind.not_in(self.NON_TIMELINE),
             )
             .order_by(Block.created_at, Block.id)
         )
@@ -914,7 +914,7 @@ class BlockRepository:
             select(Block.id)
             .where(
                 *place,
-                Block.kind.not_in(self._NON_TIMELINE),
+                Block.kind.not_in(self.NON_TIMELINE),
                 Block.meta["event_type"].as_string() == "cloud_provisioning",
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
@@ -968,7 +968,7 @@ class BlockRepository:
             select(Block)
             .where(
                 *self._in_place(topic_id, task_id),
-                Block.kind.not_in(self._NON_TIMELINE),
+                Block.kind.not_in(self.NON_TIMELINE),
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
             .limit(1)
@@ -1011,7 +1011,7 @@ class BlockRepository:
         if kinds is not None:
             stmt = stmt.where(Block.kind.in_(list(kinds)))
         else:
-            stmt = stmt.where(Block.kind.not_in(self._NON_TIMELINE))
+            stmt = stmt.where(Block.kind.not_in(self.NON_TIMELINE))
         if query:
             # Literal matching: a pasted log containing % or _ is not SQL syntax.
             pattern = (
@@ -1067,7 +1067,7 @@ class BlockRepository:
             .select_from(Block)
             .where(
                 *self._in_place(topic_id, task_id),
-                Block.kind.not_in(self._NON_TIMELINE),
+                Block.kind.not_in(self.NON_TIMELINE),
             )
         )
         return int((await self._session.scalar(stmt)) or 0)
