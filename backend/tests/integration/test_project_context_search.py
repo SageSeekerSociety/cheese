@@ -241,3 +241,34 @@ def test_artifacts_rank_by_name_and_stay_in_their_project(client):
 
     found = _search(client, project, here, "年度报告").json()["data"]["hits"]
     assert [a["name"] for a in found["artifacts"]] == ["年度报告", "附件汇编"]
+
+
+def test_a_busy_conversation_does_not_crowd_out_the_documents(client):
+    """``limit`` is per kind: a hundred matching messages still leave room for
+    the one decision and the one document paragraph that match too."""
+    project = _project(client)
+    room = _room(client, project, "排期")
+    # The messages are short and say little else, so each outranks the longer
+    # decision and document paragraph.
+    for i in range(6):
+        _seed(client, _say(project, room, f"上线日期？{i}"))
+    long = "经过三轮讨论，考虑到测试、审批和宣传各自需要的时间，"
+    _seed(
+        client,
+        _say(project, room, long + "上线日期定在 10 月 8 日", kind=BlockKind.decision),
+    )
+    _seed(
+        client,
+        _say(project, room, long + "上线日期以决策为准", kind=BlockKind.doc_node),
+    )
+
+    r = client.get(
+        f"/projects/{project}/context/search",
+        params={"q": "上线日期", "topic": room, "limit": 3},
+    )
+    assert r.status_code == 200, r.text
+    records = r.json()["data"]["hits"]["records"]
+    kinds = [h["kind"] for h in records]
+    assert kinds.count("message") == 3
+    assert "decision" in kinds
+    assert "doc_node" in kinds
