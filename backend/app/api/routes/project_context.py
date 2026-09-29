@@ -4,8 +4,9 @@ One query across the rooms the caller may read: room titles, messages and
 documents, decisions, tasks, library file names and the artifact list. Every
 word of the query has to be found; each group lists its best matches first (see
 `app.domain.search.bm25`), library file names aside, which are matched as
-written. Each hit names where it lives, so it can be cited; rooms the caller may
-not read are not searched and are only counted.
+written. `limit` caps each group, and each kind of record (message, decision…)
+within its group. Each hit names where it lives, so it can be cited; rooms the
+caller may not read are not searched and are only counted.
 """
 
 import uuid
@@ -126,20 +127,30 @@ async def search_project_context(
         hits["rooms"] = [
             {**where(r.id), "status": str(r.status.value)} for r in found_rooms
         ]
-        blocks = await db.scalars(
-            select(Block)
-            .where(
-                bm25.match_all_words(
-                    Block.id,
-                    terms,
-                    {"content": 1},
-                    filters=[bm25.any_of("topic_id", in_readable)],
-                ),
-                _SEARCHED_BLOCKS_SQL,
+        # Each kind gets its own `limit`: a busy conversation would otherwise
+        # fill every slot, and the decision or document paragraph that also
+        # matches would never be listed.
+        blocks = [
+            block
+            for kind in SEARCHED_BLOCKS
+            for block in await db.scalars(
+                select(Block)
+                .where(
+                    bm25.match_all_words(
+                        Block.id,
+                        terms,
+                        {"content": 1},
+                        filters=[
+                            bm25.any_of("topic_id", in_readable),
+                            bm25.any_of("kind", [kind.value]),
+                        ],
+                    ),
+                    _SEARCHED_BLOCKS_SQL,
+                )
+                .order_by(func.paradedb.score(Block.id).desc(), Block.id)
+                .limit(limit)
             )
-            .order_by(func.paradedb.score(Block.id).desc(), Block.id)
-            .limit(limit)
-        )
+        ]
         hits["records"] = [
             {
                 **where(b.topic_id),
