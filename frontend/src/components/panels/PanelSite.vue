@@ -6,6 +6,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
+import { scrollTopAfterPrepend, shouldLoadOlder } from '../../lib/blockPaging'
 import { renderMarkdown } from '../../lib/renderMessage'
 import {
   countLines,
@@ -63,28 +64,42 @@ const emit = defineEmits<{
 const loading = ref(false)
 const errorMsg = ref<string | null>(null)
 
-// 现场: read-only transcript timeline.
+// 现场: read-only transcript timeline. 手上这一窗是**当前视角**的：「全部」是房间里
+// 所有人的，「只看某个队友」时只有它自己的——过滤在服务端的分页里做，不是在读到
+// 的一页上再挑（那正是「切过去就等于加载全部」的来源）。
 const transcript = ref<Block[]>([])
 // 更早的现场还在库里没拉。和对话栏一样，只在读的人自己往上翻时才拉。
 const hasOlder = ref(false)
 const loadingOlder = ref(false)
+// 手上这一窗是给哪个视角读的（null = 全部）。换视角时它和这一栏现在要读的东西就
+// 不是一回事了，重读时不能再和它合。
+let loadedFor: string | null = null
 
 async function loadOlder() {
   const tid = props.topic?.id
   const oldest = transcript.value[0]
   if (!tid || !oldest || loadingOlder.value || !hasOlder.value) return
+  const author = viewing.value
   loadingOlder.value = true
   const el = scrollRef.value
-  const before = el ? { top: el.scrollTop, height: el.scrollHeight } : null
+  const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
   try {
-    const page = await getTranscript(tid, { limit: SITE_PAGE_SIZE, before: oldest.id })
+    const page = await getTranscript(tid, {
+      limit: SITE_PAGE_SIZE,
+      before: oldest.id,
+      author,
+    })
+    // 读的人可能已经换了视角：这一页是上一位的，丢掉——合进来就是把别人的行塞进
+    // 这个人的时间线。
+    if (props.topic?.id !== tid || viewing.value !== author) return
+    noteAgents(page.data)
     transcript.value = [...page.data, ...transcript.value]
     hasOlder.value = page.has_more === true
     // Prepending grows the content ABOVE the viewport; without this the reader
     // is thrown backwards by exactly that much (same fix as the chat's pager).
     await nextTick()
     const sc = scrollRef.value
-    if (sc && before) sc.scrollTop = sc.scrollHeight - before.height + before.top
+    if (sc && before) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -92,9 +107,15 @@ async function loadOlder() {
   }
 }
 
+// 和对话栏同一个判据：离顶还有一屏就开始拉上一页，已经有的人不用等。
 function onSiteScroll() {
   const el = scrollRef.value
-  if (el && el.scrollTop < 120) void loadOlder()
+  if (
+    el &&
+    shouldLoadOlder(el.scrollTop, { hasMore: hasOlder.value, loading: loadingOlder.value })
+  ) {
+    void loadOlder()
+  }
 }
 // The scroll container, so the timeline can open on its newest entry the way a
 // chat log does. Measured before this existed: opening 现场 left scrollTop at 0
@@ -145,19 +166,31 @@ function atTail(): boolean {
 
 // 这一栏已经有东西时，再读一遍是安静的：不换骨架屏、不跳回底部——换成骨架屏再
 // 换回来，就是整栏闪一下。
+//
+// 每次读的都是**当前视角**的最近一页，和打开时一样。换了视角就是换了一个人的
+// 时间线：那一页到手之前手上那份还是上一位的（照旧渲染，不闪骨架屏），到手之后
+// 它整个换掉——不是往上摞。一个人可能有上千步，把上一位翻出来的历史带过去，就
+// 等于又「切一次加载全部」。
 async function load() {
   const tid = props.topic?.id
   if (!tid) return
+  const author = viewing.value
+  const switched = author !== loadedFor
   const quiet = transcript.value.length > 0
-  const follow = !quiet || atTail()
+  const follow = switched || !quiet || atTail()
   if (!quiet) loading.value = true
   errorMsg.value = null
   try {
-    const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE })
-    transcript.value = mergeSite(tx.data, transcript.value)
-    if (!quiet) hasOlder.value = tx.has_more === true
+    const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE, author })
+    // 读的人可能已经又换了一个视角：这一页不是他现在要的，丢掉。骨架屏由下面的
+    // finally 收掉，不能让它留在半路。
+    if (props.topic?.id !== tid || viewing.value !== author) return
+    loadedFor = author
+    noteAgents(tx.data)
+    transcript.value = mergeSite(tx.data, transcript.value, switched)
+    if (switched || !quiet) hasOlder.value = tx.has_more === true
     // Follow the tail on every open of a topic's 现场 — that is what "open on
-    // the newest" means.
+    // the newest" means. 换视角也是「打开这个人的现场」，同样停在最新的那一条。
     if (follow) scrollSiteToTail()
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
@@ -169,22 +202,32 @@ async function load() {
 // 一页读回来的，和这一栏手上已有的，按 id 合成一份。读的请求在路上的时候 socket
 // 又送来了几行，它们比这一页新：留着，接在后面。手上那份里比这一页最老的一行还
 // 老的（往上翻出来的更早的记录），也留着。
-function mergeSite(page: Block[], held: Block[]): Block[] {
+//
+// `switched` 是另一回事：手上那份是上一个视角的，它的「更早」不是这个人的更早。
+// 那时只留请求在路上时新到的几行 —— 比这一页最新的一条还新的，是真的还没进这一页
+// 的几步，不是翻出来的历史。
+function mergeSite(page: Block[], held: Block[], switched = false): Block[] {
   if (!page.length) return held.length ? held : page
   const ids = new Set(page.map((b) => b.id))
   const first = Date.parse(page[0].created_at)
   const last = Date.parse(page[page.length - 1].created_at)
-  const older = held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) < first)
+  const older = switched
+    ? []
+    : held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) < first)
   const newer = held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) >= last)
   return [...older, ...page, ...newer]
 }
 
 /**
  * socket 上来的一行（对话栏收到，一路转过来）：新的接在末尾，已有的原地换掉。
- * 别的话题的、分身卡上的、不是事件的，都不归这一栏。
+ * 别的话题的、分身卡上的、不是事件的，都不归这一栏。只看一个队友时，别人的行
+ * 也不归这一栏——手上这条时间线就是那个人的。
  */
 function receive(block: Block): void {
   if (block.topic_id !== props.topic?.id || block.kind !== 'event' || block.task_id) return
+  // 名册先记上：别的队友在干活，tab 得出现（切过去时才读得到它的记录）。
+  noteAgents([block])
+  if (viewing.value !== null && block.author !== viewing.value) return
   const at = transcript.value.findIndex((b) => b.id === block.id)
   if (at >= 0) {
     const next = transcript.value.slice()
@@ -205,32 +248,45 @@ function receive(block: Block): void {
 
 defineExpose({ receive })
 
-// Opening the tab loads it, exactly like opening the drawer used to.
-watch(
-  () => props.active,
-  (on) => {
-    if (on) void load()
-  },
-  { immediate: true }
-)
-
 // ---- 按队友看 ----
 // 一个房间可以先后、甚至同时交给几个队友。时间线是他们交错着的，而人来看的往往
 // 是其中一个在干什么。作者就是做这一步的那个队友：做过一步、说过一句的参与者。
 // 平台自己的话（署名 system）和人的动作只在「全部」里。
-const agents = computed(() => {
-  const seen: string[] = []
-  for (const b of transcript.value) {
-    if (b.author_type !== 'participant' || seen.includes(b.author)) continue
-    if (b.meta?.tool || isNarration(b.meta)) seen.push(b.author)
+//
+// 这一排 tab 是**攒出来**的，不是每次从手上那一窗里现算的：只看一个队友时手上只有
+// 那个人的行，现算的话这一排会当场塌成一个 tab，人就切不回去了。每读一页都往里
+// 记新露面的（从新到旧地翻，一个都不会漏），socket 上来的一行也记。
+const agents = ref<string[]>([])
+
+function noteAgents(blocks: Block[]): void {
+  const seen = new Set(agents.value)
+  let grew = false
+  const next = agents.value.slice()
+  for (const b of blocks) {
+    if (b.author_type !== 'participant' || seen.has(b.author)) continue
+    if (!b.meta?.tool && !isNarration(b.meta)) continue
+    seen.add(b.author)
+    next.push(b.author)
+    grew = true
   }
-  return seen
-})
+  if (grew) agents.value = next
+}
+
 // null = 全部。
 const selectedAgent = ref<string | null>(null)
 const viewing = computed(() =>
   selectedAgent.value !== null && agents.value.includes(selectedAgent.value) ? selectedAgent.value : null
 )
+
+// 换一个视角 = 换一条时间线：重读这个人的最近一页，停在最新的那一条。不是把手上
+// 这一窗（可能是「全部」，也可能是上一位）就地滤一遍 —— 那既是「一次加载全部」，
+// 也停在原地，而人是来看这个人刚刚在干什么的。
+function selectAgent(next: string | null): void {
+  if (next === selectedAgent.value) return
+  selectedAgent.value = next
+  void load()
+}
+
 const visible = computed(() =>
   viewing.value === null ? transcript.value : transcript.value.filter((b) => b.author === viewing.value)
 )
@@ -268,6 +324,16 @@ const statusAgentHandle = computed(() => {
   return viewing.value ?? activeAgent.value ?? null
 })
 const statusAgent = computed(() => (statusAgentHandle.value ? agentLabel(statusAgentHandle.value) : ''))
+
+// Opening the tab loads it, exactly like opening the drawer used to. 它读的是
+// 「现在看的是谁」，所以要等在 `viewing` 之后 —— immediate 的那一次是当场跑的。
+watch(
+  () => props.active,
+  (on) => {
+    if (on) void load()
+  },
+  { immediate: true }
+)
 
 // 一轮刚结束：开着的这一栏安静地重读一遍。
 watch(
@@ -361,7 +427,7 @@ function isLive(index: number): boolean {
           class="site-agents__tab"
           :class="{ 'site-agents__tab--on': viewing === null }"
           :aria-selected="viewing === null"
-          @click="selectedAgent = null"
+          @click="selectAgent(null)"
         >
           {{ t('work.room.site.agents.all') }}
         </button>
@@ -373,7 +439,7 @@ function isLive(index: number): boolean {
           class="site-agents__tab"
           :class="{ 'site-agents__tab--on': viewing === a }"
           :aria-selected="viewing === a"
-          @click="selectedAgent = a"
+          @click="selectAgent(a)"
         >
           {{ agentLabel(a) }}
         </button>
