@@ -42,6 +42,7 @@ class Runner(runner.Runner[Journal]):
         self.cwd = ""
         self.session: Session | None = None
         self.submit_lock = asyncio.Lock()
+        self.continuing: asyncio.Future | None = None
 
     async def _catch_up(self) -> bool:
         """The project's skills as they are on the machine now; whether they
@@ -81,16 +82,40 @@ class Runner(runner.Runner[Journal]):
             owner["work_id"] = work
         if owner:
             event = {**event, "cheese": owner}
-        self.journal.append(event)
+        ends = (
+            self.session is not None
+            and event.get("method") == "turn/completed"
+            and thread_id == self.session.thread_id
+        )
+        # A turn that ends with a person unanswered goes on instead: Codex
+        # has nothing that keeps a turn open, so its ending is held back and a
+        # new turn in the same work carries the reminder. The room sees one
+        # piece of work, ending when that turn does.
+        reason = (
+            self.insist()
+            if ends and (params.get("turn") or {}).get("status") == "completed"
+            else None
+        )
+        if reason is None:
+            self.journal.append(event)
         if self.session is not None:
             self.session.observe(event)
+        if reason is not None:
+            self.continuing = asyncio.ensure_future(self._hold_to_reply(reason, event))
+        elif ends:
             # Codex takes a message said mid-turn into that turn (`turn/steer`
             # needs one in progress), so a finished turn has read every one.
-            if (
-                event.get("method") == "turn/completed"
-                and thread_id == self.session.thread_id
-            ):
-                self.reply_settled()
+            self.reply_settled()
+
+    async def _hold_to_reply(self, reason: str, ending: dict) -> None:
+        assert self.session is not None
+        try:
+            async with self.submit_lock:
+                await self.session.send(reason)
+        except Exception as error:  # noqa: BLE001 — the turn ends as it was going to
+            print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
+            self.journal.append(ending)
+            self.reply_settled()
 
     async def start(
         self,

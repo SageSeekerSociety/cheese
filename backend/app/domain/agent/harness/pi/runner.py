@@ -67,6 +67,10 @@ class Runner(runner.Runner[Journal]):
         # The platform asked pi to stop: a retry cut short by it is not a
         # failure of anything.
         self.aborting = False
+        # The runner's own turn that holds the session to a reply, and the
+        # marker platform instructions carry in this room (`start`).
+        self.continuing: asyncio.Task | asyncio.Future | None = None
+        self.notice = ""
         # The project's MCP servers (`mcp.py`), opened with the session.
         self.servers: ProjectServers | None = None
         self.mcp_tools: list[dict] = []
@@ -87,7 +91,13 @@ class Runner(runner.Runner[Journal]):
             self.working = False
             # pi delivers a steered message before its next model call and
             # settles only once none is left, so nothing unread survives this.
-            self.reply_settled()
+            # A person it left unanswered gets one more turn, unless the
+            # platform is the one that stopped it.
+            reason = None if self.aborting else self.insist()
+            if reason is None:
+                self.reply_settled()
+            else:
+                self.continuing = asyncio.ensure_future(self._hold_to_reply(reason))
         elif kind == "auto_retry_start":
             self.failing = True
             self._verdict(
@@ -392,6 +402,7 @@ class Runner(runner.Runner[Journal]):
             # already knows, and the first thing a wrong guess costs is every
             # platform tool in the room.
             env = {**env, "CHEESE_PI_EXTENSION": str(home)}
+        self.notice = notice
         self.errors = (self.state / "pi.log").open("ab")
         self.process = await asyncio.create_subprocess_exec(
             binary,
@@ -465,6 +476,7 @@ class Runner(runner.Runner[Journal]):
             # Persist attribution before the call: entries can appear
             # before the command's own acknowledgement comes back.
             owner = json.loads(self.journal.recall("owner") or "{}")
+            owner.pop("unsolicited", None)
             self.journal.remember("owner", json.dumps({**owner, "work_id": work_id}))
         fields: dict = {"message": text}
         if images:
@@ -474,6 +486,25 @@ class Runner(runner.Runner[Journal]):
         else:
             await self.client.request("prompt", **fields)
         return {"input_id": identifier}
+
+    async def _hold_to_reply(self, reason: str) -> None:
+        """A turn of the session's own, to answer the person it left waiting.
+
+        The room already saw the last one end — pi wrote its final message
+        before it settled — so this is new work the room opens the books for
+        when it speaks (`unsolicited`), as it does for a turn a finished
+        background job starts."""
+        assert self.client is not None
+        owner = json.loads(self.journal.recall("owner") or "{}")
+        owner.update(work_id=str(uuid.uuid4()), unsolicited=True)
+        self.journal.remember("owner", json.dumps(owner))
+        try:
+            await self.client.request(
+                "prompt", message=f"{self.notice}\n{reason}" if self.notice else reason
+            )
+        except Exception as error:  # noqa: BLE001 — the turn ended; so be it
+            print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
+            self.reply_settled()
 
     async def yield_foreground(self) -> None:
         """Nothing to send: pi's shell runs inside pi, as the platform

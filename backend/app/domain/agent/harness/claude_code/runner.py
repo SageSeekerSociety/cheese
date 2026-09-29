@@ -1006,6 +1006,14 @@ class Runner(runner.Runner[Journal]):
             # 不是 accept 那种一次性输入：对账是幂等的（同样的三方合出同样的结
             # 果），重来一次不会多出一条记忆，所以不需要按 id 去重。
             return self.sync_memory(params)
+        if method == "reply_check":
+            # The session's Stop hook (`client.py reply`), as the turn is about
+            # to end. A message the build has not read yet opens a turn of its
+            # own, and is that turn's to answer.
+            if self.interrupting or (self.owed is not None and self.owed in self.sent):
+                return {}
+            reason = self.insist()
+            return {"reason": reason} if reason else {}
         if method == "ping":
             return {
                 "pid": os.getpid(),

@@ -41,7 +41,11 @@ from app.domain.agent.harness.claude_code.remote_execution import client as cent
 from app.domain.agent.harness.claude_code.remote_execution import release, runtime
 from app.domain.agent.harness.codex.bundle import build as codex_archive
 from app.domain.agent.harness.codex.host import configure as start_codex
-from app.domain.agent.harness.driven.runner import REPLY_OWED, socket_path
+from app.domain.agent.harness.driven.runner import (
+    REPLY_INSIST,
+    REPLY_OWED,
+    socket_path,
+)
 from app.domain.agent.harness.pi.device_launch import PiLaunch, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
@@ -56,6 +60,8 @@ TOPIC = "fixture-topic"
 SUBAGENT_TASK = "SUBAGENT_TASK: run the commands"
 #: A piece of the refusal no prompt the platform writes otherwise carries.
 REFUSED = REPLY_OWED.split(":")[0]
+#: …and of the reminder a turn that tried to end unanswered is held to.
+HELD = REPLY_INSIST.split(";")[0]
 
 
 def shell(command: str) -> tuple[str, str]:
@@ -64,6 +70,11 @@ def shell(command: str) -> tuple[str, str]:
 
 def publish(text: str) -> tuple[str, str]:
     return ("publish", text)
+
+
+def say(text: str) -> tuple[str, str]:
+    """An answer the model writes where only it can see, and stops."""
+    return ("say", text)
 
 
 class Backend:
@@ -233,6 +244,8 @@ async def claude_code(tmp_path: Path, steps: list):
             "name": "mcp__native__chat_send",
             "input": {"content": value},
         },
+        # Words that reach no one: the fixture answers with plain text.
+        "say": lambda value: None,
         # Only Claude Code's model starts a subagent here; the value is the
         # commands the subagent's own model runs, and it ends after them.
         "subagent": lambda value: {
@@ -281,19 +294,11 @@ async def claude_code(tmp_path: Path, steps: list):
         "mcp_servers": [],
     }
     (tmp_path / "central.json").write_text(json.dumps(target))
-    plugin = tmp_path / "plugin"
-    (plugin / ".claude-plugin").mkdir(parents=True)
-    (plugin / "hooks").mkdir()
-    (plugin / ".claude-plugin/plugin.json").write_text(
-        json.dumps({"name": "cheese-remote-execution", "version": "0.1.0"})
-    )
-    (plugin / "hooks/hooks.json").write_text('{"modules":["proxy.js"]}')
-    (plugin / "hooks/proxy.js").write_text(
-        release.hook_module(
-            Path(central.__file__).with_name("proxy.js").read_text(),
-            target,
-            release.platform_tool_names(CHEESE.read_text()),
-        )
+    plugin = central.write_plugin(
+        tmp_path / "plugin",
+        target,
+        release.platform_tool_names(CHEESE.read_text()),
+        tmp_path / "central.json",
     )
     native = {
         "mcpServers": {
@@ -406,6 +411,8 @@ async def codex(tmp_path: Path, steps: list):
         [
             {"tool": "Bash", "arguments": {"command": value}}
             if kind == "shell"
+            else {"text": value}
+            if kind == "say"
             else {"tool": "chat_send", "arguments": {"content": value}}
             for kind, value in steps
         ]
@@ -483,6 +490,8 @@ async def pi(tmp_path: Path, steps: list):
         [
             {"tool": "bash", "arguments": {"command": value}}
             if kind == "shell"
+            else {"text": value}
+            if kind == "say"
             else {"tool": "chat_send", "arguments": {"content": value}}
             for kind, value in steps
         ]
@@ -640,3 +649,47 @@ async def test_a_subagent_reports_to_its_session_and_is_never_held_back(tmp_path
         assert (session.machine / "CHILD").exists()
         assert not (session.machine / "NEXT").exists()
         assert session.backend.published == ["stopping"]
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_turn_cannot_end_with_the_person_unanswered(tmp_path, harness):
+    """A model that answers only where it alone can see, and stops, is held to
+    answering in the room once more — the person always hears back."""
+    steps = [say("fixed it"), publish("fixed it, the build is green")]
+    async with harness(tmp_path, steps) as session:
+        await session.send("[someone]: please fix the build", owes_reply=True)
+        await session.finished(len(steps) + 1)
+
+        assert HELD not in session.told(0)
+        assert HELD in session.told(1)
+        assert session.backend.published == ["fixed it, the build is green"]
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_session_held_once_that_still_does_not_answer_is_let_go(
+    tmp_path, harness
+):
+    steps = [say("no"), say("still no")]
+    async with harness(tmp_path, steps) as session:
+        await session.send("[someone]: please fix the build", owes_reply=True)
+        await session.finished(len(steps))
+        await asyncio.sleep(3)
+
+        assert len(session.requests) == len(steps)
+        assert session.backend.published == []
+        assert not session.working(await session.call("ping", {}))
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_turn_nobody_asked_for_ends_when_it_ends(tmp_path, harness):
+    steps = [say("patrol done")]
+    async with harness(tmp_path, steps) as session:
+        await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
+        await session.finished(len(steps))
+        await asyncio.sleep(3)
+
+        assert len(session.requests) == len(steps)
+        assert session.backend.published == []

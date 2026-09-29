@@ -142,6 +142,8 @@ export function register(on) {
         const name = tool.startsWith("mcp__native__") ? tool.slice("mcp__native__".length) : tool;
         if (!owed.answers.includes(name)) return { deny: owed.reason };
         answered = owed.id;
+        // And where the runner reads it, to know the turn may end (`insist`).
+        await $.fs.write(owed.answered, owed.id);
       }
     }
     // The pinned executor's `mcp serve` does not expose these tools. Never

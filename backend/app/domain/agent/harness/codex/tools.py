@@ -290,6 +290,8 @@ class RemoteTools:
                         "contentItems": [{"type": "inputText", "text": owed["reason"]}],
                     }
                 self.answered = owed["id"]
+                # And where the runner reads it, to know the turn may end.
+                Path(owed["answered"]).write_text(owed["id"])
         server, tool = self.routes[params["tool"]]
         if server == PLATFORM:
             return await asyncio.to_thread(

@@ -724,7 +724,7 @@ function announceExits(pi: any, spec: Manifest) {
 
 const REPLY_OWED_ENV = "CHEESE_REPLY_OWED";
 
-type Debt = { id: string; answers: string[]; reason: string };
+type Debt = { id: string; answers: string[]; reason: string; answered: string };
 
 // What the runner's file says is owed right now, answered or not.
 function debtOnFile(): Debt | null {
@@ -757,6 +757,8 @@ function holdToAnswering(pi: any) {
       return { block: true, reason: debt.reason };
     }
     answered = debt.id;
+    // And where the runner reads it, to know the turn may end (`insist`).
+    fs.writeFileSync(debt.answered, debt.id);
   });
 }
 

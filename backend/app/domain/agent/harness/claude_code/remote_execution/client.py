@@ -34,6 +34,7 @@ if __package__:
     from app.domain.agent.executor_transport import (
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
+        SESSION_SOCKET,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -48,6 +49,7 @@ else:
     from executor_transport import (
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
+        SESSION_SOCKET,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
@@ -143,6 +145,63 @@ def _ensure_sync_agents_hook(hooks: dict) -> None:
         groups.append(
             {"hooks": [{"type": "command", "command": command, "timeout": 15}]}
         )
+
+
+def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) -> Path:
+    """The plugin a room's session is started with: the function hook that runs
+    its tools where the project is (`proxy.js`), and the Stop hook that keeps a
+    turn from ending while a person in the room is unanswered (`reply`)."""
+    if __package__:
+        from .release import hook_module
+    else:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from release import hook_module
+
+    (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+    (plugin / "hooks").mkdir(exist_ok=True)
+    (plugin / ".claude-plugin/plugin.json").write_text(
+        json.dumps({"name": "cheese-remote-execution", "version": "0.1.0"})
+    )
+    stop = shlex.join(
+        [sys.executable, str(Path(__file__).resolve()), "reply", str(target_path)]
+    )
+    (plugin / "hooks/hooks.json").write_text(
+        json.dumps(
+            {
+                "modules": ["proxy.js"],
+                "hooks": {"Stop": [{"hooks": [{"type": "command", "command": stop}]}]},
+            }
+        )
+    )
+    (plugin / "hooks/proxy.js").write_text(
+        hook_module(
+            (Path(__file__).parent / "proxy.js").read_text(), target, platform_tools
+        )
+    )
+    return plugin
+
+
+def reply_hook(payload: dict) -> dict | None:
+    """The Stop hook: may this turn end? The runner decides (`driven/runner.py`
+    `insist`), reached on the socket it gave this session. A session with no
+    runner, or one that does not answer, ends as it would have."""
+    import socket
+
+    path = os.environ.get(SESSION_SOCKET)
+    if not path or payload.get("stop_hook_active"):
+        return None
+    try:
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(10)
+            connection.connect(path)
+            connection.sendall(
+                json.dumps({"method": "reply_check", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+    except (OSError, ValueError):
+        return None
+    reason = (answer.get("result") or {}).get("reason")
+    return {"decision": "block", "reason": reason} if reason else None
 
 
 def cheese_source() -> Path:
@@ -309,25 +368,14 @@ def prepare(
             {"entries": {}} if unavailable else context_tree,
             Path(__file__).parent,
         )
-    plugin = directory / "plugin"
-    (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
-    (plugin / "hooks").mkdir(exist_ok=True)
-    (plugin / ".claude-plugin/plugin.json").write_text(
-        json.dumps({"name": "cheese-remote-execution", "version": "0.1.0"})
-    )
-    (plugin / "hooks/hooks.json").write_text('{"modules":["proxy.js"]}')
     if __package__:
-        from .release import allow_native_tools, hook_module, platform_tool_names
+        from .release import allow_native_tools, platform_tool_names
     else:
         sys.path.insert(0, str(Path(__file__).parent))
-        from release import allow_native_tools, hook_module, platform_tool_names
+        from release import allow_native_tools, platform_tool_names
 
     platform_tools = platform_tool_names(cheese_source().read_text())
-    (plugin / "hooks/proxy.js").write_text(
-        hook_module(
-            (Path(__file__).parent / "proxy.js").read_text(), target, platform_tools
-        )
-    )
+    plugin = write_plugin(directory / "plugin", target, platform_tools, target_path)
     settings = json.loads(json.dumps(base_settings or {}))
     # The project's own tool hooks, which the build fires and the shell prefix
     # runs on the executor (never here: they are not in `central_hooks`).
@@ -458,7 +506,7 @@ def prepare(
     }
     local_commands.update(
         shlex.join([*helper, mode, str(target_path)])
-        for mode in ("guard", "context", "checkpoint", "transport")
+        for mode in ("guard", "context", "checkpoint", "transport", "reply")
     )
     local_commands.update(
         shlex.join([*helper, "bridge", str(target_path), name]) for name in bridged
@@ -740,7 +788,8 @@ def shell(target_path, command):
     if (
         len(words) >= 4
         and words[:2] == [sys.executable, helper]
-        and words[2] in ("bridge", "guard", "context", "checkpoint", "transport")
+        and words[2]
+        in ("bridge", "guard", "context", "checkpoint", "transport", "reply")
         and words[3] == str(target_path)
     ):
         os.execvp(words[0], words)
@@ -1843,6 +1892,7 @@ def main():
             "checkpoint",
             "release",
             "transport",
+            "reply",
         ],
     )
     parser.add_argument("config", type=Path)
@@ -1888,6 +1938,10 @@ def main():
         )
         if "error" in result:
             raise RuntimeError(result["error"])
+    elif args.mode == "reply":
+        decision = reply_hook(json.load(sys.stdin))
+        if decision is not None:
+            print(json.dumps(decision))
     elif args.mode == "guard":
         call = json.load(sys.stdin)
         if own_output(config, call) or own_memory(config, call):
