@@ -13,7 +13,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { readRecents, recordVisit } from './recents'
-import { buildResults } from './results'
+import { buildResults, remoteSources, splitPrefix } from './results'
 import { paletteSources } from './sources'
 import { paletteOpen } from './state'
 
@@ -45,8 +45,34 @@ const recentElsewhere = computed(() =>
     }
   })
 )
+
+// 远程搜：停止打字一会儿再问，问回来时输入已经变了就扔掉。本地结果不等它。
+const SEARCH_DELAY_MS = 200
+const remote = ref(new Map<string, PaletteItem[]>())
+const searching = ref(false)
+let asked = 0
+let timer: ReturnType<typeof setTimeout> | undefined
+watch([input, () => ctx.value.projectId, paletteOpen], () => {
+  clearTimeout(timer)
+  const ask = ++asked
+  remote.value = new Map()
+  const targets = paletteOpen.value ? remoteSources(input.value, paletteSources) : []
+  searching.value = targets.length > 0
+  if (!targets.length) return
+  const text = splitPrefix(input.value).query
+  timer = setTimeout(async () => {
+    const found = await Promise.all(
+      targets.map((source) => source.search!(text, ctx.value).catch(() => [] as PaletteItem[]))
+    )
+    if (ask !== asked) return
+    remote.value = new Map(targets.map((source, i) => [source.id, found[i]]))
+    searching.value = false
+  }, SEARCH_DELAY_MS)
+})
+onBeforeUnmount(() => clearTimeout(timer))
+
 const groups = computed(() =>
-  paletteOpen.value ? buildResults(input.value, paletteSources, ctx.value, recentElsewhere.value) : []
+  paletteOpen.value ? buildResults(input.value, paletteSources, ctx.value, recentElsewhere.value, remote.value) : []
 )
 const rows = computed(() => groups.value.flatMap((group) => group.rows))
 const offsets = computed(() => {
@@ -107,12 +133,12 @@ onBeforeUnmount(
   })
 )
 
-function choose(item: PaletteItem, newTab = false) {
+function choose(item: ResultRow, newTab = false) {
   if (newTab && item.to) {
     window.open(router.resolve(item.to).href, '_blank', 'noopener')
     return
   }
-  recordVisit(item)
+  if (!item.remote) recordVisit(item)
   close()
   item.run?.()
   if (item.to) void router.push(item.to)
@@ -193,6 +219,14 @@ const optionId = (index: number) => `palette-option-${index}`
               :placeholder="t('navigation.palette.placeholder')"
               @keydown="onKeydown"
             />
+            <v-progress-linear
+              :active="searching"
+              indeterminate
+              absolute
+              location="bottom"
+              height="2"
+              color="primary"
+            />
           </div>
           <div id="palette-results" class="palette__list" role="listbox" :aria-label="t('navigation.palette.open')">
             <template v-for="(group, g) in groups" :key="group.key">
@@ -228,7 +262,10 @@ const optionId = (index: number) => `palette-option-${index}`
                 </span>
               </div>
             </template>
-            <div v-if="input.trim() && !rows.length" class="palette__empty t-body c-muted">
+            <div
+              v-if="input.trim() && input.trim() !== '?' && !rows.length && !searching"
+              class="palette__empty t-body c-muted"
+            >
               {{ t('navigation.palette.empty') }}
             </div>
           </div>
@@ -266,6 +303,7 @@ const optionId = (index: number) => `palette-option-${index}`
   box-shadow: var(--shadow-2);
 }
 .palette__input {
+  position: relative;
   display: flex;
   flex: none;
   align-items: center;

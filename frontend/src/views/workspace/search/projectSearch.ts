@@ -1,0 +1,28 @@
+// 命令面板里的内容搜索：消息、任务、文档、项目文档、资料库五个数据源，问的是同一个
+// 后端接口。同一次输入只问一次，五个数据源各取自己那一份。
+import type { ProjectSearchHits } from '@/api'
+
+import { searchProject } from '@/api'
+
+// 只为让五个数据源合用一次请求，不是缓存：过一会儿再搜同样的字要看到新内容。
+const FRESH_MS = 10_000
+const asked = new Map<string, { at: number; hits: Promise<ProjectSearchHits> }>()
+
+export function hitsFor(projectId: string, query: string): Promise<ProjectSearchHits> {
+  const key = `${projectId}\n${query}`
+  const now = Date.now()
+  for (const [k, entry] of asked) if (now - entry.at > FRESH_MS) asked.delete(k)
+  let entry = asked.get(key)
+  if (!entry) {
+    entry = { at: now, hits: searchProject(projectId, query) }
+    // 失败的那次不留：下次输入同样的字要重新问。
+    entry.hits.catch(() => asked.delete(key))
+    asked.set(key, entry)
+  }
+  return entry.hits
+}
+
+/** 结果下面那一行：在哪个房间、谁、什么时候。 */
+export function whereAndWhen(...parts: (string | null | undefined)[]): string {
+  return parts.filter(Boolean).join(' · ')
+}

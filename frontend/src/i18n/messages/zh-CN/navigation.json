@@ -72,6 +72,14 @@
     "close": "关闭",
     "theme": "外观：{mode}",
     "showTab": "切到{tab}",
-    "newTopic": "新建话题"
+    "newTopic": "新建话题",
+    "messages": "消息",
+    "tasks": "任务",
+    "docs": "文档",
+    "projectDocs": "项目文档",
+    "library": "资料库",
+    "comment": "评论",
+    "decision": "决策",
+    "weekly": "周报"
   }
 }
