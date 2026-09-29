@@ -1298,8 +1298,14 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   position: relative;
   margin-inline-start: 0;
 }
+/* 这里挨着两颗（搜索、项目菜单）：各自只有 26 宽、靠 .tap-target 撑到 44 的话，
+   两块撑出来的范围叠在一起，按在搜索右半边点到的是后面那颗。所以顶栏里它们本身
+   就是 44 见方。 */
 .rail-header--bar .rail-header__more {
   position: relative;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
 }
 /* 两栏（平板）时这一行留在左栏顶上，高度和底线照桌面那一条（手机外壳里是 56，和
    右边的顶栏接成一条线）。两颗按钮一样由 .tap-target 撑到 44，所以一样要有定位。 */
