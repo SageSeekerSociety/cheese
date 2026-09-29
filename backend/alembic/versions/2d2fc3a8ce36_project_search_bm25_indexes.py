@@ -1,7 +1,7 @@
 """BM25 indexes for project context search
 
 Revision ID: 2d2fc3a8ce36
-Revises: 19fe29bcb352
+Revises: 06b31e24626f
 
 `GET /projects/{id}/context/search` matched `ILIKE '%q%'` and listed hits newest
 first. It now matches word by word and ranks by relevance (the query side is
@@ -58,7 +58,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "2d2fc3a8ce36"
-down_revision: str | Sequence[str] | None = "19fe29bcb352"
+down_revision: str | Sequence[str] | None = "06b31e24626f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

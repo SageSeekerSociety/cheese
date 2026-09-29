@@ -36,7 +36,7 @@ class _Quiet:
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         return {"id": "b1", "content": text}
 
-    def has_live_screen(self, topic_id):
+    def has_live_screen(self, topic_id, agent_handle=None):
         return False
 
     async def turns_that_produced_something(self, turn_ids):

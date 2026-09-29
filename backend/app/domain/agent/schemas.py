@@ -4,12 +4,16 @@
 每件事一个模型，字段名与 `frontend/src/api.ts` 那份类型接口一一对应 —— 后端是这段契约
 的权威，前端照着它写（同 `admin/schemas.py` 的 `AdminAdd`）。
 
-这里只管**形状**：字段名、类型、名字的字符集与长度、上游地址必须是 https。业务上的判断
+这里只管**形状**：字段名、类型、名字的字符集与长度、上游地址必须是 https（唯一例外
+见 `api_base_allowed`）。业务上的判断
 一个都不放：`selectable=true` 却缺输入或输出单价要由服务层拒（那句「无价模型会让项目的
 max_budget 刹车静默失效」得和网关目录刷新、审计落库一起说，放进 pydantic 只会让同一句话
 有第二份、让路由层也当一次裁判），而「config 来源不许写」「这条模型不存在」都要读网关或
 库才答得上来，同样在服务层。路由与服务合起来才是契约 §2.3 那一张失败语义表。
 """
+
+import re
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -46,12 +50,40 @@ class ModelCapabilities(BaseModel):
     adaptive_thinking: bool = False
 
 
+# 计量代理的 ChatGPT 入口：唯一允许走明文 http 的上游地址，路径是 `/chatgpt/<账号名>`
+# （账号名的字符集同 deploy/metering-proxy 的 `_ACCOUNT_NAME_RE`）。
+_METER_CHATGPT_NETLOC = "metering-proxy:8445"
+_METER_CHATGPT_PATH = re.compile(r"/chatgpt/[A-Za-z0-9][A-Za-z0-9._-]{0,63}/?")
+
+
+def api_base_allowed(value: str) -> bool:
+    """这个上游地址能不能填：https，或者恰好是计量代理的 ChatGPT 入口。
+
+    那一个 http 地址是安全的：`metering-proxy` 只在网关与计量代理两家独占的内部
+    docker 网络上解析得到（deploy/metering-proxy/compose.yml），这一跳不出那张网；
+    而这条模型带过去的 api_key 是那个入口的钥匙（CHEESE_CHATGPT_KEY），不是任何
+    上游凭据 —— 账号的 token 由计量代理在那一头换上。主机、端口、路径都逐字比，
+    `metering-proxy.evil`、别的端口、带 userinfo 的写法都不算。
+    """
+    if value.startswith("https://"):
+        return True
+    parts = urlsplit(value)
+    return (
+        value.startswith("http://")
+        and parts.netloc == _METER_CHATGPT_NETLOC
+        and _METER_CHATGPT_PATH.fullmatch(parts.path) is not None
+        and not parts.query
+        and not parts.fragment
+    )
+
+
 class _ModelBodyBase(BaseModel):
     """新建与编辑共用的那部分形状。
 
     两处真正共用的一条规则：上游地址必须 https。明文 http 会让上游凭据在路上裸奔，这里
-    直接不给人填错的机会；留空表示「用上游默认端点」，所以空串一并按「没填」处理，免得
-    前端把「没填」写成空串时被当成一个非法地址拒掉。
+    直接不给人填错的机会（计量代理的 ChatGPT 入口是唯一例外，见 `api_base_allowed`）；
+    留空表示「用上游默认端点」，所以空串一并按「没填」处理，免得前端把「没填」写成
+    空串时被当成一个非法地址拒掉。
     """
 
     api_base: str | None = None
@@ -87,8 +119,11 @@ class _ModelBodyBase(BaseModel):
         value = value.strip()
         if not value:
             return None
-        if not value.startswith("https://"):
-            raise ValueError("api_base 必须是 https:// 开头的地址")
+        if not api_base_allowed(value):
+            raise ValueError(
+                "api_base 必须是 https:// 开头的地址（计量代理的 ChatGPT 入口 "
+                "http://metering-proxy:8445/chatgpt/<账号> 除外）"
+            )
         return value
 
 

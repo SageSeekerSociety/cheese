@@ -61,6 +61,11 @@ OpenAI calls (device login, token refresh, quota) take the same exit through
 `OPENAI_SUBSCRIPTION_PROXY=http://user:password@host:port` in `backend/.env`.
 There is no fallback: with the exit down, ChatGPT calls fail.
 
+The gateway also joins `cheese-meter-gateway`, an internal network shared only
+with the metering proxy, where the proxy's ChatGPT accounts answer at
+`http://metering-proxy:8445/chatgpt/<name>` (deploy/metering-proxy/README.md).
+The release creates the network if the proxy's release has not.
+
 The box's `backend/.env` must contain:
 
 ```

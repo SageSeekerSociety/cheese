@@ -23,14 +23,15 @@ covers:
 - 留下的痕迹在 `backend/alembic/versions/971b4765fa69_drop_ccproxy_columns.py`：删掉 `device.ccproxy_upstream`、`device.ccproxy_machine_id`、`project_machines.ccproxy_upstream`、`warm_machines.ccproxy_upstream`（downgrade 只把空列加回来）。
 - 今天 `backend/app`、`cli/` 里没有 ccproxy 的运行时引用，只在历史迁移和 `docs/plans/` 里出现。旧文档里看到 ccproxy 就是旧话。
 
-## 两个入口 {#listeners}
+## 入口 {#listeners}
 
-`deploy/metering-proxy/compose.yml` 起的是一条 mitmdump：`--mode reverse:https://api.anthropic.com@8443 --mode regular@8444 --ssl-insecure --set connection_strategy=lazy`。两个入口对应两种把流量送进来的办法：
+`deploy/metering-proxy/compose.yml` 起的是一条 mitmdump：`--mode reverse:https://api.anthropic.com@8443 --mode regular@8444 --mode reverse:https://chatgpt.com@8445 --ssl-insecure --set connection_strategy=lazy`。前两个入口对应会话把流量送进来的两种办法，第三个只给网关用（见 [ChatGPT 账号](#chatgpt)）：
 
 | 入口 | 会话侧怎么被指到这里 | 宿主监听 | 归属怎么证明 |
 | --- | --- | --- | --- |
 | `:443` 反代 | 容器 `--add-host api.anthropic.com:172.17.0.1`，把域名解析到宿主机 | `172.17.0.1:443 → 8443` | 请求头里的 scoped token（`x-cheese-attr` 只在 `CHEESE_ALLOW_HEADER_ATTR=1` 时认，默认关） |
 | `:8444` CONNECT | 会话里 `HTTPS_PROXY` 指到隧道端口，隧道再走到这里 | `${CONNECT_BIND_HOST:-172.17.0.1}:8444` | `Proxy-Authorization` Basic 的密码必须通过 `verify_scoped_token`，否则 407 |
+| `:8445` 反代 | 网关（LiteLLM）deployment 的 `api_base` 指到 `http://metering-proxy:8445/chatgpt/<账号>` | 不发布；只在内部网络 `cheese-meter-gateway` 上，别名 `metering-proxy` | Bearer 必须等于 `CHEESE_CHATGPT_KEY`，否则 401；没配就全拒 |
 
 为什么是两个入口：一个客户端「长什么样」决定它能被怎么牵过来。本机上的容器有 root，改 `/etc/hosts` 把 `api.anthropic.com` 指到宿主机就行，走 `:443`；裸进程和 MicroCloud 上的机器没有 root、没有 docker、也没有 hosts 可写，只能走 `HTTPS_PROXY` 的 CONNECT，即 `:8444`。它们也不能改用 `ANTHROPIC_BASE_URL`：那会把 Claude Code 切成 API-key 模式，直接无视 OAuth token——订阅路的转向必须在传输层做。
 
@@ -91,6 +92,15 @@ covers:
 | `egress set\|clear\|test [n]` | 设、清、测出口代理；`test` 打 n 次经它与 n 次直连的 TLS 握手耗时 |
 
 - 没有凭据时，走 API-key 池的项目照跑：只有真账号能答的启动调用由 `NO_LOGIN_ANSWERS` 在这里答掉，订阅路上的请求给 400 并点名缺登录。
+
+## 平台的 ChatGPT 账号 {#chatgpt}
+
+- 一个名字一个账号，存在 `chatgpt-credential/<名字>/credential`（JSON：`access_token`、`refresh_token`、`id_token`、`expires_at` 秒、`account_id`），旁边可以有这个账号自己的 `egress`。挂载给代理的是 `CHEESE_CHATGPT_CREDENTIALS=/etc/cheese/chatgpt-credential`，读写。
+- 代理是每对 token 唯一的持有者，到期前 600 秒刷新，打 `https://auth.openai.com/oauth/token`（`grant_type=refresh_token`、`client_id`、`scope=openid profile email`，与后端 `openai_codex.py` 一致）。401/403 或 `refresh_token_expired|reused|invalidated` 判死，要重新登录；5xx、网络错误、认不出的 4xx 退避 60 秒再试。
+- `:8445` 不对宿主机发布。计量代理和网关的 LiteLLM 共用一张内部 docker 网络 `cheese-meter-gateway`，代理在上面叫 `metering-proxy`，沙箱不在这张网上，所以这一跳走明文 http。后台的模型表单只对 `http://metering-proxy:8445/chatgpt/<账号>` 这一个地址放开 http（`api_base_allowed`）。两边的 compose 都把这张网声明为 external，两边的发布脚本发现它不存在就建，谁先发布都行；手动先起计量代理而两边都没发布过时，要先跑 `docker network create --internal cheese-meter-gateway`。不用网关栈的默认网络，是因为 `openai-egress` 在那张网上以 `chatgpt.com` 为别名，代理接进去后自己发往 chatgpt.com 的请求会被解析到那个转发器。
+- `:8445` 只转 `/chatgpt/<账号>/responses[/…]` 和 `/chatgpt/<账号>/models`，到 `https://chatgpt.com/backend-api/codex/…`，换上账号的 `Authorization`、`ChatGPT-Account-Id`，加 `originator: cheese` 和 `version`（`CHEESE_CODEX_CLIENT_VERSION`，默认同后端的 `codex_client_version`）。其它路径 404，账号不存在 404，没登录或已判死 401，过期且刷新没成 503。不计量：网关自己记这部分花费。
+- 两个账号用同一个出口地址、不同的出口登录时，请求被拒（503）：mitmproxy 按出口地址复用上游连接，不分登录，放行就会让一个账号走进另一个账号的隧道。
+- `chatgpt-login.sh` 的子命令：`login <名字>`（device flow，经这个账号的出口）、`import <名字> <文件>`（搬进一对别处持有的 token，缺 `expires_at` 就取 access token 的 `exp`）、`status [名字]`、`ls`、`logout <名字>`、`egress set|clear|test <名字> …`。
 
 ## 账本 usage.jsonl {#ledger}
 

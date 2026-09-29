@@ -31,6 +31,7 @@ working_dir="$(docker inspect cheese-metering-proxy --format '{{index .Config.La
 # writes. Installed before the unchanged-image exit below, so a release that
 # changes only the tool still delivers it.
 install -m 0755 "$here/metering-proxy/claude-login.sh" "$proxy_home/claude-login.sh"
+install -m 0755 "$here/metering-proxy/chatgpt-login.sh" "$proxy_home/chatgpt-login.sh"
 current_image="$(docker inspect cheese-metering-proxy --format '{{.Config.Image}}')"
 current_health="$(docker inspect cheese-metering-proxy --format '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}')"
 # Promoted tags can resolve to the running digest; keep its active streams intact.
@@ -42,7 +43,13 @@ release_dir="$proxy_home/releases/${sha}-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT
 mkdir -p "$release_dir"
 # Created here, as the operator, so the login script can write the credential
 # into it; left to docker, the bind source would be created owned by root.
-mkdir -p "$proxy_home/claude-credential"
+mkdir -p "$proxy_home/claude-credential" "$proxy_home/chatgpt-credential"
+# The private network the gateway reaches the ChatGPT listener on. Shared with
+# the gateway stack, whose release may not have run yet; created here if
+# missing, and a concurrent creation by that release is not an error.
+docker network inspect cheese-meter-gateway >/dev/null 2>&1 \
+  || docker network create --internal cheese-meter-gateway >/dev/null \
+  || docker network inspect cheese-meter-gateway >/dev/null
 previous_image="$(docker inspect cheese-metering-proxy --format '{{.Image}}')"
 previous_compose="$(docker inspect cheese-metering-proxy --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
 # Keep raw configuration, never docker compose config: its output contains secrets.

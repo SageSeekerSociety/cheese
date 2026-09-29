@@ -1102,3 +1102,332 @@ class PlatformCredential:
                     "claude login expires in %.1f days; log in again",
                     left_s / 86400,
                 )
+
+
+# --- the platform's ChatGPT subscription accounts ----------------------------
+#
+# Held here the way the Claude credential is: this proxy is the only holder of
+# each pair and renews it itself. Unlike Claude there can be several, one per
+# name, each in `<root>/<name>/credential` with an optional `<name>/egress`
+# beside it (the same `http://[user:pass@]host:port` as the Claude one). The
+# credential is JSON: access_token, refresh_token, id_token, expires_at (epoch
+# seconds) and account_id. chatgpt-login.sh writes it; the proxy re-reads it on
+# every request and writes the renewed pair back.
+#
+# Endpoints, client id, form fields and the failure classes are the backend's
+# (backend/app/domain/subscription/openai_codex.py), ported rather than
+# imported: this file is stdlib only and ships alone in the proxy image.
+OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token"
+OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+# The backend's subscription_refresh_margin_s.
+CHATGPT_REFRESH_MARGIN_S = 600
+# Refresh answers that mean the pair is dead and someone has to log in again.
+# Anything else that is not a 200 (5xx, an unrecognised 4xx, no answer) is
+# worth retrying after REFRESH_BACKOFF_S.
+_CHATGPT_DEAD_CODES = frozenset(
+    {"refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated"}
+)
+# Where a ChatGPT account's requests go, and the only paths under it that are
+# forwarded: the Responses API and the model list. Nothing else a caller names
+# is reachable on an account's token — plain segments only, so no `..` or
+# encoded one walks out of /codex to the rest of the ChatGPT backend.
+CHATGPT_UPSTREAM = ("chatgpt.com", 443)
+CHATGPT_BACKEND_PATH = "/backend-api/codex"
+_CHATGPT_PATH_RE = re.compile(r"models|responses(/[A-Za-z0-9_-]+)*")
+# An account name is one path segment on the route and one directory on disk,
+# so nothing that could climb out of either.
+_ACCOUNT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def chatgpt_route(path: str) -> tuple[str, str] | None:
+    """(account name, upstream path) for `/chatgpt/<name>/<rest>`, else None.
+
+    The upstream path is "" when <rest> is not one this proxy forwards."""
+    prefix, sep, rest = path.partition("?")
+    parts = prefix.split("/", 3)
+    if len(parts) < 4 or parts[0] or parts[1] != "chatgpt" or not parts[2]:
+        return None
+    name, tail = parts[2], parts[3]
+    if not _CHATGPT_PATH_RE.fullmatch(tail):
+        return name, ""
+    return name, f"{CHATGPT_BACKEND_PATH}/{tail}{sep}{rest}"
+
+
+def jwt_claims(token: str) -> dict:
+    """A JWT's payload, unverified: read for metadata (expiry, account id), never
+    as proof of anything — the token came straight from OpenAI over TLS."""
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {}
+    try:
+        claims = json.loads(
+            base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4))
+        )
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return claims if isinstance(claims, dict) else {}
+
+
+def chatgpt_account_id(id_token: str) -> str:
+    """The ChatGPT account id an id_token names, at the top level or under the
+    `https://api.openai.com/auth` namespace (OpenAI has used both)."""
+    claims = jwt_claims(id_token)
+    value = claims.get("chatgpt_account_id")
+    if not isinstance(value, str) or not value:
+        nested = claims.get("https://api.openai.com/auth")
+        value = nested.get("chatgpt_account_id") if isinstance(nested, dict) else ""
+    return value if isinstance(value, str) else ""
+
+
+def _post_form(
+    url: str,
+    fields: dict,
+    timeout_s: float,
+    *,
+    egress: Egress | None = None,
+    connect=http.client.HTTPSConnection,
+) -> tuple[int, dict]:
+    """POST a form to OpenAI's token endpoint, through the account's egress when
+    it has one. Returns (status, parsed body); raises OSError on transport
+    problems."""
+    parts = urllib.parse.urlsplit(url)
+    raw = urllib.parse.urlencode(fields).encode()
+    if egress is None:
+        conn = connect(parts.hostname, parts.port, timeout=timeout_s)
+    else:
+        conn = connect(egress.host, egress.port, timeout=timeout_s)
+        tunnel_headers = (
+            {"Proxy-Authorization": egress.authorization}
+            if egress.authorization
+            else {}
+        )
+        conn.set_tunnel(parts.hostname, parts.port or 443, headers=tunnel_headers)
+    try:
+        conn.request(
+            "POST",
+            parts.path,
+            raw,
+            {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+        )
+        resp = conn.getresponse()
+        data = resp.read()
+        status = resp.status
+    except http.client.HTTPException as err:
+        raise OSError(str(err)) from err
+    finally:
+        conn.close()
+    try:
+        parsed = json.loads(data or b"{}")
+    except ValueError:
+        parsed = {}
+    return status, parsed if isinstance(parsed, dict) else {}
+
+
+def _refresh_error_code(answer: dict) -> str:
+    """The error code of a refused refresh: `error` as an object's `code` or as
+    a string, then a top-level `code`."""
+    error = answer.get("error")
+    code = error.get("code") if isinstance(error, dict) else error
+    if not isinstance(code, str):
+        code = answer.get("code")
+    return code.lower() if isinstance(code, str) else ""
+
+
+class ChatGPTCredential:
+    """One ChatGPT account's pair in `<directory>/credential`, refreshed here."""
+
+    def __init__(self, directory: Path, *, post=_post_form, now=time.time) -> None:
+        self.name = directory.name
+        self.path = directory / "credential"
+        self.egress_path = directory / "egress"
+        self._post = post
+        self._now = now
+        self._lock = threading.Lock()
+        self._dead_refresh_tokens: set[str] = set()
+        self._last_failure = 0.0
+
+    def _read(self) -> dict | None:
+        try:
+            doc = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return None
+        if not isinstance(doc, dict) or not isinstance(doc.get("access_token"), str):
+            return None
+        return doc if doc["access_token"] else None
+
+    def egress(self) -> Egress | None:
+        """Where this account's requests leave from; None is direct."""
+        try:
+            return Egress.parse(self.egress_path.read_text())
+        except OSError:
+            return None
+
+    def token(self) -> tuple[str, str, str]:
+        """(access token, account id, "") or ("", "", why there is none)."""
+        doc = self._read()
+        if doc is None:
+            return "", "", NO_CREDENTIAL
+        if doc.get("refresh_token") in self._dead_refresh_tokens:
+            return "", "", LOGIN_REQUIRED
+        expires_at = doc.get("expires_at")
+        if isinstance(expires_at, int | float) and expires_at <= self._now():
+            return "", "", EXPIRED
+        account_id = doc.get("account_id")
+        return (
+            doc["access_token"],
+            account_id if isinstance(account_id, str) else "",
+            "",
+        )
+
+    def refresh_due(self) -> bool:
+        """Cheap check, safe on every request: is a refresh worth attempting?"""
+        doc = self._read()
+        return doc is not None and self._due(doc)
+
+    def _due(self, doc: dict) -> bool:
+        refresh_token = doc.get("refresh_token")
+        if not isinstance(refresh_token, str) or not refresh_token:
+            return False
+        if refresh_token in self._dead_refresh_tokens:
+            return False
+        if self._now() - self._last_failure < REFRESH_BACKOFF_S:
+            return False
+        expires_at = doc.get("expires_at")
+        if not isinstance(expires_at, int | float):
+            return True
+        return expires_at - self._now() <= CHATGPT_REFRESH_MARGIN_S
+
+    def refresh_if_due(self) -> None:
+        """Refresh the pair once, however many requests found it due at once.
+
+        Blocking; the addon runs it off the event loop.
+        """
+        with self._lock:
+            doc = self._read()
+            if doc is None or not self._due(doc):
+                return
+            refresh_token = doc["refresh_token"]
+            fields = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": OPENAI_CLIENT_ID,
+                "scope": "openid profile email",
+            }
+            try:
+                egress = self.egress()
+                status, answer = self._post(
+                    OPENAI_TOKEN_URL,
+                    fields,
+                    30.0,
+                    **({"egress": egress} if egress else {}),
+                )
+            except OSError as err:
+                self._last_failure = self._now()
+                _credential_log.warning(
+                    "chatgpt account %s refresh failed: %s", self.name, err
+                )
+                return
+            access_token = answer.get("access_token")
+            if status == 200 and isinstance(access_token, str) and access_token:
+                self._write(doc, answer)
+                return
+            self._last_failure = self._now()
+            if (
+                status in (401, 403)
+                or _refresh_error_code(answer) in _CHATGPT_DEAD_CODES
+            ):
+                self._dead_refresh_tokens.add(refresh_token)
+                _credential_log.error(
+                    "chatgpt account %s refresh token refused (HTTP %s): log in "
+                    "again with chatgpt-login.sh login %s",
+                    self.name,
+                    status,
+                    self.name,
+                )
+                return
+            _credential_log.warning(
+                "chatgpt account %s refresh answered %s", self.name, status
+            )
+
+    def _write(self, doc: dict, answer: dict) -> None:
+        access_token = answer["access_token"]
+        refreshed = {**doc, "access_token": access_token}
+        for key in ("refresh_token", "id_token"):
+            if isinstance(answer.get(key), str) and answer[key]:
+                refreshed[key] = answer[key]
+        account_id = chatgpt_account_id(refreshed.get("id_token") or "")
+        if account_id:
+            refreshed["account_id"] = account_id
+        expires_in = answer.get("expires_in")
+        exp = jwt_claims(access_token).get("exp")
+        if isinstance(expires_in, int | float) and expires_in > 0:
+            refreshed["expires_at"] = int(self._now() + expires_in)
+        elif isinstance(exp, int | float):
+            refreshed["expires_at"] = int(exp)
+        else:
+            refreshed["expires_at"] = None
+        tmp = self.path.with_name(f".{self.path.name}.tmp")
+        owner = os.stat(self.path)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # The proxy runs as root in its container; the file stays the host
+        # operator's, so the login script can still read and replace it.
+        try:
+            os.fchown(fd, owner.st_uid, owner.st_gid)
+        except PermissionError:
+            pass
+        with os.fdopen(fd, "w") as fh:
+            json.dump(refreshed, fh, separators=(",", ":"))
+        os.replace(tmp, self.path)
+
+
+class ChatGPTAccounts:
+    """The ChatGPT accounts under one directory, one subdirectory per name.
+
+    An account exists when its directory does; a directory without a usable
+    credential is an account that is logged out. Each account's object is kept,
+    because its lock and the refresh tokens it has seen refused live on it.
+    """
+
+    def __init__(self, root: Path, *, post=_post_form, now=time.time) -> None:
+        self.root = root
+        self._post = post
+        self._now = now
+        self._lock = threading.Lock()
+        self._accounts: dict[str, ChatGPTCredential] = {}
+
+    def get(self, name: str) -> ChatGPTCredential | None:
+        if not _ACCOUNT_NAME_RE.fullmatch(name) or not (self.root / name).is_dir():
+            return None
+        with self._lock:
+            account = self._accounts.get(name)
+            if account is None:
+                account = ChatGPTCredential(
+                    self.root / name, post=self._post, now=self._now
+                )
+                self._accounts[name] = account
+            return account
+
+    def egress_conflict(self, name: str, egress: Egress) -> str:
+        """Another account whose egress is the same proxy with other credentials.
+
+        mitmproxy keeps one upstream connection per proxy address, not per
+        proxy login, so two such accounts would share whichever tunnel opened
+        first — and a proxy that picks its exit by login would put both on one
+        exit. The caller refuses instead."""
+        try:
+            others = sorted(p.name for p in self.root.iterdir() if p.name != name)
+        except OSError:
+            return ""
+        for other in others:
+            account = self.get(other)
+            theirs = account.egress() if account else None
+            if (
+                theirs is not None
+                and (theirs.host, theirs.port) == (egress.host, egress.port)
+                and theirs.authorization != egress.authorization
+            ):
+                return other
+        return ""

@@ -23,6 +23,8 @@ if args[0] == "compose":
     record["saved_image"] = list(home.glob("releases/*/previous-image"))[0].read_text().strip()
 with open(os.environ["CALLS"], "a") as log:
     log.write(json.dumps(record) + "\n")
+if args[:2] == ["network", "inspect"] and os.environ.get("NO_NETWORK"):
+    sys.exit(1)
 if args[:2] == ["image", "inspect"]:
     print(os.environ.get("FAKE_DIGEST", "ghcr.io/sageseekersociety/cheese/metering-proxy@sha256:" + "b"*64))
 elif args[0] == "inspect":
@@ -80,8 +82,10 @@ class MeteringReleaseTest(unittest.TestCase):
                 if (home / "calls").exists()
                 else []
             )
-            login = home / "claude-login.sh"
-            self.installed_login = login.is_file() and os.access(login, os.X_OK)
+            self.installed_login = all(
+                (home / name).is_file() and os.access(home / name, os.X_OK)
+                for name in ("claude-login.sh", "chatgpt-login.sh")
+            )
             self.assertNotIn("private-test-value", result.stdout + result.stderr)
             self.assertEqual(
                 (home / ".env").read_text(),
@@ -132,7 +136,22 @@ class MeteringReleaseTest(unittest.TestCase):
             self.assertEqual(
                 mounts["/etc/cheese/claude-credential"], str(home / "claude-credential")
             )
+            self.assertEqual(
+                mounts["/etc/cheese/chatgpt-credential"],
+                str(home / "chatgpt-credential"),
+            )
             self.assertEqual(mounts["/home/mitmproxy/.mitmproxy"], str(home / "certs"))
+            # The ChatGPT listener is published nowhere; the gateway reaches it
+            # on the private network, by the alias it puts in api_base.
+            published = [p["target"] for p in service["ports"]]
+            self.assertEqual(sorted(published), [8443, 8444])
+            self.assertEqual(
+                service["networks"]["meter-gateway"]["aliases"], ["metering-proxy"]
+            )
+            self.assertIn("default", service["networks"])
+            network = json.loads(result.stdout)["networks"]["meter-gateway"]
+            self.assertEqual(network["name"], "cheese-meter-gateway")
+            self.assertTrue(network["external"])
 
     def test_requires_explicit_interruption_acknowledgement(self):
         result, calls = self.run_release(METERING_ALLOW_INTERRUPT="0")
@@ -177,6 +196,18 @@ class MeteringReleaseTest(unittest.TestCase):
         result, _calls = self.run_release()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.installed_login)
+
+    def test_a_release_creates_the_gateway_network_when_it_is_missing(self):
+        for missing in ("", "1"):
+            result, calls = self.run_release(NO_NETWORK=missing)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            args = [c["args"] for c in calls]
+            created = ["network", "create", "--internal", "cheese-meter-gateway"]
+            compose = next(i for i, a in enumerate(args) if a[0] == "compose")
+            if missing:
+                self.assertLess(args.index(created), compose)
+            else:
+                self.assertNotIn(created, args)
 
     def test_unhealthy_same_digest_is_recreated(self):
         result, calls = self.run_release(

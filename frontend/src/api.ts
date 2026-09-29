@@ -1946,14 +1946,20 @@ export function deleteMemory(entryId: string): Promise<{ deleted: string }> {
 // 现场 (施工现场): a topic's tool/event record (read-only), newest window first.
 // Paged: events are the most numerous kind of block (one per tool call), so an
 // unpaged 现场 is the largest request the app can make and it only grows.
+//
+// `author` narrows a page to one teammate's steps — a room can seat several, and
+// 现场 reads them one at a time. It narrows the query, not the page: the filter
+// runs inside the paging (same as the backend's `kinds`), so a page still holds
+// `limit` rows and `has_more` is about what is left for THAT teammate.
 export const SITE_PAGE_SIZE = 120
 export function getTranscript(
   topicId: string,
-  opts: { limit?: number; before?: string } = {}
+  opts: { limit?: number; before?: string; author?: string | null } = {}
 ): Promise<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }> {
   const q = new URLSearchParams()
   if (opts.limit != null) q.set('limit', String(opts.limit))
   if (opts.before) q.set('before', opts.before)
+  if (opts.author) q.set('author', opts.author)
   const qs = q.toString()
   return request<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }>(
     `/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`

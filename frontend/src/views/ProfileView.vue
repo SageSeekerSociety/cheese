@@ -33,6 +33,7 @@ import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAv
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
+import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRef.vue'
@@ -42,7 +43,6 @@ import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
 import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 defineOptions({ name: 'ProfileView' })
 
@@ -216,7 +216,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
 
 <template>
   <component
-    :is="projectId ? ProjectPage : 'div'"
+    :is="projectId ? AppPage : 'div'"
     v-bind="
       projectId
         ? {
@@ -505,7 +505,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
   margin-inline: auto;
   padding: 48px 16px;
 }
-/* 项目框里：ProjectPage 已经给了一栏 --page-w 和四周的边距，左栏窄一档。 */
+/* 项目框里：AppPage 已经给了一栏 --page-w 和四周的边距，左栏窄一档。 */
 .profile--in-project {
   --id-w: 200px;
   --col-gap: 40px;

@@ -19,6 +19,8 @@
 帖子状态无关 —— 本用例不断言状态过滤，团队里的 CLOSED 帖对能看到该队的人依旧列出。
 """
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -253,3 +255,147 @@ class TestThePlazaIsNotTightened:
         ids = [p["id"] for p in resp.json()["data"]["posts"]]
         assert open_post["id"] in ids, ids
         assert closed_id not in ids, ids
+
+
+def _plaza_post(
+    api_client: TestClient, post_id: int, *, headers: dict[str, str] | None = None
+) -> dict:
+    """广场里那一条 —— 别只断言「在」，还要看它吐了哪些字段。"""
+    resp = api_client.get(
+        "/recruitment", params={"pageSize": 100}, headers=headers or {}
+    )
+    assert resp.status_code == 200, f"{resp.status_code} {resp.text}"
+    for post in resp.json()["data"]["posts"]:
+        if post["id"] == post_id:
+            return post
+    ids = [p["id"] for p in resp.json()["data"]["posts"]]
+    raise AssertionError(f"post {post_id} not in the plaza: {ids}")
+
+
+class TestThePlazaDoesNotNameATeamYouCannotSee:
+    """广场公开的是帖子，不是它背后那支队伍。
+
+    ``GET /recruitment`` 从前把每条帖子连同团队 ``name`` / ``handle`` / ``intro`` /
+    ``avatarId`` 和 ``contact`` 一起吐给匿名访客：一支 ``visibility=stealth`` 的队
+    就这么被点名了，还附上了联系方式，而同一个看客去 ``GET /teams/{id}`` 拿到的是
+    404。产品口径在 ``app/domain/team/models.py`` 的 ``TeamVisibility.STEALTH``
+    （搜不到、按 id 也打不开，只能经入队链接进来）。
+
+    这里按那条口径钉住广场，判据与 ``TeamService.visible_team`` 逐字同一条：公开
+    共享队谁都看得见，隐身 / 个人队只对本队成员点名。联系方式是帖子自己写下的招人
+    渠道，但它是唯一能直接联系到真人的字段，所以只给登录的人 —— 与团队作用域那条
+    列表的注释同一句理由。
+
+    广场本身仍对匿名开放、只列 OPEN 帖，那条口径由
+    ``TestThePlazaIsNotTightened`` 钉着，本类不断言它。
+    """
+
+    @pytest.fixture
+    def stealth(self, user_client: UserCreator, api_client: TestClient) -> dict:
+        owner = _registered(user_client, api_client)
+        member = _registered(user_client, api_client)
+        outsider = _registered(user_client, api_client)
+        team_id = _create_team(api_client, owner, visibility="stealth")
+        marker = unique_int()
+        post = _create_post(
+            api_client,
+            owner,
+            team_id,
+            title=f"隐身招募 {marker}",
+            content=f"正文 {marker}",
+            contact=f"secret-{marker}@example.com",
+        )
+        return {
+            "owner": owner,
+            "member": member,
+            "outsider": outsider,
+            "team_id": team_id,
+            "post": post,
+            "marker": marker,
+        }
+
+    def test_an_anonymous_reader_is_not_shown_a_stealth_teams_identity_or_contact(
+        self, api_client: TestClient, stealth: dict
+    ) -> None:
+        post = _plaza_post(api_client, stealth["post"]["id"])
+
+        # 帖子还在广场上（隐身队招人是它自己贴出来的），但队不被点名。
+        assert post["team"]["name"] == ""
+        assert post["team"]["handle"] is None
+        assert post["team"]["intro"] == ""
+        assert post["team"]["avatarId"] is None
+        assert post["contact"] is None
+        assert "secret-" not in json.dumps(post)
+
+    def test_an_outsider_logged_in_still_does_not_learn_the_stealth_teams_name(
+        self, api_client: TestClient, stealth: dict
+    ) -> None:
+        """登录给了你联系方式，没给你那支隐身队的名字。"""
+        post = _plaza_post(
+            api_client, stealth["post"]["id"], headers=_bearer(stealth["outsider"])
+        )
+        assert post["team"]["name"] == ""
+        assert post["team"]["handle"] is None
+        assert post["contact"] == f"secret-{stealth['marker']}@example.com"
+
+    def test_a_member_still_sees_their_own_stealth_team_named(
+        self, api_client: TestClient, stealth: dict
+    ) -> None:
+        _add_member(api_client, stealth["owner"], stealth["team_id"], stealth["member"])
+
+        post = _plaza_post(
+            api_client, stealth["post"]["id"], headers=_bearer(stealth["member"])
+        )
+        assert post["team"]["name"], post["team"]
+        assert post["team"]["handle"] is not None
+        assert post["contact"] == f"secret-{stealth['marker']}@example.com"
+
+    def test_the_owner_still_sees_their_own_team_named(
+        self, api_client: TestClient, stealth: dict
+    ) -> None:
+        post = _plaza_post(
+            api_client, stealth["post"]["id"], headers=_bearer(stealth["owner"])
+        )
+        assert post["team"]["name"], post["team"]
+        assert post["contact"] == f"secret-{stealth['marker']}@example.com"
+
+    def test_a_public_team_is_still_named_to_an_anonymous_reader(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> None:
+        """隐身才不点名；公开队的名字是它自己要被看见的那一面。"""
+        owner = _registered(user_client, api_client)
+        team_id = _create_team(api_client, owner)  # 默认 public
+        marker = unique_int()
+        post = _create_post(
+            api_client,
+            owner,
+            team_id,
+            title=f"公开招募 {marker}",
+            content="欢迎加入",
+            contact=f"open-{marker}@example.com",
+        )
+
+        seen = _plaza_post(api_client, post["id"])
+        assert seen["team"]["name"].startswith("Recruit Authz Team"), seen["team"]
+        assert seen["team"]["handle"] is not None
+        # 公开队的名字公开，联系方式仍只给登录的人。
+        assert seen["contact"] is None
+
+    def test_contact_comes_back_once_you_are_logged_in(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> None:
+        owner = _registered(user_client, api_client)
+        outsider = _registered(user_client, api_client)
+        team_id = _create_team(api_client, owner)
+        marker = unique_int()
+        post = _create_post(
+            api_client,
+            owner,
+            team_id,
+            title=f"要联系方式 {marker}",
+            content="欢迎加入",
+            contact=f"open-{marker}@example.com",
+        )
+
+        seen = _plaza_post(api_client, post["id"], headers=_bearer(outsider))
+        assert seen["contact"] == f"open-{marker}@example.com"

@@ -25,12 +25,12 @@ class TestPageBounds:
         assert resp.json()["error"]["name"] == "BadRequestError"
 
     def test_a_page_size_past_the_ceiling_is_refused(self, api_client: TestClient):
-        resp = api_client.get("/recruitment", params={"pageSize": 201})
+        resp = api_client.get("/recruitment", params={"pageSize": 101})
         assert resp.status_code == 400, resp.text
         assert resp.json()["error"]["name"] == "BadRequestError"
 
     def test_the_largest_page_the_server_offers_is_served(self, api_client: TestClient):
-        resp = api_client.get("/recruitment", params={"pageSize": 200})
+        resp = api_client.get("/recruitment", params={"pageSize": 100})
         assert resp.status_code == 200, resp.text
 
     def test_an_ordinary_page_is_served(self, api_client: TestClient):

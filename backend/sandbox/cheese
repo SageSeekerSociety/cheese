@@ -1747,11 +1747,6 @@ def _sync_task(task_id: str) -> None:
             _git_task(worktree, "config", "credential.useHttpPath", "true")
             _git_task(worktree, "remote", "set-url", "origin", data["remote"])
             _configure_git_transport(worktree, data)
-            branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
-            if branch != data["branch"]:
-                raise RuntimeError(
-                    f"Expected task branch {data['branch']}, found {branch}"
-                )
             head = _git_task(worktree, "rev-parse", "HEAD")
             # Keep unfinished work off the PR. An alternate index preserves the
             # worker's staging choices while backing up its files at turn end.
@@ -1773,11 +1768,17 @@ def _sync_task(task_id: str) -> None:
             )
             _backup_task_snapshot(worktree, admin, data, head, snapshot)
             if data["closed"]:
+                # Kept, never delivered: what the checkout holds is in the
+                # backup, on whichever branch an agent went on to use it for.
                 record.write(
                     f"{datetime.now(UTC).isoformat()} archived snapshot={snapshot}; "
                     "delivery is closed\n"
                 )
                 return
+            branch = data["branch"]
+            found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+            if found != branch:
+                raise RuntimeError(f"Expected task branch {branch}, found {found}")
             _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
@@ -1799,26 +1800,30 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
         return  # Every object is already on the forge; there is no unfinished work.
     _git_task(worktree, "update-ref", ref, snapshot)
     bundle = admin / f"cheese-snapshot-{snapshot}.bundle"
-    if not bundle.exists():
+    try:
         _git_task(worktree, "bundle", "create", str(bundle), ref, f"^{base}")
-    digest = hashlib.sha256()
-    with bundle.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    path = f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{snapshot}"
-    with bundle.open("rb") as stream:
-        request = urllib.request.Request(f"{API}{path}", data=stream, method="PUT")
-        request.add_header("Content-Type", "application/x-git-bundle")
-        request.add_header("Content-Length", str(bundle.stat().st_size))
-        request.add_header("X-Cheese-Token", TOKEN)
-        request.add_header("X-Cheese-Head", head)
-        request.add_header("X-Content-SHA256", digest.hexdigest())
-        with urllib.request.urlopen(request, timeout=120) as response:
-            receipt = json.load(response)["data"]
-    if receipt["digest"] != digest.hexdigest():
-        raise RuntimeError("Task backup acknowledgement did not match the bundle")
-    # The immutable object-store copy is now the backup; failed uploads keep this file.
-    bundle.unlink()
+        digest = hashlib.sha256()
+        with bundle.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        path = f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{snapshot}"
+        with bundle.open("rb") as stream:
+            request = urllib.request.Request(
+                f"{API}{path}", data=stream, method="PUT"
+            )
+            request.add_header("Content-Type", "application/x-git-bundle")
+            request.add_header("Content-Length", str(bundle.stat().st_size))
+            request.add_header("X-Cheese-Token", TOKEN)
+            request.add_header("X-Cheese-Head", head)
+            request.add_header("X-Content-SHA256", digest.hexdigest())
+            with urllib.request.urlopen(request, timeout=120) as response:
+                receipt = json.load(response)["data"]
+        if receipt["digest"] != digest.hexdigest():
+            raise RuntimeError("Task backup acknowledgement did not match the bundle")
+    finally:
+        # Built afresh on every try: the base moves on, and a bundle kept from
+        # a refused upload went out again unchanged, refused at every turn.
+        bundle.unlink(missing_ok=True)
 
 
 def _recover_task(task_id):

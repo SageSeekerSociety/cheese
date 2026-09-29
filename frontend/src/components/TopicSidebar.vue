@@ -33,6 +33,8 @@ import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 import LeaveProjectDialog from './LeaveProjectDialog.vue'
 import TransferProjectDialog from './TransferProjectDialog.vue'
 
+import { menuActionOf } from '@/commands'
+import { topicActions } from '@/commands/topicActions'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -646,34 +648,18 @@ useLongPress(
   { disabled: () => renamingTopicId.value !== null }
 )
 
-// 和 ⋯ 菜单里同一份：已归档的那几行只有「取消归档」（行尾那颗按钮做的事）。
-const rowSheetActions = computed<MenuAction[]>(() => {
-  const topic = rowSheetTopic.value
-  if (!topic) return []
-  if (topic.status === 'archived') {
-    return topic.can_archive
-      ? [
-          {
-            key: 'unarchive',
-            label: '取消归档',
-            icon: 'mdi-archive-arrow-up-outline',
-            onSelect: () => emit('unarchive-topic', topic.id),
-          },
-        ]
-      : []
-  }
-  const actions: MenuAction[] = [
-    { key: 'rename', label: '重命名', icon: 'mdi-pencil-outline', onSelect: () => startRename(topic) },
-  ]
-  if (topic.can_archive)
-    actions.push({
-      key: 'archive',
-      label: '归档',
-      icon: 'mdi-archive-arrow-down-outline',
-      onSelect: () => emit('archive-topic', topic.id),
-    })
-  return actions
-})
+// 一行话题能做的事（悬停的 ⋯、长按的面板）：侧栏里重命名是就地改。
+function rowActions(topic: Topic) {
+  return topicActions(topic, {
+    rename: () => startRename(topic),
+    archive: () => emit('archive-topic', topic.id),
+    unarchive: () => emit('unarchive-topic', topic.id),
+  })
+}
+
+const rowSheetActions = computed<MenuAction[]>(() =>
+  rowSheetTopic.value ? rowActions(rowSheetTopic.value).map(menuActionOf) : []
+)
 
 // 项目文档 (C4): 章程 / 决策记录 / 周报集 / 记忆 在侧栏只占一行，点开进章程；
 // 四选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
@@ -1124,15 +1110,11 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                           </template>
                           <v-list density="compact" nav>
                             <v-list-item
-                              prepend-icon="mdi-pencil-outline"
-                              title="重命名"
-                              @click="startRename(row.topic)"
-                            />
-                            <v-list-item
-                              v-if="row.topic.can_archive"
-                              prepend-icon="mdi-archive-arrow-down-outline"
-                              title="归档"
-                              @click="emit('archive-topic', row.topic.id)"
+                              v-for="action in rowActions(row.topic)"
+                              :key="action.id"
+                              :prepend-icon="action.icon"
+                              :title="action.title"
+                              @click="action.run?.()"
                             />
                           </v-list>
                         </v-menu>

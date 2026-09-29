@@ -78,7 +78,7 @@ test.describe('房间里派出去的活', () => {
     const view = page.locator('.board');
     // 这一页只有一个标题，写在和侧栏对齐的那条页头上：它说这一页是看板，项目名在
     // 侧栏顶上。板里不再另起标题，列头自己已经说明了它是什么。
-    await expect(page.locator('.project-page__title')).toHaveText('看板');
+    await expect(page.locator('.app-page__title')).toHaveText('看板');
     await expect(view.locator('h1, h2')).toHaveCount(0);
     // 板是按列排的，列本身要在 —— 这一页从一张平表变成看板，列就是那个变化。
     // 最右边那一列是「做出了什么」：三列任务从左到右是一条流水线，产物接在后面。

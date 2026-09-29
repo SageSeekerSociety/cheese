@@ -40,11 +40,12 @@ import {
   removeProjectMember,
   revokeInvitation,
 } from '@/api'
+import { useCommands } from '@/commands'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
-import PageAction from '@/components/common/PageAction.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
@@ -54,7 +55,6 @@ import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 defineOptions({ name: 'ProjectMembersView' })
 
@@ -312,38 +312,46 @@ async function submitInvite() {
     inviting.value = false
   }
 }
+useCommands(() => [
+  ...(canLeave.value
+    ? [
+        {
+          id: 'members.leave',
+          title: t('work.members.leave'),
+          icon: 'mdi-exit-to-app',
+          danger: true,
+          header: {},
+          run: () => (leaveOpen.value = true),
+        },
+      ]
+    : []),
+  ...(canTransfer.value
+    ? [
+        {
+          id: 'members.transfer',
+          title: t('work.members.transfer'),
+          icon: 'mdi-account-arrow-right-outline',
+          header: {},
+          run: () => (transferOpen.value = true),
+        },
+      ]
+    : []),
+  ...(canManage.value
+    ? [
+        {
+          id: 'members.invite',
+          title: t('work.members.invite'),
+          icon: 'mdi-account-plus-outline',
+          header: { primary: true, accent: true },
+          run: () => (inviteOpen.value = true),
+        },
+      ]
+    : []),
+])
 </script>
 
 <template>
-  <ProjectPage :title="t('navigation.project.members')">
-    <template v-if="canLeave || canTransfer || canManage" #actions>
-      <PageAction
-        v-if="canLeave"
-        :label="t('work.members.leave')"
-        icon="mdi-exit-to-app"
-        danger
-        prepend-icon="mdi-exit-to-app"
-        @click="leaveOpen = true"
-      />
-      <PageAction
-        v-if="canTransfer"
-        :label="t('work.members.transfer')"
-        icon="mdi-account-arrow-right-outline"
-        prepend-icon="mdi-account-arrow-right-outline"
-        @click="transferOpen = true"
-      />
-      <PageAction
-        v-if="canManage"
-        :label="t('work.members.invite')"
-        icon="mdi-account-plus-outline"
-        primary
-        color="primary"
-        variant="flat"
-        prepend-icon="mdi-account-plus-outline"
-        @click="inviteOpen = true"
-      />
-    </template>
-
+  <AppPage :title="t('navigation.project.members')">
     <!-- 名册、队友、邀请三处各自到货；到齐之前整页藏在转圈后面，不然后到的名册会
          把先画出来的队友那一段往下推一整屏。见 useRevealGate。 -->
     <div class="reveal-gate" :class="{ 'reveal-gate--waiting': !revealed }">
@@ -557,7 +565,7 @@ async function submitInvite() {
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>

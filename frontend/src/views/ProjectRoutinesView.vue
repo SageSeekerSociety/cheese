@@ -21,13 +21,13 @@ import {
   updateRoutine,
 } from '../api'
 
+import { useCommands } from '@/commands'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import PageAction from '@/components/common/PageAction.vue'
+import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
@@ -314,14 +314,22 @@ watch(
   },
   { immediate: true }
 )
+// 页头上的两件事：手机上「新建」是顶栏那一颗，「刷新」进 ⋯。
+useCommands(() => [
+  { id: 'routines.refresh', title: '刷新', icon: 'mdi-refresh', loading: loading.value, header: {}, run: load },
+  {
+    id: 'routines.new',
+    title: '新建',
+    icon: 'mdi-plus',
+    disabled: !rooms.value.length,
+    header: { primary: true, accent: true },
+    run: startNew,
+  },
+])
 </script>
 
 <template>
-  <ProjectPage :title="t('navigation.project.routines')">
-    <template #actions>
-      <PageAction label="刷新" icon="mdi-refresh" :loading="loading" @click="load" />
-      <PageAction label="新建" icon="mdi-plus" primary color="primary" :disabled="!rooms.length" @click="startNew" />
-    </template>
+  <AppPage :title="t('navigation.project.routines')">
     <div>
       <p class="t-body c-muted mb-6">
         到点或项目里发生某件事时，房间里的 AI 队友自己开工，做完把结果放进房间并通知你。
@@ -591,7 +599,7 @@ watch(
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>

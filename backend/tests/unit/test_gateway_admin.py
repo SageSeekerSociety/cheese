@@ -534,3 +534,74 @@ async def test_an_edit_goes_to_the_patch_endpoint_that_writes_model_info():
         "input_cost_per_token": 2e-6,
         "output_cost_per_token": 3e-6,
     }
+
+
+# --- 上游地址：https，或者恰好是计量代理的 ChatGPT 入口 ---------------------------
+
+METER_CHATGPT_BASE = "http://metering-proxy:8445/chatgpt/work"
+
+
+@pytest.mark.anyio
+async def test_the_meters_chatgpt_entry_is_accepted_over_plain_http():
+    gw = _Gateway()
+    service = GatewayModelsService(_StubDb(), gw.admin())
+
+    await service.add(
+        handle="admin",
+        payload=ModelCreate(
+            name="gpt-sub-work",
+            upstream_model="openai/gpt-5.2-codex",
+            api_base=METER_CHATGPT_BASE,
+            api_key="sk-cheese-chatgpt-listener-key",
+        ),
+    )
+
+    sent = next(r for r in gw.requests if r.url.path == "/model/new")
+    assert json.loads(sent.content)["litellm_params"]["api_base"] == (
+        METER_CHATGPT_BASE
+    )
+    for accepted in (
+        METER_CHATGPT_BASE + "/",
+        "http://metering-proxy:8445/chatgpt/spare-2.a_b",
+        " http://metering-proxy:8445/chatgpt/work ",
+        "https://open.bigmodel.cn/api/anthropic",
+    ):
+        ModelCreate(name="m", upstream_model="x", api_base=accepted)
+        ModelUpdate(api_base=accepted)
+
+
+@pytest.mark.anyio
+async def test_no_other_plain_http_base_is_accepted():
+    refused = (
+        "http://metering-proxy.evil:8445/chatgpt/work",
+        "http://metering-proxy:8446/chatgpt/work",
+        "http://metering-proxy/chatgpt/work",
+        "http://evil@metering-proxy:8445/chatgpt/work",
+        "http://metering-proxy:8445@evil/chatgpt/work",
+        "http://metering-proxy:8445/v1",
+        "http://metering-proxy:8445/chatgpt/",
+        "http://metering-proxy:8445/chatgpt/work/responses",
+        "http://metering-proxy:8445/chatgpt/../work",
+        "http://metering-proxy:8445/chatgpt/work?x=1",
+        "http://litellm:4000",
+        "http://172.17.0.1:8445/chatgpt/work",
+        "ftp://metering-proxy:8445/chatgpt/work",
+    )
+    for base in refused:
+        with pytest.raises(ValueError):
+            ModelCreate(name="m", upstream_model="x", api_base=base)
+        with pytest.raises(ValueError):
+            ModelUpdate(api_base=base)
+
+    # The service applies the same rule, whatever reached it.
+    gw = _Gateway(models=[_row("runtime", "openai/x", db_model=True)])
+    service = GatewayModelsService(_StubDb(), gw.admin())
+    for base in refused:
+        with pytest.raises(BadRequestError):
+            await service.add(
+                handle="admin",
+                payload=ModelCreate.model_construct(
+                    name="m", upstream_model="x", api_base=base, selectable=False
+                ),
+            )
+    assert "/model/new" not in gw.paths()

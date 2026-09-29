@@ -902,7 +902,7 @@ async def decline_team_invitation(
 async def list_my_team_requests(
     status: str | None = Query(default=None),
     pageStart: int | None = Query(default=None, ge=0),
-    pageSize: int | None = Query(default=None, ge=1),
+    pageSize: int | None = Query(default=None, ge=1, le=100),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
@@ -955,7 +955,7 @@ async def list_my_team_requests(
 async def list_my_team_invitations(
     status: str | None = Query(default=None),
     pageStart: int | None = Query(default=None, ge=0),
-    pageSize: int | None = Query(default=None, ge=1),
+    pageSize: int | None = Query(default=None, ge=1, le=100),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
@@ -1008,7 +1008,7 @@ async def list_my_team_invitations(
 async def get_user_followed_questions(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -1067,7 +1067,7 @@ async def get_user_followed_questions(
 async def get_user_questions(
     user_id: Annotated[int, Path(alias="userId")],
     page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -1132,7 +1132,7 @@ async def get_user_questions(
 async def get_user_answers(
     user_id: Annotated[int, Path(alias="userId")],
     page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -2962,7 +2962,7 @@ async def change_password(
 async def get_user_favorite_questions(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -3021,7 +3021,7 @@ async def get_user_favorite_questions(
 async def get_user_favorite_answers(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -3123,7 +3123,7 @@ async def update_user_settings(
 async def list_users(
     q: str | None = Query(default=None),
     page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
