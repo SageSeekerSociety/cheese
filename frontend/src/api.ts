@@ -1362,12 +1362,8 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
 
 // 用户给这个项目的文件，按原名。项目一级，所以一个房间引用得到另一个房间上传的
 // 那一份——「上周那份预算表」这句话正是在这种地方说的。
-export interface LibraryFile {
-  path: string
-  bytes: number
-  /** Unix seconds; the list comes back newest first. */
-  modified: number
-}
+import type { LibraryFile } from './lib/libraryApi'
+export type { LibraryFile }
 
 export function listProjectLibrary(projectId: string): Promise<ListPayload<LibraryFile>> {
   return request<ListPayload<LibraryFile>>(`/projects/${encodeURIComponent(projectId)}/library`)

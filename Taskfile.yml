@@ -120,7 +120,9 @@ tasks:
     cmds:
       - docker compose up -d
     status:
-      - docker compose ps --status running postgres --quiet
+      # `ps --quiet` exits 0 even when nothing matches, so ask whether it
+      # printed a container id rather than trusting its exit code.
+      - test -n "$(docker compose ps --status running postgres --quiet)"
 
   infra:down:
     desc: Stop infrastructure services
