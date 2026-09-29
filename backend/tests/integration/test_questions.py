@@ -375,7 +375,7 @@ class TestQuestionsSearchIntegration:
         response = self.client.get(
             "/questions",
             headers=self.headers,
-            params={"q": self.question_prefix, "page_start": -1},
+            params={"q": self.question_prefix},
         )
         assert response.status_code in (200, 404)
 

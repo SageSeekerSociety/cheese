@@ -217,8 +217,8 @@ async def list_discussions(
     modelType: str | None = Query(default=None),
     modelId: int | None = Query(default=None),
     parentId: int | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
-    pageSize: int = Query(default=20, ge=1, le=100),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int = Query(default=20, ge=1, le=200),
     sortBy: str = Query(default="createdAt", alias="sortBy"),
     sortOrder: str = Query(default="desc", alias="sortOrder"),
     sort_by: str | None = Query(default=None, alias="sort_by"),
@@ -280,8 +280,8 @@ async def list_reaction_types(
 @router.get("/{discussionId}", summary="Get Discussion")
 async def get_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
-    pageStart: int | None = Query(default=None),
-    pageSize: int = Query(default=20, ge=1, le=100),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int = Query(default=20, ge=1, le=200),
     sortBy: str = Query(default="createdAt", alias="sortBy"),
     sortOrder: str = Query(default="desc", alias="sortOrder"),
     sort_by: str | None = Query(default=None, alias="sort_by"),
@@ -362,8 +362,8 @@ async def patch_discussion(
 @router.get("/{discussionId}/sub-discussions", summary="List Sub Discussions")
 async def list_sub_discussions(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
-    pageStart: int | None = Query(default=None),
-    pageSize: int = Query(default=20, ge=1, le=100),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int = Query(default=20, ge=1, le=200),
     sortBy: str = Query(default="createdAt", alias="sortBy"),
     sortOrder: str = Query(default="desc", alias="sortOrder"),
     sort_by: str | None = Query(default=None, alias="sort_by"),

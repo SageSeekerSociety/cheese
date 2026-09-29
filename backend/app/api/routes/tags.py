@@ -16,7 +16,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError
 from app.db.session import get_db
 from app.domain.tag.repositories import TagRepository
 from app.domain.tag.services import TagService
@@ -35,13 +35,11 @@ async def get_tag_service(db=Depends(get_db)) -> TagService:
 )
 async def list_tags(
     q: str | None = Query(default=None),
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=50, ge=1, le=100, alias="page_size"),
+    page_start: int | None = Query(default=None, ge=0, alias="page_start"),
+    page_size: int = Query(default=50, ge=1, le=200, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TagService = Depends(get_tag_service),
 ) -> dict:
-    if page_start is not None and page_start < 0:
-        raise NotFoundError("Invalid page_start", data={"page_start": page_start})
     tags, page = await service.list_tags(
         keyword=q,
         page_start=page_start,
