@@ -44,6 +44,22 @@ from sqlalchemy.pool import NullPool, QueuePool
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 
+# Strip an inherited room session, for the same reason. An agent working on this
+# repository runs the suite on the machine its room was launched on, so pytest
+# starts with that room's CHEESE_API (the live deployment) and a real token.
+# Every launcher test that builds its screen from os.environ then runs the real
+# launcher against the real platform, and a launcher that sees a platform
+# installs from it: the document toolchain and the harness binaries, ~110MB per
+# test, into a throwaway tmp home, detached so it outlives the test. Tests that
+# need a platform stand up their own. CHEESE_CI_* / CHEESE_TEST_* configure the
+# suite itself and stay.
+for _k in [
+    k
+    for k in os.environ
+    if k.startswith("CHEESE_") and not k.startswith(("CHEESE_CI_", "CHEESE_TEST_"))
+]:
+    del os.environ[_k]
+
 # Client construction validates credentials before the mocked transport is used.
 # Keep the suite hermetic instead of depending on a developer or CI secret.
 os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
