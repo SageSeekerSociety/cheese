@@ -1168,10 +1168,10 @@ def _say_docs_search(args, data, env) -> str:
         if hit.get("heading"):
             where += f" › {hit['heading']}"
         tag = "（开发文档）" if hit.get("dev") else ""
-        lines.append(f"{n}. {where}{tag}\n   {hit.get('url', '')}\n   {hit.get('excerpt', '')}")
-    lines.append(
-        "\n要看整页用 cheese_docs_read(page=链接)。回答用户时附上对应链接。"
-    )
+        lines.append(
+            f"{n}. {where}{tag}\n   {hit.get('url', '')}\n   {hit.get('excerpt', '')}"
+        )
+    lines.append("\n要看整页用 cheese_docs_read(page=链接)。回答用户时附上对应链接。")
     return "\n".join(lines)
 
 
@@ -1779,7 +1779,7 @@ def _sync_task(task_id: str) -> None:
             found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
                 raise RuntimeError(f"Expected task branch {branch}, found {found}")
-            _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+            _deliver_task_branch(worktree, branch, head)
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
@@ -1790,6 +1790,66 @@ def _sync_task(task_id: str) -> None:
             )
             _report_sync_failure(task_id, branch)
             raise
+
+
+def _deliver_task_branch(worktree: Path, branch: str, head: str) -> None:
+    """Make the task's branch on the forge carry `head`.
+
+    The branch has more than one writer: every checkout of the task (a
+    teammate can work the same task from another), and whoever pushes to the
+    PR. So the forge's tip is read first, and:
+
+    - `head` already in it: this checkout has nothing the branch lacks.
+      Another checkout went further; pushing the older head is refused and
+      would say nothing true.
+    - the tip in `head`'s history: an ordinary push.
+    - neither, but the tip is a commit this checkout itself had on the branch
+      and then amended or rebased away: replace it, leased on that tip, so a
+      commit arriving meanwhile is refused and not overwritten. Tidying a
+      task's commits is part of the work (dropping a dependency asks for it).
+    - neither, and the tip carries commits this checkout never had: refuse.
+      Replacing them would delete someone else's work from the PR.
+    """
+    remote = f"refs/remotes/origin/{branch}"
+    if not _git_task(worktree, "ls-remote", "origin", f"refs/heads/{branch}"):
+        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+        return
+    _git_task(
+        worktree,
+        "fetch",
+        "--filter=blob:none",
+        "origin",
+        f"+refs/heads/{branch}:{remote}",
+    )
+    tip = _git_task(worktree, "rev-parse", remote)
+    if _is_ancestor(worktree, head, tip):
+        return
+    if _is_ancestor(worktree, tip, head):
+        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+        return
+    own = _git_task(
+        worktree, "reflog", "show", "--format=%H", f"refs/heads/{branch}"
+    ).split()
+    if tip not in own:
+        raise RuntimeError(
+            f"{branch} on the forge has commits this checkout never had "
+            f"(its tip is {tip[:12]}); merge or rebase onto {remote} and sync again"
+        )
+    _git_task(
+        worktree,
+        "push",
+        f"--force-with-lease=refs/heads/{branch}:{tip}",
+        "origin",
+        f"{head}:refs/heads/{branch}",
+    )
+
+
+def _is_ancestor(worktree: Path, commit: str, of: str) -> bool:
+    try:
+        _git_task(worktree, "merge-base", "--is-ancestor", commit, of)
+    except RuntimeError:
+        return False
+    return True
 
 
 def _backup_task_snapshot(worktree, admin, data, head, snapshot):
@@ -1808,9 +1868,7 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
                 digest.update(chunk)
         path = f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{snapshot}"
         with bundle.open("rb") as stream:
-            request = urllib.request.Request(
-                f"{API}{path}", data=stream, method="PUT"
-            )
+            request = urllib.request.Request(f"{API}{path}", data=stream, method="PUT")
             request.add_header("Content-Type", "application/x-git-bundle")
             request.add_header("Content-Length", str(bundle.stat().st_size))
             request.add_header("X-Cheese-Token", TOKEN)
@@ -1901,7 +1959,7 @@ def _has_work_to_sync(worktree: Path) -> bool:
         pushed = _git_task(
             worktree, "rev-parse", "--verify", f"refs/remotes/origin/{branch}"
         )
-        return pushed != _git_task(worktree, "rev-parse", "HEAD")
+        return not _is_ancestor(worktree, "HEAD", pushed)
     except RuntimeError:
         return True
 
@@ -2223,11 +2281,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mailsub = pmail.add_subparsers(dest="mailcmd", required=True)
     pmatt = mailsub.add_parser("attachment", help="取一封邮件的第 N 个附件")
-    pmatt.add_argument("integration", help="连接 id(GET /projects/<项目>/integrations 查)")
+    pmatt.add_argument(
+        "integration", help="连接 id(GET /projects/<项目>/integrations 查)"
+    )
     pmatt.add_argument("uid", help="邮件 UID(搜索结果里的 uid)")
     pmatt.add_argument("index", type=int, help="第几个附件,从 0 开始(读邮件时列出)")
     pmatt.add_argument("--folder", default="INBOX", help="邮件所在文件夹,默认 INBOX")
-    pmatt.add_argument("--out", default=None, help="写到别处(默认 ~/attachments/mail/<名字>)")
+    pmatt.add_argument(
+        "--out", default=None, help="写到别处(默认 ~/attachments/mail/<名字>)"
+    )
 
     part = sub.add_parser(
         "show",
@@ -2488,7 +2550,10 @@ def main() -> None:
             message = _call("GET", base + where)["data"]
             names = [x["filename"] for x in message.get("attachments", [])]
             if not 0 <= a.index < len(names):
-                print(f"[cheese] 这封邮件只有 {len(names)} 个附件:{names}", file=sys.stderr)
+                print(
+                    f"[cheese] 这封邮件只有 {len(names)} 个附件:{names}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             name = os.path.basename(names[a.index]) or f"附件{a.index + 1}"
             out = a.out or str(Path.home() / STAGED_DIR / "mail" / a.uid / name)
