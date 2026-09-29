@@ -8,7 +8,6 @@ covers:
   - frontend/src/App.vue
   - frontend/src/router/
   - frontend/src/views/workspace/
-  - frontend/src/views/spaces/board/
   - frontend/src/components/ChatPanel.vue
   - frontend/src/components/WorkPanel.vue
   - frontend/src/components/panels/
@@ -59,7 +58,7 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 - **`meta.publicLanding`** —— 不套应用外壳，`App.vue` 直接 `<router-view />`。首页的落地页各分支（`router/home.ts`）和用户协议、隐私政策（`router/legal.ts`）用它。
 - **`meta.isFullPage`** —— 一页占满，没有常规布局（加入团队、预览、站点、设备、连接设备、待办、市场等）。
 
-路由表在 `router/index.ts` 里拼装：每个域一个文件（`account`、`home`、`user`、`question`、`spaces`、`teams`、`feedback`、`legal`、`courseJoin`），加 `./legacyProjectPaths` 的旧地址重定向、`workspaceRoutes`（房间那一棵）和 `views/spaces/board/routes.ts`（空间新界面那一棵）。通配 `NotFound` **必须挂在最后** —— 被它吃掉的后果是那几页打不开，而「打不开」看起来像后端 404。
+路由表在 `router/index.ts` 里拼装：每个域一个文件（`account`、`home`、`user`、`question`、`spaces`、`teams`、`feedback`、`legal`），加 `./legacyProjectPaths` 的旧地址重定向和 `workspaceRoutes`（房间那一棵）。通配 `NotFound` **必须挂在最后** —— 被它吃掉的后果是那几页打不开，而「打不开」看起来像后端 404。
 
 四条全局守卫各管一件事：
 
