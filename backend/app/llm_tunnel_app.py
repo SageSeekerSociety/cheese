@@ -18,6 +18,12 @@ rest of the app.
 from fastapi import FastAPI
 
 from app.api.routes.llm_tunnel import router
+from app.core.obs import configure_logging
+
+# The same logging as the business backend, credentials scrubbed. Every
+# machine opens this socket as `/llm/tunnel?token=…`, and uvicorn's own line for
+# an accepted WebSocket names the whole path.
+configure_logging()
 
 app = FastAPI(
     title="cheese-llm-tunnel",
