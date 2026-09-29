@@ -75,48 +75,17 @@ class SpaceRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
-    async def default_category_shells(
-        self, *, space_ids: Sequence[int]
-    ) -> dict[int, str | None]:
-        """Every one of these 题目板's default 分组 壳, in one query.
-
-        A board is a course when this column says so (`app.domain.shell.catalog`
-        decides which names mean that), and the list page asks it of a whole page
-        of boards at once — one round trip per row is what this avoids.
-
-        A board with no default 分组 (or an archived/dangling one) answers None,
-        which reads as 「not a course」 rather than raising: the column is how the
-        answer travels, not a guarantee about the row.
-        """
-        if not space_ids:
-            return {}
-        stmt = (
-            select(Space.id, SpaceCategory.shell)
-            .select_from(Space)
-            .outerjoin(SpaceCategory, SpaceCategory.id == Space.default_category_id)
-            .where(Space.id.in_(space_ids), Space.deleted_at.is_(None))
-        )
-        result = await self._session.execute(stmt)
-        return {int(row[0]): row[1] for row in result.all()}
-
-    async def names_and_shells(
-        self, *, space_ids: Sequence[int]
-    ) -> dict[int, tuple[str, str | None]]:
-        """Each board's name and default 分组 壳, deleted boards included.
+    async def names(self, *, space_ids: Sequence[int]) -> dict[int, str]:
+        """Each board's name, deleted boards included.
 
         For records of what happened on a board: a board removed since then is
         still where it happened.
         """
         if not space_ids:
             return {}
-        stmt = (
-            select(Space.id, Space.name, SpaceCategory.shell)
-            .select_from(Space)
-            .outerjoin(SpaceCategory, SpaceCategory.id == Space.default_category_id)
-            .where(Space.id.in_(space_ids))
-        )
+        stmt = select(Space.id, Space.name).where(Space.id.in_(space_ids))
         result = await self._session.execute(stmt)
-        return {int(row[0]): (row[1], row[2]) for row in result.all()}
+        return {int(row[0]): row[1] for row in result.all()}
 
     @staticmethod
     def build_membership_predicate(*, user_id: int) -> ColumnElement[bool]:
@@ -226,7 +195,6 @@ class SpaceCategoryRepository:
         name: str,
         description: str | None,
         display_order: int,
-        shell: str | None = None,
     ) -> SpaceCategory:
         now = datetime.now(UTC)
         category = SpaceCategory(
@@ -234,7 +202,6 @@ class SpaceCategoryRepository:
             name=name,
             description=description,
             display_order=display_order,
-            shell=shell,
             archived_at=None,
             created_at=now,
             updated_at=now,
