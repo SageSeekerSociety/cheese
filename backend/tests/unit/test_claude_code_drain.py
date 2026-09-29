@@ -7,7 +7,7 @@ it does is shown again.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -260,3 +260,89 @@ async def test_a_backlog_many_pages_long_reaches_the_room_a_page_at_a_time(tmp_p
         await second.release()
     assert landed == [f"line {n}" for n in range(said)]
     assert second.pages and max(second.pages) <= PAGE
+
+
+def _said_turn(work: str, text: str, *, first: int, at: datetime) -> list[dict]:
+    """A turn the session started by itself, saying ``text``, recorded at ``at``."""
+    stamp = {"work_id": work, "unsolicited": True}
+    records = [
+        {
+            "type": "assistant",
+            "uuid": f"{work}-said",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}],
+            },
+            "cheese": {**stamp, "turn_start": True},
+        },
+        {
+            "type": "result",
+            "uuid": f"{work}-result",
+            "subtype": "success",
+            "is_error": False,
+            "result": text,
+            "session_id": "s",
+            "cheese": stamp,
+        },
+    ]
+    return [
+        {"sequence": number, "at": at.isoformat(), "record": record}
+        for number, record in enumerate(records, start=first)
+    ]
+
+
+@pytest.mark.anyio
+async def test_what_nobody_read_for_hours_never_reaches_the_room(tmp_path):
+    now = datetime.now(UTC)
+    old, fresh, later = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    # Two days of a session's output that no drain took, then what it says now.
+    journal = [
+        *_said_turn(old, "answered two days late", first=1, at=now - timedelta(days=2)),
+        *_said_turn(fresh, "said just now", first=3, at=now),
+    ]
+    landed: list[str] = []
+    opened: list[str] = []
+
+    async def call(method: str, params: dict) -> dict:
+        return {"events": [e for e in journal if e["sequence"] > params["after"]]}
+
+    async def consume(project, topic, work_id, event, eid, seen, unsolicited):
+        if isinstance(event, AgentMessage):
+            landed.append(event.text)
+
+    async def activity(project, seat, work_id, active):
+        if active:
+            opened.append(str(work_id))
+
+    async def announce():
+        pass
+
+    def reading() -> Subscription:
+        return Subscription(
+            SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-a", harness="claude-code"),
+            tmp_path / "records.sqlite",
+            call,
+            consume,
+            activity,
+            session_id=None,
+            announce=announce,
+        )
+
+    first = reading()
+    try:
+        await first.drain()
+    finally:
+        await first.release()
+    assert landed == ["said just now"]
+    assert opened == [fresh]
+
+    # A reader that comes back later is not handed the old output either, and
+    # what the session says next still arrives.
+    journal.extend(_said_turn(later, "said next", first=5, at=datetime.now(UTC)))
+    second = reading()
+    try:
+        await second.drain()
+    finally:
+        await second.release()
+    assert landed == ["said just now", "said next"]
+    assert opened == [fresh, later]
