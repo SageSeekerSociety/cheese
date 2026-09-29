@@ -12,11 +12,12 @@
 //
 // 宽度也归这里：`read` 是读和填表的那一栏（--page-w），`full` 给多列的工作面（看
 // 板）。页面不再各自写一个数字。
-import type { RouteLocationRaw } from 'vue-router'
+import type { NavTarget } from '@/lib/navTarget'
 
 import { useDisplay } from 'vuetify'
 
 import { headerCommands } from '@/commands'
+import NavLink from '@/components/common/NavLink.vue'
 
 withDefaults(
   defineProps<{
@@ -24,7 +25,7 @@ withDefaults(
     width?: 'read' | 'full'
     // 这一页是另一页里的一项（成员名册里的一个人）：页头写成「成员 / 名字」，前
     // 一段点回去。
-    parent?: { label: string; to: RouteLocationRaw }
+    parent?: { label: string; to: NavTarget }
   }>(),
   { width: 'read', parent: undefined }
 )
@@ -48,7 +49,7 @@ const { mdAndUp } = useDisplay()
     <header v-if="mdAndUp || $slots.meta" class="app-page__head">
       <h1 v-if="mdAndUp" class="app-page__title t-title">
         <template v-if="parent">
-          <router-link :to="parent.to" class="app-page__parent">{{ parent.label }}</router-link>
+          <NavLink :to="parent.to" class="app-page__parent">{{ parent.label }}</NavLink>
           <span class="app-page__sep" aria-hidden="true">/</span>
         </template>
         {{ title }}
