@@ -15,13 +15,13 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import cli_worker, execution, executor_transport, project_hooks
+from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import runtime
 from app.domain.agent.harness.codex.tools import RemoteTools
 from tests.pinned_claude import claude_binary
-from tests.support import wire
+from tests.support import executor_release, wire
 
 
 def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch):
@@ -160,15 +160,7 @@ def test_platform_requests_read_the_rotated_room_token(tmp_path, monkeypatch):
 @pytest.fixture
 def executor(tmp_path, request):
     home = tmp_path / "session home"
-    helper = home / ".cheese/remote-execution/runtime.py"
-    helper.parent.mkdir(parents=True)
-    shutil.copyfile(runtime.__file__, helper)
-    shutil.copyfile(cli_worker.__file__, helper.parent / "cli_worker.py")
-    shutil.copyfile(project_hooks.__file__, helper.parent / "project_hooks.py")
-    shutil.copyfile(
-        Path(__file__).resolve().parents[2] / "sandbox/cheese",
-        home / ".cheese/cheese",
-    )
+    helper = executor_release.install(home / ".cheese")
     state = home / ".cheese/executor"
     work = tmp_path / "project"
     work.mkdir()
