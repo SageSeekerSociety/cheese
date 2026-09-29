@@ -170,8 +170,9 @@ def stage(home, sources, seat=""):
     (``place.seat_dir``), where its execution target and everything the client
     prepared beside it live; empty is a caller with no seat to name, which
     resolves to the room-level directory files sat in before seats existed.
-    The helpers and the config dir are the ROOM's either way: one release per
-    machine, one conversation per room, and the busy check below reads the
+    The helpers and transcript config dir are the ROOM's either way. Hook
+    settings live beside the seat's execution target so releasing one seat
+    cannot redirect another seat's tools. The busy check below still reads the
     room's transcripts whichever seat asked.
     """
     config = Path(os.path.expandvars(home)) / ".claude"
@@ -183,7 +184,7 @@ def stage(home, sources, seat=""):
         else platform_dir / "remote-session"
     )
     target = json.loads((directory / "execution.json").read_text())
-    settings_path = config / "settings.json"
+    settings_path = directory / "settings.json"
     settings = json.loads(settings_path.read_text())
     version = digest(sources)
     ready = helpers / "release-ready"

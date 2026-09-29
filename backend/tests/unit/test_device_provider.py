@@ -1719,6 +1719,29 @@ async def test_a_launch_only_change_waits_for_a_background_command(monkeypatch):
     assert hub.closed == [first.sid]
 
 
+async def test_a_deferred_relaunch_does_not_release_helpers_into_the_old_session(
+    monkeypatch,
+):
+    """A busy old process keeps the helper files it was started with."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    _deploy_helpers(
+        monkeypatch,
+        **{"client.py": resident_release.sources()["client.py"] + "\n# next\n"},
+    )
+    hub.ping = {"alive": True, "working": True, "tasks": {}}
+    hub.execs.clear()
+
+    assert await room.ensure() is first
+
+    assert hub.closed == []
+    assert not any(
+        argv == ["python3", "-"] and _release_step(stdin or "") == "stage"
+        for argv, stdin in hub.execs
+    )
+
+
 # --- seats: a room's teammates have one session each -------------------------
 
 

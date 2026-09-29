@@ -1399,6 +1399,7 @@ class DeviceChannel(Channel):
         release_state = (
             {}
             if existing is not None
+            and existing.agent_configuration == configuration
             and execution_target
             and isinstance(launch, ExecutorPlan)
             else None

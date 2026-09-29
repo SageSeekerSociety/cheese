@@ -455,7 +455,10 @@ def prepare(
         enableArtifact=False,
         attribution={"sessionUrl": False},
     )
-    (config / "settings.json").write_text(json.dumps(settings))
+    # Hooks name this seat's execution target. Claude may reload them while
+    # another seat starts, so they cannot live in the room's config directory.
+    settings_path = directory / "settings.json"
+    settings_path.write_text(json.dumps(settings))
     gates = {
         "hasCompletedOnboarding": True,
         "autoUpdates": False,
@@ -553,6 +556,8 @@ def prepare(
         # tests/unit/test_session_host_files_stay_out_of_the_prompt.py.
         "--setting-sources",
         "user",
+        "--settings",
+        str(settings_path),
         "--plugin-dir",
         str(plugin),
         "--strict-mcp-config",

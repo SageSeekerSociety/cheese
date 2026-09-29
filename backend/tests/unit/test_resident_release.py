@@ -44,7 +44,7 @@ def test_staged_release_preserves_context_and_is_acknowledged_once(tmp_path):
             ]
         },
     }
-    (config / "settings.json").write_text(json.dumps(settings))
+    (directory / "settings.json").write_text(json.dumps(settings))
     (helpers / "client.py").write_text("old client")
     transcript = config / "projects/work/session.jsonl"
     transcript.parent.mkdir(parents=True)
@@ -70,7 +70,7 @@ def test_staged_release_preserves_context_and_is_acknowledged_once(tmp_path):
     staged = release.stage(str(tmp_path), sources)
     assert staged == {"changed": True, "version": release.digest(sources)}
     assert not (helpers / "release-ready").exists()
-    current = json.loads((config / "settings.json").read_text())
+    current = json.loads((directory / "settings.json").read_text())
     assert current["customSetting"] is True
     assert current["permissions"]["deny"] == ["Bash(rm *)"]
     assert (
@@ -92,6 +92,43 @@ def test_staged_release_preserves_context_and_is_acknowledged_once(tmp_path):
     old_stat = (helpers / "client.py").stat()
     assert not release.stage(str(tmp_path), sources)["changed"]
     assert (helpers / "client.py").stat().st_mtime_ns == old_stat.st_mtime_ns
+
+
+def test_releasing_one_seat_keeps_the_other_seats_hooks(tmp_path):
+    config = tmp_path / ".claude"
+    config.mkdir()
+    base = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "base"}]}]}}
+    (config / "settings.json").write_text(json.dumps(base))
+    first = tmp_path / ".cheese/seats/first/remote-session"
+    second = tmp_path / ".cheese/seats/second/remote-session"
+    for directory, name in ((first, "first"), (second, "second")):
+        directory.mkdir(parents=True)
+        (directory / "execution.json").write_text("{}")
+        (directory / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {"hooks": [{"type": "command", "command": name}]}
+                        ]
+                    }
+                }
+            )
+        )
+    original = (first / "settings.json").read_text()
+    sources = {
+        "client.py": "new",
+        "proxy.js": "__EXECUTION_CONFIG__",
+        "cheese.py": CHEESE,
+    }
+
+    release.stage(str(tmp_path), sources, seat=str(second.parent))
+
+    assert (first / "settings.json").read_text() == original
+    assert json.loads((config / "settings.json").read_text()) == base
+    updated = json.loads((second / "settings.json").read_text())
+    assert updated["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "second"
+    assert "mcp__native__invoke" in updated["permissions"]["allow"]
 
 
 def test_a_forwarded_view_whose_server_died_is_released_not_read_as_empty(
@@ -143,7 +180,7 @@ def test_staged_release_unmounts_only_the_forwarded_view_before_replacement(
     (directory / "execution.json").write_text(
         json.dumps({"kind": "device", "central_workspace": str(tmp_path / "room")})
     )
-    (config / "settings.json").write_text("{}")
+    (directory / "settings.json").write_text("{}")
     forwarded = directory / "forwarded-project"
     forwarded.mkdir()
     calls = []
@@ -178,7 +215,7 @@ def test_staged_release_keeps_a_forwarded_view_used_as_the_native_cwd(
     (directory / "execution.json").write_text(
         json.dumps({"kind": "device", "central_workspace": str(forwarded)})
     )
-    (config / "settings.json").write_text("{}")
+    (directory / "settings.json").write_text("{}")
     monkeypatch.setattr(release.os.path, "ismount", lambda path: True)
 
     def unexpected(*args, **kwargs):
@@ -221,7 +258,7 @@ def test_staged_release_only_removes_the_managed_context_hook(tmp_path):
             for event in ("SessionStart", "UserPromptSubmit")
         }
     }
-    (config / "settings.json").write_text(json.dumps(settings))
+    (directory / "settings.json").write_text(json.dumps(settings))
     sources = {
         "client.py": "new client",
         "executor_transport.py": "companion",
@@ -231,7 +268,7 @@ def test_staged_release_only_removes_the_managed_context_hook(tmp_path):
 
     release.stage(str(tmp_path), sources)
 
-    current = json.loads((config / "settings.json").read_text())
+    current = json.loads((directory / "settings.json").read_text())
     for event in ("SessionStart", "UserPromptSubmit"):
         assert current["hooks"][event] == [
             {"matcher": "startup", "hooks": [custom], "once": True}
@@ -265,7 +302,7 @@ def test_active_turn_blocks_changes_until_completion(tmp_path):
     (platform_dir / "remote-session").mkdir(parents=True)
     (platform_dir / "remote-execution").mkdir()
     (platform_dir / "remote-session/execution.json").write_text("{}")
-    (config / "settings.json").write_text("{}")
+    (platform_dir / "remote-session/settings.json").write_text("{}")
     client = platform_dir / "remote-execution/client.py"
     client.write_text("previous")
     transcript = config / "projects/work/session.jsonl"
@@ -357,7 +394,7 @@ def _released_home(tmp_path, monkeypatch):
     )
     session.mkdir(parents=True)
     (session / "execution.json").write_text("{}")
-    (config / "settings.json").write_text("{}")
+    (session / "settings.json").write_text("{}")
     monkeypatch.setattr(
         release,
         "sources",
