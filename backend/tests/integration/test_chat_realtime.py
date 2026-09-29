@@ -515,6 +515,108 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
     assert screen.runs == 2
 
 
+class StillWorking(StubChannel):
+    """Every seat takes its prompt and starts a long command, then says nothing."""
+
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
+        del reply
+        self.starts(topic_id, agent=agent)
+        self.acknowledges(topic_id, prompt, agent=agent)
+        self.uses(topic_id, "Bash", agent=agent, command="sleep 600")
+
+
+@pytest.mark.anyio
+async def test_every_working_teammate_keeps_landing_after_a_restart(
+    business_db_factory, tmp_path
+):
+    """两位队友在同一间房里各跑各的一轮，后端这时被换掉：新进程接回来以后，
+    两位后来说的话都当场落进房间，不必等谁再被点名一次。"""
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    factory = business_db_factory
+
+    def service(channel: StubChannel) -> ChatService:
+        return ChatService(
+            session_factory=factory,
+            compute=stub_compute(channel),
+            base_system_prompt="You are Cheese.",
+            workspace_root=str(tmp_path / "ws"),
+        )
+
+    before = StillWorking()
+    svc = service(before)
+    async with factory() as session:
+        await registered(session, "u")
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        second = await AgentInstanceService(session).create(
+            project_id=project.id,
+            handle="second",
+            type_name=None,
+            display_name="Second",
+        )
+        await TopicMemberService(session).ensure_agent_seat(
+            topic.id, agent_instance_handle(second.id)
+        )
+        topic_id = topic.id
+        await session.commit()
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="First task", summon=True
+    ):
+        pass
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    runner.subscribe_messages()
+    await broker.receive_message(
+        svc, topic_id, author="u", content="@Second Second task"
+    )
+    async with asyncio.timeout(HANG_S):
+        while len(before.sessions) < 2 or len(before.runtime.work) < 2:
+            await asyncio.sleep(0.01)
+
+    # The old process stops reading; both sessions go on working on the machine.
+    await before.runtime.stop_listening()
+    after = StubChannel()
+    after.root = before.root
+    after.sessions = before.sessions
+    for session_runner in after.sessions.values():
+        session_runner.channel = after
+    replaced = service(after)
+    assert await replaced.recover_sessions() == 2
+
+    seats = [session_runner.actor for session_runner in after.sessions.values()]
+    for seat in seats:
+        after.says(topic_id, f"still here: {seat}", agent=seat)
+
+    # Nothing here drains a reader by hand: what lands is what the recovered
+    # process reads on its own.
+    expected = {f"still here: {seat}" for seat in seats}
+    async with asyncio.timeout(HANG_S):
+        while True:
+            async with factory() as session:
+                said = {
+                    block.content
+                    for block in await BlockRepository(session).list_for_topic(topic_id)
+                }
+            if expected <= said:
+                break
+            await asyncio.sleep(0.05)
+
+    for seat in seats:
+        after.stops(topic_id, "done", agent=seat)
+    await finish_turn(replaced, topic_id)
+
+
 @pytest.mark.anyio
 async def test_execution_notes_are_retained_outside_public_replies(
     business_db_factory, tmp_path
