@@ -346,7 +346,8 @@
     "checklist": {
       "updatedAt": "清单更新于 {time}"
     },
-    "backToChat": "返回对话"
+    "backToChat": "返回对话",
+    "unselected": "选择一个话题"
   },
   "members": {
     "leave": "退出项目",

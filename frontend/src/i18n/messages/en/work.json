@@ -346,7 +346,8 @@
     "checklist": {
       "updatedAt": "Checklist updated {time}"
     },
-    "backToChat": "Back to chat"
+    "backToChat": "Back to chat",
+    "unselected": "Select a topic"
   },
   "members": {
     "leave": "Leave project",

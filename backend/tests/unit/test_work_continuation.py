@@ -27,6 +27,9 @@ from tests.turn_log import a_topic, open_turn
 class _Quiet:
     session_factory = None
 
+    def replaying(self, topic_id):
+        return None
+
     async def converse(self, **_):
         yield {"type": "done"}
 
@@ -150,6 +153,9 @@ class _Blocks:
     def __init__(self):
         self.started = asyncio.Event()
         self.finish = asyncio.Event()
+
+    def replaying(self, topic_id):
+        return None
 
     async def converse(self, **_):
         yield {"type": "user_block"}

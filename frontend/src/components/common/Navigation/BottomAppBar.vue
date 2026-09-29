@@ -1,5 +1,7 @@
 <template>
-  <v-bottom-navigation class="bottom-tabs" :elevation="0" bg-color="background" grow>
+  <!-- order="-2"：平板上话题列表和房间并排时，左边那一栏（SplitListColumn，-1）是从顶
+       到底的一整条；底栏排在它前面，才仍然铺满整个底边，而不是只垫在右边那栏下面。 -->
+  <v-bottom-navigation class="bottom-tabs" :elevation="0" bg-color="background" grow order="-2">
     <!-- 收到的就是手机那份清单（destinations.ts 的 tabItems），这里不再过滤：
          底栏装什么是清单的事，不是渲染的事。 -->
     <v-btn
@@ -52,6 +54,13 @@ const route = useRoute()
 }
 .bottom-tabs .v-btn--active .bottom-tabs__label {
   color: var(--accent-ink);
+}
+
+/* 底色铺满，那几格不铺：平板上三格平分九百多像素，格与格之间隔着半个屏幕，拇指
+   从一格挪到下一格要横穿过去。收到 480 居中，手机上（窄于它）不受影响。 */
+.bottom-tabs :deep(.v-bottom-navigation__content) {
+  max-width: 480px;
+  margin-inline: auto;
 }
 
 .bottom-tabs__icon {

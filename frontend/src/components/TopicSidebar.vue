@@ -57,6 +57,9 @@ const props = defineProps<{
   privateUnreadMap?: Record<string, number>
   // 整页形态: 手机上话题列表是页面栈的一层，占满内容区，不是侧边抽屉。
   page?: boolean
+  // 两栏（平板）: 还是整页形态的那份列表，但它是左边一栏、顶栏只盖着右边的房间，
+  // 所以项目名那一行留在这一栏自己的顶上，不填进顶栏。
+  column?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -707,8 +710,11 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
            各自可聚焦，键盘用户两样都够得着。 -->
       <!-- 整页形态（手机上的话题列表）下这一行不长在页面上，而是填进顶栏那一格：
            手机上只有一条顶栏，页面自己再画一条就是两条横条一上一下写同类的东西。 -->
-      <Teleport to="#app-bar-slot" :disabled="!page">
-        <div class="sidebar-header rail-header" :class="{ 'rail-header--bar': page }">
+      <Teleport to="#app-bar-slot" :disabled="!page || column">
+        <div
+          class="sidebar-header rail-header"
+          :class="{ 'rail-header--bar': page && !column, 'rail-header--column': column }"
+        >
           <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
           <!-- 名字前那个图标说的是「点下去是看板」：这一行长得像标题（它要和右边页头
                对齐成一条线，不能画成列表里的一行），光看名字猜不出它能点。 -->
@@ -1294,6 +1300,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 .rail-header--bar .rail-header__more {
   position: relative;
 }
+/* 两栏（平板）时这一行留在左栏顶上，高度和底线照桌面那一条（手机外壳里是 56，和
+   右边的顶栏接成一条线）。两颗按钮一样由 .tap-target 撑到 44，所以一样要有定位。 */
+.rail-header--column .rail-header__home,
+.rail-header--column .rail-header__more {
+  position: relative;
+}
 /* 这一条里现在有两个按钮，所以描边长在按钮上，不长在整条上。 */
 .rail-header__home,
 .rail-header__more {
@@ -1366,10 +1378,18 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   font-weight: 650;
 }
 
-/* Topic / nav rows: title ink, quiet by default. */
+/* Topic / nav rows: title ink, quiet by default.
+
+   行盒必须跟着字号一起给。v-list 的 nav 变体把 .v-list-item-title 的行盒钉在
+   1rem（16px）上，与这里的字号无关；而 14px 的字身（PingFang 这类 CJK 字体约
+   1.4em ≈ 19.6px）比 16px 的行盒还高，标题又自带 overflow: hidden —— 高出来的
+   那 1.8px 上下各切一刀，g / y / p 这些下伸的字母下缘就被切平。汉字不下伸，
+   所以只有拉丁字母看得出来。行盒高度是字号阶梯的属性（docs/design-system.md
+   §3.2），这里照 --lh-14 取，和 .menu-list 里那条同名的规则一致。 */
 .topic-row :deep(.v-list-item-title),
 .nav-row :deep(.v-list-item-title) {
   font-size: 14px;
+  line-height: var(--lh-14);
   color: var(--text);
 }
 .topic-title {

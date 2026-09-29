@@ -70,6 +70,9 @@ class _Chat:
             raise RuntimeError("probe blew up")
         return {t for t in turn_ids if str(t) in self._delivered}
 
+    def replaying(self, topic_id):
+        return None
+
     async def converse(self, **kw):
         self.converse_calls.append(kw)
         yield {"type": "done"}
