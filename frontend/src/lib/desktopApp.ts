@@ -131,7 +131,7 @@ export function goAuthorize(url: string): boolean {
     window.open(url, '_blank')
     return true
   }
-  window.location.href = url
+  window.location.assign(url)
   return false
 }
 
