@@ -57,6 +57,7 @@
     "more": "More actions"
   },
   "copy": {
+    "done": "Copied",
     "linkCopied": "Link copied",
     "failed": "Couldn’t copy"
   },
@@ -85,6 +86,16 @@
     "comment": "Comment",
     "decision": "Decision",
     "copyLink": "Copy link to this page",
+    "verbOpen": "Open",
+    "verbRun": "Run",
+    "verbLocate": "Show message",
+    "newTab": "Open in new tab",
+    "more": "More actions",
+    "save": "Save",
+    "back": "Back",
+    "dm": "Message",
+    "openRoom": "Open topic",
+    "copyHandle": "Copy {'@'}{handle}",
     "weekly": "Weekly report"
   }
 }

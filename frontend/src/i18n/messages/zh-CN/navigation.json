@@ -57,6 +57,7 @@
     "more": "更多操作"
   },
   "copy": {
+    "done": "已复制",
     "linkCopied": "已复制链接",
     "failed": "无法复制"
   },
@@ -85,6 +86,16 @@
     "comment": "评论",
     "decision": "决策",
     "copyLink": "复制本页链接",
+    "verbOpen": "打开",
+    "verbRun": "执行",
+    "verbLocate": "定位消息",
+    "newTab": "在新标签页打开",
+    "more": "更多操作",
+    "save": "保存",
+    "back": "返回",
+    "dm": "发私信",
+    "openRoom": "打开所在话题",
+    "copyHandle": "复制 {'@'}{handle}",
     "weekly": "周报"
   }
 }

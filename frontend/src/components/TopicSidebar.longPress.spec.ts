@@ -15,6 +15,9 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+const archiveTopic = vi.hoisted(() => vi.fn(async (id: string) => ({ id, status: 'archived' })))
+vi.mock('@/api', async (original) => ({ ...(await original<object>()), archiveTopic }))
+
 import TopicSidebar from './TopicSidebar.vue'
 
 const Sidebar = TopicSidebar as unknown as Component
@@ -52,7 +55,6 @@ const Host = defineComponent({
 
 function mount() {
   const onSelectTopic = vi.fn()
-  const onArchiveTopic = vi.fn()
   if (!document.getElementById('app-bar-slot')) {
     const slot = document.createElement('div')
     slot.id = 'app-bar-slot'
@@ -71,12 +73,11 @@ function mount() {
         // 两行都算「我参与的」，平铺在上面那一组里。
         unreadMap: { a: 3, b: 1 },
         onSelectTopic,
-        onArchiveTopic,
       },
     },
     global: { plugins: [vuetify, router, createPinia()] },
   })
-  return { ...utils, onSelectTopic, onArchiveTopic }
+  return { ...utils, onSelectTopic }
 }
 
 function rowOf(container: Element, id: string): HTMLElement {
@@ -136,7 +137,7 @@ afterEach(() => {
 
 describe('手机话题列表：长按一行', () => {
   it('长按升起这一行的操作，选「归档」归档的是这一行', async () => {
-    const { container, baseElement, onSelectTopic, onArchiveTopic } = mount()
+    const { container, baseElement, onSelectTopic } = mount()
     await Promise.resolve()
     vi.useFakeTimers()
     const row = rowOf(container, 'b')
@@ -155,7 +156,7 @@ describe('手机话题列表：长按一行', () => {
     // 面板里的归档：mdi 图标名说的是哪一项，文案不进断言。
     const archive = sheetItems(baseElement).find((el) => el.querySelector('.mdi-archive-arrow-down-outline'))
     await fireEvent.click(archive as Element)
-    expect(onArchiveTopic).toHaveBeenCalledWith('b')
+    expect(archiveTopic).toHaveBeenCalledWith('b', expect.anything())
   })
 
   it('轻点一行是打开它，不升起面板', async () => {

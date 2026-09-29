@@ -5,6 +5,10 @@
 //
 // 面板里的东西全部来自数据源（sources.ts）和命令表（@/commands），这里只管输入、
 // 选择和打开。整个应用只挂一个，在 App 里。
+//
+// 回车做一条结果最直接的那件事（打开、执行、定位消息）。Tab 列出对它还能做的事
+// （复制链接、重命名……），手机上没有 Tab，长按一行升起同一份清单。
+import type { MenuCommand } from '@/commands'
 import type { ResultRow } from './results'
 import type { PaletteItem, SourceContext } from './sources'
 
@@ -12,12 +16,15 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { useLongPress } from '@/composables/useLongPress'
+
 import { readRecents, recordVisit } from './recents'
 import { buildResults, remoteSources, splitPrefix } from './results'
 import { paletteSources } from './sources'
-import { paletteOpen } from './state'
+import { paletteAsk, paletteOpen } from './state'
 
-import { defineCommands } from '@/commands'
+import { defineCommands, menuActionOf } from '@/commands'
+import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import { t } from '@/i18n'
 
 const router = useRouter()
@@ -84,12 +91,17 @@ const offsets = computed(() => {
   })
 })
 
-watch(input, () => (selected.value = 0))
+watch(input, () => {
+  selected.value = 0
+  acting.value = null
+})
 watch(rows, (next) => {
   if (selected.value >= next.length) selected.value = Math.max(next.length - 1, 0)
 })
 
 watch(paletteOpen, async (open) => {
+  acting.value = null
+  paletteAsk.value = null
   if (open) {
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     input.value = ''
@@ -144,10 +156,128 @@ function choose(item: ResultRow, newTab = false) {
   if (item.to) void router.push(item.to)
 }
 
+// ---- 更多操作 --------------------------------------------------------------
+
+function verbOf(row: ResultRow): string {
+  return row.verb ?? t(row.to ? 'navigation.palette.verbOpen' : 'navigation.palette.verbRun')
+}
+
+/** 一条结果能做的全部事：回车那一件在最前，然后是在新标签页打开，然后是它自己的。 */
+function actionsOf(row: ResultRow): MenuCommand[] {
+  const list: MenuCommand[] = [{ id: 'palette.primary', title: verbOf(row), icon: row.icon, run: () => choose(row) }]
+  // 手机上没有标签页可开。
+  if (row.to && mdAndUp.value)
+    list.push({
+      id: 'palette.newTab',
+      title: t('navigation.palette.newTab'),
+      icon: 'mdi-open-in-new',
+      run: () => choose(row, true),
+    })
+  return [...list, ...(row.actions?.() ?? [])]
+}
+
+/** 只有回车那一件可做的（一条操作）不开清单。 */
+function hasMore(row: ResultRow | undefined): boolean {
+  return !!row && actionsOf(row).length > 1
+}
+
+const acting = ref<{ row: ResultRow; actions: MenuCommand[] } | null>(null)
+const actSelected = ref(0)
+
+function openActions(row: ResultRow | undefined) {
+  if (!hasMore(row)) return
+  acting.value = { row: row!, actions: actionsOf(row!) }
+  actSelected.value = 0
+}
+
+async function runAction(action: MenuCommand) {
+  acting.value = null
+  action.run?.()
+  // 这件事要在面板里接着问一句（重命名）：面板留着，输入框换成它。
+  if (paletteAsk.value) {
+    askText.value = paletteAsk.value.value
+    await nextTick()
+    field.value?.focus()
+    field.value?.select()
+    return
+  }
+  close()
+  if (action.to) void router.push(action.to)
+}
+
+// 手机上长按一行：同一份清单从底部升起。
+const list = ref<HTMLElement | null>(null)
+const sheetOpen = ref(false)
+useLongPress(list, (event) => {
+  const index = Number((event.target as HTMLElement | null)?.closest?.('[data-row]')?.getAttribute('data-row'))
+  const row = rows.value[index]
+  if (!hasMore(row)) return
+  selected.value = index
+  acting.value = { row: row!, actions: actionsOf(row!) }
+  sheetOpen.value = true
+})
+watch(sheetOpen, (open) => {
+  if (!open && !paletteAsk.value) acting.value = null
+})
+const sheetActions = computed(() =>
+  sheetOpen.value && acting.value
+    ? acting.value.actions.map((action) => ({ ...menuActionOf(action), onSelect: () => void runAction(action) }))
+    : []
+)
+
+// ---- 在面板里问一句 --------------------------------------------------------
+
+const askText = ref('')
+
+function submitAsk() {
+  const ask = paletteAsk.value
+  if (!ask) return
+  ask.submit(askText.value)
+  close()
+}
+
+function onAskKeydown(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    submitAsk()
+  } else if (event.key === 'Escape') {
+    // 不改了：回到刚才那张结果列表，输入的字还在。
+    event.preventDefault()
+    paletteAsk.value = null
+    void nextTick(() => field.value?.focus())
+  }
+}
+
+function onActingKeydown(event: KeyboardEvent, actions: MenuCommand[]) {
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    actSelected.value = (actSelected.value + 1) % actions.length
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    actSelected.value = (actSelected.value - 1 + actions.length) % actions.length
+  } else if (event.key === 'Enter') {
+    event.preventDefault()
+    void runAction(actions[actSelected.value])
+  } else if (event.key === 'Escape' || event.key === 'Tab') {
+    // Esc 只收起清单，不连面板一起关。
+    event.preventDefault()
+    acting.value = null
+  }
+}
+
 function onKeydown(event: KeyboardEvent) {
   // 拼音还在组字的时候，回车和方向键是输入法的，不是面板的。
   if (event.isComposing || event.keyCode === 229) return
-  if (event.key === 'ArrowDown') {
+  if (acting.value) {
+    onActingKeydown(event, acting.value.actions)
+    return
+  }
+  if (event.key === 'Tab') {
+    // Tab 在面板里不挪焦点：焦点一离开输入框，方向键和回车就不归面板了。
+    event.preventDefault()
+    openActions(rows.value[selected.value])
+  } else if (event.key === 'ArrowDown') {
     event.preventDefault()
     if (rows.value.length) selected.value = (selected.value + 1) % rows.value.length
   } else if (event.key === 'ArrowUp') {
@@ -185,6 +315,10 @@ function shortcutLabel(shortcut: string | undefined): string | undefined {
 }
 
 const optionId = (index: number) => `palette-option-${index}`
+const actionId = (index: number) => `palette-action-${index}`
+
+const selectedRow = computed(() => rows.value[selected.value])
+const enterKey = isMac ? '⌘' : 'Ctrl'
 </script>
 
 <template>
@@ -204,7 +338,21 @@ const optionId = (index: number) => `palette-option-${index}`
               @click="close"
             />
             <v-icon v-else icon="mdi-magnify" size="20" class="palette__glass" />
+            <template v-if="paletteAsk">
+              <span class="palette__asking">{{ paletteAsk.title }}</span>
+              <input
+                ref="field"
+                v-model="askText"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                :aria-label="paletteAsk.title"
+                :placeholder="paletteAsk.placeholder"
+                @keydown="onAskKeydown"
+              />
+            </template>
             <input
+              v-else
               ref="field"
               v-model="input"
               type="text"
@@ -214,7 +362,7 @@ const optionId = (index: number) => `palette-option-${index}`
               aria-autocomplete="list"
               aria-controls="palette-results"
               :aria-expanded="rows.length > 0"
-              :aria-activedescendant="rows.length ? optionId(selected) : undefined"
+              :aria-activedescendant="acting ? actionId(actSelected) : rows.length ? optionId(selected) : undefined"
               :aria-label="t('navigation.palette.open')"
               :placeholder="t('navigation.palette.placeholder')"
               @keydown="onKeydown"
@@ -228,7 +376,15 @@ const optionId = (index: number) => `palette-option-${index}`
               color="primary"
             />
           </div>
-          <div id="palette-results" class="palette__list" role="listbox" :aria-label="t('navigation.palette.open')">
+          <div
+            v-if="!paletteAsk"
+            id="palette-results"
+            ref="list"
+            class="palette__list"
+            role="listbox"
+            :aria-label="t('navigation.palette.open')"
+            @click.capture="acting && mdAndUp && (acting = null)"
+          >
             <template v-for="(group, g) in groups" :key="group.key">
               <div class="palette__group t-eyebrow-read" role="presentation">{{ t(group.label) }}</div>
               <div
@@ -239,6 +395,7 @@ const optionId = (index: number) => `palette-option-${index}`
                 :class="{ 'palette__row--selected': offsets[g] + i === selected }"
                 role="option"
                 :aria-selected="offsets[g] + i === selected"
+                :data-row="offsets[g] + i"
                 :title="shortcutLabel(row.shortcut)"
                 @mousemove="selected = offsets[g] + i"
                 @click="choose(row, $event.metaKey || $event.ctrlKey)"
@@ -269,10 +426,51 @@ const optionId = (index: number) => `palette-option-${index}`
               {{ t('navigation.palette.empty') }}
             </div>
           </div>
+          <!-- 底栏只在桌面上有：手机上没有这几个键。 -->
+          <div v-if="mdAndUp && (paletteAsk || selectedRow)" class="palette__foot">
+            <span class="palette__foot-main">
+              <template v-if="paletteAsk">{{ t('navigation.palette.save') }}</template>
+              <template v-else-if="acting">{{ acting.actions[actSelected].title }}</template>
+              <template v-else-if="selectedRow">{{ verbOf(selectedRow) }}</template>
+              <kbd>↵</kbd>
+            </span>
+            <span class="palette__keys">
+              <span v-if="paletteAsk || acting">{{ t('navigation.palette.back') }} <kbd>Esc</kbd></span>
+              <template v-else-if="selectedRow">
+                <span v-if="hasMore(selectedRow)">{{ t('navigation.palette.more') }} <kbd>Tab</kbd></span>
+                <span v-if="selectedRow.to">
+                  {{ t('navigation.palette.newTab') }} <kbd>{{ enterKey }}</kbd> <kbd>↵</kbd>
+                </span>
+              </template>
+            </span>
+          </div>
+          <div
+            v-if="acting && mdAndUp"
+            class="palette__actions"
+            role="menu"
+            :aria-label="acting.row.title"
+            @mousedown.prevent
+          >
+            <div class="palette__actions-head">{{ acting.row.title }}</div>
+            <div
+              v-for="(action, i) in acting.actions"
+              :id="actionId(i)"
+              :key="action.id"
+              class="palette__action"
+              :class="{ 'palette__action--selected': i === actSelected, 'palette__action--danger': action.danger }"
+              role="menuitem"
+              @mousemove="actSelected = i"
+              @click="runAction(action)"
+            >
+              <v-icon :icon="action.icon" size="16" class="palette__icon" />
+              <span class="palette__title">{{ action.title }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </Transition>
   </Teleport>
+  <MobileActionSheet v-model="sheetOpen" :actions="sheetActions" :title="acting?.row.title" :z-index="2500" />
 </template>
 
 <style scoped>
@@ -394,6 +592,87 @@ const optionId = (index: number) => `palette-option-${index}`
 .palette__badge--ok {
   background: var(--ok-wash);
   color: var(--ok-ink);
+}
+.palette__asking {
+  flex: none;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
+}
+.palette__foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
+}
+.palette__foot-main {
+  color: var(--muted);
+}
+.palette__keys {
+  display: flex;
+  gap: 12px;
+}
+.palette__foot kbd {
+  display: inline-block;
+  margin-left: 4px;
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--line-2);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  text-align: center;
+}
+.palette__actions {
+  position: absolute;
+  right: 10px;
+  bottom: 44px;
+  width: 260px;
+  padding: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+}
+.palette__actions-head {
+  overflow: hidden;
+  padding: 6px 8px 4px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette__action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+.palette__action--selected {
+  background: var(--fill-2);
+  color: var(--ink);
+}
+.palette__action--danger {
+  color: var(--danger-ink);
 }
 .palette__empty {
   padding: 24px 10px;

@@ -5,13 +5,17 @@
 import type { Component } from 'vue'
 import type { Topic, TopicComputeProfile } from '@/cx_types'
 
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getTopicComputeProfile = vi.fn()
+const archiveTopic = vi.fn(async (id: string) => ({ id, status: 'archived' }))
+const unarchiveTopic = vi.fn(async (id: string) => ({ id, status: 'active' }))
 
 vi.mock('@/api', () => ({
   getTopicComputeProfile: (...args: unknown[]) => getTopicComputeProfile(...args),
@@ -19,6 +23,8 @@ vi.mock('@/api', () => ({
   setTopicComputeChoice: vi.fn(),
   getTopicUsage: vi.fn(async () => null),
   getProjectUsage: vi.fn(async () => null),
+  archiveTopic: (...args: [string]) => archiveTopic(...args),
+  unarchiveTopic: (...args: [string]) => unarchiveTopic(...args),
 }))
 
 import TopicHeader from './TopicHeader.vue'
@@ -70,7 +76,14 @@ function mountHeader(focus = false, over: Partial<Topic> = {}) {
   return render(Header, {
     props: { topic: { ...topic, ...over }, members: [], me: 'me', connected: true, focus },
     global: {
-      plugins: [createVuetify({ components, directives })],
+      plugins: [
+        createVuetify({ components, directives }),
+        createPinia(),
+        createRouter({
+          history: createMemoryHistory(),
+          routes: [{ path: '/:any(.*)*', component: { render: () => null } }],
+        }),
+      ],
     },
   })
 }
@@ -197,12 +210,12 @@ describe('手机上话题头的 ⋯', () => {
   })
 
   it('能归档的人可以从这里归档', async () => {
-    const { emitted } = mountHeader(false, { can_archive: true })
+    mountHeader(false, { can_archive: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '归档' }))
 
-    expect(emitted().archive).toHaveLength(1)
+    expect(archiveTopic).toHaveBeenCalledWith('topic-1', expect.anything())
   })
 
   it('不能归档的人看不到归档', async () => {
@@ -214,12 +227,12 @@ describe('手机上话题头的 ⋯', () => {
   })
 
   it('已归档的话题只能取消归档', async () => {
-    const { emitted } = mountHeader(false, { status: 'archived', can_archive: true })
+    mountHeader(false, { status: 'archived', can_archive: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '取消归档' }))
 
-    expect(emitted().unarchive).toHaveLength(1)
+    expect(unarchiveTopic).toHaveBeenCalledWith('topic-1', expect.anything())
     expect(screen.queryByRole('menuitem', { name: '重命名' })).toBeNull()
   })
 })

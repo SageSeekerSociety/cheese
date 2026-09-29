@@ -17,6 +17,7 @@ import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 import type { TopicPhase } from '@/lib/topicState'
 
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
@@ -48,8 +49,6 @@ const emit = defineEmits<{
   (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
   (e: 'rename', title: string): void
-  (e: 'archive'): void
-  (e: 'unarchive'): void
   // 这个话题换了 AI 队友。对话栏要重拉名册——它显示的 AI 名字来自那份名册。
 }>()
 
@@ -103,6 +102,7 @@ function toggleFocus() {
 
 // 手机上话题列表没有行尾那颗 ⋯，改名、归档原本只有长按那一行才找得到。⋯ 面板里
 // 放的是同一份（topicActions），只是这里重命名另起一页。
+const router = useRouter()
 const renaming = ref(false)
 const draftTitle = ref('')
 
@@ -119,11 +119,7 @@ function saveRename() {
 
 // 同一份话题操作：⋯ 面板里是一行一行的菜单，命令面板里是「操作」。
 function roomCommands() {
-  return topicActions(props.topic, {
-    rename: startRename,
-    archive: () => emit('archive'),
-    unarchive: () => emit('unarchive'),
-  })
+  return topicActions(props.topic, router, { rename: startRename })
 }
 const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf))
 useCommands(roomCommands)

@@ -115,15 +115,6 @@ function openTopic(topicId: string) {
   void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
 }
 
-// 归档了就离开这个房间，和在侧栏里归档正开着的那一个一样：回到项目。没归档成
-// （store 已经报了错）就留在原地。
-async function archiveHere() {
-  await store.archive(props.topicId)
-  if (store.topics.find((row) => row.id === props.topicId)?.status === 'archived') {
-    void router.replace({ name: 'workspace-project', params: { projectId: props.projectId } })
-  }
-}
-
 // ---- Layout: the chat|panel split, persisted across sessions (in the store, so
 // the sidebar's own width sits in the same record). This splitter is the ONLY
 // width control in the workspace now — the tool drawer used to carry a second
@@ -367,8 +358,6 @@ void openPlace()
         @toggle-focus="focusMode = !focusMode"
         @open-topic="openTopic"
         @rename="(title) => store.renameTopic(topicId, title)"
-        @archive="archiveHere"
-        @unarchive="store.unarchive(topicId)"
       />
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定

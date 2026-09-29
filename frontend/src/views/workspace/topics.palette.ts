@@ -1,9 +1,13 @@
 // 命令面板里的「话题」：当前项目的房间。`#` 只看这一类。
+import type { Router } from 'vue-router'
 import type { PaletteItem, PaletteSource, SourceContext } from '@/commands/palette/sources'
 import type { Topic } from '@/cx_types'
 
+import { paletteAsk } from '@/commands/palette/state'
+import { topicActions } from '@/commands/topicActions'
 import { t } from '@/i18n'
 import { topicTitle } from '@/lib/topicState'
+import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 行尾写这个话题此刻走到哪：和看板同一个词，后端算好的，这里不推。只有要人动手的
@@ -20,7 +24,20 @@ function badgeOf(topic: Topic): PaletteItem['badge'] {
   return undefined
 }
 
-function itemOf(topic: Topic, projectId: string): PaletteItem {
+// 在面板里重命名：输入框换成话题名，回车就改，不离开当前这一页。
+function renameInPalette(topic: Topic) {
+  paletteAsk.value = {
+    title: t('work.room.menu.renameTitle'),
+    placeholder: t('work.room.menu.topicName'),
+    value: topic.title,
+    submit(draft) {
+      const next = normalizeTopicTitle(draft, topic.title, TOPIC_TITLE_MAX_LENGTH)
+      if (next) void useWorkspaceStore().renameTopic(topic.id, next)
+    },
+  }
+}
+
+function itemOf(topic: Topic, projectId: string, router: Router): PaletteItem {
   const archived = topic.status === 'archived'
   return {
     id: `topic:${topic.id}`,
@@ -29,6 +46,7 @@ function itemOf(topic: Topic, projectId: string): PaletteItem {
     badge: badgeOf(topic),
     awaiting: !!topic.awaits_me,
     to: { name: 'workspace-topic', params: { projectId, topicId: topic.id } },
+    actions: () => topicActions(topic, router, { rename: () => renameInPalette(topic) }),
   }
 }
 
@@ -43,11 +61,11 @@ const source: PaletteSource = {
   label: 'navigation.palette.topics',
   order: 10,
   prefix: '#',
-  items: (ctx) => topicsOf(ctx).map((topic) => itemOf(topic, ctx.projectId!)),
+  items: (ctx) => topicsOf(ctx).map((topic) => itemOf(topic, ctx.projectId!, ctx.router)),
   fromRoute(route, ctx) {
     if (route.name !== 'workspace-topic' || !ctx.projectId) return null
     const topic = topicsOf(ctx).find((row) => row.id === route.params.topicId)
-    return topic ? itemOf(topic, ctx.projectId) : null
+    return topic ? itemOf(topic, ctx.projectId, ctx.router) : null
   },
 }
 
