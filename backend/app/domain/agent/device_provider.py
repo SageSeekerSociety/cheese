@@ -987,14 +987,14 @@ class DeviceChannel(Channel):
             return {"alive": True, "unknown": True}
 
     async def _refresh_resident(
-        self, screen: HubScreen, home_dir: str, state: str, release: dict,
+        self,
+        screen: HubScreen,
+        home_dir: str,
+        state: str,
+        release: dict,
         session_id: str = "",
     ) -> bool:
-        """Release this seat's helpers while preserving its conversation.
-
-        The runner reloads its plugin and reconnects MCP after staging.
-        The screen names the seat; another teammate's files stay untouched.
-        """
+        """Release this seat's helpers, then reload its plugin and MCP."""
         seat = seat_dir(home_dir, screen.agent_handle)
         sources = resident_release.sources()
         version = resident_release.digest(sources)
@@ -1445,7 +1445,10 @@ class DeviceChannel(Channel):
                 else:
                     try:
                         await self._refresh_resident(
-                            existing, home_dir, place.state, release_state,
+                            existing,
+                            home_dir,
+                            place.state,
+                            release_state,
                             status.get("session_id", ""),
                         )
                     except ScreenSetupError:
