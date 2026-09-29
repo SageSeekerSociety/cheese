@@ -35,7 +35,7 @@ docker run --rm --network none --entrypoint /app/.venv/bin/python \
   -e LITELLM_LOCAL_MODEL_COST_MAP=True "$GATEWAY_IMAGE" /opt/cheese-gateway/test_deepseek_images.py
 
 echo "Releasing gateway image=$GATEWAY_IMAGE revision=$revision; active streams may be interrupted."
-if "${compose[@]}" up -d --no-deps --wait --wait-timeout 150 litellm; then
+if "${compose[@]}" up -d --no-deps --wait --wait-timeout 150 openai-egress litellm; then
   echo "Gateway healthy: $GATEWAY_IMAGE"
 else
   echo 'Gateway failed health verification; restoring the previous image and configuration.' >&2

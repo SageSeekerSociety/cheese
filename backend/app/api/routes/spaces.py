@@ -871,7 +871,7 @@ async def get_space(
 )
 async def get_spaces(
     queryMyRank: bool = Query(default=False),
-    pageStart: int | None = Query(default=None),
+    pageStart: int | None = Query(default=None, ge=0),
     pageSize: int = Query(default=20, ge=1, le=200),
     service: SpaceService = Depends(get_space_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -1788,6 +1788,23 @@ async def get_space_analytics_participants(
 
 
 @router.get(
+    "/{spaceId}/analytics/people",
+    summary="Get Space Analytics People",
+)
+async def get_space_analytics_people(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    db=Depends(get_db),
+) -> dict:
+    """Return per-person participation rows plus the claims that never moved."""
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    _ = auth_user
+    data = await service.get_people(space_id=space_id)
+    return {"code": 200, "message": "OK", "data": data}
+
+
+@router.get(
     "/{spaceId}/analytics/participants/export",
     summary="Export Space Analytics Participants",
 )
@@ -1910,8 +1927,8 @@ async def get_space_submissions(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     reviewed: bool | None = Query(default=None),
     taskId: int | None = Query(default=None),
-    pageStart: int | None = Query(default=None),
-    pageSize: int = Query(default=20, ge=1, le=100),
+    pageStart: int | None = Query(default=None, ge=0),
+    pageSize: int = Query(default=20, ge=1, le=200),
     sortBy: str = Query(default="createdAt"),
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),

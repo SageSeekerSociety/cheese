@@ -28,6 +28,12 @@
         </template>
       </v-file-input>
 
+      <!-- 上限是**接口报的**那个数（`GET /attachments/limits`），不是这一页写死的：
+           传超了会被后端按同一个数拒掉，所以这句话与真正发生的事不会走散。 -->
+      <p v-if="maxFileBytes" class="text-caption text-medium-emphasis mt-2" data-testid="attachment-limit">
+        单个文件不超过 {{ formatFileSize(maxFileBytes) }}
+      </p>
+
       <v-progress-linear v-if="uploading" indeterminate color="primary" class="mt-3" />
 
       <v-list v-if="uploaded.length > 0" density="compact" class="mt-3 bg-surface-light rounded-lg">
@@ -54,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { formatFileSize } from '@/utils/materials'
@@ -85,6 +91,20 @@ type UploadedFile = { id: number; name: string; size: number }
 const picked = ref<File[]>([])
 const uploaded = ref<UploadedFile[]>([])
 const uploading = ref(false)
+
+/** 单份文件的上限，`null` = 还没问到（问不到就不写这句话，不猜一个数出来）。 */
+const maxFileBytes = ref<number | null>(null)
+
+// 这句话是**建议**，不是闸门：拿不到就少说一句，选择与上传照旧。读数失败不弹错 ——
+// 用户到这一步并没有要求做任何事，凭空一条报错只会让人以为出了问题。
+onMounted(async () => {
+  try {
+    const { data } = await AttachmentsApi.limits()
+    maxFileBytes.value = data.maxFileBytes
+  } catch {
+    maxFileBytes.value = null
+  }
+})
 
 /** 这份材料已经在服务端了，从这道题上撤下来（建题之前只是不再带上它）。 */
 const drop = (id: number) => {

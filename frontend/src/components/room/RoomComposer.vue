@@ -590,7 +590,7 @@ defineExpose({
       />
       <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
              唯一的实心按钮，其余一律是安静的图标。 -->
-      <div class="composer-actions d-flex align-center ga-1">
+      <div class="composer-actions d-flex align-center" :class="enterSends ? 'ga-1' : 'ga-4'">
         <!-- 这两个 input 是藏起来的，但**不能**用 display:none / visibility:hidden：
                  iOS Safari 拒绝用脚本打开一个被隐藏掉的文件选择框，按钮点下去
                  毫无反应。所以按 .visually-hidden 的老办法藏——留在布局里、只是
@@ -793,6 +793,36 @@ defineExpose({
   }
 }
 
+/* 触屏上手指点得中（设计系统 §10.1）：几颗按钮画出来的样子不变，能点的范围撑到
+   44×44（同 style.css 的 .tap-target）。撑开的范围不能互相盖住，所以按钮之间拉开到
+   16px（模板里按输入方式换 ga-4）；这一行也长到 44px，不让它伸进上面的输入框。 */
+@media (pointer: coarse) {
+  .composer-actions {
+    min-height: 44px;
+  }
+  .summon-btn {
+    position: relative;
+  }
+  .composer-icon::before,
+  .composer-send::before,
+  .summon-btn::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+  .mention-menu-item {
+    min-height: 44px;
+  }
+  /* 回复、附件那一行横着滚，滚动的盒子会裁掉 ✕ 撑出去的范围：上下各留 8px。 */
+  .composer .chip-list {
+    padding-block: 8px;
+  }
+}
+
 /* @-autocomplete popup — mirrors TopicView's composer picker. */
 /* 浮在输入区上方，不占位置。它原来是输入区里的一个普通块：菜单一出现输入区就长高，
    贴在输入框上面的验收横条被整条顶上去，菜单一收又掉回来。浮层本来就该带投影、
@@ -815,8 +845,10 @@ defineExpose({
   /* 菜单最多 7 项（`mentionMatches` 里 slice(0, 7)），每项 min-height 36px，展开
      就是 254px；而 `.composer` 是 `.chat`（flex column）里不肯收缩的那一项。面板
      一矮（尤其手机上），多出来的部分连同输入框一起从 `.chat` 底部溢出、被外壳裁
-     掉，还没有滚动条。给个上限让它自己滚——40vh 与 `.panel-card__block-body` 同例。 */
-  max-height: 40vh;
+     掉，还没有滚动条。给个上限让它自己滚，量的是看得见的那一截：手机上键盘弹起来
+     时 40vh 还是按整屏算，菜单会伸到顶栏底下（--app-height / --keyboard-inset 见
+     lib/keyboardInset.ts）。 */
+  max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.4);
   background: var(--surface);
   box-shadow: var(--shadow-2);
 }

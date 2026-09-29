@@ -41,8 +41,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: scripts/remote_execution/package-lock.json
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-remote-execution-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/remote_execution/package-lock.json') }}
       - run: .github/scripts/ensure-claude-cli.sh
       # The script and what it imports are standard library only, so this job
       # skips `uv sync` and its several minutes.
@@ -107,8 +110,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: scripts/remote_execution/package-lock.json
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-remote-execution-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/remote_execution/package-lock.json') }}
       - run: .github/scripts/ensure-claude-cli.sh
       - name: Let a session have its own namespace
         run: .github/scripts/allow-user-namespaces.sh

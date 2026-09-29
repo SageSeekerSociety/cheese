@@ -2,8 +2,12 @@ import { createVuetify } from 'vuetify'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ upload: vi.fn() }))
-vi.mock('@/network/api/attachments', () => ({ AttachmentsApi: { upload: mocks.upload } }))
+// 卡片上那句「单个文件不超过…」问的是 `GET /attachments/limits`：上传之前先问一次，
+// 与上传同一道门。
+const mocks = vi.hoisted(() => ({ upload: vi.fn(), limits: vi.fn() }))
+vi.mock('@/network/api/attachments', () => ({
+  AttachmentsApi: { upload: mocks.upload, limits: mocks.limits },
+}))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import TaskAttachmentPicker from '../TaskAttachmentPicker.vue'
@@ -15,9 +19,36 @@ const mount = () => render(TaskAttachmentPicker, { global: { plugins: [createVue
 const fileInputOf = (view: ReturnType<typeof render>) =>
   view.container.querySelector('input[type="file"]') as HTMLInputElement
 
+/** 接口报的单份文件上限。**不是**任何一版页面里写过的数：卡片上那句话若对得上它，
+ *  就只可能是照着接口报的写的。 */
+const LIMIT_BYTES = 12_345_678
+
 describe('发题时带的材料', () => {
   // 这几条按「传了几次」下断言，调用记录必须一条一条分开数。
-  beforeEach(() => mocks.upload.mockReset())
+  beforeEach(() => {
+    mocks.upload.mockReset()
+    mocks.limits.mockReset()
+    mocks.limits.mockResolvedValue({ data: { maxFileBytes: LIMIT_BYTES } })
+  })
+
+  it('卡上写的上限是接口报的那个数；问不到就不写这句话，选择照旧', async () => {
+    const view = mount()
+    await waitFor(() =>
+      expect(view.getByTestId('attachment-limit').textContent?.replace(/\s+/g, ' ').trim()).toBe(
+        '单个文件不超过 11.77 MB'
+      )
+    )
+    expect(mocks.limits).toHaveBeenCalledTimes(1)
+    view.unmount()
+
+    mocks.limits.mockRejectedValue(new Error('503 Service Unavailable'))
+    const offline = mount()
+    // 给那一轮读数落地的时间，然后它还是不该出现。
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(offline.queryByTestId('attachment-limit')).toBeNull()
+    expect(fileInputOf(offline)).toBeTruthy()
+    offline.unmount()
+  })
 
   it('选中即上传，并把拿到的 id 交给发题那条请求', async () => {
     mocks.upload.mockResolvedValue({ data: { id: 7 } })

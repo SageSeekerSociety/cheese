@@ -81,4 +81,25 @@ describe('对话作为工作面板的一格', () => {
     expect(queryByRole('tab', { name: /现场/ })).toBeTruthy()
     expect(queryByRole('tab', { name: /对话/ })).toBeNull()
   })
+
+  // 芝士正在干活时桌面会自动开在现场；手机上那样做等于把输入框藏起来。
+  it('手机上芝士正在工作，房间仍开在对话', async () => {
+    const { findByRole } = mount({ withChat: true, phase: 'working', working: true })
+    await new Promise((r) => setTimeout(r, 0))
+    expect((await findByRole('tab', { name: /对话/ })).getAttribute('aria-selected')).toBe('true')
+    expect((await findByRole('tab', { name: /现场/ })).getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('桌面上芝士正在工作，房间开在现场', async () => {
+    const { findByRole } = mount({ withChat: false, phase: 'working', working: true })
+    await new Promise((r) => setTimeout(r, 0))
+    expect((await findByRole('tab', { name: /现场/ })).getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('手机上退回到不带页签的地址，回到对话', async () => {
+    const { findByRole, rerender } = mount({ withChat: true, tab: 'changes' })
+    expect((await findByRole('tab', { name: /改动/ })).getAttribute('aria-selected')).toBe('true')
+    await rerender({ tab: undefined })
+    expect((await findByRole('tab', { name: /对话/ })).getAttribute('aria-selected')).toBe('true')
+  })
 })

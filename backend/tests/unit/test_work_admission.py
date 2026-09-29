@@ -94,6 +94,9 @@ class FakeChat:
     async def merge_into_running_turn(self, *args, **kwargs):
         return None
 
+    def replaying(self, topic_id):
+        return None
+
     async def converse(self, **kwargs):
         self.converse_calls.append(kwargs)
         if not kwargs.get("summon", True):

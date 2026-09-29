@@ -12,6 +12,7 @@
 // 资源 lands here too. It used to be the fifth drawer, re-fetching every 20
 // seconds for as long as it was open; usage numbers do not move that fast, and
 // nobody watches them. Now they load once, when the popover is opened.
+import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 import type { TopicPhase } from '@/lib/topicState'
 
@@ -19,10 +20,13 @@ import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
+import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { topicPhaseBadge, topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
-import { costLabel, costNote, fmtNum } from '@/lib/usageFormat'
+import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 
 const props = defineProps<{
   topic: Topic
@@ -41,6 +45,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
+  (e: 'rename', title: string): void
+  (e: 'archive'): void
+  (e: 'unarchive'): void
   // 这个话题换了 AI 队友。对话栏要重拉名册——它显示的 AI 名字来自那份名册。
 }>()
 
@@ -87,21 +94,56 @@ watch(usageOpen, (open) => {
 // 权限，不是设置，要一直看得见。名册读到了就告诉这里。
 const machineNotice = ref<string | null>(null)
 
-// 一行一个范围：次数 · token · 费用。输入 / 输出的拆分和费用的说明放在 title 里，
-// 原来那十个大格子里有八个在一个新话题上都是 0。
-function usageLine(u: UsageStats): string {
-  return t('work.room.menu.usageLine', { turns: fmtNum(u.turns), tokens: fmtNum(u.total_tokens), cost: costLabel(u) })
-}
-function usageTitle(u: UsageStats): string {
-  const split = t('work.room.menu.usageSplit', { input: fmtNum(u.input_tokens), output: fmtNum(u.output_tokens) })
-  const note = costNote(u)
-  return note ? `${split}\n${note}` : split
-}
-
 function toggleFocus() {
   usageOpen.value = false
   emit('toggle-focus')
 }
+
+// 手机上话题列表没有行尾那颗 ⋯，改名、归档原本只有长按那一行才找得到。⋯ 面板里
+// 放同一份，和侧栏那一行的操作一致：已归档的只有「取消归档」。
+const renaming = ref(false)
+const draftTitle = ref('')
+
+function startRename() {
+  draftTitle.value = props.topic.title
+  renaming.value = true
+}
+
+function saveRename() {
+  const next = normalizeTopicTitle(draftTitle.value, props.topic.title)
+  renaming.value = false
+  if (next) emit('rename', next)
+}
+
+const topicActions = computed<MenuAction[]>(() => {
+  if (!isWorkTopic.value) return []
+  const archived = props.topic.status === 'archived'
+  const actions: MenuAction[] = []
+  if (!archived)
+    actions.push({
+      key: 'rename',
+      label: t('work.room.menu.rename'),
+      icon: 'mdi-pencil-outline',
+      onSelect: startRename,
+    })
+  if (props.topic.can_archive)
+    actions.push(
+      archived
+        ? {
+            key: 'unarchive',
+            label: t('work.room.menu.unarchive'),
+            icon: 'mdi-archive-arrow-up-outline',
+            onSelect: () => emit('unarchive'),
+          }
+        : {
+            key: 'archive',
+            label: t('work.room.menu.archive'),
+            icon: 'mdi-archive-arrow-down-outline',
+            onSelect: () => emit('archive'),
+          }
+    )
+  return actions
+})
 </script>
 
 <template>
@@ -152,7 +194,7 @@ function toggleFocus() {
       <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
            看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
            连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
-      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
+      <v-menu v-if="mdAndUp" v-model="usageOpen" :close-on-content-click="false" location="bottom end">
         <template #activator="{ props: menuProps }">
           <v-btn
             v-bind="menuProps"
@@ -172,30 +214,55 @@ function toggleFocus() {
             <v-icon size="16">{{ focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand' }}</v-icon>
             <span>{{ focus ? t('work.room.menu.exitFocus') : t('work.room.menu.focus') }}</span>
           </button>
-          <div class="room-menu__usage">
-            <div class="room-menu__label">{{ t('work.room.menu.usage') }}</div>
-            <div v-if="usageLoading" class="d-flex justify-center py-2">
-              <v-progress-circular indeterminate color="primary" size="20" />
-            </div>
-            <template v-else>
-              <div
-                v-for="row in [
-                  { label: t('work.room.menu.thisTopic'), u: topicUsage },
-                  { label: t('work.room.menu.wholeProject'), u: projectUsage },
-                ]"
-                :key="row.label"
-                class="usage-row"
-                :title="row.u ? usageTitle(row.u) : undefined"
-              >
-                <span>{{ row.label }}</span>
-                <span v-if="row.u" class="usage-row__value">{{ usageLine(row.u) }}</span>
-                <span v-else class="usage-row__value">{{ t('work.room.menu.noUsage') }}</span>
-              </div>
-            </template>
-          </div>
-          <div v-if="isWorkTopic" class="room-menu__foot t-meta" :title="topic.id">#{{ shortId }}</div>
+          <TopicUsageSummary
+            class="room-menu__usage"
+            :loading="usageLoading"
+            :topic-usage="topicUsage"
+            :project-usage="projectUsage"
+            :short-id="isWorkTopic ? shortId : null"
+            :topic-id="topic.id"
+          />
         </v-card>
       </v-menu>
+      <!-- 手机上同一块内容从底部升起，和别的手机菜单一样（设计系统 §10.4）。 -->
+      <template v-else>
+        <v-btn
+          icon="mdi-dots-horizontal"
+          size="small"
+          variant="text"
+          color="medium-emphasis"
+          class="tap-target"
+          :title="t('work.room.menu.more')"
+          :aria-label="t('work.room.menu.more')"
+          @click="usageOpen = true"
+        />
+        <MobileActionSheet v-model="usageOpen" :actions="topicActions">
+          <TopicUsageSummary
+            :loading="usageLoading"
+            :topic-usage="topicUsage"
+            :project-usage="projectUsage"
+            :short-id="isWorkTopic ? shortId : null"
+            :topic-id="topic.id"
+          />
+        </MobileActionSheet>
+        <AdaptiveDialog
+          v-model="renaming"
+          :title="t('work.room.menu.renameTitle')"
+          :primary-label="t('global.save')"
+          :primary-disabled="!draftTitle.trim()"
+          @primary="saveRename"
+        >
+          <v-text-field
+            v-model="draftTitle"
+            :label="t('work.room.menu.topicName')"
+            :maxlength="TOPIC_TITLE_MAX_LENGTH"
+            autocomplete="off"
+            autofocus
+            hide-details
+            @keyup.enter="saveRename"
+          />
+        </AdaptiveDialog>
+      </template>
     </div>
   </Teleport>
 </template>
@@ -234,7 +301,10 @@ function toggleFocus() {
 }
 .topic-header__title {
   min-width: 0;
-  line-height: 1.3;
+  /* 行盒不在这里定：这一格和话题列表的行共用 .t-title，也就共用它的 --lh-15
+     （21px）。原先这里压成 1.3（15px 字号 → 19.5px），比字身还矮，标题又是
+     overflow: hidden，g / y 这些下伸的字母下缘被切掉约 0.75px。高度是字号阶梯
+     的属性，不在调用点另定一个数（docs/design-system.md §3.2）。 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -333,35 +403,8 @@ function toggleFocus() {
 .room-menu__row--action:hover {
   background: var(--fill);
 }
-.room-menu__label {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
 .room-menu__usage {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
   margin-top: 4px;
-  padding: 8px 16px;
   border-top: 1px solid var(--line);
-}
-.usage-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--text);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-.usage-row__value {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.room-menu__foot {
-  padding: 8px 16px 4px;
-  border-top: 1px solid var(--line);
-  color: var(--faint);
 }
 </style>

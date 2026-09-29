@@ -143,6 +143,7 @@ const panelStyle = computed(() => (offset.value ? { transform: `translateY(${off
             <v-progress-circular v-if="action.loading" indeterminate size="18" width="2" />
             <v-icon v-else size="20" aria-hidden="true">{{ action.icon }}</v-icon>
             <span class="action-sheet__label">{{ action.label }}</span>
+            <span v-if="action.badge" class="action-sheet__badge">{{ action.badge }}</span>
           </button>
         </li>
       </ul>
@@ -219,10 +220,19 @@ const panelStyle = computed(() => (offset.value ? { transform: `translateY(${off
   color: var(--danger-ink);
 }
 .action-sheet__label {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 未读数：裸的琥珀数字，和侧栏行尾那一个同一种画法。 */
+.action-sheet__badge {
+  flex: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 </style>
 

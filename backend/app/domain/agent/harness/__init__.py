@@ -578,7 +578,7 @@ class SessionControls(Protocol):
 class Backlog(Protocol):
     """The unread tail of one session, as the platform needs to consume it.
 
-    Five calls, and the split between them is the point. ``unread`` and
+    Seven calls, and the split between them is the point. ``unread`` and
     ``assemble`` are the harness's — what did this agent say, and what does one
     log entry mean. Deciding what to DO about it (persist a block, broadcast a
     frame, skip a duplicate) is the platform's, and happens between the two.
@@ -609,6 +609,16 @@ class Backlog(Protocol):
 
     def landed(self, *, through: str) -> None:
         """Everything up to and including this key reached the timeline."""
+        ...
+
+    def step_over_older(self, *, than_s: float) -> int:
+        """Land, unread, the run of entries at the cursor older than
+        ``than_s``; how many there were."""
+        ...
+
+    def refused(self, key: str, *, times: int, over_s: float) -> bool:
+        """Note one more refusal of the entry ``key``; True once it has been
+        refused ``times`` times over at least ``over_s`` seconds."""
         ...
 
     def forget(self, *, older_than_s: float) -> None:

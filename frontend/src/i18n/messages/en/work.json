@@ -260,6 +260,11 @@
       "more": "More",
       "focus": "Focus mode",
       "exitFocus": "Exit focus mode",
+      "rename": "Rename",
+      "renameTitle": "Rename topic",
+      "topicName": "Topic name",
+      "archive": "Archive",
+      "unarchive": "Unarchive",
       "usage": "Usage",
       "thisTopic": "This topic",
       "wholeProject": "Whole project",
@@ -312,11 +317,15 @@
     "message": {
       "copy": "Copy",
       "copied": "Copied",
+      "selectText": "Select text",
       "edit": "Edit",
       "edited": "Edited",
       "save": "Save",
       "cancel": "Cancel",
-      "saveFailed": "Could not save the edit"
+      "saveFailed": "Could not save the edit",
+      "reply": "Reply",
+      "react": "Add reaction",
+      "upgrade": "Move to a new topic"
     },
     "outbox": {
       "failed": "Not sent: {reason}",
@@ -342,7 +351,9 @@
     },
     "checklist": {
       "updatedAt": "Checklist updated {time}"
-    }
+    },
+    "backToChat": "Back to chat",
+    "unselected": "Select a topic"
   },
   "members": {
     "leave": "Leave project",

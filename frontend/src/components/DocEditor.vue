@@ -10,7 +10,7 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { useWebSocket } from '@vueuse/core'
+import { useMediaQuery, useWebSocket } from '@vueuse/core'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
@@ -42,6 +42,11 @@ const emit = defineEmits<{
 }>()
 
 const AUTHOR = myHandle()
+
+// 块手柄（＋ / ⠿）跟着鼠标悬停出现、靠拖动排序，手机上用不了：不画，也不留那条
+// 56px 的槽，正文贴着页边排（样式里 --doc-gutter 在手机上是 0）。960 是外壳换成手机
+// 形态的那条线（Vuetify 的 md）。
+const mdAndUp = useMediaQuery('(min-width: 960px)')
 
 const loading = ref(false)
 const saving = ref(false)
@@ -296,7 +301,12 @@ onBeforeUnmount(() => {
       </div>
       <!-- Feishu-style left gutter block handles: ＋ inserts below, ⠿ reorders.
            Edit mode only, exactly like PanelDoc. -->
-      <DragHandle v-if="editor && editable" :editor="editor" :on-node-change="onNodeChange" class="doc-handle">
+      <DragHandle
+        v-if="editor && editable && mdAndUp"
+        :editor="editor"
+        :on-node-change="onNodeChange"
+        class="doc-handle"
+      >
         <button
           type="button"
           class="doc-handle__btn doc-handle__add"
@@ -328,13 +338,21 @@ onBeforeUnmount(() => {
      pins the handle's RIGHT edge to the text's left edge and it extends ~56px
      leftward; without a dedicated gutter it overflows the panel's left boundary
      (like PanelDoc's .doc-page padding, this reserves the room WITHIN the
-     editor so the ＋/⠿ handle sits neatly left of the text, never clipped). */
-  padding-left: 56px;
+     editor so the ＋/⠿ handle sits neatly left of the text, never clipped).
+     The placeholder is laid over the same box, so it reads the same gutter. */
+  --doc-gutter: 56px;
+  padding-left: var(--doc-gutter);
+}
+/* 手机上没有块手柄（模板里 mdAndUp 才画），槽也不留。 */
+@media (max-width: 959.98px) {
+  .doc-editor {
+    --doc-gutter: 0px;
+  }
 }
 .doc-editor__placeholder {
   position: absolute;
   top: 0;
-  left: 0;
+  left: var(--doc-gutter);
   right: 0;
   max-width: 720px;
   margin: 0 auto;

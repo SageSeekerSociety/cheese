@@ -178,6 +178,20 @@ describe('TransferProjectDialog', () => {
     await waitFor(() => expect(refreshProjects).toHaveBeenCalled())
   })
 
+  it('确认那一步按「返回」退回选人：弹窗还开着，也没有转', async () => {
+    lookupUser.mockResolvedValue({ handle: 'carol', name: '卡罗', avatar_id: null })
+    await mount()
+    await lookUp('carol')
+    await fireEvent.click(await screen.findByText('卡罗'))
+    await fireEvent.click(screen.getByRole('button', { name: '转让' }))
+
+    await fireEvent.click(await screen.findByRole('button', { name: '返回' }))
+
+    expect(await screen.findByRole('button', { name: '转让' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '确认转让' })).toBeNull()
+    expect(setProjectOwner).not.toHaveBeenCalled()
+  })
+
   it('团队里的成员接手是直接换人：没有第二步', async () => {
     await mount()
     await fireEvent.click(await screen.findByText('李干'))

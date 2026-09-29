@@ -172,9 +172,8 @@ async def lifespan(_: FastAPI):
         try:
             await taken_over()
         finally:
-            # A turn asked for while this process was waiting starts only now,
-            # against the sessions and turns it has just taken over — and starts
-            # even if some step of the takeover failed, which it logged.
+            # Turns start even if some step of the takeover failed, which it
+            # logged.
             get_work_runner().start_turns()
 
     async def taken_over() -> None:
@@ -194,6 +193,15 @@ async def lifespan(_: FastAPI):
             )
         except Exception:  # noqa: BLE001 — never block startup
             get_logger("cheesex.runtime").exception("hook subscription recovery failed")
+
+        # A turn asked for while this process was waiting starts now, against
+        # the sessions and turns it has just taken over. Each room's replay of
+        # its backlog goes on meanwhile, and only that room's next turn waits
+        # for it (`AgentWorkRunner._wait_for_replay`).
+        get_work_runner().start_turns()
+        # The sweeps below read what the replays land: a turn whose result is
+        # still in a backlog looks like one nobody finished.
+        await get_chat_service().replays_settled()
 
         try:
             n = await get_work_runner().resume_orphans(get_chat_service())

@@ -17,6 +17,8 @@ export interface MenuAction {
   disabled?: boolean
   /** 正在做：顶栏那颗按钮转圈，面板里这一行点不动。 */
   loading?: boolean
+  /** 行尾的未读数（「成员」上挂着的私聊未读）。琥珀色：它是未读标记。 */
+  badge?: string
   /** 选中后去哪儿。和 onSelect 可以同时给，先跑 onSelect。 */
   to?: RouteLocationRaw
   onSelect?: () => void

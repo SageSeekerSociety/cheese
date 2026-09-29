@@ -126,7 +126,7 @@ class TestGroupMembersPageCamelCase:
         resp = self.client.get(
             f"/groups/{self.group_id}/members",
             headers=self.headers,
-            params={"page_size": -1},
+            params={"page_size": 10, "page_start": 1000},
         )
         assert resp.status_code == 200
         page = resp.json()["data"]["page"]

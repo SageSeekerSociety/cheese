@@ -135,6 +135,15 @@ class Settings(BaseSettings):
     storage_type: str = "local"
     storage_local_path: str = "./uploads"
     storage_local_url: str = "/uploads"
+    # A single uploaded attachment's ceiling in bytes — every path that puts
+    # bytes into the attachment table goes through `AttachmentService.upload`,
+    # which reads this one value, and `GET /attachments/limits` reports that
+    # same value, so what the browser is told is what it will be refused for.
+    # The default is the deployment's existing ceiling: the frontend nginx
+    # `client_max_body_size 100M` on `/api/` (frontend/nginx.conf), so nothing
+    # a browser could already send starts being refused. That nginx line is a
+    # separate number in a separate file: raise one and raise the other.
+    attachment_max_bytes: int = 100 * 1024 * 1024
     redis_url: str = "redis://localhost:6379/0"
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
@@ -343,6 +352,12 @@ class Settings(BaseSettings):
     openai_oauth_base: str = "https://auth.openai.com"
     # The codex upstream is {base}/codex; the quota read is {base}/wham/usage.
     chatgpt_backend_base: str = "https://chatgpt.com/backend-api"
+    # The HTTP proxy this backend's OpenAI calls (OAuth, quota) leave through.
+    # A deployment that keeps a ChatGPT account on one exit IP sets this to that
+    # exit, and the gateway's model calls take the same exit
+    # (deploy/gateway/README.md).
+    # Unset: direct.
+    openai_subscription_proxy: str | None = None
     # The page a person opens to type the device code.
     openai_device_verification_uri: str = "https://auth.openai.com/codex/device"
     codex_originator: str = "codex_cli_rs"
@@ -910,7 +925,7 @@ class Settings(BaseSettings):
     chat_ws_allow_anonymous: bool = False
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
-    # (task AI advice, rank checks, email/notifications, meilisearch, real-name
+    # (task AI advice, rank checks, email/notifications, real-name
     # encryption) read these off settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
@@ -999,9 +1014,6 @@ class Settings(BaseSettings):
         凭据。所以这两个字段一起判断，调用点不各自数一遍。
         """
         return bool(self.vapid_public_key and self.vapid_private_key)
-
-    meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")
-    meilisearch_api_key: str = Field(default="", alias="MEILISEARCH_API_KEY")
 
     enforce_task_participant_limit_check: bool = Field(
         default=False, alias="APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK"

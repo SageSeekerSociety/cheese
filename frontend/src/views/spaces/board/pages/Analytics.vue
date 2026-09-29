@@ -20,19 +20,19 @@
 // 2. **主体**。KPI 里的「领取 / 提交 / 通过」都按**主体**算（个人或一支小队各算一个），
 //    与老树九页同一口径；所以这里没有原型那一对「参与人数」与「领取总数」—— 真库里
 //    它们是同一个数（memberships 的行数），画两张卡是把一个数说两遍。
-// 3. **领了没动**。原型那一格是「**人**领了五天没动」的名单；接口给的是「**题**上两周
-//    没有提交」的条数（后端 14 天口径），逐人的那一层它不返回。所以那一格只有数字、
-//    没有名单 —— 少画，不编。
+// 3. **领了没动**。接口给两层：`/analytics/alerts` 的 `stalledTaskCount` 是**题**上两周
+//    没有提交的条数（后端 14 天口径），`/analytics/people` 的 `stalled` 是**逐条领取**：
+//    谁在哪道题上领了两周没动。那一格列的是后者的名单。
 //
-// 五个 tab 里的「题目 / 参与者 / 出题人」三格照原型排，但**只在接口真有那一层的
-// 地方画那一层**（原型的数据是造的，它算得出来的不一定真有来源）：
-// - 题目：`/analytics/tasks` 逐题一行，全在。
+// 五个 tab 里的「题目 / 参与者 / 出题人」三格照原型排，逐人的那一层走上面那条
+// `/analytics/people`：
+// - 题目：`/analytics/tasks` 逐题一行，全在（`participantLimit` 是名额上限，没设的是 null）。
 // - 出题人：`/analytics/publishers` 逐人一行，含 `successRate`（= 通过 / 提交）与
 //   `avgParticipantsPerTask`，两个数接口自己算好给。
-// - 参与者：`/analytics/participants` **只回聚合**（报名与完成的主体数、分布、走势），
-//   不返回成员名单 —— 「这人领了几道、还在不在做」没有来源，所以那两列不画，页面上
-//   如实说明。逐人的明细真平台只有一份 CSV 导出（`/analytics/participants/export`，
-//   带审计日志的下载），不是这一屏该去拉的东西。
+// - 参与者：`/analytics/participants` 回聚合（报名与完成的主体数、分布、走势），
+//   `/analytics/people` 回逐人一行（领了几道、走到哪一步）。两格说的是两件事，都画。
+//   逐人那一层的状态由**提交与评审**算出来（判过且通过 = 通过；有提交没判 = 已交），
+//   不看 `task_membership.completion_status` —— 那一列后端没有请求路径会推进它。
 //
 // 老树那九页一页没删，仍在 `/spaces/:id/analytics/*` 上原样服务：要逐题、逐人、逐
 // 出题人（以及课程的学习那一格）翻明细时，走页脚那条链。
@@ -42,6 +42,8 @@ import type {
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipantEntityMetrics,
   SpaceAnalyticsParticipants,
+  SpaceAnalyticsPeople,
+  SpaceAnalyticsPerson,
   SpaceAnalyticsPublisherMetrics,
   SpaceAnalyticsTask,
 } from '@/network/api/spaces/types'
@@ -76,8 +78,12 @@ const alerts = ref<SpaceAnalyticsAlerts | null>(null)
 /** 逐题一行。接口一次给全（不分页），所以「三天内截止」「无人领取」是在全量上挑。 */
 const taskRows = ref<SpaceAnalyticsTask[]>([])
 const publishers = ref<SpaceAnalyticsPublisherMetrics[]>([])
-/** 参与者那一格**只有聚合**：报名与完成的主体数、分布、走势。接口不返回成员名单。 */
+/** 参与者那一格的聚合：报名与完成的主体数、分布、走势。 */
 const participants = ref<SpaceAnalyticsParticipants | null>(null)
+/** 逐人那一格 + 「领了没动」的名单。与上面五条**分开取**：那五条是聚合，这一条是名单，
+ *  它读不到时只这一格说一句，整屏不该跟着塌。 */
+const people = ref<SpaceAnalyticsPeople | null>(null)
+const peopleFailed = ref(false)
 
 const loading = ref(true)
 const failed = ref(false)
@@ -87,8 +93,9 @@ async function load() {
   if (!Number.isFinite(id) || id <= 0) return
   loading.value = true
   failed.value = false
+  peopleFailed.value = false
   try {
-    const [overviewRes, alertsRes, tasksRes, publishersRes, participantsRes] = await Promise.all([
+    const [overviewRes, alertsRes, tasksRes, publishersRes, participantsRes, peopleRes] = await Promise.all([
       SpacesApi.getAnalyticsOverview(id, { groupBy: 'day' }),
       SpacesApi.getAnalyticsAlerts(id),
       // `sortBy` 必须显式给：这一条路由的默认值是 `publishedAt`，而后端认的排序字段
@@ -99,12 +106,20 @@ async function load() {
       // 参与者那一格要的是「报名审批 / 完成」这组数 —— 只有这条接口有（overview 的
       // 那三张卡是领取 / 提交 / 通过，说的不是报名本身）。
       SpacesApi.getAnalyticsParticipants(id),
+      // 逐人那一格自己吞掉失败：它挂了只把这一格标成「读不到」，其余五条照画。
+      SpacesApi.getAnalyticsPeople(id).catch(() => null),
     ])
     overview.value = overviewRes.data
     alerts.value = alertsRes.data
     taskRows.value = tasksRes.data.tasks ?? []
     publishers.value = publishersRes.data.publishers ?? []
     participants.value = participantsRes.data
+    if (peopleRes) {
+      people.value = peopleRes.data
+    } else {
+      people.value = null
+      peopleFailed.value = true
+    }
   } catch {
     // 读不到（没权限、空间没了、接口改了）就说一句，不留一屏看着像「这块板是空的」。
     overview.value = null
@@ -112,6 +127,7 @@ async function load() {
     taskRows.value = []
     publishers.value = []
     participants.value = null
+    people.value = null
     failed.value = true
   } finally {
     loading.value = false
@@ -175,7 +191,12 @@ const kpis = computed<Kpi[]>(() => {
       label: '领取主体',
       value: m.participantCount,
       icon: 'mdi-hand-extended-outline',
-      hint: `已通过 ${m.approvedParticipantCount}`,
+      // 比的是**新增**（走势按天的桶相加），不是这个累计值本身 —— 卡片上的数是累计，
+      // 副行说的是最近两周各新增多少。文案写「近 7 天 / 前 7 天」，不假装是自然周。
+      tone: twoWeeks.value ? (twoWeeks.value.last >= twoWeeks.value.prev ? 'ok' : 'warn') : undefined,
+      hint: twoWeeks.value
+        ? `近 7 天新增 ${twoWeeks.value.last} · 前 7 天 ${twoWeeks.value.prev}`
+        : `已通过 ${m.approvedParticipantCount}`,
     },
     {
       label: '提交主体',
@@ -216,12 +237,35 @@ function toDaily(points: AnalyticsTimeSeriesPoint[]): number[] {
   return trendDays.value.map((day) => byDay.get(day) ?? 0)
 }
 
+/** 走势的两种读法：默认累计（原型画的就是两条累计线），切到「每天」看当天的量。
+ *  两种画法用**同一批桶**：累计只是把每天的数往前加，不是另取一份数据。 */
+const trendMode = ref<'cumulative' | 'daily'>('cumulative')
+
+const cumulative = (values: number[]) => {
+  let running = 0
+  return values.map((v) => (running += v))
+}
+
 const trendSeries = computed(() => {
   const trends = overview.value?.trends
-  return [
+  const daily = [
     { name: '每天领取', values: toDaily(trends?.participantsJoined ?? []) },
     { name: '每天提交', values: toDaily(trends?.submissionsCreated ?? []) },
   ]
+  if (trendMode.value === 'daily') return daily
+  return daily.map((s) => ({ name: s.name.replace('每天', '累计'), values: cumulative(s.values) }))
+})
+
+/** 最近 7 天与前 7 天的**新增领取主体**：接口已经按 UTC 日历日分好桶，这里只把落在
+ *  那两段里的桶相加 —— 不另算、也不按下标挤。桶多一天少一天都不会算错。 */
+const twoWeeks = computed(() => {
+  const points = overview.value?.trends.participantsJoined ?? []
+  if (!points.length) return null
+  const now = new Date()
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const sum = (from: number, to: number) =>
+    points.filter((p) => p.bucket >= from && p.bucket < to).reduce((n, p) => n + p.count, 0)
+  return { last: sum(today - 6 * DAY, today + DAY), prev: sum(today - 13 * DAY, today - 6 * DAY) }
 })
 
 /** 12 天里一个人都没动过就不画线：一条贴在 0 上的双线不是「数据」，是噪音。 */
@@ -379,12 +423,10 @@ const publisherTableRows = computed(() =>
  *  「领取 / 提交 / 通过」，报名本身待审多少、被驳回多少它不说。 */
 const participantSummary = computed<{
   rows: { label: string; value: number; icon: string; hint: string; tone?: Tone }[]
-  total: number | null
 }>(() => {
   const m: SpaceAnalyticsParticipantEntityMetrics | undefined = participants.value?.entityMetrics
-  if (!m) return { rows: [], total: null }
+  if (!m) return { rows: [] }
   return {
-    total: m.participantCount,
     rows: [
       { label: '报名主体', value: m.participantCount, icon: 'mdi-account-group-outline', hint: '个人或小队各算一个' },
       {
@@ -422,9 +464,47 @@ const participantSummary = computed<{
 
 // --- 领了但没动的 --------------------------------------------------------------
 
-/** 「领了没动」只有**题**这一层的条数（后端 14 天口径：有已通过的领取者、最近一次提交在
- *  14 天以前或从来没有）。逐人的那一层接口不返回 —— 列表照实空着，不按原型编名字。 */
-const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
+// --- 逐人那一格 ----------------------------------------------------------------
+
+// 「领了没动」有两个粒度，别混：`alerts.stalledTaskCount` 是**题**上两周没提交的条数
+// （进的是「待处理」那排 alert），下面 `stalledClaims` 是**逐条领取**（谁在哪道题上）。
+// 一个人在两道题上各领了两周没动时，那边算两道题、这边算两条。
+
+/** 接口按领取数降序给（同数按个人在前），页面照它画 —— 与逐题、出题人两张表同一套信任。 */
+const peopleRows = computed(() => people.value?.people ?? [])
+
+/** 「领了没动」的**逐条领取**：谁、在哪道题上、什么时候领的。接口按领取时间升序给，
+ *  领得最久的排在最前 —— 这一格问的是「先问谁」。 */
+const stalledClaims = computed(() => people.value?.stalled ?? [])
+
+/** 还在做 = 还在做 + 交了没判。原型那一列（`p.active`）就是这两类相加；已判过的
+ *  （通过或没过）都不再算「在做」。 */
+const activeOf = (p: SpaceAnalyticsPerson) => p.inProgress + p.submitted
+
+/** 「N 天前领的」。领取到今天不满一天也算一天 —— 这一格是提醒谁该被问一句，不是账目。 */
+const daysAgoText = (ms: number) => {
+  const days = Math.max(0, Math.floor((Date.now() - ms) / DAY))
+  return days === 0 ? '今天领的' : `${days} 天前领的`
+}
+
+const peopleSubtitle = computed(() => {
+  if (peopleFailed.value) return '逐人的那一层没读出来'
+  if (!people.value) return ''
+  return `${peopleRows.value.length} 个主体领过题 · 按领取数排`
+})
+
+const stalledSubtitle = computed(() =>
+  peopleFailed.value ? '逐人的名单没读出来' : `${stalledClaims.value.length} 条领取两周没动 · 按领取时间排`
+)
+
+const stalledNote = computed(() => {
+  if (peopleFailed.value) {
+    return '逐人的名单没读出来 —— 这一格只对这块板的所有者和管理员开放。读不到就只说明这一句，不照原型编名字。'
+  }
+  const standard =
+    '口径是两周：领取超过 14 天、而且一版提交都没有。交过一版的（哪怕还没判）不在这里，才领了三天的也不算。'
+  return stalledClaims.value.length ? standard : `这两周没有人领了题一直没动。${standard}`
+})
 </script>
 
 <template>
@@ -471,7 +551,17 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
         </div>
 
         <div class="an__grid">
-          <PanelCard class="an__span2" title="领取与提交" subtitle="最近 12 天 · 每天新增">
+          <PanelCard
+            class="an__span2"
+            title="领取与提交"
+            :subtitle="`最近 12 天 · ${trendMode === 'cumulative' ? '累计' : '每天新增'}`"
+          >
+            <template #actions>
+              <v-btn-toggle v-model="trendMode" density="comfortable" variant="outlined" divided mandatory>
+                <v-btn value="cumulative" size="small">累计</v-btn>
+                <v-btn value="daily" size="small">每天</v-btn>
+              </v-btn-toggle>
+            </template>
             <TrendChart v-if="hasTrend" :labels="trendLabels" :series="trendSeries" :height="220" />
             <v-empty-state
               v-else
@@ -518,17 +608,16 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
         </div>
 
         <!-- 原型把这一格挂在「待处理」里（那一排 alert 之后），不是总览 —— 照原型摆。 -->
-        <PanelCard title="领了但没动的" :subtitle="`${stalledCount} 道题上有已通过的领取者、两周没提交`">
-          <div class="stalled">
-            <b class="stalled__num">{{ stalledCount }}</b>
-            <span class="stalled__unit">道题</span>
-          </div>
-          <p class="an__note">
-            口径是<strong>两周</strong>：有已通过的领取者，而最近一次提交在 14 天以前（或者从来没交过）。
-            原型那一格写「超过五天」，真版按接口的 14 天说，这个差是有意记在案的。 能给的也只有<strong>题</strong>这一层
-            —— 谁在哪道题上没动，逐人的名单接口不返回 （真平台上只有一份带审计的导出 CSV
-            里有），所以这一格只有数、不列名字：少画，不编。
-          </p>
+        <PanelCard title="领了但没动的" :subtitle="stalledSubtitle">
+          <ul v-if="stalledClaims.length" class="mini">
+            <li v-for="c in stalledClaims" :key="`${c.taskId}-${c.isTeam ? 'team' : 'user'}-${c.userId}`">
+              <span class="mini__who">{{ c.name }}</span>
+              <router-link :to="taskTo(c.taskId)" class="mini__title">{{ c.taskTitle }}</router-link>
+              <v-spacer />
+              <span class="mini__meta">{{ daysAgoText(c.claimedAt) }}</span>
+            </li>
+          </ul>
+          <p class="an__note">{{ stalledNote }}</p>
         </PanelCard>
 
         <PanelCard
@@ -550,7 +639,9 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
             <li v-for="t in coldTasks" :key="t.taskId">
               <router-link :to="taskTo(t.taskId)" class="mini__title">{{ t.taskName }}</router-link>
               <v-spacer />
-              <span class="mini__meta">{{ t.publisher.name }} 出题</span>
+              <!-- 截止日是响应里就有的（`deadline`），没设的写「不限」—— 零领取的题回看时，
+                   先看还有多久。 -->
+              <span class="mini__meta">{{ t.publisher.name }} 出题 · {{ deadlineDay(t.deadline) }}</span>
             </li>
           </ul>
         </PanelCard>
@@ -578,7 +669,10 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
                   <div class="an__sub">{{ t.category.name }}</div>
                 </td>
                 <td>{{ t.publisher.name }}</td>
-                <td class="num">{{ t.participantCount }}</td>
+                <td class="num">
+                  {{ t.participantCount
+                  }}<span v-if="t.participantLimit != null" class="an__cap"> / {{ t.participantLimit }}</span>
+                </td>
                 <td class="num">{{ t.submittedParticipantCount }}</td>
                 <td class="num">{{ pct(t.successRate) }}</td>
                 <td>
@@ -601,23 +695,62 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
           <PageBar :page="taskPage" :page-size="PAGE_SIZE" :total="taskRows.length" @update:page="taskPage = $event" />
 
           <p class="an__note">
-            四项都是接口给的：领取＝`participantCount`（领取主体数），提交＝`submittedParticipantCount`，
-            通过率＝`successRate`（<strong>通过 / 提交</strong>，分母是提交不是领取）。状态由 `approved`
+            五项都是接口给的：领取＝`participantCount`（领取主体数），提交＝`submittedParticipantCount`，
+            通过率＝`successRate`（<strong>通过 / 提交</strong>，分母是提交不是领取），领取那一列斜杠后面
+            是这道题的名额上限（`participantLimit`）—— 没设上限的题只写一个数，不画「/ 上限」。 状态由 `approved`
             加上截止时间推出来：「已截止」= 过审了但过了截止日。
           </p>
         </PanelCard>
       </div>
 
-      <!-- ===== 参与者：接口只回聚合，逐人那一层不画 ===== -->
+      <!-- ===== 参与者：逐人一行（`/analytics/people`）+ 报名与完成的聚合 ===== -->
       <div v-else-if="tab === 'people'" class="an__pane">
-        <PanelCard
-          title="参与者"
-          :subtitle="
-            participantSummary.total === null
-              ? '逐人的那一层接口不返回'
-              : `${participantSummary.total} 个主体领过题 · 逐人的那一层接口不返回，排不了名`
-          "
-        >
+        <PanelCard title="参与者" :subtitle="peopleSubtitle">
+          <v-table v-if="peopleRows.length" density="comfortable" class="an__table">
+            <thead>
+              <tr>
+                <th>成员</th>
+                <th class="num">领取</th>
+                <th class="num">通过</th>
+                <th class="num">在做的</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in peopleRows" :key="`${p.isTeam ? 'team' : 'user'}-${p.userId}`">
+                <td>
+                  {{ p.name }}
+                  <div v-if="p.isTeam" class="an__sub">小队</div>
+                </td>
+                <td class="num">{{ p.claims }}</td>
+                <td class="num">{{ p.passed }}</td>
+                <td class="num">{{ activeOf(p) }}</td>
+                <td>
+                  <v-chip size="x-small" label variant="tonal" :class="activeOf(p) ? 'tone-warn' : 'tone-ok'">
+                    {{ activeOf(p) ? `${activeOf(p)} 道在做` : '都收尾了' }}
+                  </v-chip>
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+
+          <p v-if="peopleFailed" class="an__note">
+            逐人的名单没读出来 —— 这一格只对这块板的所有者和管理员开放。读不到就只说这一句， 不照原型编一张人表。
+          </p>
+          <v-empty-state
+            v-else-if="people && !peopleRows.length"
+            icon="mdi-account-off-outline"
+            title="还没有人领过题"
+            text="窗口里这块板上的题一条领取都没有。"
+          />
+
+          <p v-else class="an__note">
+            逐人这一行来自 <code>/analytics/people</code>：领取＝这位在这块板上领了几道题，通过＝其中判过且通过的，
+            「在做的」＝还在做或交了没判的（判过的不再算）。状态那枚 chip 就是这一列的说法 ——
+            一个人只剩判完的题时写「都收尾了」。小队按队一行。
+          </p>
+
+          <div v-if="participantSummary.rows.length" class="an__subhead">报名与完成（只按主体汇总）</div>
           <div v-if="participantSummary.rows.length" class="an__kpis">
             <MetricCard
               v-for="k in participantSummary.rows"
@@ -629,14 +762,6 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
               :tone="k.tone"
             />
           </div>
-
-          <p class="an__note">
-            原型这一格是<strong>逐人</strong>一行：谁领了几道、还有几道在做、活跃还是不活跃。真版没有这一层 ——
-            `/analytics/participants` 只回聚合的报名与完成情况，<strong>不返回成员名单</strong>，
-            所以「领取数」「在做的」「活跃 / 不活跃」这三列没有来源。这一格只画接口真有的那一层
-            （报名与完成的主体数），不照原型编一张人表。逐人的明细真平台上只有一份带审计日志的 CSV
-            导出，不是这一屏该去拉的东西。
-          </p>
         </PanelCard>
       </div>
 
@@ -682,9 +807,9 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
       <p class="an__foot">
         这一屏的数字按<strong>主体</strong>算（个人或一支小队各算一个），窗口是接口自己给的那一段（默认最近 180
         天，题目按创建时间落在里面）。
-        「题目」与「出题人」两格逐行都是接口给的；「参与者」那一格<strong>只有聚合</strong>：
-        「谁领了几道、还在不在做」接口不返回，那几列就不画。
-        「领了没动」也只有<strong>题</strong>这一层的条数，逐人的名单接口同样不返回 —— 少画，不编。
+        「题目」「参与者」「出题人」三格逐行都是接口给的；参与者那张人表里，一个人的状态由
+        <strong>提交与评审</strong>算出来（判过且通过＝通过，交了没判＝在做），不看报名表上那份完成状态。
+        「领了没动」是<strong>逐条领取</strong>的名单，口径 14 天。
         要逐人翻明细，走老树那九页（一页没删，仍在老地址上服务）：
         <router-link :to="{ name: 'SpacesDetailAnalytics', params: { spaceId } }" class="an__link">
           打开老版九页分析
@@ -828,6 +953,10 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
   border-top: none;
 }
 
+.mini__who {
+  font-weight: 600;
+}
+
 .mini__title {
   overflow: hidden;
   color: rgba(var(--v-theme-on-surface), 0.8);
@@ -875,6 +1004,20 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
   font-variant-numeric: tabular-nums;
 }
 
+/* 领取那一列里「/ 上限」那一截：上限是次要信息，压淡一点。 */
+.an__cap {
+  color: rgba(var(--v-theme-on-surface), 0.45);
+  font-size: 0.72rem;
+}
+
+/* 一张面板里换一组东西时的小标题（参与者：逐人表 → 报名与完成的汇总）。 */
+.an__subhead {
+  margin: 18px 0 10px;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 /* 题目名底下那一行小字（分类）。 */
 .an__sub {
   color: rgba(var(--v-theme-on-surface), 0.45);
@@ -903,25 +1046,6 @@ const stalledCount = computed(() => alerts.value?.stalledTaskCount ?? 0)
 
 .tone-muted {
   color: rgba(var(--v-theme-on-surface), 0.5);
-}
-
-/* 「领了但没动的」那一格：一个大数 + 口径。数在这里只说明量级，口径才是这一格的内容。 */
-.stalled {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-}
-
-.stalled__num {
-  font-size: 1.9rem;
-  font-weight: 650;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-
-.stalled__unit {
-  color: rgba(var(--v-theme-on-surface), 0.55);
-  font-size: 0.85rem;
 }
 
 .an__foot {

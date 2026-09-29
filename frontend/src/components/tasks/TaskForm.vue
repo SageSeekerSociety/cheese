@@ -57,18 +57,32 @@
           </v-col>
 
           <v-col cols="12" md="6">
-            <v-text-field
-              v-model.number="participantLimit"
-              :label="submitterType === 'TEAM' ? '队伍数量限制' : '参与者人数限制'"
-              type="number"
-              min="1"
-              v-bind="participantLimitProps"
-              :hint="t('tasks.form.participantLimitHint')"
-            >
-              <template #append-inner>
-                <v-icon size="small" color="primary">mdi-account-group</v-icon>
-              </template>
-            </v-text-field>
+            <div class="d-flex align-center">
+              <v-text-field
+                v-model.number="participantLimit"
+                :label="submitterType === 'TEAM' ? '队伍数量限制' : '参与者人数限制'"
+                type="number"
+                min="1"
+                :disabled="participantLimitUnlimited"
+                v-bind="participantLimitProps"
+                :hint="t('tasks.form.participantLimitHint')"
+                class="flex-grow-1"
+              >
+                <template #append-inner>
+                  <v-icon size="small" color="primary">mdi-account-group</v-icon>
+                </template>
+              </v-text-field>
+              <!-- 「不限」是把输入框里的数**去掉**（不填 = 不限），可手删拿到的空串会被
+                   校验当成填错，所以那条路走不通；这个勾给出一条走得通的，并且把框锁上
+                   —— 锁上之后就看得见「这个数现在不算数」。 -->
+              <v-checkbox
+                v-model="participantLimitUnlimited"
+                label="不限"
+                density="compact"
+                hide-details
+                class="ms-4 flex-grow-0"
+              />
+            </div>
           </v-col>
 
           <!-- 小队人数限制 -->
@@ -786,7 +800,9 @@ const { handleSubmit, defineField, isSubmitting, values } = useForm({
     minTeamSize: props.initialData?.minTeamSize ?? 1,
     maxTeamSize: props.initialData?.maxTeamSize ?? 10,
     defaultDeadline: props.initialData?.defaultDeadline ?? 30,
-    participantLimit: props.initialData?.participantLimit ?? null,
+    // `||` 而不是 `??`：0 在这个表单里与「没有」是同一件事（后端不限时存的是 `null`，
+    // 老行里可能是 0），留着它反而会被下面那条 `min(1)` 判成填错。
+    participantLimit: props.initialData?.participantLimit || null,
     teamLockingPolicy: props.initialData?.teamLockingPolicy ?? 'NO_LOCK',
     accessControlEnabled: props.initialData?.accessControlEnabled ?? false,
     accessDomainGroupIds: props.initialData?.accessDomainGroupIds ?? [],
@@ -810,6 +826,19 @@ const [teamLockingPolicy, teamLockingPolicyProps] = defineField('teamLockingPoli
 const [accessControlEnabled, accessControlEnabledProps] = defineField('accessControlEnabled', vuetifyConfig)
 const [accessDomainGroupIds, accessDomainGroupIdsProps] = defineField('accessDomainGroupIds', vuetifyConfig)
 const [videoUrl, videoUrlProps] = defineField('videoUrl', vuetifyConfig)
+
+// 「不限」那一勾。不是表单字段（不进 zod、不进 payload）：它只描述旁边那个数现在算不算数。
+// 勾上 = 把那个数放回初始的那份 `null`（这个表单里「不填」就是不限，`min(1)` 那条只管
+// 填了的值），并把输入框锁上 —— 交出去的 payload 与「从头就没填过」一模一样
+// （`participantLimit` 那一项是 `undefined`，见 `submitFormData`）。
+//
+// 默认只在**改一道本来就上限为空的题**时勾上：那是它真实的状态（`null`，老行里也可能
+// 是 0）。新发一道题不勾 —— 与原型那张卡一样，框空着、想设上限直接填。
+const participantLimitUnlimited = ref(props.isEditing && !((props.initialData?.participantLimit ?? 0) > 0))
+
+watch(participantLimitUnlimited, (unlimited) => {
+  if (unlimited) participantLimit.value = null
+})
 
 const domainGroupItems = computed(
   () => props.domainGroups?.map((g) => ({ title: g.name, value: g.id, subtitle: g.domains.join(', ') })) ?? []

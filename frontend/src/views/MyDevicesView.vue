@@ -2,11 +2,14 @@
 // 「我的设备 / Agent」(P3 Phase B item 4): the machines the signed-in human enrolled
 // via the device flow. List them with liveness, rename/unbind, and open the 现场 of any
 // agent (screen) currently running on them — a read-only real terminal in the browser.
+import type { MenuAction } from '../components/common/menuAction'
 import type { DeviceScreen, MyDevice, MyTeam } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
+import AdaptiveMenu from '../components/common/AdaptiveMenu.vue'
 import PageAction from '../components/common/PageAction.vue'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
 import {
@@ -161,6 +164,16 @@ async function saveRename(d: MyDevice) {
 const unbindTarget = ref<MyDevice | null>(null)
 const unbinding = ref(false)
 
+// 手机上一台设备的操作（改名、解绑）收进行尾的 ⋯（底部面板）：名字旁那颗小铅笔和
+// 行尾的「解绑」都比手指小，挨着「在线」两个字也容易按错。
+const { mdAndUp } = useDisplay()
+function deviceActions(d: MyDevice): MenuAction[] {
+  return [
+    { key: 'rename', label: '重命名', icon: 'mdi-pencil-outline', onSelect: () => startRename(d) },
+    { key: 'unbind', label: '解绑', icon: 'mdi-link-variant-off', danger: true, onSelect: () => askUnbind(d) },
+  ]
+}
+
 function askUnbind(d: MyDevice) {
   unbindTarget.value = d
 }
@@ -291,14 +304,34 @@ onMounted(load)
             </template>
             <template v-else>
               <span class="t-title">{{ d.name }}</span>
-              <v-btn variant="text" size="x-small" icon="mdi-pencil" class="ml-1" @click="startRename(d)" />
+              <v-btn
+                v-if="mdAndUp"
+                variant="text"
+                size="x-small"
+                icon="mdi-pencil"
+                class="ml-1"
+                @click="startRename(d)"
+              />
             </template>
 
             <v-spacer />
             <span class="t-caption mr-3" :class="d.online ? 'text-success font-weight-medium' : 'c-muted'">
               {{ d.online ? '在线' : '离线' }}
             </span>
-            <v-btn variant="text" size="small" color="error" @click="askUnbind(d)"> 解绑 </v-btn>
+            <v-btn v-if="mdAndUp" variant="text" size="small" color="error" @click="askUnbind(d)"> 解绑 </v-btn>
+            <AdaptiveMenu v-else :actions="deviceActions(d)" :title="d.name">
+              <template #activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  icon="mdi-dots-horizontal"
+                  size="small"
+                  variant="text"
+                  color="on-surface-variant"
+                  class="tap-target"
+                  aria-label="更多操作"
+                />
+              </template>
+            </AdaptiveMenu>
           </div>
 
           <!-- A device is pure compute (算力节点), not an agent. Which agents run on it

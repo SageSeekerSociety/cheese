@@ -187,6 +187,10 @@ PRIVATE_SKILLS = ["private-chat"]
 
 CHEESE_AUTHOR = "cheese"
 
+#: How many rooms replay their sessions' backlog at once. Each replay writes
+#: what it lands to the database, which the turns running meanwhile share.
+REPLAYS_AT_ONCE = 4
+
 logger = logging.getLogger(__name__)
 
 
@@ -1416,6 +1420,11 @@ class ChatService:
         # Strong refs to in-flight background tasks (asyncio only keeps weak
         # refs; without this a pending commit could be GC'd).
         self._background_tasks: set[asyncio.Task] = set()
+        # Each room's replay of what its sessions said while nobody listened
+        # (`recover_sessions`), for as long as it runs. A turn in the room waits
+        # for it (`replaying`); nothing else does.
+        self._replays: dict[uuid.UUID, asyncio.Task] = {}
+        self._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
 
     @property
     def session_factory(self) -> async_sessionmaker:
@@ -2470,16 +2479,28 @@ class ChatService:
         deadline = time.monotonic() + timeout_s
         while any(self._pending_receipts.values()) and time.monotonic() < deadline:
             await asyncio.sleep(0.2)
+        # A replay still running reads its sessions too; the next process
+        # replays them again from where this one landed.
+        replays = list(self._replays.values())
+        for replay in replays:
+            replay.cancel()
+        await asyncio.gather(*replays, return_exceptions=True)
         await self._compute.stop_listening()
 
     async def recover_sessions(self, device_id: str | None = None) -> int:
-        """Listen again to sessions that outlived this process, and land what
-        they said while nobody was.
+        """Listen again to sessions that outlived this process, and start
+        landing what they said while nobody was.
 
         Two calls to the runtime, and the split is deliberate: ``recover``
         establishes that we are listening, ``replay`` hands over the tail. What
         the room already shows is ours to supply; which of the harness's own
         records are still unlanded is its.
+
+        Returns once every session is listened to and its turn's bookkeeping is
+        back, which is all a turn elsewhere needs. The replays go on in the
+        background, a room at a time (``replaying``): a session that was not
+        read for a day can take longer to replay than this process stays up,
+        and waiting for it held every room's turns, not only its own.
         """
         sessions = await self._compute.recover_sessions(device_id)
         # One per seat, not per room: teammates in one room run side by side,
@@ -2488,16 +2509,17 @@ class ChatService:
         unique = {
             (session.topic_id, session.agent_handle): session for session in sessions
         }
+        rooms: dict[uuid.UUID, list[SessionRef]] = {}
         for session in unique.values():
-            try:
-                # A turn still running there was fed by a process that is gone,
-                # and its result lands here. Without its bookkeeping that result
-                # closes nothing: the batch it answered is never stamped
-                # consumed, and the next turn sends it again.
-                work = self._compute.work_in_flight(
-                    session.topic_id, session.agent_handle or None
-                )
-                if work is not None and (session.topic_id, work) not in self._hook_work:
+            # A turn still running there was fed by a process that is gone,
+            # and its result lands here. Without its bookkeeping that result
+            # closes nothing: the batch it answered is never stamped
+            # consumed, and the next turn sends it again.
+            work = self._compute.work_in_flight(
+                session.topic_id, session.agent_handle or None
+            )
+            if work is not None and (session.topic_id, work) not in self._hook_work:
+                try:
                     await self._begin_self_started_turn(
                         session.project_id,
                         session.topic_id,
@@ -2505,34 +2527,75 @@ class ChatService:
                         opened=True,
                         agent_handle=session.agent_handle or None,
                     )
-                # What the room already shows, so a message the live path DID
-                # persist before this process died is not landed twice. The room
-                # is ours; which of the harness's own records are still unlanded
-                # is the harness's.
-                await self._compute.replay(
-                    session, known_texts=await self._said(session)
-                )
-            except DeviceOffline:
-                # The machine holding this session is not there. Nothing to
-                # recover and nothing to fix; its next connection runs this.
-                logger.warning(
-                    "session not recovered for topic %s: device offline",
-                    session.topic_id,
-                )
-            except DeviceCallError as exc:
-                # The machine is there and said no — its runner's socket is not
-                # up yet (a cold one takes about a minute), or the room's home
-                # is gone. Same standing as the machine being away: the next
-                # connection recovers this session, and the machine's own words
-                # are what somebody reading this would act on.
-                logger.warning(
-                    "session not recovered for topic %s: %s", session.topic_id, exc
-                )
-            except Exception:  # noqa: BLE001 — one topic cannot block startup
-                logger.exception(
-                    "session recovery failed for topic %s", session.topic_id
-                )
+                except Exception:  # noqa: BLE001 — one topic cannot block startup
+                    logger.exception(
+                        "session recovery failed for topic %s", session.topic_id
+                    )
+                    continue
+            rooms.setdefault(session.topic_id, []).append(session)
+        for topic_id, seats in rooms.items():
+            # A device reconnecting while its room still replays: the new
+            # replay starts where that one stops, not beside it.
+            replay = asyncio.create_task(
+                self._replay_room(seats, after=self._replays.get(topic_id)),
+                name=f"replay:{topic_id}",
+            )
+            self._replays[topic_id] = replay
+            replay.add_done_callback(self._replayed)
         return len(unique)
+
+    def _replayed(self, replay: asyncio.Task) -> None:
+        for topic_id, current in list(self._replays.items()):
+            if current is replay:
+                del self._replays[topic_id]
+
+    def replaying(self, topic_id: uuid.UUID) -> asyncio.Task | None:
+        """The replay a turn in this room has to wait for, if one is running."""
+        replay = self._replays.get(topic_id)
+        return None if replay is None or replay.done() else replay
+
+    async def replays_settled(self) -> None:
+        """Wait until no room is replaying."""
+        while self._replays:
+            await asyncio.gather(*self._replays.values(), return_exceptions=True)
+
+    async def _replay_room(
+        self, seats: list[SessionRef], *, after: asyncio.Task | None
+    ) -> None:
+        if after is not None:
+            await asyncio.gather(after, return_exceptions=True)
+        async with self._replay_slots:
+            for session in seats:
+                try:
+                    # What the room already shows, so a message the live path
+                    # DID persist before this process died is not landed twice.
+                    # The room is ours; which of the harness's own records are
+                    # still unlanded is the harness's.
+                    await self._compute.replay(
+                        session, known_texts=await self._said(session)
+                    )
+                except DeviceOffline:
+                    # The machine holding this session is not there. Nothing to
+                    # recover and nothing to fix; its next connection runs this.
+                    logger.warning(
+                        "session not recovered for topic %s: device offline",
+                        session.topic_id,
+                    )
+                except DeviceCallError as exc:
+                    # The machine is there and said no — its runner's socket is
+                    # not up yet (a cold one takes about a minute), or the room's
+                    # home is gone. Same standing as the machine being away: the
+                    # next connection recovers this session, and the machine's
+                    # own words are what somebody reading this would act on.
+                    logger.warning(
+                        "session not recovered for topic %s: %s",
+                        session.topic_id,
+                        exc,
+                    )
+                except Exception:  # noqa: BLE001 — one topic cannot block startup
+                    logger.exception(
+                        "session recovery failed for topic %s", session.topic_id
+                    )
 
     async def _said(self, session: SessionRef) -> set[str]:
         """What 芝士 has already said in this topic, as the room stores it."""
@@ -4085,11 +4148,21 @@ class ChatService:
         project: Project,
         agent_handle: str | None,
     ) -> ResolvedAgent:
-        """The agent a known session belongs to, else the room's answer."""
+        """The agent a known session belongs to, else the room's answer.
+
+        ``agent_handle`` is the agent's own handle, or the seat it acts under:
+        the output a session produces by itself is stamped by its runner with
+        the seat, and read as a handle that names no agent it gave the turn to
+        the project's default — whose session then received, or was opened for,
+        what was said to the one actually working.
+        """
         if agent_handle:
             try:
                 return agents.resolved(await agents.for_handle(project, agent_handle))
             except NotFoundError:
+                seated = await agents.for_seat_handle(project, agent_handle)
+                if seated is not None:
+                    return seated
                 logger.warning(
                     "session agent %r is not in project %s; using the room's",
                     agent_handle,
@@ -6781,9 +6854,9 @@ async def person_mentions(
         # 成 <@cheese>。谁坐在这间房里，谁先答。
         # 这是同一次读的一个渲染顺序，不是第二份名册——和 `roster_rows()`
         # 的定位一致。
+        seated = set(agent_handles)
         if roster and agent_handles:
             row_of = {row["handle"]: row for row in roster}
-            seated = set(agent_handles)
             roster = [
                 row_of[handle]
                 if handle in row_of
@@ -6797,6 +6870,13 @@ async def person_mentions(
                 }
                 for handle in agent_handles
             ] + [row for row in roster if row["handle"] not in seated]
+        # An AI teammate answers to its name only in a room it sits in. One
+        # that does not is not addressed by an @ here (``addressed`` reads the
+        # seats), so its name stays the words a person typed rather than a
+        # chip that looks like it summoned someone.
+        roster = [
+            row for row in roster if not row.get("agent") or row["handle"] in seated
+        ]
         if roster:
             topic_refs = [
                 {"id": str(t.id), "title": t.title}

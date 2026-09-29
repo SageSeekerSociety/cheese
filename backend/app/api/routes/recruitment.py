@@ -172,8 +172,8 @@ async def _viewer_team_ids(db, viewer_id: int | None) -> set[int]:
 @router.get("/recruitment", summary="Browse Recruitment Plaza")
 async def list_recruitment_posts(
     keyword: str | None = Query(default=None),
-    page_start: int | None = Query(default=None, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
     viewer_id: int | None = Depends(get_optional_user_id),
     service: RecruitmentService = Depends(_get_recruitment_service),
     db=Depends(get_db),

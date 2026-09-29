@@ -260,6 +260,11 @@
       "more": "更多",
       "focus": "专注模式",
       "exitFocus": "退出专注模式",
+      "rename": "重命名",
+      "renameTitle": "重命名话题",
+      "topicName": "话题名称",
+      "archive": "归档",
+      "unarchive": "取消归档",
       "usage": "用量",
       "thisTopic": "本话题",
       "wholeProject": "全项目",
@@ -312,11 +317,15 @@
     "message": {
       "copy": "复制",
       "copied": "已复制",
+      "selectText": "选择文字",
       "edit": "编辑",
       "edited": "已编辑",
       "save": "保存",
       "cancel": "取消",
-      "saveFailed": "保存失败"
+      "saveFailed": "保存失败",
+      "reply": "回复",
+      "react": "添加表情",
+      "upgrade": "转为话题"
     },
     "outbox": {
       "failed": "发送失败：{reason}",
@@ -342,7 +351,9 @@
     },
     "checklist": {
       "updatedAt": "清单更新于 {time}"
-    }
+    },
+    "backToChat": "返回对话",
+    "unselected": "选择一个话题"
   },
   "members": {
     "leave": "退出项目",

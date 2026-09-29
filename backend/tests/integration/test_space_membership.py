@@ -760,6 +760,7 @@ class TestSideDoors:
         "/analytics/alerts",
         "/analytics/publishers",
         "/analytics/participants",
+        "/analytics/people",
         "/analytics/tasks",
         "/me/publishing",
         "/me/participating",

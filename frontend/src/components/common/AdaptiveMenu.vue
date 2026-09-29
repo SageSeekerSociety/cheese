@@ -69,6 +69,9 @@ const sheetActivator = () => ({
           <v-icon size="18" class="adaptive-menu__icon" aria-hidden="true">{{ action.icon }}</v-icon>
         </template>
         <v-list-item-title>{{ action.label }}</v-list-item-title>
+        <template v-if="action.badge" #append>
+          <span class="adaptive-menu__badge">{{ action.badge }}</span>
+        </template>
       </v-list-item>
     </v-list>
   </v-menu>
@@ -84,6 +87,13 @@ const sheetActivator = () => ({
 .adaptive-menu__icon {
   margin-inline-end: 12px;
   color: var(--muted);
+}
+.adaptive-menu__badge {
+  margin-inline-start: 12px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 .adaptive-menu__item--danger :deep(.v-list-item-title),
 .adaptive-menu__item--danger .adaptive-menu__icon {

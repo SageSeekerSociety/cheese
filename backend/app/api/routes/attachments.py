@@ -30,6 +30,7 @@ from fastapi.responses import Response
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.config import settings
 from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
@@ -126,6 +127,33 @@ async def upload_attachment(
         "code": 201,
         "message": "Attachment uploaded successfully",
         "data": {"id": attachment.id, "url": attachment.url, "type": attachment.type},
+    }
+
+
+@router.get(
+    "/limits",
+    summary="Attachment Upload Limits",
+)
+async def get_attachment_limits(
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    """What an upload will be refused for — asked before the upload, not after.
+
+    Declared above ``/{attachmentId}`` on purpose: paths match in registration
+    order, and a literal segment parked after a path parameter is unreachable.
+
+    The number is read from the same setting the upload itself reads
+    (``settings.attachment_max_bytes``, enforced in ``AttachmentService.upload``),
+    so this cannot drift from what is actually enforced unless someone reports a
+    second source — which is the thing this route exists to prevent.
+
+    Same door as the upload: ``require_auth_user``, nothing else. A signed-in
+    person learns the shape of an upload they are about to make; nobody else.
+    """
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"maxFileBytes": settings.attachment_max_bytes},
     }
 
 

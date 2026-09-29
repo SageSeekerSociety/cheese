@@ -108,9 +108,7 @@ def test_ci_service_images_do_not_depend_on_docker_hub():
     # settings do not depend on which kind of runner they land on.
     for filename, job_name in (("test.yml", "test"), ("e2e.yml", "e2e")):
         job = load_workflow(filename)["jobs"][job_name]
-        for service_name, service in job.get("services", {}).items():
-            if service_name == "meilisearch":
-                continue  # Search has its own optional service, not a resident pair.
+        for service in job.get("services", {}).values():
             assert service["image"].startswith(MIRROR), service["image"]
             assert "@sha256:" in service["image"], service["image"]
             assert service["image"] in images, service["image"]

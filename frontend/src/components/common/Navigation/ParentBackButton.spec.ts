@@ -5,7 +5,9 @@ import { createVuetify } from 'vuetify'
 import { VBtn, VIcon } from 'vuetify/components'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { topBarBack } from '../topBarBack'
 
 import ParentBackButton from './ParentBackButton.vue'
 
@@ -287,5 +289,28 @@ describe('只在手机上是一层的页面', () => {
     await router.push('/my/devices')
     const view = await mount(router)
     expect(back(view)).toBeNull()
+  })
+})
+
+// 页面里还有一层比路由更近的「上一步」时（手机上话题里从别的页签回到对话），页面
+// 接管这颗 ←；桌面上没有这一层，照旧回路由声明的上一层。
+describe('页面接管 ←', () => {
+  afterEach(() => (topBarBack.value = null))
+
+  it('手机上点 ← 走页面给的那一步，不离开这一页', async () => {
+    widthIs(PHONE)
+    const onBack = vi.fn()
+    topBarBack.value = { label: '返回对话', onBack }
+    const { router, getByRole } = await open('/projects/project-a/topics/topic-b')
+    await fireEvent.click(getByRole('button', { name: '返回对话' }))
+    expect(onBack).toHaveBeenCalledOnce()
+    expect(router.currentRoute.value.path).toBe('/projects/project-a/topics/topic-b')
+  })
+
+  it('桌面上照旧回上一层', async () => {
+    const onBack = vi.fn()
+    topBarBack.value = { label: '返回对话', onBack }
+    const view = await open('/projects/project-a/topics/topic-b')
+    expect(back(view)?.getAttribute('href')).toBe('/projects/project-a')
   })
 })

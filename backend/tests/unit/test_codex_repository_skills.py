@@ -2,10 +2,14 @@
 
 Plain Codex, opened in a repository, lists the skills in its `.agents/skills`
 and `.codex/skills`, injects one a message names with `$`, and notices one
-added, edited or removed while it runs. A room's Codex runs on the session
-host, away from the project, so this plays those against the real pinned
-binary launched as a room launches it (`host.configure`), with the project
-served by a real executor on the machine that holds it.
+added, edited or removed while it runs. A room also gives every session the
+platform's own skills, as it does on Claude Code and pi; Codex finds them as a
+user-level root, and lists one beside a repository skill of the same name, as
+plain Codex lists a user skill and a repository skill of one name. A room's
+Codex runs on the session host, away from the project, so this plays those
+against the real pinned binary launched as a room launches it
+(`host.configure`), with the project served by a real executor on the
+machine that holds it.
 """
 
 import asyncio
@@ -23,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.codex.bundle import build
 from app.domain.agent.harness.codex.host import configure
 from app.domain.agent.harness.driven.runner import socket_path
@@ -31,6 +36,24 @@ from tests.support import executor_release
 
 #: Printed only by a command that ran on the machine holding the project.
 MACHINE_MARK = "SKILL_FIXTURE_ON_THE_MACHINE"
+
+
+#: The platform's skills as a room's launch carries them (`session_skill_files`).
+PLATFORM = {
+    "skills/documents/SKILL.md": (
+        "---\nname: documents\ndescription: Office files. PLATFORMDOC_LISTED.\n---\n"
+        "PLATFORMDOC_BODY. See references/word.md; run scripts/where.py.\n"
+    ),
+    "skills/documents/references/word.md": "PLATFORM_REFERENCE\n",
+    "skills/documents/scripts/where.py": (
+        f'import os\nprint("PLATFORM_SCRIPT", os.environ.get("{MACHINE_MARK}"))\n'
+    ),
+    # Named like the repository's own skill.
+    "skills/greet/SKILL.md": (
+        "---\nname: greet\ndescription: The platform greets. PLATFORMGREET_LISTED.\n"
+        "---\nPLATFORMGREET_BODY\n"
+    ),
+}
 
 
 def skill(directory: Path, name: str, description: str, body: str) -> None:
@@ -137,6 +160,9 @@ def machine(tmp_path):
     state = home / ".cheese/executor"
     work = tmp_path / "the project"
     project(work)
+    # Where a room's launch plants the platform's skills on the machine, and
+    # the config dir its executor runs with.
+    bootstrap.plant_native_skills(home / ".claude", PLATFORM)
     subprocess.run(
         [sys.executable, str(helper), "start", "--state", str(state)],
         input=json.dumps(
@@ -151,6 +177,7 @@ def machine(tmp_path):
         capture_output=True,
         check=True,
         timeout=30,
+        env={**os.environ, "CLAUDE_CONFIG_DIR": str(home / ".claude")},
     )
     target = {
         "command": [sys.executable, str(helper)],
@@ -181,6 +208,7 @@ async def test_a_repositorys_skills_work_in_a_codex_room(tmp_path, machine):
             "opening": {"system_prompt": "ROOM"},
             "mcp_servers": [],
             "binary": shutil.which("codex"),
+            "skills": PLATFORM,
         },
         "codex_config": (
             'model = "gpt-5.3-codex"\nmodel_provider = "fixture"\n'
@@ -249,11 +277,13 @@ async def test_a_repositorys_skills_work_in_a_codex_room(tmp_path, machine):
             ]
         )
 
-    def root(requests, of):
-        """The directory the skill list names for `of`'s skill root."""
+    def root(requests, of, marker):
+        """The directory the skill list names for the root of the skill `of`
+        whose description carries `marker`."""
         roots = dict(re.findall(r"`(r\d+)` = `([^`]+)`", offered(requests)))
         (alias,) = re.findall(
-            rf"- {of}: .*?\(file: (r\d+)/{of}/SKILL.md\)", offered(requests)
+            rf"- {of}: [^\n]*?{marker}[^\n]*?\(file: (r\d+)/{of}/SKILL.md\)",
+            offered(requests),
         )
         return roots[alias]
 
@@ -265,7 +295,22 @@ async def test_a_repositorys_skills_work_in_a_codex_room(tmp_path, machine):
             assert "TIDY_LISTED" in listing
             assert "OTHER_LISTED" not in listing
             assert "DEEP_LISTED" not in listing
-            greet = root(first, "greet")
+            greet = root(first, "greet", "Greets the reader")
+
+            # The platform's skills, and both skills named greet.
+            assert "PLATFORMDOC_LISTED" in listing
+            assert "PLATFORMGREET_LISTED" in listing
+            documents = root(first, "documents", "PLATFORMDOC_LISTED")
+            read = await turn(do("Read", file_path=f"{documents}/documents/SKILL.md"))
+            assert "PLATFORMDOC_BODY" in handed_back(read)
+            read = await turn(
+                do("Read", file_path=f"{documents}/documents/references/word.md")
+            )
+            assert "PLATFORM_REFERENCE" in handed_back(read)
+            ran = await turn(
+                do("Bash", command=f'python3 "{documents}/documents/scripts/where.py"')
+            )
+            assert f"PLATFORM_SCRIPT {MACHINE_MARK}" in handed_back(ran)
 
             # The skill's own file and a file beside it, at the paths the list
             # gave, through the room's file tool.

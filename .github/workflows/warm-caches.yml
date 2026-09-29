@@ -1,0 +1,176 @@
+name: Warm dependency caches
+
+# Required CI runs in pull requests and the merge queue, never on main. A cache
+# saved from a pull-request or merge-queue ref is visible to that ref alone,
+# while one saved on main is visible to every ref, so the suites only restore
+# and this workflow is the one place their dependency caches are saved. Each
+# job installs dependencies the way its suite does, under the suite's exact
+# key, and runs no tests. A key that already exists is left as it is.
+#
+# Keys, and the suites that restore them:
+#   backend uv (setup-uv inputs)       test.yml, harness-contract.yml, remote-execution.yml
+#   npm-harness-pins-*                 test.yml, harness-contract.yml
+#   pre-commit uv (setup-uv inputs)    repo-guards.yml
+#   npm-remote-execution-*             mcp-contract.yml
+#   go-*                               cli.yml
+#   pnpm-hosted-v2-*                   frontend.yml
+# Changing a key or an install step in one of those suites means changing it
+# here in the same PR.
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/uv.lock
+      - .pre-commit-config.yaml
+      - backend/app/domain/agent/harness/claude_code/device_launch.py
+      - backend/app/domain/agent/harness/claude_code/remote_execution/client.py
+      - backend/app/domain/agent/harness/codex/**
+      - scripts/remote_execution/package-lock.json
+      - cli/go.mod
+      - cli/go.sum
+      - frontend/pnpm-lock.yaml
+      - frontend/package.json
+      - .github/workflows/warm-caches.yml
+  # Re-saves a key that eviction removed while no dependency changed.
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-caches
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          save-cache: true
+
+      - name: Install Python and dependencies
+        working-directory: backend
+        run: |
+          uv python install 3.13
+          uv sync --frozen --all-extras
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
+
+      # The same packages test.yml and scripts/test_harness_contracts.py install.
+      - name: Download the pinned harness binaries
+        working-directory: backend
+        run: |
+          packages="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX
+          pins = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(f"@anthropic-ai/claude-code@{pins[CLAUDE_CODE]} @openai/codex@{pins[CODEX]}")
+          PY
+          )"
+          read -r -a pinned_packages <<< "$packages"
+          npm install --prefix "$RUNNER_TEMP/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
+
+  guards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          enable-cache: true
+          cache-dependency-glob: .pre-commit-config.yaml
+          prune-cache: false
+          save-cache: true
+      - name: Install pre-commit the way repo-guards.yml runs it
+        run: uvx pre-commit --version
+
+  remote-execution-npm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-remote-execution-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/remote_execution/package-lock.json') }}
+      - name: Install scripts/remote_execution the way mcp-contract.yml does
+        run: npm ci --prefix scripts/remote_execution --no-audit --no-fund
+
+  go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: cli/go.mod
+          cache: false
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cli/go.mod', 'cli/go.sum') }}
+          restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
+      # Builds what cli.yml builds; `-run '^$'` compiles the test binaries and
+      # runs none of them.
+      - name: Build the module, its vet targets and its test binaries
+        run: |
+          go mod download
+          go build ./...
+          go vet ./...
+          GOOS=windows GOARCH=amd64 go vet ./...
+          go test -race -run '^$' ./...
+          go test -tags claudee2e -run '^$' ./e2e/
+
+  pnpm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Enable corepack
+        run: corepack enable
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}/.pnpm-store
+          key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install dependencies the way frontend.yml does
+        run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
