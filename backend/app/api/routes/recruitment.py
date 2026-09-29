@@ -134,7 +134,7 @@ async def _load_maps_for_posts(
 async def list_recruitment_posts(
     keyword: str | None = Query(default=None),
     page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     service: RecruitmentService = Depends(_get_recruitment_service),
     db=Depends(get_db),
 ) -> dict:

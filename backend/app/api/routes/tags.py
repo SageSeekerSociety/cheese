@@ -36,7 +36,7 @@ async def get_tag_service(db=Depends(get_db)) -> TagService:
 async def list_tags(
     q: str | None = Query(default=None),
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=50, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=50, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TagService = Depends(get_tag_service),
 ) -> dict:

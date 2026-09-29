@@ -56,7 +56,7 @@ async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
 async def list_answers(
     question_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
@@ -161,7 +161,7 @@ async def list_answer_comments(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     sort_by: str = Query(default="createdAt"),
     sort_order: str = Query(default="asc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),

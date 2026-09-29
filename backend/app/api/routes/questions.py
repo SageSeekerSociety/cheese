@@ -112,7 +112,7 @@ async def get_popular_search_terms(
 async def search_questions(
     q: str | None = Query(default=None),
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
@@ -179,7 +179,7 @@ async def add_question(
 )
 async def list_followed_questions(
     pageStart: int | None = Query(default=None, ge=0, alias="page_start"),
-    pageSize: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    pageSize: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
@@ -327,7 +327,7 @@ async def get_question_votes(
 async def list_question_comments(
     question_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     sort_by: str = Query(default="createdAt"),
     sort_order: str = Query(default="asc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -461,7 +461,7 @@ async def delete_question(
 async def list_question_followers(
     question_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     follower_ids, page = await service.list_followers(
@@ -564,7 +564,7 @@ async def attitude_question(
 async def list_question_invitations(
     question_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
