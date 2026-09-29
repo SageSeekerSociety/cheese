@@ -589,19 +589,19 @@ creating a database without naming the encoding, which is the rule above.
 `okcheese.com`, `www.okcheese.com` and `hk.okcheese.com` resolve to the etrip
 box (8.217.1.152). Its Caddy owns public :443 with a layer4 router
 ([`scripts/ops/Caddyfile`](../scripts/ops/Caddyfile)) that forwards those names,
-still encrypted, to `127.0.0.1:18443`. That port is the far end of a reverse
-SSH tunnel opened by the dev box, which lands on api-front's TLS listener
-`127.0.0.1:18443` on the dev box (set up by
+still encrypted, to `127.0.0.1:18443` or `127.0.0.1:18444`. Each port is the
+far end of a reverse SSH tunnel opened by the dev box; both land on
+api-front's TLS listener `127.0.0.1:18443` on the dev box (set up by
 `deploy/llm-tunnel/configure-frontend.sh`). The dev box has no public
-inbound, so the site is up exactly while this tunnel is up.
+inbound, so the site is up while at least one tunnel is up.
 
 None of it is deployed by CI. The units below were installed by hand; change
 them by hand, keep a timestamped copy of every file you edit next to it, and
 note the rollback command before you start.
 
-The tunnel travels inside TLS on :443, not as SSH on :22:
+Each tunnel travels inside TLS on :443, not as SSH on :22:
 
-    dev box: ssh -R 127.0.0.1:18443:127.0.0.1:18443
+    dev box: ssh -R 127.0.0.1:18443:127.0.0.1:18443   (second tunnel: 18444)
       -> tls-proxy.py (TLS, SNI relay.okcheese.com, pinned certificate)
       -> etrip :443, Caddy layer4 route for SNI relay.okcheese.com
       -> socat on 127.0.0.1:2222 (terminates that TLS)
@@ -611,18 +611,21 @@ Bare SSH from the dev box's egress to etrip :22 stalls in the key exchange for
 several minutes at a time, several times a day. The TCP connection and the
 server banner still get through, and other hosts reach the same sshd without
 trouble, so neither the host nor the tunnel's keepalive settings are the cause.
-TLS on :443 over the same egress keeps working through those periods.
+TLS on :443 over the same egress keeps working through most of those periods;
+when it does not, both tunnels go down together.
 
 | Box | Path | What it is |
 |---|---|---|
-| dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | the tunnel (enabled) |
-| dev | `/usr/local/libexec/cheese-hk-relay/tls-proxy.py` | the tunnel's `ProxyCommand` |
+| dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | tunnel on 18443 (enabled) |
+| dev | `/etc/systemd/system/cheese-hk-relay-tls443-b.service` | identical tunnel on 18444 (enabled) |
+| dev | `/usr/local/libexec/cheese-hk-relay/tls-proxy.py` | the tunnels' `ProxyCommand` |
 | dev | `/home/nictheboy/.ssh/id_hkrelay`, `relay-okcheese.crt` | login key; the certificate `tls-proxy.py` pins etrip to |
 | dev | `/etc/systemd/system/cheese-hk-relay-tls.service` | previous tunnel, bare SSH on :22; installed but disabled |
 | dev | `/etc/systemd/system/cheese-hk-relay.service` | plain relay to `127.0.0.1:18080`; nothing routes there; installed but disabled |
 | etrip | `/etc/systemd/system/cheese-ssh-relay-tls.service` | socat, TLS on 127.0.0.1:2222 to sshd |
+| etrip | `/etc/systemd/system/cheese-relay-watchdog.service`, `/usr/local/libexec/cheese-hk-relay/relay-watchdog.sh` | frees a port held by a dead tunnel session |
 | etrip | `/etc/ssl/relay/relay.pem` | certificate and key for `relay.okcheese.com` |
-| etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080` and `127.0.0.1:18443` |
+| etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080`, `:18443` and `:18444` |
 | etrip | `/etc/ssh/sshd_config`, last block | `Match User hkrelay`: forwarding only, 10 s × 2 keepalive |
 
 The TLS client is `tls-proxy.py` rather than `openssl s_client`. Used as a
@@ -630,21 +633,41 @@ The TLS client is `tls-proxy.py` rather than `openssl s_client`. Used as a
 few hundred kilobytes flowing through it, which turns every page load into a
 reconnect.
 
-The unit restarts after 5 s, with no growing backoff: systemd never resets its
-restart-step counter after a healthy run, so a backoff would add its maximum
-to every later reconnect. Every login that stalls holds one of etrip sshd's
-unauthenticated slots for up to two minutes, and once ten are held sshd starts
-refusing new connections, the tunnel's included. One attempt every 25 s or so
-stays under that.
+Why two tunnels and a watchdog: when a tunnel's path dies, etrip's sshd can
+keep its port bound for minutes. OpenSSH sends a ClientAlive probe only after
+a full `ClientAliveInterval` with no activity on the session, and the
+connections Caddy forwards into the port keep it busy, so the 10 s × 2
+keepalive never fires. The session ends when the TLS connection underneath
+finally errors. Until then the port still accepts connections, which hang, so
+a dial-based health check calls it healthy, and the dev box's tunnel cannot
+bind it again (`remote port forwarding failed for listen port 18443`).
 
-Rollback to the :22 tunnel, on the dev box:
+- Caddy spreads connections over both ports with `least_conn`, so new
+  connections move off a held port as the stuck ones pile up. A port that
+  refuses the dial is marked down for 10 s, and `lb_try_duration` retries the
+  other one.
+- The watchdog sends an HTTPS request through each port every 3 s. After three
+  in a row get no HTTP answer, it kills the `sshd: hkrelay` process holding
+  that port. The port closes, Caddy stops choosing it, and the dev box binds it
+  again on its next attempt, about 25 s after the path died.
 
-    sudo systemctl disable --now cheese-hk-relay-tls443 && sudo systemctl enable --now cheese-hk-relay-tls cheese-hk-relay
+Each tunnel restarts after 5 s, with no growing backoff: systemd never resets
+its restart-step counter after a healthy run, so a backoff would add its
+maximum to every later reconnect. A login that stalls after TLS is set up holds
+one of etrip sshd's ten unauthenticated slots for up to two minutes; one
+attempt per tunnel every 25 s or so stays under that.
 
-If the new tunnel then logs `remote port forwarding failed for listen port
-18443`, etrip is still holding the port for a session whose connection died.
-It can hold it for many minutes. `sudo ss -ltnp | grep 18443` on etrip names the
-`sshd: hkrelay` process; killing that one process releases the port.
+Rollback, on the dev box. Back to one tunnel:
+
+    sudo systemctl disable --now cheese-hk-relay-tls443-b
+
+Back to bare SSH on :22 (Caddy then sends everything to 18443):
+
+    sudo systemctl disable --now cheese-hk-relay-tls443 cheese-hk-relay-tls443-b && sudo systemctl enable --now cheese-hk-relay-tls cheese-hk-relay
+
+The watchdog frees 18443 for the :22 tunnel as well, since it acts on whatever
+`sshd: hkrelay` process holds the port. By hand: `sudo ss -ltnp | grep 18443`
+on etrip names that process; killing it releases the port.
 
 To check the public path from anywhere, run
 [`scripts/ops/probe-okcheese.sh`](../scripts/ops/probe-okcheese.sh).
