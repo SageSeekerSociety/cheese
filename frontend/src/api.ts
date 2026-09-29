@@ -1474,6 +1474,8 @@ export interface Integration {
   last_error: string
   last_checked_at: string | null
   user_authorized: boolean
+  /** 用的是平台管理员配的那一个应用，而不是这条连接自己带的凭据。 */
+  shared_app: boolean
 }
 
 export interface MailDraft {
@@ -1501,8 +1503,29 @@ export function connectMail(body: Record<string, unknown>): Promise<Integration>
   return request<Integration>('/me/integrations/mail', { method: 'POST', body: JSON.stringify(body) })
 }
 
-export function connectFeishu(body: Record<string, unknown>): Promise<Integration> {
-  return request<Integration>('/me/integrations/feishu', { method: 'POST', body: JSON.stringify(body) })
+/**
+ * 平台配过飞书应用没有 —— 「连接飞书」那颗按钮亮不亮就是这个问题的答案。
+ *
+ * 没有它的时候按钮是灰的，而灰的原因只有一个：管理员还没填那一次（`/admin/integrations/feishu`）。
+ */
+export interface FeishuAvailability {
+  configured: boolean
+  app_id: string
+  domain: string
+}
+
+export function feishuAvailability(): Promise<FeishuAvailability> {
+  return request<FeishuAvailability>('/me/integrations/feishu')
+}
+
+/**
+ * 「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
+ *
+ * 不带任何正文 —— 应用凭据是平台管理员的，成员这边只出自己的账号。已有的那一行会被
+ * 原样返回（这个动作是幂等的），所以「连接过一半又回来了」不会攒出第二行。
+ */
+export function connectFeishu(): Promise<Integration> {
+  return request<Integration>('/me/integrations/feishu', { method: 'POST' })
 }
 
 export function updateIntegration(id: string, body: Record<string, unknown>): Promise<Integration> {
@@ -1522,6 +1545,38 @@ export function deleteIntegration(id: string): Promise<{ deleted: string }> {
 
 export function feishuAuthorizeUrl(id: string): Promise<{ url: string; redirect_uri: string }> {
   return request<{ url: string; redirect_uri: string }>(`/me/integrations/${encodeURIComponent(id)}/feishu/authorize`)
+}
+
+/* ---- 管理端（`/admin/integrations`）----
+ *
+ * 平台上**唯一**一处飞书应用凭据（`backend/app/api/routes/admin_integrations.py`）。
+ * 成员不再各自去飞书建一个应用，所以这一页是管理员填一次、所有人共用的那一次。
+ *
+ * Secret 只写不回显：读回来的结构里根本没有它，所以 `save` 的空串表示「不改已经存下的
+ * 那一个」，不是「清空」—— 改了域名或 App ID 不必先把它找回来。
+ */
+
+export interface PlatformFeishuApp {
+  configured: boolean
+  app_id: string
+  domain: string
+  updated_by: string
+  updated_at: string | null
+}
+
+export function getPlatformFeishuApp(): Promise<PlatformFeishuApp> {
+  return request<PlatformFeishuApp>('/admin/integrations/feishu')
+}
+
+export function savePlatformFeishuApp(body: {
+  app_id: string
+  app_secret: string
+  domain: string
+}): Promise<PlatformFeishuApp> {
+  return request<PlatformFeishuApp>('/admin/integrations/feishu', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
 }
 
 export function listMyMailDrafts(status: string): Promise<ListPayload<MailDraft>> {

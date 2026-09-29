@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // 我的连接：你自己的邮箱和飞书。AI 队友只在你勾选的项目里用它们，用的是你的账号；
 // 它们写的邮件只进草稿箱，发不发由你在这里看过之后决定。
-import type { Integration, MailDraft } from '../api'
+import type { FeishuAvailability, Integration, MailDraft } from '../api'
 import type { Project } from '../cx_types'
 
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import {
@@ -14,6 +14,7 @@ import {
   deleteIntegration,
   discardMailDraft,
   feishuAuthorizeUrl,
+  feishuAvailability,
   listMyIntegrations,
   listMyMailDrafts,
   listProjects,
@@ -31,6 +32,14 @@ const route = useRoute()
 const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
 const projects = ref<Project[]>([])
+/** 平台管理员配过飞书应用没有。没配时「连接飞书」是灰的 —— 点了必然失败，画成能点
+ *  只会把人送到一句报错上。 */
+const feishu = ref<FeishuAvailability>({ configured: false, app_id: '', domain: '' })
+/** 上面那个问题问到答案没有。读不到时按钮不画灰 —— 没读到不等于没配，而「管理员还没
+ *  配置飞书应用」是一句会被当真的话：宁可让人按下去，由服务端回那句实话。 */
+const feishuKnown = ref(false)
+/** 确定没配：按钮灰着，底下写明为什么。 */
+const feishuMissing = computed(() => feishuKnown.value && !feishu.value.configured)
 const loading = ref(false)
 const error = ref('')
 const notice = ref(typeof route.query.feishu === 'string' ? route.query.feishu : '')
@@ -93,6 +102,13 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // 应用配没配是另一件事，单独问、单独失败：问不到不该把整页的连接一起掀掉。
+  try {
+    feishu.value = await feishuAvailability()
+    feishuKnown.value = true
+  } catch {
+    feishuKnown.value = false
+  }
 }
 
 function replace(row: Integration) {
@@ -127,6 +143,21 @@ async function authorize(row: Integration) {
   if (out) window.location.href = out.url
 }
 
+/**
+ * 「连接飞书」：两跳一步。
+ *
+ * 先要自己那一行（`POST /me/integrations/feishu`），再拿它的授权地址跳去飞书 —— 回调
+ * 要靠行 id 找回它是谁（见 `feishu_callback` 的 `state`），所以顺序不能反过来。这一行
+ * 此刻没有任何凭据：应用是平台管理员的，成员出的是自己的账号。
+ */
+async function connectFeishuAccount() {
+  const row = await act('feishu:connect', () => connectFeishu())
+  if (!row) return
+  if (integrations.value.some((x) => x.id === row.id)) replace(row)
+  else integrations.value = [...integrations.value, row]
+  await authorize(row)
+}
+
 async function remove(row: Integration) {
   removing.value = null
   const out = await act(`${row.id}:delete`, () => deleteIntegration(row.id))
@@ -151,12 +182,9 @@ async function discard(draft: MailDraft) {
 }
 
 // ── 接入 ───────────────────────────────────────────────────────────────────
-const adding = ref<'mail' | 'feishu' | null>(null)
-// 关上的那一下 adding 已经是 null，标题和表单还要照着刚才那一种画完收起的动画。
-const addingKind = ref<'mail' | 'feishu'>('mail')
-watch(adding, (kind) => {
-  if (kind) addingKind.value = kind
-})
+// 只剩邮箱这一张表单。飞书不再有「填 App ID / Secret」这一种接入方式 —— 它是成员点
+// 一下「连接飞书」、跳到飞书授权页那一步（`connectFeishuAccount`），凭据在管理员那边。
+const adding = ref(false)
 const saving = ref(false)
 const formError = ref('')
 const mailForm = reactive({
@@ -171,15 +199,6 @@ const mailForm = reactive({
   security: PRESETS[0].security,
   grants: [] as string[],
 })
-const feishuForm = reactive({
-  label: '飞书',
-  app_id: '',
-  app_secret: '',
-  domain: 'feishu',
-  folders: '',
-  grants: [] as string[],
-})
-
 function applyPreset(title: string) {
   const preset = PRESETS.find((p) => p.title === title)
   if (!preset) return
@@ -196,18 +215,13 @@ async function save() {
   saving.value = true
   formError.value = ''
   try {
-    const row =
-      adding.value === 'mail'
-        ? await connectMail({ ...mailForm, username: mailForm.username || mailForm.address, preset: undefined })
-        : await connectFeishu({
-            ...feishuForm,
-            folders: feishuForm.folders
-              .split(/[\s,，]+/)
-              .map((f) => f.trim())
-              .filter(Boolean),
-          })
+    const row = await connectMail({
+      ...mailForm,
+      username: mailForm.username || mailForm.address,
+      preset: undefined,
+    })
     integrations.value = [...integrations.value, row]
-    adding.value = null
+    adding.value = false
   } catch (e) {
     formError.value = e instanceof Error ? e.message : '没有连上'
   } finally {
@@ -286,15 +300,23 @@ useCommands(() => [
     <section aria-label="连接">
       <div class="connections__head">
         <h2 class="t-section">连接</h2>
-        <div>
-          <v-btn prepend-icon="mdi-email-plus-outline" variant="text" size="small" @click="adding = 'mail'">
+        <div class="connections__add">
+          <v-btn prepend-icon="mdi-email-plus-outline" variant="text" size="small" @click="adding = true">
             接入邮箱
           </v-btn>
-          <v-btn prepend-icon="mdi-link-variant-plus" variant="text" size="small" @click="adding = 'feishu'">
-            接入飞书
+          <v-btn
+            prepend-icon="mdi-link-variant-plus"
+            variant="text"
+            size="small"
+            :disabled="feishuMissing"
+            :loading="busy === 'feishu:connect'"
+            @click="connectFeishuAccount"
+          >
+            {{ t('integrations.member.connect') }}
           </v-btn>
         </div>
       </div>
+      <p v-if="feishuMissing" class="t-meta c-faint mb-2">{{ t('integrations.member.notConfigured') }}</p>
       <p v-if="!integrations.length && !loading" class="t-meta c-faint">还没有接入任何邮箱或飞书</p>
       <ul class="conn-list">
         <li v-for="row in integrations" :key="row.id" class="conn-row" :data-integration="row.id">
@@ -302,6 +324,12 @@ useCommands(() => [
             <div class="conn-row__id">
               <div class="t-body">{{ row.provider === 'mail' ? '邮箱' : '飞书' }} · {{ row.label }}</div>
               <div v-if="row.last_error" class="t-meta c-danger">{{ row.last_error }}</div>
+              <!-- 平台应用那一行在授权回来之前什么也做不了（凭据是管理员的，账号是你的），
+                   所以这里说的是「连结上了没有」，不是「工作正常」—— 上面那枚徽章在授权
+                   之前说的「正常」只到「这一行本身没问题」为止。 -->
+              <div v-else-if="row.shared_app && !row.user_authorized" class="t-meta c-faint">
+                {{ t('integrations.member.notConnected') }}
+              </div>
             </div>
             <v-chip size="small" variant="tonal" :color="row.status === 'ok' ? 'success' : 'error'">
               {{ STATUS[row.status] }}
@@ -324,8 +352,11 @@ useCommands(() => [
             <v-btn variant="text" size="small" :loading="busy === `${row.id}:check`" @click="recheck(row)">
               测试连接
             </v-btn>
+            <!-- 自带凭据的老连接：授权个人账号是它在搜索上差的那一步，按钮留着是为了让
+                 这些行照旧能用（`feishu_settings` 优先用它自己那套凭据）。走平台应用的那
+                 些行没有这一颗 —— 它们连接的方式就是上面那颗「连接飞书」。 -->
             <v-btn
-              v-if="row.provider === 'feishu'"
+              v-if="row.provider === 'feishu' && !row.shared_app"
               variant="text"
               size="small"
               :loading="busy === `${row.id}:auth`"
@@ -367,91 +398,53 @@ useCommands(() => [
       </v-card>
     </v-dialog>
 
-    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
+    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。
+         只剩邮箱 —— 飞书那一栏不是一张表单，是上面那颗「连接飞书」。 -->
     <AdaptiveDialog
-      :model-value="!!adding"
-      :title="addingKind === 'mail' ? '接入邮箱' : '接入飞书'"
+      :model-value="adding"
+      title="接入邮箱"
       primary-label="测试并保存"
       :primary-loading="saving"
       :max-width="560"
-      @update:model-value="adding = null"
+      @update:model-value="adding = false"
       @primary="save"
     >
       <template v-if="adding">
-        <template v-if="addingKind === 'mail'">
-          <v-select
-            :model-value="mailForm.preset"
-            autocomplete="off"
-            :items="PRESETS.map((p) => p.title)"
-            label="邮箱服务"
-            @update:model-value="applyPreset"
-          />
-          <v-text-field v-model="mailForm.address" autocomplete="email" label="邮箱地址" />
-          <v-text-field
-            v-model="mailForm.password"
-            autocomplete="new-password"
-            type="password"
-            label="密码或授权码"
-            hint="QQ、163 等要在邮箱设置里开启 IMAP/SMTP 并生成授权码；Gmail 用应用专用密码"
-            persistent-hint
-          />
-          <div class="conn-form-row mt-2">
-            <v-text-field v-model="mailForm.imap_host" autocomplete="off" label="IMAP 服务器" />
-            <v-text-field v-model.number="mailForm.imap_port" autocomplete="off" type="number" label="端口" />
-          </div>
-          <div class="conn-form-row">
-            <v-text-field v-model="mailForm.smtp_host" autocomplete="off" label="SMTP 服务器" />
-            <v-text-field v-model.number="mailForm.smtp_port" autocomplete="off" type="number" label="端口" />
-          </div>
-          <v-select v-model="mailForm.security" autocomplete="off" :items="['ssl', 'starttls']" label="加密方式" />
-          <v-select
-            v-model="mailForm.grants"
-            autocomplete="off"
-            :items="projects"
-            item-title="name"
-            item-value="id"
-            multiple
-            chips
-            label="允许这些项目的 AI 队友使用"
-          />
-        </template>
-        <template v-else>
-          <v-text-field v-model="feishuForm.label" autocomplete="off" label="名称" />
-          <v-text-field v-model="feishuForm.app_id" autocomplete="off" label="App ID（企业自建应用）" />
-          <v-text-field
-            v-model="feishuForm.app_secret"
-            autocomplete="new-password"
-            type="password"
-            label="App Secret"
-          />
-          <v-select
-            v-model="feishuForm.domain"
-            autocomplete="off"
-            :items="[
-              { value: 'feishu', title: '飞书（feishu.cn）' },
-              { value: 'lark', title: 'Lark（larksuite.com）' },
-            ]"
-            label="版本"
-          />
-          <v-text-field
-            v-model="feishuForm.folders"
-            autocomplete="off"
-            label="应用能看到的文件夹 token（可选，多个用逗号隔开）"
-            hint="只用应用凭据时飞书不提供全文搜索，列在这里的文件夹会按文件名查找；授权个人账号后可以全文搜索"
-            persistent-hint
-          />
-          <v-select
-            v-model="feishuForm.grants"
-            autocomplete="off"
-            :items="projects"
-            item-title="name"
-            item-value="id"
-            multiple
-            chips
-            label="允许这些项目的 AI 队友使用"
-            class="mt-2"
-          />
-        </template>
+        <v-select
+          :model-value="mailForm.preset"
+          autocomplete="off"
+          :items="PRESETS.map((p) => p.title)"
+          label="邮箱服务"
+          @update:model-value="applyPreset"
+        />
+        <v-text-field v-model="mailForm.address" autocomplete="email" label="邮箱地址" />
+        <v-text-field
+          v-model="mailForm.password"
+          autocomplete="new-password"
+          type="password"
+          label="密码或授权码"
+          hint="QQ、163 等要在邮箱设置里开启 IMAP/SMTP 并生成授权码；Gmail 用应用专用密码"
+          persistent-hint
+        />
+        <div class="conn-form-row mt-2">
+          <v-text-field v-model="mailForm.imap_host" autocomplete="off" label="IMAP 服务器" />
+          <v-text-field v-model.number="mailForm.imap_port" autocomplete="off" type="number" label="端口" />
+        </div>
+        <div class="conn-form-row">
+          <v-text-field v-model="mailForm.smtp_host" autocomplete="off" label="SMTP 服务器" />
+          <v-text-field v-model.number="mailForm.smtp_port" autocomplete="off" type="number" label="端口" />
+        </div>
+        <v-select v-model="mailForm.security" autocomplete="off" :items="['ssl', 'starttls']" label="加密方式" />
+        <v-select
+          v-model="mailForm.grants"
+          autocomplete="off"
+          :items="projects"
+          item-title="name"
+          item-value="id"
+          multiple
+          chips
+          label="允许这些项目的 AI 队友使用"
+        />
         <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
       </template>
     </AdaptiveDialog>
@@ -465,6 +458,11 @@ useCommands(() => [
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
+}
+.connections__add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 .conn-list {
   list-style: none;
