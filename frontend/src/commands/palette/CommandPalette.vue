@@ -431,7 +431,9 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
             @click.capture="acting && mdAndUp && (acting = null)"
           >
             <template v-for="(group, g) in groups" :key="group.key">
-              <div class="palette__group t-eyebrow-read" role="presentation">{{ t(group.label) }}</div>
+              <div v-if="group.label" class="palette__group t-eyebrow-read" role="presentation">
+                {{ t(group.label) }}
+              </div>
               <div
                 v-for="(row, i) in group.rows"
                 :id="optionId(offsets[g] + i)"

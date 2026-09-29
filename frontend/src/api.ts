@@ -736,12 +736,34 @@ export interface ProjectSearchHits {
   library: { path: string; bytes: number; modified: string }[]
 }
 
-export async function searchProject(projectId: string, q: string, limit = 10): Promise<ProjectSearchHits> {
+/**
+ * `only` 只搜这几类（`message`、`doc_node`…、`tasks`、`library`），并且可以用 `offset`
+ * 往后翻；不给 `only` 就是每类各取前 `limit` 条。
+ */
+export async function searchProject(
+  projectId: string,
+  q: string,
+  limit = 10,
+  page?: { only: string[]; offset: number }
+): Promise<ProjectSearchHits> {
   const params = new URLSearchParams({ q, limit: String(limit) })
+  if (page) {
+    for (const kind of page.only) params.append('only', kind)
+    params.set('offset', String(page.offset))
+  }
   const body = await request<{ hits: ProjectSearchHits }>(
     `/projects/${encodeURIComponent(projectId)}/context/search?${params}`
   )
   return body.hits
+}
+
+/** 同一个词每一类各能搜到多少：`message`、`doc`、`doc_node`、`comment`、`decision`、`weekly`、`tasks`、`library`。 */
+export async function countProjectHits(projectId: string, q: string): Promise<Record<string, number>> {
+  const params = new URLSearchParams({ q })
+  const body = await request<{ counts: Record<string, number> }>(
+    `/projects/${encodeURIComponent(projectId)}/context/search/counts?${params}`
+  )
+  return body.counts
 }
 
 // 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活

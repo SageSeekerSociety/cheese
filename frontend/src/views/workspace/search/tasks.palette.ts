@@ -1,20 +1,17 @@
-// 命令面板里的「任务」：房间里派出去的活。点开进那个房间，打开这张卡。
-import type { PaletteSource } from '@/commands/palette/sources'
+// 内容里的「任务」：房间里派出去的活。点开进那个房间，打开这张卡。
+import type { ContentKind } from './projectSearch'
 
-import { hitsFor } from './projectSearch'
+import { contentSource } from './projectSearch'
 
 import { copyLink, linkOf } from '@/commands/copy'
 import { t } from '@/i18n'
 
-const source: PaletteSource = {
+export const tasks: ContentKind = {
   id: 'tasks',
   label: 'navigation.palette.tasks',
-  order: 110,
-  prefix: '?',
-  async search(query, { projectId, router }) {
-    if (!projectId) return []
-    const { tasks } = await hitsFor(projectId, query)
-    return tasks.map((hit) => {
+  only: ['tasks'],
+  itemsOf: ({ tasks: hits }, projectId, router) =>
+    hits.map((hit) => {
       const to = {
         name: 'workspace-topic',
         params: { projectId, topicId: hit.room_id },
@@ -35,8 +32,7 @@ const source: PaletteSource = {
           },
         ],
       }
-    })
-  },
+    }),
 }
 
-export default source
+export default contentSource(tasks, 110)

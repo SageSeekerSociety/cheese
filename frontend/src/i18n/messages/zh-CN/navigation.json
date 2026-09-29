@@ -61,6 +61,14 @@
     "linkCopied": "已复制链接",
     "failed": "无法复制"
   },
+  "search": {
+    "title": "搜索",
+    "placeholder": "搜索项目内容",
+    "all": "全部",
+    "viewAll": "查看全部 {n} 条",
+    "failed": "搜索失败，稍后重试",
+    "loading": "正在搜索"
+  },
   "palette": {
     "open": "搜索和跳转",
     "placeholder": "搜索或跳转",
@@ -98,6 +106,7 @@
     "copyHandle": "复制 {'@'}{handle}",
     "searchIn": "项目内搜索",
     "leaveScope": "移除项目范围，跨项目搜索名称",
+    "searchAll": "查看全部结果",
     "weekly": "周报"
   }
 }

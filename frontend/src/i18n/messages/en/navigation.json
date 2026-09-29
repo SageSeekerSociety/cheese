@@ -61,6 +61,14 @@
     "linkCopied": "Link copied",
     "failed": "Couldn’t copy"
   },
+  "search": {
+    "title": "Search",
+    "placeholder": "Search this project",
+    "all": "All",
+    "viewAll": "View all {n}",
+    "failed": "Search failed. Try again later.",
+    "loading": "Searching"
+  },
   "palette": {
     "open": "Search and jump",
     "placeholder": "Search or jump to",
@@ -98,6 +106,7 @@
     "copyHandle": "Copy {'@'}{handle}",
     "searchIn": "Search in project",
     "leaveScope": "Remove project scope and search names across projects",
+    "searchAll": "View all results",
     "weekly": "Weekly report"
   }
 }
