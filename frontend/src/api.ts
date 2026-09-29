@@ -1366,10 +1366,68 @@ export interface LibraryFile {
   bytes: number
   /** Unix seconds; the list comes back newest first. */
   modified: number
+  /** 谁放进来的（handle）；查不到时为 null。 */
+  added_by: string | null
+  added_at: string | null
+  /** 在哪个房间给的；从资料库页直接上传的、或读不了那个房间时为 null。 */
+  room: { id: string; title: string } | null
+  /** 被替换过几次。 */
+  replaced: number
+  /** 你读得到的房间里有几条消息带着它。 */
+  references: number
 }
 
 export function listProjectLibrary(projectId: string): Promise<ListPayload<LibraryFile>> {
   return request<ListPayload<LibraryFile>>(`/projects/${encodeURIComponent(projectId)}/library`)
+}
+
+async function libraryUpload(
+  projectId: string,
+  file: File,
+  replacing?: string
+): Promise<{ path: string; bytes: number }> {
+  const form = new FormData()
+  form.append('file', file)
+  const query = replacing ? `?path=${encodeURIComponent(replacing)}` : ''
+  const res = await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/library${query}`, {
+    method: replacing ? 'PUT' : 'POST',
+    body: form,
+    headers: authHeaders(),
+  })
+  const envelope = (await res.json().catch(() => null)) as ApiEnvelope<{ path: string; bytes: number }> | null
+  if (!res.ok || !envelope || envelope.code !== 200) {
+    throw new Error(envelope?.message || `上传失败（HTTP ${res.status}）`)
+  }
+  return envelope.data
+}
+
+/** 在资料库页上直接放进一份文件。撞名不覆盖，返回它最后叫什么。 */
+export function uploadLibraryFile(projectId: string, file: File): Promise<{ path: string; bytes: number }> {
+  return libraryUpload(projectId, file)
+}
+
+/** 把一份资料换成新版本：名字不变，旧的那一份留着。 */
+export function replaceLibraryFile(
+  projectId: string,
+  path: string,
+  file: File
+): Promise<{ path: string; bytes: number }> {
+  return libraryUpload(projectId, file, path)
+}
+
+/** 一份资料的字节，给页面预览；Office 文档可以转成 PDF 再给。 */
+export async function libraryFileBytes(projectId: string, path: string, asPdf = false): Promise<ArrayBuffer> {
+  const response = await fetch(libraryFileRawUrl(projectId, path) + (asPdf ? '&preview_pdf=true' : ''), {
+    headers: authHeaders(),
+  })
+  if (response.ok) return response.arrayBuffer()
+  let message = ''
+  try {
+    message = String((await response.json())?.message || '')
+  } catch {
+    /* Keep the HTTP error when the server sent no JSON. */
+  }
+  throw new Error(message || `无法读取这份资料（HTTP ${response.status}）`)
 }
 
 /** 一份资料的字节。这条端点一律按下载发，所以 `downloadFile` 补在末尾的

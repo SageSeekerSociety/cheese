@@ -1,13 +1,22 @@
 /**
- * 资料库这一页：给进这个项目的文件，在哪儿看得见、怎么拿走、怎么扔掉。
+ * 资料库这一页：给进这个项目的文件都有什么、谁在哪给的、里面是什么，以及怎么放进
+ * 来、换新、拿走、扔掉。
  *
- * 上传不在这一页上——一份资料总是在说某件事的时候给进来的，入口只有输入栏那一个。
+ * 规矩：扔掉和替换都先问一句，答应了才动；替换是同一个名字换新的字节，不是多一份；
+ * 看哪一份记在地址上。
  */
+import type { LibraryFile } from '../api'
+
+import { defineComponent, h } from 'vue'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { setLocale } from '../i18n'
 
 import ProjectLibraryView from './ProjectLibraryView.vue'
 
@@ -15,12 +24,14 @@ vi.mock('../api', () => ({
   listProjectLibrary: vi.fn(),
   deleteLibraryFile: vi.fn(),
   downloadFile: vi.fn(),
+  uploadLibraryFile: vi.fn(),
+  replaceLibraryFile: vi.fn(),
+  libraryFileBytes: vi.fn(),
   libraryFileRawUrl: (projectId: string, path: string) => `/api/projects/${projectId}/library/raw?path=${path}`,
 }))
 
-const { deleteLibraryFile, downloadFile, listProjectLibrary } = await import('../api')
-
-const vuetify = createVuetify({ components, directives })
+const { deleteLibraryFile, downloadFile, libraryFileBytes, listProjectLibrary, replaceLibraryFile, uploadLibraryFile } =
+  await import('../api')
 
 afterEach(cleanup)
 
@@ -34,6 +45,10 @@ beforeAll(() => {
       disconnect() {}
     }
   }
+  // 桌面上一行的 ⋯ 是一个 v-menu，定位时要读 devicePixelRatio。
+  if (!('devicePixelRatio' in globalThis)) {
+    Object.defineProperty(globalThis, 'devicePixelRatio', { configurable: true, value: 1 })
+  }
   if (!globalThis.visualViewport) {
     Object.defineProperty(globalThis, 'visualViewport', {
       configurable: true,
@@ -42,50 +57,151 @@ beforeAll(() => {
   }
 })
 
+function file(path: string, extra: Partial<LibraryFile> = {}): LibraryFile {
+  return {
+    path,
+    bytes: 2048,
+    modified: 1758000000,
+    added_by: 'alice',
+    added_at: '2026-09-20T10:00:00Z',
+    room: null,
+    replaced: 0,
+    references: 0,
+    ...extra,
+  }
+}
+
 beforeEach(() => {
+  setLocale('zh-CN')
   vi.clearAllMocks()
   vi.mocked(listProjectLibrary).mockResolvedValue({
     data: [
-      { path: '预算表(2).xlsx', bytes: 2048, modified: 1758000000 },
-      { path: '预算表.xlsx', bytes: 120, modified: 1757000000 },
+      file('预算表(2).xlsx', { room: { id: 't1', title: '数据分析' } }),
+      file('预算表.xlsx', { bytes: 120 }),
+      file('结题报告.docx'),
     ],
-    total: 2,
+    total: 3,
   })
   vi.mocked(deleteLibraryFile).mockResolvedValue({ deleted: true })
   vi.mocked(downloadFile).mockResolvedValue(undefined)
+  vi.mocked(uploadLibraryFile).mockResolvedValue({ path: '新.txt', bytes: 1 })
+  vi.mocked(replaceLibraryFile).mockResolvedValue({ path: '预算表.xlsx', bytes: 1 })
+  vi.mocked(libraryFileBytes).mockResolvedValue(new ArrayBuffer(0))
 })
 
-function mount() {
-  return render(ProjectLibraryView, { props: { projectId: 'p1' }, global: { plugins: [vuetify] } })
+const Blank = defineComponent({ render: () => h('div') })
+
+async function mount(url = '/projects/p1/library') {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/projects/:projectId/library', name: 'project-library', component: ProjectLibraryView, props: true },
+      { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: Blank },
+    ],
+  })
+  await router.push(url)
+  await router.isReady()
+  const Host = defineComponent({ setup: () => () => h(components.VApp, null, () => h(RouterView)) })
+  const view = render(Host, {
+    global: { plugins: [createVuetify({ components, directives }), router, createPinia()] },
+  })
+  await waitFor(() => expect(view.container.textContent).toContain('预算表.xlsx'))
+  return { ...view, router }
 }
 
-function button(container: Element, label: string): HTMLElement | undefined {
-  return Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === label)
+const rowNames = (container: Element) =>
+  Array.from(container.querySelectorAll('.library-row__name')).map((el) => el.textContent)
+
+function pick(input: HTMLInputElement, files: File[]) {
+  Object.defineProperty(input, 'files', { configurable: true, value: files })
+  return fireEvent.change(input)
 }
 
 describe('资料库', () => {
-  it('把给进来的文件列出来，同名的那两份各占一行', async () => {
-    const { container } = mount()
-
-    await waitFor(() => expect(container.textContent).toContain('预算表.xlsx'))
-    expect(container.textContent).toContain('预算表(2).xlsx')
+  it('把给进来的文件列出来，同名的那两份各占一行，并写明是谁给的', async () => {
+    const { container } = await mount()
+    expect(rowNames(container)).toEqual(['预算表(2).xlsx', '预算表.xlsx', '结题报告.docx'])
+    expect(container.textContent).toContain('alice')
     expect(container.textContent).toContain('2.0 KB')
   })
 
+  it('按名字搜、按类型筛', async () => {
+    const { container } = await mount()
+    await fireEvent.update(screen.getByRole('searchbox'), '报告')
+    await waitFor(() => expect(rowNames(container)).toEqual(['结题报告.docx']))
+
+    await fireEvent.update(screen.getByRole('searchbox'), '')
+    await fireEvent.click(screen.getByRole('button', { name: '表格' }))
+    await waitFor(() => expect(rowNames(container)).toEqual(['预算表(2).xlsx', '预算表.xlsx']))
+  })
+
+  it('点开一份：地址记着是哪一份，读的是资料库里那一份的内容，写明是在哪个对话里给的', async () => {
+    const { container, router } = await mount()
+    await fireEvent.click(screen.getByRole('button', { name: /^预算表\(2\)\.xlsx alice/ }))
+    await waitFor(() => expect(router.currentRoute.value.query.file).toBe('预算表(2).xlsx'))
+    await waitFor(() => expect(libraryFileBytes).toHaveBeenCalledWith('p1', '预算表(2).xlsx', false))
+    const link = screen.getByRole('link', { name: '《数据分析》' })
+    expect(link.getAttribute('href')).toBe('/projects/p1/topics/t1')
+    expect(container.textContent).toContain('数据分析')
+  })
+
+  it('Word 文档要服务端转好的那一份才画得出来', async () => {
+    await mount('/projects/p1/library?file=结题报告.docx')
+    await waitFor(() => expect(libraryFileBytes).toHaveBeenCalledWith('p1', '结题报告.docx', true))
+  })
+
   it('下载取的是资料库里那一份，不经过某个房间', async () => {
-    const { container } = mount()
-    await waitFor(() => expect(container.textContent).toContain('预算表.xlsx'))
+    await mount('/projects/p1/library?file=预算表.xlsx')
+    await fireEvent.click(screen.getByRole('button', { name: '下载' }))
+    expect(downloadFile).toHaveBeenCalledWith('/api/projects/p1/library/raw?path=预算表.xlsx', '预算表.xlsx')
+  })
 
-    await fireEvent.click(button(container, '下载')!)
+  it('在这一页上放进来的每一份都上传，放完重新列一遍', async () => {
+    const { container } = await mount()
+    const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
+    await pick(input, [new File(['a'], 'a.txt'), new File(['b'], 'b.txt')])
+    await waitFor(() => expect(uploadLibraryFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadLibraryFile).mock.calls.map((call) => (call[1] as File).name)).toEqual(['a.txt', 'b.txt'])
+    await waitFor(() => expect(listProjectLibrary).toHaveBeenCalledTimes(2))
+  })
 
-    expect(downloadFile).toHaveBeenCalledWith('/api/projects/p1/library/raw?path=预算表(2).xlsx', '预算表(2).xlsx')
+  it('替换先问一句，答应了才换；取消什么也不动', async () => {
+    const { container, baseElement } = await mount('/projects/p1/library?file=预算表.xlsx')
+    const input = container.querySelector('input[type="file"]:not([multiple])') as HTMLInputElement
+
+    await fireEvent.click(screen.getByRole('button', { name: '替换为新版本' }))
+    await pick(input, [new File(['new'], '预算表-新.xlsx')])
+    await waitFor(() => expect(baseElement.textContent).toContain('引用这份文件的消息将读到新的一份'))
+    const cancel = Array.from(baseElement.querySelectorAll('.v-card-actions button')).find(
+      (b) => b.textContent?.trim() === '取消'
+    )
+    await fireEvent.click(cancel!)
+    expect(replaceLibraryFile).not.toHaveBeenCalled()
+
+    await fireEvent.click(screen.getByRole('button', { name: '替换为新版本' }))
+    await pick(input, [new File(['new'], '预算表-新.xlsx')])
+    const confirm = await waitFor(() => {
+      const button = Array.from(baseElement.querySelectorAll('.v-card-actions button')).find(
+        (b) => b.textContent?.trim() === '替换'
+      )
+      expect(button).toBeTruthy()
+      return button as HTMLElement
+    })
+    await fireEvent.click(confirm)
+    await waitFor(() => expect(replaceLibraryFile).toHaveBeenCalledWith('p1', '预算表.xlsx', expect.any(File)))
   })
 
   it('删除先问一句，答应了才真的删', async () => {
-    const { container, baseElement } = mount()
-    await waitFor(() => expect(container.textContent).toContain('预算表.xlsx'))
-
-    await fireEvent.click(button(container, '删除')!)
+    const { container, baseElement } = await mount()
+    await fireEvent.click(screen.getByRole('button', { name: '预算表(2).xlsx 的操作' }))
+    const remove = await waitFor(() => {
+      const item = Array.from(baseElement.querySelectorAll('.v-list-item, [role="menuitem"]')).find(
+        (b) => b.textContent?.trim() === '删除'
+      )
+      expect(item).toBeTruthy()
+      return item as HTMLElement
+    })
+    await fireEvent.click(remove)
     await waitFor(() => expect(baseElement.textContent).toContain('删除后无法恢复'))
     expect(deleteLibraryFile).not.toHaveBeenCalled()
 
@@ -93,50 +209,22 @@ describe('资料库', () => {
       (b) => b.textContent?.trim() === '删除'
     )
     await fireEvent.click(confirm!)
-
     await waitFor(() => expect(deleteLibraryFile).toHaveBeenCalledWith('p1', '预算表(2).xlsx'))
-    await waitFor(() => expect(container.textContent).not.toContain('预算表(2).xlsx'))
+    await waitFor(() => expect(rowNames(container)).not.toContain('预算表(2).xlsx'))
   })
 
-  it('手机上：一行的操作从底部面板里选，删除照样先问一句', async () => {
-    const width = window.innerWidth
-    ;(window as unknown as { innerWidth: number }).innerWidth = 390
-    try {
-      const phone = createVuetify({ components, directives })
-      const { container, baseElement } = render(ProjectLibraryView, {
-        props: { projectId: 'p1' },
-        global: { plugins: [phone] },
-      })
-      await waitFor(() => expect(container.textContent).toContain('预算表.xlsx'))
-
-      const more = container.querySelectorAll('button[aria-haspopup="dialog"]')[1] as HTMLElement
-      await fireEvent.click(more)
-      const remove = await waitFor(() => {
-        const item = Array.from(baseElement.querySelectorAll('[role="menuitem"]')).find(
-          (b) => b.textContent?.trim() === '删除'
-        )
-        expect(item).toBeTruthy()
-        return item as HTMLElement
-      })
-      await fireEvent.click(remove)
-      await waitFor(() => expect(baseElement.textContent).toContain('删除后无法恢复'))
-      expect(deleteLibraryFile).not.toHaveBeenCalled()
-
-      const confirm = Array.from(baseElement.querySelectorAll('.v-card-actions button')).find(
-        (b) => b.textContent?.trim() === '删除'
-      )
-      await fireEvent.click(confirm!)
-      await waitFor(() => expect(deleteLibraryFile).toHaveBeenCalledWith('p1', '预算表.xlsx'))
-    } finally {
-      ;(window as unknown as { innerWidth: number }).innerWidth = width
-    }
-  })
-
-  it('一份都还没有时说的是暂无资料，并且说清文件从哪儿来', async () => {
+  it('一份都还没有时说的是暂无资料', async () => {
     vi.mocked(listProjectLibrary).mockResolvedValue({ data: [], total: 0 })
-    const { container } = mount()
-
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/projects/:projectId/library', component: ProjectLibraryView, props: true }],
+    })
+    await router.push('/projects/p1/library')
+    await router.isReady()
+    const Host = defineComponent({ setup: () => () => h(components.VApp, null, () => h(RouterView)) })
+    const { container } = render(Host, {
+      global: { plugins: [createVuetify({ components, directives }), router, createPinia()] },
+    })
     await waitFor(() => expect(container.textContent).toContain('暂无资料'))
-    expect(container.textContent).toContain('在对话里上传的文件会收进这里')
   })
 })
