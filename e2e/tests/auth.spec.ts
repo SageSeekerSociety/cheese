@@ -88,12 +88,9 @@ test.describe("Login", () => {
       ),
     });
     await expect(consentButton).toBeHidden();
-    // This is the suite's first sign-in that lands on the home page, and CI
-    // starts vite cold: compiling that page and loading its data took about six
-    // seconds after the consent POST, past the default five.
     await expect(
       page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
-    ).toBeVisible({ timeout: 30_000 });
+    ).toBeVisible();
     const current = await page.request.get("/api/users/me/consents", {
       headers: {
         Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("accessToken"))}`,

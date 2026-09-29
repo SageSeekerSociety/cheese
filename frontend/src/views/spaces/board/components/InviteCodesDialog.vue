@@ -25,6 +25,7 @@ import dayjs from 'dayjs'
 
 import { currentInviteCode, inviteCodeStatus } from '../model'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const props = defineProps<{ spaceId: number }>()
@@ -313,7 +314,8 @@ async function submitCreate() {
             <v-list-item-subtitle>
               {{ item.useCount }} / {{ item.maxUses > 0 ? item.maxUses : '不限' }} 人已用 ·
               {{ item.expiresAt ? `有效期至 ${formatDate(item.expiresAt)}` : '永不过期' }} · 建码人
-              {{ makerName(item) }}
+              <UserRef v-if="item.createdBy" :handle="item.createdBy.username" :name="makerName(item)" />
+              <template v-else>{{ makerName(item) }}</template>
             </v-list-item-subtitle>
 
             <!-- 说明。没写就写「没写说明」而不是留白：留白读起来像这一格坏了，

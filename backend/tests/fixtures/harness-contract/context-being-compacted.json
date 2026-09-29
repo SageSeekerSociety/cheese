@@ -1,0 +1,89 @@
+{
+  "verb": "backlog",
+  "why": "Compacting a long conversation is a stretch of a turn in which nothing reaches the room and new messages go unanswered, for minutes. The room has to be able to say it is compacting rather than leave a silence that reads as a hung session, and to say when it is over. Claude Code reports both ends as system/status records, and a status record about anything else (a permission mode) says nothing to the room. Codex writes the compaction as an item of its own, started and completed. pi says it only on its live event stream; its cell is the records its runner writes into the log for compaction_start and compaction_end.",
+  "readers": [
+    "python"
+  ],
+  "harnesses": {
+    "claude-code": {
+      "records": [
+        {
+          "type": "system",
+          "subtype": "status",
+          "status": "compacting",
+          "uuid": "rec_1",
+          "session_id": "session-1"
+        },
+        {
+          "type": "system",
+          "subtype": "status",
+          "status": null,
+          "permissionMode": "default",
+          "uuid": "rec_2",
+          "session_id": "session-1"
+        },
+        {
+          "type": "system",
+          "subtype": "status",
+          "status": null,
+          "compact_result": "success",
+          "uuid": "rec_3",
+          "session_id": "session-1"
+        }
+      ]
+    },
+    "codex": {
+      "records": [
+        {
+          "method": "item/started",
+          "params": {
+            "threadId": "session-1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "contextCompaction",
+              "id": "c1"
+            }
+          }
+        },
+        {
+          "method": "item/completed",
+          "params": {
+            "threadId": "session-1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "contextCompaction",
+              "id": "c1"
+            }
+          }
+        }
+      ]
+    },
+    "pi": {
+      "records": [
+        {
+          "type": "cheese_compacting",
+          "id": "cheese:1",
+          "done": false
+        },
+        {
+          "type": "cheese_compacting",
+          "id": "cheese:2",
+          "done": true,
+          "aborted": false,
+          "errorMessage": ""
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "kind": "compacting",
+      "done": false
+    },
+    {
+      "kind": "compacting",
+      "done": true,
+      "error": ""
+    }
+  ]
+}

@@ -334,12 +334,16 @@ class AgentRuntime(Protocol):
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
         images: list[dict] | None = None,
+        owes_reply: bool = False,
     ) -> bool | None:
         """Put a message into the session. True = the transport took it.
 
         An ack, not an answer. What the agent does about it arrives through
         ``read`` — possibly minutes later, possibly to a different process than
         the one that sent this.
+
+        ``owes_reply``: a person wrote this, and the session answers them in
+        the room before it does anything else (`driven/runner.py`).
 
         ``work_id`` and ``on_mark`` do not belong to this contract and are
         declared anyway, because the only caller passes them and a signature
@@ -368,9 +372,13 @@ class AgentRuntime(Protocol):
         *,
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
+        owes_reply: bool = False,
     ) -> bool:
         """Put text into a session that is already working, with no turn opened
         for it. True = it landed; False = there is no live session here.
+
+        ``owes_reply`` as for ``send``: a person's message does, a platform
+        notice does not.
 
         The bare form of ``send``: no opening, no bookkeeping, nothing to start.
         It is how a person's mid-turn message reaches 芝士, and how the platform

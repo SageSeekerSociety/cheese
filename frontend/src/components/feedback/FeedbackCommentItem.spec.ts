@@ -27,7 +27,7 @@ import FeedbackCommentItem from './FeedbackCommentItem.vue'
 
 // 组件里的话现在都走 `feedback.comment.*`（英文目录里是英文），而这几条用例钉的是
 // 中文文案本身 —— 测试环境的默认语言是英文，所以这里显式站到 zh-CN 上。
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 const vuetify = createVuetify({ components, directives })
 
@@ -55,7 +55,7 @@ function c(extra: Partial<FeedbackComment> = {}): FeedbackComment {
 function mountComment(extra: Partial<FeedbackComment> = {}, props: Record<string, unknown> = {}) {
   const result = render(FeedbackCommentItem, {
     props: { comment: c(extra), replying: false, replyCount: 0, ...props },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   // container 在 @testing-library/vue 的类型里是 Element，而 within() 要
   // HTMLElement —— 它拿到的本来就一定是元素，转一下比在每处查询外面套 as 干净。
@@ -71,7 +71,7 @@ describe('楼内回复指代', () => {
     const { container } = mountComment({ parent_id: 'c-0', reply_to_handle: 'andylizf' })
     const line = container.querySelector('.fb-ci__re')
     expect(line, '存了 reply_to_handle 却没画「回复 X」').not.toBeNull()
-    expect(line?.textContent).toContain('andylizf')
+    expect(line?.querySelector('.mention')?.textContent).toBe('@andylizf')
   })
 
   it('顶层评论一个字都不画', () => {

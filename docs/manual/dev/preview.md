@@ -1,17 +1,20 @@
 ---
-title: 预览与项目网站
+title: 话题预览
 kind: 流程
-summary: 房间里的预览和项目网站怎么托管、怎么鉴权。
+summary: 房间里的预览怎么托管、怎么鉴权，和项目网站共用哪一套、分开在哪。
 covers:
   - backend/app/api/preview_host.py
-  - backend/app/domain/site/
+  - backend/app/domain/agent/preview_hub.py
+  - backend/app/domain/agent/preview_tunnel.py
+  - backend/app/api/routes/app_preview.py
+  - backend/app/api/routes/preview_sessions.py
 ---
 
-# 预览与项目网站 {#preview}
+# 话题预览 {#preview}
 
-房间里的预览和项目网站怎么托管、怎么鉴权。
+房间里的预览怎么托管、怎么鉴权。项目网站和它用同一套内容域与凭证交换，但快照、入口和上限是另一个部件。
 
-> 讲：两个独立源、凭证交换、发布快照。不讲：用户怎么发布网站，见使用文档[发布网站](/sites#sites)。
+> 讲：两个独立源、凭证交换、静态预览与运行中的应用。不讲：发布快照，见[项目网站](/dev/sites)；用户怎么发布网站，见使用文档[发布网站](/sites#sites)。
 
 ## 两个独立的源 {#origins}
 
@@ -125,7 +128,7 @@ steps:
 
 ## 发布快照 {#sites}
 
-发布把项目已采纳版本里被跟踪的文件复制成一个快照，存在工作区卷的 `.sites/<项目 id>/<发布记录 id>`。稳定入口是平台上的 `/sites/<项目 id>`：先让访问者登录，再打开内容源上的当前快照。之后采纳的改动不会自动发布；发布失败时保留上一版。上限 2000 个文件、100MB，入口 HTML 不超过 1MB。
+发布快照、稳定入口 `/sites/<项目 id>`、文件数与体积上限都在[项目网站](/dev/sites)。
 
 ## 部署前提 {#deploy}
 

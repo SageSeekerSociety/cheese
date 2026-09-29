@@ -12,6 +12,11 @@ harness 正是用第二种在敲门。`/awaiting-me` 是同一个先例。
 访客能读公开列表，写操作要身份。私密条目的可见性并集（管理员 ∪ 提交者本人 ∪ 提出它
 的那个房间当时的成员、且今天还读得到那个房间）在 `services.FeedbackService.may_see`，
 不在这一层 —— 路由拿不到判断权，就不会漏。
+
+Every route here that writes commits before it answers. ``get_db`` commits in
+its teardown, which FastAPI runs after the response has been sent, so the read a
+page makes right after a support or a comment can still find the old row — and
+put the old count back on screen.
 """
 
 import uuid
@@ -196,6 +201,7 @@ async def get_feedback_counts(
 
 @router.post("/read")
 async def mark_feedback_read(
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -208,6 +214,7 @@ async def mark_feedback_read(
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
     at = await service.mark_read(handle=who.handle)
+    await db.commit()
     return ok({"last_read_at": at.isoformat()})
 
 
@@ -301,6 +308,7 @@ async def create_feedback(
         actor_handle=who.handle,
         actor_user_id=who.user_id,
     )
+    await db.commit()
     return ok(
         await _detail(
             service, row, handle=who.handle, is_admin=await _is_admin(db, service, who)
@@ -350,6 +358,7 @@ async def delete_feedback(
         handle=who.handle,
         is_admin=await _is_admin(db, service, who),
     )
+    await db.commit()
     return ok({"deleted": True})
 
 
@@ -436,6 +445,7 @@ async def create_feedback_comment(
         actor_user_id=who.user_id,
         is_admin=is_admin,
     )
+    await db.commit()
     # The same assembler the list uses, over the one new row: the freshly posted
     # comment renders in the thread immediately and must carry everything the
     # rows around it carry (`likes` is 0 and `liked` is False, but `can_delete`
@@ -466,6 +476,7 @@ async def delete_feedback_comment(
         handle=who.handle,
         is_admin=await _is_admin(db, service, who),
     )
+    await db.commit()
     return ok({"deleted": True})
 
 
@@ -492,6 +503,7 @@ async def like_feedback_comment(
         handle=who.handle,
         is_admin=await _is_admin(db, service, who),
     )
+    await db.commit()
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
 
@@ -512,6 +524,7 @@ async def unlike_feedback_comment(
         handle=who.handle,
         is_admin=await _is_admin(db, service, who),
     )
+    await db.commit()
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
 
@@ -532,6 +545,7 @@ async def support_feedback(
     count, supported = await service.support(
         feedback_id, handle=who.handle, is_admin=await _is_admin(db, service, who)
     )
+    await db.commit()
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))
 
 
@@ -548,4 +562,5 @@ async def unsupport_feedback(
     count, supported = await service.unsupport(
         feedback_id, handle=who.handle, is_admin=await _is_admin(db, service, who)
     )
+    await db.commit()
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))

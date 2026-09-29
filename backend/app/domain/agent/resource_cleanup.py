@@ -159,7 +159,16 @@ def run_command(
     )
 
 
-def check_published(work: Path, *, canonical: bool = False) -> None:
+def check_published(
+    work: Path, *, canonical: bool = False, own_branch: bool = False
+) -> None:
+    """Refuse if `work` holds anything its remote does not.
+
+    `own_branch` limits the commit check to what this checkout has checked
+    out. A task checkout shares its repository with every other task of the
+    room, so the repository's branches are theirs too, and one of them not
+    yet pushed would otherwise keep every finished task on the disk.
+    """
     if not work.exists():
         return
     if not (work / ".git").exists():
@@ -172,15 +181,17 @@ def check_published(work: Path, *, canonical: bool = False) -> None:
     if dirty.returncode or dirty.stdout.strip():
         raise RuntimeError("checkout has unpublished working-tree changes")
     if not canonical:
-        check_published_commits(work, include_head=True)
+        check_published_commits(work, include_head=True, branches=not own_branch)
 
 
-def check_published_commits(repo: Path, *, include_head: bool = False) -> None:
+def check_published_commits(
+    repo: Path, *, include_head: bool = False, branches: bool = True
+) -> None:
     unpublished = run_command(
         [
             "git",
             "rev-list",
-            "--branches",
+            *(["--branches"] if branches else []),
             *(["HEAD"] if include_head else []),
             "--not",
             "--remotes=origin",
@@ -295,6 +306,55 @@ def check_resource_publication(home: Path, work: Path) -> None:
     repositories = home / ".cheese/repositories"
     for repo in repositories.glob("*.git"):
         check_published_commits(repo)
+
+
+def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
+    """Remove the checkouts of these closed tasks whose work is on the forge.
+
+    The platform names the tasks; this decides, per checkout, whether removing
+    it loses anything: what `check_published` refuses — files not committed,
+    commits not pushed — stays, and so does a checkout something still has
+    open. Each kept one comes back with the reason. A checkout that is not
+    there is already done, so the same list can be sent again and again.
+    """
+    root = home / FOOTPRINT_ROOT / "tasks"
+    if root.is_symlink():
+        raise RuntimeError("task storage is a symlink")
+    kept: dict[str, str] = {}
+    candidates: list[Path] = []
+    for task in tasks:
+        path = root / str(uuid.UUID(task))
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            kept[task] = "unrecognized entry in task storage"
+            continue
+        if not path.exists():
+            continue
+        try:
+            check_published(path, own_branch=True)
+        except RuntimeError as exc:
+            kept[task] = str(exc)
+            continue
+        candidates.append(path)
+    try:
+        check_no_writers(candidates)
+        free = candidates
+    except RuntimeError:
+        # One lsof for all of them is the cheap answer; only when it says
+        # something is inside does it pay to ask which ones.
+        free = []
+        for path in candidates:
+            try:
+                check_no_writers([path])
+                free.append(path)
+            except RuntimeError as exc:
+                kept[path.name] = str(exc)
+    for path in free:
+        remove_tree(path)
+    if free:
+        # The repositories still list the removed checkouts until pruned.
+        for repo in (home / FOOTPRINT_ROOT / "repositories").glob("*.git"):
+            run_command(["git", "worktree", "prune"], cwd=repo)
+    return {"removed": [path.name for path in free], "kept": kept}
 
 
 def remove_tree(path: Path) -> None:
@@ -593,7 +653,7 @@ def stop_executor(home: Path, resource: str) -> None:
 def main() -> None:
     # `room` names the room whose transcripts this device keeps, or is "-" on a
     # device that does not keep them.
-    action, project, resource, cleanup, room = sys.argv[1:]
+    action, project, resource, cleanup, room, *tasks = sys.argv[1:]
     home, work = resource_paths(Path.home(), project, resource)
     executor = session_target(home, resource)
     if action == "prepare":
@@ -655,6 +715,9 @@ def main() -> None:
             if path.exists():
                 remove_tree(path)
         print(json.dumps({"removed": True}))
+    elif action == "tasks":
+        # `tasks` are closed tasks of this room; `cleanup` and `room` are unused.
+        print(json.dumps(remove_task_checkouts(home, tasks)))
     elif action == "expire":
         expire_transcripts(retained_transcripts(Path.home(), project, room, resource))
         print(json.dumps({"expired": True}))

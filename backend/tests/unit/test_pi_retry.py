@@ -22,7 +22,12 @@ from app.domain.agent.harness import Opening
 from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.runner import Runner, socket_path
 from app.domain.agent.harness.pi.subscription import Subscription
-from app.domain.agent.service import AgentMessage, AgentResult, AgentRetrying
+from app.domain.agent.service import (
+    AgentCompacting,
+    AgentMessage,
+    AgentResult,
+    AgentRetrying,
+)
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -49,7 +54,7 @@ async def replay(tmp_path: Path, recording: str) -> list[dict]:
     shim = tmp_path / "pi"
     shim.write_text(
         f"#!/bin/sh\nexec {sys.executable} {FAKE} "
-        f'{FIXTURES / f"pi-retry-{recording}.json"} "$@"\n'
+        f'{FIXTURES / f"pi-{recording}.json"} "$@"\n'
     )
     shim.chmod(0o700)
     runner = Runner(tmp_path / "state")
@@ -93,7 +98,7 @@ def read(log: list[dict]) -> tuple[list, list[int]]:
 
 @pytest.mark.anyio
 async def test_a_turn_whose_request_is_retried_ends_once_with_the_answer(tmp_path):
-    log = await replay(tmp_path, "recovered")
+    log = await replay(tmp_path, "retry-recovered")
     events, ends = read(log)
 
     assert [type(e) for e in events] == [
@@ -113,7 +118,7 @@ async def test_a_turn_whose_request_is_retried_ends_once_with_the_answer(tmp_pat
 
 @pytest.mark.anyio
 async def test_each_retry_is_written_behind_the_failure_it_retries(tmp_path):
-    log = await replay(tmp_path, "recovered")
+    log = await replay(tmp_path, "retry-recovered")
 
     failures = [
         i
@@ -131,7 +136,7 @@ async def test_each_retry_is_written_behind_the_failure_it_retries(tmp_path):
 
 @pytest.mark.anyio
 async def test_retries_that_run_out_end_the_turn_as_a_failure(tmp_path):
-    log = await replay(tmp_path, "exhausted")
+    log = await replay(tmp_path, "retry-exhausted")
     events, ends = read(log)
 
     assert [type(e) for e in events] == [AgentRetrying] * 3 + [AgentResult]
@@ -145,10 +150,23 @@ async def test_retries_that_run_out_end_the_turn_as_a_failure(tmp_path):
 
 @pytest.mark.anyio
 async def test_a_request_pi_does_not_retry_ends_the_turn_at_once(tmp_path):
-    log = await replay(tmp_path, "refused")
+    log = await replay(tmp_path, "retry-refused")
     events, ends = read(log)
 
     assert [type(e) for e in events] == [AgentResult]
     assert events[0].is_error is True
     assert events[0].api_error_status == 400
     assert ends == [len(log) - 1]
+
+
+@pytest.mark.anyio
+async def test_a_compaction_pi_reports_on_its_stream_reaches_the_room(tmp_path):
+    """pi says it is compacting only on its live stream, and the entry it
+    writes for a compaction comes after it is over. The runner writes both ends
+    into the log, so the room hears it started and how it ended."""
+    log = await replay(tmp_path, "compaction")
+    events, _ = read(log)
+
+    compacting = [e for e in events if isinstance(e, AgentCompacting)]
+    assert [e.done for e in compacting] == [False, True]
+    assert compacting[1].error == "summarization failed: 429"

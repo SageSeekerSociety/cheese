@@ -91,9 +91,10 @@ class TestTeamEntityResolver:
 
 
 class TestUserEntityResolver:
-    def _make_resolver(self, users_by_id=None):
+    def _make_resolver(self, users_by_id=None, handles_by_id=None):
         user_service = AsyncMock()
         user_service.get_users_by_ids.return_value = users_by_id or {}
+        user_service.get_handles_by_ids.return_value = handles_by_id or {}
         return UserEntityResolver(
             user_service, avatar_base_url="https://cdn.example.com/"
         )
@@ -117,13 +118,16 @@ class TestUserEntityResolver:
     @pytest.mark.anyio
     async def test_resolve_found(self):
         profile = SimpleNamespace(nickname="Alice", avatar_id=10)
-        resolver = self._make_resolver(users_by_id={1: profile})
+        resolver = self._make_resolver(
+            users_by_id={1: profile}, handles_by_id={1: "alice"}
+        )
 
         result = await resolver.resolve(["1"])
         assert "1" in result
         dto = result["1"]
         assert isinstance(dto, ResolvedEntityInfoDTO)
         assert dto.name == "Alice"
+        assert dto.handle == "alice"
         assert dto.type == "user"
         assert dto.url == "/users/1"
         assert dto.avatarUrl == "https://cdn.example.com/avatars/10"

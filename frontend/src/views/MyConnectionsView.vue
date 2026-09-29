@@ -23,6 +23,8 @@ import {
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 import PageAction from '../components/common/PageAction.vue'
 
+import UserRef from '@/components/common/UserRef.vue'
+
 const route = useRoute()
 const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
@@ -251,7 +253,9 @@ onMounted(load)
               {{ d.attachments.length ? d.attachments.map((a) => `${a.name}（${a.size} 字节）`).join('、') : '无' }}
             </dd>
             <dt>来自</dt>
-            <dd>{{ projectName(d.project_id) }} · {{ d.created_by }} 起草</dd>
+            <dd>
+              {{ projectName(d.project_id) }} · <UserRef :handle="d.created_by" :project-id="d.project_id" /> 起草
+            </dd>
           </dl>
           <div class="conn-actions">
             <v-btn
@@ -493,7 +497,7 @@ onMounted(load)
 }
 .conn-spec {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: 4px 12px;
   margin: 0 0 8px;
 }
@@ -501,7 +505,9 @@ onMounted(load)
   color: var(--faint);
 }
 .conn-spec dd {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 .conn-body {
   white-space: pre-wrap;

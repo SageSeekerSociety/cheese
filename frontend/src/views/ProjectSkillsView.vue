@@ -19,6 +19,7 @@ import {
 } from '../api'
 
 import PageAction from '@/components/common/PageAction.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
@@ -247,7 +248,7 @@ watch(
                 <div class="skill-row__id">
                   <div class="t-body skill-row__title">{{ s.title }}</div>
                   <div class="t-meta c-faint">
-                    {{ s.name }} · 由 {{ s.proposed_by }} 整理
+                    {{ s.name }} · 由 <UserRef :handle="s.proposed_by" /> 整理
                     <template v-if="s.shipped_revision">· 正在用的是第 {{ s.shipped_revision }} 版，这是改动</template>
                   </div>
                 </div>
@@ -308,7 +309,8 @@ watch(
               <div class="skill-row__id">
                 <div class="t-body skill-row__title">{{ s.title }}</div>
                 <div class="t-meta c-faint">
-                  {{ s.name }} · 第 {{ s.shipped_revision }} 版 · {{ s.confirmed_by }} 确认于 {{ fmt(s.confirmed_at) }}
+                  {{ s.name }} · 第 {{ s.shipped_revision }} 版 · <UserRef :handle="s.confirmed_by" /> 确认于
+                  {{ fmt(s.confirmed_at) }}
                 </div>
                 <div class="t-meta c-muted mt-1">{{ s.description }}</div>
               </div>
@@ -387,7 +389,7 @@ watch(
             <li v-for="r in history.revisions" :key="r.revision" class="skill-row" :data-revision="r.revision">
               <div class="skill-row__head">
                 <div class="skill-row__id t-meta">
-                  第 {{ r.revision }} 版 · {{ r.note }} · {{ r.confirmed_by }} · {{ fmt(r.created_at) }}
+                  第 {{ r.revision }} 版 · {{ r.note }} · <UserRef :handle="r.confirmed_by" /> · {{ fmt(r.created_at) }}
                 </div>
                 <v-chip
                   v-if="r.revision === history.skill.shipped_revision"
@@ -482,7 +484,7 @@ watch(
 }
 .skill-row__spec {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: 4px 12px;
   margin: 8px 0;
 }
@@ -490,7 +492,9 @@ watch(
   color: var(--faint);
 }
 .skill-row__spec dd {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 .skill-row__actions {

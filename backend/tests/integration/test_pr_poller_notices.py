@@ -128,7 +128,7 @@ def test_a_second_poll_on_the_same_commit_does_not_ring_again(client, app_world)
 
 
 def test_the_reviewer_hears_when_the_pr_is_closed_without_merging(client, app_world):
-    """有人在 GitHub 上把 PR 关了 —— 平台不会替他合，也不会自己收尾。
+    """有人在 GitHub 上把 PR 关了 —— 平台不会替他合，这次审阅随之作废。
 
     这件事完全发生在平台之外，房间里不会有任何别的痕迹。
     """

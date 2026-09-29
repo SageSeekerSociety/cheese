@@ -18,6 +18,8 @@ import { copyIntoRoom, openRoomFileEditor, roomFileRevisions } from '../../../ap
 
 import RoomFileHistory from './RoomFileHistory.vue'
 
+import UserRef from '@/components/common/UserRef.vue'
+
 const props = defineProps<{ topicId: string; path: string }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'opened', path: string): void }>()
 
@@ -159,7 +161,8 @@ onBeforeUnmount(() => {
 
     <v-alert v-if="changedBy" type="info" density="compact" class="ma-2" data-testid="changed-by">
       <div>
-        {{ changedBy.author_kind === 'agent' ? '芝士' : changedBy.author || '有人' }}
+        <UserRef v-if="changedBy.author" :handle="changedBy.author" />
+        <template v-else>{{ changedBy.author_kind === 'agent' ? '芝士' : '有人' }}</template>
         刚刚保存了这份文件（第 {{ changedBy.seq }} 版）<template v-if="changedBy.note">：{{ changedBy.note }}</template>
       </div>
       <div class="t-meta">

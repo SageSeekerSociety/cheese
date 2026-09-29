@@ -32,8 +32,10 @@ from app.domain.agent.harness import Opening
 from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import socket_path
-from app.domain.agent.harness.pi import catalog
-from app.domain.agent.harness.pi.journal import GAVE_UP, RETRYING, Journal
+from app.domain.agent.harness.pi import catalog, hooks
+from app.domain.agent.harness.pi.journal import COMPACTING, GAVE_UP, RETRYING, Journal
+from app.domain.agent.harness.pi.mcp import ProjectServers
+from app.domain.agent.harness.pi.project_skills import project_skills
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 
 # A live event that can only mean an entry was written. Anything else is
@@ -65,6 +67,17 @@ class Runner(runner.Runner[Journal]):
         # The platform asked pi to stop: a retry cut short by it is not a
         # failure of anything.
         self.aborting = False
+        # The runner's own turn that holds the session to a reply, and the
+        # marker platform instructions carry in this room (`start`).
+        self.continuing: asyncio.Task | asyncio.Future | None = None
+        self.notice = ""
+        # The project's MCP servers (`mcp.py`), opened with the session.
+        self.servers: ProjectServers | None = None
+        self.mcp_tools: list[dict] = []
+        # The checkout and environment pi runs in, which its tool calls'
+        # hooks run in too (`tool_hooks`).
+        self.workspace = ""
+        self.env: dict[str, str] = {}
 
     # --- reading -------------------------------------------------------------
 
@@ -80,6 +93,15 @@ class Runner(runner.Runner[Journal]):
             self.working = True
         elif kind == "agent_settled":
             self.working = False
+            # pi delivers a steered message before its next model call and
+            # settles only once none is left, so nothing unread survives this.
+            # A person it left unanswered gets one more turn, unless the
+            # platform is the one that stopped it.
+            reason = None if self.aborting else self.insist()
+            if reason is None:
+                self.reply_settled()
+            else:
+                self.continuing = asyncio.ensure_future(self._hold_to_reply(reason))
         elif kind == "auto_retry_start":
             self.failing = True
             self._verdict(
@@ -96,6 +118,16 @@ class Runner(runner.Runner[Journal]):
             elif self.failing:
                 # A retry cut short while it waited: no agent_end follows.
                 self._give_up(event.get("finalError"))
+        elif kind == "compaction_start":
+            self._verdict(COMPACTING, after=None, done=False)
+        elif kind == "compaction_end":
+            self._verdict(
+                COMPACTING,
+                after=None,
+                done=True,
+                aborted=bool(event.get("aborted")),
+                errorMessage=str(event.get("errorMessage") or ""),
+            )
         elif kind == "agent_end":
             # The call that ended this run, if it failed. When pi is not trying
             # again — a request it cannot retry, or the retries ran out — that
@@ -157,6 +189,10 @@ class Runner(runner.Runner[Journal]):
             # after a held entry waits with it: the cursor stays before it.
             verdicts, self.verdicts = self.verdicts, []
             owner = json.loads(self.journal.recall("owner") or "{}")
+            # A compaction names no entry: it is news the moment pi says it,
+            # and a failed call held back for its verdict must not hold it too.
+            loose = [v for v in verdicts if v["type"] == COMPACTING]
+            verdicts = [v for v in verdicts if v["type"] != COMPACTING]
 
             def stamped(record: dict) -> dict:
                 return {**record, "cheese": owner} if owner else record
@@ -186,10 +222,15 @@ class Runner(runner.Runner[Journal]):
                     rows.append(stamped(entry))
                     rows += [stamped(v) for v in behind]
                     verdicts = [v for v in verdicts if v not in behind]
+                if held:
+                    rows += [stamped(v) for v in loose]
+                    loose = []
                 if rows:
                     self.journal.import_entries(rows)
                 if len(page) < PAGE:
                     break
+            if loose:
+                self.journal.import_entries([stamped(v) for v in loose])
             # Not placed yet: the entry each names is still to be pulled.
             self.verdicts = verdicts + self.verdicts
 
@@ -233,6 +274,9 @@ class Runner(runner.Runner[Journal]):
                     "jobs": str(self.state / "bg"),
                     "tools": tools,
                     "unavailable": reason,
+                    # The project's MCP servers' tools, listed when the session
+                    # opened (`open_servers`); each call comes back as `mcp`.
+                    "mcp": self.mcp_tools,
                     # The marker every platform instruction in this room already
                     # carries, handed over rather than restated: it is the one
                     # string in a prompt that claims institutional authority,
@@ -244,6 +288,16 @@ class Runner(runner.Runner[Journal]):
             encoding="utf-8",
         )
         return home
+
+    async def open_servers(
+        self, *, workspace: str, env: dict[str, str], remote: dict | None
+    ) -> None:
+        """Start the checkout's stdio MCP servers and list every server's tools,
+        before the extension's manifest is written."""
+        self.servers = ProjectServers(
+            self.state, workspace=workspace, env=env, remote=remote
+        )
+        self.mcp_tools = await self.servers.discover()
 
     async def run_cli(self, tool: str, arguments: dict, cwd: str | None) -> dict:
         """One platform tool call.
@@ -287,6 +341,30 @@ class Runner(runner.Runner[Journal]):
             "stderr": err.decode("utf-8", "replace"),
         }
 
+    async def tool_hooks(self, params: dict) -> dict:
+        """The project's hooks for one event of one of pi's own tool calls,
+        asked by the extension before the call and after it (`platform.ts`).
+
+        A deny is an answer, not a failure: the extension blocks the call with
+        it, or adds it to the result. A hook that could not run is a failure,
+        and pi blocks a call whose `tool_call` handler throws.
+        """
+        try:
+            args = await hooks.run(
+                params["event"],
+                params["tool"],
+                params.get("input") or {},
+                call_id=params["id"],
+                root=self.workspace,
+                cwd=params.get("cwd"),
+                env=self.env,
+                session_id=self.state.name,
+                result=params.get("result"),
+            )
+        except hooks.Denied as denied:
+            return {"denied": str(denied)}
+        return {"input": args}
+
     # --- lifecycle -----------------------------------------------------------
 
     async def start(
@@ -300,8 +378,10 @@ class Runner(runner.Runner[Journal]):
         skills: dict[str, str] | None = None,
         extension: dict[str, str] | None = None,
         notice: str = "",
+        remote_mcp: dict | None = None,
     ) -> str:
         self.claim()
+        self.workspace, self.env = cwd, env
         saved = self.journal.recall("session_id")
         if saved is not None and opening.resume_token not in (None, saved):
             raise ValueError("A session directory cannot resume a different session")
@@ -320,10 +400,17 @@ class Runner(runner.Runner[Journal]):
             ["--append-system-prompt", str(prompt)] if opening.system_prompt else []
         )
         # pi starts with `--no-skills` because it would otherwise read whatever
-        # the machine's owner keeps in ~/.agents and cwd. Explicit `--skill`
-        # paths are additive even then, so the platform's own skills are written
-        # here and named — for the same reason the system prompt is: they are
-        # assembled by the platform, and the machine has no copy to point at.
+        # the machine's owner keeps in their own ~/.agents. That drops the
+        # project's own skills as well, so they are named here, found the way
+        # pi finds them in a project it trusts. They come first: pi keeps the
+        # first skill of a name, and in a project opened with plain pi, the
+        # project's skill wins over one of the same name from anywhere else.
+        for path in project_skills(cwd):
+            appended += ["--skill", path]
+        # Explicit `--skill` paths are additive even under `--no-skills`, so the
+        # platform's own skills are written here and named — for the same
+        # reason the system prompt is: they are assembled by the platform, and
+        # the machine has no copy to point at.
         #
         # A skill is a directory and everything under it travels, so the files
         # go wherever their relative paths say — but only the directories that
@@ -336,6 +423,7 @@ class Runner(runner.Runner[Journal]):
             if file.name == "SKILL.md":
                 appended += ["--skill", str(file.parent)]
         if extension is not None:
+            await self.open_servers(workspace=cwd, env=env, remote=remote_mcp)
             home = self.write_extension(extension, notice)
             appended += ["--extension", str(home / "index.ts")]
             # Named rather than derived: an extension that had to work out
@@ -343,6 +431,7 @@ class Runner(runner.Runner[Journal]):
             # already knows, and the first thing a wrong guess costs is every
             # platform tool in the room.
             env = {**env, "CHEESE_PI_EXTENSION": str(home)}
+        self.notice = notice
         self.errors = (self.state / "pi.log").open("ab")
         self.process = await asyncio.create_subprocess_exec(
             binary,
@@ -355,7 +444,7 @@ class Runner(runner.Runner[Journal]):
             *appended,
             *args,
             cwd=cwd,
-            env=env,
+            env=self.agent_env(env),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=self.errors,
@@ -386,6 +475,7 @@ class Runner(runner.Runner[Journal]):
         steering: bool = False,
         images: list[dict] | None = None,
         work_id: str | None = None,
+        owes_reply: bool = False,
     ) -> dict:
         """``prompt``, or ``steer`` for words said to a session mid-turn."""
         return await self.accept(
@@ -397,6 +487,7 @@ class Runner(runner.Runner[Journal]):
                 "steer": steering,
             },
             lambda: self._submit(identifier, text, steering, images, work_id),
+            owes_reply=owes_reply,
         )
 
     async def _submit(
@@ -414,6 +505,7 @@ class Runner(runner.Runner[Journal]):
             # Persist attribution before the call: entries can appear
             # before the command's own acknowledgement comes back.
             owner = json.loads(self.journal.recall("owner") or "{}")
+            owner.pop("unsolicited", None)
             self.journal.remember("owner", json.dumps({**owner, "work_id": work_id}))
         fields: dict = {"message": text}
         if images:
@@ -423,6 +515,30 @@ class Runner(runner.Runner[Journal]):
         else:
             await self.client.request("prompt", **fields)
         return {"input_id": identifier}
+
+    async def _hold_to_reply(self, reason: str) -> None:
+        """A turn of the session's own, to answer the person it left waiting.
+
+        The room already saw the last one end — pi wrote its final message
+        before it settled — so this is new work the room opens the books for
+        when it speaks (`unsolicited`), as it does for a turn a finished
+        background job starts."""
+        assert self.client is not None
+        owner = json.loads(self.journal.recall("owner") or "{}")
+        owner.update(work_id=str(uuid.uuid4()), unsolicited=True)
+        self.journal.remember("owner", json.dumps(owner))
+        try:
+            await self.client.request(
+                "prompt", message=f"{self.notice}\n{reason}" if self.notice else reason
+            )
+        except Exception as error:  # noqa: BLE001 — the turn ended; so be it
+            print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
+            self.reply_settled()
+
+    async def yield_foreground(self) -> None:
+        """Nothing to send: pi's shell runs inside pi, as the platform
+        extension's `bash` (`platform.ts`), which watches the file the debt was
+        just written to and lets go of its command as soon as it changes."""
 
     # --- the socket ----------------------------------------------------------
 
@@ -438,6 +554,7 @@ class Runner(runner.Runner[Journal]):
                 params["text"],
                 images=params.get("images"),
                 work_id=params.get("work_id"),
+                owes_reply=bool(params.get("owes_reply")),
             )
         if method == "steer":
             return await self.send(
@@ -446,11 +563,23 @@ class Runner(runner.Runner[Journal]):
                 steering=True,
                 images=params.get("images"),
                 work_id=params.get("work_id"),
+                owes_reply=bool(params.get("owes_reply")),
             )
         if method == "cli":
             return await self.run_cli(
                 params["tool"], params.get("arguments") or {}, params.get("cwd")
             )
+        if method == "mcp":
+            if self.servers is None:
+                raise ValueError("This session has no MCP servers")
+            return await self.servers.call(
+                params["tool"],
+                params.get("arguments") or {},
+                call_id=params.get("id") or str(uuid.uuid4()),
+                cwd=params.get("cwd"),
+            )
+        if method == "hooks":
+            return await self.tool_hooks(params)
         if method == "abort":
             if self.client is None:
                 return {"aborted": False}
@@ -507,4 +636,8 @@ class Runner(runner.Runner[Journal]):
         if self.refresher is not None:
             self.refresher.cancel()
             await asyncio.gather(self.refresher, return_exceptions=True)
-        await super().close()
+        try:
+            await super().close()
+        finally:
+            if self.servers is not None:
+                await self.servers.close()

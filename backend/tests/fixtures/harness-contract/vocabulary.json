@@ -51,6 +51,11 @@
       "class": "AgentRetrying",
       "required": [],
       "why": "A model request failed and the harness is sending it again. Nothing else reaches the room while it waits, so without this a turn stuck in backoff looks exactly like a turn that is thinking. Every field is optional: a harness says as much of the count as it knows."
+    },
+    "compacting": {
+      "class": "AgentCompacting",
+      "required": [],
+      "why": "The session is compacting its context, or has finished. A long conversation is summarised before the next request, which can take minutes with no output and no reply to new messages; without this a compacting session looks exactly like a hung one. `done` is false when it starts and true when it ends; `error` says why it ended without compacting."
     }
   },
   "differences": {

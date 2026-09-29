@@ -552,6 +552,19 @@ function openTask(task: RoomTask) {
   grid-column: 1 / -1;
   max-height: 132px;
 }
+/* 三列任务排不下一行（< 800 = 3×260 + 2×10）时，列会折成两行、三行。上面那两条
+   行轨只管得了前两行：第二行吃掉剩下的全部高度，下一列被推到一屏空白之后。这时
+   不再把板钉在这一格的高度里各列自己滚，而是每列有多高画多高，整页一起滚。 */
+@container (width < 800px) {
+  .board__cols {
+    flex: none;
+    grid-template-rows: none;
+    padding-bottom: 12px;
+  }
+  .board-col {
+    max-height: none;
+  }
+}
 /* 够宽就并排成四列。三列任务各 240 起，产物那一列只放名字和第几版，220 够用：
    240×3 + 220 + 10×3 = 970，所以 1000 是这条线该划的地方。 */
 @container (min-width: 1000px) {

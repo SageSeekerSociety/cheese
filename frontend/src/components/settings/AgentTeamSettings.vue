@@ -216,30 +216,33 @@ async function confirmDeactivate() {
       </div>
 
       <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
-        <div class="d-flex align-center">
-          <CheeseAvatar :name="a.display_name || a.handle" :size="36" class="mr-3" />
-          <div class="min-w-0">
-            <div class="d-flex align-center ga-2">
-              <span class="t-title">{{ a.display_name || a.handle }}</span>
-              <v-chip v-if="a.is_default" size="x-small" color="primary" variant="tonal">默认</v-chip>
-              <v-chip v-if="a.is_active === false" size="x-small" variant="tonal">已停用</v-chip>
+        <div class="agent-head">
+          <div class="agent-head__id">
+            <CheeseAvatar :name="a.display_name || a.handle" :size="36" class="mr-3 flex-shrink-0" />
+            <div class="min-w-0">
+              <div class="d-flex align-center flex-wrap ga-2">
+                <span class="t-title agent-head__name">{{ a.display_name || a.handle }}</span>
+                <v-chip v-if="a.is_default" size="x-small" color="primary" variant="tonal">默认</v-chip>
+                <v-chip v-if="a.is_active === false" size="x-small" variant="tonal">已停用</v-chip>
+              </div>
+              <div class="t-meta c-muted agent-head__name">@{{ a.handle }} · {{ typeLabel(types, a.type_name) }}</div>
             </div>
-            <div class="t-meta c-muted">@{{ a.handle }} · {{ typeLabel(types, a.type_name) }}</div>
           </div>
-          <v-spacer />
-          <v-btn
-            v-if="!a.is_default && a.is_active !== false"
-            variant="text"
-            size="small"
-            :loading="settingDefault === a.id"
-            @click="makeDefault(a)"
-          >
-            设为默认
-          </v-btn>
-          <v-btn variant="text" size="small" @click="openEdit(a)">编辑</v-btn>
-          <v-btn v-if="a.is_active !== false" variant="text" size="small" color="error" @click="deactivateTarget = a">
-            停用
-          </v-btn>
+          <div class="agent-head__actions">
+            <v-btn
+              v-if="!a.is_default && a.is_active !== false"
+              variant="text"
+              size="small"
+              :loading="settingDefault === a.id"
+              @click="makeDefault(a)"
+            >
+              设为默认
+            </v-btn>
+            <v-btn variant="text" size="small" @click="openEdit(a)">编辑</v-btn>
+            <v-btn v-if="a.is_active !== false" variant="text" size="small" color="error" @click="deactivateTarget = a">
+              停用
+            </v-btn>
+          </div>
         </div>
 
         <div class="d-flex align-center ga-4 mt-3 flex-wrap">
@@ -291,6 +294,30 @@ async function confirmDeactivate() {
 <style scoped>
 .min-w-0 {
   min-width: 0;
+}
+
+/* 名字一组、按钮一组：放不下时整组按钮换到下一行靠右，而不是把名字挤成一列，
+   也不是三颗按钮一颗一颗地掉下去。 */
+.agent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.agent-head__id {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+}
+.agent-head__name {
+  overflow-wrap: anywhere;
+}
+.agent-head__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  margin-inline-start: auto;
 }
 
 /* 记忆条数是可以点开的，所以它长得像个链接而不像一段说明文字。 */

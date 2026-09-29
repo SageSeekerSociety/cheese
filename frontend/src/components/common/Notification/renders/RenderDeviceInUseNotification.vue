@@ -1,6 +1,13 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
+    <div class="text-subtitle-2 font-weight-medium">
+      <i18n-t keypath="notifications.DEVICE_IN_USE.title" tag="span">
+        <template #agent>
+          <UserRef :handle="text('agentHandle')" :name="text('agentName')" :project-id="text('projectId') || null" />
+        </template>
+        <template #device>{{ text('deviceName') }}</template>
+      </i18n-t>
+    </div>
     <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
   </div>
 </template>
@@ -12,6 +19,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getMetadata, getStringMetadata } from './NotificationRenderUtils'
+
+import UserRef from '@/components/common/UserRef.vue'
 
 /**
  * 一个 agent 开始在你登记的设备上工作（#1900 第 5 步）。只是告知：哪个项目、哪个
