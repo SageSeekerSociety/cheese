@@ -1,6 +1,11 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
+    <div class="text-subtitle-2 font-weight-medium">
+      <i18n-t v-if="decliner" keypath="notifications.TEAM_INVITATION_DECLINED.title" tag="span">
+        <template #decliner><UserRef :handle="decliner.handle" :name="decliner.name" :project-id="null" /></template>
+      </i18n-t>
+      <template v-else>{{ title }}</template>
+    </div>
     <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
     <div v-if="declineReason" class="text-body-2 text-medium-emphasis mt-2 message-box">
       <div class="text-caption mb-1">{{ t('notifications.common.reason') }}:</div>
@@ -16,6 +21,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
+
+import UserRef from '@/components/common/UserRef.vue'
 
 const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()

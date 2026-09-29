@@ -56,12 +56,14 @@ const chatRef = ref<{
   send: (content: string, summon: boolean) => boolean
 } | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
+const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 
 const connected = computed(() => !!chatRef.value?.connected)
 
 defineExpose({
   connected,
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
+  reloadFeedback: () => feedbackRef.value?.reload(),
   // 预览面板里「指出位置」发出来的那一句。带 summon：读者指着文档说了一处要改，
   // 等下一轮顺路捎上等于没说。
   say: (content: string) => chatRef.value?.send(content, true) ?? false,
@@ -110,7 +112,7 @@ defineExpose({
              （`GET /topics/{id}/feedback-proposals`），一张都没有就什么都不画。
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
              换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
-        <AgentFeedbackCard :topic-id="topic.id" />
+        <AgentFeedbackCard ref="feedbackRef" :topic-id="topic.id" />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（工作电脑）都不是某条消息的动作，摆在输入区上纯是占

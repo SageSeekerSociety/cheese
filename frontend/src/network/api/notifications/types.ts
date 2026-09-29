@@ -25,6 +25,8 @@ export interface EntityInfo {
   // The page this entity opens, as the backend resolved it (a team: `/teams/<handle>`).
   url?: string
   avatarUrl?: string
+  // A user entity's handle, so the name can link to that person.
+  handle?: string | null
 }
 
 export interface Notification {

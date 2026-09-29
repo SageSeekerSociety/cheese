@@ -27,6 +27,7 @@ from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.remote_execution import release
+from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.project_skill.service import project_skill_names, session_skill_files
@@ -158,6 +159,7 @@ def launch_holes(
     ca_pem: str = "",
     resume_session_id: str | None = None,
     project_id: str | None = None,
+    launch_name: str = "",
 ) -> MachineLaunch:
     """Claude Code's half of a device launch: the four holes, and its own env.
 
@@ -204,6 +206,12 @@ python3 - "$CLAUDE_CONFIG_DIR" <<'CHEESE_SKILLS'
 import base64, gzip, json, os, sys
 files = json.loads(gzip.decompress(base64.b64decode("{skills}")))
 for name, content in files.items():
+    # An earlier session may have linked the repository's skill of this name
+    # here, into the project; the platform's is written in its place, never
+    # through the link.
+    top = os.path.join(sys.argv[1], *name.split("/")[:2])
+    if os.path.islink(top):
+        os.unlink(top)
     path = os.path.join(sys.argv[1], name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as out:
@@ -241,6 +249,7 @@ CHEESE_SKILLS"""
   > "$HOME/.cheese/remote-target.json"
 EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"
 EXECUTOR_TARGET="$HOME/.cheese/remote-target.json"
+export CHEESE_EXECUTION_CONFIG="$HOME/.cheese/remote-session/execution.json"
 CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
         configure = f"""\
@@ -403,6 +412,10 @@ CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" 
         # on the env for the same reason the tunnel vars are — a remote launch
         # is built entirely out of its environment.
         env["CHEESE_RESUME_SESSION"] = resume_session_id
+    if launch_name:
+        # Which start of the runner this is, so a wait on it reads only what
+        # this start left in the runner's log (``runner.LAUNCH``).
+        env[LAUNCH] = launch_name
     configure, prepare = holes(system_prompt, helper_sources)
     launch = MachineLaunch(
         configure=configure,
@@ -426,14 +439,17 @@ cheese_launch_phase credentials_selected
     # without the two things that are not the platform's. The system prompt is
     # the room's and is rebuilt every turn; a live session keeps the one it
     # started with. The resume offer names the conversation, which a relaunch
-    # continues. The helpers a release puts into a running session are left
-    # out too, since changing one is a release and not a relaunch. Everything
+    # continues, and the launch name is new on every turn. The helpers a
+    # release puts into a running session are left out too, since changing
+    # one is a release and not a relaunch. Everything
     # else here is read once by a process that keeps it for its life — the
     # binary, the argv, the settings, the skills, the runner, the environment,
     # and everything `client.prepare` writes — so any change to it has to
     # reach a live session as a new one.
     configured, prepared = holes("", release.launch_only(helper_sources))
-    fixed_env = {k: v for k, v in env.items() if k != "CHEESE_RESUME_SESSION"}
+    fixed_env = {
+        k: v for k, v in env.items() if k not in ("CHEESE_RESUME_SESSION", LAUNCH)
+    }
     contract = hashlib.sha256(
         json.dumps(
             [configured, launch.credentials, prepared, launch.command, fixed_env],
@@ -448,6 +464,7 @@ def on_machine(
     *,
     system_prompt: str,
     resume_session_id: str | None,
+    launch_name: str = "",
 ) -> MachineLaunch:
     """Claude Code, now that a machine has said where and what this room is.
 
@@ -461,6 +478,7 @@ def on_machine(
         ca_pem=place.ca_pem,
         resume_session_id=resume_session_id,
         project_id=place.project_id,
+        launch_name=launch_name,
     )
 
 

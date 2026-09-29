@@ -9,6 +9,25 @@ order: 2
 
 和芝士协作，就像把一件事交给一位能干的同事：先说清要什么、做到什么算完，中途随时补一句，最后检查交回来的东西。
 
+```demo-steps
+title: 中途补一句，芝士问你一句
+note: 画面用的是产品里真的消息行、按钮卡和现场
+embed: collaborate
+steps:
+  - label: 说清要什么、有什么、怎样算完
+    desc: 一条要求里写清成果给谁用、已有的材料、完成标准。材料直接上传或贴进来。
+    link: /working-with-cheese#describe-goal
+  - label: 执行中补一句，并进这一轮
+    desc: 芝士在干活时补的话，会并进正在进行的这一轮，不用等它做完，也不用再点名。
+    link: /working-with-cheese#add-context
+  - label: 它需要你拍板：点一个选项
+    desc: 芝士要你做决定时，会发一张带按钮的问题卡。点一个选项就是回答，它接着做。
+    link: /working-with-cheese#follow-progress
+  - label: 看结果：说明加改动
+    desc: 先读它的结果说明，再点本轮摘要的「查看改动」或右侧「改动」核对文件。
+    link: /working-with-cheese#review-result
+```
+
 ## 描述目标 {#describe-goal}
 
 一条好的要求包含三件事：
@@ -36,7 +55,7 @@ order: 2
 | 右侧页签 | 看什么 |
 |---|---|
 | 总览 | 这个话题的任务、进度和实况文档 |
-| 现场 | 芝士正在操作的终端和浏览器画面 |
+| 现场 | 芝士每一步做了什么：读了什么、改了什么、跑了什么命令 |
 | 改动 | 目前改了哪些文件 |
 | 预览 | 做出来的网页或文件的预览 |
 

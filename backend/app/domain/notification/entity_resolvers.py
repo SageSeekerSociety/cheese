@@ -100,6 +100,7 @@ class UserEntityResolver:
             return {}
 
         profiles_by_user_id = await self._user_service.get_users_by_ids(numeric_ids)
+        handles_by_user_id = await self._user_service.get_handles_by_ids(numeric_ids)
 
         result: dict[str, ResolvedEntityInfoDTO | None] = {}
         for raw_id in id_strs:
@@ -118,6 +119,7 @@ class UserEntityResolver:
                 url=f"/users/{uid}",
                 avatarUrl=avatar_url,
                 status=None,
+                handle=handles_by_user_id.get(uid),
             )
 
         return result

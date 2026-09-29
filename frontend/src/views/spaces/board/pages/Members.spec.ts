@@ -44,7 +44,11 @@ vi.mock('../store', async () => {
       name: '一块板',
       intro: '',
       owner: { handle: 'boss', name: '板主' },
-      admins: [{ handle: 'boss', name: '板主' }],
+      // 所有者也是管理员名单里的人（角色只有一处来源），马小雨是另一位管理员。
+      admins: [
+        { handle: 'boss', name: '板主' },
+        { handle: 'maxiaoyu', name: '马小雨' },
+      ],
       isCourse: false,
     }),
     loadBoard: vi.fn(async () => {}),
@@ -105,11 +109,12 @@ async function mount() {
 }
 
 /** 表体里每一行，按屏幕上的先后。`Map` 而不是对象：handle 是数据，不是键名。 */
-function rows(): { who: string; join: string }[] {
+function rows(): { who: string; role: string; join: string }[] {
   return Array.from(document.querySelectorAll('tbody tr')).map((tr) => {
     const cells = tr.querySelectorAll('td')
     return {
       who: (cells[0]?.textContent || '').trim(),
+      role: (cells[1]?.textContent || '').trim(),
       join: (cells[2]?.textContent || '').trim(),
     }
   })
@@ -180,5 +185,59 @@ describe('成员页的「加入方式」', () => {
     expect(document.body.textContent).toContain('LIVE2222BB')
     expect(rowOf('林')?.join).toBe('未知')
     expect(rowOf('周')?.join).toBe('ABCD2345EF')
+  })
+})
+
+// 这一批补的是角色旁那句旁注，以及**所有者那一行的例外**：他不是靠哪张邀请码进来的，
+// 所以那格读「建板时就在」，而不是跟别人一样读「未知」。上面那条「不替没记录的人说话」
+// 照旧管着其余每一行 —— 所以这里要并排摆三种角色，才看得出只放行了所有者一个。
+describe('成员页的角色旁注与所有者的「加入方式」', () => {
+  beforeEach(() => {
+    storeRefs().currentCode.value = null
+    storeRefs().isOwner.value = false
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  /** 三种角色各一行：板主是所有者、马小雨是管理员、林是成员。 */
+  function roster() {
+    listMembers.mockImplementation(async () => ({
+      data: {
+        members: [
+          member({ userId: 9, user: { id: 9, username: 'boss', nickname: '板主' } }),
+          member({ userId: 2, user: { id: 2, username: 'maxiaoyu', nickname: '马小雨' } }),
+          member({ userId: 1, user: { id: 1, username: 'lin', nickname: '林' } }),
+        ],
+      },
+    }))
+  }
+
+  it('所有者那一行写「建板时就在」——他不是靠码进来的', async () => {
+    roster()
+    await mount()
+
+    expect(rowOf('板主')?.join).toBe('建板时就在')
+  })
+
+  it('其余没有记录的行照旧写「未知」，没跟着一起变', async () => {
+    roster()
+    await mount()
+
+    expect(rowOf('林')?.join).toBe('未知')
+    // 管理员也是所有者授上来的（不是自己用码进来的），那一格同样没有记录可说。
+    expect(rowOf('马小雨')?.join).toBe('未知')
+  })
+
+  it('角色旁注：所有者「建板的人」、管理员「由所有者授予」，成员没有', async () => {
+    roster()
+    await mount()
+
+    expect(rowOf('板主')?.role).toContain('建板的人')
+    expect(rowOf('马小雨')?.role).toContain('由所有者授予')
+    // 成员是缺省角色：那一格只有角色名，没有旁注。
+    expect(rowOf('林')?.role).toBe('成员')
   })
 })

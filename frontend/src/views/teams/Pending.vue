@@ -156,7 +156,7 @@
       </template>
       <v-list-item-title>{{ invitation.project_name || '一个项目' }}</v-list-item-title>
       <v-list-item-subtitle class="text-caption">
-        {{ invitation.inviter_handle }} 邀请 · 接受之后你能看到这个项目的全部话题
+        <UserRef :handle="invitation.inviter_handle" :project-id="null" /> 邀请 · 接受之后你能看到这个项目的全部话题
       </v-list-item-subtitle>
 
       <template #append>
@@ -196,6 +196,7 @@ import { toast } from 'vuetify-sonner'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { listMyInvitations, respondToInvitation } from '@/api'
+import UserRef from '@/components/common/UserRef.vue'
 import { TeamsApi } from '@/network/api/teams'
 
 // 申请和邀请的状态

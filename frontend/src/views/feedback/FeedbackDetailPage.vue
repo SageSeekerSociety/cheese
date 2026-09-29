@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ApiError, getFeedback } from '@/api'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import FeedbackCommentsThread from '@/components/feedback/FeedbackCommentsThread.vue'
 import FeedbackErrorBanner from '@/components/feedback/FeedbackErrorBanner.vue'
@@ -303,7 +304,9 @@ async function share() {
           <!-- 提案卡发出来的那条有两个名字：agent 找出来的、人发出去的。两个都写，
                因为「这是谁提的」在这条路径上有两个都对但不同的答案。 -->
           <div v-if="item.submitted_by_handle" class="t-meta-read t-num">
-            {{ t('feedback.detail.submittedBy', { handle: item.submitted_by_handle }) }}
+            <i18n-t keypath="feedback.detail.submittedBy" tag="span">
+              <template #handle><UserRef :handle="item.submitted_by_handle" /></template>
+            </i18n-t>
           </div>
         </div>
 

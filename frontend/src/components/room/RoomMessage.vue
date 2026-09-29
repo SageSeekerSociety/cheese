@@ -18,6 +18,7 @@ import { avatarColor, avatarInitial } from '../../utils/avatar'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
+import UserRef from '../common/UserRef.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
 import MessageEditor from './MessageEditor.vue'
@@ -281,7 +282,8 @@ async function onAgentTextClick(e: MouseEvent) {
         <div v-else-if="askOptions(block)" key="answered" class="ask-row">
           <div class="ask-answered">
             <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
-            {{ askAnswered(block)!.by }} 选了「{{ askAnswered(block)!.option }}」
+            <UserRef :handle="askAnswered(block)!.by" :name="refs.mentionNames[askAnswered(block)!.by]" />
+            选了「{{ askAnswered(block)!.option }}」
           </div>
         </div>
       </Transition>

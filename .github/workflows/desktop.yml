@@ -100,6 +100,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: write
     defaults:
       run:
         working-directory: .
@@ -128,3 +129,6 @@ jobs:
                "darwin-x86_64": {signature: $x64, url: "\($base)/Cheese-x64.app.tar.gz"}}}' \
             > latest.json
           gh release upload desktop-latest latest.json --clobber
+          # okcheese.com serves these files from the frontend image (build.yml
+          # copies the release in), so rebuild the images for it to carry this one.
+          gh workflow run build.yml --ref main

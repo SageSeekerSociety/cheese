@@ -342,7 +342,10 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
             ws,
             lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
         )
-    client.portal.call(before.runtime._detach, topic)
+    # The old process stops reading, as a replaced backend does. `_detach` takes
+    # a seat, not a room, so `_detach(room)` removed nothing and the old reader
+    # went on handling the session's records next to the new one.
+    client.portal.call(before.runtime.stop_listening)
 
     # The machine kept its runner; the new process has only the channel to it.
     after = StubChannel()

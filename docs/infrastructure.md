@@ -227,8 +227,8 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 ## CI runner pool (cheese-ci)
 
-Backend CI (`test.yml`) runs on GitHub-hosted Ubuntu runners. E2E runs on the
-**cheese-ci** label — a pool of MicroCloud VMs (prod tenant, customer
+Backend CI (`test.yml`) and E2E (`e2e.yml`, split into Playwright shards) run
+on GitHub-hosted Ubuntu runners. The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
 keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
@@ -271,8 +271,8 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   4 KB `oflag=dsync` write took 3.5 ms on runner-3, IO stall 23% of the time,
   #668 needed five attempts to finish inside the 20-minute timeout while #667
   had taken 7 minutes on a quiet host). Since #670 the Postgres data directory
-  of the `test` and `e2e` service containers is a 3 GB tmpfs: no disk in the
-  path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
+  of the `test` job's integration service container is a tmpfs (its size is
+  set in `test.yml`): no disk in the path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
   host). A full run writes about 1 GB including WAL, measured locally; if the
   suite ever outgrows the tmpfs, Postgres fails with ENOSPC and the size in the
   workflow is the knob. The unit-test third never touched the disk and runs at
@@ -282,9 +282,10 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `RUNNER_TEMP` and therefore its own uv venv rather than a
   concurrent `uv sync` into one. Postgres and Valkey are resident on the machine
   (`deploy/ci-runner/resident-services.sh`, on 5442/6389) and shared by its
-  slots: a job's own service containers bind 5432/6379 and bring a 3 GB tmpfs
-  each, which is what held a machine to one job. What keeps two concurrent runs
-  apart is the slot each declares in its runner `.env` — see
+  slots. The one pool job with service containers of its own, `private-chat`
+  in `remote-execution.yml`, publishes them on ephemeral host ports and gives
+  its Postgres a 1 GB tmpfs, so two slots do not collide over them. What keeps
+  two concurrent runs apart is the slot each declares in its runner `.env` — see
   `backend/tests/isolation.py` for the names it scopes, and note that the test
   harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
   runs handed one name delete each other's data mid-test.

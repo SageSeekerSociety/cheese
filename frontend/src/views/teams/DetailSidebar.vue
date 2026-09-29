@@ -91,7 +91,18 @@
             <v-img :src="getAvatarUrl(admin.avatarId)" />
           </v-avatar>
         </div>
-        <div class="text-caption text-medium-emphasis ml-2">{{ ownerAndAdminsText }}</div>
+        <div class="text-caption text-medium-emphasis ml-2">
+          <template v-if="!ownerAndAdminTotal">暂无管理员</template>
+          <template v-else>
+            创建者
+            <UserRef
+              :handle="ownerAndAdminExamples[0]!.username"
+              :name="ownerAndAdminExamples[0]!.nickname"
+              :project-id="null"
+            />
+            <template v-if="ownerAndAdminTotal > 1"> 和 {{ ownerAndAdminTotal - 1 }} 位管理员</template>
+          </template>
+        </div>
       </div>
     </div>
   </SecondaryNavigation>
@@ -115,6 +126,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import TeamProfileEditDialog from './TeamProfileEditDialog.vue'
 
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 
 interface Props {
@@ -149,16 +161,6 @@ const ownerAndAdminTotal = computed(() => {
     return 0
   }
   return 1 + (props.teamData.admins.total || 0)
-})
-
-const ownerAndAdminsText = computed(() => {
-  if (!ownerAndAdminTotal.value) {
-    return '暂无管理员'
-  } else if (ownerAndAdminTotal.value === 1) {
-    return `创建者 ${ownerAndAdminExamples.value[0]!.nickname}`
-  } else {
-    return `创建者 ${ownerAndAdminExamples.value[0]!.nickname} 和 ${ownerAndAdminTotal.value - 1} 位管理员`
-  }
 })
 </script>
 

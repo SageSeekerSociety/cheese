@@ -102,7 +102,7 @@ def machine(contract, tmp_path):
 class Screen:
     """The runner archive, started the way the launcher starts it."""
 
-    def __init__(self, machine: Machine):
+    def __init__(self, machine: Machine, env: dict[str, str] | None = None):
         self.machine = machine
         artifact = machine.root / "runner.pyz"
         artifact.write_bytes(build())
@@ -114,6 +114,7 @@ class Screen:
                 **machine.env,
                 "CHEESE_CLAUDE_COMMAND": machine.command,
                 "CHEESE_AUTHOR": AGENT,
+                **(env or {}),
             },
             stdout=subprocess.DEVNULL,
             stderr=self.errors,
@@ -553,6 +554,66 @@ async def test_a_question_the_build_would_ask_never_reaches_the_driver(
     assert [message["type"] for message in written] == ["user"]
 
 
+@pytest.mark.anyio
+async def test_the_builds_thinking_estimate_is_not_journaled(monkeypatch, tmp_path):
+    """While the model thinks, the build prints a running estimate of how much,
+    one line per streamed delta. The room shows none of it, so none of it is
+    kept: a long think was otherwise most of a session's journal."""
+    said = [
+        {"type": "system", "subtype": "init", "session_id": "s", "model": "m"},
+        *(
+            {
+                "type": "system",
+                "subtype": "thinking_tokens",
+                "estimated_tokens": n,
+                "estimated_tokens_delta": 1,
+                "session_id": "s",
+                "uuid": f"t{n}",
+            }
+            for n in range(1, 50)
+        ),
+        {
+            "type": "assistant",
+            "uuid": "a",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "done thinking"}],
+            },
+        },
+        {"type": "result", "subtype": "success", "is_error": False, "uuid": "r"},
+    ]
+    build = tmp_path / "build.py"
+    build.write_text(
+        "import json, sys\n"
+        f"for record in {said!r}:\n"
+        "    print(json.dumps(record), flush=True)\n"
+        "sys.stdin.read()\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    runner = Runner(tmp_path / "state")
+    await runner.start(
+        command=shlex.join([sys.executable, str(build)]),
+        env={**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path / "config")},
+        resume=None,
+        agent_handle=AGENT,
+    )
+    try:
+        async with asyncio.timeout(30):
+            while True:
+                records = [e["record"] for e in runner.journal.read(0)]
+                if any(_is("result")(r) for r in records):
+                    break
+                await asyncio.sleep(0.05)
+    finally:
+        await runner.close()
+
+    assert [(r["type"], r.get("subtype")) for r in records] == [
+        ("system", "init"),
+        ("assistant", None),
+        ("result", "success"),
+    ]
+
+
 # --- a session that dies on its way up says why --------------------------------
 
 
@@ -613,3 +674,126 @@ def test_an_earlier_start_does_not_speak_for_this_one(tmp_path):
 
     assert "today's failure" in log
     assert "yesterday's failure" not in log
+
+
+# --- a machine that attaches later brings its project's hooks ---------------
+
+
+def test_the_hooks_a_helper_hands_the_session_hold_for_its_next_tool_call(
+    screen, machine, contract
+):
+    """A session started before its machine had no project hooks to register.
+    When the machine attaches, the helper that attached it (the shell prefix,
+    inside a tool call) hands the session the project's hooks through this
+    runner, and the next tool call fires them."""
+    transport = Path(__file__).resolve().parents[2] / (
+        "app/domain/agent/executor_transport.py"
+    )
+    log = machine.root / "project-hook.jsonl"
+    hooks = {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {"type": "command", "command": f"cat >> {log}; echo >> {log}"}
+                ],
+            }
+        ]
+    }
+    session = machine.root / "session"
+    session.mkdir()
+    attach = shlex.join(
+        [
+            sys.executable,
+            "-c",
+            "import json, runpy, sys; "
+            f"module = runpy.run_path({str(transport)!r}); "
+            "print('registered', module['register_project_hooks']("
+            f"{{'central_config': {str(machine.config)!r}, "
+            f"'target_file': {str(session / 'execution.json')!r}}}, "
+            f"json.loads({json.dumps(hooks)!r})))",
+        ]
+    )
+
+    def bash(command):
+        mark = screen.records()[-1]["sequence"] if screen.records() else 0
+        screen.send(
+            contract.do("Bash", command=command, description="step"),
+            work_id=str(uuid.uuid4()),
+        )
+        screen.wait(_is("result"), after=mark)
+        return [
+            block
+            for entry in screen.records()
+            if entry["sequence"] > mark and _tool_result(entry["record"])
+            for block in _blocks(entry["record"])
+            if block.get("type") == "tool_result"
+        ]
+
+    (attached,) = bash(attach)
+    assert "registered True" in json.dumps(attached), attached
+    assert not log.exists(), "no hooks were registered when that call started"
+
+    bash("echo AFTER_THE_MACHINE")
+    fired = [json.loads(line) for line in log.read_text().splitlines() if line]
+    assert [entry["tool_input"]["command"] for entry in fired] == [
+        "echo AFTER_THE_MACHINE"
+    ]
+
+
+# --- a new turn starts on the project's skills as they are now ------------------
+
+
+def _ends(work):
+    return lambda r: (
+        r.get("type") == "result" and (r.get("cheese") or {}).get("work_id") == work
+    )
+
+
+def test_a_skill_the_project_gained_between_turns_is_offered_in_the_next(
+    machine, contract
+):
+    """A room's session reads the project's skills through links into the
+    executor's view, which no file watcher sees change. Before a turn the runner
+    has the executor client synchronize them (`client.py catch-up`, named in the
+    session's execution target) and, when they changed, the session reloads its
+    skills before the turn starts."""
+    # The executor client, standing in: the project gained a skill, which it
+    # links into the config dir, and it says so; after that nothing changes.
+    client = machine.root / "client.py"
+    client.write_text(
+        "import json, pathlib, sys\n"
+        f"added = pathlib.Path({str(machine.config / 'skills/pulled')!r})\n"
+        "assert sys.argv[1:3] == ['catch-up', sys.argv[2]]\n"
+        "changed = not added.exists()\n"
+        "if changed:\n"
+        "    added.mkdir(parents=True)\n"
+        "    (added / 'SKILL.md').write_text('---\\nname: pulled\\n"
+        "description: Came with a pull. PULLED_LISTED.\\n---\\nPULLED_BODY\\n')\n"
+        "with open(sys.argv[2] + '.calls', 'a') as calls:\n"
+        "    calls.write('called\\n')\n"
+        "print(json.dumps({'changed': changed}))\n"
+    )
+    execution = machine.root / "execution.json"
+    execution.write_text(json.dumps({"helper": [sys.executable, str(client)]}))
+
+    screen = Screen(machine, env={"CHEESE_EXECUTION_CONFIG": str(execution)})
+    try:
+        requests = machine.server.state["requests"]
+        work = str(uuid.uuid4())
+        screen.send("hello", work_id=work)
+        first = screen.wait(_ends(work))
+        asked = len(requests)
+        offered = "PULLED_LISTED" in json.dumps(requests[-1])
+        work = str(uuid.uuid4())
+        screen.send(contract.do("Skill", skill="pulled"), work_id=work)
+        screen.wait(_ends(work), after=first["sequence"])
+        loaded = "PULLED_BODY" in json.dumps(requests[asked:])
+    finally:
+        screen.stop()
+
+    calls = machine.root / "execution.json.calls"
+    assert calls.exists(), screen.log()
+    assert calls.read_text().count("called") == 2, "once before each turn"
+    assert offered, "the first turn was not offered the skill the project gained"
+    assert loaded

@@ -91,6 +91,9 @@ class ClaudeLaunch:
     system_prompt: str
     model: str | None = None
     resume_session_id: str | None = None
+    # Names this start of the runner (``runner.LAUNCH``); new on every turn,
+    # so it is never part of what a live session is compared against.
+    launch_name: str = ""
     harness: str = CLAUDE_CODE
 
     @property
@@ -108,4 +111,5 @@ class ClaudeLaunch:
             # A screen is retired and reopened for reasons that say nothing
             # about the conversation, so every launch offers to continue it.
             resume_session_id=self.resume_session_id,
+            launch_name=self.launch_name,
         )

@@ -28,6 +28,7 @@ from app.domain.agent.harness.claude_code import ClaudeCodeChannel
 from app.domain.agent.harness.claude_code import channel as claude_channel
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.driven.runner import socket_path
+from app.domain.agent.harness.launch import MachinePlace
 
 PROJECT, TOPIC = uuid.uuid4(), uuid.uuid4()
 AGENT = "cheese-agent"
@@ -60,14 +61,27 @@ class Host:
     def available(self) -> bool:
         return True
 
+    def place(self, state: str) -> MachinePlace:
+        return MachinePlace(
+            home=str(self.home),
+            workdir=str(self.home),
+            store=str(self.home),
+            state=state,
+            api_base="http://api.test",
+            project_id=str(PROJECT),
+            topic_id=str(TOPIC),
+            agent_handle=AGENT,
+        )
+
     def expand(self, state: str) -> Path:
         return Path(state.replace("$HOME", str(self.home)))
 
     async def precheck(self, session, *, needs_place):
         return Placement(DEVICE, 1, AGENT, rented=False)
 
-    async def ensure_ready(self, *, env, runtime_factory, **_):
-        state = self.expand(runtime_factory(TOPIC)["state"])
+    async def ensure_ready(self, *, env, runtime_factory, launch, **_):
+        placed = runtime_factory(TOPIC)["state"]
+        state = self.expand(placed)
         state.mkdir(parents=True, exist_ok=True)
         if self.before is not None:
             self.before(state)
@@ -89,6 +103,9 @@ class Host:
                             "CLAUDE_CONFIG_DIR": str(self.home / ".claude"),
                             "CHEESE_CLAUDE_COMMAND": self.command,
                             **(env or {}),
+                            # The launch's own environment, which a channel
+                            # merges into the one the runner starts with.
+                            **launch.on(self.place(placed)).env,
                         },
                         stdout=subprocess.DEVNULL,
                         stderr=log,

@@ -10,6 +10,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from sqlalchemy import select
 
 from app.common.auth import verify_access_token
@@ -289,6 +290,26 @@ class TestAccountLinkTokenPersistence:
         )
         assert "github_account=error" in r.headers["location"]
         assert "reason=oauth_failed" in r.headers["location"]
+
+    def test_github_unreachable_is_not_reported_as_an_unfinished_authorization(
+        self, client, monkeypatch
+    ):
+        _enable_github_app_provider(monkeypatch)
+
+        async def fake_exchange_code(self, code):
+            raise httpx.ConnectTimeout("connect timed out")
+
+        monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
+
+        token = seed_user(client, "erin_ghlink")
+        user_id = verify_access_token(token).user_id
+        r = client.get(
+            "/users/me/github-account/callback",
+            params={"code": "fine", "state": _link_state(user_id)},
+            follow_redirects=False,
+        )
+        assert "github_account=error" in r.headers["location"]
+        assert "reason=github_unreachable" in r.headers["location"]
 
     def test_already_linked_rejects_and_logs_all_three_parties(
         self, client, monkeypatch, caplog

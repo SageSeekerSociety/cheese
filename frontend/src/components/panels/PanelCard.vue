@@ -26,6 +26,7 @@ import TopicAcceptCard from '../TopicAcceptCard.vue'
 
 import TodoChecklist from './TodoChecklist.vue'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -291,7 +292,7 @@ async function send() {
       <div class="panel-card__meta t-meta">
         <span data-testid="card-status">{{ card.presentation.display_status }}</span>
         <span class="panel-card__sep">·</span>
-        <span v-if="card.owner_handle">{{ card.owner_handle }}</span>
+        <UserRef v-if="card.owner_handle" :handle="card.owner_handle" />
         <span v-else class="c-faint">暂无负责人</span>
         <span class="panel-card__sep">·</span>
         <span>{{ relTime(card.updated_at) }}</span>

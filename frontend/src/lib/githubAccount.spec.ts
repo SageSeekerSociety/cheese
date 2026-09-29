@@ -61,7 +61,7 @@ describe('explainAccountLinkFailure', () => {
   it('turns every code the account callback can emit into a sentence', () => {
     // The full set, read off github_account_link.py — a code missing here is a
     // user staring at an English identifier (the #222 incident).
-    for (const code of ['already_linked', 'oauth_failed', 'invalid_state']) {
+    for (const code of ['already_linked', 'oauth_failed', 'github_unreachable', 'invalid_state']) {
       const text = explainAccountLinkFailure(code)
       expect(text).not.toContain(code)
       expect(text.length).toBeGreaterThan('连接 GitHub 账号失败：'.length + 8)
@@ -71,6 +71,12 @@ describe('explainAccountLinkFailure', () => {
   it('says what to do, not just what broke', () => {
     expect(explainAccountLinkFailure('already_linked')).toContain('断开')
     expect(explainAccountLinkFailure('invalid_state')).toContain('重新点')
+  })
+
+  it('does not blame the person when our server could not reach GitHub', () => {
+    const text = explainAccountLinkFailure('github_unreachable')
+    expect(text).toContain('网络')
+    expect(text).not.toContain('没点完')
   })
 
   it('still names an unrecognised code rather than hiding it', () => {
@@ -91,7 +97,7 @@ describe('explainRepoInstallFailure', () => {
       'missing_installation_id',
       'project_not_found',
       'no_accessible_repos',
-      'installation_conflict',
+      'forge_conflict',
       'github_error',
       'access_denied',
       'upstream_not_accessible',
@@ -101,6 +107,19 @@ describe('explainRepoInstallFailure', () => {
     ]) {
       expect(explainRepoInstallFailure(code)).not.toContain(code)
     }
+  })
+
+  it('names the project already holding the repo when the caller may see it', () => {
+    const text = explainRepoInstallFailure('repository_taken', { repo: 'acme/widgets', holder: 'Widgets' })
+    expect(text).toContain('acme/widgets')
+    expect(text).toContain('「Widgets」')
+    expect(text).not.toContain('repository_taken')
+  })
+
+  it('does not invent a holder it was not told about', () => {
+    const text = explainRepoInstallFailure('repository_taken', { repo: 'acme/widgets' })
+    expect(text).toContain('acme/widgets')
+    expect(text).toContain('看不到')
   })
 
   it('is about the repo, not the account — the two flows have separate copy', () => {

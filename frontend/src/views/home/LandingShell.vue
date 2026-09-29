@@ -38,6 +38,7 @@ const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace'
         <a href="/solutions" :aria-current="page === 'solutions' ? 'page' : undefined">
           {{ t('publicSite.navSolutions') }}
         </a>
+        <a :href="page === 'home' ? '#download' : `${homeHref}#download`">{{ t('publicSite.navDownload') }}</a>
       </nav>
       <div class="site-actions">
         <LanguageToggle />

@@ -147,7 +147,9 @@ def main():
                 commands.append(command)
             for port, paths in (
                 (api, ["/connector/agent", "/api/connector/agent", "/connector/session/s/screen", "/api/connector/session/s/screen", "/llm/tunnel"]),
-                (public, ["/api/connector/agent", "/api/connector/session/s/screen", "/api/llm/tunnel", "/api/forge/events/ws"]),
+                # A connector connected with <site>/connector dials the
+                # unprefixed channel; the desktop app does exactly that.
+                (public, ["/connector/agent", "/api/connector/agent", "/connector/session/s/screen", "/api/connector/session/s/screen", "/api/llm/tunnel", "/api/forge/events/ws"]),
             ):
                 for path in paths:
                     sockets.append(connect(port, path))

@@ -147,7 +147,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 每台 Device 都有自己的文件系统边界，物理上是否碰巧与后端同机不改变协议：
 
-- Each device stores room state under `$HOME/.cheese/home/{project_id}/{resource_id}`. The room directory is `room/` under that home, and task checkouts live under `.cheese/tasks/{task_id}`. A reclaimed room receives a new resource UUID when reopened.
+- Each device stores room state under `$HOME/.cheese/home/{project_id}/{resource_id}`. The room directory is `room/` under that home, and task checkouts live under `.cheese/tasks/{task_id}`. A closed task's checkout is removed once its work is on the forge: when the task closes, or when the device next connects if it was offline then. One holding uncommitted files, unpushed commits or a running process is kept. A reclaimed room receives a new resource UUID when reopened.
 - `cheese worktree` fetches each task branch through authenticated Git HTTP. The central Stop hook runs a checkpoint that invokes `cheese-sync` on that execution device to publish task work.
 - Image attachments travel inside the message written to the session; no file is staged on either machine.
 - 后端从不把自己的 topic workspace 路径翻译成设备路径，也不跳过复制。仓库中没有“后端与设备共享 workspace”的配置或分支。
@@ -195,7 +195,7 @@ claude -p 的 stdout（stream-json）               读循环按游标向 runner
 
 ### 5.3 设备离线时的表现
 
-- **设备掉线**：`device_hub.is_online` 转 false，「我的设备」该设备变灰「离线」。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
+- **设备掉线**：`device_hub.is_online` 转 false，「我的设备」该设备变灰「离线」。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，所有在等这台机器回话的调用立刻失败（`DeviceOffline`），不会等到各自超时。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
 - **已 pin 该设备的话题发 turn**：`resolve_pinned_device` 发现 pinned 设备离线 → 抛 `ScreenSetupError`「话题绑定的算力设备已离线，请重新连接该设备再继续本轮（不会漂到别的设备，以免工作树/会话错乱）」→ 该轮排队/失败重试，**绝不漂到别的在线设备**。
 - **话题还没 pin、且没有任何绑定设备在线**：报「没有在线的绑定设备可运行本轮（self-hosted 设备未连接）」。
 - **解绑/撤销 token**：`DELETE /my/devices/{id}` 或服务端撤销 durable token → 该设备所有 screen 失效、`device_hub` 标记离线、`DeviceChannel.available` 转 false、市场 listing 里 `device` 变为不可选。

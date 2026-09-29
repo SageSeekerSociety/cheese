@@ -19,10 +19,15 @@
  * 出表单的提交与逐版评审这类成熟功能；默认那一格（老 `Overview.vue`）撤了 ——
  * 它画的东西这一页的卡片里已经有了，见下面 `tasks/:taskId` 那一条的注释。
  *
- * **发题这一格仍是包着老页面**（第五批）：那背后同样是一整套成熟功能（按
- * `submissionSchema` 出表单、PDF 解析发题），所以老页面**一个字没改**，由
- * `pages/TaskPublish.vue` 那一层包着挂进这棵树 —— 那层文件顶部写明它补的是什么
- * （provide 路由名、页头、pinia 的 space store）。老地址照常在原处服务。
+ * **发题这一格不再是包着老页面**（第十批）：`/board/publish` 现在是这块板自己的发题页
+ * （`pages/TaskPublish.vue`，按 `proto-board/pages/Publish.vue` 的形状重画 —— 页头与那颗
+ * 「手写一道 / 从 PDF 生成」、两条路各几张卡、整页两栏网格）。底下那套成熟功能一件没丢：
+ * 表单与附件卡片（`components/tasks/TaskForm.vue`、`TaskAttachmentPicker.vue`）原样复用，
+ * 两条路走的是同一批真接口（`POST /tasks` 与
+ * `POST /tasks/publish/from-pdf/preview|confirm`）；空间、分类、模板那份装配 —— 老树里
+ * 由空间壳（`views/spaces/Detail.vue`）替老页装好 —— 现在由这一页自己保证（见那一页
+ * 文件头的「装完再挂」）。老树那一页**一个字没改**，仍在 `/spaces/:id/publish` 上原样
+ * 服务（见 `router/spaces.ts` 文件头）。
  *
  * **整板看板这一格不再是老树那九页的副本**（第七批）：`/board/analytics` 现在渲染这
  * 块板自己的看板（`pages/Analytics.vue`：六个 KPI、领取与提交走势、题目构成、分类分布、

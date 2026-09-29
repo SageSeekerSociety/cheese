@@ -220,11 +220,10 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
 class ProjectGitInstallation(UuidPk, Timestamps, Base):
     """One project's connected cheesex-app GitHub App installation (#192).
 
-    Both `project_id` and `installation_id` are unique: a project connects to
-    one repo at a time, and one installation (= one GitHub-side "connect this
-    App to this repo" grant) is never shared between two platform projects —
-    otherwise a token minted for it would be ambiguous about which project's
-    git operations it belongs to.
+    A project connects to one repo at a time, and a repo to one project.
+    `installation_id` is NOT unique: one org installation covers many repos,
+    so several projects can share it — each token is minted for its project's
+    repo alone (`GitHubAppTokens(repository=...)`).
     """
 
     __tablename__ = "project_git_installations"
@@ -232,9 +231,9 @@ class ProjectGitInstallation(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), unique=True
     )
-    installation_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    installation_id: Mapped[int] = mapped_column(BigInteger)
     # "owner/repo" full name, e.g. "SageSeekerSociety/cheese".
-    repo: Mapped[str] = mapped_column(String(255))
+    repo: Mapped[str] = mapped_column(String(255), unique=True)
     # The GitHub org or user login the installation lives under.
     account: Mapped[str] = mapped_column(String(255))
 

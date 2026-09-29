@@ -171,6 +171,10 @@ export interface TaskMembership {
   applyReason?: string
   personalAdvantage?: string
   remark?: string
+  /** 这条报名是不是一支团队领的（列表接口 `GET /tasks/{id}/participants` 给的）。 */
+  isTeam?: boolean
+  /** 这条报名背后的团队。查不到队（已解散 / 老数据）或按人领取时没有这个字段。 */
+  team?: { id: number; name: string }
   teamMembers?: TaskTeamParticipantMemberSummary[]
 }
 

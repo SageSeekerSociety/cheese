@@ -13,6 +13,7 @@ import type { Block, ProjectMemberRow, Topic, TopicMemberRow } from '../../../cx
 import { computed, ref, watch } from 'vue'
 
 import { listTopicMembers } from '../../../api'
+import { agentNames } from '../../../lib/agentNames'
 import { isAgentBlock } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
 import { getAvatarUrl } from '../../../utils/materials'
@@ -157,12 +158,18 @@ export function useRoomRoster(options: {
   // AI 的一条和人的一条是同一个规矩：署它的作者，不署「这个房间的那位」。一个房
   // 间可以先后交给两个队友，两个人的话都还在记录里，各自署各自的名。名册还没到
   // 时写「芝士」——那一刻界面上任何一处说出的名字都可能是上一个房间那位。
-  // 名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是人和
-  // 人的私聊里平台自己写的）。那也不能把 `cheese-<hex>` 摆到屏幕上：那是管道，读
-  // 的人只会当成乱码。身份分叉，显示不分叉。
+  // 房间名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是
+  // 人和人的私聊里平台自己写的），项目名册上还有它的名字；轮次帧、收件人写的是队友
+  // 自己的 handle，也在项目名册上认。都认不出也不能把 `cheese-<hex>` 摆到屏幕上：那
+  // 是管道，读的人只会当成乱码。身份分叉，显示不分叉。
+  const agentNameMap = computed(() => agentNames(rosterLoaded.value ? roomMembers.value : [], options.members()))
+  /** 这个 AI handle 的名字；认不出（或名册还没到）时是 null，兜底由调用方定。 */
+  function agentNameOf(handle: string): string | null {
+    if (!rosterLoaded.value) return null
+    return agentNameMap.value.get(handle) ?? null
+  }
   function agentDisplayName(handle: string): string {
-    if (!rosterLoaded.value) return '芝士'
-    return seatByHandle.value.get(handle)?.name || '芝士'
+    return agentNameOf(handle) || '芝士'
   }
   function displayName(m: Block): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)
@@ -191,6 +198,7 @@ export function useRoomRoster(options: {
     mentionPool,
     memberByHandle,
     seatByHandle,
+    agentNameOf,
     agentDisplayName,
     displayName,
     isExternal,

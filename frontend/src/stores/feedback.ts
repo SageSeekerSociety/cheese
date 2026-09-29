@@ -178,6 +178,12 @@ let mineCache: { items: FeedbackCard[]; total: number } | null = null
  *  更新缓存 —— 见这两处的注释。 */
 const detailCache = new Map<string, FeedbackDetail>()
 
+/** 这个人在详情上写成了几笔（支持、评论、点赞、删评论）。每一笔的回答都**就地**改
+ *  详情，所以一次在它之前出发的 `loadDetail` 回来时，手上是写之前的那份 —— 拿它整个
+ *  换掉，刚点的支持数就退回去了。`loadDetail` 出发前记下这个数，回来时对不上就再读
+ *  一次：服务端在回答写之前已经提交，第二次读得到它。 */
+let detailWrites = 0
+
 /** 丢掉两份列表缓存。**不动已经在屏幕上的数组** —— 「屏幕上那份要不要清」是另一个
  *  决定（`submit` 清了，因为它刚插进去一条），这里只回答「下次还信不信缓存」。
  *  两件事分开写，是因为它们真的会分开：提交之后屏幕上那份该清，而缓存里那份对
@@ -920,8 +926,13 @@ export const useFeedbackStore = defineStore('feedback', {
       this.detailLoading = cached === null
       this.error = null
       try {
-        const detail = await getFeedback(id)
-        if (this.detailId !== id) return
+        let detail: FeedbackDetail
+        let writes: number
+        do {
+          writes = detailWrites
+          detail = await getFeedback(id)
+          if (this.detailId !== id) return
+        } while (writes !== detailWrites)
         this.detail = detail
         detailCache.set(id, detail)
       } catch (error) {
@@ -950,6 +961,7 @@ export const useFeedbackStore = defineStore('feedback', {
       if (!card) return
       try {
         const result = card.supported ? await unsupportFeedback(id) : await supportFeedback(id)
+        detailWrites += 1
         this._patch(id, { supports: result.count, supported: result.supported })
         // 栏位上的数字也要跟着动：「热门」是服务端按「支持数 ≥ 门槛且未解决」现算的，
         // 就在这一下跨过门槛的条目，本地那份计数当场就对不上了（列表 6 条、Tab 上写着
@@ -996,6 +1008,7 @@ export const useFeedbackStore = defineStore('feedback', {
       if (!text) return false
       try {
         const created = await createFeedbackComment(id, text, parentId ?? null)
+        detailWrites += 1
         const detail = this._detailIfCurrent(id)
         if (detail) {
           detail.thread = [...detail.thread, created]
@@ -1083,6 +1096,7 @@ export const useFeedbackStore = defineStore('feedback', {
         const result = comment.liked
           ? await unlikeFeedbackComment(id, commentId)
           : await likeFeedbackComment(id, commentId)
+        detailWrites += 1
         // 重新取一次而不是改上面那个引用：请求在飞的时候页面可能已经换了详情，也可能
         // 有人又点了一下。`_commentOf` 会挡住前一种（拿不到就什么都不做）。
         const current = this._commentOf(id, commentId)
@@ -1105,6 +1119,7 @@ export const useFeedbackStore = defineStore('feedback', {
     async deleteComment(id: string, commentId: string): Promise<void> {
       try {
         await deleteFeedbackComment(id, commentId)
+        detailWrites += 1
         const detail = this._detailIfCurrent(id)
         if (!detail) return
         const gone = detail.thread.filter((c) => c.id === commentId || c.parent_id === commentId)

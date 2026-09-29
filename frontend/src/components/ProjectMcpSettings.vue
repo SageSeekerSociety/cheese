@@ -8,6 +8,7 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { clearMcpSecret, connectMcpServer, disconnectMcpServer, getMcpServers, setMcpSecret } from '../api'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
@@ -98,9 +99,8 @@ function missing(server: McpServer) {
 function statusLine(server: McpServer) {
   switch (server.status) {
     case 'connected':
-      return server.authorized_by
-        ? t('work.mcp.status.connectedBy', { name: server.authorized_by, when: relTime(server.authorized_at) })
-        : t('work.mcp.status.connected')
+      // 带授权人的那一句在模板里用 <i18n-t> 画，名字是一颗 UserRef。
+      return t('work.mcp.status.connected')
     case 'ready':
       return t('work.mcp.status.ready')
     case 'needs_reconnect':
@@ -171,7 +171,16 @@ watch(() => props.projectId, load)
               </div>
               <div class="mcp-row__state">
                 <span class="status-dot" :class="DOT[server.status]" />
-                <span class="t-body c-text">{{ statusLine(server) }}</span>
+                <i18n-t
+                  v-if="server.status === 'connected' && server.authorized_by"
+                  keypath="work.mcp.status.connectedBy"
+                  tag="span"
+                  class="t-body c-text"
+                >
+                  <template #name><UserRef :handle="server.authorized_by" /></template>
+                  <template #when>{{ relTime(server.authorized_at) }}</template>
+                </i18n-t>
+                <span v-else class="t-body c-text">{{ statusLine(server) }}</span>
               </div>
               <div v-if="server.auth === 'oauth'" class="mcp-row__action">
                 <v-btn
@@ -221,7 +230,10 @@ watch(() => props.projectId, load)
                 {{ t('work.mcp.action.clear') }}
               </v-btn>
               <span v-if="variable.set && variable.updated_by" class="t-meta">
-                {{ t('work.mcp.valueSetBy', { name: variable.updated_by, when: relTime(variable.updated_at) }) }}
+                <i18n-t keypath="work.mcp.valueSetBy" tag="span">
+                  <template #name><UserRef :handle="variable.updated_by" /></template>
+                  <template #when>{{ relTime(variable.updated_at) }}</template>
+                </i18n-t>
               </span>
             </div>
           </li>

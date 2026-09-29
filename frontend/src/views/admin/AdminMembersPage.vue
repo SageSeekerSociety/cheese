@@ -11,6 +11,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { relTime } from '@/lib/relTime'
 
 // 管理后台的「成员管理」（`/admin/members`）：平台管理员的名单，页面上加与删。
@@ -468,9 +469,10 @@ onMounted(load)
                 :data-label="t('members.table.colAddedInfo')"
                 :title="t('members.row.addedBy', { by: row.addedBy, time: relTime(row.createdAt) })"
               >
-                <span class="am__dim">{{
-                  t('members.row.addedBy', { by: row.addedBy, time: relTime(row.createdAt) })
-                }}</span>
+                <i18n-t keypath="members.row.addedBy" tag="span" class="am__dim">
+                  <template #by><UserRef :handle="row.addedBy" /></template>
+                  <template #time>{{ relTime(row.createdAt) }}</template>
+                </i18n-t>
               </td>
               <td class="am__cell am__cell--actions" :data-label="t('members.table.colActions')">
                 <!-- 描边（不是实心、不是文字按钮）：这个动作改的是「谁能看别人的私密

@@ -175,11 +175,17 @@
     </v-row>
     <v-row v-if="questionData?.accepted_answer">
       <v-col>
-        <v-alert
-          class="accept-alert"
-          type="success"
-          :title="t('questions.detail.acceptedAnswerTitle', { user: questionData.accepted_answer.author.nickname })"
-        >
+        <v-alert class="accept-alert" type="success">
+          <template #title>
+            <i18n-t keypath="questions.detail.acceptedAnswerTitle" tag="span">
+              <template #user>
+                <UserRef
+                  :handle="questionData.accepted_answer.author.username"
+                  :name="questionData.accepted_answer.author.nickname"
+                />
+              </template>
+            </i18n-t>
+          </template>
           <template #append>
             <v-btn
               color="text"
@@ -256,6 +262,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import ContentVoter from '@/components/common/ContentVoter.vue'
 import RichEditor from '@/components/common/Editor/Editor.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import InvitationList from '@/components/questions/InvitationList.vue'
 import { NewAttitudeType } from '@/constants'
 import { questionDataInjectionKey } from '@/keys'

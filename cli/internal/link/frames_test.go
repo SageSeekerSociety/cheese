@@ -119,17 +119,20 @@ func TestConnectorWritesTheAnswerFramesInTheFixtures(t *testing.T) {
 			continue
 		}
 		t.Run(f.name, func(t *testing.T) {
-			id := f.Meaning["call_id"].(string)
 			var built Msg
 			switch f.Type {
 			case "execution.data":
+				id := f.Meaning["call_id"].(string)
 				built = ExecutionData(id, []byte(f.Meaning["payload"].(string)))
 			case "execution.result":
+				id := f.Meaning["call_id"].(string)
 				var failure error
 				if reason := f.Meaning["error"].(string); reason != "" {
 					failure = errors.New(reason)
 				}
 				built = ExecutionResult(id, failure)
+			case "heartbeat":
+				built = Heartbeat()
 			default:
 				t.Fatalf("no builder for %s", f.Type)
 			}
