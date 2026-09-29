@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { desktopListenForNotices, desktopStopNotices, tellDesktopTheme } from './desktopApp'
+import {
+  desktopListenForNotices,
+  desktopStopNotices,
+  goAuthorize,
+  signInInBrowser,
+  takeSignInVerifier,
+  tellDesktopTheme,
+} from './desktopApp'
 
 type AppWindow = { __TAURI__?: unknown; __CHEESE_APP__?: unknown }
 
@@ -57,5 +64,47 @@ describe('desktop notices', () => {
     const invoke = desktopApp(app)
     desktopStopNotices()
     expect(invoke).toHaveBeenCalledWith('stop_notices')
+  })
+})
+
+describe('authorizing from the app', () => {
+  const app = { origin: 'https://okcheese.com', theme: 'system', titleBar: 'native', can: ['links'] }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    localStorage.clear()
+  })
+
+  it('goes to the browser, and the page stays where it is', () => {
+    desktopApp(app)
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const before = window.location.href
+    expect(goAuthorize('https://github.com/login/oauth/authorize?state=s')).toBe(true)
+    expect(open).toHaveBeenCalledWith('https://github.com/login/oauth/authorize?state=s', '_blank')
+    expect(window.location.href).toBe(before)
+  })
+
+  it('gives the browser only the hash of the secret the app keeps', async () => {
+    desktopApp(app)
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    await signInInBrowser('github', '/inbox')
+    const opened = new URL(String(open.mock.calls[0][0]), 'https://okcheese.com')
+    const kept = takeSignInVerifier()
+    expect(kept?.target).toBe('/inbox')
+    expect(opened.href).not.toContain(kept!.verifier)
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(kept!.verifier)))
+    const hash = btoa(String.fromCharCode(...digest))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '')
+    expect(opened.searchParams.get('challenge')).toBe(hash)
+  })
+
+  it('uses the secret at most once', async () => {
+    desktopApp(app)
+    vi.spyOn(window, 'open').mockReturnValue(null)
+    await signInInBrowser('github', '/')
+    expect(takeSignInVerifier()).not.toBeNull()
+    expect(takeSignInVerifier()).toBeNull()
   })
 })

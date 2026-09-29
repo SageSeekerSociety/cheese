@@ -10,6 +10,7 @@ import { clearMcpSecret, connectMcpServer, disconnectMcpServer, getMcpServers, s
 
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
+import { goAuthorize } from '@/lib/desktopApp'
 import { relTime } from '@/lib/relTime'
 
 // 项目的远程 MCP 服务器（#1909）。清单来自仓库默认分支的 .mcp.json，连接属于项目：
@@ -43,7 +44,7 @@ async function connect(server: McpServer) {
   notice.value = null
   try {
     const { authorization_url } = await connectMcpServer(props.projectId, server.name)
-    window.location.assign(authorization_url)
+    if (goAuthorize(authorization_url)) busy.value = ''
   } catch (e) {
     fail(e, t('work.mcp.connectFailed'))
     busy.value = ''

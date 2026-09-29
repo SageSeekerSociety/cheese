@@ -199,6 +199,13 @@
       (function () {
         // Set by the app (main.rs) before this page runs.
         var ORIGIN = window.__CHEESE_APP__.origin;
+        // The page to open once the server answers: the one a cheese:// link
+        // named (links.rs), passed at launch or on this page's address.
+        var start =
+          new URLSearchParams(location.search).get("start") ||
+          window.__CHEESE_APP__.start ||
+          "/";
+        if (start.charAt(0) !== "/" || start.charAt(1) === "/") start = "/";
         // How long the server has to answer before this counts as offline, and
         // how often it is asked again after that.
         var PATIENCE = 8000;
@@ -324,7 +331,7 @@
             clearTimeout(waiting);
             if (up) {
               settle().then(function () {
-                location.replace(ORIGIN + "/");
+                location.replace(ORIGIN + start);
               });
               return;
             }

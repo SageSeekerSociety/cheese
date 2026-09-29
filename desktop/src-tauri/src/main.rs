@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod connect;
+mod links;
 mod notices;
 mod platform;
 mod resident;
@@ -13,6 +14,7 @@ use serde::Serialize;
 use tauri::ipc::{CapabilityBuilder, Channel};
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
 use tauri::{Manager, State, Theme, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_window_state::StateFlags;
@@ -168,7 +170,9 @@ fn main() {
     tauri::Builder::default()
         // Opening the app while it runs with its window closed brings that window
         // back rather than starting a second app. Registered first, as it must be.
+        // A `cheese://` link opening it is passed on to the running app (links.rs).
         .plugin(tauri_plugin_single_instance::init(|app, _, _| resident::bring_back(app)))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         // Off until the person turns it on; launched this way the app starts out of sight.
         .plugin(tauri_plugin_autostart::init(
@@ -232,6 +236,23 @@ fn main() {
             resident::tray::install(app.handle())?;
             tauri::async_runtime::spawn(keep_updated(app.handle().clone()));
             notices::resume(app.handle());
+            // The installer registers the scheme; registering again at each start
+            // mends an install that lost it. macOS reads it from the bundle instead.
+            #[cfg(windows)]
+            let _ = app.deep_link().register_all();
+            let linked = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for link in event.urls() {
+                    links::open(&linked, &link);
+                }
+            });
+            // Started by a link (Windows, Linux): the first page goes on to that page.
+            let start = app
+                .deep_link()
+                .get_current()
+                .ok()
+                .flatten()
+                .and_then(|urls| urls.iter().find_map(links::page));
             let opener = app.handle().clone();
             let opener2 = app.handle().clone();
             // Anything that is not the server — docs, GitHub, a shared link — opens
@@ -241,7 +262,8 @@ fn main() {
             // and ../shell): where the server is, the theme last picked, whether
             // the title bar lies over the page, and what else the app can do for it.
             let about = format!(
-                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, can: [\"notices\", \"badge\", \"autostart\"] }};"
+                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\"] }};",
+                start = serde_json::to_string(&start).unwrap_or_else(|_| "null".into()),
             );
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .initialization_script(about)

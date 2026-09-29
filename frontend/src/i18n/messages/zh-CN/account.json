@@ -68,7 +68,8 @@
       "passwordReset": "密码已重置，请使用新密码登录"
     },
     "lastUsed": "上次使用",
-    "emailCode": "使用邮箱验证码登录"
+    "emailCode": "使用邮箱验证码登录",
+    "continueInBrowser": "已在浏览器中打开 {provider} 登录，完成后会回到这里"
   },
   "attempts": {
     "wrongPassword": "用户名或密码错误",
@@ -213,6 +214,14 @@
       "bindSubmit": "关联并登录",
       "unavailable": "无法继续登录",
       "emailBelongsToAccount": "该邮箱已被现有账号使用"
+    },
+    "app": {
+      "leaving": "正在前往 {provider}",
+      "backTitle": "回到 Cheese app",
+      "backLede": "如果 Cheese app 没有自动打开，请点击下方按钮。之后可以关闭此页面。",
+      "open": "打开 Cheese",
+      "handOffFailed": "无法把这次登录交给 Cheese app，请在 app 中重新登录",
+      "expired": "这次登录已失效，请重新登录"
     }
   },
   "sudo": {

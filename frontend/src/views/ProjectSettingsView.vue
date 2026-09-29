@@ -49,6 +49,7 @@ import { SudoCancelledError, withSudo } from '../utils/sudo'
 import { useCommands } from '@/commands'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
+import { goAuthorize } from '@/lib/desktopApp'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // The project default never moves an agent that has already started working.
@@ -297,8 +298,7 @@ async function saveUpstream() {
   }
 }
 
-// Send the browser to GitHub's install page; the callback (github_install.py)
-// bounces back here with ?github_install=success|pending|error afterward.
+// To GitHub's install page; its callback (github_install.py) comes back here with ?github_install=<result>.
 async function connectGithubRepo() {
   connectingGithubRepo.value = true
   try {
@@ -313,7 +313,7 @@ async function connectGithubRepo() {
       return
     }
     if (res.install_url) {
-      window.location.href = res.install_url
+      if (goAuthorize(res.install_url)) connectingGithubRepo.value = false
       return
     }
     githubRepoNotice.value = { type: 'error', text: '连接失败：后端没有返回安装链接' }
@@ -330,7 +330,7 @@ async function connectGithubAccount() {
   connectingGithubAccount.value = true
   try {
     const { url } = await getGithubAccountAuthorizeUrl(props.projectId)
-    window.location.href = url
+    if (goAuthorize(url)) connectingGithubAccount.value = false
   } catch (e) {
     githubAccountNotice.value = { type: 'error', text: e instanceof Error ? e.message : '获取授权链接失败' }
     connectingGithubAccount.value = false
