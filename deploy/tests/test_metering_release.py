@@ -80,8 +80,10 @@ class MeteringReleaseTest(unittest.TestCase):
                 if (home / "calls").exists()
                 else []
             )
-            login = home / "claude-login.sh"
-            self.installed_login = login.is_file() and os.access(login, os.X_OK)
+            self.installed_login = all(
+                (home / name).is_file() and os.access(home / name, os.X_OK)
+                for name in ("claude-login.sh", "chatgpt-login.sh")
+            )
             self.assertNotIn("private-test-value", result.stdout + result.stderr)
             self.assertEqual(
                 (home / ".env").read_text(),
@@ -131,6 +133,10 @@ class MeteringReleaseTest(unittest.TestCase):
             self.assertEqual(mounts["/var/log/cheese"], str(home / "logs"))
             self.assertEqual(
                 mounts["/etc/cheese/claude-credential"], str(home / "claude-credential")
+            )
+            self.assertEqual(
+                mounts["/etc/cheese/chatgpt-credential"],
+                str(home / "chatgpt-credential"),
             )
             self.assertEqual(mounts["/home/mitmproxy/.mitmproxy"], str(home / "certs"))
 
