@@ -34,9 +34,21 @@ install -m 0755 "$here/metering-proxy/claude-login.sh" "$proxy_home/claude-login
 install -m 0755 "$here/metering-proxy/chatgpt-login.sh" "$proxy_home/chatgpt-login.sh"
 current_image="$(docker inspect cheese-metering-proxy --format '{{.Config.Image}}')"
 current_health="$(docker inspect cheese-metering-proxy --format '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}')"
+# The configuration a container runs is the compose file and the box's .env it
+# was created from, and a change to either alone (a new env value, a new mount)
+# ships no new image. So the release labels the container with a hash of the
+# two, and the unchanged-image exit below also needs the hash unchanged. Only
+# the hash is kept anywhere: the .env holds secrets.
+export METERING_PROXY_CONFIG_SHA256
+METERING_PROXY_CONFIG_SHA256="$(
+  { sha256sum < "$here/metering-proxy/compose.yml"; sha256sum < "$env_file"; } \
+    | sha256sum | cut -d' ' -f1
+)"
+current_config="$(docker inspect cheese-metering-proxy --format '{{index .Config.Labels "cheese.metering-proxy.config-sha256"}}')"
 # Promoted tags can resolve to the running digest; keep its active streams intact.
-if [[ "$current_image" = "$METERING_PROXY_IMAGE" && "$current_health" = "true healthy" ]]; then
-  echo "Metering proxy already healthy at $METERING_PROXY_IMAGE; no restart needed."
+if [[ "$current_image" = "$METERING_PROXY_IMAGE" && "$current_health" = "true healthy" \
+  && "$current_config" = "$METERING_PROXY_CONFIG_SHA256" ]]; then
+  echo "Metering proxy already healthy at $METERING_PROXY_IMAGE with this configuration; no restart needed."
   exit 0
 fi
 release_dir="$proxy_home/releases/${sha}-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
@@ -77,8 +89,11 @@ if "${compose[@]}" -f "$release_dir/compose.yml" up -d --force-recreate --no-dep
 else
   echo 'Metering proxy failed health verification; restoring the previous image and configuration.' >&2
   export METERING_PROXY_IMAGE="$previous_image"
-  # The first release's compose names the upstream image literally.
-  printf 'services:\n  metering-proxy:\n    image: "%s"\n' "$previous_image" > "$release_dir/rollback.yml"
+  # The first release's compose names the upstream image literally. The label
+  # is emptied because the restored container runs the previous configuration,
+  # not the one hashed above, so the next release must not take it as current.
+  printf 'services:\n  metering-proxy:\n    image: "%s"\n    labels:\n      cheese.metering-proxy.config-sha256: ""\n' \
+    "$previous_image" > "$release_dir/rollback.yml"
   "${compose[@]}" "${previous_args[@]}" -f "$release_dir/rollback.yml" \
     up -d --no-deps --wait --wait-timeout 150 metering-proxy
   # Legacy containers have no Docker HEALTHCHECK; probe the real listeners too.

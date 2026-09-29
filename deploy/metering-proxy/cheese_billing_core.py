@@ -1265,6 +1265,17 @@ _CHATGPT_PATH_RE = re.compile(r"models|responses(/[A-Za-z0-9_-]+)*")
 # An account name is one path segment on the route and one directory on disk,
 # so nothing that could climb out of either.
 _ACCOUNT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+# ChatGPT gates which models an account is offered on the Codex client version
+# it is told: 0.153.4 is not offered gpt-6-sol or gpt-6-luna, 0.158.0 is. So the
+# version is an operator's setting, a file beside the accounts that is read on
+# every request (`chatgpt-login.sh client-version`), and this is only what is
+# sent while there is none. A plain file among the account directories is not
+# an account: an account is a directory.
+DEFAULT_CODEX_CLIENT_VERSION = "0.158.0"
+CLIENT_VERSION_FILE = "client-version"
+# What may go into the header and the query; chatgpt-login.sh refuses the rest
+# on the way in, and a file edited by hand into anything else is not sent.
+_CLIENT_VERSION_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+-]{0,63}")
 
 
 def chatgpt_route(path: str) -> tuple[str, str] | None:
@@ -1279,6 +1290,25 @@ def chatgpt_route(path: str) -> tuple[str, str] | None:
     if not _CHATGPT_PATH_RE.fullmatch(tail):
         return name, ""
     return name, f"{CHATGPT_BACKEND_PATH}/{tail}{sep}{rest}"
+
+
+def with_client_version(upstream_path: str, version: str) -> str:
+    """The model list's path asking for `version`'s models; any other path as is.
+
+    The model list takes the client version as `client_version` in its query
+    as well as in the `version` header. The caller's own query value is
+    replaced, not kept: one request naming two versions would list one
+    version's models while the requests that follow are gated on the other."""
+    prefix, _, query = upstream_path.partition("?")
+    if prefix != f"{CHATGPT_BACKEND_PATH}/models":
+        return upstream_path
+    pairs = [
+        (key, value)
+        for key, value in urllib.parse.parse_qsl(query, keep_blank_values=True)
+        if key != "client_version"
+    ]
+    pairs.append(("client_version", version))
+    return f"{prefix}?{urllib.parse.urlencode(pairs)}"
 
 
 def jwt_claims(token: str) -> dict:
@@ -1537,6 +1567,18 @@ class ChatGPTAccounts:
                 )
                 self._accounts[name] = account
             return account
+
+    def client_version(self) -> str:
+        """The Codex client version ChatGPT is told, from the file beside the
+        accounts; the built-in default while it is absent or unusable. Read on
+        every request, so a change reaches the next one without a restart."""
+        try:
+            value = (self.root / CLIENT_VERSION_FILE).read_text().strip()
+        except OSError:
+            return DEFAULT_CODEX_CLIENT_VERSION
+        if not _CLIENT_VERSION_RE.fullmatch(value):
+            return DEFAULT_CODEX_CLIENT_VERSION
+        return value
 
     def egress_conflict(self, name: str, egress: Egress) -> str:
         """Another account whose egress is the same proxy with other credentials.
