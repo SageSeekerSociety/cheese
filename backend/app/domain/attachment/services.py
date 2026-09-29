@@ -3,7 +3,13 @@ from typing import Any, BinaryIO
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ForbiddenError, InternalServerError, NotFoundError
+from app.core.config import settings
+from app.core.errors import (
+    ForbiddenError,
+    InternalServerError,
+    NotFoundError,
+    UnprocessableEntityError,
+)
 from app.core.storage import StorageBackend, compute_file_hash, generate_storage_key
 from app.domain.attachment.models import Attachment, AttachmentType
 from app.domain.attachment.repositories import AttachmentRepository
@@ -61,7 +67,21 @@ class AttachmentService:
 
         import asyncio
 
-        file_content = await asyncio.to_thread(file.read)
+        # One file's ceiling, judged here and nowhere else: this method is the
+        # single door bytes take into the attachment table (the generic
+        # `POST /attachments`, a task's materials, the PDF publish path), and
+        # `GET /attachments/limits` reports this same `settings` value — so the
+        # number the browser is told is the number it is refused for.
+        #
+        # Read one byte past the ceiling instead of the whole file: a refused
+        # 2 GB upload must not be pulled into memory first to find out it is too
+        # big, and `read(n)` on a file object stops at n.
+        max_bytes = settings.attachment_max_bytes
+        file_content = await asyncio.to_thread(file.read, max_bytes + 1)
+        if len(file_content) > max_bytes:
+            raise UnprocessableEntityError(
+                f"File is too large (max {max_bytes // (1024 * 1024)}MB)"
+            )
         file_size = len(file_content)
         file.seek(0)
 

@@ -135,6 +135,15 @@ class Settings(BaseSettings):
     storage_type: str = "local"
     storage_local_path: str = "./uploads"
     storage_local_url: str = "/uploads"
+    # A single uploaded attachment's ceiling in bytes — every path that puts
+    # bytes into the attachment table goes through `AttachmentService.upload`,
+    # which reads this one value, and `GET /attachments/limits` reports that
+    # same value, so what the browser is told is what it will be refused for.
+    # The default is the deployment's existing ceiling: the frontend nginx
+    # `client_max_body_size 100M` on `/api/` (frontend/nginx.conf), so nothing
+    # a browser could already send starts being refused. That nginx line is a
+    # separate number in a separate file: raise one and raise the other.
+    attachment_max_bytes: int = 100 * 1024 * 1024
     redis_url: str = "redis://localhost:6379/0"
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and

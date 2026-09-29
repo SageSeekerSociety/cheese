@@ -63,10 +63,13 @@
 // - **标签**：原型那张「题目内容」卡里有一格自由标签。真库没有这一层，题目挂的是
 //   `topics` —— 表单里就是那枚「话题」下拉（分类标签那张卡的第二枚 combobox），
 //   所以这一页不画一排凭空贴出来的标签。
-// - **附件上限**：原型那张卡脚上写着「最多 10 个，单个 20MB 以内」。真接口没有这两个数
-//   （`POST /attachments` 的响应只有 `{ id }`，`UploadAttachmentResponseData` 里没有
-//   上限，也没有回显 name/size），所以这一页不写它们 —— 写了就是编。文件名与大小是
-//   上传成功之后由这一页自己记着的那一份（`TaskAttachmentPicker` 回报的）。
+// - **附件上限**：原型那张卡脚上写着「最多 10 个，单个 20MB 以内」——两个数都是假的。
+//   数量今天没有上限（想传多少份都收，服务只拦「同一个文件挂到第二道题上」），所以这
+//   一句不写；大小有一个，而且是由**接口报出来的那个数**：`GET /attachments/limits`
+//   报的与 `AttachmentService.upload` 拦下超限文件读的是同一个配置
+//   （`settings.attachment_max_bytes`）。附件卡写的正是它（`TaskAttachmentPicker`
+//   自己问、自己画），这一页不转述也不写死。文件名与大小仍旧是上传成功之后由那张卡
+//   自己记着的那一份。
 // - **领取与小队**：原型把它们并成一张卡（领取人数上限 / 小队规模 / 截止时间）。真库里
 //   对应的是三样不同的东西（`participantLimit`、`submitterType` + 小队上下限 + 队伍
 //   锁定策略、报名截止 `deadline` 与领取后默认天数 `defaultDeadline`），分在表单
@@ -823,7 +826,11 @@ async function confirmPdf() {
             </li>
             <li>「提交前」那几条：真表单自己的校验规则（<code>lib/taskPublishChecks.ts</code>），不是这一页另写的。</li>
             <li>原型的自由「标签」真库没有这一层，题目挂的是<b>话题</b> —— 表单里那枚「话题」下拉。</li>
-            <li>原型附件卡上「最多 10 个、单个 20MB」这两个数上传接口不回报，所以这一页不写。</li>
+            <li>
+              附件卡上「单个文件不超过…」那个数：<code>GET /attachments/limits</code> ——
+              与上传那条路拦下超限文件读的是<b>同一个上限</b>，所以卡上写的与传上去会发生的
+              是同一件事。附件数量没有上限，那句不写。
+            </li>
             <li v-if="quickDrafts.length">
               这份预览的模板、插图数、token：<code>POST /tasks/publish/from-pdf/preview</code> 的响应。
             </li>
