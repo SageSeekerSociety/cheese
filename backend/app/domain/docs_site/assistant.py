@@ -55,6 +55,11 @@ KEY_NAME = "docs-assistant-gateway-key"
 MAX_ANSWER_TOKENS = 700
 # How many rounds of tool calls the model may make before it must answer.
 MAX_TOOL_ROUNDS = 4
+# What the last round is told once the tool rounds are spent.
+FINAL_ROUND_NUDGE = (
+    "查找到此为止，不能再调用工具。现在只根据上面已经读到的文档内容回答问题；"
+    "如果读到的内容里没有答案，就直接说文档里没有讲到，并建议最接近的那一页。"
+)
 
 SYSTEM_PROMPT = "\n".join(
     [
@@ -297,6 +302,7 @@ async def stream_answer(
     result: Outcome,
     transport: httpx.AsyncBaseTransport | None = None,
     links: _Links | None = None,
+    extra: dict | None = None,
 ) -> AsyncIterator[bytes]:
     """Relay the gateway's streamed completion as ``delta`` events.
 
@@ -305,7 +311,12 @@ async def stream_answer(
     caller can record what happened even if the reader disconnects midway.
 
     ``links``, when given, judges the links in the text before the reader sees
-    them (the agentic path may only cite what it searched or read)."""
+    them (the agentic path may only cite what it searched or read).
+
+    ``extra`` adds fields to the request body (the agentic path's last round
+    sends the tool definitions with ``tool_choice: none``). A ``thinking`` field
+    the gateway refuses (400/422) is dropped and the call made once more, as in
+    ``_tool_round``."""
     body = {
         "model": settings.docs_assistant_model,
         "messages": messages,
@@ -313,6 +324,7 @@ async def stream_answer(
         "stream_options": {"include_usage": True},
         "max_tokens": MAX_ANSWER_TOKENS,
         "temperature": 0.2,
+        **(extra or {}),
     }
     timeout = httpx.Timeout(connect=5.0, read=45.0, write=10.0, pool=5.0)
     try:
@@ -323,6 +335,23 @@ async def stream_answer(
                 headers={"Authorization": f"Bearer {key}"},
                 json=body,
             ) as r:
+                if r.status_code in (400, 422) and "thinking" in body:
+                    await r.aread()
+                    logger.info(
+                        "docs assistant: gateway refused the thinking parameter (%s)",
+                        r.status_code,
+                    )
+                    rest = {k: v for k, v in (extra or {}).items() if k != "thinking"}
+                    async for chunk in stream_answer(
+                        key,
+                        messages,
+                        result,
+                        transport,
+                        links=links,
+                        extra=rest,
+                    ):
+                        yield chunk
+                    return
                 if r.status_code != 200:
                     await r.aread()
                     result.outcome = "failed"
@@ -459,9 +488,27 @@ async def run_agent(
     links = _Links(docs.allows)
     for round_number in range(MAX_TOOL_ROUNDS + 1):
         if round_number == MAX_TOOL_ROUNDS:
-            # Out of rounds: no tools, so the model has to answer.
+            # Out of rounds: the model has to answer now. The tool definitions
+            # still go with the request, with ``tool_choice: none``: the
+            # conversation carries tool calls and tool results, and a request
+            # that carries them without the tools is one the gateway refuses
+            # (measured on dev 2026-09-29: every question that used all four
+            # rounds ended in 「芝士暂时答不上来」). Thinking stays off for the
+            # same reason as in the tool rounds, and the model is told plainly
+            # that this is the answer, so reading nothing ends in 「文档里没有
+            # 讲到」 rather than in another search it may not make.
+            messages.append({"role": "user", "content": FINAL_ROUND_NUDGE})
             async for chunk in stream_answer(
-                key, messages, result, transport, links=links
+                key,
+                messages,
+                result,
+                transport,
+                links=links,
+                extra={
+                    "tools": tools.SCHEMAS,
+                    "tool_choice": "none",
+                    "thinking": {"type": "disabled"},
+                },
             ):
                 yield chunk
             break
