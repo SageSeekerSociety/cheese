@@ -1,86 +1,73 @@
 <script setup lang="ts">
-// 清单上这一项自己的那一页 (#1085 结论二)：它现在是第几版，交付过的每一版是什么。
+// 清单上这一项自己的那一页 (#1085 结论二)。
 //
-// 一版是一次交付，所以这一页上没有「保存」「上传新版本」——版本由交付长出来，和
-// 清单本身一样。能下载的是**当时交出去的那一份**，不是现在从源重建一次的结果：半
-// 年后依赖变了，重建出来的可能和当时交出去的不是同一个东西。
+// 人来这一页，先要的是这一项现在长什么样：所以打开就是当前这一版本身——文档、表格、
+// 图片直接预览，网址直接给，代码给这一版改了哪些文件。版本历史在旁边（手机上从底下
+// 升起来），每一版说清谁认的、在哪次对话里做的，要看它比上一版改了什么从那一行进去。
 //
+// 一版是一次交付，所以这一页上没有「保存」「上传新版本」——版本由交付长出来，和清单
+// 本身一样。能下载的是**当时交出去的那一份**，不是现在从源重建一次的结果：半年后依
+// 赖变了，重建出来的可能和当时交出去的不是同一个东西。
+//
+// 比较两版是同一页的另一个样子（地址上带 `?before=&after=`），刷新、后退、把链接发给
+// 别人都回到同一处。
 import type { ArtifactComparison, ArtifactVersion, ProjectArtifactDetail } from '../api'
 
 import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import { artifactVersionFileUrl, compareArtifactVersions, downloadFile, getProjectArtifact } from '../api'
+import ArtifactChanges from '../components/artifact/ArtifactChanges.vue'
+import ArtifactCompare from '../components/artifact/ArtifactCompare.vue'
+import ArtifactVersionList from '../components/artifact/ArtifactVersionList.vue'
 import ArtifactVersionPreview from '../components/ArtifactVersionPreview.vue'
 import { t } from '../i18n'
-import { parseDiffLines } from '../lib/diff'
 import { relTime } from '../lib/relTime'
-import { usePageTitleStore } from '../stores/title'
 
-import UserRef from '@/components/common/UserRef.vue'
+import { useCommands } from '@/commands'
+import { copyLink, linkOf } from '@/commands/copy'
+import AppPage from '@/components/common/AppPage.vue'
+import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
+import { usePageTitleStore } from '@/stores/title'
 
 const props = defineProps<{ projectId: string; artifactId: string }>()
 
-// 这一项的名字就是这一页的标题：手机上它只写在顶栏里（页内的 h1 在手机上不画）。
-const titles = usePageTitleStore()
+const route = useRoute()
+const router = useRouter()
+const { mdAndUp } = useDisplay()
 
 const artifact = ref<ProjectArtifactDetail | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const actionError = ref('')
 const downloading = ref('')
-const before = ref('')
-const after = ref('')
-const comparison = ref<ArtifactComparison | null>(null)
-const comparing = ref(false)
-const comparisonError = ref('')
-const showPreviews = ref(false)
-let comparisonGeneration = 0
-const beforeVersion = computed(() => artifact.value?.versions.find((v) => v.card_id === before.value))
-const afterVersion = computed(() => artifact.value?.versions.find((v) => v.card_id === after.value))
+const historyOpen = ref(false)
 
-function comparisonNote(note: string | null): string {
-  const messages: Record<string, string> = {
-    oversized: t('tasks.artifactComparison.oversized'),
-    binary: t('tasks.artifactComparison.binary'),
-    document: t('tasks.artifactComparison.document'),
-    unsupported: t('tasks.artifactComparison.unsupported'),
-    many: t('tasks.artifactComparison.many'),
-    unavailable: t('tasks.artifactComparison.unavailable'),
-    source: t('tasks.artifactComparison.source'),
-    link: t('tasks.artifactComparison.link'),
-  }
-  return note ? messages[note] : ''
+const versions = computed(() => artifact.value?.versions ?? [])
+const current = computed<ArtifactVersion | null>(() => versions.value.at(-1) ?? null)
+const previous = computed(() => versions.value.at(-2) ?? null)
+
+// ---- 比较：地址上的两版 ------------------------------------------------------
+
+const before = computed(() => (typeof route.query.before === 'string' ? route.query.before : ''))
+const after = computed(() => (typeof route.query.after === 'string' ? route.query.after : ''))
+const comparing = computed(() => !!before.value && !!after.value)
+const afterVersion = computed(() => versions.value.find((v) => v.card_id === after.value))
+const beforeVersion = computed(() => versions.value.find((v) => v.card_id === before.value))
+
+function compare(version: ArtifactVersion) {
+  const earlier = versions.value.find((v) => v.number === version.number - 1)
+  if (!earlier) return
+  historyOpen.value = false
+  void router.push({ query: { ...route.query, before: earlier.card_id, after: version.card_id } })
 }
 
-watch([before, after, () => props.projectId, () => props.artifactId], async () => {
-  const generation = ++comparisonGeneration
-  comparison.value = null
-  comparisonError.value = ''
-  showPreviews.value = false
-  comparing.value = false
-  if (!before.value || !after.value || before.value === after.value) return
-  comparing.value = true
-  try {
-    const result = await compareArtifactVersions(props.projectId, props.artifactId, before.value, after.value)
-    if (generation !== comparisonGeneration) return
-    comparison.value = result
-    showPreviews.value =
-      result.kind === 'link' ||
-      result.kind === 'unavailable' ||
-      (result.kind === 'file' && result.files.some((file) => file.diff === null))
-  } catch (e) {
-    if (generation === comparisonGeneration)
-      comparisonError.value = e instanceof Error ? e.message : t('tasks.artifactComparison.loadError')
-  } finally {
-    if (generation === comparisonGeneration) comparing.value = false
-  }
-})
+function pickBefore(cardId: string) {
+  void router.replace({ query: { ...route.query, before: cardId } })
+}
 
-/** 最新的一版在最前面：人来这一页多半是为了拿当前这一版。 */
-const newestFirst = computed(() => [...(artifact.value?.versions ?? [])].reverse())
-
-/** 当前版本里能直接拿走的那一个 —— 有它才在标题旁边放一颗按钮。 */
-const current = computed(() => newestFirst.value[0] ?? null)
+// ---- 读 --------------------------------------------------------------------
 
 async function load() {
   const { projectId, artifactId } = props
@@ -90,16 +77,49 @@ async function load() {
     const found = await getProjectArtifact(projectId, artifactId)
     if (props.artifactId !== artifactId || props.projectId !== projectId) return
     artifact.value = found
-    titles.setDynamicTitle(found.name, 'project-artifact')
-    before.value = found.versions.at(-2)?.card_id ?? ''
-    after.value = found.versions.at(-1)?.card_id ?? ''
   } catch (e) {
     if (props.artifactId !== artifactId || props.projectId !== projectId) return
-    loadError.value = e instanceof Error ? e.message : '未能读取这一项产物'
+    loadError.value = e instanceof Error ? e.message : t('tasks.artifact.loadError')
   } finally {
     if (props.artifactId === artifactId && props.projectId === projectId) loading.value = false
   }
 }
+
+watch(
+  [() => props.projectId, () => props.artifactId],
+  () => {
+    artifact.value = null
+    actionError.value = ''
+    void load()
+  },
+  { immediate: true }
+)
+
+// 交出去的是一次合并时，「这一版」就是它比上一版改了的那些文件。
+const changes = ref<ArtifactComparison | null>(null)
+const changesError = ref('')
+let changesAsked = 0
+watch(
+  () => [current.value?.card_id, previous.value?.card_id, comparing.value] as const,
+  async () => {
+    const ask = ++changesAsked
+    changes.value = null
+    changesError.value = ''
+    const now = current.value
+    const earlier = previous.value
+    if (comparing.value || now?.kind !== 'merge' || earlier?.kind !== 'merge') return
+    try {
+      const result = await compareArtifactVersions(props.projectId, props.artifactId, earlier.card_id, now.card_id)
+      if (ask === changesAsked) changes.value = result
+    } catch (e) {
+      if (ask === changesAsked)
+        changesError.value = e instanceof Error ? e.message : t('tasks.artifactComparison.loadError')
+    }
+  },
+  { immediate: true }
+)
+
+// ---- 拿走 ------------------------------------------------------------------
 
 async function download(version: ArtifactVersion) {
   if (!version.filename) return
@@ -108,294 +128,305 @@ async function download(version: ArtifactVersion) {
   try {
     await downloadFile(artifactVersionFileUrl(props.projectId, props.artifactId, version.card_id), version.filename)
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : '未能下载这一版'
+    actionError.value = e instanceof Error ? e.message : t('tasks.artifact.downloadError')
   } finally {
     downloading.value = ''
   }
 }
 
-function when(version: ArtifactVersion): string {
-  return version.delivered_at ? relTime(version.delivered_at) : ''
+function openLink(version: ArtifactVersion) {
+  if (version.url) window.open(version.url, '_blank', 'noopener,noreferrer')
 }
 
-watch(
-  [() => props.projectId, () => props.artifactId],
-  () => {
-    artifact.value = null
-    before.value = ''
-    after.value = ''
-    actionError.value = ''
-    void load()
-  },
-  { immediate: true }
+useCommands(() => {
+  const now = current.value
+  if (comparing.value || !artifact.value) return []
+  return [
+    {
+      id: 'artifact.copyLink',
+      title: t('tasks.artifact.copyLink'),
+      icon: 'mdi-link-variant',
+      palette: false,
+      header: {},
+      run: () =>
+        void copyLink(
+          linkOf(router, {
+            name: 'project-artifact',
+            params: { projectId: props.projectId, artifactId: props.artifactId },
+          })
+        ),
+    },
+    ...(now?.kind === 'file'
+      ? [
+          {
+            id: 'artifact.download',
+            title: t('tasks.artifact.downloadVersion', { number: now.number }),
+            icon: 'mdi-download-outline',
+            palette: false as const,
+            loading: downloading.value === now.card_id,
+            // 手机上拿走这一版的那颗按钮贴在底边，顶栏不再放一颗。
+            header: { accent: true },
+            run: () => void download(now),
+          },
+        ]
+      : now?.kind === 'link' && now.url
+        ? [
+            {
+              id: 'artifact.open',
+              title: t('tasks.artifact.open'),
+              icon: 'mdi-open-in-new',
+              palette: false as const,
+              header: { accent: true },
+              run: () => openLink(now),
+            },
+          ]
+        : []),
+  ]
+})
+
+// ---- 页头 ------------------------------------------------------------------
+
+const title = computed(() =>
+  comparing.value ? t('tasks.artifactComparison.title') : artifact.value?.name ?? t('tasks.artifact.fallbackTitle')
 )
+const parent = computed(() =>
+  comparing.value && artifact.value
+    ? {
+        label: artifact.value.name,
+        to: { name: 'project-artifact', params: { projectId: props.projectId, artifactId: props.artifactId } },
+      }
+    : {
+        label: t('navigation.project.board'),
+        to: { name: 'workspace-running', params: { projectId: props.projectId } },
+      }
+)
+
+// 手机顶栏写的是这一项的名字，不是「产物」这个类别。
+const titles = usePageTitleStore()
+watch(title, (value) => titles.setDynamicTitle(value, 'project-artifact'), { immediate: true })
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** 这一版是什么：第几版、什么时候交的、谁认的、是哪一份。 */
+const facts = computed(() => {
+  const now = current.value
+  if (!now || !artifact.value) return ''
+  return [
+    t('tasks.artifactComparison.version', { number: now.number }),
+    now.delivered_at ? t('tasks.artifact.deliveredAt', { when: relTime(now.delivered_at) }) : '',
+    now.decided_by ? t('tasks.artifact.acceptedBy', { who: now.decided_by }) : '',
+    now.filename ?? '',
+    now.bytes !== null && now.bytes !== undefined ? fmtBytes(now.bytes) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+})
 </script>
 
 <template>
-  <div class="artifact-page pa-4 pa-md-6">
-    <div class="artifact-content">
-      <p v-if="loadError" role="alert" class="t-body c-danger mb-4">{{ loadError }}</p>
+  <AppPage :title="title" :parent="parent" width="full">
+    <template v-if="comparing && beforeVersion && afterVersion" #meta>
+      {{ t('tasks.artifactComparison.version', { number: beforeVersion.number }) }} →
+      {{ t('tasks.artifactComparison.version', { number: afterVersion.number }) }}
+    </template>
 
-      <div v-if="loading && !artifact" class="py-8 text-center" role="status" aria-label="读取这一项产物">
-        <v-progress-circular indeterminate size="28" color="primary" />
-      </div>
+    <p v-if="loadError" role="alert" class="t-body c-danger pa-4">{{ loadError }}</p>
 
-      <template v-else-if="artifact">
-        <header class="artifact-head">
-          <div class="artifact-head__id">
-            <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title">{{ artifact.name }}</h1>
-            <p class="t-meta c-faint mt-1">
-              <template v-if="artifact.version">
-                第 {{ artifact.version }} 版
-                <template v-if="artifact.delivered_at"> · 交付于 {{ relTime(artifact.delivered_at) }}</template>
-              </template>
-              <template v-else>尚未交付</template>
-            </p>
+    <div v-if="loading && !artifact" class="py-8 text-center" role="status" :aria-label="t('tasks.artifact.loading')">
+      <v-progress-circular indeterminate size="28" color="primary" />
+    </div>
+
+    <!-- 比较两版 -->
+    <div v-else-if="artifact && comparing" class="artifact-compare" :class="{ 'artifact-compare--phone': !mdAndUp }">
+      <ArtifactCompare
+        :project-id="projectId"
+        :artifact-id="artifactId"
+        :versions="versions"
+        :before="before"
+        :after="after"
+        @update:before="pickBefore"
+      />
+    </div>
+
+    <div v-else-if="artifact" class="artifact" :class="{ 'artifact--phone': !mdAndUp }">
+      <section class="artifact__main">
+        <div class="artifact__facts">
+          <p v-if="artifact.about" class="t-body c-muted artifact__about">{{ artifact.about }}</p>
+          <p class="t-meta c-faint artifact__line">{{ current ? facts : t('tasks.artifact.notDelivered') }}</p>
+          <p v-if="actionError" role="alert" class="t-meta c-danger artifact__line">{{ actionError }}</p>
+        </div>
+
+        <!-- 这一版本身 -->
+        <div class="artifact__view">
+          <p v-if="!current" class="t-body c-muted artifact__empty">{{ t('tasks.artifact.noVersions') }}</p>
+          <ArtifactVersionPreview
+            v-else-if="current.kind === 'file'"
+            bare
+            :project-id="projectId"
+            :artifact-id="artifactId"
+            :version="current"
+          />
+          <div v-else-if="current.kind === 'link' && current.url" class="artifact__link">
+            <p class="t-meta c-faint">{{ t('tasks.artifact.linkDelivered') }}</p>
+            <a :href="current.url" target="_blank" rel="noopener noreferrer" class="t-body">{{ current.url }}</a>
           </div>
+          <div v-else-if="current.kind === 'merge'" class="artifact__merge">
+            <h2 class="t-title">{{ t('tasks.artifact.thisVersion') }}</h2>
+            <p class="t-body">{{ current.subject || t('tasks.artifact.noSubject') }}</p>
+            <p v-if="!previous" class="t-meta c-faint">{{ t('tasks.artifact.firstVersion') }}</p>
+            <p v-else-if="changesError" class="t-meta c-danger" role="alert">{{ changesError }}</p>
+            <p v-else-if="!changes" class="t-meta c-faint" role="status">{{ t('tasks.artifactComparison.loading') }}</p>
+            <ArtifactChanges v-else :files="changes.files" />
+          </div>
+          <p v-else class="t-body c-muted artifact__empty">{{ t('tasks.artifact.notRetained') }}</p>
+        </div>
+
+        <!-- 手机上：版本历史从底下升起来，拿走这一版的那颗按钮贴着底边。 -->
+        <div v-if="!mdAndUp && current" class="artifact__bar">
+          <v-btn variant="outlined" class="flex-grow-1" @click="historyOpen = true">
+            {{ t('tasks.artifact.historyCount', { n: versions.length }) }}
+          </v-btn>
           <v-btn
-            v-if="current?.kind === 'file'"
-            variant="flat"
+            v-if="current.kind === 'file'"
             color="primary"
+            variant="flat"
+            class="flex-grow-1"
             :loading="downloading === current.card_id"
             @click="download(current)"
           >
-            下载当前版本
+            {{ t('tasks.artifact.download') }}
           </v-btn>
-          <v-btn v-else-if="current?.kind === 'link' && current.url" variant="flat" color="primary" :href="current.url">
-            打开
+          <v-btn
+            v-else-if="current.kind === 'link' && current.url"
+            color="primary"
+            variant="flat"
+            class="flex-grow-1"
+            :href="current.url"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {{ t('tasks.artifact.open') }}
           </v-btn>
-        </header>
-
-        <p v-if="actionError" role="alert" class="t-body c-danger mb-4">{{ actionError }}</p>
-
-        <section v-if="artifact.versions.length >= 2" class="comparison mt-8">
-          <h2 class="t-title mb-4">{{ t('tasks.artifactComparison.title') }}</h2>
-          <div class="comparison-selectors">
-            <label class="t-body"
-              >{{ t('tasks.artifactComparison.before') }}
-              <select v-model="before" :aria-label="t('tasks.artifactComparison.before')">
-                <option v-for="version in newestFirst" :key="version.card_id" :value="version.card_id">
-                  {{ t('tasks.artifactComparison.version', { number: version.number }) }} · {{ version.subject }}
-                </option>
-              </select>
-            </label>
-            <label class="t-body"
-              >{{ t('tasks.artifactComparison.after') }}
-              <select v-model="after" :aria-label="t('tasks.artifactComparison.after')">
-                <option v-for="version in newestFirst" :key="version.card_id" :value="version.card_id">
-                  {{ t('tasks.artifactComparison.version', { number: version.number }) }} · {{ version.subject }}
-                </option>
-              </select>
-            </label>
-          </div>
-          <p v-if="before === after" class="t-body c-muted mt-4">{{ t('tasks.artifactComparison.chooseTwo') }}</p>
-          <p v-else-if="comparing" class="t-body c-muted mt-4" role="status">
-            {{ t('tasks.artifactComparison.loading') }}
-          </p>
-          <p v-else-if="comparisonError" class="t-body c-danger mt-4" role="alert">{{ comparisonError }}</p>
-          <template v-else-if="comparison">
-            <p v-if="comparison.note" class="t-body c-muted mt-4">{{ comparisonNote(comparison.note) }}</p>
-            <p v-if="comparison.identical !== null" class="t-body mt-4" role="status">
-              {{
-                comparison.kind === 'link'
-                  ? comparison.identical
-                    ? t('tasks.artifactComparison.sameLink')
-                    : t('tasks.artifactComparison.changedLink')
-                  : comparison.identical
-                    ? t('tasks.artifactComparison.identical')
-                    : t('tasks.artifactComparison.changed')
-              }}
-            </p>
-            <article v-for="file in comparison.files" :key="file.path" class="comparison-file mt-4">
-              <h3 class="t-body pa-3">{{ file.path }}</h3>
-              <p v-if="file.before_mode !== file.after_mode" class="t-body pa-3">
-                {{ t('tasks.artifactComparison.fileMode') }} {{ file.before_mode || '—' }} →
-                {{ file.after_mode || '—' }}
-              </p>
-              <p v-if="file.note" class="t-body c-muted pa-3">{{ comparisonNote(file.note) }}</p>
-              <pre
-                v-if="file.diff"
-                class="comparison-diff t-body"
-              ><span v-for="(line, index) in parseDiffLines(file.diff)" :key="index" :class="`diff-${line.kind}`">{{ line.text }}</span></pre>
-            </article>
-            <v-btn
-              v-if="comparison.kind === 'file'"
-              class="mt-4"
-              variant="text"
-              @click="showPreviews = !showPreviews"
-              >{{
-                showPreviews ? t('tasks.artifactComparison.hidePreviews') : t('tasks.artifactComparison.showPreviews')
-              }}</v-btn
-            >
-            <div v-if="showPreviews && beforeVersion && afterVersion" class="comparison-previews mt-4">
-              <ArtifactVersionPreview :project-id="projectId" :artifact-id="artifactId" :version="beforeVersion" />
-              <ArtifactVersionPreview :project-id="projectId" :artifact-id="artifactId" :version="afterVersion" />
-            </div>
-          </template>
-        </section>
-
-        <h2 class="t-title mt-8 mb-3">版本历史</h2>
-
-        <ul v-if="newestFirst.length" class="version-list">
-          <li v-for="version in newestFirst" :key="version.card_id" class="version-row">
-            <span class="version-row__no t-meta c-faint">第 {{ version.number }} 版</span>
-            <div class="version-row__id">
-              <div class="t-body version-row__subject">{{ version.subject || '这次交付没有留下说明' }}</div>
-              <div class="t-meta c-faint">
-                <template v-if="when(version)">{{ when(version) }}</template>
-                <template v-if="version.decided_by"> · <UserRef :handle="version.decided_by" /> 采纳</template>
-              </div>
-            </div>
-            <v-btn
-              v-if="version.kind === 'file'"
-              size="small"
-              variant="text"
-              color="on-surface-variant"
-              :loading="downloading === version.card_id"
-              @click="download(version)"
-            >
-              下载
-            </v-btn>
-            <v-btn
-              v-else-if="version.kind === 'link' && version.url"
-              size="small"
-              variant="text"
-              color="on-surface-variant"
-              :href="version.url"
-            >
-              打开
-            </v-btn>
-            <!-- 交出去的是一次合并，或者这一版早于交付物留存：两种都没有文件可
-                 给，而它们不是同一件事，所以话也不一样。 -->
-            <span v-else class="t-meta c-faint version-row__none">
-              {{ version.kind === 'merge' ? '交出去的是这次合并' : '这一版没有留存文件' }}
-            </span>
-          </li>
-        </ul>
-
-        <div v-else class="py-8 text-center">
-          <p class="t-body c-muted">暂无交付</p>
         </div>
-      </template>
+      </section>
+
+      <aside v-if="mdAndUp" class="artifact__history">
+        <h2 class="t-title artifact__history-title">
+          {{ t('tasks.artifact.history') }}
+          <span v-if="versions.length" class="t-meta c-faint"
+            >· {{ t('tasks.artifact.total', { n: versions.length }) }}</span
+          >
+        </h2>
+        <ArtifactVersionList
+          :project-id="projectId"
+          :versions="versions"
+          :downloading="downloading"
+          @download="download"
+          @compare="compare"
+        />
+      </aside>
+      <MobileActionSheet v-else v-model="historyOpen" :title="t('tasks.artifact.history')">
+        <div class="artifact__sheet">
+          <ArtifactVersionList
+            :project-id="projectId"
+            :versions="versions"
+            :downloading="downloading"
+            @download="download"
+            @compare="compare"
+          />
+        </div>
+      </MobileActionSheet>
     </div>
-  </div>
+  </AppPage>
 </template>
 
 <style scoped>
-/* 项目框架那一格是 overflow: hidden，这一页得自己滚：不给高度的话，比一屏长的版本
-   历史被裁在屏幕外面，拖不上来。 */
-.artifact-page {
-  box-sizing: border-box;
-  height: 100%;
-  overflow-y: auto;
-}
-.artifact-content {
-  max-width: 1120px;
-  margin: 0 auto;
-}
-.artifact-head {
+.artifact {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  height: 100%;
+  min-height: 0;
 }
-.artifact-head__id {
+.artifact__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+}
+.artifact__facts {
+  flex: none;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.artifact--phone .artifact__facts {
+  padding: 10px 16px;
+}
+.artifact__about,
+.artifact__line {
+  margin: 0;
   overflow-wrap: anywhere;
 }
-.version-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+/* 预览贴满下面整块：它就是这一页的主体，不再套一圈外框。 */
+.artifact__view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--canvas);
+}
+.artifact__empty {
+  padding: 48px 24px;
+  text-align: center;
+}
+.artifact__link,
+.artifact__merge {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-/* 版号在左边自成一列，所以一眼扫下来是 7、6、5……而不是混在说明里。 */
-.version-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-.version-row__no {
-  flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
-}
-.version-row__id {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.version-row__subject {
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.version-row__none {
-  flex: 0 0 auto;
-}
-.comparison-selectors,
-.comparison-previews {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-.comparison-selectors label {
-  min-width: 0;
-}
-.comparison-selectors select {
-  display: block;
-  width: 100%;
-  margin-top: 8px;
-  padding: 12px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text);
-}
-.comparison-file {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-.comparison-file h3 {
-  border-bottom: 1px solid var(--line);
+  max-width: 880px;
+  padding: 24px;
   overflow-wrap: anywhere;
 }
-.comparison-diff {
-  overflow: auto;
-  max-height: 480px;
+.artifact__merge h2,
+.artifact__merge p,
+.artifact__link p {
+  margin: 0;
 }
-.comparison-diff span {
-  display: block;
-  min-width: 100%;
-  min-height: var(--lh-14);
-  width: max-content;
-  padding: 0 12px;
+.artifact__link a {
+  color: var(--accent-ink);
 }
-.diff-add {
-  background: var(--ok-wash);
-  color: var(--ok-ink);
+.artifact__bar {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--surface);
 }
-.diff-del {
-  background: var(--danger-wash);
-  color: var(--danger-ink);
+.artifact__history {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 12px;
+  width: 400px;
+  padding: 16px 20px 24px;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
 }
-.diff-hunk,
-.diff-meta {
-  color: var(--muted);
-  background: var(--fill);
+.artifact__history-title {
+  margin: 0;
 }
-@media (max-width: 700px) {
-  .comparison-selectors,
-  .comparison-previews {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.artifact__sheet {
+  padding: 0 12px 12px;
+}
+.artifact-compare {
+  max-width: 1040px;
+  padding: 24px;
+}
+.artifact-compare--phone {
+  padding: 16px;
 }
 </style>

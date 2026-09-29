@@ -1645,6 +1645,10 @@ export interface ArtifactVersion {
   kind: DeliverableKind | null
   filename: string | null
   url: string | null
+  /** 这一版留存的那一份有多大；不是文件、或没有留存时为 null。 */
+  bytes: number | null
+  /** 这一版是在哪个房间做出来的；读不了那个房间（别人的私聊）时为 null。 */
+  room: { id: string; title: string } | null
 }
 
 export interface ProjectArtifactDetail extends ProjectArtifact {
