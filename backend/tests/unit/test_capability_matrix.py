@@ -93,7 +93,7 @@ def test_every_copy_of_a_pin_is_held_to_the_one_the_adapter_declares() -> None:
     assert private.IMAGE == f"cheese-private-executor:{claude}"
     assert Settings.model_fields["private_chat_executor_image"].default == private.IMAGE
     workflow = (REPO / ".github/workflows/remote-execution.yml").read_text()
-    assert f"-t {private.IMAGE} " in workflow
+    assert f"tags: {private.IMAGE}\n" in workflow
     # The agent image bakes the same build a device launches, so "the same turn"
     # means the same runtime on either side; and the connector's delivery e2e in
     # CI boots the build production launches.

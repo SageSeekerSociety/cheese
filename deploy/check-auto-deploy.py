@@ -20,7 +20,9 @@ def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
     runs = []
     page = 1
     while True:
-        query = urlencode({"head_sha": candidate, "branch": "main", "per_page": 100, "page": page})
+        # No branch filter: a merge-queue run belongs to the queue's temporary
+        # branch, not to main. ci_ready checks each run's branch itself.
+        query = urlencode({"head_sha": candidate, "per_page": 100, "page": page})
         request = Request(
             f"https://api.github.com/repos/{repository}/actions/workflows/{workflow}/runs?{query}",
             headers={
@@ -43,10 +45,16 @@ def ci_ready(candidate: str) -> bool:
         raise ValueError("the automatic release must name a full commit SHA")
     repository = os.environ["GITHUB_REPOSITORY"]
     ready = True
-    for workflow, events in (("build.yml", {"push", "workflow_dispatch"}),
-                             ("required-ci.yml", {"push"})):
+    # Required CI runs once per commit, in the merge queue. The queue squashes
+    # each entry onto its base and fast-forwards main to that same commit, so
+    # the queue run's head SHA is the SHA that lands on main.
+    for workflow, events, on_branch in (
+        ("build.yml", {"push", "workflow_dispatch"}, lambda branch: branch == "main"),
+        ("required-ci.yml", {"merge_group"},
+         lambda branch: branch.startswith("gh-readonly-queue/main/")),
+    ):
         runs = [run for run in workflow_runs(repository, workflow, candidate)
-                if run["head_sha"] == candidate and run["head_branch"] == "main"
+                if run["head_sha"] == candidate and on_branch(run["head_branch"] or "")
                 and run["event"] in events
                 and run["head_repository"]["full_name"] == repository]
         # A rerun keeps its run ID. Its latest update must supersede an older
