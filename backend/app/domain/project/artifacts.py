@@ -68,6 +68,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact
 from app.domain.review.models import AcceptCard, AcceptStatus
 
@@ -457,6 +458,35 @@ class ArtifactVersion:
     filename: str | None
     url: str | None
     revision: str | None
+    #: 递这张卡的房间：这一版是在哪一次对话里做出来的。
+    room_id: uuid.UUID
+
+
+def version_payload(
+    project_id: uuid.UUID, v: ArtifactVersion, room_titles: dict[uuid.UUID, str]
+) -> dict:
+    """一版在接口上的样子。房间只在 `room_titles` 里有它时才写名字：调用方只给
+    读者读得了的那些房间。"""
+    return {
+        "number": v.number,
+        "card_id": str(v.card_id),
+        "subject": v.subject,
+        "delivered_at": v.delivered_at.isoformat() if v.delivered_at else None,
+        "decided_by": v.decided_by,
+        "kind": v.kind,
+        "filename": v.filename,
+        "url": v.url,
+        "bytes": (
+            library.artifact_snapshot_size(project_id, v.card_id, v.filename)
+            if v.kind == "file" and v.filename
+            else None
+        ),
+        "room": (
+            {"id": str(v.room_id), "title": room_titles[v.room_id]}
+            if v.room_id in room_titles
+            else None
+        ),
+    }
 
 
 async def versions(
@@ -482,6 +512,7 @@ async def versions(
             filename=card.deliverable_name,
             url=card.deliverable_url,
             revision=card.pr_head_sha,
+            room_id=card.topic_id,
         )
         for number, card in enumerate(found.scalars().all(), start=1)
     ]

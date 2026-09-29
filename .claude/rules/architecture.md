@@ -92,7 +92,7 @@ Four principles, in the order they matter:
    alone, it is a view or a container, not a component. **建议** — no check can
    decide which side of that line a file is on.
 
-The rule is ratcheted because the tree starts at 91 violations in 57 components
+The rule is ratcheted because the tree starts at 84 violations in 50 components
 (`frontend/import-boundary-baseline.json`); a gate that reddened the whole tree
 on day one would be switched off within a week. It is a separate ESLint config
 (`eslint.boundary.config.mjs`) rather than a rule in `eslint.config.mjs` for the

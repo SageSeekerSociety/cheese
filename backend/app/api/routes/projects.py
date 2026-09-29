@@ -16,7 +16,7 @@ from app.api.deps import (
     get_chat_service,
     get_profile_registry,
 )
-from app.api.place import project_reader
+from app.api.place import project_reader, readable_room_titles
 from app.api.response import ok, page
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -624,10 +624,12 @@ async def read_artifact(
     一版就是一张采纳了的卡，所以这里没有「版本表」——历史是数出来的，撤回一次采
     纳，它后面几版的号自己往前挪。"""
     await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
+    actor = await project_reader(db, resolver, project_id, topic)
     row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
     listed = await artifacts.summary(db, row.id)
     history = await artifacts.versions(db, row.id)
+    # 每一版出自哪个房间，能点回去；读不了的房间不写名字。
+    titles = await readable_room_titles(db, resolver, actor, project_id)
     return ok(
         {
             "id": str(row.id),
@@ -640,19 +642,7 @@ async def read_artifact(
                 else None
             ),
             "versions": [
-                {
-                    "number": v.number,
-                    "card_id": str(v.card_id),
-                    "subject": v.subject,
-                    "delivered_at": (
-                        v.delivered_at.isoformat() if v.delivered_at else None
-                    ),
-                    "decided_by": v.decided_by,
-                    "kind": v.kind,
-                    "filename": v.filename,
-                    "url": v.url,
-                }
-                for v in history
+                artifacts.version_payload(project_id, v, titles) for v in history
             ],
         }
     )
