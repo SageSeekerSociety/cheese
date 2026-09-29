@@ -25,16 +25,19 @@ import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
 import type { TopicPhase } from '../lib/topicState'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { getPreview, getTopicWorkSummary, listRoomTasks, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
-import { fileIcon, previewCanShowInRoom } from '../lib/fileKind'
+import { previewCanShowInRoom } from '../lib/fileKind'
 
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
+// 别名：这个文件里 `panelTabs` 已经是「页签条要的那份数据」了。
+import { ALL_TABS, panelTabs as fixedTabs, type TabDef, type TabKey } from './panels/panelTabList'
+import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
@@ -107,22 +110,8 @@ const emit = defineEmits<{
   (e: 'locate', message: string): void
 }>()
 
-type TabKey = 'chat' | 'overview' | 'site' | 'changes' | 'preview'
-interface TabDef {
-  key: TabKey
-  label: string
-  icon: string
-}
-const ALL_TABS: TabDef[] = [
-  { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
-  // 文档 和 任务 合成了一格。它们回答的是同一个问题的两半——「这个房间在干什么」
-  // ——分成两格意味着看完一半得先想起来还有另一半，于是大多数人只看文档，房间里
-  // 有几条活在跑就没人知道。
-  { key: 'overview', label: '总览', icon: 'mdi-file-document-outline' },
-  { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
-  { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
-  { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
-]
+// 有哪几格、各叫什么、挂哪个图标在 `panels/panelTabList.ts`：文档里的演示照着
+// 同一份表画这条栏，一个名字只有一个出处。
 // 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
 // 的），桌面上对话就在旁边那一栏，所以是总览。
 const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'overview'))
@@ -135,9 +124,6 @@ const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview'
 const FILE_TAB = 'file:'
 function fileKey(path: string): string {
   return FILE_TAB + path
-}
-function fileName(path: string): string {
-  return path.split('/').pop() || path
 }
 const openFiles = ref<OpenFileTab[]>([])
 // 自由区属于房间：切去别的房间再回来，开着的那几份还在。只记在这一次会话里。
@@ -161,52 +147,8 @@ function ensureFileFromUrl(key: string | null) {
 
 // 窄屏上这条栏会横向滚动，所以「哪一格是选中的」和「你看得见哪一格」不再是同一
 // 件事：阶段自动选中的那一格（比如开工时的现场）可能整个在屏幕外，屏幕上什么都
-// 没发生。选中态一变就把它带回视野里。
-const tabbarRef = ref<HTMLElement | null>(null)
-watch(active, () => {
-  void nextTick(() => {
-    const on = tabbarRef.value?.querySelector('[aria-selected="true"]')
-    on?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  })
-})
-
-// 选中那一格下面的线是一条，换页签时从旧的那一格滑到新的那一格（§9.2：位置变了，
-// 就让人看见它是从哪儿挪过来的）。每一格各画一条的话，换页签是一条消失、另一条
-// 凭空出现，读不出「从这儿到那儿」。
-//
-// 量的是选中那一格自己的盒子，所以一格的宽度变了（计数出现、字体加载完）也得重量
-// 一次——盯着的就是那一格。第一次落位不演：打开房间时线本来就在那儿。
-const ink = ref<{ left: number; width: number } | null>(null)
-const inkMoves = ref(false)
-let inkWatch: ResizeObserver | null = null
-let inkTarget: Element | null = null
-function placeInk() {
-  const on = tabbarRef.value?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
-  if (!on) {
-    ink.value = null
-    return
-  }
-  // 页签在 `.tabbar__file` 里的时候 offsetLeft 量的也是到 `.tabbar` 的距离：那层
-  // 包装没有定位，偏移的基准一路落到定了位的 `.tabbar` 上。
-  ink.value = { left: on.offsetLeft, width: on.offsetWidth }
-  // 只在选中的换了一格时改盯的对象：`observe` 一挂上就先回调一次，回调里再
-  // `disconnect` + `observe` 同一格，就是每一帧都在重挂、每一帧都在报 ResizeObserver
-  // 循环。
-  if (on !== inkTarget && typeof ResizeObserver !== 'undefined') {
-    inkWatch?.disconnect()
-    inkWatch ??= new ResizeObserver(() => placeInk())
-    inkWatch.observe(on)
-    inkTarget = on
-  }
-  if (!inkMoves.value) requestAnimationFrame(() => (inkMoves.value = true))
-}
-watch([active, () => openFiles.value.length, tabbarRef], () => void nextTick(placeInk), { immediate: true })
-onBeforeUnmount(() => inkWatch?.disconnect())
-const inkStyle = computed(() =>
-  ink.value
-    ? { transform: `translateX(${ink.value.left + 8}px)`, width: `${Math.max(0, ink.value.width - 16)}px` }
-    : { display: 'none' }
-)
+// 没发生。把选中那一格带回视野、以及那条下边线的量法，都在 `PanelTabs` 里——它
+// 是这条栏的组件，产品页和文档里的演示共用它。
 
 // Every move the panel makes goes through here, so the address always says what
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
@@ -409,7 +351,7 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-const tabs = computed(() => ALL_TABS.filter((t) => t.key !== 'chat' || props.withChat))
+const tabs = computed(() => fixedTabs(props.withChat))
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
 useCommands(() =>
   tabs.value.map((tab) => ({
@@ -439,6 +381,29 @@ function tabTitle(t: TabDef): string {
   }
   return t.label
 }
+
+/** 挂在页签上的那个信号。哪一格挂什么属于工作面板的账，`PanelTabs` 只负责画。 */
+function signalFor(key: TabKey): PanelTab['signal'] {
+  if (key === 'site' && props.working) return { kind: 'pulse' }
+  if (key === 'preview' && previewHasNew.value) return { kind: 'dot' }
+  if (key === 'overview' && threads.value.total) return { kind: 'count', count: threads.value.total }
+  if (key === 'changes' && summary.value.changedFiles.length) {
+    return { kind: 'count', count: summary.value.changedFiles.length, fresh: changesHasNew.value }
+  }
+  return undefined
+}
+
+/** 交给 `PanelTabs` 的那四格（或五格）：文案、图标、有没有东西、信号。 */
+const panelTabs = computed<PanelTab[]>(() =>
+  tabs.value.map((tab) => ({
+    key: tab.key,
+    label: tab.label,
+    icon: tab.icon,
+    empty: !hasContent(tab.key),
+    title: tabTitle(tab),
+    signal: signalFor(tab.key),
+  }))
+)
 
 // Opening the topic: the address decides, 文档 when it says nothing. Baseline the
 // dot against whatever this topic already had, so opening a topic — including
@@ -598,75 +563,18 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
     </div>
 
     <template v-else>
-      <div ref="tabbarRef" class="tabbar" :class="{ 'tabbar--phone': withChat }" role="tablist">
-        <button
-          v-for="t in tabs"
-          :key="t.key"
-          type="button"
-          role="tab"
-          class="tabbar__tab"
-          :class="{ 'tabbar__tab--on': active === t.key, 'tabbar__tab--empty': !hasContent(t.key) }"
-          :aria-selected="active === t.key"
-          :title="tabTitle(t)"
-          @click="setTab(t.key)"
-        >
-          <v-icon size="16">{{ t.icon }}</v-icon>
-          {{ t.label }}
-          <!-- 信号上 Tab，不抢占视图: 芝士 works for minutes at a time and the
-               reader is usually somewhere else while it does, so what it
-               produced has to be visible from the tab it produced it on. None
-               of these ever selects a tab for you. -->
-          <span v-if="t.key === 'site' && working" class="tabbar__pulse" />
-          <!-- A dot, not a count: there is only ever one current preview, so a
-               number would be noise. -->
-          <span v-if="t.key === 'preview' && previewHasNew" class="tabbar__dot" />
-          <!-- 有几件活在跑。和 改动 一样用数字而不是点：几件在跑本身就是要看的
-               那个信息。它不变色——派出去的活不是「你还没看过的东西」。 -->
-          <span v-if="t.key === 'overview' && threads.total" class="tabbar__count">{{ threads.total }}</span>
-          <!-- 改动 is the opposite: how much there is to review is the useful
-               part, so the count carries the signal and turns amber when it is
-               work you have not looked at yet. -->
-          <span
-            v-if="t.key === 'changes' && summary.changedFiles.length"
-            class="tabbar__count"
-            :class="{ 'tabbar__count--new': changesHasNew }"
-            >{{ summary.changedFiles.length }}</span
-          >
-        </button>
-        <!-- 自由区。关闭钮和页签是兄弟，不是它的孩子：按钮里套按钮不合法，读屏也会
-             把两者念成一个东西。 -->
-        <span v-if="openFiles.length" class="tabbar__sep" aria-hidden="true" />
-        <div
-          v-for="f in openFiles"
-          :key="fileKey(f.path)"
-          class="tabbar__file"
-          :class="{ 'tabbar__file--temp': !f.pinned }"
-        >
-          <button
-            type="button"
-            role="tab"
-            class="tabbar__tab"
-            :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
-            :aria-selected="active === fileKey(f.path)"
-            :title="f.pinned ? f.path : `${f.path}（双击固定这个页签）`"
-            @click="setTab(fileKey(f.path))"
-            @dblclick="pinFile(f.path)"
-          >
-            <v-icon size="16">{{ fileIcon(f.path) }}</v-icon>
-            <span class="tabbar__name">{{ fileName(f.path) }}</span>
-          </button>
-          <button
-            type="button"
-            class="tabbar__close"
-            :aria-label="`关闭 ${fileName(f.path)}`"
-            :title="`关闭 ${fileName(f.path)}`"
-            @click="closeFile(f.path)"
-          >
-            <v-icon size="14">mdi-close</v-icon>
-          </button>
-        </div>
-        <span class="tabbar__ink" :class="{ 'tabbar__ink--moves': inkMoves }" :style="inkStyle" aria-hidden="true" />
-      </div>
+      <!-- 这条栏是 `PanelTabs` 画的：产品页和文档里的动态演示共用同一个组件，演示
+           的四格于是永远和这里长得一样。信号（谁在干活、有几个文件改了）和「哪一
+           格此刻没东西」都由这里算好交给它。 -->
+      <PanelTabs
+        :tabs="panelTabs"
+        :active="active"
+        :files="openFiles"
+        :phone="withChat"
+        @select="setTab"
+        @close-file="closeFile"
+        @pin-file="pinFile"
+      />
 
       <div class="tabbody" :class="{ 'tabbody--phone': withChat }">
         <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
@@ -770,156 +678,6 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
   min-width: 0;
   min-height: 0;
   height: 100%;
-}
-.tabbar {
-  position: relative;
-  display: flex;
-  flex: 0 0 auto;
-  align-items: stretch;
-  gap: 2px;
-  padding: 0 6px;
-  border-bottom: 1px solid var(--line);
-  /* 一屏放不下的时候横着滚，而不是把每一格压扁：挤压是没有边界的——tab 只会越
-     加越多，而窄屏上第一个被挤没的永远是文字，剩下一排认不出来的图标。滚动条不
-     画出来，因为这条栏本来就只有一行高，一条滚动条会占掉它三分之一。 */
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-}
-.tabbar::-webkit-scrollbar {
-  display: none;
-}
-.tabbar__tab {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
-  padding: 8px 12px;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.tabbar__tab:hover {
-  color: var(--ink);
-}
-/* 手机上一格页签至少 44px 高，手指点得中。栏会横向滚动，撑开的伪元素会被裁掉，
-   所以是真的长高。 */
-.tabbar--phone .tabbar__tab {
-  min-height: 44px;
-}
-/* 这一格此刻没东西：字退到 --faint，但照样能点，点进去是它自己的「暂无」。 */
-.tabbar__tab--empty:not(.tabbar__tab--on) {
-  color: var(--faint);
-}
-/* 固定区和自由区之间的那一道：前面几格永远在，后面几格是你自己开的。 */
-.tabbar__sep {
-  flex: 0 0 auto;
-  align-self: center;
-  width: 1px;
-  height: 16px;
-  margin: 0 4px;
-  background: var(--line);
-}
-.tabbar__file {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-}
-.tabbar__file .tabbar__tab {
-  padding-right: 4px;
-}
-.tabbar__name {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* 临时位：下一次打开会换掉它。斜体是编辑器里通行的说法；双击就不斜了。 */
-.tabbar__file--temp .tabbar__name {
-  font-style: italic;
-}
-.tabbar__close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin-right: 4px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-}
-.tabbar__close:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-/* 选中态: ink + 一条下边线。琥珀只留给唯一主操作、导航选中态和品牌标，工作面板的
-   tab 不是导航，所以用中性墨色。 */
-.tabbar__tab--on {
-  color: var(--ink);
-  font-weight: 600;
-}
-.tabbar__ink {
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  height: 2px;
-  background: var(--ink);
-  pointer-events: none;
-}
-.tabbar__ink--moves {
-  transition:
-    transform var(--dur-base) var(--ease-standard),
-    width var(--dur-base) var(--ease-standard);
-}
-/* 有新内容 —— 琥珀在这条 tab 栏里只给「有东西等你看」，不给选中态。 */
-.tabbar__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-/* 芝士正在这个 tab 后面干活。呼吸而不是常亮：常亮说的是「有个东西」，呼吸说的
-   是「正在发生」，而现场这一片的全部意义就是后者。 */
-.tabbar__pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ok);
-  animation: tabbar-breathe 1.6s ease-in-out infinite;
-}
-@keyframes tabbar-breathe {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .tabbar__pulse {
-    animation: none;
-  }
-}
-/* 改动的规模。默认是中性的事实，只有「你还没看过的那些」才配琥珀。 */
-.tabbar__count {
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--faint);
-}
-.tabbar__count--new {
-  color: var(--accent);
 }
 .tabpane-in {
   animation: tabpane-in var(--dur-base) var(--ease-standard);

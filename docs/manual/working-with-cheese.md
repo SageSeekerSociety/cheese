@@ -11,7 +11,7 @@ order: 2
 
 ```demo-steps
 title: 中途补一句，芝士问你一句
-note: 画面用的是产品里真的消息行、按钮卡和现场
+note: 画面用的是产品里真的消息行、按钮卡和工作面板（右边那四格）
 embed: collaborate
 steps:
   - label: 说清要什么、有什么、怎样算完

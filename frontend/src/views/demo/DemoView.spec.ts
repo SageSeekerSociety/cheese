@@ -64,7 +64,11 @@ describe('DemoView', () => {
     await waitFor(() => expect(view.getByText('按钮用主色，别用描边', { exact: false })).toBeTruthy())
     // 现场是真的 PanelSite：队友切换栏出来了，叙述那一行也在。
     await waitFor(() => expect(view.getByText('收到补充：登录按钮改成主色实心。')).toBeTruthy())
-    expect(view.getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['全部', '芝士', '芝士K'])
+    const tabs = view.getAllByRole('tab').map((t) => t.textContent?.trim())
+    // 右边那条是产品的工作面板页签（`panelTabs`，和桌面上的工作面板同一张表）。
+    expect(tabs.slice(0, 4)).toEqual(['总览', '现场', '改动', '预览'])
+    // 后面那一组是座位切换栏（演示自己画的），和页签条混在一个无障碍树里。
+    expect(tabs.slice(4)).toEqual(['全部', '芝士', '芝士K'])
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
@@ -88,6 +92,31 @@ describe('DemoView', () => {
     expect(view.getByText(/改动了 1 个文件/)).toBeTruthy()
     // 步骤清单：三项都打勾，结果那一句在。
     expect(view.getByText('README.md 写好了，验收卡已递给王长鑫', { exact: false })).toBeTruthy()
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('shows the panel a step declares, and 现场 when it declares none', async () => {
+    vi.spyOn(window, 'parent', 'get').mockReturnValue({ postMessage: () => {} } as unknown as Window)
+    const view = mount('/demo/quickstart?embed=1')
+    const selected = () =>
+      view.container.querySelector('[data-region="tabs"] [role="tab"][aria-selected="true"]')?.textContent?.trim()
+
+    // 第三步（这张剧本里没写 panel）：右边还是现场，改动那几格连挂都没挂上。
+    window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 2, play: false } }))
+    await waitFor(() => expect(selected()).toBe('现场'))
+    expect(view.container.querySelectorAll('[data-region="panel"] > *').length).toBe(1)
+
+    // 第四步写了 panel: changes：选中的换成改动，格子里是产品自己的 PanelChanges，
+    // 画的是剧本里那份 diff（README.md，+6）。
+    window.dispatchEvent(new MessageEvent('message', { data: { cheeseDemo: 'go', step: 3, play: false } }))
+    await waitFor(() => expect(selected()).toContain('改动'))
+    // 页签上带着改动的规模（剧本里那一个文件）。
+    expect(view.container.querySelector('.tabbar__count')?.textContent).toBe('1')
+    await waitFor(() => expect(view.container.textContent).toContain('@@ -0,0 +1,6 @@'))
+    expect(view.container.textContent).toContain('README.md')
+    // 现场那一格还挂着，只是藏起来了（和产品一样：切走不卸）。
+    expect(view.container.querySelector<HTMLElement>('.panel-site')?.style.display).toBe('none')
+    expect(view.container.querySelector<HTMLElement>('.panel-changes')?.style.display).not.toBe('none')
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
