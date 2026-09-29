@@ -10,7 +10,7 @@ caller may not read are not searched and are only counted.
 
 `only` narrows the search to some groups and pages through them with `offset`:
 the search results page reads one kind at a time, a page at a time, and
-`/context/search/counts` says how many of each there are.
+`with_counts` adds how many of each kind there are.
 """
 
 import uuid
@@ -128,12 +128,8 @@ async def _readable_rooms(
         await resolver.authorize_project(actor, project_id=project_id)
 
     rooms = list(await db.scalars(select(Topic).where(Topic.project_id == project_id)))
-    readable: dict[uuid.UUID, Topic] = {}
-    for room in rooms:
-        if await resolver.can_access_topic(
-            actor, project_id=project_id, topic_id=room.id
-        ):
-            readable[room.id] = room
+    ids = await resolver.readable_topic_ids(actor, project_id=project_id, topics=rooms)
+    readable = {room.id: room for room in rooms if room.id in ids}
     return readable, len(rooms) - len(readable)
 
 
@@ -163,14 +159,42 @@ async def search_project_context(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
     only: Annotated[list[str] | None, Query()] = None,
     offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
+    with_counts: bool = False,
 ) -> dict:
     q = _query(q)
     groups = _only(only)
-    if groups is None:
-        return await _everything(db, resolver, project_id, q, topic, limit)
     readable, skipped = await _readable_rooms(db, resolver, project_id, topic)
     terms = bm25.words(q)
     await bm25.serial_scans(db)
+    hits = (
+        await _everything(db, project_id, q, terms, readable, limit)
+        if groups is None
+        else await _page(db, project_id, q, terms, readable, groups, limit, offset)
+    )
+    body: dict = {
+        "query": q,
+        "searched_rooms": len(readable),
+        "skipped_rooms": skipped,
+        "hits": hits,
+        "total": sum(len(v) for v in hits.values()),
+    }
+    if with_counts:
+        # The results page asks for its first page and the per-kind counts
+        # together: one room check instead of two.
+        body["counts"] = await _counts(db, project_id, q, terms, list(readable))
+    return ok(body)
+
+
+async def _page(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    q: str,
+    terms: list[str],
+    readable: dict[uuid.UUID, Topic],
+    groups: set[str],
+    limit: int,
+    offset: int,
+) -> dict[str, list[dict]]:
     hits: dict[str, list[dict]] = {"records": [], "tasks": [], "library": []}
     in_readable = list(readable)
     kinds = sorted(groups - {"tasks", "library"})
@@ -196,33 +220,18 @@ async def search_project_context(
         hits["tasks"] = [_task(t, readable, terms) for t in tasks]
     if "library" in groups:
         hits["library"] = _library_matching(project_id, q)[offset : offset + limit]
-    return ok(
-        {
-            "query": q,
-            "searched_rooms": len(readable),
-            "skipped_rooms": skipped,
-            "hits": hits,
-            "total": sum(len(v) for v in hits.values()),
-        }
-    )
+    return hits
 
 
-@router.get("/projects/{project_id}/context/search/counts")
-async def count_project_context(
+async def _counts(
+    db: AsyncSession,
     project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    q: Annotated[str, Query(min_length=1, max_length=200)],
-    topic: uuid.UUID | None = None,
-) -> dict:
-    """How many of each kind `/context/search` would find for `q`, so a results
-    page can say how many there are before it pages through them."""
-    q = _query(q)
-    readable, _ = await _readable_rooms(db, resolver, project_id, topic)
-    terms = bm25.words(q)
-    await bm25.serial_scans(db)
+    q: str,
+    terms: list[str],
+    in_readable: list[uuid.UUID],
+) -> dict[str, int]:
+    """How many of each kind the search finds, named as `only` names them."""
     counts: dict[str, int] = dict.fromkeys(ONLY_VALUES, 0)
-    in_readable = list(readable)
     if in_readable:
         rows = await db.execute(
             select(Block.kind, func.count())
@@ -245,7 +254,7 @@ async def count_project_context(
             or 0
         )
     counts["library"] = len(_library_matching(project_id, q))
-    return ok({"query": q, "counts": counts})
+    return counts
 
 
 def _record(b: Block, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
@@ -279,16 +288,12 @@ def _task(t: Task, readable: dict[uuid.UUID, Topic], terms: list[str]) -> dict:
 
 async def _everything(
     db: AsyncSession,
-    resolver: ActorResolver,
     project_id: uuid.UUID,
     q: str,
-    topic: uuid.UUID | None,
+    terms: list[str],
+    readable: dict[uuid.UUID, Topic],
     limit: int,
-) -> dict:
-    readable, skipped = await _readable_rooms(db, resolver, project_id, topic)
-    terms = bm25.words(q)
-    await bm25.serial_scans(db)
-
+) -> dict[str, list[dict]]:
     def where(room_id: uuid.UUID) -> dict:
         room = readable[room_id]
         return {"room_id": str(room.id), "room_title": room.title}
@@ -354,13 +359,4 @@ async def _everything(
     hits["artifacts"] = [
         {"id": str(a.id), "name": a.name, "about": a.about} for a in artifacts
     ]
-
-    return ok(
-        {
-            "query": q,
-            "searched_rooms": len(readable),
-            "skipped_rooms": skipped,
-            "hits": hits,
-            "total": sum(len(v) for v in hits.values()),
-        }
-    )
+    return hits

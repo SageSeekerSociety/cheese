@@ -746,24 +746,37 @@ export async function searchProject(
   limit = 10,
   page?: { only: string[]; offset: number }
 ): Promise<ProjectSearchHits> {
+  return (await askProjectSearch(projectId, q, limit, page, false)).hits
+}
+
+/**
+ * 同一次搜索，再带上每一类各能搜到多少（`message`、`doc`、`doc_node`、`comment`、
+ * `decision`、`weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
+ */
+export async function searchProjectCounted(
+  projectId: string,
+  q: string,
+  limit: number,
+  page?: { only: string[]; offset: number }
+): Promise<{ hits: ProjectSearchHits; counts: Record<string, number> }> {
+  const body = await askProjectSearch(projectId, q, limit, page, true)
+  return { hits: body.hits, counts: body.counts ?? {} }
+}
+
+function askProjectSearch(
+  projectId: string,
+  q: string,
+  limit: number,
+  page: { only: string[]; offset: number } | undefined,
+  withCounts: boolean
+): Promise<{ hits: ProjectSearchHits; counts?: Record<string, number> }> {
   const params = new URLSearchParams({ q, limit: String(limit) })
   if (page) {
     for (const kind of page.only) params.append('only', kind)
     params.set('offset', String(page.offset))
   }
-  const body = await request<{ hits: ProjectSearchHits }>(
-    `/projects/${encodeURIComponent(projectId)}/context/search?${params}`
-  )
-  return body.hits
-}
-
-/** 同一个词每一类各能搜到多少：`message`、`doc`、`doc_node`、`comment`、`decision`、`weekly`、`tasks`、`library`。 */
-export async function countProjectHits(projectId: string, q: string): Promise<Record<string, number>> {
-  const params = new URLSearchParams({ q })
-  const body = await request<{ counts: Record<string, number> }>(
-    `/projects/${encodeURIComponent(projectId)}/context/search/counts?${params}`
-  )
-  return body.counts
+  if (withCounts) params.set('with_counts', 'true')
+  return request(`/projects/${encodeURIComponent(projectId)}/context/search?${params}`)
 }
 
 // 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
