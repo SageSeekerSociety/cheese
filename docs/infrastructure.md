@@ -630,9 +630,12 @@ The TLS client is `tls-proxy.py` rather than `openssl s_client`. Used as a
 few hundred kilobytes flowing through it, which turns every page load into a
 reconnect.
 
-The unit restarts with a backoff from 3 s to 30 s. Every login that stalls
-holds one of etrip sshd's unauthenticated slots for up to two minutes, and once
-ten are held sshd starts refusing new connections, the tunnel's included.
+The unit restarts after 5 s, with no growing backoff: systemd never resets its
+restart-step counter after a healthy run, so a backoff would add its maximum
+to every later reconnect. Every login that stalls holds one of etrip sshd's
+unauthenticated slots for up to two minutes, and once ten are held sshd starts
+refusing new connections, the tunnel's included. One attempt every 25 s or so
+stays under that.
 
 Rollback to the :22 tunnel, on the dev box:
 
