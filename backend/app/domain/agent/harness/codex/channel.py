@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
-from app.domain.agent.executor_transport import RemoteClient
+from app.domain.agent.executor_transport import session_servers
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import (
     Placement,
@@ -113,7 +113,7 @@ class CodexChannel:
                 # The machine's stdio servers, the teammate's type's, and the
                 # remote ones; `RemoteClient.call` sends each to where it is
                 # served.
-                "mcp_servers": RemoteClient(target).session_servers(),
+                "mcp_servers": session_servers(target),
             }
             if target["kind"] == "private":
                 result = await self.channel._hub.exec(

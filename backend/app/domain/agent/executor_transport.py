@@ -310,6 +310,41 @@ def register_project_hooks(config, hooks):
     return True
 
 
+def _remote_servers(target: dict) -> list[str]:
+    return list((target.get("remote_mcp") or {}).get("servers", []))
+
+
+def agent_servers(target: dict) -> list[str]:
+    """The teammate's type's own stdio servers (`agent_mcp`): they run on the
+    room's machine, which is handed each one's definition with the call. A name
+    the checkout's `.mcp.json` or a remote server already uses stays that
+    server's, as committed configuration decides."""
+    taken = {*target.get("mcp_servers", []), *_remote_servers(target)}
+    return [name for name in target.get("agent_mcp") or {} if name not in taken]
+
+
+def session_servers(target: dict) -> list[str]:
+    """Every MCP server a session lists: the machine's stdio servers and the
+    type's, once the session is on the machine, and the remote ones.
+
+    Before then (a session at the placeholder) it lists no stdio server at all,
+    the checkout's or the type's: listing one would take the machine for a turn
+    that may never need it. The session is relaunched onto the machine once it
+    has one, and lists them then."""
+    on_machine = not (
+        target.get("kind") == "deferred"
+        and target.get("workspace") == DEFERRED_WORKSPACE
+    )
+    return [
+        *(
+            [*target.get("mcp_servers", []), *agent_servers(target)]
+            if on_machine
+            else []
+        ),
+        *_remote_servers(target),
+    ]
+
+
 class RemoteClient:
     def __init__(self, config, *, shared_connection=False):
         import threading
@@ -702,35 +737,10 @@ class RemoteClient:
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
 
     def agent_servers(self):
-        """The teammate's type's own stdio servers (`agent_mcp`): they run on
-        the room's machine, which is handed each one's definition with the
-        call. A name the checkout's `.mcp.json` or a remote server already uses
-        stays that server's, as committed configuration decides."""
-        taken = {*self.config.get("mcp_servers", []), *self.remote_servers()}
-        return [
-            name for name in self.config.get("agent_mcp") or {} if name not in taken
-        ]
+        return agent_servers(self.config)
 
     def session_servers(self):
-        """Every MCP server a session lists: the machine's stdio servers and the
-        type's, once the session is on the machine, and the remote ones.
-
-        Before then (a session at the placeholder) it lists no stdio server at
-        all, the checkout's or the type's: listing one would take the machine
-        for a turn that may never need it. The session is relaunched onto the
-        machine once it has one, and lists them then."""
-        on_machine = not (
-            self.config.get("kind") == "deferred"
-            and self.config.get("workspace") == DEFERRED_WORKSPACE
-        )
-        return [
-            *(
-                [*self.config.get("mcp_servers", []), *self.agent_servers()]
-                if on_machine
-                else []
-            ),
-            *self.remote_servers(),
-        ]
+        return session_servers(self.config)
 
     def call(self, method, params=None, *, abandoned=None, preparing=None):
         """``abandoned`` says the caller has given the operation up (a cancelled

@@ -42,6 +42,7 @@ if __package__:
         RemoteClient,
         read_file_on_the_machine,
         session_path,
+        session_servers,
         stat_file_on_the_machine,
     )
 else:
@@ -57,6 +58,7 @@ else:
         RemoteClient,
         read_file_on_the_machine,
         session_path,
+        session_servers,
         stat_file_on_the_machine,
     )
 
@@ -483,7 +485,7 @@ def prepare(
     # The room machine's stdio servers, the teammate's type's, and the remote
     # ones take the same bridge; `RemoteClient.call` sends each to where it is
     # served, with the type's definition when it is the type's.
-    bridged = RemoteClient(dict(target)).session_servers()
+    bridged = session_servers(target)
     for name in bridged:
         if name == "native":
             raise ValueError("MCP server name native is reserved for file operations")

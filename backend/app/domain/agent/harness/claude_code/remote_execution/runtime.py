@@ -611,7 +611,9 @@ class Executor:
                     key,
                     params.get("server", "native"),
                     params.get("cwd"),
-                    tool_hooks=not params.get("platform"),
+                    tool_hooks=not (
+                        params.get("platform") or params.get("hooks_fired")
+                    ),
                     spec=params.get("spec"),
                 )
             }
@@ -2119,6 +2121,11 @@ def bridge(state, server, *, call=None):
                         "server": server,
                         "tool": params["name"],
                         "args": params.get("arguments", {}),
+                        # Only Claude Code bridges its MCP servers, and the build
+                        # has already fired the project's PreToolUse for this
+                        # call and fires PostToolUse on its result. Run on the
+                        # machine as well, every hook ran twice.
+                        "hooks_fired": True,
                     },
                 )
                 result = value.get("value") or {
