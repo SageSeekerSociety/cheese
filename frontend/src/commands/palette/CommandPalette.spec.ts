@@ -256,7 +256,7 @@ describe('命令面板', () => {
     expect(afterRecent?.textContent).toContain('搭建第一个原型')
   })
 
-  it('打字也搜消息内容，选中一条就进它所在的房间', async () => {
+  it('打字也搜消息内容，选中一条就进它所在的房间，停在那一条上', async () => {
     searchProject.mockImplementation(async (_project: string, q: string) =>
       q === '重试' ? hits({ records: [MESSAGE] }) : NOTHING
     )
@@ -266,6 +266,7 @@ describe('命令面板', () => {
     await waitFor(() => expect(options().some((text) => text.includes('重试以后队列就不卡了'))).toBe(true))
     await fireEvent.click(screen.getByText('合并队列偶发卡住', { exact: false, selector: '[role=option] *' }))
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3'))
+    expect(router.currentRoute.value.query.block).toBe('b1')
   })
 
   it('搜到一件任务，选中就进房间并打开那张卡', async () => {
