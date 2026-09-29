@@ -3,10 +3,12 @@ import type { Block } from '@/cx_types'
 import { describe, expect, it } from 'vitest'
 
 import {
+  joinNewest,
   LOAD_OLDER_THRESHOLD,
   mergeRefreshedTail,
   prependOlder,
   scrollTopAfterPrepend,
+  shouldLoadNewer,
   shouldLoadOlder,
 } from './blockPaging'
 
@@ -126,5 +128,66 @@ describe('mergeRefreshedTail', () => {
       }
     )
     expect(merged.blocks).toEqual([])
+  })
+})
+
+// A conversation opened at an old message holds that stretch on screen while the
+// newest page stays live beside it; scrolling down must end in one timeline.
+describe('joinNewest', () => {
+  const ids = (w: { blocks: Block[] } | null) => w?.blocks.map((x) => x.id)
+
+  it('stitches at the newest window when the middle already reaches into it', () => {
+    const joined = joinNewest(
+      { blocks: blocks('a', 'b', 'c', 'd'), hasMore: true },
+      { blocks: blocks('c', 'd', 'e'), hasMore: true }
+    )
+    expect(ids(joined)).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(joined?.hasMore).toBe(true)
+  })
+
+  it("stitches when the newest window holds the middle one's last block", () => {
+    const joined = joinNewest(
+      { blocks: blocks('a', 'b', 'c'), hasMore: false },
+      { blocks: blocks('b', 'c', 'd'), hasMore: true }
+    )
+    expect(ids(joined)).toEqual(['a', 'b', 'c', 'd'])
+    expect(joined?.hasMore).toBe(false)
+  })
+
+  it('keeps the live copy of a block edited after the middle window was fetched', () => {
+    const stale = { id: 'c', content: 'old' } as Block
+    const live = { id: 'c', content: 'new' } as Block
+    const joined = joinNewest(
+      { blocks: [b('a'), b('b'), stale], hasMore: false },
+      { blocks: [live, b('d')], hasMore: true }
+    )
+    expect(joined?.blocks.find((x) => x.id === 'c')?.content).toBe('new')
+  })
+
+  it('refuses to join across a stretch neither window holds', () => {
+    expect(
+      joinNewest({ blocks: blocks('a', 'b'), hasMore: false }, { blocks: blocks('x', 'y'), hasMore: true })
+    ).toBeNull()
+  })
+
+  it('joins anyway once the middle window itself reached the newest block', () => {
+    const joined = joinNewest(
+      { blocks: blocks('a', 'b'), hasMore: false },
+      { blocks: blocks('x', 'y'), hasMore: true },
+      true
+    )
+    expect(ids(joined)).toEqual(['a', 'b', 'x', 'y'])
+  })
+})
+
+describe('shouldLoadNewer', () => {
+  it('fires near the bottom of a window that stops short of the newest block', () => {
+    expect(shouldLoadNewer(0, { hasNewer: true, loading: false })).toBe(true)
+    expect(shouldLoadNewer(LOAD_OLDER_THRESHOLD + 1, { hasNewer: true, loading: false })).toBe(false)
+  })
+
+  it('stays quiet when the window already ends at the newest block, or a page is in flight', () => {
+    expect(shouldLoadNewer(0, { hasNewer: false, loading: false })).toBe(false)
+    expect(shouldLoadNewer(0, { hasNewer: true, loading: true })).toBe(false)
   })
 })

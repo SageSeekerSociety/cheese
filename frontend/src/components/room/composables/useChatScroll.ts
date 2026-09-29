@@ -1,7 +1,7 @@
 /**
  * 「这一栏停在哪」——滚动位置、跟不跟新消息、以及重放风暴期间别抖。
  *
- * 只管滚动本身，不带任何入参。往回翻历史（拉上一页、拼接、补偿位移）不在这里：
+ * 只管滚动本身。往回翻历史（拉上一页、拼接、补偿位移）不在这里：
  * 那件事碰 `messages`、`props.topic`、`listBlocks`、缓存和错误横幅，是房间壳的活。
  * 壳自己在滚动事件里读 `scrollRef` 决定要不要去拉。
  */
@@ -46,7 +46,16 @@ export interface ChatScroll {
   restoreScroll(topicId: string): void
 }
 
-export function useChatScroll(): ChatScroll {
+export function useChatScroll(
+  options: {
+    /**
+     * 这一栏此刻显示的是不是最新的一段。停在历史中间时，「在底部」只是这一段的
+     * 底部：不钉底、不跟新消息，位置也不记（回来时显示的是最新的一段）。
+     */
+    showingNewest?: () => boolean
+  } = {}
+): ChatScroll {
+  const showingNewest = options.showingNewest ?? (() => true)
   const scrollRef = ref<HTMLElement | null>(null)
   const contentRef = ref<HTMLElement | null>(null)
 
@@ -87,7 +96,7 @@ export function useChatScroll(): ChatScroll {
         atBottom.value = isAtBottom(sc)
         return
       }
-      if (atBottom.value && !isAtBottom(sc)) sc.scrollTop = sc.scrollHeight
+      if (atBottom.value && showingNewest() && !isAtBottom(sc)) sc.scrollTop = sc.scrollHeight
     })
     if (content) contentObserver.observe(content)
     if (pane) contentObserver.observe(pane)
@@ -126,7 +135,7 @@ export function useChatScroll(): ChatScroll {
   // 只在用户没往上翻时跟随新消息。重放追赶期间逐帧的调用被压住，由 `noteFrame`
   // 在这一阵静下来之后滚一次。
   function autoScroll() {
-    if (catchingUp) return
+    if (catchingUp || !showingNewest()) return
     if (atBottom.value) scrollToBottom()
   }
 
@@ -135,6 +144,7 @@ export function useChatScroll(): ChatScroll {
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
     atBottom.value = isAtBottom(el)
+    if (!showingNewest()) return
     scrollMemory.set(topicId, { top: el.scrollTop, atBottom: atBottom.value })
   }
 

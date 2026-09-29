@@ -33,7 +33,13 @@ import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { replySnippet } from '../lib/blockDisplay'
-import { mergeRefreshedTail, PAGE_SIZE, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
+import {
+  mergeRefreshedTail,
+  PAGE_SIZE,
+  scrollTopAfterPrepend,
+  shouldLoadNewer,
+  shouldLoadOlder,
+} from '../lib/blockPaging'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks, editableText } from '../lib/renderMessage'
@@ -99,6 +105,8 @@ const props = withDefaults(
     // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
     // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
     unreadOnOpen?: number
+    // 打开时停在这一条（搜索结果、链接里的 `?block=`）。null = 停在平常的位置。
+    focusBlock?: string | null
   }>(),
   {
     alwaysSummon: false,
@@ -206,7 +214,7 @@ watch(
 
 // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline。
 const timeline = useTimeline()
-const { messages, hasMore } = timeline
+const { messages, hasMore, hasNewer } = timeline
 const loadingHistory = ref(false)
 
 // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
@@ -301,7 +309,7 @@ const {
   noteFrame,
   rememberScroll,
   restoreScroll,
-} = useChatScroll()
+} = useChatScroll({ showingNewest: () => !hasNewer.value })
 
 // ---- 触屏：长按一条消息打开它的操作面板（见 room/RoomMessageSheet）。 ----
 // 按输入方式判断，不按视口宽度：带触摸屏的笔记本两样都对，有鼠标就有悬停条。
@@ -378,6 +386,8 @@ function onTimelineScroll() {
   rememberScroll(props.topic?.id)
   const el = scrollRef.value
   if (el && shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value })) void loadOlder()
+  const fromBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight : Infinity
+  if (shouldLoadNewer(fromBottom, { hasNewer: hasNewer.value, loading: loadingNewer.value })) void loadNewer()
 }
 
 // --- paging back through history --------------------------------------------
@@ -413,14 +423,15 @@ async function loadOlder() {
     const payload = await listBlocks(topic.id, { limit: PAGE_SIZE, before: oldest.id })
     // The user may have switched topics while this was in flight.
     if (props.topic?.id !== topic.id) return
-    setCachedWindow(topic.id, timeline.prepend(payload.data, payload.has_more))
+    timeline.prepend(payload.data, payload.has_more)
+    if (!hasNewer.value) setCachedWindow(topic.id, timeline.newest())
     for (const b of payload.data) older.add(b.id)
     await nextTick()
     const sc = scrollRef.value
     if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
   } catch (e) {
     failed = true
-    errorMsg.value = e instanceof Error ? e.message : '加载消息失败'
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
   } finally {
     // Unconditional: a topic switch mid-flight must not leave the flag stuck,
     // or the new topic could never page back.
@@ -431,6 +442,72 @@ async function loadOlder() {
   // a broken request in a tight loop.
   if (!failed) await fillViewportIfNeeded()
 }
+
+// --- a window opened in the middle of the history ---------------------------
+// 从一条旧消息打开对话时，显示的是它前后的一段，下面还有更新的（hasNewer）。往下
+// 翻时一页页接上，接到最新的那一段就合成一段（见 room/composables/useTimeline）。
+const loadingNewer = ref(false)
+
+async function loadNewer() {
+  const topic = props.topic
+  const last = messages.value.at(-1)
+  if (!topic || !last || loadingNewer.value || !hasNewer.value) return
+  loadingNewer.value = true
+  try {
+    const payload = await listBlocks(topic.id, { limit: PAGE_SIZE, after: last.id })
+    if (props.topic?.id !== topic.id) return
+    timeline.appendNewer(payload.data, !payload.has_newer)
+    if (!hasNewer.value) setCachedWindow(topic.id, timeline.newest())
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
+  } finally {
+    loadingNewer.value = false
+  }
+}
+
+/**
+ * 停到这一条上，并让它闪一下。已经在显示的这一段里就直接滚过去；不在就取它前后
+ * 的一段换上来——离最新不远的话，这一段会和最新的接上，那就还是平常的样子。
+ */
+async function openAt(id: string) {
+  // 落到一条上之后，这一栏不该再被「新消息来了就钉到底部」拽走。
+  atBottom.value = false
+  await nextTick()
+  if (timeline.find(id)) {
+    scrollToMessage(id)
+    return
+  }
+  const topic = props.topic
+  if (!topic) return
+  try {
+    const payload = await listBlocks(topic.id, { limit: PAGE_SIZE, around: id })
+    if (props.topic?.id !== topic.id) return
+    unseen.value = []
+    timeline.showMiddle({ blocks: payload.data, hasMore: payload.has_more }, !payload.has_newer)
+    if (!hasNewer.value) setCachedWindow(topic.id, timeline.newest())
+    await nextTick()
+    // 整段换过，没有「从哪滑过去」可言：直接落到那一行。
+    scrollToMessage(id, 'auto')
+    void fillViewportIfNeeded()
+  } catch (e) {
+    errorMsg.value = e instanceof ApiError && e.status === 404 ? t('work.room.messageGone') : t('work.room.loadFailed')
+  }
+}
+
+/** 回到最新：背后一直在收新消息的那一段直接换上来，不用再取。 */
+function backToNewest() {
+  if (!hasNewer.value) return
+  timeline.backToNewest()
+  scrollToBottom()
+}
+
+// 同一个房间里，地址换了点名的那一条（又从面板跳了一次）就落过去；点名去掉了（浏览
+// 器后退到跳之前）就回到最新。换房间不归这里：loadTopic 打开新房间时自己看点名。
+watch([() => props.topic?.id, () => props.focusBlock ?? null], ([topicId, id], [wasTopic, wasId]) => {
+  if (topicId !== wasTopic || id === wasId || loadingHistory.value) return
+  if (id) void openAt(id)
+  else backToNewest()
+})
 
 // 这条房间 socket 的连接、重连退避、心跳、换掉假活的那条 —— 见
 // room/composables/useRoomSocket。它不认识帧的含义：帧交给下面的 handleFrame。
@@ -510,23 +587,24 @@ const older = reactive(new Set<string>())
 
 function pushBlock(b: Block) {
   historyChanges?.set(b.id, b)
-  if (timeline.append(b) && historyChanges === null && b.author !== AUTHOR) {
-    arrived.add(b.id)
-    if (!atBottom.value && b.kind !== 'event') unseen.value.push(b.id)
-  }
+  const landing = timeline.append(b)
+  if (landing === 'known' || historyChanges !== null || b.author === AUTHOR) return
+  if (landing === 'shown') arrived.add(b.id)
+  if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
 }
 
 // 往上翻着的时候别人又说了话：底部浮出一颗提示，写着来了几条。点它回到最新，并让
 // 来的第一条闪一下——人要找的是「新的从哪开始」，不只是「到底了」。回到底部（不管
-// 是点它还是自己滚下去）它就收起。
+// 是点它还是自己滚下去）它就收起。停在历史中间时它一直在，写「回到最新」：那时底部
+// 只是这一段的底部，不是最新。
 const unseen = ref<string[]>([])
 watch(atBottom, (bottom) => {
-  if (bottom) unseen.value = []
+  if (bottom && !hasNewer.value) unseen.value = []
 })
 function jumpToUnseen() {
   const first = unseen.value[0]
-  const el = scrollRef.value
-  if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  if (hasNewer.value) backToNewest()
+  else scrollRef.value?.scrollTo({ top: scrollRef.value.scrollHeight, behavior: 'smooth' })
   unseen.value = []
   if (first) flash(first)
 }
@@ -692,6 +770,8 @@ async function loadTopic(topic: Topic, entering = false) {
   const reactions = new Map<string, ReactionAgg[]>()
   historyReactions = reactions
   const stillHere = () => !disposed && generation === historyGeneration && props.topic?.id === topic.id
+  // 地址点名了一条消息：落到它上面，而不是上次停的地方。
+  const focus = props.focusBlock ?? null
   errorMsg.value = null
   connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   turns.reset()
@@ -719,7 +799,7 @@ async function loadTopic(topic: Topic, entering = false) {
   const cached = cachedWindow(topic.id)
   if (cached) {
     timeline.show(cached)
-    restoreScroll(topic.id)
+    if (!focus) restoreScroll(topic.id)
   } else {
     timeline.show({ blocks: [], hasMore: false })
     loadingHistory.value = true
@@ -745,7 +825,7 @@ async function loadTopic(topic: Topic, entering = false) {
       shownEarly = warmed
       timeline.show(warmed)
       loadingHistory.value = false
-      restoreScroll(topic.id)
+      if (!focus) restoreScroll(topic.id)
     })
     // One screenful, not the whole timeline — older blocks arrive when the
     // user scrolls up to them (loadOlder).
@@ -783,14 +863,15 @@ async function loadTopic(topic: Topic, entering = false) {
     for (const block of merged.blocks) settleOutbox(block)
     setCachedWindow(topic.id, merged)
     placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
-    if (!shown) restoreScroll(topic.id)
+    if (focus) void openAt(focus)
+    else if (!shown) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
     if (!parallelSocket && !connectRefused.value) connectSocket(topic.id)
     void fillViewportIfNeeded()
   } catch (e) {
     if (!stillHere()) return
     if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
-    errorMsg.value = e instanceof Error ? e.message : '加载消息失败'
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
     // A failed history fetch must not terminate socket recovery during an outage.
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
       retryLater(topic.id)
@@ -876,10 +957,10 @@ async function downloadAttachment(m: Block) {
     errorMsg.value = e instanceof Error ? e.message : '下载失败'
   }
 }
-function scrollToMessage(id: string) {
-  const el = document.querySelector(`[data-mid="${id}"]`)
+function scrollToMessage(id: string, behavior: 'smooth' | 'auto' = 'smooth') {
+  const el = scrollRef.value?.querySelector(`[data-mid="${id}"]`)
   if (!el) return
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  el.scrollIntoView({ behavior, block: 'center' })
   flash(id)
 }
 
@@ -903,6 +984,8 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   // An image-only send (no text) is a valid message (图片输入).
   if (!trimmed && !atts) return false
   errorMsg.value = null
+  // 停在历史中间时发出去的这条要看得见：先回到最新。
+  backToNewest()
   sentNow.add(enqueue({ content: trimmed, replyTo: replyTarget.value?.id ?? undefined, atts }))
   replyTarget.value = null
   // Only a summon starts awaiting a reply — an instant local ack, before
@@ -1036,6 +1119,7 @@ const splitMarkers = computed(() =>
   placeSplitMarkers(roomTasks.value, {
     blocks: visible.value,
     hasMore: hasMore.value,
+    hasNewer: hasNewer.value,
   })
 )
 
@@ -1557,7 +1641,7 @@ onBeforeUnmount(() => {
               @react="onReact"
               @answer="pickOption"
               @download="downloadAttachment"
-              @jump="scrollToMessage"
+              @jump="openAt"
               @avatar-error="onAvatarError"
               @save-edit="saveEdit(m, $event)"
               @cancel-edit="editingId = null"
@@ -1626,10 +1710,13 @@ onBeforeUnmount(() => {
       <!-- 往上翻着的时候来了新消息。 -->
       <div class="new-pill-anchor">
         <Transition name="new-pill">
-          <button v-if="unseen.length" type="button" class="new-pill" @click="jumpToUnseen">
+          <button v-if="unseen.length || hasNewer" type="button" class="new-pill" @click="jumpToUnseen">
             <v-icon size="14">mdi-arrow-down</v-icon>
-            <RollingNumber :value="unseen.length" />
-            <span>{{ t('work.room.newMessages') }}</span>
+            <template v-if="unseen.length">
+              <RollingNumber :value="unseen.length" />
+              <span>{{ t('work.room.newMessages') }}</span>
+            </template>
+            <span v-else>{{ t('work.room.backToLatest') }}</span>
           </button>
         </Transition>
       </div>

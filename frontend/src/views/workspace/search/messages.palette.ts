@@ -1,5 +1,5 @@
-// 命令面板里的「消息」：对话里说过的话。点开进那个房间；说在某件活的卡片里的，打开
-// 那张卡——卡片里的对话不在房间的对话里。
+// 命令面板里的「消息」：对话里说过的话。点开进那个房间，停在这一条上；说在某件活的
+// 卡片里的，打开那张卡——卡片里的对话不在房间的对话里。
 import type { PaletteSource } from '@/commands/palette/sources'
 
 import { hitsFor, whereAndWhen } from './projectSearch'
@@ -24,7 +24,7 @@ const source: PaletteSource = {
         to: {
           name: 'workspace-topic',
           params: { projectId, topicId: hit.room_id },
-          query: hit.task_id ? { tab: 'overview', card: hit.task_id } : undefined,
+          query: hit.task_id ? { tab: 'overview', card: hit.task_id } : { block: hit.id },
         },
       }))
   },

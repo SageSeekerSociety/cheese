@@ -1261,15 +1261,25 @@ export function sendFeedback(alertId: number, feedback: 'up' | 'down'): Promise<
 // is 2.1 MB / 2226 rows on a long topic. The chat panel always passes a limit;
 // `has_more` + `oldest_id` walk backwards from there (a cursor, not an offset —
 // the tail keeps growing while you read history).
+//
+// A window can also open in the middle (`around` a message) and walk down towards
+// the newest with `after`; `has_newer` + `newest_id` are the cursor that way.
 export interface BlockPage extends ListPayload<Block> {
   has_more: boolean
   oldest_id: string | null
+  has_newer: boolean
+  newest_id: string | null
 }
 
-export function listBlocks(topicId: string, opts?: { limit?: number; before?: string }): Promise<BlockPage> {
+export function listBlocks(
+  topicId: string,
+  opts?: { limit?: number; before?: string; after?: string; around?: string }
+): Promise<BlockPage> {
   const q = new URLSearchParams()
   if (opts?.limit !== undefined) q.set('limit', String(opts.limit))
   if (opts?.before) q.set('before', opts.before)
+  if (opts?.after) q.set('after', opts.after)
+  if (opts?.around) q.set('around', opts.around)
   const qs = q.toString()
   const query = qs ? `?${qs}` : ''
   return request<BlockPage>(`/topics/${encodeURIComponent(topicId)}/blocks${query}`)

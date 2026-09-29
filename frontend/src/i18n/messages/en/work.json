@@ -353,7 +353,10 @@
       "updatedAt": "Checklist updated {time}"
     },
     "backToChat": "Back to chat",
-    "unselected": "Select a topic"
+    "unselected": "Select a topic",
+    "backToLatest": "Back to latest",
+    "loadFailed": "Failed to load messages",
+    "messageGone": "This message no longer exists"
   },
   "members": {
     "leave": "Leave project",

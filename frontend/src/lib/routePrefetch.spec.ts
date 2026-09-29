@@ -37,6 +37,8 @@ function page(ids: string[]): BlockPage {
     total: ids.length,
     has_more: false,
     oldest_id: ids[0] ?? null,
+    has_newer: false,
+    newest_id: null,
   }
 }
 
