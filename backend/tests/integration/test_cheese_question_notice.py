@@ -60,7 +60,10 @@ def _agent_ask(client, room: str) -> str:
     """芝士自己问出口的那道题（`cheese_ask`）—— 署名是房间里的那个席位。"""
     r = client.post(
         f"/topics/{room}/ask",
-        json={"question": "截图里那个灰底圆角块是哪一处？", "options": ["左边那行", "顶上那行"]},
+        json={
+            "question": "截图里那个灰底圆角块是哪一处？",
+            "options": ["左边那行", "顶上那行"],
+        },
         headers=delivery_headers(client, room),
     )
     assert r.status_code == 200, r.text
