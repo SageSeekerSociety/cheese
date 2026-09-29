@@ -110,6 +110,19 @@ def test_a_number_that_is_not_on_the_fixes_feedback_line_moves_nothing(
     assert _detail(client, row)["status"] == "received"
 
 
+def test_an_indented_example_of_the_line_moves_nothing(client, run_deploy):
+    row = _report(client, REPORTER)
+
+    # A commit that documents the syntax shows it indented, as a quotation.
+    run_deploy(
+        "docs: explain the convention (#40)\n\n"
+        "A fixing commit carries:\n\n"
+        f"    Fixes-feedback: FB-{_number(row)}\n"
+    )
+
+    assert _detail(client, row)["status"] == "received"
+
+
 def test_a_second_deploy_does_not_add_a_second_step(client, run_deploy):
     row = _report(client, REPORTER)
     message = f"fix: it (#11)\n\nFixes-feedback: FB-{_number(row)}\n"
