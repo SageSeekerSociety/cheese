@@ -617,7 +617,7 @@ TLS on :443 over the same egress keeps working through those periods.
 |---|---|---|
 | dev | `/etc/systemd/system/cheese-hk-relay-tls443.service` | the tunnel (enabled) |
 | dev | `/usr/local/libexec/cheese-hk-relay/tls-proxy.py` | the tunnel's `ProxyCommand` |
-| dev | `/home/nictheboy/.ssh/id_hkrelay`, `relay-okcheese.crt` | login key; certificate the TLS leg is pinned to |
+| dev | `/home/nictheboy/.ssh/id_hkrelay`, `relay-okcheese.crt` | login key; the certificate `tls-proxy.py` pins etrip to |
 | dev | `/etc/systemd/system/cheese-hk-relay-tls.service` | previous tunnel, bare SSH on :22; installed but disabled |
 | dev | `/etc/systemd/system/cheese-hk-relay.service` | plain relay to `127.0.0.1:18080`; nothing routes there; installed but disabled |
 | etrip | `/etc/systemd/system/cheese-ssh-relay-tls.service` | socat, TLS on 127.0.0.1:2222 to sshd |
@@ -625,7 +625,7 @@ TLS on :443 over the same egress keeps working through those periods.
 | etrip | `~hkrelay/.ssh/authorized_keys` | the key may only open `127.0.0.1:18080` and `127.0.0.1:18443` |
 | etrip | `/etc/ssh/sshd_config`, last block | `Match User hkrelay`: forwarding only, 10 s × 2 keepalive |
 
-The TLS leg is `tls-proxy.py` rather than `openssl s_client`. Used as a
+The TLS client is `tls-proxy.py` rather than `openssl s_client`. Used as a
 `ProxyCommand`, `s_client` closes the connection within a second or two of a
 few hundred kilobytes flowing through it, which turns every page load into a
 reconnect.
