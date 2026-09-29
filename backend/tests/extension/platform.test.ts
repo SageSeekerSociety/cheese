@@ -115,6 +115,129 @@ describe("项目的 MCP 服务器", () => {
   });
 });
 
+describe("项目的 hooks 管着 pi 自己的工具", () => {
+  const TRACKER = {
+    name: "mcp__tracker__whoami",
+    description: "Say which credential reached the server.",
+    inputSchema: { type: "object", properties: {} },
+  };
+
+  it("PreToolUse 拒了的命令不会跑，模型读到的是 hook 给的理由", async () => {
+    const socket = await runner(() => ({ result: { denied: "PROJECT_POLICY: no" } }));
+    const { pi } = await load({ socket: socket.address });
+    const ran: any[] = [];
+
+    const answer = await pi.run("bash", { command: "rm -rf /" }, (input) => {
+      ran.push(input);
+      return { content: [{ type: "text", text: "gone" }] };
+    }, { cwd: "/work" });
+
+    assert.deepEqual(ran, [], "a denied call never reaches the tool");
+    assert.equal(answer.isError, true);
+    assert.equal(answer.content[0].text, "PROJECT_POLICY: no");
+    assert.deepEqual(socket.asked, [
+      {
+        method: "hooks",
+        params: {
+          event: "PreToolUse",
+          tool: "bash",
+          id: "call-1",
+          input: { command: "rm -rf /" },
+          cwd: "/work",
+        },
+      },
+    ]);
+    socket.close();
+  });
+
+  it("放行的调用跑 hook 改过的参数，跑完带着结果再问一次 PostToolUse", async () => {
+    const socket = await runner((request) =>
+      request.params.event === "PreToolUse"
+        ? { result: { input: { path: "notes.md" } } }
+        : { result: { input: request.params.input } },
+    );
+    const { pi } = await load({ socket: socket.address });
+    const ran: any[] = [];
+
+    const answer = await pi.run("read", { path: "old.md", limit: 5 }, (input) => {
+      ran.push({ ...input });
+      return { content: [{ type: "text", text: "the notes" }] };
+    });
+
+    assert.deepEqual(ran, [{ path: "notes.md" }], "the input the hook returned, whole");
+    assert.deepEqual(answer, { content: [{ type: "text", text: "the notes" }], isError: false });
+    assert.deepEqual(socket.asked[1].params, {
+      event: "PostToolUse",
+      tool: "read",
+      id: "call-1",
+      input: { path: "notes.md" },
+      result: { content: [{ type: "text", text: "the notes" }] },
+    });
+    socket.close();
+  });
+
+  it("PostToolUse 拒了，调用已经发生，理由加进结果里", async () => {
+    const socket = await runner((request) =>
+      request.params.event === "PreToolUse"
+        ? { result: { input: request.params.input } }
+        : { result: { denied: "PROJECT_POLICY: review this" } },
+    );
+    const { pi } = await load({ socket: socket.address });
+
+    const answer = await pi.run("write", { path: "a", content: "b" }, () => ({
+      content: [{ type: "text", text: "written" }],
+    }));
+
+    assert.deepEqual(answer.content, [
+      { type: "text", text: "written" },
+      { type: "text", text: "PostToolUse hook: PROJECT_POLICY: review this" },
+    ]);
+    socket.close();
+  });
+
+  it("问不到 runner 时调用不跑", async () => {
+    const { pi } = await load({ socket: "/nonexistent/runner.sock" });
+    const ran: any[] = [];
+
+    const answer = await pi.run("bash", { command: "echo hi" }, (input) => {
+      ran.push(input);
+      return { content: [] };
+    });
+
+    assert.deepEqual(ran, []);
+    assert.equal(answer.isError, true);
+  });
+
+  it("失败的调用不跑 PostToolUse", async () => {
+    const socket = await runner((request) => ({ result: { input: request.params.input } }));
+    const { pi } = await load({ socket: socket.address });
+
+    await pi.run("bash", { command: "false" }, () => {
+      throw new Error("exit 1");
+    });
+
+    assert.deepEqual(
+      socket.asked.map((request) => request.params.event),
+      ["PreToolUse"],
+    );
+    socket.close();
+  });
+
+  it("平台工具和 MCP 工具不在这里问：前者不跑 hooks，后者由 runner 在调用两边跑", async () => {
+    const socket = await runner(() => ({
+      result: { status: 0, stdout: "ok", stderr: "" },
+    }));
+    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+
+    for (const name of ["chat_send", TRACKER.name]) {
+      await pi.run(name, {}, () => ({ content: [{ type: "text", text: "ok" }] }));
+    }
+
+    assert.deepEqual(socket.asked, []);
+    socket.close();
+  });
+});
+
 describe("仓库自己的说明", () => {
   const withRepo = async (files: Record<string, string>) => {
     const { pi } = await load();

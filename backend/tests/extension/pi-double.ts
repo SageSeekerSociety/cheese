@@ -67,6 +67,48 @@ export class FakePi {
     return answer;
   }
 
+  /** One tool call as pi 0.85.1 makes it (`agent-loop.ts`, `agent-session.ts`):
+   *  `tool_call` first, where a `block` or a throw stops the call and its
+   *  reason becomes the error the model reads, and a mutated input is what
+   *  runs; then the tool; then `tool_result`, whose patches replace fields of
+   *  the result. `tool` stands in for the tool's own `execute`. */
+  async run(
+    name: string,
+    input: any,
+    tool: (input: any) => any,
+    ctx: any = {},
+    id = "call-1",
+  ) {
+    let verdict: any;
+    try {
+      for (const handler of this.handlers.get("tool_call") ?? []) {
+        verdict = await handler({ type: "tool_call", toolName: name, toolCallId: id, input }, ctx);
+        if (verdict?.block) break;
+      }
+    } catch (error: any) {
+      return { content: [{ type: "text", text: error.message }], isError: true };
+    }
+    if (verdict?.block) {
+      return {
+        content: [{ type: "text", text: verdict.reason || "Tool execution was blocked" }],
+        isError: true,
+      };
+    }
+    let result: any;
+    let isError = false;
+    try {
+      result = await tool(input);
+    } catch (error: any) {
+      result = { content: [{ type: "text", text: error.message }] };
+      isError = true;
+    }
+    const event = { type: "tool_result", toolName: name, toolCallId: id, input, ...result, isError };
+    for (const handler of this.handlers.get("tool_result") ?? []) {
+      Object.assign(event, (await handler({ ...event }, ctx)) ?? {});
+    }
+    return { content: event.content, isError: event.isError };
+  }
+
   async call(name: string, params: any, ctx: any = {}) {
     const tool = this.tools.get(name);
     assert.ok(tool, `${name} was never registered`);

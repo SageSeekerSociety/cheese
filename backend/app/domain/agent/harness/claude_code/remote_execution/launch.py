@@ -13,6 +13,7 @@ from app.domain.agent import (
     forge_cli,
     machine_tunnel,
     preview_tunnel,
+    project_hooks,
     toolchain,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -51,6 +52,7 @@ def file_sources():
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
         "remote-execution/runtime.py": Path(runtime.__file__).read_text(),
         "remote-execution/cli_worker.py": Path(cli_worker.__file__).read_text(),
+        "remote-execution/project_hooks.py": Path(project_hooks.__file__).read_text(),
         "remote-execution/portable.py": (
             Path(runtime.__file__).with_name("portable.py").read_text()
         ),

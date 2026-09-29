@@ -102,6 +102,17 @@ def portable():
     return runpy.run_path(str(Path(__file__).with_name("portable.py")))
 
 
+@functools.cache
+def project_hooks():
+    """The project's tool hooks, by the rules pi's runner follows too
+    (`app/domain/agent/project_hooks.py`). Shipped beside this file; read from
+    the source tree when this runs from a checkout."""
+    beside = Path(__file__).with_name("project_hooks.py")
+    if not beside.exists():
+        beside = Path(__file__).resolve().parents[3] / "project_hooks.py"
+    return runpy.run_path(str(beside))
+
+
 def lock(file, blocking=True):
     if sys.platform == "win32":
         portable()["lock"](file, blocking)
@@ -528,67 +539,19 @@ class Executor:
         if self.config.get("private"):
             return args
         cwd = Path(cwd) if cwd and Path(cwd).is_dir() else self.bash_cwd
-        paths = [
-            self.root / ".claude/settings.json",
-            self.root / ".claude/settings.local.json",
-        ]
-        settings = [json.loads(path.read_text()) for path in paths if path.exists()]
-        settings.append(self.config.get("settings", {}))
-        for source in settings:
-            for group in source.get("hooks", {}).get(event, []):
-                matcher = group.get("matcher", "*")
-                if matcher not in ("", "*") and not re.fullmatch(matcher, tool):
-                    continue
-                for hook in group.get("hooks", []):
-                    if hook["type"] != "command":
-                        raise ValueError(
-                            "Remote execution currently requires command hooks"
-                        )
-                    payload = {
-                        "hook_event_name": event,
-                        "tool_name": tool,
-                        "tool_input": args,
-                        "tool_use_id": key,
-                        "cwd": str(cwd),
-                        "session_id": self.state.name,
-                    }
-                    if event == "PostToolUse":
-                        payload["tool_response"] = result
-                    # A repository writes these hooks for plain Claude Code,
-                    # which invokes them with the project root in
-                    # CLAUDE_PROJECT_DIR (its documented way to reach a script
-                    # the repository ships), blocks on exit 2 alone, and lets
-                    # the call go ahead on any other failing exit.
-                    response = subprocess.run(
-                        resolve_program(["bash", "-c", hook["command"]]),
-                        cwd=cwd,
-                        env=dict(self.env, CLAUDE_PROJECT_DIR=str(self.root)),
-                        input=json.dumps(payload),
-                        capture_output=True,
-                        text=True,
-                        timeout=hook.get("timeout", 60),
-                    )
-                    if response.returncode == 2:
-                        raise PermissionError(
-                            f"Remote {event} hook failed: {response.stderr}"
-                        )
-                    if response.returncode:
-                        continue
-                    output = (
-                        json.loads(response.stdout) if response.stdout.strip() else {}
-                    )
-                    specific = output.get("hookSpecificOutput", {})
-                    if (
-                        specific.get("permissionDecision") == "deny"
-                        or output.get("decision") == "block"
-                    ):
-                        raise PermissionError(
-                            specific.get("permissionDecisionReason")
-                            or output.get("reason", "Remote hook denied operation")
-                        )
-                    if event == "PreToolUse" and "updatedInput" in specific:
-                        args = specific["updatedInput"]
-        return args
+        return project_hooks()["run"](
+            event,
+            tool,
+            args,
+            call_id=key,
+            root=self.root,
+            cwd=cwd,
+            env=self.env,
+            session_id=self.state.name,
+            result=result,
+            extra=[self.config.get("settings", {})],
+            program=resolve_program,
+        )
 
     def tool_hooks(self, params):
         """The project's hooks for one event of a call this executor does not

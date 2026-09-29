@@ -324,7 +324,7 @@ class ProjectServers:
         }
         try:
             arguments = await hooks.run("PreToolUse", tool, arguments, **around)
-        except hooks.HookDenied as denied:
+        except hooks.Denied as denied:
             raise RuntimeError(str(denied)) from None
         if server in self.stdio:
             result = await self.stdio[server].request(
@@ -345,7 +345,7 @@ class ProjectServers:
         answer = _pi_result(result)
         try:
             await hooks.run("PostToolUse", tool, arguments, result=result, **around)
-        except hooks.HookDenied as denied:
+        except hooks.Denied as denied:
             answer["content"].append(
                 {"type": "text", "text": f"PostToolUse hook: {denied}"}
             )

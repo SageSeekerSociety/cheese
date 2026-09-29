@@ -525,6 +525,9 @@ class Room:
         programs = layout.programs
         shutil.copyfile(SOURCE / "runtime.py", programs / "runtime.py")
         shutil.copyfile(SOURCE / "portable.py", programs / "portable.py")
+        shutil.copyfile(
+            SOURCE.parents[2] / "project_hooks.py", programs / "project_hooks.py"
+        )
         self.state = programs / "state"
         subprocess.run(
             [

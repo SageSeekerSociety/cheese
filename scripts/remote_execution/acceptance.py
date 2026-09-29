@@ -63,6 +63,7 @@ def setup(folder, options, api):
     run(remote_command(options, ["mkdir", "-p", remote + "/remote-execution"]))
     sources = (
         (SOURCE / "runtime.py", "runtime.py"),
+        (AGENT / "project_hooks.py", "project_hooks.py"),
         (AGENT / "cli_worker.py", "remote-execution/cli_worker.py"),
         (ROOT / "backend/sandbox/cheese", "cheese"),
         (Path(__file__).parent / "custom_mcp.py", "custom_mcp.py"),

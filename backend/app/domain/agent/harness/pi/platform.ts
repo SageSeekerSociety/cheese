@@ -160,6 +160,64 @@ function registerMcpTools(pi: any, spec: Manifest) {
   }
 }
 
+// --- the project's hooks around pi's own tools --------------------------------
+//
+// Claude Code fires the project's PreToolUse and PostToolUse hooks around every
+// tool call, and on Codex the executor runs them around every call it makes. pi
+// fires none, so every call of pi's own (read, bash, edit, write, the
+// background shell) asks the runner before it runs and after it returns, and
+// the runner runs the hooks under the name each one is written for (hooks.py).
+//
+// Two kinds of call are not asked about here. An MCP tool's hooks run in the
+// runner around the call itself (mcp.py). A platform tool runs none, as on the
+// executor, which runs no project hook around the platform's own tools.
+//
+// A PreToolUse block stops the call and pi hands the model its reason as the
+// tool's error; an `updatedInput` is written into the call's input, which pi
+// runs as mutated. A handler that throws — the runner unreachable — blocks
+// the call too: pi's rule, and the one a guard needs. PostToolUse runs only
+// after a call that succeeded, as Claude Code's does, and a block from it is
+// added to the result, since the call has already happened.
+
+function applyProjectHooks(pi: any, spec: Manifest) {
+  const skipped = new Set([...spec.tools, ...(spec.mcp ?? [])].map((tool) => tool.name));
+
+  pi.on("tool_call", async (event: any, ctx: any) => {
+    if (skipped.has(event.toolName)) return;
+    const answer = await ask(spec.socket, "hooks", {
+      event: "PreToolUse",
+      tool: event.toolName,
+      id: event.toolCallId,
+      input: event.input,
+      cwd: ctx?.cwd,
+    });
+    if (answer.denied !== undefined) return { block: true, reason: answer.denied };
+    for (const key of Object.keys(event.input)) {
+      if (!(key in answer.input)) delete event.input[key];
+    }
+    Object.assign(event.input, answer.input);
+  });
+
+  pi.on("tool_result", async (event: any, ctx: any) => {
+    if (skipped.has(event.toolName) || event.isError) return;
+    const answer = await ask(spec.socket, "hooks", {
+      event: "PostToolUse",
+      tool: event.toolName,
+      id: event.toolCallId,
+      input: event.input,
+      cwd: ctx?.cwd,
+      result: { content: event.content },
+    });
+    if (answer.denied === undefined) return;
+    return {
+      content: [
+        ...event.content,
+        { type: "text", text: `PostToolUse hook: ${answer.denied}` },
+      ],
+    };
+  });
+}
+
 // --- what the repository says about itself -----------------------------------
 //
 // pi discovers AGENTS.md and CLAUDE.md by walking from the working directory up
@@ -875,6 +933,7 @@ export default function (pi: any) {
     process.stderr.write(`[cheese] no platform tools: ${spec.unavailable}\n`);
   }
   registerMcpTools(pi, spec);
+  if (spec.socket) applyProjectHooks(pi, spec);
   if (spec.background && spec.python) {
     registerBackgroundTools(pi, spec);
     announceExits(pi, spec);
