@@ -23,3 +23,17 @@ export async function copyMessage(block: Block, isAgent: boolean): Promise<boole
     return false
   }
 }
+
+/**
+ * 一条消息在屏幕上显示成的样子，给「选择文字」那一页照着再画一遍：@ 的是名字、芝士的
+ * 回复带着排版。取的是页面上已经渲染、净化过的那一份，不重新渲染。代码块角上的
+ * 「复制」和「已编辑」不是消息里的字，拿掉，免得选的时候一起选进去。
+ * 这一条不在屏幕上时返回 null。
+ */
+export function shownMessageHtml(blockId: string): string | null {
+  const shown = document.querySelector(`[data-mid="${blockId}"] .im-text`)
+  if (!shown) return null
+  const copy = shown.cloneNode(true) as HTMLElement
+  copy.querySelectorAll('.md-copy, .im-edited').forEach((el) => el.remove())
+  return copy.innerHTML
+}

@@ -132,6 +132,20 @@ describe('触屏上消息的操作', () => {
     await waitFor(() => expect(container.querySelector('.reply-chip')?.textContent).toContain('第二条'))
   })
 
+  it('长按一条消息，选「选择文字」，这一条单独放到一页上', async () => {
+    pretendTouchDevice(true)
+    const { container } = await mountRoom([msg('m1', '第一条'), msg('m2', '第二条里要挑一段出来')])
+
+    await press(container.querySelector('[data-mid="m2"] .im-text')!, 550)
+    await waitFor(() => expect(sheetItems().length).toBeGreaterThan(0))
+
+    await fireEvent.click(screen.getByRole('menuitem', { name: t('work.room.message.selectText') }))
+    // 操作面板收起的那一下它也还是个 dialog，但面板上没有消息的字。
+    const page = () => screen.queryAllByRole('dialog').find((d) => d.textContent?.includes('第二条里要挑一段出来'))
+    await waitFor(() => expect(page()).toBeTruthy())
+    expect(page()?.textContent).not.toContain('第一条')
+  })
+
   it('轻点一下不打开面板', async () => {
     pretendTouchDevice(true)
     const { container } = await mountRoom([msg('m1', '第一条')])

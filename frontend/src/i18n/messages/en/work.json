@@ -312,6 +312,7 @@
     "message": {
       "copy": "Copy",
       "copied": "Copied",
+      "selectText": "Select text",
       "edit": "Edit",
       "edited": "Edited",
       "save": "Save",
