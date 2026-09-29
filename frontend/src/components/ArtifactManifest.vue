@@ -36,6 +36,11 @@ const rows = ref<ProjectArtifact[]>([])
 const actionError = ref('')
 const busy = ref('')
 
+// 窄的时候这一块摞在板上面，只列前几项，其余的收着，点开才全列出来。宽的时候它是
+// 一整列，自己滚，全列着——收起只在窄的那一档起作用（见样式里的 @container）。
+const FOLDED = 3
+const expanded = ref(false)
+
 const renaming = ref<ProjectArtifact | null>(null)
 const newName = ref('')
 const merging = ref<ProjectArtifact | null>(null)
@@ -119,6 +124,7 @@ watch(
   () => {
     rows.value = []
     actionError.value = ''
+    expanded.value = false
     void load()
   },
   { immediate: true }
@@ -126,13 +132,13 @@ watch(
 </script>
 
 <template>
-  <div class="made">
+  <div class="made" :class="{ 'made--expanded': expanded }">
     <!-- 网站钉在最上面：它也是交出去的东西，但只有一个，所以不排进下面那张清单。 -->
     <PublishedSite :project-id="projectId" />
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
     <ul class="made__list">
       <li v-if="!rows.length" class="made__empty t-body">暂无产物</li>
-      <li v-for="row in rows" :key="row.id" class="made-row">
+      <li v-for="(row, index) in rows" :key="row.id" class="made-row" :class="{ 'made-row--folded': index >= FOLDED }">
         <!-- 点进去是这一项自己那一页：版本历史、下载当时交出去的那一份。 -->
         <div class="made-row__what">
           <router-link
@@ -144,8 +150,8 @@ watch(
           <!-- 这是什么东西、给谁的。判断「这两项是不是同一个东西」要的正是它：
                两个名字并排摆着，人也看不出什么。没人写过的就不占一行。 -->
           <span v-if="row.about" class="made-row__about t-meta c-faint">{{ row.about }}</span>
+          <span class="made-row__when t-meta c-faint">{{ version(row) }}</span>
         </div>
-        <span class="made-row__when t-meta c-faint">{{ version(row) }}</span>
         <v-menu location="bottom end">
           <template #activator="{ props: menu }">
             <v-btn
@@ -164,6 +170,11 @@ watch(
             <v-list-item title="删除" @click="removing = row" />
           </v-list>
         </v-menu>
+      </li>
+      <li v-if="rows.length > FOLDED" class="made__fold t-meta">
+        <button type="button" class="made__fold-btn tap-target" :aria-expanded="expanded" @click="expanded = !expanded">
+          {{ expanded ? '收起' : `展开其余 ${rows.length - FOLDED} 项` }}
+        </button>
       </li>
     </ul>
 
@@ -258,8 +269,8 @@ watch(
   flex-direction: column;
   gap: 6px;
 }
-/* 一行是一项：名字在左，版本贴着右边的操作按钮。两栏之间留白，行与行的两端因此
-   对齐 —— 名字长短不一时，右边那一列仍然是一条直线。 */
+/* 一行是一项：名字一行，说明和第几版在它下面，操作按钮在右边。版本不和名字抢同
+   一行：宽屏上这一列只有两百来像素，并排的话版本那一截是定宽的，名字会被挤成零。 */
 .made-row {
   display: flex;
   align-items: center;
@@ -295,8 +306,32 @@ watch(
   text-decoration: underline;
 }
 .made-row__when {
-  flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
+}
+/* 收起、展开只在窄的那一档：这一块摞在板上面，全列出来就把板往下推。宽的时候它是
+   一整列，自己滚，全列着，按钮也不出现。 */
+.made__fold {
+  display: none;
+}
+.made__fold-btn {
+  position: relative;
+  padding: 4px;
+  border: 0;
+  font: inherit;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.made__fold-btn:hover {
+  color: var(--ink);
+}
+@container (width < 1000px) {
+  .made:not(.made--expanded) .made-row--folded {
+    display: none;
+  }
+  .made__fold {
+    display: block;
+  }
 }
 /* 空列自己说它空。和任务列的空行同一个观感（同样的内边距、同样的 --muted）。 */
 .made__empty {
