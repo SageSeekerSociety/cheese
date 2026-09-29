@@ -84,9 +84,6 @@ sys.path.insert(0, str(SOURCE))
 import release as execution_release  # noqa: E402
 import runtime as execution_runtime  # noqa: E402
 
-sys.path.insert(0, str(HERE.parents[1] / "backend"))
-from tests.support import executor_release  # noqa: E402 — standard library only
-
 _spec = importlib.util.spec_from_file_location("execution_client", SOURCE / "client.py")
 client = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(client)
@@ -538,7 +535,11 @@ class Room:
         layout.rebuild()
         self.binary, self.layout, self.port = binary, layout, port
         programs = layout.programs
-        self.runtime = executor_release.install(programs)
+        # Started where it is, as `test_native_shell` starts it, so nothing is
+        # copied. A release would also bring the platform CLI's preload
+        # worker, whose socket (CHEESE_CLI_SOCKET) every command it runs
+        # sees: the platform's own addition, outside what this check compares.
+        self.runtime = SOURCE / "runtime.py"
         self.state = programs / "state"
         subprocess.run(
             [
