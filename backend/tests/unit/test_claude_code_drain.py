@@ -14,7 +14,7 @@ import pytest
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code.backlog import ClaudeCodeBacklog
 from app.domain.agent.harness.claude_code.subscription import Subscription
-from app.domain.agent.harness.driven import subscription
+from app.domain.agent.harness.driven import backlog, subscription
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.service import AgentMessage, AgentResult
 
@@ -346,3 +346,142 @@ async def test_what_nobody_read_for_hours_never_reaches_the_room(tmp_path):
         await second.release()
     assert landed == ["said just now", "said next"]
     assert opened == [fresh, later]
+
+
+class _Clock:
+    """The backend's clock, moved on by hand."""
+
+    def __init__(self, monkeypatch):
+        self.ahead = timedelta()
+        real = datetime
+
+        class Shifted(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return real.now(tz) + self.ahead
+
+        monkeypatch.setattr(backlog, "datetime", Shifted)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("refusals", [2, None])
+async def test_a_record_the_room_goes_on_refusing_is_stepped_over(
+    tmp_path, monkeypatch, refusals
+):
+    """``refusals`` None: the room never takes "line 2". 2: it refuses it twice,
+    as while its database was away, and takes it after that."""
+    clock = _Clock(monkeypatch)
+    journal = _long_turn(str(uuid.uuid4()), 5)
+    landed: list[str] = []
+    refused: list[str] = []
+
+    async def call(method: str, params: dict) -> dict:
+        return {"events": [e for e in journal if e["sequence"] > params["after"]]}
+
+    async def consume(project, topic, work_id, event, eid, seen, unsolicited):
+        if isinstance(event, AgentMessage):
+            if event.text == "line 2" and (refusals is None or len(refused) < refusals):
+                refused.append(event.text)
+                raise ValueError("the room cannot take this")
+            landed.append(event.text)
+
+    async def activity(project, seat, work_id, active):
+        pass
+
+    async def announce():
+        pass
+
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-a", harness="claude-code")
+
+    async def drain() -> None:
+        reading = Subscription(
+            session,
+            tmp_path / "records.sqlite",
+            call,
+            consume,
+            activity,
+            session_id=None,
+            announce=announce,
+        )
+        try:
+            await reading.drain()
+        finally:
+            await reading.release()
+
+    # Refused on drain after drain, minutes apart: nothing past it arrives yet.
+    for _ in range(2):
+        with pytest.raises(ValueError):
+            await drain()
+        clock.ahead += timedelta(minutes=1)
+    assert landed == ["line 0", "line 1"]
+
+    clock.ahead += timedelta(minutes=10)
+    if refusals is None:
+        # Refused a third time, ten minutes after the first: the rest of the
+        # turn reaches the room, and the refused record never does.
+        await drain()
+        assert landed == ["line 0", "line 1", "line 3", "line 4"]
+    else:
+        # A record the room refused only for a while still arrives, in order.
+        await drain()
+        assert landed == ["line 0", "line 1", "line 2", "line 3", "line 4"]
+
+    await drain()
+    assert len(landed) == (4 if refusals is None else 5)
+
+
+@pytest.mark.anyio
+async def test_a_day_of_unread_output_is_stepped_over_without_reading_it(tmp_path):
+    now = datetime.now(UTC)
+    old = [
+        {**row, "at": (now - timedelta(days=1)).isoformat()}
+        for row in _long_turn(str(uuid.uuid4()), 5 * PAGE)
+    ]
+    journal = [
+        *old,
+        *_said_turn(str(uuid.uuid4()), "said just now", first=len(old) + 1, at=now),
+        # Recorded by a clock that runs behind, after something said just now.
+        *_said_turn(
+            str(uuid.uuid4()),
+            "recorded by a slow clock",
+            first=len(old) + 3,
+            at=now - timedelta(days=1),
+        ),
+        *_said_turn(str(uuid.uuid4()), "said next", first=len(old) + 5, at=now),
+    ]
+    landed: list[str] = []
+
+    async def call(method: str, params: dict) -> dict:
+        return {
+            "events": [e for e in journal if e["sequence"] > params["after"]][:PAGE]
+        }
+
+    async def consume(project, topic, work_id, event, eid, seen, unsolicited):
+        if isinstance(event, AgentMessage):
+            landed.append(event.text)
+
+    async def activity(project, seat, work_id, active):
+        pass
+
+    async def announce():
+        pass
+
+    reading = _Paging(
+        SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-a", harness="claude-code"),
+        tmp_path / "records.sqlite",
+        call,
+        consume,
+        activity,
+        session_id=None,
+        announce=announce,
+    )
+    reading.pages = []
+    try:
+        await reading.drain()
+    finally:
+        await reading.release()
+
+    assert landed == ["said just now", "said next"]
+    # The day-old run was never read: one page holds what is left, and the
+    # empty read that ends the walk.
+    assert reading.pages == [6, 0]

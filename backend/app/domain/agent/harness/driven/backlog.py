@@ -8,6 +8,7 @@ worked out before the first one) and what one of its rows is as a
 ``HarnessEvent``; the paging, the cursor and retention are the same for all.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -56,6 +57,46 @@ class JournalBacklog[J: Journal]:
             journal.acknowledge(int(through))
         finally:
             journal.close()
+
+    def step_over_older(self, *, than_s: float) -> int:
+        """Land, unread, the run of records at the cursor older than ``than_s``,
+        in one move rather than a page at a time; how many there were."""
+        if self.path is None or not self.path.exists():
+            return 0
+        journal = self.journal(self.path)
+        try:
+            count, last = journal.older_run(
+                self.after, (datetime.now(UTC) - timedelta(seconds=than_s)).isoformat()
+            )
+            if count:
+                journal.acknowledge(last)
+                self.after = last
+        finally:
+            journal.close()
+        return count
+
+    def refused(self, key: str, *, times: int, over_s: float) -> bool:
+        """Note that the room refused the record ``key`` once more; True once it
+        has refused it ``times`` times, over at least ``over_s`` seconds.
+
+        Kept in the journal, not in the reader: every drain starts at the
+        record that failed, and the backend that tried it last may be gone.
+        """
+        assert self.path is not None
+        now = datetime.now(UTC)
+        journal = self.journal(self.path)
+        try:
+            noted = json.loads(journal.recall("refused") or "{}")
+            if noted.get("key") != key:
+                noted = {"key": key, "times": 0, "since": now.isoformat()}
+            noted["times"] += 1
+            given_up = noted["times"] >= times and (
+                now - datetime.fromisoformat(noted["since"])
+            ) >= timedelta(seconds=over_s)
+            journal.remember("refused", json.dumps(noted))
+        finally:
+            journal.close()
+        return given_up
 
     def forget(self, *, older_than_s: float) -> None:
         if self.path is None or not self.path.exists():

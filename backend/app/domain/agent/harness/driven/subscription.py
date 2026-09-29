@@ -11,7 +11,8 @@ one: a commit per record is a sync per record, and a backlog can run to a
 million records.
 
 A record that waited too long to be read is stepped over, not landed
-(``STALE_S``): the cursor moves past it and the room never hears it.
+(``STALE_S``): the cursor moves past it and the room never hears it. So is one
+the room went on refusing (``REFUSED_TIMES``), with its id in the error log.
 
 What a harness supplies is what its protocol decides: how to pull from its
 runner, how to read its mirror, which records open and close a turn, what to do
@@ -94,6 +95,15 @@ RETENTION_EVERY_S = 3600
 #: recorded it for Claude Code and Codex, when the backend mirrored it for pi.
 #: So for pi, output mirrored late after the backend itself was away is fresh.
 STALE_S = 2 * 3600
+
+#: When a record the room keeps refusing is stepped over: after this many
+#: drains refused it, the first at least this long ago. Every drain starts at
+#: the record that failed, so one the room can never take stops the session's
+#: output reaching the room for good, while the session goes on working and its
+#: journal grows behind it. Both bounds, because a record refused only while
+#: the database was away is one the room takes once it is back.
+REFUSED_TIMES = 3
+REFUSED_OVER_S = 10 * 60
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +213,12 @@ class Subscription[B: Backlog]:
             await self.receive()
             reader = await self.on_disk(self.reader)
             delivered = stale = 0
+            # A backlog nobody read for hours is mostly records too old to
+            # land. The run of them at the cursor is stepped over in one move:
+            # read a page at a time, a day of a busy session's journal took
+            # longer than the backend it was recovered by stayed up.
+            if not reader.unfinished():
+                stale = await self.on_disk(reader.step_over_older, than_s=STALE_S)
             # How far the room has taken whole things; landed once per page.
             whole: str | None = None
             try:
@@ -211,7 +227,25 @@ class Subscription[B: Backlog]:
                         if entry.age_s >= STALE_S:
                             stale += 1
                         else:
-                            delivered += await self._deliver(entry, reader)
+                            try:
+                                delivered += await self._deliver(entry, reader)
+                            except Exception:
+                                if not await self.on_disk(
+                                    reader.refused,
+                                    entry.key,
+                                    times=REFUSED_TIMES,
+                                    over_s=REFUSED_OVER_S,
+                                ):
+                                    raise
+                                logger.exception(
+                                    "stepped over journal record %s the room "
+                                    "refused %d times over %ds topic=%s agent=%s",
+                                    entry.eid,
+                                    REFUSED_TIMES,
+                                    REFUSED_OVER_S,
+                                    self.session.topic_id,
+                                    self.session.agent_handle,
+                                )
                         if not reader.unfinished():
                             whole = entry.key
                     if whole is not None:
