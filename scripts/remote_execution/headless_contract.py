@@ -1553,11 +1553,11 @@ def remote(binary, root, name, args, env=None, trusted_hook=None, untrusted_hook
     if untrusted_hook:
         # Added after prepare, so the shell prefix does not know it: the
         # prefix sends any command it does not know to the executor.
-        written = json.loads((home / ".claude" / "settings.json").read_text())
+        written = json.loads((home / "session" / "settings.json").read_text())
         written["hooks"].setdefault("Stop", []).append(
             {"hooks": [{"type": "command", "command": untrusted_hook}]}
         )
-        (home / ".claude" / "settings.json").write_text(json.dumps(written))
+        (home / "session" / "settings.json").write_text(json.dumps(written))
     session = Session(binary, root, name, args, launch=launch, env=env)
     session.executor = executor
     session.remote_workspace = Path(

@@ -60,7 +60,8 @@ async def control(
         'for config in "$root/remote-session/execution.json" '
         '"$root/seats"/*/remote-session/execution.json; do '
         'if test -f "$config"; then '
-        'exec python3 "$root/remote-execution/client.py" control "$config"; fi; '
+        'seat="$(dirname "$(dirname "$config")")"; '
+        'exec python3 "$seat/remote-execution/client.py" control "$config"; fi; '
         "done; done; "
         'echo "no private executor is installed for this room" >&2; exit 1'
     )
@@ -91,7 +92,8 @@ async def release(project_id, topic_id, device_id, hub):
             'for config in "$root/remote-target.json" '
             '"$root/seats"/*/remote-target.json; do '
             'if test -f "$config"; then '
-            'exec python3 "$root/remote-execution/client.py" release "$config"; '
+            'seat="$(dirname "$config")"; '
+            'exec python3 "$seat/remote-execution/client.py" release "$config"; '
             "fi; done; done",
         ],
         timeout=45,

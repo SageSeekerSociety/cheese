@@ -486,6 +486,24 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
     assert settings_path.read_text() == '{"keep":true}'
 
 
+def test_release_marker_is_read_from_the_requested_seat(tmp_path):
+    home = tmp_path / "room"
+    for name in ("first", "second"):
+        session = Path(seat_dir(str(home), name)) / "remote-session"
+        session.mkdir(parents=True)
+        (session / "release-ready").write_text(name)
+
+    for name in ("first", "second"):
+        command, env = DeviceChannel._screen_file_refresh(
+            str(home), release_state={}, execution_token=None, agent_handle=name
+        )
+        result = subprocess.run(
+            ["sh", "-c", command], capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0
+        assert result.stdout == name
+
+
 async def test_a_turn_rewrites_only_its_own_seat_s_execution_token(tmp_path):
     """一个话题两个座位，各写各的凭据文件（docs/manual/dev/turn.md #seats-session）。
 
@@ -853,6 +871,20 @@ async def test_a_release_refused_by_a_busy_conversation_waits_for_a_later_turn(
     # Refused on the first attempt, applied on the next.
     assert steps == ["stage", "stage", "acknowledge"]
     assert hub.commands() == ["/reload-plugins"]
+
+
+@pytest.mark.parametrize("busy", [{"working": True}, {"tasks": {"id": "running"}}])
+async def test_a_busy_seat_never_stages_its_release_even_if_another_transcript_is_idle(
+    busy,
+):
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    hub.ping = {"alive": True, **busy}
+
+    assert await room.ensure() is first
+    assert not [stdin for argv, stdin in hub.execs if argv == ["python3", "-"]]
+    assert hub.commands() == []
 
 
 async def test_a_deferred_room_is_released_without_a_context_tree():
@@ -1717,6 +1749,29 @@ async def test_a_launch_only_change_waits_for_a_background_command(monkeypatch):
     hub.ping = {"alive": True, "working": False, "tasks": {}}
     assert (await room.ensure()).sid != first.sid
     assert hub.closed == [first.sid]
+
+
+async def test_a_deferred_relaunch_does_not_release_helpers_into_the_old_session(
+    monkeypatch,
+):
+    """A busy old process keeps the helper files it was started with."""
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    _deploy_helpers(
+        monkeypatch,
+        **{"client.py": resident_release.sources()["client.py"] + "\n# next\n"},
+    )
+    hub.ping = {"alive": True, "working": True, "tasks": {}}
+    hub.execs.clear()
+
+    assert await room.ensure() is first
+
+    assert hub.closed == []
+    assert not any(
+        argv == ["python3", "-"] and _release_step(stdin or "") == "stage"
+        for argv, stdin in hub.execs
+    )
 
 
 # --- seats: a room's teammates have one session each -------------------------

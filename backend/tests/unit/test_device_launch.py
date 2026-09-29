@@ -20,6 +20,9 @@ import pytest
 from app.domain.agent import machine_launcher, place
 from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS, LAUNCH_ARGS
+from app.domain.agent.harness.claude_code.remote_execution import (
+    release as resident_release,
+)
 from app.domain.agent.harness.claude_code.session_launch import (
     ClaudeLaunch,
     session_settings,
@@ -152,7 +155,7 @@ def test_build_screen_launch_shapes_command_and_env():
     )
     assert command[0] == "bash" and command[1] == "-lc"
     script = command[2]
-    assert 'cat > "$CLAUDE_CONFIG_DIR/settings.json"' in script
+    assert 'cat > "$SEAT/remote-session/base-settings.json"' in script
     # What the screen runs is the runner; claude is the command it is handed.
     assert script.rstrip().endswith('exit "$RESULT"')
     assert 'eval "exec $ENVIRONMENT_CMD"$CLAUDE_RUNNER""' in script
@@ -437,8 +440,8 @@ def test_the_runner_is_handed_the_pinned_build_behind_the_executor_client(tmp_pa
     argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
     assert argv[:4] == [
         "python3",
-        # The client is the ROOM's, installed once for every seat.
-        f"{session}/.cheese/remote-execution/client.py",
+        # The client belongs to this seat and cannot replace a running peer's.
+        f"{seat}/remote-execution/client.py",
         "bootstrap",
         # The target is the SEAT's: what this session is handed.
         f"{seat}/remote-target.json",
@@ -712,9 +715,11 @@ def test_the_launch_starts_the_runner_and_the_runner_starts_claude(tmp_path):
     # The offered transcript is not on this disk, so the session starts afresh.
     assert args[-2] == "--session-id"
     uuid.UUID(args[-1])
-    # The config dir stays the ROOM's: its transcripts, settings and skills are
-    # read and resumed by name, and a teammate does not own them.
-    assert (claude.parent / "ran.config").read_text() == f"{session}/.claude"
+    # Each seat keeps its settings and skills; transcripts stay in the room.
+    assert (claude.parent / "ran.config").read_text() == f"{seat}/.claude"
+    assert (seat / ".claude/projects").resolve() == (
+        session / ".claude/projects"
+    ).resolve()
     assert (seat / "cheese-system-prompt.md").read_text() == "be kind\n"
     assert (state / "records.sqlite").is_file()
 
@@ -730,7 +735,7 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert not network.exists(), "room startup must not fetch the platform CLI"
-    transport = session / ".claude/webfetch_transport.cjs"
+    transport = seat_of(session) / ".claude/webfetch_transport.cjs"
     assert (
         transport.read_bytes()
         == Path(device_launch.__file__).with_name("webfetch_transport.cjs").read_bytes()
@@ -752,8 +757,43 @@ def test_the_settings_file_written_is_the_sessions_settings(tmp_path):
     result = _launch(tmp_path, env)
 
     assert result.returncode == 0, result.stderr
-    written = json.loads((session / ".claude/settings.json").read_text())
+    written = json.loads(
+        (seat_of(session) / "remote-session/base-settings.json").read_text()
+    )
     assert written == session_settings()
+    assert (
+        seat_of(session) / "remote-session/release-ready"
+    ).read_text() == resident_release.digest(resident_release.sources())
+
+
+def test_new_seat_leaves_busy_older_seats_shared_files_intact(tmp_path):
+    _owner, session, _work, _claude, env = _machine(tmp_path)
+    old_settings = session / ".claude/settings.json"
+    old_settings.parent.mkdir(parents=True)
+    old_settings.write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"command": "old guard"}]}]}})
+    )
+    old_client = session / ".cheese/remote-execution/client.py"
+    old_client.parent.mkdir(parents=True)
+    old_client.write_text("old running client")
+    old_transport = session / ".claude/webfetch_transport.cjs"
+    old_transport.write_text("old running preload")
+    old_skill = session / ".claude/skills/cheese-chat/SKILL.md"
+    old_skill.parent.mkdir(parents=True)
+    old_skill.write_text("old running skill")
+
+    result = _launch(tmp_path, env)
+
+    assert result.returncode == 0, result.stderr
+    assert "old guard" in old_settings.read_text()
+    assert old_client.read_text() == "old running client"
+    assert old_transport.read_text() == "old running preload"
+    assert old_skill.read_text() == "old running skill"
+    seat = seat_of(session)
+    assert (seat / "remote-execution/client.py").is_file()
+    assert (seat / ".claude/projects").resolve() == (
+        session / ".claude/projects"
+    ).resolve()
 
 
 def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
@@ -777,7 +817,7 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     before = {path: path.read_bytes() for path in protected}
     project_entries = set(work.rglob("*"))
     original_entries = set(owner.iterdir())
-    previous_chat_skill = session / ".claude/skills/cheese-chat/SKILL.md"
+    previous_chat_skill = seat_of(session) / ".claude/skills/cheese-chat/SKILL.md"
     previous_chat_skill.parent.mkdir(parents=True)
     previous_chat_skill.write_text("Previous generated chat guide\n")
     log = tmp_path / "curl.log"
@@ -793,7 +833,7 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     assert set(work.rglob("*")) == project_entries
     assert (owner / ".cheese/claude/versions" / PIN).is_file()
     for name in ("cheese-docs",):
-        assert (session / ".claude/skills" / name / "SKILL.md").is_file()
+        assert (seat_of(session) / ".claude/skills" / name / "SKILL.md").is_file()
     assert not previous_chat_skill.exists()
 
 
@@ -1340,7 +1380,7 @@ def test_the_tunnel_password_stays_the_scoped_token():
 def test_the_launcher_exports_the_config_dir():
     """CLAUDE_CONFIG_DIR is the isolation boundary itself, exported before the
     runner starts so the session it launches inherits it."""
-    assert 'export CLAUDE_CONFIG_DIR="$HOME/.claude"' in _script()
+    assert 'export CLAUDE_CONFIG_DIR="$SEAT/.claude"' in _script()
 
 
 # --- 运行环境预览: the preview helper shipped alongside the tunnel's -------------
@@ -1713,6 +1753,6 @@ def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
     else in the script would say why."""
     script = _script(system_prompt="x")
 
-    assert script.index('export CLAUDE_CONFIG_DIR="$HOME/.claude"') < script.index(
+    assert script.index('export CLAUDE_CONFIG_DIR="$SEAT/.claude"') < script.index(
         'CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap'
     )
