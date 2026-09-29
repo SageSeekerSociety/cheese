@@ -1,6 +1,6 @@
 // The component boundary rule, as an eslint configuration.
 //
-// WHY THIS IS NOT IN eslint.config.mjs. The rule is not new — 131 imports in
+// WHY THIS IS NOT IN eslint.config.mjs. The rule is not new — 127 imports in
 // src/components/** already break it — so adding it there as `error` would red
 // `pnpm run lint`, the pre-commit hook and frontend.yml's ESLint step for
 // everybody on day one, on files nobody touched. As a `warn` it would be
@@ -18,8 +18,10 @@
 import {
   BOUNDARY_FILES,
   BOUNDARY_IGNORES,
+  BOUNDARY_PLUGIN_NAME,
   BOUNDARY_RULE_ID,
   boundaryOptions,
+  boundaryPlugin,
 } from './scripts/import-boundary-ratchet-core.mjs'
 import base from './eslint.config.mjs'
 
@@ -28,6 +30,12 @@ export default [
   {
     files: BOUNDARY_FILES,
     ignores: BOUNDARY_IGNORES,
+    // The rule is local (scripts/import-boundary-ratchet-core.mjs) and not
+    // eslint's `no-restricted-imports`: that one matches the specifier as a
+    // glob, so `@/api` was counted and `../api` — the same dependency, spelled
+    // the long way — never was. A rule that resolves the path first needs code,
+    // not a pattern, so it travels as a rule object and is registered here.
+    plugins: { [BOUNDARY_PLUGIN_NAME]: boundaryPlugin },
     rules: {
       [BOUNDARY_RULE_ID]: ['error', boundaryOptions],
     },

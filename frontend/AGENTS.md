@@ -14,7 +14,7 @@ pnpm run lint:boundary          # what CI runs
 pnpm run lint:boundary:update   # after you fix some, rewrite the baseline
 ```
 
-84 violations across 50 components are frozen in
+127 violations across 82 components are frozen in
 `import-boundary-baseline.json`; only new ones fail. It is a separate ESLint
 config (`eslint.boundary.config.mjs`) rather than a rule in `eslint.config.mjs`
 for exactly that reason — as a plain rule it reddens the whole tree on day one.
