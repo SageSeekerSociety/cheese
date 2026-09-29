@@ -160,7 +160,7 @@ class TopicRepository:
         callers that rebuild the tree should not combine it with the filter.
         """
         stmt = self._project_topics_stmt(
-            project_id, sort=sort, order=order, active_since=active_since
+            [project_id], sort=sort, order=order, active_since=active_since
         )
         return list((await self._session.scalars(stmt)).all())
 
@@ -179,20 +179,21 @@ class TopicRepository:
 
     def _project_topics_stmt(
         self,
-        project_id: uuid.UUID,
+        project_ids: list[uuid.UUID],
         *,
         sort: TopicSortField | None,
         order: SortOrder,
         active_since: datetime | None,
     ) -> Select[tuple[Topic]]:
-        """The one definition of "this project's topic tree, flat, in order".
+        """The one definition of "these projects' topic trees, flat, in order".
 
-        Shared so ``list_for_project`` and ``list_for_project_with_activity``
-        cannot drift into filtering or ordering the same list differently.
+        Shared so ``list_for_project``, ``list_for_project_with_activity`` and
+        ``names_in_projects`` cannot drift into filtering or ordering the same
+        list differently.
         """
         # Private chats are not part of the topic tree.
         stmt = select(Topic).where(
-            Topic.project_id == project_id, Topic.is_private.is_(False)
+            Topic.project_id.in_(project_ids), Topic.is_private.is_(False)
         )
         if active_since is not None:
             stmt = stmt.where(_last_activity() >= active_since)
@@ -203,10 +204,8 @@ class TopicRepository:
         first — the rows the sidebar would list, for a name search across them."""
         if not project_ids:
             return []
-        stmt = (
-            select(Topic)
-            .where(Topic.project_id.in_(project_ids), Topic.is_private.is_(False))
-            .order_by(_last_activity().desc())
+        stmt = self._project_topics_stmt(
+            project_ids, sort="last_activity_at", order="desc", active_since=None
         )
         return list(await self._session.scalars(stmt))
 
@@ -231,7 +230,7 @@ class TopicRepository:
         dashboard want, and none of them look at last activity.
         """
         stmt = self._project_topics_stmt(
-            project_id, sort=sort, order=order, active_since=active_since
+            [project_id], sort=sort, order=order, active_since=active_since
         ).add_columns(_last_activity())
         rows = (await self._session.execute(stmt)).all()
         return [(topic, last) for topic, last in rows]
