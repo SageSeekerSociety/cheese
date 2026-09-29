@@ -51,8 +51,11 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_BLOCK_UPGRADED,
+    EVENT_MENTION_FUSED,
     SEVERITY_INFO,
+    SEVERITY_WARN,
     WHO_HUMAN,
+    WHO_PLATFORM,
     notice,
 )
 from app.domain.agent.preview_hub import preview_hub
@@ -1996,7 +1999,8 @@ async def publish_chat_message(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """Publish an agent-authored message without starting a model turn."""
+    """Publish an agent-authored message. It starts no turn of its own; a
+    teammate it @-mentions gets one, the same as when a person names it."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
@@ -2044,7 +2048,60 @@ async def publish_chat_message(
     )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
+    await _summon_the_named(chat, runner, place, payload, actor.handle)
     return ok(payload)
+
+
+async def _summon_the_named(
+    chat: ChatService, runner: AgentWorkRunner, place, payload: dict, author: str
+) -> None:
+    """这条消息 @ 到的 AI 队友，各起一轮（`delivery/mention.py`）。
+
+    消息先落库、先广播，再记投递：被点名的那位醒来时，房间里已经有它要读的那一行。
+    """
+    from app.domain.delivery.agent import dispatch_pending
+    from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
+
+    async with chat.session_factory() as session:
+        summoned = await record_mentions(
+            session,
+            project_id=place.project_id,
+            room_id=place.room_id,
+            block_id=uuid.UUID(payload["id"]),
+            author=author,
+            content=payload["content"],
+            by_agent=True,
+            occurred_at=datetime.now(UTC),
+        )
+        fused = None
+        if summoned.fused:
+            fused = await announce(
+                session,
+                place_id=place.room_id,
+                content="AI 队友之间的点名本小时已到上限，这次没有叫醒对方",
+                meta=notice(
+                    EVENT_MENTION_FUSED,
+                    severity=SEVERITY_WARN,
+                    who=WHO_PLATFORM,
+                    detail=(
+                        f"同一个话题里，AI 队友点名每小时最多叫起 "
+                        f"{AGENT_MENTIONS_PER_HOUR} 轮，防止互相点名停不下来。"
+                        f"这次没叫醒：{'、'.join(summoned.fused)}。"
+                        "人点名不受这个限制。"
+                    ),
+                ),
+            )
+        await session.commit()
+    if fused is not None:
+        await get_broker().publish(
+            str(place.room_id),
+            {
+                "type": "event_block",
+                "block": BlockOut.model_validate(fused).model_dump(mode="json"),
+            },
+        )
+    if summoned.woken:
+        await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
 
 
 @router.post("/{topic_id}/ask")
