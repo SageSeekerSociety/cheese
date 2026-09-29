@@ -600,12 +600,22 @@ class DrivenRuntime[H: Handle]:
         if time.monotonic() - since < RUNNER_GONE_S:
             return False
         self.unreachable.pop(seat, None)
-        await self._died(self.live[seat])
+        await self._died(self.live[seat], out_of_reach=True)
         return True
 
-    async def _died(self, handle: H) -> None:
-        """The process is gone with a turn open. Say so where the turn is, or
-        the room waits on something that will never answer."""
+    async def _died(self, handle: H, *, out_of_reach: bool = False) -> None:
+        """The turn is over with nobody able to answer it. Say so where the turn
+        is, or the room waits on something that will never answer.
+
+        Two things end a turn this way and the room is told which: a runner that
+        answered and said its process was gone, and one that has not answered for
+        ``RUNNER_GONE_S`` at all. The second is not the same fact as the first —
+        a runner that never came up is the shape of a machine still being
+        prepared, and saying its process exited then is a sentence the room reads
+        as an unexplained crash. Whoever reads either one has the socket, the
+        machine and the runner's log to go on; the platform does not, so it says
+        only what it saw.
+        """
         topic = handle.session.topic_id
         seat = self._seat_of_handle(handle)
         work = self.work[seat]
@@ -614,7 +624,11 @@ class DrivenRuntime[H: Handle]:
             topic,
             work,
             AgentResult(
-                text=f"{self.label} session process exited",
+                text=(
+                    f"{self.label} 的运行程序连续 {RUNNER_GONE_S:.0f} 秒没有应答"
+                    if out_of_reach
+                    else f"{self.label} session process exited"
+                ),
                 session_id=self.conversation(handle),
                 is_error=True,
                 agent_handle=handle.agent_handle,
