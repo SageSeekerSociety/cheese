@@ -925,7 +925,7 @@ class Settings(BaseSettings):
     chat_ws_allow_anonymous: bool = False
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
-    # (task AI advice, rank checks, email/notifications, meilisearch, real-name
+    # (task AI advice, rank checks, email/notifications, real-name
     # encryption) read these off settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
@@ -1014,9 +1014,6 @@ class Settings(BaseSettings):
         凭据。所以这两个字段一起判断，调用点不各自数一遍。
         """
         return bool(self.vapid_public_key and self.vapid_private_key)
-
-    meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")
-    meilisearch_api_key: str = Field(default="", alias="MEILISEARCH_API_KEY")
 
     enforce_task_participant_limit_check: bool = Field(
         default=False, alias="APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK"
