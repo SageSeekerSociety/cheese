@@ -23,6 +23,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
+from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
 
 pytestmark = pytest.mark.anyio
@@ -338,6 +339,8 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
     admitted, release = Event(), Event()
 
     async def finishing_call(target, method, params, **kwargs):
+        if method == "ping":
+            return running()
         if params.get("id") == "in-flight-read":
             admitted.set()
             await asyncio.to_thread(release.wait, 10)

@@ -30,6 +30,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.machine.services import MachineService
 from app.domain.project.models import Project
+from tests.executor_release import running
 from tests.integration.conftest import post_project
 
 
@@ -287,6 +288,8 @@ def test_changing_the_room_moves_every_agent_already_working(client, monkeypatch
     pushes = []
 
     async def push(target, method, params, **_kwargs):
+        if method == "ping":
+            return running()
         if method == "control":
             pushes.append((target["device_id"], method, params.get("subtype")))
         return {"value": {"stdout": "", "stderr": "", "interrupted": False}}
