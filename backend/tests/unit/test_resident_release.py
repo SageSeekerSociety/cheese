@@ -129,6 +129,12 @@ def test_releasing_one_seat_keeps_the_other_seats_hooks(tmp_path):
     assert first_stage["changed"]
     assert second_stage["changed"]
     assert not release.stage(str(tmp_path), sources, seat=str(first.parent))["changed"]
+    first_client = first.parent / "remote-execution/client.py"
+    second_client = second.parent / "remote-execution/client.py"
+    assert first_client.read_text() == second_client.read_text() == "new"
+    second_client.write_text("other seat changed")
+    assert not release.stage(str(tmp_path), sources, seat=str(first.parent))["changed"]
+    assert first_client.read_text() == "new"
     assert (first / "settings.json").read_text() == original
     assert json.loads((config / "settings.json").read_text()) == base
     updated = json.loads((second / "settings.json").read_text())

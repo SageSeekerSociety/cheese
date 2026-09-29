@@ -170,14 +170,17 @@ def stage(home, sources, seat=""):
     (``place.seat_dir``), where its execution target and everything the client
     prepared beside it live; empty is a caller with no seat to name, which
     resolves to the room-level directory files sat in before seats existed.
-    The helpers and transcript config dir are the ROOM's either way. Hook
-    settings live beside the seat's execution target so releasing one seat
-    cannot redirect another seat's tools. The busy check below still reads the
-    room's transcripts whichever seat asked.
+    The transcript config dir is the room's. A named seat owns its helpers and
+    hook settings, so releasing it cannot replace another seat's tool code or
+    redirect its hooks. The busy check still reads room transcripts.
     """
     config = Path(os.path.expandvars(home)) / ".claude"
     platform_dir = Path(os.path.expandvars(home)) / ".cheese"
-    helpers = platform_dir / "remote-execution"
+    helpers = (
+        Path(os.path.expandvars(seat)) / "remote-execution"
+        if seat
+        else platform_dir / "remote-execution"
+    )
     directory = (
         Path(os.path.expandvars(seat)) / "remote-session"
         if seat

@@ -546,7 +546,7 @@ def prepare(
         # Exclude host ancestor instructions while retaining the room's user
         # context; test_session_host_files_stay_out_of_the_prompt guards this.
         "--setting-sources",
-        "user",
+        "",
         "--settings",
         str(settings_path),
         "--plugin-dir",
@@ -2029,16 +2029,16 @@ def main():
     elif args.mode == "enter":
         enter(args.config, args.args)
     elif args.mode == "bootstrap":
-        # The launcher names where the session's target goes; the harness's
-        # config dir is the harness's, and is where `claude` reads
-        # the settings we are extending and writes everything it owns.
+        # The launcher names the seat's base settings separately from the
+        # room config. An older seat may still be using that room's settings.
         config_dir = Path(os.environ["CLAUDE_CONFIG_DIR"])
+        directory = Path(os.environ[EXECUTION_CONFIG]).parent
         launch = prepare(
-            Path(os.environ[EXECUTION_CONFIG]).parent,
+            directory,
             config,
             claude=args.args[0],
             extra_args=args.args[1:],
-            base_settings=json.loads((config_dir / "settings.json").read_text()),
+            base_settings=json.loads((directory / "base-settings.json").read_text()),
             home_override=os.environ["HOME"],
             config_override=config_dir,
             workspace_override=os.environ["CHEESE_WORK"],

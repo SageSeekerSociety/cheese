@@ -44,6 +44,7 @@ def test_starting_another_seat_does_not_replace_the_first_seats_hooks(tmp_path):
     ):
         command = launch["command"]
         settings = directory / "settings.json"
+        assert command[command.index("--setting-sources") + 1] == ""
         assert command[command.index("--settings") + 1] == str(settings)
         hooks = json.loads(settings.read_text())["hooks"]["PreToolUse"]
         guard = next(

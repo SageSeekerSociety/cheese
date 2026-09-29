@@ -155,7 +155,7 @@ def test_build_screen_launch_shapes_command_and_env():
     )
     assert command[0] == "bash" and command[1] == "-lc"
     script = command[2]
-    assert 'cat > "$CLAUDE_CONFIG_DIR/settings.json"' in script
+    assert 'cat > "$SEAT/remote-session/base-settings.json"' in script
     # What the screen runs is the runner; claude is the command it is handed.
     assert script.rstrip().endswith('exit "$RESULT"')
     assert 'eval "exec $ENVIRONMENT_CMD"$CLAUDE_RUNNER""' in script
@@ -440,8 +440,8 @@ def test_the_runner_is_handed_the_pinned_build_behind_the_executor_client(tmp_pa
     argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
     assert argv[:4] == [
         "python3",
-        # The client is the ROOM's, installed once for every seat.
-        f"{session}/.cheese/remote-execution/client.py",
+        # The client belongs to this seat and cannot replace a running peer's.
+        f"{seat}/remote-execution/client.py",
         "bootstrap",
         # The target is the SEAT's: what this session is handed.
         f"{seat}/remote-target.json",
@@ -755,11 +755,33 @@ def test_the_settings_file_written_is_the_sessions_settings(tmp_path):
     result = _launch(tmp_path, env)
 
     assert result.returncode == 0, result.stderr
-    written = json.loads((session / ".claude/settings.json").read_text())
+    written = json.loads(
+        (seat_of(session) / "remote-session/base-settings.json").read_text()
+    )
     assert written == session_settings()
     assert (
         seat_of(session) / "remote-session/release-ready"
     ).read_text() == resident_release.digest(resident_release.sources())
+
+
+def test_new_seat_leaves_busy_older_seats_shared_files_intact(tmp_path):
+    _owner, session, _work, _claude, env = _machine(tmp_path)
+    old_settings = session / ".claude/settings.json"
+    old_settings.parent.mkdir(parents=True)
+    old_settings.write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"command": "old guard"}]}]}})
+    )
+    old_client = session / ".cheese/remote-execution/client.py"
+    old_client.parent.mkdir(parents=True)
+    old_client.write_text("old running client")
+
+    result = _launch(tmp_path, env)
+
+    assert result.returncode == 0, result.stderr
+    assert "old guard" in old_settings.read_text()
+    assert old_client.read_text() == "old running client"
+    seat = seat_of(session)
+    assert (seat / "remote-execution/client.py").is_file()
 
 
 def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
