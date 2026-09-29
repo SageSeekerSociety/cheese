@@ -15,6 +15,8 @@
 # pinned Python 3.12: `postgresql-binaries` (relocatable PostgreSQL 17 with the
 # contrib extensions) and `redislite` (bundled redis-server 6.2). They are
 # deliberately NOT backend dependencies — see the note at resolve_bins() below.
+# ParadeDB's pg_search extension is added to that PostgreSQL from ParadeDB's
+# release package — see install_pg_search().
 # The harness builds are npm packages; they land in $TOOL_CACHE, outside
 # $DATA_DIR, so `stop --purge` does not throw away the download.
 set -euo pipefail
@@ -67,8 +69,9 @@ resolve_bins() {
     if [ -f "$BIN_CACHE" ]; then
         # shellcheck disable=SC1090
         . "$BIN_CACHE"
-        if [ "${BIN_PINS:-}" = "$PG_WHEEL $REDIS_WHEEL" ] \
-            && [ -x "${PG_BIN:-}/pg_ctl" ] && [ -x "${REDIS_BIN:-}/redis-server" ]; then
+        if [ "${BIN_PINS:-}" = "$PG_WHEEL $REDIS_WHEEL pg_search==$PG_SEARCH_VERSION" ] \
+            && [ -x "${PG_BIN:-}/pg_ctl" ] && [ -x "${REDIS_BIN:-}/redis-server" ] \
+            && pg_search_installed; then
             return
         fi
         log "cached binary paths are stale (pins changed or uv cache pruned) — re-resolving"
@@ -84,12 +87,142 @@ print("PG_BIN=" + str(postgresql_binaries.bin()))
 print("REDIS_BIN=" + str(pathlib.Path(redislite.__file__).parent / "bin"))
 ')" || die "could not resolve server binaries (is uv installed and the network up?)"
 
-    mkdir -p "$DATA_DIR"
-    printf '%s\nBIN_PINS=%q\n' "$out" "$PG_WHEEL $REDIS_WHEEL" > "$BIN_CACHE"
-    # shellcheck disable=SC1090
-    . "$BIN_CACHE"
+    eval "$out"
     [ -x "$PG_BIN/pg_ctl" ] || die "pg_ctl not executable at $PG_BIN"
     [ -x "$REDIS_BIN/redis-server" ] || die "redis-server not executable at $REDIS_BIN"
+    pg_search_installed || install_pg_search
+
+    # Written last, so a failed download or install leaves no cache that passes.
+    mkdir -p "$DATA_DIR"
+    printf '%s\nBIN_PINS=%q\n' "$out" "$PG_WHEEL $REDIS_WHEEL pg_search==$PG_SEARCH_VERSION" > "$BIN_CACHE"
+}
+
+# The migrations run `CREATE EXTENSION pg_search` (ParadeDB's BM25 index, which
+# dev and production get from the paradedb image). theseus-rs does not build it,
+# so it comes from ParadeDB's own release: the Debian bookworm package for
+# PostgreSQL 17. Every Linux build ParadeDB publishes needs glibc 2.34, and this
+# one links nothing beyond libc, libm and libgcc_s, so it loads into the
+# relocatable server on any Linux with that glibc. Only pg_search.so and the
+# extension's SQL and control files are taken from the .deb; they go into this
+# server's own pkglibdir and sharedir, next to pg_trgm. Keep the version on the
+# one dev and production run (docker-compose.yml's paradedb image).
+PG_SEARCH_VERSION=0.24.0
+PG_SEARCH_GLIBC_MIN=2.34
+
+pg_search_installed() {
+    local libdir sharedir
+    libdir="$("$PG_BIN/pg_config" --pkglibdir 2>/dev/null)" || return 1
+    sharedir="$("$PG_BIN/pg_config" --sharedir 2>/dev/null)" || return 1
+    [ -f "$libdir/pg_search.so" ] \
+        && grep -qx "default_version = '$PG_SEARCH_VERSION'" "$sharedir/extension/pg_search.control" 2>/dev/null
+}
+
+install_pg_search() {
+    local os arch deb_arch sha256
+    os="$(uname -s)"
+    arch="$(uname -m)"
+    case "$os/$arch" in
+        Linux/x86_64)
+            deb_arch=amd64
+            sha256=6ca0329d67bcea07518a97e2aae77f3a2ecdc9a10e2cf88eddb87c774a804f4a ;;
+        Linux/aarch64 | Linux/arm64)
+            deb_arch=arm64
+            sha256=56d738139ef86bbda90fe451d86181571dbdebddbf10579abb92346a65140c8f ;;
+        *)
+            die "no pg_search $PG_SEARCH_VERSION build is set up for $os/$arch, only for Linux x86_64 and aarch64.
+       ParadeDB's v$PG_SEARCH_VERSION release lists what exists for other systems (for macOS arm64:
+       pg_search@17--$PG_SEARCH_VERSION.arm64_<release>.pkg). Without pg_search the migrations fail,
+       and with them every DB-backed test." ;;
+    esac
+    local glibc
+    glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null)" || glibc=""
+    glibc="${glibc#glibc }"
+    if [ -z "$glibc" ] \
+        || [ "$(printf '%s\n%s\n' "$PG_SEARCH_GLIBC_MIN" "$glibc" | sort -V | head -1)" != "$PG_SEARCH_GLIBC_MIN" ]; then
+        die "pg_search $PG_SEARCH_VERSION needs glibc $PG_SEARCH_GLIBC_MIN or newer; this system has ${glibc:-no glibc}."
+    fi
+
+    local asset="postgresql-17-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-bookworm_${deb_arch}.deb"
+    local url="https://github.com/paradedb/paradedb/releases/download/v$PG_SEARCH_VERSION/$asset"
+    local libdir sharedir
+    libdir="$("$PG_BIN/pg_config" --pkglibdir)" || die "pg_config at $PG_BIN does not run"
+    sharedir="$("$PG_BIN/pg_config" --sharedir)" || die "pg_config at $PG_BIN does not run"
+    log "installing pg_search $PG_SEARCH_VERSION into $libdir (first run downloads ~70MB, then cached)"
+    # Plain Python, so the host needs no curl, ar or xz. The .deb is kept in
+    # $TOOL_CACHE, so `stop --purge` keeps it too. Each file is written under a
+    # temporary name and renamed into place, so a start running concurrently
+    # never loads a half-written library.
+    uv run --no-project --python 3.12 python - \
+        "$url" "$sha256" "$TOOL_CACHE/pg_search/$asset" "$libdir" "$sharedir/extension" <<'PY' \
+        || die "installing pg_search $PG_SEARCH_VERSION failed (see above)"
+import hashlib, io, os, pathlib, shutil, sys, tarfile, time, urllib.request
+
+url, want, deb_path, libdir, extdir = sys.argv[1:]
+deb = pathlib.Path(deb_path)
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+if not (deb.is_file() and sha256(deb) == want):
+    deb.parent.mkdir(parents=True, exist_ok=True)
+    part = deb.with_name(f"{deb.name}.{os.getpid()}.part")
+    for attempt in range(3):
+        try:
+            urllib.request.urlretrieve(url, part)
+            break
+        except OSError as e:
+            if attempt == 2:
+                sys.exit(f"download of {url} failed: {e}")
+            time.sleep(2)
+    got = sha256(part)
+    if got != want:
+        part.unlink()
+        sys.exit(f"{url} has sha256 {got}, expected {want}")
+    os.replace(part, deb)
+
+# A .deb is an ar archive; the installed files are in its data.tar.* member.
+data = None
+with open(deb, "rb") as f:
+    if f.read(8) != b"!<arch>\n":
+        sys.exit(f"{deb} is not a .deb")
+    while len(header := f.read(60)) == 60:
+        name = header[:16].decode().strip().rstrip("/")
+        size = int(header[48:58].decode())
+        if name.startswith("data.tar"):
+            data = f.read(size)
+            break
+        f.seek(size + size % 2, 1)
+if data is None:
+    sys.exit(f"{deb} has no data.tar member")
+
+targets = {
+    "usr/lib/postgresql/17/lib/": pathlib.Path(libdir),
+    "usr/share/postgresql/17/extension/": pathlib.Path(extdir),
+}
+placed = set()
+with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+    for member in tar:
+        path = member.name.removeprefix("./")
+        for prefix, dest in targets.items():
+            name = path.removeprefix(prefix)
+            if member.isfile() and name != path and "/" not in name:
+                out = dest / name
+                tmp = dest / f".{name}.{os.getpid()}"
+                with tar.extractfile(member) as src, open(tmp, "wb") as dst:
+                    shutil.copyfileobj(src, dst, 1 << 20)
+                tmp.chmod(0o755 if name.endswith(".so") else 0o644)
+                os.replace(tmp, out)
+                placed.add(name)
+if not {"pg_search.so", "pg_search.control"} <= placed:
+    sys.exit(f"{deb} does not contain pg_search.so and pg_search.control")
+PY
+    pg_search_installed || die "pg_search $PG_SEARCH_VERSION is still missing from $libdir after install"
 }
 
 pg_running() { [ -d "$PGDATA" ] && "$PG_BIN/pg_ctl" -D "$PGDATA" status >/dev/null 2>&1; }
@@ -161,7 +294,7 @@ start_pg() {
     # a Mac. That passes pytest-timeout's 300s, which then ends the xdist worker
     # mid-teardown ("worker crashed" on migration tests that drop their own DB).
     "$PG_BIN/pg_ctl" -D "$PGDATA" -l "$PG_LOG" -w -t 60 \
-        -o "-p $PG_PORT -h 127.0.0.1 -k $PGDATA -c fsync=off -c full_page_writes=off -c synchronous_commit=off" \
+        -o "-p $PG_PORT -h 127.0.0.1 -k $PGDATA -c fsync=off -c full_page_writes=off -c synchronous_commit=off -c shared_preload_libraries=pg_search" \
         start >/dev/null 2>&1 \
         || { log "--- postgres log ---"; tail -30 "$PG_LOG" >&2; die "postgres failed to start"; }
     "$PG_BIN/pg_isready" -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -t 30 >/dev/null 2>&1 \
