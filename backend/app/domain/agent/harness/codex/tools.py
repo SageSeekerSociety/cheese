@@ -73,6 +73,7 @@ class RemoteTools:
         target: dict,
         mirror: Path | None = None,
         reply_file: Path | None = None,
+        shipped: Path | None = None,
     ):
         self.client = RemoteClient(target)
         self.routes: dict[str, tuple[str, str]] = {}
@@ -82,6 +83,13 @@ class RemoteTools:
         # has no environment of its own (`session.py`), so it finds none in
         # the project; it finds these as extra roots (`skill_roots`).
         self.mirror = mirror
+        # The platform's own skills (its own and the ways of working the
+        # project saved), written here by the runner. The room's executor
+        # holds the same files in its config dir, where the launch planted
+        # them (`bootstrap.plant_native_skills`); `executor_config` is that
+        # directory, asked of the executor once.
+        self.shipped = shipped
+        self.executor_config: str | None = None
         # What the mirror holds: its path -> the (size, mtime) it was read at.
         self.mirrored: dict[str, tuple[int, int]] | None = None
         # Where the runner says a person is waiting on an answer
@@ -95,7 +103,40 @@ class RemoteTools:
 
     def skill_roots(self) -> list[str]:
         assert self.mirror is not None
-        return [str(self.mirror / root) for root in SKILL_ROOTS]
+        roots = [str(self.mirror / root) for root in SKILL_ROOTS]
+        if self.shipped is not None and (self.shipped / "skills").is_dir():
+            # Beside the project's: plain Codex lists a user skill and a
+            # repository skill of the same name side by side, and so does this.
+            roots.append(str(self.shipped / "skills"))
+        return roots
+
+    def ship_skills(self, files: dict[str, str]) -> None:
+        """Write the platform's skills (`skills/<name>/...`) where the
+        session's Codex reads them, replacing what an earlier process wrote."""
+        assert self.shipped is not None
+        shutil.rmtree(self.shipped, ignore_errors=True)
+        for name, content in files.items():
+            relative = Path(name)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError(f"A platform skill file outside its folder: {name}")
+            path = self.shipped / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+    async def find_shipped(self, arguments: dict) -> None:
+        """Where the executor holds the platform's skills, asked the first
+        time a call names one of them: the machine is being reached anyway
+        then, and a session that never does never waits on it."""
+        if self.shipped is None or self.executor_config is not None:
+            return
+        here = str(self.shipped / "skills")
+        if any(
+            isinstance(value, str) and here in value
+            for key, value in arguments.items()
+            if key in PATH_ARGUMENTS
+        ):
+            status = await asyncio.to_thread(self.client.call, "ping")
+            self.executor_config = status.get("config_dir")
 
     def sync_skills(self) -> bool:
         """The mirror holds the project's skills as the machine has them now.
@@ -175,12 +216,24 @@ class RemoteTools:
         """`arguments` with each path in the mirror named where the machine
         holds it: the model reads a skill's files, and runs its scripts, at
         the paths the skill list gave it, which are the mirror's."""
+        places = []
         workspace = self.client.config.get("workspace")
-        if self.mirror is None or not workspace:
+        if self.mirror is not None and workspace:
+            places.append((str(self.mirror), session_path(workspace)))
+        if self.shipped is not None and self.executor_config:
+            places.append(
+                (str(self.shipped / "skills"), self.executor_config + "/skills")
+            )
+        if not places:
             return arguments
-        mirror, project = str(self.mirror), session_path(workspace)
+
+        def placed(value: str) -> str:
+            for here, there in places:
+                value = value.replace(here, there)
+            return value
+
         return {
-            key: value.replace(mirror, project)
+            key: placed(value)
             if key in PATH_ARGUMENTS and isinstance(value, str)
             else value
             for key, value in arguments.items()
@@ -299,6 +352,7 @@ class RemoteTools:
             )
         receipt: dict
         if server == "native":
+            await self.find_shipped(params["arguments"])
             params = {**params, "arguments": self.on_the_machine(params["arguments"])}
         if server in self.client.remote_servers():
             # Codex fires no project hooks, and a remote server's call never

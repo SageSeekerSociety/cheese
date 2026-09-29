@@ -18,7 +18,11 @@ async def serve(state: Path, config: dict) -> None:
         config["execution_target"],
         mirror=state / "project-skills",
         reply_file=reply_owed_path(state),
+        shipped=state / "platform-skills",
     )
+    # What a session in this project gets besides the repository's skills,
+    # as the Claude Code and pi launches carry them (`session_skill_files`).
+    await asyncio.to_thread(tools.ship_skills, config.get("skills") or {})
     runner = Runner(state, tools, skills=tools)
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
