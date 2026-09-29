@@ -32,6 +32,7 @@ class ProjectRepository:
         team_id: int | None = None,
         external_task_id: int | None = None,
         intent: str = "",
+        project_id: uuid.UUID | None = None,
     ) -> Project:
         project = Project(
             name=name,
@@ -41,6 +42,8 @@ class ProjectRepository:
             external_task_id=external_task_id,
             intent=intent,
         )
+        if project_id is not None:
+            project.id = project_id
         self._session.add(project)
         await self._session.flush()
         await self._session.refresh(project)

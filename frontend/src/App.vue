@@ -549,6 +549,10 @@ const newProjectForgeKind = ref<'forgejo' | 'github_app'>('forgejo')
 // 这个项目打算做什么——建项目时问的那一句（#946 片 C）。问题只在人愿意答的时候
 // 才有价值，所以它是可选的：空着就和从前一样，只建一个空房间。
 const newProjectIntent = ref('')
+// The project's id, chosen once per opening of the dialog. Pressing 创建项目 again
+// after a failure sends the same id, so the server finishes that project rather
+// than starting another beside what the failed attempt already made.
+const newProjectId = ref('')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
 // 所属小队: which team the project belongs to decides who can see it. Without
@@ -619,6 +623,7 @@ watch(newProjectDialog, (opened) => {
   // 上一次开的对话框留下的答案不该跟到这一次——那会让第二个项目凭空继承第一个
   // 项目的说明，而人根本没说过。
   newProjectIntent.value = ''
+  newProjectId.value = crypto.randomUUID()
   newProjectError.value = null
   void loadProjectTeams()
 })
@@ -643,7 +648,8 @@ async function confirmNewProject() {
       sourceTask.value?.id,
       newProjectForgeKind.value,
       newProjectIntent.value.trim(),
-      newProjectAgentName.value.trim()
+      newProjectAgentName.value.trim(),
+      newProjectId.value
     )
     await loadCxProjects()
     newProjectDialog.value = false
