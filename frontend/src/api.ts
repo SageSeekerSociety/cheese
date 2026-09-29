@@ -3153,13 +3153,13 @@ export type { FeedbackNote }
  * 位置，而「窗口」这一档该进 URL/状态，不该在每个调用点各自传一个字面量。
  */
 
-/** 目录里的一行。`view` 是前端注册表里的键，两边各有一半：服务端知道有哪些功能，
- *  前端知道每个功能画成什么样子。 */
+/** 目录里的一行。**没有 `view` / 路由 / 组件名这一栏**：服务端只知道有哪些功能，
+ *  每个功能画成什么样子是前端注册表（`views/admin/features/registry.ts`）按 `id` 查的。
+ *  让服务端回一个组件路径，等于把半个前端写进 Python 字符串里，改个文件名就烂。 */
 export interface FeatureCatalogueEntry {
   id: string
   title: string
   summary: string
-  view: string
 }
 
 /** 「访客」这一格：`value` 是全部，`logged_in` 是其中登录的那些。两个数一起给而不是
