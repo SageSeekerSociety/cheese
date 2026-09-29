@@ -1,6 +1,8 @@
 // 命令面板里的内容搜索：消息、任务、文档、项目文档、资料库五个数据源，问的是同一个
 // 后端接口。同一次输入只问一次，五个数据源各取自己那一份。
+import type { Router } from 'vue-router'
 import type { ProjectSearchHits } from '@/api'
+import type { PaletteItem, PaletteSource } from '@/commands/palette/sources'
 
 import { searchProject } from '@/api'
 
@@ -25,4 +27,31 @@ export function hitsFor(projectId: string, query: string): Promise<ProjectSearch
 /** 结果下面那一行：在哪个房间、谁、什么时候。 */
 export function whereAndWhen(...parts: (string | null | undefined)[]): string {
   return parts.filter(Boolean).join(' · ')
+}
+
+/**
+ * 内容的一类：面板里是一组结果，搜索结果页上是一栏。两处用同一份「搜到的东西长什么
+ * 样、点开去哪」，所以写在一起。
+ */
+export interface ContentKind {
+  id: string
+  /** i18n key：面板里那一组、结果页上那一栏的名字。 */
+  label: string
+  /** 后端 `only` 认的名字：这一栏只搜这几类。 */
+  only: string[]
+  itemsOf: (hits: ProjectSearchHits, projectId: string, router: Router) => PaletteItem[]
+}
+
+/** 一类内容在面板里的数据源：`?` 只看内容。 */
+export function contentSource(kind: ContentKind, order: number): PaletteSource {
+  return {
+    id: kind.id,
+    label: kind.label,
+    order,
+    prefix: '?',
+    async search(query, { projectId, router }) {
+      if (!projectId) return []
+      return kind.itemsOf(await hitsFor(projectId, query), projectId, router)
+    },
+  }
 }

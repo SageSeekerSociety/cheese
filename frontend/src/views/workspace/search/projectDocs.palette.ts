@@ -1,20 +1,17 @@
-// 命令面板里的「项目文档」：决定和周报。点开去项目文档页对应的那一格。
-import type { PaletteSource } from '@/commands/palette/sources'
+// 内容里的「项目文档」：决定和周报。点开去项目文档页对应的那一格。
+import type { ContentKind } from './projectSearch'
 
-import { hitsFor, whereAndWhen } from './projectSearch'
+import { contentSource, whereAndWhen } from './projectSearch'
 
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
-const source: PaletteSource = {
+export const projectDocs: ContentKind = {
   id: 'project-docs',
   label: 'navigation.palette.projectDocs',
-  order: 130,
-  prefix: '?',
-  async search(query, { projectId }) {
-    if (!projectId) return []
-    const { records } = await hitsFor(projectId, query)
-    return records
+  only: ['decision', 'weekly'],
+  itemsOf: ({ records }, projectId) =>
+    records
       .filter((hit) => hit.kind === 'decision' || hit.kind === 'weekly')
       .map((hit) => {
         const decision = hit.kind === 'decision'
@@ -28,8 +25,7 @@ const source: PaletteSource = {
           icon: decision ? 'mdi-gavel' : 'mdi-calendar-text-outline',
           to: { name: 'project-docs', params: { projectId, kind: decision ? 'decisions' : 'weeklies' } },
         }
-      })
-  },
+      }),
 }
 
-export default source
+export default contentSource(projectDocs, 130)

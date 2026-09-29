@@ -90,6 +90,7 @@ async function mount({ withRoomCommand = ref(false) } = {}) {
           { path: 'topics/:topicId', name: 'workspace-topic', component: Blank },
           { path: 'members/:handle', name: 'member', component: Blank },
           { path: 'dm/:peer', name: 'workspace-dm', component: Blank },
+          { path: 'search', name: 'project-search', component: Blank },
           {
             path: 'library',
             name: 'project-library',
@@ -337,9 +338,32 @@ describe('命令面板', () => {
     await mount()
     await open()
     await type('?原型')
-    await waitFor(() => expect(options()).toHaveLength(1))
-    expect(options()[0]).toContain('原型的配色再调一下')
+    await waitFor(() => expect(options().some((text) => text.includes('原型的配色再调一下'))).toBe(true))
+    expect(options().some((text) => text.includes('搭建第一个原型'))).toBe(false)
     expect(searchProject).toHaveBeenLastCalledWith('p1', '原型')
+  })
+
+  it('内容结果的最后一行进搜索结果页，带着这个词', async () => {
+    searchProject.mockImplementation(async (_project: string, q: string) =>
+      q === '配色' ? hits({ records: [{ ...MESSAGE, snippet: '配色再调一下' }] }) : NOTHING
+    )
+    const { router } = await mount()
+    await open()
+    await type('配色')
+    const last = t('navigation.palette.searchAll')
+    await waitFor(() => expect(options().at(-1)).toContain(last))
+    for (let i = 1; i < options().length; i++) await press('ArrowDown')
+    await press('Enter')
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/search'))
+    expect(router.currentRoute.value.query.q).toBe('配色')
+  })
+
+  it('什么内容都没搜到时，没有「查看全部结果」', async () => {
+    await mount()
+    await open()
+    await type('根本没有')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(options().some((text) => text.includes(t('navigation.palette.searchAll')))).toBe(false)
   })
 
   // 同一个词短时间内只问一次后端（五个数据源合用），所以各条用例用的词互不相同。

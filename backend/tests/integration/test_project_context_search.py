@@ -272,3 +272,116 @@ def test_a_busy_conversation_does_not_crowd_out_the_documents(client):
     assert kinds.count("message") == 3
     assert "decision" in kinds
     assert "doc_node" in kinds
+
+
+# 搜索结果页：一类一类地看，一页一页地翻，先知道每类有多少。翻完所有页，拿到的
+# 正好是这一类的全部、不重不漏；条数和翻出来的一样多；只问的那几类之外什么都不给。
+
+
+def test_paging_through_one_kind_gives_every_hit_once(client):
+    project = _project(client)
+    room = _room(client, project, "排期")
+    for i in range(7):
+        _seed(client, _say(project, room, f"发布窗口第 {i} 次讨论"))
+    _seed(client, _say(project, room, "发布窗口定了", kind=BlockKind.decision))
+
+    seen: list[str] = []
+    for offset in (0, 3, 6):
+        r = client.get(
+            f"/projects/{project}/context/search",
+            params={
+                "q": "发布窗口",
+                "topic": room,
+                "only": "message",
+                "limit": 3,
+                "offset": offset,
+            },
+        )
+        assert r.status_code == 200, r.text
+        hits = r.json()["data"]["hits"]
+        assert {h["kind"] for h in hits["records"]} <= {"message"}
+        assert hits["tasks"] == []
+        seen += [h["id"] for h in hits["records"]]
+
+    assert len(seen) == 7
+    assert len(set(seen)) == 7
+
+
+def test_one_page_can_hold_several_kinds(client):
+    project = _project(client)
+    room = _room(client, project, "文档")
+    _seed(client, _say(project, room, "接口约定写在这里", kind=BlockKind.doc_node))
+    _seed(client, _say(project, room, "接口约定第二段要改", kind=BlockKind.comment))
+    _seed(client, _say(project, room, "接口约定聊过了"))
+
+    r = client.get(
+        f"/projects/{project}/context/search",
+        params=[
+            ("q", "接口约定"),
+            ("topic", room),
+            ("only", "doc_node"),
+            ("only", "comment"),
+        ],
+    )
+    assert r.status_code == 200, r.text
+    kinds = sorted(h["kind"] for h in r.json()["data"]["hits"]["records"])
+    assert kinds == ["comment", "doc_node"]
+
+
+def test_counts_match_what_the_pages_hold(client):
+    project = _project(client)
+    room = _room(client, project, "预算")
+    for i in range(4):
+        _seed(client, _say(project, room, f"季度预算 {i}"))
+    _seed(client, _say(project, room, "季度预算按此执行", kind=BlockKind.decision))
+
+    r = client.get(
+        f"/projects/{project}/context/search/counts",
+        params={"q": "季度预算", "topic": room},
+    )
+    assert r.status_code == 200, r.text
+    counts = r.json()["data"]["counts"]
+    assert counts["message"] == 4
+    assert counts["decision"] == 1
+    assert counts["tasks"] == 0
+
+
+def test_counts_leave_out_rooms_the_caller_cannot_read(client):
+    project = _project(client)
+    here = _room(client, project, "公开")
+
+    async def private_room(db):
+        room = await TopicRepository(db).add(
+            project_id=uuid.UUID(project), title="私人房间"
+        )
+        room.is_private = True
+        await db.flush()
+        db.add(
+            Block(
+                project_id=uuid.UUID(project),
+                topic_id=room.id,
+                kind=BlockKind.message,
+                author_type=AuthorType.participant,
+                author=OWNER,
+                content="私下的年终奖",
+            )
+        )
+
+    _seed(client, private_room)
+    _seed(client, _say(project, here, "公开的年终奖"))
+
+    counts = client.get(
+        f"/projects/{project}/context/search/counts",
+        params={"q": "年终奖", "topic": here},
+    ).json()["data"]["counts"]
+    assert counts["message"] == 1
+
+
+def test_an_unknown_kind_is_refused(client):
+    project = _project(client)
+    room = _room(client, project, "随便")
+    r = client.get(
+        f"/projects/{project}/context/search",
+        params={"q": "什么", "topic": room, "only": "passwords"},
+    )
+    assert r.status_code == 422

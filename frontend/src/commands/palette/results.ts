@@ -121,7 +121,7 @@ function aroundHit(item: PaletteItem, query: string): Omit<ResultRow, 'remote'> 
 }
 
 /** 标题里最先出现的那个词：后端按词找，摘要里哪个词先出现就亮哪个。 */
-function firstWord(title: string, query: string): [number, number] | null {
+export function firstWord(title: string, query: string): [number, number] | null {
   const lowered = title.toLowerCase()
   let best: [number, number] | null = null
   for (const word of query.toLowerCase().split(/\s+/).filter(Boolean)) {

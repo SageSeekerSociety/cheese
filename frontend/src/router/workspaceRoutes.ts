@@ -133,6 +133,14 @@ export const workspaceRoutes: RouteRecordRaw = {
       },
     },
     {
+      // 搜索结果页：命令面板里内容只列前几条，「查看全部结果」进这里看全。词在地址上。
+      name: 'project-search',
+      path: 'search',
+      component: () => import('@/views/ProjectSearchView.vue'),
+      props: true,
+      meta: { title: '搜索', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
       // 定时与触发：房间里的 AI 队友按时间或按项目事件自己开工的那些规则。项目级，
       // 因为一条规则的结果可能要看别的房间，而人要在一处看全这个项目有哪些在自己跑。
       name: 'project-routines',

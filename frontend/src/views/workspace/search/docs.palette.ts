@@ -1,20 +1,17 @@
-// 命令面板里的「文档」：房间的文档正文和文档边上的评论。点开进那个房间的总览。
-import type { PaletteSource } from '@/commands/palette/sources'
+// 内容里的「文档」：房间的文档正文和文档边上的评论。点开进那个房间的总览。
+import type { ContentKind } from './projectSearch'
 
-import { hitsFor, whereAndWhen } from './projectSearch'
+import { contentSource, whereAndWhen } from './projectSearch'
 
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
-const source: PaletteSource = {
+export const docs: ContentKind = {
   id: 'docs',
   label: 'navigation.palette.docs',
-  order: 120,
-  prefix: '?',
-  async search(query, { projectId }) {
-    if (!projectId) return []
-    const { records } = await hitsFor(projectId, query)
-    return records
+  only: ['doc', 'doc_node', 'comment'],
+  itemsOf: ({ records }, projectId) =>
+    records
       .filter((hit) => hit.kind === 'doc' || hit.kind === 'doc_node' || hit.kind === 'comment')
       .map((hit) => {
         const comment = hit.kind === 'comment'
@@ -26,8 +23,7 @@ const source: PaletteSource = {
           badge: comment ? { text: t('navigation.palette.comment') } : undefined,
           to: { name: 'workspace-topic', params: { projectId, topicId: hit.room_id }, query: { tab: 'overview' } },
         }
-      })
-  },
+      }),
 }
 
-export default source
+export default contentSource(docs, 120)

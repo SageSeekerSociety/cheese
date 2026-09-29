@@ -1,17 +1,14 @@
-// 命令面板里的「资料库」：按文件名找。点开去资料库。
-import type { PaletteSource } from '@/commands/palette/sources'
+// 内容里的「资料库」：按文件名找。点开去资料库。
+import type { ContentKind } from './projectSearch'
 
-import { hitsFor } from './projectSearch'
+import { contentSource } from './projectSearch'
 
-const source: PaletteSource = {
+export const library: ContentKind = {
   id: 'library',
   label: 'navigation.palette.library',
-  order: 140,
-  prefix: '?',
-  async search(query, { projectId }) {
-    if (!projectId) return []
-    const { library } = await hitsFor(projectId, query)
-    return library.map((hit) => {
+  only: ['library'],
+  itemsOf: ({ library: hits }, projectId) =>
+    hits.map((hit) => {
       const slash = hit.path.lastIndexOf('/')
       return {
         id: `library:${hit.path}`,
@@ -20,8 +17,7 @@ const source: PaletteSource = {
         icon: 'mdi-file-outline',
         to: { name: 'project-library', params: { projectId } },
       }
-    })
-  },
+    }),
 }
 
-export default source
+export default contentSource(library, 140)
