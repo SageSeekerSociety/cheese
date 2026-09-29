@@ -626,7 +626,7 @@ bash .claude/scripts/check-repo-rules.sh --self-test                # 证明闸�
 
 ### 9.8 这一节没有闸门
 
-写页面时过一遍 §9.1、§9.3、§9.4、§9.5。老社区那一侧（`views/spaces`、`views/tasks`、`views/projects`、`components/discussions`）大量使用 hover 抬升与 `transition: all`，方向是往这一节收，而不是让工作台去学它。
+写页面时过一遍 §9.1、§9.3、§9.4、§9.5。老社区那一侧（`views/spaces`、`views/tasks`、`views/projects`）大量使用 hover 抬升与 `transition: all`，方向是往这一节收，而不是让工作台去学它。
 
 ### 9.9 门口页面的品牌画面
 
