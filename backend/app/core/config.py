@@ -318,6 +318,10 @@ class Settings(BaseSettings):
     # `llm_gateway_admin_base` and capped at this budget per 30 days.
     docs_assistant_model: str = "deepseek-flash"
     docs_assistant_budget_usd: float = 20.0
+    # Whether 问芝士 searches and reads the docs itself, over the three tools in
+    # `docs_site/tools.py`, instead of answering from one round of retrieval.
+    # False keeps the old path, for a deployment that wants the cheaper one.
+    docs_assistant_agentic: bool = True
     # Per signed-in user, and across one backend process.
     docs_assistant_hourly_limit: int = 20
     docs_assistant_daily_limit: int = 100

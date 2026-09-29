@@ -2,9 +2,11 @@
 
 /docs/dev/ is for platform admins: the pass is issued only to them, every
 check re-asks, and losing admin closes the door. 问芝士 needs a signed-in
-person, never calls the model when the docs have nothing to say, mints its
-gateway key once, records every question, and refuses past its limits. The
-gateway and the frontend's index are stubbed with one MockTransport.
+person, mints its gateway key once, records every question, and refuses past
+its limits. Over the model's own searches it reads the public pages and answers
+from them (``docs_assistant_agentic``); with the switch off it answers from one
+round of retrieval, and never calls the model when the docs have nothing to
+say. The gateway and the frontend's index are stubbed with one MockTransport.
 """
 
 import asyncio
@@ -40,6 +42,11 @@ INDEX = [
         "text": "队长和管理员可以通过 UID 邀请成员。",
     },
 ]
+# The page's public ``.md`` twin, as the reader (and the agent's fetch_doc) gets it.
+PAGE_MD = (
+    "## 采纳交付 {#is-merge}\n\n"
+    "确认改动符合要求后，在任务面板中点击「采纳」。采纳并合并成功后，改动进入项目主线。\n"
+)
 
 
 @pytest.fixture
@@ -51,24 +58,75 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
 
 @pytest.fixture
 def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
-    """The frontend's index and the LiteLLM gateway, stubbed; returns what they saw."""
-    seen: dict = {"mints": 0, "completions": [], "index": 0}
+    """The frontend's index and the LiteLLM gateway, stubbed; returns what they saw.
+
+    A test that wants the model to search before it answers sets ``script`` to
+    the tool calls it should make, one per round; then ``answer`` is what it
+    says once the script runs out. Without a script the first round already
+    answers, which is the shape a gateway that does not want tools replies in."""
+    seen: dict = {
+        "mints": 0,
+        "completions": [],
+        "index": 0,
+        "pages": [],
+        "tool_rounds": 0,
+        "script": [],
+        "answer": "文档里没有讲到。",
+        "deltas": ("采纳就是合并，", "见 [验收与采纳](/docs/accept#is-merge)。"),
+        "usage": (300, 20),
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/docs/ask-index.json":
+        path = request.url.path
+        if path == "/docs/ask-index.json":
             seen["index"] += 1
             return httpx.Response(200, json=INDEX)
-        if request.url.path == "/key/generate":
+        if path == "/key/generate":
             seen["mints"] += 1
             seen["mint_body"] = json.loads(request.content)
             return httpx.Response(200, json={"key": "sk-docs-virtual"})
-        if request.url.path == "/v1/chat/completions":
-            seen["completions"].append(
-                (request.headers["authorization"], json.loads(request.content))
+        if path.endswith(".md"):
+            seen["pages"].append(path)
+            return httpx.Response(
+                200, text=PAGE_MD, headers={"content-type": "text/markdown"}
             )
-            deltas = ("采纳就是合并，", "见 [验收与采纳](/docs/accept#is-merge)。")
-            chunks = [{"choices": [{"delta": {"content": d}}]} for d in deltas]
-            usage = {"prompt_tokens": 300, "completion_tokens": 20}
+        if path == "/v1/chat/completions":
+            sent = json.loads(request.content)
+            seen["completions"].append((request.headers["authorization"], sent))
+            prompt, completion = seen["usage"]
+            usage = {"prompt_tokens": prompt, "completion_tokens": completion}
+            if sent.get("tools"):
+                at = seen["tool_rounds"]
+                seen["tool_rounds"] += 1
+                if at < len(seen["script"]):
+                    name, args = seen["script"][at]
+                    calls = [
+                        {
+                            "id": f"call_{at}",
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(args, ensure_ascii=False),
+                            },
+                        }
+                    ]
+                    return httpx.Response(
+                        200,
+                        json={
+                            "choices": [
+                                {"message": {"content": None, "tool_calls": calls}}
+                            ],
+                            "usage": usage,
+                        },
+                    )
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": seen["answer"]}}],
+                        "usage": usage,
+                    },
+                )
+            chunks = [{"choices": [{"delta": {"content": d}}]} for d in seen["deltas"]]
             chunks.append({"choices": [], "usage": usage})
             body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks)
             body += "data: [DONE]\n\n"
@@ -194,8 +252,12 @@ def test_asking_needs_a_signed_in_person(client, gateway):
 
 
 def test_a_question_the_docs_do_not_cover_never_reaches_the_model(
-    client, asker, gateway
+    client, asker, gateway, monkeypatch
 ):
+    # The one-shot path's guarantee, kept for a deployment that turns the switch
+    # off: the retrieval that would feed the model comes back empty, so there is
+    # nothing to feed it and no key is minted.
+    monkeypatch.setattr(settings, "docs_assistant_agentic", False)
     r = client.post("/docs/ask", json={"question": "今天天气怎么样"}, headers=asker)
     assert r.status_code == 200, r.text
     assert _events(r.text) == [
@@ -208,7 +270,11 @@ def test_a_question_the_docs_do_not_cover_never_reaches_the_model(
     assert row.outcome == "no_match" and row.model is None
 
 
-def test_an_answer_is_grounded_streamed_and_recorded(client, asker, gateway):
+def test_an_answer_is_grounded_streamed_and_recorded(
+    client, asker, gateway, monkeypatch
+):
+    # The original path, end to end: one round of retrieval, no tools.
+    monkeypatch.setattr(settings, "docs_assistant_agentic", False)
     body = {
         "question": "采纳和合并是一回事吗",
         "page": "accept",
@@ -234,6 +300,8 @@ def test_an_answer_is_grounded_streamed_and_recorded(client, asker, gateway):
         and sent["max_tokens"] == assistant.MAX_ANSWER_TOKENS
     )
     assert "<docs>" in sent["messages"][-1]["content"]
+    # No tools on the old path: the sections were chosen here, not by the model.
+    assert "tools" not in sent and "thinking" not in sent
     # The key is minted with a budget, once.
     assert gateway["mint_body"]["max_budget"] == settings.docs_assistant_budget_usd
     [row] = _rows(client)
@@ -253,6 +321,82 @@ def test_an_answer_is_grounded_streamed_and_recorded(client, asker, gateway):
             return await s.scalar(select(func.count()).select_from(ServiceCredential))
 
     assert asyncio.run(keys()) == 1
+
+
+def test_the_model_searches_reads_and_answers_from_the_page_it_read(
+    client, asker, gateway
+):
+    gateway["script"] = [
+        ("search_docs", {"query": "采纳 合并"}),
+        ("fetch_doc", {"url": "/docs/accept#is-merge"}),
+    ]
+    gateway["answer"] = "采纳就是合并，见 [验收与采纳](/docs/accept#is-merge)。"
+    gateway["usage"] = (100, 10)
+
+    r = client.post(
+        "/docs/ask",
+        json={"question": "采纳和合并是一回事吗", "page": "accept"},
+        headers=asker,
+    )
+    assert r.status_code == 200, r.text
+    events = _events(r.text)
+    assert [e for e, _ in events] == [
+        "tool",
+        "tool",
+        "sources",
+        "delta",
+        "sources",
+        "done",
+    ]
+    assert events[0][1] == {"kind": "search", "query": "采纳 合并"}
+    assert events[1][1] == {
+        "kind": "fetch",
+        "title": "验收与采纳",
+        "url": "/docs/accept",
+    }
+    # The pages it actually read: once before the answer is finished, again
+    # under it, so a reader who joined late still gets the list.
+    read = {"sources": [{"title": "验收与采纳", "heading": "", "url": "/docs/accept"}]}
+    assert events[2][1] == read and events[4][1] == read
+    assert events[3][1] == {"text": gateway["answer"]}
+    assert events[5] == ("done", {})
+
+    # The tools went out with the round; the fetch went to the page's public
+    # .md twin; the page came back to the model as data.
+    assert gateway["pages"] == ["/docs/accept.md"]
+    first, second, third = (sent for _, sent in gateway["completions"])
+    assert [t["function"]["name"] for t in first["tools"]] == [
+        "search_docs",
+        "fetch_doc",
+        "list_docs",
+    ]
+    assert first["thinking"] == {"type": "disabled"} and "stream" not in first
+    assert second["messages"][-1]["role"] == "tool"
+    assert "在任务面板中点击「采纳」" in second["messages"][-1]["content"]
+    assert third["messages"][-1]["role"] == "tool"
+
+    # Every round was billed to the question, not just the one that answered.
+    [row] = _rows(client)
+    assert (row.outcome, row.page) == ("answered", "accept")
+    assert (row.prompt_tokens, row.completion_tokens) == (300, 30)
+    assert row.sources == ["/docs/accept"]
+
+
+def test_a_question_the_docs_do_not_cover_is_refused_without_reading_anything(
+    client, asker, gateway
+):
+    gateway["answer"] = "文档里没有讲到。"
+    r = client.post("/docs/ask", json={"question": "今天天气怎么样"}, headers=asker)
+    assert r.status_code == 200, r.text
+    events = _events(r.text)
+    assert [e for e, _ in events] == ["delta", "sources", "done"]
+    assert events[0][1] == {"text": "文档里没有讲到。"}
+    assert events[1][1] == {"sources": []}
+    # It answered from what it knows: no page was read, and nothing is offered
+    # to the reader to click.
+    assert gateway["pages"] == []
+    [row] = _rows(client)
+    assert row.outcome == "answered" and row.sources == []
 
 
 def test_past_the_hourly_limit_the_answer_is_429(client, asker, gateway, monkeypatch):

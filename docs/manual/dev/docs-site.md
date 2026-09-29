@@ -154,18 +154,19 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 
 ## 问芝士 {#ask}
 
-`POST /api/docs/ask`，需要登录，以 server-sent events 流式返回：`sources`（这次回答可以引用的段落）、`delta`（文字）、`error`、`done`。
+`POST /api/docs/ask`，需要登录，以 server-sent events 流式返回：`sources`（这次回答可以引用的页面）、`tool`（模型正在搜什么、正在读哪一页）、`delta`（文字）、`error`、`done`。
 
 1. **限流**（`limits.py`，Valkey）：每人每小时 20 次、每天 100 次；同一个人同一时间只能有一个问题在答；每个进程同时最多答 8 个，满了立刻返回「忙」，不排队。Valkey 不可用时拒绝，不放行。
-2. **检索**（`retrieval.py`）：从前端取 `ask-index.json`，每 10 分钟刷新，取不到时沿用上一份。用 BM25 打分，英文按词切、中文按两字切；读者正在看的那一页加权。
-3. **找不到就不问模型**：最高分低于 `MIN_SCORE` 时，直接回答「文档里没有讲到」，不调用模型。这一步既防止编造，也让与知是无关的请求花不到钱。
-4. **回答**（`assistant.py`）：系统提示词只让模型根据 `<docs>` 里的段落回答；段落和问题里的尖括号会被替换，模型无法闭合或伪造这个区块；拒绝无关请求；只能链接到给出的 url。最多输出 700 个 token，温度 0.2。模型、长度等参数由后端固定，调用方改不了。
-5. **成本上限**：调用走平台网关，用一个专为问芝士签发的虚拟 key（`service_credentials` 表，首次使用时签发，多进程用 advisory lock 保证只签一次）。这个 key 每 30 天最多花 `DOCS_ASSISTANT_BUDGET_USD`（默认 20 美元），并限 120 rpm；上游 key 不出网关。
-6. **记录**：每个问题一行 `docs_questions`：问了什么、有没有答上、引用了哪些段落、用了多少 token、花了多久。`outcome = no_match` 的问题就是文档该补的地方。90 天后由后台任务清理（`DOCS_QUESTION_RETENTION_DAYS`）。
+2. **模型自己查文档**（默认，`DOCS_ASSISTANT_AGENTIC=true`）：给它三个只读工具（`tools.py`，形状照 OpenAI 的文档服务）——`search_docs`（用 `retrieval.py` 检索 `ask-index.json`，返回最相关的六节：标题、小节、链接、摘录）、`fetch_doc`（读一页的 `.md` 原文；链接带 `#小节` 时只返回那一节和相邻小节）、`list_docs`（列出全部公开页）。检索词由模型自己换：口语换成文档的说法、英文换中文关键词、代词换成上一轮的对象——「那怎么把他移出去？」这种追问，一次检索是接不上的。最多四轮工具调用，第五轮不带工具、必须作答。
+3. **只引用读过的**：答案里只保留这一轮搜到或读过的页面的链接，别的链接降级成文字（`assistant.filter_links`）；工具返回的内容一律转义后当数据交给模型（`_escape`），页面里写什么都成不了指令。`sources` 最终是模型真正读过的页面，在答案开始前给一次、`done` 之前再给一次。工具参数一律不开思考（`thinking: disabled`）：这个模型会把输出额度花在思考上，搜不动；网关不认这个参数时去掉重试一次。
+4. **旧路径**（`DOCS_ASSISTANT_AGENTIC=false`）：一轮检索把段落塞进系统提示词，最高分低于 `MIN_SCORE`、或命中的词少于两个时，直接回答「文档里没有讲到」，不调用模型。这条路上模型拿不到工具，成本也只有一次调用。
+5. **回答**（`assistant.py`）：系统提示词只让模型根据搜到和读到的内容回答，拒绝无关请求，只说读者问的那种语言，最多 250 字；旧路径里段落和问题里的尖括号会被替换，模型无法闭合或伪造 `<docs>` 区块。最多输出 700 个 token，温度 0.2。模型、长度等参数由后端固定，调用方改不了。
+6. **成本上限**：调用走平台网关，用一个专为问芝士签发的虚拟 key（`service_credentials` 表，首次使用时签发，多进程用 advisory lock 保证只签一次）。这个 key 每 30 天最多花 `DOCS_ASSISTANT_BUDGET_USD`（默认 20 美元），并限 120 rpm；上游 key 不出网关。agent 这一路上一个问题的 token 是几轮之和，所以额度比旧路径用得快。
+7. **记录**：每个问题一行 `docs_questions`：问了什么、有没有答上、引用了哪些段落、用了多少 token、花了多久。`outcome = no_match` 的问题就是文档该补的地方。90 天后由后台任务清理（`DOCS_QUESTION_RETENTION_DAYS`）。
 
-浏览器端只渲染一小部分 Markdown，并且只保留指向这次检索到的段落的链接。
+浏览器端只渲染一小部分 Markdown，并且只保留指向这次回答可以引用的页面的链接。`tool` 事件显示成「正在搜：…」「正在读：…」：模型还在查的时候是展开的几行，一开始作答就折成一行「查了 N 步」（`src/walk.mjs`）。
 
-**划词问芝士**：在文档页选中一段正文，选区旁出现「问芝士」按钮；点它会打开面板，并把选中的文字作为引用带进下一个问题（请求里的 `quote`，最多 600 字）。后端用「引用 + 问题」一起检索，引用和问题一样转义后放在 `<docs>` 围栏之外，只作为「问的是什么」，不作为回答依据。
+**划词问芝士**：在文档页选中一段正文，选区旁出现「问芝士」按钮；点它会打开面板，并把选中的文字作为引用带进下一个问题（请求里的 `quote`，最多 600 字）。旧路径用「引用 + 问题」一起检索，引用和问题一样转义后放在 `<docs>` 围栏之外，只作为「问的是什么」，不作为回答依据；agent 这一路引用和问题一起交给模型，它会自己决定搜什么。
 
 ## AI 队友查文档 {#agent-docs}
 
@@ -177,4 +178,4 @@ AI 队友在平台里回答「怎么用」的问题时，用两个平台工具�
 
 ## 相关设置 {#settings}
 
-全部见 [环境变量全表](/dev/ref-env)，以 `DOCS_` 开头：`DOCS_INDEX_URL`、`DOCS_DEV_INDEX_URL`、`DOCS_DEV_REPOSITORIES`、`DOCS_ASSISTANT_MODEL`、`DOCS_ASSISTANT_BUDGET_USD`、`DOCS_ASSISTANT_HOURLY_LIMIT`、`DOCS_ASSISTANT_DAILY_LIMIT`、`DOCS_ASSISTANT_CONCURRENCY`、`DOCS_QUESTION_RETENTION_DAYS`、`DOCS_DEV_SESSION_SECONDS`。网关地址和管理密钥沿用 `LLM_GATEWAY_ADMIN_BASE`、`LLM_GATEWAY_ADMIN_KEY`；没配置时问芝士显示暂未开放。
+全部见 [环境变量全表](/dev/ref-env)，以 `DOCS_` 开头：`DOCS_INDEX_URL`、`DOCS_DEV_INDEX_URL`、`DOCS_DEV_REPOSITORIES`、`DOCS_ASSISTANT_MODEL`、`DOCS_ASSISTANT_AGENTIC`（默认 `true`；`false` 走一轮检索的旧路径）、`DOCS_ASSISTANT_BUDGET_USD`、`DOCS_ASSISTANT_HOURLY_LIMIT`、`DOCS_ASSISTANT_DAILY_LIMIT`、`DOCS_ASSISTANT_CONCURRENCY`、`DOCS_QUESTION_RETENTION_DAYS`、`DOCS_DEV_SESSION_SECONDS`。网关地址和管理密钥沿用 `LLM_GATEWAY_ADMIN_BASE`、`LLM_GATEWAY_ADMIN_KEY`；没配置时问芝士显示暂未开放。

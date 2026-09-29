@@ -30,7 +30,7 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.domain.admin.services import AdminService
-from app.domain.docs_site import access, assistant, library, retrieval
+from app.domain.docs_site import access, assistant, library, retrieval, tools
 from app.domain.docs_site.limits import AskLimits
 from app.domain.topic.services import TopicService
 
@@ -128,7 +128,12 @@ async def ask(
     auth: Annotated[AuthUserInfo, Depends(require_auth_user)],
 ) -> Response:
     """Answer one question from the public docs, streamed as server-sent events:
-    ``sources`` (what the answer may cite), ``delta`` (text), ``error``, ``done``."""
+    ``sources`` (what the answer may cite), ``tool`` (what it is looking at),
+    ``delta`` (text), ``error``, ``done``.
+
+    Which way the answer is found is ``settings.docs_assistant_agentic``: the
+    model searches and reads the docs itself (``assistant.run_agent``), or one
+    round of retrieval feeds it the sections (the original path, kept)."""
     started = time.monotonic()
     limits = ask_limits()
     verdict = await limits.admit(auth.user_id)
@@ -139,6 +144,37 @@ async def ask(
     if index is None:
         await limits.release(auth.user_id)
         return _refuse(503, "问芝士暂时读不到文档，稍后再试。", 30)
+
+    if settings.docs_assistant_agentic:
+        result = assistant.Outcome()
+        docs = tools.Docs(index)
+        key = await assistant.gateway_key(db)
+        if key is None:
+            await limits.release(auth.user_id)
+            return _refuse(503, "问芝士暂未开放，稍后再试。", 60)
+        if not limits.try_slot():
+            await limits.release(auth.user_id)
+            return _refuse(503, "现在问的人有点多，稍后再试。", 10)
+
+        async def agent_events():
+            try:
+                async for chunk in assistant.run_agent(
+                    key,
+                    body.question,
+                    docs,
+                    result,
+                    history=[t.model_dump() for t in body.history],
+                    quote=body.quote,
+                ):
+                    yield chunk
+                yield assistant.sse("done", {})
+            finally:
+                limits.free_slot()
+                # The reader may have gone; the bookkeeping must not go with them.
+                _bookkeep(auth.user_id, body, result, started)
+
+        return _stream(agent_events())
+
     # A quoted passage says what the question is about; search with both.
     query = f"{body.quote}\n{body.question}" if body.quote else body.question
     hits = retrieval.relevant(
@@ -173,19 +209,30 @@ async def ask(
         finally:
             if hits:
                 limits.free_slot()
-            # The reader may have gone; the bookkeeping must not go with them.
-            task = asyncio.get_running_loop().create_task(
-                _settle(auth.user_id, body, result, started)
-            )
-            _background.add(task)
-            task.add_done_callback(_background.discard)
+            _bookkeep(auth.user_id, body, result, started)
 
+    return _stream(events())
+
+
+def _stream(events) -> StreamingResponse:
     return StreamingResponse(
-        events(),
+        events,
         media_type="text/event-stream",
         # nginx must hand each event on as it comes rather than buffer the answer.
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+def _bookkeep(
+    user_id: int, body: AskRequest, result: assistant.Outcome, started: float
+) -> None:
+    """Record the question without holding up the response: the reader may have
+    gone, and the bookkeeping must not go with them."""
+    task = asyncio.get_running_loop().create_task(
+        _settle(user_id, body, result, started)
+    )
+    _background.add(task)
+    task.add_done_callback(_background.discard)
 
 
 async def _settle(

@@ -28,15 +28,22 @@ logger = logging.getLogger(__name__)
 REFRESH_SECONDS = 600
 _WORD = re.compile(r"[a-z0-9_./-]+")
 _CJK = re.compile(r"[㐀-鿿]+")
-# Function words, question words and the product's own name: they appear in
+# Function phrases, question phrases and the product's own name: they appear in
 # nearly every section, and inside a run of Chinese they would otherwise glue
 # onto content words as junk bigrams (「怎么邀请」→「么邀」).
+#
+# Only phrases of two characters or more: a single character is as likely to be
+# part of a content word as to be a function word, and splitting on one cuts the
+# word in half — 「请问怎么邀请成员」 split on 「请」 leaves 「邀」, which matches
+# nothing, so the question that most needed the 邀请 section never found it.
 _STOP = re.compile(
     "知是|芝士|怎么办|怎么样|怎么|什么|为什么|如何|可以|能不能|有没有|是不是|"
-    "一个|这个|那个|哪些|哪个|一下|自己|请问|帮我|给我|我们|你们|"
-    "[吗呢吧啊的了是我你他她它们在和与及或就都也还要会能让把给被从到对里上下中请]"
+    "一个|这个|那个|哪些|哪个|一下|自己|请问|帮我|给我|我们|你们"
 )
-# The words readers use for what the docs call something else.
+# The words readers use for what the docs call something else. Matched as
+# fragments anywhere in the question (a two-character fragment is enough: 「不回」
+# has to reach 「没有回复」, and readers write 「芝士不回我」 far more often than
+# 「芝士不回复我」).
 _SYNONYMS = {
     "电脑": "设备",
     "机器": "设备",
@@ -50,14 +57,15 @@ _SYNONYMS = {
     "交作业": "提交",
     "赛题": "题目",
     "没反应": "没有回复",
+    "不回": "没有回复",
+    "没回": "没有回复",
+    "不理": "没有回复",
     "不回复": "没有回复",
-    "不理我": "没有回复",
     "repo": "仓库",
     "github": "仓库",
     "代码库": "仓库",
     "合并": "采纳",
     "网页": "网站",
-    "额度": "额度",
     "token": "额度",
 }
 
@@ -93,6 +101,11 @@ class Section:
 class Hit:
     section: Section
     score: float
+    # How many of the question's terms this section carries, and how many the
+    # question had. One word in common out of six is a coincidence, not an
+    # answer; ``relevant`` reads both.
+    matched: int = 0
+    asked: int = 0
 
 
 @dataclass
@@ -140,7 +153,7 @@ class DocsIndex:
             # Coverage: sections matching more of the question's terms rank
             # above one lucky match.
             score *= 0.5 + 0.5 * matched / len(q)
-            hits.append(Hit(s, score))
+            hits.append(Hit(s, score, matched=matched, asked=len(q)))
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits[:limit]
 
@@ -148,15 +161,28 @@ class DocsIndex:
 # Below this, the best section shares too little with the question to answer
 # from; the assistant says the docs do not cover it instead of asking the model.
 MIN_SCORE = 1.5
+# And the best section must carry more than one of the question's terms, when
+# the question has more than one. 「芝士能记住我说过的话吗」 used to clear the
+# score bar on 「记住」 alone and hand the model four sections that do not
+# answer it; a question the docs do cover shares two terms or more. This is the
+# guard the old path gained — the score bar itself is left where it was, since
+# BM25 scores move with the size of the index and a bar raised on one index
+# refuses questions on another.
+MIN_MATCHED = 2
 
 
 def relevant(hits: list[Hit]) -> list[Hit]:
     """The hits worth answering from.
 
-    The best must clear MIN_SCORE; the rest must be within reach of it."""
+    The best must clear MIN_SCORE and cover more than one of the question's
+    terms; the rest must be within reach of it."""
     if not hits or hits[0].score < MIN_SCORE:
         return []
-    return [h for h in hits if h.score >= hits[0].score * 0.35][:4]
+    best = hits[0]
+    # A one-word question («邀请») can only ever match one term.
+    if best.matched < min(MIN_MATCHED, best.asked):
+        return []
+    return [h for h in hits if h.score >= best.score * 0.35][:4]
 
 
 class IndexSource:
