@@ -85,6 +85,7 @@ def _load_addon(
     scoped_secret: str = "",
     allow_header_attr: str = "",
     credential: str | None = None,
+    chatgpt_key: str = "",
 ):
     """Load a FRESH billing_addon module with env captured for this test.
 
@@ -108,6 +109,9 @@ def _load_addon(
     if credential is not None:
         credential_file.write_text(credential)
     monkeypatch.setenv("CHEESE_CLAUDE_CREDENTIAL", str(credential_file))
+    monkeypatch.setenv("CHEESE_CHATGPT_CREDENTIALS", str(tmp_path / "chatgpt"))
+    monkeypatch.setenv("CHEESE_CHATGPT_KEY", chatgpt_key)
+    monkeypatch.delenv("CHEESE_CODEX_CLIENT_VERSION", raising=False)
 
     _ADDON_LOADS += 1
     name = f"billing_addon_{_ADDON_LOADS}"
@@ -1020,7 +1024,9 @@ def test_the_credentials_requests_leave_through_its_egress(monkeypatch, tmp_path
 
     asyncio.run(mod.requestheaders(flow))
     connect = SimpleNamespace(
-        request=SimpleNamespace(headers={}), client_conn=flow.client_conn
+        # The CONNECT mitmproxy raises to open the tunnel names its target.
+        request=SimpleNamespace(host="api.anthropic.com", headers={}),
+        client_conn=flow.client_conn,
     )
     mod.http_connect_upstream(connect)
 
@@ -1811,3 +1817,341 @@ def test_an_oversize_subagent_body_keeps_the_old_streamed_road(monkeypatch, tmp_
     assert callable(flow.request.stream)
     body = flow.request.stream(b'{"model":"glm-4.6","messages":[]}')
     assert json.loads(body)["model"] == "claude-sonnet-5"
+
+
+# --- the ChatGPT listener ----------------------------------------------------
+#
+# The gateway (LiteLLM) sends a ChatGPT subscription request to
+# `/chatgpt/<account>/…` on the proxy's third listener, with the listener's key
+# as its Bearer; the proxy puts the account on it and sends it to ChatGPT.
+
+GATEWAY_KEY = "sk-cheese-chatgpt-listener-key"
+
+
+def _chatgpt_account_on_disk(tmp_path, name="work", *, expires_in_s=86400, **extra):
+    directory = tmp_path / "chatgpt" / name
+    directory.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "access_token": f"chatgpt-at-{name}",
+        "refresh_token": f"chatgpt-rt-{name}",
+        "id_token": "",
+        "expires_at": int(time.time() + expires_in_s),
+        "account_id": f"acct-{name}",
+        **extra,
+    }
+    (directory / "credential").write_text(json.dumps(doc))
+    return directory
+
+
+def _gateway_request(
+    path="/chatgpt/work/responses", *, bearer=GATEWAY_KEY, server_conn=None
+):
+    """What LiteLLM sends: plain HTTP on the docker bridge, its own headers."""
+    request = SimpleNamespace(
+        path=path,
+        host="chatgpt.com",
+        port=443,
+        scheme="https",
+        headers={
+            "authorization": f"Bearer {bearer}",
+            "content-type": "application/json",
+            "cookie": "session=gateway",
+            "x-api-key": "sk-something-else",
+            "chatgpt-account-id": "acct-forged",
+            "originator": "codex_cli_rs",
+            "proxy-authorization": "Basic Zm9vOmJhcg==",
+        },
+    )
+    return SimpleNamespace(
+        request=request,
+        client_conn=SimpleNamespace(
+            sni=None,
+            tls_established=False,
+            id="gateway-conn",
+            proxy_mode=SimpleNamespace(
+                type_name="reverse", address=("chatgpt.com", 443)
+            ),
+        ),
+        server_conn=server_conn or SimpleNamespace(via=None),
+        metadata={},
+        response=None,
+    )
+
+
+def _chatgpt_proxy(monkeypatch, tmp_path, *, key=GATEWAY_KEY):
+    return _load_addon(monkeypatch, tmp_path, chatgpt_key=key)
+
+
+def _refused(flow, status: int, *fragments: bytes) -> None:
+    assert flow.response is not None, "forwarded instead of refused"
+    assert flow.response.status_code == status, flow.response.content
+    for fragment in fragments:
+        assert fragment in flow.response.content
+    # A refusal that still streams the body is never delivered.
+    _mitmproxy_takes_over(flow)
+    assert flow.request.host == "chatgpt.com"
+    assert "chatgpt-at-" not in flow.request.headers.get("authorization", "")
+
+
+def test_a_gateway_request_goes_to_chatgpt_on_the_accounts_credential(
+    monkeypatch, tmp_path
+):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    flow = _gateway_request()
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is None
+    assert (flow.request.scheme, flow.request.host, flow.request.port) == (
+        "https",
+        "chatgpt.com",
+        443,
+    )
+    assert flow.request.path == "/backend-api/codex/responses"
+    headers = flow.request.headers
+    assert headers["authorization"] == "Bearer chatgpt-at-work"
+    assert headers["chatgpt-account-id"] == "acct-work"
+    assert headers["originator"] == "cheese"
+    assert headers["version"] == "0.153.4"
+    assert headers["host"] == "chatgpt.com"
+    assert headers["content-type"] == "application/json"
+    for gone in ("cookie", "x-api-key", "proxy-authorization"):
+        assert gone not in headers, gone
+    assert GATEWAY_KEY not in json.dumps(headers)
+    assert flow.server_conn.via is None
+    assert flow.request.stream is True
+
+
+def test_the_model_list_is_forwarded_with_its_query(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    flow = _gateway_request("/chatgpt/work/models?client_version=0.153.4")
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is None
+    assert flow.request.path == "/backend-api/codex/models?client_version=0.153.4"
+
+
+def test_the_client_version_sent_to_chatgpt_is_configurable(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHEESE_CODEX_CLIENT_VERSION", "9.9.9")
+    _install_mitmproxy_stub(monkeypatch)
+    spec = importlib.util.spec_from_file_location("billing_addon_version", ADDON)
+    mod = importlib.util.module_from_spec(spec)
+    monkeypatch.setenv("CHEESE_CHATGPT_KEY", GATEWAY_KEY)
+    monkeypatch.setenv("CHEESE_CHATGPT_CREDENTIALS", str(tmp_path / "chatgpt"))
+    monkeypatch.setenv("CHEESE_USAGE_LOG", str(tmp_path / "usage.jsonl"))
+    spec.loader.exec_module(mod)
+    _chatgpt_account_on_disk(tmp_path)
+    flow = _gateway_request()
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.request.headers["version"] == "9.9.9"
+
+
+def test_each_account_name_puts_its_own_account_on_the_request(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path, "work")
+    _chatgpt_account_on_disk(tmp_path, "spare")
+    first, second = _gateway_request(), _gateway_request("/chatgpt/spare/responses")
+
+    asyncio.run(mod.requestheaders(first))
+    asyncio.run(mod.requestheaders(second))
+
+    assert first.request.headers["authorization"] == "Bearer chatgpt-at-work"
+    assert second.request.headers["authorization"] == "Bearer chatgpt-at-spare"
+    assert second.request.headers["chatgpt-account-id"] == "acct-spare"
+
+
+def test_paths_other_than_responses_and_models_are_not_forwarded(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    for path in (
+        "/chatgpt/work/wham/usage",
+        "/chatgpt/work/responses/../../wham/usage",
+        "/v1/messages",
+        "/backend-api/codex/responses",
+    ):
+        flow = _gateway_request(path)
+        asyncio.run(mod.requestheaders(flow))
+        _refused(flow, 404)
+
+
+def test_an_unknown_account_is_answered_here(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path, "work")
+    flow = _gateway_request("/chatgpt/nobody/responses")
+
+    asyncio.run(mod.requestheaders(flow))
+
+    _refused(flow, 404, b"no ChatGPT account named 'nobody'")
+
+
+def test_a_logged_out_account_names_the_login_to_run(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    (tmp_path / "chatgpt" / "work").mkdir(parents=True)
+    flow = _gateway_request()
+
+    asyncio.run(mod.requestheaders(flow))
+
+    _refused(flow, 401, b"chatgpt-login.sh login work")
+
+
+def test_an_account_about_to_expire_is_renewed_before_it_goes_out(
+    monkeypatch, tmp_path
+):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path, expires_in_s=60)
+    refreshed = []
+    account = mod.CHATGPT_ACCOUNTS.get("work")
+
+    def grant(url, fields, timeout):
+        refreshed.append(fields["refresh_token"])
+        return 200, {"access_token": "chatgpt-at-RENEWED", "expires_in": 864000}
+
+    account._post = grant
+    flow = _gateway_request()
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert refreshed == ["chatgpt-rt-work"]
+    assert flow.request.headers["authorization"] == "Bearer chatgpt-at-RENEWED"
+
+
+def test_a_dead_account_is_refused_as_one_to_log_in_again(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path, expires_in_s=60)
+    mod.CHATGPT_ACCOUNTS.get("work")._post = lambda url, fields, timeout: (
+        400,
+        {"error": {"code": "refresh_token_reused"}},
+    )
+    flow = _gateway_request()
+
+    asyncio.run(mod.requestheaders(flow))
+
+    _refused(flow, 401, b"chatgpt-login.sh login work")
+
+
+def test_an_expired_account_whose_renewal_can_heal_is_retried(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path, expires_in_s=-5)
+
+    def down(url, fields, timeout):
+        raise OSError("connection reset")
+
+    mod.CHATGPT_ACCOUNTS.get("work")._post = down
+    flow = _gateway_request()
+
+    asyncio.run(mod.requestheaders(flow))
+
+    _refused(flow, 503, b"retry shortly")
+
+
+def test_only_a_caller_with_the_listeners_key_gets_an_account(monkeypatch, tmp_path):
+    """The listener is on the docker bridge, where every sandbox on the box can
+    reach it; a request that gets through spends a subscription."""
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    for bearer in ("wrong", "", GATEWAY_KEY + "x"):
+        flow = _gateway_request(bearer=bearer)
+        asyncio.run(mod.requestheaders(flow))
+        _refused(flow, 401)
+
+
+def test_without_a_configured_key_the_listener_refuses_everyone(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path, key="")
+    _chatgpt_account_on_disk(tmp_path)
+    for bearer in ("", "anything"):
+        flow = _gateway_request(bearer=bearer)
+        asyncio.run(mod.requestheaders(flow))
+        _refused(flow, 401, b"CHEESE_CHATGPT_KEY is not configured")
+
+
+def test_an_accounts_requests_leave_through_its_egress(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    directory = _chatgpt_account_on_disk(tmp_path)
+    (directory / "egress").write_text("http://me:pw@egress.example:3128\n")
+    flow = _gateway_request()
+
+    asyncio.run(mod.requestheaders(flow))
+    # The CONNECT mitmproxy raises to open the tunnel is sent to the egress.
+    connect = SimpleNamespace(
+        request=SimpleNamespace(host="chatgpt.com", headers={}),
+        client_conn=flow.client_conn,
+        server_conn=SimpleNamespace(address=flow.server_conn.via[1]),
+    )
+    mod.http_connect_upstream(connect)
+
+    assert flow.response is None
+    assert flow.server_conn.via == ("http", ("egress.example", 3128))
+    assert connect.request.headers["Proxy-Authorization"] == (
+        "Basic " + base64.b64encode(b"me:pw").decode()
+    )
+
+
+def test_the_next_account_on_the_same_connection_does_not_take_the_last_ones_route(
+    monkeypatch, tmp_path
+):
+    """The gateway keeps one connection open and sends every account down it,
+    and each request's flow starts from the server connection state the
+    previous one left."""
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    work = _chatgpt_account_on_disk(tmp_path, "work")
+    (work / "egress").write_text("http://egress.example:3128\n")
+    _chatgpt_account_on_disk(tmp_path, "spare")
+    first = _gateway_request()
+    asyncio.run(mod.requestheaders(first))
+    previous = first.server_conn
+
+    second = _gateway_request("/chatgpt/spare/responses", server_conn=previous)
+    asyncio.run(mod.requestheaders(second))
+
+    assert second.server_conn.via is None
+
+
+def test_two_accounts_on_one_proxy_address_with_different_logins_are_refused(
+    monkeypatch, tmp_path
+):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    for name, url in (
+        ("work", "http://a:1@egress.example:3128"),
+        ("spare", "http://b:2@egress.example:3128"),
+    ):
+        directory = _chatgpt_account_on_disk(tmp_path, name)
+        (directory / "egress").write_text(url)
+    flow = _gateway_request()
+
+    asyncio.run(mod.requestheaders(flow))
+
+    _refused(flow, 503, b"'work' and 'spare'")
+
+
+def test_the_anthropic_listeners_never_route_to_a_chatgpt_account(
+    monkeypatch, tmp_path
+):
+    mod = _load_addon(
+        monkeypatch, tmp_path, allow_header_attr="1", chatgpt_key=GATEWAY_KEY
+    )
+    _chatgpt_account_on_disk(tmp_path)
+    flow = _make_flow(path="/chatgpt/work/responses", caller_bearer=GATEWAY_KEY)
+
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.request.host == "api.anthropic.com"
+    assert not [v for v in flow.request.headers.values() if "chatgpt-at-" in v]
+
+
+def test_chatgpt_responses_stream_through_unmetered(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    flow = _gateway_request()
+    asyncio.run(mod.requestheaders(flow))
+    flow.response = _make_response()
+
+    mod.responseheaders(flow)
+    mod.response(flow)
+
+    assert flow.response.stream is True
+    assert not (tmp_path / "usage.jsonl").exists()

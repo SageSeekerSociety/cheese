@@ -26,6 +26,15 @@
 #   CHEESE_ALLOW_HEADER_ATTR  1 ONLY on bridge-only single-host deployments
 #   CONNECT_BIND_HOST       bind address for the CONNECT listener (see below);
 #                           0.0.0.0 on a box that serves MicroCloud machines
+#   CHEESE_CHATGPT_KEY      the Bearer the ChatGPT listener (:8445) demands:
+#                           the api_key of the gateway deployments pointed at
+#                           it. Empty refuses every request there.
+#   CHEESE_CODEX_CLIENT_VERSION  the `version` header sent to ChatGPT; empty
+#                           keeps the addon's default
+#
+# The ChatGPT listener (:8445) stays on the docker bridge like :443. Its only
+# intended caller is the gateway on this box, which reaches 172.17.0.1; the
+# sandboxes can reach it too, which is why it demands CHEESE_CHATGPT_KEY.
 #
 # The reverse listener (:443) stays on the docker bridge (172.17.0.1): only
 # sandboxes on this box reach it, and they are steered there by --add-host.
@@ -76,12 +85,14 @@ services:
       mitmdump --listen-host 0.0.0.0
       --mode reverse:https://api.anthropic.com@8443
       --mode regular@8444
+      --mode reverse:https://chatgpt.com@8445
       --ssl-insecure
       --set connection_strategy=lazy
       -s /addons/billing_addon.py
     ports:
       - "172.17.0.1:443:8443"
       - "${CONNECT_BIND_HOST:-172.17.0.1}:8444:8444"
+      - "172.17.0.1:8445:8445"
     environment:
       CHEESE_USAGE_LOG: /var/log/cheese/usage.jsonl
       CHEESE_TOKEN_CAP: ${CHEESE_TOKEN_CAP:-0}
@@ -90,6 +101,9 @@ services:
       CHEESE_ADMISSION_URL: ${CHEESE_ADMISSION_URL:-}
       CHEESE_GATEWAY_BASE: ${CHEESE_GATEWAY_BASE:-}
       CHEESE_CLAUDE_CREDENTIAL: /etc/cheese/claude-credential/credential
+      CHEESE_CHATGPT_CREDENTIALS: /etc/cheese/chatgpt-credential
+      CHEESE_CHATGPT_KEY: ${CHEESE_CHATGPT_KEY:-}
+      CHEESE_CODEX_CLIENT_VERSION: ${CHEESE_CODEX_CLIENT_VERSION:-}
     volumes:
       # The ledger. This MUST resolve to the same host directory the backend's
       # SUBSCRIPTION_USAGE_LOG points into — the proxy writes the rows and the
@@ -105,3 +119,6 @@ services:
       # (claude-login.sh). Writable, because a login's pair is refreshed here
       # and written back; a directory, so an atomic replace is seen at once.
       - ${CLAUDE_CREDENTIAL_DIR:-./claude-credential}:/etc/cheese/claude-credential
+      # The platform's ChatGPT accounts, one directory per name
+      # (chatgpt-login.sh), writable for the same reason as the Claude one.
+      - ${CHATGPT_CREDENTIAL_DIR:-./chatgpt-credential}:/etc/cheese/chatgpt-credential
