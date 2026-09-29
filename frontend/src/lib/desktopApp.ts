@@ -6,7 +6,7 @@
 import type { ThemePreference } from '@/theme'
 
 /** What an app can do beyond the window itself; an older app lists fewer. */
-export type DesktopAbility = 'notify' | 'badge'
+export type DesktopAbility = 'notices' | 'badge' | 'autostart'
 
 interface CheeseApp {
   /** 'overlay': the title bar is drawn over the page (macOS), so the page leaves room for its buttons. */
@@ -56,11 +56,23 @@ export function desktopCan(ability: DesktopAbility): boolean {
   return app()?.can?.includes(ability) ?? false
 }
 
-/** A system notification; clicking it opens `url`, a path in this web app. */
-export function desktopNotify(notice: { title: string; body: string; url: string }): void {
-  if (!desktopCan('notify')) return
+/**
+ * Hands the app a credential for this account's notices. From then on the app
+ * keeps its own connection to the server and shows them as system
+ * notifications, window or no window (desktop/src-tauri/src/notices.rs).
+ * `issue` asks the server for the credential, which opens nothing else.
+ */
+export async function desktopListenForNotices(account: number, issue: () => Promise<string>): Promise<void> {
+  if (!desktopCan('notices')) return
+  const token = await issue()
+  await tauri()?.core?.invoke('listen_for_notices', { token, account })
+}
+
+/** Signed out: the app stops listening and clears the count on its icon. */
+export function desktopStopNotices(): void {
+  if (!desktopCan('notices')) return
   tauri()
-    ?.core?.invoke('notify', notice)
+    ?.core?.invoke('stop_notices')
     .catch(() => {})
 }
 
@@ -86,4 +98,16 @@ export function onDesktopOpenPage(open: (path: string) => void): () => void {
     stopped = true
     stop?.()
   }
+}
+
+/** Whether the app opens by itself, out of sight, when the person logs in to this computer. */
+export async function desktopOpensAtLogin(): Promise<boolean> {
+  if (!desktopCan('autostart')) return false
+  return ((await tauri()?.core?.invoke('opens_at_login')) as boolean | undefined) ?? false
+}
+
+/** Rejects when the system refused; the setting is then as it was. */
+export async function setDesktopOpensAtLogin(on: boolean): Promise<void> {
+  if (!desktopCan('autostart')) return
+  await tauri()?.core?.invoke('set_opens_at_login', { on })
 }

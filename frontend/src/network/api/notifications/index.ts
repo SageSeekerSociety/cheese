@@ -3,11 +3,11 @@ import type {
   BulkUpdateResponse,
   ListNotificationsParams,
   ListNotificationsResponse,
+  LiveTokenResponse,
   MarkAllAsReadRequest,
   MarkAllAsReadResponse,
   Notification,
   NotificationUpdate,
-  PushFeedResponse,
   UnreadCountResponse,
 } from './types'
 
@@ -67,11 +67,10 @@ export namespace NotificationsApi {
       method: 'GET',
     })
 
-  // 浏览器推送会发的那几条，给收不到推送的桌面 app 来取（lib/desktopNotices.ts）
-  export const pushFeed = (after: number | null) =>
-    NewApiInstance.request<PushFeedResponse>({
-      url: '/notifications/push-feed',
-      method: 'GET',
-      params: after === null ? {} : { after },
+  // 桌面 app 自己连服务器收通知用的凭证，只能用来开那条连接（lib/desktopApp.ts）
+  export const liveToken = () =>
+    NewApiInstance.request<LiveTokenResponse>({
+      url: '/notifications/live-token',
+      method: 'POST',
     })
 }

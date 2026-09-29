@@ -368,7 +368,8 @@
   },
   "settings": {
     "realName": "实名信息",
-    "install": "安装到手机"
+    "install": "安装到手机",
+    "general": "通用"
   },
   "emailCode": {
     "title": "邮箱验证码登录",
@@ -420,5 +421,11 @@
       "more": "加载更多",
       "loadFailed": "未能加载访问记录"
     }
+  },
+  "general": {
+    "lede": "这里的设置只对这台电脑生效",
+    "openAtLogin": "开机时启动",
+    "openAtLoginHint": "登录电脑后在后台运行，有事时通知你",
+    "saveFailed": "保存失败"
   }
 }

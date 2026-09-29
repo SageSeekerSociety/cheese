@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod connect;
+mod notices;
 mod platform;
 mod resident;
 
@@ -169,6 +170,11 @@ fn main() {
         // back rather than starting a second app. Registered first, as it must be.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| resident::bring_back(app)))
         .plugin(tauri_plugin_opener::init())
+        // Off until the person turns it on; launched this way the app starts out of sight.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![resident::AT_LOGIN]),
+        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Size, position and maximized, from one launch to the next. Whether the
         // window is shown is the app's to decide at each launch, not a thing to restore.
@@ -179,13 +185,17 @@ fn main() {
         )
         .manage(connect::Running::default())
         .manage(resident::StartHidden::default())
+        .manage(notices::Notices::default())
         .invoke_handler(tauri::generate_handler![
             connect_this_machine,
             cancel_connect,
             this_device,
             set_theme,
-            resident::notify,
-            resident::set_badge
+            resident::set_badge,
+            resident::opens_at_login,
+            resident::set_opens_at_login,
+            notices::listen_for_notices,
+            notices::stop_notices
         ])
         // Closing the window keeps the app running (resident.rs); quitting is ⌘Q
         // on macOS and 退出 in the tray menu elsewhere.
@@ -209,15 +219,19 @@ fn main() {
                     .permission("allow-cancel-connect")
                     .permission("allow-this-device")
                     .permission("allow-set-theme")
-                    .permission("allow-notify")
-                    .permission("allow-set-badge"),
+                    .permission("allow-set-badge")
+                    .permission("allow-listen-for-notices")
+                    .permission("allow-stop-notices")
+                    .permission("allow-opens-at-login")
+                    .permission("allow-set-opens-at-login"),
             )?;
-            if restarted_by_update(app) {
+            if restarted_by_update(app) || std::env::args().any(|a| a == resident::AT_LOGIN) {
                 app.state::<resident::StartHidden>().0.store(true, Ordering::Relaxed);
             }
             #[cfg(not(target_os = "macos"))]
             resident::tray::install(app.handle())?;
             tauri::async_runtime::spawn(keep_updated(app.handle().clone()));
+            notices::resume(app.handle());
             let opener = app.handle().clone();
             let opener2 = app.handle().clone();
             // Anything that is not the server — docs, GitHub, a shared link — opens
@@ -227,7 +241,7 @@ fn main() {
             // and ../shell): where the server is, the theme last picked, whether
             // the title bar lies over the page, and what else the app can do for it.
             let about = format!(
-                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, can: [\"notify\", \"badge\"] }};"
+                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, can: [\"notices\", \"badge\", \"autostart\"] }};"
             );
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .initialization_script(about)

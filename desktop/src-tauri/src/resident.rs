@@ -4,12 +4,13 @@
 //! window hides it; the Dock icon (macOS) or the tray icon (Windows) brings it
 //! back, and so does opening the app again.
 //!
-//! What to notify and the count come from the page, which is signed in and
-//! polls the server (frontend/src/lib/desktopNotices.ts); the app only shows them.
+//! What to notify comes over the app's own connection to the server
+//! (notices.rs); the count comes from there too, and from the page whenever
+//! it has read the count itself.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Set while the window should stay out of sight at launch: after an update
 /// restarted the app behind someone's back. Cleared once anything brings it back.
@@ -31,7 +32,7 @@ pub fn bring_back(app: &AppHandle) {
 }
 
 /// Brings the window back on a page of the web app, e.g. "/inbox". The page
-/// routes there itself (desktopNotices.ts), without reloading.
+/// routes there itself (frontend/src/lib/desktopApp.ts), without reloading.
 pub fn open_page(app: &AppHandle, path: &str) {
     bring_back(app);
     let _ = app.emit_to("main", "open-page", path.to_string());
@@ -39,11 +40,14 @@ pub fn open_page(app: &AppHandle, path: &str) {
 
 /// A system notification. Clicking it opens `url`, a path in the web app.
 /// Nothing shows while the window is in front: the person is already looking.
-#[tauri::command]
-pub fn notify(app: AppHandle, window: WebviewWindow, title: String, body: String, url: String) {
-    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
+pub fn show_notice(app: &AppHandle, title: String, body: String, url: String) {
+    let in_front = app
+        .get_webview_window("main")
+        .is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false));
+    if in_front {
         return;
     }
+    let app = app.clone();
     let identifier = app.config().identifier.clone();
     // Each notification waits for its answer on a thread of its own; the answer
     // may come minutes later, or never.
@@ -75,18 +79,45 @@ pub fn notify(app: AppHandle, window: WebviewWindow, title: String, body: String
     });
 }
 
+/// The page read the count of things waiting and says what it is.
+#[tauri::command]
+pub fn set_badge(app: AppHandle, count: u32) {
+    show_waiting(&app, count);
+}
+
 /// How many things wait on the person: the number on the Dock icon (macOS), a
 /// dot on the taskbar button (Windows, which shows no numbers), and the tray menu.
-#[tauri::command]
-pub fn set_badge(app: AppHandle, window: WebviewWindow, count: u32) {
-    #[cfg(windows)]
-    let _ = window.set_overlay_icon((count > 0).then(dot));
-    #[cfg(not(windows))]
-    let _ = window.set_badge_count((count > 0).then_some(i64::from(count)));
+pub fn show_waiting(app: &AppHandle, count: u32) {
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(windows)]
+        let _ = window.set_overlay_icon((count > 0).then(dot));
+        #[cfg(not(windows))]
+        let _ = window.set_badge_count((count > 0).then_some(i64::from(count)));
+    }
     #[cfg(not(target_os = "macos"))]
-    tray::show_count(&app, count);
-    #[cfg(target_os = "macos")]
-    let _ = app;
+    tray::show_count(app, count);
+}
+
+/// Launched by the system at login (`AT_LOGIN`): the app starts out of sight.
+pub const AT_LOGIN: &str = "--at-login";
+
+/// Whether the app opens by itself when the person logs in. Off until they turn it on.
+#[tauri::command]
+pub fn opens_at_login(app: AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+pub fn set_opens_at_login(app: AppHandle, on: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    if on {
+        launcher.enable()
+    } else {
+        launcher.disable()
+    }
+    .map_err(|e| e.to_string())
 }
 
 /// An amber dot for the taskbar button, drawn here so it needs no image file.

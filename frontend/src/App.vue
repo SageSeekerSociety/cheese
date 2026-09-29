@@ -253,8 +253,13 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
 import { autoConnectThisComputer } from '@/lib/desktop'
-import { onDesktopOpenPage, tellDesktopTheme } from '@/lib/desktopApp'
-import { watchForDesktopNotices } from '@/lib/desktopNotices'
+import {
+  desktopBadge,
+  desktopListenForNotices,
+  desktopStopNotices,
+  onDesktopOpenPage,
+  tellDesktopTheme,
+} from '@/lib/desktopApp'
 import { landBootSplash } from '@/lib/desktopSplash'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { pageMotion } from '@/lib/pageMotion'
@@ -268,6 +273,7 @@ import {
   saveProjectOrder,
 } from '@/lib/projectOrder'
 import { myHandle } from '@/me'
+import { NotificationsApi } from '@/network/api/notifications'
 import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
@@ -467,23 +473,23 @@ watch(
   { immediate: true }
 )
 
-// The desktop app calls the person back while its window is closed: system
-// notifications and the count of things waiting (lib/desktopNotices.ts). A
-// clicked notification or the tray menu opens its page here.
-let stopDesktopNotices = () => {}
+// The desktop app calls the person back while its window is closed: once handed
+// a credential it keeps its own connection for this account's notices, and it
+// shows the count of things waiting on its icon. A clicked notification or the
+// tray menu opens its page here.
 watch(
   () => AccountService.loggedIn && AccountService.user?.id,
-  (userId) => {
-    stopDesktopNotices()
-    stopDesktopNotices = typeof userId === 'number' ? watchForDesktopNotices(userId) : () => {}
+  (userId, previous) => {
+    if (typeof userId === 'number') {
+      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).data.token).catch(() => {})
+    } else if (typeof previous === 'number') {
+      desktopStopNotices()
+    }
   },
   { immediate: true }
 )
 const stopOpeningPages = onDesktopOpenPage((path) => void router.push(path))
-onBeforeUnmount(() => {
-  stopDesktopNotices()
-  stopOpeningPages()
-})
+onBeforeUnmount(stopOpeningPages)
 
 // 上次开过的那个项目存在 workspace store 的布局里，所以冷启动也落得回去。
 const workspaceProjectId = computed<string | null>(() =>
@@ -492,6 +498,8 @@ const workspaceProjectId = computed<string | null>(() =>
 
 // 「待办」那一格的件数：桌面画在 rail 上，手机画在底栏上。
 const awaitingCount = useAwaitingCount(computed(() => AccountService._loggedIn.value))
+// The same number on the desktop app's icon, whenever this page has read it.
+watch(awaitingCount, desktopBadge)
 
 const navSources = computed<NavSources>(() => ({
   projects: railProjects.value,
