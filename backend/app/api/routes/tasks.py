@@ -111,6 +111,7 @@ async def get_task_submission_service(db=Depends(get_db)) -> TaskSubmissionServi
         entry_repo=entry_repo,
         review_repo=review_repo,
         membership_repo=membership_repo,
+        session=db,
     )
 
 
@@ -130,6 +131,7 @@ async def get_task_submission_review_service(
         membership_repo=membership_repo,
         task_repo=task_repo,
         rank_service=rank_service,
+        session=db,
     )
 
 
