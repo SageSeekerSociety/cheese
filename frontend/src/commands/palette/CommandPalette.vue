@@ -26,6 +26,7 @@ import { paletteAsk, paletteOpen } from './state'
 import { defineCommands, menuActionOf } from '@/commands'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import { t } from '@/i18n'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const router = useRouter()
 const route = useRoute()
@@ -37,10 +38,26 @@ const recents = ref(readRecents())
 const field = ref<HTMLInputElement | null>(null)
 let returnFocus: HTMLElement | null = null
 
-const ctx = computed<SourceContext>(() => ({
+// 在哪个项目里找。默认跟着当前页；空着按退格去掉范围（跨项目只找名字），在一个项目
+// 上按 Tab 进到那个项目里。每次打开都回到当前页所在的项目。
+const routeCtx = computed<SourceContext>(() => ({
   projectId: typeof route.params.projectId === 'string' ? route.params.projectId : null,
   router,
 }))
+const scope = ref<string | null | undefined>(undefined)
+const ctx = computed<SourceContext>(() =>
+  scope.value === undefined ? routeCtx.value : { projectId: scope.value, router }
+)
+const store = useWorkspaceStore()
+const scopeName = computed(() =>
+  ctx.value.projectId ? store.projects.find((project) => project.id === ctx.value.projectId)?.name : undefined
+)
+
+function enterScope(projectId: string) {
+  scope.value = projectId
+  input.value = ''
+  acting.value = null
+}
 
 // 「最近去过」不列你现在就在的地方。
 const recentElsewhere = computed(() =>
@@ -63,7 +80,8 @@ watch([input, () => ctx.value.projectId, paletteOpen], () => {
   clearTimeout(timer)
   const ask = ++asked
   remote.value = new Map()
-  const targets = paletteOpen.value ? remoteSources(input.value, paletteSources) : []
+  // 内容只在一个项目里搜。
+  const targets = paletteOpen.value && ctx.value.projectId ? remoteSources(input.value, paletteSources) : []
   searching.value = targets.length > 0
   if (!targets.length) return
   const text = splitPrefix(input.value).query
@@ -102,6 +120,7 @@ watch(rows, (next) => {
 watch(paletteOpen, async (open) => {
   acting.value = null
   paletteAsk.value = null
+  scope.value = undefined
   if (open) {
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     input.value = ''
@@ -136,7 +155,7 @@ onBeforeUnmount(
 onBeforeUnmount(
   router.afterEach((to) => {
     for (const source of paletteSources) {
-      const item = source.fromRoute?.(to, ctx.value)
+      const item = source.fromRoute?.(to, routeCtx.value)
       if (item) {
         recordVisit(item)
         return
@@ -173,6 +192,8 @@ function actionsOf(row: ResultRow): MenuCommand[] {
       icon: 'mdi-open-in-new',
       run: () => choose(row, true),
     })
+  if (row.scope)
+    list.push({ id: 'palette.scope', title: t('navigation.palette.searchIn'), icon: 'mdi-magnify', run: () => {} })
   return [...list, ...(row.actions?.() ?? [])]
 }
 
@@ -191,7 +212,15 @@ function openActions(row: ResultRow | undefined) {
 }
 
 async function runAction(action: MenuCommand) {
+  const row = acting.value?.row
   acting.value = null
+  // 进到一个项目里搜：面板留着，换个范围接着打字。
+  if (action.id === 'palette.scope' && row?.scope) {
+    enterScope(row.scope)
+    await nextTick()
+    field.value?.focus()
+    return
+  }
   action.run?.()
   // 这件事要在面板里接着问一句（重命名）：面板留着，输入框换成它。
   if (paletteAsk.value) {
@@ -276,7 +305,13 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Tab') {
     // Tab 在面板里不挪焦点：焦点一离开输入框，方向键和回车就不归面板了。
     event.preventDefault()
-    openActions(rows.value[selected.value])
+    const row = rows.value[selected.value]
+    if (row?.scope) enterScope(row.scope)
+    else openActions(row)
+  } else if (event.key === 'Backspace' && !input.value && ctx.value.projectId) {
+    // 空着按退格：去掉项目范围，跨项目只找名字。
+    event.preventDefault()
+    scope.value = null
   } else if (event.key === 'ArrowDown') {
     event.preventDefault()
     if (rows.value.length) selected.value = (selected.value + 1) % rows.value.length
@@ -351,8 +386,18 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
                 @keydown="onAskKeydown"
               />
             </template>
+            <button
+              v-if="!paletteAsk && scopeName"
+              type="button"
+              class="palette__asking palette__scope"
+              :title="t('navigation.palette.leaveScope')"
+              :aria-label="t('navigation.palette.leaveScope')"
+              @click="scope = null"
+            >
+              {{ scopeName }}<v-icon icon="mdi-chevron-right" size="14" />
+            </button>
             <input
-              v-else
+              v-if="!paletteAsk"
               ref="field"
               v-model="input"
               type="text"
@@ -437,7 +482,8 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
             <span class="palette__keys">
               <span v-if="paletteAsk || acting">{{ t('navigation.palette.back') }} <kbd>Esc</kbd></span>
               <template v-else-if="selectedRow">
-                <span v-if="hasMore(selectedRow)">{{ t('navigation.palette.more') }} <kbd>Tab</kbd></span>
+                <span v-if="selectedRow.scope">{{ t('navigation.palette.searchIn') }} <kbd>Tab</kbd></span>
+                <span v-else-if="hasMore(selectedRow)">{{ t('navigation.palette.more') }} <kbd>Tab</kbd></span>
                 <span v-if="selectedRow.to">
                   {{ t('navigation.palette.newTab') }} <kbd>{{ enterKey }}</kbd> <kbd>↵</kbd>
                 </span>
@@ -602,6 +648,13 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
   font-size: 13px;
   line-height: var(--lh-13);
   white-space: nowrap;
+}
+.palette__scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 0;
+  cursor: pointer;
 }
 .palette__foot {
   display: flex;
