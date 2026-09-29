@@ -17,7 +17,7 @@ import logging
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
@@ -53,7 +53,11 @@ from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
-from app.domain.identity.handles import names_a_person, recipient_seat
+from app.domain.identity.handles import (
+    message_recipients,
+    names_a_person,
+    recipient_seat,
+)
 from app.domain.topic import doc_nudge
 from app.domain.topic_membership.services import addressable_seat
 
@@ -79,6 +83,28 @@ def addressed_to_agent(handle: str | None) -> Addressed:
     检查红了，共同点都是「芝士停在这里，接下来只有它能往下走」。
     """
     return address(Event(asked=handle), Hand.participant) if handle else NOBODY
+
+
+def landed_recipients(payloads: list[dict]) -> list[Mapping[str, object]]:
+    """The teammates a just-posted message was addressed to, in order, once each.
+
+    Read back from what was stored rather than from the request: resolving
+    「@名字」 against the room's roster is what the write did (I13), and this is
+    the same fact the turn's own addressing reads. Every block of one send
+    carries it — a text block and its images are one message, however many
+    teammates it names — so the list is built across the payloads and deduped
+    rather than taken from the first one.
+    """
+    recipients: list[Mapping[str, object]] = []
+    seen: set[tuple[object, object]] = set()
+    for payload in payloads:
+        for recipient in message_recipients(payload.get("meta")):
+            key = (recipient.get("instance_id"), recipient.get("handle"))
+            if key in seen:
+                continue
+            seen.add(key)
+            recipients.append(recipient)
+    return recipients
 
 
 def _fire_on_done(callback: Callable[[], None]) -> None:
@@ -227,29 +253,7 @@ class InProcessBroker:
             client_id=client_id,
         )
         turn_id = user_block_id
-        recipient = next(
-            (
-                (payload.get("meta") or {}).get("agent_recipient")
-                for payload in payloads
-                if (payload.get("meta") or {}).get("agent_recipient")
-            ),
-            None,
-        )
-        recipient_handle = (recipient or {}).get("handle")
-        mentioned = any(
-            (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
-            for payload in payloads
-        )
-        # 点到的是**席位**，不是这个队友自己的名字。`agent_recipient.handle` 是项目
-        # 给它起的名（`reviewer`、`planner`…，`AgentInstance.handle` 允许任意小写
-        # 串），而一条投递怎么到达是按席位的命名规矩判出来的
-        # （`how_it_arrives` → `looks_like_agent_handle`）。拿实例名去问，一个没叫
-        # `cheese` 开头的队友就永远不是「靠一轮收到」—— @ 它、和它私聊，都跑不起一
-        # 轮。席位由实例 id 定，和名册上坐的那个字符串是同一个。
-        #
-        # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
-        # 问的是「哪个实例在跑」，那边认的就是实例名。
-        addressed = addressed_to_agent(recipient_seat(recipient) if mentioned else None)
+        recipients = landed_recipients(payloads)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self.publish(channel, {"type": "user_block", "block": payload})
@@ -263,29 +267,64 @@ class InProcessBroker:
         if duplicate:
             return turn_id
         if self._message_subscriber is not None:
-            self._message_subscriber(
-                chat_service,
-                topic_id,
-                turn_id,
-                addressed=addressed,
-                continuation_id=turn_id,
-                author=author,
-                content=next(
-                    (
-                        payload["content"]
-                        for payload in payloads
-                        if payload.get("id") == str(user_block_id) and content
+            # One arrival per teammate the message named. A room seats several
+            # agents and a person may @ more than one of them in one message;
+            # that message is addressed to each of them, so each of them gets
+            # what a single @ would have given it — its own turn, on its own
+            # seat, in parallel with the others (docs/manual/dev/turn.md
+            # #seats). Its blocks are stored once, so the room shows one message
+            # however many teammates were named.
+            #
+            # A message that names nobody still has exactly one recipient (the
+            # room's agent), and this is the single delivery it was.
+            targets = [r for r in recipients if r.get("mentioned")] or recipients[:1]
+            for index, recipient in enumerate(targets):
+                # 点到的是**席位**，不是这个队友自己的名字。`handle` 是项目给它
+                # 起的名（`reviewer`、`planner`…，`AgentInstance.handle` 允许任意
+                # 小写串），而一条投递怎么到达是按席位的命名规矩判出来的
+                # （`how_it_arrives` → `looks_like_agent_handle`）。拿实例名去
+                # 问，一个没叫 `cheese` 开头的队友就永远不是「靠一轮收到」——
+                # @ 它、和它私聊，都跑不起一轮。席位由实例 id 定，和名册上坐的那
+                # 个字符串是同一个。
+                #
+                # `recipient_handle` 不跟着改：`converse_prepared` /
+                # `merge_into_running_turn` 问的是「哪个实例在跑」，那边认的就是
+                # 实例名。
+                seat = recipient_seat(recipient)
+                instance_id = recipient.get("instance_id")
+                self._message_subscriber(
+                    chat_service,
+                    topic_id,
+                    # A turn is its own unit of work, with its own interval row
+                    # and its own place in the room's activity; two seats
+                    # answering one message are two turns and must not share an
+                    # id. The first keeps the human message's, so a room with one
+                    # teammate named has exactly what it had.
+                    turn_id if index == 0 else uuid.uuid4(),
+                    addressed=addressed_to_agent(
+                        seat if recipient.get("mentioned") else None
                     ),
-                    content,
-                ),
-                reply_to=reply_to,
-                attachments=attachments,
-                provision_actor=provision_actor,
-                landed_user_block_id=user_block_id,
-                landed_user_block_ids=user_block_ids,
-                live_delivery_expected=live_delivery_expected,
-                recipient_handle=recipient_handle,
-            )
+                    continuation_id=turn_id,
+                    author=author,
+                    content=next(
+                        (
+                            payload["content"]
+                            for payload in payloads
+                            if payload.get("id") == str(user_block_id) and content
+                        ),
+                        content,
+                    ),
+                    reply_to=reply_to,
+                    attachments=attachments,
+                    provision_actor=provision_actor,
+                    landed_user_block_id=user_block_id,
+                    landed_user_block_ids=user_block_ids,
+                    live_delivery_expected=live_delivery_expected,
+                    recipient_handle=recipient.get("handle"),
+                    recipient_instance_id=(
+                        uuid.UUID(str(instance_id)) if instance_id else None
+                    ),
+                )
         return turn_id
 
     def subscribe_messages(self, subscriber: Callable[..., None]) -> None:
@@ -1246,28 +1285,39 @@ class AgentWorkRunner:
                 continue
             rooms.setdefault(block.topic_id, block)
         for topic_id, block in rooms.items():
-            recipient = (block.meta or {}).get("agent_recipient") or {}
             logger.info(
                 "starting the turn a previous backend never began topic=%s block=%s",
                 topic_id,
                 block.id,
             )
-            self._receive_message(
-                chat_service,
-                topic_id,
-                block.id,
-                addressed=addressed_to_agent(recipient_seat(recipient)),
-                continuation_id=block.id,
-                author=block.author,
-                content=block.content,
-                reply_to=str(block.reply_to) if block.reply_to else None,
-                attachments=None,
-                provision_actor=None,
-                landed_user_block_id=block.id,
-                landed_user_block_ids=[block.id],
-                live_delivery_expected=False,
-                recipient_handle=recipient.get("handle"),
-            )
+            # Every teammate the message named, not just the first of them: the
+            # wake-up a dropped turn owes is one per seat, the same as the one
+            # the live path does. `begun` above still asks about the message's
+            # own turn — the first seat's — because that is the only one a
+            # reader of this block can name.
+            targets = [r for r in message_recipients(block.meta) if r.get("mentioned")]
+            for index, recipient in enumerate(targets or [{}]):
+                self._receive_message(
+                    chat_service,
+                    topic_id,
+                    block.id if index == 0 else uuid.uuid4(),
+                    addressed=addressed_to_agent(recipient_seat(recipient)),
+                    continuation_id=block.id,
+                    author=block.author,
+                    content=block.content,
+                    reply_to=str(block.reply_to) if block.reply_to else None,
+                    attachments=None,
+                    provision_actor=None,
+                    landed_user_block_id=block.id,
+                    landed_user_block_ids=[block.id],
+                    live_delivery_expected=False,
+                    recipient_handle=recipient.get("handle"),
+                    recipient_instance_id=(
+                        uuid.UUID(str(recipient["instance_id"]))
+                        if recipient.get("instance_id")
+                        else None
+                    ),
+                )
         return len(rooms)
 
     async def sweep_orphans(
@@ -2082,6 +2132,11 @@ class AgentWorkRunner:
                     **(
                         {"recipient_handle": recipient_handle}
                         if recipient_handle is not None
+                        else {}
+                    ),
+                    **(
+                        {"recipient_instance_id": recipient_instance_id}
+                        if recipient_instance_id is not None
                         else {}
                     ),
                 )

@@ -122,6 +122,7 @@ from app.domain.block.models import (
     Block,
     BlockKind,
     agent_notice,
+    consumed_by,
     consumed_turn,
     prompted_turn,
 )
@@ -131,8 +132,11 @@ from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
+    RECIPIENT_META_KEY,
+    RECIPIENTS_META_KEY,
     agent_instance_handle,
     looks_like_agent_handle,
+    message_recipients,
     names_a_person,
     recipient_seat,
 )
@@ -1106,7 +1110,9 @@ def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
 
 
-def _pending_input_blocks(history: list[Block]) -> list[Block]:
+def _pending_input_blocks(
+    history: list[Block], *, for_handle: str | None = None
+) -> list[Block]:
     """The messages/attachments no turn has read into a prompt yet.
 
     轮次边界按**归属**划，不按位置划：一条在轮次运行中到达的人类消息，created_at
@@ -1120,6 +1126,11 @@ def _pending_input_blocks(history: list[Block]) -> list[Block]:
     watermark over another tracked input. Legacy blocks have no marker and keep
     the old "after the latest AI message" fallback.
 
+    ``for_handle`` asks the window one seat's turn asks — this input is pending
+    for ME. A message that named several teammates is pending for each of them
+    until each has taken it (`consumed_by`); the room's own question, asked
+    without a handle, is whether any turn has taken it at all.
+
     `history` 已按 created_at 升序。
     """
     legacy_watermark = -1
@@ -1130,15 +1141,38 @@ def _pending_input_blocks(history: list[Block]) -> list[Block]:
         b
         for i, b in enumerate(history)
         if _is_pending_input(b)
-        and consumed_turn(b) is None
+        and not consumed_by(b, for_handle)
         and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
     ]
 
 
 def _addressed_to(block: Block, handle: str) -> bool:
     """Is this input for the agent `handle`? One without a recipient is for
-    whichever agent the room resolves to, which the caller passes in."""
-    return (block.meta or {}).get("agent_recipient", {}).get("handle", handle) == handle
+    whichever agent the room resolves to, which the caller passes in.
+
+    一条消息可以同时点名几位队友（`message_recipients`）：那几位各自是它的收件
+    人，而没被点到的座位读不到它。这是「这一轮该不该读这句话」的判据，也是
+    `pending` 窗口之外那一半 —— 光有窗口不够，窗口里躺着的是整个房间的消息。"""
+    recipients = message_recipients(block.meta)
+    if not recipients:
+        return True
+    return any(r.get("handle", handle) == handle for r in recipients)
+
+
+def _recipient_meta(recipients: list[dict], **extra: object) -> dict:
+    """The `meta` a message carries about who it was addressed to.
+
+    `agent_recipient` is the head of the list and is written for every message:
+    it is what every reader written before a room could seat several teammates
+    reads, and the room's whole answer when a message names one. The list goes
+    in beside it only when there is more than one teammate to name — a message
+    with one addressee is not a different fact from the one it always was, and
+    no reader should have to ask two records which teammate it is for.
+    """
+    meta: dict = {RECIPIENT_META_KEY: recipients[0], **extra}
+    if len(recipients) > 1:
+        meta[RECIPIENTS_META_KEY] = recipients
+    return meta
 
 
 def _pending_platform_notices(history: list[Block]) -> list[Block]:
@@ -1717,11 +1751,17 @@ class ChatService:
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
         recipient_handle: str | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Run the AI half of a human message that is already durable.
 
         ``InProcessBroker.receive_message`` owns the receive-before-admission ordering;
         this method starts only after the project gate admits the model work.
+
+        ``recipient_instance_id`` names the teammate this turn is FOR. One
+        message may name several, each with a turn of its own, and the block
+        they share carries the first of them — so the seat a turn runs on has to
+        be handed down, not read back off the message.
         """
         seat_handle = await self._turn_seat_handle(
             topic_id,
@@ -1736,6 +1776,7 @@ class ChatService:
                 user_block_id=user_block_id,
                 continuation_id=continuation_id,
                 provision_actor=provision_actor,
+                recipient_instance_id=recipient_instance_id,
             ):
                 yield frame
 
@@ -2056,10 +2097,19 @@ class ChatService:
             text, block_ids, consuming_turn_id, _written_at = entry
             if prompt == text or (text and prompt.startswith(text)):
                 pending.remove(entry)
+                # Which seat's turn this was. An injected message stamped
+                # consumed has to say WHO consumed it, or a message naming
+                # several teammates is taken from the ones that never saw it.
+                state = self._hook_work.get((topic_id, consuming_turn_id))
+                consumed_by_seat = (
+                    (state.agent_instance_handle or state.acting_agent)
+                    if state is not None
+                    else None
+                )
                 try:
                     async with self._sessions() as session:
                         await BlockRepository(session).mark_consumed(
-                            block_ids, consuming_turn_id
+                            block_ids, consuming_turn_id, by=consumed_by_seat
                         )
                         from app.domain.delivery.agent import receive_attempt
 
@@ -3594,7 +3644,7 @@ class ChatService:
         history = await BlockRepository(session).turn_history(state.topic_id)
         fed = {
             block.id: turn
-            for block in _pending_input_blocks(history)
+            for block in _pending_input_blocks(history, for_handle=handle)
             if (turn := prompted_turn(block)) is not None
             and _addressed_to(block, handle)
         }
@@ -3692,7 +3742,9 @@ class ChatService:
                 state.pending_ids | set(await self._delivered_unread(session, state))
             )
             if not result.is_error:
-                await blocks.mark_consumed(fed, state.work_id)
+                await blocks.mark_consumed(
+                    fed, state.work_id, by=state.agent_instance_handle
+                )
             else:
                 await blocks.forget_prompted_turn(fed)
             await session.commit()
@@ -3811,6 +3863,10 @@ class ChatService:
                 "handle": agent.handle,
                 "mentioned": seats is not None and looks_like_agent_handle(seats[1]),
             }
+            # 这条消息交给谁。没点名就是房间里那一位（往下 `recipients` 不变）；
+            # 点名了就每位被点到的队友各是一条，第一条同时写回上面那个单数字
+            # 段 —— 老读者只认它，所以它必须还是今天的那个答案（first named）。
+            recipients = [recipient]
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
             # B3: a reply threads under a block IN THIS TOPIC. A client that
@@ -3832,23 +3888,31 @@ class ChatService:
                     reply_uuid = None
             if content:
                 content, roster = mentions.content, mentions.roster
-                # WHICH agent was addressed, not merely whether one was. The
+                # WHICH agents were addressed, not merely whether one was. The
                 # flag alone left `handle`/`instance_id` naming whoever the room
                 # pointed at, so @-ing the second teammate ran the first one's
-                # turn. A room holds members; the one addressed answers, exactly
-                # as for a person.
-                addressed = next(
-                    (h for h in agent_handles if f"<@{h}>" in content), None
-                )
-                if addressed is not None:
-                    recipient["mentioned"] = True
-                    named = by_seat.get(addressed)
-                    if named is not None:
-                        recipient["instance_id"] = str(named.id)
-                        recipient["handle"] = named.handle
-                    # A seat still under the room-derived handle names no
-                    # instance, and that seat IS the agent the room points at,
-                    # so the recipient resolved above is already the right one.
+                # turn. A room holds members; the ones addressed answer, exactly
+                # as for a person — and a message may address more than one of
+                # them, in which case each of them is a recipient of it and each
+                # gets its own turn. Naming the same teammate twice is still one
+                # arrival: `agent_handles` lists each seat once.
+                addressed = [h for h in agent_handles if f"<@{h}>" in content]
+                if addressed:
+                    recipients = []
+                    for seat in addressed:
+                        named = by_seat.get(seat)
+                        # A seat still under the room-derived handle names no
+                        # instance, and that seat IS the agent the room points
+                        # at, so the recipient resolved above is already the
+                        # right one — both fields of it, not just the id: the
+                        # handle is what `_addressed_to` matches the room's
+                        # agent by when no instance answers.
+                        entry = {**recipient, "mentioned": True}
+                        if named is not None:
+                            entry["instance_id"] = str(named.id)
+                            entry["handle"] = named.handle
+                        recipients.append(entry)
+                    recipient = recipients[0]
                 user_block = await blocks.add(
                     project_id=topic.project_id,
                     topic_id=place.room_id,
@@ -3863,10 +3927,10 @@ class ChatService:
                     # it was typed (§14.1 实时) needs to recognise its own copy
                     # coming home; matching on text cannot do that, because this
                     # method rewrites the text on the way in.
-                    meta={
-                        "agent_recipient": recipient,
+                    meta=_recipient_meta(
+                        recipients,
                         **({"client_id": client_id} if client_id else {}),
-                    },
+                    ),
                 )
                 if attribution_id is None:
                     attribution_id = user_block.id
@@ -3890,14 +3954,14 @@ class ChatService:
                     turn_id=attribution_id,
                     # An image-only send still honors the reply thread (B3).
                     reply_to=None if content else reply_uuid,
-                    meta={
-                        "agent_recipient": recipient,
+                    meta=_recipient_meta(
+                        recipients,
                         **(
                             {"client_id": client_id}
                             if not content and index == 0 and client_id
                             else {}
                         ),
-                    },
+                    ),
                 )
                 if attribution_id is None:
                     attribution_id = att_block.id
@@ -5445,13 +5509,21 @@ class ChatService:
                         instance_id=uuid.UUID(recipient["instance_id"]),
                     )
                 )
-            pending = [block for block in pending if _addressed_to(block, agent.handle)]
+            pending = [
+                block
+                for block in _pending_input_blocks(history, for_handle=agent.handle)
+                if _addressed_to(block, agent.handle)
+            ]
             prompt_pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
                 # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
                 # @，第一轮在锁上把两条合并答掉）。再跑一轮就是白烧一轮算力，还会
                 # 走下面的 platform_prompt 兜底、把已经答过的话当成平台指令重投一
                 # 遍。这里直接收工 —— 只是不跑这一轮，不碰任何排队/锁的逻辑。
+                #
+                # 一条点名了**几位**队友的消息不在这里：它对每一位都还是待读的，
+                # 直到那一位自己把它读进去（`consumed_by`），所以先答完的那位不会
+                # 把这一轮从别人手里收走。
                 return _TurnBail([{"type": "done"}])
             # 盖章清单比 prompt 清单窄（多 agent 房间，2026-09-28 定）：
             # 没被 @ 的公共消息每个轮次都看得见，但只由「被人召唤起来的轮次」

@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+from app.domain.identity.handles import message_recipients
 
 
 class BlockKind(enum.StrEnum):
@@ -91,6 +92,19 @@ class AuthorType(enum.StrEnum):
 # 查询/索引，而本仓多个 agent 并发改动，一次 alembic 分叉的代价高于一列的收益。
 CONSUMED_TURN_META_KEY = "consumed_turn"
 
+# {seat handle: turn id} — who has read this block, one turn per seat. Only
+# written for a block that named SEVERAL teammates (`message_recipients`), and
+# the only thing asked of such a block: `consumed_turn` is one value, and a room
+# that reads the first seat's stamp as "everybody has this" hands the message to
+# nobody. So the single value above waits for EVERY named teammate (it is the
+# room's answer, and the room's answer is "read" once each of them has read it —
+# `mark_consumed`), and until then it stays null. Null is not a detail here:
+# `turn_history` selects on exactly that column, so a message one seat has read
+# and another has not has to keep the null key to reach the second seat's window
+# at all. A block naming one teammate (or none) is one arrival and keeps the
+# single value it always had, with no entry here.
+CONSUMED_SEATS_META_KEY = "consumed_seats"
+
 # How many turns have taken this block into a prompt — INCLUDING the ones that
 # died before finishing. `consumed_turn` above is stamped only by a turn that
 # completed, which is deliberate (a dead turn must not eat the message). The
@@ -139,6 +153,26 @@ CHECKLIST_META_KEY = "checklist"
 def consumed_turn(block: "Block") -> str | None:
     """Which turn already read this block into a prompt (None = still pending)."""
     return (block.meta or {}).get(CONSUMED_TURN_META_KEY)
+
+
+def consumed_by(block: "Block", handle: str | None = None) -> bool:
+    """Has this block been read into a prompt — by ``handle``'s seat, when one
+    is named.
+
+    ``handle=None`` asks the room's question — the single value, which for a
+    message naming several teammates lands only once every one of them has read
+    it. A handle asks the question a turn has to ask about its own window, and
+    the two differ exactly for such a message: it has to reach each of their
+    turns, and each of those turns is a separate arrival, so a second seat
+    reading the first seat's stamp as "已处理" would never answer a message it
+    was named in. So a multi-addressee block is remembered per seat, and only a
+    block with a single addressee (or none, or a legacy one) is the one-value
+    fact it was before.
+    """
+    meta = block.meta or {}
+    if handle is not None and len(message_recipients(meta)) > 1:
+        return handle in (meta.get(CONSUMED_SEATS_META_KEY) or {})
+    return consumed_turn(block) is not None
 
 
 def agent_notice(block: "Block") -> str | None:

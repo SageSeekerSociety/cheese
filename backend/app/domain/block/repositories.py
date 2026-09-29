@@ -14,6 +14,7 @@ from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CHECKLIST_META_KEY,
+    CONSUMED_SEATS_META_KEY,
     CONSUMED_TURN_META_KEY,
     EDITED_AT_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
@@ -24,7 +25,11 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
-from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
+from app.domain.identity.handles import (
+    agent_handle_column,
+    looks_like_agent_handle,
+    message_recipients,
+)
 
 
 @dataclass(frozen=True)
@@ -311,7 +316,11 @@ class BlockRepository:
         return doc if won else None
 
     async def mark_consumed(
-        self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
+        self,
+        block_ids: list[uuid.UUID],
+        turn_id: uuid.UUID,
+        *,
+        by: str | None = None,
     ) -> None:
         """Stamp human blocks as read, by the turn `turn_id` whose clean Stop
         showed the session got through them.
@@ -320,12 +329,36 @@ class BlockRepository:
         guess (see CONSUMED_TURN_META_KEY). `meta` is a plain JSON column, so the
         dict is REPLACED rather than mutated in place — an in-place mutation is
         invisible to SQLAlchemy's change detection and would silently not save.
+
+        ``by`` is the seat that turn ran on, and it is what a block naming
+        several teammates needs: the single value above is the room's answer,
+        and the room's answer is not each seat's (see CONSUMED_SEATS_META_KEY).
+        A block with one addressee says the same thing either way, so it is not
+        given a second stamp.
+
+        那种块的单值戳要等**点名的那几位都读过**才落。它是「这条读完了」，而一
+        位读完并不等于这条读完了 —— 更要紧的是判据不在 Python 里：`turn_history`
+        只把 `consumed_turn IS NULL` 的块取回来，所以一位读完后就把单值盖上，另
+        一位还没读的这条会从他的窗口里整条消失，逐席位的 `consumed_by` 再准也
+        够不到一条没被查出来的块。
         """
         if not block_ids:
             return
         stmt = select(Block).where(Block.id.in_(block_ids))
         for block in (await self._session.scalars(stmt)).all():
-            block.meta = {**(block.meta or {}), CONSUMED_TURN_META_KEY: str(turn_id)}
+            meta = {**(block.meta or {})}
+            recipients = message_recipients(meta)
+            if by is not None and len(recipients) > 1:
+                seats = {**(meta.get(CONSUMED_SEATS_META_KEY) or {})}
+                seats[by] = str(turn_id)
+                meta[CONSUMED_SEATS_META_KEY] = seats
+                named = {r.get("handle") for r in recipients} - {None}
+                meta[CONSUMED_TURN_META_KEY] = (
+                    str(turn_id) if named and named <= seats.keys() else None
+                )
+            else:
+                meta[CONSUMED_TURN_META_KEY] = str(turn_id)
+            block.meta = meta
         await self._session.flush()
 
     async def bump_prompt_attempts(

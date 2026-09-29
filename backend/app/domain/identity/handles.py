@@ -80,6 +80,40 @@ def recipient_seat(recipient: Mapping[str, object] | None) -> str | None:
     return handle if isinstance(handle, str) and handle else None
 
 
+# Where a message records who it was addressed to. `agent_recipient` is the
+# FIRST of them, and is what every reader written before a room could seat
+# several teammates reads; `agent_recipients` is the whole list, in the order
+# the room was addressed. A message that names one teammate (or none, and every
+# message written before the list existed) carries only the first, so reading
+# through `message_recipients` answers with that one — the list is what a
+# message names several teammates with, never a second, competing record.
+RECIPIENT_META_KEY = "agent_recipient"
+RECIPIENTS_META_KEY = "agent_recipients"
+
+
+def message_recipients(
+    meta: Mapping[str, object] | None,
+) -> tuple[Mapping[str, object], ...]:
+    """Who a message was addressed to, in order. Pure.
+
+    A room seats several agents, and a person may name more than one of them in
+    one message. Each named seat is a recipient of its own: the message arrives
+    at every one of them, exactly as it would have if the person had written it
+    three times over. The single field is the head of that list rather than a
+    summary of it, which is why an older message — stored when only one could be
+    named — reads back here as a one-element list and not as nothing.
+    """
+    if not meta:
+        return ()
+    listed = meta.get(RECIPIENTS_META_KEY)
+    if isinstance(listed, list):
+        named = tuple(r for r in listed if isinstance(r, Mapping))
+        if named:
+            return named
+    one = meta.get(RECIPIENT_META_KEY)
+    return (one,) if isinstance(one, Mapping) else ()
+
+
 # How a 私聊 with an AI teammate is addressed — in the URL the browser shows and
 # in the unread map keyed by "who am I talking to". Prefixed rather than bare,
 # because a teammate's handle is chosen per project (``AgentInstance.handle``)
