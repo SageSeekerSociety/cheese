@@ -50,13 +50,18 @@ INTERNAL_LINK = re.compile(r"(!?)\[[^\]]*\]\((/[^)\s]*)\)")
 def _first_sentence(lines: list[str]) -> str:
     """The section's opening prose, trimmed to one sentence.
 
-    Skips list items, quotes and fences: a section that opens with a table of
-    options has no summary sentence, and inventing one from a bullet reads as a
-    fact about the whole section when it is a fact about one row.
+    Skips list items (bulleted and numbered), quotes and fences: a section that
+    opens with a table of options has no summary sentence, and inventing one
+    from a bullet reads as a fact about the whole section when it is a fact
+    about one row. A numbered step is the same case — `1. 点「发布」` describes
+    one step, not the section — and it used to slip through here, so a section
+    that opened with steps was handed to 芝士 with a summary taken from step 1.
     """
     for raw in lines:
         line = raw.strip()
         if not line or line.startswith(("#", "-", "*", ">", "|", "```", "<!--")):
+            continue
+        if re.match(r"^\d+[.、]", line):
             continue
         text = re.sub(r"\*\*|`|\[|\]\([^)]*\)", "", line)
         parts = re.split(r"(?<=[。！？])", text)
@@ -205,6 +210,7 @@ def self_test() -> int:
     )
     case("同一页重复 slug", {"a.md": "# A {#x}\n\n一。\n\n## B {#x}\n\n二。\n"}, False)
     case("小节没有说明句", {"a.md": "# A {#x}\n\n- 只有列表\n"}, False)
+    case("小节从编号步骤开头", {"a.md": "# A {#x}\n\n1. 点「发布」。\n"}, False)
     case(
         "图片路径存在",
         {"a.md": "# A {#x}\n\n一句话。\n\n![界面截图](/images/ok.png)\n"},
