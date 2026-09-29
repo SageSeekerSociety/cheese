@@ -432,7 +432,9 @@ async def _room_is_working(db, topic_id) -> bool:
     return running is not None
 
 
-async def push_before_switch(lease: dict, start: Callable[[], Awaitable[dict]]) -> None:
+async def push_before_switch(
+    lease: dict, start: Callable[[], Awaitable[dict]], *, keeps_files: bool
+) -> list[str]:
     """Push the session's work to its branches on the machine it is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
@@ -443,18 +445,29 @@ async def push_before_switch(lease: dict, start: Callable[[], Awaitable[dict]]) 
     ``WorkComputerUnreachable`` when the command could not run at all, and a
     ``ConflictError`` with the machine's own words when it ran and failed.
 
+    Except for closed tasks on a machine that ``keeps_files`` (a self-hosted
+    one, left as it is): a closed task is never pushed, only backed up, and
+    its checkout stays on that machine after the switch, so a backup it could
+    not make loses nothing. Those come back as warnings, one line per task,
+    and the switch goes on. A Cloud machine is deleted after the switch, so
+    there they refuse it like any other failure.
+
     The session's executor runs only while the session is in use, so on a
     machine that is online an idle session usually has none. ``start`` brings
     it up the way a tool call would before the push, and only a machine that
-    is away, or that cannot start it, is unreachable.
+    is away, or that cannot start it, is unreachable. One that is running an
+    older release is started again too: its ``cheese`` is the one it was
+    installed with, and a sync fixed since would still fail there the old way.
     """
     # A lease that never finished installing has no executor to run the push.
     if not lease.get("state") or not device_hub.is_online(lease["device_id"]):
         raise WorkComputerUnreachable(PUSH_UNREACHABLE)
     try:
         try:
-            await execution.call(lease, "ping", {}, hub=device_hub)
+            running = await execution.call(lease, "ping", {}, hub=device_hub)
         except DeviceCallError:
+            running = None
+        if running is None or not launch.can_prepare(running):
             lease = {**lease, "state": (await start())["state"]}
         result = await execution.call(
             lease,
@@ -472,18 +485,23 @@ async def push_before_switch(lease: dict, start: Callable[[], Awaitable[dict]]) 
     if output.get("backgroundTaskId"):
         raise ConflictError("推送两分钟内没有完成，没有更换；稍后重试")
     said = output.get("stdout") or ""
-    if said.startswith("Exit code "):
-        printed = said.partition("\n")[2]
-        detail = "\n".join(_failed_tasks(printed)) or printed.strip()[-600:] or said
-        raise ConflictError(f"推送失败，没有更换：{detail}")
+    if not said.startswith("Exit code "):
+        return []
+    printed = said.partition("\n")[2]
+    failed = _failed_tasks(printed)
+    if failed and keeps_files and all(closed for closed, _ in failed):
+        return [f"{line}（已结束的任务，文件还在原来那台上）" for _, line in failed]
+    detail = "\n".join(line for _, line in failed) or printed.strip()[-600:] or said
+    raise ConflictError(f"推送失败，没有更换：{detail}")
 
 
 # The line ``cheese sync --all`` ends each task it could not sync with.
-_TASK_FAILED = re.compile(r"^\[cheese\] 任务 (\S+) 同步失败：(.*)$")
+_TASK_FAILED = re.compile(r"^\[cheese\] (已结束的)?任务 (\S+) 同步失败：(.*)$")
 
 
-def _failed_tasks(printed: str) -> list[str]:
-    """Each task the push could not sync, with the first line said about why.
+def _failed_tasks(printed: str) -> list[tuple[bool, str]]:
+    """Each task the push could not sync — whether it is a closed one, and
+    the first line said about why.
 
     ``cheese sync --all`` prints nothing for a task it synced, and for one it
     could not, what went wrong and then a line naming the task; that line's own
@@ -498,8 +516,8 @@ def _failed_tasks(printed: str) -> list[str]:
             if first is None and line.strip():
                 first = line.strip().removeprefix("[cheese] ")
             continue
-        task, reason = ended.groups()
-        failed.append(f"任务 {task}：{first or reason}")
+        closed, task, reason = ended.groups()
+        failed.append((closed is not None, f"任务 {task}：{first or reason}"))
         first = None
     return failed
 
@@ -641,8 +659,9 @@ async def request_choice(
     # （``_roommates_device``）。
     await TopicService(db).lock_for_execution(topic_id)
     sessions = await AgentSessionService(db).ids_in_room(topic_id)
+    warnings: list[str] = []
     for session_id in sessions:
-        await _move_session(
+        warnings += await _move_session(
             db,
             topic_id=topic_id,
             session_id=session_id,
@@ -653,8 +672,39 @@ async def request_choice(
         )
     topic = await TopicService(db).lock_for_execution(topic_id)
     topic.compute_config = choice.model_dump()
+    if warnings:
+        await _tell_room_what_stayed_behind(db, topic_id, warnings)
     await db.commit()
-    return {"choice": choice.model_dump(), "sessions": len(sessions)}
+    return {
+        "choice": choice.model_dump(),
+        "sessions": len(sessions),
+        "warnings": warnings,
+    }
+
+
+async def _tell_room_what_stayed_behind(db, topic_id, warnings: list[str]) -> None:
+    """The room moved, and closed tasks whose leftover work could not be
+    backed up still have it only on the machine it left, which keeps it."""
+    from app.domain.agent.announce import announce
+    from app.domain.agent.platform_notices import (
+        EVENT_WORK_LEFT_ON_MACHINE,
+        SEVERITY_WARN,
+        WHO_HUMAN,
+        notice,
+    )
+
+    await announce(
+        db,
+        place_id=topic_id,
+        content="已换工作电脑；有已结束任务的文件没能备份，只留在原来那台上",
+        meta=notice(
+            EVENT_WORK_LEFT_ON_MACHINE,
+            severity=SEVERITY_WARN,
+            who=WHO_HUMAN,
+            detail="\n".join(warnings),
+            detail_label="没能备份的任务",
+        ),
+    )
 
 
 def _still_preparing(lease: dict | None) -> bool:
@@ -686,6 +736,7 @@ async def _move_session(
     be reached (``abandon_unpushed``). A Cloud machine left after a push is
     deleted, so it stops counting against the team's quota. With ``if_idle``
     a session whose room is mid-turn is left alone (``SessionWorking``).
+    Returns the push's warnings (``push_before_switch``).
     """
     # 房间那一把锁：这一条会话的租约和房间的算力选择在同一行上改，拿着它读、拿着
     # 它写，别的请求看到的是「搬之前」或者「搬之后」，没有中间态。
@@ -702,7 +753,7 @@ async def _move_session(
         if choice.profile == "cloud" and not request.get("authorized_by"):
             row.execution_request = {**request, "authorized_by": asdict(actor)}
             await db.commit()
-        return presentation(row)
+        return []
     if _still_preparing(old):
         raise ConflictError("机器分配仍在进行，请稍后再换机")
     if if_idle and await _room_is_working(db, topic_id):
@@ -713,12 +764,17 @@ async def _move_session(
         # one's consent and keeps nothing for the room's cleanup.
         old = None
     pushed = False
+    warnings: list[str] = []
     if old:
         generation = request.get("generation")
         start = await _restart_executor(db, row, old)
         await db.commit()
         try:
-            await push_before_switch(old, start)
+            # A Cloud machine is deleted once left; any other keeps its files.
+            leaving_cloud = (request.get("choice") or {}).get("profile") == "cloud"
+            warnings = await push_before_switch(
+                old, start, keeps_files=not leaving_cloud
+            )
             pushed = True
         except WorkComputerUnreachable:
             if not (abandon_unpushed and actor.via == "token"):
@@ -752,7 +808,7 @@ async def _move_session(
     await db.commit()
     if release is not None:
         await MachineService(db).release_left_machine(release.id)
-    return presentation(row)
+    return warnings
 
 
 # The room names a machine whose owner has since unbound it. It cannot come back

@@ -26,7 +26,9 @@ from app.core.sandbox_auth import (
 )
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError
+from app.domain.agent.harness.claude_code.remote_execution import launch
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.models import Block, BlockKind
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
@@ -38,6 +40,7 @@ from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from app.main import app
 from tests.delivery import delivery_task
+from tests.executor_release import running
 from tests.integration.conftest import post_project
 from tests.unit.test_machine_service import FakeMicroCloud
 
@@ -140,7 +143,9 @@ def _machines(monkeypatch, *, online=True, push=PUSHED):
     hub = SimpleNamespace(is_online=lambda device: online)
     monkeypatch.setattr(work_lease, "device_hub", hub)
     remote = AsyncMock(
-        side_effect=push if isinstance(push, BaseException) else lambda *a, **k: push
+        side_effect=push
+        if isinstance(push, BaseException)
+        else lambda lease, method, *a, **k: running() if method == "ping" else push
     )
     monkeypatch.setattr(execution, "call", remote)
     return remote
@@ -366,7 +371,7 @@ class _IdleMachine:
                 "dial unix /tmp/cheese-execution-1000-x.sock: connect: "
                 "no such file or directory"
             )
-        return {} if method == "ping" else self.push
+        return running() if method == "ping" else self.push
 
     async def exec(self, device_id, argv, *, stdin, timeout):
         self.installs.append((device_id, stdin))
@@ -505,3 +510,118 @@ async def test_an_executor_started_to_push_is_installed_with_the_rooms_environme
     ).json()["data"]["pinned_revision"]
     assert installed is not None
     assert installed["revision"] == pinned
+
+
+async def test_an_executor_on_an_older_release_is_started_again_to_push(
+    client, monkeypatch
+):
+    """An executor keeps the `cheese` it was installed with. A switch that
+    pushed through one from before a sync fix failed the way that fix had
+    already stopped, so it is started again on this release first."""
+    room = await _room(client)
+    machine = _IdleMachine()
+    machine.started = True
+    older = {**launch.file_sources(), "cheese": "# the CLI of an older release\n"}
+
+    async def call_executor(device_id, state, method, params, **kwargs):
+        if method == "ping":
+            machine.calls.append((device_id, method, params))
+            return running() if machine.installs else running(older)
+        return await _IdleMachine.call_executor(
+            machine, device_id, state, method, params, **kwargs
+        )
+
+    machine.call_executor = call_executor
+    monkeypatch.setattr(work_lease, "device_hub", machine)
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    [(device, _)] = machine.installs
+    assert device == room.old_device
+    _, method, params = machine.calls[-1]
+    assert method == "control" and params["subtype"] == "checkpoint"
+
+
+def _closed_task_failed(task, reason):
+    return {
+        "value": {
+            "stdout": f"Exit code 1\n[cheese] 已结束的任务 {task} 同步失败：{reason}"
+        }
+    }
+
+
+async def _room_events(client, room, event_type):
+    async with client.test_factory() as db:
+        blocks = await db.scalars(
+            select(Block).where(
+                Block.topic_id == room.topic_id, Block.kind == BlockKind.event
+            )
+        )
+        return [b for b in blocks if (b.meta or {}).get("event_type") == event_type]
+
+
+async def test_a_closed_tasks_failed_backup_does_not_hold_a_room_on_its_own_machine(
+    client, monkeypatch
+):
+    """A self-hosted machine keeps its files after the room leaves it, so a
+    closed task whose leftovers could not be backed up loses nothing: the room
+    moves, and the switch and the room both say which task and why."""
+    room = await _room(client)
+    _machines(
+        monkeypatch,
+        push=_closed_task_failed("t-closed", "fatal: ref HEAD is not a symbolic ref"),
+    )
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    [warning] = switched.json()["data"]["warnings"]
+    assert "t-closed" in warning and "not a symbolic ref" in warning
+    session = await _session(client, room)
+    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert session.execution_request["retained_leases"] == [room.lease]
+    [told] = await _room_events(client, room, "work_left_on_machine")
+    assert "t-closed" in told.meta["detail"]
+    assert "not a symbolic ref" in told.meta["detail"]
+
+
+async def test_a_closed_tasks_failed_backup_still_holds_a_room_on_a_cloud_machine(
+    client, monkeypatch
+):
+    """A Cloud machine is deleted once the room leaves it: a closed task's
+    leftovers that were not backed up would go with it."""
+    room = await _room(client, on_cloud=True)
+    _machines(
+        monkeypatch,
+        push=_closed_task_failed("t-closed", "Connection reset by peer"),
+    )
+
+    refused = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert refused.status_code == 409, refused.text
+    said = refused.json()["error"]["message"]
+    assert "t-closed" in said and "Connection reset by peer" in said
+    session = await _session(client, room)
+    assert session.work_lease == room.lease
+    assert not await _room_events(client, room, "work_left_on_machine")
+
+
+async def test_an_open_tasks_failed_push_holds_the_room_beside_a_closed_one(
+    client, monkeypatch
+):
+    room = await _room(client)
+    printed = (
+        "[cheese] 已结束的任务 t-closed 同步失败："
+        "fatal: ref HEAD is not a symbolic ref\n"
+        "[cheese] 任务 t-open 同步失败：rejected non-fast-forward\n"
+    )
+    _machines(monkeypatch, push={"value": {"stdout": "Exit code 1\n" + printed}})
+
+    refused = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert refused.status_code == 409, refused.text
+    said = refused.json()["error"]["message"]
+    assert "t-open" in said and "non-fast-forward" in said
+    session = await _session(client, room)
+    assert session.execution_request["choice"]["device_id"] == room.old_device
