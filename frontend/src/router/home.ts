@@ -61,6 +61,17 @@ export default {
       component: () => import('@/views/home/Solutions.vue'),
     },
     {
+      // 桌面 app 和手机的下载页。登录与否都能打开：用户菜单的「下载客户端」也到这里。
+      path: 'download',
+      name: 'Download',
+      meta: {
+        title: '下载',
+        titleKey: 'publicSite.downloadPage.title',
+        publicLanding: true,
+      },
+      component: () => import('@/views/home/Download.vue'),
+    },
+    {
       // 我的工作：登录后的首页（`/` 把已登录的人送到这儿）。不进任何项目就能看见
       // 我手上的每一个项目、它们的壳、以及每个项目最近在发生什么，点一张卡直接
       // 进去。手机上是这一层的第一格分段。

@@ -39,7 +39,6 @@
   "userMenu": {
     "profile": "Profile",
     "settings": "Settings",
-    "devices": "My devices",
     "appearance": "Appearance",
     "language": "Language",
     "logout": "Log out",
@@ -49,8 +48,8 @@
       "light": "Light",
       "dark": "Dark"
     },
-    "connections": "Connections",
-    "archivedProjects": "Archived projects"
+    "archivedProjects": "Archived projects",
+    "download": "Download apps"
   },
   "shell": {
     "close": "Close",
