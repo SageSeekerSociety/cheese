@@ -276,18 +276,27 @@ watch(
 </template>
 
 <style scoped>
+/* 项目框架那一格是 overflow: hidden，这一页得自己滚：不给高度的话，比一屏长的版本
+   历史被裁在屏幕外面，拖不上来。 */
+.artifact-page {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+}
 .artifact-content {
   max-width: 1120px;
   margin: 0 auto;
 }
 .artifact-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
 .artifact-head__id {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .version-list {
   list-style: none;

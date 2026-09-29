@@ -318,7 +318,7 @@ onMounted(async () => {
                     :class="`my-work__part--${part.kind}`"
                   >
                     <v-icon v-if="partIcon(part)" :icon="partIcon(part)!" size="14" class="me-1" />
-                    {{ partText(part) }}
+                    <span class="my-work__part-text">{{ partText(part) }}</span>
                   </span>
                 </div>
                 <!-- 一页纸总结只给桌面看：手机上是列表，不是卡片详情。 -->
@@ -409,13 +409,21 @@ onMounted(async () => {
   line-height: var(--lh-12);
   color: var(--muted);
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
+/* 放不下时是字收成省略号，不是整段被裁掉：省略号只画在装着字的那一格上，画在
+   flex 容器上的不会出现。 */
 .my-work__part {
   display: inline-flex;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   align-items: center;
+}
+
+.my-work__part-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 「待处理」是这一行里唯一要人动的东西，所以只有它加重。不用琥珀：琥珀留给

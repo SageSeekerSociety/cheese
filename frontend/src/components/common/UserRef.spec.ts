@@ -10,6 +10,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import userRoutes from '@/router/user'
@@ -104,6 +105,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  setActivePinia(createPinia())
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
 })
 
