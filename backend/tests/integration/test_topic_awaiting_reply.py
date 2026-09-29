@@ -414,6 +414,32 @@ def test_a_rejected_card_nobody_picks_up_waits_for_an_agent(client):
     assert _reason(client, pid, rid) == "rejected"
 
 
+def test_the_wait_is_timed_from_the_agents_last_touch_not_the_rejection(client):
+    """退回半小时了，但 AI 一轮接一轮地在修，两分钟前还在活里动过手：「没人管」
+    从它最后一次动手算起，不是从退回那一刻——否则两轮之间的空档当场就亮红。"""
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid)
+    _update_card(client, card, status=AcceptStatus.rejected, decided_by="alice")
+    _rejected(client, pid, rid, tid, ago=timedelta(minutes=30))
+    touched = _on_task(
+        client,
+        pid,
+        rid,
+        tid,
+        AGENT,
+        ago=timedelta(minutes=2),
+        author_type=AuthorType.participant,
+        meta={},
+    )
+
+    since = _since(client, pid, rid)
+    assert since is not None
+    assert abs(since - touched) < timedelta(seconds=1)
+
+
 def test_refiling_after_a_rejection_ends_the_wait(client):
     from app.domain.review.models import AcceptStatus
 

@@ -724,26 +724,43 @@ class BlockRepository:
     async def _checks_awaiting_an_agent(
         self, topic_ids: list[uuid.UUID], since: datetime
     ) -> list[tuple[uuid.UUID, datetime]]:
-        """[(房间, 最近一次要 AI 接手的检查事件的时间)] —— 只问卡还停着的房间。
+        """[(房间, 「没人管」从什么时候开始算)] —— 只问卡还停着的房间。
 
         「有没有人接」不看 AI 说没说过话（回一句不相干的话也会被当成接了），而看
-        卡本身：调用方只把卡还停在检查红 / 冲突上的房间传进来。取**最近**一条事件：
-        AI 推了修复、检查又红了，时钟从这次重新算。事件多半落在某条活的卡上，所以
-        连同名下的活一起看。
+        卡本身：调用方只把卡还停在检查红 / 冲突 / 退回上的房间传进来。事件多半落在
+        某条活的卡上，所以连同名下的活一起看。
+
+        计时起点取两者里**晚**的那个：最近一次要 AI 接手的事件，和 AI 最近一次在
+        这里动过手（它每调一次工具、说一句话都会落一个块）。只按事件算的话，一张被
+        退回的卡 AI 一轮接一轮地修，每两轮之间那一两分钟都会被读成「退回以来半小时
+        没人管」，当场亮红——而它一分钟前还在干活。
         """
         if not topic_ids:
             return []
-        stmt = (
+        under_room = (Block.topic_id.in_(topic_ids), Block.created_at >= since)
+        events = (
             select(Block.topic_id, func.max(Block.created_at))
             .where(
-                Block.topic_id.in_(topic_ids),
-                Block.created_at >= since,
+                *under_room,
                 ~participant_blocks(),
                 Block.meta["event_type"].as_string().in_(self.CHECKS_FOR_THE_AGENT),
             )
             .group_by(Block.topic_id)
         )
-        return [(t, at) for t, at in (await self._session.execute(stmt)).all()]
+        touched = (
+            select(Block.topic_id, func.max(Block.created_at))
+            .where(
+                *under_room,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+            )
+            .group_by(Block.topic_id)
+        )
+        last_touch = dict((await self._session.execute(touched)).all())
+        return [
+            (t, max(at, last_touch[t]) if t in last_touch else at)
+            for t, at in (await self._session.execute(events)).all()
+        ]
 
     #: 「这一轮坏了」的那几种平台提示：没分类的失败（HTTP 502/404、异常原话）和
     #: 分类过的平台故障。超时、部署打断这些是 warn —— 平台会自己接着跑，不算坏。
