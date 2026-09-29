@@ -233,7 +233,10 @@ function toggleFocus() {
 }
 .topic-header__title {
   min-width: 0;
-  line-height: 1.3;
+  /* 行盒不在这里定：这一格和话题列表的行共用 .t-title，也就共用它的 --lh-15
+     （21px）。原先这里压成 1.3（15px 字号 → 19.5px），比字身还矮，标题又是
+     overflow: hidden，g / y 这些下伸的字母下缘被切掉约 0.75px。高度是字号阶梯
+     的属性，不在调用点另定一个数（docs/design-system.md §3.2）。 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
