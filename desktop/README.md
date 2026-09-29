@@ -1,7 +1,23 @@
 # Cheese desktop
 
 The desktop app is the web app, loaded from the server in the system's own web
-view (Tauri), plus one thing a browser cannot do: connect the computer it runs
+view (Tauri). The window opens on the app's own page (`shell/index.html`): the
+brand tile, moving while it waits for the server, and a notice with automatic
+retries when the server cannot be reached. Once the server answers, the window
+goes to the web app, whose first frame in the app is the same tile
+(`frontend/index.html`); `frontend/src/lib/desktopSplash.ts` then lands it in
+the rail. The window keeps its size and position between launches.
+
+On macOS the title bar is drawn over the page: the window buttons sit at the
+left end of the web app's top bar, which leaves them room, and the top bar and
+the sign-in pages' side pane move the window. Elsewhere the system title bar
+stays. The web app tells the app the theme picked in it (`set_theme`), which
+colours the title bar and the app's own page from the next launch. What the
+app tells the page about its window is `window.__CHEESE_APP__`
+(`frontend/src/lib/desktopApp.ts`); a page never calls a command an older app
+lacks. Signed out, the app opens on sign-in rather than the public home page.
+
+Beyond that the app adds one thing a browser cannot do: connect the computer it runs
 on as a device. On 「我的设备」 it offers 「接入这台电脑」, which does what the
 page otherwise asks a terminal user to do — run the server's `install.sh`, then
 `cheesehost link connect` — and approves the login with the session the page is

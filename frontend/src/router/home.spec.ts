@@ -27,7 +27,11 @@ const blank = { template: '<div />' }
 function router() {
   return createRouter({
     history: createWebHistory(),
-    routes: [home, { path: '/:pathMatch(.*)*', name: 'catch-all', component: blank }],
+    routes: [
+      home,
+      { path: '/account/signin', name: 'SignIn', component: blank },
+      { path: '/:pathMatch(.*)*', name: 'catch-all', component: blank },
+    ],
   })
 }
 
@@ -35,6 +39,7 @@ describe('首页那一层', () => {
   beforeEach(() => {
     AccountService.loggedIn = false
     AccountService.sessionRestored = Promise.resolve()
+    delete (window as { __TAURI__?: unknown }).__TAURI__
   })
   it('小队落在「我的」上', async () => {
     const r = router()
@@ -93,6 +98,22 @@ describe('首页那一层', () => {
     AccountService.loggedIn = true
     restored()
     await navigation
+    expect(r.currentRoute.value.name).toBe('HomeWork')
+  })
+
+  // 桌面 app 是已经装上的人在用：没登录就去登录，不看推广页。浏览器里照旧。
+  it('桌面 app 里未登录时根地址去登录', async () => {
+    ;(window as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.name).toBe('SignIn')
+  })
+
+  it('桌面 app 里登录后根地址仍落在我的工作上', async () => {
+    ;(window as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
     expect(r.currentRoute.value.name).toBe('HomeWork')
   })
 })

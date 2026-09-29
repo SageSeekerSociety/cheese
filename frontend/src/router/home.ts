@@ -33,7 +33,10 @@ export default {
         // 当成生人：先给他看推广页，恢复完再跳走——或者恢复得比推广页挂载
         // 还快，那一跳就没人接，页面就停在推广页上。
         await AccountService.sessionRestored
-        return AccountService.loggedIn ? { name: 'HomeWork' } : true
+        if (AccountService.loggedIn) return { name: 'HomeWork' }
+        // 桌面 app 是已经装上的人在用，推广页对他没有意义：没登录就直接去登录。
+        const { inDesktopApp } = await import('@/lib/desktopApp')
+        return inDesktopApp() ? { name: 'SignIn' } : true
       },
     },
     {

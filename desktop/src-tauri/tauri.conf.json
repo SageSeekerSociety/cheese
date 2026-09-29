@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.okcheese.desktop",
   "build": {
-    "frontendDist": "https://okcheese.com"
+    "frontendDist": "../shell"
   },
   "app": {
     "withGlobalTauri": true,
