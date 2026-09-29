@@ -21,8 +21,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const getPlatformFeishuApp = vi.fn()
 const savePlatformFeishuApp = vi.fn()
 
-vi.mock('@/api', async () => ({
-  ...(await vi.importActual<typeof import('@/api')>('@/api')),
+vi.mock('@/api/feishu', async () => ({
+  ...(await vi.importActual<typeof import('@/api/feishu')>('@/api/feishu')),
   getPlatformFeishuApp: () => getPlatformFeishuApp(),
   savePlatformFeishuApp: (body: unknown) => savePlatformFeishuApp(body),
 }))

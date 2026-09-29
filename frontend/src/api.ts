@@ -271,7 +271,8 @@ function roomRead<T>(path: string): Promise<T> {
   return started
 }
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
+/** 这个文件里的每个端点都过它。飞书那一块在 `api/feishu.ts`，也用这一个（见那儿的说明）。 */
+export function request<T>(path: string, init?: RequestInit): Promise<T> {
   if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
   return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
 }
@@ -1503,31 +1504,6 @@ export function connectMail(body: Record<string, unknown>): Promise<Integration>
   return request<Integration>('/me/integrations/mail', { method: 'POST', body: JSON.stringify(body) })
 }
 
-/**
- * 平台配过飞书应用没有 —— 「连接飞书」那颗按钮亮不亮就是这个问题的答案。
- *
- * 没有它的时候按钮是灰的，而灰的原因只有一个：管理员还没填那一次（`/admin/integrations/feishu`）。
- */
-export interface FeishuAvailability {
-  configured: boolean
-  app_id: string
-  domain: string
-}
-
-export function feishuAvailability(): Promise<FeishuAvailability> {
-  return request<FeishuAvailability>('/me/integrations/feishu')
-}
-
-/**
- * 「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
- *
- * 不带任何正文 —— 应用凭据是平台管理员的，成员这边只出自己的账号。已有的那一行会被
- * 原样返回（这个动作是幂等的），所以「连接过一半又回来了」不会攒出第二行。
- */
-export function connectFeishu(): Promise<Integration> {
-  return request<Integration>('/me/integrations/feishu', { method: 'POST' })
-}
-
 export function updateIntegration(id: string, body: Record<string, unknown>): Promise<Integration> {
   return request<Integration>(`/me/integrations/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -1541,42 +1517,6 @@ export function checkIntegration(id: string): Promise<Integration> {
 
 export function deleteIntegration(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/me/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' })
-}
-
-export function feishuAuthorizeUrl(id: string): Promise<{ url: string; redirect_uri: string }> {
-  return request<{ url: string; redirect_uri: string }>(`/me/integrations/${encodeURIComponent(id)}/feishu/authorize`)
-}
-
-/* ---- 管理端（`/admin/integrations`）----
- *
- * 平台上**唯一**一处飞书应用凭据（`backend/app/api/routes/admin_integrations.py`）。
- * 成员不再各自去飞书建一个应用，所以这一页是管理员填一次、所有人共用的那一次。
- *
- * Secret 只写不回显：读回来的结构里根本没有它，所以 `save` 的空串表示「不改已经存下的
- * 那一个」，不是「清空」—— 改了域名或 App ID 不必先把它找回来。
- */
-
-export interface PlatformFeishuApp {
-  configured: boolean
-  app_id: string
-  domain: string
-  updated_by: string
-  updated_at: string | null
-}
-
-export function getPlatformFeishuApp(): Promise<PlatformFeishuApp> {
-  return request<PlatformFeishuApp>('/admin/integrations/feishu')
-}
-
-export function savePlatformFeishuApp(body: {
-  app_id: string
-  app_secret: string
-  domain: string
-}): Promise<PlatformFeishuApp> {
-  return request<PlatformFeishuApp>('/admin/integrations/feishu', {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  })
 }
 
 export function listMyMailDrafts(status: string): Promise<ListPayload<MailDraft>> {

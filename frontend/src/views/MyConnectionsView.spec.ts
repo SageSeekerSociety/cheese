@@ -35,6 +35,11 @@ vi.mock('../api', async () => ({
   listMyIntegrations: () => listMyIntegrations(),
   listMyMailDrafts: () => listMyMailDrafts(),
   listProjects: () => listProjects(),
+}))
+
+// 飞书那几个函数住它们自己的模块（`../api/feishu`），所以按模块分别挡。
+vi.mock('../api/feishu', async () => ({
+  ...(await vi.importActual<typeof import('../api/feishu')>('../api/feishu')),
   feishuAvailability: () => feishuAvailability(),
   connectFeishu: () => connectFeishu(),
   feishuAuthorizeUrl: (id: string) => feishuAuthorizeUrl(id),

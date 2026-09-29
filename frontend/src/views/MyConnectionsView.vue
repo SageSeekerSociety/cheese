@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 我的连接：你自己的邮箱和飞书。AI 队友只在你勾选的项目里用它们，用的是你的账号；
 // 它们写的邮件只进草稿箱，发不发由你在这里看过之后决定。
-import type { FeishuAvailability, Integration, MailDraft } from '../api'
+import type { Integration, MailDraft } from '../api'
+import type { FeishuAvailability } from '../api/feishu'
 import type { Project } from '../cx_types'
 
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -9,18 +10,16 @@ import { useRoute } from 'vue-router'
 
 import {
   checkIntegration,
-  connectFeishu,
   connectMail,
   deleteIntegration,
   discardMailDraft,
-  feishuAuthorizeUrl,
-  feishuAvailability,
   listMyIntegrations,
   listMyMailDrafts,
   listProjects,
   sendMailDraft,
   updateIntegration,
 } from '../api'
+import { connectFeishu, feishuAuthorizeUrl, feishuAvailability } from '../api/feishu'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
 import { useCommands } from '@/commands'
@@ -459,59 +458,70 @@ useCommands(() => [
   gap: 12px;
   margin-bottom: 8px;
 }
+
 .connections__add {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
+
 .conn-list {
-  list-style: none;
+  display: flex;
   padding: 0;
   margin: 0;
-  display: flex;
+  list-style: none;
   flex-direction: column;
   gap: 8px;
 }
+
 .conn-row {
   padding: 12px;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: var(--surface);
 }
+
 .conn-row__head {
   display: flex;
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 8px;
 }
+
 .conn-row__id {
   flex: 1;
   min-width: 0;
 }
+
 .conn-spec {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 4px 12px;
   margin: 0 0 8px;
 }
+
 .conn-spec dt {
   color: var(--faint);
 }
+
 .conn-spec dd {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
 }
+
 .conn-body {
-  white-space: pre-wrap;
   max-height: 240px;
   overflow: auto;
+  white-space: pre-wrap;
 }
+
 .conn-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
+
 .conn-form-row {
   display: grid;
   grid-template-columns: 1fr 120px;

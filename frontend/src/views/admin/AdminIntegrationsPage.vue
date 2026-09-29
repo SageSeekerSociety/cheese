@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import type { PlatformFeishuApp } from '@/api'
+import type { PlatformFeishuApp } from '@/api/feishu'
 
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { getPlatformFeishuApp, savePlatformFeishuApp } from '@/api'
+import { getPlatformFeishuApp, savePlatformFeishuApp } from '@/api/feishu'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import { relTime } from '@/lib/relTime'
 
