@@ -639,3 +639,35 @@ def test_the_card_carries_the_version_it_would_become(client):
         again=True,
     )
     assert second.json()["data"]["artifact"]["version"] == 2
+
+
+def test_each_version_names_its_room_only_to_readers_of_that_room(client):
+    project_id = _project(client)
+    room_id = _room(client, project_id, "结题报告修订")
+    card = _hand_over(
+        client, room_id, files={"out/报告.pdf": "第一版\n"}, deliver="out/报告.pdf"
+    )
+    _accept(client, card.json()["data"]["id"])
+    join_project_team(client, project_id, "bob")
+    artifact_id = _artifact_id(client, project_id)
+
+    def as_bob() -> dict:
+        r = client.get(
+            f"/projects/{project_id}/artifacts/{artifact_id}",
+            headers=session_auth_headers("bob"),
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["versions"][0]
+
+    version = as_bob()
+    assert version["room"] == {"id": room_id, "title": "结题报告修订"}
+    assert version["bytes"] == len("第一版\n".encode())
+
+    async def make_private():
+        async with client.test_factory() as session:
+            room = await session.get(Topic, uuid.UUID(room_id))
+            room.is_private = True
+            await session.commit()
+
+    asyncio.run(make_private())
+    assert as_bob()["room"] is None, "a private room's name reached a non-member"

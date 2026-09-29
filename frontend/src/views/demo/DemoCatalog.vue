@@ -1,0 +1,264 @@
+<script setup lang="ts">
+// 组件预览站（`/demo/catalog`），文档动态演示那一套里的第二页。
+//
+//   /demo/catalog          → 目录：每个组件一张卡，写着它是什么、在哪儿、独立渲染要哪几样
+//   /demo/catalog/<id>     → 这个组件的那一页：一格里一个状态，喂的是真产品的形状
+//
+// 和 DemoView 一样不连后端、不登录、不起真路由之外的任何东西：`installDemoBackend()`
+// 把会自己取数的组件（验收卡）接在演示后端的答案上。**这一页只读目录，不写任何源
+// 文件** —— 想把一个新的组件放进来，改的是 `catalog.ts`。
+//
+// 地址照 DemoView 的做法由入口当 props 传进来（测试里换得了 props，换不了 location）。
+import { computed } from 'vue'
+
+import { CATALOG, catalogEntry } from './catalog'
+import { installCatalogAnswers } from './catalogFixtures'
+import { installDemoBackend } from './demoBackend'
+
+const props = withDefaults(defineProps<{ path?: string }>(), { path: '/' })
+
+installDemoBackend()
+installCatalogAnswers()
+
+/** 地址里那一段：`/demo/catalog/<id>`。没有就是目录。 */
+const id = computed(() => /^\/demo\/catalog\/([\w-]+)/.exec(props.path)?.[1] ?? null)
+const entry = computed(() => (id.value ? catalogEntry(id.value) : null))
+const missing = computed(() => id.value !== null && entry.value === null)
+
+const NEED_LABELS: Record<string, string> = {
+  vuetify: 'Vuetify',
+  i18n: '语言包',
+  router: '路由',
+  pinia: 'store',
+}
+
+function needsOf(needs: string[]): string {
+  return needs.length ? needs.map((n) => NEED_LABELS[n] ?? n).join(' · ') : '一件都不用装'
+}
+</script>
+
+<template>
+  <div class="catalog">
+    <header class="catalog-head">
+      <a class="catalog-back" href="/demo/catalog">组件预览站</a>
+      <span class="catalog-count">{{ CATALOG.length }} 个组件</span>
+      <a class="catalog-demo" href="/demo/quickstart">去看动态演示 →</a>
+    </header>
+
+    <!-- 目录：扫一眼有哪些组件、各自要什么。这一页不挂组件，挂满一屏的组件没人看。 -->
+    <template v-if="!entry">
+      <p class="catalog-lede">
+        每个组件一页，用真产品的形状渲染几种状态。这一页不连后端、不登录 —— <code>pnpm dev</code> 打开
+        <code>/demo/catalog</code> 就能看。加一个组件：在 <code>src/views/demo/catalog.ts</code> 里追加一条。
+      </p>
+      <ul class="catalog-index">
+        <li v-for="item in CATALOG" :key="item.id">
+          <a class="catalog-card" :href="`/demo/catalog/${item.id}`">
+            <span class="catalog-card-title">{{ item.title }}</span>
+            <span class="catalog-card-about">{{ item.about }}</span>
+            <span class="catalog-card-meta">
+              <code>{{ item.file }}</code>
+              <span>{{ needsOf(item.needs) }}</span>
+              <span>{{ item.states.length }} 格</span>
+            </span>
+          </a>
+        </li>
+      </ul>
+    </template>
+
+    <!-- 这个组件的那一页：一格里一个状态。 -->
+    <template v-else>
+      <div class="catalog-title">
+        <h1 class="catalog-name">{{ entry.title }}</h1>
+        <p class="catalog-about">{{ entry.about }}</p>
+        <p class="catalog-card-meta">
+          <code>{{ entry.file }}</code>
+          <span>独立渲染需要：{{ needsOf(entry.needs) }}</span>
+        </p>
+      </div>
+      <section v-for="(state, i) in entry.states" :key="i" class="catalog-case">
+        <header class="catalog-case-head">
+          <h2 class="catalog-case-name">{{ state.name }}</h2>
+          <span v-if="state.needs" class="catalog-case-needs">这里只装：{{ needsOf(state.needs) }}</span>
+        </header>
+        <p class="catalog-case-note">{{ state.note }}</p>
+        <!-- 要坐在 Vuetify 布局里的那两件（底栏、底部动作面板）本来就长在 layout 里，
+             别处没有它们的位置：这里给的就是它们在产品里的那一层。 -->
+        <div class="catalog-stage">
+          <v-layout v-if="entry.layout">
+            <component :is="entry.component" v-bind="state.props">{{ state.slot }}</component>
+          </v-layout>
+          <component :is="entry.component" v-else v-bind="state.props">{{ state.slot }}</component>
+        </div>
+      </section>
+    </template>
+
+    <p v-if="missing" class="catalog-missing">目录里没有这一个。回<a href="/demo/catalog">目录</a>看看。</p>
+  </div>
+</template>
+
+<style scoped>
+.catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100vh;
+  padding: 16px 24px 32px;
+  overflow: auto;
+  background: var(--canvas);
+}
+
+.catalog-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex: none;
+}
+
+.catalog-back {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.catalog-count,
+.catalog-demo {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.catalog-demo {
+  margin-left: auto;
+  text-decoration: none;
+}
+
+.catalog-lede {
+  max-width: 60ch;
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.catalog-lede code,
+.catalog-card-meta code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.catalog-index {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.catalog-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  padding: 12px 14px;
+  color: inherit;
+  text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+}
+
+.catalog-card:hover {
+  border-color: var(--accent);
+}
+
+.catalog-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.catalog-card-about {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.catalog-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  margin: 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--faint);
+  /* 文件路径是最长的那一格，而 flex 子项的 min-content 就是「整条路径」的宽度：
+     不折断的话它会把卡片撑破（深路径那几个正好卡在断行还没到的地方）。 */
+  overflow-wrap: anywhere;
+}
+
+.catalog-title {
+  flex: none;
+}
+
+.catalog-name {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.catalog-about {
+  max-width: 70ch;
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.catalog-case {
+  flex: none;
+}
+
+.catalog-case-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.catalog-case-name {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.catalog-case-needs {
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.catalog-case-note {
+  max-width: 70ch;
+  margin: 2px 0 8px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+/* 摆得下这一格的地方。给一块底、一条边，免得组件自己没边的时候看不出它有多宽
+   （KPI 卡、页签条都是「自己不带框」的那种）。 */
+.catalog-stage {
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+}
+
+.catalog-missing {
+  margin: 0;
+  color: var(--muted);
+}
+</style>

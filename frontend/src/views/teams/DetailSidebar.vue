@@ -32,7 +32,7 @@
     <div class="px-2 pt-2">
       <v-list density="compact" nav>
         <v-list-item
-          :to="{ name: 'TeamsDetailDefault', params: route.params }"
+          :to="{ name: 'TeamsDetailDefault', params }"
           exact
           prepend-icon="mdi-rocket-launch-outline"
           rounded="lg"
@@ -42,7 +42,7 @@
         </v-list-item>
 
         <v-list-item
-          :to="{ name: 'TeamsDetailMembers', params: route.params }"
+          :to="{ name: 'TeamsDetailMembers', params }"
           prepend-icon="mdi-account-group"
           rounded="lg"
           class="function-item"
@@ -56,7 +56,7 @@
         </v-list-item>
 
         <v-list-item
-          :to="{ name: 'TeamsDetailKnowledge', params: route.params }"
+          :to="{ name: 'TeamsDetailKnowledge', params }"
           prepend-icon="mdi-book-open-page-variant"
           rounded="lg"
           class="function-item"
@@ -65,7 +65,7 @@
         </v-list-item>
 
         <v-list-item
-          :to="{ name: 'TeamsDetailCompute', params: route.params }"
+          :to="{ name: 'TeamsDetailCompute', params }"
           prepend-icon="mdi-server-network"
           rounded="lg"
           class="function-item"
@@ -119,9 +119,10 @@
 import type { Team } from '@/types'
 
 import { computed, ref } from 'vue'
-import { useRoute } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import TeamProfileEditDialog from './TeamProfileEditDialog.vue'
 
@@ -137,7 +138,10 @@ interface Props {
 const props = defineProps<Props>()
 const emit = defineEmits<{ updated: [team: Team] }>()
 
-const route = useRoute()
+const nav = useNavigation()
+
+/** 小队四格功能区都挂在小队详情这条路上，把当前路由的参数原样带过去。 */
+const params = computed(() => nav?.route?.params ?? {})
 
 const editProfileDialog = ref(false)
 

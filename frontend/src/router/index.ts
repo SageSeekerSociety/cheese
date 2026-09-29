@@ -80,32 +80,10 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '打开网站', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
-    name: 'my-connections',
-    path: '/my/connections',
-    component: () => import('@/views/MyConnectionsView.vue'),
-    meta: {
-      title: '我的连接',
-      isFullPage: true,
-      ...PERSONAL_PAGE,
-      palette: { label: 'navigation.userMenu.connections', icon: 'mdi-link-variant' },
-    },
-  },
-  {
     name: 'my-archived-projects',
     path: '/my/archived-projects',
     component: () => import('@/views/MyArchivedProjectsView.vue'),
     meta: { title: '已归档的项目', isFullPage: true, ...PERSONAL_PAGE },
-  },
-  {
-    name: 'my-devices',
-    path: '/my/devices',
-    component: () => import('@/views/MyDevicesView.vue'),
-    meta: {
-      title: '我的设备',
-      isFullPage: true,
-      ...PERSONAL_PAGE,
-      palette: { label: 'navigation.userMenu.devices', icon: 'mdi-laptop' },
-    },
   },
   {
     // Device-flow approval landing page: `cheesehost auth login` prints a

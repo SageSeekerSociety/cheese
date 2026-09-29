@@ -191,7 +191,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     const versions = [1, 2].map(number => ({
       number, card_id: `version-${number}`, subject: `Report ${number}`,
       delivered_at: '2026-09-20T12:00:00Z', decided_by: 'alice',
-      kind: 'file', filename: 'report.txt', url: null,
+      kind: 'file', filename: 'report.txt', url: null, bytes: 6, room: null,
     }));
     await page.route(`**/api/projects/${projectId}/artifacts/${artifactId}`, route => route.fulfill({
       json: { code: 200, data: { id: artifactId, name: 'Version comparison fixture', version: 2, delivered_at: versions[1].delivered_at, versions } },
@@ -199,13 +199,12 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await page.route(`**/api/projects/${projectId}/artifacts/${artifactId}/compare?*`, route => route.fulfill({
       json: { code: 200, data: { kind: 'file', identical: false, note: null, files: [{ path: 'report.txt', diff: '--- report.txt\n+++ report.txt\n@@ -1 +1 @@\n-before\n+after', note: null }] } },
     }));
-    await page.goto(`/projects/${projectId}/artifacts/${artifactId}`);
+    await page.goto(`/projects/${projectId}/artifacts/${artifactId}?before=version-1&after=version-2`);
     await expect(page.getByText('+after', { exact: true })).toBeVisible();
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1000 });
-      await expect(page.getByLabel('基准版本', { exact: true })).toBeVisible();
-      await expect(page.getByLabel('对比版本', { exact: true })).toBeVisible();
-      const lines = await page.locator('.comparison-diff span').evaluateAll(nodes => nodes.map(node => {
+      await expect(page.getByLabel('比较对象', { exact: true })).toBeVisible();
+      const lines = await page.locator('.changes__diff span').evaluateAll(nodes => nodes.map(node => {
         const r = node.getBoundingClientRect();
         return { top: r.top, bottom: r.bottom, left: r.left };
       }));
@@ -214,12 +213,9 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
         expect(lines[i].top).toBeGreaterThanOrEqual(lines[i - 1].bottom);
         expect(lines[i].left).toBe(lines[0].left);
       }
-      const selectors = await page.locator('.comparison-selectors').boundingBox();
-      expect(selectors!.x + selectors!.width).toBeLessThanOrEqual(width);
+      const bar = await page.locator('.compare__bar').boundingBox();
+      expect(bar!.x + bar!.width).toBeLessThanOrEqual(width);
     }
-    await page.getByLabel('对比版本', { exact: true }).selectOption('version-1');
-    await expect(page.getByText('请选择两个不同的版本')).toBeVisible();
-    await expect(page.locator('.comparison-diff')).toHaveCount(0);
   });
 
   test('账号页：登录、注册、找回密码，桌面与手机', async ({ page }) => {

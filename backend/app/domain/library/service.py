@@ -290,6 +290,16 @@ def write_artifact_snapshot(
     target.write_bytes(data)
 
 
+def artifact_snapshot_size(
+    project_id: uuid.UUID, card_id: uuid.UUID, name: str
+) -> int | None:
+    """这一版留存的那一份有多大；没有留存时给 None。"""
+    try:
+        return artifact_snapshot_path(project_id, card_id, name).stat().st_size
+    except (OSError, ValidationError):
+        return None
+
+
 def read_artifact_snapshot(
     project_id: uuid.UUID, card_id: uuid.UUID, name: str
 ) -> bytes:
