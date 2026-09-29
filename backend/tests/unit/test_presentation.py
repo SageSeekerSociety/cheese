@@ -279,12 +279,6 @@ TASK_CASES = [
         NeedsYou.bounced,
     ),
     (
-        "PR 被人关掉了",
-        task(card=card(AcceptStatus.pending, note_code=NoteCode.pr_closed_unmerged)),
-        Column.needs_you,
-        NeedsYou.bounced,
-    ),
-    (
         "采纳时冲突",
         task(card=card(AcceptStatus.conflict)),
         Column.needs_you,

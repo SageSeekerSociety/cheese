@@ -2587,15 +2587,8 @@ class AcceptService:
             # or merge a returned delivery, even when its checks are green.
             return
         if status.state == "closed":
-            await self._note_pr_closed_unmerged(card=card, topic=topic)
-            await self._session.flush()
+            await self._void_closed_pr_card(card=card, topic=topic)
             return
-        if card.note_code == notes.NoteCode.pr_closed_unmerged:
-            # Reopened. The closure note now describes a PR that is open again,
-            # and archiving / voiding read this code to decide whether a human
-            # still has a PR to close (`archive.pr_left_open`).
-            notes.clear(card)
-            await self._session.flush()
 
         if card.note_code == notes.NoteCode.waiting_merge_queue:
             if await client.merge_queue_entry(
@@ -3064,37 +3057,37 @@ class AcceptService:
             merged_externally=card.note_code != notes.NoteCode.waiting_merge_queue,
         )
 
-    async def _note_pr_closed_unmerged(self, *, card: AcceptCard, topic: Topic) -> None:
-        """The PR was closed on GitHub WITHOUT merging. Say so and stop there.
+    async def _void_closed_pr_card(self, *, card: AcceptCard, topic: Topic) -> None:
+        """The PR was closed on GitHub WITHOUT merging: the review is over.
 
-        No auto-settle and no local-merge fallback: a human closing the PR is
-        them saying "not this", and merging behind their back would be the
-        opposite of what they asked for. A human reopens the PR or voids the
-        card; either way the poller picks it up from there.
+        A human closing the PR is them saying "not this". Merging behind their
+        back, or falling back to a local merge, would be the opposite of what
+        they asked for; so the platform voids the card, the same terminal state
+        a manual void writes. Delivering again is an ordinary new submission,
+        with a new card.
         """
-        note = (
-            f"PR #{card.pr_number} 已关闭且没有合并，平台不会自动合并。"
-            "可以重新打开 PR，或者作废这次审阅。"
+        headline = (
+            f"{VOIDED_PREFIX}：PR #{card.pr_number} 已在 GitHub 关闭且没有合并，"
+            "平台自动作废了这次审阅。要继续交付，重新提交审阅。"
         )
-        if card.note == note:
-            return  # already said once — the 60s poll must not repeat it
-        notes.record(card, notes.NoteCode.pr_closed_unmerged, note)
-        logger.warning(
-            "card %s: PR #%s was closed unmerged — poller is now idling on it",
-            card.id,
-            card.pr_number,
+        card.status = AcceptStatus.revoked
+        notes.record(
+            card, notes.NoteCode.voided, archive.prefix_note(card.note, headline)
         )
+        card.decided_at = card.decided_at or datetime.now(UTC)
+        await self._session.flush()
         await self._tell_the_reviewer(
             card,
             topic,
-            f"PR #{card.pr_number} 已关闭且没有合并",
+            f"PR #{card.pr_number} 已关闭且没有合并，审阅已作废",
             meta=notice(
                 EVENT_PR_CLOSED,
                 severity=SEVERITY_WARN,
                 who=WHO_HUMAN,
                 detail=(
-                    "已关闭的 PR 不会自动合并。话题保持进行中，"
-                    "可以重新打开 PR，或者作废这次审阅。"
+                    "PR 在 GitHub 上被关闭且没有合并，平台自动作废了这次审阅，"
+                    "不会合并它。要继续交付，重新提交审阅。"
+                    f"\n{card.pr_url or ''}"
                 ),
                 detail_label="下一步",
             ),

@@ -75,7 +75,7 @@ const animate = ref(false)
 const acceptBusy = ref(false)
 const rejectNote = ref('')
 const showRejectInput = ref(false)
-// 作废：卡停在一个没人能推进的地方（PR 在 GitHub 上被关掉、冲突卡等）时的出口。
+// 作废：卡停在一个没人能推进的地方（GitHub 拒绝合并、冲突卡等）时的出口。
 // 它不是退回——不叫芝士改，只结束这次审阅，所以同样要先展开、再确认。
 const voidNote = ref('')
 const showVoidInput = ref(false)
