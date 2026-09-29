@@ -127,3 +127,15 @@ def push_text(type_: NotificationType, payload: dict[str, Any]) -> tuple[str, st
         return (question or "有一个新问题", where or "等你回答")
     content = str(payload.get("content") or "").strip()
     return (content or "平台有一条提示", where)
+
+
+def push_link(payload: dict[str, Any]) -> str:
+    """点开推送落到哪儿：那个房间；房间说不清就是待办，那里一定列着这件事。
+
+    和 `frontend/public/push-sw.js` 的 `readPayload` 是同一条规则。
+    """
+    project_id = payload.get("projectId")
+    topic_id = payload.get("topicId")
+    if project_id and topic_id:
+        return f"/projects/{project_id}/topics/{topic_id}"
+    return "/inbox"

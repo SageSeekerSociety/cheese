@@ -3,6 +3,7 @@ import type {
   BulkUpdateResponse,
   ListNotificationsParams,
   ListNotificationsResponse,
+  LiveTokenResponse,
   MarkAllAsReadRequest,
   MarkAllAsReadResponse,
   Notification,
@@ -64,5 +65,12 @@ export namespace NotificationsApi {
     NewApiInstance.request<UnreadCountResponse>({
       url: '/notifications/unread-count',
       method: 'GET',
+    })
+
+  // 桌面 app 自己连服务器收通知用的凭证，只能用来开那条连接（lib/desktopApp.ts）
+  export const liveToken = () =>
+    NewApiInstance.request<LiveTokenResponse>({
+      url: '/notifications/live-token',
+      method: 'POST',
     })
 }

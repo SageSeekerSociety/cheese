@@ -106,14 +106,16 @@ def _is_claude(argv0: str) -> bool:
     )
 
 
-def sessions_on(config_dir: Path) -> list[int]:
-    """Claude Code processes already using this config directory.
+def sessions_on(config_dir: Path, agent_handle: str | None) -> list[int]:
+    """Claude Code processes already using this seat and config directory.
 
-    Two sessions appending to one transcript corrupt it, and a runner that
-    starts while an older session (a terminal of the harness this replaced, a
-    runner that lost its lock) is still running would be the second.
+    A new runner replaces an older process for its own seat. Teammates in one
+    room share the config directory, so that directory alone is not ownership.
     """
+    if not agent_handle:
+        return []
     marker = f"CLAUDE_CONFIG_DIR={config_dir}"
+    owner = f"CHEESE_AUTHOR={agent_handle}"
     found = []
     proc = Path("/proc")
     if proc.is_dir():
@@ -125,7 +127,11 @@ def sessions_on(config_dir: Path) -> list[int]:
                 environ = (entry / "environ").read_bytes().split(b"\0")
             except (OSError, UnicodeDecodeError):
                 continue
-            if _is_claude(argv0) and marker.encode() in environ:
+            if (
+                _is_claude(argv0)
+                and marker.encode() in environ
+                and owner.encode() in environ
+            ):
                 found.append(int(entry.name))
         return found
     try:
@@ -147,7 +153,7 @@ def sessions_on(config_dir: Path) -> list[int]:
             ).stdout
         except (OSError, subprocess.TimeoutExpired):
             continue
-        if marker in detail.split():
+        if marker in detail.split() and owner in detail.split():
             found.append(int(pid))
     return found
 
@@ -386,7 +392,7 @@ class Runner(runner.Runner[Journal]):
         self.claim()
         self.config_dir = Path(env["CLAUDE_CONFIG_DIR"])
         self.execution = env.get("CHEESE_EXECUTION_CONFIG")
-        end(sessions_on(self.config_dir))
+        end(sessions_on(self.config_dir, agent_handle))
         saved = self.journal.recall("session_id")
         failed = self.journal.recall("resume_failed")
         resumed = next(

@@ -8,6 +8,52 @@ import type { AcceptCard, Block, PrChecks } from '@/cx_types'
 
 export type Focus = 'machine' | 'seats' | 'chat' | 'site' | 'tabs' | 'title' | 'backstage' | 'card'
 
+// 右侧那一条栏上的四格，名字和产品工作面板的固定页签一一对应（`PanelTabs`）：
+// 剧本说「这一步切到 changes」，画面上就是产品里的「改动」那一格。
+export type PanelKey = 'overview' | 'site' | 'changes' | 'preview'
+
+// 总览那一格里的东西：实况文档、上一轮的进度清单、房间里的活（看板）。
+export interface OverviewScene {
+  // 实况文档正文（markdown），和芝士写进房间的是同一份东西。
+  doc?: string
+  // 上一轮留下的清单，画成「进度 完成 N/M」。
+  progress?: { subject: string; status: ChecklistStatus }[]
+  // 房间里的活，画成看板那一行「N 件，M 件待处理」。
+  tasks?: SceneTask[]
+}
+
+// 一件活：只写要讲的那几项，其余按一件普通的、开着分支的活补齐。
+export interface SceneTask {
+  id?: string
+  title: string
+  // 下一步该谁动。不写就是 施工中。
+  column?: 'building' | 'delivering' | 'needs_you' | 'done'
+  // 这一列里那句话。不写按列给一句。
+  status?: string
+  // 负责人（handle）。
+  who?: string
+}
+
+// 改动那一格里的东西：这一轮改出来的文件。每份文件自己那几行 diff 照 git 的写法
+// 写（`+`、`-`、空格的上下文），文件头和 hunk 头由这里补——剧本里抄那些只是噪音，
+// 「改了哪几行」才是要讲的东西。
+export interface SceneDiffFile {
+  path: string
+  status?: 'added' | 'modified' | 'removed'
+  diff: string[]
+}
+
+export interface ChangesScene {
+  files: SceneDiffFile[]
+}
+
+// 预览那一格里的东西：芝士摆出来的那一份文件。markdown 直接画出正文。
+export interface PreviewScene {
+  path: string
+  content: string
+  mime?: string
+}
+
 // 右下角「幕后」那一格画什么：界面上看不见、但这一段要讲的机制。
 export type Backstage = 'memory' | 'pipeline' | 'devices'
 
@@ -107,6 +153,14 @@ export interface SceneStep {
   // 这一步画面上该看哪一块：那一块描一圈边，旁边挂 tag 这句短话。
   focus?: Focus
   tag?: string
+  // 这一步右侧停在哪一格。不写就是现场——「别的剧本一步都不改」靠的就是这一条。
+  // 它是**这一步**的：下一帧不说，就又回到现场。
+  panel?: PanelKey
+  // 那几格里的东西。写一次就留在那儿（和机器栏、座位卡一样是重放出来的房间状态）：
+  // 后面那几步可以只说 `panel: "changes"`，不必把同一份 diff 抄第二遍。
+  overview?: OverviewScene
+  changes?: ChangesScene
+  preview?: PreviewScene
   events: SceneEvent[]
 }
 
@@ -175,6 +229,11 @@ export interface Frame {
   runningWho: string[]
   focus: Focus | null
   tag: string
+  // 右侧此刻停在哪一格，以及那几格里的东西（真组件要的形状由 demoPanels 拼）。
+  panel: PanelKey
+  overview: OverviewScene | null
+  changes: ChangesScene | null
+  preview: PreviewScene | null
   card: AcceptCard | null
   cardOpen: boolean
   checks: PrChecks | null
@@ -276,11 +335,18 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
   const meters = new Map<string, string>()
   const devices: Frame['devices'] = {}
   const term: string[] = []
+  let overview: OverviewScene | null = null
+  let changes: ChangesScene | null = null
+  let preview: PreviewScene | null = null
 
   let offset = 0
   for (let i = 0; i <= last; i++) {
     const s = scene.steps[i]
     const until = i < last ? Infinity : elapsed
+    // 那几格里的东西是房间状态，和机器栏、座位卡一样重放：写一次就留在那儿。
+    if (s.overview !== undefined) overview = s.overview
+    if (s.changes !== undefined) changes = s.changes
+    if (s.preview !== undefined) preview = s.preview
     for (const f of files.values()) f.fresh = false
     s.events.forEach((e, n) => {
       if (e.at > until) return
@@ -475,6 +541,11 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
     runningWho,
     focus: current?.focus ?? null,
     tag: current?.tag ?? '',
+    // 页签是「这一步在看哪一格」，所以只读这一步的；不写就是现场。
+    panel: current?.panel ?? 'site',
+    overview,
+    changes,
+    preview,
     card,
     cardOpen,
     checks,
@@ -492,8 +563,20 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
 export function checkScene(scene: Scene): string[] {
   const problems: string[] = []
   const open = new Set<string>()
+  // 哪几格里的东西已经写过了。声明了一格却没有内容，画面上就是一块空的——那不
+  // 是一步演示，那是漏了一句。
+  const declared = new Set<PanelKey>()
   scene.steps.forEach((s, i) => {
     const where = `step ${i + 1}「${s.label}」`
+    if (s.overview !== undefined) declared.add('overview')
+    if (s.changes !== undefined) declared.add('changes')
+    if (s.preview !== undefined) declared.add('preview')
+    if (s.panel === 'changes' && !declared.has('changes'))
+      problems.push(`${where}: panel is changes, but no step declares changes`)
+    if (s.panel === 'preview' && !declared.has('preview'))
+      problems.push(`${where}: panel is preview, but no step declares preview`)
+    if (s.changes && !s.changes.files.length) problems.push(`${where}: changes has no files`)
+    if (s.preview && !s.preview.path) problems.push(`${where}: preview has no path`)
     let prev = -1
     for (const e of s.events) {
       if (e.at < prev) problems.push(`${where}: events are out of order at ${e.at}ms`)

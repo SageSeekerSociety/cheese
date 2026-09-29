@@ -5,15 +5,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod connect;
+mod notices;
 mod platform;
+mod resident;
 
 use serde::Serialize;
 use tauri::ipc::{CapabilityBuilder, Channel};
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
-use tauri::{Manager, State, Theme, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, State, Theme, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_window_state::StateFlags;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 use url::Url;
 
 // Built against okcheese.com; CHEESE_ORIGIN at build time points a build elsewhere.
@@ -113,23 +117,64 @@ fn stored_theme(app: &tauri::App) -> String {
 
 // Replaces this app with the newest release (.github/workflows/desktop.yml
 // publishes it with latest.json beside it) and starts that. The page is the
-// server's own and always current; this is for the app around it. A
-// connection in progress finishes first: a restart would cut it off halfway.
-async fn update(app: tauri::AppHandle) -> tauri_plugin_updater::Result<()> {
+// server's own and always current; this is for the app around it. The app runs
+// for days with its window closed, so it looks again every few hours, and it
+// restarts only while the window is out of sight and no connection is in
+// progress: never under someone's hands, never cutting a connection off halfway.
+// The restarted app stays out of sight too.
+async fn keep_updated(app: tauri::AppHandle) {
+    loop {
+        if let Err(e) = update(&app).await {
+            eprintln!("cheese: update failed: {e}");
+        }
+        tokio::time::sleep(UPDATE_EVERY).await;
+    }
+}
+
+const UPDATE_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+const START_HIDDEN_FILE: &str = "start-hidden";
+
+async fn update(app: &tauri::AppHandle) -> tauri_plugin_updater::Result<()> {
     let Some(update) = app.updater()?.check().await? else {
         return Ok(());
     };
     let bytes = update.download(|_, _| {}, || {}).await?;
-    while app.state::<connect::Running>().0.lock().unwrap().is_some() {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    loop {
+        let connecting = app.state::<connect::Running>().0.lock().unwrap().is_some();
+        let in_sight = app
+            .get_webview_window("main")
+            .is_some_and(|w| w.is_visible().unwrap_or(false));
+        if !connecting && !in_sight {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+    if let Ok(dir) = app.path().app_config_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join(START_HIDDEN_FILE), "");
     }
     update.install(bytes)?;
     app.restart();
 }
 
+/// Whether this launch is the restart after an update, which keeps the window out of sight.
+fn restarted_by_update(app: &tauri::App) -> bool {
+    app.path()
+        .app_config_dir()
+        .is_ok_and(|dir| std::fs::remove_file(dir.join(START_HIDDEN_FILE)).is_ok())
+}
+
 fn main() {
     tauri::Builder::default()
+        // Opening the app while it runs with its window closed brings that window
+        // back rather than starting a second app. Registered first, as it must be.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| resident::bring_back(app)))
         .plugin(tauri_plugin_opener::init())
+        // Off until the person turns it on; launched this way the app starts out of sight.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![resident::AT_LOGIN]),
+        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Size, position and maximized, from one launch to the next. Whether the
         // window is shown is the app's to decide at each launch, not a thing to restore.
@@ -139,7 +184,27 @@ fn main() {
                 .build(),
         )
         .manage(connect::Running::default())
-        .invoke_handler(tauri::generate_handler![connect_this_machine, cancel_connect, this_device, set_theme])
+        .manage(resident::StartHidden::default())
+        .manage(notices::Notices::default())
+        .invoke_handler(tauri::generate_handler![
+            connect_this_machine,
+            cancel_connect,
+            this_device,
+            set_theme,
+            resident::set_badge,
+            resident::opens_at_login,
+            resident::set_opens_at_login,
+            notices::listen_for_notices,
+            notices::stop_notices
+        ])
+        // Closing the window keeps the app running (resident.rs); quitting is ⌘Q
+        // on macOS and 退出 in the tray menu elsewhere.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             // A page from the server may call the commands above; by default
             // a remote page reaches no IPC at all. The app's own page has the same.
@@ -153,34 +218,40 @@ fn main() {
                     .permission("allow-connect-this-machine")
                     .permission("allow-cancel-connect")
                     .permission("allow-this-device")
-                    .permission("allow-set-theme"),
+                    .permission("allow-set-theme")
+                    .permission("allow-set-badge")
+                    .permission("allow-listen-for-notices")
+                    .permission("allow-stop-notices")
+                    .permission("allow-opens-at-login")
+                    .permission("allow-set-opens-at-login"),
             )?;
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = update(handle).await {
-                    eprintln!("cheese: update check failed: {e}");
-                }
-            });
+            if restarted_by_update(app) || std::env::args().any(|a| a == resident::AT_LOGIN) {
+                app.state::<resident::StartHidden>().0.store(true, Ordering::Relaxed);
+            }
+            #[cfg(not(target_os = "macos"))]
+            resident::tray::install(app.handle())?;
+            tauri::async_runtime::spawn(keep_updated(app.handle().clone()));
+            notices::resume(app.handle());
             let opener = app.handle().clone();
             let opener2 = app.handle().clone();
             // Anything that is not the server — docs, GitHub, a shared link — opens
             // in the user's browser, so the commands are only ever reachable from our pages.
             let theme = stored_theme(app);
             // What the pages need to know about this window (frontend/src/lib/desktopApp.ts
-            // and ../shell): where the server is, the theme last picked, and whether
-            // the title bar lies over the page.
+            // and ../shell): where the server is, the theme last picked, whether
+            // the title bar lies over the page, and what else the app can do for it.
             let about = format!(
-                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?} }};"
+                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, can: [\"notices\", \"badge\", \"autostart\"] }};"
             );
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .initialization_script(about)
                 .theme(window_theme(&theme).flatten())
                 .title("Cheese")
                 // Shown once the app's own page has painted, so the window never
-                // opens as a blank white rectangle.
+                // opens as a blank white rectangle; not at all after an update's restart.
                 .visible(false)
                 .on_page_load(|webview, payload| {
-                    if payload.event() == PageLoadEvent::Finished {
+                    if payload.event() == PageLoadEvent::Finished && !resident::start_hidden(webview.app_handle()) {
                         let _ = webview.show();
                     }
                 })
@@ -208,8 +279,17 @@ fn main() {
             window.build()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Cheese");
+        .build(tauri::generate_context!())
+        .expect("error while building Cheese")
+        .run(|app, event| {
+            // Clicking the Dock icon with the window closed brings it back.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                resident::bring_back(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]

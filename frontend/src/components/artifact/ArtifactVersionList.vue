@@ -8,6 +8,7 @@ import type { ArtifactVersion } from '@/api'
 
 import { computed, ref } from 'vue'
 
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
@@ -49,8 +50,11 @@ function previous(version: ArtifactVersion): ArtifactVersion | undefined {
           <div class="t-meta c-faint">
             <template v-if="version.delivered_at">{{ relTime(version.delivered_at) }}</template>
             <template v-if="version.decided_by">
-              · {{ t('tasks.artifact.acceptedBy', { who: version.decided_by }) }}</template
-            >
+              ·
+              <i18n-t keypath="tasks.artifact.acceptedBy" tag="span">
+                <template #who><UserRef :handle="version.decided_by" /></template>
+              </i18n-t>
+            </template>
             <template v-if="version.room">
               · {{ t('tasks.artifact.from') }}
               <router-link

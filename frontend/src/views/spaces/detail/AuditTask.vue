@@ -163,7 +163,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { createEmptyResult, usePaging } from '@/utils/paging'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { TasksApi } from '@/network/api/tasks'
 import { CancelError, useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'

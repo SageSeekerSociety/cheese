@@ -69,13 +69,24 @@ async def list_awaiting_me(
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
         return ok(page([], 0))
-    handle = who.handle
+    items = await waiting_items(db, chat, handle=who.handle, user_id=who.user_id)
+    rows = [item.as_dict() for item in items]
+    return ok(page(rows, len(rows)))
 
+
+async def waiting_items(
+    db: AsyncSession, chat: ChatService, *, handle: str, user_id: int | None
+) -> list[awaiting.WaitingItem]:
+    """点到 `handle` 的、还没处理完的事项，最近动过的在前。
+
+    待办页和桌面 app 图标上的数字（`notifications_live.py`）读的都是它，所以两处
+    的数永远一样。
+    """
     projects = await ProjectRepository(db).list_visible_to(
-        handle=handle, user_id=who.user_id
+        handle=handle, user_id=user_id
     )
     if not projects:
-        return ok(page([], 0))
+        return []
     names = {p.id: p.name for p in projects}
     project_ids = list(names)
 
@@ -174,5 +185,4 @@ async def list_awaiting_me(
         )
 
     items.sort(key=lambda item: item.at, reverse=True)
-    rows = [item.as_dict() for item in items]
-    return ok(page(rows, len(rows)))
+    return items
