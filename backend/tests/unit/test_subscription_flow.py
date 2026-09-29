@@ -5,6 +5,7 @@
 凭据的实测清单在 PR 描述里，这里钉的是「代码按规格书写」这件事本身）。
 """
 
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime, timedelta
@@ -12,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
+from app.core.config import settings
 from app.domain.subscription.openai_codex import (
     OpenAICodexOAuth,
     SubscriptionTokenInvalid,
@@ -232,6 +234,42 @@ async def test_refresh_network_error_is_connectivity():
 
     with pytest.raises(SubscriptionUnreachable):
         await _oauth(handler).refresh("rt-old")
+
+
+async def test_token_requests_leave_through_the_configured_proxy(monkeypatch):
+    """钉住出口的部署设了代理，token 请求就必须经它出去，而不是绕开它直连。
+    OAuth 主机故意不可解析：请求只有经代理才可能成功。"""
+    request_lines: list[str] = []
+
+    async def proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        head = await reader.readuntil(b"\r\n\r\n")
+        request_lines.append(head.split(b"\r\n", 1)[0].decode())
+        length = next(
+            int(line.split(b":", 1)[1])
+            for line in head.split(b"\r\n")
+            if line.lower().startswith(b"content-length:")
+        )
+        await reader.readexactly(length)
+        body = json.dumps({"access_token": "at-new", "refresh_token": "rt-new"})
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+            b"Connection: close\r\nContent-Length: %d\r\n\r\n%s"
+            % (len(body), body.encode())
+        )
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(proxy, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(settings, "openai_oauth_base", "http://auth.openai.invalid")
+    monkeypatch.setattr(
+        settings, "openai_subscription_proxy", f"http://127.0.0.1:{port}"
+    )
+    async with server:
+        tokens = await OpenAICodexOAuth().refresh("rt-old")
+
+    assert tokens.access_token == "at-new"
+    assert request_lines == ["POST http://auth.openai.invalid/oauth/token HTTP/1.1"]
 
 
 # --- 额度读数 ----------------------------------------------------------------
