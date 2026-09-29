@@ -33,6 +33,11 @@ interface CommandBase {
   /** 做这件事就是去一个地方。和 run 可以同时给，先跑 run。 */
   to?: RouteLocationRaw
   run?: () => void
+  /**
+   * 不进命令面板。「刷新」这种只在它那一页有意义、在面板里分不清是哪一页的；切项目
+   * 的 ⌘1–9 在面板里已经由「项目」那一组给出。
+   */
+  palette?: false
 }
 
 /**

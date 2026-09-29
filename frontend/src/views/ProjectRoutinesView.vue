@@ -316,7 +316,15 @@ watch(
 )
 // 页头上的两件事：手机上「新建」是顶栏那一颗，「刷新」进 ⋯。
 useCommands(() => [
-  { id: 'routines.refresh', title: '刷新', icon: 'mdi-refresh', loading: loading.value, header: {}, run: load },
+  {
+    id: 'routines.refresh',
+    title: '刷新',
+    palette: false,
+    icon: 'mdi-refresh',
+    loading: loading.value,
+    header: {},
+    run: load,
+  },
   {
     id: 'routines.new',
     title: '新建',

@@ -480,7 +480,9 @@ defineCommands(() =>
     const to = shortcutTarget(rail.value, digit)
     const item = rail.value.find((it) => it.type === 'item' && it.to === to)
     const title = item?.type === 'item' ? item.title : to
-    return to ? [{ id: `rail.${digit}`, title: title ?? to, shortcut: `mod+${digit}`, to }] : []
+    return to
+      ? [{ id: `rail.${digit}`, title: title ?? to, shortcut: `mod+${digit}`, to, palette: false as const }]
+      : []
   })
 )
 let stopShortcuts: (() => void) | undefined
