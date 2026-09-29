@@ -30,8 +30,6 @@ const { t } = useI18n()
 // 获取实体和元数据
 const replier = computed(() => getEntity(props.notification, 'replier'))
 const discussionTitle = computed(() => getStringMetadata(props.notification, 'discussionTitle', ''))
-const discussionId = computed(() => getStringMetadata(props.notification, 'discussionId', ''))
-const commentId = computed(() => getStringMetadata(props.notification, 'commentId', ''))
 const previewContent = computed(() => getStringMetadata(props.notification, 'previewContent', ''))
 
 // 通知标题
@@ -47,44 +45,10 @@ const body = computed(() => {
   })
 })
 
-// 构建路由链接
-const routerLink = computed(() => {
-  if (discussionId.value) {
-    return {
-      name: 'DiscussionDetail',
-      params: { id: discussionId.value },
-      query: commentId.value ? { comment: commentId.value } : undefined,
-    }
-  }
-  return undefined
-})
-
-// 可选的自定义操作
-const actions = computed(() => {
-  // 如果回复内容可用且有评论ID，可以添加"回复"操作
-  if (previewContent.value && commentId.value && discussionId.value) {
-    return [
-      {
-        text: t('notifications.REPLY.action.reply'),
-        color: 'primary',
-        handler: () => {
-          // 这里可以实现直接回复的功能
-          // 例如，打开回复对话框或导航到特定页面
-          console.log('Reply to comment:', commentId.value)
-          window.open(`/discussions/${discussionId.value}?comment=${commentId.value}&reply=true`, '_blank')
-        },
-      },
-    ]
-  }
-  return []
-})
-
 // 导出渲染结果，供父组件使用
 const content = computed<RenderedNotificationContent>(() => ({
   title: title.value,
   body: body.value,
-  routerLink: routerLink.value,
-  actions: actions.value,
 }))
 
 defineExpose({

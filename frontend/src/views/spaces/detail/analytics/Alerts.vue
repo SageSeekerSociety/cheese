@@ -44,10 +44,10 @@ import { toast } from 'vuetify-sonner'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 import { formatCount } from './helpers'
 
-import { useAnalyticsRouteNames } from '@/lib/shellRouteNames'
+import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { SpacesApi } from '@/network/api/spaces'
 
-const analyticsNames = useAnalyticsRouteNames()
+const analyticsNames = ANALYTICS_ROUTE_NAMES
 const { pushToSection, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)

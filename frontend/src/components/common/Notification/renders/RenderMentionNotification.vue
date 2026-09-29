@@ -30,8 +30,6 @@ const { t } = useI18n()
 // 获取实体和元数据
 const mentioner = computed(() => getEntity(props.notification, 'mentioner'))
 const discussionTitle = computed(() => getStringMetadata(props.notification, 'discussionTitle', ''))
-const discussionId = computed(() => getStringMetadata(props.notification, 'discussionId', ''))
-const commentId = computed(() => getStringMetadata(props.notification, 'commentId', ''))
 const previewContent = computed(() => getStringMetadata(props.notification, 'previewContent', ''))
 
 // 通知标题
@@ -47,23 +45,10 @@ const body = computed(() => {
   })
 })
 
-// 构建路由链接
-const routerLink = computed(() => {
-  if (discussionId.value) {
-    return {
-      name: 'DiscussionDetail',
-      params: { id: discussionId.value },
-      query: commentId.value ? { comment: commentId.value } : undefined,
-    }
-  }
-  return undefined
-})
-
 // 导出渲染结果，供父组件使用
 const content = computed<RenderedNotificationContent>(() => ({
   title: title.value,
   body: body.value,
-  routerLink: routerLink.value,
 }))
 
 defineExpose({

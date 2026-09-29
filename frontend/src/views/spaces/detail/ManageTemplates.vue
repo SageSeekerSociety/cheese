@@ -1,13 +1,12 @@
 <template>
+  <PageHeader :title="t('spaces.detail.manageTemplates.title')" show-on-mobile>
+    <template #actions>
+      <v-btn color="primary" prepend-icon="mdi-plus" @click="createTemplate">{{
+        t('spaces.detail.manageTemplates.createTemplate')
+      }}</v-btn>
+    </template>
+  </PageHeader>
   <v-sheet flat rounded="lg">
-    <v-toolbar :title="t('spaces.detail.manageTemplates.title')" color="transparent" density="compact">
-      <template #append>
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="createTemplate">{{
-          t('spaces.detail.manageTemplates.createTemplate')
-        }}</v-btn>
-      </template>
-    </v-toolbar>
-
     <v-container v-if="templates.length > 0" class="pa-0">
       <v-row>
         <v-col v-for="(template, index) in templates" :key="index" cols="12">
@@ -80,6 +79,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
+import PageHeader from '@/components/common/PageHeader.vue'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 

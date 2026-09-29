@@ -5,16 +5,16 @@
 // 那个「发布网站」），按名字解析的路由在表里找不到就**抛**（不是警告），整个渲染就
 // 断在那儿。名字补全，落点还是那个空的通配页 —— 链接画得出来，点不动。
 //
-// 看板那六格（`AnalyticsNavigationTabs` 的页签，名字见 `shellRouteNames.ts`）同理：
+// 看板那六格（`AnalyticsNavigationTabs` 的页签，名字见 `spaceRouteNames.ts`）同理：
 // 那一排「总览 / 告警 / 出题人 / …」在组件预览站上也得画得出来。
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-import { OLD_ANALYTICS_ROUTE_NAMES } from '@/lib/shellRouteNames'
+import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 
 const blank = { render: () => null }
 
 /** 老树那一套看板名字，各给一条不会被走到的路径（落点是通配页）。 */
-const analytics = Object.entries(OLD_ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
+const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
   path: `/spaces/:spaceId/analytics/${key}`,
   name,
   component: blank,

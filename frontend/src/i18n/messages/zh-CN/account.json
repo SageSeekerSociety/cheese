@@ -426,7 +426,6 @@
       "viewed": "{name} 查看了完整信息",
       "youViewed": "你查看了完整信息",
       "where": "{name} · {kind}",
-      "course": "课程",
       "space": "空间",
       "more": "加载更多",
       "loadFailed": "未能加载访问记录"

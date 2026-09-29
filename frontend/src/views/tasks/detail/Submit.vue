@@ -222,13 +222,13 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { throttle } from 'lodash-es'
 
-import { useTaskRouteNames } from '@/lib/shellRouteNames'
+import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'
 
 const CountdownTimer = defineAsyncComponent(() => import('@/components/common/CountdownTimer.vue'))
 
-const routeNames = useTaskRouteNames()
+const routeNames = TASK_ROUTE_NAMES
 
 const props = defineProps<{
   taskData: Task | null

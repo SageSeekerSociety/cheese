@@ -15,8 +15,6 @@
     "src/components/room/RoomComposer.vue": 1,
     "src/components/TopicMembers.vue": 2,
     "src/components/TopicSidebar.vue": 1,
-    "src/views/tasks/components/TaskHeader.vue": 1,
-    "src/views/tasks/Detail.vue": 1,
     "src/views/teams/detail/Knowledge.vue": 6
   }
 }

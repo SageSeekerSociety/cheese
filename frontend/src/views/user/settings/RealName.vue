@@ -128,7 +128,7 @@
               {{
                 t('account.realName.log.where', {
                   name: entry.accessEntityName,
-                  kind: entry.accessEntityIsCourse ? t('account.realName.log.course') : t('account.realName.log.space'),
+                  kind: t('account.realName.log.space'),
                 })
               }}
             </span>

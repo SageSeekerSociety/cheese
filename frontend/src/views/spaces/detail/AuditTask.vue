@@ -1,6 +1,6 @@
 <template>
+  <PageHeader :title="t('spaces.detail.auditTasks.title')" show-on-mobile />
   <v-sheet flat rounded="lg">
-    <v-toolbar :title="t('spaces.detail.auditTasks.title')" color="transparent" density="compact"></v-toolbar>
     <div class="tasks-list">
       <infinite-scroll
         :loading="loadingMore"
@@ -163,6 +163,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { createEmptyResult, usePaging } from '@/utils/paging'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { TasksApi } from '@/network/api/tasks'
 import { CancelError, useDialog } from '@/plugins/dialog'
@@ -234,11 +235,13 @@ const rejectTask = async (taskId: number) => {
         required: true,
       })
       .wait()
-    if (!rejectReason) {
+    // 只有空格也算没写：驳回原因是作者改题的唯一依据。
+    const reason = rejectReason?.trim()
+    if (!reason) {
       toast.error(t('spaces.detail.auditTasks.rejectReasonRequired'))
       return
     }
-    await TasksApi.update(taskId, { approved: 'DISAPPROVED', rejectReason })
+    await TasksApi.update(taskId, { approved: 'DISAPPROVED', rejectReason: reason })
     toast.success(t('spaces.detail.auditTasks.operationSuccess'))
   } catch (error) {
     if (error instanceof CancelError) {

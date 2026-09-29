@@ -2025,7 +2025,7 @@ function routes(url: URL, method: string, body: unknown): MockReply {
       // 刚加过路由、还没人访问过的那几条：分位数是 null，页面画「—」。
       {
         method: 'GET',
-        route: '/spaces/{space_id}/discussions',
+        route: '/spaces/{space_id}/domain-groups',
         count: 0,
         error_count: 0,
         status: { '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0 },

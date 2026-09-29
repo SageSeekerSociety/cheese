@@ -136,17 +136,9 @@
     <v-card>
       <v-card-title class="d-flex align-center ga-2">
         <span>{{ resubmittingId === null ? t('spaces.create.open') : t('spaces.review.resubmit') }}</span>
-        <v-spacer />
-        <!-- 建版不挑模板：建出来就是课程空间。这句说清默认值，免得有人去找选择器。 -->
-        <v-chip v-if="resubmittingId === null" size="small" color="primary" variant="flat">
-          {{ t('spaces.create.courseTemplateTag') }}
-        </v-chip>
       </v-card-title>
       <v-form @submit.prevent="createSpace">
         <v-card-text>
-          <v-alert v-if="resubmittingId === null" type="info" variant="tonal" class="mb-4">
-            {{ t('spaces.create.courseTemplate') }}
-          </v-alert>
           <p class="text-body-2 mb-2">{{ t('spaces.create.ownership') }}</p>
           <p class="text-body-2 text-medium-emphasis mb-4">{{ t('spaces.create.visibility') }}</p>
           <p class="text-body-2 mb-2">{{ t('spaces.create.avatar') }}</p>
@@ -214,9 +206,9 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <!-- 建完不停在名录页：收起这张卡就进这门课。 -->
+        <!-- 建完不停在名录页：收起这张卡就进这个空间。 -->
         <v-btn color="primary" variant="flat" @click="enterCreatedSpace">
-          {{ t('spaces.inviteCodes.openCourse') }}
+          {{ t('spaces.inviteCodes.openSpace') }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -241,7 +233,7 @@ import { listProjects } from '@/api'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { spaceEntryRoute } from '@/lib/courseNav'
+import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { AvatarsApi } from '@/network/api/avatars'
 import { SpacesApi } from '@/network/api/spaces'
 import AccountService from '@/services/account'

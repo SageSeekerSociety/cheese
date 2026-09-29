@@ -1,27 +1,8 @@
 import type { RouteRecordRaw } from 'vue-router'
 
 /**
- * 老的空间树（`/spaces/:spaceId/…`）。
- *
- * **2026-09-26 起它不再是「进去」的落点。** 进一块板一律落在新题目板
- * （`/spaces/:id/board`，见 `lib/courseNav.ts` 的 `spaceEntryRoute`）；这一棵现在的
- * 身份是**管理面与课程面**：题目板头部那块下拉带人来的「编辑信息」「管理员设置」，
- * 以及课那几屏（`course/*`，题目板外壳里那格「课程」）。
- *
- * **下面这几屏已经被题目板接手了，但一个都没删**：题目列表 → 题目板首页、我的发布 /
- * 我的参与 → 「我的」、公告板 → 「公告」、审核题目 → 「审核」、题目详情 / 发题 /
- * 九个分析页 → 第五批包进新外壳的同名页。留着的理由不是舍不得，是**删了会留死链，
- * 而那些链来自不会退场的屏**：
- * - `SpaceSidebar.vue`（老树自己的侧栏）每一格都指着它们；
- * - 课那几屏指着它们 —— `course/Assignments.vue` 的发题按钮走 `SpacesDetailPublishTask`，
- *   课程面是要长期在的；
- * - 老树内部互相指着（`detail/Tasks.vue` → 详情/我的参与、`MyPublishing.vue` → 发题、
- *   新外壳的 `board/routes.ts` 把 `SpacesDetailTasksList` 当作详情页的 `backTo`）；
- * - 已经发出去的地址（书签、通知里的链接）没有重定向会直接 404。
- *
- * 所以退场的次序是：**先在老树内部把这些指针对到题目板上**，再删页。这一步没做，
- * 因为「老树内部那一批指针」和「老树要不要整个收成一条重定向」是同一件事的两半，
- * 得一起定 —— 属于下一批。
+ * 一个空间（`/spaces/:spaceId/…`）。侧栏是 `SpaceSidebar.vue`，每一页的标题行由
+ * 页面自己的 `PageHeader` 画，和侧栏顶那一行等高。
  */
 export default {
   path: '/spaces/:spaceId',
@@ -33,7 +14,7 @@ export default {
   meta: {
     isFullPage: true,
     backTo: 'HomeSpaces',
-    // 这一棵下面还挂着 SpaceSidebar，手机上它是抽屉，所以顶栏给汉堡。
+    // 手机上 SpaceSidebar 是抽屉，所以顶栏给汉堡。
     drawer: true,
   },
   redirect: { name: 'SpacesDetailTasks' },
@@ -42,6 +23,7 @@ export default {
       path: 'announcements',
       name: 'SpacesAnnouncements',
       component: () => import('@/views/spaces/detail/Announcements.vue'),
+      meta: { titleKey: 'spaces.detail.announcements' },
     },
     {
       path: 'tasks',
@@ -98,26 +80,15 @@ export default {
           },
         },
         {
+          // 题目详情：页面本身画题目、领取与出题人的领取者名单，下面四格是子页。
           path: ':taskId',
-          name: 'SpacesDetailTasksDetail',
-          components: {
-            default: () => import('@/views/tasks/Detail.vue'),
-            header: () => import('@/components/common/PageHeader.vue'),
-          },
+          name: 'TasksDetail',
+          component: () => import('@/views/tasks/Detail.vue'),
           meta: {
             title: '题目',
             backTo: 'SpacesDetailTasksList',
           },
           children: [
-            {
-              path: '',
-              name: 'TasksDetail',
-              component: () => import('@/views/tasks/detail/Overview.vue'),
-              meta: {
-                title: '题目概览',
-                disableBreadcrumbLink: true,
-              },
-            },
             {
               path: 'submissions',
               name: 'TasksSubmissions',
@@ -158,6 +129,16 @@ export default {
           ],
         },
         {
+          // 单题分析：出题人和管理员看这道题的领取、提交与走势。
+          path: ':taskId/insights',
+          name: 'TasksInsights',
+          component: () => import('@/views/tasks/Insights.vue'),
+          meta: {
+            title: '单题分析',
+            backTo: 'TasksDetail',
+          },
+        },
+        {
           path: ':taskId/edit',
           name: 'TasksEdit',
           component: () => import('@/views/tasks/Edit.vue'),
@@ -168,56 +149,15 @@ export default {
         },
       ],
     },
-    // 一门课自己的几屏。题目板是不是课看 `Space.isCourse`（服务端按默认分组声明
-    // 的壳算的），能不能看见哪几格看 `lib/courseNav.ts`。这六条路由**一次加齐**：
-    // 教学单元 / 作业与验收 / 成员与分组 / 小测 由后面的任务填组件，它们不再动这个
-    // 文件，也不再动侧栏。
-    //
-    // 注意 `SpacesCourseHome` 一条路由两种人看：管理员看到课程总览，成员看到我的
-    // 课程。分叉在页面里按 `space.admins` 判，不按地址分叉 —— 同一个人今天教书、
-    // 明天可能只是学员，地址不该因为「你是谁」而变。
-    {
-      path: 'course',
-      name: 'SpacesCourseHome',
-      component: () => import('@/views/spaces/course/CourseHome.vue'),
-    },
-    {
-      path: 'course/units',
-      name: 'SpacesCourseUnits',
-      component: () => import('@/views/spaces/course/Units.vue'),
-    },
-    {
-      path: 'course/assignments',
-      name: 'SpacesCourseAssignments',
-      // 管理员：作业与验收；成员：本周任务。分叉同 SpacesCourseHome。
-      component: () => import('@/views/spaces/course/CourseWork.vue'),
-    },
-    {
-      path: 'course/people',
-      name: 'SpacesCoursePeople',
-      component: () => import('@/views/spaces/course/People.vue'),
-    },
-    {
-      path: 'course/quiz',
-      name: 'SpacesCourseQuiz',
-      component: () => import('@/views/spaces/course/Quiz.vue'),
-    },
-    {
-      path: 'course/team',
-      name: 'SpacesCourseTeam',
-      component: () => import('@/views/spaces/course/Team.vue'),
-    },
-    // 课程模板的配置（模块开关 + 教学参数）。放在「设置」那一块下 —— 它是管理员配
-    // 这门课的地方，不是一个课程页；侧栏那一条也只对课程里出现。
-    {
-      path: 'course/settings',
-      name: 'SpacesCourseSettings',
-      component: () => import('@/views/spaces/course/CourseSettings.vue'),
-    },
     {
       path: 'tasks/audit',
       name: 'SpacesDetailAuditTasks',
       component: () => import('@/views/spaces/detail/AuditTask.vue'),
+    },
+    {
+      path: 'members',
+      name: 'SpacesDetailMembers',
+      component: () => import('@/views/spaces/detail/Members.vue'),
     },
     {
       path: 'templates',
@@ -304,33 +244,7 @@ export default {
     {
       path: 'manage/invite-codes',
       name: 'SpacesDetailManageInviteCodes',
-      component: () => import('@/views/spaces/detail/ManageInviteCodes.vue'),
-    },
-    {
-      path: 'discussions',
-      name: 'SpacesDetailDiscussions',
-      component: () => import('@/views/spaces/detail/Discussions.vue'),
-      meta: {
-        titleKey: 'spaces.discussions.title',
-      },
-    },
-    {
-      path: 'discussions/create',
-      name: 'SpacesDetailCreateDiscussion',
-      component: () => import('@/views/spaces/detail/CreateDiscussion.vue'),
-      meta: {
-        titleKey: 'spaces.discussions.createDiscussion',
-        backTo: 'SpacesDetailDiscussions',
-      },
-    },
-    {
-      path: 'discussions/:discussionId',
-      name: 'SpacesDetailDiscussionItem',
-      component: () => import('@/views/spaces/detail/DiscussionItem.vue'),
-      meta: {
-        titleKey: 'spaces.discussions.detailTitle',
-        backTo: 'SpacesDetailDiscussions',
-      },
+      component: () => import('@/views/spaces/detail/InviteCodes.vue'),
     },
   ],
 } as RouteRecordRaw

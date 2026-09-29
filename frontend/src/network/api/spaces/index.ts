@@ -1,14 +1,4 @@
-import type {
-  CourseRoster,
-  DomainGroup,
-  MyCourseGroup,
-  Space,
-  SpaceCategory,
-  SpaceInviteCode,
-  SpaceMember,
-  Topic,
-} from '@/types'
-import type { Quiz, QuizQuestion } from './types'
+import type { DomainGroup, Space, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -16,35 +6,23 @@ import type {
   AnalyticsRealNameType,
   AnalyticsSortOrder,
   GetSpacesResponseData,
-  GetTeachingUnitsResponseData,
-  PatchQuizAnswerRequestData,
-  PatchQuizQuestionRequestData,
-  PatchQuizRequestData,
   PatchSpaceAdminRequestData,
   PatchSpaceCategoryRequestData,
   PatchSpaceDomainGroupRequestData,
   PatchSpaceInviteCodeRequestData,
   PatchSpaceRequestData,
-  PatchTeachingUnitRequestData,
-  PostQuizAttemptRequestData,
-  PostQuizQuestionRequestData,
-  PostQuizRequestData,
   PostSpaceAdminRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
-  PostSpaceEnrollRequestData,
   PostSpaceInviteCodeRequestData,
   PostSpaceJoinRequestData,
   PostSpaceMemberRequestData,
   PostSpaceRequestData,
-  PostTeachingUnitRequestData,
   SpaceAnalyticsAlerts,
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
   SpaceAnalyticsPeople,
   SpaceAnalyticsPublishers,
-  SpaceCourseLink,
-  SpaceEnrollment,
   SpaceLearningFilters,
   SpaceLearningOutline,
   SpaceLearningQuestions,
@@ -55,8 +33,6 @@ import type {
   SpaceMyPublishingOverview,
   SpaceSubmissionQueue,
   SpaceTaskAnalytics,
-  TeachingQuizData,
-  TeachingUnit,
 } from './types'
 
 import { NewApiInstance } from '../index'
@@ -108,44 +84,9 @@ export namespace SpacesApi {
       data,
     })
 
-  /**
-   * Opening a course link: redeem the code it carries, then come away with the
-   * student's project in that course. Doing it twice is not an error.
-   */
-  export const enroll = (spaceId: number, data: PostSpaceEnrollRequestData = {}) =>
-    NewApiInstance.request<SpaceEnrollment>({
-      url: `/spaces/${spaceId}/enroll`,
-      method: 'POST',
-      data,
-    })
-
-  /** Teacher-side: the one link to hand out for this course. */
-  export const courseLink = (spaceId: number) =>
-    NewApiInstance.request<SpaceCourseLink>({
-      url: `/spaces/${spaceId}/course-link`,
-      method: 'GET',
-    })
-
   export const listMembers = (spaceId: number) =>
     NewApiInstance.request<{ members: SpaceMember[] }>({
       url: `/spaces/${spaceId}/members`,
-      method: 'GET',
-    })
-
-  /**
-   * 这门课的人、项目与组 —— 管理员版面的「成员与分组」那一屏。
-   * 只对本版管理员开放：成员读这条是 403。
-   */
-  export const getCourseRoster = (spaceId: number) =>
-    NewApiInstance.request<CourseRoster>({
-      url: `/spaces/${spaceId}/course/roster`,
-      method: 'GET',
-    })
-
-  /** 成员自己那一行：我在这个课里的项目与我的组（谁都能读，只关于自己）。 */
-  export const getMyCourseGroup = (spaceId: number) =>
-    NewApiInstance.request<MyCourseGroup>({
-      url: `/spaces/${spaceId}/course/my-group`,
       method: 'GET',
     })
 
@@ -522,107 +463,5 @@ export namespace SpacesApi {
       url: `/spaces/${spaceId}/submissions`,
       method: 'GET',
       params,
-    })
-
-  export const listUnits = (spaceId: number) =>
-    NewApiInstance.request<GetTeachingUnitsResponseData>({
-      url: `/spaces/${spaceId}/units`,
-      method: 'GET',
-    })
-
-  export const createUnit = (spaceId: number, data: PostTeachingUnitRequestData) =>
-    NewApiInstance.request<{ unit: TeachingUnit }>({
-      url: `/spaces/${spaceId}/units`,
-      method: 'POST',
-      data,
-    })
-
-  export const updateUnit = (spaceId: number, unitId: number, data: PatchTeachingUnitRequestData) =>
-    NewApiInstance.request<{ unit: TeachingUnit }>({
-      url: `/spaces/${spaceId}/units/${unitId}`,
-      method: 'PATCH',
-      data,
-    })
-
-  export const deleteUnit = (spaceId: number, unitId: number) =>
-    NewApiInstance.request({
-      url: `/spaces/${spaceId}/units/${unitId}`,
-      method: 'DELETE',
-    })
-
-  export const getUnitQuiz = (spaceId: number, unitId: number) =>
-    NewApiInstance.request<TeachingQuizData>({
-      url: `/spaces/${spaceId}/units/${unitId}/quiz`,
-      method: 'GET',
-    })
-
-  export const getQuiz = (spaceId: number, quizId: number) =>
-    NewApiInstance.request<TeachingQuizData>({
-      url: `/spaces/${spaceId}/quizzes/${quizId}`,
-      method: 'GET',
-    })
-
-  export const createQuiz = (spaceId: number, unitId: number, data: PostQuizRequestData) =>
-    NewApiInstance.request<{ quiz: Quiz }>({
-      url: `/spaces/${spaceId}/units/${unitId}/quiz`,
-      method: 'POST',
-      data,
-    })
-
-  export const updateQuiz = (spaceId: number, quizId: number, data: PatchQuizRequestData) =>
-    NewApiInstance.request<{ quiz: Quiz }>({
-      url: `/spaces/${spaceId}/quizzes/${quizId}`,
-      method: 'PATCH',
-      data,
-    })
-
-  export const deleteQuiz = (spaceId: number, quizId: number) =>
-    NewApiInstance.request({
-      url: `/spaces/${spaceId}/quizzes/${quizId}`,
-      method: 'DELETE',
-    })
-
-  export const addQuizQuestion = (spaceId: number, quizId: number, data: PostQuizQuestionRequestData) =>
-    NewApiInstance.request<{ question: QuizQuestion }>({
-      url: `/spaces/${spaceId}/quizzes/${quizId}/questions`,
-      method: 'POST',
-      data,
-    })
-
-  export const updateQuizQuestion = (
-    spaceId: number,
-    quizId: number,
-    questionId: number,
-    data: PatchQuizQuestionRequestData
-  ) =>
-    NewApiInstance.request<{ question: QuizQuestion }>({
-      url: `/spaces/${spaceId}/quizzes/${quizId}/questions/${questionId}`,
-      method: 'PATCH',
-      data,
-    })
-
-  export const deleteQuizQuestion = (spaceId: number, quizId: number, questionId: number) =>
-    NewApiInstance.request({
-      url: `/spaces/${spaceId}/quizzes/${quizId}/questions/${questionId}`,
-      method: 'DELETE',
-    })
-
-  export const submitQuizAttempt = (spaceId: number, quizId: number, data: PostQuizAttemptRequestData) =>
-    NewApiInstance.request<TeachingQuizData>({
-      url: `/spaces/${spaceId}/quizzes/${quizId}/my-attempt`,
-      method: 'PUT',
-      data,
-    })
-
-  export const gradeQuizAnswer = (
-    spaceId: number,
-    quizId: number,
-    answerId: number,
-    data: PatchQuizAnswerRequestData
-  ) =>
-    NewApiInstance.request<{ answer: unknown }>({
-      url: `/spaces/${spaceId}/quizzes/${quizId}/answers/${answerId}`,
-      method: 'PATCH',
-      data,
     })
 }

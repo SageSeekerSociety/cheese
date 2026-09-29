@@ -27,10 +27,7 @@
   "REPLY": {
     "title": "{replier} 回复了你的评论",
     "title_anonymous": "有人回复了你的评论",
-    "body": "在 \"{discussionTitle}\" 中回复了你",
-    "action": {
-      "reply": "回复"
-    }
+    "body": "在 \"{discussionTitle}\" 中回复了你"
   },
   "REACTION": {
     "title": "{reactor} 对你的内容做出了反应",

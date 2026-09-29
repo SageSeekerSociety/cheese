@@ -1,0 +1,249 @@
+<script setup lang="ts">
+// 成员与角色。名单是**管理员名单与成员表的并集**：管理员（含所有者）不一定在成员表
+// 里（授管理员是往管理员关系里写一行，不是往成员表写），只读成员表会把管理员漏掉。
+//
+// 「加入方式」那一列：成员行带 `inviteCode`，只在核销那一刻写下。它是「有记录」的
+// 证据，不是「没用过码」的证据 —— 没记录的一律显示「未知」，不拿现有的某张码顶上。
+// 所有者那一行例外，他是建空间的人。
+import type { SpaceAdminRoleType, SpaceMember } from '@/types'
+
+import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
+import { storeToRefs } from 'pinia'
+
+import { getAvatarUrl } from '@/utils/materials'
+
+import PageHeader from '@/components/common/PageHeader.vue'
+import { myHandle } from '@/me'
+import { SpacesApi } from '@/network/api/spaces'
+import { useDialog } from '@/plugins/dialog'
+import { useSpaceStore } from '@/stores/space'
+
+type Role = SpaceAdminRoleType | 'MEMBER'
+
+interface Row {
+  userId: number
+  handle: string
+  name: string
+  avatarId?: number | null
+  role: Role
+  /** 当初用的那张码；`null` = 没有记录。 */
+  viaCode: string | null
+}
+
+const { t } = useI18n()
+const route = useRoute()
+const dialog = useDialog()
+const spaceStore = useSpaceStore()
+const { currentSpace, isOwner } = storeToRefs(spaceStore)
+
+const spaceId = Number(route.params.spaceId)
+const members = ref<SpaceMember[]>([])
+const keyword = ref('')
+const busy = ref(false)
+
+async function refresh() {
+  try {
+    members.value = (await SpacesApi.listMembers(spaceId)).data.members ?? []
+  } catch {
+    members.value = []
+  }
+}
+
+onMounted(refresh)
+
+const ORDER: Record<Role, number> = { OWNER: 0, ADMIN: 1, MEMBER: 2 }
+
+const rows = computed<Row[]>(() => {
+  const byId = new Map<number, Row>()
+  for (const admin of currentSpace.value?.admins ?? []) {
+    byId.set(admin.user.id, {
+      userId: admin.user.id,
+      handle: admin.user.username,
+      name: admin.user.nickname || admin.user.username,
+      avatarId: admin.user.avatarId,
+      role: admin.role,
+      viaCode: null,
+    })
+  }
+  for (const m of members.value) {
+    const known = byId.get(m.userId)
+    const viaCode = m.inviteCode?.code ?? null
+    if (known) {
+      known.viaCode = viaCode
+      continue
+    }
+    const handle = m.user?.username ?? String(m.userId)
+    byId.set(m.userId, {
+      userId: m.userId,
+      handle,
+      name: m.user?.nickname || handle,
+      avatarId: m.user?.avatarId,
+      role: 'MEMBER',
+      viaCode,
+    })
+  }
+  return [...byId.values()].sort((a, b) => ORDER[a.role] - ORDER[b.role])
+})
+
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return rows.value
+  return rows.value.filter((r) => r.name.toLowerCase().includes(kw) || r.handle.toLowerCase().includes(kw))
+})
+
+function roleLabel(role: Role): string {
+  return t(`spaces.members.role.${role.toLowerCase()}`)
+}
+
+/** 下面三件事只有所有者能做；store 那边成功失败都会给提示。 */
+async function run(action: () => Promise<void>) {
+  busy.value = true
+  try {
+    await action()
+  } catch {
+    // 提示由 store 给
+  } finally {
+    busy.value = false
+    await refresh()
+  }
+}
+
+function makeAdmin(row: Row) {
+  return run(() => spaceStore.addAdmin(row.userId, 'ADMIN'))
+}
+
+/** 先问一句；取消（包括关掉对话框）就什么都不做。 */
+async function confirmed(message: string, title: string): Promise<boolean> {
+  try {
+    return await dialog.confirm(message, { title }).wait()
+  } catch {
+    return false
+  }
+}
+
+async function revokeAdmin(row: Row) {
+  if (!(await confirmed(t('spaces.members.confirmRevoke', { name: row.name }), t('spaces.members.revoke')))) return
+  await run(() => spaceStore.removeAdmin(row.userId))
+}
+
+/** 转让所有者：对方成为所有者，我变成管理员。只有管理员能接手，所以成员要先设为管理员。 */
+async function transferOwner(row: Row) {
+  if (!(await confirmed(t('spaces.members.confirmTransfer', { name: row.name }), t('spaces.members.transfer')))) return
+  await run(() => spaceStore.updateAdmin(row.userId, 'OWNER'))
+}
+</script>
+
+<template>
+  <PageHeader :title="t('spaces.members.title')" show-on-mobile>
+    <template #actions>
+      <v-text-field
+        v-model="keyword"
+        autocomplete="off"
+        density="compact"
+        variant="outlined"
+        hide-details
+        prepend-inner-icon="mdi-magnify"
+        :placeholder="t('spaces.members.search')"
+        class="mem__search"
+      />
+    </template>
+  </PageHeader>
+
+  <div class="mem">
+    <v-table v-if="filtered.length" density="comfortable" class="mem__table">
+      <thead>
+        <tr>
+          <th>{{ t('spaces.members.columns.member') }}</th>
+          <th>{{ t('spaces.members.columns.role') }}</th>
+          <th>{{ t('spaces.members.columns.joinedVia') }}</th>
+          <th class="mem__actions-head"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in filtered" :key="row.userId">
+          <td>
+            <div class="mem__who">
+              <v-avatar size="28" :image="getAvatarUrl(row.avatarId ?? undefined)" />
+              <div>
+                <div class="mem__name">
+                  {{ row.name }}
+                  <span v-if="row.handle === myHandle()" class="mem__muted">{{ t('spaces.members.you') }}</span>
+                </div>
+                <div class="mem__muted">{{ row.handle }}</div>
+              </div>
+            </div>
+          </td>
+          <td>{{ roleLabel(row.role) }}</td>
+          <td>
+            <code v-if="row.viaCode" class="mem__code">{{ row.viaCode }}</code>
+            <span v-else-if="row.role === 'OWNER'" class="mem__muted">{{ t('spaces.members.createdSpace') }}</span>
+            <span v-else class="mem__muted">{{ t('spaces.members.unknown') }}</span>
+          </td>
+          <td class="mem__actions">
+            <template v-if="isOwner && row.role !== 'OWNER'">
+              <v-btn v-if="row.role === 'MEMBER'" size="small" variant="text" :disabled="busy" @click="makeAdmin(row)">
+                {{ t('spaces.members.makeAdmin') }}
+              </v-btn>
+              <template v-else>
+                <v-btn size="small" variant="text" :disabled="busy" @click="transferOwner(row)">
+                  {{ t('spaces.members.transfer') }}
+                </v-btn>
+                <v-btn size="small" variant="text" :disabled="busy" @click="revokeAdmin(row)">
+                  {{ t('spaces.members.revoke') }}
+                </v-btn>
+              </template>
+            </template>
+          </td>
+        </tr>
+      </tbody>
+    </v-table>
+    <p v-else class="mem__muted">{{ t('spaces.members.empty') }}</p>
+  </div>
+</template>
+
+<style scoped>
+.mem {
+  padding: 16px;
+}
+
+.mem__search {
+  min-width: 200px;
+  max-width: 240px;
+}
+
+.mem__table {
+  background: transparent;
+}
+
+.mem__who {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.mem__name {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.mem__muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mem__code {
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+}
+
+.mem__actions,
+.mem__actions-head {
+  text-align: right;
+  white-space: nowrap;
+}
+</style>

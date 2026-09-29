@@ -92,13 +92,13 @@ import type { Task } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 
-import { useTaskRouteNames } from '@/lib/shellRouteNames'
+import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import AccountService from '@/services/account'
 
 const TaskSubmissionHistory = defineAsyncComponent(() => import('@/components/tasks/TaskSubmissionHistory.vue'))
 
-const routeNames = useTaskRouteNames()
+const routeNames = TASK_ROUTE_NAMES
 
 const props = defineProps<{
   taskData: Task | null

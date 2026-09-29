@@ -68,8 +68,6 @@ function mountPage() {
     routes: [
       { path: '/', name: 'root', component: { template: '<div />' } },
       { path: '/spaces/:spaceId', name: 'SpacesDetail', component: { template: '<div />' } },
-      { path: '/spaces/:spaceId/board', name: 'SpaceBoardHome', component: { template: '<div />' } },
-      { path: '/spaces/:spaceId/course', name: 'SpacesCourseHome', component: { template: '<div />' } },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: { template: '<div />' } },
     ],
   })
@@ -183,37 +181,24 @@ describe('space creation', () => {
     await waitFor(() => expect(spacesCreate).toHaveBeenCalledTimes(2))
   })
 
-  it('says up front that a new board already is a course', async () => {
+  it('lands the creator in the new space instead of back on the list', async () => {
     listProjects.mockResolvedValue({ data: [] })
-    const page = mountPage()
-    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
-    await flush()
-
-    // 建版不选模板，建出来就是课程空间——这句话得在提交之前就看得见。
-    expect(page.getByText('spaces.create.courseTemplate')).toBeTruthy()
-    expect(page.getByText('spaces.create.courseTemplateTag')).toBeTruthy()
-  })
-
-  it('lands the creator in the new board instead of back on the list', async () => {
-    listProjects.mockResolvedValue({ data: [] })
-    // 建出来的题目板就是一门课（服务端说 `isCourse`）—— 落点**不看这个**：新板走的
-    // 就是新题目板，课那几屏在题目板外壳里那格「课程」后面。
-    spacesCreate.mockResolvedValue({ data: { space: { id: 42, isCourse: true } } })
+    spacesCreate.mockResolvedValue({ data: { space: { id: 42 } } })
     const page = mountPage()
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()
     await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Programming course')
     await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
 
-    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpaceBoardHome'))
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetailTasksList'))
     expect(page.router.currentRoute.value.params.spaceId).toBe('42')
   })
 
-  it('hands over the invite code first, then lands in the new board', async () => {
+  it('hands over the invite code first, then lands in the new space', async () => {
     listProjects.mockResolvedValue({ data: [] })
     spacesCreate.mockResolvedValue({
       data: {
-        space: { id: 7, isCourse: true },
+        space: { id: 7 },
         inviteCode: {
           id: 1,
           spaceId: 7,
@@ -235,8 +220,8 @@ describe('space creation', () => {
     await waitFor(() => expect(page.getByText('9F3A-2C71-B8E4')).toBeTruthy())
     expect(page.router.currentRoute.value.name).toBe('root')
 
-    await fireEvent.click(page.getByRole('button', { name: 'spaces.inviteCodes.openCourse' }))
-    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpaceBoardHome'))
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.inviteCodes.openSpace' }))
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetailTasksList'))
     expect(page.router.currentRoute.value.params.spaceId).toBe('7')
   })
 
@@ -314,7 +299,7 @@ describe('从申请列表进入一块板', () => {
     await waitFor(() => expect(page.getByText('spaces.review.enter')).toBeTruthy())
     await fireEvent.click(page.getByText('spaces.review.enter'))
 
-    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpaceBoardHome'))
+    await waitFor(() => expect(page.router.currentRoute.value.name).toBe('SpacesDetailTasksList'))
     expect(page.router.currentRoute.value.params.spaceId).toBe('9')
   })
 })
