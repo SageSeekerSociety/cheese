@@ -20,6 +20,7 @@
 """
 
 import hashlib
+import re
 import uuid
 from pathlib import Path, PurePosixPath
 
@@ -186,6 +187,49 @@ def read_library_file(project_id: uuid.UUID, path: str) -> bytes:
     if not target.is_file():
         raise NotFoundError("资料库里没有这份文件")
     return target.read_bytes()
+
+
+def clean_upload_name(filename: str | None) -> str:
+    """一份上传的文件在资料库里叫什么：它自己的名字，去掉路径和控制字符。"""
+    name = (filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
+    name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
+    return name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
+
+
+def _history_root(project_id: uuid.UUID) -> Path:
+    return Path(settings.workspace_root) / ".library-history" / str(project_id)
+
+
+def keep_replaced(project_id: uuid.UUID, name: str, record_id: uuid.UUID) -> None:
+    """替换之前，把现在这一份挪进历史目录：替换不是删除，旧的那一份还在。"""
+    source = _safe_path(library_root(project_id), name)
+    if not source.is_file():
+        raise NotFoundError("资料库里没有这份文件")
+    target = _history_root(project_id) / str(record_id) / PurePosixPath(name).name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(source.read_bytes())
+
+
+def overwrite_library_file(project_id: uuid.UUID, name: str, data: bytes) -> None:
+    """用新的字节替换这个名字下的那一份。先写到旁边再换过去，读的人不会读到半份。"""
+    target = _safe_path(library_root(project_id), name)
+    if not target.is_file():
+        raise NotFoundError("资料库里没有这份文件")
+    staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}")
+    staging.write_bytes(data)
+    staging.replace(target)
+
+
+def drop_history(project_id: uuid.UUID, record_ids: list[uuid.UUID]) -> None:
+    """一份资料被删掉时，它被替换下来的那几版也一起扔掉。"""
+    root = _history_root(project_id)
+    for record_id in record_ids:
+        folder = root / str(record_id)
+        if not folder.is_dir():
+            continue
+        for entry in folder.iterdir():
+            entry.unlink()
+        folder.rmdir()
 
 
 def delete_library_file(project_id: uuid.UUID, name: str) -> None:
