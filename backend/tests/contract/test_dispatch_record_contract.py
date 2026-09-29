@@ -99,6 +99,9 @@ class _Chat:
     def schedule_spool_settle(self, topic_id, delay_s=2.0):
         pass
 
+    def replaying(self, topic_id):
+        return None
+
     async def converse(self, **kw):
         self.converse_calls.append(kw)
         yield {"type": "done"}

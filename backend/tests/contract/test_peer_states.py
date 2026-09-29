@@ -435,7 +435,7 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
     no is skipped, every other session is still recovered."""
     import uuid
 
-    from app.domain.agent.chat import ChatService
+    from app.domain.agent.chat import REPLAYS_AT_ONCE, ChatService
 
     replayed = []
     sessions = [
@@ -461,6 +461,9 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
     chat = ChatService.__new__(ChatService)
     chat._compute = Compute()
     chat._said = lambda session: _said()
+    chat._replays = {}
+    chat._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
 
     assert await chat.recover_sessions(DEVICE) == 2
+    await chat.replays_settled()
     assert replayed == [sessions[1]]

@@ -1269,3 +1269,106 @@ async def test_midturn_message_stays_pending_until_its_receipt(
     # The matching receipt stamps it.
     await svc.confirm_prompt_receipt(topic_id, delivered_texts[0])
     assert await _consumed() is True
+
+
+class SlowToReplay(StubChannel):
+    """A machine whose sessions in one room answer for their journal only once
+    ``replayed`` is set: a backlog that takes a long time to hand over."""
+
+    def __init__(self, slow: uuid.UUID) -> None:
+        super().__init__()
+        self.slow = slow
+        self.replayed = asyncio.Event()
+
+    async def call(self, handle, method: str, params: dict) -> dict:
+        if method == "events" and handle.session.topic_id == self.slow:
+            await self.replayed.wait()
+        return await super().call(handle, method, params)
+
+
+@pytest.mark.anyio
+async def test_a_room_still_replaying_holds_only_its_own_turns(
+    business_db_factory, tmp_path
+):
+    """后端换人时，一间房的会话积压很长、要回放很久：别的房间照常起轮次，这间房
+    里点名芝士的那条等回放完再开跑，等得久了房间里会说一声。"""
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+
+    factory = business_db_factory
+
+    def service(channel: StubChannel) -> ChatService:
+        return ChatService(
+            session_factory=factory,
+            compute=stub_compute(channel),
+            base_system_prompt="You are Cheese.",
+            workspace_root=str(tmp_path / "ws"),
+        )
+
+    before = StubChannel()
+    svc = service(before)
+    async with factory() as session:
+        await registered(session, "u")
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        rooms = [
+            (
+                await TopicService(session).create(
+                    project_id=project.id, title=title, created_by="u"
+                )
+            ).id
+            for title in ("Slow", "Quick")
+        ]
+        await session.commit()
+    slow, quick = rooms
+    for room in rooms:
+        async for _ in svc.converse(
+            topic_id=room, author="u", content="First task", summon=True
+        ):
+            pass
+        await finish_turn(svc, room)
+
+    await before.runtime.stop_listening()
+    after = SlowToReplay(slow)
+    after.root = before.root
+    after.sessions = before.sessions
+    for session_runner in after.sessions.values():
+        session_runner.channel = after
+    replaced = service(after)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    runner.REPLAY_NOTICE_S = 0.2
+    runner.subscribe_messages()
+
+    # Taking the sessions over does not wait for the slow room's backlog.
+    async with asyncio.timeout(HANG_S):
+        assert await replaced.recover_sessions() == 2
+
+    await broker.receive_message(
+        replaced, quick, author="u", content="@芝士 quick room task"
+    )
+    async with asyncio.timeout(HANG_S):
+        while "quick room task" not in (after.last_prompt or ""):
+            await asyncio.sleep(0.05)
+
+    await broker.receive_message(
+        replaced, slow, author="u", content="@芝士 slow room task"
+    )
+
+    async def notices() -> list[str]:
+        async with factory() as session:
+            return [
+                block.content or ""
+                for block in await BlockRepository(session).list_for_topic(slow)
+            ]
+
+    async with asyncio.timeout(HANG_S):
+        while not any("断线期间" in text for text in await notices()):
+            await asyncio.sleep(0.05)
+    assert "slow room task" not in (after.last_prompt or "")
+
+    after.replayed.set()
+    async with asyncio.timeout(HANG_S):
+        while "slow room task" not in (after.last_prompt or ""):
+            await asyncio.sleep(0.05)
+    await runner.drain(timeout_s=60)
+    for room in rooms:
+        await finish_turn(replaced, room)
