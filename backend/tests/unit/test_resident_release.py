@@ -115,7 +115,6 @@ def test_releasing_one_seat_keeps_the_other_seats_hooks(tmp_path):
                 }
             )
         )
-    original = (first / "settings.json").read_text()
     sources = {
         "client.py": "new",
         "proxy.js": "__EXECUTION_CONFIG__",
@@ -123,6 +122,7 @@ def test_releasing_one_seat_keeps_the_other_seats_hooks(tmp_path):
     }
 
     first_stage = release.stage(str(tmp_path), sources, seat=str(first.parent))
+    original = (first / "settings.json").read_text()
     release.acknowledge(str(tmp_path), first_stage["version"], seat=str(first.parent))
     second_stage = release.stage(str(tmp_path), sources, seat=str(second.parent))
 
