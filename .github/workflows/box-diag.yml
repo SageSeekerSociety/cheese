@@ -172,6 +172,14 @@ jobs:
               | grep -E '115ee22f|device_screen_retired|device_screen_timing|session_not_alive|tunnel_helper_down|orphan|permission denied|sudo:' \
               || true
           done
+          for window in '05:39:25 05:39:50' '08:06:15 08:07:00' '11:48:25 11:48:50'; do
+            read -r start end <<< "$window"
+            echo "===== connection owner $start to $end UTC ====="
+            docker logs --since="2026-09-29T${start}Z" --until="2026-09-29T${end}Z" \
+              --timestamps cheese-device-connection-1 2>&1 \
+              | grep -E 'ae1caec26135|sc60bbee1|sface898e|sab3f6767|s27ecb48f|s7e5962bc|s01327f2e|session.close|session.create' \
+              || true
+          done
       - name: Device connection log tail
         # The owner of the DeviceHub is a SEPARATE process on a separate release
         # boundary (deploy/release-device-connection.sh), and every executor call,
