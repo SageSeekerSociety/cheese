@@ -110,10 +110,11 @@ PG_SEARCH_VERSION=0.24.0
 PG_SEARCH_GLIBC_MIN=2.34
 
 pg_search_installed() {
-    local libdir sharedir
+    local libdir sharedir library=pg_search.so
+    [ "$(uname -s)" != Darwin ] || library=pg_search.dylib
     libdir="$("$PG_BIN/pg_config" --pkglibdir 2>/dev/null)" || return 1
     sharedir="$("$PG_BIN/pg_config" --sharedir 2>/dev/null)" || return 1
-    [ -f "$libdir/pg_search.so" ] \
+    [ -f "$libdir/$library" ] \
         && grep -qx "default_version = '$PG_SEARCH_VERSION'" "$sharedir/extension/pg_search.control" 2>/dev/null
 }
 
@@ -128,11 +129,13 @@ install_pg_search() {
         Linux/aarch64 | Linux/arm64)
             deb_arch=arm64
             sha256=56d738139ef86bbda90fe451d86181571dbdebddbf10579abb92346a65140c8f ;;
+        Darwin/arm64)
+            install_pg_search_macos
+            return ;;
         *)
-            die "no pg_search $PG_SEARCH_VERSION build is set up for $os/$arch, only for Linux x86_64 and aarch64.
-       ParadeDB's v$PG_SEARCH_VERSION release lists what exists for other systems (for macOS arm64:
-       pg_search@17--$PG_SEARCH_VERSION.arm64_<release>.pkg). Without pg_search the migrations fail,
-       and with them every DB-backed test." ;;
+            die "no pg_search $PG_SEARCH_VERSION build is set up for $os/$arch, only for Linux x86_64 and
+       aarch64 and macOS arm64. Without pg_search the migrations fail, and with them every
+       DB-backed test." ;;
     esac
     local glibc
     glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null)" || glibc=""
@@ -222,6 +225,43 @@ with tarfile.open(fileobj=io.BytesIO(data)) as tar:
 if not {"pg_search.so", "pg_search.control"} <= placed:
     sys.exit(f"{deb} does not contain pg_search.so and pg_search.control")
 PY
+    pg_search_installed || die "pg_search $PG_SEARCH_VERSION is still missing from $libdir after install"
+}
+
+# macOS arm64 takes ParadeDB's installer package for Homebrew's PostgreSQL 17,
+# built on macOS 15 and loading on later releases. Its library links nothing
+# beyond the system's own, so, as on Linux, only the library and the extension's
+# SQL and control files are taken, into this server's own directories. curl and
+# pkgutil ship with macOS.
+install_pg_search_macos() {
+    local asset="pg_search@17--$PG_SEARCH_VERSION.arm64_sequoia.pkg"
+    local sha256=ffc8a840b191cb72367ee5d846ebe0f5d9509eea09518e7734cfabbd71f5e76a
+    local url="https://github.com/paradedb/paradedb/releases/download/v$PG_SEARCH_VERSION/$asset"
+    local pkg="$TOOL_CACHE/pg_search/$asset" libdir extdir work
+    libdir="$("$PG_BIN/pg_config" --pkglibdir)" || die "pg_config at $PG_BIN does not run"
+    extdir="$("$PG_BIN/pg_config" --sharedir)/extension" || die "pg_config at $PG_BIN does not run"
+    log "installing pg_search $PG_SEARCH_VERSION into $libdir (first run downloads ~80MB, then cached)"
+    if [ "$(shasum -a 256 "$pkg" 2>/dev/null | cut -d' ' -f1)" != "$sha256" ]; then
+        mkdir -p "$(dirname "$pkg")"
+        curl -fsSL --retry 3 -o "$pkg.$$.part" "$url" || die "download of $url failed"
+        [ "$(shasum -a 256 "$pkg.$$.part" | cut -d' ' -f1)" = "$sha256" ] \
+            || { rm -f "$pkg.$$.part"; die "$url does not have sha256 $sha256"; }
+        mv "$pkg.$$.part" "$pkg"
+    fi
+    work="$(mktemp -d)"
+    pkgutil --expand-full "$pkg" "$work/pkg" >/dev/null || { rm -rf "$work"; die "cannot expand $pkg"; }
+    local payload="$work/pkg/Payload" from to
+    # Each file is copied under a temporary name and renamed into place, so a
+    # start running concurrently never loads a half-written library.
+    for from in lib/postgresql/pg_search.dylib \
+        share/postgresql@17/extension/pg_search.control \
+        "share/postgresql@17/extension/pg_search--$PG_SEARCH_VERSION.sql"; do
+        case "$from" in lib/*) to="$libdir" ;; *) to="$extdir" ;; esac
+        [ -f "$payload/$from" ] || { rm -rf "$work"; die "$pkg has no $from"; }
+        cp "$payload/$from" "$to/.$(basename "$from").$$" \
+            && mv "$to/.$(basename "$from").$$" "$to/$(basename "$from")"
+    done
+    rm -rf "$work"
     pg_search_installed || die "pg_search $PG_SEARCH_VERSION is still missing from $libdir after install"
 }
 

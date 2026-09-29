@@ -1,7 +1,7 @@
 """Library file records: who added each file, where, and its replaced versions
 
 Revision ID: b4e1c2d9a7f3
-Revises: 2d2fc3a8ce36
+Revises: c4f1d8a2e9b7
 
 The library's bytes stay on disk, addressed by name. This table records what the
 disk cannot: who added a file, in which room, when, its size and hash, and the
@@ -22,7 +22,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b4e1c2d9a7f3"
-down_revision: str | Sequence[str] | None = "2d2fc3a8ce36"
+down_revision: str | Sequence[str] | None = "c4f1d8a2e9b7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

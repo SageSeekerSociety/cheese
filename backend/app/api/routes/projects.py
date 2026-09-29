@@ -106,8 +106,6 @@ from app.domain.user.services import user_by_handle
 logger = logging.getLogger("cheesex.projects")
 
 
-
-
 router = APIRouter(prefix="/projects", tags=["projects"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]

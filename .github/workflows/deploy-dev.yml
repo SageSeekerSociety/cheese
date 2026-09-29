@@ -228,6 +228,23 @@ jobs:
               )
           PY
 
+      # Which release this one replaces, read before it is replaced: the last
+      # step below moves the feedback fixed by the commits in between.
+      - name: Remember the release being replaced
+        id: previous
+        if: steps.release.outputs.skip != 'true'
+        run: |
+          if [ -f "$HOME/ops/deploy.env" ]; then
+            . "$HOME/ops/deploy.env"
+          fi
+          backend="$(docker ps -q --filter "label=com.docker.compose.project=${PROJECT:-cheese}" \
+            --filter label=com.docker.compose.service=backend \
+            --filter label=com.docker.compose.oneoff=False | head -n 1)"
+          if [ -n "$backend" ]; then
+            image="$(docker inspect --format '{{.Config.Image}}' "$backend")"
+            echo "tag=${image##*:}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Docker deploy this commit
         if: steps.release.outputs.skip != 'true'
         env:
@@ -244,3 +261,28 @@ jobs:
           release_sha="$(git rev-parse HEAD)"
           python3 deploy/check-auto-deploy.py --require-ci "$release_sha"
           bash deploy/release-metering-proxy.sh "$release_sha"
+
+      # A commit carrying `Fixes-feedback: FB-<n>` moves that report to 已上线
+      # once the release containing it is live, which is here: every step above
+      # succeeded. Only the commits since the replaced release are read, so a
+      # report someone reopened later is not moved back by an unrelated deploy.
+      # The status change goes through the backend's own service in the running
+      # container, the way the deploy already runs its other backend scripts —
+      # no endpoint, no credential. Convention: app/domain/feedback/shipping.py.
+      - name: Mark the feedback this release fixes as deployed
+        if: steps.release.outputs.skip != 'true' && steps.previous.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ steps.previous.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/ops/deploy.env" ]; then
+            . "$HOME/ops/deploy.env"
+          fi
+          backend="$(docker ps -q --filter "label=com.docker.compose.project=${PROJECT:-cheese}" \
+            --filter label=com.docker.compose.service=backend \
+            --filter label=com.docker.compose.oneoff=False | head -n 1)"
+          gh api "repos/$GITHUB_REPOSITORY/compare/$PREVIOUS...$(git rev-parse HEAD)" \
+            --jq '[.commits[] | {sha, message: .commit.message}]' \
+            | docker exec -i "$backend" python -m scripts.ship_feedback \
+                --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
