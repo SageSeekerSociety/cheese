@@ -282,9 +282,10 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `RUNNER_TEMP` and therefore its own uv venv rather than a
   concurrent `uv sync` into one. Postgres and Valkey are resident on the machine
   (`deploy/ci-runner/resident-services.sh`, on 5442/6389) and shared by its
-  slots: a job's own service containers bind 5432/6379 and bring a 3 GB tmpfs
-  each, which is what held a machine to one job. What keeps two concurrent runs
-  apart is the slot each declares in its runner `.env` — see
+  slots. The one pool job with service containers of its own, `private-chat`
+  in `remote-execution.yml`, publishes them on ephemeral host ports and gives
+  its Postgres a 1 GB tmpfs, so two slots do not collide over them. What keeps
+  two concurrent runs apart is the slot each declares in its runner `.env` — see
   `backend/tests/isolation.py` for the names it scopes, and note that the test
   harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
   runs handed one name delete each other's data mid-test.
