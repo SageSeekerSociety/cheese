@@ -4148,11 +4148,21 @@ class ChatService:
         project: Project,
         agent_handle: str | None,
     ) -> ResolvedAgent:
-        """The agent a known session belongs to, else the room's answer."""
+        """The agent a known session belongs to, else the room's answer.
+
+        ``agent_handle`` is the agent's own handle, or the seat it acts under:
+        the output a session produces by itself is stamped by its runner with
+        the seat, and read as a handle that names no agent it gave the turn to
+        the project's default — whose session then received, or was opened for,
+        what was said to the one actually working.
+        """
         if agent_handle:
             try:
                 return agents.resolved(await agents.for_handle(project, agent_handle))
             except NotFoundError:
+                seated = await agents.for_seat_handle(project, agent_handle)
+                if seated is not None:
+                    return seated
                 logger.warning(
                     "session agent %r is not in project %s; using the room's",
                     agent_handle,
