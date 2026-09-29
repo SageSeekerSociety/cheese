@@ -15,6 +15,10 @@
 #                                           send this account's requests through a proxy
 #   chatgpt-login.sh egress clear <name>    send them direct again
 #   chatgpt-login.sh egress test <name> [n] compare reaching ChatGPT through it and direct
+#   chatgpt-login.sh client-version set <v> the Codex client version ChatGPT is told,
+#                                           for every account; it gates which models they get
+#   chatgpt-login.sh client-version show    the version set, if any
+#   chatgpt-login.sh client-version clear   back to the proxy's built-in default
 set -euo pipefail
 umask 077
 
@@ -22,6 +26,9 @@ home="${METERING_PROXY_HOME:-$HOME/cheese-proxy-new/deploy/metering-proxy}"
 root="${CHATGPT_CREDENTIAL_DIR:-$home/chatgpt-credential}"
 # Where OpenAI's device login and token endpoints live; overridden only by tests.
 auth_base="${OPENAI_AUTH_BASE:-https://auth.openai.com}"
+# Beside the account directories, read by the proxy on every request. Not an
+# account: an account is a directory, so its name is reserved below.
+client_version_file="$root/client-version"
 
 account() {
   # One path segment on the proxy's route and one directory here, so nothing
@@ -29,6 +36,10 @@ account() {
   local name="${1:?an account name is required}"
   [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || {
     echo "An account name is letters, digits, '.', '_' and '-', starting with a letter or digit." >&2
+    exit 1
+  }
+  [[ "$name" != client-version ]] || {
+    echo "client-version is the client version's file, not an account name." >&2
     exit 1
   }
   printf '%s/%s' "$root" "$name"
@@ -357,8 +368,40 @@ PY
         ;;
     esac
     ;;
+  client-version)
+    case "${2:-}" in
+      set)
+        version="${3:?usage: chatgpt-login.sh client-version set <version>}"
+        # The proxy sends only this shape, in a header and a query.
+        [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$ ]] || {
+          echo "A client version is letters, digits, '.', '+' and '-', like 0.158.0." >&2
+          exit 1
+        }
+        mkdir -p "$root"
+        tmp="$(mktemp "$root/.client-version.XXXXXX")"
+        printf '%s\n' "$version" > "$tmp"
+        mv -f "$tmp" "$client_version_file"
+        echo "set: ChatGPT is told client version $version from the next request"
+        ;;
+      show)
+        if [[ -s "$client_version_file" ]]; then
+          echo "client version: $(cat "$client_version_file")"
+        else
+          echo "client version: none set; the proxy sends its built-in default"
+        fi
+        ;;
+      clear)
+        rm -f "$client_version_file"
+        echo "cleared: the proxy sends its built-in default from the next request"
+        ;;
+      *)
+        echo "usage: chatgpt-login.sh client-version set <version> | show | clear" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   *)
-    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac

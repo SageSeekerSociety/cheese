@@ -98,9 +98,9 @@ covers:
 - 一个名字一个账号，存在 `chatgpt-credential/<名字>/credential`（JSON：`access_token`、`refresh_token`、`id_token`、`expires_at` 秒、`account_id`），旁边可以有这个账号自己的 `egress`。挂载给代理的是 `CHEESE_CHATGPT_CREDENTIALS=/etc/cheese/chatgpt-credential`，读写。
 - 代理是每对 token 唯一的持有者，到期前 600 秒刷新，打 `https://auth.openai.com/oauth/token`（`grant_type=refresh_token`、`client_id`、`scope=openid profile email`，与后端 `openai_codex.py` 一致）。401/403 或 `refresh_token_expired|reused|invalidated` 判死，要重新登录；5xx、网络错误、认不出的 4xx 退避 60 秒再试。
 - `:8445` 不对宿主机发布。计量代理和网关的 LiteLLM 共用一张内部 docker 网络 `cheese-meter-gateway`，代理在上面叫 `metering-proxy`，沙箱不在这张网上，所以这一跳走明文 http。后台的模型表单只对 `http://metering-proxy:8445/chatgpt/<账号>` 这一个地址放开 http（`api_base_allowed`）。两边的 compose 都把这张网声明为 external，两边的发布脚本发现它不存在就建，谁先发布都行；手动先起计量代理而两边都没发布过时，要先跑 `docker network create --internal cheese-meter-gateway`。不用网关栈的默认网络，是因为 `openai-egress` 在那张网上以 `chatgpt.com` 为别名，代理接进去后自己发往 chatgpt.com 的请求会被解析到那个转发器。
-- `:8445` 只转 `/chatgpt/<账号>/responses[/…]` 和 `/chatgpt/<账号>/models`，到 `https://chatgpt.com/backend-api/codex/…`，换上账号的 `Authorization`、`ChatGPT-Account-Id`，加 `originator: cheese` 和 `version`（`CHEESE_CODEX_CLIENT_VERSION`，默认同后端的 `codex_client_version`）。其它路径 404，账号不存在 404，没登录或已判死 401，过期且刷新没成 503。不计量：网关自己记这部分花费。
+- `:8445` 只转 `/chatgpt/<账号>/responses[/…]` 和 `/chatgpt/<账号>/models`，到 `https://chatgpt.com/backend-api/codex/…`，换上账号的 `Authorization`、`ChatGPT-Account-Id`，加 `originator: cheese` 和 `version`。`version` 取自 `chatgpt-credential/client-version` 这个文件，所有账号共用，每个请求都重读，所以改了不用重启；没有这个文件就用内置默认值（`cheese_billing_core.py` 的 `DEFAULT_CODEX_CLIENT_VERSION`）。ChatGPT 按这个版本决定账号能用哪些模型。转 `/models` 时，查询参数里的 `client_version` 也改成同一个值，调用方自己带的会被替换。其它路径 404，账号不存在 404，没登录或已判死 401，过期且刷新没成 503。不计量：网关自己记这部分花费。
 - 两个账号用同一个出口地址、不同的出口登录时，请求被拒（503）：mitmproxy 按出口地址复用上游连接，不分登录，放行就会让一个账号走进另一个账号的隧道。
-- `chatgpt-login.sh` 的子命令：`login <名字>`（device flow，经这个账号的出口）、`import <名字> <文件>`（搬进一对别处持有的 token，缺 `expires_at` 就取 access token 的 `exp`）、`status [名字]`、`ls`、`logout <名字>`、`egress set|clear|test <名字> …`。
+- `chatgpt-login.sh` 的子命令：`login <名字>`（device flow，经这个账号的出口）、`import <名字> <文件>`（搬进一对别处持有的 token，缺 `expires_at` 就取 access token 的 `exp`）、`status [名字]`、`ls`、`logout <名字>`、`egress set|clear|test <名字> …`、`client-version set <版本>|show|clear`（`clear` 回到内置默认值）。`client-version` 因此不能用作账号名。
 
 ## 账本 usage.jsonl {#ledger}
 
@@ -127,7 +127,7 @@ covers:
 ## 怎么上线，怎么验 {#release}
 
 - 镜像钉住 mitmproxy 12.1.2，把 addon、billing core 和控制回答表打进镜像里；宿主机不挂任何源码目录到 `/addons`，所以跑的永远是镜像里那一版。
-- 发布走 **Release metering proxy** 这个 GitHub Actions 工作流，从 `main` 上给完整 commit SHA，要求该 SHA 的镜像构建与 Required CI 都成功；已经跑着同一 digest 的代理不动，免得打断正在流的会话。
+- 发布走 **Release metering proxy** 这个 GitHub Actions 工作流，从 `main` 上给完整 commit SHA，要求该 SHA 的镜像构建与 Required CI 都成功；已经跑着同一 digest、配置也没变的代理不动，免得打断正在流的会话。配置指要发布的 compose 文件加宿主机上的 `.env`：每次发布都把两者的 SHA-256 记在新容器的标签 `cheese.metering-proxy.config-sha256` 上，下次发布时镜像、健康状态和这个哈希都对得上才跳过；只改了 `.env` 或 compose 的，下次发布会重建容器。只存哈希，不打印也不复制 `.env`。不是由发布创建的容器、以及回滚恢复出来的容器没有这个哈希，下次发布一律重建。
 - 发布保留宿主机上的 `.env`、端口、账本和 CA 挂载；重建前先把镜像 ID 与 compose 原文件存进 `releases/<sha>-<run>-<attempt>/`，健康检查不过就回滚。健康检查要求两个监听都在、且一次不带认证的 CONNECT 得到 407——它不调模型。
 - 健康检查过了不等于能用：发布后要亲手验一次沙箱回合、一条归属正确的用量行、以及一个额度用尽的测试项目的拒绝。只看监听活着，说明不了平台凭据到得了 Anthropic、准入调得通、账本进得去。
 
