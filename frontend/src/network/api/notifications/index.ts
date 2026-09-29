@@ -7,6 +7,7 @@ import type {
   MarkAllAsReadResponse,
   Notification,
   NotificationUpdate,
+  PushFeedResponse,
   UnreadCountResponse,
 } from './types'
 
@@ -64,5 +65,13 @@ export namespace NotificationsApi {
     NewApiInstance.request<UnreadCountResponse>({
       url: '/notifications/unread-count',
       method: 'GET',
+    })
+
+  // 浏览器推送会发的那几条，给收不到推送的桌面 app 来取（lib/desktopNotices.ts）
+  export const pushFeed = (after: number | null) =>
+    NewApiInstance.request<PushFeedResponse>({
+      url: '/notifications/push-feed',
+      method: 'GET',
+      params: after === null ? {} : { after },
     })
 }

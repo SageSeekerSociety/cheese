@@ -17,6 +17,18 @@ app tells the page about its window is `window.__CHEESE_APP__`
 (`frontend/src/lib/desktopApp.ts`); a page never calls a command an older app
 lacks. Signed out, the app opens on sign-in rather than the public home page.
 
+Closing the window keeps the app running (`src-tauri/src/resident.rs`); the Dock
+icon on macOS, the tray icon elsewhere, or opening the app again brings the
+window back, and quitting is ⌘Q or 退出 in the tray menu. While it runs, the
+signed-in page asks the server every 30 seconds for what a browser push would
+have said (`frontend/src/lib/desktopNotices.ts`, `docs/topics/浏览器推送.md`) and
+has the app show it as a system notification that opens its room when clicked,
+and puts the count of things waiting on the Dock icon (a dot on the Windows
+taskbar, and in the tray menu). What the app can do is listed in
+`__CHEESE_APP__.can`, so a page never asks an older app for more. Updates are
+checked every six hours and installed only while the window is out of sight and
+no connection is in progress; the restarted app stays out of sight.
+
 Beyond that the app adds one thing a browser cannot do: connect the computer it runs
 on as a device. On 「我的设备」 it offers 「接入这台电脑」, which does what the
 page otherwise asks a terminal user to do — run the server's `install.sh`, then

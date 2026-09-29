@@ -75,3 +75,17 @@ export interface MarkAllAsReadResponse {
 export interface UnreadCountResponse {
   count: number
 }
+
+/** 一条本该推送的通知，标题和正文与推送上的一样；`url` 是点开后去的站内路径。 */
+export interface PushFeedItem {
+  id: number
+  title: string
+  body: string
+  url: string
+}
+
+export interface PushFeedResponse {
+  /** 下一次从这里接着取；还没有任何一条时为 null。 */
+  latest: number | null
+  items: PushFeedItem[]
+}

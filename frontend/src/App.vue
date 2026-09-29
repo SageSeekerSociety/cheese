@@ -253,7 +253,8 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
 import { autoConnectThisComputer } from '@/lib/desktop'
-import { tellDesktopTheme } from '@/lib/desktopApp'
+import { onDesktopOpenPage, tellDesktopTheme } from '@/lib/desktopApp'
+import { watchForDesktopNotices } from '@/lib/desktopNotices'
 import { landBootSplash } from '@/lib/desktopSplash'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { pageMotion } from '@/lib/pageMotion'
@@ -465,6 +466,24 @@ watch(
   },
   { immediate: true }
 )
+
+// The desktop app calls the person back while its window is closed: system
+// notifications and the count of things waiting (lib/desktopNotices.ts). A
+// clicked notification or the tray menu opens its page here.
+let stopDesktopNotices = () => {}
+watch(
+  () => AccountService.loggedIn && AccountService.user?.id,
+  (userId) => {
+    stopDesktopNotices()
+    stopDesktopNotices = typeof userId === 'number' ? watchForDesktopNotices(userId) : () => {}
+  },
+  { immediate: true }
+)
+const stopOpeningPages = onDesktopOpenPage((path) => void router.push(path))
+onBeforeUnmount(() => {
+  stopDesktopNotices()
+  stopOpeningPages()
+})
 
 // 上次开过的那个项目存在 workspace store 的布局里，所以冷启动也落得回去。
 const workspaceProjectId = computed<string | null>(() =>
