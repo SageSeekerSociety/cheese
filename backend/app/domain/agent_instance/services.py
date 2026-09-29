@@ -82,14 +82,25 @@ class AgentInstanceService:
 
         A room does not have an agent: it seats members, and which of its agents
         answers is decided by who a message addresses. What a room falls back to
-        is the project's default. A private 1:1 with a teammate is the one place
-        nobody has to address anybody: the room holds two seats, so the teammate
-        is the seat that is not the person's.
+        is the seat its roster answers for (`resolve_agent_handle`: the project's
+        default when it sits there), which is also the seat a turn the platform
+        starts is addressed to and acts under. Answered by the project's default
+        instead, a room that does not seat it ran the default agent under another
+        teammate's seat, as a second session on that teammate's runner.
+
+        The project's default remains the answer where no saved teammate sits.
+        A private 1:1 with a teammate is the one place nobody has to address
+        anybody: the room holds two seats, so the teammate is the seat that is
+        not the person's.
         """
         peer = await self._dm_teammate(topic, project)
         if peer is not None:
             return peer
-        return await self.for_project(project)
+        seat = await TopicMemberService(self._session).addressable_agent_handle(
+            topic.id
+        )
+        seated = await self.for_seat_handle(project, seat)
+        return seated if seated is not None else await self.for_project(project)
 
     async def _dm_teammate(
         self, topic: Topic, project: Project
