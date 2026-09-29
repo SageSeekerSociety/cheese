@@ -930,8 +930,15 @@ class MachineService:
         machines = await self._repo.list_unsettled(limit)
         for machine in machines:
             try:
-                if machine.status != MachineStatus.suspended:
+                if machine.status not in {MachineStatus.suspended, *GONE}:
                     await self.refresh(machine)
+                if machine.status in GONE:
+                    # Gone at the provider: dropped here as every read that
+                    # learns it does. Left for a read, a row nobody reads again
+                    # stays an unreleased lease on a machine that no longer
+                    # exists.
+                    await self.forget(machine)
+                    continue
                 if (
                     machine.status == MachineStatus.suspended
                     and machine.topic_id is not None
