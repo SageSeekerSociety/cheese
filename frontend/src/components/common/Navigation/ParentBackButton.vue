@@ -5,6 +5,8 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { topBarBack } from '../topBarBack'
+
 import { projectFrameOf, readEntry } from '@/lib/projectEntry'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -79,16 +81,31 @@ const to = computed<RouteLocationRaw | null>(() => {
 // 说得出去处就说：读屏和长按看到的是「返回小队」而不是一句放之四海皆准的
 // 「返回上一级」。名字是**离开那一页时**存下来的——现在再去取，那一页早卸载了。
 const label = computed(() => (target.value?.label ? `返回${target.value.label}` : '返回上一级'))
+
+// 页面接管了这一下（topBarBack.ts）：手机上话题里的非对话页签，← 先回到对话。
+const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
 </script>
 
 <template>
+  <v-btn
+    v-if="override"
+    icon
+    color="on-surface-variant"
+    variant="text"
+    :size="44"
+    :aria-label="override.label"
+    :title="override.label"
+    @click="override.onBack()"
+  >
+    <v-icon size="20">mdi-arrow-left</v-icon>
+  </v-btn>
   <!-- `:active="false"` 不是样式偏好，是修一个 bug：这颗按钮指向的是**父**地址，
        而 vue-router 的非精确匹配认为「站在子路由上时父链接是激活的」，于是
        Vuetify 一直给它盖一层 12% 的实底遮罩——一颗永远处于按下态的返回键，在
        顶栏左上角就是一个突兀的灰方块。返回是「离开这一层」，不是「你在这儿」，
        它本来就不该有激活态。 -->
   <v-btn
-    v-if="to"
+    v-else-if="to"
     :to="to"
     :active="false"
     icon

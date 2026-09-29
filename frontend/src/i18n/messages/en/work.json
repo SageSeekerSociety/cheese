@@ -316,7 +316,10 @@
       "edited": "Edited",
       "save": "Save",
       "cancel": "Cancel",
-      "saveFailed": "Could not save the edit"
+      "saveFailed": "Could not save the edit",
+      "reply": "Reply",
+      "react": "Add reaction",
+      "upgrade": "Move to a new topic"
     },
     "outbox": {
       "failed": "Not sent: {reason}",
@@ -342,7 +345,8 @@
     },
     "checklist": {
       "updatedAt": "Checklist updated {time}"
-    }
+    },
+    "backToChat": "Back to chat"
   },
   "members": {
     "leave": "Leave project",

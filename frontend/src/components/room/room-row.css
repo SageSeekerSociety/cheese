@@ -27,10 +27,15 @@
   margin-top: 8px;
 }
 /* 悬停只改颜色不改位置（设计系统 §9.1），刷的是整行。悬停条停在这一行上时
-   （指针挪到了悬停条上，已经不在行上了）这一行也还是亮着的：`--active`。 */
-.im-row:hover,
+   （指针挪到了悬停条上，已经不在行上了）这一行也还是亮着的：`--active`。
+   触屏上的 :hover 是点过之后粘住不走的那一种，所以只给真有悬停的设备。 */
 .im-row--active {
   background: var(--fill);
+}
+@media (hover: hover) {
+  .im-row:hover {
+    background: var(--fill);
+  }
 }
 .im-gutter {
   width: 28px;
@@ -71,9 +76,15 @@
   opacity: 0;
   transition: opacity var(--dur-quick) var(--ease-standard);
 }
-.im-row:hover .im-gutter-time,
-.im-row--active .im-gutter-time {
+/* 触屏上没有悬停：点一下这一条亮出时间（`--time`，房间按点击切换）。 */
+.im-row--active .im-gutter-time,
+.im-row--time .im-gutter-time {
   opacity: 1;
+}
+@media (hover: hover) {
+  .im-row:hover .im-gutter-time {
+    opacity: 1;
+  }
 }
 .im-main {
   min-width: 0;

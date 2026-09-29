@@ -231,11 +231,12 @@ function tabForPhase(phase: TopicPhase): TabKey {
   return defaultTab.value
 }
 
-// Back / forward, or someone pasting a link into the open topic.
+// Back / forward, or someone pasting a link into the open topic. 手机上对话那一格
+// 的地址可以不带 `?tab=`（刚进房间时就是这样），退回到它时也得回到对话。
 watch(
   () => props.tab,
   () => {
-    const asked = tabFromUrl()
+    const asked = tabFromUrl() ?? (props.withChat ? defaultTab.value : null)
     ensureFileFromUrl(asked)
     if (asked && asked !== active.value) active.value = asked
   }
@@ -250,6 +251,25 @@ function show(k: string) {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 }
 watch(active, show)
+
+// ---- 手机上换页签时内容从哪边进来 ----
+// 一屏只有一格，换页签时新的那一格从它页签所在的方向挪进来（右边的页签从右边来），
+// 人看得出自己是往哪边走了。动的只是进来的那一格的外层：各格一直挂着（对话的滚动
+// 位置、键盘弹起时的贴底都在里面），不为了演一下重建。桌面上两栏并排，不演。
+const tabOrder = computed(() => [
+  ...tabs.value.map((t) => t.key as string),
+  ...openFiles.value.map((f) => fileKey(f.path)),
+])
+const entering = ref<{ key: string; from: 'left' | 'right' } | null>(null)
+watch(active, (now, before) => {
+  if (!props.withChat) return
+  const order = tabOrder.value
+  entering.value = { key: now, from: order.indexOf(now) < order.indexOf(before) ? 'left' : 'right' }
+})
+function enterClass(key: string) {
+  const e = entering.value
+  return e?.key === key ? `tabpane-in tabpane-in--${e.from}` : undefined
+}
 
 const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
@@ -435,6 +455,12 @@ watch(
   [() => props.phase, summaryLoaded],
   ([phase, loaded]) => {
     if (settled.value || !phase) return
+    // 手机上房间永远开在对话：输入框就在那一格里，自动跳去现场等于把它藏起来。
+    // 现场那一格上的呼吸点照样说着「正在工作」。
+    if (props.withChat) {
+      settled.value = true
+      return
+    }
     if ((phase === 'reviewing' || phase === 'delivering') && !loaded) return
     const want = tabForPhase(phase)
     if (want === active.value) settled.value = true
@@ -557,7 +583,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
     </div>
 
     <template v-else>
-      <div ref="tabbarRef" class="tabbar" role="tablist">
+      <div ref="tabbarRef" class="tabbar" :class="{ 'tabbar--phone': withChat }" role="tablist">
         <button
           v-for="t in tabs"
           :key="t.key"
@@ -627,15 +653,16 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
         <span class="tabbar__ink" :class="{ 'tabbar__ink--moves': inkMoves }" :style="inkStyle" aria-hidden="true" />
       </div>
 
-      <div class="tabbody">
+      <div class="tabbody" :class="{ 'tabbody--phone': withChat }">
         <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
              而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
-        <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat">
+        <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
           <slot name="chat" />
         </div>
         <PanelOverview
           v-show="active === 'overview'"
           ref="overviewRef"
+          :class="enterClass('overview')"
           :agent-name="agentName"
           :topic="topic"
           :activity-tick="activityTick"
@@ -655,6 +682,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           v-if="mounted.has('site')"
           v-show="active === 'site'"
           ref="siteRef"
+          :class="enterClass('site')"
           :agent-name="agentName"
           :topic="topic"
           :active="active === 'site'"
@@ -671,6 +699,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           v-if="mounted.has('changes')"
           v-show="active === 'changes'"
           ref="changesRef"
+          :class="enterClass('changes')"
           :topic-id="topicId"
           :task-id="openCardId"
           :read-only="topic?.status === 'archived'"
@@ -681,6 +710,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
         <PanelPreview
           v-if="mounted.has('preview')"
           v-show="active === 'preview'"
+          :class="enterClass('preview')"
           :topic-id="topicId"
           :project-id="projectId"
           :active="active === 'preview'"
@@ -693,6 +723,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           <PanelPreview
             v-if="mounted.has(fileKey(f.path))"
             v-show="active === fileKey(f.path)"
+            :class="enterClass(fileKey(f.path))"
             :topic-id="topicId"
             :project-id="projectId"
             :path="f.path"
@@ -758,6 +789,11 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
 }
 .tabbar__tab:hover {
   color: var(--ink);
+}
+/* 手机上一格页签至少 44px 高，手指点得中。栏会横向滚动，撑开的伪元素会被裁掉，
+   所以是真的长高。 */
+.tabbar--phone .tabbar__tab {
+  min-height: 44px;
 }
 /* 这一格此刻没东西：字退到 --faint，但照样能点，点进去是它自己的「暂无」。 */
 .tabbar__tab--empty:not(.tabbar__tab--on) {
@@ -869,11 +905,35 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
 .tabbar__count--new {
   color: var(--accent);
 }
+.tabpane-in {
+  animation: tabpane-in var(--dur-base) var(--ease-standard);
+}
+.tabpane-in--right {
+  --tabpane-from: 20px;
+}
+.tabpane-in--left {
+  --tabpane-from: -20px;
+}
+@keyframes tabpane-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--tabpane-from));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabpane-in {
+    animation: none;
+  }
+}
 .tabbody {
   position: relative;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+}
+/* 挪进来的那 20px 不该撑出一条横向滚动。 */
+.tabbody--phone {
+  overflow: hidden;
 }
 </style>

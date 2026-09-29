@@ -1123,7 +1123,8 @@ defineExpose({ reload: loadAcceptCard })
   background: var(--surface);
 }
 .accept-dock--docked .accept-dock__detail {
-  max-height: 50vh;
+  /* 按看得见的那一截算：手机上键盘弹起来时，50vh 会把输入框顶到屏幕外。 */
+  max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.5);
   overflow-y: auto;
   border-bottom: 1px solid var(--line);
 }

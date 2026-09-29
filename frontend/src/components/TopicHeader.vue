@@ -19,10 +19,11 @@ import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
+import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
+import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { topicPhaseBadge, topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
-import { costLabel, costNote, fmtNum } from '@/lib/usageFormat'
 
 const props = defineProps<{
   topic: Topic
@@ -87,17 +88,6 @@ watch(usageOpen, (open) => {
 // 权限，不是设置，要一直看得见。名册读到了就告诉这里。
 const machineNotice = ref<string | null>(null)
 
-// 一行一个范围：次数 · token · 费用。输入 / 输出的拆分和费用的说明放在 title 里，
-// 原来那十个大格子里有八个在一个新话题上都是 0。
-function usageLine(u: UsageStats): string {
-  return t('work.room.menu.usageLine', { turns: fmtNum(u.turns), tokens: fmtNum(u.total_tokens), cost: costLabel(u) })
-}
-function usageTitle(u: UsageStats): string {
-  const split = t('work.room.menu.usageSplit', { input: fmtNum(u.input_tokens), output: fmtNum(u.output_tokens) })
-  const note = costNote(u)
-  return note ? `${split}\n${note}` : split
-}
-
 function toggleFocus() {
   usageOpen.value = false
   emit('toggle-focus')
@@ -152,7 +142,7 @@ function toggleFocus() {
       <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
            看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
            连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
-      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
+      <v-menu v-if="mdAndUp" v-model="usageOpen" :close-on-content-click="false" location="bottom end">
         <template #activator="{ props: menuProps }">
           <v-btn
             v-bind="menuProps"
@@ -172,30 +162,38 @@ function toggleFocus() {
             <v-icon size="16">{{ focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand' }}</v-icon>
             <span>{{ focus ? t('work.room.menu.exitFocus') : t('work.room.menu.focus') }}</span>
           </button>
-          <div class="room-menu__usage">
-            <div class="room-menu__label">{{ t('work.room.menu.usage') }}</div>
-            <div v-if="usageLoading" class="d-flex justify-center py-2">
-              <v-progress-circular indeterminate color="primary" size="20" />
-            </div>
-            <template v-else>
-              <div
-                v-for="row in [
-                  { label: t('work.room.menu.thisTopic'), u: topicUsage },
-                  { label: t('work.room.menu.wholeProject'), u: projectUsage },
-                ]"
-                :key="row.label"
-                class="usage-row"
-                :title="row.u ? usageTitle(row.u) : undefined"
-              >
-                <span>{{ row.label }}</span>
-                <span v-if="row.u" class="usage-row__value">{{ usageLine(row.u) }}</span>
-                <span v-else class="usage-row__value">{{ t('work.room.menu.noUsage') }}</span>
-              </div>
-            </template>
-          </div>
-          <div v-if="isWorkTopic" class="room-menu__foot t-meta" :title="topic.id">#{{ shortId }}</div>
+          <TopicUsageSummary
+            class="room-menu__usage"
+            :loading="usageLoading"
+            :topic-usage="topicUsage"
+            :project-usage="projectUsage"
+            :short-id="isWorkTopic ? shortId : null"
+            :topic-id="topic.id"
+          />
         </v-card>
       </v-menu>
+      <!-- 手机上同一块内容从底部升起，和别的手机菜单一样（设计系统 §10.4）。 -->
+      <template v-else>
+        <v-btn
+          icon="mdi-dots-horizontal"
+          size="small"
+          variant="text"
+          color="medium-emphasis"
+          class="tap-target"
+          :title="t('work.room.menu.more')"
+          :aria-label="t('work.room.menu.more')"
+          @click="usageOpen = true"
+        />
+        <MobileActionSheet v-model="usageOpen">
+          <TopicUsageSummary
+            :loading="usageLoading"
+            :topic-usage="topicUsage"
+            :project-usage="projectUsage"
+            :short-id="isWorkTopic ? shortId : null"
+            :topic-id="topic.id"
+          />
+        </MobileActionSheet>
+      </template>
     </div>
   </Teleport>
 </template>
@@ -333,35 +331,8 @@ function toggleFocus() {
 .room-menu__row--action:hover {
   background: var(--fill);
 }
-.room-menu__label {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
 .room-menu__usage {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
   margin-top: 4px;
-  padding: 8px 16px;
   border-top: 1px solid var(--line);
-}
-.usage-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--text);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-.usage-row__value {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.room-menu__foot {
-  padding: 8px 16px 4px;
-  border-top: 1px solid var(--line);
-  color: var(--faint);
 }
 </style>

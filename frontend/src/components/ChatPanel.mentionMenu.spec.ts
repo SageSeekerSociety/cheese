@@ -29,7 +29,7 @@ function rule(selector: string): string {
 describe('@ 候选菜单压扁时滚得动', () => {
   it('有一个高度上限，并且自己滚', () => {
     const menu = rule('.mention-menu')
-    expect(menu).toMatch(/max-height:\s*\d/)
+    expect(menu).toMatch(/max-height:\s*(\d|calc\()/)
     expect(menu).toContain('overflow-y: auto')
   })
 

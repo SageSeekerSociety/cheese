@@ -7,12 +7,15 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicMemory } from '@/composables/useTopicMemory'
 
 import { listTopicMembers } from '@/api'
+import { useTopBarBack } from '@/components/common/topBarBack'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
+import { t } from '@/i18n'
 import { agentNames } from '@/lib/agentNames'
 import { topicPhase, topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
@@ -41,12 +44,17 @@ const panelTab = computed(() => {
   const q = route.query.tab
   return typeof q === 'string' ? q : undefined
 })
+// 页签和浏览器历史怎么对应（桌面 replace；手机上 Back 先回到对话）见 useRoomTabHistory。
+const phone = computed(() => !mdAndUp.value)
+const tabHistory = useRoomTabHistory(phone)
 function onPanelTab(key: string) {
-  if (panelTab.value === key) return
-  // replace, not push: a tab is where you are looking, not somewhere you went.
-  // Pushing would make Back walk the tabs instead of leaving the topic.
-  void router.replace({ query: { ...route.query, tab: key } })
+  tabHistory.goTab(key)
 }
+// 手机上不在对话那一格时，顶栏的 ← 和 Back 一样先回到对话。
+useTopBarBack(() =>
+  phone.value && !tabHistory.onChat.value ? { label: t('work.room.backToChat'), onBack: tabHistory.toChat } : null
+)
+void tabHistory.ensureChatBehind()
 
 // 看板上点开的那张卡。**一件活不是地点**：做它的分身住在这个房间的会话里，所以
 // 打开一张卡不离开房间，只是总览那一格往下钻一层——地址里记的就是这一层，于是
@@ -64,9 +72,8 @@ function onReview() {
 
 function onOpenCard(taskId: string | null) {
   if (openCardId.value === taskId) return
-  // push，不是 replace：往下钻一层是「去了一个地方」，浏览器的返回该退回看板。
-  const query = { ...route.query, tab: 'overview', card: taskId ?? undefined }
-  void router.push({ query })
+  // 桌面上是 push：往下钻一层是「去了一个地方」，浏览器的返回该退回看板。
+  tabHistory.openCard(taskId)
 }
 
 const AUTHOR = myHandle()
