@@ -511,9 +511,18 @@ async def test_the_model_must_answer_once_the_rounds_run_out():
     events, result, docs = await _drive(gateway)
     kinds = [e for e, _ in events]
     assert kinds.count("tool") == 4
-    # The fifth round is asked without the tools, so it has to answer.
+    # The fifth round may not call a tool, so it has to answer. It still sends
+    # the definitions (the conversation carries tool calls, and a request with
+    # those but without the tools is refused), with thinking off, and it tells
+    # the model this is the answer.
     assert len(gateway.posts) == assistant.MAX_TOOL_ROUNDS + 1
-    assert "tools" not in gateway.posts[-1]
+    last = gateway.posts[-1]
+    assert last["tool_choice"] == "none" and last["tools"] == tools.SCHEMAS
+    assert last["thinking"] == {"type": "disabled"} and last["stream"] is True
+    assert last["messages"][-1] == {
+        "role": "user",
+        "content": assistant.FINAL_ROUND_NUDGE,
+    }
     assert "".join(d["text"] for e, d in events if e == "delta") == "文档里没有讲到。"
     # Nothing was read and nothing was found: the docs had nothing to say.
     assert result.outcome == "no_match" and result.sources == []
@@ -617,3 +626,41 @@ def test_one_word_in_common_is_not_enough_to_answer_from():
     # A one-word question can only ever match one term, and still answers.
     hits = relevant(index.search("邀请"))
     assert hits and hits[0].section.url == "/docs/teams#invite-member"
+
+
+async def test_the_last_round_is_answered_where_the_gateway_needs_the_tools_sent():
+    """The gateway on dev refuses a conversation that carries tool calls unless
+    the request carries the tools too. The last round used to leave them out,
+    so every question that used all four rounds ended in an error."""
+
+    class StrictGateway(FakeGateway):
+        def __call__(self, request: httpx.Request) -> httpx.Response:
+            if not request.url.path.endswith(".md"):
+                body = json.loads(request.content)
+                carries_tools = any(m.get("role") == "tool" for m in body["messages"])
+                if carries_tools and "tools" not in body:
+                    self.posts.append(body)
+                    return httpx.Response(400, json={"error": {"message": "tools"}})
+            return super().__call__(request)
+
+    gateway = StrictGateway(
+        *[{"calls": [("search_docs", {"query": f"记忆{i}"})]} for i in range(4)],
+        {"pieces": ["文档里没有讲到。"]},
+    )
+    events, result, _ = await _drive(gateway)
+    assert [e for e, _ in events if e == "error"] == []
+    assert "".join(d["text"] for e, d in events if e == "delta") == "文档里没有讲到。"
+    assert result.outcome == "no_match"
+
+
+async def test_a_gateway_that_refuses_thinking_on_the_last_round_is_asked_again():
+    gateway = FakeGateway(
+        *[{"calls": [("search_docs", {"query": f"x{i}"})]} for i in range(4)],
+        {"status": 400},
+        {"pieces": ["文档里没有讲到。"]},
+    )
+    events, result, _ = await _drive(gateway)
+    assert "".join(d["text"] for e, d in events if e == "delta") == "文档里没有讲到。"
+    assert "thinking" in gateway.posts[-2] and "thinking" not in gateway.posts[-1]
+    assert gateway.posts[-1]["tool_choice"] == "none"
+    assert result.outcome == "no_match"
