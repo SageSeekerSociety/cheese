@@ -70,6 +70,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.chat", "app.domain.usage.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
+        # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
+        # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：
+        # 一条读 block（block 领域没有 service 层，`platform_stats.pipeline`
+        # 那条注释讲的是同一件事），一条读话题表（和 `app.domain.mentions` 的
+        # `canonicalize_refs` 是同一种读法）。拆模块没有新增跨包的边，只是发起
+        # 方从 chat.py 换成了 mentions.py，所以按同一笔债入账。
+        ("app.domain.agent.mentions", "app.domain.block.repositories"),
+        ("app.domain.agent.mentions", "app.domain.topic.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
