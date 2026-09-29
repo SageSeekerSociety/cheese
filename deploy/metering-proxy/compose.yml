@@ -32,9 +32,18 @@
 #   CHEESE_CODEX_CLIENT_VERSION  the `version` header sent to ChatGPT; empty
 #                           keeps the addon's default
 #
-# The ChatGPT listener (:8445) stays on the docker bridge like :443. Its only
-# intended caller is the gateway on this box, which reaches 172.17.0.1; the
-# sandboxes can reach it too, which is why it demands CHEESE_CHATGPT_KEY.
+# The ChatGPT listener (:8445) is published nowhere. Its one caller, the
+# gateway's LiteLLM, reaches it as http://metering-proxy:8445 on
+# cheese-meter-gateway, an internal network only those two containers join;
+# no sandbox is on it. Plain HTTP is safe there because the hop never leaves
+# that network, and the Bearer it carries is the listener key, not an upstream
+# credential. CHEESE_CHATGPT_KEY stays as the second line of defence.
+#
+# The network is shared with the gateway stack, so neither stack owns it: both
+# compose files name it external, and each stack's release creates it when it
+# is missing. Brought up by hand before either release has run, this service
+# fails with "network cheese-meter-gateway declared as external, but could not
+# be found"; `docker network create --internal cheese-meter-gateway` fixes it.
 #
 # The reverse listener (:443) stays on the docker bridge (172.17.0.1): only
 # sandboxes on this box reach it, and they are steered there by --add-host.
@@ -92,7 +101,13 @@ services:
     ports:
       - "172.17.0.1:443:8443"
       - "${CONNECT_BIND_HOST:-172.17.0.1}:8444:8444"
-      - "172.17.0.1:8445:8445"
+    networks:
+      # Listed because naming any network drops the implicit one: the
+      # published listeners and the way out to Anthropic stay on it.
+      default:
+      meter-gateway:
+        aliases:
+          - metering-proxy
     environment:
       CHEESE_USAGE_LOG: /var/log/cheese/usage.jsonl
       CHEESE_TOKEN_CAP: ${CHEESE_TOKEN_CAP:-0}
@@ -122,3 +137,8 @@ services:
       # The platform's ChatGPT accounts, one directory per name
       # (chatgpt-login.sh), writable for the same reason as the Claude one.
       - ${CHATGPT_CREDENTIAL_DIR:-./chatgpt-credential}:/etc/cheese/chatgpt-credential
+
+networks:
+  meter-gateway:
+    external: true
+    name: cheese-meter-gateway
