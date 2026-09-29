@@ -27,10 +27,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            backend/app/domain/agent/harness/claude_code/device_launch.py
-            backend/app/domain/agent/harness/codex/host.py
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.1"
@@ -40,6 +41,8 @@ jobs:
           cache-dependency-glob: backend/uv.lock
           # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
           prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
       - name: Install Python and dependencies
         run: |
           uv python install 3.13

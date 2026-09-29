@@ -684,3 +684,36 @@ class TestClientAddressLimits:
         outbox.settle(3)
         expected = {u.email for u in users[:2]} | {users[3].email}
         assert {m["to"] for m in outbox.sent} == expected
+
+    def test_probing_registered_addresses_is_limited_across_recipients(
+        self, from_address, few_failures, user_client: UserCreator
+    ):
+        """The 409 an unregistered address never gets is the answer a probe is
+        buying, so asking for it spends the same client budget that guessing a
+        mailed code spends."""
+        users = [user_client.create_user() for _ in range(few_failures + 1)]
+        guesser, other = from_address(), from_address()
+
+        for user in users[:few_failures]:
+            asked = guesser.post("/users/verify/email", json={"email": user.email})
+            assert asked.status_code == 409, asked.text
+
+        assert _refused(
+            guesser.post("/users/verify/email", json={"email": users[-1].email})
+        )
+        still_told = other.post("/users/verify/email", json={"email": users[-1].email})
+        assert still_told.status_code == 409, still_told.text
+
+    def test_a_code_that_is_actually_sent_hands_the_budget_back(
+        self, from_address, few_failures, outbox: Outbox
+    ):
+        """Registering — many addresses, each answered with a mailed code — is
+        the ordinary case and must not read as an attack."""
+        client = from_address()
+
+        for _ in range(few_failures * 2):
+            email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
+            sent = client.post("/users/verify/email", json={"email": email})
+            assert sent.status_code == 200, sent.text
+
+        assert len(outbox.sent) == few_failures * 2

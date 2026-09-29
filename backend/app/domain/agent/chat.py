@@ -4148,11 +4148,21 @@ class ChatService:
         project: Project,
         agent_handle: str | None,
     ) -> ResolvedAgent:
-        """The agent a known session belongs to, else the room's answer."""
+        """The agent a known session belongs to, else the room's answer.
+
+        ``agent_handle`` is the agent's own handle, or the seat it acts under:
+        the output a session produces by itself is stamped by its runner with
+        the seat, and read as a handle that names no agent it gave the turn to
+        the project's default — whose session then received, or was opened for,
+        what was said to the one actually working.
+        """
         if agent_handle:
             try:
                 return agents.resolved(await agents.for_handle(project, agent_handle))
             except NotFoundError:
+                seated = await agents.for_seat_handle(project, agent_handle)
+                if seated is not None:
+                    return seated
                 logger.warning(
                     "session agent %r is not in project %s; using the room's",
                     agent_handle,
@@ -6844,9 +6854,9 @@ async def person_mentions(
         # 成 <@cheese>。谁坐在这间房里，谁先答。
         # 这是同一次读的一个渲染顺序，不是第二份名册——和 `roster_rows()`
         # 的定位一致。
+        seated = set(agent_handles)
         if roster and agent_handles:
             row_of = {row["handle"]: row for row in roster}
-            seated = set(agent_handles)
             roster = [
                 row_of[handle]
                 if handle in row_of
@@ -6860,6 +6870,13 @@ async def person_mentions(
                 }
                 for handle in agent_handles
             ] + [row for row in roster if row["handle"] not in seated]
+        # An AI teammate answers to its name only in a room it sits in. One
+        # that does not is not addressed by an @ here (``addressed`` reads the
+        # seats), so its name stays the words a person typed rather than a
+        # chip that looks like it summoned someone.
+        roster = [
+            row for row in roster if not row.get("agent") or row["handle"] in seated
+        ]
         if roster:
             topic_refs = [
                 {"id": str(t.id), "title": t.title}

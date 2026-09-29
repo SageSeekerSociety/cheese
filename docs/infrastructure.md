@@ -192,7 +192,7 @@ or cancelled selected suites, and unexpected skips fail `CI required`. Remote
 execution acceptance remains advisory pending the stability target in #1279; the
 MCP latest-version canary runs on schedule or manual dispatch.
 
-Queue settings: two concurrent merge-group builds, ALLGREEN, squash merge, one
+Queue settings: four concurrent merge-group builds, ALLGREEN, squash merge, one
 to five PRs per merge, no minimum-batch wait, and a 60-minute check-response timeout.
 That timeout bounds a stalled queue; the feedback-time targets remain those in
 #1279.
@@ -227,8 +227,12 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 ## CI runner pool (cheese-ci)
 
-Backend CI (`test.yml`) and E2E (`e2e.yml`, split into Playwright shards) run
-on GitHub-hosted Ubuntu runners. The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
+Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
+the CLI boot e2e and remote-execution acceptance. The organisation is on the
+Free plan, whose documented limit is 20 concurrent hosted jobs, but this public
+repository is not held to it: on 2026-09-28 Required CI alone had 41 hosted
+runners busy at once, and hosted jobs waited 1.2 minutes at the 90th percentile.
+The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
 keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
@@ -282,9 +286,7 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   `RUNNER_TEMP` and therefore its own uv venv rather than a
   concurrent `uv sync` into one. Postgres and Valkey are resident on the machine
   (`deploy/ci-runner/resident-services.sh`, on 5442/6389) and shared by its
-  slots. The one pool job with service containers of its own, `private-chat`
-  in `remote-execution.yml`, publishes them on ephemeral host ports and gives
-  its Postgres a 1 GB tmpfs, so two slots do not collide over them. What keeps
+  slots. What keeps
   two concurrent runs apart is the slot each declares in its runner `.env` — see
   `backend/tests/isolation.py` for the names it scopes, and note that the test
   harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two

@@ -93,7 +93,7 @@ async def list_admin_feedback(
     resolved_since: datetime | None = Query(default=None),
     deployed_since: datetime | None = Query(default=None),
     page_start: int = Query(default=0, ge=0),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
 ) -> dict:
     """四个栏位：公开 / 私密 / agent 提的 / 安全。
 

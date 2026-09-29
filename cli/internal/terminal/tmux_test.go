@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -79,6 +81,101 @@ func TestCloseWaitsForPaneCleanup(t *testing.T) {
 	if _, err := os.Stat(stopped); err != nil {
 		t.Fatal("close returned before the pane finished cleanup")
 	}
+}
+
+// TestCloseKillsAPaneThatIgnoresTheHangup covers the pane that will not go,
+// which is what takes a room's sessions with it: a runner left running keeps
+// the state's socket bound, so the screen cannot be replaced and every later
+// turn waits on a machine that will never answer. kill-session's hangup is one
+// a program can ignore, so close has to be able to insist.
+func TestCloseKillsAPaneThatIgnoresTheHangup(t *testing.T) {
+	isolate(t)
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.KillServer)
+	defer shrinkPaneGraces()()
+	directory := t.TempDir()
+	ready := filepath.Join(directory, "ready")
+	// Ignored, not trapped: the shell and everything it starts are unmoved by
+	// the hangup, which is what a pane that outlives its terminal looks like.
+	script := fmt.Sprintf("trap '' HUP; touch %q; while :; do sleep 0.1; done", ready)
+	session, err := manager.Spawn("stubborn", []string{"bash", "-c", script}, nil, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := panePidOf(t, manager, "stubborn")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("pane never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("close gave up on a pane it could have stopped: %v", err)
+	}
+	// Stopped, in either of the two shapes the wait accepts: reaped (the signal
+	// fails) or exited and not yet collected (a zombie, which answers it). A
+	// process in a state of its own is still the running one — which is what
+	// this test finds if close never insists. Which of the two it is here is a
+	// race against whoever collects the pane, so only those two pass.
+	if process, err := os.FindProcess(pid); err == nil &&
+		process.Signal(syscall.Signal(0)) == nil && paneState(pid) != "Z" {
+		t.Fatalf("close left pane process %d in state %q", pid, paneState(pid))
+	}
+}
+
+// TestPaneGoneCountsAnExitedPaneAsStopped covers the other half of the same
+// corner: a process that has exited and not been reaped is a zombie, and a
+// zombie still answers signal 0. Waiting on that answer alone never lets the
+// screen go, however long the wait is.
+func TestPaneGoneCountsAnExitedPaneAsStopped(t *testing.T) {
+	command := exec.Command("true")
+	if err := command.Start(); err != nil {
+		t.Skipf("cannot start a process to leave unreaped: %v", err)
+	}
+	pid := command.Process.Pid
+	deadline := time.Now().Add(5 * time.Second)
+	for paneState(pid) != "Z" {
+		if time.Now().After(deadline) {
+			_ = command.Wait()
+			t.Skipf("pid %d did not become a zombie to test with", pid)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	gone := paneGone(command.Process)
+	_ = command.Wait()
+	if !gone {
+		t.Fatalf("exited pane process %d still read as alive", pid)
+	}
+}
+
+// panePidOf asks the server for the pid of a session's pane, the same way Close
+// does.
+func panePidOf(t *testing.T, manager *Manager, session string) int {
+	t.Helper()
+	out, err := manager.tmux("list-panes", "-t", "="+session, "-F", "#{pane_pid}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("list panes: %v: %s", err, out)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatalf("pane pid %q: %v", out, err)
+	}
+	return pid
+}
+
+// shrinkPaneGraces makes the two waits short enough for a test to sit through,
+// and answers the function that puts them back.
+func shrinkPaneGraces() func() {
+	cleanup, kill := paneCleanupGrace, paneKillGrace
+	paneCleanupGrace, paneKillGrace = 200*time.Millisecond, 2*time.Second
+	return func() { paneCleanupGrace, paneKillGrace = cleanup, kill }
 }
 
 // isolate points NewManager at a runtime dir of this test's own. NewManager
