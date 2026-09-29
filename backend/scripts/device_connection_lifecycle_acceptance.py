@@ -371,7 +371,7 @@ def image_owner(options, root: Path, *, start_runtime=True):
                 "POSTGRES_PASSWORD=postgres",
                 "-e",
                 "POSTGRES_DB=cheese",
-                "mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2",
+                "mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4",
             )
             docker(
                 "run",

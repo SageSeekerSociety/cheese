@@ -12,7 +12,7 @@
 # progress/diagnostic message goes to stderr.
 #
 # Binaries come from two prebuilt wheels fetched by `uv run --no-project` on a
-# pinned Python 3.12: `postgresql-binaries` (relocatable PostgreSQL 16 with the
+# pinned Python 3.12: `postgresql-binaries` (relocatable PostgreSQL 17 with the
 # contrib extensions) and `redislite` (bundled redis-server 6.2). They are
 # deliberately NOT backend dependencies — see the note at resolve_bins() below.
 # The harness builds are npm packages; they land in $TOOL_CACHE, outside
@@ -34,7 +34,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PG_USER=cheesex
 PG_PASSWORD=cheesex
 
-PGDATA="$DATA_DIR/pg"
+# Named for the major: a cluster initdb'd by another major will not start.
+PGDATA="$DATA_DIR/pg17"
 REDIS_DIR="$DATA_DIR/redis"
 PG_LOG="$DATA_DIR/pg.log"
 REDIS_LOG="$DATA_DIR/redis.log"
@@ -49,7 +50,7 @@ die() { printf 'dev-db: %s\n' "$*" >&2; exit 1; }
 # wheel) cannot satisfy, so `alembic upgrade head` would fail on it.
 # `postgresql-binaries` repackages the theseus-rs/postgresql-binaries release
 # tarball unchanged, contrib included; its bin() unpacks it next to itself on
-# first call. Keep it on major 16 to match the deployed paradedb image.
+# first call. Keep its major on the one dev and production run (17).
 #
 # These are test-host tools, not something the backend imports, so they stay
 # out of backend's dependency groups. `redislite` publishes wheels up to cp312
@@ -58,7 +59,7 @@ die() { printf 'dev-db: %s\n' "$*" >&2; exit 1; }
 # the servers; the test suite still runs on the project's 3.13. uv caches wheels
 # and interpreter, so only the first call downloads, and the resolved paths are
 # then cached in $BIN_CACHE so repeat starts skip uv entirely.
-PG_WHEEL='postgresql-binaries==16.15.0'
+PG_WHEEL='postgresql-binaries==17.11.0'
 REDIS_WHEEL='redislite==6.2.912183'
 resolve_bins() {
     # BIN_PINS makes a cache written for other pins count as stale: the binaries
