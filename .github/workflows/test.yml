@@ -156,7 +156,6 @@ jobs:
           - {layer: integration, shard: '1/4', floor: 2400, timeout: 15}
           - {layer: integration, shard: '2/4', floor: 2400, timeout: 15}
           - {layer: integration, shard: '3/4', floor: 2400, timeout: 15}
-          - {layer: search, shard: '0/1', floor: 4, timeout: 5}
     # Floors apply to the complete layer before sharding, not each runner.
     env:
       REDIS_URL: redis://localhost:6389/0
@@ -169,8 +168,6 @@ jobs:
       # present (AgentProfile.available = bool(auth_token)); the market test
       # asserts availability. Dummy token — no real calls are made.
       ANTHROPIC_AUTH_TOKEN: test-token
-      CHEESEX_TEST_MEILISEARCH_URL: ${{ matrix.layer == 'search' && 'http://localhost:7700' || '' }}
-      CHEESEX_TEST_MEILISEARCH_API_KEY: cheese-ci-search-key
     services:
       # The same images the cheese-ci pool's resident pair run
       # (deploy/ci-runner/resident-services.sh), on the same host ports, so the
@@ -195,13 +192,6 @@ jobs:
         options: >-
           --health-cmd "valkey-cli ping" --health-interval 10s
           --health-timeout 5s --health-retries 5
-      meilisearch:
-        image: ${{ matrix.layer == 'search' && 'mirror.gcr.io/getmeili/meilisearch:v1.54.0@sha256:0bf32debcbfa8ba4e418679025f4935884972171513c92f0584689ff994a61df' || '' }}
-        env:
-          MEILI_MASTER_KEY: cheese-ci-search-key
-          MEILI_NO_ANALYTICS: 'true'
-        ports:
-          - 7700:7700
     # Each runner has its own services and xdist workers. This ceiling detects
     # hangs; the artifact timings measure whether the feedback budget is met.
     timeout-minutes: 20
@@ -321,11 +311,6 @@ jobs:
           echo "CHEESE_TEST_PI=$RUNNER_TEMP/pi/pi/pi" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/pi/pi/pi" --version
 
-      - name: Wait for the search test service
-        if: matrix.layer == 'search'
-        timeout-minutes: 2
-        run: curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 --max-time 2 http://localhost:7700/health
-
       - name: Verify integration PostgreSQL storage
         if: matrix.layer == 'integration'
         env:
@@ -350,20 +335,12 @@ jobs:
             export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
             export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
           fi
-          # Real search owns a separate serial runner and index. The four cases
-          # previously skipped without a service must pass there on every run.
-          if [ "$TEST_LAYER" = search ]; then
-            selection=(tests/integration/test_meilisearch_integration.py -m integration)
-            workers=0
-          else
-            selection=(tests/ -m "$TEST_LAYER" -k 'not kotlin and not meilisearch_integration')
-            workers="$CHEESE_CI_TEST_WORKERS"
-          fi
           observe=()
           if [ "$TEST_LAYER" = integration ]; then
             observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" --)
           fi
-          "${observe[@]}" uv run python -m pytest "${selection[@]}" --ignore=tests/forgejo -n "$workers" \
+          "${observe[@]}" uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+            --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
             --ci-selection-output="$RUNNER_TEMP/backend-results" \
             --dist worksteal --tb=short --durations=30 \
