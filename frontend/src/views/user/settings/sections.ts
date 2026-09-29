@@ -7,8 +7,13 @@ export const SETTINGS_SECTIONS = [
   { label: () => t('account.profile.title'), route: { name: 'UserSettingsProfile' }, icon: 'mdi-account' },
   { label: () => t('account.settings.realName'), route: { name: 'UserSettingsRealName' }, icon: 'mdi-account-card' },
   { label: () => t('account.security.title'), route: { name: 'UserSettingsSecurity' }, icon: 'mdi-lock' },
+  { label: () => t('account.settings.devices'), route: { name: 'UserSettingsDevices' }, icon: 'mdi-laptop' },
+  {
+    label: () => t('account.settings.connections'),
+    route: { name: 'UserSettingsConnections' },
+    icon: 'mdi-link-variant',
+  },
   ...(desktopCan('autostart')
     ? [{ label: () => t('account.settings.general'), route: { name: 'UserSettingsGeneral' }, icon: 'mdi-tune-variant' }]
     : []),
-  { label: () => t('account.settings.install'), route: { name: 'UserSettingsApp' }, icon: 'mdi-cellphone-arrow-down' },
 ]

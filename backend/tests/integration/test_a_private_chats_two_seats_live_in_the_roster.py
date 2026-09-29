@@ -160,7 +160,7 @@ def test_reopening_a_dm_whose_roster_grew_finds_the_same_room(client):
 
     私聊不进话题树，角标又被两席那道闸滤掉，所以旧那间房在界面上没有别的入口：
     这里另开一间，里面的对话就再也找不回来。多出一席这间房确实答不出对面是谁，
-    但那件事由 ``private_seats`` 一处答，它退回项目默认那位，不另开房。
+    但那件事由 ``private_seats`` 一处答，它退回名册上坐着的那位 AI，不另开房。
     """
     project_id = _project(client)
     _add_agent(client, project_id, "reviewer", "评审")
@@ -172,8 +172,9 @@ def test_reopening_a_dm_whose_roster_grew_finds_the_same_room(client):
     again = _dm(client, project_id, "user-1", agent_handle="reviewer")
 
     assert again == dm
-    # 答不出对面是谁的那一条退路照走：项目默认那位答这间房。
-    assert _who_answers(client, dm) == "cheese"
+    # 答不出对面是谁的那一条退路照走：名册上坐着的那位 AI 答这间房。项目默认那位
+    # 不在名册上，由它来答就是借评审的席位、在评审的会话机器上跑它的一轮。
+    assert _who_answers(client, dm) == "reviewer"
 
 
 def _project_with_a_roster(client, owner: str, member: str) -> str:

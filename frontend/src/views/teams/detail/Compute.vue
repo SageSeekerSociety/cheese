@@ -395,7 +395,11 @@ onBeforeUnmount(() => {
                 </template>
               </v-list-item>
               <v-list-item v-if="!addable.length && myDevices.length" disabled title="你的设备都已在这个团队中" />
-              <v-list-item v-if="!myDevices.length" :to="{ name: 'my-devices' }" title="先去「我的设备」接入机器">
+              <v-list-item
+                v-if="!myDevices.length"
+                :to="{ name: 'UserSettingsDevices' }"
+                title="先在「设置 → 设备」中接入电脑"
+              >
                 <template #prepend><v-icon size="18" class="mr-2">mdi-laptop-account</v-icon></template>
               </v-list-item>
             </v-list>

@@ -22,6 +22,14 @@ All three print their baseline and their refresh command when they fail, and all
 three carry `--self-test` (also run in CI — a check nobody has watched fail is
 not a check).
 
+What they cannot say is whether the tree is getting *better*: each one is a
+ratchet against a frozen baseline, and a ratchet that holds still reports success
+forever. That half is a board, not a gate — `python3 .claude/scripts/arch-metrics.py`
+(and `--compare <ref>` for two revisions side by side), reported on main and
+weekly by `.github/workflows/arch-metrics.yml`, never able to fail a run. What it
+measures, how to read it, and today's numbers: `docs/manual/dev/arch-metrics.md`
+(发布在文档站的「架构指标」一页).
+
 ## Backend: the import graph is checked, not assumed
 
 `backend/.importlinter` declares three contracts (import-linter, AST-based, so
@@ -84,7 +92,7 @@ Four principles, in the order they matter:
    alone, it is a view or a container, not a component. **建议** — no check can
    decide which side of that line a file is on.
 
-The rule is ratcheted because the tree starts at 91 violations in 57 components
+The rule is ratcheted because the tree starts at 84 violations in 50 components
 (`frontend/import-boundary-baseline.json`); a gate that reddened the whole tree
 on day one would be switched off within a week. It is a separate ESLint config
 (`eslint.boundary.config.mjs`) rather than a rule in `eslint.config.mjs` for the

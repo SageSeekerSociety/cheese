@@ -14,7 +14,8 @@
 import type { MenuAction } from './menuAction'
 
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 const open = defineModel<boolean>({ default: false })
 
@@ -34,14 +35,14 @@ defineSlots<{
   default?: () => unknown
 }>()
 
-const router = useRouter()
+const nav = useNavigation()
 
 function choose(action: MenuAction) {
   if (action.disabled || action.loading) return
   open.value = false
   emit('select', action)
   action.onSelect?.()
-  if (action.to) void router.push(action.to)
+  if (action.to) nav?.navigate(action.to)
 }
 
 // ---- 往下拖着关 ------------------------------------------------------------

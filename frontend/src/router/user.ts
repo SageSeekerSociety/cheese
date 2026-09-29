@@ -36,6 +36,20 @@ export default {
           component: () => import('@/views/user/settings/RealName.vue'),
         },
         {
+          // 接入的电脑：这个人的工作电脑，哪个项目都能用。
+          path: 'devices',
+          name: 'UserSettingsDevices',
+          component: () => import('@/views/MyDevicesView.vue'),
+          meta: { palette: { label: 'account.settings.devices', icon: 'mdi-laptop' } },
+        },
+        {
+          // 芝士替这个人用的邮箱和飞书。
+          path: 'connections',
+          name: 'UserSettingsConnections',
+          component: () => import('@/views/MyConnectionsView.vue'),
+          meta: { palette: { label: 'account.settings.connections', icon: 'mdi-link-variant' } },
+        },
+        {
           // 「通用」：这台电脑上的桌面 app 自己的设置。浏览器里没有这一块。
           path: 'general',
           name: 'UserSettingsGeneral',
@@ -44,14 +58,6 @@ export default {
             const { desktopCan } = await import('@/lib/desktopApp')
             return desktopCan('autostart') ? true : { name: 'UserSettingsProfile' }
           },
-        },
-        {
-          // 「安装到手机」：装到主屏幕的说明 + 一次 beforeinstallprompt 机会。
-          // 路径叫 app 而不是 install，是因为将来这一页还会放别的客户端形态
-          // （桌面端安装、版本信息）——它答的是「芝士在哪些设备上是应用」。
-          path: 'app',
-          name: 'UserSettingsApp',
-          component: () => import('@/views/user/settings/Install.vue'),
         },
       ],
     },

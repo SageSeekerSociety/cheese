@@ -23,6 +23,7 @@ from app.domain.project.models import Project
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
+from tests.executor_release import running
 from tests.integration.conftest import post_project, registered
 
 pytestmark = pytest.mark.anyio
@@ -127,7 +128,11 @@ def _pushes(monkeypatch):
     monkeypatch.setattr(
         work_lease, "device_hub", SimpleNamespace(is_online=lambda device: True)
     )
-    remote = AsyncMock(return_value={"value": {"stdout": ""}})
+    remote = AsyncMock(
+        side_effect=lambda lease, method, *a, **k: (
+            running() if method == "ping" else {"value": {"stdout": ""}}
+        )
+    )
     monkeypatch.setattr(execution, "call", remote)
     return remote
 

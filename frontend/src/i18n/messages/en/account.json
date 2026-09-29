@@ -368,8 +368,9 @@
   },
   "settings": {
     "realName": "Real-name information",
-    "install": "Install on your phone",
-    "general": "General"
+    "general": "General",
+    "devices": "Devices",
+    "connections": "Connections"
   },
   "emailCode": {
     "title": "Sign in with an email code",

@@ -1,7 +1,7 @@
 """平台级飞书应用：管理员配一次，成员各自授权
 
 Revision ID: c4e18a72b9d0
-Revises: 2d2fc3a8ce36
+Revises: 7e4b9d2c1a60
 Create Date: 2026-09-29
 
 成员不再各建一个企业自建应用。这张表只有一行（``id`` 恒为
@@ -22,7 +22,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c4e18a72b9d0"
-down_revision: str | Sequence[str] | None = "2d2fc3a8ce36"
+down_revision: str | Sequence[str] | None = "7e4b9d2c1a60"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

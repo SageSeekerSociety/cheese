@@ -4,11 +4,12 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import AnswerList from '@/components/questions/AnswerList.vue'
 
-const route = useRoute()
+const nav = useNavigation()
 
-const questionId = computed(() => parseInt(route.params.questionId as string))
+const questionId = computed(() => Number(nav?.route?.params?.questionId))
 </script>

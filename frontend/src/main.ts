@@ -92,5 +92,5 @@ app.mount('#app')
 clearStaleBuildGuard()
 registerPwa()
 // 安装机会（beforeinstallprompt）来得比任何页面都早——早到用户还没来得及打开
-// 「设置 → 安装到手机」。所以在启动时就把它接住，"安装到手机"那一页才有得用。
+// 下载页。所以在启动时就把它接住，下载页上的「添加到主屏幕」才有得用。
 watchInstallPrompt()

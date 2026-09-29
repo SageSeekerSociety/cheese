@@ -10,15 +10,25 @@ import '@/styles/content.scss'
 import '@/styles/fonts.css'
 import './style.css'
 
+import type { Component } from 'vue'
+
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
 import i18n from '@/i18n'
 import vuetify from '@/plugins/vuetify'
+import DemoCatalog from '@/views/demo/DemoCatalog.vue'
 import { demoRouter } from '@/views/demo/demoRouter'
 import DemoView from '@/views/demo/DemoView.vue'
 
-createApp(DemoView, { path: location.pathname, search: location.search })
+// 这一条入口上现在有两页，地址说了算：组件预览站（/demo/catalog…）和动态演示
+// （/demo/<名字>）。两页都是「地址当 props 传进去」，只是预览站不看查询串。
+const catalog = /^\/demo\/catalog(\/|$)/.test(location.pathname)
+
+createApp(catalog ? (DemoCatalog as Component) : DemoView, {
+  path: location.pathname,
+  ...(catalog ? {} : { search: location.search }),
+})
   .use(vuetify)
   .use(i18n)
   .use(createPinia())

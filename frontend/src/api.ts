@@ -1700,6 +1700,8 @@ export interface ArtifactVersion {
   kind: DeliverableKind | null
   filename: string | null
   url: string | null
+  bytes: number | null
+  room: { id: string; title: string } | null
 }
 
 export interface ProjectArtifactDetail extends ProjectArtifact {
@@ -1714,8 +1716,6 @@ export interface ArtifactComparison {
     path: string
     diff: string | null
     note: string | null
-    before_mode?: string | null
-    after_mode?: string | null
     status?: string
   }[]
 }

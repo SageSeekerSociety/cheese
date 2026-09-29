@@ -34,7 +34,7 @@ checked every six hours and installed only while the window is out of sight and
 no connection is in progress; the restarted app stays out of sight.
 
 Beyond that the app adds one thing a browser cannot do: connect the computer it runs
-on as a device. On 「我的设备」 it offers 「接入这台电脑」, which does what the
+on as a device. Under 设置 → 设备 it offers 「接入这台电脑」, which does what the
 page otherwise asks a terminal user to do — run the server's `install.sh`, then
 `cheesehost link connect` — and approves the login with the session the page is
 already signed in with. The page's side of that is `frontend/src/lib/desktop.ts`.
@@ -64,7 +64,9 @@ and only that origin's pages can call it.
 
 `.github/workflows/desktop.yml` builds the two macOS dmgs and the Windows
 installer on every change here and, on main, replaces the assets of the
-`desktop-latest` release, which is where the download links on 「我的设备」 point.
+`desktop-latest` release, which is where the download page (`/download`) points.
+`CHANGELOG.md` goes up with each build; the download page shows it, so a
+change to the app adds a line or two there, written for the people who use it.
 Each build is version `0.1.<run number>`, and the publish step uploads
 `latest.json` last. An installed app checks it at every start and, when a
 newer version is out, downloads it, waits for any connection in progress to

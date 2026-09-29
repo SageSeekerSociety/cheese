@@ -1,11 +1,6 @@
 <template>
   <v-tabs class="analytics-tabs" color="primary" show-arrows>
-    <v-tab
-      v-for="tab in tabs"
-      :key="tab.name"
-      :to="{ name: tab.name, params: { spaceId }, query: route.query }"
-      :value="tab.name"
-    >
+    <v-tab v-for="tab in tabs" :key="tab.name" :to="{ name: tab.name, params: { spaceId }, query }" :value="tab.name">
       <v-icon start>{{ tab.icon }}</v-icon>
       {{ tab.label }}
     </v-tab>
@@ -14,13 +9,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import { useAnalyticsRouteNames } from '@/lib/shellRouteNames'
 
-const route = useRoute()
+const nav = useNavigation()
 
-const spaceId = computed(() => Number(route.params.spaceId))
+const spaceId = computed(() => Number(nav?.route?.params?.spaceId))
+/** 换一格不丢当前那一串筛选条件（query 原样带过去）。 */
+const query = computed(() => nav?.route?.query ?? {})
 
 /** 六格跳哪儿由挂着它的那棵树说了算（老的九页 / 新题目板外壳各一套名字），
  *  见 `shellRouteNames.ts` 顶部。 */
