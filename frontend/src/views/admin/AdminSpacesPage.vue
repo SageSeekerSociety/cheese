@@ -10,7 +10,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
 import { SpacesApi } from '@/network/api/spaces'
 

@@ -25,7 +25,7 @@ import { useCommands } from '@/commands'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
 

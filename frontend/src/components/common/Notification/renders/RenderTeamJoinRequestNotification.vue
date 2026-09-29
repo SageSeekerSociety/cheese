@@ -24,7 +24,7 @@ import { toast } from 'vuetify-sonner'
 
 import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { TeamsApi } from '@/network/api/teams'
 
 const props = defineProps<NotificationRenderProps>()

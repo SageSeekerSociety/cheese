@@ -148,7 +148,7 @@ import { useRoute } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TeamsApi } from '@/network/api/teams'
 import { BusinessError } from '@/network/types/error'

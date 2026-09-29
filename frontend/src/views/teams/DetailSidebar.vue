@@ -126,7 +126,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import TeamProfileEditDialog from './TeamProfileEditDialog.vue'
 
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
-import UserRef from '@/components/common/UserRef.vue'
+import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
 interface Props {
