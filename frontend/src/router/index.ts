@@ -83,13 +83,23 @@ const routes: RouteRecordRaw[] = [
     name: 'my-connections',
     path: '/my/connections',
     component: () => import('@/views/MyConnectionsView.vue'),
-    meta: { title: '我的连接', isFullPage: true, ...PERSONAL_PAGE },
+    meta: {
+      title: '我的连接',
+      isFullPage: true,
+      ...PERSONAL_PAGE,
+      palette: { label: 'navigation.userMenu.connections', icon: 'mdi-link-variant' },
+    },
   },
   {
     name: 'my-devices',
     path: '/my/devices',
     component: () => import('@/views/MyDevicesView.vue'),
-    meta: { title: '我的设备', isFullPage: true, ...PERSONAL_PAGE },
+    meta: {
+      title: '我的设备',
+      isFullPage: true,
+      ...PERSONAL_PAGE,
+      palette: { label: 'navigation.userMenu.devices', icon: 'mdi-laptop' },
+    },
   },
   {
     // Device-flow approval landing page: `cheesehost auth login` prints a
@@ -106,7 +116,7 @@ const routes: RouteRecordRaw[] = [
     name: 'inbox',
     path: '/inbox',
     component: () => import('@/views/InboxView.vue'),
-    meta: { title: '待办', isFullPage: true },
+    meta: { title: '待办', isFullPage: true, palette: { label: 'navigation.inbox', icon: 'mdi-inbox-outline' } },
   },
   {
     name: 'market',

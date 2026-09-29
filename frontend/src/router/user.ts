@@ -14,7 +14,10 @@ export default {
         default: () => import('@/layouts/user/Settings.vue'),
         sidebar: () => import('@/views/user/settings/SettingsSidebar.vue'),
       },
-      meta: { titleKey: 'navigation.userMenu.settings' },
+      meta: {
+        titleKey: 'navigation.userMenu.settings',
+        palette: { label: 'navigation.userMenu.settings', icon: 'mdi-account-cog-outline' },
+      },
       redirect: { name: 'UserSettingsProfile' },
       children: [
         {

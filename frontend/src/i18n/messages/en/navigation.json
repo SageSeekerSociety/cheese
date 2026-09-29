@@ -54,5 +54,23 @@
   "shell": {
     "close": "Close",
     "more": "More actions"
+  },
+  "palette": {
+    "open": "Search and jump",
+    "placeholder": "Search or jump to",
+    "empty": "No results",
+    "awaiting": "Waiting on you",
+    "archived": "Archived",
+    "recent": "Recent",
+    "best": "Best match",
+    "topics": "Topics",
+    "projects": "Projects",
+    "members": "Members",
+    "pages": "Pages",
+    "commands": "Actions",
+    "close": "Close",
+    "theme": "Appearance: {mode}",
+    "showTab": "Show {tab}",
+    "newTopic": "New topic"
   }
 }
