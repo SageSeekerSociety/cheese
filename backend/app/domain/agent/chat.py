@@ -2482,7 +2482,12 @@ class ChatService:
         records are still unlanded is its.
         """
         sessions = await self._compute.recover_sessions(device_id)
-        unique = {session.topic_id: session for session in sessions}
+        # One per seat, not per room: teammates in one room run side by side,
+        # and a seat left out here is re-attached but never read again until
+        # somebody next addresses it.
+        unique = {
+            (session.topic_id, session.agent_handle): session for session in sessions
+        }
         for session in unique.values():
             try:
                 # A turn still running there was fed by a process that is gone,

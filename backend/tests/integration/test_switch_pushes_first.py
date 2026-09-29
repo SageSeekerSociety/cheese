@@ -6,6 +6,7 @@ nobody else may. A Cloud machine left after a push stops counting against the
 team's quota.
 """
 
+import ast
 import json
 import re
 import uuid
@@ -480,3 +481,27 @@ async def test_an_executor_started_for_a_push_can_still_push_hours_later(
     assert len(machine.installs) == 1
     session = await _session(client, room)
     assert session.execution_request["choice"]["device_id"] == room.new_device
+
+
+async def test_an_executor_started_to_push_is_installed_with_the_rooms_environment(
+    client, monkeypatch
+):
+    room = await _room(client)
+    machine = _IdleMachine()
+    monkeypatch.setattr(work_lease, "device_hub", machine)
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    # The machine records the environment an executor was installed with and
+    # refuses the next turn's start while it differs from the room's, so the
+    # one started for the push must be installed with the room's.
+    [(_, script)] = machine.installs
+    [payload] = re.findall(r"configure\(json\.loads\((.+)\)\)\n$", script)
+    installed = json.loads(ast.literal_eval(payload))["environment"]
+    pinned = client.get(
+        f"/projects/{room.project_id}/environment/rooms/{room.topic_id}",
+        headers=room.person,
+    ).json()["data"]["pinned_revision"]
+    assert installed is not None
+    assert installed["revision"] == pinned
