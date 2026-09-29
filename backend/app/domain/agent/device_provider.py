@@ -490,6 +490,14 @@ async def environment_status(
             "sh",
             "-c",
             f'export HOME="{home}"; '
+            # The runner finds the room's status under `Path.home()`, which on
+            # Windows is USERPROFILE and not HOME. Exported as HOME alone, a
+            # Windows room read the device owner's own profile and stayed
+            # `pending` for good while its environment was ready. `cygpath`
+            # (Git Bash's shell) spells the home the way Windows Python reads
+            # it; elsewhere nothing reads USERPROFILE.
+            'USERPROFILE="$(cygpath -w "$HOME" 2>/dev/null || '
+            'printf %s "$HOME")"; export USERPROFILE; '
             f"for candidate in {candidates}; do "
             'if [ -f "$candidate" ]; then '
             f"CHEESE_STATUS_WAIT={int(wait_ready)} "

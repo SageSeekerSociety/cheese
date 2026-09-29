@@ -221,7 +221,16 @@
                   v-else-if="request.status === 'APPROVED' || request.status === 'REJECTED'"
                   class="text-caption text-medium-emphasis"
                 >
-                  {{ request.processedBy?.nickname ? `由 ${request.processedBy.nickname} 处理` : '已处理' }}
+                  <template v-if="request.processedBy?.nickname">
+                    由
+                    <UserRef
+                      :handle="request.processedBy.username"
+                      :name="request.processedBy.nickname"
+                      :project-id="null"
+                    />
+                    处理
+                  </template>
+                  <template v-else>已处理</template>
                 </div>
               </template>
             </v-list-item>
@@ -296,6 +305,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { teamDataInjectionKey } from '@/keys'
 import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'

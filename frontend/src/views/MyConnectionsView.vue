@@ -21,6 +21,8 @@ import {
   updateIntegration,
 } from '../api'
 
+import UserRef from '@/components/common/UserRef.vue'
+
 const route = useRoute()
 const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
@@ -242,7 +244,9 @@ onMounted(load)
               {{ d.attachments.length ? d.attachments.map((a) => `${a.name}（${a.size} 字节）`).join('、') : '无' }}
             </dd>
             <dt>来自</dt>
-            <dd>{{ projectName(d.project_id) }} · {{ d.created_by }} 起草</dd>
+            <dd>
+              {{ projectName(d.project_id) }} · <UserRef :handle="d.created_by" :project-id="d.project_id" /> 起草
+            </dd>
           </dl>
           <div class="conn-actions">
             <v-btn

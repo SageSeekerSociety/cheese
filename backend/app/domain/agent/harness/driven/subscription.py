@@ -1,11 +1,14 @@
 """Hand a mirrored journal to the room's persistence, and say when it is working.
 
 A drain pulls whatever the runner has that the mirror does not, then walks the
-unread tail in order. Every record the runner hands over is stamped with the
-work it was produced under — the stamp is the runner's because only it knows
-what was in flight when the record appeared, and a backend that came up after
-the fact would have to guess. The landing cursor moves only after the room took
-a record, so a drain that dies halfway re-reads rather than skips.
+unread tail in order, a page at a time. Every record the runner hands over is
+stamped with the work it was produced under — the stamp is the runner's because
+only it knows what was in flight when the record appeared, and a backend that
+came up after the fact would have to guess. The landing cursor moves only after
+the room took a record, so a drain that dies halfway re-reads rather than skips.
+It moves once per page, and where the room refused a record partway through
+one: a commit per record is a sync per record, and a backlog can run to a
+million records.
 
 What a harness supplies is what its protocol decides: how to pull from its
 runner, how to read its mirror, which records open and close a turn, what to do
@@ -14,8 +17,8 @@ it — which record says an input was read.
 
 The mirror is a sqlite file that commits synchronously, and every room on a
 backend shares one event loop, so no read or write of the mirror runs on that
-loop: a drain lands a record per transaction, and on a slow disk each of those
-syncs would stall every room this backend serves. They run on the mirror's own
+loop: every landing is a transaction, and on a slow disk each of those syncs
+would stall every room this backend serves. They run on the mirror's own
 thread (``on_disk``) instead. One thread per mirror is what keeps the mirror's
 semantics: sqlite connections stay on the thread that opened them, and the
 writes happen one at a time, in the order the drain asked for them, each
@@ -179,71 +182,92 @@ class Subscription[B: Backlog]:
             await self.receive()
             reader = await self.on_disk(self.reader)
             delivered = 0
-            for entry in reader.unread():
-                assert isinstance(entry.record, dict)
-                record = entry.record
-                stamp = record.get("cheese") or {}
-                work = stamp.get("work_id")
-                if work is None:
-                    self.unowned(entry, reader)
-                else:
-                    work_id = uuid.UUID(work)
-                    events = reader.assemble(entry)
-                    if self.starts_turn(record, reader):
-                        await self.activity(
-                            self.session.project_id,
-                            self.seat,
-                            work_id,
-                            True,
-                        )
-                    if self.pulse is not None:
-                        self.pulse(
-                            self.seat,
-                            frozenset(self.marks(record, list(events))),
-                        )
-                    text = self.receipt(record)
-                    if text is not None and self.receipts is not None:
-                        await self.receipts(self.session.topic_id, text)
-                    for event in events:
-                        # Which seat's session produced this event. Events that
-                        # declare the field keep what the record said (the
-                        # runner's stamp is authoritative); the rest carry this
-                        # subscription's own seat, so a consumer opening the
-                        # books for a self-started turn attributes it to the
-                        # right agent when several seats share one room — the
-                        # room-keyed fallback cannot tell them apart.
-                        fields = getattr(type(event), "__dataclass_fields__", None)
-                        if fields is not None and "agent_handle" not in fields:
-                            # Dynamic by design: the stamp lands on events whose
-                            # dataclass never heard of it, which is exactly what
-                            # the check above proved.
-                            cast(Any, event).agent_handle = self.session.agent_handle
-                        await self.consume(
-                            self.session.project_id,
-                            self.session.topic_id,
-                            work_id,
-                            event,
-                            getattr(event, "eid", None) or entry.eid,
-                            # The closing text was already landed as its own
-                            # message; the result must not publish it twice.
-                            isinstance(event, AgentResult) and not event.is_error,
-                            # A turn the session started for itself, which the
-                            # room has to open the books for when it speaks.
-                            bool(stamp.get("unsolicited")),
-                        )
-                        delivered += 1
-                    if self.ends_turn(record, reader):
-                        await self.activity(
-                            self.session.project_id,
-                            self.seat,
-                            work_id,
-                            False,
-                        )
-                        if self.memory is not None:
-                            await self.memory()
-                if not reader.unfinished():
-                    await self.on_disk(reader.landed, through=entry.key)
+            # How far the room has taken whole things; landed once per page.
+            whole: str | None = None
+            try:
+                while page := await self.on_disk(reader.unread):
+                    for entry in page:
+                        delivered += await self._deliver(entry, reader)
+                        if not reader.unfinished():
+                            whole = entry.key
+                    if whole is not None:
+                        await self.on_disk(reader.landed, through=whole)
+                        whole = None
+            except Exception:
+                # The room refused a record partway through a page: what it
+                # took before that stays taken, and the next drain starts at
+                # the refusal. A cancelled drain does not wait on its disk for
+                # this; the next one re-reads the page and the ids absorb it.
+                if whole is not None:
+                    await self.on_disk(reader.landed, through=whole)
+                raise
             if time.monotonic() - self.forgotten_at >= RETENTION_EVERY_S:
                 self.forgotten_at = time.monotonic()
                 await self.on_disk(reader.forget, older_than_s=RETENTION_S)
             return delivered
+
+    async def _deliver(self, entry: HarnessEvent, reader: B) -> int:
+        """Hand one record to the room; how many events it came out as."""
+        assert isinstance(entry.record, dict)
+        delivered = 0
+        record = entry.record
+        stamp = record.get("cheese") or {}
+        work = stamp.get("work_id")
+        if work is None:
+            self.unowned(entry, reader)
+        else:
+            work_id = uuid.UUID(work)
+            events = reader.assemble(entry)
+            if self.starts_turn(record, reader):
+                await self.activity(
+                    self.session.project_id,
+                    self.seat,
+                    work_id,
+                    True,
+                )
+            if self.pulse is not None:
+                self.pulse(
+                    self.seat,
+                    frozenset(self.marks(record, list(events))),
+                )
+            text = self.receipt(record)
+            if text is not None and self.receipts is not None:
+                await self.receipts(self.session.topic_id, text)
+            for event in events:
+                # Which seat's session produced this event. Events that
+                # declare the field keep what the record said (the
+                # runner's stamp is authoritative); the rest carry this
+                # subscription's own seat, so a consumer opening the
+                # books for a self-started turn attributes it to the
+                # right agent when several seats share one room — the
+                # room-keyed fallback cannot tell them apart.
+                fields = getattr(type(event), "__dataclass_fields__", None)
+                if fields is not None and "agent_handle" not in fields:
+                    # Dynamic by design: the stamp lands on events whose
+                    # dataclass never heard of it, which is exactly what
+                    # the check above proved.
+                    cast(Any, event).agent_handle = self.session.agent_handle
+                await self.consume(
+                    self.session.project_id,
+                    self.session.topic_id,
+                    work_id,
+                    event,
+                    getattr(event, "eid", None) or entry.eid,
+                    # The closing text was already landed as its own
+                    # message; the result must not publish it twice.
+                    isinstance(event, AgentResult) and not event.is_error,
+                    # A turn the session started for itself, which the
+                    # room has to open the books for when it speaks.
+                    bool(stamp.get("unsolicited")),
+                )
+                delivered += 1
+            if self.ends_turn(record, reader):
+                await self.activity(
+                    self.session.project_id,
+                    self.seat,
+                    work_id,
+                    False,
+                )
+                if self.memory is not None:
+                    await self.memory()
+        return delivered

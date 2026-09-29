@@ -149,6 +149,113 @@ def test_a_streak_of_retries_is_one_line_that_counts_them(client, stub_hooks):
     assert restated == [2, 3]
 
 
+def _compaction(stub, topic, **status) -> None:
+    stub.record(topic, type="system", subtype="status", **status)
+
+
+def test_a_compaction_says_so_while_it_runs_and_when_it_is_over(client, stub_hooks):
+    """Compacting a long conversation can take minutes with nothing said and no
+    reply to new messages. The room hears that it started, on one line, and the
+    same line says when it is over."""
+
+    def turn(topic, prompt, reply, agent=None):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        _compaction(stub_hooks, topic, status="compacting")
+        _compaction(stub_hooks, topic, status=None, compact_result="success")
+        stub_hooks.says(topic, "接上了")
+        stub_hooks.stops(topic, "好了")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 接着做"})
+        frames = _until(ws, _done)
+    wait_work_idle()
+
+    lines = _of_type(_blocks(client, room), "context_compact")
+    assert len(lines) == 1
+    assert lines[0].meta["state"] == "over"
+    assert "整理" in lines[0].content
+    assert lines[0].turn_id is not None
+
+    line = str(lines[0].id)
+    landed = [
+        f["block"]
+        for f in frames
+        if f["type"] == "event_block"
+        and (f["block"]["meta"] or {}).get("event_type") == "context_compact"
+    ]
+    assert [b["id"] for b in landed] == [line]
+    assert landed[0]["meta"]["state"] == "running"
+    assert [
+        f["block"]["meta"]["state"]
+        for f in frames
+        if f["type"] == "block_updated" and f["block"]["id"] == line
+    ] == ["over"]
+
+
+def test_a_compaction_that_fails_says_why(client, stub_hooks):
+    def turn(topic, prompt, reply, agent=None):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        _compaction(stub_hooks, topic, status="compacting")
+        _compaction(
+            stub_hooks,
+            topic,
+            status=None,
+            compact_result="failed",
+            compact_error="prompt too long",
+        )
+        stub_hooks.stops(topic, "好了")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 接着做"})
+        _until(ws, _done)
+    wait_work_idle()
+
+    [line] = _of_type(_blocks(client, room), "context_compact")
+    assert line.meta["state"] == "over"
+    assert line.meta["detail"] == "prompt too long"
+
+
+def test_a_turn_that_ends_mid_compaction_does_not_leave_it_running(client, stub_hooks):
+    def turn(topic, prompt, reply, agent=None):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        _compaction(stub_hooks, topic, status="compacting")
+        stub_hooks.stops(topic, "")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 接着做"})
+        _until(ws, _done)
+    wait_work_idle()
+
+    [line] = _of_type(_blocks(client, room), "context_compact")
+    assert line.meta["state"] == "over"
+
+
+def test_a_status_record_about_something_else_says_nothing(client, stub_hooks):
+    def turn(topic, prompt, reply, agent=None):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        _compaction(stub_hooks, topic, status=None, permissionMode="default")
+        stub_hooks.stops(topic, "好了")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 接着做"})
+        _until(ws, _done)
+    wait_work_idle()
+
+    assert _of_type(_blocks(client, room), "context_compact") == []
+
+
 def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
     client, stub_hooks, monkeypatch
 ):

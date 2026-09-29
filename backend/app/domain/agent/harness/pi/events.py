@@ -29,9 +29,10 @@ here: the runner writes what pi decided into the same log right behind it
 import re
 from datetime import UTC, datetime
 
-from app.domain.agent.harness.pi.journal import GAVE_UP, RETRYING
+from app.domain.agent.harness.pi.journal import COMPACTING, GAVE_UP, RETRYING
 from app.domain.agent.service import (
     STEP_ERROR_MAX,
+    AgentCompacting,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -126,6 +127,13 @@ class Assembler:
             ]
         if entry.get("type") == GAVE_UP:
             return [self._gave_up(entry)]
+        if entry.get("type") == COMPACTING:
+            if not entry.get("done"):
+                return [AgentCompacting()]
+            error = str(entry.get("errorMessage") or "")
+            if entry.get("aborted"):
+                error = error or "aborted"
+            return [AgentCompacting(done=True, error=error)]
         if entry.get("type") != "message":
             return []
         message = entry.get("message") or {}

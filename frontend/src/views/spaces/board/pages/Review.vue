@@ -17,6 +17,8 @@ import { type BoardTask, type ReviewedTask } from '../model'
 import { deadlineText } from '../model'
 import { loadPending, loadRecentReviews, me, reviewTask, space } from '../store'
 
+import UserRef from '@/components/common/UserRef.vue'
+
 /** 一页 20 道，与空间首页同一口径。队列积压时（开放发题之后就一定会积压）才翻页。 */
 const PAGE_SIZE = 20
 
@@ -162,9 +164,7 @@ function detailTo(id: string) {
             </div>
             <p class="queue__summary">{{ task.summary }}</p>
             <div class="queue__meta">
-              <span
-                >作者 <b>{{ task.publisher.name }}</b></span
-              >
+              <span>作者 <UserRef :handle="task.publisher.handle" :name="task.publisher.name" /></span>
               <span v-if="task.category">{{ task.category }}</span>
               <span>{{ task.participantLimit === null ? '领取不限' : `领取上限 ${task.participantLimit}` }}</span>
               <span>{{
@@ -200,7 +200,12 @@ function detailTo(id: string) {
           />
           <router-link :to="detailTo(item.id)" class="recent__title">{{ item.title }}</router-link>
           <span class="recent__result">{{ item.result === 'APPROVED' ? '通过' : '驳回' }}</span>
-          <span class="recent__by">{{ item.reviewer ? `${item.reviewer.name} 审` : '不知是谁审的' }}</span>
+          <span class="recent__by">
+            <template v-if="item.reviewer">
+              <UserRef :handle="item.reviewer.handle" :name="item.reviewer.name" /> 审
+            </template>
+            <template v-else>不知是谁审的</template>
+          </span>
           <time class="recent__at" :datetime="item.reviewedAt">{{ reviewedText(item.reviewedAt) }}</time>
         </li>
       </ul>

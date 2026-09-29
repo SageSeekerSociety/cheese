@@ -67,6 +67,7 @@ const handlers = {};
 register((event, handler) => { handlers[event] = handler; });
 const $ = {
   session: {id: async () => 'fixture'},
+  env: {get: async () => undefined},
   mcp: {call: async (server, name, params) => {
     process.stdout.write(JSON.stringify({server, name, arguments: params}) + '\\n');
     return JSON.parse((await replies.next()).value);

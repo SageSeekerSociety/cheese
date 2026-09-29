@@ -11,6 +11,7 @@ from pathlib import Path
 
 import boto3
 import httpx
+from sqlalchemy import select
 from websockets.asyncio.client import connect
 
 import app.models  # noqa: F401
@@ -21,6 +22,7 @@ from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.review.pr_publish import _draft_pr_for_one_task
+from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -116,10 +118,20 @@ async def main():
 
     await asyncio.to_thread(seed)
     # Run the scheduled publication step now, before opening the browser panel.
+    # The backend's own draft-PR sweep can reach the same task at the same time:
+    # it holds the task row while it opens the PR, and this call then skips the
+    # task. So what is checked is that the PR exists, not who opened it; the
+    # blocking lock waits out a sweep still holding the row.
     for task in request["tasks"]:
+        task_id = uuid.UUID(task["id"])
         async with async_session_factory() as session:
-            assert await _draft_pr_for_one_task(session, uuid.UUID(task["id"]))
+            await _draft_pr_for_one_task(session, task_id)
             await session.commit()
+        async with async_session_factory() as session:
+            row = await session.scalar(
+                select(Task).where(Task.id == task_id).with_for_update()
+            )
+            assert row is not None and row.pr_number is not None, task_id
     (state / "config.json").write_text(
         json.dumps({"workspace": str(home), "env": {"HOME": str(home)}})
     )

@@ -193,6 +193,10 @@ class PiLaunch:
     model: str
     resume_session_id: str | None = None
     agent_handle: str | None = None
+    #: The project's remote MCP servers this session can call now, and the
+    #: route that calls them (`remote_mcp.session_target`). Part of the launch
+    #: contract, so connecting one relaunches an idle session with it.
+    remote_mcp: dict | None = None
     harness: str = "pi"
 
     def arguments(self) -> list[str]:
@@ -211,10 +215,10 @@ class PiLaunch:
             # 2026-09-14 — a plain run carried the owner's SKILL.md files into
             # the system prompt with the config dir already pointed elsewhere.
             # A room's agent must not read what the person who lent us the
-            # machine happens to keep in their home. The platform's own skills
-            # come back through `--skill`, which is additive even with this —
-            # the runner adds those, being the only side that knows where it
-            # wrote them.
+            # machine happens to keep in their home. The project's own skills
+            # and the platform's come back through `--skill`, which is additive
+            # even with this; the runner names both, being the side that runs
+            # in the project and knows where it wrote the platform's.
             "--no-skills",
             "--no-extensions",
             "--no-prompt-templates",
@@ -248,6 +252,9 @@ class PiLaunch:
             # the extension raises is not a second convention the agent has to
             # learn — and cannot drift from the one every other notice uses.
             "notice": PLATFORM_NOTICE,
+            # Names and a route, never a credential: the backend attaches that
+            # to each call (`POST /topics/{id}/mcp/{name}`).
+            "remote_mcp": self.remote_mcp,
         }
 
     def on(self, place: MachinePlace) -> MachineLaunch:

@@ -69,6 +69,10 @@ async def _device_action(
         stdin=Path(resource_cleanup.__file__).read_text(),
         timeout=60,
     )
+    if result.get("exit") == resource_cleanup.STILL_RUNNING_EXIT and not result.get(
+        "truncated"
+    ):
+        raise resource_cleanup.StillRunning(str(result.get("stderr") or "").strip())
     if result.get("exit") != 0 or result.get("truncated"):
         raise RuntimeError(
             str(result.get("stderr") or "device cleanup check failed")[-1500:]
@@ -338,10 +342,25 @@ async def _sweep_once(sessions: SessionFactory) -> dict[str, int]:
                 except Exception as exc:
                     await session.rollback()
                     operation = await session.get(RoomCleanup, cleanup_id)
+                    reason = str(exc)[:2048]
+                    changed = operation is None or reason != operation.last_error
                     if operation is not None:
-                        operation.last_error = str(exc)[:2048]
+                        operation.last_error = reason
                         await session.commit()
-                    logger.exception("cleanup failed operation=%s", cleanup_id)
+                    if isinstance(exc, resource_cleanup.StillRunning):
+                        # Something still has the room open: the sweep waits it
+                        # out, as it does before the claim (`_advance`), and says
+                        # so when what it waits on changes. At ERROR this was an
+                        # alert a minute for every room whose last process took
+                        # a few minutes to leave, each of which then finished.
+                        logger.log(
+                            logging.WARNING if changed else logging.DEBUG,
+                            "cleanup waiting operation=%s reason=%s",
+                            cleanup_id,
+                            reason,
+                        )
+                    else:
+                        logger.exception("cleanup failed operation=%s", cleanup_id)
                     counts["pending"] += 1
         finally:
             await _release(sessions, cleanup_id)

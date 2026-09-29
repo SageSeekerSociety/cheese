@@ -33,6 +33,7 @@ async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
         images=None,
         expected_work_id=None,
         agent_handle=None,
+        owes_reply=False,
     )
 
 
@@ -113,7 +114,7 @@ class _FakeBackend:
     async def ensure(self, session, opening, *, work_id=None):
         return None
 
-    async def send(self, session, message, opening, *, work_id, on_mark, images=None):
+    async def send(self, session, message, opening, *, work_id, on_mark, **kwargs):
         return True
 
     def backlog(self, session):

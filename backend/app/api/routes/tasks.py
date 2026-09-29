@@ -67,6 +67,7 @@ from app.domain.task.services import (
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.visibility_service import TaskVisibilityService
+from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.team.summary import team_summary
@@ -111,6 +112,7 @@ async def get_task_submission_service(db=Depends(get_db)) -> TaskSubmissionServi
         entry_repo=entry_repo,
         review_repo=review_repo,
         membership_repo=membership_repo,
+        session=db,
     )
 
 
@@ -130,6 +132,7 @@ async def get_task_submission_review_service(
         membership_repo=membership_repo,
         task_repo=task_repo,
         rank_service=rank_service,
+        session=db,
     )
 
 
@@ -843,11 +846,15 @@ def _membership_to_api_model(
     membership: TaskMembership,
     *,
     participant_info: dict | None = None,
+    team: Team | None = None,
 ) -> dict:
     """Minimal TaskMembership representation for participants list.
 
     NOTE: This is a simplified view that focuses on structure. More fields
     (real name info, team members, etc.) can be added as needed.
+
+    ``team`` 是这条报名背后的队（只由批量查过队名的调用者传）。传了才多出
+    ``team`` 字段；没传（单条、PATCH 那几条路由）返回体与以前一模一样。
     """
     created_at_ms = (
         int(membership.created_at.timestamp() * 1000)
@@ -866,7 +873,7 @@ def _membership_to_api_model(
     approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
     approved_str = approved_map.get(membership.approved, "NONE")
 
-    return {
+    model = {
         "id": membership.id,
         "taskId": membership.task_id,
         "memberId": membership.member_id,
@@ -880,6 +887,11 @@ def _membership_to_api_model(
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
+    if membership.is_team and team is not None:
+        # 队名：看板按它给「小队构成」分桶、在名册里写下是哪支队伍。个人领取没有
+        # 这个字段；团队领取但队已不在（查不到行）也没有 —— 前端据此退回「小队」。
+        model["team"] = {"id": team.id, "name": team.name}
+    return model
 
 
 def _map_submitter_type(value: str) -> int:
@@ -1941,8 +1953,13 @@ async def join_task_as_user(
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
-
-    return await _participation_response(db, task, membership, auth_user)
+    response = await _participation_response(db, task, membership, auth_user)
+    # Commit before answering (the claim and the project it opens). ``get_db``
+    # commits in its teardown, which FastAPI runs after the response has gone
+    # out, so the task owner listing the participants right after a claim could
+    # find no pending record yet. Same reason as the commit in ``create_task``.
+    await db.commit()
+    return response
 
 
 @router.post(
@@ -2010,6 +2027,9 @@ async def join_task_as_team(
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
+    # Commit before answering, as in ``join_task_as_user``: the publisher lists
+    # the pending claims on the next request.
+    await db.commit()
 
     return await _participation_response(db, task, membership, auth_user)
 
@@ -2063,6 +2083,10 @@ async def patch_task_participant(
     from app.domain.project.services import ProjectService
 
     await ProjectService(db).activate_participation(task=task, membership=updated)
+    # Commit before answering: the participant told they are approved can reload
+    # the task on their next request and must see it as theirs (download and
+    # submit). Same reason as the commit in ``create_task``.
+    await db.commit()
 
     return {
         "code": 200,
@@ -2994,7 +3018,12 @@ async def get_task_participants(
             m, user_map=user_map, profile_map=profile_map, team_map=team_map
         )
         participants.append(
-            _membership_to_api_model(m, participant_info=participant_info)
+            _membership_to_api_model(
+                m,
+                participant_info=participant_info,
+                # 同上那一批 team_map，不另查一次。
+                team=team_map.get(m.member_id) if m.is_team else None,
+            )
         )
 
     return {
@@ -3208,6 +3237,7 @@ async def post_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     contents: list[dict],
+    db=Depends(get_db),
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
@@ -3254,6 +3284,10 @@ async def post_task_submission(
         submitter_id=auth_user.user_id,
         contents=contents,
     )
+    # Commit before answering: the page that just submitted opens the submission
+    # history next, and must find what it handed in. Same reason as the commit in
+    # ``create_task``.
+    await db.commit()
     return {
         "code": 200,
         "message": "OK",

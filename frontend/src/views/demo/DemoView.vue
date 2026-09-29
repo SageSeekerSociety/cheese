@@ -9,6 +9,7 @@ import type { Scene } from './demoScene'
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
+import { installDemoBackend } from './demoBackend'
 import DemoRoom from './DemoRoom.vue'
 import { frameAt, stepDuration } from './demoScene'
 import { SCENES } from './scenes'
@@ -16,6 +17,8 @@ import { SCENES } from './scenes'
 // 地址是 /demo/<名字>；只写 /demo（或者话题预览打开的根路径）就放第一个。
 // 入口（demo-main.ts）把地址当 props 传进来，而不是这里自己读 location：测试里
 // 换得了 props，换不了 happy-dom 的 location。
+installDemoBackend()
+
 const props = withDefaults(defineProps<{ path?: string; search?: string }>(), { path: '/', search: '' })
 const params = new URLSearchParams(props.search)
 const embedded = params.get('embed') === '1'

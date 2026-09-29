@@ -5,12 +5,22 @@ Symmetric to ``device_hub`` and kept the same way — I/O-free, depending only o
 one-method transport Protocol — so it is exercised with in-process fakes: no
 WebSocket, no machine, no DB.
 
-One machine per topic. A topic runs on exactly one machine at a time, and the
-helper authenticates with that turn's scoped cheese token, so the topic id in the
-token's claims is the whole routing table. A second attach for the same topic
-REPLACES the first (the topic moved to another machine, or a screen was
-relaunched): keeping both would leave the browser talking to whichever helper the
-dict happened to hold.
+One tunnel per SEAT. A room may seat several teammates, each working in its own
+checkout — possibly on its own machine — and each one that runs ``cheese serve``
+starts its own helper. The helper authenticates with its turn's scoped cheese
+token, whose claims name both the room (``t``) and the teammate (``a``), so a
+tunnel is keyed by the two together. Keyed by the room alone, two teammates'
+helpers took the slot from each other on every reconnect, once a second, and a
+page load that fell into a gap saw ``preview unavailable``.
+
+Which seat the room's preview shows is not decided here: it is whoever declared
+the room's current app (the author of that artifact), and every browser-side
+call names it.
+
+Within one seat the NEWEST credential holds the tunnel: the same teammate
+relaunched, or moved to another machine, and the older helper is the stale one.
+It is hung up with ``CLOSE_SUPERSEDED`` and exits instead of redialling; one that
+dials in holding an older credential than the live one is refused the same way.
 
 The frame codec is imported from the machine-side helper rather than restated
 here — ``preview_tunnel`` is stdlib-only by construction, so there is one
@@ -86,7 +96,10 @@ class PreviewStream:
 @dataclass
 class PreviewMachine:
     topic_id: uuid.UUID
+    seat: str
     transport: PreviewTransport
+    # When the credential it dialled with was issued; see the module docstring.
+    issued: int = 0
     streams: dict[int, PreviewStream] = field(default_factory=dict)
     next_stream: int = 0
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -107,19 +120,41 @@ class PreviewMachine:
     def forget(self, stream_id: int) -> None:
         self.streams.pop(stream_id, None)
 
+    def on_frame(self, data: bytes) -> None:
+        """Route one frame this machine sent to the stream waiting for it.
+
+        On the machine, not looked up by room: a helper being replaced is still
+        delivering frames for a moment, and its stream ids mean nothing on the
+        machine that replaced it.
+        """
+        try:
+            op, stream_id, payload = wire.decode(data)
+        except ValueError as exc:
+            logger.warning(
+                "preview machine for %s sent a runt frame: %s", self.topic_id, exc
+            )
+            return
+        stream = self.streams.get(stream_id)
+        if stream is None:
+            return
+        stream.inbox.put_nowait((op, payload))
+
+
+_Seat = tuple[uuid.UUID, str]
+
 
 class PreviewHub:
     def __init__(self) -> None:
-        self._machines: dict[uuid.UUID, PreviewMachine] = {}
-        self._arrivals: dict[uuid.UUID, asyncio.Event] = {}
+        self._machines: dict[_Seat, PreviewMachine] = {}
+        self._arrivals: dict[_Seat, asyncio.Event] = {}
 
     # -- the machine's side ----------------------------------------------------
 
-    def machine(self, topic_id: uuid.UUID) -> PreviewMachine | None:
-        """Whoever is carrying this topic's preview right now. The caller that
+    def machine(self, topic_id: uuid.UUID, seat: str) -> PreviewMachine | None:
+        """Whoever is carrying this seat's preview right now. The caller that
         attaches a replacement reads this first, so it can hang up on the machine
         it is displacing rather than leave a socket nothing will ever speak on."""
-        return self._machines.get(topic_id)
+        return self._machines.get((topic_id, seat))
 
     def _abandon(self, machine: PreviewMachine) -> None:
         """Tell everything still waiting on this machine that it is gone.
@@ -134,34 +169,50 @@ class PreviewHub:
         machine.streams.clear()
 
     def attach(
-        self, topic_id: uuid.UUID, transport: PreviewTransport
-    ) -> PreviewMachine:
-        displaced = self._machines.get(topic_id)
+        self,
+        topic_id: uuid.UUID,
+        seat: str,
+        transport: PreviewTransport,
+        *,
+        issued: int = 0,
+    ) -> PreviewMachine | None:
+        """Give this seat's tunnel to ``transport``; None when it may not have it.
+
+        Refused only for a credential OLDER than the live one's. An equal one
+        wins: that is the same helper redialling after a dropped connection,
+        whose previous socket the backend may not have noticed is dead yet.
+        """
+        key = (topic_id, seat)
+        displaced = self._machines.get(key)
         if displaced is not None:
+            if issued < displaced.issued:
+                return None
             self._abandon(displaced)
-        machine = PreviewMachine(topic_id=topic_id, transport=transport)
-        self._machines[topic_id] = machine
+        machine = PreviewMachine(
+            topic_id=topic_id, seat=seat, transport=transport, issued=issued
+        )
+        self._machines[key] = machine
         # POPPED, not merely set: a waiter already holds its own reference, and
         # leaving a set event in the table would make the NEXT wait return at once
         # for a machine that has since gone — the grace period silently skipped
         # exactly when it is needed.
-        event = self._arrivals.pop(topic_id, None)
+        event = self._arrivals.pop(key, None)
         if event is not None:
             event.set()
         return machine
 
-    def detach(self, topic_id: uuid.UUID, transport: PreviewTransport) -> None:
-        machine = self._machines.get(topic_id)
-        # Only if it is still OURS: a replacement helper for the same topic has
+    def detach(self, machine: PreviewMachine) -> None:
+        key = (machine.topic_id, machine.seat)
+        # Only if it is still OURS: a replacement helper for the same seat has
         # already taken the slot, and the loser's teardown must not evict it.
-        if machine is not None and machine.transport is transport:
-            del self._machines[topic_id]
+        if self._machines.get(key) is machine:
+            del self._machines[key]
             self._abandon(machine)
 
-    def is_online(self, topic_id: uuid.UUID) -> bool:
-        return topic_id in self._machines
+    def is_online(self, topic_id: uuid.UUID, seat: str) -> bool:
+        return (topic_id, seat) in self._machines
 
-    async def wait_online(self, topic_id: uuid.UUID, timeout: float) -> bool:
+    async def wait_online(self, topic_id: uuid.UUID, seat: str, timeout: float) -> bool:
         """Whether a helper is connected, waiting up to ``timeout`` for one.
 
         ``cheese serve`` starts the helper and then declares the preview in the
@@ -169,44 +220,29 @@ class PreviewHub:
         upgrading. Without this wait the platform would refuse a preview that is
         one round trip from working.
         """
-        if self.is_online(topic_id):
+        key = (topic_id, seat)
+        if self.is_online(topic_id, seat):
             return True
-        event = self._arrivals.setdefault(topic_id, asyncio.Event())
+        event = self._arrivals.setdefault(key, asyncio.Event())
         try:
             await asyncio.wait_for(event.wait(), timeout=timeout)
         except TimeoutError:
             return False
         finally:
-            if not self.is_online(topic_id):
-                self._arrivals.pop(topic_id, None)
-        return self.is_online(topic_id)
-
-    def on_frame(self, topic_id: uuid.UUID, data: bytes) -> None:
-        """Route one inbound frame to the stream that is waiting for it."""
-        machine = self._machines.get(topic_id)
-        if machine is None:
-            return
-        try:
-            op, stream_id, payload = wire.decode(data)
-        except ValueError as exc:
-            logger.warning(
-                "preview machine for %s sent a runt frame: %s", topic_id, exc
-            )
-            return
-        stream = machine.streams.get(stream_id)
-        if stream is None:
-            return
-        stream.inbox.put_nowait((op, payload))
+            if not self.is_online(topic_id, seat):
+                self._arrivals.pop(key, None)
+        return self.is_online(topic_id, seat)
 
     # -- the browser's side ----------------------------------------------------
 
-    def open_stream(self, topic_id: uuid.UUID) -> PreviewStream | None:
-        machine = self._machines.get(topic_id)
+    def open_stream(self, topic_id: uuid.UUID, seat: str) -> PreviewStream | None:
+        machine = self._machines.get((topic_id, seat))
         return None if machine is None else machine.open()
 
     async def request(
         self,
         topic_id: uuid.UUID,
+        seat: str,
         *,
         method: str,
         path: str,
@@ -216,7 +252,7 @@ class PreviewHub:
     ) -> PreviewResponse | None:
         """One HTTP request to the topic's app. None = there is no tunnel, the
         app did not answer, or it answered with more than we will hold."""
-        stream = self.open_stream(topic_id)
+        stream = self.open_stream(topic_id, seat)
         if stream is None:
             return None
         try:
@@ -264,7 +300,7 @@ class PreviewHub:
             stream.close()
 
     async def probe(
-        self, topic_id: uuid.UUID, *, timeout: float = PROBE_TIMEOUT_S
+        self, topic_id: uuid.UUID, seat: str, *, timeout: float = PROBE_TIMEOUT_S
     ) -> bool:
         """Whether something actually answers on the declared port right now.
 
@@ -276,6 +312,7 @@ class PreviewHub:
         """
         response = await self.request(
             topic_id,
+            seat,
             method="GET",
             path="/",
             headers=[("host", "127.0.0.1")],

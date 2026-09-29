@@ -2,7 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { createI18n } from 'vue-i18n'
+import { describe, expect, it, vi } from 'vitest'
 
 import en from './messages/en'
 import zhCN from './messages/zh-CN'
@@ -146,6 +147,38 @@ describe('locale catalogs', () => {
   it('never ships Chinese text as the English translation', () => {
     const withCjk = enEntries.filter((e) => CJK.test(e.value)).map((e) => e.id)
     expect(withCjk, '英文词条里出现了中日韩字符——多半是复制中文凑数').toEqual([])
+  })
+})
+
+// vue-i18n parses every message, and a syntax error in one — a bare `@`, its
+// linked-message marker — only logs in development, where the raw text still
+// renders. The production build throws while rendering, the app's error handler
+// swallows it, and the page comes up blank: /solutions shipped that way over
+// `ops@okcheese.com`. Write a literal `@` as {'@'}.
+describe('every message compiles', () => {
+  it.each([
+    ['zh-CN', zhCN],
+    ['en', en],
+  ])('%s', (locale, catalog) => {
+    const errors: string[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((message: unknown) => {
+      errors.push(String(message).split('\n')[0])
+    })
+    const i18n = createI18n({
+      legacy: false,
+      locale,
+      messages: { [locale]: catalog },
+      missingWarn: false,
+      fallbackWarn: false,
+      warnHtmlMessage: false,
+    })
+    const broken = leaves(catalog as Messages).filter(({ id }) => {
+      errors.length = 0
+      i18n.global.t(id)
+      return errors.some((e) => e.startsWith('Message compilation error'))
+    })
+    spy.mockRestore()
+    expect(broken.map(({ id, value }) => `${id}: ${value}`)).toEqual([])
   })
 })
 

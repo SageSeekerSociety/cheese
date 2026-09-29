@@ -70,6 +70,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 名册还没到时才退回「芝士」。房间里有自己的 AI 席位时，对话里读的是房间名册
   // （`useRoomRoster`），这里给的是项目默认那一位，供拿不到房间名册的地方用。
   const agentName = computed(() => members.value.find((m) => m.agent && m.project_default)?.name || '芝士')
+  // 同一位的 handle：句子里提到它时画成可点的 @chip（UserRef），点了去它的成员页。
+  const agentHandle = computed(() => members.value.find((m) => m.agent && m.project_default)?.user_handle ?? null)
   const loadingTopics = ref(false)
   let projectEpoch = 0
   let topicRevision = 0
@@ -475,6 +477,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     topics,
     members,
     agentName,
+    agentHandle,
     isExternal,
     loadingTopics,
     unreadMap,

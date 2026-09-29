@@ -32,4 +32,4 @@ covers:
 
 ## 内容域 {#content}
 
-预览和项目网站用单独的内容域和各自的 cookie，平台令牌不会到达那里，见[预览与项目网站](/dev/preview#grant)。
+预览和项目网站用单独的内容域和各自的 cookie，平台令牌不会到达那里，见[话题预览](/dev/preview#grant)。

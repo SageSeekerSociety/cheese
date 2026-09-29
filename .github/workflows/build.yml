@@ -411,6 +411,29 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
 
+      # The site serves the desktop installers itself (/downloads/desktop/):
+      # GitHub release downloads are unreliable from mainland networks. Like the
+      # docs above, they have to land in public/ before the docker build. The
+      # updater manifest is rewritten to point at this site too. desktop.yml
+      # dispatches this workflow after each publish, so the image follows it.
+      - name: Put the desktop installers into the image context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          out=frontend/public/downloads/desktop
+          mkdir -p "$out"
+          gh release download desktop-latest --repo "$GITHUB_REPOSITORY" --dir "$out" \
+            --pattern 'Cheese-*.dmg' --pattern 'Cheese-*.exe' --pattern 'Cheese-*.app.tar.gz' --pattern latest.json
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/desktop-latest"
+          jq --arg base "$base" '.platforms[].url |= sub("^" + $base; "https://okcheese.com/downloads/desktop")' \
+            "$out/latest.json" > "$out/latest.json.new"
+          mv "$out/latest.json.new" "$out/latest.json"
+          if grep -q github.com "$out/latest.json"; then
+            echo "::error::latest.json still points at GitHub" >&2
+            exit 1
+          fi
+          ls -l "$out"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:

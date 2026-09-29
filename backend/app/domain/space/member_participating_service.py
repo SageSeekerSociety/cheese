@@ -34,6 +34,38 @@ PARTICIPATION_SORT_FIELDS = {
     "completionStatus",
 }
 
+# ---------------------------------------------------------------------------
+# 「什么算已成功」—— 唯一的开关
+# ---------------------------------------------------------------------------
+#
+# 这条轴的取值与转移不随这个问题改变（那部分在 ``app.domain.task.submission_state``，
+# 两种答案下完全一样）；变的只有「哪些取值计入成功这一档」这个展示口径：
+#
+#   * ``False``（现在的答案，也是暂且的默认）：**判通过才算**
+#       成功 = {SUCCESS}，待判 = {PENDING_REVIEW}
+#   * ``True``：**交了就算**
+#       成功 = {SUCCESS, PENDING_REVIEW} —— 待评审并进「成功」那一档，
+#       ``pendingReviewCount`` 因此归零（两档仍然是一份划分，不重不漏）
+#
+# 换语义就改这一个常量。前端的同一个开关在
+# ``frontend/src/views/spaces/board/pages/Mine.vue`` 的
+# ``SUCCESS_INCLUDES_PENDING_REVIEW``（那行标签要与这里的计数说同一件事），
+# 两处一起改 —— 别把判断散回各个计数里。
+SUCCESS_INCLUDES_PENDING_REVIEW = False
+
+
+def successful_completion_statuses() -> frozenset[str]:
+    """哪些 ``completion_status`` 计入概览的「成功」一档 —— 唯一的开关。"""
+    statuses = {"SUCCESS"}
+    if SUCCESS_INCLUDES_PENDING_REVIEW:
+        statuses.add("PENDING_REVIEW")
+    return frozenset(statuses)
+
+
+def awaiting_review_statuses() -> frozenset[str]:
+    """「待判」那一档：成功那一档已经吃掉的取值不在这里重复计数。"""
+    return frozenset({"PENDING_REVIEW"}) - successful_completion_statuses()
+
 
 class _Context:
     """In-memory aggregate used by both overview and list endpoints."""
@@ -109,13 +141,15 @@ class SpaceMemberParticipatingService:
                 and r["completionStatus"] == "NOT_SUBMITTED"
             ),
             "pendingReviewCount": sum(
-                1 for r in rows if r["completionStatus"] == "PENDING_REVIEW"
+                1 for r in rows if r["completionStatus"] in awaiting_review_statuses()
             ),
             "resubmittableCount": sum(
                 1 for r in rows if r["completionStatus"] == "REJECTED_RESUBMITTABLE"
             ),
             "successfulCount": sum(
-                1 for r in rows if r["completionStatus"] == "SUCCESS"
+                1
+                for r in rows
+                if r["completionStatus"] in successful_completion_statuses()
             ),
             "failedCount": sum(1 for r in rows if r["completionStatus"] == "FAILED"),
         }

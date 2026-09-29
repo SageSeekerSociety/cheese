@@ -59,6 +59,7 @@ def room_home(home, target):
         "HOME": str(home),
         "CLAUDE_CONFIG_DIR": str(config),
         "CHEESE_WORK": str(home / ".cheese/remote-session/workspace"),
+        "CHEESE_EXECUTION_CONFIG": str(home / ".cheese/remote-session/execution.json"),
     }
 
 

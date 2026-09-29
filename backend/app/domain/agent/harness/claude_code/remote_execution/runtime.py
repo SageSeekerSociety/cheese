@@ -102,6 +102,17 @@ def portable():
     return runpy.run_path(str(Path(__file__).with_name("portable.py")))
 
 
+@functools.cache
+def project_hooks():
+    """The project's tool hooks, by the rules pi's runner follows too
+    (`app/domain/agent/project_hooks.py`). Shipped beside this file; read from
+    the source tree when this runs from a checkout."""
+    beside = Path(__file__).with_name("project_hooks.py")
+    if not beside.exists():
+        beside = Path(__file__).resolve().parents[3] / "project_hooks.py"
+    return runpy.run_path(str(beside))
+
+
 def lock(file, blocking=True):
     if sys.platform == "win32":
         portable()["lock"](file, blocking)
@@ -186,6 +197,77 @@ def native_path(path):
     if sys.platform != "win32":
         return path
     return re.sub(r"^/([A-Za-z])(?:/|$)", lambda m: m.group(1).upper() + ":/", path)
+
+
+def gitignored(root, directories):
+    """Those of `directories`, all under `root`, that git ignores. None when
+    `root` is not a work tree or git cannot be run: nothing is ignored then."""
+    if not directories:
+        return set()
+    names = [directory.relative_to(root).as_posix() + "/" for directory in directories]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "--stdin"],
+            input="\n".join(names) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if result.returncode not in (0, 1):
+        return set()
+    found = set(result.stdout.splitlines())
+    return {
+        directory
+        for directory, name in zip(directories, names, strict=True)
+        if name in found
+    }
+
+
+def _unquote(value):
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def skill_paths(path):
+    """What a SKILL.md's frontmatter `paths` scopes it to, as written: each
+    string it lists (a flow sequence as its inner text), for the session to
+    split and expand as Claude Code does (`release.path_patterns`). None when
+    the frontmatter has no `paths`."""
+    try:
+        with open(path, encoding="utf-8") as stream:
+            if stream.readline().strip() != "---":
+                return None
+            lines = []
+            for line in stream:
+                line = line.rstrip("\r\n")
+                if line.strip() == "---":
+                    break
+                lines.append(line)
+            else:
+                return None
+    except (OSError, UnicodeError):
+        return None
+    for index, line in enumerate(lines):
+        match = re.match(r"paths\s*:(.*)$", line)
+        if not match:
+            continue
+        value = match.group(1).strip()
+        if value.startswith("[") and value.endswith("]"):
+            return [value[1:-1]]
+        if value:
+            return [_unquote(value)]
+        items = []
+        for following in lines[index + 1 :]:
+            item = re.match(r"\s*-\s*(.*)$", following)
+            if item:
+                items.append(_unquote(item.group(1).strip()))
+            elif following.strip() and not following[:1].isspace():
+                break
+        return items
+    return None
 
 
 def request(state, method, params=None):
@@ -342,6 +424,10 @@ class Executor:
         self.commands_dir.mkdir(exist_ok=True)
         self.running = {}
         self.command_lock = threading.RLock()
+        # Foreground Bash calls still waiting on their command (call → command),
+        # and the ones told to stop waiting (`control` "background").
+        self.foreground = {}
+        self.backgrounded = set()
         # The shell working directory of this executor's own Bash tool, which
         # a `cd` changes for the next call, as the build's own Bash tool does.
         self.bash_cwd = self.root
@@ -524,67 +610,19 @@ class Executor:
         if self.config.get("private"):
             return args
         cwd = Path(cwd) if cwd and Path(cwd).is_dir() else self.bash_cwd
-        paths = [
-            self.root / ".claude/settings.json",
-            self.root / ".claude/settings.local.json",
-        ]
-        settings = [json.loads(path.read_text()) for path in paths if path.exists()]
-        settings.append(self.config.get("settings", {}))
-        for source in settings:
-            for group in source.get("hooks", {}).get(event, []):
-                matcher = group.get("matcher", "*")
-                if matcher not in ("", "*") and not re.fullmatch(matcher, tool):
-                    continue
-                for hook in group.get("hooks", []):
-                    if hook["type"] != "command":
-                        raise ValueError(
-                            "Remote execution currently requires command hooks"
-                        )
-                    payload = {
-                        "hook_event_name": event,
-                        "tool_name": tool,
-                        "tool_input": args,
-                        "tool_use_id": key,
-                        "cwd": str(cwd),
-                        "session_id": self.state.name,
-                    }
-                    if event == "PostToolUse":
-                        payload["tool_response"] = result
-                    # A repository writes these hooks for plain Claude Code,
-                    # which invokes them with the project root in
-                    # CLAUDE_PROJECT_DIR (its documented way to reach a script
-                    # the repository ships), blocks on exit 2 alone, and lets
-                    # the call go ahead on any other failing exit.
-                    response = subprocess.run(
-                        resolve_program(["bash", "-c", hook["command"]]),
-                        cwd=cwd,
-                        env=dict(self.env, CLAUDE_PROJECT_DIR=str(self.root)),
-                        input=json.dumps(payload),
-                        capture_output=True,
-                        text=True,
-                        timeout=hook.get("timeout", 60),
-                    )
-                    if response.returncode == 2:
-                        raise PermissionError(
-                            f"Remote {event} hook failed: {response.stderr}"
-                        )
-                    if response.returncode:
-                        continue
-                    output = (
-                        json.loads(response.stdout) if response.stdout.strip() else {}
-                    )
-                    specific = output.get("hookSpecificOutput", {})
-                    if (
-                        specific.get("permissionDecision") == "deny"
-                        or output.get("decision") == "block"
-                    ):
-                        raise PermissionError(
-                            specific.get("permissionDecisionReason")
-                            or output.get("reason", "Remote hook denied operation")
-                        )
-                    if event == "PreToolUse" and "updatedInput" in specific:
-                        args = specific["updatedInput"]
-        return args
+        return project_hooks()["run"](
+            event,
+            tool,
+            args,
+            call_id=key,
+            root=self.root,
+            cwd=cwd,
+            env=self.env,
+            session_id=self.state.name,
+            result=result,
+            extra=[self.config.get("settings", {})],
+            program=resolve_program,
+        )
 
     def tool_hooks(self, params):
         """The project's hooks for one event of a call this executor does not
@@ -615,7 +653,7 @@ class Executor:
         if tool not in NATIVE_TOOLS:
             raise ValueError(f"Unsupported remote tool: {tool}")
         if tool == "Bash":
-            return self.bash(args)
+            return self.bash(args, key)
         if tool == "TaskStop":
             record = self.stop_command(args["task_id"])
             return {
@@ -1063,7 +1101,7 @@ class Executor:
                 if meta.get("watched") and time.time() - last > COMMAND_ABANDONED_S:
                     shutil.rmtree(record, ignore_errors=True)
 
-    def bash(self, args):
+    def bash(self, args, key=None):
         """This executor's own Bash tool, for the callers that have no shell of
         their own here: the Codex harness and the platform's own commands.
 
@@ -1071,7 +1109,8 @@ class Executor:
         a `cd` holds for the next call and leaving the workspace returns to its
         root, a failure comes back as `Exit code N` followed by the output, a
         foreground command still running at its timeout goes on as a background
-        task, and `TaskStop` stops one.
+        task, and `TaskStop` stops one. So does one the caller moves to the
+        background while it runs (`background`), as Ctrl+B does to the build's.
         """
         command_id = "task-" + uuid.uuid4().hex[:16]
         record = self._record(command_id)
@@ -1094,16 +1133,29 @@ class Executor:
             "interrupted": False,
             "noOutputExpected": False,
             "backgroundTaskId": command_id,
+            # Where it goes on printing: a file on this machine, so the caller
+            # can read it with the same tools it reads the project with.
+            "outputFile": str(record / "out"),
         }
         if args.get("run_in_background"):
             return running
         deadline = (
             time.monotonic() + min(max(args.get("timeout", 120000), 1), 600000) / 1000
         )
-        while not (record / "exit").exists():
-            if time.monotonic() >= deadline:
-                return running
-            time.sleep(0.05)
+        with self.command_lock:
+            self.foreground[key] = command_id
+        try:
+            while not (record / "exit").exists():
+                with self.command_lock:
+                    yielded = key in self.backgrounded
+                    self.backgrounded.discard(key)
+                if yielded or time.monotonic() >= deadline:
+                    return running
+                time.sleep(0.05)
+        finally:
+            with self.command_lock:
+                self.foreground.pop(key, None)
+                self.backgrounded.discard(key)
         code = int((record / "exit").read_text())
         if code < 0:
             # Killed by signal n: the number a shell reports.
@@ -1140,6 +1192,14 @@ class Executor:
             )
         if kind == "shell":
             return self.shell(params)
+        if kind == "background":
+            # The named Bash call returns now, its command running on. Named by
+            # the call rather than by what is waiting: a call that is only
+            # starting has not registered yet, and must find the request when
+            # it does. Another session's calls on this machine are not touched.
+            with self.command_lock:
+                self.backgrounded.add(params["id"])
+                return {"background": self.foreground.get(params["id"])}
         if kind == "tool_hooks":
             return self.tool_hooks(params)
         if kind == "read_file":
@@ -1669,14 +1729,32 @@ class Executor:
             root / ".claude/agents",
         ):
             include(path, imports=True)
-        for name in ("CLAUDE.md", "CLAUDE.local.md"):
-            for path in root.rglob(name):
-                if ".git" not in path.relative_to(root).parts:
-                    include(path, imports=True)
+        # One walk for everything a subdirectory contributes: its instruction
+        # files, and its own `.claude/skills`, which a session offers once a
+        # file tool reaches into that subdirectory (`release.lazy_skills`).
+        nested_skills = []
+        for directory, directories, files in os.walk(root):
+            directories[:] = [name for name in directories if name != ".git"]
+            here = Path(directory)
+            for name in ("CLAUDE.md", "CLAUDE.local.md"):
+                if name in files:
+                    include(here / name, imports=True)
+            if here != root and (here / ".claude/skills").is_dir():
+                nested_skills.append(here)
+        ignored = gitignored(root, nested_skills)
+        for here in nested_skills:
+            # Claude Code skips a gitignored subdirectory's skills (a
+            # dependency's, under `node_modules`), and so does the room.
+            if here not in ignored:
+                include(here / ".claude/skills")
         if (root / ".claude").is_dir() and not (root / ".claude").is_symlink():
             selected.add(root / ".claude")
         include(root / ".claude/skills")
         include(root / ".claude/workflows")
+        # Where Codex finds a repository's skills: a Codex room mirrors them
+        # from here (`codex/tools.py` `RemoteTools.sync_skills`).
+        include(root / ".agents/skills")
+        include(root / ".codex/skills")
 
         entries = {}
         for path in selected:
@@ -1699,6 +1777,12 @@ class Executor:
             }
             if kind == "symlink":
                 entries[relative]["target"] = os.readlink(path)
+            elif kind == "file" and path.name == "SKILL.md":
+                scoped = skill_paths(path)
+                if scoped is not None:
+                    # The files it applies to: the session holds it back
+                    # until a file tool reaches one (`release.lazy_skills`).
+                    entries[relative]["paths"] = scoped
             parent = path.parent
             while parent != root:
                 name = parent.relative_to(root).as_posix()
@@ -1865,6 +1949,9 @@ class Executor:
             return {
                 "pid": os.getpid(),
                 "workspace": str(self.root),
+                # Where the platform's skills are on this machine: the files a
+                # skill's text names beside it (`bootstrap.plant_native_skills`).
+                "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
                 "files": files,
                 "runtime_sha256": SOURCE_SHA256,
                 "protocol_version": PROTOCOL_VERSION,
@@ -2099,7 +2186,11 @@ def main():
                     if sys.platform == "win32"
                     else subprocess.Popen(argv, start_new_session=True, **options)
                 )
-            for _ in range(100):
+            # Started is the service answering a ping; failed is the process
+            # exiting. Nothing in between says which one is coming, so how long
+            # to wait is the caller's call: a fixed count here gave a loaded
+            # machine about five seconds and failed services that were only slow.
+            while True:
                 if process.poll() is not None:
                     raise RuntimeError("Executor startup failed; inspect service.log")
                 try:
@@ -2107,7 +2198,6 @@ def main():
                     return
                 except (OSError, RuntimeError):
                     time.sleep(0.05)
-            raise RuntimeError("Executor readiness timed out")
 
 
 if __name__ == "__main__":

@@ -55,9 +55,9 @@ class _Peer:
         wire.send_frame(self.backend, wire.encode(op, stream, payload))
 
     def recv(self) -> tuple[int, int, bytes]:
-        message = wire.recv_message(self.backend)
-        assert message is not None, "the machine closed the tunnel"
-        return wire.decode(message[1])
+        kind, data = wire.recv_message(self.backend)
+        assert kind != wire._OP_CLOSE, "the machine closed the tunnel"
+        return wire.decode(data)
 
     def close(self) -> None:
         self.backend.close()
@@ -262,3 +262,41 @@ def test_it_relays_a_websocket_to_the_declared_port(port_file):
     finally:
         peer.close()
         server.shutdown()
+
+
+def test_a_helper_handed_over_stops_instead_of_dialling_back(tmp_path):
+    """When a newer launch of the same teammate takes the tunnel, the backend
+    says so with CLOSE_SUPERSEDED. Dialling back in would take the tunnel from
+    the helper that is supposed to have it — two helpers doing that to each other
+    is what kept a preview up for one second at a time."""
+    from websockets.sync.server import serve
+
+    dials = []
+
+    def hand_over(connection):
+        dials.append(connection.request.path)
+        connection.close(wire.CLOSE_SUPERSEDED, "a newer launch carries it")
+
+    server = serve(hand_over, "127.0.0.1", 0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    token = tmp_path / "token"
+    token.write_text("t\n")
+    port = tmp_path / "port"
+    port.write_text("1\n")
+    codes = []
+    helper = threading.Thread(
+        target=lambda: codes.append(
+            wire.run(
+                f"ws://127.0.0.1:{server.socket.getsockname()[1]}/preview/tunnel",
+                wire.TokenSource(str(token)),
+                wire.PortSource(str(port)),
+            )
+        ),
+        daemon=True,
+    )
+    helper.start()
+    helper.join(timeout=10)
+    server.shutdown()
+
+    assert codes == [0], "the helper is still dialling"
+    assert len(dials) == 1

@@ -18,11 +18,16 @@ export const SECTIONS = [
 // Developer pages live in docs/manual/dev/. Pages whose slug starts with `ref-`
 // or `by-` are generated at build time (see gen/), not written by hand.
 export const DEV = [
-  ['总览', ['overview', 'topology', 'data']],
-  ['关键流程', ['turn', 'context', 'memory', 'ref-prompt', 'llm', 'billing', 'machines', 'cli', 'delivery', 'preview', 'ci', 'docs-site']],
-  ['安全与权限', ['auth', 'seats', 'admins']],
+  ['导读', ['overview', 'turn', 'delivery']],
+  ['会话与骨架', ['session', 'harness', 'context', 'ref-prompt', 'memory', 'skills', 'mcp', 'remote-mcp', 'cli']],
+  ['模型与计费', ['llm', 'metering-proxy', 'gateway', 'admission', 'billing']],
+  ['机器与执行', ['machines', 'execution', 'preview', 'sites', 'local-fs', 'cleanup']],
+  ['交付与成果', ['tasks', 'accept', 'forge', 'documents', 'library', 'boards']],
+  ['协作', ['teams', 'spaces', 'notifications', 'feedback', 'routine', 'integrations']],
+  ['平台与安全', ['auth', 'seats', 'admins', 'backend-app', 'frontend']],
+  ['部署与运维', ['topology', 'data', 'ci', 'docs-site', 'deploy-scripts']],
   ['参考（自动生成）', ['ref-cli', 'ref-env', 'ref-ci']],
-  ['索引（自动生成）', ['by-path', 'by-kind']],
+  ['索引（自动生成）', ['by-path']],
 ]
 
 // Pages that moved; their old URLs keep working.

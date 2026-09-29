@@ -77,6 +77,7 @@ from app.domain.review.models import (
 )
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
@@ -1681,6 +1682,34 @@ class AcceptService:
             return verdict, "agent", protection, False, runs
         return verdict, whose_move(verdict), protection, enforces, runs
 
+    async def _mirror_pr_verdict(
+        self,
+        card: AcceptCard,
+        *,
+        topic: Topic,
+        owner: str,
+        repo: str,
+        creds: "_GitHubCredentials",
+        client,
+        status: "PullRequestStatus",
+        ref: str,
+    ) -> tuple[MergeVerdict, Who, "BranchProtection", bool, list[merge_state.CheckRun]]:
+        """问一次那个唯一的判官，把它的答案写到卡上 —— 中间的每一步都不许有人
+        自己再判一遍（`_pr_verdict` 的 docstring）。轮询器、点击、以及读卡时补陈旧
+        快照，三条路都从这一个门口过。"""
+        verdict, who, protection, enforces, runs = await self._pr_verdict(
+            card=card,
+            topic=topic,
+            owner=owner,
+            repo=repo,
+            creds=creds,
+            client=client,
+            status=status,
+            ref=ref,
+        )
+        self._write_merge_mirror(card, verdict, who, ref)
+        return verdict, who, protection, enforces, runs
+
     def _write_merge_mirror(
         self, card: AcceptCard, verdict: MergeVerdict, who: Who, head_sha: str
     ) -> None:
@@ -2056,6 +2085,99 @@ class AcceptService:
         forge = await self._resolve_forge(topic.project_id, card=card)
         await forge.poll(self, card, topic, chat_service=chat_service, runner=runner)
 
+    async def refresh_stale_pr_snapshots(self, cards: Sequence[AcceptCard]) -> None:
+        """读卡这条路，把卡面上过期的合并态补上。
+
+        卡上的 `merge_state` 是一份**快照**，而前端那颗「采纳」按钮按它亮不亮
+        (`TopicAcceptCard.vue` 的 `acceptBlockedTitle`)。快照平时只有两个时候
+        重算：轮询器 (`accept_pr_poll_interval_s`，默认 300s)，和点下采纳的那一
+        刻。夹在两者之间来读的人只会读到陈旧的一份 —— 实测 CI 在 11:28Z 就全绿
+        了，卡到 11:49Z 才写进 `clean`，中间二十来分钟界面上是「检查全绿、按钮
+        点不动」；更短的一次是 12:06Z 卡上被写成 `unknown`（GitHub 那一刻还没算
+        完 mergeable），而此刻 `/pr-checks` 早已 `mergeable: true`，快照又冻了五
+        分钟。界面每 15s 来读一次，读到的却是同一份旧快照，**靠前端轮询自己收敛
+        不了**。
+
+        所以给读这条路一个它自己的保证：快照比 `accept_pr_snapshot_floor_s` 还
+        旧，就重算一次。地板是必须的 —— 读卡是热点，不能每个读者都触发一次外呼。
+
+        只做一件事：把当前判定重算一遍写回去（具体交给托管方那一侧的能力，
+        `Forge.refresh_snapshot`）。轮询器做的另外两件**不做** —— 不发事件、
+        不合并 (那是它的职责，`advance_pr_card` 的 docstring)。任何失败都吞掉：
+        读卡不能因为 GitHub 抖一下就 500，快照下一轮重试就是。
+        """
+        for card in cards:
+            try:
+                await self._refresh_stale_pr_snapshot(card)
+            except Exception:  # noqa: BLE001 — a read never fails over a poll
+                logger.warning(
+                    "card %s: refreshing a stale merge snapshot failed",
+                    card.id,
+                    exc_info=True,
+                )
+
+    def _merge_snapshot_age_s(self, card: AcceptCard) -> float | None:
+        """这份快照是多久以前算的；没算过或读不懂就是 None（当作最陈旧）。"""
+        state = card.merge_state if isinstance(card.merge_state, dict) else None
+        raw = (state or {}).get("checked_at")
+        if not raw:
+            return None
+        try:
+            when = datetime.fromisoformat(raw)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        return (datetime.now(UTC) - when).total_seconds()
+
+    async def _refresh_stale_pr_snapshot(self, card: AcceptCard) -> None:
+        if card.status != AcceptStatus.pending or card.pr_number is None:
+            return
+        age = self._merge_snapshot_age_s(card)
+        if age is not None and age < settings.accept_pr_snapshot_floor_s:
+            return
+        topic = await self._topic_or_404(card.topic_id)
+        if topic.status == TopicStatus.archived:
+            # 归档里的卡不会再被采纳，没必要为它花一次外呼。
+            return
+        try:
+            forge = await self._resolve_forge(topic.project_id, card=card)
+        except ValidationError:
+            # 托管绑定暂时读不出来。`describe` 那一侧照样把卡发出去（在卡面上
+            # 如实说「暂时读不出」），这里也照做：不补快照，轮询器下一跳再试。
+            return
+        await forge.refresh_snapshot(self, card, topic)
+
+    async def _refresh_github_snapshot(self, card: AcceptCard, topic: Topic) -> None:
+        """GitHub 那一侧的重算：读一眼现在的状态，写回卡面。"""
+        number = card.pr_number
+        assert number is not None  # PR lane only; the caller checked
+        owner, repo = await self._pr_repo_of(card, topic)
+        creds, reason = await self._pr_poll_credentials(card, topic)
+        if creds is None:
+            logger.info("card %s: stale snapshot left alone (%s)", card.id, reason)
+            return
+        client = await self._status_client(topic.project_id)
+        status = await client.pull_request_status(
+            owner=owner, repo=repo, number=number, token=creds.read
+        )
+        live = status.head_sha
+        if card.pr_head_sha != live:
+            # head 动了 —— 那属于「新提交作废已有的采纳」(`dismiss_stale_accept`
+            # 会撤掉别人给的批准并发通知) 这个状态迁移，是 `_poll_pr_card` 的事。
+            # 浏览器每 15s 读一次卡，读的人可能根本不在乎这张卡：读不替它迁移。
+            return
+        await self._mirror_pr_verdict(
+            card,
+            topic=topic,
+            owner=owner,
+            repo=repo,
+            creds=creds,
+            client=client,
+            status=status,
+            ref=live,
+        )
+
     async def _advance_github_card(
         self,
         card: AcceptCard,
@@ -2147,6 +2269,7 @@ class AcceptService:
         )
         task.status = TaskStatus.closed
         task.closed_at = task.closed_at or datetime.now(UTC)
+        after_close(self._session, task.room_id)
         task.accepted_at = task.accepted_at or datetime.now(UTC)
         task.accepted_by = task.accepted_by or card.decided_by
         if delivered_head and not task.delivered_head:
@@ -2464,15 +2587,8 @@ class AcceptService:
             # or merge a returned delivery, even when its checks are green.
             return
         if status.state == "closed":
-            await self._note_pr_closed_unmerged(card=card, topic=topic)
-            await self._session.flush()
+            await self._void_closed_pr_card(card=card, topic=topic)
             return
-        if card.note_code == notes.NoteCode.pr_closed_unmerged:
-            # Reopened. The closure note now describes a PR that is open again,
-            # and archiving / voiding read this code to decide whether a human
-            # still has a PR to close (`archive.pr_left_open`).
-            notes.clear(card)
-            await self._session.flush()
 
         if card.note_code == notes.NoteCode.waiting_merge_queue:
             if await client.merge_queue_entry(
@@ -2506,8 +2622,8 @@ class AcceptService:
             card.pr_head_sha = live
             await self._session.flush()
 
-        verdict, who, protection, enforces, runs = await self._pr_verdict(
-            card=card,
+        verdict, who, protection, enforces, runs = await self._mirror_pr_verdict(
+            card,
             topic=topic,
             owner=owner,
             repo=repo,
@@ -2516,7 +2632,6 @@ class AcceptService:
             status=status,
             ref=live,
         )
-        self._write_merge_mirror(card, verdict, who, live)
 
         # —— 按表发事件，每件各排一条待发，谁都不许把别人挡掉 (pr_signals) ——
         #
@@ -2942,37 +3057,37 @@ class AcceptService:
             merged_externally=card.note_code != notes.NoteCode.waiting_merge_queue,
         )
 
-    async def _note_pr_closed_unmerged(self, *, card: AcceptCard, topic: Topic) -> None:
-        """The PR was closed on GitHub WITHOUT merging. Say so and stop there.
+    async def _void_closed_pr_card(self, *, card: AcceptCard, topic: Topic) -> None:
+        """The PR was closed on GitHub WITHOUT merging: the review is over.
 
-        No auto-settle and no local-merge fallback: a human closing the PR is
-        them saying "not this", and merging behind their back would be the
-        opposite of what they asked for. A human reopens the PR or voids the
-        card; either way the poller picks it up from there.
+        A human closing the PR is them saying "not this". Merging behind their
+        back, or falling back to a local merge, would be the opposite of what
+        they asked for; so the platform voids the card, the same terminal state
+        a manual void writes. Delivering again is an ordinary new submission,
+        with a new card.
         """
-        note = (
-            f"PR #{card.pr_number} 已关闭且没有合并，平台不会自动合并。"
-            "可以重新打开 PR，或者作废这次审阅。"
+        headline = (
+            f"{VOIDED_PREFIX}：PR #{card.pr_number} 已在 GitHub 关闭且没有合并，"
+            "平台自动作废了这次审阅。要继续交付，重新提交审阅。"
         )
-        if card.note == note:
-            return  # already said once — the 60s poll must not repeat it
-        notes.record(card, notes.NoteCode.pr_closed_unmerged, note)
-        logger.warning(
-            "card %s: PR #%s was closed unmerged — poller is now idling on it",
-            card.id,
-            card.pr_number,
+        card.status = AcceptStatus.revoked
+        notes.record(
+            card, notes.NoteCode.voided, archive.prefix_note(card.note, headline)
         )
+        card.decided_at = card.decided_at or datetime.now(UTC)
+        await self._session.flush()
         await self._tell_the_reviewer(
             card,
             topic,
-            f"PR #{card.pr_number} 已关闭且没有合并",
+            f"PR #{card.pr_number} 已关闭且没有合并，审阅已作废",
             meta=notice(
                 EVENT_PR_CLOSED,
                 severity=SEVERITY_WARN,
                 who=WHO_HUMAN,
                 detail=(
-                    "已关闭的 PR 不会自动合并。话题保持进行中，"
-                    "可以重新打开 PR，或者作废这次审阅。"
+                    "PR 在 GitHub 上被关闭且没有合并，平台自动作废了这次审阅，"
+                    "不会合并它。要继续交付，重新提交审阅。"
+                    f"\n{card.pr_url or ''}"
                 ),
                 detail_label="下一步",
             ),

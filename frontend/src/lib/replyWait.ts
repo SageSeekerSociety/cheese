@@ -29,19 +29,45 @@ export function replyStalled(
   return now - at >= stallThreshold(reason)
 }
 
-/** 红灯悬停那一句：为什么亮、该谁去动。 */
-export function stallReasonText(reason: string | null | undefined, agent: string): string {
-  switch (reason) {
+/** 等了多久，说成人读的一截：「3 分钟」「4 小时」「2 天」。 */
+export function waitedFor(since: string | null | undefined, now: number): string {
+  const at = since ? Date.parse(since) : NaN
+  if (Number.isNaN(at)) return ''
+  const minutes = Math.max(0, Math.floor((now - at) / 60_000))
+  if (minutes < 60) return `${Math.max(1, minutes)} 分钟`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时`
+  return `${Math.floor(hours / 24)} 天`
+}
+
+export interface StallInfo {
+  reason?: string | null
+  since?: string | null
+  pr?: number | null
+}
+
+/** 红灯悬停那一句：哪件事、哪个 PR、已经等了多久、该谁去动。 */
+export function stallReasonText(info: StallInfo, agent: string, now: number): string {
+  const waited = waitedFor(info.since, now)
+  const long = waited ? `已等 ${waited}` : '等了很久'
+  const pr = info.pr ? `PR #${info.pr} ` : ''
+  switch (info.reason) {
     case 'device_waiting':
-      return `${agent}的机器够不着，平台在等它回来——多半要有人去把那台设备开机或连上网`
+      return `${agent}的机器够不着，${long}——多半要有人去把那台设备开机或连上网`
     case 'machine_provisioning':
-      return `${agent}的机器创建超过 15 分钟还没好`
+      return `${agent}的机器还没创建好，${long}`
     case 'sandbox_rebuilt':
     case 'environment_repaired':
-      return `${agent}的运行环境重建超过 15 分钟还没恢复`
+      return `${agent}的运行环境还没恢复，${long}`
     case 'check':
-      return `PR 反馈或检查报错超过 5 分钟没有${agent}去处理`
+      return `${pr}检查没通过，${long}，没有${agent}在处理`
+    case 'conflict':
+      return `${pr}有合并冲突，${long}，没有${agent}在处理`
+    case 'rejected':
+      return `${pr}被退回了，${long}，没有${agent}去改`
+    case 'gate':
+      return `${pr}质量闸门没过，${long}，没有${agent}去改`
     default:
-      return `有人 @ 了${agent}，超过 5 分钟没有回话`
+      return `有人 @ 了${agent}，${long}还没有回话`
   }
 }

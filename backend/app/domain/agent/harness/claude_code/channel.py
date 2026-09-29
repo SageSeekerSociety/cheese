@@ -20,16 +20,15 @@ from typing import TYPE_CHECKING
 
 from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import machine_launcher
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
 from app.domain.agent.harness.channel import (
-    SESSION_TOKEN_TTL_S,
     Placement,
+    mint_session_token,
     startup_refused,
 )
-from app.domain.agent.harness.claude_code.runner import LAUNCH, ended
+from app.domain.agent.harness.claude_code.runner import ended
 from app.domain.agent.harness.claude_code.runtime import Handle
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
@@ -87,13 +86,7 @@ class ClaudeCodeChannel:
         # The room itself never answers: it may seat several agents, and a name
         # signed into a token cannot be taken back.
         agent = opening.agent_handle or precheck.agent_handle
-        token = mint_scoped_token(
-            project_id=str(session.project_id),
-            topic_id=str(session.topic_id),
-            ttl_s=SESSION_TOKEN_TTL_S,
-            access_scope="project",
-            agent_handle=agent,
-        )
+        token = mint_session_token(session.project_id, session.topic_id, agent)
         placed: dict = {}
         launch = uuid.uuid4().hex
 
@@ -111,7 +104,7 @@ class ClaudeCodeChannel:
         screen = await self.channel.ensure_ready(
             session=session,
             token=token,
-            env={**(opening.env or {}), LAUNCH: launch},
+            env=opening.env,
             memory_scope=opening.memory_scope,
             owner=opening.owner,
             turn_id=None,
@@ -119,6 +112,7 @@ class ClaudeCodeChannel:
                 system_prompt=opening.system_prompt,
                 model=opening.model,
                 resume_session_id=opening.resume_token,
+                launch_name=launch,
             ),
             precheck=precheck,
             runtime_factory=runtime,
