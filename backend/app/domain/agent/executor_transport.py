@@ -69,10 +69,12 @@ def _device_is_offline(response) -> bool:
     return response.status == 409 and response.getheader("X-Device-Id") is not None
 
 
-# What a command waiting for its machine tells the agent, once, when the wait
+# What a tool call waiting for its machine tells the agent, once, when the wait
 # starts: the platform says nothing else until the machine is ready or the wait
-# gives up, and a command silent that long reads as a dead shell.
-MACHINE_PREPARING = "工作电脑正在准备，命令会在它就绪后执行（最多等 {minutes} 分钟）。"
+# gives up, and a call silent that long reads as a dead shell or a lost machine.
+MACHINE_PREPARING = (
+    "工作电脑正在准备，这次操作会在它就绪后执行（最多等 {minutes} 分钟）。"
+)
 
 
 class MachineOutOfReach(RuntimeError):
@@ -651,7 +653,7 @@ class RemoteClient:
             raise RuntimeError(answer["error"])
         return answer["result"]
 
-    def remote_call_with_hooks(self, call_id, server, tool, args):
+    def remote_call_with_hooks(self, call_id, server, tool, args, preparing=None):
         """A remote server's tool call with the project's PreToolUse and
         PostToolUse hooks around it, for a harness that does not fire them
         itself (Codex; pi). Claude Code fires them itself, so its bridge calls
@@ -666,7 +668,8 @@ class RemoteClient:
                 "tool": name,
                 "args": args,
                 "request_id": call_id,
-            }
+            },
+            preparing=preparing,
         )
         if "denied" in before:
             return {"error": before["denied"]}
@@ -908,5 +911,5 @@ class RemoteClient:
             )
         return json.loads(result.stdout)
 
-    def control(self, request):
-        return self.call("control", dict(request))
+    def control(self, request, preparing=None):
+        return self.call("control", dict(request), preparing=preparing)
