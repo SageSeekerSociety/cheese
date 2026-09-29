@@ -18,12 +18,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { artifactVersionFileUrl, compareArtifactVersions, downloadFile, getProjectArtifact } from '../api'
-import ArtifactChanges from '../components/artifact/ArtifactChanges.vue'
-import ArtifactCompare from '../components/artifact/ArtifactCompare.vue'
-import ArtifactVersionList from '../components/artifact/ArtifactVersionList.vue'
 import ArtifactVersionPreview from '../components/ArtifactVersionPreview.vue'
 import { t } from '../i18n'
 import { relTime } from '../lib/relTime'
+
+import ArtifactChanges from './artifact/ArtifactChanges.vue'
+import ArtifactCompare from './artifact/ArtifactCompare.vue'
+import ArtifactVersionList from './artifact/ArtifactVersionList.vue'
 
 import { useCommands } from '@/commands'
 import { copyLink, linkOf } from '@/commands/copy'
