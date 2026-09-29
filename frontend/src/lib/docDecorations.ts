@@ -1,0 +1,271 @@
+// 正文上那三种装饰：token chip（<@handle> / <#话题> / <&文件>）、支线徽章、评论
+// 下划线。三样都是把文档里**已经写好的**结构化东西画成看得懂的样子，没有一样去猜
+// 自然语言（军规 4）。
+//
+// 它们住在 lib/ 而不是文档面板里，理由和 docSlashMenu.ts 一样：这是**内容**而不是
+// 布局 —— 一段解析、几个 widget、三个 tiptap 扩展，都不碰面板的状态，也不该为了读
+// 一行徽章文案去翻两千行的编辑器组件。
+//
+// 三样都要两份输入：「哪一段上有装饰」（段落 index，来自一次 GET /docs 的位置对齐）
+// 和「装饰上写什么」（支线的标题与状态、话题标题表）。这两份输入是面板的，所以这里
+// 导出的是**工厂**：面板把两份输入作为回调递进来，扩展只读它们，不自己去取。
+import type { Extension } from '@tiptap/core'
+import type { Node as PMNode } from '@tiptap/pm/model'
+
+import { Extension as TiptapExtension } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
+
+export interface LiveRefFacts {
+  title: string | null
+  status: string
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  open: '进行中',
+  in_progress: '进行中',
+  active: '进行中',
+  draft: '草稿',
+  archived: '已完成',
+  completed: '已完成',
+}
+function statusLabel(s: string): string {
+  return STATUS_LABEL[s] ?? s
+}
+
+// ---- 支线徽章: a doc paragraph that was upgraded into a subtopic stays in
+// place as a live-ref showing that subtopic's live status. The badge is a
+// ProseMirror WIDGET decoration appended at the end of the upgraded paragraph:
+// it lives in the document flow, so it can never float over (and swallow clicks
+// meant for) neighbouring text — unlike the old absolutely-positioned overlay
+// track, which created cursor dead zones. ----
+
+export const liveRefKey = new PluginKey('cheeseLiveRefBadges')
+
+// Build the badge element a live-ref widget renders as.
+function liveRefWidget(topicId: string, facts: LiveRefFacts): HTMLElement {
+  const { title: subTitle, status } = facts
+  const el = document.createElement('span')
+  el.className = 'doc-liveref'
+  el.dataset.topic = topicId
+  el.contentEditable = 'false'
+  el.setAttribute('role', 'button')
+  el.title = `「${subTitle ?? '这件任务'}」· ${statusLabel(status)} — 点击打开`
+  const dot = document.createElement('span')
+  dot.className = `doc-liveref__dot is-${status}`
+  // 图标而不是 🧩：emoji 在不同系统上是彩色位图，尺寸和基线都不跟随字号，混在
+  // 正文里显得很脏。用 puzzle 而不是 mdi-source-branch，是因为后者在本组件里
+  // 已经代表 Git 标签页和「磁盘版本分叉」提示，一个图标不该同时是三件事。
+  // (ProseMirror widget 是裸 DOM，用不了 <v-icon>；@mdi/font 是全局 CSS，
+  //  所以这里直接写 mdi 的字体类。)
+  const icon = document.createElement('i')
+  icon.className = 'mdi mdi-puzzle-outline doc-liveref__icon'
+  icon.setAttribute('aria-hidden', 'true')
+  const label = document.createElement('span')
+  label.className = 'doc-liveref__label'
+  label.textContent = subTitle ?? '子话题'
+  const st = document.createElement('span')
+  st.className = 'doc-liveref__status'
+  st.textContent = statusLabel(status)
+  el.append(dot, icon, label, st)
+  return el
+}
+
+// Top-level doc-node index → the subtopic id that paragraph was upgraded into.
+// Positional zip: server node i ↔ ProseMirror doc.child(i), the same alignment
+// contract the panel uses when it flashes a paragraph.
+function liveRefDecorations(
+  doc: PMNode,
+  index: Map<number, string>,
+  factsOf: (topicId: string) => LiveRefFacts
+): DecorationSet {
+  const decos: Decoration[] = []
+  doc.forEach((node, offset, index_) => {
+    const topicId = index.get(index_)
+    if (!topicId) return
+    // End of the block's content (just inside its closing token) — the badge
+    // renders after the paragraph's last character, in flow.
+    const pos = offset + Math.max(node.nodeSize - 1, 1)
+    // key 决定两次重建之间「这还是同一个装饰吗」：prosemirror-view 的
+    // `WidgetType.eq` 一看见 key 相等就短路返回 true，DOM 于是原样留着。所以
+    // key 里必须带上徽章会变的那点东西——只写 topicId 的话，支线改了标题、跑完
+    // 收了工，徽章上的字还停在第一次渲染的那一刻，而这段代码的全部意义就是让
+    // 它跟着变。反过来，没变的时候 key 一样，DOM 不重建，读的人也不会看见闪。
+    const { title: subTitle, status } = factsOf(topicId)
+    decos.push(
+      Decoration.widget(pos, () => liveRefWidget(topicId, factsOf(topicId)), {
+        side: 1,
+        key: `liveref-${topicId}-${status}-${subTitle ?? ''}`,
+      })
+    )
+  })
+  return DecorationSet.create(doc, decos)
+}
+
+export function createLiveRefBadges(opts: {
+  /** 段落 index → 这一段升级出来的那个地点 id。 */
+  index: () => Map<number, string>
+  /** 徽章上写什么：那条支线现在的标题和状态。 */
+  factsOf: (topicId: string) => LiveRefFacts
+}): Extension {
+  return TiptapExtension.create({
+    name: 'cheeseLiveRefBadges',
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          key: liveRefKey,
+          state: {
+            init: (_cfg, state) => liveRefDecorations(state.doc, opts.index(), opts.factsOf),
+            apply: (tr, old) => {
+              // Explicit poke (fresh /docs data or topicList change) → rebuild.
+              if (tr.getMeta(liveRefKey)) return liveRefDecorations(tr.doc, opts.index(), opts.factsOf)
+              // Local edits: map the existing widgets along, so a badge stays
+              // glued to its paragraph while the user types (indices may shift
+              // until the next server refresh; mapping avoids mis-attachment).
+              return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
+            },
+          },
+          props: {
+            decorations(state) {
+              return this.getState(state)
+            },
+          },
+        }),
+      ]
+    },
+  })
+}
+
+// ---- 评论下划线 (Feishu): each anchored comment's quote gets a clickable
+// dashed underline in the doc. Deterministic: the stored quote is OUR
+// structured field; we locate it by exact substring inside its anchored
+// block (positional node↔block alignment, same as live-refs). No match →
+// no mark (the paragraph changed; the bottom card already says so). ----
+
+export const commentMarkKey = new PluginKey('cheeseCommentMarks')
+
+function commentMarkDecorations(doc: PMNode, index: Map<number, { id: string; quote: string }[]>): DecorationSet {
+  const decos: Decoration[] = []
+  doc.forEach((node, offset, index_) => {
+    const anchored = index.get(index_)
+    if (!anchored?.length) return
+    const text = node.textContent
+    for (const c of anchored) {
+      const at = text.indexOf(c.quote)
+      if (at < 0) continue
+      // +1: past the block's opening token into its text content.
+      decos.push(
+        Decoration.inline(offset + 1 + at, offset + 1 + at + c.quote.length, {
+          class: 'comment-anchor',
+          'data-comment': c.id,
+        })
+      )
+    }
+  })
+  return DecorationSet.create(doc, decos)
+}
+
+export function createCommentMarks(opts: { index: () => Map<number, { id: string; quote: string }[]> }): Extension {
+  return TiptapExtension.create({
+    name: 'cheeseCommentMarks',
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          key: commentMarkKey,
+          state: {
+            init: (_cfg, state) => commentMarkDecorations(state.doc, opts.index()),
+            apply: (tr, old) => {
+              if (tr.getMeta(commentMarkKey)) return commentMarkDecorations(tr.doc, opts.index())
+              return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
+            },
+          },
+          props: {
+            decorations(state) {
+              return this.getState(state)
+            },
+          },
+        }),
+      ]
+    },
+  })
+}
+
+// ---- 结构化 token 装饰 (spec §9.1): decorate our OWN tokens — <@handle> /
+// <#topicId> / <&path> — as clickable chips in the doc, read-only and edit
+// alike. Deterministic token parsing, never NL guessing.
+// 文件引用可以带行号（`<&src/a.ts:12-30>`）——同 renderMessage.ts 的 ESCAPED_TOKEN，
+// 两处必须认同一套语法，否则同一个 token 在对话里是 chip、在文档里是一串尖括号。 ----
+const TOKEN_RE = /<@([\w-]+)>|<#([0-9a-fA-F-]{8,})>|<&([\w./\u4e00-\u9fff-]+(?::\d+(?:-\d+)?)?)>/g
+
+// Build the pretty chip element a token renders as. The raw token stays in the
+// document (markdown is the source of truth); the chip is display-only.
+function tokenWidget(kind: '@' | '#' | '&', id: string, titleOf: (tid: string) => string | undefined): HTMLElement {
+  const el = document.createElement('span')
+  if (kind === '@') {
+    el.className = 'mention'
+    el.dataset.handle = id
+    el.textContent = `@${id}`
+  } else if (kind === '#') {
+    el.className = 'mention topic-ref'
+    el.dataset.topic = id
+    el.textContent = `#${titleOf(id) ?? '话题'}`
+  } else {
+    el.className = 'mention file-ref'
+    el.dataset.file = id
+    el.title = id
+    // mdi 图标而不是 📄，理由同 doc-liveref：emoji 是彩色位图，不跟随字号和
+    // 前景色。mdi-file-document-outline 是本仓库既有的「文件」图标。
+    const icon = document.createElement('i')
+    icon.className = 'mdi mdi-file-document-outline file-ref__icon'
+    icon.setAttribute('aria-hidden', 'true')
+    el.append(icon, document.createTextNode(id.split('/').pop() || id))
+  }
+  return el
+}
+
+function tokenDecorations(doc: PMNode, titleOf: (tid: string) => string | undefined): DecorationSet {
+  const decos: Decoration[] = []
+  doc.descendants((node, pos) => {
+    if (!node.isText) return
+    const text = node.text ?? ''
+    TOKEN_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = TOKEN_RE.exec(text))) {
+      const from = pos + m.index
+      const to = from + m[0].length
+      const kind = m[1] ? '@' : m[2] ? '#' : '&'
+      const id = (m[1] ?? m[2] ?? m[3]) as string
+      // hide the raw token (inline display:none) + widget(show the chip):
+      // the doc keeps `<&path>` verbatim, the reader sees 「(文件图标) name」.
+      // (prosemirror-view has no Decoration.replace — widget/inline/node only.)
+      decos.push(
+        Decoration.widget(from, () => tokenWidget(kind, id, titleOf), {
+          side: 1,
+        }),
+        Decoration.inline(from, to, { style: 'display: none' })
+      )
+    }
+  })
+  return DecorationSet.create(doc, decos)
+}
+
+export function createTokenChips(opts: { titleOf: (tid: string) => string | undefined }): Extension {
+  return TiptapExtension.create({
+    name: 'cheeseTokenChips',
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          state: {
+            init: (_cfg, state) => tokenDecorations(state.doc, opts.titleOf),
+            apply: (tr, old) => (tr.docChanged ? tokenDecorations(tr.doc, opts.titleOf) : old),
+          },
+          props: {
+            decorations(state) {
+              return this.getState(state)
+            },
+          },
+        }),
+      ]
+    },
+  })
+}
