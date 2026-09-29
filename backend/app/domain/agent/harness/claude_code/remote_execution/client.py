@@ -903,6 +903,7 @@ def run_on_the_machine(target, command):
                 "command_id": command_id,
                 **params,
             },
+            preparing=sys.stderr if bash else None,  # a hook's stderr is its answer
         )
 
     # A stop has to reach the command even when this process does not live to
@@ -921,8 +922,7 @@ def run_on_the_machine(target, command):
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, on_signal)
 
-    # Started once, whatever it takes: the id makes a retried start the same
-    # start.
+    # Started once, whatever it takes: the id makes a retried start the same start.
     deadline = time.monotonic() + SHELL_START_RETRY_S
     while True:
         try:

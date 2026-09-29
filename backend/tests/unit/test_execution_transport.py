@@ -1454,6 +1454,113 @@ def test_a_tool_waits_while_its_machine_is_prepared_unless_it_is_cancelled(
         thread.join()
 
 
+PREPARING = "云端工作电脑正在准备；对话和平台工具仍可用。"
+
+
+class PreparingPlatform:
+    """A platform whose session machine is being prepared until `ready` is
+    set. A waiting lease request is held a moment before it answers "still
+    preparing", as the platform's bounded wait is; one that will not wait is
+    answered at once."""
+
+    def __init__(self, state, work):
+        self.leases = 0
+        self.ready = threading.Event()
+        platform = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/lease":
+                    platform.leases += 1
+                    if not platform.ready.is_set() and body["timeout"] > 0.01:
+                        platform.ready.wait(0.3)
+                    result = {
+                        "data": {
+                            "target": {
+                                "kind": "device",
+                                "workspace": str(work),
+                                "url": platform.base + "/execute",
+                                "generation": "prepared",
+                            },
+                            "token": "execution-only",
+                        }
+                        if platform.ready.is_set()
+                        else {"unavailable": PREPARING, "preparing": True}
+                    }
+                else:
+                    result = runtime.request(state, body["method"], body["params"])
+                encoded = json.dumps(result).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+
+@pytest.mark.anyio
+async def test_a_codex_command_waiting_for_its_machine_says_so_once(
+    executor, monkeypatch
+):
+    """Codex answers a Bash call only once it has run. One issued before the
+    session's machine exists comes back with the platform's one line about
+    the wait, then the command's own output."""
+    _, work, state = executor
+    platform = PreparingPlatform(state, work)
+    monkeypatch.setenv("CHEESE_API", platform.base)
+    monkeypatch.setenv("CHEESE_TOKEN", "session-token")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    tools = RemoteTools(
+        {
+            "kind": "deferred",
+            "workspace": "/unavailable-project",
+            "lease_path": "/lease",
+        }
+    )
+    tools.routes = {"Bash": ("native", "Bash")}
+
+    def command(call_id):
+        return {
+            "tool": "Bash",
+            "callId": call_id,
+            "arguments": {"command": "echo real-output"},
+        }
+
+    try:
+        call = asyncio.ensure_future(tools("item/tool/call", command("first")))
+        while platform.leases < 4:
+            await asyncio.sleep(0.05)
+        assert not call.done(), "The command waits for its machine"
+        platform.ready.set()
+        answer = await asyncio.wait_for(call, 30)
+        assert answer["success"] is True, answer
+        notice, output = answer["contentItems"]
+        assert notice == {
+            "type": "inputText",
+            "text": "工作电脑正在准备，命令会在它就绪后执行（最多等 11 分钟）。",
+        }
+        assert "real-output" in output["text"]
+
+        # With the machine there, a command has nothing to wait for.
+        again = await tools("item/tool/call", command("second"))
+        (output,) = again["contentItems"]
+        assert "real-output" in output["text"]
+    finally:
+        platform.close()
+
+
 @pytest.mark.parametrize("executor", ["project-mcp"], indirect=True)
 def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
     tmp_path, executor
