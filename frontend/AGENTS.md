@@ -84,3 +84,6 @@ Rendering the site writes nothing to the source tree.
 - `task fe:check` runs lint, boundaries, style, typecheck, unit tests and build.
 - A dev server may already be running on 3001/3002 in this worktree; do not
   restart one you did not start.
+- A new page under `src/views/admin/features/`: the chart components take props
+  and the view is the only thing that fetches —
+  [`../docs/manual/dev/feature-stats.md`](../docs/manual/dev/feature-stats.md).
