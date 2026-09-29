@@ -6,17 +6,27 @@ import { t } from '@/i18n'
 import { topicTitle } from '@/lib/topicState'
 import { useWorkspaceStore } from '@/stores/workspace'
 
+// 行尾写这个话题此刻走到哪：和看板同一个词，后端算好的，这里不推。只有要人动手的
+// 那一列着暖色，已完成的着绿色。
+function badgeOf(topic: Topic): PaletteItem['badge'] {
+  const shown = topic.presentation
+  if (shown)
+    return {
+      text: shown.display_status,
+      tone: shown.column === 'needs_you' ? 'warn' : shown.column === 'done' ? 'ok' : undefined,
+    }
+  if (topic.awaits_me) return { text: t('navigation.palette.awaiting'), tone: 'warn' }
+  if (topic.status === 'archived') return { text: t('navigation.palette.archived') }
+  return undefined
+}
+
 function itemOf(topic: Topic, projectId: string): PaletteItem {
   const archived = topic.status === 'archived'
   return {
     id: `topic:${topic.id}`,
     title: topicTitle(topic),
     icon: archived ? 'mdi-archive-outline' : 'mdi-pound',
-    badge: topic.awaits_me
-      ? { text: t('navigation.palette.awaiting'), tone: 'warn' }
-      : archived
-        ? { text: t('navigation.palette.archived') }
-        : undefined,
+    badge: badgeOf(topic),
     awaiting: !!topic.awaits_me,
     to: { name: 'workspace-topic', params: { projectId, topicId: topic.id } },
   }

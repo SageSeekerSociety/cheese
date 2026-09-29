@@ -19,8 +19,8 @@ export interface PaletteItem {
   subtitle?: string
   /** mdi 图标名。 */
   icon: string
-  /** 行尾的一小段状态（「已归档」）。`warn` 是需要这个人去做点什么的。 */
-  badge?: { text: string; tone?: 'warn' }
+  /** 行尾的一小段状态（「待审阅」）。`warn` 是需要这个人去做点什么的，`ok` 是已经做完的。 */
+  badge?: { text: string; tone?: 'warn' | 'ok' }
   /** 按它也能找到的别名。 */
   keywords?: string[]
   /** 这一条在等这个人（等他验收、等他回答）：不打字时排在最上面。 */

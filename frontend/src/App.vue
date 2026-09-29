@@ -222,6 +222,7 @@ import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, r
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { toast } from 'vuetify-sonner'
 
 import { avatarColor } from '@/utils/avatar'
 import { pendingSudo } from '@/utils/sudo'
@@ -539,6 +540,12 @@ defineCommands(() => [
     icon: 'mdi-plus',
     run: createNewProject,
   },
+  {
+    id: 'page.copyLink',
+    title: t('navigation.palette.copyLink'),
+    icon: 'mdi-link-variant',
+    run: () => void copyPageLink(),
+  },
   // 外观只列另外两种：当前这种不用选。
   ...appTheme.options
     .filter((mode) => mode !== appTheme.preference.value)
@@ -550,6 +557,15 @@ defineCommands(() => [
       run: () => appTheme.setPreference(mode),
     })),
 ])
+
+async function copyPageLink() {
+  try {
+    await navigator.clipboard.writeText(window.location.href)
+    toast(t('navigation.palette.linkCopied'))
+  } catch {
+    toast.error(t('navigation.palette.copyLinkFailed'))
+  }
+}
 
 async function loadProjectTeams() {
   loadingTeams.value = true

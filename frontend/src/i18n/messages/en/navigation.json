@@ -80,6 +80,9 @@
     "library": "Library",
     "comment": "Comment",
     "decision": "Decision",
+    "copyLink": "Copy link to this page",
+    "linkCopied": "Link copied",
+    "copyLinkFailed": "Couldn’t copy the link",
     "weekly": "Weekly report"
   }
 }

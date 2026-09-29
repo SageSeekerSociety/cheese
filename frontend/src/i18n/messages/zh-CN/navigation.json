@@ -80,6 +80,9 @@
     "library": "资料库",
     "comment": "评论",
     "decision": "决策",
+    "copyLink": "复制本页链接",
+    "linkCopied": "已复制链接",
+    "copyLinkFailed": "无法复制链接",
     "weekly": "周报"
   }
 }
