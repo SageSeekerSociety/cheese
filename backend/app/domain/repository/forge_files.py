@@ -34,6 +34,19 @@ from app.domain.textfile import (
 )
 from app.domain.topic.models import Topic
 
+#: How many changed files one comparison reads for a line diff.
+MAX_DIFFED_FILES = 200
+
+
+def _file_entry(path: str, entry: dict) -> dict:
+    return {
+        "path": path,
+        "bytes": entry.get("size", 0),
+        "kind": entry["type"],
+        "mode": entry["mode"],
+        "oid": entry["sha"],
+    }
+
 
 def clean_path(path: str) -> str:
     if (
@@ -165,25 +178,67 @@ class ProjectFiles:
                 if entry["type"] == "tree":
                     pending.append((name + "/", entry["sha"]))
                 else:
-                    files.append(
-                        {
-                            "path": name,
-                            "bytes": entry.get("size", 0),
-                            "kind": entry["type"],
-                            "mode": entry["mode"],
-                            "oid": entry["sha"],
-                        }
-                    )
+                    files.append(_file_entry(name, entry))
         return sorted(files, key=lambda f: f["path"])
+
+    async def _changed_entries(
+        self, before: str, after: str
+    ) -> tuple[dict[str, dict], dict[str, dict]]:
+        """The files that differ between two commits, as each side has them.
+
+        The two trees are walked together and a directory is only opened when
+        its id differs on the two sides: the same id means the same files, so a
+        comparison costs the directories that changed, not the whole repository.
+        """
+        old: dict[str, dict] = {}
+        new: dict[str, dict] = {}
+        pending: list[tuple[str, str | None, str | None]] = [("", before, after)]
+        while pending:
+            prefix, left_sha, right_sha = pending.pop()
+            left = (
+                {e["path"]: e for e in await self._tree(left_sha)} if left_sha else {}
+            )
+            right = (
+                {e["path"]: e for e in await self._tree(right_sha)} if right_sha else {}
+            )
+            for name in left.keys() | right.keys():
+                was, now = left.get(name), right.get(name)
+                if (
+                    was
+                    and now
+                    and was["sha"] == now["sha"]
+                    and was["mode"] == now["mode"]
+                ):
+                    continue
+                path = prefix + name
+                was_dir = was is not None and was["type"] == "tree"
+                now_dir = now is not None and now["type"] == "tree"
+                if was_dir or now_dir:
+                    pending.append(
+                        (
+                            path + "/",
+                            was["sha"] if was_dir else None,
+                            now["sha"] if now_dir else None,
+                        )
+                    )
+                if was is not None and not was_dir:
+                    old[path] = _file_entry(path, was)
+                if now is not None and not now_dir:
+                    new[path] = _file_entry(path, now)
+        return old, new
 
     async def committed_blobs(self, oids: list[str]):
         return {oid: await self._blob({"sha": oid}) for oid in dict.fromkeys(oids)}
 
     async def compare_revisions(self, before: str, after: str) -> list[dict]:
-        """Compare two delivered trees, never a moving branch or PR merge-base."""
-        old = {entry["path"]: entry for entry in await self.committed_entries(before)}
-        new = {entry["path"]: entry for entry in await self.committed_entries(after)}
+        """Compare two delivered trees, never a moving branch or PR merge-base.
+
+        Only the first `MAX_DIFFED_FILES` changed files are read for a line
+        diff; the rest are listed as changed. Two deliveries far apart in a
+        large repository differ in thousands of files, each one a request."""
+        old, new = await self._changed_entries(before, after)
         changes = []
+        diffed = 0
         for path in sorted(old.keys() | new.keys()):
             left, right = old.get(path), new.get(path)
             if left == right:
@@ -194,10 +249,13 @@ class ProjectFiles:
                 "diff": None,
                 "note": "unsupported",
             }
-            if all(
+            if diffed >= MAX_DIFFED_FILES:
+                result["note"] = "many"
+            elif all(
                 entry["kind"] == "blob" and entry["bytes"] <= MAX_TEXT_BYTES
                 for entry in entries
             ):
+                diffed += 1
                 blobs = await self.committed_blobs([entry["oid"] for entry in entries])
                 result = await asyncio.to_thread(
                     compare_bytes,
