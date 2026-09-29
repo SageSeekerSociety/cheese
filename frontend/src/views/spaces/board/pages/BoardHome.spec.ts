@@ -20,7 +20,7 @@ import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -253,4 +253,64 @@ describe('空间首页', () => {
     expect(notice()?.textContent).toContain('最新的公告')
     expect(notice()?.textContent).toContain('最新')
   })
+
+  it('我领过的题写的是我的**档位**，不是笼统的「已领取」', async () => {
+    signIn('someone-else')
+    // 两张都领过（`joined`），差别只在那格档位：服务端说走到哪一步，卡片就该说
+    // 哪一步。只写「已领取」等于把这四个阶段抹成一个。
+    const passed = task({ id: 3, name: '我通过了的题', joined: true, myClaimStatus: 'PASSED' })
+    const rejected = task({ id: 4, name: '我被打回来的题', joined: true, myClaimStatus: 'REJECTED' })
+    listTasks.mockImplementation(async (params: { approved?: string }) =>
+      params?.approved === 'NONE'
+        ? { data: { tasks: [PENDING], page: {} } }
+        : { data: { tasks: [passed, rejected], page: {} } }
+    )
+    await mount()
+    await waitFor(() => expect(document.body.textContent).toContain('我通过了的题'))
+
+    expect(mineOf('我通过了的题')).toBe('已通过')
+    expect(mineOf('我被打回来的题')).toBe('未通过')
+  })
+
+  it('拿不到档位时才退回「已领取」—— 我领了这件事不能因为那一格缺失而消失', async () => {
+    signIn('someone-else')
+    // 小队提交的题就是这一支：接手的是小队那条领取，服务端给不出我个人的档位。
+    const teamTask = task({ id: 5, name: '小队替我领的题', joined: true, myClaimStatus: null })
+    listTasks.mockImplementation(async (params: { approved?: string }) =>
+      params?.approved === 'NONE' ? { data: { tasks: [PENDING], page: {} } } : { data: { tasks: [teamTask], page: {} } }
+    )
+    await mount()
+    await waitFor(() => expect(document.body.textContent).toContain('小队替我领的题'))
+
+    expect(mineOf('小队替我领的题')).toBe('已领取')
+  })
+
+  it('首页搜索也匹配标签 —— 卡片上摆着的 #名字 得搜得到', async () => {
+    signIn('someone-else')
+    const tagged = task({ id: 6, name: '缓存那道题', topics: [{ id: 1, name: '并发编程' }] })
+    const other = task({ id: 7, name: '另一道题' })
+    listTasks.mockImplementation(async (params: { approved?: string }) =>
+      params?.approved === 'NONE'
+        ? { data: { tasks: [PENDING], page: {} } }
+        : { data: { tasks: [tagged, other], page: {} } }
+    )
+    await mount()
+    await waitFor(() => expect(document.body.textContent).toContain('缓存那道题'))
+
+    const input = document.querySelector('.home__search input') as HTMLInputElement
+    expect(input).toBeTruthy()
+    await fireEvent.update(input, '并发编程')
+
+    // 「缓存那道题」四个字里没有「并发编程」，它是因为**标签**才留下来的。
+    await waitFor(() => expect(document.body.textContent).not.toContain('另一道题'))
+    expect(document.body.textContent).toContain('缓存那道题')
+  })
 })
+
+/** 某张卡片右上角「我的档位」那一格画的字。卡片按标题认。 */
+function mineOf(title: string): string {
+  const card = Array.from(document.querySelectorAll('.tcard')).find(
+    (el) => (el.querySelector('.tcard__title')?.textContent || '').trim() === title
+  )
+  return (card?.querySelector('.tcard__mine')?.textContent || '').replace(/\s+/g, '').trim()
+}

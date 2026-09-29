@@ -26,8 +26,13 @@
 「什么算已成功」的两种读法（判通过才算 / 交了就算）不改变上面任何一条转移，只改变
 计数与标签怎么显示 —— 那处开关在 ``member_participating_service.get_overview`` 与
 ``frontend/src/views/spaces/board/pages/Mine.vue``。
+
+同一份优先级还有第二种粒度：板上的题卡片只问「我这条领取走到哪了」，取值那套见下面
+的 :func:`claim_state`。它不看截止时间那一档，别的与上面逐条对齐，且顺序由
+:func:`completion_status_for` 一处说了算。
 """
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy import ColumnElement, SQLColumnExpression, exists, or_, select
@@ -154,6 +159,54 @@ def completion_status_for(
     if has_a_live_submission:
         return COMPLETION_STATUS_REJECTED_RESUBMITTABLE
     return COMPLETION_STATUS_NOT_SUBMITTED
+
+
+#: 板上的题卡片那一格（`:func:`claim_state` 的四个取值）—— 与前端
+#: ``Claimant['status']`` 同名同义，与 ``completion_status`` 是两套取值、一份优先级。
+CLAIM_IN_PROGRESS = "IN_PROGRESS"
+CLAIM_SUBMITTED = "SUBMITTED"
+CLAIM_PASSED = "PASSED"
+CLAIM_REJECTED = "REJECTED"
+
+#: 完成状态的取值 → 卡片那一格。``FAILED`` 到不了这里：卡片这一格不看截止时间。
+_CLAIM_BY_COMPLETION_STATUS = {
+    COMPLETION_STATUS_SUCCESS: CLAIM_PASSED,
+    COMPLETION_STATUS_PENDING_REVIEW: CLAIM_SUBMITTED,
+    COMPLETION_STATUS_REJECTED_RESUBMITTABLE: CLAIM_REJECTED,
+    COMPLETION_STATUS_NOT_SUBMITTED: CLAIM_IN_PROGRESS,
+}
+
+
+def claim_state(verdicts: Iterable[bool | None]) -> str:
+    """一个领取现在是什么档位，按它每条 live 提交的判决算。
+
+    ``verdicts`` 是这个领取名下**每条 live 提交**的判决：``True`` 判过、``False``
+    退回、``None`` 还没判。空 = 一条都没交。判决与提交的「live」两个条件由取数的
+    那一边按 ``has_work_in_hand`` 同一口径给（提交行 ``deleted_at IS NULL``、评审行
+    同样），这里只负责排序。
+
+    一条领取可以同时有多版提交：退回之后重交是新的一版，**旧的那版还在**（它只是
+    带着一条退回的评审躺着，见 ``TaskSubmissionService.submit_task``）。所以排的是
+    优先级，不是「最新那版」：任一版通过就是「已通过」，交出去并被认下来的东西不会
+    被后来的一版抹掉。
+
+    优先级本身写在 :func:`completion_status_for` —— 这里只把判决折成它的三个事实再
+    翻回来，避免同一份顺序在库里和 Python 里各写一遍（两者分叉的表现就是同一领取在
+    「我的」那页与卡片那格显示成两档）。
+    """
+    # 先落成一份：``verdicts`` 只保证是 Iterable，三次 any() 会把它跑空。
+    rows = list(verdicts)
+    passed = any(verdict is True for verdict in rows)
+    queued = any(verdict is None for verdict in rows)
+    handed_in = passed or queued or any(verdict is False for verdict in rows)
+    return _CLAIM_BY_COMPLETION_STATUS[
+        completion_status_for(
+            has_a_passed_submission=passed,
+            has_a_submission_in_the_queue=queued,
+            has_a_live_submission=handed_in,
+            past_deadline=False,
+        )
+    ]
 
 
 def _past_deadline(deadline: datetime | None, moment: datetime) -> bool:

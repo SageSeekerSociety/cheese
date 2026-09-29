@@ -137,6 +137,13 @@ function deadlineText(ms: number | null | undefined): string {
   return `${days} 天后截止`
 }
 
+/** 领取到了上限的百分之多少。**不限领取的题给 `null`**：没有分母，那一格整块不
+ *  出现 —— 拿 `0` 或 `100` 顶上都会说一句「这道题有个上限」的谎。 */
+function fill(t: SpaceMyPublishedTask): number | null {
+  if (t.participantLimit === null) return null
+  return Math.round((t.participantCount / t.participantLimit) * 100)
+}
+
 function detailTo(taskId: number) {
   return { name: 'SpaceBoardTaskDetail', params: { spaceId: String(spaceId), taskId: String(taskId) } }
 }
@@ -210,7 +217,11 @@ function homeTo() {
             <div class="pub-row__meta">
               <span v-if="task.category?.name">{{ task.category.name }}</span>
               <span>{{ deadlineText(task.deadline) }}</span>
-              <span>{{ task.participantCount }} 人领取</span>
+              <span
+                >{{ task.participantCount
+                }}{{ task.participantLimit === null ? '' : ` / ${task.participantLimit}` }} 人领取</span
+              >
+              <span v-if="fill(task) !== null">{{ fill(task) }}% 满</span>
               <span>提交 {{ task.submittedParticipantCount }} · 通过 {{ task.successfulParticipantCount }}</span>
             </div>
           </div>

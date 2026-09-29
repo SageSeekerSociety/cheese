@@ -409,6 +409,8 @@ export type SpaceMyPublishedTask = {
   publishedAt?: number | null
   endedAt?: number | null
   deadline?: number | null
+  /** 领取人数上限；`null` = 不限（真库用 0 表示不限，接口一律折成 null）。 */
+  participantLimit: number | null
   participantCount: number
   approvedParticipantCount: number
   pendingParticipantApprovalCount: number

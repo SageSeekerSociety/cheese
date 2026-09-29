@@ -687,6 +687,46 @@ class TaskSubmissionRepository:
         await self._session.flush()
         return submission
 
+    async def list_review_verdicts_for_memberships(
+        self,
+        *,
+        membership_ids: Sequence[int],
+    ) -> dict[int, list[bool | None]]:
+        """这些领取名下**每条 live 提交**的判决，按领取分组。
+
+        判决三态照 ``app.domain.task.submission_state`` 的口径：``True`` = 判过、
+        ``False`` = 退回、``None`` = 还没判（没有 live 评审行）。两个「live」的条件
+        与那边一致：提交行与评审行各自 ``deleted_at IS NULL``。
+
+        一页题一次性问完：逐题各发一条就是 20 条查询，而这一条按领取去重后只跑一次
+        （`has_work_in_hand` 那边是相关的 EXISTS 谓词，用途不同，不通用）。
+        """
+        if not membership_ids:
+            return {}
+        stmt = (
+            select(TaskSubmission.membership_id, TaskSubmissionReview.accepted)
+            .select_from(TaskSubmission)
+            .outerjoin(
+                TaskSubmissionReview,
+                and_(
+                    TaskSubmissionReview.submission_id == TaskSubmission.id,
+                    TaskSubmissionReview.deleted_at.is_(None),
+                ),
+            )
+            .where(
+                TaskSubmission.membership_id.in_(membership_ids),
+                TaskSubmission.deleted_at.is_(None),
+            )
+            .order_by(TaskSubmission.id.asc())
+        )
+        result = await self._session.execute(stmt)
+        verdicts: dict[int, list[bool | None]] = {}
+        for membership_id, accepted in result.all():
+            verdicts.setdefault(int(membership_id), []).append(
+                None if accepted is None else bool(accepted)
+            )
+        return verdicts
+
     async def list_submissions(
         self,
         *,
@@ -1298,6 +1338,30 @@ class TopicRepository:
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_by_task_ids(self, task_ids: Sequence[int]) -> dict[int, list[Tag]]:
+        """一次取回多道题的标签，按题目分组（组内仍按 ``Tag.id`` 排）。
+
+        列表接口一屏就要给一整页题配标签，逐题各发一条是 20 条查询；这条是它的
+        批量版本，条件与 ``list_by_task_id`` 逐字一致。没有标签的题不在结果里。
+        """
+        if not task_ids:
+            return {}
+        stmt: Select[tuple[int, Tag]] = (
+            select(TaskTagRelation.task_id, Tag)
+            .join(Tag, TaskTagRelation.tag_id == Tag.id)
+            .where(
+                TaskTagRelation.task_id.in_(task_ids),
+                TaskTagRelation.deleted_at.is_(None),
+                Tag.deleted_at.is_(None),
+            )
+            .order_by(TaskTagRelation.task_id.asc(), Tag.id.asc())
+        )
+        result = await self._session.execute(stmt)
+        grouped: dict[int, list[Tag]] = {}
+        for task_id, tag in result.all():
+            grouped.setdefault(int(task_id), []).append(tag)
+        return grouped
 
 
 class TaskSubmissionSchemaRepository:

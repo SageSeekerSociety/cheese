@@ -14,10 +14,11 @@
 uploaderId），这里只把它挂到题目上，并保管题目这一侧的下载计数与生命期。
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import BinaryIO
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.space_access import may_teach_task
@@ -59,6 +60,29 @@ class TaskAttachmentRepository:
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def count_live_by_task_ids(
+        self, *, task_ids: Sequence[int]
+    ) -> dict[int, int]:
+        """每道题挂着几个材料 —— 一行一题，一个材料都没有的题不在结果里。
+
+        列表接口一屏就要给一整页题配上这个数，逐题各发一条就是 20 条查询。这里只
+        数**行数**：不带文件本体、不带文件名、不问谁能下载 —— 「有几份材料」不比
+        「这道题在不在」多泄露什么，而清单与下载各有自己的门（见本模块开头那三条
+        判据）。
+        """
+        if not task_ids:
+            return {}
+        stmt = (
+            select(TaskAttachment.task_id, func.count(TaskAttachment.id))
+            .where(
+                TaskAttachment.task_id.in_(task_ids),
+                TaskAttachment.deleted_at.is_(None),
+            )
+            .group_by(TaskAttachment.task_id)
+        )
+        result = await self._session.execute(stmt)
+        return {int(task_id): int(count) for task_id, count in result.all()}
 
     async def get_live(
         self, *, task_id: int, attachment_id: int

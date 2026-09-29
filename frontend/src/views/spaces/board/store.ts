@@ -11,7 +11,8 @@
  * 已知的映射损失，写在这里免得后面有人当成 bug 查：
  * - 列表接口只给 `participants.total`，**不给整份领取名单**，所以提交数/通过数在
  *   这一层没有 —— 要看它们得进单题看板（那条路另取参与者与提交，见 `TaskInsights.vue`）。
- * - 题目**还没有附件这一层**（真表没有该字段），`files` 一律是空数组。
+ * - 附件只有**一个数**（`Task.attachmentCount`，列表接口的分组计数）：文件名与下载
+ *   走另一条路（`TasksApi.listAttachments` / 下载端点），卡片上那格「附件 N」不等它们。
  * - 「我发布的 / 我领取的」不走这里：那两块有**专为它们准备的接口**
  *   （`/spaces/{id}/me/publishing*`、`/me/participating*`），在 `Mine.vue` 里直接取，
  *   因为那些数（谁在等我审、多少人在我这卡住）全板列表里根本没有。
@@ -74,7 +75,9 @@ export function toBoardTask(task: Task): BoardTask {
     summary,
     origin,
     category: task.category?.name ?? '',
-    tags: [],
+    // 标签就是题目的 topics（真模型里没有单独的一份）：接口按名字给，卡片显示
+    // `#名字`，首页的搜索也在这几个名字上匹配（`BoardHome.vue` 的 `visible`）。
+    tags: (task.topics ?? []).map((topic) => topic.name),
     publisher: toPerson(task.creator),
     state: toState(task),
     rejectReason: task.rejectReason,
@@ -86,9 +89,10 @@ export function toBoardTask(task: Task): BoardTask {
     minTeamSize: task.minTeamSize ?? 1,
     maxTeamSize: task.maxTeamSize ?? 1,
     videoUrl: task.videoUrl ?? null,
-    files: [],
+    attachmentCount: task.attachmentCount ?? 0,
     claims: [],
     claimCount: task.participants?.total ?? 0,
+    myClaimStatus: task.myClaimStatus ?? null,
   }
 }
 
@@ -110,6 +114,9 @@ export async function loadBoard(id: number, force = false) {
         sort_order: 'desc',
         querySpace: false,
         queryJoined: true,
+        // 卡片上的标签、以及首页搜索要匹配的那几个词。跟着列表一起回来 ——
+        // 一页题再补一次请求，标签就会比卡片晚一步出现。
+        queryTopics: true,
         // 首页那句「参与 N 人」跟这一份列表一起回来 —— 它不能是另一次请求，否则
         // 首页多等一轮，而且两次读到的题目集合可能不一样（一边正在审、正在发）。
         queryDistinctParticipants: true,
