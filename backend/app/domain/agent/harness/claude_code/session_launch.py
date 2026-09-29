@@ -17,7 +17,7 @@ from app.domain.agent.harness.launch import ExecutorLaunch, MachineLaunch, Machi
 
 
 def session_settings() -> dict:
-    """``$CLAUDE_CONFIG_DIR/settings.json`` for a room's session.
+    """Base Claude settings for one seat's session.
 
     No hook here observes the session: the runner reads what it does from its
     own stdout. The hooks left are the ones that act — the model catalogue

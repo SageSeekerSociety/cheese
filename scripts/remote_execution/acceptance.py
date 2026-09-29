@@ -384,7 +384,8 @@ def case(folder, options):
                 claude.chmod(0o755)
             elif options.mode in ("throw", "timeout"):
                 # The helper `bootstrap` copies into the session's plugin.
-                (home / ".cheese/remote-execution/proxy.js").write_text(
+                proxy = runner_fixture.session_dir(home) / "remote-execution/proxy.js"
+                proxy.write_text(
                     'export function register(on) { on("tool.call", () => {throw new Error("fixture failure")}); }'
                     if options.mode == "throw"
                     else 'export function register(on) { on("tool.call", async () => {await new Promise(() => {})}); }'

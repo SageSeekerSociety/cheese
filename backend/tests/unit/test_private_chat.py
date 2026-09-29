@@ -142,8 +142,9 @@ def test_central_context_does_not_trust_a_modified_executor(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("installed_in", [".cheese", ".claude"])
+@pytest.mark.parametrize("seat_name", ["", "4b9f7d802648"])
 def test_releasing_a_private_room_reaches_the_root_it_was_installed_in(
-    tmp_path, installed_in
+    tmp_path, installed_in, seat_name
 ):
     """The release runs as a shell test-and-exec on the machine, so a root it
     does not name is not an error there — it is silence, and the seat the room
@@ -151,12 +152,13 @@ def test_releasing_a_private_room_reaches_the_root_it_was_installed_in(
     project, topic = uuid.uuid4(), uuid.uuid4()
     home = private_chat.device_home_dir(project, topic).replace("$HOME", str(tmp_path))
     directory = Path(home) / installed_in
-    (directory / "remote-execution").mkdir(parents=True)
+    session = directory / "seats" / seat_name if seat_name else directory
+    (session / "remote-execution").mkdir(parents=True)
     released = tmp_path / "released.json"
-    (directory / "remote-execution/client.py").write_text(
+    (session / "remote-execution/client.py").write_text(
         f"import json, sys\njson.dump(sys.argv[1:], open({str(released)!r}, 'w'))\n"
     )
-    (directory / "remote-target.json").write_text('{"kind": "private"}')
+    (session / "remote-target.json").write_text('{"kind": "private"}')
 
     class ShellHub:
         async def exec(self, device_id, argv, *, timeout):
@@ -174,7 +176,7 @@ def test_releasing_a_private_room_reaches_the_root_it_was_installed_in(
 
     assert json.loads(released.read_text()) == [
         "release",
-        str(directory / "remote-target.json"),
+        str(session / "remote-target.json"),
     ]
 
 
@@ -190,11 +192,11 @@ def test_controlling_a_private_room_reaches_the_seat_that_prepared_it(
     config = private_chat.scratch_target(project, resource, device_id="dev1")
     home = config["home"].replace("$HOME", str(tmp_path))
     directory = Path(home) / installed_in
-    (directory / "remote-execution").mkdir(parents=True)
     session = directory / "seats/4b9f7d802648/remote-session"
     session.mkdir(parents=True)
     (session / "execution.json").write_text("{}")
-    (directory / "remote-execution/client.py").write_text(
+    (session.parent / "remote-execution").mkdir()
+    (session.parent / "remote-execution/client.py").write_text(
         "import json, sys\njson.dump(sys.argv[1:], sys.stdout)\n"
     )
     request = {"subtype": "read_file", "path": "/work/draft.md"}

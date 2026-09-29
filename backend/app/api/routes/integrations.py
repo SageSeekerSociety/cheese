@@ -10,11 +10,12 @@ import uuid
 from typing import Annotated
 from urllib.parse import quote, urlencode
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.config import settings
@@ -267,9 +268,14 @@ async def delete_integration(
     return ok({"deleted": str(integration_id)})
 
 
-def _state(integration_id: uuid.UUID) -> str:
+# Started in the desktop app: the callback hands the result back to it. Left
+# outside the digest, as all it can change is where the result is shown.
+_IN_APP = ".app"
+
+
+def _state(integration_id: uuid.UUID, *, in_app: bool) -> str:
     kid, digest = keyed_digest(Purpose.INTEGRATION_STATE, integration_id.bytes)
-    return f"{integration_id}.{kid}.{digest.hex()}"
+    return f"{integration_id}.{kid}.{digest.hex()}" + (_IN_APP if in_app else "")
 
 
 def _redirect_uri() -> str:
@@ -278,19 +284,32 @@ def _redirect_uri() -> str:
 
 @router.get("/me/integrations/{integration_id}/feishu/authorize")
 async def feishu_authorize(
-    integration_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    integration_id: uuid.UUID,
+    request: Request,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
     row = await IntegrationService(db).get_owned(integration_id, actor.user_id)
     settings = await feishu_settings_for(db, row)
-    url = FeishuClient(settings).authorize_url(_redirect_uri(), _state(row.id))
+    url = FeishuClient(settings).authorize_url(
+        _redirect_uri(), _state(row.id, in_app=started_in_app(request))
+    )
     return ok({"url": url, "redirect_uri": _redirect_uri()})
 
 
 @router.get("/integrations/feishu/callback")
 async def feishu_callback(
     db: DbSession, code: str = "", state: str = "", error: str = ""
+) -> RedirectResponse:
+    in_app = state.endswith(_IN_APP)
+    landing = await _finish_feishu(db, code, state.removesuffix(_IN_APP), error)
+    return back_in_app(landing) if in_app else landing
+
+
+async def _finish_feishu(
+    db: AsyncSession, code: str, state: str, error: str
 ) -> RedirectResponse:
     back = f"{settings.frontend_url}/users/settings/connections"
     try:

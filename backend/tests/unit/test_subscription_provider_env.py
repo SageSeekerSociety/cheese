@@ -10,6 +10,8 @@ but bills nothing" if it regresses:
   - an inherited ANTHROPIC_AUTH_TOKEN switches the CLI out of subscription mode.
 """
 
+from pathlib import Path
+
 from app.domain.agent import provider_env
 
 
@@ -107,9 +109,14 @@ def test_no_credential_file_is_ever_planted_in_the_box(tmp_path):
         check=True,
         capture_output=True,
     )
-    planted = {path.name for path in (tmp_path / ".claude").rglob("*")}
-    assert "settings.json" in planted
+    from app.domain.agent.place import seat_dir
+
+    seat = Path(seat_dir(str(tmp_path)))
+    planted = {path.name for path in (seat / ".claude").rglob("*")}
+    assert "base-settings.json" in {
+        path.name for path in (seat / "remote-session").rglob("*")
+    }
     assert ".credentials.json" not in planted
     # What it DOES plant is not credential-shaped.
-    settings = (tmp_path / ".claude/settings.json").read_text()
+    settings = (seat / "remote-session/base-settings.json").read_text()
     assert "token" not in settings.lower()

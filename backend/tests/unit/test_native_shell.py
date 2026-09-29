@@ -890,7 +890,7 @@ def test_the_projects_hooks_are_registered_centrally_and_run_there(
     tmp_path, machine, monkeypatch
 ):
     launch, home = _prepared(tmp_path, machine, monkeypatch)
-    written = json.loads((home / ".claude/settings.json").read_text())
+    written = json.loads((tmp_path / "central-session/settings.json").read_text())
     registered = [
         hook["command"]
         for group in written["hooks"]["PreToolUse"]

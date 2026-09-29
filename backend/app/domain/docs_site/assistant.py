@@ -44,7 +44,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.docs_site import tools
+from app.domain.docs_site import tools, visits
 from app.domain.docs_site.models import DocsQuestion
 from app.domain.docs_site.retrieval import Hit
 from app.domain.service_keys import KeySpec, service_key
@@ -607,11 +607,17 @@ async def record(
 
 
 async def purge_old_questions(sessions) -> int:
-    """Delete questions older than the retention window; returns how many went."""
+    """Delete questions and visits older than the retention window.
+
+    Two tables, one sweep: they hold the same 90 days of the same feature, and
+    one job is what keeps 「保留 90 天」 a single promise instead of two that
+    can drift apart. Returns how many rows went, together.
+    """
     cutoff = datetime.now(UTC) - timedelta(days=settings.docs_question_retention_days)
     async with sessions() as session:
         result = await session.execute(
             delete(DocsQuestion).where(DocsQuestion.created_at < cutoff)
         )
-        await session.commit()
-    return result.rowcount or 0
+        gone = result.rowcount or 0
+        gone += await visits.purge_old(session)
+    return gone

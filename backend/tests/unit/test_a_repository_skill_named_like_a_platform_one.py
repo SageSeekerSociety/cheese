@@ -80,7 +80,9 @@ def test_a_launch_writes_its_skills_over_a_link_an_earlier_session_left(tmp_path
     repository.mkdir(parents=True)
     (repository / "SKILL.md").write_text("THE REPOSITORY'S\n")
     repository.chmod(0o500)
-    skills = session / ".claude/skills"
+    from app.domain.agent.place import seat_dir
+
+    skills = Path(seat_dir(str(session))) / ".claude/skills"
     skills.mkdir(parents=True)
     (skills / "cheese-docs").symlink_to(repository, target_is_directory=True)
     try:

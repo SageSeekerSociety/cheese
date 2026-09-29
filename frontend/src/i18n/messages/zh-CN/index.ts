@@ -1,6 +1,7 @@
 import account from './account.json'
 import comments from './comments.json'
 import editor from './editor.json'
+import featureStats from './featureStats.json'
 import feedback from './feedback.json'
 import global from './global.json'
 import integrations from './integrations.json'
@@ -26,6 +27,7 @@ export default {
   account,
   editor,
   feedback,
+  featureStats,
   questions,
   users,
   comments,

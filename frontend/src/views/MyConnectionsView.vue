@@ -26,6 +26,7 @@ import { useCommands } from '@/commands'
 import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
+import { goAuthorize } from '@/lib/desktopApp'
 
 const route = useRoute()
 const integrations = ref<Integration[]>([])
@@ -139,7 +140,7 @@ async function recheck(row: Integration) {
 
 async function authorize(row: Integration) {
   const out = await act(`${row.id}:auth`, () => feishuAuthorizeUrl(row.id))
-  if (out) window.location.href = out.url
+  if (out) goAuthorize(out.url)
 }
 
 /**

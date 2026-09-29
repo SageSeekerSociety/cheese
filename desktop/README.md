@@ -33,6 +33,18 @@ starts out of sight. What the app can do is listed in
 checked every six hours and installed only while the window is out of sight and
 no connection is in progress; the restarted app stays out of sight.
 
+Authorizing with another site happens in the person's browser, where their
+accounts are signed in and where Google agrees to show its page at all:
+signing in with a provider, and connecting GitHub, Feishu or an MCP server.
+The browser hands the result back through a `cheese://open?path=<page>` link
+(`src-tauri/src/links.rs`), which brings the window back on that page of the
+server and nowhere else. A connection started in the app says so on its first
+request, and its callback lands the browser on `/account/to-app`, which opens
+the app on the page with the result (`backend/app/api/app_return.py`). A
+sign-in is handed over as a code that is good once and only with a secret the
+app kept and the browser never saw (`POST /users/auth/app-sign-in` and
+`.../finish`); the browser stays signed in too.
+
 Beyond that the app adds one thing a browser cannot do: connect the computer it runs
 on as a device. Under 设置 → 设备 it offers 「接入这台电脑」, which does what the
 page otherwise asks a terminal user to do — run the server's `install.sh`, then
