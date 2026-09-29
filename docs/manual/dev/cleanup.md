@@ -25,6 +25,19 @@ covers:
 - 发布检查没过 → 保留资源并记下原因。删云机器还要一个空的房间目录清单：清单里有不认识的目录就保留这台 VM。
 - 进度从 `GET /topics/{id}/cleanup` 读：阶段、期限、已完成的资源数、最近一次失败。
 
+## 项目归档 {#project-archive}
+
+项目归档（`POST /projects/{id}/archive`，只有 `owner_handle` 本人能做）不另起一套回收，它把项目里每个还没归档的房间（总览和私聊也在内）交给上面那条房间归档的路：`TopicService.archive_with_project` 对每个房间走 `_archive_one`，所以会话在宽限之后停下、云机器被回收、没决议的审阅被收成 `revoked`、PR 不再被轮询、房间里的任务关掉。这些房间记下 `archived_with_project`，取消归档只恢复它们，归档之前就已归档的房间不动。
+
+其余几件事的去向：
+
+- **写入**：`ActorResolver` 在一次写请求（非 GET）点名某个项目或它的房间时，项目已归档就拒绝，错误名 `ProjectArchivedError`（409）。`resolve` 与两个 `authorize_*` 都问这一句，所以新加的写路由不用自己记得。不走 `ActorResolver` 的写路由（环境设置、入站 webhook）自己调 `refuse_writes_if_archived`。只读的 POST（换站点浏览凭据）和个人收件箱的已读状态传 `read_only`。
+- **定时任务**：`routine.service` 不触发已归档房间里的定时任务；房间恢复后，错过的那一次记为跳过。
+- **记忆整理**：`sweep_memory_dreams` 跳过已归档的项目。
+- **邀请**：还在等答复的邀请被撤回（`revoked`），取消归档不恢复。
+- **站点**：已发布的站点仍可由成员查看，不能再发布。
+- **不动的东西**：数据、额度记录、仓库连接、forgejo 仓库的 webhook 配置；自有设备与项目的绑定也不解除，房间的占用由房间回收释放。
+
 ## 回收脚本在设备上跑 {#script}
 
 `domain/agent/resource_cleanup.py` 是用 stdin 送到设备上、在那边跑的程序（没有 `__file__`、import 不到平台任何东西），所以它带着几个常数的**副本**，由 `tests/unit/test_footprint_root.py` 与 `place.py` 对齐：`FOOTPRINT_ROOT = ".cheese"`、`CHECKOUT_DIR = "room"`、`TRANSCRIPTS_ROOT = "transcripts"`、`PLATFORM_DIRS = (".cheese", ".claude")`。名字漂移的代价写得很直白：拆卸会对一条从没存在过的路径报成功，而真正的几百 GB 留在机器上。

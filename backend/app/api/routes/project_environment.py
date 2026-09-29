@@ -39,6 +39,7 @@ from app.domain.project.environment_recovery import (
     reconcile_recovery,
 )
 from app.domain.project.models import Project
+from app.domain.project.services import refuse_writes_if_archived
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
@@ -67,6 +68,10 @@ async def access(
     )
     if not steward and (write or not member):
         raise ForbiddenError("只有项目成员能查看环境，项目所有者或团队管理员能修改环境")
+    # This router authenticates on its own rather than through ActorResolver, so
+    # it asks the archived-project question that the resolver asks for the rest.
+    if write:
+        await refuse_writes_if_archived(db, project_id)
     return project, steward
 
 

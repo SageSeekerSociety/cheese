@@ -61,7 +61,7 @@ class ProjectRepository:
         """The AI-workspace project for a 知是 Team (P4 native link), newest first."""
         stmt = (
             select(Project)
-            .where(Project.team_id == team_id)
+            .where(Project.team_id == team_id, Project.archived_at.is_(None))
             .order_by(Project.created_at.desc())
             .limit(1)
         )
@@ -365,9 +365,21 @@ class ProjectRepository:
             # Nobody in particular is asking; that is not the same as everybody.
             return []
         result = await self._session.execute(
-            select(Project).where(or_(*claims)).order_by(Project.created_at)
+            select(Project)
+            # An archived project leaves every list; its owner finds it with
+            # `list_archived_owned_by`.
+            .where(or_(*claims), Project.archived_at.is_(None))
+            .order_by(Project.created_at)
         )
         return list(result.scalars())
+
+    async def list_archived_owned_by(self, handle: str) -> list[Project]:
+        stmt = (
+            select(Project)
+            .where(Project.owner_handle == handle, Project.archived_at.is_not(None))
+            .order_by(Project.archived_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
 
 
 class RepositoryTakenError(ConflictError):

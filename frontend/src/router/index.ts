@@ -86,6 +86,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '我的连接', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
+    name: 'my-archived-projects',
+    path: '/my/archived-projects',
+    component: () => import('@/views/MyArchivedProjectsView.vue'),
+    meta: { title: '已归档的项目', isFullPage: true, ...PERSONAL_PAGE },
+  },
+  {
     name: 'my-devices',
     path: '/my/devices',
     component: () => import('@/views/MyDevicesView.vue'),

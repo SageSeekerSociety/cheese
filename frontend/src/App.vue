@@ -411,6 +411,18 @@ watch(
   }
 )
 
+// The workspace store reads the same list after something changed it from inside
+// a project — archived, unarchived, handed over. Take its answer instead of
+// showing the rail's older copy until the next reload.
+watch(
+  () => workspace.projects,
+  (list) => {
+    if (!workspace.projectsSettled) return
+    cxProjects.value = list
+    saveCachedProjects(myHandle(), list)
+  }
+)
+
 // …and again whenever the identity changes. The rail used to load exactly once,
 // on mount — and the app normally mounts on the sign-in page, i.e. with no
 // credential yet. Signing in is an SPA navigation, not a reload, so nothing

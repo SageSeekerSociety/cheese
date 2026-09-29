@@ -404,6 +404,13 @@ class InvitationService:
         await self._resolve_alert(settled)
         return settled
 
+    async def revoke_all_pending(self, project_id: uuid.UUID) -> None:
+        """Withdraw every invitation still waiting on this project — archiving
+        it does, as its owner. Authorized by the caller, like the archive is."""
+        for invitation in await self._repo.list_pending_for_project(project_id):
+            settled = await self._repo.settle(invitation, InvitationStatus.revoked)
+            await self._resolve_alert(settled)
+
     async def _resolve_alert(self, invitation: ProjectInvitation) -> None:
         """把收件箱里那条待办结掉。
 
