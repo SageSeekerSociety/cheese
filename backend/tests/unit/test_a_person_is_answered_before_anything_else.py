@@ -33,7 +33,6 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import cli_worker, project_hooks
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.claude_code.bundle import build as claude_archive
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
@@ -50,6 +49,7 @@ from app.domain.agent.harness.pi.device_launch import PiLaunch, extension, provi
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from tests.pinned_claude import claude_binary
+from tests.support import executor_release
 from tests.support.completions_fixture import Completions
 from tests.support.responses_fixture import Responses
 
@@ -377,19 +377,14 @@ class CodexSession(Session):
 async def codex(tmp_path: Path, steps: list):
     """The Codex runner archive, its tools on a real executor over the project."""
     home = tmp_path / "executor-home"
-    helpers = home / ".cheese/remote-execution"
-    helpers.mkdir(parents=True)
-    shutil.copyfile(runtime.__file__, helpers / "runtime.py")
-    shutil.copyfile(cli_worker.__file__, helpers / "cli_worker.py")
-    shutil.copyfile(project_hooks.__file__, helpers / "project_hooks.py")
-    shutil.copyfile(CHEESE, home / ".cheese/cheese")
+    helper = executor_release.install(home / ".cheese")
     executor_state = home / ".cheese/executor"
     machine = tmp_path / "project"
     machine.mkdir()
     subprocess.run(
         [
             sys.executable,
-            str(helpers / "runtime.py"),
+            str(helper),
             "start",
             "--state",
             str(executor_state),
@@ -461,7 +456,7 @@ async def codex(tmp_path: Path, steps: list):
         subprocess.run(
             [
                 sys.executable,
-                str(helpers / "runtime.py"),
+                str(helper),
                 "stop",
                 "--state",
                 str(executor_state),

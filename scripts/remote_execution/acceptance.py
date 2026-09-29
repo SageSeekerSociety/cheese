@@ -24,13 +24,11 @@ from model_fixture import Handler, Server, dump, log
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
-# The CLI preload worker is not the adapter's — it knows the platform CLI and
-# nothing about any harness, so it lives beside the other platform-side machine
-# helpers. Only the path it is FETCHED from moved; where it lands on the machine
-# is what `runtime.py` looks for, and that is unchanged.
-AGENT = ROOT / "backend/app/domain/agent"
 sys.path.insert(0, str(SOURCE))
 import release as execution_release  # noqa: E402 — from the source tree above
+
+sys.path.insert(0, str(ROOT / "backend"))
+from tests.support import executor_release  # noqa: E402 — standard library only
 
 spec = importlib.util.spec_from_file_location("execution_client", SOURCE / "client.py")
 client = importlib.util.module_from_spec(spec)
@@ -61,14 +59,17 @@ def setup(folder, options, api):
         else str(folder / "execution")
     )
     run(remote_command(options, ["mkdir", "-p", remote + "/remote-execution"]))
-    sources = (
-        (SOURCE / "runtime.py", "runtime.py"),
-        (AGENT / "project_hooks.py", "project_hooks.py"),
-        (AGENT / "cli_worker.py", "remote-execution/cli_worker.py"),
-        (ROOT / "backend/sandbox/cheese", "cheese"),
+    # The executor as a machine's bootstrap installs it; over ssh, installed
+    # here and copied across file by file under the names it was installed as.
+    installed = Path(remote) if not options.ssh else folder / "executor-release"
+    executor_release.install(installed)
+    sources = [
         (Path(__file__).parent / "custom_mcp.py", "custom_mcp.py"),
         (Path(__file__).parent / "seed.py", "seed.py"),
-    )
+    ]
+    if options.ssh:
+        names = json.loads((installed / "executor-files.json").read_text())
+        sources += [(installed / name, name) for name in names]
     for source, destination in sources:
         if options.ssh:
             run(
@@ -103,7 +104,7 @@ def setup(folder, options, api):
         },
     }
     target = {
-        "command": [python, remote + "/runtime.py"],
+        "command": [python, remote + "/remote-execution/runtime.py"],
         "state": remote + "/state",
         "mcp_servers": ["custom"],
     }

@@ -23,10 +23,12 @@ import pytest
 
 if __package__:
     from tests.pinned_claude import claude_binary
+    from tests.support import executor_release
 else:
     # The acceptance suite runs this file as a script, from outside the package.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from pinned_claude import claude_binary
+    from support import executor_release
 
 RUNTIME = (
     Path(__file__).resolve().parents[2]
@@ -798,10 +800,9 @@ def _room_prepared_under_the_previous_root(tmp_path, monkeypatch):
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     previous = home / ".claude"
-    (previous / "remote-execution").mkdir(parents=True)
     # Its OWN runtime, the one that started it: the protocol a running executor
     # answers is the one it was installed with, not the one being installed now.
-    shutil.copyfile(RUNTIME, previous / "remote-execution/runtime.py")
+    executor_release.install(previous)
     work = home / "room"
     work.mkdir(parents=True)
     program = script(

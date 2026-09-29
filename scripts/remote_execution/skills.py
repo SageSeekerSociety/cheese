@@ -220,18 +220,9 @@ class Room:
         self.server = model_server(folder)
         base = f"http://127.0.0.1:{self.server.server_port}"
         programs = folder / "executor"
-        programs.mkdir(parents=True)
-        for source, destination in (
-            (acceptance.SOURCE / "runtime.py", "runtime.py"),
-            (acceptance.SOURCE / "portable.py", "portable.py"),
-            (acceptance.AGENT / "project_hooks.py", "project_hooks.py"),
-            (acceptance.AGENT / "cli_worker.py", "remote-execution/cli_worker.py"),
-            (acceptance.ROOT / "backend/sandbox/cheese", "cheese"),
-        ):
-            (programs / destination).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, programs / destination)
+        runtime = acceptance.executor_release.install(programs)
         self.target = {
-            "command": [sys.executable, str(programs / "runtime.py")],
+            "command": [sys.executable, str(runtime)],
             "state": str(programs / "state"),
             "mcp_servers": [],
         }
