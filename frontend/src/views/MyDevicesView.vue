@@ -202,6 +202,7 @@ useCommands(() => [
   {
     id: 'devices.refresh',
     title: '刷新',
+    palette: false,
     icon: 'mdi-refresh',
     loading: loading.value,
     header: { iconOnly: true },

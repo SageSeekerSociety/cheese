@@ -1,11 +1,14 @@
 import { createApp } from 'vue'
 import { createVuetify } from 'vuetify'
+import { createPinia, getActivePinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
 import { SudoCancelledError, withSudo } from '../utils/sudo'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
+
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const me = vi.hoisted(() => ({ id: null as string | null }))
 const router = vi.hoisted(() => ({
@@ -30,6 +33,7 @@ vi.mock('vue-router', () => ({
 
 beforeEach(() => {
   vi.resetAllMocks()
+  setActivePinia(createPinia())
   me.id = null
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
@@ -47,6 +51,7 @@ async function openSettings() {
   const element = document.createElement('div')
   const app = createApp(ProjectSettingsView, { projectId: 'project' })
   app.use(createVuetify())
+  app.use(getActivePinia()!)
   app.mount(element)
   // 设置读完之后才画出各组；「工作电脑」那一组标题出现，就是这一页可以操作了。
   await vi.waitFor(() => expect(element.textContent).toContain('工作电脑'))
@@ -54,6 +59,19 @@ async function openSettings() {
 }
 
 describe('project settings', () => {
+  it.each([
+    ['alice', true],
+    ['bob', false],
+  ])('offers archiving only to the owner (owner=%s)', async (owner, offered) => {
+    useWorkspaceStore().projects = [{ id: 'project', name: '毕业设计', created_at: '', owner_handle: owner }]
+    const wrapper = await openSettings()
+    try {
+      expect(wrapper.element.textContent?.includes('归档项目')).toBe(offered)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('shows the hosted repository without offering a GitHub repository connection', async () => {
     vi.mocked(api.getForgeConnection).mockResolvedValue({
       kind: 'forgejo',

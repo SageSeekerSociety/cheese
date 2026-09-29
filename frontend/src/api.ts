@@ -589,6 +589,26 @@ export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
 
+/** 归档项目：只有所有者能做。项目从所有人的列表里消失、不能再修改，里面的内容都保留。 */
+export function archiveProject(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/archive`, { method: 'POST' })
+}
+
+/** 取消归档：项目和随它一起归档的话题回来。 */
+export function unarchiveProject(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/unarchive`, { method: 'POST' })
+}
+
+/** 我归档过的项目 —— 它们只在这里列出来。 */
+export function listArchivedProjects(): Promise<ListPayload<Project>> {
+  return request<ListPayload<Project>>('/projects?archived=true')
+}
+
+/** 后端拒绝写入一个已归档项目时，错误名是这个。 */
+export function isProjectArchivedError(e: unknown): boolean {
+  return e instanceof ApiError && e.code === 'ProjectArchivedError'
+}
+
 export function getProjectSite(projectId: string): Promise<ProjectSiteInfo> {
   return request<ProjectSiteInfo>(`/projects/${encodeURIComponent(projectId)}/site`)
 }

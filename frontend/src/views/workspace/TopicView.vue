@@ -11,6 +11,7 @@ import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicMemory } from '@/composables/useTopicMemory'
 
 import { listTopicMembers } from '@/api'
+import { useCommands } from '@/commands'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
@@ -120,6 +121,19 @@ async function archiveHere() {
 // one of its own (`cheesex.toolWidth`), plus a 钉住 toggle that decided whether
 // the doc made room for it at all.
 const { focusMode } = useTopicMemory() // 专注模式 (spec §7.1): session-only, a transient mode
+// 专注模式只在桌面上有：手机上本来就只有一栏。
+useCommands(() =>
+  mdAndUp.value
+    ? [
+        {
+          id: 'room.focus',
+          title: focusMode.value ? t('work.room.menu.exitFocus') : t('work.room.menu.focus'),
+          icon: focusMode.value ? 'mdi-arrow-collapse' : 'mdi-arrow-expand',
+          run: () => (focusMode.value = !focusMode.value),
+        },
+      ]
+    : []
+)
 // 收起 / 拉开的那一下里，栏在变窄变宽，里面的东西不跟着变：几百条消息每一帧按新
 // 宽度重新折行，既费又难看。把里面钉在这一栏落定时的宽度上，栏只是把它裁开、露出。
 function freezeChatWidth(el: Element) {

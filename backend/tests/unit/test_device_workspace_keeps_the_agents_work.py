@@ -505,3 +505,87 @@ def test_a_backup_refused_once_is_rebuilt_against_the_base_it_has_now(device):
     git(home, "clone", "-q", str(remote), str(recovered))
     git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
     assert git(recovered, "rev-parse", "FETCH_HEAD") == head
+
+
+def _commit(work, name, text, *extra):
+    (work / name).write_text(text)
+    git(work, "add", name)
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", *extra, "-m", f"edit {name}")
+    return git(work, "rev-parse", "HEAD")
+
+
+def _push_from_elsewhere(home, remote, branch, name):
+    """Someone other than this checkout adds a commit to the task's branch:
+    a teammate working the same task from another checkout, or a person."""
+    other = home / f"elsewhere-{name}"
+    git(home, "clone", "-q", "-b", branch, str(remote), str(other))
+    (other / name).write_text("theirs\n")
+    git(other, "add", name)
+    git(
+        other,
+        "-c",
+        "user.name=o",
+        "-c",
+        "user.email=o@example.com",
+        "commit",
+        "-m",
+        f"their {name}",
+    )
+    git(other, "push", "-q", "origin", branch)
+    return git(other, "rev-parse", "HEAD")
+
+
+def test_rewriting_the_commits_this_checkout_pushed_replaces_them_on_the_branch(
+    device,
+):
+    """Amending or rebasing what this checkout already pushed is how a task's
+    commits get tidied (dropping a dependency asks for exactly that); the
+    branch then carries the rewritten commits instead of refusing them."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    branch = tasks[task]["branch"]
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "first\n")
+    cli._sync_task(task)
+    rewritten = _commit(work, "a.txt", "first, amended\n", "--amend")
+
+    cli._sync_task(task)
+
+    assert git(remote, "rev-parse", branch) == rewritten
+    assert not (home / "posted.jsonl").exists()
+
+
+def test_a_rewrite_never_drops_commits_this_checkout_never_had(device):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    branch = tasks[task]["branch"]
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "first\n")
+    cli._sync_task(task)
+    theirs = _push_from_elsewhere(home, remote, branch, "b.txt")
+    _commit(work, "a.txt", "first, amended\n", "--amend")
+
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+
+    assert git(remote, "rev-parse", branch) == theirs
+    assert (home / "posted.jsonl").exists()
+
+
+def test_a_checkout_behind_its_branch_has_nothing_to_push(device):
+    """Another checkout of the same task went on and pushed more; this one,
+    with nothing of its own since, has nothing undelivered to report."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    branch = tasks[task]["branch"]
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "first\n")
+    cli._sync_task(task)
+    theirs = _push_from_elsewhere(home, remote, branch, "b.txt")
+    git(work, "fetch", "-q", "origin")  # as agents do, to look at the branch
+
+    cli._sync_all_tasks()
+    cli._sync_all_tasks()
+
+    assert git(remote, "rev-parse", branch) == theirs
+    assert not (home / "posted.jsonl").exists()

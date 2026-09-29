@@ -108,6 +108,7 @@ useCommands(() => [
   {
     id: 'library.refresh',
     title: '刷新',
+    palette: false,
     icon: 'mdi-refresh',
     loading: loading.value,
     header: { primary: true },

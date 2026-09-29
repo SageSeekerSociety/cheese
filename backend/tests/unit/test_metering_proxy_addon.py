@@ -1913,7 +1913,7 @@ def test_a_gateway_request_goes_to_chatgpt_on_the_accounts_credential(
     assert headers["authorization"] == "Bearer chatgpt-at-work"
     assert headers["chatgpt-account-id"] == "acct-work"
     assert headers["originator"] == "cheese"
-    assert headers["version"] == "0.153.4"
+    assert headers["version"] == "0.158.0"
     assert headers["host"] == "chatgpt.com"
     assert headers["content-type"] == "application/json"
     for gone in ("cookie", "x-api-key", "proxy-authorization"):

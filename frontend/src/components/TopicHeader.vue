@@ -20,7 +20,7 @@ import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
-import { menuActionOf } from '@/commands'
+import { menuActionOf, useCommands } from '@/commands'
 import { topicActions } from '@/commands/topicActions'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
@@ -117,13 +117,16 @@ function saveRename() {
   if (next) emit('rename', next)
 }
 
-const roomActions = computed<MenuAction[]>(() =>
-  topicActions(props.topic, {
+// 同一份话题操作：⋯ 面板里是一行一行的菜单，命令面板里是「操作」。
+function roomCommands() {
+  return topicActions(props.topic, {
     rename: startRename,
     archive: () => emit('archive'),
     unarchive: () => emit('unarchive'),
-  }).map(menuActionOf)
-)
+  })
+}
+const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf))
+useCommands(roomCommands)
 </script>
 
 <template>

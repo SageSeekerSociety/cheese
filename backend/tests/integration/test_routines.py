@@ -460,3 +460,18 @@ def test_a_turn_that_never_started_says_why(client):
     run = _runs(client, routine["id"])[0]
     assert run["status"] == "failed"
     assert "机器尚未配置或未连接" in run["error"]
+
+
+def test_a_routine_in_an_archived_project_runs_nothing(client):
+    project = _project(client)
+    room = _room(client, project)
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    archived = client.post(f"/projects/{project}/archive", headers=PERSON)
+    assert archived.status_code == 200, archived.text
+    _make_due(client, routine["id"])
+
+    result, runner = _sweep(client)
+
+    assert result["scheduled"] == 0
+    assert runner.submitted == []
+    assert _runs(client, routine["id"]) == []

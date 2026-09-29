@@ -33,6 +33,7 @@ import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings
 import ProjectMcpSettings from '../components/ProjectMcpSettings.vue'
 import ProjectTopicNamingSettings from '../components/ProjectTopicNamingSettings.vue'
 import AgentTeamSettings from '../components/settings/AgentTeamSettings.vue'
+import ArchiveProjectSection from '../components/settings/ArchiveProjectSection.vue'
 import CreditsPanel from '../components/settings/CreditsPanel.vue'
 import { parseApprovalsInput, parseCheckPaths } from '../lib/branchProtection'
 import {
@@ -42,17 +43,23 @@ import {
   isGithubAccountTokenExpired,
 } from '../lib/githubAccount'
 import { relTime } from '../lib/relTime'
-import { myId } from '../me'
+import { myHandle, myId } from '../me'
 import { SudoCancelledError, withSudo } from '../utils/sudo'
 
 import { useCommands } from '@/commands'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 // The project default never moves an agent that has already started working.
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const route = useRoute()
+
+const workspace = useWorkspaceStore()
+const project = computed(() => workspace.projects.find((p) => p.id === props.projectId) ?? null)
+const projectName = computed(() => project.value?.name ?? '')
+const ownsProject = computed(() => !!project.value?.owner_handle && project.value.owner_handle === myHandle())
 
 // 从 true 起步：挂载那一帧设置还没读回来，先画一帧空的表单再换成转圈就是一闪。
 const loading = ref(true)
@@ -889,6 +896,12 @@ useCommands(() => [
       </section>
 
       <ProjectMcpSettings :project-id="projectId" />
+
+      <!-- 最后一组只给所有者：归档是他一个人的决定（后端也只认他）。 -->
+      <template v-if="ownsProject">
+        <h2 class="t-title settings-group">归档</h2>
+        <ArchiveProjectSection :project-id="projectId" :project-name="projectName" />
+      </template>
       <div v-if="!revealed" class="reveal-gate__wait">
         <v-progress-circular indeterminate color="primary" />
       </div>
