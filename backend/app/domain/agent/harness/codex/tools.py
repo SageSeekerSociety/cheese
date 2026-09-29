@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import importlib.resources
+import io
 import json
 import posixpath
 import shutil
@@ -351,6 +352,10 @@ class RemoteTools:
                 self._platform_call, tool, params["callId"], params["arguments"]
             )
         receipt: dict
+        # What the platform said while this call waited for its machine: a
+        # Bash call is answered only once the command has run, so the agent
+        # reads it beside the command's output.
+        notice = io.StringIO()
         if server == "native":
             await self.find_shipped(params["arguments"])
             params = {**params, "arguments": self.on_the_machine(params["arguments"])}
@@ -368,6 +373,7 @@ class RemoteTools:
             except MachineOutOfReach:
                 receipt = {"error": MACHINE_OUT_OF_REACH}
         else:
+            bash = server == "native" and tool == "Bash"
             invoked = asyncio.ensure_future(
                 asyncio.to_thread(
                     self.client.call,
@@ -378,11 +384,22 @@ class RemoteTools:
                         "tool": tool,
                         "args": params["arguments"],
                     },
+                    preparing=notice if bash else None,
                 )
             )
-            if session_call and server == "native" and tool == "Bash":
+            if session_call and bash:
                 await self._yield_when_spoken_to(params["callId"], invoked)
             receipt = await invoked
+        answer = self._answer(server, receipt)
+        if notice.getvalue():
+            answer["contentItems"] = [
+                {"type": "inputText", "text": notice.getvalue().strip()},
+                *answer["contentItems"],
+            ]
+        return answer
+
+    @staticmethod
+    def _answer(server: str, receipt: dict) -> dict:
         if "error" in receipt:
             return {
                 "success": False,

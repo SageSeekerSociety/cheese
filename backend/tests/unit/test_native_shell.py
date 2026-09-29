@@ -421,7 +421,7 @@ DRIVER = textwrap.dedent(
     state = {{"reads": 0, "failed": 0}}
 
     class Flaky(real):
-        def call(self, method, params=None):
+        def call(self, method, params=None, **options):
             late = os.environ.get("DRIVER_LATE_START")
             if late and (params or {{}}).get("operation") == "start":
                 # The start still on its way when this process is killed: a
@@ -452,7 +452,7 @@ DRIVER = textwrap.dedent(
                     if kind == "os":
                         raise ConnectionResetError("link dropped")
                     raise client.MachineOutOfReach()
-            return super().call(method, params)
+            return super().call(method, params, **options)
 
     client.RemoteClient = Flaky
     raise SystemExit(client.shell(sys.argv[1], sys.argv[2]))
@@ -578,6 +578,91 @@ def test_the_first_command_after_the_machine_arrives_stops_promptly(tmp_path, ma
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=15) == -signal.SIGTERM
         _wait_for(lambda: not _alive("^sleep 65$"))
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_command_waiting_for_its_machine_says_so_once_then_runs(tmp_path, machine):
+    """A command issued before the session's machine exists waits for it. The
+    build shows the command's output as it comes, and a command silent for
+    minutes reads as a dead shell: so the first thing on its output is one
+    line from the platform saying what it is waiting for, and then, once the
+    machine is there, what the command itself prints."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    ready = threading.Event()
+    leases = []
+
+    class Platform(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/lease":
+                leases.append(body["timeout"])
+                # The platform's bounded wait, for a request that waits.
+                if not ready.is_set() and body["timeout"] > 0.01:
+                    ready.wait(0.3)
+                result = {
+                    "data": {
+                        "target": {
+                            "kind": "device",
+                            "workspace": str(machine.workspace),
+                            "url": base + "/execute",
+                            "generation": "prepared",
+                        },
+                        "token": "execution-only",
+                    }
+                    if ready.is_set()
+                    else {
+                        "unavailable": "云端工作电脑正在准备；对话和平台工具仍可用。",
+                        "preparing": True,
+                    }
+                }
+            else:
+                result = runtime.request(machine.state, body["method"], body["params"])
+            encoded = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Platform)
+    base = f"http://127.0.0.1:{server.server_port}"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    session = Session(tmp_path / "deferred-session", machine)
+    session.target.write_text(
+        json.dumps(
+            {
+                "kind": "deferred",
+                "workspace": "/unavailable-project",
+                "session_workspace": "/unavailable-project",
+                "lease_path": "/lease",
+                "target_file": str(session.target),
+                "central_workspace": str(session.central),
+                "central_config": str(session.config),
+                "central_tmp": str(session.tmp),
+                "central_hooks": {},
+            }
+        )
+    )
+    notice = "工作电脑正在准备，命令会在它就绪后执行（最多等 11 分钟）。\n".encode()
+    try:
+        process = session.prefix(
+            session.wrapped("echo real-output"),
+            cwd=session.central,
+            env=session.env(CHEESE_API=base, CHEESE_TOKEN="session-token"),
+        )
+        _wait_for(lambda: session.output.read_bytes() == notice)
+        # Still waiting, and still told only once.
+        _wait_for(lambda: len(leases) >= 4)
+        assert process.poll() is None
+        assert session.output.read_bytes() == notice
+        ready.set()
+        assert process.wait(timeout=30) == 0
+        assert session.output.read_bytes() == notice + b"real-output\n"
     finally:
         server.shutdown()
         server.server_close()
