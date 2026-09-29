@@ -112,6 +112,7 @@ vi.mock('@/components/tasks/TaskSubmissionHistory.vue', async () => {
 
 import TaskDetail from './Detail.vue'
 
+import i18n, { setLocale } from '@/i18n'
 import AccountService from '@/services/account'
 
 const SPACE_ID = 7
@@ -177,7 +178,7 @@ async function mount(task: Record<string, unknown> = {}, participation: Record<s
   await router.push(`/spaces/${SPACE_ID}/tasks/${TASK_ID}`)
   await router.isReady()
   const utils = render(TaskDetail, {
-    global: { plugins: [createVuetify({ components, directives }), router, createPinia()] },
+    global: { plugins: [createVuetify({ components, directives }), router, createPinia(), i18n] },
   })
   // 首屏是「接口回来之后」才有的东西 —— 等它出现，后面才有得量。
   await waitFor(() => expect(document.querySelector('.td__title')).not.toBeNull())
@@ -444,5 +445,37 @@ describe('题目详情', () => {
     await waitFor(() => expect(container.textContent).toContain('红黑树小组的项目'))
     const link = Array.from(container.querySelectorAll('a')).find((a) => a.textContent?.includes('红黑树小组的项目'))
     expect(link?.getAttribute('href')).toBe('/projects/p-1')
+  })
+
+  it('领不了的原因说中文：认得出的按原因说，认不出的给一句通用的，不露后端的英文', async () => {
+    setLocale('zh-CN')
+    const { container } = await mount({
+      participationEligibility: {
+        user: {
+          eligible: false,
+          reasons: [{ code: 'TASK_NOT_APPROVED', message: 'Task is not approved yet.' }],
+        },
+      },
+    })
+    expect(container.textContent).not.toContain('Task is not approved yet.')
+    expect(container.textContent).toContain('这道题还在审核中')
+
+    cleanup()
+    const other = await mount({
+      participationEligibility: {
+        user: { eligible: false, reasons: [{ code: 'SOMETHING_NEW', message: 'Something new happened.' }] },
+      },
+    })
+    expect(other.container.textContent).not.toContain('Something new happened.')
+    expect(other.container.textContent).toContain('暂时无法参与这道题')
+  })
+
+  it('提交期限按天说：老数据里存的毫秒也换成天', async () => {
+    const { container } = await mount({ defaultDeadline: 14 * 86_400_000 })
+    expect(factsOf(container)['提交期限']).toBe('领取后 14 天')
+
+    cleanup()
+    const days = await mount({ defaultDeadline: 30 })
+    expect(factsOf(days.container)['提交期限']).toBe('领取后 30 天')
   })
 })

@@ -344,9 +344,10 @@ describe('当前使用中的码', () => {
     expect(currentBlock().querySelector('.current__code')).toBeNull()
   })
 
-  it('一张码都没有时，不会凭空给出一张当前码', async () => {
+  it('一张码都没有时只有一个空状态，也不会凭空给出一张当前码', async () => {
     listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [] } }))
-    await mount('暂无可用的码')
-    expect(currentBlock().querySelector('.current__code')).toBeNull()
+    await mount('暂无邀请码')
+    expect(document.querySelector('.current')).toBeNull()
+    expect(document.body.textContent).not.toContain('暂无可用的码')
   })
 })

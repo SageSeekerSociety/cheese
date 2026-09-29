@@ -163,8 +163,12 @@ const sorted = computed(() =>
 
 <template>
   <PageHeader :title="t('spaces.detail.announcements')" show-on-mobile>
-    <template v-if="isManager" #actions>
-      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreate">发布公告</v-btn>
+    <!-- 插槽本身不能带 v-if：PageHeader 只在挂上那一刻看有没有操作区插槽，空间读回来、
+         知道你是管理员时它已经不再看了。条件放在按钮上。 -->
+    <template #actions>
+      <v-btn v-if="isManager" color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreate">
+        发布公告
+      </v-btn>
     </template>
   </PageHeader>
   <div class="ann">

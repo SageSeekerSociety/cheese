@@ -208,7 +208,8 @@ async function submitCreate() {
     <div>
       <!-- 「当前使用中的码」单列在这里，不和列表第一格混为一谈：用尽或过期的码就躺在
              列表第一格上，照它发出去是发不出去的。 -->
-      <v-sheet variant="tonal" rounded="lg" class="current pa-3 mb-4">
+      <!-- 一张码都没有时只说一次「暂无邀请码」，这一块不出现。 -->
+      <v-sheet v-if="codes.length > 0" variant="tonal" rounded="lg" class="current pa-3 mb-4">
         <div class="current__label">当前使用中的码</div>
         <div v-if="active" class="current__body">
           <code class="current__code">{{ active.code }}</code>

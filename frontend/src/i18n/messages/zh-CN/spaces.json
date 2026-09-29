@@ -274,6 +274,11 @@
     "transfer": "转让所有者",
     "confirmRevoke": "取消 {name} 的管理员身份？",
     "confirmTransfer": "把所有者转让给 {name}？转让后你会成为管理员。",
-    "empty": "暂无成员"
+    "empty": "暂无成员",
+    "role": {
+      "owner": "所有者",
+      "admin": "管理员",
+      "member": "成员"
+    }
   }
 }

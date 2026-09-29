@@ -15,6 +15,7 @@ import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
+import PageHeader from '@/components/common/PageHeader.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import BarList from '@/components/spaces/BarList.vue'
 import MetricCard from '@/components/spaces/MetricCard.vue'
@@ -186,14 +187,14 @@ function detailTo() {
 </script>
 
 <template>
+  <PageHeader :title="task?.name ?? '单题分析'" show-on-mobile>
+    <template #actions>
+      <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" :to="detailTo()">回到题目</v-btn>
+    </template>
+  </PageHeader>
   <div v-if="task" class="ins">
-    <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" :to="detailTo()" class="ins__back">
-      回到题目
-    </v-btn>
-
     <div class="ins__head">
       <div>
-        <h1>{{ task.name }}</h1>
         <p>
           <UserRef :handle="task.creator?.username" :name="task.creator?.nickname" /> 出题
           <template v-if="task.category?.name"> · {{ task.category.name }}</template>
@@ -283,8 +284,8 @@ function detailTo() {
 </template>
 
 <style scoped lang="scss">
-.ins__back {
-  margin-bottom: 10px;
+.ins {
+  padding: 16px;
 }
 
 .ins__head {
@@ -295,15 +296,8 @@ function detailTo() {
   margin-bottom: 18px;
 }
 
-.ins__head h1 {
-  margin: 0;
-  font-size: 1.3rem;
-  font-weight: 650;
-  line-height: 1.4;
-}
-
 .ins__head p {
-  margin: 6px 0 0;
+  margin: 0;
   color: rgba(var(--v-theme-on-surface), 0.58);
   font-size: 0.8rem;
 }

@@ -30,20 +30,6 @@ vi.mock('@/network/api/spaces', () => ({
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-// 页头只是个壳（面包屑要真路由和导航 store）；这里只留它的标题与操作区插槽。
-vi.mock('@/components/common/PageHeader.vue', async () => {
-  const { defineComponent, h } = await import('vue')
-  return {
-    default: defineComponent({
-      name: 'PageHeaderStub',
-      props: { title: { type: String, default: '' } },
-      setup(props, { slots }) {
-        return () => h('div', { class: 'page-header-stub' }, [props.title, slots.default?.(), slots.actions?.()])
-      },
-    }),
-  }
-})
-
 // 读弹窗的正文是 tiptap 富文本；这一批测的是它上面那行「谁 · 什么时候 · 改过没有」，
 // 所以把渲染器换成一个只画文本的替身 —— 编辑器本身不进 happy-dom。
 vi.mock('@/components/common/Editor/TipTapViewer.vue', async () => {
@@ -361,5 +347,31 @@ describe('公告页的时间与「已编辑」', () => {
     expect(meta()).toContain('马小雨')
     expect(meta()).toContain('3天前')
     expect(meta()).not.toContain('已编辑')
+  })
+})
+
+describe('公告页的发布入口', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+    spaceUpdate.mockImplementation(async () => ({ data: { space: space([]) } }))
+  })
+
+  afterEach(() => {
+    dialogs.splice(0, dialogs.length)
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('所有者在一条公告都没有时也能发第一条（空间读回来之后才知道他是所有者）', async () => {
+    signIn('caisongyang')
+    spaceDetail.mockImplementation(async () => ({ data: { space: space([]) } }))
+    await mount()
+
+    await waitFor(() =>
+      expect(Array.from(document.querySelectorAll('button')).some((b) => b.textContent?.includes('发布公告'))).toBe(
+        true
+      )
+    )
   })
 })

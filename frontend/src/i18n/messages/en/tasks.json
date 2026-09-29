@@ -117,5 +117,19 @@
     "ongoing": "Registration open",
     "ended": "Closed",
     "rejected": "Rejected"
+  },
+  "eligibility": {
+    "TASK_NOT_APPROVED": "This task is still under review and can be claimed once approved",
+    "REGISTRATION_NOT_STARTED": "Registration has not opened yet",
+    "REGISTRATION_CLOSED": "Registration has closed",
+    "PARTICIPANT_LIMIT_REACHED": "This task has no places left",
+    "ALREADY_PARTICIPATING": "You have already claimed this task",
+    "MISSING_REAL_NAME": "This task requires real-name information",
+    "USER_RANK_NOT_HIGH_ENOUGH": "Your rank is not high enough for this task",
+    "TEAM_TOO_SMALL": "The team is smaller than this task requires",
+    "TEAM_TOO_LARGE": "The team is larger than this task allows",
+    "TEAM_MEMBER_MISSING_REAL_NAME": "Some team members have not provided real-name information",
+    "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH": "Some team members do not have a high enough rank",
+    "unknown": "You cannot take part in this task right now"
   }
 }

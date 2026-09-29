@@ -32,7 +32,6 @@ export default {
       redirect: { name: 'SpacesDetailTasksList' },
       meta: {
         title: '题目',
-        icon: { type: 'icon', value: 'mdi-cube-outline' },
       },
       children: [
         {
@@ -70,10 +69,8 @@ export default {
         {
           path: 'publish',
           name: 'SpacesDetailPublishTask',
-          components: {
-            default: () => import('@/views/spaces/detail/PublishTask.vue'),
-            header: () => import('@/components/common/PageHeader.vue'),
-          },
+          // 页头由页面自己画：那两条路的切换放在页头的操作区里。
+          component: () => import('@/views/spaces/detail/PublishTask.vue'),
           meta: {
             titleKey: 'tasks.publish.title',
             backTo: 'SpacesDetailTasksList',
@@ -189,7 +186,6 @@ export default {
       redirect: { name: 'SpacesDetailAnalyticsOverview' },
       meta: {
         title: '数据分析',
-        icon: { type: 'icon', value: 'mdi-chart-line' },
       },
       children: [
         {

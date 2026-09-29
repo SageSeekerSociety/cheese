@@ -38,6 +38,8 @@ vi.mock('@/network/api/spaces', () => ({
 
 import TaskInsights from './Insights.vue'
 
+import i18n from '@/i18n'
+
 const SPACE_ID = 7
 const TASK_ID = 3
 
@@ -86,7 +88,7 @@ async function mount() {
   await router.isReady()
 
   const utils = render(TaskInsights, {
-    global: { plugins: [createVuetify({ components, directives }), router, createPinia()] },
+    global: { plugins: [createVuetify({ components, directives }), router, createPinia(), i18n] },
   })
   // 题目是首屏那一块「接口回来之后」才有的东西 —— 等它出现，后面才有得量。
   await waitFor(() => expect(document.querySelector('.ins__kpis')).toBeTruthy())

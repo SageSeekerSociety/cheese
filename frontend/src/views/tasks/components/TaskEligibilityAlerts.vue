@@ -8,11 +8,11 @@
   >
     <template #text>
       <div class="mt-2">
-        <div class="font-weight-medium">{{ userReasons[0]?.message || '你当前无法参与这道题' }}</div>
+        <div class="font-weight-medium">{{ reasonText(userReasons[0]?.code) }}</div>
         <div v-if="userReasons[0]?.code === 'USER_RANK_NOT_HIGH_ENOUGH'" class="mt-2 text-medium-emphasis">
           完成更多基础题目来提升等级，解锁更高难度的题目。
         </div>
-        <div v-if="userReasons[0]?.code === 'USER_MISSING_REAL_NAME'" class="mt-2 text-medium-emphasis">
+        <div v-if="userReasons[0]?.code === 'MISSING_REAL_NAME'" class="mt-2 text-medium-emphasis">
           <div class="d-flex align-center ga-2">
             <span>这道题需要实名信息才能参与。</span>
             <v-btn variant="tonal" size="small" :to="{ name: 'UserSettingsRealName' }">
@@ -20,9 +20,6 @@
               <v-icon end>mdi-arrow-right</v-icon>
             </v-btn>
           </div>
-        </div>
-        <div v-if="userReasons[0]?.code === 'PARTICIPANT_LIMIT_REACHED'" class="mt-2 text-medium-emphasis">
-          这道题的名额已满。
         </div>
       </div>
     </template>
@@ -63,16 +60,16 @@
                 <div v-for="(reason, index) in entry.eligibility.reasons" :key="index" class="mb-2">
                   <div class="font-weight-medium">
                     <v-icon color="warning" size="small" class="mr-1">mdi-alert-circle</v-icon>
-                    {{ reason.message }}
+                    {{ reasonText(reason.code) }}
                   </div>
-                  <div v-if="reason.code === 'TEAM_SIZE_MIN_NOT_MET'" class="mt-1 text-medium-emphasis">
+                  <div v-if="reason.code === 'TEAM_TOO_SMALL'" class="mt-1 text-medium-emphasis">
                     这道题要求团队至少 {{ task.minTeamSize }} 人，邀请更多成员加入团队。
                   </div>
-                  <div v-if="reason.code === 'TEAM_SIZE_MAX_EXCEEDED'" class="mt-1 text-medium-emphasis">
+                  <div v-if="reason.code === 'TEAM_TOO_LARGE'" class="mt-1 text-medium-emphasis">
                     这道题要求团队最多 {{ task.maxTeamSize }} 人，你的团队人数超出限制。
                   </div>
                   <div v-if="reason.code === 'TEAM_MEMBER_MISSING_REAL_NAME'" class="mt-1">
-                    <p class="text-medium-emphasis mb-2">团队中有成员尚未填写实名信息：</p>
+                    <p class="text-medium-emphasis mb-2">以下成员尚未填写实名信息：</p>
                     <v-list
                       v-if="entry.team.memberRealNameStatus"
                       density="compact"
@@ -90,9 +87,6 @@
                       </v-list-item>
                     </v-list>
                   </div>
-                  <div v-if="reason.code === 'TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH'" class="mt-1 text-medium-emphasis">
-                    团队中有成员等级不足，无法参与这个难度的题目。
-                  </div>
                 </div>
                 <v-btn
                   variant="tonal"
@@ -109,12 +103,9 @@
         </div>
 
         <div v-else-if="userReasons.length > 0" class="font-weight-medium">
-          {{ userReasons[0]?.message || '你当前无法参与这道题' }}
+          {{ reasonText(userReasons[0]?.code) }}
           <div v-if="userReasons[0]?.code === 'USER_RANK_NOT_HIGH_ENOUGH'" class="mt-2 text-medium-emphasis">
             完成更多基础题目来提升等级，解锁更高难度的题目。
-          </div>
-          <div v-if="userReasons[0]?.code === 'PARTICIPANT_LIMIT_REACHED'" class="mt-2 text-medium-emphasis">
-            这道题的名额已满。
           </div>
         </div>
       </div>
@@ -126,10 +117,31 @@
 import type { Task } from '@/types'
 
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
 
 const props = defineProps<{ task: Task }>()
+const { t } = useI18n()
+
+/** 后端给的 `message` 是英文日志句，不给人看；按 `code` 说中文，认不出的给一句通用的。 */
+const REASON_KEYS: Record<string, string> = {
+  TASK_NOT_APPROVED: 'tasks.eligibility.TASK_NOT_APPROVED',
+  REGISTRATION_NOT_STARTED: 'tasks.eligibility.REGISTRATION_NOT_STARTED',
+  REGISTRATION_CLOSED: 'tasks.eligibility.REGISTRATION_CLOSED',
+  PARTICIPANT_LIMIT_REACHED: 'tasks.eligibility.PARTICIPANT_LIMIT_REACHED',
+  ALREADY_PARTICIPATING: 'tasks.eligibility.ALREADY_PARTICIPATING',
+  MISSING_REAL_NAME: 'tasks.eligibility.MISSING_REAL_NAME',
+  USER_RANK_NOT_HIGH_ENOUGH: 'tasks.eligibility.USER_RANK_NOT_HIGH_ENOUGH',
+  TEAM_TOO_SMALL: 'tasks.eligibility.TEAM_TOO_SMALL',
+  TEAM_TOO_LARGE: 'tasks.eligibility.TEAM_TOO_LARGE',
+  TEAM_MEMBER_MISSING_REAL_NAME: 'tasks.eligibility.TEAM_MEMBER_MISSING_REAL_NAME',
+  TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH: 'tasks.eligibility.TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH',
+}
+
+function reasonText(code: string | undefined): string {
+  return t(REASON_KEYS[code ?? ''] ?? 'tasks.eligibility.unknown')
+}
 
 const deadlinePassed = computed(() => props.task.deadline != null && props.task.deadline < Date.now())
 

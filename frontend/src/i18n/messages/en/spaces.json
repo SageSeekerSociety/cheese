@@ -221,6 +221,11 @@
     "transfer": "Transfer ownership",
     "confirmRevoke": "Remove {name} as an admin?",
     "confirmTransfer": "Transfer ownership to {name}? You will become an admin.",
-    "empty": "No members"
+    "empty": "No members",
+    "role": {
+      "owner": "Owner",
+      "admin": "Admin",
+      "member": "Member"
+    }
   }
 }

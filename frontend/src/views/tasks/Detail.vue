@@ -365,8 +365,13 @@ const formText = computed(() => {
 /** 难度：1–5 星；老数据没有难度时不画这一行。 */
 const rank = computed(() => taskData.value?.rank ?? 0)
 
-/** 领取之后给我的提交期限（天）；0 或没有就不画这一行。 */
-const defaultDeadline = computed(() => taskData.value?.defaultDeadline ?? 0)
+/** 领取之后给我的提交期限（天）；0 或没有就不画这一行。
+ *  发题表单存的是天数，老数据里存的是毫秒（14 天存成 1209600000），两种都换成天。 */
+const DAY_MS = 86_400_000
+const defaultDeadline = computed(() => {
+  const raw = taskData.value?.defaultDeadline ?? 0
+  return raw >= DAY_MS ? Math.round(raw / DAY_MS) : raw
+})
 
 const CountdownTimer = defineAsyncComponent(() => import('@/components/common/CountdownTimer.vue'))
 

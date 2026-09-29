@@ -336,7 +336,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
 </script>
 
 <template>
-  <PageHeader :title="mode === 'write' ? '发布题目' : '从 PDF 生成题目'" show-on-mobile>
+  <PageHeader show-on-mobile>
     <template #actions>
       <v-btn-toggle v-model="mode" density="compact" variant="outlined" divided mandatory class="pub__mode">
         <v-btn value="write" size="small" prepend-icon="mdi-pencil-outline">手写一道</v-btn>
