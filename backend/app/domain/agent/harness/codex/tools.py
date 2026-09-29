@@ -311,10 +311,14 @@ class RemoteTools:
                     )
                 return
 
-    def _platform_call(self, tool: str, call_id: str, arguments: dict) -> dict:
+    def _platform_call(
+        self, tool: str, call_id: str, arguments: dict, notice: io.StringIO
+    ) -> dict:
         def invoke(payload, args):
             return self.client.call(
-                "invoke", {"id": payload["id"], "tool": payload["tool"], "args": args}
+                "invoke",
+                {"id": payload["id"], "tool": payload["tool"], "args": args},
+                preparing=notice,
             )
 
         host = PlatformHost(self.client, invoke, call_id, self.doc_versions)
@@ -347,15 +351,39 @@ class RemoteTools:
                 # And where the runner reads it, to know the turn may end.
                 Path(owed["answered"]).write_text(owed["id"])
         server, tool = self.routes[params["tool"]]
-        if server == PLATFORM:
-            return await asyncio.to_thread(
-                self._platform_call, tool, params["callId"], params["arguments"]
-            )
-        receipt: dict
-        # What the platform said while this call waited for its machine: a
-        # Bash call is answered only once the command has run, so the agent
-        # reads it beside the command's output.
+        # What the platform said while this call waited for its machine. Codex
+        # hears a call only once it has run, so the agent reads it at the head
+        # of the call's result.
         notice = io.StringIO()
+        if server == PLATFORM:
+            answer = await asyncio.to_thread(
+                self._platform_call,
+                tool,
+                params["callId"],
+                params["arguments"],
+                notice,
+            )
+        else:
+            receipt = await self._executor_call(
+                server, tool, params, notice, session_call
+            )
+            answer = self._answer(server, receipt)
+        if notice.getvalue():
+            answer["contentItems"] = [
+                {"type": "inputText", "text": notice.getvalue().strip()},
+                *answer["contentItems"],
+            ]
+        return answer
+
+    async def _executor_call(
+        self,
+        server: str,
+        tool: str,
+        params: dict,
+        notice: io.StringIO,
+        session_call: bool,
+    ) -> dict:
+        receipt: dict
         if server == "native":
             await self.find_shipped(params["arguments"])
             params = {**params, "arguments": self.on_the_machine(params["arguments"])}
@@ -369,11 +397,11 @@ class RemoteTools:
                     server,
                     tool,
                     params["arguments"],
+                    notice,
                 )
             except MachineOutOfReach:
                 receipt = {"error": MACHINE_OUT_OF_REACH}
         else:
-            bash = server == "native" and tool == "Bash"
             invoked = asyncio.ensure_future(
                 asyncio.to_thread(
                     self.client.call,
@@ -384,19 +412,13 @@ class RemoteTools:
                         "tool": tool,
                         "args": params["arguments"],
                     },
-                    preparing=notice if bash else None,
+                    preparing=notice,
                 )
             )
-            if session_call and bash:
+            if session_call and server == "native" and tool == "Bash":
                 await self._yield_when_spoken_to(params["callId"], invoked)
             receipt = await invoked
-        answer = self._answer(server, receipt)
-        if notice.getvalue():
-            answer["contentItems"] = [
-                {"type": "inputText", "text": notice.getvalue().strip()},
-                *answer["contentItems"],
-            ]
-        return answer
+        return receipt
 
     @staticmethod
     def _answer(server: str, receipt: dict) -> dict:

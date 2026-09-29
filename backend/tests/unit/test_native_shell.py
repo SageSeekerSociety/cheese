@@ -648,7 +648,7 @@ def test_a_command_waiting_for_its_machine_says_so_once_then_runs(tmp_path, mach
             }
         )
     )
-    notice = "工作电脑正在准备，命令会在它就绪后执行（最多等 11 分钟）。\n".encode()
+    notice = "工作电脑正在准备，这次操作会在它就绪后执行（最多等 11 分钟）。\n".encode()
     try:
         process = session.prefix(
             session.wrapped("echo real-output"),
