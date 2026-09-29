@@ -18,8 +18,8 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { after, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { after, describe, it } from 'node:test'
 
 import { ESLint } from 'eslint'
 

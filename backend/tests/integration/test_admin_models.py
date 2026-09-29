@@ -58,8 +58,8 @@ _NEW_MODEL = {
     "capabilities": {"reasoning": True, "vision": False},
 }
 
-#: 网关里一条**运行时**模型（`db_model` 为真，origin=runtime，可改）。订阅导入
-#: 挂的那种模型就长这样：`extra_headers` 三件套已经在 litellm_params 里。
+#: 网关里一条**运行时**模型（`db_model` 为真，origin=runtime，可改），
+#: litellm_params 里已经带着 `extra_headers`。
 _RUNTIME_MODEL = {
     "model_name": "runtime-x",
     "litellm_params": {
@@ -281,7 +281,7 @@ def test_a_failed_write_is_recorded_too(client, as_admin, gateway):
 
 @pytest.fixture
 def runtime_gateway(client, monkeypatch) -> SimpleNamespace:
-    """模型表里有一条**运行时**模型的假网关（订阅导入挂的那种，头上已带三件套）。"""
+    """模型表里有一条**运行时**模型的假网关（头上已带 `extra_headers`）。"""
     gateway_models.reset_cache()
     calls: list[httpx.Request] = []
     _install(
@@ -313,9 +313,8 @@ def _patches(calls: list[httpx.Request]) -> list[dict]:
 def test_a_patch_without_extra_headers_leaves_the_gateway_side_alone(
     client, as_admin, runtime_gateway
 ):
-    """PATCH 合并语义在**客户端**兑现：表单不知道订阅头（v1 不暴露编辑），改
-    标签的 PATCH 里不带 `extra_headers` —— 带了就是整组替换，会把订阅导入
-    写进去的三件套弄丢。"""
+    """PATCH 合并语义在**客户端**兑现：表单不编辑 `extra_headers`，改标签的
+    PATCH 里不带它 —— 带了就是整组替换，会把网关上已有的头弄丢。"""
     r = client.patch(
         "/admin/gateway/models/runtime-x",
         json={"label": "新标签"},
@@ -325,14 +324,14 @@ def test_a_patch_without_extra_headers_leaves_the_gateway_side_alone(
     sent = _patches(runtime_gateway.calls)
     assert len(sent) == 1
     # 标签只动 model_info：litellm_params 整个不出现（或出现了也不带头），
-    # 网关侧的既有三件套因此原样保留。
+    # 网关侧的既有头因此原样保留。
     assert "extra_headers" not in sent[0].get("litellm_params", {})
 
 
 def test_a_patch_with_extra_headers_replaces_the_whole_set(
     client, as_admin, runtime_gateway
 ):
-    """给了才整组替换（订阅导入/刷新推进走的就是这条路）。"""
+    """给了才整组替换。"""
     headers = {
         "chatgpt-account-id": "acct-2",
         "originator": "codex_cli_rs",

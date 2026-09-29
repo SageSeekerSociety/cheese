@@ -44,7 +44,6 @@ class Purpose(StrEnum):
     FORGE_PASSWORD = "forge-password"
     FORGE_TOKEN = "forge-token"
     OAUTH_TOKEN = "oauth-token"
-    LLM_SUBSCRIPTION_TOKEN = "llm-subscription-token"
     REALNAME = "realname"
     INTEGRATION_SECRET = "integration-secret"
     INTEGRATION_STATE = "integration-state"

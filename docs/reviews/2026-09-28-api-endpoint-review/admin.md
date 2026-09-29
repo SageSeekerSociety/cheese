@@ -1,4 +1,4 @@
-# admin 组逐接口分析（65 条）
+# admin 组逐接口分析（57 条）
 
 只读分析，未改任何代码。判断顺序：GitHub REST 惯例 → 项目自己的既定契约
 （`backend/design/common/parameters.yaml`、`responses.yaml`，以及 `backend/alembic/versions/a9c4e7f12b60_*.py`
@@ -42,14 +42,6 @@
 | 27 | GET | `/admin/stats/pipeline` | 暂无 | 十几个 `count(*)`，但都在 `accept_cards`/`questions` 这类小表上，代价可接受（模式见模块级第 4 条） |
 | 28 | GET | `/admin/stats/product` | 暂无 | 三组都是按天 GROUP BY，窗口必填，无 N+1 |
 | 29 | GET | `/admin/stats/integrations` | 暂无 | 四个 `count(*)`（凭据表量级），无窗口是刻意的 |
-| 30 | POST | `/admin/subscriptions/device-flows` | 暂无 | 「一座一订阅」409 在服务层兑现，审计落 `subscription.start` |
-| 31 | POST | `/admin/subscriptions/device-flows/{flow_id}/poll` | 可优化 | 前端每次轮询都 `SELECT … FOR UPDATE` + 写 `flow_last_poll_at` + 提交，被节流的那次也照写 |
-| 32 | POST | `/admin/subscriptions/device-flows/{flow_id}/cancel` | 暂无 | 行锁 + `subscription.cancel` 审计 |
-| 33 | GET | `/admin/subscriptions` | 暂无 | 无分页，但这张表天然是「一座一订阅」的个位数量级（`list_all` 仍是全量，见模块级第 5 条） |
-| 34 | POST | `/admin/subscriptions/{subscription_id}/refresh` | 暂无 | 行锁内完成，三类结局各自落审计 |
-| 35 | GET | `/admin/subscriptions/{subscription_id}/quota` | 暂无 | 传输错误回旧快照（`stale: true`），无快照才 503 |
-| 36 | PATCH | `/admin/subscriptions/{subscription_id}/upstream-model` | 暂无 | 显式 null 与「没提」靠 `model_fields_set` 区分，审计落 failed |
-| 37 | DELETE | `/admin/subscriptions/{subscription_id}` | 暂无 | 终态必落库、网关失败只影响这次响应，审计落 failed |
 | 38 | GET | `/ai/quota` | 可优化 | 读路径会 INSERT（懒建额度行），而 `user_ai_quota.user_id` **没有唯一约束**——并发首次访问会插两行，之后每次 `scalar_one_or_none()` 直接 500 |
 | 39 | GET | `/ai/models` | 待确认 | 全模块唯一**没有**任何鉴权依赖的端点（静态列表，风险低，但同模块不一致） |
 | 40 | GET | `/ai/conversations` | 可优化 | 参数名驼峰 `pageStart`/`pageSize`（本模块外一律下划线），且这里的 `pageStart` 是**游标 id**，与 `/admin/feedback` 的同名参数（offset）语义相反 |
@@ -91,7 +83,7 @@
 
 **谁被授权、检查落在哪**：
 
-- 清单第 1–37 条（`/admin/*`）**每一条 handler 的签名上都有 `PlatformAdminDep`**，已逐条核对：`admin_feedback.py:87/140/151/170/189`、`admin_memory.py:88/101/111/121/133/144`、`admin_models.py:105/120/133/148/164/175/196/211/236`、`admin_spaces.py:20/33`、`admin_stats.py:51/65/81/140/159/174/189`、`admin_subscriptions.py:96/124/138/150/160/175/191/211`。没有一条漏挂。
+- 清单第 1–29 条（`/admin/*`）**每一条 handler 的签名上都有 `PlatformAdminDep`**，已逐条核对：`admin_feedback.py:87/140/151/170/189`、`admin_memory.py:88/101/111/121/133/144`、`admin_models.py:105/120/133/148/164/175/196/211/236`、`admin_spaces.py:20/33`、`admin_stats.py:51/65/81/140/159/174/189`。没有一条漏挂。
 - 这道门做两件事（`admin_common.py:41-77`）：`AdminService.require_admin`（配置里的根管理员 ∪ `platform_admins` 表，403）与 `policy.refuse_management_action`（带 agent 绑定的 actor 一律拒）。**注意 `/admin/*` 不在 `main.py` 的 `_CHEESE_WRITE_PATHS` 白名单里，中间件不看这个前缀**——所以路由体里这一次拒绝就是全部的拒绝，而它确实存在（`admin_common.py:71-77` 在依赖里，先于 handler 执行）。
 - 已经验证过的（不是靠假设）：`test_admin_stats.py` / `test_admin_members.py` / `test_admin_models.py` 里有「非管理员 403」的用例。
 - 第 38–45 条 `/ai/*`：7 条走 `require_auth_user`（`ai.py:39/68/86/102/117/130/147`），**`GET /ai/models`（`ai.py:57`）一条鉴权都没有**（见第 39 条）。越权面由 `AIChatService` 的 `conv.owner_id != user_id → ForbiddenError` 兜住（`llm/chat_service.py:120/137/151/184`），我看过是每条读改删都判了。
@@ -105,7 +97,6 @@
 |---|---|---|---|
 | 模型增删改 / 停用 | `/admin/gateway/models*` | `gateway_admin_audit`：actor、action、target、ok/failed、`before`/`after`（`gateway_models.py:712-738`，成功失败都落） | 有，且最完整 |
 | 改项目刹车值 | `PUT …/budget` | 同上 | 有 |
-| 订阅完成/刷新/撤销/取消/改上游 | `/admin/subscriptions*` | 同上（自动动作 actor=`system`），快照脱敏（`_audit_snapshot`） | 有 |
 | 反馈状态推进 | `POST …/status` | `feedback_timeline`（`by_handle`）与状态同事务 | 有 |
 | 反馈改优先级 / 指派人 | `PATCH …/{id}` | **无**（只有 `security` 翻转会写一条时间线，`feedback/services.py:825-829`） | **缺** |
 | 反馈内部备注 | `POST …/notes` | `FeedbackNote` 行（作者、时间） | 有 |
@@ -114,7 +105,7 @@
 | 记忆迁移 复核 | `POST …/approve` | `approved_by`/`approved_at` | 有 |
 | 记忆迁移 **落笔**（真正改写记忆树） | `POST …/apply` | **只有 `applied_at`，没有 `applied_by`**；`apply()` 收了 `by=` 一次都没用（`migration_service.py:371-441`，全文只有 `row.project_id`），房间里的公告也「谁的名都不点」（`_say_report` 的注释、`_say_applied:491-506`） | **缺** |
 
-**其它安全面**：全仓 `git grep` 过一遍，管理端响应里没有 token/密文（订阅 DTO 在 `_dto` 一处脱敏、`_KEY_FIELD_NAMES` 把 OAuth 三件套也纳入了审计剔除），`account_email` 是管理页有意显示的 PII。速率限制：`/admin/*` 与 `/ai/chat` 都没有限流（`/ai/chat` 每次真花钱，见第 45 条）。
+**其它安全面**：全仓 `git grep` 过一遍，管理端响应里没有 token/密文（`_KEY_FIELD_NAMES` 把 OAuth 三件套也纳入了审计剔除）。速率限制：`/admin/*` 与 `/ai/chat` 都没有限流（`/ai/chat` 每次真花钱，见第 45 条）。
 
 ---
 
@@ -727,45 +718,6 @@ async def audit_log(
 - **契约**：纯增量（`actor`/`action`/`target`/`before` 都是可选，`items` 的键不变，多一个 `next_before`）。唯一需要迁移的是索引形状（把 `id` 加进去，可省——现有一条索引已经能服务 `created_at DESC` 的范围扫，`id` 只在同毫秒并列时影响顺序稳定性）。**这个表还没有保留期/清理**（只增），长期是运营问题，不是这次要改的。
 - **测试**：`tests/unit/test_gateway_admin.py` 旁边加 `tests/integration/test_admin_models.py::test_audit_pages_backwards_and_filters_by_actor`（造 3 条审计，`limit=2` 拿两页且第二页不比第一页新；`actor=` 过滤只回那一人的）。
 
-### POST /admin/subscriptions/device-flows/{flow_id}/poll
-
-- **现状**：`api/routes/admin_subscriptions.py:120-131` → `SubscriptionService.poll_flow`（`domain/subscription/services.py:196-329`）。
-- **问题**：前端每隔几秒轮询一次，而每次进服务就先 `get_locked(flow_id)`（`services.py:203`，`repositories.py:33-45` 是 `SELECT … FOR UPDATE`）——**被节流的那次也照样加行锁**，而且 `sub.flow_last_poll_at = now`（`services.py:213`）会让每一轮都产生一次 UPDATE 与一次提交（`_record` 之外，`get_db` 收尾 commit 也会写）。一次授权流程几十轮轮询，等于几十次写 + 几十次锁等待，而其中绝大多数只是「还没好」。
-- **优化**：节流判定不需要写锁——先做一次非锁定读，被节流就直接返回；只有真要去问上游时才拿锁。
-
-```python
-# app/domain/subscription/services.py
-    async def poll_flow(self, *, handle: str, flow_id: uuid.UUID) -> dict:
-        # 快路：节流窗口内的轮询不拿行锁、不写库 —— 前端每几秒来一次，
-        # 唯一要做的事就是回答「还没好」，而 FOR UPDATE 与 UPDATE 都只为真轮询服务。
-        peek = await self._repo.get(flow_id)          # 非锁定读
-        if peek is None or peek.status != "pending":
-            raise NotFoundError("这个授权流程不存在或已结束")
-        now = _utcnow()
-        if peek.flow_expires_at is not None and peek.flow_expires_at <= now:
-            peek.status = "flow_expired"
-            _clear_flow(peek)
-            return {"state": "expired"}
-        if _poll_throttled(peek.flow_last_poll_at, now):
-            return {"state": "pending"}
-
-        sub = await self._repo.get_locked(flow_id)    # 真要去上游了才拿锁
-        if sub is None or sub.status != "pending":
-            raise NotFoundError("这个授权流程不存在或已结束")
-        if sub.flow_expires_at is not None and sub.flow_expires_at <= now:
-            sub.status = "flow_expired"
-            _clear_flow(sub)
-            return {"state": "expired"}
-        now = _utcnow()
-        if _poll_throttled(sub.flow_last_poll_at, now):   # 锁内复检，语义与原来一致
-            return {"state": "pending"}
-        sub.flow_last_poll_at = now
-        ...
-```
-
-- **契约**：响应三态一字不改（`pending`/`complete`/`expired`），过期与终态的判断顺序不变（锁内复检把并发的那一支守住）。`flow_last_poll_at` 的写入频率下降，但语义（多久算「刚问过」）不变。
-- **测试**：`tests/integration/test_admin_subscriptions.py` 旁边加 `tests/unit/test_subscription_flow.py::test_a_throttled_poll_does_not_ask_for_a_row_lock`（monkeypatch 仓储记录 `get_locked` 调用次数：节流窗口内连打两次，第二次不调 `get_locked`）。
-
 ### GET /admin/stats/performance
 
 - **现状**：`api/routes/admin_stats.py:137-153`，第 152 行是 `endpoints = list(_http_endpoints(request.app))`，而 `_http_endpoints`（`admin_stats.py:93-134`）对每个 `app.routes` 条目递归展开 `_IncludedRouter` 壳，逐条 `APIRoute` 取 `methods`。
@@ -1119,7 +1071,7 @@ def upgrade() -> None:
 
 ### 1. 分页协议统一（GitHub 用 Link 头 + 游标 / 本仓 `design/` 用 `page_start`+`has_more`）
 
-- **适用**：`/admin/feedback`、`/admin/spaces`、`/admin/gateway/audit`、`/admin/gateway/projects`、`/admin/subscriptions`、`/admin/memory/migration/…/plans`、`/projects/{id}/alerts`、`/projects/{id}/inbox`。
+- **适用**：`/admin/feedback`、`/admin/spaces`、`/admin/gateway/audit`、`/admin/gateway/projects`、`/admin/memory/migration/…/plans`、`/projects/{id}/alerts`、`/projects/{id}/inbox`。
 - **做法**：本仓已经有自己的答案——`design/common/parameters.yaml` 的 `PageStart`（游标 id）+ `design/common/responses.yaml` 的 `Page`（`has_more`/`next_start`），`/ai/conversations` 是唯一严格按它实现的端点。建议：（a）所有集合端点至少回一个「还有没有下一页」（`api/response.py` 的 `page()` 加可选 `has_more`，见第 5 条的具体补丁）；（b）`total` 一律是**真总数**，不是这一页的条数（`alerts.py:114-117` 现在写的是 `page(items, len(items))`）；（c）**同名参数必须同义**：`page_start` 在 `/admin/feedback` 是 offset、在 `/ai/conversations` 是游标 id，这个必须收敛，改的那一侧走「新参数名 + 旧名保留」。
 - **为什么**：GitHub 的分页就是这么定的（Link 头 + `per_page`，<https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api>）；偏移分页在「一边翻页一边有新数据写入」的队列里会漏行/重行，而分诊队列正是这种。
 
@@ -1143,8 +1095,8 @@ def upgrade() -> None:
 
 ### 5. 「规模天然有界」的表要写明界在哪里
 
-- **适用**：`/admin/subscriptions`（`list_all`，`subscription/repositories.py:68-70`）、`/admin/gateway/projects`（`ProjectService.list_all`）、`/admin/gateway/audit`（只增）、`/admin/memory/migration/…/plans`（每次 dry-run 一行）。
-- **做法**：无分页的端点必须在 docstring 里写清上界来自什么（例如「一座一订阅」），并在**界面**上留可见的计数；一旦上界不再成立就补分页。`/admin/subscriptions` 的 docstring 现在没写这一句。
+- **适用**：`/admin/gateway/projects`（`ProjectService.list_all`）、`/admin/gateway/audit`（只增）、`/admin/memory/migration/…/plans`（每次 dry-run 一行）。
+- **做法**：无分页的端点必须在 docstring 里写清上界来自什么，并在**界面**上留可见的计数；一旦上界不再成立就补分页。
 - **为什么**：业界通行（GitHub 的所有集合端点一律分页，未逐条查证具体规模阈值），而本仓已经有「参数上界写死在签名上」的纪律（`admin_stats.py:16-20` 那段注释）——同一套纪律应该覆盖「无分页」这一种。
 
 ---
