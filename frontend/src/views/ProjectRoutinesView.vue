@@ -539,7 +539,7 @@ watch(
 }
 .routine-row__spec {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: 4px 12px;
   margin: 8px 0;
 }
@@ -547,7 +547,9 @@ watch(
   color: var(--faint);
 }
 .routine-row__spec dd {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 .routine-row__actions {

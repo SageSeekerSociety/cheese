@@ -51,12 +51,28 @@ const online = useOnline()
 .offline-slide-enter-active,
 .offline-slide-leave-active {
   transition:
-    transform 0.22s ease,
-    opacity 0.22s ease;
+    transform var(--dur-base) var(--ease-standard),
+    opacity var(--dur-base) var(--ease-standard);
 }
 .offline-slide-enter-from,
 .offline-slide-leave-to {
   opacity: 0;
   transform: translate(-50%, -100%);
+}
+/* 手机上顶栏的 ← 和头像就在屏幕最上面那一条里，贴顶居中的横幅会盖住它们，一句话
+   也挤不进 360 宽。所以挪到顶栏下面，左右各留 16，字放不下就换行。 */
+@media (width < 960px) {
+  .offline-banner {
+    top: 64px;
+    right: 16px;
+    left: 16px;
+    white-space: normal;
+    border-radius: var(--radius-md);
+    transform: none;
+  }
+  .offline-slide-enter-from,
+  .offline-slide-leave-to {
+    transform: translateY(-8px);
+  }
 }
 </style>

@@ -522,7 +522,7 @@ defineExpose({
                 <ExternalTag v-else-if="mm.external" />
                 <span class="mention-menu-sub">{{ mm.sub }}</span>
                 <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
-                <span v-else-if="i === mentionActiveIndex" class="mention-menu-hint">Enter</span>
+                <span v-else-if="i === mentionActiveIndex && enterSends" class="mention-menu-hint">Enter</span>
               </button>
             </template>
             <div v-if="mentionLevel === 'library' && !mentionMatches.length" class="mention-menu-group">

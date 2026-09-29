@@ -43,7 +43,9 @@
 
 .brand {
   display: inline-flex;
+  flex: none;
   color: var(--ink);
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
 }
@@ -167,9 +169,10 @@
 
 .hero-actions {
   display: flex;
+  flex-wrap: wrap;
   margin-top: 16px;
   align-items: center;
-  gap: 32px;
+  gap: 12px 32px;
 }
 
 /* ---- Manifesto: clauses light up as they cross the viewport ---- */
@@ -818,6 +821,39 @@
   .site-foot {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+/* A phone is too narrow for the lockup and both buttons at their full padding.
+   The lockup keeps its shape (`.brand` never shrinks, so 知是 never stacks into a
+   column); the buttons and gaps give up the room instead. */
+@media (width <= 420px) {
+  .brand {
+    gap: 6px;
+  }
+
+  .site-actions {
+    gap: 8px;
+  }
+
+  .site-actions .language-toggle {
+    padding-inline: 8px;
+  }
+
+  .site-actions .v-btn {
+    padding-inline: 12px;
+  }
+}
+
+@media (width <= 374px) {
+  .brand-mark {
+    width: 22px;
+    height: 22px;
+  }
+
+  .brand-word {
+    font-size: 18px;
+    line-height: var(--lh-18);
   }
 }
 
