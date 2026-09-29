@@ -24,6 +24,8 @@ export interface ResultGroup {
 }
 
 const PER_GROUP = 5
+// 打了 ? 只看内容时每组多给几条，但不是全部：一组列得比一屏还长，就该换个词搜了。
+const PER_GROUP_CONTENT_ONLY = 10
 const PREFIXES: Prefix[] = ['#', '@', '>', '?']
 
 export function splitPrefix(input: string): { prefix: Prefix | null; query: string } {
@@ -99,7 +101,9 @@ export function buildResults(
     groups.push({
       key: source.id,
       label: source.label,
-      rows: found.slice(0, prefix ? undefined : PER_GROUP).map((item) => ({ ...aroundHit(item, query), remote: true })),
+      rows: found
+        .slice(0, prefix ? PER_GROUP_CONTENT_ONLY : PER_GROUP)
+        .map((item) => ({ ...aroundHit(item, query), remote: true })),
     })
   }
   return groups
