@@ -111,17 +111,19 @@ async def _instance_of(
 ) -> uuid.UUID | None:
     """The agent instance *agent_handle* names in the project *place_id* is in,
     or None when no instance carries it."""
-    from app.domain.agent_instance.repositories import AgentInstanceRepository
+    from app.domain.agent_instance.models import AgentInstance
     from app.domain.room_task.place import PlaceResolver
 
     async with session_factory() as session:
         place = await PlaceResolver(session).resolve(place_id)
         if place is None:
             return None
-        instance = await AgentInstanceRepository(session).get_by_handle(
-            project_id=place.project_id, handle=agent_handle
+        return await session.scalar(
+            select(AgentInstance.id).where(
+                AgentInstance.project_id == place.project_id,
+                AgentInstance.handle == agent_handle,
+            )
         )
-    return None if instance is None else instance.id
 
 
 async def _open_turn(session_factory, **fields) -> None:
