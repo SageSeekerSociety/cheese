@@ -78,6 +78,7 @@ class TaskRepository:
 
         hits = self._keyword_hits(space_id=space_id, keywords=keywords)
         if hits is not None:
+            await bm25.serial_scans(self._session)
             stmt = stmt.join(hits, hits.c.id == Task.id)
 
         if topics:
@@ -211,6 +212,7 @@ class TaskRepository:
 
         hits = self._keyword_hits(space_id=space_id, keywords=keywords)
         if hits is not None:
+            await bm25.serial_scans(self._session)
             stmt = stmt.join(hits, hits.c.id == Task.id)
 
         if topics:

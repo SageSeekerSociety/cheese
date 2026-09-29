@@ -101,6 +101,7 @@ async def search_project_context(
             readable[room.id] = room
     skipped = len(rooms) - len(readable)
     terms = bm25.words(q)
+    await bm25.serial_scans(db)
 
     def where(room_id: uuid.UUID) -> dict:
         room = readable[room_id]

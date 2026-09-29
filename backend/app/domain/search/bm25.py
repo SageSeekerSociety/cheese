@@ -5,7 +5,7 @@ Every searched text column is indexed twice: once with the jieba tokenizer
 with 2..3-character ngrams (the middle of a word, which jieba cannot find).
 This module builds the query that reads both.
 
-Two things about `pg_search` 0.18.8 that the callers depend on:
+Three things about `pg_search` that the callers depend on:
 
 - jieba emits whitespace as a token. A phrase sent whole would require, and
   match, the whitespace itself, so the words are split here and each must be
@@ -14,6 +14,9 @@ Two things about `pg_search` 0.18.8 that the callers depend on:
   of the scan itself; it silently returns NULL otherwise. A caller that orders
   by score keeps its other predicates in the index (``filters``) or outside
   the scan (a CTE joined back).
+- Every parallel worker of a BM25 scan loads the jieba dictionary afresh,
+  which costs about 150ms per search; a single process takes a few. A caller
+  calls `serial_scans` before it searches.
 
 `match` treats its value as literal text, not query syntax, so user input
 needs no escaping.
@@ -23,9 +26,15 @@ import uuid
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from sqlalchemy import ColumnElement, literal
+from sqlalchemy import ColumnElement, literal, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
+
+
+async def serial_scans(session: AsyncSession) -> None:
+    """Plan the rest of this transaction without parallel workers."""
+    await session.execute(text("SET LOCAL max_parallel_workers_per_gather = 0"))
 
 
 def words(q: str | None) -> list[str]:
@@ -49,7 +58,7 @@ def match_all_words(
 
     ``fields`` maps each text column to its weight; its ngram copy carries the
     same weight. ``filters`` restrict the result; they go under ``must``
-    because 0.18.8 accepts a boolean query's ``filter`` clause and ignores it,
+    because `pg_search` accepts a boolean query's ``filter`` clause and ignores it,
     returning rows outside the restriction.
     """
 
