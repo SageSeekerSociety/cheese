@@ -261,6 +261,8 @@
       "focus": "专注模式",
       "exitFocus": "退出专注模式",
       "rename": "重命名",
+      "copyLink": "复制链接",
+      "markRead": "标为已读",
       "renameTitle": "重命名话题",
       "topicName": "话题名称",
       "archive": "归档",

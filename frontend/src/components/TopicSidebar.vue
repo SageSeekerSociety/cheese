@@ -72,8 +72,7 @@ const emit = defineEmits<{
   (e: 'hover-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'create-topic', title: string): void
-  // 归档去向: manual archive / unarchive from the row's ⋯ actions.
-  (e: 'archive-topic', id: string): void
+  // 已归档那一组里行尾的「取消归档」。
   (e: 'unarchive-topic', id: string): void
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
   // final: the platform stops renaming that room from then on.
@@ -656,11 +655,7 @@ useLongPress(
 
 // 一行话题能做的事（悬停的 ⋯、长按的面板）：侧栏里重命名是就地改。
 function rowActions(topic: Topic) {
-  return topicActions(topic, {
-    rename: () => startRename(topic),
-    archive: () => emit('archive-topic', topic.id),
-    unarchive: () => emit('unarchive-topic', topic.id),
-  })
+  return topicActions(topic, router, { rename: () => startRename(topic) })
 }
 
 const rowSheetActions = computed<MenuAction[]>(() =>

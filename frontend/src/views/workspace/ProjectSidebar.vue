@@ -74,8 +74,6 @@ async function onCreateTopic(title: string) {
   }
 }
 
-// Archiving the topic you are looking at closes it — go back to the project
-// root rather than leaving a frozen archive open in the content area.
 // 新建话题和侧栏上那颗 ＋ 是同一件事。
 useCommands(() => [
   {
@@ -86,13 +84,6 @@ useCommands(() => [
     run: () => void onCreateTopic(''),
   },
 ])
-
-async function onArchiveTopic(topicId: string) {
-  await store.archive(topicId)
-  if (activeTopicId.value === topicId) {
-    void router.replace({ name: 'workspace-project', params: { projectId: props.projectId } })
-  }
-}
 </script>
 
 <template>
@@ -122,7 +113,6 @@ async function onArchiveTopic(topicId: string) {
       @hover-topic="onHoverTopic"
       @leave-topic="cancelPrefetch"
       @select-docs="openDocs"
-      @archive-topic="onArchiveTopic"
       @unarchive-topic="store.unarchive"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
       @create-topic="onCreateTopic"

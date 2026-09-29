@@ -24,7 +24,17 @@ import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const searchProject = vi.hoisted(() => vi.fn())
-vi.mock('@/api', async (original) => ({ ...(await original<object>()), searchProject }))
+const archiveTopic = vi.hoisted(() => vi.fn())
+const setTopicTitle = vi.hoisted(() => vi.fn())
+// 归档之后 store 会重新拉一次话题表。
+const listTopics = vi.hoisted(() => vi.fn(async () => ({ data: [], total: 0 })))
+vi.mock('@/api', async (original) => ({
+  ...(await original<object>()),
+  searchProject,
+  archiveTopic,
+  setTopicTitle,
+  listTopics,
+}))
 
 const NOTHING: ProjectSearchHits = { records: [], tasks: [], library: [] }
 function hits(extra: Partial<ProjectSearchHits>): ProjectSearchHits {
@@ -44,7 +54,16 @@ const MESSAGE = {
 const Blank = defineComponent({ render: () => h('div') })
 
 function topic(id: string, title: string, extra: Partial<Topic> = {}): Topic {
-  return { id, project_id: 'p1', title, kind: 'topic', status: 'active', created_at: '', ...extra } as Topic
+  return {
+    id,
+    project_id: 'p1',
+    title,
+    kind: 'topic',
+    status: 'active',
+    can_archive: true,
+    created_at: '',
+    ...extra,
+  } as Topic
 }
 
 let undoShortcuts: (() => void) | null = null
@@ -62,6 +81,7 @@ async function mount({ withRoomCommand = ref(false) } = {}) {
           { path: '', name: 'workspace-project', component: Blank },
           { path: 'topics/:topicId', name: 'workspace-topic', component: Blank },
           { path: 'members/:handle', name: 'member', component: Blank },
+          { path: 'dm/:peer', name: 'workspace-dm', component: Blank },
           {
             path: 'library',
             name: 'project-library',
@@ -126,6 +146,10 @@ async function press(key: string, init: KeyboardEventInit = {}) {
 }
 
 beforeEach(() => {
+  archiveTopic.mockReset()
+  archiveTopic.mockImplementation(async (id: string) => ({ id, status: 'archived' }))
+  setTopicTitle.mockReset()
+  setTopicTitle.mockImplementation(async (id: string, title: string) => ({ id, title }))
   searchProject.mockReset()
   searchProject.mockResolvedValue(NOTHING)
   localStorage.clear()
@@ -325,5 +349,90 @@ describe('命令面板', () => {
     answerOld(hits({ records: [MESSAGE] }))
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(options().some((text) => text.includes('重试以后队列就不卡了'))).toBe(false)
+  })
+})
+
+// Tab：选中一条再按 Tab，列出对它还能做的事。清单里的事做的是选中的那一条；Esc 只收起
+// 清单，面板还在；在面板里重命名不离开当前页，回车改名，Esc 不改。
+describe('命令面板：更多操作', () => {
+  const actions = () => screen.queryAllByRole('menuitem').map((el) => el.textContent?.trim() ?? '')
+  async function choose(name: string) {
+    await waitFor(() => expect(actions()).toContain(name))
+    const index = actions().indexOf(name)
+    for (let i = 0; i < index; i++) await press('ArrowDown')
+    await press('Enter')
+  }
+
+  it('在一个话题上按 Tab，归档的是这个话题，页面不动', async () => {
+    const { router } = await mount()
+    await open()
+    await type('原型')
+    await press('Tab')
+    await choose(t('work.room.menu.archive'))
+    await waitFor(() => expect(archiveTopic).toHaveBeenCalledWith('t2', expect.anything()))
+    expect(router.currentRoute.value.path).toBe('/projects/p1')
+    await waitFor(() => expect(field()).toBeNull())
+  })
+
+  it('Esc 只收起清单，面板和输入都还在', async () => {
+    await mount()
+    await open()
+    await type('原型')
+    await press('Tab')
+    await waitFor(() => expect(actions().length).toBeGreaterThan(0))
+    await press('Escape')
+    await waitFor(() => expect(actions()).toHaveLength(0))
+    expect(field()?.value).toBe('原型')
+  })
+
+  it('在面板里重命名：改了名字回车就改，留在原来的页面', async () => {
+    const { router } = await mount()
+    await open()
+    await type('原型')
+    await press('Tab')
+    await choose(t('work.room.menu.rename'))
+    const box = await screen.findByLabelText(t('work.room.menu.renameTitle'))
+    await fireEvent.update(box, '搭建第二个原型')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await waitFor(() => expect(setTopicTitle).toHaveBeenCalledWith('t2', '搭建第二个原型'))
+    expect(router.currentRoute.value.path).toBe('/projects/p1')
+  })
+
+  it('重命名时按 Esc 不改名，回到结果列表', async () => {
+    await mount()
+    await open()
+    await type('原型')
+    await press('Tab')
+    await choose(t('work.room.menu.rename'))
+    const box = await screen.findByLabelText(t('work.room.menu.renameTitle'))
+    await fireEvent.update(box, '不要的名字')
+    await fireEvent.keyDown(box, { key: 'Escape' })
+    await waitFor(() => expect(field()?.value).toBe('原型'))
+    expect(setTopicTitle).not.toHaveBeenCalled()
+  })
+
+  it('给成员发私信', async () => {
+    const { router } = await mount()
+    await open()
+    await type('@alice')
+    await press('Tab')
+    await choose(t('navigation.palette.dm'))
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/dm/alice'))
+  })
+
+  it('一条消息的「打开所在话题」进房间，不停在那一条上', async () => {
+    searchProject.mockImplementation(async (_project: string, q: string) =>
+      q === '不卡了' ? hits({ records: [MESSAGE] }) : NOTHING
+    )
+    const { router } = await mount()
+    await open()
+    await type('不卡了')
+    await waitFor(() => expect(options().some((text) => text.includes('重试以后队列就不卡了'))).toBe(true))
+    const index = options().findIndex((text) => text.includes('重试以后队列就不卡了'))
+    for (let i = 0; i < index; i++) await press('ArrowDown')
+    await press('Tab')
+    await choose(t('navigation.palette.openRoom'))
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3'))
+    expect(router.currentRoute.value.query.block).toBeUndefined()
   })
 })

@@ -8,6 +8,7 @@
 // 面板里统一做。远程数据源（`search`）交不出全部候选，只能拿着输入去后端问，问回来的
 // 就是结果，面板不再匹配，排在本地结果后面。
 import type { RouteLocationNormalizedLoaded, RouteLocationRaw, Router } from 'vue-router'
+import type { MenuCommand } from '@/commands'
 
 export type Prefix = '#' | '@' | '>' | '?'
 
@@ -29,6 +30,10 @@ export interface PaletteItem {
   shortcut?: string
   to?: RouteLocationRaw
   run?: () => void
+  /** 回车做的那件事叫什么，写在底栏上。不给就按有没有地址说「打开」或「执行」。 */
+  verb?: string
+  /** 按 Tab（手机上长按）列出来的：回车那一件之外，对它还能做什么。用到时才算。 */
+  actions?: () => MenuCommand[]
 }
 
 export interface SourceContext {

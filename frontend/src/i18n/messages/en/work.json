@@ -261,6 +261,8 @@
       "focus": "Focus mode",
       "exitFocus": "Exit focus mode",
       "rename": "Rename",
+      "copyLink": "Copy link",
+      "markRead": "Mark as read",
       "renameTitle": "Rename topic",
       "topicName": "Topic name",
       "archive": "Archive",
