@@ -222,7 +222,7 @@ export type PlatformNotice =
   /** 现场抽屉的东西（前端报错），房间里不显示。 */
   | { mode: 'hidden' }
   /** 芝士写好的一封邮件：在房间里看全、由邮箱主人在这里确认发送。 */
-  | { mode: 'mail-draft'; mail: MailDraftView }
+  | { mode: 'mail-draft'; mail: MailDraftView; outcome: MailOutcome | null }
   /** 基础设施事故卡：正文压成一行，剩下的进展开区。 */
   | {
       mode: 'incident'
@@ -384,7 +384,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   if (error) return { mode: 'backend-error', error }
 
   const mail = mailDraftView(block)
-  if (mail) return { mode: 'mail-draft', mail }
+  if (mail) return { mode: 'mail-draft', mail, outcome: null }
 
   if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) {
     const latest = run[run.length - 1] ?? block
@@ -523,7 +523,12 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
     rows.push({ block, run: [block], notice: null })
   }
 
-  for (const row of rows) row.notice = platformNotice(row.block, row.run)
+  // 草稿卡片的下落记在后来的 `mail_result` 事件里，只有看得到整条块流的这里对得上。
+  const mailEnds = mailOutcomes(blocks)
+  for (const row of rows) {
+    row.notice = platformNotice(row.block, row.run)
+    if (row.notice?.mode === 'mail-draft') row.notice.outcome = mailEnds.get(row.notice.mail.draftId) ?? null
+  }
   return foldTurnSummary(rows)
 }
 

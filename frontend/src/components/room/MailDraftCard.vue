@@ -10,13 +10,14 @@ import type { MailDraftView, MailOutcome } from '../../lib/platformNotice'
 import { computed, ref } from 'vue'
 
 import { discardMailDraft, sendMailDraft } from '../../api'
+import { myHandle } from '../../me'
 
 const props = defineProps<{
   mail: MailDraftView
   /** 房间里已经记下的下落；没有就是还在等。 */
   outcome: MailOutcome | null
-  /** 正在看这个房间的人。 */
-  me: string | null
+  /** 正在看这个房间的人；不给就是当前登录的账号。 */
+  me?: string | null
 }>()
 
 const busy = ref<'' | 'send' | 'discard'>('')
@@ -24,7 +25,10 @@ const error = ref('')
 /** 刚在这里点完、房间事件还没回来的那一刻，先按自己的结果画。 */
 const local = ref<MailOutcome | null>(null)
 const ended = computed(() => local.value ?? props.outcome)
-const mine = computed(() => !!props.me && props.me === props.mail.owner)
+const mine = computed(() => {
+  const me = props.me ?? myHandle()
+  return !!me && me === props.mail.owner
+})
 
 function when(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : ''

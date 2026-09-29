@@ -10,7 +10,7 @@
 // 这里只画已经判好档的东西：判档在 lib/platformNotice.ts，署名和时间由房间算好
 // 传进来。它不认识名册，也不认识 socket。
 import type { Block } from '../../cx_types'
-import type { MailOutcome, PlatformNotice } from '../../lib/platformNotice'
+import type { PlatformNotice } from '../../lib/platformNotice'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -43,10 +43,6 @@ const props = defineProps<{
   canRetry?: boolean
   /** 重试请求已经发出、还没回来。 */
   retrying?: boolean
-  /** 正在看房间的人：邮件草稿只给邮箱主人画「确认发送」。 */
-  me?: string | null
-  /** 这封邮件草稿后来怎样了（`mail-draft` 档用）。 */
-  mailOutcome?: MailOutcome | null
   /** 房间所在的项目：「去确认」要带人去项目级的页面。 */
   projectId?: string | null
 }>()
@@ -309,7 +305,7 @@ const ACTION_META: Record<string, { btn: string }> = {
       <div class="sys-line">
         <span class="sys-text" v-html="renderPlain(block.content)" />
       </div>
-      <MailDraftCard :mail="notice.mail" :outcome="mailOutcome ?? null" :me="me ?? null" />
+      <MailDraftCard :mail="notice.mail" :outcome="notice.outcome" />
     </div>
     <div v-else-if="notice.mode === 'plain'" class="sys-row im-event">
       <div class="sys-line">

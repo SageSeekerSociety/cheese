@@ -111,4 +111,17 @@ describe('房间事件', () => {
     expect(ends.get('d2')?.status).toBe('sent')
     expect(ends.has('d1')).toBe(false)
   })
+
+  it('草稿卡片自己带着后来的下落，时间线不用另外对', () => {
+    const result = {
+      ...drafted('x'),
+      id: 'r1',
+      meta: { event_type: 'mail_result', mail_draft_id: 'd2', status: 'failed', detail: '服务器拒绝' },
+    } as unknown as Block
+    const cards = collapseNotices([drafted('d1'), drafted('d2', '第二封'), result]).filter(
+      (r) => r.notice?.mode === 'mail-draft'
+    )
+    const outcomes = cards.map((r) => (r.notice?.mode === 'mail-draft' ? r.notice.outcome?.status ?? null : 'x'))
+    expect(outcomes).toEqual([null, 'failed'])
+  })
 })
