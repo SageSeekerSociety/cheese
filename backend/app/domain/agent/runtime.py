@@ -1175,9 +1175,9 @@ class AgentWorkRunner:
     async def resume_orphans(self, chat_service) -> int:
         """The sweep a process runs as it takes the work over. Every open
         interval then belongs to a previous owner, which has stopped listening
-        and let go of its turns, and this process has started none yet — which
-        makes this exactly `sweep_orphans` with the young-entry guard switched
-        off: nothing can be racing it."""
+        and let go of its turns, or to a turn this process started since, which
+        is in `_live` before its interval is written — which makes this exactly
+        `sweep_orphans` with the young-entry guard switched off."""
         return await self.sweep_orphans(chat_service, min_age_s=0.0)
 
     async def resume_lost_messages(self, chat_service) -> int:
@@ -1818,6 +1818,43 @@ class AgentWorkRunner:
         detail_label="接下来会发生什么",
     )
 
+    #: How long a turn waits for its room's replay before the room is told.
+    REPLAY_NOTICE_S = 20.0
+
+    #: 等的是这间房自己的记录接回来，平台自己会往前推，没人需要动手。
+    _CATCHING_UP_META = notice(
+        EVENT_TURN_QUEUED,
+        severity=SEVERITY_INFO,
+        who=WHO_PLATFORM,
+        detail="接回来就自动开跑，不用重发。",
+        detail_label="接下来会发生什么",
+    )
+
+    async def _wait_for_replay(
+        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> None:
+        """Wait for the room's replay of what its sessions said while nobody
+        listened (`ChatService.recover_sessions`).
+
+        The turn it answered is closed, and the messages it took stamped
+        consumed, only as that replay lands; a turn started before then sends
+        them again. Nothing outside the room waits for it.
+        """
+        told = False
+        while (replay := chat_service.replaying(topic_id)) is not None:
+            done, _ = await asyncio.wait(
+                {replay}, timeout=None if told else self.REPLAY_NOTICE_S
+            )
+            if not done:
+                told = True
+                await self._post_event(
+                    chat_service,
+                    topic_id,
+                    turn_id,
+                    "正在接回这个房间断线期间的会话记录，本轮稍后开始",
+                    meta=self._CATCHING_UP_META,
+                )
+
     async def _post_event(
         self,
         chat_service,
@@ -2041,6 +2078,7 @@ class AgentWorkRunner:
         # into the topic as platform system events, so people SEE why nothing
         # is streaming yet.
         await self._wait_to_start()
+        await self._wait_for_replay(chat_service, topic_id, turn_id)
         admit_started = time.monotonic()
         verdict, gate = await self._admit(chat_service, topic_id, turn_id)
         logger.info(

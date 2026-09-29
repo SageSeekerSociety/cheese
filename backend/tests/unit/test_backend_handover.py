@@ -107,6 +107,9 @@ class _Chat:
     async def recover_native_tools(self, topic_id):
         return False
 
+    def replaying(self, topic_id):
+        return None
+
     async def converse(self, **kwargs):
         self.started += 1
         async for frame in self._turn():

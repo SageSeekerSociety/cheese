@@ -46,6 +46,9 @@ class _Backend:
     def frames(self):
         raise NotImplementedError
 
+    def replaying(self, topic_id):
+        return None
+
     async def converse(self, **_):
         async for frame in self.frames():
             yield frame

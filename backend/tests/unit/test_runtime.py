@@ -57,6 +57,9 @@ class _FakeChat:
         self.events.append(text)
         return None
 
+    def replaying(self, topic_id):
+        return None
+
     async def converse(self, **kwargs):
         self.ran = True
         self.kwargs = kwargs
@@ -276,6 +279,9 @@ async def test_wedged_turn_times_out_and_is_cancelled(db_factory):
     class _Hang:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "user_block"}
             try:
@@ -322,6 +328,9 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout(db_factory):
     class _LongTmuxTurn:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 10.0}
             # Where the declared ceiling takes effect: both clocks have a real
@@ -355,6 +364,9 @@ async def test_topic_turn_reports_the_rescheduled_ceiling(db_factory):
     class _Turn:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 123.0}
             yield {"type": "done"}
@@ -383,6 +395,9 @@ async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
 
     class _SlowTurn:
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             await asyncio.sleep(0.2)
@@ -423,6 +438,9 @@ async def test_runner_publishes_friendly_error_on_failure(db_factory):
     class _Boom:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             raise RuntimeError("kaboom")
             yield  # pragma: no cover — makes this an async generator
@@ -454,6 +472,9 @@ async def test_turn_failure_lands_in_the_timeline(db_factory):
         def __init__(self) -> None:
             self.posted: str | None = None
             self.posted_meta: dict | None = None
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             raise RuntimeError("kaboom")
@@ -508,6 +529,9 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
         def __init__(self) -> None:
             self.meta: dict | None = None
             self.converse_calls = 0
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             self.converse_calls += 1
@@ -567,6 +591,9 @@ async def test_failed_turn_fails_loud_and_does_not_resume(db_factory):
             self.calls: list[dict] = []
             self.events: list[tuple[str, dict]] = []
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **kw):
             self.calls.append(kw)
             raise RuntimeError("boom")
@@ -614,6 +641,9 @@ async def test_a_resent_turn_that_crashes_also_fails_loud(db_factory):
         def __init__(self) -> None:
             self.calls = 0
             self.events: list[tuple[str, dict]] = []
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             self.calls += 1
@@ -1258,6 +1288,9 @@ async def test_live_turn_for_topic_tracks_a_running_turn(db_factory):
     class _Slow:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "user_block"}
             streaming.set()
@@ -1310,6 +1343,9 @@ async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
         """A turn whose sandbox died mid-stream: frames stop, the task lives."""
 
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             yield {"type": "user_block"}
@@ -1419,6 +1455,9 @@ async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(db_fact
         """Yields the delivery frame, then holds the turn open."""
 
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **kwargs):
             yield {"type": "prompt_delivered"}
@@ -1565,6 +1604,9 @@ async def test_unclassified_failure_hands_to_a_human_without_retrying(db_factory
             self.calls: list[dict] = []
             self.events: list[tuple[str, dict]] = []
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **kw):
             self.calls.append(kw)
             raise RuntimeError("boom")
@@ -1613,6 +1655,9 @@ async def test_a_timeout_hands_to_a_human_without_retrying(db_factory):
         def __init__(self) -> None:
             self.calls: list[dict] = []
             self.events: list[tuple[str, dict]] = []
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **kw):
             self.calls.append(kw)
@@ -1667,6 +1712,9 @@ async def test_a_slow_setup_does_not_spend_the_ceiling_before_the_turn_starts(
     class _SlowSetup:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 0.3}
             # Setup: everything before the prompt reaches the session, and here
@@ -1707,6 +1755,9 @@ async def test_a_turn_cut_by_the_fuse_still_ends_its_stream(db_factory):
     class _NeverFinishes:
         session_factory = db_factory
 
+        def replaying(self, topic_id):
+            return None
+
         async def converse(self, **_):
             yield {"type": "prompt_delivered"}
             await asyncio.sleep(5)
@@ -1739,6 +1790,9 @@ async def test_a_turn_that_keeps_calling_tools_outlives_its_ceiling(db_factory):
 
     class _KeepsWorking:
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 0.3}
@@ -1775,6 +1829,9 @@ async def test_crossing_the_ceiling_is_recorded_and_ends_nothing(db_factory, cap
 
     class _TalksPastTheCeiling:
         session_factory = db_factory
+
+        def replaying(self, topic_id):
+            return None
 
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 0.1}
