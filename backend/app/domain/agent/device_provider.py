@@ -987,18 +987,14 @@ class DeviceChannel(Channel):
             return {"alive": True, "unknown": True}
 
     async def _refresh_resident(
-        self, screen: HubScreen, home_dir: str, state: str, release: dict
+        self, screen: HubScreen, home_dir: str, state: str, release: dict,
+        session_id: str = "",
     ) -> bool:
-        """Put a new release of the remote-execution helpers into a live session.
+        """Release this seat's helpers while preserving its conversation.
 
-        The helpers are replaced on disk and the running session is told to
-        reload: `/reload-plugins` for the plugin that routes its tools to the
-        executor, and a reconnect of the MCP server that carries them. The
-        session keeps its conversation throughout.
-
-        The session's directory is the SEAT's, and it is the screen's own seat
-        that names it: what is being released is that session's target and that
-        session's plugin, and a room's other teammate keeps its own."""
+        The runner reloads its plugin and reconnects MCP after staging.
+        The screen names the seat; another teammate's files stay untouched.
+        """
         seat = seat_dir(home_dir, screen.agent_handle)
         sources = resident_release.sources()
         version = resident_release.digest(sources)
@@ -1018,7 +1014,7 @@ class DeviceChannel(Channel):
                 )
             return json.loads(result["stdout"])
 
-        staged = await execute("stage", home_dir, sources, seat)
+        staged = await execute("stage", home_dir, sources, seat, session_id)
         if staged.get("busy"):
             # Helpers are not replaced under a conversation that is still
             # running. This turn runs on the release it has; the marker stays
@@ -1449,7 +1445,8 @@ class DeviceChannel(Channel):
                 else:
                     try:
                         await self._refresh_resident(
-                            existing, home_dir, place.state, release_state
+                            existing, home_dir, place.state, release_state,
+                            status.get("session_id", ""),
                         )
                     except ScreenSetupError:
                         logger.warning(

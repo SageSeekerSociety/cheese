@@ -163,7 +163,7 @@ def replace(path, content):
     temporary.replace(path)
 
 
-def stage(home, sources, seat=""):
+def stage(home, sources, seat="", session_id=""):
     """Install a release into the session that asked for it.
 
     ``seat`` is that session's own directory inside the room's home
@@ -193,7 +193,11 @@ def stage(home, sources, seat=""):
     ready = directory / "release-ready"
     if ready.exists() and ready.read_text() == version:
         return {"changed": False, "version": version}
-    transcripts = list((config / "projects").glob("*/*.jsonl"))
+    transcripts = list(
+        (config / "projects").glob(
+            f"*/{session_id}.jsonl" if session_id else "*/*.jsonl"
+        )
+    )
     if transcripts:
         busy = False
         latest = max(transcripts, key=lambda path: path.stat().st_mtime_ns)

@@ -338,6 +338,37 @@ def test_active_turn_blocks_changes_until_completion(tmp_path):
     assert release.stage(str(tmp_path), sources)["changed"]
 
 
+def test_one_seats_busy_transcript_does_not_delay_an_idle_seats_release(tmp_path):
+    config = tmp_path / ".claude/projects/work"
+    config.mkdir(parents=True)
+    idle = config / "idle.jsonl"
+    idle.write_text(
+        json.dumps({"type": "user", "message": {"content": "done"}})
+        + "\n"
+        + json.dumps({"type": "assistant", "message": {"stop_reason": "end_turn"}})
+        + "\n"
+    )
+    busy = config / "busy.jsonl"
+    busy.write_text(json.dumps({"type": "user", "message": {"content": "work"}}) + "\n")
+    sources = {
+        "client.py": "released",
+        "proxy.js": "__EXECUTION_CONFIG__",
+        "cheese.py": CHEESE,
+    }
+    for name in ("idle", "busy"):
+        directory = tmp_path / ".cheese/seats" / name / "remote-session"
+        directory.mkdir(parents=True)
+        (directory / "execution.json").write_text("{}")
+        (directory / "settings.json").write_text("{}")
+
+    idle_seat = tmp_path / ".cheese/seats/idle"
+    busy_seat = tmp_path / ".cheese/seats/busy"
+    assert release.stage(str(tmp_path), sources, str(idle_seat), "idle")["changed"]
+    assert release.stage(str(tmp_path), sources, str(busy_seat), "busy")["busy"]
+    assert (idle_seat / "remote-execution/client.py").read_text() == "released"
+    assert not (busy_seat / "remote-execution/client.py").exists()
+
+
 class _Runner:
     """A hub whose `call_executor` answers the way the screen's runner does.
 
