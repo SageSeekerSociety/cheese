@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from app.domain.agent import place
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -349,8 +350,13 @@ def _released_home(tmp_path, monkeypatch):
     config = tmp_path / ".claude"
     config.mkdir(exist_ok=True)
     platform_dir = tmp_path / ".cheese"
-    (platform_dir / "remote-session").mkdir(parents=True)
-    (platform_dir / "remote-session/execution.json").write_text("{}")
+    # The screen's own seat, not the room: a release is that session's target
+    # and that session's plugin.
+    session = (
+        Path(place.seat_dir(str(tmp_path), SCREEN.agent_handle)) / "remote-session"
+    )
+    session.mkdir(parents=True)
+    (session / "execution.json").write_text("{}")
     (config / "settings.json").write_text("{}")
     monkeypatch.setattr(
         release,

@@ -37,6 +37,16 @@ CHECKOUT_DIR = "room"
 # the cleanup that retained them deletes them (topic/retire.py sets how long).
 TRANSCRIPTS_ROOT = "transcripts"
 
+# Where the seats of a room keep the files that belong to one teammate's session
+# rather than to the room — a copy of `place.SEATS_DIR`, held to it by
+# test_footprint_root.py, because this file is piped to the machine on stdin and
+# can import nothing of ours. The target that names the room's executor is one
+# of those files now, and the teardown reads it to decide whether there is an
+# executor to stop and a private scratch to release: a copy that drifts here is
+# a room torn down with its executor still running and its container never
+# released.
+SEATS_DIR = "seats"
+
 # The platform's directories INSIDE a room's home, the current one first — the
 # pair is `place.session_platform_dirs()`, and it is a pair only in there. The
 # machine's own `$HOME` has never held more than FOOTPRINT_ROOT.
@@ -552,21 +562,41 @@ def expire_transcripts(archive: Path) -> None:
             break
 
 
+def target_markers(home: Path) -> list[Path]:
+    """Every file that says which executor this room has, in reading order.
+
+    Room level first: that is where a room prepared before seats existed keeps
+    its one target, and a room does not move. Then one per seat, because the
+    launcher now writes each session's target into the seat that owns it
+    (`SEATS_DIR`). Every seat of a room names the same executor — one private
+    container per topic, one device executor per home — so the first one found
+    answers for the room, and reading only the room level would answer "this
+    room never had an executor" for a room whose every seat has one.
+    """
+    installed = platform_dir(home)
+    seats = installed / SEATS_DIR
+    return [
+        installed / "remote-target.json",
+        *(sorted(seats.glob("*/remote-target.json")) if seats.is_dir() else []),
+    ]
+
+
 def session_target(home: Path, resource: str) -> dict | None:
-    marker = platform_dir(home) / "remote-target.json"
-    if not marker.exists():
-        return None
-    target = json.loads(marker.read_text())
-    if target.get("kind") not in {"private", "device"}:
-        return None
-    generation = (
-        target.get("topic")
-        if target["kind"] == "private"
-        else target.get("resource_id")
-    )
-    if generation != str(uuid.UUID(resource)):
-        raise RuntimeError("executor belongs to another resource generation")
-    return target
+    for marker in target_markers(home):
+        if not marker.exists():
+            continue
+        target = json.loads(marker.read_text())
+        if target.get("kind") not in {"private", "device"}:
+            continue
+        generation = (
+            target.get("topic")
+            if target["kind"] == "private"
+            else target.get("resource_id")
+        )
+        if generation != str(uuid.UUID(resource)):
+            raise RuntimeError("executor belongs to another resource generation")
+        return target
+    return None
 
 
 def wait_for_launcher(home: Path, state: Path) -> None:

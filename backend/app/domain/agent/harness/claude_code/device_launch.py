@@ -30,6 +30,7 @@ from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
+from app.domain.agent.place import SEATS_DIR, seat_name
 from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # --- the version this session is pinned to ----------------------------------
@@ -160,6 +161,7 @@ def launch_holes(
     resume_session_id: str | None = None,
     project_id: str | None = None,
     launch_name: str = "",
+    seat: str = "",
 ) -> MachineLaunch:
     """Claude Code's half of a device launch: the four holes, and its own env.
 
@@ -171,8 +173,19 @@ def launch_holes(
     CONNECTOR resolves it (a literal ``$HOME/...``): the backend derives the
     socket it calls from that same string.
 
+    ``seat`` is which teammate this session belongs to (`place.seat_name`), as
+    the name of its directory under the room's home. Everything a turn writes
+    that belongs to one seat goes there, and NOT into the room's shared files:
+    the execution target and the config the client derives from it, and the
+    system prompt, which differs per teammate. Two seats of one room writing
+    one path is what put a room's second teammate's turn on the first one's
+    credential. The harness's own config dir (``$CLAUDE_CONFIG_DIR``) stays
+    the room's: its transcripts, settings and skills are read by programs that
+    resolve a ROOM's paths (a resume, a conversation transfer between machines,
+    a release's busy scan) and could not name a seat.
+
     ``system_prompt`` (the platform's assembled system prompt) is embedded in the
-    script itself — written to ``$HOME/.claude/cheese-system-prompt.md`` on the
+    script itself — written to the seat's ``cheese-system-prompt.md`` on the
     device and handed to `claude` via ``--append-system-prompt-file``. Embedding
     beats an env var here: the connector's env transport is not guaranteed to
     survive multi-KB values with newlines, while a quoted heredoc is.
@@ -182,7 +195,16 @@ def launch_holes(
     exported over whatever placeholder the screen env carried — the server
     cannot know the device user's home, so only the script can name the real
     absolute path (an untrusted CA fails as an opaque TLS error far from its
-    cause)."""
+    cause). It is the room's, not the seat's: it is the same file for every
+    session of the room and is read by the probe that answers whether the
+    room's tunnel helper is up (`device_provider._DEVICE_PROXY_CA_PATH`)."""
+    # The seat's own directory inside the room's home, as this script spells it:
+    # by the time any hole runs the skeleton has resolved CHEESE_HOME into
+    # `$HOME`, so `$HOME` here is the room and this is the seat below it. One
+    # spelling, shared with the backend that refreshes the same directory over
+    # an exec and with `place.seat_dir`, which answers the same path in the
+    # backend's own `$HOME/...` form.
+    seat_home = f"$HOME/.cheese/{SEATS_DIR}/{seat or seat_name('')}"
     # The heredoc delimiter must sit on its own line, so the content always ends
     # with exactly one newline (empty stays empty → the [ -s ] launch guard skips
     # the flag and claude runs with its stock prompt).
@@ -245,11 +267,12 @@ CHEESE_SKILLS"""
             f"printf %s {release.digest(helper_sources)} "
             '> "$HOME/.cheese/remote-execution/release-ready"\n'
         )
-        execution_setup += """printf '%s' "$CHEESE_EXECUTION_TARGET" \\
-  > "$HOME/.cheese/remote-target.json"
+        execution_setup += """mkdir -p "$SEAT"
+printf '%s' "$CHEESE_EXECUTION_TARGET" \\
+  > "$SEAT/remote-target.json"
 EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"
-EXECUTOR_TARGET="$HOME/.cheese/remote-target.json"
-export CHEESE_EXECUTION_CONFIG="$HOME/.cheese/remote-session/execution.json"
+EXECUTOR_TARGET="$SEAT/remote-target.json"
+export CHEESE_EXECUTION_CONFIG="$SEAT/remote-session/execution.json"
 CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
         configure = f"""\
@@ -279,7 +302,13 @@ rm -f "$CLAUDE_CONFIG_DIR/skills/cheese-chat/SKILL.md"
 cat > "$CLAUDE_CONFIG_DIR/settings.json" <<'JSON'
 {settings_json}
 JSON
-cat > "$CLAUDE_CONFIG_DIR/cheese-system-prompt.md" <<'SYSPROMPT'
+# This seat's own directory, and everything below that belongs to one session
+# rather than to the room: the prompt (one per teammate), the execution target
+# the client prepares against, and — through it — the client's own per-turn
+# files. The harness's config dir above stays the room's.
+SEAT="{seat_home}"
+mkdir -p "$SEAT"
+cat > "$SEAT/cheese-system-prompt.md" <<'SYSPROMPT'
 {system_prompt}SYSPROMPT
 """
         prepare = f"""\
@@ -344,7 +373,7 @@ fi
 CLAUDE="\\"$CLAUDE_BIN\\"{claude_args}"
 # The platform system prompt (written next to settings.json above). The path is
 # embedded QUOTED so a home dir with spaces survives the runner's `sh -c`.
-CHEESE_SP="$HOME/.claude/cheese-system-prompt.md"
+CHEESE_SP="$SEAT/cheese-system-prompt.md"
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 {execution_setup}
 # --- the runner that owns the session -----------------------------------------
@@ -479,6 +508,12 @@ def on_machine(
         resume_session_id=resume_session_id,
         project_id=place.project_id,
         launch_name=launch_name,
+        # Which seat this session is: the agent handle the place was opened
+        # for. It names the directory the prompt and the execution target go
+        # into, and it is in the launch identity — so a session started under
+        # the previous per-room layout is replaced on its next turn instead of
+        # being handed a room-mate's files.
+        seat=seat_name(place.agent_handle),
     )
 
 
