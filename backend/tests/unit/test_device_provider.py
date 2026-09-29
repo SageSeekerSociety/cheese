@@ -873,6 +873,20 @@ async def test_a_release_refused_by_a_busy_conversation_waits_for_a_later_turn(
     assert hub.commands() == ["/reload-plugins"]
 
 
+@pytest.mark.parametrize("busy", [{"working": True}, {"tasks": {"id": "running"}}])
+async def test_a_busy_seat_never_stages_its_release_even_if_another_transcript_is_idle(
+    busy,
+):
+    hub = FakeHub()
+    room = _executor_room(hub)
+    first = await room.ensure()
+    hub.ping = {"alive": True, **busy}
+
+    assert await room.ensure() is first
+    assert not [stdin for argv, stdin in hub.execs if argv == ["python3", "-"]]
+    assert hub.commands() == []
+
+
 async def test_a_deferred_room_is_released_without_a_context_tree():
     """A room that has not leased a work machine yet carries a `deferred`
     target, and no target carries a context tree: the machine's own transport

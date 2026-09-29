@@ -546,7 +546,7 @@ def prepare(
         # Exclude host ancestor instructions while retaining the room's user
         # context; test_session_host_files_stay_out_of_the_prompt guards this.
         "--setting-sources",
-        "",
+        "user",
         "--settings",
         str(settings_path),
         "--plugin-dir",

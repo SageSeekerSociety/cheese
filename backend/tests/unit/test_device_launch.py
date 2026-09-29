@@ -715,9 +715,11 @@ def test_the_launch_starts_the_runner_and_the_runner_starts_claude(tmp_path):
     # The offered transcript is not on this disk, so the session starts afresh.
     assert args[-2] == "--session-id"
     uuid.UUID(args[-1])
-    # The config dir stays the ROOM's: its transcripts, settings and skills are
-    # read and resumed by name, and a teammate does not own them.
-    assert (claude.parent / "ran.config").read_text() == f"{session}/.claude"
+    # Each seat keeps its settings and skills; transcripts stay in the room.
+    assert (claude.parent / "ran.config").read_text() == f"{seat}/.claude"
+    assert (seat / ".claude/projects").resolve() == (
+        session / ".claude/projects"
+    ).resolve()
     assert (seat / "cheese-system-prompt.md").read_text() == "be kind\n"
     assert (state / "records.sqlite").is_file()
 
@@ -733,7 +735,7 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert not network.exists(), "room startup must not fetch the platform CLI"
-    transport = session / ".claude/webfetch_transport.cjs"
+    transport = seat_of(session) / ".claude/webfetch_transport.cjs"
     assert (
         transport.read_bytes()
         == Path(device_launch.__file__).with_name("webfetch_transport.cjs").read_bytes()
@@ -774,14 +776,24 @@ def test_new_seat_leaves_busy_older_seats_shared_files_intact(tmp_path):
     old_client = session / ".cheese/remote-execution/client.py"
     old_client.parent.mkdir(parents=True)
     old_client.write_text("old running client")
+    old_transport = session / ".claude/webfetch_transport.cjs"
+    old_transport.write_text("old running preload")
+    old_skill = session / ".claude/skills/cheese-chat/SKILL.md"
+    old_skill.parent.mkdir(parents=True)
+    old_skill.write_text("old running skill")
 
     result = _launch(tmp_path, env)
 
     assert result.returncode == 0, result.stderr
     assert "old guard" in old_settings.read_text()
     assert old_client.read_text() == "old running client"
+    assert old_transport.read_text() == "old running preload"
+    assert old_skill.read_text() == "old running skill"
     seat = seat_of(session)
     assert (seat / "remote-execution/client.py").is_file()
+    assert (seat / ".claude/projects").resolve() == (
+        session / ".claude/projects"
+    ).resolve()
 
 
 def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
@@ -805,7 +817,7 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     before = {path: path.read_bytes() for path in protected}
     project_entries = set(work.rglob("*"))
     original_entries = set(owner.iterdir())
-    previous_chat_skill = session / ".claude/skills/cheese-chat/SKILL.md"
+    previous_chat_skill = seat_of(session) / ".claude/skills/cheese-chat/SKILL.md"
     previous_chat_skill.parent.mkdir(parents=True)
     previous_chat_skill.write_text("Previous generated chat guide\n")
     log = tmp_path / "curl.log"
@@ -821,7 +833,7 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     assert set(work.rglob("*")) == project_entries
     assert (owner / ".cheese/claude/versions" / PIN).is_file()
     for name in ("cheese-docs",):
-        assert (session / ".claude/skills" / name / "SKILL.md").is_file()
+        assert (seat_of(session) / ".claude/skills" / name / "SKILL.md").is_file()
     assert not previous_chat_skill.exists()
 
 

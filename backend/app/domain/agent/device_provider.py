@@ -1446,6 +1446,14 @@ class DeviceChannel(Channel):
                 # it again on every turn after.
                 if "unknown" in status:
                     retire_reason = "resident_release_unreachable"
+                elif status.get("working") or status.get("tasks"):
+                    # The room transcript scan can see a newer idle peer. The
+                    # target runner's own state decides whether its files may
+                    # be replaced while it is still using them.
+                    logger.info(
+                        "resident release deferred topic=%s reason=seat_busy",
+                        topic_id,
+                    )
                 else:
                     try:
                         await self._refresh_resident(

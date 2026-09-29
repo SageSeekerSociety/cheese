@@ -179,10 +179,9 @@ def launch_holes(
     the execution target and the config the client derives from it, and the
     system prompt, which differs per teammate. Two seats of one room writing
     one path is what put a room's second teammate's turn on the first one's
-    credential. The harness's own config dir (``$CLAUDE_CONFIG_DIR``) stays
-    the room's: its transcripts, settings and skills are read by programs that
-    resolve a ROOM's paths (a resume, a conversation transfer between machines,
-    a release's busy scan) and could not name a seat.
+    credential. Each seat has its own Claude config and skills. Only the
+    transcript directory is shared with the room, so resume, transfer and the
+    release's busy scan can still find each conversation.
 
     ``system_prompt`` (the platform's assembled system prompt) is embedded in the
     script itself — written to the seat's ``cheese-system-prompt.md`` on the
@@ -287,8 +286,14 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 # the owner's settings.json to be routed at all, hijacking every claude the
 # owner starts by hand. With it, claude never reads or writes the owner's
 # files.
-export CLAUDE_CONFIG_DIR="$HOME/.claude"
-mkdir -p "$CLAUDE_CONFIG_DIR"
+ROOM_CONFIG_DIR="$HOME/.claude"
+SEAT="{seat_home}"
+export CLAUDE_CONFIG_DIR="$SEAT/.claude"
+mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
+# Conversation transcripts belong to the room for resume and transfer, while
+# settings, skills and generated instructions belong to this seat.
+[ -e "$CLAUDE_CONFIG_DIR/projects" ] || \\
+  ln -s "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR/projects"
 export DISABLE_AUTOUPDATER=1
 cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
 {webfetch_transport}CHEESE_WEBFETCH
@@ -303,8 +308,7 @@ rm -f "$CLAUDE_CONFIG_DIR/skills/cheese-chat/SKILL.md"
 # This seat's own directory, and everything below that belongs to one session
 # rather than to the room: the prompt (one per teammate), the execution target
 # the client prepares against, and — through it — the client's own per-turn
-# files. The harness's config dir above stays the room's.
-SEAT="{seat_home}"
+# files. Only the transcript directory above stays the room's.
 mkdir -p "$SEAT"
 mkdir -p "$SEAT/remote-session"
 cat > "$SEAT/remote-session/base-settings.json" <<'JSON'

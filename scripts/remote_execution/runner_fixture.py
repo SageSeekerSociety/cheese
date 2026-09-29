@@ -45,7 +45,7 @@ def session_dir(home, seat=""):
     The launcher writes everything a turn owns that belongs to ONE teammate
     into the seat that owns it (`place.seat_dir`): the execution target, the
     config the client derives from it, the system prompt and helpers. The room's
-    config dir and checkout stay where they were, and the
+    transcript directory and checkout stay where they were, and the
     fixture lays both out under the same names so a script can read them.
     """
     return Path(seat_dir(str(home), seat))
@@ -55,7 +55,7 @@ def room_home(home, target, seat=""):
     """Lay out a session home as the device launcher does; return its environment.
 
     The helpers and base settings go beside the seat, where the launcher writes
-    them. The room's config dir remains shared for transcripts and skills.
+    them. Each seat has its own config dir; transcripts remain shared.
     The target and release marker are the SESSION's (`session_dir`), as the
     launcher writes them. The client prepares its own `remote-session/` beside
     the target from `CHEESE_EXECUTION_CONFIG`.
@@ -69,8 +69,11 @@ def room_home(home, target, seat=""):
     (session / "remote-session").mkdir(parents=True, exist_ok=True)
     (session / "remote-session/release-ready").write_text(release.digest(sources))
     (session / "remote-target.json").write_text(json.dumps(target))
-    config = home / ".claude"
+    room_config = home / ".claude"
+    (room_config / "projects").mkdir(parents=True, exist_ok=True)
+    config = session / ".claude"
     config.mkdir(exist_ok=True)
+    (config / "projects").symlink_to(room_config / "projects", target_is_directory=True)
     (session / "remote-session/base-settings.json").write_text(
         json.dumps(session_settings())
     )
