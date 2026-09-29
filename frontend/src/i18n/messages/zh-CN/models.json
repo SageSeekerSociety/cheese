@@ -41,10 +41,6 @@
     "blocked": "已停用",
     "howToEdit": "只读 · 查看改法",
     "failRate": "失败率 {rate}",
-    "subscriptionOk": "订阅正常",
-    "subscriptionRefreshFailed": "刷新失败",
-    "subscriptionReauth": "需重新授权",
-    "estimateNote": "包月订阅 · 花费为估计值",
     "sparklineHint": "逐日 token 用量",
     "column": {
       "name": "模型名",
@@ -58,8 +54,7 @@
     },
     "origin": {
       "config": "配置文件",
-      "runtime": "运行时新增",
-      "subscription": "订阅"
+      "runtime": "运行时新增"
     },
     "offered": {
       "on": "已上架",
@@ -108,62 +103,7 @@
     "series": {
       "tokens": "token",
       "spend": "花费"
-    },
-    "subscription": {
-      "title": "订阅",
-      "account": "账号",
-      "status": "状态",
-      "tokenExpires": "凭据 {time} 过期",
-      "quotaTitle": "额度用量",
-      "quotaRefresh": "刷新读数",
-      "quotaEmpty": "暂无额度读数",
-      "quotaUpdated": "读数 {time} 更新",
-      "quotaStale": "没刷出新读数，显示 {time} 的旧读数",
-      "resetsAt": "{time} 重置",
-      "reauth": "重新授权",
-      "revoke": "移除订阅",
-      "revokeTitle": "移除订阅",
-      "revokeBody": "断开这条订阅，并停用网关模型「{name}」——项目随即选不到它。",
-      "estimateNote": "包月订阅 · 花费为估计值",
-      "tier": {
-        "fiveHour": "5 小时窗口",
-        "sevenDay": "7 天窗口",
-        "thirtyDay": "30 天窗口",
-        "other": "用量窗口"
-      }
     }
-  },
-  "subscription": {
-    "import": "导入订阅",
-    "dialogTitle": "导入 ChatGPT 订阅",
-    "intro": "把一个 ChatGPT 订阅接到平台上：授权完成后，它会作为一个模型出现在列表里，项目可以像选别的模型一样选它。",
-    "reauthIntro": "重新授权你的 ChatGPT 账号：用原来的账号完成授权后，这条订阅会恢复。",
-    "start": "开始授权",
-    "label": "备注名",
-    "labelHint": "可选。写一句这是谁的订阅，之后好认。",
-    "waiting": "等你授权",
-    "codeHint": "打开授权页，登录并输入这串代码",
-    "openPage": "打开授权页",
-    "copy": "复制",
-    "copied": "已复制",
-    "polling": "正在等待授权…",
-    "expiresIn": "代码 {minutes} 分钟后过期",
-    "expired": "代码已过期",
-    "restart": "重新开始",
-    "cancelImport": "取消导入",
-    "success": "订阅已连接",
-    "accountAs": "账号：{email}",
-    "done": "完成",
-    "failed": "授权没完成",
-    "retry": "重试",
-    "upstreamModel": "上游模型",
-    "upstreamModelHint": "可选。留空跟随部署默认；订阅里可用的其他模型（如 openai/gpt-5.6-luna）填在这里。",
-    "upstreamModelInvalid": "上游模型不能为空",
-    "upstreamModelCurrent": "上游模型：{model}",
-    "upstreamModelDefault": "上游模型：跟随部署默认",
-    "upstreamModelEdit": "修改",
-    "upstreamModelSave": "保存",
-    "upstreamModelCancel": "取消"
   },
   "dialog": {
     "cancel": "取消",

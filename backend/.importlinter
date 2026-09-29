@@ -351,12 +351,6 @@ ignore_imports =
     app.domain.room_task.services -> app.domain.topic.models
     app.domain.service_keys -> app.domain.docs_site.models
     app.domain.shell.service -> app.domain.space.models
-    app.domain.subscription.refresh -> app.domain.agent.gateway_admin
-    app.domain.subscription.services -> app.domain.agent.gateway
-    app.domain.subscription.services -> app.domain.agent.gateway_admin
-    app.domain.subscription.services -> app.domain.agent.gateway_catalog
-    app.domain.subscription.services -> app.domain.agent.gateway_models
-    app.domain.subscription.services -> app.domain.agent.models
     app.domain.task.services -> app.domain.space.rank_service
     app.domain.task.services -> app.domain.space.repositories
     app.domain.task.teaching -> app.domain.project.models

@@ -63,9 +63,7 @@ class GatewayReleaseTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(c["args"][0] == "compose" for c in calls))
 
-    def test_releases_only_gateway_and_its_openai_exit_after_saving_previous_config(
-        self,
-    ):
+    def test_releases_only_gateway_after_saving_previous_config(self):
         result, calls = self.run_release()
         self.assertEqual(result.returncode, 0, result.stderr)
         actions = [c["args"][0] for c in calls]
@@ -78,10 +76,10 @@ class GatewayReleaseTest(unittest.TestCase):
                 "up",
                 "-d",
                 "--no-deps",
+                "--remove-orphans",
                 "--wait",
                 "--wait-timeout",
                 "150",
-                "openai-egress",
                 "litellm",
             ],
         )
@@ -92,6 +90,8 @@ class GatewayReleaseTest(unittest.TestCase):
         rollout = [c for c in calls if c["args"][0] == "compose"]
         self.assertEqual(len(rollout), 2)
         self.assertEqual(rollout[-1]["image"], "sha256:previous")
+        # The rollback also drops containers of services no longer in the file.
+        self.assertIn("--remove-orphans", rollout[-1]["args"])
         self.assertTrue(rollout[-1]["config"].endswith("/previous.yaml"))
 
     def test_the_network_shared_with_the_metering_proxy_exists_before_rollout(self):

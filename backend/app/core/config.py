@@ -346,45 +346,6 @@ class Settings(BaseSettings):
     # even without a signal (a task, an accept card, a changed goal).
     topic_naming_follow_messages: int = 30
 
-    # --- ChatGPT subscription import (app/domain/subscription) ---
-    # A platform-level ChatGPT subscription rides the gateway as a runtime model
-    # whose api_key is the subscription's OAuth access_token; this backend owns
-    # the token lifecycle (device flow, refresh, push-to-gateway). Endpoints and
-    # semantics follow cc-switch's Codex OAuth implementation.
-    # Same client_id as the official Codex CLI (cc-switch's measured value).
-    openai_codex_client_id: str = "app_EMoamEEZ73f0CkXaXp7hrann"
-    openai_oauth_base: str = "https://auth.openai.com"
-    # The codex upstream is {base}/codex; the quota read is {base}/wham/usage.
-    chatgpt_backend_base: str = "https://chatgpt.com/backend-api"
-    # The HTTP proxy this backend's OpenAI calls (OAuth, quota) leave through.
-    # A deployment that keeps a ChatGPT account on one exit IP sets this to that
-    # exit, and the gateway's model calls take the same exit
-    # (deploy/gateway/README.md).
-    # Unset: direct.
-    openai_subscription_proxy: str | None = None
-    # The page a person opens to type the device code.
-    openai_device_verification_uri: str = "https://auth.openai.com/codex/device"
-    codex_originator: str = "codex_cli_rs"
-    # ChatGPT gates model availability on this client version, so it MUST be
-    # hot-configurable without a release (cc-switch's lesson: hardcoding it
-    # turns an upstream policy change into an app update).
-    codex_client_version: str = "0.153.4"
-    subscription_refresh_interval_s: int = 300
-    # How long before the access_token expires we refresh it.
-    subscription_refresh_margin_s: int = 600
-    # The runtime model on the gateway this subscription feeds.
-    subscription_linked_model_name: str = "gpt-codex-subscription"
-    # The upstream identifier the linked model calls. May need a Responses-API
-    # form (e.g. openai/responses/…) pending the protocol spike. This is the
-    # DEFAULT: a subscription row may carry its own explicit upstream_model
-    # (llm_subscriptions.upstream_model), which wins over this value.
-    subscription_upstream_model: str = "openai/gpt-5.2-codex"
-    # Estimated prices: they exist ONLY so max_budget braking and the spend
-    # readout keep working for a flat-rate subscription (the mimo precedent) —
-    # they are not a real bill.
-    subscription_estimate_input_usd: float = 2.5e-6
-    subscription_estimate_output_usd: float = 1e-5
-
     # ExecutionProfile "claude-opus" (tier=testing): native Claude for the team's
     # own dogfooding. Only selectable when claude_auth_token is set (an Anthropic
     # API key). base_url unset → Anthropic's default endpoint. Not the multi-user

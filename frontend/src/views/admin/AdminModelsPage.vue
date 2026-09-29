@@ -22,7 +22,6 @@ import AdminModelFormDialog, { type ModelFormPayload } from '@/components/admin/
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
-import AdminSubscriptionImportDialog from '@/components/admin/AdminSubscriptionImportDialog.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
@@ -57,14 +56,6 @@ interface Usage {
   total_tokens: number
 }
 
-/** 模型项上的订阅 overlay（§3.7）：第三种来源徽章「订阅」的数据。 */
-interface SubscriptionOverlay {
-  id: string
-  status: string
-  account_email: string | null
-  quota: { tiers: { name: string; utilization: number; resets_at: string | null }[]; fetched_at: string | null } | null
-}
-
 /** §3.1 的模型项。 */
 interface ModelRow {
   name: string
@@ -82,7 +73,6 @@ interface ModelRow {
   usage: Usage
   /** 行内 sparkline 的逐日 token（与详情折线同源同账）。 */
   series?: number[]
-  subscription?: SubscriptionOverlay | null
 }
 
 interface GatewayState {
@@ -164,9 +154,6 @@ const formError = ref<string | null>(null)
 const drawerOpen = ref(false)
 const drawerName = ref<string | null>(null)
 
-/** 「导入订阅」对话框（页级实例；抽屉里的「重新授权」用的是抽屉自己的定向实例）。 */
-const importOpen = ref(false)
-
 /** 审计区展开「查看改动」的行（按下标记）。diff 在子组件 `AdminAuditDiff` 里画。 */
 const auditExpanded = ref<Set<number>>(new Set())
 
@@ -234,29 +221,9 @@ const health = computed<{ ok: boolean; text: string; title: string } | null>(() 
   return { ok: false, text: t('models.health.down'), title: detail }
 })
 
-/** 来源徽章的三态：配置文件 / 运行时新增 / **订阅**（有订阅 overlay 时盖过
- *  runtime —— origin 仍由网关报，订阅身份是平台库 overlay 给的）。 */
+/** 来源徽章的两态：配置文件 / 运行时新增。 */
 function originKey(row: ModelRow): string {
-  if (row.subscription) return 'models.table.origin.subscription'
   return row.origin === 'config' ? 'models.table.origin.config' : 'models.table.origin.runtime'
-}
-
-/** 订阅状态 → 词条（列表状态列第二行与徽章状态点共用这一份语义）。 */
-const SUBSCRIPTION_STATUS_KEY: Record<string, string> = {
-  active: 'models.table.subscriptionOk',
-  refresh_failed: 'models.table.subscriptionRefreshFailed',
-  reauth_required: 'models.table.subscriptionReauth',
-}
-
-function subscriptionStatusText(status: string): string {
-  return SUBSCRIPTION_STATUS_KEY[status] ? t(SUBSCRIPTION_STATUS_KEY[status]) : status
-}
-
-/** 订阅状态 → 状态点色调：active 绿 / refresh_failed 琥珀 / reauth_required 红。 */
-function subscriptionDotClass(status: string): string {
-  if (status === 'active') return 'amd__dot--ok'
-  if (status === 'refresh_failed') return 'amd__dot--warn'
-  return 'amd__dot--danger'
 }
 
 /** 状态列的失败率：0 请求画 `—`（「没用到」和「没失败」是两句话）；>5% 红、
@@ -269,11 +236,11 @@ function failRate(row: ModelRow): { text: string; title: string; tone: string } 
   return { text: rate, title: t('models.table.failRate', { rate }), tone }
 }
 
-/** 状态列在窄屏卡片里**整格收起来**的条件：这一行既没有订阅、这个窗口里又没有请求时，
+/** 状态列在窄屏卡片里**整格收起来**的条件：这个窗口里没有请求时，
  *  那一格画的是一句「—」。卡片上多一行「状态 —」是没有信息的行，而真有事的那几行
  *  照样画得出来（同成员页「异常才说话」那条）。 */
 function statusQuiet(row: ModelRow): boolean {
-  return !row.subscription && !row.usage.requests
+  return !row.usage.requests
 }
 
 const totals = computed<Usage | null>(() => models.value?.totals ?? null)
@@ -596,16 +563,6 @@ onMounted(load)
             <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.models') }}</h2>
             <span class="amd__count t-meta-read">{{ num(models?.models.length) }}</span>
             <div class="amd__spacer" />
-            <!-- 导入订阅是次操作（outlined）：这一组的琥珀是「新增模型」。 -->
-            <v-btn
-              variant="outlined"
-              size="small"
-              prepend-icon="mdi-link-variant"
-              :disabled="gatewayDown"
-              @click="importOpen = true"
-            >
-              {{ t('models.subscription.import') }}
-            </v-btn>
             <v-btn color="primary" size="small" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">
               {{ t('models.page.add') }}
             </v-btn>
@@ -661,23 +618,10 @@ onMounted(load)
                   </button>
                 </td>
                 <td class="amd__cell" :data-label="t('models.table.column.origin')">
-                  <!-- 订阅徽章带状态点（active 绿 / 刷新失败琥珀 / 需重授权红）：它是第三种
-                   来源，也是一个活的凭据 —— 一眼要同时看出「从哪来」和「还活不活」。 -->
-                  <span class="amd__tag">
-                    <span
-                      v-if="row.subscription"
-                      class="amd__dot amd__dot--inline"
-                      :class="subscriptionDotClass(row.subscription.status)"
-                      aria-hidden="true"
-                    />
-                    {{ t(originKey(row)) }}
-                  </span>
+                  <span class="amd__tag">{{ t(originKey(row)) }}</span>
                 </td>
                 <td class="amd__cell" :data-label="t('models.table.column.price')">
                   <AdminModelPriceCell :priced="row.priced" :prices="row.prices" :reason="row.unpriced_reason" />
-                  <span v-if="row.subscription" class="amd__estimate t-meta-read">{{
-                    t('models.table.estimateNote')
-                  }}</span>
                 </td>
                 <td class="amd__cell" :data-label="t('models.table.column.usage')">
                   <span class="amd__usage">
@@ -724,9 +668,6 @@ onMounted(load)
                   <span class="amd__usage">
                     <span class="t-num" :class="failRate(row).tone" :title="failRate(row).title">{{
                       failRate(row).text
-                    }}</span>
-                    <span v-if="row.subscription" class="t-meta-read amd__dim">{{
-                      subscriptionStatusText(row.subscription.status)
                     }}</span>
                   </span>
                 </td>
@@ -924,9 +865,7 @@ onMounted(load)
       </div>
     </div>
 
-    <AdminModelDetailDrawer v-model="drawerOpen" :name="drawerName" :days="days" @changed="load" />
-
-    <AdminSubscriptionImportDialog v-model="importOpen" @imported="load" />
+    <AdminModelDetailDrawer v-model="drawerOpen" :name="drawerName" :days="days" />
 
     <AdminModelFormDialog
       v-model="formOpen"
@@ -1401,32 +1340,13 @@ onMounted(load)
   white-space: nowrap;
 }
 
-/* 状态点（来源徽章里的订阅状态）：与徽章文字同一行。 */
-.amd__dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-}
-
-.amd__dot--inline {
-  margin-right: 4px;
-}
-
+/* 网关健康灯的色调。 */
 .amd__dot--ok {
   background: var(--ok);
 }
 
-.amd__dot--warn {
-  background: var(--warn);
-}
-
 .amd__dot--danger {
   background: var(--danger);
-}
-
-.amd__estimate {
-  color: var(--muted);
 }
 
 .amd__reason {

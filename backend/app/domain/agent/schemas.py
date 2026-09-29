@@ -92,8 +92,8 @@ class _ModelBodyBase(BaseModel):
     label: str | None = None
     prices: ModelPrices | None = None
     capabilities: ModelCapabilities | None = None
-    # 随每次调用透传给上游的额外头（订阅导入程序化写入；v1 前端表单不暴露它，
-    # PATCH 缺省即保留 —— 编辑订阅模型的标签/价格不会弄丢头）。键限 64、值限
+    # 随每次调用透传给上游的额外头（前端表单不暴露它，PATCH 缺省即保留 ——
+    # 编辑标签/价格不会弄丢头）。键限 64、值限
     # 200：头会原样进 HTTP 请求行，不挡住注释/换行注入就是给别人开门。
     extra_headers: dict[str, str] | None = None
 

@@ -58,9 +58,7 @@ services:
       - app
       # The metering proxy's ChatGPT listener, http://metering-proxy:8445, is
       # reachable only here: an internal network with the proxy and this
-      # container on it. Not the default network: openai-egress answers as
-      # chatgpt.com there, and on it the proxy's own ChatGPT requests would
-      # resolve to that forwarder instead of each account's egress.
+      # container on it.
       - meter-gateway
     healthcheck:
       # This image has Python at this exact path but no curl/wget. A probe whose
@@ -73,30 +71,6 @@ services:
       interval: 15s
       timeout: 8s
       retries: 10
-
-  openai-egress:
-    # ChatGPT subscription calls leave through one fixed exit, not this box's:
-    # an imported account can also be in use elsewhere through that exit, and
-    # this keeps it on one exit IP. This forwarder answers as
-    # chatgpt.com on the gateway's own network (the alias below), so only the
-    # gateway resolves it, and CONNECTs each connection through the exit's HTTP
-    # proxy; TLS stays end to end with chatgpt.com and every other upstream is
-    # untouched. No fallback: with the exit down, ChatGPT calls fail rather than
-    # leave from somewhere else.
-    image: alpine/socat:1.8.0.3@sha256:beb4a68d9e4fe6b0f21ea774a0fde6c31f580dde6368939ed70100c5385b015e
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
-    command:
-      - TCP-LISTEN:443,fork,reuseaddr
-      - PROXY:${OPENAI_EGRESS_HOST:?set OPENAI_EGRESS_HOST}:chatgpt.com:443,proxyport=${OPENAI_EGRESS_PORT:?set OPENAI_EGRESS_PORT},proxyauth=${OPENAI_EGRESS_AUTH:?set OPENAI_EGRESS_AUTH}
-    networks:
-      default:
-        aliases:
-          - chatgpt.com
 
   litellm-db:
     # Its own database rather than a schema in the app's: LiteLLM runs its own
