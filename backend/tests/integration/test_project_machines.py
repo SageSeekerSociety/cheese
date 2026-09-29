@@ -160,6 +160,52 @@ def test_message_arriving_during_suspend_resumes_after_sweep(client):
     client.portal.call(run)
 
 
+@pytest.mark.parametrize(
+    "recorded", [MachineStatus.deleting, MachineStatus.deleted, MachineStatus.running]
+)
+def test_a_machine_gone_at_the_provider_is_not_left_leased_by_the_sweep(
+    client, recorded
+):
+    """The sweep, not only a person opening the project, lets go of a machine
+    the provider no longer has: whether the sweep learns it now (a delete
+    finishing), learned it on an earlier tick, or the row still says running
+    while it waits on its AI channel."""
+    from app.domain.machine.models import AiStatus
+
+    async def seed():
+        async with client.test_factory() as session:
+            project = await ProjectRepository(session).add(
+                name="Gone upstream", team_id=await a_team(session)
+            )
+            topic = await TopicRepository(session).add(
+                project_id=project.id, title="Room"
+            )
+            machine = await _add_topic_machine(
+                session,
+                project_id=project.id,
+                topic_id=topic.id,
+                machine_id=73,
+                status=recorded,
+            )
+            if recorded == MachineStatus.running:
+                machine.ai_status = AiStatus.provisioning
+            await session.commit()
+            return machine.id
+
+    machine_id = asyncio.run(seed())
+    cloud = FakeMicroCloud()  # knows no machine 73
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await MachineService(session, cloud).refresh_unsettled()
+            await session.commit()
+        async with client.test_request_factory() as session:
+            machine = await ProjectMachineRepository(session).get(machine_id)
+            assert machine is None or machine.released_at is not None
+
+    client.portal.call(run)
+
+
 def _project(client: TestClient, headers: dict[str, str] | None = None) -> str:
     return post_project(
         client, json={"name": "机器项目"}, headers=headers or {}
