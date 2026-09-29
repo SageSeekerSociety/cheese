@@ -223,7 +223,7 @@ useCommands(() => [
 </script>
 
 <template>
-  <AppPage :title="t('navigation.userMenu.devices')">
+  <AppPage :title="t('account.settings.devices')">
     <v-alert v-if="!isLoggedIn" type="info" density="comfortable" class="mb-4"> 登录后即可管理已接入的设备 </v-alert>
 
     <template v-else>

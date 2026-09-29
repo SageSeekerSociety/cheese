@@ -368,8 +368,9 @@
   },
   "settings": {
     "realName": "实名信息",
-    "install": "安装到手机",
-    "general": "通用"
+    "general": "通用",
+    "devices": "设备",
+    "connections": "连接"
   },
   "emailCode": {
     "title": "邮箱验证码登录",

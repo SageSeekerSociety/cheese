@@ -423,7 +423,7 @@ jobs:
           out=frontend/public/downloads/desktop
           mkdir -p "$out"
           gh release download desktop-latest --repo "$GITHUB_REPOSITORY" --dir "$out" \
-            --pattern 'Cheese-*.dmg' --pattern 'Cheese-*.exe' --pattern 'Cheese-*.app.tar.gz' --pattern latest.json
+            --pattern 'Cheese-*.dmg' --pattern 'Cheese-*.exe' --pattern 'Cheese-*.app.tar.gz' --pattern latest.json --pattern CHANGELOG.md
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/desktop-latest"
           jq --arg base "$base" '.platforms[].url |= sub("^" + $base; "https://okcheese.com/downloads/desktop")' \
             "$out/latest.json" > "$out/latest.json.new"
