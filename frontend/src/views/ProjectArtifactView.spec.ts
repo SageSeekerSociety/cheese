@@ -11,6 +11,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '../i18n'
@@ -82,7 +83,7 @@ beforeEach(() => {
 function mount() {
   return render(ProjectArtifactView, {
     props: { projectId: 'p1', artifactId: 'a1' },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, createPinia()] },
   })
 }
 

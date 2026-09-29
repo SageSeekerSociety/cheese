@@ -14,10 +14,14 @@ import ArtifactVersionPreview from '../components/ArtifactVersionPreview.vue'
 import { t } from '../i18n'
 import { parseDiffLines } from '../lib/diff'
 import { relTime } from '../lib/relTime'
+import { usePageTitleStore } from '../stores/title'
 
 import UserRef from '@/components/common/UserRef.vue'
 
 const props = defineProps<{ projectId: string; artifactId: string }>()
+
+// 这一项的名字就是这一页的标题：手机上它只写在顶栏里（页内的 h1 在手机上不画）。
+const titles = usePageTitleStore()
 
 const artifact = ref<ProjectArtifactDetail | null>(null)
 const loading = ref(false)
@@ -85,6 +89,7 @@ async function load() {
     const found = await getProjectArtifact(projectId, artifactId)
     if (props.artifactId !== artifactId || props.projectId !== projectId) return
     artifact.value = found
+    titles.setDynamicTitle(found.name, 'project-artifact')
     before.value = found.versions.at(-2)?.card_id ?? ''
     after.value = found.versions.at(-1)?.card_id ?? ''
   } catch (e) {
@@ -137,7 +142,7 @@ watch(
       <template v-else-if="artifact">
         <header class="artifact-head">
           <div class="artifact-head__id">
-            <h1 class="t-page-title">{{ artifact.name }}</h1>
+            <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title">{{ artifact.name }}</h1>
             <p class="t-meta c-faint mt-1">
               <template v-if="artifact.version">
                 第 {{ artifact.version }} 版

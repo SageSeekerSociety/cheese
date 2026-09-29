@@ -50,5 +50,9 @@
       "dark": "Dark"
     },
     "connections": "Connections"
+  },
+  "shell": {
+    "close": "Close",
+    "more": "More actions"
   }
 }

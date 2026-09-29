@@ -60,6 +60,15 @@ describe('BottomAppBar', () => {
     expect(queryByText('新建项目')).toBeNull()
   })
 
+  it('待办那一格带着件数，没有待办时不画', async () => {
+    const { findByRole, rerender } = mount([tab('待办', { to: '/inbox', badge: 3 })])
+    const inbox = await findByRole('link')
+    expect(inbox.textContent).toContain('3')
+    expect(inbox.getAttribute('aria-label') ?? '').toContain('3')
+    await rerender({ items: [tab('待办', { to: '/inbox', badge: 0 })] })
+    expect((await findByRole('link')).textContent?.trim()).toBe('待办')
+  })
+
   it('只有动作、没有地址的一格点得动', async () => {
     const createProject = vi.fn()
     const { findByText } = mount([tab('工作区', { action: createProject })])

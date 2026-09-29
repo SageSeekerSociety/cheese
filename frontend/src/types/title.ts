@@ -17,6 +17,9 @@ export interface RouteMetaTitle {
   disableBreadcrumbLink?: boolean
   isFullPage?: boolean
   backTo?: string
+  /** `backTo` 只在手机上算：这一页在桌面上是 rail 或头像菜单直接到的地方，不是谁的
+   *  下一层，桌面顶栏不画 ←。 */
+  backOnPhoneOnly?: boolean
   /** 「项目这个框」那条记录自己举的手——见 lib/projectEntry 的 projectFrameOf。 */
   projectFrame?: boolean
 }

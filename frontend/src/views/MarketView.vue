@@ -45,7 +45,8 @@ onMounted(load)
 <template>
   <div class="market-page fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 1080px">
-      <div class="mb-4">
+      <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
+      <div v-if="$vuetify.display.mdAndUp" class="mb-4">
         <div class="t-eyebrow mb-1">市场</div>
         <h1 class="t-page-title">匹配与资源</h1>
       </div>

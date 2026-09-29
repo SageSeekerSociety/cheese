@@ -4,7 +4,7 @@
 import type { Integration, MailDraft } from '../api'
 import type { Project } from '../cx_types'
 
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import {
@@ -20,6 +20,8 @@ import {
   sendMailDraft,
   updateIntegration,
 } from '../api'
+import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
+import PageAction from '../components/common/PageAction.vue'
 
 import UserRef from '@/components/common/UserRef.vue'
 
@@ -148,6 +150,11 @@ async function discard(draft: MailDraft) {
 
 // ── 接入 ───────────────────────────────────────────────────────────────────
 const adding = ref<'mail' | 'feishu' | null>(null)
+// 关上的那一下 adding 已经是 null，标题和表单还要照着刚才那一种画完收起的动画。
+const addingKind = ref<'mail' | 'feishu'>('mail')
+watch(adding, (kind) => {
+  if (kind) addingKind.value = kind
+})
 const saving = ref(false)
 const formError = ref('')
 const mailForm = reactive({
@@ -211,9 +218,11 @@ onMounted(load)
 
 <template>
   <div class="connections">
-    <header class="connections__head">
+    <!-- 手机上页名写在顶栏里，操作交给了顶栏（PageAction），这一条整条收起；
+         PageAction 仍要挂着才交得出去，所以是 d-none 不是 v-if。 -->
+    <header class="connections__head" :class="{ 'd-none': !$vuetify.display.mdAndUp }">
       <h1 class="t-page-title">我的连接</h1>
-      <v-btn variant="text" :loading="loading" @click="load">刷新</v-btn>
+      <PageAction label="刷新" icon="mdi-refresh" variant="text" :loading="loading" @click="load" />
     </header>
     <p class="t-body c-muted mb-6">
       接入你自己的邮箱或飞书，并勾选允许哪些项目的 AI
@@ -270,8 +279,20 @@ onMounted(load)
       <div class="connections__head">
         <h2 class="t-section">连接</h2>
         <div>
-          <v-btn variant="text" size="small" @click="adding = 'mail'">接入邮箱</v-btn>
-          <v-btn variant="text" size="small" @click="adding = 'feishu'">接入飞书</v-btn>
+          <PageAction
+            label="接入邮箱"
+            icon="mdi-email-plus-outline"
+            variant="text"
+            size="small"
+            @click="adding = 'mail'"
+          />
+          <PageAction
+            label="接入飞书"
+            icon="mdi-link-variant-plus"
+            variant="text"
+            size="small"
+            @click="adding = 'feishu'"
+          />
         </div>
       </div>
       <p v-if="!integrations.length && !loading" class="t-meta c-faint">还没有接入任何邮箱或飞书</p>
@@ -346,93 +367,94 @@ onMounted(load)
       </v-card>
     </v-dialog>
 
-    <v-dialog :model-value="!!adding" max-width="560" @update:model-value="adding = null">
-      <v-card v-if="adding">
-        <v-card-title class="t-dialog-title">{{ adding === 'mail' ? '接入邮箱' : '接入飞书' }}</v-card-title>
-        <v-card-text>
-          <template v-if="adding === 'mail'">
-            <v-select
-              :model-value="mailForm.preset"
-              autocomplete="off"
-              :items="PRESETS.map((p) => p.title)"
-              label="邮箱服务"
-              @update:model-value="applyPreset"
-            />
-            <v-text-field v-model="mailForm.address" autocomplete="email" label="邮箱地址" />
-            <v-text-field
-              v-model="mailForm.password"
-              autocomplete="new-password"
-              type="password"
-              label="密码或授权码"
-              hint="QQ、163 等要在邮箱设置里开启 IMAP/SMTP 并生成授权码；Gmail 用应用专用密码"
-              persistent-hint
-            />
-            <div class="conn-form-row mt-2">
-              <v-text-field v-model="mailForm.imap_host" autocomplete="off" label="IMAP 服务器" />
-              <v-text-field v-model.number="mailForm.imap_port" autocomplete="off" type="number" label="端口" />
-            </div>
-            <div class="conn-form-row">
-              <v-text-field v-model="mailForm.smtp_host" autocomplete="off" label="SMTP 服务器" />
-              <v-text-field v-model.number="mailForm.smtp_port" autocomplete="off" type="number" label="端口" />
-            </div>
-            <v-select v-model="mailForm.security" autocomplete="off" :items="['ssl', 'starttls']" label="加密方式" />
-            <v-select
-              v-model="mailForm.grants"
-              autocomplete="off"
-              :items="projects"
-              item-title="name"
-              item-value="id"
-              multiple
-              chips
-              label="允许这些项目的 AI 队友使用"
-            />
-          </template>
-          <template v-else>
-            <v-text-field v-model="feishuForm.label" autocomplete="off" label="名称" />
-            <v-text-field v-model="feishuForm.app_id" autocomplete="off" label="App ID（企业自建应用）" />
-            <v-text-field
-              v-model="feishuForm.app_secret"
-              autocomplete="new-password"
-              type="password"
-              label="App Secret"
-            />
-            <v-select
-              v-model="feishuForm.domain"
-              autocomplete="off"
-              :items="[
-                { value: 'feishu', title: '飞书（feishu.cn）' },
-                { value: 'lark', title: 'Lark（larksuite.com）' },
-              ]"
-              label="版本"
-            />
-            <v-text-field
-              v-model="feishuForm.folders"
-              autocomplete="off"
-              label="应用能看到的文件夹 token（可选，多个用逗号隔开）"
-              hint="只用应用凭据时飞书不提供全文搜索，列在这里的文件夹会按文件名查找；授权个人账号后可以全文搜索"
-              persistent-hint
-            />
-            <v-select
-              v-model="feishuForm.grants"
-              autocomplete="off"
-              :items="projects"
-              item-title="name"
-              item-value="id"
-              multiple
-              chips
-              label="允许这些项目的 AI 队友使用"
-              class="mt-2"
-            />
-          </template>
-          <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="adding = null">取消</v-btn>
-          <v-btn variant="text" color="primary" :loading="saving" @click="save">测试并保存</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
+    <AdaptiveDialog
+      :model-value="!!adding"
+      :title="addingKind === 'mail' ? '接入邮箱' : '接入飞书'"
+      primary-label="测试并保存"
+      :primary-loading="saving"
+      :max-width="560"
+      @update:model-value="adding = null"
+      @primary="save"
+    >
+      <template v-if="adding">
+        <template v-if="addingKind === 'mail'">
+          <v-select
+            :model-value="mailForm.preset"
+            autocomplete="off"
+            :items="PRESETS.map((p) => p.title)"
+            label="邮箱服务"
+            @update:model-value="applyPreset"
+          />
+          <v-text-field v-model="mailForm.address" autocomplete="email" label="邮箱地址" />
+          <v-text-field
+            v-model="mailForm.password"
+            autocomplete="new-password"
+            type="password"
+            label="密码或授权码"
+            hint="QQ、163 等要在邮箱设置里开启 IMAP/SMTP 并生成授权码；Gmail 用应用专用密码"
+            persistent-hint
+          />
+          <div class="conn-form-row mt-2">
+            <v-text-field v-model="mailForm.imap_host" autocomplete="off" label="IMAP 服务器" />
+            <v-text-field v-model.number="mailForm.imap_port" autocomplete="off" type="number" label="端口" />
+          </div>
+          <div class="conn-form-row">
+            <v-text-field v-model="mailForm.smtp_host" autocomplete="off" label="SMTP 服务器" />
+            <v-text-field v-model.number="mailForm.smtp_port" autocomplete="off" type="number" label="端口" />
+          </div>
+          <v-select v-model="mailForm.security" autocomplete="off" :items="['ssl', 'starttls']" label="加密方式" />
+          <v-select
+            v-model="mailForm.grants"
+            autocomplete="off"
+            :items="projects"
+            item-title="name"
+            item-value="id"
+            multiple
+            chips
+            label="允许这些项目的 AI 队友使用"
+          />
+        </template>
+        <template v-else>
+          <v-text-field v-model="feishuForm.label" autocomplete="off" label="名称" />
+          <v-text-field v-model="feishuForm.app_id" autocomplete="off" label="App ID（企业自建应用）" />
+          <v-text-field
+            v-model="feishuForm.app_secret"
+            autocomplete="new-password"
+            type="password"
+            label="App Secret"
+          />
+          <v-select
+            v-model="feishuForm.domain"
+            autocomplete="off"
+            :items="[
+              { value: 'feishu', title: '飞书（feishu.cn）' },
+              { value: 'lark', title: 'Lark（larksuite.com）' },
+            ]"
+            label="版本"
+          />
+          <v-text-field
+            v-model="feishuForm.folders"
+            autocomplete="off"
+            label="应用能看到的文件夹 token（可选，多个用逗号隔开）"
+            hint="只用应用凭据时飞书不提供全文搜索，列在这里的文件夹会按文件名查找；授权个人账号后可以全文搜索"
+            persistent-hint
+          />
+          <v-select
+            v-model="feishuForm.grants"
+            autocomplete="off"
+            :items="projects"
+            item-title="name"
+            item-value="id"
+            multiple
+            chips
+            label="允许这些项目的 AI 队友使用"
+            class="mt-2"
+          />
+        </template>
+        <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
+      </template>
+    </AdaptiveDialog>
   </div>
 </template>
 

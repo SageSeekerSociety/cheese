@@ -12,6 +12,7 @@ import { ref, watch } from 'vue'
 
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
 
+import PageAction from '@/components/common/PageAction.vue'
 import { t } from '@/i18n'
 import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
@@ -88,7 +89,7 @@ watch(
 <template>
   <ProjectPage :title="t('navigation.project.library')">
     <template #actions>
-      <v-btn :loading="loading" @click="load">刷新</v-btn>
+      <PageAction label="刷新" icon="mdi-refresh" primary :loading="loading" @click="load" />
     </template>
     <div>
       <p class="t-body c-muted mb-6">你给这个项目的文件。每个对话都引用得到，芝士只读不改</p>

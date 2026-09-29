@@ -41,6 +41,7 @@ import {
 } from '@/api'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
+import PageAction from '@/components/common/PageAction.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
@@ -302,21 +303,31 @@ async function submitInvite() {
 <template>
   <ProjectPage :title="t('navigation.project.members')">
     <template v-if="canLeave || canTransfer || canManage" #actions>
-      <v-btn v-if="canLeave" prepend-icon="mdi-exit-to-app" @click="leaveOpen = true">
-        {{ t('work.members.leave') }}
-      </v-btn>
-      <v-btn v-if="canTransfer" prepend-icon="mdi-account-arrow-right-outline" @click="transferOpen = true">
-        {{ t('work.members.transfer') }}
-      </v-btn>
-      <v-btn
+      <PageAction
+        v-if="canLeave"
+        :label="t('work.members.leave')"
+        icon="mdi-exit-to-app"
+        danger
+        prepend-icon="mdi-exit-to-app"
+        @click="leaveOpen = true"
+      />
+      <PageAction
+        v-if="canTransfer"
+        :label="t('work.members.transfer')"
+        icon="mdi-account-arrow-right-outline"
+        prepend-icon="mdi-account-arrow-right-outline"
+        @click="transferOpen = true"
+      />
+      <PageAction
         v-if="canManage"
+        :label="t('work.members.invite')"
+        icon="mdi-account-plus-outline"
+        primary
         color="primary"
         variant="flat"
         prepend-icon="mdi-account-plus-outline"
         @click="inviteOpen = true"
-      >
-        {{ t('work.members.invite') }}
-      </v-btn>
+      />
     </template>
 
     <!-- 名册、队友、邀请三处各自到货；到齐之前整页藏在转圈后面，不然后到的名册会

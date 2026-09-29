@@ -27,7 +27,10 @@ defineSlots<{
   default?: () => unknown
   // 标题右边紧跟着的一段短状态（「已保存」「施工中 2 · 已完成 1」）。
   meta?: () => unknown
-  // 这一页的操作，靠右。
+  // 这一页的操作，靠右。命令（刷新、新建、邀请）写成 PageAction：桌面上它就是这里
+  // 的按钮，手机上它交给顶栏（主操作一颗图标，其余进 ⋯），这一行不再为它单占。
+  // 直接写在这里的别的东西（看板的「只看我的」开关）只在桌面、以及手机上有 #meta
+  // 撑起这一行时才看得见。
   actions?: () => unknown
 }>()
 
@@ -38,9 +41,9 @@ const ACTION_DEFAULTS = { VBtn: { variant: 'text', size: 'small' } } as const
 
 <template>
   <div class="project-page">
-    <!-- 手机上页名写在顶栏里（路由的 title），这一条只剩状态和操作；两样都没有就
-         整条不画。 -->
-    <header v-if="mdAndUp || $slots.meta || $slots.actions" class="project-page__head">
+    <!-- 手机上页名写在顶栏里（路由的 title），操作也交给了顶栏（PageAction），这一条
+         只剩状态；没有状态就整条不画。 -->
+    <header v-if="mdAndUp || $slots.meta" class="project-page__head">
       <h1 v-if="mdAndUp" class="project-page__title t-title">
         <template v-if="parent">
           <router-link :to="parent.to" class="project-page__parent">{{ parent.label }}</router-link>
@@ -55,6 +58,8 @@ const ACTION_DEFAULTS = { VBtn: { variant: 'text', size: 'small' } } as const
         <v-defaults-provider :defaults="ACTION_DEFAULTS"><slot name="actions" /></v-defaults-provider>
       </div>
     </header>
+    <!-- 手机上没有这一条时，PageAction 照样要挂上去才交得出顶栏上的那几颗。 -->
+    <div v-else-if="$slots.actions" hidden><slot name="actions" /></div>
     <div class="project-page__body">
       <div class="project-page__column" :class="`project-page__column--${width}`">
         <slot />

@@ -56,7 +56,8 @@ watch(
 
 <template>
   <v-container class="py-8">
-    <h1 class="t-page-title mb-4">打开网站</h1>
+    <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
+    <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title mb-4">打开网站</h1>
     <template v-if="needsLogin">
       <p class="t-body mb-4">这个网站仅项目成员可访问，请先登录</p>
       <v-btn color="primary" :to="loginLink">登录</v-btn>

@@ -259,3 +259,33 @@ describe('走的是小队页上那条真实链接（带重定向）', () => {
     expect(back(view)?.getAttribute('href')).toBe('/teams/12')
   })
 })
+
+// 设备、连接这几页：手机上是从头像菜单推进来的一层，← 回首页；桌面上 rail 一直在，
+// 它们不是谁的下一层，顶栏不画 ←。
+describe('只在手机上是一层的页面', () => {
+  function withPersonalPage() {
+    const router = makeRouter()
+    router.addRoute({
+      name: 'my-devices',
+      path: '/my/devices',
+      component: { template: '<div />' },
+      meta: { title: '我的设备', hideTabs: true, backTo: 'HomeWork', backOnPhoneOnly: true },
+    })
+    return router
+  }
+
+  it('手机上 ← 回首页', async () => {
+    widthIs(PHONE)
+    const router = withPersonalPage()
+    await router.push('/my/devices')
+    const view = await mount(router)
+    expect(back(view)?.getAttribute('href')).toBe('/work')
+  })
+
+  it('桌面上不画 ←', async () => {
+    const router = withPersonalPage()
+    await router.push('/my/devices')
+    const view = await mount(router)
+    expect(back(view)).toBeNull()
+  })
+})

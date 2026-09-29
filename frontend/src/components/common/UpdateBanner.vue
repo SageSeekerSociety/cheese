@@ -24,10 +24,14 @@ const online = useOnline()
     <div v-if="updateReady && online" class="update-banner" role="status" aria-live="polite">
       <v-icon size="16" class="update-banner__icon">mdi-download</v-icon>
       <span class="update-banner__text">芝士有新版本，更新后自动刷新</span>
-      <button type="button" class="update-banner__action update-banner__action--primary" @click="applyUpdate">
+      <button
+        type="button"
+        class="update-banner__action update-banner__action--primary tap-target"
+        @click="applyUpdate"
+      >
         立即更新
       </button>
-      <button type="button" class="update-banner__action" @click="dismissUpdate">稍后</button>
+      <button type="button" class="update-banner__action tap-target" @click="dismissUpdate">稍后</button>
     </div>
   </Transition>
 </template>
@@ -61,7 +65,9 @@ const online = useOnline()
 .update-banner__icon {
   color: rgb(var(--v-theme-on-primary));
 }
+/* 相对定位是给 .tap-target 撑开的那一块点击区用的。 */
 .update-banner__action {
+  position: relative;
   padding: 2px 10px;
   font-size: 12px;
   font-weight: 600;

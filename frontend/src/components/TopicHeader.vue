@@ -160,6 +160,7 @@ function toggleFocus() {
             size="small"
             variant="text"
             color="medium-emphasis"
+            class="tap-target"
             :title="t('work.room.menu.more')"
             :aria-label="t('work.room.menu.more')"
           />

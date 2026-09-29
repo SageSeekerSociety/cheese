@@ -24,6 +24,35 @@
       <!-- 渲染动态 actions 组件 -->
       <component :is="actionsComponent" v-if="actionsComponent" />
 
+      <!-- 这一页的操作（页面里的 PageAction 交上来的）：主操作一颗图标，其余进 ⋯。
+           手机上页面不再为几颗按钮单占一行。 -->
+      <v-btn
+        v-if="primaryAction"
+        icon
+        variant="text"
+        :to="primaryAction.to"
+        :loading="primaryAction.loading"
+        :disabled="primaryAction.disabled"
+        :aria-label="primaryAction.label"
+        :title="primaryAction.label"
+        @click="primaryAction.onSelect?.()"
+      >
+        <v-icon size="22">{{ primaryAction.icon }}</v-icon>
+      </v-btn>
+      <AdaptiveMenu v-if="moreActions.length" :actions="moreActions">
+        <template #activator="{ props: activator }">
+          <v-btn
+            v-bind="activator"
+            icon
+            variant="text"
+            :aria-label="t('navigation.shell.more')"
+            :title="t('navigation.shell.more')"
+          >
+            <v-icon size="22">mdi-dots-horizontal</v-icon>
+          </v-btn>
+        </template>
+      </AdaptiveMenu>
+
       <!-- 通知的铃铛不在这儿了：手机上它的去处是底栏「待办」那一格
            (docs/plans/2026-08-18-mobile-shell-design.md §3.3)。 -->
 
@@ -82,6 +111,9 @@ import { storeToRefs } from 'pinia'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
 
+import AdaptiveMenu from '../AdaptiveMenu.vue'
+import { topBarActions } from '../topBarActions'
+
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
 import UserMenuCard from './UserMenuCard.vue'
@@ -111,6 +143,10 @@ const barSlot = computed(() => route.meta.barSlot === true)
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)
+
+// 顶栏右边只放得下一颗主操作；标了几个 primary 就只取第一个，其余和没标的一起进 ⋯。
+const primaryAction = computed(() => topBarActions.value.find((action) => action.primary) ?? null)
+const moreActions = computed(() => topBarActions.value.filter((action) => action !== primaryAction.value))
 
 const currentTitle = ref(t('global.cheese'))
 
