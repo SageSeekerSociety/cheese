@@ -594,7 +594,8 @@ onBeforeUnmount(() => {
   font-size: inherit;
 }
 /* lowlight token colors — the --code-* palette from style.css, shared with
-   PanelDoc and with CodeEditor's Monaco theme. See the note in PanelDoc.vue. */
+   PanelDoc and with CodeEditor's Monaco theme. See the note in
+   panels/doc/DocSurface.vue. */
 .doc-editor :deep(.hljs-comment),
 .doc-editor :deep(.hljs-quote) {
   color: var(--code-comment);
