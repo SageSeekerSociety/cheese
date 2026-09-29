@@ -10,7 +10,7 @@ which are retired.
 
 - **Web Framework**: FastAPI
 - **ORM**: SQLAlchemy 2.x (async)
-- **Database**: PostgreSQL 16
+- **Database**: PostgreSQL 17
 - **Configuration**: Pydantic v2 + pydantic-settings
 - **Periodic jobs**: in-process interval loops (`app/core/background.py`)
 - **Package Manager**: uv

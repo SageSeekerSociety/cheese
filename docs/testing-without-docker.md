@@ -9,7 +9,7 @@ bash .claude/scripts/dev-db.sh stop --purge      # 停掉并删数据目录
 ```
 
 - **Redis 是必须的,不是可选**——登录限流、2FA 验证票据和会话状态都在里面,没有它 integration 套件直接报错。
-- Postgres 必须带 contrib:迁移里有 `CREATE EXTENSION pg_trgm`,只含核心的构建(比如 `pgserver` wheel)上 `alembic upgrade head` 会失败。`postgresql-binaries` 原样打包 theseus-rs 的发行包,contrib 齐全,主版本和部署用的 paradedb 镜像一样是 16。
+- Postgres 必须带 contrib:迁移里有 `CREATE EXTENSION pg_trgm`,只含核心的构建(比如 `pgserver` wheel)上 `alembic upgrade head` 会失败。`postgresql-binaries` 原样打包 theseus-rs 的发行包,contrib 齐全,主版本和 dev、生产一样是 17。
 - 这两个 wheel **故意不是 backend 依赖**:它们是测试机上的工具,backend 不 import。`redislite` 的 wheel 只到 cp312,所以脚本自己钉住版本,把它们跑在一个一次性的 3.12 解释器上;测试本身仍跑在 3.13。
 - Claude Code 和 Codex 的版本从 backend 里的声明读出来,跟 CI 装的一样。不能靠 PATH 上现成的 `claude`:本机那个常常是别的版本,或者是一层包装脚本,远程执行和 runner 相关的测试会因此失败,跟代码无关。
 - 下载的东西放在 `${XDG_CACHE_HOME:-~/.cache}/cheesex-dev-db`,`stop --purge` 不删它。
